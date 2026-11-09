@@ -14,6 +14,8 @@ import type { SetupFacts } from "@/lib/setup-check";
 import {
   campaignChoice,
   campaignRefusal,
+  campaignsNamed,
+  KEEP_PAUSED,
   checkGooglePlan,
   kaizenScopeIssues,
   draftSummary,
@@ -45,6 +47,10 @@ import {
   type Rsa,
 } from "./core";
 import { applyMatchAnswer, tabsToDraft } from "./sheet";
+import { campaignPlaces, resolvePlaces } from "./places";
+import { compareReadBack, missingPlan, type Found, type QaLine } from "./readback";
+import { frustrated, wantsEverything } from "@/lib/launch-intent";
+import { SHORT_YES } from "@/lib/kaizen-scope";
 import { ASKS_FOR_LINK, followLanding, landingRule, pagesText, urlIn, type LandingSet } from "@/lib/landing-pages-core";
 import { askedKey, childrenNamedKaizen, isKaizenName, NOT_ASKED, scrubPaused, withKaizen, yesOnlyAnswersAsked, type Comeback, type LaunchContext } from "@/lib/kaizen-scope";
 import { contextText } from "@/lib/launch-context";
@@ -96,7 +102,26 @@ export type GoogleResolution = {
   context?: LaunchContext | null;
   /** The paused Kaizen campaign worth bringing back for this launch, when no live Kaizen campaign fits */
   comeback?: Comeback | null;
+  /** Campaigns Kaizen Ads launched for this client (ids): built into as they are, paused or not */
+  own?: string[];
+  /** Answers settled before the launch was read (adding to a campaign that was just launched: its name) */
+  preset?: Record<string, string> | null;
 };
+
+/** What the read-back found after a deploy (launch_runs.qa for a Google run) */
+export type GoogleQa = { at: string; lines: QaLine[]; summary?: string; missing?: string[]; ids?: Record<string, string>; added?: string | null };
+
+/**
+ * The campaigns Kaizen Ads launched for this client (from the launch lines it created): a paused one of these is built
+ * into as it is ("it's paused, so nothing runs until you turn it on", said once), never refused.
+ */
+export async function ownGoogleCampaigns(admin: SupabaseClient, clientId: string): Promise<string[]> {
+  const { data: runs } = await admin.from("launch_runs").select("id").eq("client_id", clientId).eq("platform", "google").in("status", ["applied", "partial"]).order("created_at", { ascending: false }).limit(40);
+  const ids = (runs ?? []).map((r) => r.id as string);
+  if (!ids.length) return [];
+  const { data: items } = await admin.from("launch_items").select("meta_id").in("run_id", ids).eq("kind", "campaign").eq("status", "created").not("meta_id", "is", null);
+  return [...new Set((items ?? []).map((i) => String(i.meta_id ?? "").match(/campaigns\/(\d+)/)?.[1]).filter((x): x is string => Boolean(x)))];
+}
 
 /** asks: the question an assistant turn asked (its key), so a short "yes" answers only that one */
 export type Turn = { role: "user" | "assistant"; text: string; at: string; asks?: string | null };
@@ -122,7 +147,7 @@ async function load(admin: SupabaseClient, id: string): Promise<Run | null> {
 }
 const patch = (admin: SupabaseClient, id: string, p: Record<string, unknown>) => admin.from("launch_runs").update({ ...p, updated_at: now() }).eq("id", id);
 
-const RULES = `Kaizen's Google launch rules: Kaizen only touches what Kaizen set up. A launch goes into a live campaign with "Kaizen" in its name (and only ad groups inside one), a paused Kaizen campaign brought back when its record says so, or a new campaign whose name has Kaizen in it the way the account names its Kaizen campaigns ("Search | Non Brand | Kaizen"). Campaigns without Kaizen in the name are context only (what converts, what runs): never propose, plan or add to them; if the buyer names one, say in one sentence Kaizen didn't set it up so you won't touch it, and offer the Kaizen one or a new Kaizen campaign. Never propose or plan launching into a paused campaign or ad group (nothing added there runs) unless it's the paused Kaizen campaign offered back. Everything new is created PAUSED: that's Kaizen's rule, not a question, so never ask or confirm it ("Taking that as paused" is never said). A plainly written keyword goes in as phrase match, Kaizen's default: never ask for a match type unless the buyer raises it. Never ask what the account, the history or the client context already answers; decide like a senior buyer and say your pick. Respect Google's limits exactly: RSA headlines up to 30 characters (3 to 15 of them), descriptions up to 90 (2 to 4), display paths up to 15 each, keywords up to 80 characters and 10 words, sitelink text 25, callouts 25. No exclamation marks in headlines, no repeated punctuation, no emojis, no phone numbers in ad text, no all-caps words except brand names and acronyms. Match types: [exact], "phrase", broad as plain text. Profitability first: the searches that convert and the copy that won lead; what wastes spend becomes a negative. Refer to people by role (the buyer, the client, the head of Google), never by name. Plain text, no markdown, no emojis, no em dashes.`;
+const RULES = `Kaizen's Google launch rules: Kaizen only touches what Kaizen set up. A launch goes into a live campaign with "Kaizen" in its name (and only ad groups inside one), a paused Kaizen campaign brought back when its record says so, or a new campaign whose name has Kaizen in it the way the account names its Kaizen campaigns ("Search | Non Brand | Kaizen"). Campaigns without Kaizen in the name are context only (what converts, what runs): never propose, plan or add to them; if the buyer names one, say in one sentence Kaizen didn't set it up so you won't touch it, and offer the Kaizen one or a new Kaizen campaign. Never propose or plan launching into a paused campaign or ad group (nothing added there runs) unless it's the paused Kaizen campaign offered back, a campaign Kaizen Ads launched itself (marked [launched by Kaizen Ads]) or a paused Kaizen campaign the buyer names and insists on: then build into it as it is, say at most once that it's paused so nothing runs until they turn it on, and never refuse or repeat that. Everything new is created PAUSED: that's Kaizen's rule, not a question, so never ask or confirm it ("Taking that as paused" is never said). A plainly written keyword goes in as phrase match, Kaizen's default: never ask for a match type unless the buyer raises it. Never ask what the account, the history or the client context already answers; decide like a senior buyer and say your pick. Respect Google's limits exactly: RSA headlines up to 30 characters (3 to 15 of them), descriptions up to 90 (2 to 4), display paths up to 15 each, keywords up to 80 characters and 10 words, sitelink text 25, callouts 25. No exclamation marks in headlines, no repeated punctuation, no emojis, no phone numbers in ad text, no all-caps words except brand names and acronyms. Match types: [exact], "phrase", broad as plain text. Profitability first: the searches that convert and the copy that won lead; what wastes spend becomes a negative. Refer to people by role (the buyer, the client, the head of Google), never by name. Plain text, no markdown, no emojis, no em dashes.`;
 
 // ─── Starting one ───────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -134,7 +159,12 @@ async function accountFor(admin: SupabaseClient, clientId: string, targetId: str
 }
 
 /** A new Google launch from the chat (the buyer's words, and a sheet when one was shared); read in the background */
-export async function startGoogleRun(admin: SupabaseClient, clientId: string, profileId: string, o: { request: string; source?: SheetSource | null; targetId?: string | null; scopeType?: CampaignType | null; opener?: string | null }): Promise<{ id: string } | { error: string }> {
+export async function startGoogleRun(
+  admin: SupabaseClient,
+  clientId: string,
+  profileId: string,
+  o: { request: string; source?: SheetSource | null; targetId?: string | null; scopeType?: CampaignType | null; opener?: string | null; preset?: Record<string, string> | null },
+): Promise<{ id: string } | { error: string }> {
   // Only someone who may launch in this client's Google Ads account starts one (every surface comes here)
   const allowed = await canIdOn(admin, profileId, "ads.launch", { platform: "google", clientId });
   if (!allowed.ok) return { error: allowed.reason };
@@ -152,9 +182,10 @@ export async function startGoogleRun(admin: SupabaseClient, clientId: string, pr
       surface: "client_chat",
       status: "reading",
       progress: o.source ? "Reading the sheet and the account" : "Reading the account",
-      resolution: { request: o.request.slice(0, 3000), scopeType: o.scopeType ?? null },
-      // The chat's first answer is the launch's first turn: a "yes" to it answers the question it asked
-      turns: [...(o.request.trim() ? [{ role: "user", text: o.request.slice(0, 3000), at: now() }] : []), ...(o.opener?.trim() ? [{ role: "assistant", text: o.opener.slice(0, 1500), at: now() }] : [])],
+      resolution: { request: o.request.slice(0, 3000), scopeType: o.scopeType ?? null, preset: o.preset ?? null },
+      // The chat's first answer is the launch's first turn: it proposes the whole launch and asks "Build it?", so a
+      // "yes" to it takes every proposal ("all")
+      turns: [...(o.request.trim() ? [{ role: "user", text: o.request.slice(0, 3000), at: now() }] : []), ...(o.opener?.trim() ? [{ role: "assistant", text: o.opener.slice(0, 1500), at: now(), asks: "all" }] : [])],
     })
     .select("id")
     .single();
@@ -264,7 +295,7 @@ function accountText(r: GoogleResolution, o: { groups?: number; terms?: number; 
   const adGroups = [...r.adGroups].sort((a, b) => Number(kaizenIds.has(b.campaignId)) - Number(kaizenIds.has(a.campaignId)));
   return [
     "CAMPAIGNS (id, type, status, bidding, daily budget, last 30 days; [Kaizen] ones can be launched into, the rest are context only)",
-    ...camps.map((c) => `- ${c.id} "${c.name}" ${isKaizenName(c.name) ? "[Kaizen]" : "[not Kaizen's]"} ${c.type} ${c.status} ${c.bidding.toLowerCase()} ${money(c.budget)}/day · ${money(c.spend30)} spent, ${c.conversions30} conv${c.conversions30 ? ` ($${Math.round(c.spend30 / c.conversions30)}/conv)` : ""}`),
+    ...camps.map((c) => `- ${c.id} "${c.name}" ${isKaizenName(c.name) ? "[Kaizen]" : "[not Kaizen's]"}${r.own?.includes(c.id) ? " [launched by Kaizen Ads]" : ""} ${c.type} ${c.status} ${c.bidding.toLowerCase()} ${money(c.budget)}/day · ${money(c.spend30)} spent, ${c.conversions30} conv${c.conversions30 ? ` ($${Math.round(c.spend30 / c.conversions30)}/conv)` : ""}`),
     "AD GROUPS (id, campaign, ads and their best ad strength)",
     ...adGroups.slice(0, groups).map((g) => `- ${g.id} "${g.name}" in "${g.campaign}"${kaizenIds.has(g.campaignId) ? "" : " [not Kaizen's]"} ${g.status}${g.rsas ? `, ${g.rsas} RSA${g.rsas === 1 ? "" : "s"}${g.strength ? ` (${g.strength.toLowerCase()})` : ""}` : ", no RSA"}`),
     ...(r.adGroups.length > groups ? [`(${r.adGroups.length - groups} more ad groups)`] : []),
@@ -273,6 +304,15 @@ function accountText(r: GoogleResolution, o: { groups?: number; terms?: number; 
     ...(waste ? ["SEARCHES SPENDING WITH NO CONVERSIONS (30 days)", ...r.waste.slice(0, waste).map((t) => `- "${t.term}" (${t.campaign}): $${t.spend}, ${t.clicks} clicks`)] : []),
     ...(copy ? ["COPY LIBRARY (this client's Google lines)", ...r.winners.map((l) => `- winner ${l}`), ...r.tired.map((l) => `- tired ${l}`)] : []),
   ].join("\n");
+}
+
+/** The paused campaigns built into as they are: the ones Kaizen Ads launched for this client */
+const keepOf = (r: Pick<GoogleResolution, "own"> | null | undefined): ReadonlySet<string> => new Set(r?.own ?? []);
+
+/** Answers settled before the launch was read (the campaign that was just launched), taken as given */
+export function withPreset(questions: LaunchQuestion[], preset: Record<string, string> | null | undefined): LaunchQuestion[] {
+  if (!preset) return questions;
+  return questions.map((q) => (preset[q.key] ? { ...q, answer: preset[q.key] } : q));
 }
 
 /** The campaign types a launch can go into, for the comeback (keywords need Search; Performance Max only when asked) */
@@ -422,19 +462,20 @@ export async function prepareGoogleRun(admin: SupabaseClient, id: string) {
     const { value: acct, cached } = await acctP;
     // The pages if they're already found; otherwise they join the questions once tailored, below
     const landing = await Promise.race([pagesP, new Promise<null>((r) => setTimeout(() => r(null), 1500))]);
-    res = { account, request, scopeType: base?.scopeType ?? null, ...acct, suggestions: [], checks: [], at: now(), landing };
+    const own = await ownGoogleCampaigns(admin, run.client_id).catch(() => [] as string[]);
+    res = { account, request, scopeType: base?.scopeType ?? null, ...acct, suggestions: [], checks: [], at: now(), landing, own, preset: base?.preset ?? null };
     // What a master buyer knows walking in (the client, this account's history, the other platform), built once and
     // kept on the run: the comeback it finds decides the campaign question when no live Kaizen campaign fits
     const context = await launchContext(admin, run.client_id, account, res, googleTheme(request, draft, []));
     res.context = context;
     res.comeback = context?.comeback ?? null;
-    const must = googleQuestions(draft, res.campaigns, res.adGroups, `${request} ${run.source.kind !== "words" ? run.source.name : ""}`, res.scopeType, res.comeback);
+    const must = withPreset(googleQuestions(draft, res.campaigns, res.adGroups, `${request} ${run.source.kind !== "words" ? run.source.name : ""}`, res.scopeType, res.comeback, keepOf(res)), res.preset);
     res.checks = intakeChecks(draft, res);
     const live = res.campaigns.filter((c) => c.status === "ENABLED").length;
     const kaizenLive = res.campaigns.filter((c) => c.status === "ENABLED" && isKaizenName(c.name)).length;
     const facts = `${count(res.campaigns.length)} campaigns (${count(live)} live, ${count(kaizenLive)} of them Kaizen's), ${count(res.adGroups.length)} ad groups, ${count(res.inAccount.length)} keywords read${cached ? " (read in the last few minutes)" : ""}.`;
     const summary = [read ? `${read}.` : "", facts, ...draft.notes.map((x) => `Note: ${x}`)].filter(Boolean).join("\n\n");
-    await patch(admin, id, { sheet: draft, resolution: res, summary, questions: followLanding(followCampaign(must, res.campaigns, res.adGroups, res.comeback), "final_url", landing, googleTheme(request, draft, must)), status: "asking", progress: "Tailoring the questions to the account", error: null });
+    await patch(admin, id, { sheet: draft, resolution: res, summary, questions: followLanding(followCampaign(must, res.campaigns, res.adGroups, res.comeback, keepOf(res)), "final_url", landing, googleTheme(request, draft, must)), status: "asking", progress: "Tailoring the questions to the account", error: null });
     console.log(`[launch] ${scope} · questions on the card ${Date.now() - t0}ms`);
   } catch (e) {
     await patch(admin, id, { status: "failed", progress: null, error: msg(e).slice(0, 500) });
@@ -443,7 +484,7 @@ export async function prepareGoogleRun(admin: SupabaseClient, id: string) {
 
   // ─── The Google Ads Buyer tailors the questions (fast tier, lean prompt), merged in without touching answers ───
   try {
-    const must = googleQuestions(draft, res.campaigns, res.adGroups, `${request} ${run.source.kind !== "words" ? run.source.name : ""}`, res.scopeType, res.comeback);
+    const must = withPreset(googleQuestions(draft, res.campaigns, res.adGroups, `${request} ${run.source.kind !== "words" ? run.source.name : ""}`, res.scopeType, res.comeback, keepOf(res)), res.preset);
     const out = await step(
       scope,
       "tailor questions (fast tier)",
@@ -468,7 +509,7 @@ ${RULES}`,
       read = draft.adGroups.length ? draftSummary(draft) : "";
     }
     // The questions again from what's now read (the words may have answered some), the model's version of each kept
-    const required = googleQuestions(draft, res.campaigns, res.adGroups, request, res.scopeType, res.comeback);
+    const required = withPreset(googleQuestions(draft, res.campaigns, res.adGroups, request, res.scopeType, res.comeback, keepOf(res)), res.preset);
     const keys = new Set(required.map((q) => q.key));
     // Never a question about paused creation or match types (Kaizen's rules, not decisions), whatever the model wrote
     const fromModel = out.questions.filter((q) => !NOT_ASKED.test(`${q.key} ${q.question}`) && (keys.has(q.key) || !["campaign", "ad_group", "final_url", "keywords", "ads"].includes(q.key))).slice(0, 6);
@@ -495,7 +536,7 @@ ${RULES}`,
       sheet: draft,
       resolution: { ...(latest.resolution ?? res), checks, landing },
       summary,
-      questions: followLanding(followCampaign(questions, res.campaigns, res.adGroups, res.comeback), "final_url", landing, googleTheme(request, draft, questions)),
+      questions: followLanding(followCampaign(questions, res.campaigns, res.adGroups, res.comeback, keepOf(res)), "final_url", landing, googleTheme(request, draft, questions)),
       progress: null,
     });
     console.log(`[launch] ${scope} · questions tailored ${Date.now() - t0}ms`);
@@ -543,6 +584,52 @@ const REPLY = obj({ answer: S, asks: S, answers: arr(obj({ key: S, answer: S }))
 /** How the launch chat treats a short "yes" and what it never asks (shared by Google and Meta) */
 export const YES_RULE = `A short "yes" (or "sure", "sounds good", "go with that") answers ONLY the question your last message asked, with the proposal you made in it: never any other question. asks: the key of the ONE question your answer asks now ("" when it asks nothing).`;
 
+/**
+ * The launch as it really is, for every reply about it (so the chat never contradicts the card): its status, what's
+ * planned, what was created and what the read-back found.
+ */
+export function launchStateText(run: { status: RunStatus; plan: GooglePlan | null; qa?: GoogleQa | null; account: string | null }) {
+  const created = ["applied", "partial"].includes(run.status);
+  const camp = run.plan?.campaigns[0] ?? null;
+  const link = created && run.qa?.ids && camp ? googleDeepLink(run.account ?? "", "campaign", { campaignId: run.qa.ids[`campaign:${camp.key}`] ?? camp.existingId }) : null;
+  return [
+    `Status: ${run.status}${created ? " (created in Google Ads, paused: never say nothing is created)" : run.status === "ready" ? " (planned and checked, nothing created until Deploy is pressed on the card)" : " (nothing created yet)"}.`,
+    run.plan ? `Plan: ${planText(run.plan).slice(0, 1500)}` : "",
+    run.qa?.summary ? run.qa.summary : "",
+    link ? `Open in Google Ads: ${link}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** "It's paused" said at most once in a conversation: later mentions are taken out of the reply */
+export function pausedOnce(text: string, earlier: { role: string; text: string }[]) {
+  const said = earlier.some((t) => t.role === "assistant" && /\bpaused\b/i.test(t.text) && /\b(nothing|won'?t|doesn'?t|isn'?t)\b[^.]*\b(run|spend|live)/i.test(t.text));
+  if (!said) return text;
+  const out = text
+    .split(/(?<=[.!?])\s+/)
+    .filter((s) => !(/\bpaused\b/i.test(s) && /\b(nothing|won'?t|doesn'?t|isn'?t)\b[^.]*\b(run|spend|live)/i.test(s)))
+    .join(" ")
+    .trim();
+  return out || text;
+}
+
+/**
+ * Every open question answered with its proposal (the campaign first, so the ad group follows it): "just build it",
+ * a frustrated buyer, or a "yes" to the whole plan proposed.
+ */
+export function acceptAll(questions: LaunchQuestion[], follow: (q: LaunchQuestion[]) => LaunchQuestion[]): LaunchQuestion[] {
+  let qs = questions;
+  for (let pass = 0; pass < 3; pass++) {
+    const open = qs.filter((q) => !q.answer && q.proposal.trim() && !/^pick the campaign first$/i.test(q.proposal.trim()));
+    if (!open.length) break;
+    // The campaign first: the ad group's options and proposal depend on it
+    const first = open.find((q) => q.key === "campaign");
+    qs = follow(applyAnswers(qs, (first ? [first] : open).map((q) => ({ key: q.key, answer: q.proposal }))));
+  }
+  return qs;
+}
+
 /** The buyer's message about the launch: answers taken in, the plan built when asked. Fast tier: someone is waiting. */
 export async function googleLaunchReply(admin: SupabaseClient, id: string, message: string): Promise<{ answer: string; offTopic: boolean; building: boolean }> {
   const run = await load(admin, id);
@@ -550,11 +637,23 @@ export async function googleLaunchReply(admin: SupabaseClient, id: string, messa
   const context = await ensureContext(admin, run);
   const comeback = run.resolution.comeback ?? null;
   const lastSaid = [...run.turns].reverse().find((t) => t.role === "assistant") ?? null;
+  // The campaigns Kaizen Ads launched here: built into as they are, paused or not (fresh: one may have just been)
+  const own = await ownGoogleCampaigns(admin, run.client_id).catch(() => run.resolution?.own ?? []);
+  run.resolution = { ...run.resolution, own };
+  const keep = keepOf(run.resolution);
+  // "Just build it", a frustrated or repeating buyer, or a "yes" to the whole plan proposed: every proposal taken
+  const hurry = frustrated(
+    message,
+    run.turns.filter((t) => t.role === "user").map((t) => t.text),
+  );
+  const all = wantsEverything(message) || hurry || (lastSaid?.asks === "all" && SHORT_YES.test(message));
   // The client's pages, so a page named in words ("the homepage") is answered with its link (a run from before they
   // were found reads them now: kept a day, so usually at once)
   const landing = run.resolution.landing ?? (run.account ? await landingFor(admin, run.client_id, run.account) : null);
   const theme = googleTheme(run.resolution.request, run.sheet, run.questions);
   const asksUrl = run.questions.some((q) => q.key === "final_url");
+  const { data: qaRow } = await admin.from("launch_runs").select("qa").eq("id", id).maybeSingle();
+  const state = launchStateText({ status: run.status, plan: run.plan, qa: (qaRow?.qa as GoogleQa | null) ?? null, account: run.account });
   const out = await step(
     `google run ${id.slice(0, 8)}`,
     "chat turn (fast tier)",
@@ -563,42 +662,54 @@ export async function googleLaunchReply(admin: SupabaseClient, id: string, messa
       label: "google launch chat",
       clientId: run.client_id,
       override: FAST,
-      system: `You're the Google Ads buyer in a conversation with the buyer about launching new ads into the client's Google Ads account. What was read, your questions (with what's answered) and the conversation are below. Stage: ${run.status}. Stay on this launch: nothing account-wide (that's offered after it's deployed).
-answers: the questions the buyer's message answers, by key, in their words made exact and in the format Google needs (keywords with their notation, a daily budget in dollars, the full final URL). When they accept your proposal ("yes", "go with that"), the answer is the proposal your last message made, written out. When they give keywords or copy, the answer holds them word for word. Only what they actually said or accepted.
-${YES_RULE}
+      system: `You're the Google Ads buyer in a conversation with the buyer about launching new ads into the client's Google Ads account. What was read, your questions (with what's answered), the launch's real state and the conversation are below. Stage: ${run.status}. Stay on this launch: nothing account-wide (that's offered after it's deployed). Everything you say about whether something exists must match <launch_state>.
+answers: the questions the buyer's message answers, by key, in their words made exact and in the format Google needs (keywords with their notation, a daily budget in dollars, the full final URL, places as the buyer said them: "United States excluding Hawaii and Alaska"). When they accept your proposal ("yes", "go with that"), the answer is the proposal your last message made, written out. When they give keywords or copy, the answer holds them word for word. Only what they actually said or accepted.
+${YES_RULE} When your last message proposed the whole plan and asked "Build it?", asks was "all" and a "yes" takes every proposal.
 newQuestions: only when their answer opens something the plan needs and only the buyer can decide it (question at most 15 words, why one short sentence). Never about paused creation or match types.
 build: true when they ask to build, see or redo the plan, or say go ahead, or (stage ready) ask for a change to the plan. The plan is only built once every required question is answered; if some aren't, say which.
-answer: 1 or 2 short sentences. Talk like a senior media buyer a colleague just walked up to: natural and brief, one breath at a time, under 45 words. Confirm what you took in a few words, then ask ONE thing, the next open decision, with your pick in a few words ("I'd send them to the Seafood box page. OK?"), never open-ended when you have a pick. Your picks come from <account_history>, <client_context> and <related_accounts>: what converts, the target, the budget pacing, what the audit and sprint said; never suggest what they show doesn't work. Only one campaign at a time, and only a Kaizen one, the paused Kaizen one offered back (say its number: "Search | Non Brand | Kaizen ran at $38 CPA vs $50 target until it was paused Oct 2; I'd bring it back with this in it. Sound good?") or a new Kaizen campaign. No lists or bullets, no reasoning, rules or caveats unless they ask why or something would break; the rest comes in the next turns. Push back in a sentence when something works against the client's results or the platform's rules. (Google's rules: over a limit, a duplicate, a keyword already running.) When the stage is "ready" and they say go ahead, tell them to press Deploy on the launch card (it checks the client's Google switch and who may deploy); build stays false.
+answer: ${
+        all
+          ? `the buyer wants it built now${hurry ? " and is out of patience" : ""}: ask nothing. One sentence, under 30 words, saying exactly what you're building (campaign, ad groups, keywords, ads, places), no apology, no caveats.`
+          : `talk like a senior media buyer a colleague just walked up to: natural and brief, under 60 words. While decisions are open, propose ALL of them in one message with your pick for each (campaign, ad groups, the landing page per ad group, keywords per ad group, one ad per ad group from the winners and the Brand Bible, places from where the client ships or serves, the budget if given), then ask once "Build it?" (asks "all"). Ask about something on its own only when you genuinely have no pick (usually only a new campaign's budget), at most two such questions. Your picks come from <account_history>, <client_context> and <related_accounts>: what converts, the target, the budget pacing, what the audit and sprint said; never suggest what they show doesn't work. Only one campaign at a time, and only a Kaizen one, the paused Kaizen one offered back (say its number) or a new Kaizen campaign. No lists or bullets, no reasoning, rules or caveats unless they ask why or something would break. Push back in a sentence when something works against the client's results or the platform's rules. When the stage is "ready" and they say go ahead, tell them to press Deploy on the launch card (it checks the client's Google switch and who may deploy); build stays false.`
+      }
 offTopic: true when the message isn't about this launch (answer ""). setAside: true when they say to stop or park it.
 ${asksUrl ? `${landingRule("final_url")}\n` : ""}${SHORT}
 ${RULES}`,
       schema: REPLY,
       maxTokens: 3000,
-      prompt: `${contextText(context)}\n\n<read>\n${run.sheet ? draftText(run.sheet, 25) : "(nothing yet)"}\n</read>\n\n${asksUrl ? `<landing_pages site="${landing?.site ?? ""}">\n${pagesText(landing, theme, 15)}\n</landing_pages>\n\n` : ""}${comeback ? `<comeback>${comeback.why}</comeback>\n\n` : ""}<last_question_asked>${lastSaid ? `${lastSaid.asks ? `${lastSaid.asks}: ` : ""}${lastSaid.text.slice(-400)}` : "(none yet)"}</last_question_asked>\n\n<questions>\n${run.questions.map((q) => `- ${q.key}${q.required ? " (required)" : ""}: ${q.question} Proposal: ${q.proposal}. ${q.answer ? `ANSWERED: ${q.answer}` : "Not answered yet."}`).join("\n")}\n</questions>\n\n${run.plan ? `<plan>\n${planText(run.plan)}\n</plan>\n\n` : ""}<conversation>\n${run.turns
+      prompt: `<launch_state>\n${state}\n</launch_state>\n\n${contextText(context)}\n\n<read>\n${run.sheet ? draftText(run.sheet, 25) : "(nothing yet)"}\n</read>\n\n${asksUrl ? `<landing_pages site="${landing?.site ?? ""}">\n${pagesText(landing, theme, 15)}\n</landing_pages>\n\n` : ""}${comeback ? `<comeback>${comeback.why}</comeback>\n\n` : ""}${own.length ? `<launched_by_kaizen_ads>${run.resolution.campaigns.filter((c) => own.includes(c.id)).map((c) => `"${c.name}" (${c.status.toLowerCase()})`).join(", ") || own.join(", ")}: build into these as they are, paused or not</launched_by_kaizen_ads>\n\n` : ""}<last_question_asked>${lastSaid ? `${lastSaid.asks ? `${lastSaid.asks}: ` : ""}${lastSaid.text.slice(-400)}` : "(none yet)"}</last_question_asked>\n\n<questions>\n${run.questions.map((q) => `- ${q.key}${q.required ? " (required)" : ""}: ${q.question} Proposal: ${q.proposal}. ${q.answer ? `ANSWERED: ${q.answer}` : "Not answered yet."}`).join("\n")}\n</questions>\n\n${run.plan ? `<plan>\n${planText(run.plan)}\n</plan>\n\n` : ""}<conversation>\n${run.turns
         .slice(-12)
         .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
         .join("\n")}\n</conversation>\n\nThe buyer says: ${message.slice(0, 3000)}`,
     }),
   );
-  if (out.offTopic) return { answer: "", offTopic: true, building: false };
-  // A short "yes" answers only the question just asked (never paused creation, a match type or anything else)
-  out.answers = yesOnlyAnswersAsked(message, out.answers, run.questions, lastSaid);
+  if (out.offTopic && !all) return { answer: "", offTopic: true, building: false };
+  // A short "yes" answers only the question just asked (never paused creation, a match type or anything else), unless
+  // the last message proposed the whole plan
+  if (!all) out.answers = yesOnlyAnswersAsked(message, out.answers, run.questions, lastSaid);
   let questions = applyAnswers(run.questions, out.answers);
-  if (out.newQuestions.length) questions = mergeQuestions(out.newQuestions.filter((q) => !NOT_ASKED.test(`${q.key} ${q.question}`)).map((q) => ({ ...q, answer: null })), [], questions);
-  questions = followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups, comeback);
-  // A campaign answer that wasn't taken (Kaizen didn't set it up, it's paused, two named): that's what's said
+  if (out.newQuestions.length && !all) questions = mergeQuestions(out.newQuestions.filter((q) => !NOT_ASKED.test(`${q.key} ${q.question}`)).map((q) => ({ ...q, answer: null })), [], questions);
+  // The buyer insisting on a paused Kaizen campaign (named in this message or the campaign answer) keeps it as it is
   const campaignGiven = out.answers.find((a) => a.key === "campaign")?.answer ?? null;
-  const refused = campaignGiven && !questions.find((q) => q.key === "campaign")?.answer ? campaignRefusal(campaignGiven, run.resolution.campaigns, comeback) : null;
+  const insisted = [...campaignsNamed(message, run.resolution.campaigns), ...(KEEP_PAUSED.test(campaignGiven ?? "") ? campaignsNamed(campaignGiven, run.resolution.campaigns) : [])].filter((c) => isKaizenName(c.name));
+  const keepNow = new Set([...keep, ...insisted.map((c) => c.id)]);
+  const follow = (qs: LaunchQuestion[]) => followCampaign(qs, run.resolution!.campaigns, run.resolution!.adGroups, comeback, keepNow);
+  questions = follow(questions);
+  // A campaign answer that wasn't taken (Kaizen didn't set it up, two named): that's what's said, never twice
+  let refused = campaignGiven && !questions.find((q) => q.key === "campaign")?.answer ? campaignRefusal(campaignGiven, run.resolution.campaigns, comeback, keepNow) : null;
+  if (refused && lastSaid?.text.trim() === refused.trim()) refused = null;
   // The landing page as a real link: a page named in words taken from the list, a typed link checked
   const { settleLanding } = await import("@/lib/landing-pages");
   const settled = await settleLanding(questions, "final_url", landing, message, out.answers.some((a) => a.key === "final_url"));
   questions = followLanding(settled.questions, "final_url", landing, googleTheme(run.resolution.request, run.sheet, settled.questions));
+  if (all) questions = acceptAll(questions, follow);
   // Code took the page the chat asked a link for: its words would contradict the card, so the note replaces them
-  const said = refused ?? scrubPaused(settled.took && ASKS_FOR_LINK.test(out.answer) ? (settled.note ?? "") : [out.answer, settled.note].filter(Boolean).join(" "));
-  const answers = out.answers.filter((a) => a.key !== "campaign" || !refused).length + (settled.took ? 1 : 0);
-  const asks = refused ? "campaign" : out.asks && questions.some((q) => q.key === out.asks && !q.answer) ? out.asks : askedKey(questions, { text: said });
+  const raw = refused ?? scrubPaused(settled.took && ASKS_FOR_LINK.test(out.answer) ? (settled.note ?? "") : [out.answer, settled.note].filter(Boolean).join(" "));
+  const said = pausedOnce(raw, run.turns);
+  const answers = out.answers.filter((a) => a.key !== "campaign" || !refused).length + (settled.took ? 1 : 0) + (all ? 1 : 0);
+  const asks = refused ? "campaign" : out.asks === "all" ? "all" : out.asks && questions.some((q) => q.key === out.asks && !q.answer) ? out.asks : askedKey(questions, { text: said });
   const turns = [...run.turns, { role: "user" as const, text: message.slice(0, 3000), at: now() }, { role: "assistant" as const, text: said, at: now(), asks }].slice(-40);
-  const resolution = landing && !run.resolution.landing ? { ...run.resolution, landing } : null;
+  const resolution = { ...run.resolution, ...(landing && !run.resolution.landing ? { landing } : {}) };
   if (out.setAside) {
     await patch(admin, id, { questions, turns, status: "set_aside" });
     return { answer: out.answer || "Set aside. Nothing was created.", offTopic: false, building: false };
@@ -606,9 +717,9 @@ ${RULES}`,
   const open = unanswered(questions);
   // Chat first: once a reply leaves nothing required open, the preview is built (they don't have to say "build it")
   const building = !open.length && (out.build || answers > 0) && (run.status === "asking" || answers > 0);
-  const answer = out.build && open.length ? `${said}\n\nBefore I can plan it I still need: ${open.map((q) => q.question).join(" ")}` : said;
+  const answer = (out.build || all) && open.length ? `${said}\n\nBefore I can plan it I still need: ${open.map((q) => q.question).join(" ")}` : said;
   const changed = answers > 0 && ["ready", "failed"].includes(run.status);
-  await patch(admin, id, { questions, turns, ...(resolution ? { resolution } : {}), ...(building ? { status: "planning", progress: "Laying out the plan" } : changed ? { status: "asking" } : {}) });
+  await patch(admin, id, { questions, turns, resolution, ...(building ? { status: "planning", progress: "Laying out the plan" } : changed ? { status: "asking" } : {}) });
   return { answer, offTopic: false, building };
 }
 
@@ -621,7 +732,7 @@ export async function acceptGoogleProposals(admin: SupabaseClient, id: string, k
     run.questions.filter((q) => keys.includes(q.key) && !q.answer).map((q) => ({ key: q.key, answer: chosen[q.key] && q.options.includes(chosen[q.key]) ? chosen[q.key] : q.proposal })),
   );
   // The landing pages offered follow the ad group and keywords just chosen
-  await patch(admin, id, { questions: run.resolution ? followLanding(followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups, run.resolution.comeback ?? null), "final_url", run.resolution.landing, googleTheme(run.resolution.request, run.sheet, questions)) : questions });
+  await patch(admin, id, { questions: run.resolution ? followLanding(followCampaign(questions, run.resolution.campaigns, run.resolution.adGroups, run.resolution.comeback ?? null, keepOf(run.resolution)), "final_url", run.resolution.landing, googleTheme(run.resolution.request, run.sheet, questions)) : questions });
 }
 
 /** A suggestion taken or skipped on the card */
@@ -639,14 +750,14 @@ export async function setGoogleSuggestion(admin: SupabaseClient, id: string, key
 const PLAN = obj({
   note: S,
   campaigns: arr(
-    obj({ key: S, mode: S, existingId: S, name: S, type: S, budget: N, bidding: S, targetCpa: N, targetRoas: N, locations: arr(S), negatives: arr(S), sitelinks: arr(S), callouts: arr(S), snippets: arr(S) }),
+    obj({ key: S, mode: S, existingId: S, name: S, type: S, budget: N, bidding: S, targetCpa: N, targetRoas: N, locations: arr(S), excludedLocations: arr(S), negatives: arr(S), sitelinks: arr(S), callouts: arr(S), snippets: arr(S) }),
   ),
   adGroups: arr(obj({ key: S, campaignKey: S, mode: S, existingId: S, name: S, fromRead: I, finalUrl: S, keywords: arr(S), negatives: arr(S), rsas: arr(obj({ headlines: arr(S), descriptions: arr(S), path1: S, path2: S, finalUrl: S })) })),
   assetGroups: arr(obj({ key: S, campaignKey: S, existingId: S, name: S, finalUrl: S, headlines: arr(S), longHeadlines: arr(S), descriptions: arr(S), searchThemes: arr(S), byHand: arr(S) })),
 });
 type RawPlan = {
   note: string;
-  campaigns: { key: string; mode: string; existingId: string; name: string; type: string; budget: number; bidding: string; targetCpa: number; targetRoas: number; locations: string[]; negatives: string[]; sitelinks: string[]; callouts: string[]; snippets: string[] }[];
+  campaigns: { key: string; mode: string; existingId: string; name: string; type: string; budget: number; bidding: string; targetCpa: number; targetRoas: number; locations: string[]; excludedLocations: string[]; negatives: string[]; sitelinks: string[]; callouts: string[]; snippets: string[] }[];
   adGroups: { key: string; campaignKey: string; mode: string; existingId: string; name: string; fromRead: number; finalUrl: string; keywords: string[]; negatives: string[]; rsas: { headlines: string[]; descriptions: string[]; path1: string; path2: string; finalUrl: string }[] }[];
   assetGroups: GoogleProposal["assetGroups"];
 };
@@ -684,7 +795,7 @@ export function proposalFrom(r: RawPlan): GoogleProposal {
     assetGroups: r.assetGroups,
   };
 }
-type ProposalCampaign = { key: string; mode: "new" | "existing"; existingId: string; name: string; type: CampaignType; budget: number; bidding: Bidding; targetCpa: number; targetRoas: number; locations: string[]; negatives: string[]; sitelinks: GCampaign["sitelinks"]; callouts: string[]; snippets: GCampaign["snippets"] };
+type ProposalCampaign = { key: string; mode: "new" | "existing"; existingId: string; name: string; type: CampaignType; budget: number; bidding: Bidding; targetCpa: number; targetRoas: number; locations: string[]; excludedLocations?: string[]; negatives: string[]; sitelinks: GCampaign["sitelinks"]; callouts: string[]; snippets: GCampaign["snippets"] };
 type ProposalAdGroup = { key: string; campaignKey: string; mode: "new" | "existing"; existingId: string; name: string; fromRead: number; finalUrl: string; keywords: string[]; negatives: string[]; rsas: { headlines: { text: string; pin: number }[]; descriptions: { text: string; pin: number }[]; path1: string; path2: string; finalUrl: string }[] };
 export type GoogleProposal = { note: string; campaigns: ProposalCampaign[]; adGroups: ProposalAdGroup[]; assetGroups: (Omit<GooglePlan["assetGroups"][number], "mode" | "existingId"> & { existingId: string })[] };
 
@@ -704,9 +815,29 @@ const pin = (p: number, max: number) => (Number.isInteger(p) && p >= 1 && p <= m
  */
 export function buildGooglePlan(
   p: GoogleProposal,
-  ctx: { account: string; draft: GoogleDraft; res: Pick<GoogleResolution, "campaigns" | "adGroups" | "assetGroups">; finalUrl: string | null; locations: Map<string, { geo: string; name: string }>; revive?: string | null },
+  ctx: {
+    account: string;
+    draft: GoogleDraft;
+    res: Pick<GoogleResolution, "campaigns" | "adGroups" | "assetGroups">;
+    finalUrl: string | null;
+    /** Google's places for names the plan used (lower case), from suggestGeo */
+    locations: Map<string, { geo: string; name: string }>;
+    /** Where the buyer said to show it, in their words (the locations answer) */
+    locationAsk?: string | null;
+    revive?: string | null;
+    /** A paused campaign built into as it is (launched by Kaizen Ads, or the buyer insisted) */
+    keepPaused?: ReadonlySet<string>;
+  },
 ): { plan: GooglePlan; warnings: string[] } {
   const warnings: string[] = [];
+  const keepPaused = ctx.keepPaused ?? new Set<string>();
+  // A new campaign's places: the buyer's words, else the plan's list; what doesn't resolve is kept so the deploy is
+  // blocked (never shown in every country by accident)
+  const placesFor = (c: ProposalCampaign | null): Pick<GCampaign, "locations" | "excludedLocations" | "locationAsk" | "unresolvedPlaces"> => {
+    if (!c) return { locations: [] };
+    const r = campaignPlaces(ctx.locationAsk ?? null, c.locations, c.excludedLocations ?? [], ctx.locations);
+    return { locations: r.locations, excludedLocations: r.excluded, locationAsk: r.ask, unresolvedPlaces: r.unresolved };
+  };
   // How the account names its Kaizen campaigns (and whether its ad groups carry Kaizen too), for every new name
   const kaizenCampaigns = ctx.res.campaigns.filter((c) => isKaizenName(c.name));
   const kaizenIds = new Set(kaizenCampaigns.map((c) => c.id));
@@ -722,7 +853,7 @@ export function buildGooglePlan(
       live = null;
     }
     const revive = Boolean(live && live.status !== "ENABLED" && ctx.revive === live.id);
-    if (live && live.status !== "ENABLED" && !revive) warnings.push(`"${live.name}" is paused: nothing added there runs until it's turned on.`);
+    if (live && live.status !== "ENABLED" && !revive) warnings.push(`"${live.name}" is paused${keepPaused.has(live.id) ? " (kept as it is)" : ""}: nothing added there runs until it's turned on.`);
     const type: CampaignType = live ? (live.type === "PERFORMANCE_MAX" ? "PERFORMANCE_MAX" : "SEARCH") : c.type;
     return {
       key: c.key,
@@ -736,17 +867,14 @@ export function buildGooglePlan(
       bidding: c.bidding,
       targetCpa: c.targetCpa > 0 ? c.targetCpa : null,
       targetRoas: c.targetRoas > 0 ? c.targetRoas : null,
-      locations: live ? [] : c.locations.map((l) => ctx.locations.get(l.toLowerCase().trim())).filter((x): x is { geo: string; name: string } => Boolean(x)),
+      ...placesFor(live ? null : c),
       negatives: kws(c.negatives),
       sitelinks: c.sitelinks.filter((s) => s.text.trim()),
       callouts: c.callouts.map((x) => x.trim()).filter(Boolean),
       snippets: c.snippets.filter((s) => s.header.trim() && s.values.length),
     };
   });
-  for (const c of p.campaigns) {
-    const missing = c.locations.filter((l) => !ctx.locations.get(l.toLowerCase().trim()));
-    if (c.mode === "new" && missing.length) warnings.push(`Google didn't recognize ${missing.map((m) => `"${m}"`).join(", ")} as a place.`);
-  }
+  for (const c of campaigns) if (c.mode === "new" && c.unresolvedPlaces?.length) warnings.push(`Couldn't resolve "${c.locationAsk}" as places Google knows (${c.unresolvedPlaces.map((m) => `"${m}"`).join(", ")}): it won't deploy until the places are fixed.`);
   const adGroups: GAdGroup[] = [];
   for (const g of p.adGroups) {
     let live = g.mode === "existing" ? ctx.res.adGroups.find((x) => x.id === digits(g.existingId)) : null;
@@ -827,7 +955,11 @@ export async function planGoogleRun(admin: SupabaseClient, id: string) {
     let draft = run.sheet ?? { adGroups: [], campaignNegatives: [], notes: [] };
     const matchAnswer = run.questions.find((q) => q.key === "match_types")?.answer;
     if (matchAnswer) draft = applyMatchAnswer(draft, matchAnswer);
-    const choice = campaignChoice(run.questions.find((q) => q.key === "campaign")?.answer, res.campaigns);
+    // The campaigns Kaizen Ads launched (and one the buyer insisted on by name) are built into as they are
+    const campaignAnswer = run.questions.find((q) => q.key === "campaign")?.answer ?? null;
+    const keep = new Set([...(await ownGoogleCampaigns(admin, run.client_id).catch(() => res.own ?? [])), ...(KEEP_PAUSED.test(campaignAnswer ?? "") ? campaignsNamed(campaignAnswer, res.campaigns).map((c) => c.id) : [])]);
+    res.own = [...new Set([...(res.own ?? []), ...keep])];
+    const choice = campaignChoice(campaignAnswer, res.campaigns, keep);
     const urlAnswer = urlIn(run.questions.find((q) => q.key === "final_url")?.answer);
     const taken = res.suggestions.filter((s) => s.accepted === true);
     const context = await ensureContext(admin, run);
@@ -838,28 +970,32 @@ export async function planGoogleRun(admin: SupabaseClient, id: string) {
       label: "google launch plan",
       clientId: run.client_id,
       system: `You lay out the Google launch the buyer agreed to, exactly as answered, as campaigns, ad groups and asset groups. Formats: mode "new" or "existing"; type "SEARCH" or "PERFORMANCE_MAX"; bidding one of MAXIMIZE_CONVERSIONS, MAXIMIZE_CONVERSION_VALUE, MAXIMIZE_CLICKS, MANUAL_CPC; each headline or description is a plain string, with " (pin 1)" at the end only when pinned; a sitelink is "link text | line 1 | line 2 | https://url"; a structured snippet is "Header: value, value, value". Code copies what was read (keywords, negatives and copy of an ad group in <read>) straight from it: point at it with fromRead (its # number) and leave keywords and rsas for that ad group empty unless the buyer added more in the conversation. fromRead -1 for an ad group not in <read>.
-- campaigns: key ("c1"…). mode "existing" with existingId (an id from <account>, only a [Kaizen] one) when the buyer chose that campaign; else "new" with existingId "", a name in the account's naming pattern for its Kaizen campaigns, always with Kaizen in it (${kaizenNames.length ? `like ${kaizenNames.slice(0, 3).map((n) => `"${n}"`).join(", ")}` : `e.g. "Search | Non Brand | Kaizen"`}), type SEARCH unless they chose Performance Max, budget (daily dollars, as agreed), bidding (MAXIMIZE_CONVERSIONS unless agreed otherwise; MAXIMIZE_CONVERSION_VALUE for a ROAS goal), targetCpa / targetRoas only when agreed (else 0), locations as place names Google knows ("Houston, Texas"). For an existing campaign budget 0 and locations []. negatives: campaign negatives with notation ("free", [diy]). sitelinks, callouts, snippets: only when the buyer asked for them or took a suggestion that adds them, and only where <live_setup> shows they're missing.
+- campaigns: key ("c1"…). mode "existing" with existingId (an id from <account>, only a [Kaizen] one) when the buyer chose that campaign; else "new" with existingId "", a name in the account's naming pattern for its Kaizen campaigns, always with Kaizen in it (${kaizenNames.length ? `like ${kaizenNames.slice(0, 3).map((n) => `"${n}"`).join(", ")}` : `e.g. "Search | Non Brand | Kaizen"`}), type SEARCH unless they chose Performance Max, budget (daily dollars, as agreed), bidding (MAXIMIZE_CONVERSIONS unless agreed otherwise; MAXIMIZE_CONVERSION_VALUE for a ROAS goal), targetCpa / targetRoas only when agreed (else 0), locations as place names Google knows ("United States", "Texas", "Houston, Texas") and excludedLocations as the places left out ("Hawaii", "Alaska"; "the lower 48" is locations ["United States"], excludedLocations ["Alaska", "Hawaii"]). For an existing campaign budget 0, locations [] and excludedLocations []. negatives: campaign negatives with notation ("free", [diy]). sitelinks, callouts, snippets: only when the buyer asked for them or took a suggestion that adds them, and only where <live_setup> shows they're missing.
 - adGroups: key ("g1"…), campaignKey, mode "existing" with existingId (an ad group id from <account>) only when the buyer chose to add into it, else "new" with a name in the account's pattern. finalUrl: the landing page for its ads. keywords and negatives with notation ([exact], "phrase", broad plain) when they come from the conversation or a suggestion taken. rsas: only ads the buyer wrote in the conversation, or that they asked you to write (then up to 15 headlines of at most 30 characters and 4 descriptions of at most 90, built on the client's winning lines and away from the tired ones, pin 0 unless asked; pin 1 to 3 for headlines, 1 to 2 for descriptions).
 - assetGroups: only for Performance Max: an existing asset group (existingId from <account>) gets the text agreed (headlines 30, long headlines 90, descriptions 90); searchThemes and byHand (images, videos, audience signals the buyer described) are listed for doing by hand.
-Include the suggestions the buyer took; leave out the ones they skipped. Bidding, targets and budgets follow <account_history> (the KPI target, what converts, the monthly budget's pacing) and never contradict the latest audit or the open sprint actions. note: 1 to 3 sentences on how the plan follows what was agreed${chosen && chosen.status !== "ENABLED" ? `, and that "${chosen.name}" is turned back on when it's deployed while everything new in it is created paused for the buyer to switch on` : ""}.
+Include the suggestions the buyer took; leave out the ones they skipped. Bidding, targets and budgets follow <account_history> (the KPI target, what converts, the monthly budget's pacing) and never contradict the latest audit or the open sprint actions. note: 1 to 3 sentences on how the plan follows what was agreed${chosen && chosen.status !== "ENABLED" && choice?.mode === "existing" && choice.revive ? `, and that "${chosen.name}" is turned back on when it's deployed while everything new in it is created paused for the buyer to switch on` : ""}.
 ${RULES}`,
       schema: PLAN,
       maxTokens: 20000,
       prompt: `${contextText(context)}\n\n<request>${res.request}</request>\n\n<read>\n${draft.adGroups.length || draft.campaignNegatives.length ? draftText(draft, 200) : "(nothing read: the plan comes from the answers and the conversation)"}\n</read>\n\n<answers>\n${run.questions.map((q) => `- ${q.key}: ${q.answer ?? "(not answered)"}`).join("\n")}\n</answers>\n\n<suggestions_taken>\n${taken.map((s) => `- ${s.title}: ${s.why}`).join("\n") || "(none)"}\n</suggestions_taken>\n\n<conversation>\n${run.turns
         .slice(-20)
         .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
-        .join("\n")}\n</conversation>\n\n<account id="${run.account}">\n${accountText(res, { groups: 80, waste: 10 })}\n</account>\n\n<live_setup>\n${res.setup.slice(0, 3500)}\n</live_setup>${choice?.mode === "existing" ? (choice.revive ? `\n\nThe buyer chose to bring back the paused Kaizen campaign ${choice.id} with this in it (mode "existing").` : `\n\nThe buyer chose the live campaign ${choice.id}.`) : choice?.mode === "new" ? `\n\nThe buyer chose a new ${choice.type === "PERFORMANCE_MAX" ? "Performance Max" : "Search"} campaign.` : ""}`,
+        .join("\n")}\n</conversation>\n\n<account id="${run.account}">\n${accountText(res, { groups: 80, waste: 10 })}\n</account>\n\n<live_setup>\n${res.setup.slice(0, 3500)}\n</live_setup>${choice?.mode === "existing" ? (choice.revive ? `\n\nThe buyer chose to bring back the paused Kaizen campaign ${choice.id} with this in it (mode "existing").` : chosen && chosen.status !== "ENABLED" ? `\n\nThe buyer chose the paused campaign ${choice.id} ("${chosen.name}"), as it is: add the ad groups, keywords and ads into it (mode "existing"), it stays paused.` : `\n\nThe buyer chose the live campaign ${choice.id}.`) : choice?.mode === "new" ? `\n\nThe buyer chose a new ${choice.type === "PERFORMANCE_MAX" ? "Performance Max" : "Search"} campaign.` : ""}`,
     }));
-    // Google's own places for the new campaigns' locations
+    // Where to show it: the buyer's answer, in their words, first ("US excluding Hawaii and Alaska")
     const proposal = proposalFrom(raw);
-    const names = [...new Set(proposal.campaigns.filter((c) => c.mode === "new").flatMap((c) => c.locations))];
-    const geos = names.length ? await suggestGeo(names).catch(() => [] as { geo: string; name: string }[]) : [];
+    const locationAsk = run.questions.find((q) => /^(locations?|places|geo|targeting|where)$/i.test(q.key) && q.answer)?.answer ?? null;
+    // Countries and US states are known; the rest goes to Google's own suggestion, matched by the name asked (never by
+    // position: a name Google didn't place stays unresolved and blocks the deploy)
+    const asked = [locationAsk, ...proposal.campaigns.filter((c) => c.mode === "new").flatMap((c) => [...c.locations, ...(c.excludedLocations ?? [])])].filter((x): x is string => Boolean(x));
+    const unknown = [...new Set(asked.flatMap((t) => resolvePlaces(t).unresolved))];
+    const geos = unknown.length ? await suggestGeo(unknown).catch(() => [] as { geo: string; name: string }[]) : [];
     const locations = new Map<string, { geo: string; name: string }>();
-    names.forEach((nm, i) => {
-      const hit = geos.find((g) => g.name.toLowerCase().startsWith(nm.toLowerCase().split(",")[0].trim())) ?? geos[i];
+    for (const nm of unknown) {
+      const hit = geos.find((g) => g.name.toLowerCase().startsWith(nm.toLowerCase().split(",")[0].trim()));
       if (hit) locations.set(nm.toLowerCase().trim(), hit);
-    });
-    const { plan, warnings } = buildGooglePlan(proposal, { account: run.account, draft, res, finalUrl: urlAnswer, locations, revive: choice?.mode === "existing" && choice.revive ? choice.id : null });
+    }
+    const { plan, warnings } = buildGooglePlan(proposal, { account: run.account, draft, res, finalUrl: urlAnswer, locations, locationAsk, revive: choice?.mode === "existing" && choice.revive ? choice.id : null, keepPaused: keep });
     await patch(admin, id, { plan, plan_warnings: warnings, status: "checking", progress: "Checking every line with Google (nothing is created)", error: null });
     await checkGoogleRun(admin, id);
   } catch (e) {
@@ -931,7 +1067,8 @@ export async function checkGoogleRun(admin: SupabaseClient, id: string) {
   await writeItems(admin, id, items);
   // The plan's own warnings stay; what Google and the by-hand list said last time is replaced
   const { data: was } = await admin.from("launch_runs").select("plan_warnings").eq("id", id).single();
-  const kept = ((was?.plan_warnings ?? []) as string[]).filter((w) => !w.startsWith("Google ") && !w.startsWith("By hand: "));
+  // Only what this check writes is replaced (the plan's own warnings, "Couldn't resolve…" among them, always stay)
+  const kept = ((was?.plan_warnings ?? []) as string[]).filter((w) => !w.startsWith("Google refused the batch: ") && !w.startsWith("By hand: "));
   const loose = google.loose.map((x) => `Google refused the batch: ${plainGoogleError(x).plain}`);
   const warnings = [...new Set([...kept, ...loose, ...byHand.map((b) => `By hand: ${b.why}`)])];
   const bad = items.filter((x) => x.status === "invalid").length;
@@ -1100,74 +1237,159 @@ export function launchTitle(p: GooglePlan) {
 
 const idOf = (res: string | null | undefined, kind: string) => res?.match(new RegExp(`/${kind}/(\\d+)`))?.[1] ?? null;
 
-/** Everything created, read back from Google (status, name, the ad's copy) with its place in Google Ads */
+/**
+ * What Google has under the launch's campaigns, by querying them (never the resource names the mutate returned): the
+ * campaigns and their budgets, every ad group, keyword and negative, every ad with its copy, the locations, language
+ * and campaign negatives, the extensions. Paused and enabled alike (only removed ones are left out).
+ */
+async function readCampaigns(account: string, campaignIds: string[]): Promise<Found> {
+  const found: Found = { campaigns: [], adGroups: [], keywords: [], ads: [], criteria: [], assets: [] };
+  const ids = [...new Set(campaignIds.map(digits).filter(Boolean))];
+  if (!ids.length) return found;
+  const inList = ids.join(", ");
+  const q = (sql: string) => googleQuery(account, sql) as Promise<Row[]>;
+  const [camps, groups, crits, ads, campCrits, assets] = await Promise.all([
+    q(`SELECT campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros FROM campaign WHERE campaign.id IN (${inList})`),
+    q(`SELECT ad_group.id, ad_group.name, ad_group.status, campaign.id FROM ad_group WHERE campaign.id IN (${inList}) AND ad_group.status != 'REMOVED'`),
+    q(`SELECT ad_group.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.negative, ad_group_criterion.status FROM ad_group_criterion WHERE campaign.id IN (${inList}) AND ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status != 'REMOVED'`),
+    q(`SELECT ad_group.id, ad_group_ad.status, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions FROM ad_group_ad WHERE campaign.id IN (${inList}) AND ad_group_ad.status != 'REMOVED'`),
+    q(`SELECT campaign.id, campaign_criterion.type, campaign_criterion.negative, campaign_criterion.location.geo_target_constant, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type FROM campaign_criterion WHERE campaign.id IN (${inList}) AND campaign_criterion.status != 'REMOVED'`),
+    q(`SELECT campaign.id, campaign_asset.field_type FROM campaign_asset WHERE campaign.id IN (${inList}) AND campaign_asset.status != 'REMOVED'`).catch(() => [] as Row[]),
+  ]);
+  const text = (xs: unknown) => ((xs ?? []) as { text?: string }[]).map((x) => String(x.text ?? ""));
+  found.campaigns = camps.map((r) => ({ id: String(r.campaign?.id ?? ""), name: String(r.campaign?.name ?? ""), status: String(r.campaign?.status ?? ""), budget: r.campaignBudget?.amountMicros == null ? null : Math.round(Number(r.campaignBudget.amountMicros) / 10_000) / 100 }));
+  found.adGroups = groups.map((r) => ({ id: String(r.adGroup?.id ?? ""), campaignId: String(r.campaign?.id ?? ""), name: String(r.adGroup?.name ?? ""), status: String(r.adGroup?.status ?? "") }));
+  found.keywords = crits.map((r) => {
+    const c = r.adGroupCriterion as { keyword?: { text?: string; matchType?: string }; negative?: boolean; status?: string } | undefined;
+    return { adGroupId: String(r.adGroup?.id ?? ""), text: String(c?.keyword?.text ?? "").toLowerCase(), match: String(c?.keyword?.matchType ?? ""), negative: Boolean(c?.negative), status: String(c?.status ?? "") };
+  });
+  found.ads = ads.map((r) => {
+    const a = r.adGroupAd as { status?: string; ad?: { responsiveSearchAd?: { headlines?: unknown; descriptions?: unknown } } } | undefined;
+    return { adGroupId: String(r.adGroup?.id ?? ""), status: String(a?.status ?? ""), headlines: text(a?.ad?.responsiveSearchAd?.headlines), descriptions: text(a?.ad?.responsiveSearchAd?.descriptions) };
+  });
+  found.criteria = campCrits.map((r) => {
+    const c = r.campaignCriterion as { type?: string; negative?: boolean; location?: { geoTargetConstant?: string }; keyword?: { text?: string; matchType?: string } } | undefined;
+    return { campaignId: String(r.campaign?.id ?? ""), kind: String(c?.type ?? ""), negative: Boolean(c?.negative), geo: c?.location?.geoTargetConstant ?? null, text: c?.keyword?.text ?? null, match: c?.keyword?.matchType ?? null };
+  });
+  found.assets = assets.map((r) => ({ campaignId: String(r.campaign?.id ?? ""), fieldType: String((r.campaignAsset as { fieldType?: string } | undefined)?.fieldType ?? "") }));
+  return found;
+}
+
+/**
+ * Everything the launch made, read back by querying its campaigns in Google and compared line by line with the plan:
+ * a line is ok only when it's found. The lines Google doesn't have are marked on the card ("not found in Google
+ * Ads") and said in one sentence, ready for "Add what's missing".
+ */
 export async function qaGoogleRun(admin: SupabaseClient, id: string) {
   const run = await load(admin, id);
-  if (!run?.plan) return;
+  if (!run?.plan) return null;
   const plan = run.plan;
-  const { data: rows } = await admin.from("launch_items").select("key, kind, status, meta_id").eq("run_id", id);
-  const made = (rows ?? []).filter((r) => r.status === "created" && r.meta_id) as { key: string; kind: string; meta_id: string }[];
-  const campaignId = (ck: string) => {
-    const c = plan.campaigns.find((x) => x.key === ck);
-    return c?.existingId ?? idOf(made.find((r) => r.key === `campaign:${ck}`)?.meta_id, "campaigns");
-  };
-  const groupId = (gk: string) => {
-    const g = plan.adGroups.find((x) => x.key === gk);
-    return g?.existingId ?? idOf(made.find((r) => r.key === `adgroup:${gk}`)?.meta_id, "adGroups");
-  };
-  const list = (kind: string) => made.filter((r) => r.kind === kind).map((r) => `'${r.meta_id}'`);
-  const q = async (sql: string) => ((await googleQuery(plan.account, sql).catch(() => [])) as Row[]);
-  const [camps, groups, ads, crits] = await Promise.all([
-    list("campaign").length ? q(`SELECT campaign.resource_name, campaign.name, campaign.status FROM campaign WHERE campaign.resource_name IN (${list("campaign").join(", ")})`) : [],
-    list("ad_group").length ? q(`SELECT ad_group.resource_name, ad_group.name, ad_group.status FROM ad_group WHERE ad_group.resource_name IN (${list("ad_group").join(", ")})`) : [],
-    list("rsa").length ? q(`SELECT ad_group_ad.resource_name, ad_group_ad.status, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions FROM ad_group_ad WHERE ad_group_ad.resource_name IN (${list("rsa").join(", ")})`) : [],
-    list("keyword").length ? q(`SELECT ad_group_criterion.resource_name, ad_group_criterion.status FROM ad_group_criterion WHERE ad_group_criterion.resource_name IN (${list("keyword").slice(0, 400).join(", ")})`) : [],
-  ]);
-  const lines: { key: string; ok: boolean; diffs: string[]; link: string | null }[] = [];
-  for (const r of made) {
-    const [kind, a, b] = r.key.split(":");
-    const diffs: string[] = [];
-    let link: string | null = null;
-    if (kind === "campaign") {
-      const m = camps.find((x) => x.campaign?.resourceName === r.meta_id);
-      if (!m) diffs.push("couldn't be read back");
-      else if (m.campaign?.status !== "PAUSED") diffs.push(`status is ${String(m.campaign?.status).toLowerCase()}`);
-      link = googleDeepLink(plan.account, "campaign", { campaignId: campaignId(a) });
-    } else if (kind === "adgroup") {
-      const m = groups.find((x) => x.adGroup?.resourceName === r.meta_id);
-      if (!m) diffs.push("couldn't be read back");
-      else if (m.adGroup?.status !== "PAUSED") diffs.push(`status is ${String(m.adGroup?.status).toLowerCase()}`);
-      const g = plan.adGroups.find((x) => x.key === a);
-      link = googleDeepLink(plan.account, "ad_group", { campaignId: g ? campaignId(g.campaignKey) : null, adGroupId: groupId(a) });
-    } else if (kind === "rsa") {
-      const m = ads.find((x) => x.adGroupAd?.resourceName === r.meta_id);
-      const ad = plan.adGroups.find((x) => x.key === a)?.rsas.find((x) => x.key === b);
-      const got = (m?.adGroupAd as { ad?: { responsiveSearchAd?: { headlines?: unknown[]; descriptions?: unknown[] } } } | undefined)?.ad?.responsiveSearchAd;
-      if (!m) diffs.push("couldn't be read back");
-      else {
-        if (m.adGroupAd?.status !== "PAUSED") diffs.push(`status is ${String(m.adGroupAd?.status).toLowerCase()}`);
-        if (ad && (got?.headlines?.length ?? 0) !== ad.headlines.length) diffs.push(`${got?.headlines?.length ?? 0} headlines instead of ${ad.headlines.length}`);
-        if (ad && (got?.descriptions?.length ?? 0) !== ad.descriptions.length) diffs.push(`${got?.descriptions?.length ?? 0} descriptions instead of ${ad.descriptions.length}`);
-      }
-      const g = plan.adGroups.find((x) => x.key === a);
-      link = googleDeepLink(plan.account, "ad", { campaignId: g ? campaignId(g.campaignKey) : null, adGroupId: groupId(a) });
-    } else if (kind === "kw") {
-      const m = crits.find((x) => x.adGroupCriterion?.resourceName === r.meta_id);
-      if (m && m.adGroupCriterion?.status !== "PAUSED") diffs.push(`status is ${String(m.adGroupCriterion?.status).toLowerCase()}`);
-      const g = plan.adGroups.find((x) => x.key === a);
-      link = googleDeepLink(plan.account, "keyword", { campaignId: g ? campaignId(g.campaignKey) : null, adGroupId: groupId(a) });
-    } else if (kind === "revive") {
-      // The campaign brought back: it should be on now
-      const id0 = campaignId(a);
-      const m = id0 ? (await q(`SELECT campaign.status FROM campaign WHERE campaign.id = ${digits(id0)}`))[0] : null;
-      if (m && m.campaign?.status !== "ENABLED") diffs.push(`status is ${String(m.campaign?.status).toLowerCase()}`);
-      link = googleDeepLink(plan.account, "campaign", { campaignId: id0 });
-    } else if (kind === "budget" || kind === "targeting" || kind === "cneg" || kind === "sitelink" || kind === "callout" || kind === "snippet") {
-      link = googleDeepLink(plan.account, "campaign", { campaignId: campaignId(a) });
-    } else if (kind === "aneg") {
-      link = googleDeepLink(plan.account, "keyword", { adGroupId: groupId(a) });
-    }
-    lines.push({ key: r.key, ok: !diffs.length, diffs, link });
+  const { data: rows } = await admin.from("launch_items").select("key, kind, position, parent_key, label, status, meta_id, error, help, checked_at").eq("run_id", id).order("position");
+  const all = (rows ?? []) as ItemRow[];
+  const made = new Map(all.filter((r) => r.meta_id).map((r) => [r.key, r.meta_id as string]));
+  const campaignIds = plan.campaigns.map((c) => c.existingId ?? idOf(made.get(`campaign:${c.key}`), "campaigns")).filter((x): x is string => Boolean(x));
+  let found: Found;
+  try {
+    found = await readCampaigns(plan.account, campaignIds);
+  } catch (e) {
+    // Google couldn't be read: nothing is claimed either way
+    const qa: GoogleQa = { at: now(), lines: [], summary: `Couldn't read it back from Google yet (${msg(e).slice(0, 160)}). Check it in Google Ads, or ask me again in a minute.`, missing: [] };
+    await patch(admin, id, { qa, progress: null });
+    return qa;
   }
-  await patch(admin, id, { qa: { at: now(), lines }, progress: null });
+  const rb = compareReadBack(plan, made, found);
+  const camp = (ck: string) => rb.ids[`campaign:${ck}`] ?? plan.campaigns.find((c) => c.key === ck)?.existingId ?? null;
+  const grp = (gk: string) => rb.ids[`adgroup:${gk}`] ?? plan.adGroups.find((g) => g.key === gk)?.existingId ?? null;
+  const lines = rb.lines.map((l) => {
+    const [kind, a] = l.key.split(":");
+    const g = plan.adGroups.find((x) => x.key === a);
+    const link =
+      kind === "adgroup"
+        ? googleDeepLink(plan.account, "ad_group", { campaignId: g ? camp(g.campaignKey) : null, adGroupId: grp(a) })
+        : kind === "rsa"
+          ? googleDeepLink(plan.account, "ad", { campaignId: g ? camp(g.campaignKey) : null, adGroupId: grp(a) })
+          : kind === "kw" || kind === "aneg"
+            ? googleDeepLink(plan.account, "keyword", { campaignId: g ? camp(g.campaignKey) : null, adGroupId: grp(a) })
+            : googleDeepLink(plan.account, "campaign", { campaignId: camp(a) });
+    return { ...l, link };
+  });
+  // The card's lines follow what Google has: a line it doesn't have is marked, one found again is created
+  const at = now();
+  const missing = new Set(rb.missing);
+  const fixed = all.map((r) => {
+    if (r.status === "existing" || r.status === "skipped") return r;
+    if (missing.has(r.key)) return { ...r, status: "failed" as ItemStatus, error: "Not found in Google Ads after the deploy.", help: "Add what's missing puts it into the same campaign.", checked_at: at };
+    if (lines.some((l) => l.key === r.key) && r.status === "failed") return { ...r, status: "created" as ItemStatus, error: null, help: null, checked_at: at };
+    return r;
+  });
+  await writeItems(
+    admin,
+    id,
+    fixed.map((x) => ({ key: x.key, kind: x.kind, position: x.position, parentKey: x.parent_key, label: x.label, status: x.status, metaId: x.meta_id, error: x.error, help: x.help, checked: x.checked_at })),
+  );
+  const qa: GoogleQa = { at, lines, summary: rb.summary, missing: rb.missing, ids: rb.ids };
+  await patch(admin, id, { qa, progress: null });
+  return qa;
+}
+
+/**
+ * "Add what's missing": only what the read-back didn't find, created into the same campaign (and ad groups) in one
+ * batch, paused, then read back again. The same gates as Deploy (who may launch, the client's Google switch, Kaizen's
+ * campaigns only).
+ */
+export async function addMissingGoogleRun(admin: SupabaseClient, id: string, by: string): Promise<{ added: number } | { blocked: string } | { busy: true } | { error: string }> {
+  const { data: owner } = await admin.from("launch_runs").select("client_id").eq("id", id).maybeSingle();
+  const allowed = await canIdOn(admin, by, "ads.launch", { platform: "google", clientId: (owner?.client_id as string | undefined) ?? null });
+  if (!allowed.ok) return { blocked: allowed.reason };
+  if (!(await lock(admin, id))) return { busy: true };
+  try {
+    const run = await load(admin, id);
+    if (!run?.plan || !["applied", "partial"].includes(run.status)) return { blocked: "Only a launch that's been created can have what's missing added." };
+    const { googleWritesOn, GOOGLE_OFF } = await import("@/lib/meta-write");
+    if (!(await googleWritesOn(admin, run.plan.account))) return { blocked: GOOGLE_OFF };
+    // A fresh read first: only what Google still doesn't have goes in
+    const qa = await qaGoogleRun(admin, id);
+    const extra = qa?.missing?.length ? missingPlan(run.plan, { missing: qa.missing, ids: qa.ids ?? {} }) : null;
+    if (!extra) return { added: 0 };
+    const scope = kaizenScopeIssues(extra);
+    if (scope.length) return { blocked: `Not added: ${scope[0].message}` };
+    const { ops } = googleOperations(extra, extra.account);
+    if (!ops.length) return { added: 0 };
+    await patch(admin, id, { progress: "Adding what's missing in Google Ads, paused" });
+    const r = await googleBulkMutate(extra.account, ops, false);
+    if (!r.ok) {
+      const why = `Google refused adding what's missing: ${r.errors.slice(0, 2).map((e) => plainGoogleError(e).plain).join(" ")}`.slice(0, 500);
+      await patch(admin, id, { progress: null, error: why });
+      return { error: why };
+    }
+    await forgetCached(admin, `google:${run.client_id}:${extra.account}`);
+    await admin
+      .from("ad_changes")
+      .insert({ client_id: run.client_id, platform: "google", account: extra.account, source: "launch", status: "applied", title: `Launch, what was missing: ${launchTitle(extra)}`.slice(0, 200), note: `Added paused into the same campaign: ${ops.length} operation${ops.length === 1 ? "" : "s"}.`, ops: [], asked_by: by, planned_by: by, applied_by: by, applied_at: now() })
+      .then(
+        () => null,
+        () => null,
+      );
+    const after = await qaGoogleRun(admin, id);
+    await patch(admin, id, { progress: null, error: null, qa: { ...(after ?? { at: now(), lines: [] }), added: `Added ${ops.length} missing piece${ops.length === 1 ? "" : "s"} at ${now()}.` } });
+    return { added: ops.length };
+  } catch (e) {
+    await patch(admin, id, { progress: null, error: msg(e).slice(0, 500) });
+    return { error: msg(e) };
+  } finally {
+    await admin.from("launch_runs").update({ locked_at: null }).eq("id", id);
+  }
+}
+
+/** The launch's place in Google Ads (its first campaign), from the read-back or what was made */
+export async function googleLaunchWhere(admin: SupabaseClient, id: string) {
+  const run = await load(admin, id);
+  if (!run?.plan) return null;
+  const { data } = await admin.from("launch_runs").select("qa").eq("id", id).maybeSingle();
+  let qa = (data?.qa as GoogleQa | null) ?? null;
+  // The read-back is what's true now: read again when it's older than a minute
+  if (!qa || Date.now() - Date.parse(qa.at) > 60_000) qa = (await qaGoogleRun(admin, id).catch(() => null)) ?? qa;
+  const c = run.plan.campaigns[0];
+  const campaignId = c ? (qa?.ids?.[`campaign:${c.key}`] ?? c.existingId) : null;
+  return { name: c?.name ?? "the campaign", link: campaignId ? googleDeepLink(run.plan.account, "campaign", { campaignId }) : null, summary: qa?.summary ?? null, missing: qa?.missing ?? [], status: run.status };
 }

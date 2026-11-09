@@ -5,10 +5,13 @@ import { LogoLoader } from "@/components/logo-loader";
 import { useEffect, useRef, useState } from "react";
 import { WriteOff } from "@/components/write-gate";
 import { chars, G, kwText, type AdLine, type GAdGroup, type GCampaign, type GooglePlan, type Match, type PlanEdit, type Rsa } from "@/lib/google-launch/core";
+import { placesLabel } from "@/lib/google-launch/places";
 import type { LaunchItem } from "@/lib/launch-sheet/types";
 import { aboutQuestion, Checklist, Mark, Question, StillNeeded } from "./launch-card";
 import { Clamp, LaunchMore } from "./launch-more";
 import {
+  addMissingGoogleLaunch,
+  readBackGoogleLaunch,
   buildGoogleLaunchPlan,
   deployGoogleLaunch,
   editGoogleLaunch,
@@ -82,7 +85,16 @@ function Editable({ value, max, onSave, disabled, placeholder }: { value: string
   const [v, setV] = useState(value);
   const n = chars(editing ? v : value);
   const over = max != null && n > max;
-  if (editing && !disabled)
+  // Read only (being checked, created, or not theirs to edit): plain text that always shows, never a collapsible
+  // flex button (the values read as blanks that way: names, the budget, every headline)
+  if (disabled)
+    return (
+      <span className="flex min-w-0 flex-1 items-baseline justify-between gap-2 px-1.5 py-0.5">
+        <span className={`min-w-0 text-[12.5px] leading-snug [overflow-wrap:anywhere] ${value ? "text-fg" : "text-ink/35"}`}>{value || placeholder}</span>
+        {max != null && <span className={`tabular shrink-0 text-[10.5px] ${over ? "font-medium text-bad" : "text-ink/40"}`}>{n}/{max}</span>}
+      </span>
+    );
+  if (editing)
     return (
       <form
         className="flex min-w-0 flex-1 items-center gap-1.5"
@@ -256,12 +268,18 @@ function CampaignLine({ c, plan, items, edit, busy, links }: { c: GCampaign; pla
           {c.mode === "new" ? <Editable value={c.name} disabled={busy} onSave={(text) => edit({ type: "name", key: `campaign:${c.key}`, text })} /> : <span className="text-[13px] font-medium leading-snug">{c.name}</span>}
           {c.mode === "new" && c.type === "SEARCH" && (
             <span className="flex flex-wrap items-center gap-x-1 text-[11px] text-ink/55">
-              <span className="inline-flex items-center">
-                $<Editable value={String(c.budget ?? "")} placeholder="budget" disabled={busy} onSave={(t) => Number(t) > 0 && edit({ type: "budget", campaignKey: c.key, amount: Number(t) })} />/day
-              </span>
-              · {BID[c.bidding]}
-              {c.targetCpa ? ` · target CPA $${c.targetCpa}` : ""}
-              {c.targetRoas ? ` · target ROAS ${Math.round(c.targetRoas * 100)}%` : ""} · {c.locations.map((l) => l.name.split(",")[0]).join(", ") || "no locations"} · English
+              {busy ? (
+                <span className="text-fg/80">{c.budget ? `$${c.budget}/day` : "No budget yet"}</span>
+              ) : (
+                <span className="inline-flex min-w-[5.5rem] items-center">
+                  $<Editable value={String(c.budget ?? "")} placeholder="budget" disabled={busy} onSave={(t) => Number(t) > 0 && edit({ type: "budget", campaignKey: c.key, amount: Number(t) })} />/day
+                </span>
+              )}
+              <span>· {BID[c.bidding] ?? c.bidding}</span>
+              {c.targetCpa ? <span>· target CPA ${c.targetCpa}</span> : null}
+              {c.targetRoas ? <span>· target ROAS {Math.round(c.targetRoas * 100)}%</span> : null}
+              <span className={c.unresolvedPlaces?.length || (!c.locations.length && c.locationAsk) ? "text-bad" : ""}>· {c.unresolvedPlaces?.length || (!c.locations.length && c.locationAsk) ? `Couldn't resolve "${c.locationAsk}"` : c.locations.length ? placesLabel(c.locations, c.excludedLocations ?? []) : "Everywhere (no locations)"}</span>
+              <span>· English</span>
             </span>
           )}
           <LineNote item={budget?.status === "invalid" ? budget : item} link={links.get(`campaign:${c.key}`)} />
@@ -397,6 +415,9 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
   const kws = plan?.adGroups.reduce((s, g) => s + g.keywords.length, 0) ?? 0;
   const ads = plan?.adGroups.reduce((s, g) => s + g.rsas.length, 0) ?? 0;
   const qaBad = (v.qa?.lines ?? []).filter((l) => !l.ok);
+  const missing = v.qa?.missing ?? [];
+  const firstCampaign = plan?.campaigns[0] ?? null;
+  const campaignLink = firstCampaign ? (links.get(`campaign:${firstCampaign.key}`) ?? null) : null;
 
   return (
     // Never wider than the chat panel: every descendant may shrink (min-w-0) and long tokens (campaign names with pipes,
@@ -508,9 +529,29 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
       )}
 
       {v.qa && (
-        <p className={`rounded-[10px] px-3 py-2 text-[12px] ${qaBad.length ? "border border-warn/30 bg-warn-soft/20" : "border border-ok/25 bg-ok-soft/15"}`}>
-          {qaBad.length ? `Read back from Google: ${qaBad.length} line${qaBad.length === 1 ? "" : "s"} differ from the plan. ${qaBad.slice(0, 3).map((l) => `${l.key.split(":")[0]} ${l.diffs.join(", ")}`).join("; ")}` : `Read back from Google: all ${v.qa.lines.length} created lines are there, paused. Turn them on in Google Ads when you're ready.`}
-        </p>
+        <div className={`grid gap-2 rounded-[10px] px-3 py-2 text-[12px] ${missing.length || qaBad.length ? "border border-warn/30 bg-warn-soft/20" : "border border-ok/25 bg-ok-soft/15"}`}>
+          <p>
+            {v.qa.summary ??
+              (qaBad.length ? `Read back from Google: ${qaBad.length} line${qaBad.length === 1 ? "" : "s"} differ from the plan. ${qaBad.slice(0, 3).map((l) => `${l.key.split(":")[0]} ${l.diffs.join(", ")}`).join("; ")}` : `Read back from Google: all ${v.qa.lines.length} created lines are there, paused. Turn them on in Google Ads when you're ready.`)}
+          </p>
+          {campaignLink && (
+            <a href={campaignLink} target="_blank" rel="noreferrer" className="w-fit text-[11.5px] text-brand-text underline max-md:inline-flex max-md:min-h-9 max-md:items-center">
+              Open {plan?.campaigns[0]?.name ?? "the campaign"} in Google Ads ↗
+            </a>
+          )}
+          {mine && ["applied", "partial"].includes(v.status) && (
+            <div className="flex flex-wrap gap-2">
+              {missing.length > 0 && v.write.live && (
+                <button type="button" disabled={Boolean(busy)} onClick={() => void act("missing", () => addMissingGoogleLaunch(v.id))} className="h-11 rounded-full bg-fg px-4 text-[12.5px] font-medium text-bg disabled:opacity-40 md:h-9">
+                  {busy === "missing" ? "Adding…" : `Add what's missing (${missing.length}), paused`}
+                </button>
+              )}
+              <button type="button" disabled={Boolean(busy)} onClick={() => void act("readback", () => readBackGoogleLaunch(v.id))} className="h-11 rounded-full border border-ink/15 px-4 text-[12.5px] text-ink/75 hover:text-fg disabled:opacity-40 md:h-9">
+                {busy === "readback" ? "Reading…" : "Read it back again"}
+              </button>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Once it's deployed and read back: suggest more for the rest of the account (sprint or the buyer's tasks), only

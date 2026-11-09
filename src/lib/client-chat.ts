@@ -39,7 +39,8 @@ Changes in the ad account (only on a platform this person may change, below; oth
 
 Launch sheets: when they share a launch sheet (a plan of ads to launch: rows of dates, Pages, creative and copy) to launch or set up, summarize it in a sentence or two; the launch card under your answer takes it from there (the media buyer checks it against the account and asks what only they can decide). Don't plan the launch yourself and don't use change for it.
 
-Launching new ads (only on a platform this person may launch on, below): when they ask you to launch or build something new in an ad account (a campaign, an ad group, keywords, responsive search ads, Performance Max assets, new ads) or share a sheet of keywords and ad copy to launch, set launch: wanted true, platform "google" for Google Ads (keywords, ad groups, RSAs, Search, Performance Max) or "meta" for Meta, and request: their full ask in one or two sentences with every name, number, link, keyword and line of copy they gave. Answer like a media buyer would in person, in at most 2 short sentences (under 45 words): what you understood in a few words, then ONE question, the most important open decision, with your pick in a few words ("I'd do X. Sound good?"). No lists, no bullets, no reasoning, numbers, rules, claims or caveats unless they ask why; one thing at a time, the next comes in the next turn. Kaizen only launches into campaigns with Kaizen in their name, a paused Kaizen campaign brought back, or a new campaign named with Kaizen: never suggest a campaign without Kaizen in its name, and never ask whether to create it paused (it always is). The launch card shows the preview once it has everything. The card takes it from there (it reads the live account, asks only what's missing in the format the platform needs and shows every object it will create, paused, before anything is deployed; once it's deployed it offers to suggest more for the rest of the account). Don't plan it yourself and don't use change for it. A Meta launch is read from a launch sheet (or approved ads launch from the board): when they want one without sharing a sheet, ask them to share it here. Otherwise launch is wanted false with "" fields.`;
+Launching new ads (only on a platform this person may launch on, below): when they ask you to launch or build something new in an ad account (a campaign, an ad group, keywords, responsive search ads, Performance Max assets, new ads) or share a sheet of keywords and ad copy to launch, set launch: wanted true, platform "google" for Google Ads (keywords, ad groups, RSAs, Search, Performance Max) or "meta" for Meta, and request: their full ask in one or two sentences with every name, number, link, keyword and line of copy they gave. Answer like a media buyer would in person, under 60 words: propose the whole launch in one go from what they gave and what you know (the campaign, the ad groups, the landing page for each, keywords per ad group, one ad per ad group from the winners and the Brand Bible, places from where the client ships or serves, the budget if given), then ask once "Build it?". Ask about something on its own only when you genuinely have no pick (usually a new campaign's budget), at most two. When they say "just build it", "build everything" or sound frustrated, ask nothing: say in one line what you'll build. No lists, no bullets, no reasoning, rules or caveats unless they ask why.
+What's already launched: <launches> is the truth about this person's launches with the client. Never say nothing is created, it isn't there, or it's waiting on Deploy when <launches> says it's CREATED; say what was created and where. A request about a campaign that was just created (add keywords, ads, locations to it, finish it) is that same campaign: it goes into it, paused, never a new launch re-asking everything, and never refused because it's paused. Kaizen only launches into campaigns with Kaizen in their name, a paused Kaizen campaign brought back, or a new campaign named with Kaizen: never suggest a campaign without Kaizen in its name, and never ask whether to create it paused (it always is). The launch card shows the preview once it has everything. The card takes it from there (it reads the live account, asks only what's missing in the format the platform needs and shows every object it will create, paused, before anything is deployed; once it's deployed it offers to suggest more for the rest of the account). Don't plan it yourself and don't use change for it. A Meta launch is read from a launch sheet (or approved ads launch from the board): when they want one without sharing a sheet, ask them to share it here. Otherwise launch is wanted false with "" fields.`;
 
 const SCHEMA = {
   type: "object",
@@ -195,16 +196,104 @@ async function answerOffer(admin: SupabaseClient, clientId: string, profileId: s
   return m.appendChat(admin, clientId, profileId, [asked, m.moreTurn(offer.id, offer.platform, more)]);
 }
 
+const LAUNCH_STATE: Record<string, string> = {
+  reading: "being read, nothing created",
+  resolving: "being read, nothing created",
+  asking: "being worked out in the chat, nothing created",
+  planning: "plan being laid out, nothing created",
+  checking: "plan being checked, nothing created",
+  ready: "planned on the card, nothing created until Deploy is pressed",
+  applying: "being created in the account right now, paused",
+  applied: "CREATED in the account, paused",
+  partial: "CREATED in the account, paused, with parts for doing by hand",
+  failed: "stopped, nothing created",
+};
+
+/**
+ * This person's launches with the client in the last three days, as they really are (the chat reads this before it
+ * says anything about a launch, so it never says "nothing is created" about one that was), and the latest one.
+ */
+async function recentLaunches(admin: SupabaseClient, clientId: string, profileId: string) {
+  const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
+  const { data } = await admin
+    .from("launch_runs")
+    .select("id, platform, status, plan, qa, created_at, updated_at, applied_at")
+    .eq("client_id", clientId)
+    .eq("created_by", profileId)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(6);
+  const rows = (data ?? []) as { id: string; platform: "meta" | "google"; status: string; plan: { campaigns?: { name: string }[] } | null; qa: { summary?: string } | null; created_at: string; updated_at: string; applied_at: string | null }[];
+  const names = (r: (typeof rows)[number]) => (r.plan?.campaigns ?? []).map((c) => c.name).filter(Boolean);
+  const text = rows
+    .filter((r) => !["discarded", "set_aside"].includes(r.status))
+    .map((r) => `- ${r.platform === "google" ? "Google" : "Meta"} launch${names(r).length ? ` "${names(r).join('", "')}"` : ""} started ${r.created_at.slice(0, 16).replace("T", " ")} UTC: ${LAUNCH_STATE[r.status] ?? r.status}${r.applied_at ? ` (created ${r.applied_at.slice(0, 16).replace("T", " ")} UTC)` : ""}.${r.qa?.summary ? ` ${r.qa.summary}` : ""}`)
+    .join("\n");
+  const top = rows[0];
+  const just = top ? ["applying", "applied", "partial"].includes(top.status) && Date.now() - Date.parse(top.applied_at ?? top.updated_at) < 12 * 3_600_000 : false;
+  return { text, latest: top ? { id: top.id, platform: top.platform, just, names: names(top) } : null };
+}
+
 /** The answer, with who can do what was asked (once: the AI may already have said it) */
 function withWho(answer: string, who: string) {
   return answer.includes(who) ? answer : `${answer}\n\n${who}`;
 }
 
+/** Saves the person's message and the answer (with the launch card under it) to their thread */
+async function saveTurns(admin: SupabaseClient, clientId: string, profileId: string, q: string, text: string, launch: { id: string; platform: "meta" | "google" } | null) {
+  const chat = await loadClientChat(admin, clientId, profileId);
+  const now = new Date().toISOString();
+  const next: ChatTurn[] = [...chat, { role: "user" as const, text: q, at: now }, { role: "assistant" as const, text, at: now, ...(launch ? { launch } : {}) }].slice(-60);
+  await admin.from("client_chats").upsert({ client_id: clientId, profile_id: profileId, turns: next, updated_at: now });
+  return next;
+}
+
+/**
+ * A message about the launch that was just created (one launch per conversation): "where is it?" gets its name and
+ * where it is in Google Ads; "add the keywords, ads, locations to it" continues that same campaign (what the read-back
+ * didn't find goes in with "Add what's missing"; anything more is planned into it, never a fresh launch re-asking
+ * everything). Null: it's about something else (the chat answers it, knowing the launch is done).
+ */
+async function appliedFollowUp(admin: SupabaseClient, clientId: string, profileId: string, q: string, run: { id: string; platform: "meta" | "google"; status: string }): Promise<ChatTurn[] | null> {
+  const { appliedIntent } = await import("@/lib/launch-intent");
+  // Still being created: said as it is (never "nothing is created")
+  if (run.status === "applying") return appliedIntent(q) ? saveTurns(admin, clientId, profileId, q, "It's being created right now, paused. The card below shows each line as Google takes it, then reads it all back.", { id: run.id, platform: run.platform }) : null;
+  if (run.platform === "google") {
+    const g = await import("@/lib/google-launch/runs");
+    const { data } = await admin.from("launch_runs").select("plan").eq("id", run.id).maybeSingle();
+    const names = ((data?.plan as { campaigns?: { name: string }[] } | null)?.campaigns ?? []).map((c) => c.name);
+    const intent = appliedIntent(q, names);
+    if (!intent || intent === "new") return null;
+    const w = await g.googleLaunchWhere(admin, run.id);
+    if (!w) return null;
+    const card = { id: run.id, platform: "google" as const };
+    if (intent === "where") return saveTurns(admin, clientId, profileId, q, [`${w.name} is created in Google Ads, paused.`, w.summary ?? "", w.link ? `Open it: ${w.link}` : ""].filter(Boolean).join(" "), card);
+    // What Google didn't keep goes into the same campaign from the card (one click, the same gates as Deploy)
+    if (w.missing.length) return saveTurns(admin, clientId, profileId, q, `${w.summary ?? ""} Press "Add what's missing" on the card below: it puts only those into ${w.name}, paused.`.trim(), card);
+    // Everything planned is there: more goes into the same campaign, with the campaign already settled
+    const r = await g.startGoogleRun(admin, clientId, profileId, { request: `${q} (into the existing campaign "${w.name}")`, preset: { campaign: w.name }, opener: `Adding that into ${w.name}. It's paused, so nothing runs until you turn it on. I'll put the plan on the card.` });
+    if ("error" in r) return saveTurns(admin, clientId, profileId, q, `I couldn't start it: ${r.error}`, card);
+    const { after } = await import("next/server");
+    after(() => g.prepareGoogleRun(admin, r.id));
+    return saveTurns(admin, clientId, profileId, q, `Adding that into ${w.name}, the campaign just created. It's paused, so nothing runs until you turn it on. The plan shows here in a moment.`, { id: r.id, platform: "google" });
+  }
+  // Meta: where it is, from what was read back
+  if (appliedIntent(q) !== "where") return null;
+  const { data } = await admin.from("launch_runs").select("qa").eq("id", run.id).maybeSingle();
+  const lines = ((data?.qa as { lines?: { key: string; ok: boolean; link: string | null }[] } | null)?.lines ?? []).filter((l) => l.link);
+  const link = lines.find((l) => l.key.startsWith("campaign:"))?.link ?? lines[0]?.link ?? null;
+  return saveTurns(admin, clientId, profileId, q, `It's created in Ads Manager, paused.${link ? ` Open it: ${link}` : ""}`, { id: run.id, platform: "meta" });
+}
+
 /** The person's message, answered in the launch conversation they have open with this client (null: not about it) */
 async function continueLaunch(admin: SupabaseClient, clientId: string, profileId: string, q: string): Promise<ChatTurn[] | null> {
-  const { openRunFor, launchReply, planRun } = await import("@/lib/launch-sheet/runs");
-  const open = await openRunFor(admin, clientId, profileId);
-  if (!open || !["asking", "ready"].includes(open.status)) return null;
+  const { latestRunFor, justLaunched, launchReply, planRun } = await import("@/lib/launch-sheet/runs");
+  const latest = await latestRunFor(admin, clientId, profileId);
+  if (!latest) return null;
+  // The launch was just created: the conversation is about it (never a fresh launch re-asking everything)
+  if (justLaunched(latest)) return appliedFollowUp(admin, clientId, profileId, q, latest);
+  const open = latest;
+  if (!["asking", "ready"].includes(open.status)) return null;
   const google = open.platform === "google";
   const g = google ? await import("@/lib/google-launch/runs") : null;
   const r = g ? await g.googleLaunchReply(admin, open.id, q) : await launchReply(admin, open.id, q);
@@ -260,7 +349,7 @@ export async function askAboutClient(
   const docs = await addDocs(admin, clientId, profileId, "chat", files, links);
   const reads: DocRead[] = await Promise.all(docs.map((d) => readDoc(admin, d).catch((e) => ({ id: d.id, label: d.name, text: null, pdf: null, image: null, note: e instanceof Error ? e.message : "Couldn't read it" }))));
   // The brief includes the documents shared before (their summaries)
-  const [brief, audits, chat, route, { data: memory }, campaigns] = await Promise.all([
+  const [brief, audits, chat, route, { data: memory }, campaigns, launches] = await Promise.all([
     accountBrief(admin, clientId, null, true),
     auditsText(admin, clientId),
     loadClientChat(admin, clientId, profileId),
@@ -268,7 +357,9 @@ export async function askAboutClient(
     admin.from("client_memory").select("id, kind, body, dated").eq("client_id", clientId).eq("status", "active").order("created_at", { ascending: false }).limit(80),
     // Every campaign judged on its own result, with purchases and ROAS (as on the KPI card)
     import("@/lib/kpi/campaigns").then((m) => m.clientCampaignsText(admin, clientId)).catch(() => ""),
+    recentLaunches(admin, clientId, profileId).catch(() => ({ text: "", latest: null })),
   ]);
+  const recent = launches.latest;
   const scorecard = campaigns
     ? `\n\n<campaigns_scorecard note="last 30 days; each campaign judged on its own result; ones marked left out are run by the client and don't count toward the KPI">\n${campaigns}\n</campaigns_scorecard>`
     : "";
@@ -310,7 +401,7 @@ export async function askAboutClient(
     override: { model, effort: route.effort },
     pdfs,
     images,
-    prompt: `${brief.text}${scorecard}\n\n${audits}${extra ? `\n\n${extra}` : ""}\n\n<knowledge_base>\nWhat's remembered about this client now (numbered for "background"):\n${
+    prompt: `${brief.text}${scorecard}\n\n${audits}${launches.text ? `\n\n<launches note="this person's launches with the client in the last 3 days, as they really are now">\n${launches.text}\n</launches>` : ""}${extra ? `\n\n${extra}` : ""}\n\n<knowledge_base>\nWhat's remembered about this client now (numbered for "background"):\n${
       mem.map((m, i) => `${i + 1}. [${m.kind}${m.dated ? `, background as of ${m.dated}` : ""}] ${m.body}`).join("\n") || "(nothing yet)"
     }\n</knowledge_base>\n\n<conversation>\n${chat
       .slice(-14)
@@ -353,8 +444,19 @@ export async function askAboutClient(
   // A launch on a platform that isn't this person's: no launch card, just who can do it
   const launchPlatform: "meta" | "google" | null = sheetDoc ? sheetDoc.platform : googleAsked ? "google" : launchWanted && L?.platform === "meta" ? "meta" : null;
   const launchRefused = launchPlatform ? perms.launchWhy[launchPlatform] : null;
+  // The Google launch just created, when this request names its campaign again (not a different new one)
+  const sameAsJustLaunched = googleAsked && recent?.platform === "google" && recent.just && recent.names.some((n) => n && `${L?.request ?? ""} ${q}`.toLowerCase().includes(n.toLowerCase())) ? recent : null;
   if (launchRefused) {
     if (launchWanted) answer = withWho(answer, launchRefused);
+  } else if (!sheetDoc && googleAsked && sameAsJustLaunched) {
+    // One launch per conversation: the campaign just created is named again, so it's that one (never a second launch
+    // re-asking everything): where it is, and what's missing goes in from its card
+    const { googleLaunchWhere } = await import("@/lib/google-launch/runs");
+    const w = await googleLaunchWhere(admin, sameAsJustLaunched.id);
+    if (w) {
+      answer = [`${w.name} is already created in Google Ads, paused.`, w.summary ?? "", w.missing.length ? `Press "Add what's missing" on the card below to put only those into it.` : "", w.link ? `Open it: ${w.link}` : ""].filter(Boolean).join(" ");
+      launch = { id: sameAsJustLaunched.id, platform: "google" };
+    }
   } else if (sheetDoc?.platform === "google" || (googleAsked && !sheetDoc)) {
     const { startGoogleRun, prepareGoogleRun } = await import("@/lib/google-launch/runs");
     const r = await startGoogleRun(admin, clientId, profileId, { request: (L?.request || q).trim(), source: sheetDoc?.src ?? null, targetId: scope?.platform === "google" ? (scope.targetId ?? null) : null, opener: sheetDoc ? null : answer });

@@ -17,7 +17,7 @@ import { isPostUrl } from "./sheet";
 import type { ItemStatus, LaunchItem, LaunchPlan, LaunchQuestion, LaunchSheet, Resolution, RunStatus } from "./types";
 import { ASKS_FOR_LINK, followLanding, urlIn, type LandingSet } from "@/lib/landing-pages-core";
 import { settleLanding } from "@/lib/landing-pages";
-import { askedKey, BRING_BACK, isKaizenAdset, isKaizenName, NOT_ASKED, scrubPaused, yesOnlyAnswersAsked, type LaunchContext } from "@/lib/kaizen-scope";
+import { askedKey, BRING_BACK, isKaizenAdset, isKaizenName, NOT_ASKED, scrubPaused, SHORT_YES, yesOnlyAnswersAsked, type LaunchContext } from "@/lib/kaizen-scope";
 import { contextText } from "@/lib/launch-context";
 
 // A launch from a sheet, start to finish, for any client and any chat surface:
@@ -82,6 +82,27 @@ export async function openRunFor(admin: SupabaseClient, clientId: string, profil
   if (!data || Date.now() - Date.parse(data.updated_at as string) > 14 * 86_400_000) return null;
   return data as { id: string; status: RunStatus; platform: "meta" | "google" };
 }
+
+/**
+ * The person's latest launch with this client, whatever its stage (one launch per conversation): the newest one they
+ * started, so an older launch still asking never takes a message about the one just created. Null after two weeks.
+ */
+export async function latestRunFor(admin: SupabaseClient, clientId: string, profileId: string) {
+  const { data } = await admin
+    .from("launch_runs")
+    .select("id, status, platform, created_at, updated_at, applied_at")
+    .eq("client_id", clientId)
+    .eq("created_by", profileId)
+    .in("status", ["asking", "ready", "planning", "checking", "applying", "applied", "partial"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data || Date.now() - Date.parse(data.updated_at as string) > 14 * 86_400_000) return null;
+  return data as { id: string; status: RunStatus; platform: "meta" | "google"; created_at: string; updated_at: string; applied_at: string | null };
+}
+
+/** Whether a launch was created recently enough that the chat is still about it (12 hours) */
+export const justLaunched = (r: { status: string; applied_at: string | null; updated_at: string }) => ["applying", "applied", "partial"].includes(r.status) && Date.now() - Date.parse(r.applied_at ?? r.updated_at) < 12 * 3_600_000;
 
 // ─── Read, check, ask ───────────────────────────────────────────────────────────────────────────────────────────
 
@@ -257,10 +278,22 @@ export async function launchReply(admin: SupabaseClient, id: string, message: st
   const context = await ensureContext(admin, run);
   const lastSaid = [...run.turns].reverse().find((t) => t.role === "assistant") ?? null;
   const out = await replyToBuyer(run.client_id, run.sheet, run.resolution, run.questions, run.turns, message, run.status, { set: landing, theme }, contextText(context));
-  if (out.offTopic) return { answer: "", offTopic: true, building: false };
+  // "Just build it", a frustrated or repeating buyer, or a "yes" to the whole plan proposed: every proposal taken
+  const { frustrated, wantsEverything } = await import("@/lib/launch-intent");
+  const hurry = frustrated(
+    message,
+    run.turns.filter((t) => t.role === "user").map((t) => t.text),
+  );
+  const all = wantsEverything(message) || hurry || ((lastSaid as { asks?: string | null } | null)?.asks === "all" && SHORT_YES.test(message));
+  if (out.offTopic && !all) return { answer: "", offTopic: true, building: false };
   // A short "yes" answers only the question just asked
-  out.answers = yesOnlyAnswersAsked(message, out.answers, run.questions, lastSaid);
+  if (!all) out.answers = yesOnlyAnswersAsked(message, out.answers, run.questions, lastSaid);
   let questions = applyAnswers(run.questions, out.answers);
+  if (all) {
+    questions = followStructure(applyAnswers(questions, questions.filter((q) => !q.answer && q.proposal.trim()).map((q) => ({ key: q.key, answer: q.proposal }))), run.resolution.existing, run.resolution.outside ?? []);
+    out.answers.push({ key: "all", answer: "every proposal" });
+    if (hurry || !out.answer.trim()) out.answer = "Building it now with every proposal on the card.";
+  }
   if (out.newQuestions.length) questions = mergeQuestions(out.newQuestions.filter((q) => !NOT_ASKED.test(`${q.key} ${q.question}`)).map((q) => ({ ...q, answer: null })), [], questions);
   questions = followStructure(questions, run.resolution.existing, run.resolution.outside ?? []);
   // A "where it goes" answer that wasn't taken (Kaizen didn't set it up, two places): that's what's said

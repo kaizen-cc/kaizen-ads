@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { WriteStatus } from "@/lib/write-status-core";
 import { canOn } from "@/lib/chat-permissions-server";
 import { deployBlocked, type GooglePlan, type PlanEdit } from "@/lib/google-launch/core";
-import type { Suggestion } from "@/lib/google-launch/runs";
+import type { GoogleQa, Suggestion } from "@/lib/google-launch/runs";
 import { unanswered } from "@/lib/launch-sheet/plan";
 import type { CheckItem, LaunchItem, LaunchQuestion, RunStatus } from "@/lib/launch-sheet/types";
 
@@ -32,7 +32,7 @@ export type GoogleLaunchView = {
   plan: GooglePlan | null;
   warnings: string[];
   items: LaunchItem[];
-  qa: { at: string; lines: { key: string; ok: boolean; diffs: string[]; link: string | null }[] } | null;
+  qa: GoogleQa | null;
   write: WriteStatus;
   canSwitch: boolean;
   canConfirm: boolean;
@@ -213,6 +213,36 @@ export async function deployGoogleLaunch(id: string): Promise<Result> {
   const { applyGoogleRun } = await import("@/lib/google-launch/runs");
   after(() => applyGoogleRun(admin, id, me.id));
   revalidatePath("/clients", "layout");
+  return { ok: true, view: (await view(id))! };
+}
+
+/**
+ * "Add what's missing": what the read-back didn't find in Google, created into the same campaign, paused, then read
+ * back again. The same gates as Deploy (who may launch, the client's Google switch).
+ */
+export async function addMissingGoogleLaunch(id: string): Promise<Result> {
+  const me = await requireStaff();
+  const v = await view(id);
+  if (!v) return { ok: false, error: "Not found." };
+  if (!v.canConfirm) return { ok: false, error: v.confirmWhy ?? "This launch isn't yours to change." };
+  if (!v.write.live) return { ok: false, error: v.write.reason ?? "Live changes in Google Ads are off for this client." };
+  const { addMissingGoogleRun } = await import("@/lib/google-launch/runs");
+  const r = await addMissingGoogleRun(createAdminClient(), id, me.id);
+  if ("blocked" in r) return { ok: false, error: r.blocked };
+  if ("error" in r) return { ok: false, error: r.error };
+  if ("busy" in r) return { ok: false, error: "It's already being worked on: give it a moment." };
+  revalidatePath("/clients", "layout");
+  return { ok: true, view: (await view(id))! };
+}
+
+/** Reads the launch back from Google again (what's really there), for the card */
+export async function readBackGoogleLaunch(id: string): Promise<Result> {
+  await requireStaff();
+  const v = await view(id);
+  if (!v) return { ok: false, error: "Not found." };
+  if (!["applied", "partial"].includes(v.status)) return { ok: false, error: "Nothing's been created yet." };
+  const { qaGoogleRun } = await import("@/lib/google-launch/runs");
+  await qaGoogleRun(createAdminClient(), id);
   return { ok: true, view: (await view(id))! };
 }
 
