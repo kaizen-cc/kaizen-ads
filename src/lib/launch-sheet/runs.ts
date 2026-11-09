@@ -352,7 +352,7 @@ export async function planRun(admin: SupabaseClient, id: string) {
     const { plan, warnings } = buildPlan(proposal, { sheet, resolution: run.resolution, account, urlTags, today: day, specialAdCategories: [], scope: setup ? { campaigns: setup.campaigns, adsets: setup.adsets } : null, revive });
     // A new ad set copied from an existing one: its targeting, pixel, event and optimization, read as they are now
     for (const s of plan.adsets.filter((x) => x.cloneFrom)) {
-      const src = await metaGraph<{ name?: string; targeting?: Record<string, unknown>; promoted_object?: Record<string, unknown>; optimization_goal?: string; billing_event?: string }>(s.cloneFrom!, { fields: "name,targeting,promoted_object,optimization_goal,billing_event" }).catch(() => null);
+      const src = await metaGraph<{ name?: string; targeting?: Record<string, unknown>; promoted_object?: Record<string, unknown>; optimization_goal?: string; billing_event?: string }>(s.cloneFrom!, { fields: "name,targeting,promoted_object,optimization_goal,billing_event" }, "GET", { account }).catch(() => null);
       if (!src?.targeting) {
         warnings.push(`Ad set "${s.name}": couldn't read the ad set it copies, so it uses the targeting in the plan.`);
         s.cloneFrom = null;
@@ -504,12 +504,12 @@ async function upload(admin: SupabaseClient, runId: string, account: string, fil
   }
   const v = await metaWrite<{ id: string }>(admin, account, `act_${account}/advideos`, { file_url: staged.url, name: staged.name.slice(0, 200) }, false);
   for (let i = 0; i < 30; i++) {
-    const s = await metaGraph<{ status?: { video_status?: string } }>(v.id, { fields: "status" }).catch(() => null);
+    const s = await metaGraph<{ status?: { video_status?: string } }>(v.id, { fields: "status" }, "GET", { account }).catch(() => null);
     if (s?.status?.video_status === "ready") break;
     if (s?.status?.video_status === "error") throw new Error("Meta couldn't process the video");
     await new Promise((r) => setTimeout(r, 6000));
   }
-  const thumbs = await metaGraph<{ data: { uri: string; is_preferred: boolean }[] }>(`${v.id}/thumbnails`, {}).catch(() => ({ data: [] }));
+  const thumbs = await metaGraph<{ data: { uri: string; is_preferred: boolean }[] }>(`${v.id}/thumbnails`, {}, "GET", { account }).catch(() => ({ data: [] }));
   void detail;
   return { videoId: v.id, thumb: thumbs.data.find((t) => t.is_preferred)?.uri ?? thumbs.data[0]?.uri ?? null };
 }
@@ -667,12 +667,12 @@ export async function qaRun(admin: SupabaseClient, id: string) {
     let link: string | null = null;
     try {
       if (r.key.startsWith("revive:")) {
-        const m = await metaGraph<{ status: string; effective_status?: string }>(r.meta_id!, { fields: "status,effective_status" });
+        const m = await metaGraph<{ status: string; effective_status?: string }>(r.meta_id!, { fields: "status,effective_status" }, "GET", { account: plan.account });
         if (m.status !== "ACTIVE") diffs.push(`status is ${m.status}`);
         link = metaDeepLink(plan.account, "campaign", r.meta_id);
       } else if (r.kind === "campaign") {
         const c = plan.campaigns.find((x) => `campaign:${x.key}` === r.key)!;
-        const m = await metaGraph<{ name: string; status: string; objective: string; daily_budget?: string; lifetime_budget?: string }>(r.meta_id!, { fields: "name,status,objective,daily_budget,lifetime_budget" });
+        const m = await metaGraph<{ name: string; status: string; objective: string; daily_budget?: string; lifetime_budget?: string }>(r.meta_id!, { fields: "name,status,objective,daily_budget,lifetime_budget" }, "GET", { account: plan.account });
         if (m.name !== c.name.slice(0, 400)) diffs.push(`name is "${m.name}"`);
         if (m.objective !== c.objective) diffs.push(`objective is ${m.objective}`);
         if (c.budget && Number(m[c.budget.type === "daily" ? "daily_budget" : "lifetime_budget"] ?? 0) !== minor(c.budget.amount)) diffs.push(`budget is $${Number(m.daily_budget ?? m.lifetime_budget ?? 0) / 100}`);
@@ -680,7 +680,7 @@ export async function qaRun(admin: SupabaseClient, id: string) {
         link = metaDeepLink(plan.account, "campaign", r.meta_id);
       } else if (r.kind === "adset") {
         const s = plan.adsets.find((x) => `adset:${x.key}` === r.key)!;
-        const m = await metaGraph<{ name: string; status: string; daily_budget?: string; lifetime_budget?: string; promoted_object?: { pixel_id?: string; custom_event_type?: string }; targeting?: { age_min?: number } }>(r.meta_id!, { fields: "name,status,daily_budget,lifetime_budget,promoted_object,targeting" });
+        const m = await metaGraph<{ name: string; status: string; daily_budget?: string; lifetime_budget?: string; promoted_object?: { pixel_id?: string; custom_event_type?: string }; targeting?: { age_min?: number } }>(r.meta_id!, { fields: "name,status,daily_budget,lifetime_budget,promoted_object,targeting" }, "GET", { account: plan.account });
         if (m.name !== s.name.slice(0, 400)) diffs.push(`name is "${m.name}"`);
         if (s.pixelId && m.promoted_object?.pixel_id !== s.pixelId) diffs.push("optimizes for a different pixel");
         if (s.event && m.promoted_object?.custom_event_type && m.promoted_object.custom_event_type !== s.event) diffs.push(`optimizes for ${m.promoted_object.custom_event_type}`);
@@ -690,7 +690,7 @@ export async function qaRun(admin: SupabaseClient, id: string) {
         link = metaDeepLink(plan.account, "adset", r.meta_id);
       } else if (r.kind === "creative") {
         const ad = plan.ads.find((x) => `creative:${x.key}` === r.key)!;
-        const m = await metaGraph<{ asset_feed_spec?: { bodies?: unknown[]; titles?: unknown[] }; object_story_spec?: { page_id?: string } ; effective_object_story_id?: string }>(r.meta_id!, { fields: "asset_feed_spec,object_story_spec,effective_object_story_id" });
+        const m = await metaGraph<{ asset_feed_spec?: { bodies?: unknown[]; titles?: unknown[] }; object_story_spec?: { page_id?: string } ; effective_object_story_id?: string }>(r.meta_id!, { fields: "asset_feed_spec,object_story_spec,effective_object_story_id" }, "GET", { account: plan.account });
         if (ad.source.kind === "files" && (ad.copy.bodies.length > 1 || ad.copy.titles.length > 1)) {
           if ((m.asset_feed_spec?.bodies?.length ?? 1) !== ad.copy.bodies.length) diffs.push(`${m.asset_feed_spec?.bodies?.length ?? 1} primary texts instead of ${ad.copy.bodies.length}`);
           if ((m.asset_feed_spec?.titles?.length ?? 1) !== ad.copy.titles.length) diffs.push(`${m.asset_feed_spec?.titles?.length ?? 1} headlines instead of ${ad.copy.titles.length}`);
@@ -698,7 +698,7 @@ export async function qaRun(admin: SupabaseClient, id: string) {
         if (m.object_story_spec?.page_id && m.object_story_spec.page_id !== ad.identity.pageId) diffs.push("runs as a different Page");
       } else if (r.kind === "ad") {
         const ad = plan.ads.find((x) => `ad:${x.key}` === r.key)!;
-        const m = await metaGraph<{ name: string; status: string; creative?: { id: string } }>(r.meta_id!, { fields: "name,status,creative{id}" });
+        const m = await metaGraph<{ name: string; status: string; creative?: { id: string } }>(r.meta_id!, { fields: "name,status,creative{id}" }, "GET", { account: plan.account });
         const creative = rows.find((x) => x.key === `creative:${ad.key}`)?.meta_id;
         if (creative && m.creative?.id !== creative) diffs.push("uses a different creative");
         if (plan.goLive === "paused" && m.status !== "PAUSED") diffs.push(`status is ${m.status}`);

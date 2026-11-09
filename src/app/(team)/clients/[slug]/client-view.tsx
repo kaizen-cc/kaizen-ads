@@ -635,7 +635,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   )}
                   {liveWrites && (
                     <Section title="Live changes in their ad accounts" description="Meta and Google Ads are switched on separately, client by client, by an exec. Off, every change stays a plan to do by hand.">
-                      <LiveWritesPanel data={liveWrites} clientId={client.id} canEdit={can.admin && !demo} toggle={setLiveAdWrites.bind(null, client.id, client.slug)} />
+                      <LiveWritesPanel data={liveWrites} clientId={client.id} slug={client.slug} canEdit={can.admin && !demo} toggle={setLiveAdWrites.bind(null, client.id, client.slug)} />
                     </Section>
                   )}
                   <Section title="Creative billing date" description="When their creative allotment starts again: the day the Creative Package is billed in Stripe. Execs can set it by hand; every change is kept.">

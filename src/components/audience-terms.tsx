@@ -296,10 +296,12 @@ function AccountRow({ r, all, bizName, hasBiz }: { r: TermsRow; all: boolean; bi
       : r.status === "view"
         ? { href: r.assignUrl, label: "Give access", title: "Turn on Manage campaigns for the system user" }
         : r.status === "terms"
-          ? { href: r.url, label: "Accept terms", title: `Accept as ${bizName}, not as the client` }
+          ? { href: r.url, label: "Accept terms", title: r.via ? `Accept as ${r.via}, the business our changes go through` : `Accept as ${bizName}, not as the client` }
           : null;
   const title = all ? (r.client ?? r.name ?? "Ad account") : (r.name ?? "Ad account");
-  const sub = all ? `${r.name ?? "Ad account"} · ${r.account}` : r.account;
+  // Which token a change goes through: the client business's own connection, or Kaizen's
+  const via = r.via ? `via ${r.via}'s business` : `via ${bizName}'s business`;
+  const sub = `${all ? `${r.name ?? "Ad account"} · ${r.account}` : r.account} · ${via}`;
 
   return (
     <li className="min-w-0">
@@ -345,6 +347,8 @@ function AccountRow({ r, all, bizName, hasBiz }: { r: TermsRow; all: boolean; bi
             <dd className="tabular text-muted [overflow-wrap:anywhere]">
               {r.name ?? "Unnamed"} · {r.account}
             </dd>
+            <dt className="text-faint">Changes go</dt>
+            <dd className="text-muted">{r.via ? `${via}, with the token connected for it` : `${via}, with Kaizen's own token`}</dd>
             {r.owner && (
               <>
                 <dt className="text-faint">Owned by</dt>
@@ -391,6 +395,12 @@ function AccountRow({ r, all, bizName, hasBiz }: { r: TermsRow; all: boolean; bi
 }
 
 function why(r: TermsRow, bizName: string, hasBiz: boolean) {
+  // Through a client business's own connection: its system user, its terms
+  if (r.via) {
+    if (r.status === "none") return `The system user connected from ${r.via}'s business can't see this account. In their Business Manager: Ad accounts › this account › Assign people › that system user › Manage campaigns, then Check again on the connection.`;
+    if (r.status === "view") return `The system user connected from ${r.via}'s business can only view this account. In their Business Manager, turn on Manage campaigns for it on this account, then Check again on the connection.`;
+    if (r.status === "terms") return `This account ${r.usesLists ? "uses" : "may use"} customer lists, and Meta's Custom Audience terms aren't accepted for ${r.via}'s business, which our changes go through. An admin of ${r.via}'s business accepts them once (the button opens Meta's page set to that business).`;
+  }
   if (r.status === "none")
     return "Our system user can't see this account, so nothing can be read or changed. Assign it: Business settings › Ad accounts › this account › Assign people › the system user › Manage campaigns. If the account belongs to the client, they first share it with our Business Manager as a partner (with Manage campaigns).";
   if (r.status === "view")

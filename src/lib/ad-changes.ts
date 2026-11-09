@@ -330,7 +330,7 @@ export function describeOp(op: ChangeOp): string {
  * An ad that runs an existing Page post can't be changed this way.
  */
 async function metaReplaceLink(admin: SupabaseClient, account: string, op: Extract<ChangeOp, { kind: "meta_link" }>, validateOnly: boolean): Promise<string | null> {
-  const ad = await metaGraph<{ creative?: { id: string; name?: string; object_story_spec?: unknown; asset_feed_spec?: unknown; url_tags?: string } }>(op.objectId, { fields: "creative{id,name,object_story_spec,asset_feed_spec,url_tags}" });
+  const ad = await metaGraph<{ creative?: { id: string; name?: string; object_story_spec?: unknown; asset_feed_spec?: unknown; url_tags?: string } }>(op.objectId, { fields: "creative{id,name,object_story_spec,asset_feed_spec,url_tags}" }, "GET", { account });
   const c = ad.creative;
   if (!c) throw new Error("Couldn't read this ad's creative.");
   if (!c.object_story_spec && !c.asset_feed_spec) throw new Error("This ad runs an existing Page post, so its link can't be swapped here: duplicate it with the new link in Ads Manager.");

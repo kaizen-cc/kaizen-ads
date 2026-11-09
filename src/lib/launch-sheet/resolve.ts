@@ -99,7 +99,8 @@ async function driveFiles(token: string, url: string): Promise<ResolvedFile[]> {
 async function usablePages(account: string) {
   type P = { id: string; name: string; tasks?: string[]; instagram_business_account?: { id: string; username?: string } };
   const [mine, promote, igs] = await Promise.all([
-    metaGraph<{ data: P[] }>("me/accounts", { fields: "name,tasks,instagram_business_account{id,username}", limit: "200" }).catch(() => ({ data: [] as P[] })),
+    // The Pages of the system user that launches into this account (a client business's own, or Kaizen's)
+    metaGraph<{ data: P[] }>("me/accounts", { fields: "name,tasks,instagram_business_account{id,username}", limit: "200" }, "GET", { account, write: true }).catch(() => ({ data: [] as P[] })),
     metaGraph<{ data: P[] }>(`act_${account}/promote_pages`, { fields: "name,instagram_business_account{id,username}", limit: "200" }).catch(() => ({ data: [] as P[] })),
     metaGraph<{ data: { id: string; username?: string }[] }>(`act_${account}/instagram_accounts`, { fields: "username", limit: "100" }).catch(() => ({ data: [] })),
   ]);
@@ -174,11 +175,23 @@ export async function resolveSheet(admin: SupabaseClient, clientId: string, shee
   // checks, added in the usual order at the end. The account's Pages are kept ten minutes (src/lib/launch-cache.ts).
   const [blocked, scopes, { pages, igs }] = await Promise.all([
     writeBlocked(admin, account),
-    tokenScopes().catch(() => ({ granted: [] as string[], missing: [] as string[] })),
+    tokenScopes(account).catch(() => ({ granted: [] as string[], missing: [] as string[] })),
     cachedRead(admin, `meta-pages:${account}`, () => usablePages(account), { clientId }).then((r) => r.value),
   ]);
   add(blocked ? { key: "live", label: "Live changes", level: "warn", detail: blocked, fix: "An exec switches live changes on for this client in Team & setup. Until then the plan can be checked and saved, not created." } : { key: "live", label: "Live changes", level: "ok", detail: "Kaizen can create in this ad account once you confirm." });
-  if (scopes.missing.length) add({ key: "scopes", label: "Token permissions", level: "fail", detail: `The system user's token is missing ${scopes.missing.join(", ")}.`, fix: "Business settings → Users → System users → Generate new token with those permissions, then replace META_SYSTEM_USER_TOKEN." });
+  if (scopes.missing.length) {
+    const { viaBusiness } = await import("@/lib/meta-write");
+    const via = await viaBusiness(account);
+    add({
+      key: "scopes",
+      label: "Token permissions",
+      level: "fail",
+      detail: `The system user's token (${via.label}) is missing ${scopes.missing.join(", ")}.`,
+      fix: via.client
+        ? `In ${via.name}'s Business Manager: Users → System users → Generate new token with those permissions, then Replace it in the client's Team & setup.`
+        : "Business settings → Users → System users → Generate new token with those permissions, then replace META_SYSTEM_USER_TOKEN.",
+    });
+  }
 
   // ─── Pages ──────────────────────────────────────────────────────────────────────────────────────────────
   const names = [...new Set(sheet.rows.map((r) => r.page.trim()).filter(Boolean))];

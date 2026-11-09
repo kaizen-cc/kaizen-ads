@@ -548,7 +548,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       // A form the ads use that the Page list didn't show (an older or archived form): by its own name
       for (const id of new Set(adset.forms ?? []))
         if (!leadForms.some((f) => f.id === id)) {
-          const f = await metaGraph<{ id: string; name?: string }>(id, { fields: "name" }).catch(() => null);
+          const f = await metaGraph<{ id: string; name?: string }>(id, { fields: "name" }, "GET", { account }).catch(() => null);
           if (f) leadForms.push({ id, name: f.name ?? id });
         }
       const prevForm = (l.plan as LaunchPlan | null)?.leadFormId;
@@ -564,7 +564,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
     let dynamic: LaunchPlan["dynamic"] = null;
     if (adset.dynamic) {
       type DAd = { id: string; name: string; status: string; creative?: { asset_feed_spec?: Feed } };
-      const one = mode === "clone" ? null : (await metaGraph<{ data: DAd[] }>(`${adset.id}/ads`, { fields: "name,status,creative{asset_feed_spec}", limit: "10" }).catch(() => ({ data: [] as DAd[] }))).data.find((a) => !["ARCHIVED", "DELETED"].includes(a.status));
+      const one = mode === "clone" ? null : (await metaGraph<{ data: DAd[] }>(`${adset.id}/ads`, { fields: "name,status,creative{asset_feed_spec}", limit: "10" }, "GET", { account }).catch(() => ({ data: [] as DAd[] }))).data.find((a) => !["ARCHIVED", "DELETED"].includes(a.status));
       dynamic = { adId: one?.id ?? null, adName: one?.name ?? "", status: one?.status ?? null, base: one?.creative?.asset_feed_spec ?? {}, dropped: [] };
     }
 
@@ -700,13 +700,13 @@ async function uploadAssets(admin: SupabaseClient, plan: LaunchPlan) {
         a.videoId = r.id;
         // Meta processes the video before an ad can use it; its poster comes from our thumbnail, else Meta's
         for (let i = 0; i < 40; i++) {
-          const s = await metaGraph<{ status?: { video_status?: string } }>(r.id, { fields: "status" }).catch(() => null);
+          const s = await metaGraph<{ status?: { video_status?: string } }>(r.id, { fields: "status" }, "GET", { account: plan.account }).catch(() => null);
           if (s?.status?.video_status === "ready") break;
           if (s?.status?.video_status === "error") throw new Error(`Meta couldn't process ${a.name}`);
           await new Promise((res) => setTimeout(res, 6000));
         }
         const thumb = f.thumb_path ? (await admin.storage.from(BUCKET).createSignedUrl(f.thumb_path, 60 * 60 * 24 * 7)).data?.signedUrl : null;
-        const metaThumb = await metaGraph<{ data: { uri: string; is_preferred: boolean }[] }>(`${r.id}/thumbnails`, {}).catch(() => ({ data: [] }));
+        const metaThumb = await metaGraph<{ data: { uri: string; is_preferred: boolean }[] }>(`${r.id}/thumbnails`, {}, "GET", { account: plan.account }).catch(() => ({ data: [] }));
         a.thumbUrl = metaThumb.data.find((t) => t.is_preferred)?.uri ?? metaThumb.data[0]?.uri ?? thumb ?? undefined;
       }
     }
@@ -1303,7 +1303,7 @@ export async function moveLaunch(admin: SupabaseClient, launchId: string, by: st
   let adsetId = target.adsetId;
   if (target.mode === "campaign") {
     // A new campaign built like the ad set picked: its objective and special ad category, budget on the ad set
-    const tpl = await metaGraph<{ campaign?: { id: string; objective: string; special_ad_categories?: string[] }; daily_budget?: string }>(target.adsetId, { fields: "daily_budget,campaign{objective,special_ad_categories}" });
+    const tpl = await metaGraph<{ campaign?: { id: string; objective: string; special_ad_categories?: string[] }; daily_budget?: string }>(target.adsetId, { fields: "daily_budget,campaign{objective,special_ad_categories}" }, "GET", { account: plan.account });
     if (!tpl.campaign) throw new Error("Couldn't read the ad set to copy from.");
     if (!target.newCampaignName?.trim()) throw new Error("Name the new campaign.");
     const camp = await metaWrite<{ id: string }>(

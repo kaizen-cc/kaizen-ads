@@ -86,7 +86,7 @@ export async function checkMeta(admin: SupabaseClient, clientId: string): Promis
     const me = await metaGraph<{ id: string }>("me", {}).catch(() => null);
     const assigned = me
       ? await Promise.all([
-          metaGraph(`act_${account.account_id}/assigned_users`, { user: me.id, tasks: JSON.stringify(["MANAGE", "ADVERTISE", "ANALYZE"]), business: bmId }, "POST").then(() => true).catch(() => false),
+          metaGraph(`act_${account.account_id}/assigned_users`, { user: me.id, tasks: JSON.stringify(["MANAGE", "ADVERTISE", "ANALYZE"]), business: bmId }, "POST", { token: "default" }).then(() => true).catch(() => false),
           metaGraph(`${page.id}/assigned_users`, { user: me.id, tasks: JSON.stringify(["MANAGE", "CREATE_CONTENT", "MODERATE", "ADVERTISE", "ANALYZE"]), business: bmId }, "POST").then(() => true).catch(() => false),
         ])
       : [false, false];

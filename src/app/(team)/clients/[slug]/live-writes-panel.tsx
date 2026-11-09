@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { AudienceTermsCheck } from "@/components/audience-terms";
+import { MetaBusinessConnections } from "@/components/meta-business-connections";
 import { checkGoogleAccess, type GoogleAccessResult } from "../../settings/meta-write-actions";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -26,7 +27,7 @@ const day = (at: string | null) => (at ? new Date(at).toLocaleDateString("en-US"
  * separately, client by client. Under each switch, exactly which accounts changes are written to (from the KPI board,
  * as the gates read it), any mismatch, and the platform's own access check.
  */
-export function LiveWritesPanel({ clientId, data, canEdit, toggle }: { clientId: string; data: LiveWritesData; canEdit: boolean; toggle: (platform: Platform, on: boolean) => Promise<Result> }) {
+export function LiveWritesPanel({ clientId, slug, data, canEdit, toggle }: { clientId: string; slug?: string; data: LiveWritesData; canEdit: boolean; toggle: (platform: Platform, on: boolean) => Promise<Result> }) {
   const [google, setGoogle] = useState<GoogleAccessResult | null>(null);
   const names = new Map(google?.ok ? google.rows.map((r) => [r.account, r.name] as const) : []);
   const m = data.meta;
@@ -60,6 +61,7 @@ export function LiveWritesPanel({ clientId, data, canEdit, toggle }: { clientId:
         )}
         {!m.field && m.accounts.length > 0 && <p className="text-[12.5px] text-warn">No Meta ad account ID in Details: the launcher can&rsquo;t launch into their account until it&rsquo;s set.</p>}
         <AudienceTermsCheck clientId={clientId} />
+        {canEdit && <MetaBusinessConnections clientId={clientId} slug={slug} />}
       </PlatformSwitch>
 
       <PlatformSwitch

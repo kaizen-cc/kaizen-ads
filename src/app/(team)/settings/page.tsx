@@ -1,5 +1,6 @@
 import { GoogleWriteCard, MetaWriteCard } from "./meta-write-card";
 import { AudienceTermsCheck } from "@/components/audience-terms";
+import { MetaBusinessConnections } from "@/components/meta-business-connections";
 import { Connections } from "./connections";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
@@ -781,7 +782,16 @@ async function Sync({ motion }: { motion: string | null }) {
     <SyncShell
       hero={{ healthy, behind: behindN, failing: failingN, total: syncs.length, latest: latest ? freshness(latest).label.toLowerCase() : null, metaSandbox: write.sandbox, googleLive: googleLive.length }}
       syncs={syncsPanel}
-      meta={<AudienceTermsCheck />}
+      meta={
+        me.isExec ? (
+          <div className="grid min-w-0 gap-8">
+            <AudienceTermsCheck />
+            <MetaBusinessConnections />
+          </div>
+        ) : (
+          <AudienceTermsCheck />
+        )
+      }
       google={<GoogleWriteCard clients={googleLive} />}
       writes={
         <MetaWriteCard

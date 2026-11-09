@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { metaConfigured, metaGraph } from "@/lib/context/meta";
+import { metaConfigured, metaGraph, withMetaAccount } from "@/lib/context/meta";
 
 // Every write Kaizen Ads makes to Meta goes through here: the launcher creating ads, and audit or sprint changes
 // (pausing, budgets). Two guards, whatever asked:
@@ -84,12 +84,16 @@ export async function writeBlocked(admin: SupabaseClient, account: string): Prom
 export async function metaWrite<T = { id?: string; success?: boolean }>(admin: SupabaseClient, account: string, path: string, params: Record<string, string>, validateOnly: boolean): Promise<T> {
   const blocked = await writeBlocked(admin, account);
   if (blocked) throw new Error(blocked);
-  return metaGraph<T>(path, { ...params, ...(validateOnly ? { execution_options: JSON.stringify(["validate_only"]) } : {}) }, "POST");
+  // The token that can manage this account: a client business's when one does, otherwise Kaizen's own
+  return metaGraph<T>(path, { ...params, ...(validateOnly ? { execution_options: JSON.stringify(["validate_only"]) } : {}) }, "POST", { account, write: true });
 }
 
-/** The object an ID belongs to, read fresh: which ad account owns it (so a write can't be aimed at another account). */
-export async function ownerAccount(objectId: string): Promise<string | null> {
-  const r = await metaGraph<{ account_id?: string }>(objectId, { fields: "account_id" }).catch(() => null);
+/**
+ * The object an ID belongs to, read fresh: which ad account owns it (so a write can't be aimed at another account).
+ * account: the account it's expected in, so it's read with the token that reaches that account.
+ */
+export async function ownerAccount(objectId: string, account?: string | null): Promise<string | null> {
+  const r = await metaGraph<{ account_id?: string }>(objectId, { fields: "account_id" }, "GET", { account: account ?? null }).catch(() => null);
   return r?.account_id ? bare(r.account_id) : null;
 }
 
@@ -101,9 +105,9 @@ export async function ownerAccount(objectId: string): Promise<string | null> {
 // hidden Page post behind every ad with text options or per-placement sizes
 const NEEDED = ["ads_management", "ads_read", "business_management", "pages_manage_ads", "pages_read_engagement", "pages_show_list"];
 
-/** The permissions the token was generated with, and the ones the launcher needs that it's missing. */
-export async function tokenScopes() {
-  const r = await metaGraph<{ data: { permission: string; status: string }[] }>("me/permissions", {}).catch(() => null);
+/** The permissions the token was generated with, and the ones the launcher needs that it's missing (account: the token that changes it). */
+export async function tokenScopes(account?: string | null) {
+  const r = await metaGraph<{ data: { permission: string; status: string }[] }>("me/permissions", {}, "GET", account ? { account, write: true } : {}).catch(() => null);
   const granted = (r?.data ?? []).filter((p) => p.status === "granted").map((p) => p.permission);
   return { granted, missing: r ? NEEDED.filter((n) => !granted.includes(n)) : [] };
 }
@@ -114,14 +118,19 @@ const TASKS: Record<string, string> = { MANAGE: "manage the account", ADVERTISE:
 export async function diagnoseAccess(account: string): Promise<string> {
   const id = bare(account);
   type Acct = { name?: string; user_tasks?: string[]; business?: { name?: string; id?: string } };
-  const [acct, me, scopes] = await Promise.all([
-    metaGraph<Acct>(`act_${id}`, { fields: "name,user_tasks,business{name,id}" }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) })),
-    metaGraph<{ name?: string; id?: string }>("me", { fields: "id,name" }).catch(() => null),
-    tokenScopes(),
+  // Asked with the token a change to this account actually uses
+  const on = { account: id, write: true };
+  const [acct, me, scopes, via] = await Promise.all([
+    metaGraph<Acct>(`act_${id}`, { fields: "name,user_tasks,business{name,id}" }, "GET", on).catch((e) => ({ error: e instanceof Error ? e.message : String(e) })),
+    metaGraph<{ name?: string; id?: string }>("me", { fields: "id,name" }, "GET", on).catch(() => null),
+    tokenScopes(id),
+    viaBusiness(id),
   ]);
-  const who = me?.name ? `The system user "${me.name}" (${me.id})` : "The system user";
+  const who = `${me?.name ? `The system user "${me.name}" (${me.id})` : "The system user"} ${via.label}`;
   if (scopes.missing.includes("ads_management"))
-    return `${who}'s token was generated without ads_management (it has ${scopes.granted.join(", ") || "nothing readable"}). In Business Manager: Users → System users → Generate new token with ads_management ticked, then replace META_SYSTEM_USER_TOKEN in Vercel and redeploy.`;
+    return via.client
+      ? `${who}: its token was generated without ads_management (it has ${scopes.granted.join(", ") || "nothing readable"}). In ${via.name}'s Business Manager: Users → System users → Generate new token with ads_management ticked, then Replace it in the client's Team & setup.`
+      : `${who}: its token was generated without ads_management (it has ${scopes.granted.join(", ") || "nothing readable"}). In Business Manager: Users → System users → Generate new token with ads_management ticked, then replace META_SYSTEM_USER_TOKEN in Vercel and redeploy.`;
   if ("error" in acct) return `${who} can't even read ad account ${id}: ${acct.error}`;
   const tasks = acct.user_tasks ?? [];
   const owner = acct.business?.name ? `owned by the business "${acct.business.name}" (${acct.business.id})` : "owner not visible";
@@ -131,18 +140,31 @@ export async function diagnoseAccess(account: string): Promise<string> {
   return `${who} has ${can} on "${acct.name ?? id}" (${id}, ${owner}) and the token has ads_management, so Meta is refusing for another reason: often the app itself isn't approved for ads_management (Advanced Access) or the system user's role in our Business Manager is Employee instead of Admin.`;
 }
 
+/** Which business a change to this account goes through: a connected client business, or Kaizen's own. */
+export async function viaBusiness(account: string): Promise<{ client: boolean; name: string; label: string }> {
+  const { metaTokenVia } = await import("@/lib/meta-tokens");
+  const v = await metaTokenVia(bare(account), { write: true }).catch(() => null);
+  if (v) {
+    const name = v.businessName || "the client";
+    return { client: true, name, label: `via ${name}'s business` };
+  }
+  return { client: false, name: "Kaizen", label: "via Kaizen's business" };
+}
+
 export async function writeAccess(admin: SupabaseClient, account: string): Promise<{ ok: boolean; detail: string }> {
   const blocked = await writeBlocked(admin, account);
   if (blocked) return { ok: false, detail: blocked };
-  const scopes = await tokenScopes();
+  const [scopes, via] = await Promise.all([tokenScopes(account), viaBusiness(account)]);
   if (scopes.missing.length)
     return {
       ok: false,
-      detail: `The system user's token is missing ${scopes.missing.join(", ")}. Generate a new token for the system user in Business Manager (Users → System users → Generate new token) with those permissions ticked, then replace META_SYSTEM_USER_TOKEN in Vercel. It has now: ${scopes.granted.join(", ") || "nothing readable"}.`,
+      detail: via.client
+        ? `The token ${via.label} is missing ${scopes.missing.join(", ")}. In ${via.name}'s Business Manager, generate a new token for the system user with those permissions ticked, then Replace it in the client's Team & setup. It has now: ${scopes.granted.join(", ") || "nothing readable"}.`
+        : `The system user's token is missing ${scopes.missing.join(", ")}. Generate a new token for the system user in Business Manager (Users → System users → Generate new token) with those permissions ticked, then replace META_SYSTEM_USER_TOKEN in Vercel. It has now: ${scopes.granted.join(", ") || "nothing readable"}.`,
     };
   try {
     await metaWrite(admin, account, `act_${bare(account)}/campaigns`, { name: "Kaizen Ads access check", objective: "OUTCOME_TRAFFIC", status: "PAUSED", special_ad_categories: "[]", is_adset_budget_sharing_enabled: "false" }, true);
-    return { ok: true, detail: "Kaizen Ads can create and change ads here (checked with Meta, nothing was created)." };
+    return { ok: true, detail: `Kaizen Ads can create and change ads here, ${via.label} (checked with Meta, nothing was created).` };
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
     const hint = /permission|not authorized|ads_management|\(#200\)|\(#10\)/i.test(m)
@@ -266,6 +288,8 @@ export type AudienceTerms = {
   tosKeys: string[];
   error: string | null;
   url: string;
+  /** The client business a change goes through (its own connected token), or null for Kaizen's */
+  via: string | null;
   access: "manage" | "view" | "none";
   tasks: string[];
   owner: string | null;
@@ -306,21 +330,26 @@ export async function audienceTerms(accounts: string[]): Promise<AudienceTerms[]
     out.push(
       ...(await Promise.all(
         ids.slice(i, i + 8).map(async (id): Promise<AudienceTerms> => {
-          const url = audienceTermsUrl(id, business?.id);
+          // Checked with the token a change to this account uses: a client business's own, or Kaizen's. Through a
+          // client's token, the terms are the client business's to accept
+          const { metaTokenVia } = await import("@/lib/meta-tokens");
+          const via = await metaTokenVia(id, { write: true }).catch(() => null);
+          const url = audienceTermsUrl(id, via ? via.businessId : business?.id);
+          const viaName = via ? via.businessName || "the client" : null;
           try {
-            const r = await metaGraph<{ name?: string; tos_accepted?: Record<string, number | boolean> | null; user_tasks?: string[]; business?: { name?: string } }>(`act_${id}`, { fields: "name,tos_accepted,user_tasks,business{name}" });
+            const r = await metaGraph<{ name?: string; tos_accepted?: Record<string, number | boolean> | null; user_tasks?: string[]; business?: { name?: string } }>(`act_${id}`, { fields: "name,tos_accepted,user_tasks,business{name}" }, "GET", { account: id, write: true });
             const tasks = r.user_tasks ?? [];
             const access = tasks.includes("ADVERTISE") || tasks.includes("MANAGE") ? ("manage" as const) : ("view" as const);
             const tos = r.tos_accepted && typeof r.tos_accepted === "object" ? r.tos_accepted : {};
             const tosKeys = Object.keys(tos).sort();
             for (const k of tosKeys) keysSeen.set(k, (keysSeen.get(k) ?? 0) + 1);
             const accepted = LIST_TOS.some((k) => Boolean(tos[k]));
-            const usesLists = access === "manage" && !accepted ? await hasCustomerLists(id) : null;
+            const usesLists = access === "manage" && !accepted ? await withMetaAccount(id, () => hasCustomerLists(id)) : null;
             const status: AccessStatus = access === "view" ? "view" : !accepted && usesLists !== false ? "terms" : "ready";
-            return { account: id, name: r.name ?? null, accepted, usesLists, tosKeys, error: null, url, access, tasks, owner: r.business?.name ?? null, assignUrl: assignUrl(id), status };
+            return { account: id, name: r.name ?? null, accepted, usesLists, tosKeys, error: null, url, via: viaName, access, tasks, owner: r.business?.name ?? null, assignUrl: assignUrl(id), status };
           } catch (e) {
             // Unreadable: almost always the system user isn't assigned to the account (or it was removed)
-            return { account: id, name: null, accepted: null, usesLists: null, tosKeys: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200), url, access: "none", tasks: [], owner: null, assignUrl: assignUrl(id), status: "none" };
+            return { account: id, name: null, accepted: null, usesLists: null, tosKeys: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200), url, via: viaName, access: "none", tasks: [], owner: null, assignUrl: assignUrl(id), status: "none" };
           }
         }),
       )),

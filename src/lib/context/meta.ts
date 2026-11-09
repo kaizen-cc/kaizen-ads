@@ -1,7 +1,9 @@
 import "server-only";
 import type { Tracker } from "@/lib/progress";
 import { createHmac } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { accountFromPath, bareAccount, isWriteCall, redactTokens } from "@/lib/meta-token-core";
 import { compact } from "./shared";
 import { isLive, LIVE } from "@/lib/live";
 import { META_ATTRIBUTION, PURCHASE_TYPES } from "@/lib/kpi/conversions";
@@ -14,10 +16,86 @@ import { videoMetrics } from "@/lib/kpi/video";
 const VERSION = process.env.META_API_VERSION || "v24.0";
 export const metaConfigured = () => Boolean(process.env.META_SYSTEM_USER_TOKEN);
 
-const proof = (): Record<string, string> => {
-  const token = process.env.META_SYSTEM_USER_TOKEN!;
-  return process.env.META_APP_SECRET ? { appsecret_proof: createHmac("sha256", process.env.META_APP_SECRET).update(token).digest("hex") } : {};
+const proofFor = (token: string): Record<string, string> =>
+  process.env.META_APP_SECRET ? { appsecret_proof: createHmac("sha256", process.env.META_APP_SECRET).update(token).digest("hex") } : {};
+
+// ─── Which token: Kaizen's own, or a client business's ─────────────────────
+// Some ad accounts live in a client's own Business Manager and are reached with a token from a system user there
+// (meta_business_tokens). Every call aimed at an ad account uses the token that reaches it: the account comes from
+// the path (act_123/…), from opts.account, or from the account scope a caller opened with withMetaAccount (for calls
+// on an ad, ad set, video or report ID inside that account). A write only uses a client token that can manage the
+// account. Calls tied to no account (me/…, search, a business) keep Kaizen's own token.
+
+const scope = new AsyncLocalStorage<{ account: string }>();
+
+/** Run fn with every Graph call inside it tied to this ad account (for calls on its ads, ad sets, videos, reports). */
+export function withMetaAccount<T>(account: string | null | undefined, fn: () => Promise<T>): Promise<T> {
+  const id = bareAccount(account);
+  return id ? scope.run({ account: id }, fn) : fn();
+}
+
+/** account: the ad account the call belongs to. write: needs a token that can manage it. token "default": Kaizen's own. */
+export type GraphOpts = { account?: string | null; write?: boolean; token?: "default" };
+
+type Resolved = { token: string; client: boolean };
+
+async function resolveToken(path: string, method: "GET" | "POST", opts: GraphOpts): Promise<Resolved & { account: string | null }> {
+  const fallback = { token: process.env.META_SYSTEM_USER_TOKEN!, client: false };
+  const account = bareAccount(opts.account) || accountFromPath(path) || scope.getStore()?.account || null;
+  if (opts.token === "default" || !account) return { ...fallback, account };
+  const { metaTokenFor } = await import("@/lib/meta-tokens");
+  const hit = await metaTokenFor(account, { write: opts.write ?? isWriteCall(path, method) }).catch(() => null);
+  return hit ? { token: hit.token, client: true, account } : { ...fallback, account };
+}
+
+type GraphError = { message: string; code: number; error_subcode?: number; error_user_title?: string; error_user_msg?: string };
+
+/** One call with one token, retried while Meta is busy or rate limiting. Errors never carry the token. */
+async function send<T>(token: string, path: string, params: Record<string, string>, method: "GET" | "POST"): Promise<T> {
+  const query = new URLSearchParams({ ...withAttribution(path, params), ...proofFor(token), access_token: token });
+  for (let attempt = 0; attempt < 4; attempt++) {
+    let body: T & { error?: GraphError };
+    try {
+      const res = await fetch(`https://graph.facebook.com/${VERSION}/${path}${method === "GET" ? `?${query}` : ""}`, {
+        method,
+        ...(method === "POST" ? { body: query } : {}),
+        cache: "no-store",
+      });
+      body = (await res.json()) as T & { error?: GraphError };
+    } catch (e) {
+      throw new Error(`Meta (${path.split("/").pop() || "ads"}): ${redactTokens(e instanceof Error ? e.message : String(e), [token])}`);
+    }
+    // 1, 2: Meta busy for a moment; 4, 17, 32, 613: rate limits. Wait a little and try again
+    const notReady = body.error?.message?.includes("not completed yet");
+    if (body.error && ([1, 2, 4, 17, 32, 613].includes(body.error.code) || notReady) && attempt < 3) {
+      await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
+      continue;
+    }
+    // Meta's own explanation (error_user_msg) says what's actually wrong; "Invalid parameter" alone doesn't
+    if (body.error) {
+      const err = new Error(
+        redactTokens(`Meta (${path.split("/").pop() || "ads"}): ${body.error.message}${body.error.error_user_title ? ` · ${body.error.error_user_title}` : ""}${body.error.error_user_msg ? `: ${body.error.error_user_msg}` : ""}`, [token]),
+      ) as Error & { metaCode?: number; metaSubcode?: number };
+      err.metaCode = body.error.code;
+      err.metaSubcode = body.error.error_subcode;
+      throw err;
+    }
+    return body;
+  }
+  throw new Error("Meta: rate limited");
+}
+
+/** Meta saying the token can't see an object (rather than the request being wrong) */
+const unseen = (e: unknown) => {
+  const x = e as { metaCode?: number; metaSubcode?: number; message?: string };
+  return x?.metaSubcode === 33 || [10, 200, 803].includes(x?.metaCode ?? -1) || /unsupported get request|does not exist|cannot be loaded|missing permissions/i.test(x?.message ?? "");
 };
+
+/**
+ * A call with a token the caller holds (validating a client business's token). Never Kaizen's own unless passed.
+ * The token stays out of every error.
+ */
+export const metaGraphAs = <T>(token: string, path: string, params: Record<string, string> = {}, method: "GET" | "POST" = "GET") => send<T>(token, path, params, method);
 
 /**
  * Every insights request on an ad account asks for Kaizen's attribution explicitly (7-day click, 1-day view), so our
@@ -28,27 +106,27 @@ export function withAttribution(path: string, params: Record<string, string>): R
   return { ...params, action_attribution_windows: JSON.stringify(META_ATTRIBUTION) };
 }
 
-async function graph<T>(path: string, params: Record<string, string> = {}, method: "GET" | "POST" = "GET"): Promise<T> {
-  const query = new URLSearchParams({ ...withAttribution(path, params), ...proof(), access_token: process.env.META_SYSTEM_USER_TOKEN! });
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(`https://graph.facebook.com/${VERSION}/${path}${method === "GET" ? `?${query}` : ""}`, {
-      method,
-      ...(method === "POST" ? { body: query } : {}),
-      cache: "no-store",
-    });
-    const body = (await res.json()) as T & { error?: { message: string; code: number; error_user_title?: string; error_user_msg?: string } };
-    // 1, 2: Meta busy for a moment; 4, 17, 32, 613: rate limits. Wait a little and try again
-    const notReady = body.error?.message?.includes("not completed yet");
-    if (body.error && ([1, 2, 4, 17, 32, 613].includes(body.error.code) || notReady) && attempt < 3) {
-      await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
-      continue;
+/**
+ * Every Graph call: with the token that reaches the account it's aimed at (see resolveToken). A read of an ad, ad set,
+ * video or post outside any account scope that Kaizen's token can't see is tried once with each client business's
+ * token, so objects in a client's own Business Manager still read wherever they're opened. Writes never fall back.
+ */
+async function graph<T>(path: string, params: Record<string, string> = {}, method: "GET" | "POST" = "GET", opts: GraphOpts = {}): Promise<T> {
+  const r = await resolveToken(path, method, opts);
+  try {
+    return await send<T>(r.token, path, params, method);
+  } catch (e) {
+    if (method !== "GET" || r.client || r.account || opts.token === "default" || !unseen(e)) throw e;
+    const { clientTokens } = await import("@/lib/meta-tokens");
+    for (const t of await clientTokens().catch(() => [])) {
+      try {
+        return await send<T>(t, path, params, method);
+      } catch {
+        // the next business, or Kaizen's own error
+      }
     }
-    // Meta's own explanation (error_user_msg) says what's actually wrong; "Invalid parameter" alone doesn't
-    if (body.error)
-      throw new Error(`Meta (${path.split("/").pop() || "ads"}): ${body.error.message}${body.error.error_user_title ? ` · ${body.error.error_user_title}` : ""}${body.error.error_user_msg ? `: ${body.error.error_user_msg}` : ""}`);
-    return body;
+    throw e;
   }
-  throw new Error("Meta: rate limited");
 }
 
 /**
@@ -96,7 +174,12 @@ export type InsightRow = Record<string, unknown> & {
  * Meta's async report: submit, wait for it to finish in the background, then read every page.
  * This is how Meta wants heavy reports (reach, many days, ad level) requested.
  */
-export async function asyncReport(act: string, params: Record<string, string>, timeoutMs = 240_000): Promise<InsightRow[]> {
+export function asyncReport(act: string, params: Record<string, string>, timeoutMs = 240_000): Promise<InsightRow[]> {
+  // The report's own ID is read with the same token that started it
+  return withMetaAccount(act, () => runReport(act, params, timeoutMs));
+}
+
+async function runReport(act: string, params: Record<string, string>, timeoutMs: number): Promise<InsightRow[]> {
   let id: string;
   try {
     ({ report_run_id: id } = await graph<{ report_run_id: string }>(`${act}/insights`, params, "POST"));
@@ -317,7 +400,7 @@ async function syncDaily(admin: SupabaseClient, clientId: string, adAccountId: s
 }
 
 /** One account's ad-level days now (an audit that finds none pulls them instead of failing). */
-export const syncClientAds = (admin: SupabaseClient, clientId: string, adAccountId: string) => syncDaily(admin, clientId, adAccountId.replace(/^act_/, ""));
+export const syncClientAds = (admin: SupabaseClient, clientId: string, adAccountId: string) => withMetaAccount(adAccountId, () => syncDaily(admin, clientId, adAccountId.replace(/^act_/, "")));
 
 /** Unique people over the last 7 and 30 days, for the account and each campaign. */
 async function syncReach(admin: SupabaseClient, clientId: string, adAccountId: string) {
@@ -494,6 +577,17 @@ export async function linkAdAccounts(admin: SupabaseClient) {
     accounts.push(...page.data);
     after = page.paging?.next ? (page.paging.cursors?.after ?? "") : "";
   } while (after);
+  // Plus the accounts each connected client business's system user sees (their own Business Managers)
+  const { clientTokens } = await import("@/lib/meta-tokens");
+  for (const token of await clientTokens().catch(() => [] as string[])) {
+    let next = "";
+    for (let i = 0; i < 10; i++) {
+      const page = await send<{ data: typeof accounts; paging?: { cursors?: { after?: string }; next?: string } }>(token, "me/adaccounts", { fields: "account_id,name,account_status", limit: "200", ...(next ? { after: next } : {}) }, "GET").catch(() => null);
+      for (const a of page?.data ?? []) if (!accounts.some((x) => x.account_id === a.account_id)) accounts.push(a);
+      next = page?.paging?.next ? (page.paging.cursors?.after ?? "") : "";
+      if (!next) break;
+    }
+  }
 
   const { data: all } = await admin.from("clients").select("id, name, meta_ad_account_id, creative_package, status, archived_at");
   // Every client's account is taken, archived ones too (it isn't free to link to someone else)
@@ -529,10 +623,12 @@ export async function linkAdAccounts(admin: SupabaseClient) {
 /** One client, on demand (the client page's Sync now): daily metrics, reach, and the AI snapshot. */
 export async function syncClientMeta(admin: SupabaseClient, clientId: string, adAccountId: string) {
   const account = adAccountId.replace(/^act_/, "");
-  const daily = await syncDaily(admin, clientId, account);
-  await syncReach(admin, clientId, account);
-  await snapshot(admin, clientId, account);
-  return daily;
+  return withMetaAccount(account, async () => {
+    const daily = await syncDaily(admin, clientId, account);
+    await syncReach(admin, clientId, account);
+    await snapshot(admin, clientId, account);
+    return daily;
+  });
 }
 
 /**
@@ -565,9 +661,12 @@ export async function collectMeta(admin: SupabaseClient, budgetMs = 700_000, t?:
     t?.on(c.name);
     const account = c.meta_ad_account_id!.replace(/^act_/, "");
     try {
-      const daily = await syncDaily(admin, c.id, account);
-      const reach = await syncReach(admin, c.id, account);
-      const snap = await snapshot(admin, c.id, account);
+      const { daily, reach, snap } = await withMetaAccount(account, async () => {
+        const daily = await syncDaily(admin, c.id, account);
+        const reach = await syncReach(admin, c.id, account);
+        const snap = await snapshot(admin, c.id, account);
+        return { daily, reach, snap };
+      });
       synced.push({ client: c.name, ...daily, reachWindows: reach, snapshot: Boolean(snap) });
       t?.tick(c.name);
     } catch (e) {
@@ -623,13 +722,14 @@ export function describeMeta(s: { date_start: string; date_stop: string; summary
 
 /** Try progressively bigger requests on one ad account and report Meta's exact answer to each. */
 export async function debugMeta(adAccountId: string) {
-  const token = process.env.META_SYSTEM_USER_TOKEN!;
   const act = `act_${adAccountId.replace(/^act_/, "")}`;
+  // The token this account actually uses (a client business's, or Kaizen's own)
+  const { token, client } = await resolveToken(act, "GET", {});
   const probe = async (label: string, version: string, path: string, params: Record<string, string>) => {
-    const res = await fetch(`https://graph.facebook.com/${version}/${path}?${new URLSearchParams({ ...params, ...proof(), access_token: token })}`, { cache: "no-store" });
+    const res = await fetch(`https://graph.facebook.com/${version}/${path}?${new URLSearchParams({ ...params, ...proofFor(token), access_token: token })}`, { cache: "no-store" });
     const body = (await res.json()) as { error?: { message: string; code: number; error_subcode?: number; type?: string }; data?: unknown[] };
     return body.error
-      ? { label, version, ok: false, code: body.error.code, subcode: body.error.error_subcode ?? null, type: body.error.type, message: body.error.message }
+      ? { label, version, ok: false, code: body.error.code, subcode: body.error.error_subcode ?? null, type: body.error.type, message: redactTokens(body.error.message, [token]) }
       : { label, version, ok: true, rows: Array.isArray(body.data) ? body.data.length : undefined };
   };
   const out = [];
@@ -640,10 +740,10 @@ export async function debugMeta(adAccountId: string) {
   out.push(await probe("by ad", VERSION, `${act}/insights`, { date_preset: "last_30d", level: "ad", fields: "ad_name,spend", limit: "5" }));
   out.push(await probe("token permissions", VERSION, "me/permissions", {}));
   // One ad's creative, the way the sync reads it
-  const ads = await fetch(`https://graph.facebook.com/${VERSION}/${act}/ads?${new URLSearchParams({ fields: "id", limit: "1", ...proof(), access_token: token })}`, { cache: "no-store" }).then((r) => r.json() as Promise<{ data?: { id: string }[] }>);
+  const ads = await fetch(`https://graph.facebook.com/${VERSION}/${act}/ads?${new URLSearchParams({ fields: "id", limit: "1", ...proofFor(token), access_token: token })}`, { cache: "no-store" }).then((r) => r.json() as Promise<{ data?: { id: string }[] }>);
   const adId = ads.data?.[0]?.id;
   if (adId) out.push(await probe("one ad's creative", VERSION, adId, { fields: "effective_status,creative.thumbnail_width(600).thumbnail_height(600){title,body,thumbnail_url,image_url,object_story_spec,asset_feed_spec,effective_object_story_id}" }));
-  return { version: VERSION, appSecretProof: Boolean(process.env.META_APP_SECRET), probes: out };
+  return { version: VERSION, appSecretProof: Boolean(process.env.META_APP_SECRET), token: client ? "client business" : "Kaizen", probes: out };
 }
 
 // ─── One ad, in full, on demand (the winners library and client pages open it) ───
@@ -974,7 +1074,7 @@ export async function campaignGoals(adAccountId: string) {
   const ids = [...new Set([...byCampaign.values()].map((s) => s.promoted_object?.custom_conversion_id).filter((x): x is string => Boolean(x)))];
   const names = new Map<string, string>();
   for (const id of ids.slice(0, 25)) {
-    const c = await graph<{ name?: string }>(id, { fields: "name" }).catch(() => null);
+    const c = await graph<{ name?: string }>(id, { fields: "name" }, "GET", { account: adAccountId }).catch(() => null);
     if (c?.name) names.set(id, c.name);
   }
   return [...byCampaign.entries()].map(([campaignId, s]) => ({
