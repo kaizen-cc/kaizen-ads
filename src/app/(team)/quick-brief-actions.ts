@@ -1,7 +1,7 @@
 "use server";
 
 import { AGENCY_SYSTEM, AiUnavailable, aiEnabled, askJson, clientContext, contextBlock, getAgent } from "@/lib/ai";
-import { AVATAR_RULE } from "@/lib/suggestions";
+import { AVATAR_RULE, winningAdBlock } from "@/lib/suggestions";
 import { toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { requireStaff } from "@/lib/auth";
 import { can } from "@/lib/chat-permissions";
@@ -90,8 +90,7 @@ function cleanFormats(list: QuickFormat[], only: QuickFormat["format"] | undefin
 async function sourceBlock(admin: ReturnType<typeof createAdminClient>, clientId: string, source: BriefSource): Promise<string | null> {
   switch (source.kind) {
     case "winner": {
-      const w = source.winner;
-      return `<winning_ad>\nFrom another Kaizen account (${w.detail ?? "another business"}). ${w.ratio}x better cost per ${w.result ?? "result"} than that account's usual.\nHeadline: ${w.headline ?? "(none)"}\nPrimary text: ${(w.text ?? "(none)").slice(0, 600)}\n</winning_ad>\nBuild this client's version of what makes the winning ad work.`;
+      return `${winningAdBlock(source.winner, 600)}\nBuild this client's version of what makes the winning ad work.`;
     }
     case "market": {
       const { loadMarketAd } = await import("@/lib/market");

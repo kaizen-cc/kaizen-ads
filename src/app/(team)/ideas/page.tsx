@@ -19,8 +19,11 @@ import { loadGoogleIdeas } from "@/lib/google-ideas";
 import { loadGoogleMarket } from "@/lib/google-market";
 import { GoogleMarketView } from "./google-market-view";
 import { GoogleVerticalsView } from "./google-verticals-view";
-import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
+import { GoogleAdsMark, MetaMark, TikTokMark } from "@/components/source-logo";
 import { CopyLibrary } from "@/components/copy-library";
+import { ideasHref, ideasLine, ideasTab, type IdeasLine, type IdeasTab } from "@/lib/ideas-nav";
+import { hasTikTokData, loadTikTokIdeas } from "@/lib/tiktok/ideas";
+import { TikTokIdeasView } from "./tiktok-ideas-view";
 
 export const metadata: Metadata = { title: "Ideas" };
 
@@ -43,38 +46,40 @@ const TABS = [
   ["copy", "Copy library", "Our best primary texts, headlines and descriptions across clients, by industry and sub-vertical"],
 ] as const;
 
+// TikTok has no public ad library API for US ads: Ads Lab on TikTok is our own clients' TikTok winners only
+const TIKTOK_TABS = [
+  ["fame", "Hall of Fame", "Our TikTok ads that beat their TikTok target over 30+ days, kept six months"],
+  ["winners", "Live winners", "TikTok ads beating their target over the last 14 days"],
+] as const;
+
 /** Where ideas come from: what's working in our accounts, and what's working out in the market. */
 export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
   const sp = await searchParams;
-  const tab = sp.tab === "market" ? "market" : sp.tab === "verticals" ? "verticals" : sp.tab === "winners" ? "winners" : sp.tab === "copy" ? "copy" : "fame";
-  // Two sides, the same four kinds of ideas: Meta (briefs for the creative team) and Google (search ads, keywords and
-  // search terms). Everyone can look at both
-  const line = sp.line === "google" ? "google" : "meta";
+  // Three sides: Meta (briefs for the creative team), Google (search ads, keywords and search terms) and TikTok (our own
+  // clients' TikTok winners: shown once there's TikTok data). Everyone can look at each
+  await requireStaff();
+  const tiktok = await hasTikTokData(adminConfigured() ? createAdminClient() : await createClient());
+  const line = ideasLine(sp.line, tiktok);
+  const tab = ideasTab(sp.tab, line);
   // Keep the client (and anything else) when switching tabs
-  const keep = (t: string, l: string = line) => {
-    const q = new URLSearchParams();
-    if (l === "google") q.set("line", "google");
-    q.set("tab", t);
-    if (typeof sp.client === "string") q.set("client", sp.client);
-    return `/ideas?${q.toString()}`;
-  };
-  const tabs = line === "google" ? GOOGLE_TABS : TABS;
+  const keep = (t: IdeasTab, l: IdeasLine = line) => ideasHref(t, l, sp.client);
+  const tabs = line === "google" ? GOOGLE_TABS : line === "tiktok" ? TIKTOK_TABS : TABS;
+  const sides = [
+    ["meta", "Meta", <MetaMark key="m" size={18} />],
+    ["google", "Google Ads", <GoogleAdsMark key="g" size={15} />],
+    ...(tiktok ? ([["tiktok", "TikTok", <TikTokMark key="t" size={16} />]] as const) : []),
+  ] as const;
   return (
     <div className="grid gap-6">
       <div className="mx-auto grid w-full max-w-6xl gap-3">
         {/* The side: Meta or Google */}
-        <nav className="grid w-full grid-cols-2 gap-1 rounded-[20px] border border-line bg-surface p-1 sm:mx-auto sm:w-fit" aria-label="Platform">
-          {(
-            [
-              ["meta", "Meta", <MetaMark key="m" size={18} />],
-              ["google", "Google Ads", <GoogleAdsMark key="g" size={15} />],
-            ] as const
-          ).map(([k, label, mark]) => (
+        <nav className={`grid w-full gap-1 rounded-[20px] border border-line bg-surface p-1 sm:mx-auto sm:w-fit ${sides.length === 3 ? "grid-cols-3" : "grid-cols-2"}`} aria-label="Platform">
+          {sides.map(([k, label, mark]) => (
             <Link
               key={k}
               href={keep(tab, k)}
               aria-current={line === k ? "page" : undefined}
-              className={`flex items-center justify-center gap-2.5 rounded-[16px] px-6 py-3 text-[15px] font-medium transition-colors sm:min-w-[170px] ${line === k ? "bg-fg text-bg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
+              className={`flex min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-[16px] px-2 py-3 text-[14px] font-medium transition-colors sm:gap-2.5 sm:px-6 sm:text-[15px] ${sides.length === 3 ? "sm:min-w-[150px]" : "sm:min-w-[170px]"} ${line === k ? "bg-fg text-bg" : "text-muted hover:bg-surface-2 hover:text-fg"}`}
             >
               {mark}
               {label}
@@ -95,8 +100,13 @@ export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
             </Link>
           ))}
         </nav>
+        {line === "tiktok" && (
+          <p className="mx-auto max-w-xl text-center text-xs text-faint">TikTok has no public ad library API, so In the market, Verticals and Copy library stay on Meta and Google. These show our own clients&apos; TikTok winners.</p>
+        )}
       </div>
-      {tab === "copy" ? (
+      {line === "tiktok" ? (
+        <TikTokIdeas mode={tab === "winners" ? "live" : "fame"} />
+      ) : tab === "copy" ? (
         <div className="mx-auto w-full max-w-6xl">
           <CopyLibrary title="Copy library" />
         </div>
@@ -136,6 +146,36 @@ async function GoogleIdeas({ mode }: { mode: "fame" | "live" }) {
     .map((c) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string, vertical: (c.verticals as unknown as { name: string } | null)?.name ?? null }));
   const verticals = [...new Set(items.map((i) => i.vertical).filter((v): v is string => Boolean(v)))].sort();
   return <GoogleIdeasView items={items} mode={mode} verticals={verticals} deploy={canDeploy ? { clients } : null} />;
+}
+
+/** TikTok: our own clients' TikTok winners, as the Hall of Fame or the live winners, briefable for similar clients */
+async function TikTokIdeas({ mode }: { mode: "fame" | "live" }) {
+  const allowed = formatsFor(await requireStaff());
+  const db = adminConfigured() ? createAdminClient() : await createClient();
+  const { loadPeerContext } = await import("@/lib/industry");
+  const [ads, verticals, { data: usage }, { data: rows }, match] = await Promise.all([
+    loadTikTokIdeas(db, mode),
+    loadVerticals(db),
+    db.from("client_allotment_usage").select("*"),
+    db.from("clients").select("id, name, industry, industry_detail").is("archived_at", null).in("status", LIVE).order("name"),
+    loadPeerContext(db),
+  ]);
+  const clients: PickClient[] = ((usage ?? []) as UsageRow[])
+    .map((u) => {
+      const c = (rows ?? []).find((r) => r.id === u.client_id);
+      return c ? { id: c.id, name: c.name, industry: c.industry, detail: c.industry_detail, allotment: toAllotment(u) } : null;
+    })
+    .filter((c): c is PickClient => Boolean(c))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return (
+    <TikTokIdeasView
+      ads={ads.filter((a) => allowed.has(a.format))}
+      mode={mode}
+      verticals={verticals.flatMap((v) => v.subs.map((x) => ({ id: x.id, name: x.name, parent: v.name })))}
+      clients={clients}
+      match={match}
+    />
+  );
 }
 
 async function GoogleMarket() {

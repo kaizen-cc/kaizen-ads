@@ -194,6 +194,10 @@ export type Winner = {
   fame?: { basis: "kpi" | "benchmark"; roas: boolean; days: number; beatBy: number };
   /** For one client: why this account counts as similar (same product, or same niche; nothing broader ever counts) */
   match?: PeerMatch;
+  /** Where it ran: Meta when left out. A TikTok winner is judged against its TikTok KPI target (ratio: times past it) */
+  platform?: "meta" | "tiktok";
+  /** A TikTok winner: TikTok's 6-second views over impressions, as a percent */
+  sixSecRate?: number | null;
 };
 
 type SnapAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null; image?: string | null; format?: "image" | "video" | "carousel" | null; live?: boolean; spend?: number; results?: number; result?: string | null; costPerResult?: number | null; ctr?: number };
@@ -286,6 +290,66 @@ export async function industryWinners(db: SupabaseClient, industry: string, excl
   return ws.sort((a, b) => a.match!.tier - b.match!.tier || b.ratio - a.ratio).slice(0, limit);
 }
 
+/**
+ * Our own TikTok winners (Hall of Fame and live) from the accounts most like this client, by the same rule as Meta's:
+ * sells the same thing first, then the same sub-vertical, never the broad industry. Each labelled platform "tiktok".
+ */
+export async function tiktokPeerWinners(db: SupabaseClient, clientId: string, limit = 4): Promise<Winner[]> {
+  const [{ data: me }, { data: peers }, { data: verticals }] = await Promise.all([
+    db.from("clients").select("id, industry, industry_detail, vertical_id").eq("id", clientId).maybeSingle(),
+    db.from("clients").select("id, name, slug, industry, industry_detail, vertical_id").neq("status", "offboarded").is("archived_at", null),
+    db.from("verticals").select("id, name, parent_id"),
+  ]);
+  if (!me) return [];
+  const all = (peers ?? []) as Peer[];
+  const matches = matchPeers(me as PeerInfo, all.map((p) => ({ id: p.id, industry: p.industry, industry_detail: p.industry_detail, vertical_id: p.vertical_id ?? null })), (verticals ?? []) as VerticalInfo[]);
+  if (!matches.size) return [];
+  const { loadTikTokIdeas } = await import("@/lib/tiktok/ideas");
+  const ids = [...matches.keys()];
+  const [fame, live] = await Promise.all([loadTikTokIdeas(db, "fame", { clientIds: ids }).catch(() => []), loadTikTokIdeas(db, "live", { clientIds: ids }).catch(() => [])]);
+  const seen = new Set<string>();
+  const per = new Map<string, number>();
+  const out: Winner[] = [];
+  for (const a of [...fame, ...live]) {
+    if (seen.has(a.adId) || (per.get(a.clientId) ?? 0) >= 2) continue;
+    seen.add(a.adId);
+    per.set(a.clientId, (per.get(a.clientId) ?? 0) + 1);
+    const peer = all.find((p) => p.id === a.clientId);
+    out.push(tiktokWinner(a, peer ?? null, matches.get(a.clientId)));
+  }
+  return out.sort((a, b) => a.match!.tier - b.match!.tier || b.ratio - a.ratio).slice(0, limit);
+}
+
+/** A TikTok winner in the Winner shape the AI's blocks and the brief flow take */
+export function tiktokWinner(a: import("@/lib/tiktok/ideas").TikTokIdea, peer: { industry: string | null; industry_detail: string | null } | null, match?: PeerMatch): Winner {
+  return {
+    id: a.adId,
+    client: a.client,
+    clientId: a.clientId,
+    clientSlug: a.clientSlug,
+    industry: peer?.industry ?? null,
+    detail: peer?.industry_detail ?? a.vertical,
+    name: a.adName ?? "",
+    headline: a.hook,
+    text: a.text,
+    thumbnail: a.thumbnail,
+    format: a.format,
+    live: a.stillRunning,
+    result: a.conversion.toLowerCase(),
+    results: a.results,
+    costPerResult: a.value,
+    usual: a.target,
+    ratio: Math.round((a.roas ? a.value / a.target : a.target / a.value) * 10) / 10,
+    spend: a.spend,
+    ctr: a.ctr ?? 0,
+    syncedAt: a.lastDate,
+    fame: { basis: a.targetSource, roas: a.roas, days: a.daysLive, beatBy: a.beatBy },
+    platform: "tiktok",
+    sixSecRate: a.sixSecRate,
+    ...(match ? { match } : {}),
+  };
+}
+
 /** Every client's industry, product and sub-vertical, for saying which winners are relevant to whom (the library) */
 export async function loadPeerContext(db: SupabaseClient): Promise<{ peers: PeerInfo[]; verticals: VerticalInfo[] }> {
   const [{ data: peers }, { data: verticals }] = await Promise.all([
@@ -331,7 +395,11 @@ export function winnersBlock(industry: string | null, detail: string | null, win
   return `<what_works_for_similar_clients>
 Ads that are beating their own account right now, from the other Kaizen clients most like this one: ones selling the same thing or in the same niche (${industryLabel(industry) ?? industry})${detail ? ` (this client: ${detail})` : ""}. Learn from the angle, the hook and the structure; don't copy them word for word, and never mention another client.
 ${winners
-  .map((w) => `- ${w.detail ?? "Similar business"}${w.match ? ` (${w.match.tier === 1 ? "sells the same thing" : "same niche"})` : ""}: "${w.headline ?? w.name}"${w.text ? ` · copy: ${w.text.slice(0, 220)}` : ""} · ${w.ratio}x better than that account's usual cost per ${w.result ?? "result"}${w.ctr ? ` · CTR ${w.ctr}%` : ""}`)
+  .map((w) =>
+    w.platform === "tiktok"
+      ? `- TikTok, ${w.detail ?? "Similar business"}${w.match ? ` (${w.match.tier === 1 ? "sells the same thing" : "same niche"})` : ""}: hook "${w.headline ?? w.name}"${w.text ? ` · ad text: ${w.text.slice(0, 220)}` : ""} · ${w.ratio}x its TikTok KPI target on ${w.result ?? "results"}${w.sixSecRate != null ? ` · 6s view rate ${w.sixSecRate}%` : ""}`
+      : `- ${w.detail ?? "Similar business"}${w.match ? ` (${w.match.tier === 1 ? "sells the same thing" : "same niche"})` : ""}: "${w.headline ?? w.name}"${w.text ? ` · copy: ${w.text.slice(0, 220)}` : ""} · ${w.ratio}x better than that account's usual cost per ${w.result ?? "result"}${w.ctr ? ` · CTR ${w.ctr}%` : ""}`,
+  )
   .join("\n")}
 </what_works_for_similar_clients>`;
 }

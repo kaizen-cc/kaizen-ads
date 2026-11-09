@@ -678,8 +678,10 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
     (async () => {
       if (!c.industry || c.industry === "other") return "";
       // Loaded here, not at the top: the industry module uses this one
-      const { industryWinners, winnersBlock } = await import("@/lib/industry");
-      return winnersBlock(c.industry, c.industry_detail, await industryWinners(supabase, c.industry, clientId, 5));
+      const { industryWinners, tiktokPeerWinners, winnersBlock } = await import("@/lib/industry");
+      // Meta's winners from similar clients, and our own TikTok winners from the same peers (labelled TikTok)
+      const [meta, tiktok] = await Promise.all([industryWinners(supabase, c.industry, clientId, 5), tiktokPeerWinners(supabase, clientId, 3).catch(() => [])]);
+      return winnersBlock(c.industry, c.industry_detail, [...meta, ...tiktok]);
     })(),
     loadClientKpis(supabase, clientId).then((k) => (k.length ? describeKpis(k) : null)),
     supabase

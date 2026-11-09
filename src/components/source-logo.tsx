@@ -54,6 +54,18 @@ export function MetaMark({ size = 12 }: { size?: number }) {
   );
 }
 
+/** TikTok's note: cyan and red offsets around the text color, so it reads in light and dark */
+export function TikTokMark({ size = 12 }: { size?: number }) {
+  const note = "M16.6 2h-3.4v13.3a3 3 0 1 1-3-3c.3 0 .6 0 .9.1V8.9a6.5 6.5 0 1 0 5.5 6.4V8.6a8 8 0 0 0 4.6 1.5V6.7a4.7 4.7 0 0 1-4.6-4.7Z";
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+      <path d={note} fill="#25f4ee" transform="translate(-0.9 -0.6)" />
+      <path d={note} fill="#fe2c55" transform="translate(0.9 0.6)" />
+      <path d={note} fill="currentColor" />
+    </svg>
+  );
+}
+
 /** Google Ads' mark, for actions Kaizen Ads can make in Google Ads from here */
 export function GoogleAdsMark({ size = 12 }: { size?: number }) {
   return (

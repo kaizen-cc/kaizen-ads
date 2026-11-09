@@ -741,7 +741,41 @@ export async function loadSuggestions(db: SupabaseClient, allowed?: ReadonlySet<
   };
 }
 
-export type WinnerSource = { adId: string; client: string; detail: string | null; headline: string | null; text: string | null; thumbnail: string | null; ratio: number; result: string | null; costPerResult: number; usual: number };
+export type WinnerSource = {
+  adId: string;
+  client: string;
+  detail: string | null;
+  headline: string | null;
+  text: string | null;
+  thumbnail: string | null;
+  ratio: number;
+  result: string | null;
+  costPerResult: number;
+  usual: number;
+  /** Where the ad ran: Meta when left out. A TikTok winner is judged against its TikTok KPI target, not its account's usual */
+  platform?: "meta" | "tiktok";
+  /** A TikTok winner: its numbers in one line (result vs target, 6s view rate, days running) and its landing page */
+  metrics?: string | null;
+  link?: string | null;
+  /** The winning ad's client, when known (the peer rule finds it by this before the name) */
+  clientId?: string | null;
+};
+
+/** The winning ad, in words for the strategist (the quick preview and the full brief read the same block) */
+export function winningAdBlock(w: WinnerSource, textMax = 4000) {
+  if (w.platform === "tiktok")
+    return `<winning_ad>
+A winning TikTok ad from another Kaizen account (${w.detail ?? "another business"}), our own client's: it beat its TikTok KPI target ${w.ratio}x (${w.metrics ?? `cost per ${w.result ?? "result"} $${w.costPerResult.toFixed(2)} vs $${w.usual.toFixed(2)} target`}).
+Hook (its opening line): ${w.headline ?? "(none)"}
+Ad text: ${(w.text ?? "(none)").slice(0, textMax)}${w.link ? `\nLanding page: ${w.link}` : ""}
+</winning_ad>
+It's a TikTok video: native, vertical (9:16), sound on, hooked in the first 2 seconds (the 6s view rate is how TikTok judges it). Keep that form when the request is for video; for another format, translate the hook and the angle.`;
+  return `<winning_ad>
+From another Kaizen account (${w.detail ?? "another business"}). Getting ${w.ratio}x better cost per ${w.result ?? "result"} than that account's usual ($${w.costPerResult.toFixed(2)} vs $${w.usual.toFixed(2)}).
+Headline: ${w.headline ?? "(none)"}
+Primary text: ${(w.text ?? "(none)").slice(0, textMax)}
+</winning_ad>`;
+}
 
 /**
  * A marketing moment coming up for this client (Memorial Day, Pancake Day, storm season…), briefed its lead time
@@ -825,7 +859,7 @@ export async function suggestFromWinner(admin: SupabaseClient, clientId: string,
   await (await import("@/lib/industry")).assertRelevantWinner(admin, clientId, w);
   const same = w.client;
   const prompt = await promptFor(admin, clientId, [
-    { kind: "winner", weight: 1, line: `A winning ad from another account to build on`, facts: [`${w.ratio}x better cost per ${w.result ?? "result"} than its account's usual`] },
+    { kind: "winner", weight: 1, line: w.platform === "tiktok" ? `A winning TikTok ad from another account to build on` : `A winning ad from another account to build on`, facts: [w.platform === "tiktok" ? `${w.ratio}x its TikTok KPI target${w.metrics ? ` (${w.metrics})` : ""}` : `${w.ratio}x better cost per ${w.result ?? "result"} than its account's usual`] },
   ]);
   if (!prompt) throw new Error("Client not found");
   const out = await writeBrief(admin, clientId, {
@@ -835,11 +869,7 @@ export async function suggestFromWinner(admin: SupabaseClient, clientId: string,
     schema: SCHEMA,
     prompt: `${prompt}
 
-<winning_ad>
-From another Kaizen account (${w.detail ?? "another business"}). Getting ${w.ratio}x better cost per ${w.result ?? "result"} than that account's usual ($${w.costPerResult.toFixed(2)} vs $${w.usual.toFixed(2)}).
-Headline: ${w.headline ?? "(none)"}
-Primary text: ${w.text ?? "(none)"}
-</winning_ad>
+${winningAdBlock(w)}
 
 Someone on the team wants a request for this client built on this winning ad. Work out why the ad works (the angle, the hook, the format, the structure, the proof) and translate that into a request that fits this client's brand, offer, audience and allotment. Don't copy it word for word and never name the other business. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, its one concept and the hooks its versions test. suggest: true. kind: "kpi". signal: "Built on a winning ad". evidence: 2 to 4 lines on what makes the ad work and why it fits this client. why: two or three sentences. reply: "".${seed ? "" : onlyFormat(format)}${seedBlock(seed)}`,
   });
@@ -849,13 +879,13 @@ Someone on the team wants a request for this client built on this winning ad. Wo
     .insert({
       client_id: clientId,
       kind: "winner",
-      signal: `Built on a winning ad (${w.ratio}x its account's usual)`,
+      signal: w.platform === "tiktok" ? `Built on a winning TikTok ad (${w.ratio}x its target)` : `Built on a winning ad (${w.ratio}x its account's usual)`,
       evidence: out.evidence.slice(0, 5),
       why: out.why,
       draft,
       original: draft,
       created_by: by,
-      source: { adId: w.adId, thumbnail: w.thumbnail, headline: w.headline, client: same },
+      source: { adId: w.adId, thumbnail: w.thumbnail, headline: w.headline, client: same, ...(w.platform === "tiktok" ? { platform: "tiktok" } : {}) },
     })
     .select("id")
     .single();
@@ -957,8 +987,9 @@ export async function suggestOnboarding(admin: SupabaseClient, clientId: string)
     admin.from("client_intakes").select("summary, answers").eq("client_id", clientId).not("summary", "is", null).order("received_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
   if (!c) throw new Error("Client not found");
-  const { industryWinners, winnersBlock } = await import("@/lib/industry");
-  const winners = c.industry && c.industry !== "other" ? await industryWinners(admin, c.industry, clientId, 10) : [];
+  const { industryWinners, tiktokPeerWinners, winnersBlock } = await import("@/lib/industry");
+  // Meta's winners from similar clients, plus our own TikTok winners from the same peers (labelled TikTok)
+  const winners = c.industry && c.industry !== "other" ? [...(await industryWinners(admin, c.industry, clientId, 10)), ...(await tiktokPeerWinners(admin, clientId, 4).catch(() => []))] : [];
   // What the client told us reviewing their presentation (each part, their answers, the conversation): it outranks guesses
   const { data: plan } = await admin.from("client_presentations").select("deck, reactions, chat, status").eq("client_id", clientId).maybeSingle();
   const { reviewBlock } = await import("@/lib/plan-chat");
