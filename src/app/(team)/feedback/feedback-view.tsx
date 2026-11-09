@@ -198,6 +198,43 @@ function ReviewCard({ g, onDone }: { g: Group; onDone: (patch: Partial<Pick<Grou
         {g.scopeReason && <p className="text-[12.5px] text-faint">Why it needs you: {g.scopeReason}</p>}
         <p className="text-[12.5px] text-faint">Asked by {people.map(([name, role]) => (role ? `${name} (${role})` : name)).join(", ")}</p>
       </div>
+      {/* What each person actually wrote, in their words (newest first), with their screenshot and the page */}
+      <div className="grid gap-2">
+        <p className="text-[11px] uppercase tracking-[0.14em] text-faint">In their words</p>
+        <ul className="grid gap-2">
+          {[...g.items]
+            .sort((x, y) => Date.parse(y.createdAt) - Date.parse(x.createdAt))
+            .slice(0, 5)
+            .map((r) => (
+              <li key={r.id} className="flex min-w-0 flex-col gap-2.5 rounded-[12px] border border-line bg-bg/60 p-3 md:flex-row">
+                <div className="grid min-w-0 flex-1 gap-1">
+                  <p className="text-[12px] text-faint">
+                    {r.author}
+                    {r.role ? ` (${r.role})` : ""} · {ago(r.createdAt)}
+                    {r.client ? ` · ${r.client}` : ""}
+                  </p>
+                  <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-fg [overflow-wrap:anywhere]">&ldquo;{r.message}&rdquo;</p>
+                  {r.pageUrl && (
+                    <a href={r.pageUrl} target="_blank" rel="noreferrer" className="w-fit truncate text-[12px] text-muted underline-offset-2 hover:text-fg hover:underline">
+                      On {r.route ?? r.pageUrl} ↗
+                    </a>
+                  )}
+                </div>
+                {r.screenshot && (
+                  <a href={r.screenshot} target="_blank" rel="noreferrer" className="block shrink-0 overflow-hidden rounded-[10px] border border-line md:w-36">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- a signed, private screenshot */}
+                    <img src={r.screenshot} alt="Their screenshot" className="max-h-40 w-full object-cover object-top" />
+                  </a>
+                )}
+              </li>
+            ))}
+        </ul>
+        {g.items.length > 5 && (
+          <button type="button" onClick={() => pushParams({ g: g.id })} className="min-h-11 w-fit text-[12.5px] text-muted underline-offset-2 hover:text-fg hover:underline md:min-h-0">
+            All {g.items.length} reports
+          </button>
+        )}
+      </div>
       {g.plan && (
         <div className="rounded-[12px] bg-surface-2/70 p-3.5">
           <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Proposed plan</p>
