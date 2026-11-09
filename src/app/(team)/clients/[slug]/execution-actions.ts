@@ -20,7 +20,7 @@ async function access(clientId: string) {
   const { data: mine } = await db.from("clients").select("id, slug").eq("id", clientId).maybeSingle();
   if (!mine) return { error: "You don't work on this client." } as const;
   const admin = createAdminClient();
-  const { data: seat } = await admin.from("client_assignments").select("role").eq("client_id", clientId).eq("profile_id", me.id).in("role", ["meta_buyer", "google_buyer"]).limit(1).maybeSingle();
+  const { data: seat } = await admin.from("client_assignments").select("role").eq("client_id", clientId).eq("profile_id", me.id).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]).limit(1).maybeSingle();
   return { me, admin, slug: mine.slug as string, buyer: Boolean(seat), lead: isExecOrLead(me) } as const;
 }
 const decides = (a: { buyer: boolean; lead: boolean }) => a.buyer || a.lead;

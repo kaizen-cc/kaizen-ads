@@ -68,6 +68,7 @@ function due(step: string | null) {
   const businessHours = !["Sat", "Sun"].includes(weekday) && hour >= 8 && hour < 18;
   if (step === "slack" || step === "drive" || step === "gmail") return businessHours || (hour % 3 === 0 && minute < 30);
   if (step === "meta") return hour % 2 === 0;
+  if (step === "tiktok") return hour % 2 === 0; // like Meta's ads; does nothing until TikTok's app keys are in Vercel
   if (step === "kpi") return businessHours || minute >= 30; // called at :15 and :45 (vercel.json)
   if (step === "google_ideas") return true; // once a day (vercel.json): Google's Hall of Fame and live winners
   if (step === "google_market") return true; // Mondays (vercel.json): Google in the market, by industry
@@ -152,6 +153,7 @@ export async function GET(request: Request) {
     // Sprint packages past their end date switch off (cheap, so every run checks)
     await admin.rpc("expire_sprint_packages");
     if (step === "kpi") return Response.json(await refreshAllKpis(admin));
+    if (step === "tiktok") return Response.json(await (await import("@/lib/tiktok/store")).syncAllTikTok(admin));
     if (step === "meta_tokens") return Response.json(await (await import("@/lib/meta-tokens")).checkAllBusinessTokens(admin));
     if (step === "google_ideas") {
       const { googleAdsConfigured } = await import("@/lib/context/google-ads");

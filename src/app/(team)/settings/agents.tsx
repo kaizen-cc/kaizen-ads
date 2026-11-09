@@ -33,6 +33,7 @@ import { LearnedView, type ChangeRow } from "./agent-learned";
 import { proposalOf, changeTarget } from "@/lib/agent-change";
 import type { EvalRow } from "@/lib/agent-evals";
 import type { LearningView } from "@/lib/learnings";
+import { AgentOnline } from "./agent-online";
 
 type Result = { ok: true } | { ok: false; error: string };
 export type AgentKey = import("@/lib/ai").AgentKey;
@@ -1336,6 +1337,8 @@ function AgentDetailBody({ a, items, chat, learned = null }: { a: Agent; items: 
 
 export type Role = {
   key: string;
+  /** Shipped as a shell (the TikTok Ads Buyer): trainable, never called until an exec brings it online */
+  offline?: boolean;
   label: string;
   description: string;
   icon: string;
@@ -1550,7 +1553,10 @@ export function RolesOverview({ roles, agents, items, isExec = true }: { roles: 
                   <div className="flex items-start gap-3.5">
                     <AgentIcon icon={r.icon} size={46} />
                     <div className="min-w-0 flex-1">
-                      <h3 className="truncate font-heading text-[19px] leading-tight">{r.label}</h3>
+                      <h3 className="flex min-w-0 items-center gap-2 font-heading text-[19px] leading-tight">
+                        <span className="truncate">{r.label}</span>
+                        {r.offline && <span className="shrink-0 rounded-full border border-dashed border-warn/60 bg-warn-soft px-2 py-0.5 font-sans text-[10.5px] font-medium text-warn">Offline</span>}
+                      </h3>
                       <p className="mt-0.5 text-[11px] text-faint">
                         {skills.length} skills · {itemCount} playbook items
                       </p>
@@ -1688,6 +1694,11 @@ export function RoleDetail({ role, skills, items, chat, isExec = true }: { role:
               <p className="text-[11px] uppercase tracking-[0.16em] text-faint">Agent</p>
               <h2 className="font-heading text-[26px] leading-tight [overflow-wrap:anywhere] md:text-[30px]">{role.label}</h2>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{role.description}</p>
+              {(role.offline || role.key === "tiktok_buyer") && (
+                <div className="mt-3">
+                  <AgentOnline roleKey={role.key} offline={Boolean(role.offline)} isExec={isExec} />
+                </div>
+              )}
             </div>
             <dl className="grid w-full grid-cols-2 gap-x-8 gap-y-3 border-t border-line pt-5 sm:grid-cols-5">
               {[

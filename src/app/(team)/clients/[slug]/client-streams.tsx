@@ -127,7 +127,7 @@ export async function ExecutionStream({ client, me }: { client: Base & { slack_c
     import("@/lib/execution-plan"),
     import("@/lib/kickoff"),
     import("@/lib/presentation-types"),
-    supabase.from("client_assignments").select("role").eq("client_id", client.id).eq("profile_id", me.id).in("role", ["meta_buyer", "google_buyer"]).limit(1).maybeSingle(),
+    supabase.from("client_assignments").select("role").eq("client_id", client.id).eq("profile_id", me.id).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]).limit(1).maybeSingle(),
     supabase.from("clients").select("created_at, reonboarded_at").eq("id", client.id).single(),
   ]);
   const [plan, tasks, kickoff, messages, gate] = await T("execution", Promise.all([loadPlan(supabase, client.id), loadTasks(supabase, client.id), loadKickoff(supabase, client.id), loadSlackMessages(supabase, client.id), planGate(admin, client.id)]));

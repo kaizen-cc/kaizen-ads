@@ -7,17 +7,19 @@ import { pushParams, useParam } from "@/lib/url-state";
 // Settings › Sync health: health at a glance (the hero), then one section at a time behind a segmented control (in the
 // address, so back returns to the section you were on). Meta access is checked once for the hero and its section.
 
-export type SyncView = "syncs" | "meta" | "google" | "writes";
+export type SyncView = "syncs" | "meta" | "google" | "tiktok" | "writes";
 export type SyncHero = { healthy: number; behind: number; failing: number; total: number; latest: string | null; metaSandbox: boolean; /** Clients with live changes in Google Ads switched on (there's no switch for everyone) */ googleLive: number };
 
 const VIEWS: { key: SyncView; label: string }[] = [
   { key: "syncs", label: "Syncs" },
   { key: "meta", label: "Meta access" },
   { key: "google", label: "Google" },
+  { key: "tiktok", label: "TikTok" },
   { key: "writes", label: "Writes settings" },
 ];
 
-export function SyncShell(props: { hero: SyncHero; syncs: ReactNode; meta: ReactNode; google: ReactNode; writes: ReactNode }) {
+/** tiktok: execs only (the TikTok connection); without it there's no TikTok section */
+export function SyncShell(props: { hero: SyncHero; syncs: ReactNode; meta: ReactNode; google: ReactNode; tiktok?: ReactNode; writes: ReactNode }) {
   return (
     <MetaAccessProvider>
       <Shell {...props} />
@@ -25,9 +27,10 @@ export function SyncShell(props: { hero: SyncHero; syncs: ReactNode; meta: React
   );
 }
 
-function Shell({ hero, syncs, meta, google, writes }: { hero: SyncHero; syncs: ReactNode; meta: ReactNode; google: ReactNode; writes: ReactNode }) {
+function Shell({ hero, syncs, meta, google, tiktok, writes }: { hero: SyncHero; syncs: ReactNode; meta: ReactNode; google: ReactNode; tiktok?: ReactNode; writes: ReactNode }) {
   const raw = useParam("view");
-  const view: SyncView = VIEWS.some((v) => v.key === raw) ? (raw as SyncView) : "syncs";
+  const views = VIEWS.filter((v) => v.key !== "tiktok" || Boolean(tiktok));
+  const view: SyncView = views.some((v) => v.key === raw) ? (raw as SyncView) : "syncs";
   const go = (k: SyncView, extra: Record<string, string | null> = {}) => pushParams({ view: k === "syncs" ? null : k, ...extra });
   const access = useMetaAccess();
   const data = access?.data ?? null;
@@ -139,7 +142,7 @@ function Shell({ hero, syncs, meta, google, writes }: { hero: SyncHero; syncs: R
 
       <nav className="no-scrollbar -mx-4 flex overflow-x-auto px-4 md:mx-0 md:px-0" aria-label="Sync health">
         <div className="flex shrink-0 gap-1 rounded-full border border-line bg-surface p-1">
-          {VIEWS.map((v) => (
+          {views.map((v) => (
             <button
               key={v.key}
               type="button"
@@ -154,7 +157,7 @@ function Shell({ hero, syncs, meta, google, writes }: { hero: SyncHero; syncs: R
         </div>
       </nav>
 
-      <div className="min-w-0">{view === "syncs" ? syncs : view === "meta" ? meta : view === "google" ? google : writes}</div>
+      <div className="min-w-0">{view === "syncs" ? syncs : view === "meta" ? meta : view === "google" ? google : view === "tiktok" ? tiktok : writes}</div>
     </div>
   );
 }

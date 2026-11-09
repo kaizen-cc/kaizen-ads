@@ -4,6 +4,7 @@ import type { Agg, Pacing, Status, Trend } from "./calc";
 import { conversionFor, conversionLabel } from "./conversions";
 import { successOf, successLine, type BenchmarkTarget, type Success, type TargetFrom } from "./success";
 import type { GoogleHealth } from "@/lib/google-flags";
+import { KPI_PLATFORMS, asKpiPlatform, platformShort, type KpiPlatform } from "./platform";
 
 // One client's KPI targets as the tracker last computed them (every 30 minutes in business hours, hourly otherwise): for the client page and for every
 // agent that reads the client, so a brief for an off-target account knows it's off target.
@@ -11,7 +12,7 @@ import type { GoogleHealth } from "@/lib/google-flags";
 export type ClientKpi = {
   id: string;
   label: string | null;
-  platform: "meta" | "google";
+  platform: KpiPlatform;
   accountId: string | null;
   conversionLabel: string;
   conversion: string;
@@ -58,7 +59,7 @@ export async function loadClientKpis(db: SupabaseClient, clientId: string): Prom
       return {
         id: t.id,
         label: t.label,
-        platform: t.platform as "meta" | "google",
+        platform: asKpiPlatform(t.platform),
         accountId: (t.ad_account_id as string | null) ?? null,
         conversionLabel: conversionLabel(t.conversion, t.custom_action),
         conversion: t.conversion as string,
@@ -86,7 +87,7 @@ export async function loadClientKpis(db: SupabaseClient, clientId: string): Prom
         error: s?.error ?? null,
       };
     })
-    .sort((a, b) => (a.platform === b.platform ? (a.label ?? "").localeCompare(b.label ?? "") : a.platform === "meta" ? -1 : 1));
+    .sort((a, b) => (a.platform === b.platform ? (a.label ?? "").localeCompare(b.label ?? "") : KPI_PLATFORMS.indexOf(a.platform) - KPI_PLATFORMS.indexOf(b.platform)));
 }
 
 /** Cost per result (or ROAS) over a window, as the tracker computed it. */
@@ -102,7 +103,7 @@ export function describeKpis(kpis: ClientKpi[]) {
   const pctWorse = (x: number | null) => (x == null ? null : `${Math.round(Math.abs(x) * 100)}% ${x > 0 ? "worse" : "better"}`);
   return kpis
     .map((k) => {
-      const name = `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""} · ${k.conversionLabel}`;
+      const name = `${platformShort(k.platform)}${k.platform === "tiktok" ? " (read only)" : ""}${k.label ? ` · ${k.label}` : ""} · ${k.conversionLabel}`;
       if (k.status === "setup" || k.status === "idle") return `- ${name}: ${STATUS_WORDS[k.status]}.`;
       const parts = [
         `${STATUS_WORDS[k.status]}`,

@@ -81,7 +81,7 @@ Only what's in the sources. Never promise results, numbers or dates the sources 
     await admin.from("client_kickoffs").update({ status: "draft", text: out.text.trim(), drafted_at: now, updated_at: now }).eq("client_id", clientId);
     // The buyers and the leads: it's ready to review and send
     const [{ data: buyers }, { data: leads }] = await Promise.all([
-      admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]),
+      admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
       admin.from("profiles").select("id").eq("is_active", true).eq("is_lead", true),
     ]);
     const ids = [...new Set([...(buyers ?? []).map((b) => b.profile_id as string), ...(leads ?? []).map((l) => l.id as string)])];

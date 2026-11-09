@@ -9,7 +9,7 @@ import { metricsText, reportMetrics, type ReportMetrics } from "@/lib/reports/me
 // about the numbers; a question that shows a worry ("why did conversions drop?") goes to their buyer.
 
 export type DashboardPart = {
-  platform: "meta" | "google";
+  platform: "meta" | "google" | "tiktok";
   conversion: string;
   target: number | null;
   roasKpi: boolean;
@@ -21,7 +21,7 @@ export type DashboardPart = {
 };
 
 /** Every day we have, per account: any range's hero, tiles and chart are drawn from this in the browser, instantly */
-export type DashboardHistory = { start: string; firstData: string | null; parts: { platform: "meta" | "google"; conversion: string; target: number | null; roasKpi: boolean; daily: DashboardPart["daily"] }[] };
+export type DashboardHistory = { start: string; firstData: string | null; parts: { platform: "meta" | "google" | "tiktok"; conversion: string; target: number | null; roasKpi: boolean; daily: DashboardPart["daily"] }[] };
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
 const after = (d: string) => ymd(new Date(Date.parse(`${d}T12:00:00Z`) + 86_400_000));
@@ -50,7 +50,7 @@ export async function dashboardData(admin: SupabaseClient, clientId: string, ran
       } satisfies DashboardPart;
     }),
   );
-  return parts.filter((p): p is DashboardPart => Boolean(p)).sort((a, b) => (a.platform === "meta" ? -1 : 1) - (b.platform === "meta" ? -1 : 1));
+  return parts.filter((p): p is DashboardPart => Boolean(p)).sort((a, b) => ["meta", "tiktok", "google"].indexOf(a.platform) - ["meta", "tiktok", "google"].indexOf(b.platform));
 }
 
 /**
@@ -74,7 +74,7 @@ export async function dashboardHistory(admin: SupabaseClient, clientId: string):
   let first: string | null = null;
   const parts = await Promise.all(
     (targets ?? []).map(async (t) => {
-      const rows = (await accountRows(admin, t.ad_account_id as string, t.platform === "google" ? "google" : "meta").catch(() => [])) as { date: string; spend: number | string; campaign_name: string | null }[];
+      const rows = (await accountRows(admin, t.ad_account_id as string, t.platform === "google" ? "google" : t.platform === "tiktok" ? "tiktok" : "meta").catch(() => [])) as { date: string; spend: number | string; campaign_name: string | null }[];
       for (const r of rows) {
         if (!(Number(r.spend) > 0) || r.date < from) continue;
         if (!first || r.date < first) first = r.date;
@@ -88,7 +88,7 @@ export async function dashboardHistory(admin: SupabaseClient, clientId: string):
   return {
     start: ours ?? first ?? added,
     firstData: first,
-    parts: parts.filter((p): p is NonNullable<typeof p> => Boolean(p)).sort((a, b) => (a.platform === "meta" ? -1 : 1) - (b.platform === "meta" ? -1 : 1)),
+    parts: parts.filter((p): p is NonNullable<typeof p> => Boolean(p)).sort((a, b) => ["meta", "tiktok", "google"].indexOf(a.platform) - ["meta", "tiktok", "google"].indexOf(b.platform)),
   };
 }
 
@@ -132,7 +132,7 @@ flag: true when the question shows a concern, frustration, confusion about perfo
     .single();
   if (out.flag) {
     const [{ data: buyers }, { data: leads }] = await Promise.all([
-      admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]),
+      admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
       admin.from("profiles").select("id").eq("is_active", true).eq("is_lead", true),
     ]);
     const ids = [...new Set([...(buyers ?? []).map((x) => x.profile_id as string), ...(leads ?? []).map((x) => x.id as string)])];

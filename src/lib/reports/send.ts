@@ -49,7 +49,7 @@ export async function rememberDelivery(admin: SupabaseClient, clientId: string, 
   else await admin.from("client_report_prefs").insert({ client_id: clientId, notes: [], ...row });
 }
 
-export type SendPart = { platform: "meta" | "google"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null } | null };
+export type SendPart = { platform: "meta" | "google" | "tiktok"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null } | null };
 export type SendArgs = {
   /** client_type "whitelabel": no agency name, link or brand anywhere in what goes */
   client: { id: string; name: string; slack_channel_id: string | null; slug?: string | null; portal_live?: boolean | null; client_type?: string | null };
@@ -227,8 +227,8 @@ export async function resendReport(admin: SupabaseClient, sendId: string, by: { 
       ? await admin.from("reports").select("platform, metrics, sections").eq("bundle_id", s.bundle_id).in("status", ["submitted", "posted"])
       : { data: [] };
   const parts: SendPart[] = ((rows ?? []) as { platform: string; metrics: ReportMetrics | null; sections: SendPart["sections"] }[])
-    .map((r) => ({ platform: r.platform === "google" ? ("google" as const) : ("meta" as const), metrics: r.metrics, sections: r.sections }))
-    .sort((a, b) => (a.platform === "meta" ? 0 : 1) - (b.platform === "meta" ? 0 : 1));
+    .map((r) => ({ platform: r.platform === "google" ? ("google" as const) : r.platform === "tiktok" ? ("tiktok" as const) : ("meta" as const), metrics: r.metrics, sections: r.sections }))
+    .sort((a, b) => ["meta", "tiktok", "google"].indexOf(a.platform) - ["meta", "tiktok", "google"].indexOf(b.platform));
   const label = s.period_label ?? (s.period_start && s.period_end ? `${s.period_start} to ${s.period_end}` : "");
   const joint = parts.length > 1;
   return deliver(admin, {

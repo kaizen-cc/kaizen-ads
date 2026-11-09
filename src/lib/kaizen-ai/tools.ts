@@ -267,7 +267,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     {
       name: "account_metrics",
       description:
-        "A client's ad numbers for the last 1, 3, 7, 14 or 30 days (through yesterday), at the account, campaign, ad set or ad level (Meta) or campaign, ad group, keyword or search term level (Google), against the KPI target and the monthly budget pacing. Shows as a table in the chat. Use it for daily checks, CPA/ROAS drops, frequency, spend versus budget, keyword and search term reviews.",
+        "A client's ad numbers for the last 1, 3, 7, 14 or 30 days (through yesterday), at the account, campaign, ad set or ad level (Meta) or campaign, ad group, keyword or search term level (Google), against the KPI target and the monthly budget pacing. Shows as a table in the chat. Use it for daily checks, CPA/ROAS drops, frequency, spend versus budget, keyword and search term reviews. TikTok's numbers (read only) are in get_client_context.",
       input_schema: {
         type: "object",
         properties: {
@@ -694,7 +694,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     {
       name: "plan_ad_changes",
       description:
-        "Plans a change in a client's Meta or Google Ads account (pause or turn on campaigns, ad sets, ads or keywords, budgets, bids, names, links and UTMs, negatives, moving an ad) or a change of the client's media buyer (platform team). The buyer agent reads the live account and shows the exact objects on a plan card; nothing changes until someone allowed confirms on the card. Give the full instruction with every name, number and condition.",
+        "Plans a change in a client's Meta or Google Ads account (pause or turn on campaigns, ad sets, ads or keywords, budgets, bids, names, links and UTMs, negatives, moving an ad) or a change of the client's media buyer (platform team). The buyer agent reads the live account and shows the exact objects on a plan card; nothing changes until someone allowed confirms on the card. Give the full instruction with every name, number and condition. TikTok changes aren't connected yet: never plan one; say so and point them to TikTok Ads Manager.",
       input_schema: { type: "object", properties: { client: CLIENT, platform: { type: "string", enum: ["meta", "google", "team"] }, instruction: { type: "string" } }, required: ["platform", "instruction"], additionalProperties: false },
       status: (input, client) => `Planning the change for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {

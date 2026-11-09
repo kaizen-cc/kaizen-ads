@@ -131,7 +131,7 @@ export async function syncQuestions(admin: SupabaseClient, clientId: string): Pr
 /** Who on the team holds a stage for a client: the assigned buyers, the head of creative, the execs */
 async function holders(admin: SupabaseClient, clientId: string, stage: QStage) {
   if (stage === "media_buyer") {
-    const { data } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]);
+    const { data } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]);
     if (data?.length) return data.map((d) => d.profile_id as string);
     const { data: heads } = await admin.from("profiles").select("id").eq("is_active", true).in("role", ["head_of_meta", "head_of_google"]);
     return (heads ?? []).map((h) => h.id as string);

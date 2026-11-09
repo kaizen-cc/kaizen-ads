@@ -89,7 +89,7 @@ async function whatChanged(clientName: string, url: string, before: string, afte
 async function tell(admin: SupabaseClient, clientId: string, lines: string[], key: string) {
   const [{ data: c }, { data: buyers }, { data: heads }] = await Promise.all([
     admin.from("clients").select("name, slug").eq("id", clientId).single(),
-    admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]),
+    admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
     admin.from("profiles").select("id").eq("is_active", true).eq("role", "head_of_creative"),
   ]);
   if (!c) return;

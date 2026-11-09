@@ -90,7 +90,7 @@ export function SendHistory({ items: all, showClient = true, filterable = false,
                 {showClient && <span className="truncate font-heading text-[16px] leading-tight">{s.client}</span>}
                 <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">
                   {KIND[s.kind] ?? "Report"}
-                  {s.platform ? ` · ${s.platform === "google" ? "Google" : "Meta"}` : s.kind === "built" ? " · Joint" : ""}
+                  {s.platform ? ` · ${s.platform === "google" ? "Google" : s.platform === "tiktok" ? "TikTok" : "Meta"}` : s.kind === "built" ? " · Joint" : ""}
                 </span>
                 <span className="text-[13px] text-fg">{s.periodLabel}</span>
               </div>

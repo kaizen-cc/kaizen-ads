@@ -8,6 +8,8 @@ import { emailHtml, emailText } from "@/lib/email-layout";
 import { logClientEmail } from "@/lib/client-emails";
 import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { renderReportPdf } from "./pdf";
+import { jointMessage, tiktokJoins } from "./joint-core";
+import { tiktokConfigured } from "@/lib/tiktok/core";
 import { periodsFor, type ReportMetrics } from "./metrics";
 import { platformName } from "./format";
 import { draftReport, type Sections } from "./write";
@@ -39,8 +41,10 @@ async function liveTargets(admin: SupabaseClient, window: "d7" | "d30") {
 /** Queues this week's (or this month's) reports that don't exist yet (one client's, with onlyClient). Safe to run again. */
 export async function queueReports(admin: SupabaseClient, kind: "weekly" | "monthly", today = nyParts(new Date()).date, onlyClient?: string) {
   const p = periodsFor(kind, today).main;
-  const targets = (await liveTargets(admin, kind === "weekly" ? "d7" : "d30")).filter((t) => !onlyClient || t.client_id === onlyClient);
+  // TikTok's own reports only once TikTok is set up
+  const targets = (await liveTargets(admin, kind === "weekly" ? "d7" : "d30")).filter((t) => (!onlyClient || t.client_id === onlyClient) && (t.platform !== "tiktok" || tiktokConfigured()));
   let created = 0;
+  if (kind === "weekly") return created + (await queueWeekly(admin, targets, p));
   if (kind === "monthly") {
     for (const clientId of new Set(targets.map((t) => t.client_id))) {
       const { data: bundle } = await admin.from("report_bundles").upsert({ client_id: clientId, kind: "monthly", period_start: p.start, period_end: p.end }, { onConflict: "client_id,kind,period_start", ignoreDuplicates: false }).select("id").single();
@@ -54,6 +58,31 @@ export async function queueReports(admin: SupabaseClient, kind: "weekly" | "mont
       const { data } = await admin.from("reports").upsert({ client_id: t.client_id, target_id: t.id, platform: t.platform, kind, period_start: p.start, period_end: p.end, owner_id: t.owner_id }, { onConflict: "target_id,kind,period_start", ignoreDuplicates: true }).select("id");
       created += data?.length ?? 0;
     }
+  return created;
+}
+
+/**
+ * The weekly reports: one per account; a client's TikTok part joins its Meta report (one report the Meta buyer sends
+ * once) unless the client's report prefs send them separately.
+ */
+async function queueWeekly(admin: SupabaseClient, targets: TargetRow[], p: { start: string; end: string }) {
+  const clients = [...new Set(targets.filter((t) => t.platform === "tiktok").map((t) => t.client_id))];
+  const { data: prefs } = clients.length ? await admin.from("client_report_prefs").select("client_id, tiktok_separate").in("client_id", clients) : { data: [] };
+  const separate = new Set(((prefs ?? []) as { client_id: string; tiktok_separate?: boolean | null }[]).filter((x) => x.tiktok_separate).map((x) => x.client_id));
+  const joins = tiktokJoins(targets, separate);
+  let created = 0;
+  // The Meta (and Google) reports first, so a TikTok part has its Meta report to join
+  for (const t of [...targets].sort((a, b) => Number(a.platform === "tiktok") - Number(b.platform === "tiktok"))) {
+    const join = joins.get(t.id);
+    let joinedTo: string | null = null;
+    if (join) {
+      const { data: meta } = await admin.from("reports").select("id").eq("target_id", join.metaTargetId).eq("kind", "weekly").eq("period_start", p.start).maybeSingle();
+      joinedTo = (meta?.id as string | undefined) ?? null;
+    }
+    const row = { client_id: t.client_id, target_id: t.id, platform: t.platform, kind: "weekly", period_start: p.start, period_end: p.end, owner_id: joinedTo ? join!.owner : t.owner_id, ...(joinedTo ? { joined_to: joinedTo } : {}) };
+    const { data } = await admin.from("reports").upsert(row, { onConflict: "target_id,kind,period_start", ignoreDuplicates: true }).select("id");
+    created += data?.length ?? 0;
+  }
   return created;
 }
 
@@ -89,7 +118,7 @@ export async function draftQueued(admin: SupabaseClient, budgetMs = 600_000, opt
   return done;
 }
 
-type Loaded = { id: string; kind: "weekly" | "monthly" | "custom"; platform: "meta" | "google"; period_start: string; period_end: string; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extras: string | null; client_id: string; bundle_id: string | null; owner: string | null; client: { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean; client_type?: string | null } };
+type Loaded = { id: string; kind: "weekly" | "monthly" | "custom"; platform: "meta" | "google" | "tiktok"; period_start: string; period_end: string; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extras: string | null; client_id: string; bundle_id: string | null; owner: string | null; client: { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean; client_type?: string | null } };
 
 async function load(admin: SupabaseClient, id: string): Promise<Loaded> {
   const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, message, sections, metrics, extras, client_id, bundle_id, clients(name, slack_channel_id, slug, portal_live, client_type), profiles!reports_owner_id_fkey(full_name)").eq("id", id).single();
@@ -152,20 +181,30 @@ const dashboardLine = (r: { client: { slug?: string; portal_live?: boolean; clie
  */
 export async function sendWeekly(admin: SupabaseClient, id: string, by: { id: string; fullName: string; email: string | null }, delivery: Delivery, note?: string | null) {
   const r = await load(admin, id);
+  // A TikTok part joined to its Meta report goes out with it, never on its own
+  const { data: self } = await admin.from("reports").select("joined_to").eq("id", id).maybeSingle();
+  if ((self as { joined_to?: string | null } | null)?.joined_to) throw new Error("This TikTok part goes out with the client's Meta report: send that one (or set TikTok to go separately in the client's report settings).");
+  const { data: joinedRows } = await admin.from("reports").select("id").eq("joined_to", id).neq("status", "skipped");
+  const joined = await Promise.all(((joinedRows ?? []) as { id: string }[]).map((x) => load(admin, x.id)));
+  const unready = joined.filter((j) => !j.sections || !j.metrics);
+  if (unready.length) throw new Error("The TikTok part of this report is still being written. Send once it's ready (it goes out with this one).");
   if (delivery.channels.includes("slack") && !r.message?.trim()) throw new Error("There's no message to post yet.");
-  const stale = periodMismatch({ start: r.period_start, end: r.period_end }, r.metrics, r.sections);
-  if (stale.length) throw new Error(`Part of the report isn't for ${label(r.period_start, r.period_end)} yet (${stale.join(", ")}). Regenerate it with fresh data first.`);
-  const bytes = await reportPdf(admin, [r]);
-  const service = r.platform === "google" ? "Google" : "Meta";
+  for (const x of [r, ...joined]) {
+    const stale = periodMismatch({ start: x.period_start, end: x.period_end }, x.metrics, x.sections);
+    if (stale.length) throw new Error(`Part of the ${platformName(x.platform)} report isn't for ${label(x.period_start, x.period_end)} yet (${stale.join(", ")}). Regenerate it with fresh data first.`);
+  }
+  const bytes = await reportPdf(admin, [r, ...joined]);
+  const service = joined.length ? "Meta + TikTok" : r.platform === "google" ? "Google" : r.platform === "tiktok" ? "TikTok" : "Meta";
   const period = label(r.period_start, r.period_end);
+  const message = joined.length ? jointMessage(r.message, joined) : (r.message ?? "");
   const out = await deliver(admin, {
     client: { id: r.client_id, ...r.client },
     kind: r.kind,
-    platform: r.platform,
+    platform: joined.length ? null : r.platform,
     period: { start: r.period_start, end: r.period_end, label: period },
-    message: r.message ?? "",
-    pdf: { filename: whiteLabelOf(r) ? whiteLabelFileName(r.client.name, r.kind, period, service) : pdfFileName(r.client.name, service, period), title: `${r.client.name} · ${service} Ads · ${period}`, bytes },
-    parts: [{ platform: r.platform, metrics: r.metrics, sections: r.sections }],
+    message: whiteLabelOf(r) ? forClient(message, true) : message,
+    pdf: { filename: whiteLabelOf(r) ? whiteLabelFileName(r.client.name, r.kind, period, service) : pdfFileName(r.client.name, service, period), title: `${r.client.name} · ${service}${joined.length ? "" : " Ads"} · ${period}`, bytes },
+    parts: [r, ...joined].map((x) => ({ platform: x.platform, metrics: x.metrics, sections: x.sections })),
     by,
     delivery,
     slackAs: "user",
@@ -174,7 +213,7 @@ export async function sendWeekly(admin: SupabaseClient, id: string, by: { id: st
   });
   if (!out.ok) return out;
   const slack = out.slack && "channel" in out.slack ? out.slack : null;
-  await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id, slack_channel: slack?.channel ?? null, slack_ts: slack?.ts ?? null, updated_at: new Date().toISOString() }).eq("id", id);
+  await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id, slack_channel: slack?.channel ?? null, slack_ts: slack?.ts ?? null, updated_at: new Date().toISOString() }).in("id", [id, ...joined.map((j) => j.id)]);
   return out;
 }
 
@@ -217,7 +256,7 @@ export async function submitMonthly(admin: SupabaseClient, id: string, by: { id:
   if (waiting.length)
     return {
       sent: false,
-      waitingOn: waiting.map((p) => `${(p.profiles as unknown as { full_name: string } | null)?.full_name ?? "the other buyer"} (${p.platform === "google" ? "Google" : "Meta"})`),
+      waitingOn: waiting.map((p) => `${(p.profiles as unknown as { full_name: string } | null)?.full_name ?? "the other buyer"} (${p.platform === "google" ? "Google" : p.platform === "tiktok" ? "TikTok" : "Meta"})`),
     };
   await deliverBundle(admin, r.bundle_id, by);
   return { sent: true, waitingOn: [] as string[] };
@@ -233,7 +272,7 @@ export async function sendPartNow(admin: SupabaseClient, id: string, by: { id: s
   await admin.from("reports").update({ status: "submitted", submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", id).neq("status", "submitted");
   const { data: waiting } = await admin.from("reports").select("id, platform, owner_id").eq("bundle_id", r.bundle_id).not("status", "in", "(submitted,posted,skipped)");
   await deliverBundle(admin, r.bundle_id, by);
-  const name = (p: string) => (p === "google" ? "Google" : "Meta");
+  const name = (p: string) => (p === "google" ? "Google" : p === "tiktok" ? "TikTok" : "Meta");
   // Each waiting part's owner, with the client's secondary buyers on that platform copied in (only executives and
   // media buyers hear about reports)
   const seats = await loadBuyerSeats(admin, [r.client_id]);
@@ -371,7 +410,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
             highlight: month,
             hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`,
             lines: ["Here's the short version:"],
-            bullets: parts.map((x) => forClient(`${x.platform === "google" ? "Google Ads" : "Meta Ads"}: ${x.sections?.headline ?? ""}`, true)).filter((x) => !x.endsWith(":")),
+            bullets: parts.map((x) => forClient(`${platformName(x.platform)}: ${x.sections?.headline ?? ""}`, true)).filter((x) => !x.endsWith(":")),
             note: forClient(["The full recap is attached as a PDF.", shotsNote].filter(Boolean).join(" "), true),
             whiteLabel: true,
           }
@@ -382,7 +421,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
             highlight: month,
             hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`,
             lines: ["Here's the short version:"],
-            bullets: parts.map((x) => `${x.platform === "google" ? "Google Ads" : "Meta Ads"}: ${x.sections?.headline ?? ""}`).filter((x) => !x.endsWith(": ")),
+            bullets: parts.map((x) => `${platformName(x.platform)}: ${x.sections?.headline ?? ""}`).filter((x) => !x.endsWith(": ")),
             cta: { label: "Read the recap →", url: link! },
             note: [dash ? `For every number, any dates: ${dash}` : "You can download it as a PDF from the page.", shotsNote].filter(Boolean).join(" "),
           };

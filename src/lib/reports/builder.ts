@@ -12,6 +12,7 @@ import { renderReportPdf, type ReportPart, type ReportPdfInput } from "./pdf";
 import type { ReportMetrics } from "./metrics";
 import type { ReportLayout } from "./format";
 import { layoutOf } from "./share";
+import { asKpiPlatform } from "@/lib/kpi/platform";
 import { siteUrl } from "@/lib/site";
 import { draftReport, type Sections } from "./write";
 import { forClient, isWhiteLabel, WHITE_LABEL_RULE, whiteLabelFileName } from "./white-label";
@@ -50,7 +51,8 @@ export function resolveRange(key: string, today = nyParts(new Date()).date, cust
 }
 
 export const rangesLabel = (ranges: BuiltRange[]) => ranges.map((r) => r.label).join(" + ");
-const platformName = (p: string) => (p === "google" ? "Google Ads" : "Meta Ads");
+const platformName = (p: string) => (p === "google" ? "Google Ads" : p === "tiktok" ? "TikTok Ads" : "Meta Ads");
+const partOrder = (p: string) => (p === "meta" ? 0 : p === "tiktok" ? 1 : 2);
 
 /** Who writes and approves a service's part: the account's owner, else the client's buyer for it, else the builder. */
 async function ownerFor(admin: SupabaseClient, t: { client_id: string; platform: string; owner_id: string | null }, fallback: string) {
@@ -130,7 +132,7 @@ async function loadParts(admin: SupabaseClient, bundleId: string) {
     admin.from("reports").select("id, platform, status, owner_id, message, sections, metrics, extra_metrics, extras, layout, kpi_targets(report_layout), profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", bundleId).neq("status", "skipped"),
   ]);
   if (!b) throw new Error("Report not found");
-  const sorted = ((parts ?? []) as unknown as Part[]).sort((a, c) => (a.platform === "meta" ? 0 : 1) - (c.platform === "meta" ? 0 : 1));
+  const sorted = ((parts ?? []) as unknown as Part[]).sort((a, c) => partOrder(a.platform) - partOrder(c.platform));
   const client = b.clients as unknown as { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean; client_type?: string | null };
   return { b, parts: sorted, client, ranges: (b.ranges ?? []) as BuiltRange[], whiteLabel: isWhiteLabel(client.client_type) };
 }
@@ -146,7 +148,7 @@ export async function composeMessage(admin: SupabaseClient, bundleId: string) {
     label: "joint report message",
     bare: true,
     maxTokens: 6000,
-    system: `${whiteLabel ? `You combine the buyers' report messages for one client into a single Slack post that goes to the client's channel, with one PDF covering everything. ${WHITE_LABEL_RULE}` : "You combine the buyers' report messages for one client into a single Slack post that goes to the client's channel from Kaizen Marketing, with one PDF covering everything."} Open with one or two lines on the whole account across the services. Then one short part per service under its bold name (*Meta Ads*, *Google Ads*), keeping each buyer's key numbers, what we did and what's next in their own words, shortened. Every number exactly as given; nothing new. Slack formatting: *bold* for headers, "• " for bullets, no # headings, no emojis unless the buyers used them. End with one line saying the full report is attached. Never mention anything internal (AI, Kaizen Ads, team members other than the client's own people).`,
+    system: `${whiteLabel ? `You combine the buyers' report messages for one client into a single Slack post that goes to the client's channel, with one PDF covering everything. ${WHITE_LABEL_RULE}` : "You combine the buyers' report messages for one client into a single Slack post that goes to the client's channel from Kaizen Marketing, with one PDF covering everything."} Open with one or two lines on the whole account across the services. Then one short part per service under its bold name (*Meta Ads*, *TikTok Ads*, *Google Ads*), keeping each buyer's key numbers, what we did and what's next in their own words, shortened. Every number exactly as given; nothing new. Slack formatting: *bold* for headers, "• " for bullets, no # headings, no emojis unless the buyers used them. End with one line saying the full report is attached. Never mention anything internal (AI, Kaizen Ads, team members other than the client's own people).`,
     schema: { type: "object", properties: { message: { type: "string" } }, required: ["message"], additionalProperties: false },
     prompt: `Client: ${client.name}\nPeriod: ${rangesLabel(ranges)}\n\n${ready.map((p) => `<message service="${platformName(p.platform)}" from="${p.profiles?.full_name ?? "the buyer"}">\n${p.message}\n</message>`).join("\n\n")}`,
   });
@@ -213,7 +215,7 @@ export async function builtInput(admin: SupabaseClient, bundleId: string, edit =
     client: client.name,
     kind: "built",
     periodLabel: rangesLabel(ranges),
-    parts: parts.filter((p) => p.metrics && p.sections).map((p): ReportPart => ({ platform: p.platform === "google" ? "google" : "meta", buyer: p.profiles?.full_name ?? null, metrics: p.metrics!, sections: p.sections!, extras: p.extras, extra: p.extra_metrics, layout: layoutOf(p) })),
+    parts: parts.filter((p) => p.metrics && p.sections).map((p): ReportPart => ({ platform: asKpiPlatform(p.platform), buyer: p.profiles?.full_name ?? null, metrics: p.metrics!, sections: p.sections!, extras: p.extras, extra: p.extra_metrics, layout: layoutOf(p) })),
     edit,
     dashboard: client.portal_live && client.slug && !whiteLabel ? `${siteUrl()}/c/${client.slug}/dashboard` : null,
     whiteLabel,
@@ -249,7 +251,7 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
       period: { start: main?.start ?? null, end: main?.end ?? null, label },
       message: b.message ?? "",
       pdf,
-      parts: parts.map((p) => ({ platform: p.platform === "google" ? "google" : "meta", metrics: p.metrics, sections: p.sections })),
+      parts: parts.map((p) => ({ platform: asKpiPlatform(p.platform), metrics: p.metrics, sections: p.sections })),
       by: { id: by, fullName: (me?.full_name as string | null) ?? "Kaizen", email: (me?.email as string | null) ?? null },
       delivery,
       slackAs: joint ? "app" : "user",

@@ -17,7 +17,7 @@ function efficiency(spend: number, results: number, value: number, prevSpend: nu
 }
 
 export function CampaignsPanel({ p }: { p: PlatformSummary }) {
-  const name = p.platform === "google" ? "Google" : "Meta";
+  const name = p.platform === "google" ? "Google" : p.platform === "tiktok" ? "TikTok" : "Meta";
   const live = p.campaigns.filter((c) => c.spend > 0);
   const total = efficiency(p.spend, p.results, p.value, p.prevSpend, p.prevResults, p.roas);
   return (

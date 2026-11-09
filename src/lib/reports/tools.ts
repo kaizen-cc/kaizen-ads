@@ -153,7 +153,7 @@ export async function reportTools(admin: SupabaseClient, r: { client_id: string;
     },
   ];
 
-  if (r.platform !== "google" && account) {
+  if (r.platform === "meta" && account) {
     const { metaInsights, adDetail } = await import("@/lib/context/meta");
     tools.push(
       {

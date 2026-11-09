@@ -143,7 +143,7 @@ export async function loadCampaignEvents(id: string): Promise<Result> {
   const account = (r?.kpi_targets as unknown as { ad_account_id: string | null } | null)?.ad_account_id;
   if (!r?.metrics || !account) return { ok: false, error: "This report has no campaigns to read." };
   const { withCampaignEvents } = await import("@/lib/reports/metrics");
-  const metrics = await withCampaignEvents(admin, r.metrics as ReportMetrics, account, r.platform === "google" ? "google" : "meta");
+  const metrics = await withCampaignEvents(admin, r.metrics as ReportMetrics, account, r.platform === "google" ? "google" : r.platform === "tiktok" ? "tiktok" : "meta");
   await admin.from("reports").update({ metrics }).eq("id", id);
   done(id);
   return { ok: true };

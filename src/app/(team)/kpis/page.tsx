@@ -1,6 +1,6 @@
 import { googleAdsConfigured } from "@/lib/context/google-ads";
 import { teamPlatform } from "@/lib/roles";
-import { buyerRole, orderSeats, type SeatRow } from "@/lib/buyer-seats";
+import { orderSeats, platformOf, seatRoleFor, type SeatRow } from "@/lib/buyer-seats";
 import { clientPerms } from "@/lib/chat-permissions";
 import { requireStaff } from "@/lib/auth";
 import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
@@ -13,6 +13,8 @@ import { changeKey, loadChanges } from "@/lib/account-changes";
 import { loadSprints } from "@/lib/sprints";
 import { successOf, type BenchmarkTarget } from "@/lib/kpi/success";
 import type { GoogleHealth } from "@/lib/google-flags";
+import { asKpiPlatform, type KpiPlatform } from "@/lib/kpi/platform";
+import { tiktokConfigured } from "@/lib/tiktok/core";
 
 // Pulling one client's numbers from Meta on demand can take a minute; an audit runs a few minutes after the click
 export const maxDuration = 800;
@@ -53,13 +55,14 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
     supabase.from("clients").select("id, name").neq("status", "offboarded").order("name"),
     latestAudits(supabase),
     supabase.from("ad_account_activity").select("ad_account_id, last_change_at, last_change, checked_at, error"),
-    buyer ? supabase.from("client_assignments").select("client_id, role").eq("profile_id", me.id).in("role", ["meta_buyer", "google_buyer"]) : Promise.resolve({ data: [] as { client_id: string; role: string }[] }),
+    buyer ? supabase.from("client_assignments").select("client_id, role").eq("profile_id", me.id).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]) : Promise.resolve({ data: [] as { client_id: string; role: string }[] }),
     // Every buyer seat, primary first: the "needs a KPI" rows' buyer, and each card's secondary buyers
-    supabase.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("role", ["meta_buyer", "google_buyer"]),
+    supabase.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
   ]);
   type Seat = SeatRow & { client_id: string; profiles: { full_name: string } | null };
   const buyerSeats = orderSeats((allSeats ?? []) as unknown as Seat[]);
-  const seatsOn = (clientId: string, platform: string) => buyerSeats.filter((s) => s.client_id === clientId && s.role === buyerRole(platform));
+  // TikTok: its own seat when the client has one, else the Meta buyer's
+  const seatsOn = (clientId: string, platform: string) => buyerSeats.filter((s) => s.client_id === clientId && s.role === seatRoleFor(buyerSeats, platform, clientId));
   // A card's secondary buyers: everyone on the seat but its primary, and never the card's own owner
   const coBuyersOf = (clientId: string, platform: string, ownerId: string | null) =>
     seatsOn(clientId, platform)
@@ -74,14 +77,16 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
     loadChanges(supabase, (targets ?? []).filter((t) => t.ad_account_id).map((t) => changeKey(t.platform, String(t.ad_account_id))), 10),
   ]);
   const sprints = new Map(sprintList.map((x) => [x.targetId, x.sprint]));
-  const seated = new Set((seats ?? []).map((a) => `${a.client_id}:${a.role === "google_buyer" ? "google" : "meta"}`));
+  const seated = new Set((seats ?? []).map((a) => `${a.client_id}:${platformOf(a.role)}`));
+  // A seat on the card's platform: TikTok falls back to the Meta seat while the client has no TikTok buyer
+  const onSeat = (clientId: string, platform: string) => seated.has(`${clientId}:${platformOf(seatRoleFor(buyerSeats, platform, clientId))}`);
   // What this person may do from each card's chat (src/lib/chat-permissions.ts): a buyer's seats on that client, or
   // the card being theirs
   const ownedBy = new Set((targets ?? []).filter((t) => t.owner_id === me.id).map((t) => `${t.client_id}:${t.platform === "google" ? "google" : "meta"}`));
   const seatsOf = (clientId: string) => (buyer ? (["meta", "google"] as const).filter((p) => seated.has(`${clientId}:${p}`) || ownedBy.has(`${clientId}:${p}`)) : []);
   const rows: KpiRow[] = (targets ?? [])
     .filter((t) => !team || (t.platform === "google" ? "google" : "meta") === team)
-    .filter((t) => !buyer || t.owner_id === me.id || seated.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`))
+    .filter((t) => !buyer || t.owner_id === me.id || onSeat(t.client_id as string, t.platform as string))
     .map((t) => {
       const c = t.clients as unknown as { name: string; slug: string; status: string; kaizen_id: number | null } | null;
       const s = snapBy.get(t.id);
@@ -97,7 +102,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
         kaizenId: c?.kaizen_id ?? null,
         slug: c?.slug ?? "",
         clientStatus: c?.status ?? "active",
-        platform: t.platform as "meta" | "google",
+        platform: asKpiPlatform(t.platform),
         accountId: t.ad_account_id,
         label: t.label,
         conversion: t.conversion,
@@ -146,14 +151,18 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   // Clients that run Meta or Google ads with no KPI target on that platform: they still belong on the board (as
   // "needs a KPI target"), with their buyer, so nobody loses sight of them
   const { data: svc } = await supabase.from("clients").select("id, name, slug, services").in("status", ["active", "onboarding"]).is("archived_at", null);
-  const hasTarget = new Set((targets ?? []).map((t) => `${t.client_id}:${t.platform === "google" ? "google" : "meta"}`));
+  const hasTarget = new Set((targets ?? []).map((t) => `${t.client_id}:${asKpiPlatform(t.platform)}`));
+  // TikTok shows on the board once it's set up and connected (or already has cards); dormant until then
+  const tiktokOn = tiktokConfigured() && ((targets ?? []).some((t) => t.platform === "tiktok") || (adminConfigured() && (await (await import("@/lib/tiktok/store")).tiktokConnected(createAdminClient()).catch(() => false))));
+  const SERVICE: Record<KpiPlatform, string> = { meta: "facebook-ads", google: "google-ads", tiktok: "tiktok-ads" };
   const missing: MissingKpi[] = [];
   for (const c of svc ?? []) {
     const services = (c.services ?? []) as string[];
-    for (const platform of ["meta", "google"] as const) {
-      if (!services.includes(platform === "meta" ? "facebook-ads" : "google-ads")) continue;
+    for (const platform of ["meta", "google", ...(tiktokOn ? ["tiktok" as const] : [])] as KpiPlatform[]) {
+      if (!services.includes(SERVICE[platform])) continue;
       if (hasTarget.has(`${c.id}:${platform}`)) continue;
-      if (team && team !== platform) continue;
+      // TikTok is bought by the Meta team
+      if (team && team !== (platform === "google" ? "google" : "meta")) continue;
       // The seat's primary is the row's buyer; a buyer sees it when they're on the seat at all
       const onSeat = seatsOn(c.id as string, platform);
       const seat = onSeat[0];
@@ -177,7 +186,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
     rows.find((r) => r.id === want("target")) ??
     rows
       .filter((r) => r.slug === want("client") && (!want("platform") || r.platform === want("platform")))
-      .sort((a, b) => (a.platform === b.platform ? 0 : a.platform === "meta" ? -1 : 1))[0] ??
+      .sort((a, b) => ["meta", "google", "tiktok"].indexOf(a.platform) - ["meta", "google", "tiktok"].indexOf(b.platform))[0] ??
     null;
 
   return (
@@ -192,6 +201,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       lastSync={lastSync}
       unlinked={unlinked}
       googleConnected={googleAdsConfigured()}
+      tiktokOn={tiktokOn}
       only={team}
     />
   );

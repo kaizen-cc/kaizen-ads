@@ -30,13 +30,13 @@ type Row = {
 };
 
 const toPart = (r: Row): ReportPart | null =>
-  r.metrics && r.sections ? { platform: r.platform === "google" ? "google" : "meta", buyer: r.profiles?.full_name ?? null, metrics: r.metrics, sections: r.sections, extras: r.extras, extra: r.extra_metrics ?? null, layout: layoutOf(r) } : null;
+  r.metrics && r.sections ? { platform: r.platform === "google" ? "google" : r.platform === "tiktok" ? "tiktok" : "meta", buyer: r.profiles?.full_name ?? null, metrics: r.metrics, sections: r.sections, extras: r.extras, extra: r.extra_metrics ?? null, layout: layoutOf(r) } : null;
 
 /** The buyer's layout for this report, else (while it's still being worked on) the one this client's last report used */
 export const layoutOf = (r: { status: string; layout?: ReportLayout | null; kpi_targets?: { report_layout: ReportLayout | null } | null }) =>
   r.layout ?? (["submitted", "posted"].includes(r.status) ? null : (r.kpi_targets?.report_layout ?? null));
 
-const order = (p: ReportPart) => (p.platform === "meta" ? 0 : 1);
+const order = (p: ReportPart) => (p.platform === "meta" ? 0 : p.platform === "tiktok" ? 1 : 2);
 
 /** One report, ready for the PDF, with its file name ("OceanBox - Meta weekly - Oct 12-18.pdf"). */
 export async function loadReport(admin: SupabaseClient, id: string, edit = false) {

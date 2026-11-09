@@ -69,7 +69,7 @@ export type ReportEmailInput = {
   kind: string;
   periodLabel: string;
   /** One part per service (a joint report has two) */
-  parts: { platform: "meta" | "google"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null } | null }[];
+  parts: { platform: "meta" | "google" | "tiktok"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null } | null }[];
   /** The buyer sending it: the email is signed by them and replies go to them */
   from: { name: string; email: string | null };
   /** First name of the person it's addressed to, when it goes to one */

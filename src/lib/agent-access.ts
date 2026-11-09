@@ -9,6 +9,8 @@ import type { TeamRole } from "@/lib/roles";
 export const ROLE_SKILLS: Record<string, readonly string[]> = {
   media_buyer: ["auditor", "launcher", "fatigue", "reporter", "report_qa"],
   google_buyer: ["google_launcher", "google_reporter", "google_auditor"],
+  // Offline shells until an exec brings the TikTok Ads Buyer online; the Head of Meta writes its skills
+  tiktok_buyer: ["tiktok_auditor", "tiktok_launcher", "tiktok_reporter"],
   creative_director: ["creativereview", "creativecheck", "review"],
   copywriter: ["copy", "scripts"],
   strategist: ["suggest", "strategist", "gtm", "brandbible", "lab"],
@@ -18,7 +20,7 @@ export const ROLE_SKILLS: Record<string, readonly string[]> = {
 
 /** The role agents each head trains */
 export const HEAD_LINES: Partial<Record<TeamRole, readonly string[]>> = {
-  head_of_meta: ["media_buyer"],
+  head_of_meta: ["media_buyer", "tiktok_buyer"],
   head_of_google: ["google_buyer"],
   head_of_creative: ["creative_director"],
 };

@@ -219,7 +219,7 @@ export function toDays(
   // A Meta campaign whose goal isn't known yet: its strongest result over the whole period (MAIN_RESULTS), chosen once
   // per campaign so it's counted the same way every day
   const strongest = new Map<string, string>();
-  if (goals && platform !== "google") {
+  if (goals && platform === "meta") {
     const seen = new Map<string, Set<string>>();
     for (const r of rows) if (r.campaign_id && !goals.has(String(r.campaign_id))) for (const [k, v] of Object.entries(r.actions ?? {})) if (Number(v) > 0) (seen.get(String(r.campaign_id)) ?? seen.set(String(r.campaign_id), new Set()).get(String(r.campaign_id))!).add(k);
     for (const [id, types] of seen) {
@@ -237,7 +237,7 @@ export function toDays(
     // Each campaign's own result, summed as one action: the first of its goal's types this campaign reports
     // A campaign whose goal isn't known yet counts its strongest result; Google counts conversions
     const id = String(r.campaign_id);
-    const own = goals?.get(id) ?? (platform === "google" ? ["conversions"] : strongest.has(id) ? [strongest.get(id)!] : undefined);
+    const own = goals?.get(id) ?? (platform === "google" ? ["conversions"] : platform === "tiktok" ? ["tiktok_conversion"] : strongest.has(id) ? [strongest.get(id)!] : undefined);
     const hit = own?.find((t) => r.actions?.[t] != null);
     if (hit) {
       d.actions.campaign_goal = (d.actions.campaign_goal ?? 0) + Number(r.actions[hit]);

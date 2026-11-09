@@ -89,7 +89,7 @@ Skip notes that aren't problems (reminders, context). Never invent.`,
 async function alertTeam(admin: SupabaseClient, clientId: string, issues: string[]) {
   const [{ data: c }, { data: buyers }, { data: leads }] = await Promise.all([
     admin.from("clients").select("name, slug").eq("id", clientId).single(),
-    admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]),
+    admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
     admin.from("profiles").select("id").eq("is_active", true).eq("is_lead", true),
   ]);
   if (!c) return;

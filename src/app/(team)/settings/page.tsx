@@ -1,6 +1,8 @@
 import { GoogleWriteCard, MetaWriteCard } from "./meta-write-card";
 import { AudienceTermsCheck } from "@/components/audience-terms";
 import { BusinessManagers } from "@/components/meta-business-connections";
+import { TikTokConnection } from "@/components/tiktok-connection";
+import { tiktokConfigured } from "@/lib/tiktok/core";
 import { Connections } from "./connections";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
@@ -117,6 +119,7 @@ async function Agents({ me, open: askedAgent, role: askedRole, section: askedSec
     description: r.description,
     icon: r.icon,
     core: r.core,
+    offline: Boolean((r as { offline?: boolean }).offline),
     updatedAt: r.updated_at,
     updatedBy: (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
     proposals: roleProposals.get(r.key) ?? 0,
@@ -338,6 +341,7 @@ async function Data({ target, from, to }: { target: string | null; from: string;
 const GROUPS: [string, string, SyncJob, string, string, string][] = [
   ["kpi:", "KPI numbers", "kpi", "Campaign numbers for the KPI dashboard, per ad account, every 30 minutes in business hours and hourly otherwise", "ads", "Per ad account · every 30 min (business hours), hourly otherwise"],
   ["meta", "Meta ads", "meta", "Every ad's daily numbers, then fatigue, winners and the Hall of Fame, every 2 hours", "ads", "Daily, per ad · every 2 hours"],
+  ["tiktok:", "TikTok ads", "tiktok", "Each linked TikTok ad account's ads per day, their text and thumbnails, every 2 hours (read only; campaigns come with the KPI numbers)", "ads", "Daily, per ad · every 2 hours"],
   ["slack", "Slack channels", "slack", "Client and internal channels, every 30 minutes in business hours", "talk", "Every 30 min · business hours"],
   ["gmail:", "Inboxes", "gmail", "Mail with client contacts in every team inbox, every 30 minutes in business hours", "talk", "Every 30 min · business hours"],
   ["calls", "Call notes", "calls", "Gemini and Fireflies notes from every team: what clients said goes on their page, paid ads promises go to Home. Every 30 minutes in business hours", "talk", "Every 30 min · business hours"],
@@ -629,7 +633,8 @@ async function Sync({ motion }: { motion: string | null }) {
   };
 
   // Each sync, worked out once: its sources, what's failing or behind, and its state
-  const syncs = GROUPS.map(([prefix, name, job, about, category, cadence]) => {
+  // TikTok's tile only once Kaizen's TikTok app is set up (dormant until then)
+  const syncs = GROUPS.filter(([prefix]) => prefix !== "tiktok:" || tiktokConfigured()).map(([prefix, name, job, about, category, cadence]) => {
     const all = rows.filter((r) => (prefix.endsWith(":") ? r.source.startsWith(prefix) : r.source === prefix || r.source.startsWith(`${prefix}:`)));
     // Offboarded teammates' inboxes: not synced any more, their email kept as history
     const offboarded = all.filter((r) => (r.last_result as { offboarded?: boolean } | null)?.offboarded);
@@ -793,6 +798,7 @@ async function Sync({ motion }: { motion: string | null }) {
         )
       }
       google={<GoogleWriteCard clients={googleLive} />}
+      tiktok={me.isExec ? <TikTokConnection /> : undefined}
       writes={
         <MetaWriteCard
           sandbox={write.sandbox}

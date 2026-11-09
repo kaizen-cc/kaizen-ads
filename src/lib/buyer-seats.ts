@@ -5,13 +5,26 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // single owner (the KPI card, a report part, a sprint, a ticket's buyer); everyone on the seat sees the client, its KPI
 // cards and reports, can do what the seat allows from the chat, and hears the updates and alerts.
 
-export type AdPlatform = "meta" | "google";
-export type BuyerRole = "meta_buyer" | "google_buyer";
+export type AdPlatform = "meta" | "google" | "tiktok";
+export type BuyerRole = "meta_buyer" | "google_buyer" | "tiktok_buyer";
 
-export const BUYER_ROLES: readonly BuyerRole[] = ["meta_buyer", "google_buyer"];
-export const buyerRole = (platform: string): BuyerRole => (platform === "google" ? "google_buyer" : "meta_buyer");
-export const platformOf = (role: string): AdPlatform => (role === "google_buyer" ? "google" : "meta");
-export const isBuyerRole = (role: string | null | undefined): role is BuyerRole => role === "meta_buyer" || role === "google_buyer";
+export const BUYER_ROLES: readonly BuyerRole[] = ["meta_buyer", "google_buyer", "tiktok_buyer"];
+export const buyerRole = (platform: string): BuyerRole => (platform === "google" ? "google_buyer" : platform === "tiktok" ? "tiktok_buyer" : "meta_buyer");
+export const platformOf = (role: string): AdPlatform => (role === "google_buyer" ? "google" : role === "tiktok_buyer" ? "tiktok" : "meta");
+export const isBuyerRole = (role: string | null | undefined): role is BuyerRole => role === "meta_buyer" || role === "google_buyer" || role === "tiktok_buyer";
+
+/** The seats to read for a platform: TikTok's and the Meta seat it falls back to */
+export const seatRolesToRead = (platform: string): BuyerRole[] => (platform === "tiktok" ? ["tiktok_buyer", "meta_buyer"] : [buyerRole(platform)]);
+
+/**
+ * The seat that owns a platform's work on a client: TikTok's own buyer seat when someone holds it, else the Meta buyer
+ * (who buys TikTok until a TikTok buyer is set). Meta and Google are their own seats.
+ */
+export function seatRoleFor<T extends SeatRow>(rows: readonly T[], platform: string, clientId?: string | null): BuyerRole {
+  const role = buyerRole(platform);
+  if (role !== "tiktok_buyer") return role;
+  return rows.some((r) => r.role === "tiktok_buyer" && (clientId == null || r.client_id === clientId)) ? "tiktok_buyer" : "meta_buyer";
+}
 
 export type SeatRow = { client_id?: string | null; profile_id: string; role: string; is_primary?: boolean | null; created_at?: string | null };
 
@@ -79,8 +92,9 @@ export async function clientBuyers(db: SupabaseClient, clientId: string, platfor
     .from("client_assignments")
     .select("profile_id, role, is_primary, created_at")
     .eq("client_id", clientId)
-    .in("role", platform ? [buyerRole(platform)] : [...BUYER_ROLES]);
-  const rows = orderSeats((data ?? []) as SeatRow[]);
+    .in("role", platform ? seatRolesToRead(platform) : [...BUYER_ROLES]);
+  const all = (data ?? []) as SeatRow[];
+  const rows = orderSeats(platform ? all.filter((r) => r.role === seatRoleFor(all, platform)) : all);
   return unique(rows.map((r) => r.profile_id));
 }
 
@@ -120,16 +134,17 @@ export async function coBuyers(db: SupabaseClient, clientId: string, platform?: 
     .from("client_assignments")
     .select("profile_id, role, is_primary, created_at")
     .eq("client_id", clientId)
-    .in("role", platform ? [buyerRole(platform)] : [...BUYER_ROLES]);
+    .in("role", platform ? seatRolesToRead(platform) : [...BUYER_ROLES]);
   const rows = (data ?? []) as SeatRow[];
-  return unique((platform ? [buyerRole(platform)] : BUYER_ROLES).flatMap((role) => secondariesOf(rows, role)));
+  return unique((platform ? [seatRoleFor(rows, platform)] : BUYER_ROLES).flatMap((role) => secondariesOf(rows, role)));
 }
 
 /** withCoBuyers, from seat rows already loaded:the ids a notice goes to, with the seat's secondaries copied in, each person once */
 export function ccFrom(rows: readonly SeatRow[], platform: AdPlatform | string | null | undefined, ids: readonly (string | null | undefined)[]): string[] {
   const base = unique(ids);
   if (!base.length) return base;
-  const roles = platform ? [buyerRole(platform)] : BUYER_ROLES;
+  // rows are one client's seats: TikTok's secondaries are its own seat's, or the Meta seat's while it has no TikTok buyer
+  const roles = platform ? [seatRoleFor(rows, platform)] : BUYER_ROLES;
   return unique([...base, ...roles.flatMap((role) => secondariesOf(rows, role))]);
 }
 

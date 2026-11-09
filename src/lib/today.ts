@@ -406,7 +406,7 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     const d7 = (s.windows as { d7?: { spend?: number; value?: number | null; results?: number } } | null)?.d7;
     const priority = String((t.sheet as { priority?: string } | null)?.priority ?? "").toLowerCase();
     const budget = Number(t.monthly_budget ?? 0);
-    const roas = t.conversion === "roas";
+    const roas = t.conversion === "roas" || t.conversion === "tiktok_roas";
     const score = Math.round((s.status === "off" ? 62 : 45) + Math.min(18, dev * 20) + (PRIORITY_BOOST[priority] ?? 2) + (budget >= 5000 ? 6 : budget >= 2000 ? 3 : 0));
     const what = String(t.conversion ?? "result").replace(/_/g, " ").replace(/s$/, "");
     out.push({
@@ -417,7 +417,7 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       clientSlug: c.slug,
       clientId: t.client_id as string,
       stat: { value: `${Math.round(dev * 100)}%`, label: roas ? "below its ROAS target" : `over target per ${what}` },
-      title: `${c.name} · ${t.platform === "google" ? "Google" : "Meta"}${t.label ? ` ${t.label}` : ""} is ${s.status === "off" ? "off" : "close to"} target`,
+      title: `${c.name} · ${t.platform === "google" ? "Google" : t.platform === "tiktok" ? "TikTok" : "Meta"}${t.label ? ` ${t.label}` : ""} is ${s.status === "off" ? "off" : "close to"} target`,
       story:
         d7 && d7.results
           ? `Last 7 days: ${roas ? `${Number(d7.value ?? 0).toFixed(2)}x ROAS` : `${money(Number(d7.value ?? 0))} per ${what}`} against a ${roas ? `${t.target}x` : money(Number(t.target))} target, on ${money(Number(d7.spend ?? 0))} spent.`

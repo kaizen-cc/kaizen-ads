@@ -5,6 +5,7 @@ import { routeMessage } from "@/lib/ai-router";
 import { marketBlock } from "@/lib/market";
 import type { AuditResult } from "@/lib/audit";
 import { accountBrief, type ChatTurn, type DeskAction } from "@/lib/handoff";
+import { READ_ONLY_TEXT, tiktokConfigured } from "@/lib/tiktok/core";
 import { addDocs, finishDoc, readDoc, type DocRead } from "@/lib/client-docs";
 import { clientPerms, permsPrompt } from "@/lib/chat-permissions";
 import { permsOn, personById } from "@/lib/chat-permissions-server";
@@ -395,7 +396,7 @@ export async function askAboutClient(
     agent: "strategist",
     label: `client desk (${level}${docs.length ? `, ${docs.length} shared` : ""})`,
     clientId,
-    system: SYSTEM + `\n\n${permsPrompt(perms)}` + (scope ? `\nThis chat was opened from the client's ${scope.platform === "google" ? "Google Ads" : "Meta"} KPI card: a launch or change they don't name a platform for is on ${scope.platform === "google" ? "Google Ads" : "Meta"}.` : "") + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
+    system: SYSTEM + `\n\n${permsPrompt(perms)}` + (tiktokConfigured() ? `\nTikTok: you can read and discuss its numbers when they're given, but launches and changes in TikTok aren't connected. Asked to change or launch anything on TikTok, set no change or launch and answer: "${READ_ONLY_TEXT}"` : "") + (scope ? `\nThis chat was opened from the client's ${scope.platform === "google" ? "Google Ads" : "Meta"} KPI card: a launch or change they don't name a platform for is on ${scope.platform === "google" ? "Google Ads" : "Meta"}.` : "") + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
     schema: SCHEMA,
     maxTokens: level === "deep" || docs.length ? 16000 : 8000,
     override: { model, effort: route.effort },

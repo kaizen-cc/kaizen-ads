@@ -10,6 +10,8 @@ import { CONVERSION_FIELDS, CONVERSIONS_READ_FROM, conversionFor, foldConversion
 import { businessModel, googleHealth } from "@/lib/google-flags";
 import { LIVE } from "@/lib/live";
 import { orderSeats, type SeatRow } from "@/lib/buyer-seats";
+import { dailyTable } from "./platform";
+import { tiktokConfigured, tiktokMissing } from "@/lib/tiktok/core";
 
 // Pulls Meta and Google Ads numbers per campaign per day for every ad account with a KPI target, then recomputes
 // each target (the same math for both; Google's days live in google_campaign_daily).
@@ -86,7 +88,7 @@ export async function saveCampaignGoals(admin: SupabaseClient, account: string) 
  * campaign is optimized for (Meta). Google campaigns' conversions already follow their own goals.
  */
 export async function goalsFor(admin: SupabaseClient, account: string, platform = "meta", picked?: Record<string, string> | null): Promise<Map<string, string[]>> {
-  const { data } = platform === "google" ? { data: [] } : await admin.from("campaign_goals").select("campaign_id, actions").eq("platform", "meta").eq("ad_account_id", account.replace(/^act_/, ""));
+  const { data } = platform !== "meta" ? { data: [] } : await admin.from("campaign_goals").select("campaign_id, actions").eq("platform", "meta").eq("ad_account_id", account.replace(/^act_/, ""));
   const out = new Map((data ?? []).map((g) => [g.campaign_id as string, g.actions as string[]]));
   for (const [id, type] of Object.entries(picked ?? {})) if (type) out.set(id, [type]);
   return out;
@@ -110,14 +112,14 @@ export type CampaignRow = Parameters<typeof toDays>[0][number] & { campaign_id: 
 
 /** Every stored day of an account (paged: there can be thousands of campaign rows). Also used by Settings → Data. */
 export async function accountRows(admin: SupabaseClient, account: string, platform: string = "meta"): Promise<CampaignRow[]> {
-  const table = platform === "google" ? "google_campaign_daily" : "meta_campaign_daily";
+  const table = dailyTable(platform);
   const since = ymd(new Date(Date.now() - BACKFILL_DAYS * 86_400_000));
   const out: CampaignRow[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await admin
       .from(table)
       .select("date, campaign_id, campaign_name, spend, impressions, clicks, actions, action_values, link_clicks, unique_link_clicks, updated_at")
-      .eq("ad_account_id", platform === "google" ? digits(account) : account)
+      .eq("ad_account_id", platform === "google" ? digits(account) : account.replace(/^act_/, ""))
       .gte("date", since)
       .order("date")
       .order("campaign_id")
@@ -142,7 +144,8 @@ export async function computeAccount(admin: SupabaseClient, account: string, tar
   for (const t of targets) {
     const goals = t.conversion === "campaign_goal" ? await goalsFor(admin, account, platform, t.campaign_results) : undefined;
     const roas = Boolean(conversionFor(t.conversion).roas);
-    const benchmark = t.target == null ? benchmarkTarget(benches.get(t.client_id), platform, roas) : null;
+    // TikTok has no researched benchmarks yet: a card without a target waits for one
+    const benchmark = t.target == null && platform !== "tiktok" ? benchmarkTarget(benches.get(t.client_id), platform, roas) : null;
     // Google: brand share, search impression share, conversion rate and CTR over the last 30 days
     const health =
       platform === "google"
@@ -171,7 +174,7 @@ export async function computeAccount(admin: SupabaseClient, account: string, tar
       daily: s.daily,
       benchmark,
       google_health: health,
-      error: error ?? (rows.length ? null : platform === "google" ? "No data from Google Ads yet" : "No data from Meta yet"),
+      error: error ?? (rows.length ? null : platform === "google" ? "No data from Google Ads yet" : platform === "tiktok" ? "No data from TikTok yet" : "No data from Meta yet"),
     });
   }
 }
@@ -189,13 +192,18 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
   // Keyed by platform and account ("meta:123", "google:2698564936"); Google's IDs are stored with dashes
   const byAccount = new Map<string, Target[]>();
   for (const t of targets) {
-    if (!t.ad_account_id || !["meta", "google"].includes(t.platform)) {
-      await saveSnapshot(admin, t, { status: "setup", error: t.platform === "google" ? "Add the Google Ads customer ID" : "Add the ad account ID" });
+    if (!t.ad_account_id || !["meta", "google", "tiktok"].includes(t.platform)) {
+      await saveSnapshot(admin, t, { status: "setup", error: t.platform === "google" ? "Add the Google Ads customer ID" : t.platform === "tiktok" ? "Link the TikTok ad account in Settings > Sync health > TikTok" : "Add the ad account ID" });
       continue;
     }
     const account = t.platform === "google" ? digits(t.ad_account_id) : t.ad_account_id.replace(/^act_/, "");
     if (t.platform === "google" && !googleAdsConfigured()) {
       await saveSnapshot(admin, t, { status: "setup", error: `Google Ads isn't connected yet (missing ${googleAdsMissing().join("; ")})` });
+      continue;
+    }
+    // TikTok is dormant until Kaizen's TikTok app is approved and its keys are in Vercel
+    if (t.platform === "tiktok" && !tiktokConfigured()) {
+      await saveSnapshot(admin, t, { status: "setup", error: `TikTok isn't connected yet (missing ${tiktokMissing().join("; ")})` });
       continue;
     }
     const k = `${t.platform}:${account}`;
@@ -226,7 +234,13 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
       } catch (e) {
         error = e instanceof Error ? e.message : String(e);
       }
-    } else if (pull && metaConfigured()) {
+    } else if (pull && platform === "tiktok") {
+      try {
+        pulled = await (await import("@/lib/tiktok/store")).syncTikTokCampaigns(admin, account);
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+    } else if (pull && platform === "meta" && metaConfigured()) {
       try {
         pulled = await syncMetaCampaigns(admin, account);
       } catch (e) {
@@ -237,7 +251,7 @@ async function refreshTargets(admin: SupabaseClient, targets: Target[], pull: bo
     }
     await computeAccount(admin, account, list, error, platform);
     // Who changed what in the account lately (Meta's activity log), so the board shows whether someone's on it
-    if (pull && !error && (platform === "google" || metaConfigured())) await saveActivity(admin, account, platform);
+    if (pull && !error && (platform === "google" || (platform === "meta" && metaConfigured()))) await saveActivity(admin, account, platform);
     await admin.from("sync_state").upsert({ source: `kpi:${account}`, last_run_at: new Date().toISOString(), last_result: { ...(pulled ?? {}), error: error ?? null } });
     t?.tick(account, !error);
     return { account, platform, targets: list.length, ...(pulled ?? {}), ...(error ? { error } : {}) };
@@ -303,7 +317,7 @@ export async function refreshAccountKpis(admin: SupabaseClient, account: string)
  */
 export async function refreshTargetKpis(admin: SupabaseClient, targetId: string, freshMs = 20 * 60_000) {
   const { data: t } = await admin.from("kpi_targets").select("platform, ad_account_id").eq("id", targetId).maybeSingle();
-  if (!t?.ad_account_id || !["meta", "google"].includes(t.platform as string)) return { skipped: "No ad account" };
+  if (!t?.ad_account_id || !["meta", "google", "tiktok"].includes(t.platform as string)) return { skipped: "No ad account" };
   const account = t.platform === "google" ? digits(t.ad_account_id as string) : String(t.ad_account_id).replace(/^act_/, "");
   const { data: s } = await admin.from("sync_state").select("last_run_at, last_result").eq("source", `kpi:${account}`).maybeSingle();
   if (s?.last_run_at && Date.now() - Date.parse(s.last_run_at as string) < freshMs && !(s.last_result as { error?: string | null } | null)?.error) return { skipped: "Pulled moments ago" };
@@ -326,6 +340,8 @@ export async function refreshAllKpis(admin: SupabaseClient, budgetMs = 650_000) 
 
 async function refreshAll(admin: SupabaseClient, budgetMs: number, t: Tracker) {
   const adopted = await adoptNewAccounts(admin);
+  // Linked TikTok ad accounts get their KPI card (nothing while TikTok isn't set up)
+  if (tiktokConfigured()) await (await import("@/lib/tiktok/store")).adoptTikTokTargets(admin).catch(() => 0);
   const [{ data }, { data: archived }] = await Promise.all([
     admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true),
     admin.from("clients").select("id").is("archived_at", null).in("status", LIVE),

@@ -80,6 +80,8 @@ export const canSeeReports = (p: { role: string | null | undefined; isExec?: boo
 export const SLOTS = [
   { value: "meta_buyer", label: "Meta buyer", eligible: ["media_buyer", "head_of_meta"] as TeamRole[] },
   { value: "google_buyer", label: "Google buyer", eligible: ["google_buyer", "head_of_google"] as TeamRole[] },
+  // TikTok is bought by the Meta team; with nobody on this seat the client's Meta buyer owns TikTok
+  { value: "tiktok_buyer", label: "TikTok buyer", eligible: ["media_buyer", "head_of_meta"] as TeamRole[] },
   { value: "graphic_designer", label: "Designer", eligible: ["graphic_designer", "lead_graphic_designer", "head_of_creative"] as TeamRole[] },
   { value: "video_editor", label: "Video editor", eligible: ["video_editor", "lead_video_editor", "head_of_creative"] as TeamRole[] },
 ] as const;
@@ -99,7 +101,7 @@ export function seatNeeded(slot: string, allotment: { images: number; videos: nu
 
 /** Who can hold a seat: their role, or (for the buyer seats) someone who also buys media alongside their own role (an exec) */
 export function canHold(slot: { value: string; eligible: readonly TeamRole[] }, p: { role: string; also_buys?: boolean | null }) {
-  return slot.eligible.includes(p.role as TeamRole) || (Boolean(p.also_buys) && (slot.value === "meta_buyer" || slot.value === "google_buyer"));
+  return slot.eligible.includes(p.role as TeamRole) || (Boolean(p.also_buys) && (slot.value === "meta_buyer" || slot.value === "google_buyer" || slot.value === "tiktok_buyer"));
 }
 
 /** The ad platform someone's team works on: the Meta team (buyers and head) Meta, the Google team Google, anyone else null (both) */

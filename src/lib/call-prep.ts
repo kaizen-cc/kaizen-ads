@@ -70,7 +70,7 @@ prepare: 1 to 5 concrete things the team should have ready or do on the call (e.
   // The CS team (the admins clients invite), the client's buyers and the leads
   const [{ data: cs }, { data: buyers }, { data: leads }] = await Promise.all([
     access.adminEmails.length ? admin.from("profiles").select("id").in("email", access.adminEmails).eq("is_active", true) : Promise.resolve({ data: [] as { id: string }[] }),
-    admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]),
+    admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
     admin.from("profiles").select("id").eq("is_active", true).eq("is_lead", true),
   ]);
   const ids = [...new Set([...(cs ?? []).map((x) => x.id as string), ...(buyers ?? []).map((x) => x.profile_id as string), ...(leads ?? []).map((x) => x.id as string)])];

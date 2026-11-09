@@ -84,7 +84,7 @@ export function kpiRows(m: ReportMetrics): KpiRow[] {
   ];
 }
 
-export const platformName = (p: "meta" | "google") => (p === "google" ? "Google Ads" : "Meta Ads");
+export const platformName = (p: string) => (p === "google" ? "Google Ads" : p === "tiktok" ? "TikTok Ads" : "Meta Ads");
 
 /** "Oct 12-18", "Sep 28-Oct 4": a short period for file names. */
 export function shortRange(start: string, end: string) {
@@ -108,8 +108,12 @@ export function pdfDisposition(name: string, inline = false) {
 // ─── The report's layout: which metrics the buyer chose ─────────────────────
 
 /** Every number a report can show, in a tile, a row of the key metrics table, or a column of the campaign table */
-export const METRIC_KEYS = ["spend", "results", "cost_per_result", "revenue", "roas", "ctr", "clicks", "cpc", "cpm", "impressions"] as const;
+export const METRIC_KEYS = ["spend", "results", "cost_per_result", "revenue", "roas", "ctr", "clicks", "cpc", "cpm", "impressions", "views_6s", "hook_rate"] as const;
 export type MetricKey = (typeof METRIC_KEYS)[number];
+/** Only TikTok reports have video views and hook rates */
+export const TIKTOK_ONLY: readonly MetricKey[] = ["views_6s", "hook_rate"];
+/** The metrics a report on this platform can show */
+export const metricKeysFor = (platform: string | null | undefined): MetricKey[] => METRIC_KEYS.filter((k) => platform === "tiktok" || !TIKTOK_ONLY.includes(k));
 
 /**
  * What the buyer changed in a report's structure (kept on the report, and on its KPI as the client's layout for the
@@ -120,17 +124,17 @@ export type MetricKey = (typeof METRIC_KEYS)[number];
  *  campaigns run for different conversions */
 export type ReportLayout = { tiles?: MetricKey[]; table?: MetricKey[]; columns?: MetricKey[]; campaigns?: { hide?: string[]; add?: string[]; results?: Record<string, string> } };
 
-type Nums = { spend: number; results: number; costPerResult: number | null; revenue?: number; roas: number | null; ctr: number | null; clicks?: number; cpc?: number | null; cpm?: number | null; impressions?: number };
+type Nums = { spend: number; results: number; costPerResult: number | null; revenue?: number; roas: number | null; ctr: number | null; clicks?: number; cpc?: number | null; cpm?: number | null; impressions?: number; views6s?: number; hookRate?: number | null };
 
 export function metricLabel(m: Pick<ReportMetrics, "conversion">, k: MetricKey, short = false) {
   const one = singular(m.conversion);
-  return { spend: "Spend", results: m.conversion, cost_per_result: short ? `Per ${one}` : `Cost per ${one}`, revenue: "Revenue", roas: "ROAS", ctr: short ? "CTR" : "Click-through rate", clicks: "Link clicks", cpc: "CPC", cpm: "CPM", impressions: "Impressions" }[k];
+  return { spend: "Spend", results: m.conversion, cost_per_result: short ? `Per ${one}` : `Cost per ${one}`, revenue: "Revenue", roas: "ROAS", ctr: short ? "CTR" : "Click-through rate", clicks: "Link clicks", cpc: "CPC", cpm: "CPM", impressions: "Impressions", views_6s: short ? "6s views" : "6-second views", hook_rate: "Hook rate" }[k];
 }
 
-const BETTER: Record<MetricKey, "up" | "down" | "none"> = { spend: "none", results: "up", cost_per_result: "down", revenue: "up", roas: "up", ctr: "up", clicks: "up", cpc: "down", cpm: "down", impressions: "up" };
+const BETTER: Record<MetricKey, "up" | "down" | "none"> = { spend: "none", results: "up", cost_per_result: "down", revenue: "up", roas: "up", ctr: "up", clicks: "up", cpc: "down", cpm: "down", impressions: "up", views_6s: "up", hook_rate: "up" };
 
 export function metricNumber(p: Nums, k: MetricKey): number | null {
-  const v = { spend: p.spend, results: p.results, cost_per_result: p.costPerResult, revenue: p.revenue ?? null, roas: p.roas, ctr: p.ctr, clicks: p.clicks ?? null, cpc: p.cpc ?? null, cpm: p.cpm ?? null, impressions: p.impressions ?? null }[k];
+  const v = { spend: p.spend, results: p.results, cost_per_result: p.costPerResult, revenue: p.revenue ?? null, roas: p.roas, ctr: p.ctr, clicks: p.clicks ?? null, cpc: p.cpc ?? null, cpm: p.cpm ?? null, impressions: p.impressions ?? null, views_6s: p.views6s ?? null, hook_rate: p.hookRate ?? null }[k];
   return v == null || !Number.isFinite(v) ? null : v;
 }
 
@@ -142,13 +146,15 @@ export function metricText(p: Nums, k: MetricKey) {
 export function formatMetric(k: MetricKey, n: number | null) {
   if (["spend", "cost_per_result", "revenue", "cpc", "cpm"].includes(k)) return money(n);
   if (k === "roas") return multiple(n);
-  if (k === "ctr") return percent(n);
+  if (k === "ctr" || k === "hook_rate") return percent(n);
   return count(n);
 }
 
 /** The tiles a report shows now: the buyer's choice, else what it shows by default (weekly and built: headline; monthly: conversions) */
 export function tileKeys(m: ReportMetrics, layout: ReportLayout | null | undefined, monthly: boolean): MetricKey[] {
   if (layout?.tiles?.length) return layout.tiles;
+  // TikTok: spend, conversions and their cost, and how well the video hooks (6-second views over impressions)
+  if (m.platform === "tiktok") return monthly ? ["results", "cost_per_result", ...(hasRevenue(m) ? (["roas"] as const) : (["spend"] as const)), "hook_rate"] : ["spend", "results", "cost_per_result", "hook_rate"];
   return monthly ? ["results", "cost_per_result", ...(hasRevenue(m) ? (["revenue", "roas"] as const) : (["spend"] as const))] : ["spend", "results", "ctr", hasRevenue(m) ? "roas" : "cost_per_result"];
 }
 
@@ -163,9 +169,9 @@ export function tilesFor(m: ReportMetrics, keys: MetricKey[], main: Period = m.m
 export const TABLE_DEFAULT: MetricKey[] = ["spend", "ctr", "cpc", "cpm", "results", "cost_per_result", "roas"];
 
 /** The key metrics rows a report shows now: the buyer's choice, else the default (ROAS only when it's the KPI) */
-export function tableKeys(m: Pick<ReportMetrics, "roasKpi">, layout: ReportLayout | null | undefined): MetricKey[] {
+export function tableKeys(m: Pick<ReportMetrics, "roasKpi"> & { platform?: string }, layout: ReportLayout | null | undefined): MetricKey[] {
   if (layout?.table?.length) return layout.table;
-  return TABLE_DEFAULT.filter((k) => k !== "roas" || m.roasKpi);
+  return [...TABLE_DEFAULT, ...(m.platform === "tiktok" ? TIKTOK_ONLY : [])].filter((k) => k !== "roas" || m.roasKpi);
 }
 
 /** The key metrics rows for the chosen metrics, with the target where the KPI has one */

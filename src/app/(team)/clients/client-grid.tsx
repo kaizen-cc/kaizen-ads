@@ -224,6 +224,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
             <dl className="grid gap-2">
               {has("facebook-ads") && block("Meta Ads", SVC_DOT["facebook-ads"]!, seat("meta_buyer"), <Light label="synced" tone={c.live.meta} />)}
               {has("google-ads") && block("Google Ads", SVC_DOT["google-ads"]!, seat("google_buyer"))}
+              {has("tiktok-ads") && block("TikTok Ads", SVC_DOT["tiktok-ads"]!, seat("tiktok_buyer"))}
               {has("creative") &&
                 block(
                   `Creative${c.packageLabel ? ` · ${c.packageLabel}` : ""}`,

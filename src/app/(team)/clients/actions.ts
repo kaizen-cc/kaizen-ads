@@ -29,6 +29,12 @@ export async function setAssignment(clientId: string, slot: SlotRole, profileId:
     const id = await handOff(admin, clientId, res.from, res.to, me.id, "app");
     if (id) after(() => writeHandoff(admin, id));
   }
+  // The TikTok card follows its seat: the TikTok buyer, else the Meta buyer
+  if ((slot === "tiktok_buyer" || slot === "meta_buyer") && res.to !== res.from) {
+    const admin = createAdminClient();
+    const owner = await (await import("@/lib/tiktok/store")).tiktokOwner(admin, clientId).catch(() => undefined);
+    if (owner !== undefined) await admin.from("kpi_targets").update({ owner_id: owner }).eq("client_id", clientId).eq("platform", "tiktok");
+  }
   refresh();
   return { ok: true };
 }

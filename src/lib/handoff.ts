@@ -313,7 +313,7 @@ async function writeComeback(admin: SupabaseClient, id: string, clientId: string
 
 /** A client back live: a comeback brief for each of their buyers (Meta and Google) who uses Kaizen Ads, once a day at most. */
 export async function startComebacks(admin: SupabaseClient, clientId: string, byId: string | null) {
-  const { data: buyers } = await admin.from("client_assignments").select("profile_id, profiles(auth_user_id)").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]);
+  const { data: buyers } = await admin.from("client_assignments").select("profile_id, profiles(auth_user_id)").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]);
   const ids = [...new Set((buyers ?? []).filter((b) => (b.profiles as unknown as { auth_user_id: string | null } | null)?.auth_user_id).map((b) => b.profile_id as string))];
   const since = new Date(Date.now() - 20 * 3_600_000).toISOString();
   const made: string[] = [];

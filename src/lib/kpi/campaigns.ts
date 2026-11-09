@@ -5,6 +5,7 @@ import { MAIN_RESULTS, conversionFor } from "./conversions";
 import { actionLabel } from "./explore";
 import { accountRows, goalsFor, saveCampaignGoals } from "./sync";
 import { metaConfigured } from "@/lib/context/meta";
+import { asKpiPlatform, platformLabel } from "./platform";
 
 // Each campaign in a client's ad account against its KPI: the result that campaign is judged on (picked by hand on the
 // card, or what it's optimized for, or the card's own result), its cost, purchases and ROAS, and whether it counts
@@ -85,7 +86,7 @@ function choices(sums: Map<string, number>) {
 
 export async function campaignScorecard(admin: SupabaseClient, t: ScoreTarget, opts: { fetchGoals?: boolean } = {}): Promise<{ roas: boolean; campaigns: CampaignPerf[]; fetched?: boolean }> {
   if (!t.ad_account_id) return { roas: false, campaigns: [] };
-  const platform = t.platform === "google" ? "google" : "meta";
+  const platform = asKpiPlatform(t.platform);
   const account = String(t.ad_account_id);
   const readGoals = () =>
     Promise.all([goalsFor(admin, account, platform), admin.from("campaign_goals").select("campaign_id, label").eq("ad_account_id", account.replace(/^act_/, ""))]);
@@ -103,7 +104,7 @@ export async function campaignScorecard(admin: SupabaseClient, t: ScoreTarget, o
   const conv = conversionFor(t.conversion);
   const roas = Boolean(conv.roas);
   const cardType = pickType(toDays(rows), conv, t.custom_action);
-  const buy = conversionFor(platform === "google" ? "google_roas" : "roas");
+  const buy = conversionFor(platform === "google" ? "google_roas" : platform === "tiktok" ? "tiktok_roas" : "roas");
   const today = nyParts(new Date()).date;
   const from7 = shift(today, -6);
   const from30 = shift(today, -29);
@@ -124,7 +125,7 @@ export async function campaignScorecard(admin: SupabaseClient, t: ScoreTarget, o
     const total = (ds: Day[], type: string | null) => (type ? ds.reduce((n, d) => n + (d.actions[type] ?? 0), 0) : 0);
     // Its result: picked by hand, else the first of its goal's types it reports, else its strongest result, else the card's
     const goalType = goals.get(id)?.find((x) => days.some((d) => d.actions[x] != null)) ?? null;
-    const strongest = platform === "google" ? "conversions" : (MAIN_RESULTS.find((x) => days.some((d) => (d.actions[x] ?? 0) > 0)) ?? null);
+    const strongest = platform === "google" ? "conversions" : platform === "tiktok" ? "tiktok_conversion" : (MAIN_RESULTS.find((x) => days.some((d) => (d.actions[x] ?? 0) > 0)) ?? null);
     const [result, resultFrom] = picked[id] ? [picked[id], "picked" as const] : goalType ? [goalType, "goal" as const] : strongest ? [strongest, "auto" as const] : [cardType, "card" as const];
     const spend30 = days.reduce((n, d) => n + d.spend, 0);
     const spend7 = days.filter((d) => d.date >= from7).reduce((n, d) => n + d.spend, 0);
@@ -152,7 +153,7 @@ export async function campaignScorecard(admin: SupabaseClient, t: ScoreTarget, o
       deviation: value30 == null || target == null || !target ? null : Math.round((roas ? (target - value30) / target : (value30 - target) / target) * 1000) / 1000,
       lastSpent: days.filter((d) => d.spend > 0).map((d) => d.date).sort().pop() ?? null,
       excluded: left.has(id),
-      goal: platform === "google" ? "Conversions" : (labelOf.get(id) ?? null),
+      goal: platform === "google" ? "Conversions" : platform === "tiktok" ? "Its optimization event" : (labelOf.get(id) ?? null),
       purchases30: Math.round(total(days, bt) * 10) / 10,
       revenue30: Math.round((b30.value ?? 0) * b30.spend * 100) / 100,
       roas30: b30.value,
@@ -183,7 +184,7 @@ export async function clientCampaignsText(admin: SupabaseClient, clientId: strin
   for (const t of targets ?? []) {
     if (!t.ad_account_id) continue;
     const s = await campaignScorecard(admin, t as ScoreTarget).catch(() => null);
-    if (s?.campaigns.length) parts.push(`${t.platform === "google" ? "Google Ads" : "Meta"} campaigns, last 30 days:\n${campaignsText(s, t.target)}`);
+    if (s?.campaigns.length) parts.push(`${platformLabel(t.platform)} campaigns, last 30 days${t.platform === "tiktok" ? " (read only: TikTok changes aren't connected yet)" : ""}:\n${campaignsText(s, t.target)}`);
   }
   return parts.join("\n\n");
 }

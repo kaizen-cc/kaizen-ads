@@ -48,6 +48,20 @@ export const GOOGLE_METRICS = [
   { key: "spend", label: "Spend", unit: "$" },
 ] as const;
 
+/** The TikTok catalog: its own keys (tt_), counted from TikTok's daily rows */
+export const TIKTOK_METRICS = [
+  { key: "tt_conversions", label: "Conversions", unit: "" },
+  { key: "tt_cpa", label: "Cost per conversion", unit: "$" },
+  { key: "tt_purchases", label: "Purchases (complete payment)", unit: "" },
+  { key: "tt_value", label: "Purchase value", unit: "$" },
+  { key: "tt_roas", label: "ROAS", unit: "x" },
+  { key: "tt_ctr", label: "CTR", unit: "%" },
+  { key: "tt_cpm", label: "CPM", unit: "$" },
+  { key: "tt_six_sec_views", label: "6-second views", unit: "" },
+  { key: "tt_hook", label: "Hook rate (6-second views / impressions)", unit: "%" },
+  { key: "spend", label: "Spend", unit: "$" },
+] as const;
+
 const PURCHASE = ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"];
 const LEAD = ["onsite_conversion.lead_grouped", "leadgen_grouped", "offsite_conversion.fb_pixel_lead", "lead"];
 const firstOf = (days: Day[], types: string[]) => types.find((t) => days.some((d) => (d.actions[t] ?? 0) > 0)) ?? types[0];
@@ -56,6 +70,9 @@ const firstOf = (days: Day[], types: string[]) => types.find((t) => days.some((d
 export function actionLabel(type: string) {
   // Google: all conversions together, or one conversion action by its name
   if (type === "conversions") return "All conversions (Google)";
+  // TikTok's own numbers (src/lib/tiktok/core.ts)
+  const tiktok: Record<string, string> = { tiktok_conversion: "Conversions (TikTok)", tiktok_complete_payment: "Purchases (complete payment)", tiktok_video_play: "Video plays", tiktok_video_2s: "2-second views", tiktok_video_6s: "6-second views" };
+  if (tiktok[type]) return tiktok[type];
   if (type.startsWith("action:")) return type.slice(7);
   const known: Record<string, string> = {
     omni_purchase: "Purchases (all)",
@@ -161,6 +178,15 @@ function metricValue(key: string, a: Agg, days: Day[]): number | null {
     case "add_to_cart": return a.actions.omni_add_to_cart ?? a.actions.add_to_cart ?? 0;
     case "checkouts": return a.actions.omni_initiated_checkout ?? a.actions.initiate_checkout ?? 0;
     case "video_views": return a.actions.video_view ?? 0;
+    case "tt_conversions": return a.actions.tiktok_conversion ?? 0;
+    case "tt_cpa": return div(a.spend, a.actions.tiktok_conversion ?? 0);
+    case "tt_purchases": return a.actions.tiktok_complete_payment ?? 0;
+    case "tt_value": return a.values.tiktok_complete_payment ?? 0;
+    case "tt_roas": return div(a.values.tiktok_complete_payment ?? 0, a.spend);
+    case "tt_ctr": return a.impressions ? (a.clicks / a.impressions) * 100 : null;
+    case "tt_cpm": return a.impressions ? (a.spend / a.impressions) * 1000 : null;
+    case "tt_six_sec_views": return a.actions.tiktok_video_6s ?? 0;
+    case "tt_hook": return a.impressions ? ((a.actions.tiktok_video_6s ?? 0) / a.impressions) * 100 : null;
     case "spend": return a.spend;
   }
   return null;
@@ -169,7 +195,7 @@ function metricValue(key: string, a: Agg, days: Day[]): number | null {
 export function metricMeta(key: string) {
   if (key.startsWith("action:")) return { key, label: actionLabel(key.slice(7)), unit: "" };
   if (key.startsWith("cost:")) return { key, label: `Cost per ${actionLabel(key.slice(5)).toLowerCase()}`, unit: "$" };
-  return [...METRICS, ...GOOGLE_METRICS].find((m) => m.key === key) ?? { key, label: key, unit: "" };
+  return [...METRICS, ...GOOGLE_METRICS, ...TIKTOK_METRICS].find((m) => m.key === key) ?? { key, label: key, unit: "" };
 }
 
 const shift = (day: string, n: number) => {
@@ -213,7 +239,7 @@ export async function exploreTarget(
   const d30 = sum(last(30));
   const days30 = days.filter((d) => d.date > shift(yesterday, -30) && d.date <= yesterday);
 
-  const conversions = CONVERSIONS.filter((c) => c.platforms.includes((t.platform ?? "meta") as "meta" | "google") && c.key !== "custom").map((c) => {
+  const conversions = CONVERSIONS.filter((c) => c.platforms.includes((t.platform ?? "meta") as "meta" | "google" | "tiktok") && c.key !== "custom").map((c) => {
     const type = pickType(days30, c, null);
     return { key: c.key, label: c.label, type, results30: Math.round(days30.reduce((n, d) => n + resultsOf(d, c, type), 0) * 10) / 10 };
   });
@@ -232,5 +258,5 @@ export async function exploreTarget(
     return { key, label: meta.label, unit: meta.unit, d7: at(last(7)), d14: at(last(14)), d30: at(last(30)), prev30: at(between(shift(yesterday, -59), shift(yesterday, -30))) };
   });
 
-  return { catalog: (t.platform === "google" ? GOOGLE_METRICS : METRICS).map((x) => ({ key: x.key, label: x.label, unit: x.unit })), snapshot, resultType: pickType(days, conv, tryOut.custom), conversions, actions, metrics };
+  return { catalog: (t.platform === "google" ? GOOGLE_METRICS : t.platform === "tiktok" ? TIKTOK_METRICS : METRICS).map((x) => ({ key: x.key, label: x.label, unit: x.unit })), snapshot, resultType: pickType(days, conv, tryOut.custom), conversions, actions, metrics };
 }

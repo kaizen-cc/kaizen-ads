@@ -237,7 +237,7 @@ export async function approveCopy(setId: string, ads: Ad[], force?: { reason: st
     });
     const { data: req } = await admin.from("requests").select("stage, number, title").eq("id", owner.request_id).maybeSingle();
     await admin.from("request_events").insert({ request_id: owner.request_id, kind: "copy", from_stage: req?.stage ?? null, to_stage: req?.stage ?? null, actor_id: me.id, body: why, data: { action: "force_approved", flags: open.map((v) => ({ ad: v.ad, rule: v.rule, quote: v.quote })) } });
-    const { data: buyers } = await admin.from("client_assignments").select("profile_id").eq("client_id", owner.client_id).in("role", ["meta_buyer", "google_buyer"]);
+    const { data: buyers } = await admin.from("client_assignments").select("profile_id").eq("client_id", owner.client_id).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]);
     const ids = [...new Set((buyers ?? []).map((b) => b.profile_id as string))].filter((id) => id !== me.id);
     if (ids.length)
       await admin.from("notifications").upsert(

@@ -10,13 +10,13 @@ import { allotmentPools, type PoolCounts } from "@/lib/allotment";
 // and what's run outside Kaizen Ads), what all their advertising spent together, and a way into each service.
 
 export type ServiceCard =
-  | { id: "meta" | "google"; kind: "ads"; label: string; kpis: ClientKpi[]; summary: PlatformSummary | null; extra: string[] }
+  | { id: "meta" | "google" | "tiktok"; kind: "ads"; label: string; kpis: ClientKpi[]; summary: PlatformSummary | null; extra: string[] }
   | { id: "creative"; kind: "creative"; label: string; package: string | null; pools: PoolCounts; moving: number; waiting: number; live: number; asana?: number }
   | { id: string; kind: "other"; label: string; tier: string | null };
 
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 const RANK = { off: 0, close: 1, setup: 2, idle: 3, good: 4, excellent: 5 } as const;
-const COLOR: Record<string, string> = { meta: "#6c7ee1", google: "#5be3a5" };
+const COLOR: Record<string, string> = { meta: "#6c7ee1", google: "#5be3a5", tiktok: "#e0508c" };
 
 export function BusinessOverview({ cards, audits, sprints }: { cards: ServiceCard[]; audits: Record<string, AuditSummary>; sprints: Record<string, SprintSummary> }) {
   const ads = cards.filter((c): c is Extract<ServiceCard, { kind: "ads" }> => c.kind === "ads");

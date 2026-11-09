@@ -14,7 +14,7 @@ import { isPeriodKey, resolvePeriod, shiftDay } from "@/lib/reports/period";
 
 /** A one-tap report: what this person builds again and again, or their client with no report this week */
 export type QuickPick = { clientId: string; ranges: string[]; services: string[]; reason: string };
-export type BuilderClient = { id: string; name: string; slug: string; hasChannel: boolean; services: { platform: "meta" | "google"; owner: string | null; mine: boolean }[] };
+export type BuilderClient = { id: string; name: string; slug: string; hasChannel: boolean; services: { platform: "meta" | "google" | "tiktok"; owner: string | null; mine: boolean }[] };
 
 const RANGES = [
   { key: "lastWeek", label: "Last week", hint: "Monday to Sunday" },
@@ -28,6 +28,7 @@ const RANGES = [
 const PLATFORM = {
   meta: { name: "Meta Ads", color: "#4f7cff", glow: "rgba(79,124,255,0.35)" },
   google: { name: "Google Ads", color: "#34c38f", glow: "rgba(52,195,143,0.3)" },
+  tiktok: { name: "TikTok Ads", color: "#e0508c", glow: "rgba(224,80,140,0.3)" },
 } as const;
 
 const fmt = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
@@ -39,7 +40,14 @@ function datesOf(key: string, yesterday: string, custom: { start: string; end: s
 }
 const initials = (n: string) => n.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
-function Mark({ platform, size = 18 }: { platform: "meta" | "google"; size?: number }) {
+function Mark({ platform, size = 18 }: { platform: "meta" | "google" | "tiktok"; size?: number }) {
+  if (platform === "tiktok")
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M14 4v10.5a3.5 3.5 0 1 1-3.5-3.5" />
+        <path d="M14 4c.5 2.5 2.5 4 5 4" />
+      </svg>
+    );
   return platform === "meta" ? (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
       <path d="M3 15c0-4 2-8 4.5-8C11 7 13 17 16.5 17 19 17 21 14 21 11.5S19.5 7 17.5 7C14 7 12 15 8 15c-2 0-5 .5-5 0z" />
@@ -188,8 +196,8 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
                           <span className="flex flex-wrap items-center gap-1.5">
                             {p.services.map((sv) => (
                               <span key={sv} className="flex items-center gap-1 rounded-full bg-ink/[0.06] px-2 py-0.5 text-[11px] text-ink/70">
-                                <span className="h-1.5 w-1.5 rounded-full" style={{ background: PLATFORM[sv as "meta" | "google"]?.color }} />
-                                {PLATFORM[sv as "meta" | "google"]?.name.replace(" Ads", "")}
+                                <span className="h-1.5 w-1.5 rounded-full" style={{ background: PLATFORM[sv as "meta" | "google" | "tiktok"]?.color }} />
+                                {PLATFORM[sv as "meta" | "google" | "tiktok"]?.name.replace(" Ads", "")}
                               </span>
                             ))}
                           </span>
@@ -245,7 +253,7 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
                   <Link key={a.id} href={`/reports/${a.id}`} className="group flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-ink/10 bg-ink/[0.04] px-4 py-3 transition hover:border-ok/50 hover:bg-ink/[0.07]">
                     <span className="flex flex-wrap items-center gap-2">
                       <TagChip tag={a.tag} />
-                      <span className="text-xs text-ink/50">{PLATFORM[a.platform as "meta" | "google"]?.name}</span>
+                      <span className="text-xs text-ink/50">{PLATFORM[a.platform as "meta" | "google" | "tiktok"]?.name}</span>
                     </span>
                     <span className="inline-flex h-9 items-center gap-1.5 rounded-full bg-fg px-4 text-xs font-medium text-bg">
                       Review and send <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>

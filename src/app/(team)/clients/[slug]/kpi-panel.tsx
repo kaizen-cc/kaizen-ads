@@ -8,6 +8,7 @@ import { KpiExtras } from "../../kpis/kpi-board";
 import { AuditPanel, type AuditSummary } from "../../kpis/audit-panel";
 import { ChangeLog } from "@/components/change-log";
 import type { AccountChange } from "@/lib/account-changes";
+import { platformShort } from "@/lib/kpi/platform";
 
 // How the client's ad accounts are doing against their targets, from the KPI tracker (refreshed every 30 minutes in business hours, hourly otherwise).
 // The same picture every agent reads before it writes a brief, copy or a review for this client. Each KPI carries its
@@ -65,7 +66,7 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                         </span>
                       )}
                       <span className="text-xs text-muted">
-                        {k.platform === "google" ? "Google" : "Meta"}
+                        {platformShort(k.platform)}
                         {k.label ? ` · ${k.label}` : ""} · {k.conversionLabel}
                       </span>
                     </span>
@@ -130,8 +131,9 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                 )}
                 {/* The same metric boxes and campaigns as the KPI board's card: changed here or there, it's the same KPI */}
                 {k.accountId && k.status !== "setup" && <KpiExtras k={{ id: k.id, target: k.target, targetFrom: k.targetFrom, conversion: k.conversion, customAction: k.customAction, campaignMatch: k.campaignMatch, platform: k.platform, extraMetrics: k.extraMetrics }} />}
-                {audits && k.accountId && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} />}
-                {changes && k.accountId && <ChangeLog changes={changes[k.id] ?? []} platform={k.platform} limit={30} collapsed={5} />}
+                {/* TikTok is read only: no audits or change history from Kaizen Ads yet */}
+                {audits && k.accountId && k.platform !== "tiktok" && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} />}
+                {changes && k.accountId && k.platform !== "tiktok" && <ChangeLog changes={changes[k.id] ?? []} platform={k.platform} limit={30} collapsed={5} />}
               </article>
             );
           })}

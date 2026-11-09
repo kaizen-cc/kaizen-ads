@@ -8,6 +8,7 @@ import { exploreTarget, type Explore } from "@/lib/kpi/explore";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { notLive } from "@/lib/live-guard";
+import { asKpiPlatform, defaultConversion } from "@/lib/kpi/platform";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -60,7 +61,11 @@ export async function addKpiTarget(form: FormData): Promise<ActionResult> {
   const clientId = str(form, "client_id");
   if (!clientId) return { ok: false, error: "Pick a client." };
   const supabase = await createClient();
-  const { error } = await supabase.from("kpi_targets").insert({ client_id: clientId, platform: str(form, "platform") === "google" ? "google" : "meta", ...fields(form), updated_by: me.id });
+  const platform = asKpiPlatform(str(form, "platform"));
+  const f = fields(form);
+  // A conversion from another platform's list (the form's default) becomes this platform's own default
+  const conversion = CONVERSIONS.find((c) => c.key === f.conversion)?.platforms.includes(platform) ? f.conversion : defaultConversion(platform);
+  const { error } = await supabase.from("kpi_targets").insert({ client_id: clientId, platform, ...f, conversion, updated_by: me.id });
   if (error) return { ok: false, error: error.message };
   await recompute(clientId);
   return { ok: true };

@@ -456,7 +456,7 @@ export async function businessNotices(admin: SupabaseClient) {
   const rows: Record<string, unknown>[] = [];
   let sent = 0;
   for (const [clientId, c] of byClient) {
-    const { data: who } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]);
+    const { data: who } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]);
     const buyers = [...new Set((who ?? []).map((w) => w.profile_id as string))];
     if (!buyers.length) continue;
     const note = (title: string, body: string, key: string, priority: "normal" | "critical" = "normal") => {

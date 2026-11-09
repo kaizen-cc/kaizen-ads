@@ -15,7 +15,7 @@ import { campaignLines, columnKeys, conversionTiles, formatMetric, count, headli
 
 /** extra: a built report's other date ranges (the first range is metrics) */
 /** layout: the metrics the buyer chose (null: the defaults) */
-export type ReportPart = { platform: "meta" | "google"; buyer: string | null; metrics: ReportMetrics; sections: Sections; extras: string | null; extra?: ReportMetrics[] | null; layout?: ReportLayout | null };
+export type ReportPart = { platform: "meta" | "google" | "tiktok"; buyer: string | null; metrics: ReportMetrics; sections: Sections; extras: string | null; extra?: ReportMetrics[] | null; layout?: ReportLayout | null };
 /** built: a report from the report builder (a cover, the whole account when it covers more than one service, then each) */
 /** edit: the studio's preview, with an invisible link over every metric, row and column the buyer can change (never sent) */
 /** dashboard: the client's live dashboard in their portal, linked from every part (when their portal is open) */
@@ -489,7 +489,7 @@ function MonthlyPart({ input, part, images }: { input: ReportPdfInput; part: Rep
       <Stories stories={part.sections.stories} hot={hotFor(input, part, null)} b={b} />
       <Ranges part={part} />
       <KpiTable m={m} layout={part.layout} hot={hotFor(input, part, "row")} />
-      {part.platform === "meta" ? <TopAds ads={m.topAds.slice(0, 3)} images={images} conversion={m.conversion} b={b} /> : null}
+      {part.platform !== "google" ? <TopAds ads={m.topAds.slice(0, 3)} images={images} conversion={m.conversion} b={b} /> : null}
       <Campaigns m={m} limit={8} layout={part.layout} hot={hotFor(input, part, null)} />
       <Notes sections={part.sections} hot={hotFor(input, part, null)} b={b} />
       {part.extras?.trim() ? (
@@ -866,7 +866,7 @@ function MonthlyDeck({ input, images }: { input: ReportPdfInput; images: (string
           <DeckIntro input={input} part={p} />
           <DeckNumbers input={input} part={p} />
           {(p.sections.stories ?? []).map((st, k) => (st.points?.length ? <DeckStory key={k} input={input} part={p} story={st} i={k} /> : null))}
-          {p.platform === "meta" ? <DeckAds input={input} part={p} images={images[i] ?? []} /> : null}
+          {p.platform !== "google" ? <DeckAds input={input} part={p} images={images[i] ?? []} /> : null}
           {campaignLines(p.metrics, p.layout, 10).length ? (
             <Slide input={input} kicker={platformName(p.platform)}>
               <Text style={d.title}>Where the budget went</Text>

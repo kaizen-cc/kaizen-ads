@@ -2,6 +2,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { conversionFor } from "@/lib/kpi/conversions";
 import { pickType, resultsOf, toDays, type Day } from "@/lib/kpi/calc";
+import { dailyTable, type KpiPlatform } from "@/lib/kpi/platform";
+import { tiktokConfigured } from "@/lib/tiktok/core";
 
 // A client's campaigns on each platform over the last 30 days (against the 30 before), counted the way their KPI
 // counts results: for the whole-business view and each service's own tab.
@@ -22,7 +24,7 @@ export type CampaignRow = {
 };
 
 export type PlatformSummary = {
-  platform: "meta" | "google";
+  platform: KpiPlatform;
   accounts: string[];
   resultLabel: string;
   roas: boolean;
@@ -42,13 +44,14 @@ type Raw = { ad_account_id: string; campaign_id: string; campaign_name: string |
 export async function loadCampaigns(admin: SupabaseClient, clientId: string): Promise<PlatformSummary[]> {
   const { data: targets } = await admin.from("kpi_targets").select("platform, ad_account_id, conversion, custom_action").eq("client_id", clientId).eq("active", true).not("ad_account_id", "is", null);
   const out: PlatformSummary[] = [];
-  for (const platform of ["meta", "google"] as const) {
+  // TikTok only once it's set up (dormant until Kaizen's TikTok app keys are in Vercel)
+  for (const platform of ["meta", "google", ...(tiktokConfigured() ? ["tiktok" as const] : [])] as KpiPlatform[]) {
     const mine = (targets ?? []).filter((t) => t.platform === platform);
     if (!mine.length) continue;
     const accounts = [...new Set(mine.map((t) => String(t.ad_account_id)))];
     const conv = conversionFor(String(mine[0].conversion));
     const { data } = await admin
-      .from(platform === "google" ? "google_campaign_daily" : "meta_campaign_daily")
+      .from(dailyTable(platform))
       .select(`ad_account_id, campaign_id, campaign_name, ${platform === "google" ? "campaign_type, " : ""}date, spend, impressions, clicks, link_clicks, unique_link_clicks, actions, action_values`)
       .in("ad_account_id", accounts)
       .gte("date", day(60))

@@ -45,6 +45,9 @@ import { MomentsPanel, type MomentRow } from "./moments-panel";
 import { ClientSections } from "./client-sections";
 import { BusinessOverview, type ServiceCard } from "./business-overview";
 import { CampaignsPanel } from "./campaigns-panel";
+import { TikTokPanel } from "./tiktok-panel";
+import { TikTokReportToggle } from "./tiktok-report-toggle";
+import type { ClientTikTok } from "@/lib/tiktok/store";
 import { DocsPanel } from "./docs-panel";
 import { KnowledgePanel } from "@/components/knowledge-panel";
 import type { KnowledgeDoc } from "@/lib/knowledge";
@@ -193,6 +196,8 @@ export type ClientViewProps = {
   services?: { track: string[]; extra: string[]; removed?: string[]; tiers: Tier[]; chosen: Record<string, string> } | null; // what they buy, and the tiers
   launchRules?: LaunchRule[]; // where their new ads go, learned from their buyers' moves
   campaigns?: PlatformSummary[] | null; // each platform's campaigns, last 30 days
+  /** TikTok (read only): null while TikTok isn't set up, so nothing about it shows */
+  tiktok?: { data: ClientTikTok | null; separate?: boolean } | null;
   docs?: ClientDoc[] | null; // every file and link shared about them
   /** Knowledge files the agents read for this client only */
   knowledge?: KnowledgeDoc[];
@@ -211,7 +216,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -223,7 +228,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const openPromises = (calls ?? []).flatMap((c) => c.commitments).filter((x) => x.status === "open");
   const tired = (fatigue ?? []).filter((f) => f.severity === "tired").length;
   const alerts: Alert[] = [
-    ...(kpis ?? []).filter((k) => k.status === "off").map((k): Alert => ({ tone: "bad", text: `${k.platform === "google" ? "Google" : "Meta"} · ${k.label ?? k.conversionLabel} is off target${k.deviation != null ? ` (${Math.round(Math.abs(k.deviation) * 100)}% off)` : ""}`, href: `/kpis?target=${k.id}` })),
+    ...(kpis ?? []).filter((k) => k.status === "off").map((k): Alert => ({ tone: "bad", text: `${k.platform === "google" ? "Google" : k.platform === "tiktok" ? "TikTok" : "Meta"} · ${k.label ?? k.conversionLabel} is off target${k.deviation != null ? ` (${Math.round(Math.abs(k.deviation) * 100)}% off)` : ""}`, href: `/kpis?target=${k.id}` })),
     ...(openPromises.length ? [{ tone: "bad" as const, text: `${openPromises.length} promise${openPromises.length === 1 ? "" : "s"} from calls not started`, href: tab("knowledge") }] : []),
     ...(tired ? [{ tone: "warn" as const, text: `${tired} ad${tired === 1 ? "" : "s"} worn out and ready for a refresh`, href: `/clients/${client.slug}?service=meta&tab=ads` }] : []),
     ...(active && images + videos > 0 && imagesUsed + videosUsed === 0 ? [{ tone: "warn" as const, text: "Nothing made against this month's creative allotment yet", href: `/clients/${client.slug}?service=creative` }] : []),
@@ -249,12 +254,16 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const offList = new Set(services?.removed ?? []);
   const metaKpis = (kpis ?? []).filter((k) => k.platform === "meta");
   const googleKpis = (kpis ?? []).filter((k) => k.platform === "google");
+  const tiktokKpis = (kpis ?? []).filter((k) => k.platform === "tiktok");
+  const tiktokCampaigns = (campaigns ?? []).find((c) => c.platform === "tiktok") ?? null;
   const metaCampaigns = (campaigns ?? []).find((c) => c.platform === "meta") ?? null;
   const googleCampaigns = (campaigns ?? []).find((c) => c.platform === "google") ?? null;
   const has = {
     // Taken off on purpose stays off, even with an account or a package still set up
     meta: !offList.has("facebook-ads") && (bought.includes("facebook-ads") || Boolean(client.meta_ad_account_id) || metaKpis.length > 0),
     google: !offList.has("google-ads") && (bought.includes("google-ads") || googleKpis.length > 0 || Boolean(googleCampaigns)),
+    // Only once TikTok is set up; before that it stays a plain service on the overview
+    tiktok: Boolean(tiktok) && !offList.has("tiktok-ads") && (bought.includes("tiktok-ads") || tiktokKpis.length > 0 || Boolean(tiktok?.data)),
     creative: !offList.has("creative") && (bought.includes("creative") || client.creative_package || images + videos > 0 || Boolean(creative?.moving.length)),
   };
   const tierOf = (slug: string) => {
@@ -266,14 +275,15 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const cards: ServiceCard[] = [
     ...(has.meta ? [{ id: "meta" as const, kind: "ads" as const, label: "Meta Ads", kpis: metaKpis, summary: metaCampaigns, extra: [creative?.live.length ? `${creative.live.length} ads live` : "", tired ? `${tired} worn out, ready for a refresh` : ""].filter(Boolean) }] : []),
     ...(has.google ? [{ id: "google" as const, kind: "ads" as const, label: "Google Ads", kpis: googleKpis, summary: googleCampaigns, extra: googleLosing(googleCampaigns) }] : []),
+    ...(has.tiktok ? [{ id: "tiktok" as const, kind: "ads" as const, label: "TikTok Ads", kpis: tiktokKpis, summary: tiktokCampaigns, extra: [tiktok?.data?.now.hookRate != null ? `Hook rate ${tiktok.data.now.hookRate}% (6-second views)` : "", "Read only"].filter(Boolean) }] : []),
     ...(has.creative
       ? [{ id: "creative" as const, kind: "creative" as const, label: "Creative", package: active ? (packageLabel ?? "Creative package") : null, pools, moving: creative?.moving.filter((r) => !["client_review", "ready_for_launch"].includes(r.stage)).length ?? 0, waiting: creative?.moving.filter((r) => r.stage === "client_review").length ?? 0, live: creative?.live.length ?? 0, asana: creative?.asana?.length ?? 0 }]
       : []),
-    ...bought.filter((b) => !["facebook-ads", "google-ads", "creative"].includes(b)).map((b) => ({ id: b, kind: "other" as const, label: SERVICES.find((x) => x.slug === b)?.label ?? b, tier: tierOf(b) })),
+    ...bought.filter((b) => !["facebook-ads", "google-ads", "creative", ...(has.tiktok ? ["tiktok-ads"] : [])].includes(b)).map((b) => ({ id: b, kind: "other" as const, label: SERVICES.find((x) => x.slug === b)?.label ?? b, tier: tierOf(b) })),
   ];
   const creativeTone: "bad" | "warn" | null = allotmentOver(pools) ? "bad" : active && images + videos > 0 && imagesUsed + videosUsed === 0 ? "warn" : null;
 
-  const reportAccounts = (kpis ?? []).filter((k) => k.accountId && (!reportable || reportable.includes(k.id))).map((k) => ({ id: k.id, label: `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""}` }));
+  const reportAccounts = (kpis ?? []).filter((k) => k.accountId && (!reportable || reportable.includes(k.id))).map((k) => ({ id: k.id, label: `${k.platform === "google" ? "Google" : k.platform === "tiktok" ? "TikTok" : "Meta"}${k.label ? ` · ${k.label}` : ""}` }));
 
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
@@ -382,7 +392,15 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       label: "Reports",
                       count: reports.length || null,
                       hint: "Every report made for them: weekly, monthly and built, with what each said and its PDF",
-                      content: <ReportsHistory reports={reports} slug={client.slug} />,
+                      content:
+                        has.tiktok && has.meta && !demo ? (
+                          <div className="grid gap-4">
+                            <TikTokReportToggle clientId={client.id} slug={client.slug} separate={Boolean(tiktok?.separate)} />
+                            <ReportsHistory reports={reports} slug={client.slug} />
+                          </div>
+                        ) : (
+                          <ReportsHistory reports={reports} slug={client.slug} />
+                        ),
                     },
                   ]
                 : []),
@@ -645,13 +663,13 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   <Section title="Kaizen team" description="The copywriter reviews all copy and customer success handles every client.">
             <dl className="grid gap-1">
               {/* The same seats as the client cards: a video-only package needs no designer, an images-only one no editor */}
-              {SLOTS.filter((slot) => seatNeeded(slot.value, { images, videos }) || team[slot.value]?.current).map((slot) => (
+              {SLOTS.filter((slot) => (slot.value === "tiktok_buyer" ? bought.includes("tiktok-ads") || has.tiktok : seatNeeded(slot.value, { images, videos })) || team[slot.value]?.current).map((slot) => (
                 <div key={slot.value} className="grid grid-cols-[100px_minmax(0,1fr)] items-center gap-3">
                   <dt className="self-start pt-3 text-sm text-muted md:pt-2.5">{slot.label}</dt>
                   <dd className="min-w-0">
                     {(() => {
                       const seat = team[slot.value];
-                      const buyerSeat = slot.value === "meta_buyer" || slot.value === "google_buyer";
+                      const buyerSeat = slot.value === "meta_buyer" || slot.value === "google_buyer" || slot.value === "tiktok_buyer";
                       const more = seat?.secondaries ?? [];
                       return (
                         <>
@@ -984,6 +1002,29 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       ),
                     },
                         ]),
+                  ],
+                },
+              ]
+            : []),
+          ...(has.tiktok
+            ? [
+                {
+                  id: "tiktok",
+                  label: "TikTok Ads",
+                  tone: toneOf(tiktokKpis),
+                  note: noteOf(tiktokKpis),
+                  tabs: [
+                    {
+                      id: "performance",
+                      label: "Performance",
+                      hint: "Against target, the last 30 days, campaigns and top ads (read only)",
+                      content: (
+                        <div className="grid gap-6">
+                          {kpis && tiktokKpis.length > 0 ? <KpiPanel kpis={tiktokKpis} audits={null} changes={null} /> : <p className="text-sm text-faint">No TikTok KPI yet. Link their TikTok ad account in Settings &gt; Sync health &gt; TikTok and a KPI card is made for it.</p>}
+                          {tiktok?.data ? <TikTokPanel t={tiktok.data} /> : <p className="text-sm text-faint">No TikTok numbers yet: their ad account isn&apos;t linked, or the first pull hasn&apos;t run.</p>}
+                        </div>
+                      ),
+                    },
                   ],
                 },
               ]

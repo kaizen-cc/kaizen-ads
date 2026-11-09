@@ -8,7 +8,7 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
 import { PdfPreview, type PdfField } from "./pdf-preview";
 import { RecapDeckButton } from "./recap-deck-button";
-import { METRIC_KEYS, clockTime, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tableKeys, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
+import { metricKeysFor, clockTime, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tableKeys, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, setReportCampaignExcluded, skipReport } from "./actions";
@@ -29,7 +29,7 @@ import { SendHistory, type HistoryItem } from "./send-history";
 export type StudioReport = {
   id: string;
   kind: "weekly" | "monthly" | "custom" | "built";
-  platform: "meta" | "google";
+  platform: "meta" | "google" | "tiktok";
   status: string;
   periodLabel: string;
   message: string;
@@ -456,7 +456,7 @@ export function ReportStudio({
                   className={`flex h-11 items-center gap-2 rounded-full border px-3.5 text-xs md:h-8 md:px-3 ${p.isMe ? "border-fg/40" : "border-line"} ${p.status === "submitted" || p.status === "posted" ? "text-ok" : "text-muted"}`}
                 >
                   <span className={`h-1.5 w-1.5 rounded-full ${p.status === "submitted" || p.status === "posted" ? "bg-ok" : p.status === "drafting" ? "animate-pulse bg-faint" : "bg-warn"}`} />
-                  {platformName(p.platform as "meta" | "google").replace(" Ads", "")} · {p.isMe ? "you" : (p.owner ?? "buyer")} · {PART_STATUS[p.status] ?? p.status}
+                  {platformName(p.platform as "meta" | "google" | "tiktok").replace(" Ads", "")} · {p.isMe ? "you" : (p.owner ?? "buyer")} · {PART_STATUS[p.status] ?? p.status}
                 </a>
               ))}
             </div>
@@ -619,7 +619,7 @@ export function ReportStudio({
                 const picker = (where: "tiles" | "table" | "columns", current: MetricKey | null, choose: (k: MetricKey) => void) =>
                   m && (
                     <div className="grid gap-1">
-                      {METRIC_KEYS.filter((k) => k === current || !list[where].includes(k)).map((k) => (
+                      {metricKeysFor(report.platform).filter((k) => k === current || !list[where].includes(k)).map((k) => (
                         <button key={k} type="button" onClick={() => choose(k)} className={`flex h-10 items-center justify-between rounded-[10px] px-3 text-left text-[13.5px] hover:bg-surface-2 ${k === current ? "bg-surface-2 text-fg" : "text-muted"}`}>
                           {metricLabel(m, k)}
                           {k === current && <span className="text-[11px] text-faint">Now</span>}
@@ -789,7 +789,7 @@ export function ReportStudio({
                         </div>
                         {addingMetric && addingMetric !== "campaign" && (
                           <div className="flex flex-wrap gap-1.5">
-                            {METRIC_KEYS.filter((k) => !list[addingMetric].includes(k)).map((k) => (
+                            {metricKeysFor(report.platform).filter((k) => !list[addingMetric].includes(k)).map((k) => (
                               <button
                                 key={k}
                                 type="button"
@@ -910,7 +910,7 @@ ${t}` : t);
                 </button>
               )}
             </div>
-            {act && sections && !busy && <NextStepsAct reportId={report.id} platform={report.platform} steps={[...sections.next, ...(sections.stories ?? []).map((st) => st.next)]} write={act.write} canSwitch={act.canSwitch} />}
+            {act && sections && !busy && report.platform !== "tiktok" && <NextStepsAct reportId={report.id} platform={report.platform} steps={[...sections.next, ...(sections.stories ?? []).map((st) => st.next)]} write={act.write} canSwitch={act.canSwitch} />}
           </div>
 
           {/* The side: ask the AI for a change (the document updates), or the QA's checks */}
@@ -1041,7 +1041,7 @@ ${t}` : t);
                     ) : built ? (
                       `${bundle?.builder ?? "Whoever built it"} sends it as one report.`
                     ) : (
-                      `It goes to the client when ${bundle?.parts.filter((p) => !p.isMe && !["submitted", "posted", "skipped"].includes(p.status)).map((p) => `${p.owner ?? "the other buyer"} (${p.platform === "google" ? "Google" : "Meta"})`).join(" and ") || "the other part"} is approved too.`
+                      `It goes to the client when ${bundle?.parts.filter((p) => !p.isMe && !["submitted", "posted", "skipped"].includes(p.status)).map((p) => `${p.owner ?? "the other buyer"} (${p.platform === "google" ? "Google" : p.platform === "tiktok" ? "TikTok" : "Meta"})`).join(" and ") || "the other part"} is approved too.`
                     )}{" "}
                     <button
                       type="button"
@@ -1213,7 +1213,7 @@ ${t}` : t);
             )}
             {built && waitingParts.length > 0 && (
               <p className="rounded-[10px] bg-surface-2 px-3 py-2 text-xs text-muted">
-                Waiting on {waitingParts.map((p) => `${p.owner ?? "the other buyer"} (${platformName(p.platform as "meta" | "google").replace(" Ads", "")})`).join(" and ")}. Approve the message now and it goes out the moment they approve theirs.
+                Waiting on {waitingParts.map((p) => `${p.owner ?? "the other buyer"} (${platformName(p.platform as "meta" | "google" | "tiktok").replace(" Ads", "")})`).join(" and ")}. Approve the message now and it goes out the moment they approve theirs.
               </p>
             )}
             {bundle?.messageApproved && !sent ? (

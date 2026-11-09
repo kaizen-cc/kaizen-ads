@@ -83,7 +83,7 @@ function value(t: Totals, k: Key): number | null {
 const ZERO: Totals = { spend: 0, results: 0, revenue: 0, clicks: 0, impressions: 0 };
 const sum = (list: Totals[]): Totals => list.reduce((a, b) => ({ spend: a.spend + b.spend, results: a.results + b.results, revenue: a.revenue + b.revenue, clicks: a.clicks + b.clicks, impressions: a.impressions + b.impressions }), ZERO);
 const totals = (p: DashboardPart["main"]): Totals => ({ spend: p.spend, results: p.results, revenue: p.revenue, clicks: p.clicks, impressions: p.impressions });
-const platformName = (p: string) => (p === "google" ? "Google Ads" : "Meta Ads");
+const platformName = (p: string) => (p === "google" ? "Google Ads" : p === "tiktok" ? "TikTok Ads" : "Meta Ads");
 const dateLabel = (d: string, year = false) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", ...(year ? { year: "numeric" } : {}) });
 const rangeLabel = (r: Range) => `${dateLabel(r.start, r.start.slice(0, 4) !== r.end.slice(0, 4))} – ${dateLabel(r.end, true)}`;
 

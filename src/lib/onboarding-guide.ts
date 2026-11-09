@@ -128,7 +128,7 @@ export async function checkGoogle(admin: SupabaseClient, clientId: string): Prom
 async function tellTeam(admin: SupabaseClient, clientId: string, what: string, body: string, key: string, priority: "critical" | "normal") {
   const [{ data: c }, { data: assigned }, { data: leads }] = await Promise.all([
     admin.from("clients").select("name, slug").eq("id", clientId).single(),
-    admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]),
+    admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
     admin.from("profiles").select("id").eq("is_active", true).eq("is_lead", true),
   ]);
   const ids = [...new Set([...(assigned ?? []).map((a) => a.profile_id as string), ...(leads ?? []).map((l) => l.id as string)])];

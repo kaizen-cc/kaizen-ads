@@ -52,7 +52,7 @@ function Platform({ platform }: { platform: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-muted">
       {platform === "google" ? <GoogleAdsMark size={11} /> : <MetaMark size={13} />}
-      {platform === "google" ? "Google Ads" : "Meta"}
+      {platform === "google" ? "Google Ads" : platform === "tiktok" ? "TikTok" : "Meta"}
     </span>
   );
 }
@@ -84,7 +84,7 @@ export function ReportCard({ r, showOwner, removable = false }: { r: CardReport;
         href={`/reports/${r.id}`}
         className="relative grid h-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3.5 overflow-hidden rounded-[18px] border border-line bg-surface p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-faint/60 hover:shadow-[0_22px_48px_-28px_rgba(0,0,0,0.95)] active:bg-surface-2"
       >
-        <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px]" style={{ background: r.platform === "google" ? "#34c38f" : "#4f7cff", opacity: 0.85 }} />
+        <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px]" style={{ background: r.platform === "google" ? "#34c38f" : r.platform === "tiktok" ? "#e0508c" : "#4f7cff", opacity: 0.85 }} />
         <Avatar name={r.client} />
         <span className="grid min-w-0 gap-1.5">
           <span className="flex min-w-0 items-center gap-2">

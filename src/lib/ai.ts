@@ -17,7 +17,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm" | "market" | "winners" | "verticals" | "auditor" | "google_auditor" | "google_launcher" | "reporter" | "google_reporter" | "report_qa";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm" | "market" | "winners" | "verticals" | "auditor" | "google_auditor" | "google_launcher" | "reporter" | "google_reporter" | "report_qa" | "tiktok_auditor" | "tiktok_launcher" | "tiktok_reporter";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment", "kpis"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -59,6 +59,10 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   reporter: { model: "opus", effort: "medium" }, // the weekly and monthly client report for a Meta account, in the buyer's voice
   google_reporter: { model: "opus", effort: "medium" }, // the same for a Google Ads account
   report_qa: { model: "opus", effort: "high" }, // checks every report's numbers and claims before the buyer sees it
+  // The TikTok Ads Buyer's skills: shells, offline until an exec brings the agent online (never called before then)
+  tiktok_auditor: { model: "opus", effort: "high" },
+  tiktok_launcher: { model: "opus", effort: "high" },
+  tiktok_reporter: { model: "opus", effort: "medium" },
   coach: { model: "opus", effort: "medium" }, // talking to an agent (its page) or one skill: edits its core and playbooks from feedback
 };
 
@@ -74,6 +78,32 @@ const anthropic = () =>
 // Settings are read with the server's rights and kept for a minute, so a change in Settings applies within a minute
 const cache = new Map<AgentKey, { at: number; config: AgentConfig }>();
 export const forgetAgent = (key?: AgentKey) => (key ? cache.delete(key) : cache.clear());
+
+/** The agents that ship offline: the TikTok Ads Buyer's skills, until an exec brings that agent online in Settings */
+export const OFFLINE_ROLE_OF: Partial<Record<AgentKey, string>> = { tiktok_auditor: "tiktok_buyer", tiktok_launcher: "tiktok_buyer", tiktok_reporter: "tiktok_buyer" };
+const offlineCache = new Map<string, { at: number; offline: boolean }>();
+
+/** Whether an agent is offline (its role's offline flag; offline when it can't be read, so nothing runs by mistake) */
+export async function agentOffline(key: AgentKey): Promise<boolean> {
+  const role = OFFLINE_ROLE_OF[key];
+  if (!role) return false;
+  const hit = offlineCache.get(role);
+  if (hit && Date.now() - hit.at < 60_000) return hit.offline;
+  let offline = true;
+  if (adminConfigured()) {
+    const { data, error } = await createAdminClient().from("ai_roles").select("offline").eq("key", role).maybeSingle();
+    offline = error || !data ? true : Boolean(data.offline);
+  }
+  offlineCache.set(role, { at: Date.now(), offline });
+  return offline;
+}
+
+export class AgentOffline extends Error {}
+
+/** Every AI call checks this first: an offline agent is never called */
+async function assertOnline(key: AgentKey) {
+  if (await agentOffline(key)) throw new AgentOffline(`The ${key} agent is offline: an exec brings it online in Settings > AI agents.`);
+}
 
 export async function getAgent(key: AgentKey): Promise<AgentConfig> {
   const hit = cache.get(key);
@@ -269,6 +299,7 @@ export async function askJson<T>({
   noSample?: boolean;
 }): Promise<T> {
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
+  await assertOnline(agent);
   const base = await getAgent(agent);
   const cfg = { ...base, model: override?.model ?? base.model, effort: override?.effort ?? base.effort };
   if (!bare) prompt = await withKnowledge(agent, label, prompt, clientId);
@@ -376,6 +407,7 @@ export async function askJsonWithTools<T>({
 }): Promise<T> {
   if (!tools.length) return askJson<T>({ agent, label, system, prompt, schema, maxTokens, clientId });
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
+  await assertOnline(agent);
   const cfg = await getAgent(agent);
   prompt = await withKnowledge(agent, label, prompt, clientId);
   const started = Date.now();
@@ -464,6 +496,7 @@ export async function researchWeb({ agent, label, system, prompt, maxSearches = 
   model?: ModelKey;
 }): Promise<string> {
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
+  await assertOnline(agent);
   const base = await getAgent(agent);
   const cfg = { ...base, model: model ?? base.model };
   const started = Date.now();
@@ -541,6 +574,8 @@ export type ClientContext = {
   industryDetail?: string | null; // e.g. "Pizza restaurant"
   winners?: string; // what's working for other clients in the same industry, ready for the prompt
   adAccountConnected: boolean;
+  /** TikTok Ads, last 30 days against the 30 before (read only), when they run it and it's connected */
+  tiktok?: string;
   allotment: Allotment | null;
   digest: Digest | null; // from the twice-daily briefing: Slack, email and Drive, already summarized
   meta: string | null; // the latest Meta ad performance, in readable lines
@@ -598,7 +633,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
   if (!c) return null;
   // The Bible's living learnings: what their ads proved since it was written, newest first
   const learned = ((bible?.learnings ?? []) as { at: string; kind: string; text: string }[]).slice(-30).reverse();
-  const [newer, siteIssues, gtm, googleGtm, business, documents, playbook, peers, patterns, reports, winners, kpis, intake, tiring, activity, motion] = await Promise.all([
+  const [newer, siteIssues, gtm, googleGtm, business, documents, playbook, peers, patterns, reports, winners, kpis, intake, tiring, activity, motion, tiktok] = await Promise.all([
     // Slack and email that came in after the briefing was written, so suggestions and the review are current
     supabase
       .from("context_items")
@@ -636,7 +671,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
           .filter((x) => (x.sections as { headline?: string } | null)?.headline)
           .map((x) => {
             const sec = x.sections as { headline: string; next?: string[] };
-            return `- ${x.period_start} to ${x.period_end} (${x.platform === "google" ? "Google" : "Meta"}, ${x.kind}): ${sec.headline}${sec.next?.length ? ` Next, we said: ${sec.next.slice(0, 3).join("; ")}` : ""}`;
+            return `- ${x.period_start} to ${x.period_end} (${x.platform === "google" ? "Google" : x.platform === "tiktok" ? "TikTok" : "Meta"}, ${x.kind}): ${sec.headline}${sec.next?.length ? ` Next, we said: ${sec.next.slice(0, 3).join("; ")}` : ""}`;
           })
           .join("\n"),
       ),
@@ -668,6 +703,8 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
     import("@/lib/client-activity").then(({ activityBlock }) => activityBlock(supabase, clientId)).catch(() => ""),
     // Already in motion: the board's open tickets and Asana's open tasks, so no writer claims nothing exists
     import("@/lib/in-motion").then(({ loadInMotion }) => loadInMotion(supabase, clientId)).catch(() => []),
+    // TikTok's numbers (read only; empty while TikTok isn't set up or they don't run it)
+    import("@/lib/tiktok/store").then(({ tiktokBrief }) => tiktokBrief(supabase, clientId)).catch(() => ""),
   ]);
   return {
     brandBible:
@@ -698,6 +735,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
     tiring,
     activity,
     motion,
+    ...(tiktok ? { tiktok } : {}),
     angles: angles ?? [],
     memory: (memory ?? []) as ClientContext["memory"],
     recent: (recent ?? []).map((r) => ({
@@ -744,6 +782,8 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   if (!on("meta")) lines.push("(Ad performance isn't part of this task.)");
   else if (ctx.meta) lines.push("<meta_ads_performance>", ctx.meta, "</meta_ads_performance>");
   else lines.push(ctx.adAccountConnected ? "Meta ad account linked, but no performance pulled yet. Don't invent metrics." : "No Meta ad account linked yet. Don't invent metrics.");
+  if (on("meta") && ctx.tiktok)
+    lines.push("<tiktok_ads_performance>", "TikTok is read only in Kaizen Ads: its numbers are here, but nothing can be changed or launched in TikTok from here yet (say so if asked to).", ctx.tiktok, "</tiktok_ads_performance>");
   if (on("meta") && ctx.tiring)
     lines.push(
       "<tiring_ads>",

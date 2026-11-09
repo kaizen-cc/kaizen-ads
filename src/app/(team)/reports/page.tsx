@@ -70,7 +70,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const [{ data: allTargets }, { data: slots }, { data: built }] = admin && clientIds.length
     ? await Promise.all([
         admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line ? [line] : ["meta", "google"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
-        admin.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("client_id", clientIds).in("role", ["meta_buyer", "google_buyer"]),
+        admin.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("client_id", clientIds).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
         admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, sent_at, clients(name), reports(id, platform, status, owner_id, viewed_at, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).gte("created_at", daysAgo(60)).order("created_at", { ascending: false }).limit(150),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }];
@@ -81,7 +81,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const coSeats = (clientId: string, platform: string) => seatRows.filter((s) => s.client_id === clientId && s.role === buyerRole(platform) && s.is_primary === false);
   const isMine = (clientId: string, p: { owner_id: string | null; platform: string }) => p.owner_id === me.id || coSeats(clientId, p.platform).some((s) => s.profile_id === me.id);
   const byClient = new Map<string, BuilderClient>();
-  for (const t of (allTargets ?? []) as unknown as { client_id: string; platform: "meta" | "google"; owner_id: string | null; clients: { name: string; slug: string; slack_channel_id: string | null }; profiles: { full_name: string } | null }[]) {
+  for (const t of (allTargets ?? []) as unknown as { client_id: string; platform: "meta" | "google" | "tiktok"; owner_id: string | null; clients: { name: string; slug: string; slack_channel_id: string | null }; profiles: { full_name: string } | null }[]) {
     const c = byClient.get(t.client_id) ?? { id: t.client_id, name: t.clients.name, slug: t.clients.slug, hasChannel: Boolean(t.clients.slack_channel_id), services: [] };
     if (c.services.some((x) => x.platform === t.platform)) continue;
     const slot = primaryOf(seatRows, buyerRole(t.platform), t.client_id);
@@ -167,12 +167,12 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   };
 
   // Ready and Sent: one platform at a time for execs (everyone else is on their own line), then one buyer at a time
-  const plat = (x: { platform: string }) => (x.platform === "google" ? "google" : "meta");
+  const plat = (x: { platform: string }) => (x.platform === "google" ? "google" : x.platform === "tiktok" ? "tiktok" : "meta");
   const readyReports = [...allMonthly, ...allWeekly, ...onDemand];
   const pool = [...readyReports, ...sentReports];
   const bundlePlats = (b: (typeof reach)[number]) => b.reports.map(plat);
-  const platforms = (["meta", "google"] as const).filter((x) => pool.some((r) => plat(r) === x) || reach.some((b) => bundlePlats(b).includes(x)));
-  const wp = platforms.length > 1 ? (pick("wp") === "google" ? "google" : pick("wp") === "meta" ? "meta" : platforms[0]) : (platforms[0] ?? "meta");
+  const platforms = (["meta", "google", "tiktok"] as const).filter((x) => pool.some((r) => plat(r) === x) || reach.some((b) => bundlePlats(b).includes(x)));
+  const wp = platforms.length > 1 ? (platforms.find((x) => x === pick("wp")) ?? platforms[0]) : (platforms[0] ?? "meta");
   const people = (list: Row[], bundles: typeof reach) =>
     [
       ...new Map([
@@ -277,8 +277,8 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
                 <span className="inline-flex rounded-full border border-line bg-surface p-1">
                   {platforms.map((x) => (
                     <Link key={x} href={href({ wp: x, wb: null })} scroll={false} className={`inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm transition-colors md:h-9 ${wp === x ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
-                      {x === "meta" ? <MetaMark size={15} /> : <GoogleAdsMark size={12} />}
-                      {x === "meta" ? "Meta" : "Google Ads"}
+                      {x === "meta" ? <MetaMark size={15} /> : x === "google" ? <GoogleAdsMark size={12} /> : null}
+                      {x === "meta" ? "Meta" : x === "tiktok" ? "TikTok" : "Google Ads"}
                       <span className="tabular opacity-60">{(view === "ready" ? [...readyReports] : sentReports).filter((r) => plat(r) === x).length + (view === "ready" ? builtRows : sentBuilt).filter((b) => bundlePlats(b).includes(x)).length}</span>
                     </Link>
                   ))}

@@ -99,7 +99,7 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
   const m = part.metrics;
   const s = part.sections;
   const one = singular(m.conversion);
-  const ads = part.platform === "meta" ? m.topAds.slice(0, 3) : [];
+  const ads = part.platform !== "google" ? m.topAds.slice(0, 3) : [];
   const roas = m.campaigns.some((c) => c.roas != null);
   const notes = [
     { title: "What we did", items: s.did },

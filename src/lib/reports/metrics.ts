@@ -9,6 +9,7 @@ import { actionLabel } from "@/lib/kpi/explore";
 import { metricNumber, type MetricKey } from "./format";
 import type { Diagnosis, Opportunity } from "./diagnose";
 import { lastFullWeek, previousPeriod } from "./period";
+import { asKpiPlatform, type KpiPlatform } from "@/lib/kpi/platform";
 
 // A report's numbers, from the same daily rows the KPI board reads, with the campaigns left out of the KPI left out here
 // too. On Meta, results are what each campaign is optimized for, read from the ad account (submit application, schedule,
@@ -31,6 +32,9 @@ export type Period = {
   costPerResult: number | null;
   revenue: number;
   roas: number | null;
+  /** TikTok: 6-second video views, and the hook rate (6-second views over impressions, %) */
+  views6s?: number;
+  hookRate?: number | null;
 };
 
 /** result: what this campaign is optimized for ("Purchase", "Post engagement"), counted the way the KPI board counts it */
@@ -42,7 +46,7 @@ export type LeftOut = { id: string; name: string; spend: number; why: "excluded"
 export type TopAd = { id: string; name: string; campaign: string | null; spend: number; results: number; costPerResult: number | null; ctr: number | null; clicks: number; link: string | null; image: string | null; copy?: { body: string | null; headline: string | null; cta: string | null; url: string | null } };
 
 export type ReportMetrics = {
-  platform: "meta" | "google";
+  platform: KpiPlatform;
   kind: "weekly" | "monthly" | "custom";
   conversion: string; // "Leads", "Purchases"
   roasKpi: boolean;
@@ -157,8 +161,10 @@ type Row = Awaited<ReturnType<typeof accountRows>>[number] & { impressions?: num
  * over every day so a purchase reported under all its aliases is counted once, in the attribution every pull asks for
  * (7-day click, 1-day view, as Ads Manager). On Google, conversion value.
  */
-export function revenueType(days: Pick<Day, "values">[], platform: "meta" | "google"): string | null {
+export function revenueType(days: Pick<Day, "values">[], platform: KpiPlatform): string | null {
   if (platform === "google") return "conversions";
+  // TikTok: complete payment value (purchases), never the optimization event's value
+  if (platform === "tiktok") return "tiktok_complete_payment";
   return reportedType(days.map((d) => d.values), PURCHASE_TYPES);
 }
 
@@ -170,14 +176,22 @@ export function period(rows: { date: string; impressions?: number | string | nul
   let results = 0;
   let revenue = 0;
   let clicks = 0;
+  let views6s = 0;
+  let video = false;
   for (const d of ds) {
     spend += d.spend;
     results += resultsOf(d, conv, type);
     clicks += d.linkClicks ?? 0;
     if (valueType) revenue += d.values[valueType] ?? 0;
+    // TikTok's days carry their 6-second views
+    if (d.actions.tiktok_video_6s != null) {
+      video = true;
+      views6s += d.actions.tiktok_video_6s;
+    }
   }
   const impressions = rows.filter((r) => inside(r.date)).reduce((n, r) => n + (Number(r.impressions) || 0), 0);
   return {
+    ...(video ? { views6s: Math.round(views6s), hookRate: impressions ? r2((views6s / impressions) * 100) : null } : {}),
     label: p.label,
     start: p.start,
     end: p.end,
@@ -206,7 +220,7 @@ function eventsOf(rows: { actions?: unknown }[]): CampaignEvent[] {
 }
 
 /** An older report's campaigns, with what each counted in its period (drafted before campaigns kept it) */
-export async function withCampaignEvents(admin: SupabaseClient, m: ReportMetrics, account: string, platform: "meta" | "google"): Promise<ReportMetrics> {
+export async function withCampaignEvents(admin: SupabaseClient, m: ReportMetrics, account: string, platform: KpiPlatform): Promise<ReportMetrics> {
   const rows = ((await accountRows(admin, account, platform)) as Row[]).filter((r) => r.date >= m.main.start && r.date <= m.main.end);
   const by = new Map<string, Row[]>();
   for (const r of rows) by.set(r.campaign_name ?? r.campaign_id, [...(by.get(r.campaign_name ?? r.campaign_id) ?? []), r]);
@@ -215,7 +229,7 @@ export async function withCampaignEvents(admin: SupabaseClient, m: ReportMetrics
 
 /** Every number a report shows, for one KPI target, as of `today` (New York). */
 export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }, opts: { lite?: boolean; daily?: boolean } = {}): Promise<ReportMetrics> {
-  const platform = t.platform === "google" ? "google" : "meta";
+  const platform = asKpiPlatform(t.platform);
   const every = (await accountRows(admin, t.ad_account_id ?? "", platform)) as Row[];
   const all = inScope(every, t);
   const ps = periodsFor(kind, today, range);
@@ -333,6 +347,9 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
     });
   }
 
+  // Top ads (TikTok): the same ranking from TikTok's ad days, with each ad's thumbnail and text
+  if (platform === "tiktok" && t.ad_account_id && !opts.lite) topAds = await tiktokTopAds(admin, t, ps.main, kpiConv.key === "tiktok_purchases" || kpiConv.key === "tiktok_roas");
+
   // Google's lines, over the main period (brand campaigns set aside for CTR and conversion rate)
   const google = platform === "google" ? googleHealth(all.filter((r) => r.date >= ps.main.start && r.date <= ps.main.end), businessModel(t.conversion, Boolean(kpiConv.roas))) : undefined;
   const benchmark = t.target == null && !opts.lite ? (((await admin.from("kpi_snapshots").select("benchmark").eq("target_id", t.id).maybeSingle()).data?.benchmark ?? null) as BenchmarkTarget | null) : null;
@@ -370,14 +387,48 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
   };
 }
 
+/** TikTok's top ads in a period: the most results (conversions, or purchases on a purchase KPI), then the cheapest */
+async function tiktokTopAds(admin: SupabaseClient, t: Target, p: { start: string; end: string }, purchases: boolean): Promise<TopAd[]> {
+  const { data: ads } = await admin
+    .from("tiktok_ad_daily")
+    .select("ad_id, ad_name, campaign_id, campaign_name, spend, impressions, clicks, conversions, purchases")
+    .eq("ad_account_id", String(t.ad_account_id))
+    .gte("date", p.start)
+    .lte("date", p.end)
+    .limit(5000);
+  const per = new Map<string, TopAd & { impressions: number }>();
+  for (const a of ads ?? []) {
+    if (!campaignIncluded(t, { id: a.campaign_id, name: a.campaign_name })) continue;
+    const e = per.get(a.ad_id) ?? { id: a.ad_id, name: a.ad_name ?? a.ad_id, campaign: a.campaign_name, spend: 0, results: 0, costPerResult: null, ctr: null, clicks: 0, link: null, image: null, impressions: 0 };
+    e.spend += Number(a.spend) || 0;
+    e.impressions += Number(a.impressions) || 0;
+    e.clicks += Number(a.clicks) || 0;
+    e.results += Number(purchases ? a.purchases : a.conversions) || 0;
+    per.set(a.ad_id, e);
+  }
+  const ranked = [...per.values()]
+    .filter((a) => a.spend > 0)
+    .map((a) => ({ ...a, spend: r2(a.spend), results: Math.round(a.results * 10) / 10, costPerResult: a.results ? r2(a.spend / a.results) : null, ctr: a.impressions ? r2((a.clicks / a.impressions) * 100) : null }))
+    .sort((a, b) => b.results - a.results || (a.costPerResult ?? 1e9) - (b.costPerResult ?? 1e9) || b.clicks - a.clicks)
+    .slice(0, 3);
+  const { data: meta } = ranked.length ? await admin.from("tiktok_ads").select("ad_id, ad_text, call_to_action, landing_page_url, thumbnail_url").in("ad_id", ranked.map((a) => a.id)) : { data: [] };
+  return ranked.map((x) => {
+    const { impressions, ...a } = x;
+    void impressions;
+    const m = (meta ?? []).find((y) => y.ad_id === a.id);
+    return { ...a, image: (m?.thumbnail_url as string | null) ?? null, copy: m ? { body: (m.ad_text as string | null) ?? null, headline: null, cta: (m.call_to_action as string | null) ?? null, url: (m.landing_page_url as string | null) ?? null } : undefined };
+  });
+}
+
 /** The numbers as lines for the writer and the QA. */
 export function metricsText(m: ReportMetrics) {
   const money = (x: number | null) => (x == null ? "—" : `$${x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
   const line = (p: Period) =>
     `${p.label}: spend ${money(p.spend)}, ${p.results} ${m.conversion.toLowerCase()}, cost per result ${money(p.costPerResult)}${m.roasKpi && p.revenue ? `, revenue ${money(p.revenue)}, ROAS ${p.roas ?? "—"}` : ""}, impressions ${p.impressions.toLocaleString("en-US")}, link clicks ${p.clicks.toLocaleString("en-US")}, CTR ${p.ctr ?? "—"}%, CPC ${money(p.cpc)}, CPM ${money(p.cpm)} (${p.days} days with data)`;
   return [
-    `Platform: ${m.platform === "google" ? "Google Ads" : "Meta Ads"}. KPI: ${m.conversion}${m.roasKpi ? " (judged on ROAS)" : ""}${m.target != null ? `, target ${m.roasKpi ? `${m.target}x ROAS` : money(m.target)}` : m.benchmark ? `, no target set: judged against the ${m.benchmark.vertical} industry benchmark of ${m.roasKpi ? `${m.benchmark.value}x ROAS` : money(m.benchmark.value)} (${m.benchmark.source} ${m.benchmark.year}); aim to beat it` : ", no target set"}${m.monthlyBudget ? `, monthly budget ${money(m.monthlyBudget)}` : ""}. Data through ${m.dataThrough ?? "?"}.`,
+    `Platform: ${m.platform === "google" ? "Google Ads" : m.platform === "tiktok" ? "TikTok Ads (read only in Kaizen Ads: nothing was changed in TikTok from here)" : "Meta Ads"}. KPI: ${m.conversion}${m.roasKpi ? " (judged on ROAS)" : ""}${m.target != null ? `, target ${m.roasKpi ? `${m.target}x ROAS` : money(m.target)}` : m.benchmark ? `, no target set: judged against the ${m.benchmark.vertical} industry benchmark of ${m.roasKpi ? `${m.benchmark.value}x ROAS` : money(m.benchmark.value)} (${m.benchmark.source} ${m.benchmark.year}); aim to beat it` : ", no target set"}${m.monthlyBudget ? `, monthly budget ${money(m.monthlyBudget)}` : ""}. Data through ${m.dataThrough ?? "?"}.`,
     line(m.main),
+    ...(m.main.views6s != null ? [`TikTok video in ${m.main.label}: ${m.main.views6s.toLocaleString("en-US")} 6-second views, hook rate ${m.main.hookRate ?? "n/a"}% (6-second views over impressions); ${m.compare.label}: ${(m.compare.views6s ?? 0).toLocaleString("en-US")} 6-second views, hook rate ${m.compare.hookRate ?? "n/a"}%.`] : []),
     // Not a ROAS KPI: purchase value is context only, never the story (the client is judged on its own result)
     ...(!m.roasKpi && m.main.revenue > 0 ? [`Purchase value Meta tracked in ${m.main.label} (not this KPI: leave ROAS out unless the buyer puts it in the report): ${money(m.main.revenue)}, ROAS ${m.main.roas ?? "n/a"}.`] : []),
     line(m.compare),

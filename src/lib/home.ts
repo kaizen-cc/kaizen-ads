@@ -258,7 +258,7 @@ export type KpiPulse = {
   syncedMinutes: number | null;
 };
 
-const PLATFORM = { meta: "Meta", google: "Google" } as const;
+const PLATFORM = { meta: "Meta", google: "Google", tiktok: "TikTok" } as const;
 
 /** An account changed this recently is being worked on: off target or not, it isn't raised as an alarm until then */
 export const WORKED_DAYS = 5;
@@ -312,7 +312,7 @@ export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?:
     const name = c?.name ?? "Unknown";
     if (status === "setup") (t.ad_account_id ? setup.cantRead : setup.noAccount).push(name);
     // Without a platform filter the label says which service line it is
-    const label = [platform ? null : PLATFORM[t.platform as "meta" | "google"], t.label].filter(Boolean).join(" · ");
+    const label = [platform ? null : PLATFORM[t.platform as keyof typeof PLATFORM], t.label].filter(Boolean).join(" · ");
     spend30 += Number((snap?.windows as { d30?: { spend?: number } } | null)?.d30?.spend ?? 0);
     if (snap?.computed_at && (!synced || snap.computed_at > synced)) synced = snap.computed_at;
     if (status === "off" || status === "close") off.push({ id: t.id, client: name, slug: c?.slug ?? "", platform: t.platform as string, label, deviation: snap?.deviation == null ? null : Number(snap.deviation), status });

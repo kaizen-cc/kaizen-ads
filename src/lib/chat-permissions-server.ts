@@ -15,11 +15,12 @@ export type Person = Who & { id: string };
 export async function seatsOn(admin: SupabaseClient, profileId: string, clientId: string | null | undefined): Promise<AdPlatform[]> {
   if (!clientId || !profileId) return [];
   const [{ data: seats }, { data: owned }] = await Promise.all([
-    admin.from("client_assignments").select("role").eq("client_id", clientId).eq("profile_id", profileId).in("role", ["meta_buyer", "google_buyer"]),
+    admin.from("client_assignments").select("role").eq("client_id", clientId).eq("profile_id", profileId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
     admin.from("kpi_targets").select("platform").eq("client_id", clientId).eq("owner_id", profileId).in("platform", ["meta", "google"]),
   ]);
   const out = new Set<AdPlatform>();
-  for (const s of (seats ?? []) as { role: string }[]) out.add(s.role === "google_buyer" ? "google" : "meta");
+  // A TikTok seat grants no Meta or Google writes (TikTok itself is read only)
+  for (const s of (seats ?? []) as { role: string }[]) if (s.role !== "tiktok_buyer") out.add(s.role === "google_buyer" ? "google" : "meta");
   for (const t of (owned ?? []) as { platform: string }[]) out.add(t.platform === "google" ? "google" : "meta");
   return [...out];
 }
@@ -55,12 +56,12 @@ export async function permsOn(admin: SupabaseClient, me: Person, clientId: strin
 /** The buyer seats this person holds on many clients at once (the KPI board), by client id */
 export async function seatsByClient(admin: SupabaseClient, profileId: string): Promise<Map<string, AdPlatform[]>> {
   const [{ data: seats }, { data: owned }] = await Promise.all([
-    admin.from("client_assignments").select("client_id, role").eq("profile_id", profileId).in("role", ["meta_buyer", "google_buyer"]),
+    admin.from("client_assignments").select("client_id, role").eq("profile_id", profileId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
     admin.from("kpi_targets").select("client_id, platform").eq("owner_id", profileId).in("platform", ["meta", "google"]),
   ]);
   const out = new Map<string, Set<AdPlatform>>();
   const add = (c: string, p: AdPlatform) => out.set(c, (out.get(c) ?? new Set()).add(p));
-  for (const s of (seats ?? []) as { client_id: string; role: string }[]) add(s.client_id, s.role === "google_buyer" ? "google" : "meta");
+  for (const s of (seats ?? []) as { client_id: string; role: string }[]) if (s.role !== "tiktok_buyer") add(s.client_id, s.role === "google_buyer" ? "google" : "meta");
   for (const t of (owned ?? []) as { client_id: string; platform: string }[]) if (t.client_id) add(t.client_id, t.platform === "google" ? "google" : "meta");
   return new Map([...out].map(([k, v]) => [k, [...v]]));
 }

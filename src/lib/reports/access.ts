@@ -16,22 +16,27 @@ export async function reportableTargets(db: SupabaseClient, me: Staff) {
   if (!canSeeReports(me)) return [];
   let q = db.from("kpi_targets").select("id, client_id, platform, label, owner_id, clients!inner(name, archived_at)").eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null);
   const line = lineOf(me);
-  if (line) q = q.eq("platform", line);
+  // The Head of Meta's line covers TikTok too (the Meta team buys it)
+  if (line) q = line === "meta" ? q.in("platform", ["meta", "tiktok"]) : q.eq("platform", line);
   const { data } = await q;
   const rows = (data ?? []) as unknown as (T & { label: string | null; clients: { name: string } })[];
   if (isExecOrLead(me)) return rows;
   const mine = await assignedClients(db, me.id);
-  return rows.filter((t) => t.owner_id === me.id || mine.get(t.platform)?.has(t.client_id));
+  return rows.filter((t) => t.owner_id === me.id || onSeat(mine, t));
 }
+
+/** A buyer seat on the account's platform: TikTok's own seat, or the Meta seat (the Meta buyer buys TikTok until a TikTok buyer is set) */
+const onSeat = (mine: Map<string, Set<string>>, t: T) => Boolean(mine.get(t.platform)?.has(t.client_id) || (t.platform === "tiktok" && mine.get("meta")?.has(t.client_id)));
 
 /** The clients someone holds the Meta or Google buyer slot on, by platform. */
 async function assignedClients(db: SupabaseClient, profileId: string) {
-  const { data } = await db.from("client_assignments").select("client_id, role").eq("profile_id", profileId).in("role", ["meta_buyer", "google_buyer"]);
+  const { data } = await db.from("client_assignments").select("client_id, role").eq("profile_id", profileId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]);
   const out = new Map<string, Set<string>>([
     ["meta", new Set()],
     ["google", new Set()],
+    ["tiktok", new Set()],
   ]);
-  for (const a of data ?? []) out.get(a.role === "google_buyer" ? "google" : "meta")!.add(a.client_id as string);
+  for (const a of data ?? []) out.get(a.role === "google_buyer" ? "google" : a.role === "tiktok_buyer" ? "tiktok" : "meta")!.add(a.client_id as string);
   return out;
 }
 
@@ -40,9 +45,9 @@ export async function canReportOn(db: SupabaseClient, me: Staff, t: T) {
   if (!canSeeReports(me)) return false;
   const line = lineOf(me);
   if (me.isExec) return true;
-  if (isExecOrLead(me)) return !line || line === t.platform;
+  if (isExecOrLead(me)) return !line || line === t.platform || (line === "meta" && t.platform === "tiktok");
   if (t.owner_id === me.id) return true;
-  return (await assignedClients(db, me.id)).get(t.platform)?.has(t.client_id) ?? false;
+  return onSeat(await assignedClients(db, me.id), t);
 }
 
 /** Of these people, the ones a report notice can go to (executives and media buyers): nobody else hears about reports. */

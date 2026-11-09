@@ -29,7 +29,7 @@ export async function workDone(admin: SupabaseClient, t: Target, start: string, 
     admin.from("call_commitments").select("what, status, due_at").eq("client_id", t.client_id).in("status", ["open", "briefed"]).limit(15),
   ]);
 
-  const platformWord = t.platform === "google" ? "Google" : "Meta";
+  const platformWord = t.platform === "google" ? "Google" : t.platform === "tiktok" ? "TikTok" : "Meta";
   const sprintNow = (sprint.data ?? [])[0] as { status: string; sprint_actions: { title: string; status: string; when: string | null; why: string | null; note: string | null; done_at: string | null }[] } | undefined;
   const moves = sprintNow?.sprint_actions ?? [];
   const ours = (...text: (string | null | undefined)[]) => !skip.length || !text.some((x) => aboutLeftOut(x, skip));

@@ -11,7 +11,7 @@ export type Conversion = {
   field?: "unique_link_clicks" | "link_clicks";
   /** ROAS: higher is better and the KPI is a multiple, not a cost */
   roas?: boolean;
-  platforms: ("meta" | "google")[];
+  platforms: ("meta" | "google" | "tiktok")[];
 };
 
 export const CONVERSIONS: Conversion[] = [
@@ -32,6 +32,12 @@ export const CONVERSIONS: Conversion[] = [
   { key: "campaign_goal", label: "Each campaign's own goal", types: ["campaign_goal"], platforms: ["meta", "google"] },
   { key: "google_roas", label: "ROAS", types: ["conversions"], roas: true, platforms: ["google"] },
   { key: "google_clicks", label: "Clicks", field: "link_clicks", platforms: ["google"] },
+  // TikTok (read only): "conversion" is each campaign's own optimization event; complete payment is a purchase and its
+  // value is purchase value (src/lib/tiktok/core.ts puts them under these action types)
+  { key: "tiktok_conversions", label: "Conversions (optimization event)", types: ["tiktok_conversion"], platforms: ["tiktok"] },
+  { key: "tiktok_purchases", label: "Purchases (complete payment)", types: ["tiktok_complete_payment"], platforms: ["tiktok"] },
+  { key: "tiktok_roas", label: "ROAS (complete payment)", types: ["tiktok_complete_payment"], roas: true, platforms: ["tiktok"] },
+  { key: "tiktok_clicks", label: "Clicks", field: "link_clicks", platforms: ["tiktok"] },
 ];
 
 export const conversionFor = (key: string) => CONVERSIONS.find((c) => c.key === key) ?? CONVERSIONS[0];

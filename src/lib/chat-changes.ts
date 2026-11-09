@@ -403,7 +403,7 @@ const TEAM_SCHEMA = {
 async function planTeam(admin: SupabaseClient, clientId: string, request: string) {
   const [{ data: people }, { data: seats }] = await Promise.all([
     admin.from("profiles").select("id, full_name, role, also_buys").eq("is_active", true).order("full_name"),
-    admin.from("client_assignments").select("role, profile_id, profiles(full_name)").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]),
+    admin.from("client_assignments").select("role, profile_id, profiles(full_name)").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
   ]);
   const slots = SLOTS.filter((s) => s.value === "meta_buyer" || s.value === "google_buyer");
   const eligible = (people ?? []).filter((p) => slots.some((s) => canHold(s, p as { role: string; also_buys?: boolean | null })));

@@ -5,6 +5,7 @@ import { requireStaff } from "@/lib/auth";
 import { campaignScorecard, type CampaignPerf, type ScoreTarget } from "@/lib/kpi/campaigns";
 import { CONVERSIONS } from "@/lib/kpi/conversions";
 import { refreshClientKpis } from "@/lib/kpi/sync";
+import { asKpiPlatform } from "@/lib/kpi/platform";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -75,7 +76,7 @@ export async function setCardMetric(targetId: string, conversion: string, target
   const t = await mine(targetId);
   if (!t) return { ok: false, error: "You don't work on this client." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
-  const c = CONVERSIONS.find((x) => x.key === conversion && x.platforms.includes(t.platform === "google" ? "google" : "meta"));
+  const c = CONVERSIONS.find((x) => x.key === conversion && x.platforms.includes(asKpiPlatform(t.platform)));
   if (!c) return { ok: false, error: "That metric isn't available here." };
   const { error } = await createAdminClient()
     .from("kpi_targets")

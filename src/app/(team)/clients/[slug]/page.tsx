@@ -28,6 +28,7 @@ import { permsOn } from "@/lib/chat-permissions-server";
 import type { AuditTarget } from "./client-chat";
 import { clientReadiness } from "@/lib/readiness";
 import { loadCampaigns } from "@/lib/client-campaigns";
+import { tiktokConfigured } from "@/lib/tiktok/core";
 import { loadLedger } from "@/lib/ledger";
 import type { HistoryReport } from "./reports-history";
 import { monthLabel } from "@/lib/reports/format";
@@ -403,6 +404,10 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       };
     })
     .sort((a, b) => b.start.localeCompare(a.start));
+  // TikTok (read only), once Kaizen's TikTok app is set up: dormant and invisible until then
+  const tiktokOn = tiktokConfigured();
+  const tiktok = tiktokOn && admin ? await (await import("@/lib/tiktok/store")).clientTikTok(admin, client.id).catch(() => null) : null;
+  const tiktokSeparate = tiktokOn && admin ? Boolean((await admin.from("client_report_prefs").select("tiktok_separate").eq("client_id", client.id).maybeSingle()).data?.tiktok_separate) : false;
   const docs = (docRows ?? []).map((d) => ({ id: d.id, kind: d.kind, name: d.name, url: d.url, path: d.path, mime: d.mime, bytes: d.bytes, title: d.title, summary: d.summary, status: d.status, note: d.note, via: d.via, at: d.created_at, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
   const billingHistory = (billingLog ?? []).map((h) => ({ at: h.at as string, oldDay: (h.old_day as number | null) ?? null, newDay: (h.new_day as number | null) ?? null, source: (h.source as string | null) ?? null, note: (h.note as string | null) ?? null, by: (h.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
 
@@ -446,6 +451,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         </Streamed>
       }
       campaigns={campaigns}
+      tiktok={tiktokOn ? { data: tiktok, separate: tiktokSeparate } : null}
       docs={docs}
       knowledge={knowledge}
       loom={loom}

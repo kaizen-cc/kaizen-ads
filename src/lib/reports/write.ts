@@ -8,6 +8,7 @@ import { voiceOf, workDone } from "./work";
 import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
 import { daysIn, previousPeriod, rangeLabel, todayIn } from "./period";
 import { forClient, isWhiteLabel, scrubSections, WHITE_LABEL_RULE } from "./white-label";
+import { dailyTable } from "@/lib/kpi/platform";
 
 // Writing a client report: the numbers (reportMetrics), the work behind them (workDone), the buyer's own voice (their
 // recaps in client channels), what this client likes in a report (learned from past edits), and what the buyer added
@@ -40,7 +41,7 @@ type Kind = "weekly" | "monthly" | "custom" | "built";
 /** whiteLabel: the client is an agency partner's, who passes the report on as their own (no agency name or link, ever) */
 function writerSystem(kind: Kind, platform: string, whiteLabel = false): string {
   if (whiteLabel) return `${writerSystem(kind, platform)}\n${WHITE_LABEL_RULE}`;
-  const where = platform === "google" ? "Google Ads" : "Meta Ads";
+  const where = platform === "google" ? "Google Ads" : platform === "tiktok" ? "TikTok Ads" : "Meta Ads";
   // A built report (from the report builder) reads like an on-demand recap; its other date ranges get their own short part
   if (kind === "built")
     return `${writerSystem("custom", platform)}
@@ -106,9 +107,9 @@ async function leftOutNames(admin: SupabaseClient, t: Parameters<typeof reportMe
   if (!t?.ad_account_id || !ids.length) return [];
   const google = t.platform === "google";
   const { data } = await admin
-    .from(google ? "google_campaign_daily" : "meta_campaign_daily")
+    .from(dailyTable(t.platform))
     .select("campaign_id, campaign_name")
-    .eq("ad_account_id", google ? String(t.ad_account_id).replace(/\D/g, "") : String(t.ad_account_id))
+    .eq("ad_account_id", google ? String(t.ad_account_id).replace(/\D/g, "") : String(t.ad_account_id).replace(/^act_/, ""))
     .in("campaign_id", ids.slice(0, 100))
     .order("date", { ascending: false })
     .limit(400);

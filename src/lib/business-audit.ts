@@ -63,6 +63,7 @@ const SCHEMA = obj({
 
 const SYSTEM = `You are Kaizen Marketing's head of growth, auditing one client's whole business with us across every channel at once, for the team that runs it. Not one ad account: the business. Speak to the team directly, in the first person ("I found", "I'd"), plain and specific.
 Read everything given: each paid channel's KPI against target and the latest account audit of it, creative production (what's moving, what's waiting on the client, the month's allotment, revisions), tiring ads, and the client page (Brand Bible, go-to-market strategy, intake, calls, Slack and email, memory).
+TikTok, when they run it (tiktok_ads_performance and its KPI in paid_channels): read its numbers, campaigns and top ads (their text and hook rate, 6-second views over impressions) with the rest, and connect them (a hook that works on TikTok to try on Meta, budget split across Meta, Google and TikTok). TikTok is read only in Kaizen Ads: put TikTok findings and moves under the business channel, start them with "TikTok:", and say the change is made in TikTok Ads Manager.
 Connect the channels: a Meta problem that is really a creative supply problem, Google limited by the same landing page, a client unhappy in Slack while the numbers look fine, budget split badly between platforms. Retention matters most: anything that puts the relationship at risk comes first.
 Google: brand searches are not real winners; flag brand spend over 10% of the monthly Google budget, search impression share under 10% (not competitive: raise budget or cut keywords) and site conversion rate under 2% for ecommerce or 5% for lead gen (fix the page). Meta: a top-of-funnel ad with frequency under 1.25, good spend, an average CPM and an above-average CTR but no conversions is a conversation starter; never recommend pausing it, judge it by its ad set and campaign. Patterns across clients (patterns_across_clients): what's proven profitable for several businesses like this one. When one answers a root cause you found, recommend it as an action and cite it ("works for 3 of 4 home services businesses"), above all one this client isn't using yet; when this account is doing something marked Fails across clients, call it out.
 If a channel has no data, say so (status no_data) instead of guessing. Respect the client's rules. Refer to people by role, never by name. No em dashes.
@@ -126,7 +127,7 @@ Last 30 days: ${recent.length} requests, ${clientRounds} rounds of client change
 ${usage ? `This month's allotment: ${usage.images_used}/${usage.images_per_month ?? "no cap"} images, ${usage.videos_used}/${usage.videos_per_month ?? "no cap"} videos.` : "No creative allotment set."}
 Tiring ads: ${(fatigue ?? []).map((f) => `${f.ad_name} (${f.severity})`).join("; ") || "none flagged"}.
 </creative_production>`;
-    const pushback = await rebuttalsBlock(admin, clientId, "whole business audit across meta google creative").catch(() => "");
+    const pushback = await rebuttalsBlock(admin, clientId, "whole business audit across meta google tiktok creative").catch(() => "");
     // The creative analysis of the Meta account with the most spend (its KPI's campaigns only)
     await step("Ranking the creatives against the KPI");
     const mainMeta = kpis.filter((k) => k.platform === "meta").sort((x, y) => (y.windows.d30?.spend ?? 0) - (x.windows.d30?.spend ?? 0))[0];

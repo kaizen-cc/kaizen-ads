@@ -33,6 +33,7 @@ import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 import { SUCCESS, TARGET_FROM, successLine, type BenchmarkTarget, type Success, type TargetFrom } from "@/lib/kpi/success";
 import type { GoogleFlag } from "@/lib/google-flags";
 import { kpiCampaigns, setCampaignCounted, setCampaignResult, setCardMetric, type CampaignPerf } from "./campaign-actions";
+import { defaultConversion, platformLabel, platformShort, type KpiPlatform } from "@/lib/kpi/platform";
 
 export type KpiRow = {
   id: string;
@@ -44,7 +45,7 @@ export type KpiRow = {
   kaizenId: number | null;
   slug: string;
   clientStatus: string;
-  platform: "meta" | "google";
+  platform: KpiPlatform;
   accountId: string | null;
   label: string | null;
   conversion: string;
@@ -128,8 +129,8 @@ function StatusPill({ status }: { status: Status }) {
 /** The fields a buyer sets. Shared by edit and add. */
 type Ctl = { conv: string; setConv: (v: string) => void; custom: string; setCustom: (v: string) => void; match: string; setMatch: (v: string) => void; actions: { type: string; label: string; count30: number }[] };
 
-function TargetFields({ row, buyers, platform, ctl }: { row?: KpiRow; buyers: Person[]; platform: "meta" | "google"; ctl?: Ctl }) {
-  const [ownConv, setOwnConv] = useState(row?.conversion ?? (platform === "google" ? "conversions" : "purchases"));
+function TargetFields({ row, buyers, platform, ctl }: { row?: KpiRow; buyers: Person[]; platform: KpiPlatform; ctl?: Ctl }) {
+  const [ownConv, setOwnConv] = useState(row?.conversion ?? defaultConversion(platform));
   const conv = ctl?.conv ?? ownConv;
   const setConv = ctl?.setConv ?? setOwnConv;
   return (
@@ -145,8 +146,8 @@ function TargetFields({ row, buyers, platform, ctl }: { row?: KpiRow; buyers: Pe
         </select>
       </label>
       <label className={label}>
-        {conv === "roas" ? "Target ROAS" : "Target cost per result"}
-        <input name="target" inputMode="decimal" defaultValue={row?.targetFrom === "benchmark" ? "" : (row?.target ?? "")} placeholder={conv === "roas" ? "3.0" : "$45"} className={`${field} tabular`} />
+        {CONVERSIONS.find((c) => c.key === conv)?.roas ? "Target ROAS" : "Target cost per result"}
+        <input name="target" inputMode="decimal" defaultValue={row?.targetFrom === "benchmark" ? "" : (row?.target ?? "")} placeholder={CONVERSIONS.find((c) => c.key === conv)?.roas ? "3.0" : "$45"} className={`${field} tabular`} />
       </label>
       <label className={label}>
         Monthly budget
@@ -171,8 +172,8 @@ function TargetFields({ row, buyers, platform, ctl }: { row?: KpiRow; buyers: Pe
         </select>
       </label>
       <label className={label}>
-        {platform === "google" ? "Google Ads customer ID" : "Meta ad account ID"}
-        <input name="ad_account_id" defaultValue={row?.accountId ?? ""} className={`${field} tabular`} placeholder={platform === "google" ? "123-456-7890" : "act_…"} />
+        {platform === "google" ? "Google Ads customer ID" : platform === "tiktok" ? "TikTok advertiser ID" : "Meta ad account ID"}
+        <input name="ad_account_id" defaultValue={row?.accountId ?? ""} className={`${field} tabular`} placeholder={platform === "google" ? "123-456-7890" : platform === "tiktok" ? "7012345678901234567" : "act_…"} />
       </label>
       <label className={label}>
         <span>
@@ -672,12 +673,14 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
   const gap = gapText(r);
   const moves = (r.audit?.quick ?? []).filter((q) => !q.done).length;
   const notes = NOTE_FIELDS.filter(([k]) => r.sheet?.[k]).length;
+  // TikTok is read only: no audit, moves or creative tools there yet, only its numbers, notes and what's counted
+  const tiktok = r.platform === "tiktok";
   const tabs: { id: Tab; label: string; count?: number | null; hint: string }[] = [
-    { id: "overview", label: "Overview", hint: "Where it stands, the 30 days, budget and the next move" },
-    { id: "numbers", label: "Numbers", hint: "Every window, month and quarter, and the metrics Meta reports" },
-    { id: "actions", label: "Actions", count: moves || null, hint: "The audit and the moves to make in the ad account" },
+    { id: "overview", label: "Overview", hint: tiktok ? "Where it stands, the 30 days, budget and the campaigns (TikTok is read only)" : "Where it stands, the 30 days, budget and the next move" },
+    { id: "numbers", label: "Numbers", hint: `Every window, month and quarter, and the metrics ${platformShort(r.platform)} reports` },
+    ...(tiktok ? [] : [{ id: "actions" as const, label: "Actions", count: moves || null, hint: "The audit and the moves to make in the ad account" }]),
     ...(r.platform === "google" ? [{ id: "policy" as const, label: "Policy", hint: "Disapproved and limited ads, assets and keywords: the trigger, Google's policy and the fix" }] : []),
-    { id: "creative", label: "Creative", hint: "Ads wearing out, what has worked for them, and what's live in their market" },
+    ...(tiktok ? [] : [{ id: "creative" as const, label: "Creative", hint: "Ads wearing out, what has worked for them, and what's live in their market" }]),
     { id: "notes", label: "Notes", count: notes || null, hint: "The #1 problem, the plan, this week's updates and every change in the account" },
     { id: "settings", label: "Settings", hint: "What's counted, the target and the budget" },
   ];
@@ -717,7 +720,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
               </p>
               <p className="truncate text-xs text-faint">
                 {r.kaizenId != null && <span className="tabular">ID {r.kaizenId} · </span>}
-                {r.platform === "google" ? "Google Ads" : "Meta"} · {r.conversionLabel}
+                {platformLabel(r.platform)} · {r.conversionLabel}
                 {buyersLine(r)}
                 {r.targetFrom && ` · ${TARGET_FROM[r.targetFrom].toLowerCase()}`}
               </p>
@@ -764,8 +767,8 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                 client={r.client}
                 live
                 perms={r.perms}
-                scope={r.accountId ? { platform: r.platform === "google" ? "google" : "meta", targetId: r.id } : null}
-                targets={r.accountId ? [{ id: r.id, label: `${r.platform === "google" ? "Google" : "Meta"}${r.label ? ` · ${r.label}` : ""}`, status: r.audit?.status ?? "none", auditId: r.audit?.id ?? null }] : []}
+                scope={r.accountId && !tiktok ? { platform: r.platform === "google" ? "google" : "meta", targetId: r.id } : null}
+                targets={r.accountId && !tiktok ? [{ id: r.id, label: `${platformShort(r.platform)}${r.label ? ` · ${r.label}` : ""}`, status: r.audit?.status ?? "none", auditId: r.audit?.id ?? null }] : []}
               />
               <Link href={`/clients/${r.slug}?service=${r.platform}`} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm text-muted hover:text-fg md:h-9">
                 Client page →
@@ -842,8 +845,12 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                     </div>
                   </div>
                 </div>
-                <NextMove r={r} moves={moves} onActions={() => setTab("actions")} onNotes={() => setTab("notes")} />
-                {r.accountId && r.sheet?.solution && (
+                {tiktok ? (
+                  <p className="rounded-[14px] border border-dashed border-line px-4 py-3 text-[13px] leading-relaxed text-muted">TikTok is read only for now: Kaizen Ads pulls its numbers, but audits, moves and changes in the account aren&apos;t connected yet. Make changes in TikTok Ads Manager.</p>
+                ) : (
+                  <NextMove r={r} moves={moves} onActions={() => setTab("actions")} onNotes={() => setTab("notes")} />
+                )}
+                {r.accountId && r.sheet?.solution && r.platform !== "tiktok" && (
                   <section className="grid gap-2 rounded-[20px] border border-line bg-surface p-4 md:p-5">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">The plan, in the account</p>
                     <p className="text-[13px] leading-relaxed text-muted">Turn the #1 problem&apos;s plan into the exact changes, checked before anything is written.</p>
@@ -851,7 +858,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                   </section>
                 )}
                 {r.accountId && <Campaigns key={`${r.id}:${r.conversion}:${r.target}`} id={r.id} target={r.targetFrom === "benchmark" ? null : r.target} conversion={r.conversion} platform={r.platform} />}
-                {r.audit?.status === "ready" && r.audit.quick && r.audit.quick.length > 0 && (
+                {r.platform !== "tiktok" && r.audit?.status === "ready" && r.audit.quick && r.audit.quick.length > 0 && (
                   <section className="grid gap-1 rounded-[20px] border border-line bg-surface px-4 pb-4 md:px-5 md:pb-5">
                     <QuickActions key={r.audit.id} auditId={r.audit.id} items={r.audit.quick} platform={r.audit.platform ?? r.platform} />
                     <button type="button" onClick={() => setTab("actions")} className="justify-self-start py-2 text-xs text-muted hover:text-fg">
@@ -930,7 +937,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
             {tab === "notes" && (
               <>
                 <AccountNotes r={r} />
-                {r.accountId && <ChangeLog changes={r.changes} platform={r.platform} limit={10} collapsed={5} />}
+                {r.accountId && r.platform !== "tiktok" && <ChangeLog changes={r.changes} platform={r.platform} limit={10} collapsed={5} />}
               </>
             )}
 
@@ -939,7 +946,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   {r.sheet ? <p className="text-[11px] text-faint">Buyer, budget and target come from the Account Overview sheet (read at 12pm and 5pm): change them there.</p> : <span />}
                   <div className="flex flex-wrap items-center gap-3 md:flex-nowrap">
-                    {r.accountId && <ActionButton action={pullClientKpis.bind(null, r.clientId)} label={r.platform === "google" ? "Pull from Google now" : "Pull from Meta now"} />}
+                    {r.accountId && <ActionButton action={pullClientKpis.bind(null, r.clientId)} label={`Pull from ${platformShort(r.platform)} now`} />}
                     <ActionButton action={archiveKpiTarget.bind(null, r.id)} label="Remove" confirmText="Remove this KPI?" />
                   </div>
                 </div>
@@ -961,7 +968,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
  * themselves can be switched out of the KPI. At the top, what the whole card is judged on and its target. Any change
  * works the card's numbers out again straight away.
  */
-function Campaigns({ id, target, conversion, platform }: { id: string; target: number | null; conversion: string; platform: "meta" | "google" }) {
+function Campaigns({ id, target, conversion, platform }: { id: string; target: number | null; conversion: string; platform: KpiPlatform }) {
   const router = useRouter();
   const [data, setData] = useState<{ roas: boolean; campaigns: CampaignPerf[] } | null>(null);
   const [all, setAll] = useState(false);
@@ -1713,11 +1720,11 @@ function MovesTip({ items, google, onMove }: { items: QuickAction[]; google: boo
   );
 }
 
-function AddKpi({ clients, buyers, platform, preset = null, onDone }: { clients: { id: string; name: string }[]; buyers: Person[]; platform: "meta" | "google"; preset?: string | null; onDone: () => void }) {
+function AddKpi({ clients, buyers, platform, preset = null, onDone }: { clients: { id: string; name: string }[]; buyers: Person[]; platform: KpiPlatform; preset?: string | null; onDone: () => void }) {
   return (
     <div className="grid gap-4 rounded-[14px] border border-line bg-surface p-4 sm:p-6">
       <div className="flex items-center justify-between">
-        <p className="font-heading text-[17px]">New {platform === "google" ? "Google Ads" : "Meta"} KPI</p>
+        <p className="font-heading text-[17px]">New {platformLabel(platform)} KPI</p>
         <button onClick={onDone} className="-mr-2 h-10 px-2 text-xs text-muted hover:text-fg md:mr-0 md:h-auto md:px-0">
           Close
         </button>
@@ -1784,7 +1791,7 @@ function Unlinked({ accounts, clients }: { accounts: { id: string; name: string;
 
 /** The KPI dashboard: how every account is pacing toward its target and its budget. */
 /** A client running Meta or Google ads with no KPI target on that platform yet */
-export type MissingKpi = { clientId: string; client: string; slug: string; platform: "meta" | "google"; buyerId: string | null; buyer: string | null; coBuyers?: Person[] };
+export type MissingKpi = { clientId: string; client: string; slug: string; platform: KpiPlatform; buyerId: string | null; buyer: string | null; coBuyers?: Person[] };
 
 export function KpiBoard({
   rows,
@@ -1796,6 +1803,7 @@ export function KpiBoard({
   lastSync,
   unlinked = [],
   googleConnected = false,
+  tiktokOn = false,
   focus = null,
   only = null,
 }: {
@@ -1809,8 +1817,10 @@ export function KpiBoard({
   unlinked?: { id: string; name: string; bm?: { id: string; name: string } }[];
   /** Google Ads is set up (it reads through the manager account); its KPIs fill in on the next sync */
   googleConnected?: boolean;
+  /** TikTok is set up and connected (or has cards): its switch shows. Hidden before, so nothing changes while it's dormant */
+  tiktokOn?: boolean;
   /** One account to open and bring into view (from a recap card, a notification or the client page) */
-  focus?: { id: string; platform: "meta" | "google" } | null;
+  focus?: { id: string; platform: KpiPlatform } | null;
   /** Someone on one platform's team (the Meta buyers, the Google buyers) sees only that platform: no switch */
   only?: "meta" | "google" | null;
 }) {
@@ -1818,12 +1828,17 @@ export function KpiBoard({
   // forward walk through it, and a link lands on the same view. Changes go through the History API, so nothing reloads
   const sp = useSearchParams();
   const linked = Boolean(sp.get("target") || sp.get("client"));
-  const platform = only ?? (sp.get("p") as "meta" | "google" | null) ?? focus?.platform ?? "meta";
+  // The Meta team buys TikTok too: their board switches between Meta and TikTok once TikTok is on
+  const platforms: KpiPlatform[] = only ? [only, ...(only === "meta" && tiktokOn ? ["tiktok" as const] : [])] : ["meta", "google", ...(tiktokOn ? ["tiktok" as const] : [])];
+  const asked = (sp.get("p") as KpiPlatform | null) ?? focus?.platform ?? null;
+  const platform: KpiPlatform = asked && platforms.includes(asked) ? asked : platforms[0];
   const owner = sp.get("who") ?? initialOwner;
   const status = (sp.get("status") as Status | null) ?? "all";
   const pace = (sp.get("pace") as Pacing["status"] | null) ?? "all";
   const open = sp.get("open") ?? (linked ? (focus?.id ?? null) : null);
-  const tab = (TABS as string[]).includes(sp.get("tab") ?? "") ? (sp.get("tab") as Tab) : "overview";
+  const asTab = (TABS as string[]).includes(sp.get("tab") ?? "") ? (sp.get("tab") as Tab) : "overview";
+  // TikTok cards are read only: no Actions, Policy or Creative tab to land on
+  const tab: Tab = platform === "tiktok" && ["actions", "policy", "creative"].includes(asTab) ? "overview" : asTab;
   const [q, setQ] = useState(() => sp.get("q") ?? "");
   const go = (patch: Record<string, string | null>, how: "push" | "replace" = "push") => {
     const u = new URL(window.location.href);
@@ -1833,7 +1848,7 @@ export function KpiBoard({
     }
     if (u.href !== window.location.href) window.history[how === "push" ? "pushState" : "replaceState"](null, "", u);
   };
-  const setPlatform = (p: "meta" | "google") => go({ p, who: null, open: null, tab: null, target: null, client: null, platform: null });
+  const setPlatform = (p: KpiPlatform) => go({ p, who: null, open: null, tab: null, target: null, client: null, platform: null });
   const setOwner = (who: string) => go({ who: who === initialOwner ? null : who });
   const setStatus = (v: Status | "all") => go({ status: v === "all" ? null : v });
   const setPace = (v: Pacing["status"] | "all") => go({ pace: v === "all" ? null : v });
@@ -1903,13 +1918,13 @@ export function KpiBoard({
         </div>
         <div className="flex w-full items-center gap-2 md:w-auto">
           <div className="flex flex-1 rounded-full border border-line bg-surface p-1 md:inline-flex md:flex-none">
-            {(only ? [only] : (["meta", "google"] as const)).map((p) => (
+            {platforms.map((p) => (
               <button
                 key={p}
                 onClick={() => setPlatform(p)}
                 className={`h-10 flex-1 rounded-full px-3 text-sm transition-colors md:h-8 md:flex-none md:px-4 ${platform === p ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
               >
-                {p === "meta" ? "Meta" : "Google Ads"} <span className="tabular opacity-60">{rows.filter((r) => r.platform === p).length}</span>
+                {platformLabel(p)} <span className="tabular opacity-60">{rows.filter((r) => r.platform === p).length}</span>
               </button>
             ))}
           </div>
@@ -2040,7 +2055,7 @@ export function KpiBoard({
                   <span className="shrink-0 rounded-full bg-warn-soft px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.1em] text-warn">No KPI set</span>
                 </div>
                 <p className="truncate text-xs text-muted">{m.buyer ?? "No buyer assigned"}</p>
-                <p className="text-[13px] leading-snug text-muted">Runs {m.platform === "google" ? "Google Ads" : "Meta"} with no target yet, so pacing, audits and briefs have nothing to aim at.</p>
+                <p className="text-[13px] leading-snug text-muted">Runs {platformLabel(m.platform)} with no target yet, so pacing, audits and briefs have nothing to aim at.</p>
               </div>
               <button
                 type="button"
@@ -2078,7 +2093,7 @@ export function KpiBoard({
  * campaign's result, which ones count). The same parts as the KPI board's card, saved to the same KPI, so a change in
  * either place shows in both.
  */
-export function KpiExtras({ k }: { k: { id: string; target: number | null; targetFrom?: TargetFrom | null; conversion: string; customAction: string | null; campaignMatch: string | null; platform: "meta" | "google"; extraMetrics: string[] } }) {
+export function KpiExtras({ k }: { k: { id: string; target: number | null; targetFrom?: TargetFrom | null; conversion: string; customAction: string | null; campaignMatch: string | null; platform: KpiPlatform; extraMetrics: string[] } }) {
   const router = useRouter();
   const [ex, setEx] = useState<Explore | null>(null);
   const [nonce, setNonce] = useState(0);

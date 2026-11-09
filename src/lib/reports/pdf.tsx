@@ -30,7 +30,7 @@ async function adImage(url: string | null, dark = false, size = 240): Promise<st
 /** Each part's top ad pictures, as data URIs. Meta's image links are signed and expire within days, so fresh ones are asked
  *  for; the saved link is the fallback */
 export async function reportImages(input: ReportPdfInput): Promise<(string | null)[][]> {
-  const ids = input.parts.flatMap((p) => (p.platform === "meta" ? p.metrics.topAds.slice(0, 3).map((a) => a.id) : []));
+  const ids = input.parts.flatMap((p) => (p.platform !== "google" ? p.metrics.topAds.slice(0, 3).map((a) => a.id) : []));
   const { adPreviews, metaConfigured } = await import("@/lib/context/meta");
   const fresh = ids.length && metaConfigured() ? await adPreviews(ids).catch(() => new Map<string, { images: string[] }>()) : new Map<string, { images: string[] }>();
   // The monthly deck shows the creative large
@@ -44,7 +44,7 @@ export async function reportImages(input: ReportPdfInput): Promise<(string | nul
     const first = fresh.get(a.id)?.images[0] ?? a.image;
     return first ? adImage(first, true, size) : null;
   };
-  return Promise.all(input.parts.map((p) => (p.platform === "meta" ? Promise.all(p.metrics.topAds.slice(0, 3).map(imageOf)) : Promise.resolve([]))));
+  return Promise.all(input.parts.map((p) => (p.platform !== "google" ? Promise.all(p.metrics.topAds.slice(0, 3).map(imageOf)) : Promise.resolve([]))));
 }
 
 /** The report as a PDF. Weekly: one part. Monthly: a landscape deck of one or two parts (Meta, Google). */

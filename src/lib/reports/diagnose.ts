@@ -143,7 +143,7 @@ export async function opportunityFor(admin: SupabaseClient, r: { id: string; cli
   const recently = new Set(raised.map((p) => p.opportunity!.service));
 
   const has = new Set<string>(servicesOf(c));
-  for (const p of platforms ?? []) has.add(p.platform === "google" ? "google-ads" : "facebook-ads");
+  for (const p of platforms ?? []) has.add(p.platform === "google" ? "google-ads" : p.platform === "tiktok" ? "tiktok-ads" : "facebook-ads");
   if (c.meta_ad_account_id) has.add("facebook-ads");
   if (c.creative_package) has.add("creative");
   const off = (s: ServiceSlug) => !has.has(s) && !recently.has(s) && !(c.services_removed ?? []).includes(s);

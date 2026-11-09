@@ -15,6 +15,8 @@
 //   not): video only. Neither writes copy or touches an ad account.
 // - The copywriter: copy only (and asking about creative). No briefs, no ad account.
 // - Customer success and anyone else: asking and reading only.
+// - TikTok: read only for everyone (no writes or launches are connected yet). Its seat (tiktok_buyer, falling back to the
+//   Meta buyer) and the Head of Meta own its numbers, cards and reports.
 // Ad account actions also pass the client's live-writes switch (live_ad_writes for Meta, live_google_writes for
 // Google) after this; the role is checked first.
 
@@ -30,13 +32,13 @@ export type BriefFormat = CreativeFormat | "mixed" | "unknown";
 export type Who = { role: string | null | undefined; isExec?: boolean | null };
 
 export type PermCtx = {
-  platform?: AdPlatform | null;
+  platform?: AdPlatform | "tiktok" | null;
   format?: BriefFormat | string | null;
   /** Every format in a brief (a mixed one): all of them must be the person's */
   formats?: readonly (string | null | undefined)[] | null;
   clientId?: string | null;
   /** The buyer seats this person holds on the client (from client_assignments). Needed for a buyer's ad account actions. */
-  seats?: readonly AdPlatform[] | null;
+  seats?: readonly (AdPlatform | "tiktok")[] | null;
 };
 
 export type Verdict = { ok: true; reason: null } | { ok: false; reason: string };
@@ -92,6 +94,7 @@ function copyOk(me: Who) {
 
 function adsVerdict(me: Who, action: "ads.change" | "ads.launch", ctx: PermCtx): Verdict {
   const p = ctx.platform;
+  if (p === "tiktok") return no("TikTok changes aren't connected yet: Kaizen Ads reads TikTok's numbers but can't change anything there. Make the change in TikTok Ads Manager.");
   if (p !== "meta" && p !== "google") return no("Say which ad account: Meta or Google Ads.");
   if (isExec(me)) return YES;
   const r = me.role ?? "";
@@ -158,7 +161,7 @@ export type ClientPerms = {
   review: boolean;
 };
 
-export function clientPerms(me: Who, seats: readonly AdPlatform[] = []): ClientPerms {
+export function clientPerms(me: Who, seats: readonly (AdPlatform | "tiktok")[] = []): ClientPerms {
   const v = (action: "ads.change" | "ads.launch", platform: AdPlatform) => can(me, action, { platform, seats });
   const cm = v("ads.change", "meta"), cg = v("ads.change", "google"), lm = v("ads.launch", "meta"), lg = v("ads.launch", "google");
   const brief = can(me, "brief");
