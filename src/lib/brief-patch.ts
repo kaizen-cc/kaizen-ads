@@ -59,6 +59,8 @@ export const stateOf = (r: { title: string; angle: string; audience: string; siz
 export const briefOf = (s: BriefState) => composeBrief(s.overview, s.spec);
 
 const SIZES = ["4x5", "9x16"];
+const FIELDS = [...TEXT_FIELDS, ...LIST_FIELDS] as const;
+const OPS: string[] = ["set", "add", "replace", "remove"];
 const clip = (s: string, n = 600) => s.replace(/\s*\u2014\s*/g, ", ").trim().slice(0, n);
 
 function editList<T>(xs: T[], c: BriefChange, item: T | null): T[] {
@@ -85,6 +87,11 @@ export function applyBriefPatch(s: BriefState, changes: BriefChange[], allowed?:
   const applied: BriefChange[] = [];
   const refused: BriefChange[] = [];
   for (const c of changes) {
+    // The answer's strings checked here, not by the schema (no enums: the API refuses grammars that are too large)
+    if (!(FIELDS as readonly string[]).includes(c.field) || !OPS.includes(c.op)) {
+      refused.push(c);
+      continue;
+    }
     if (allowed && !allowed.includes(c.field)) {
       refused.push(c);
       continue;
@@ -162,11 +169,11 @@ export const PATCH_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          field: { type: "string", enum: [...TEXT_FIELDS, ...LIST_FIELDS] },
-          op: { type: "string", enum: ["set", "add", "replace", "remove"] },
+          field: { type: "string" },
+          op: { type: "string" },
           value: { type: "string" },
           index: { type: "integer" },
-          status: { type: "string", enum: ["have", "need", "shoot", "missing", ""] },
+          status: { type: "string" },
           answer: { type: "string" },
           source: { type: "string" },
         },

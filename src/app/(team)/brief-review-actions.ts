@@ -6,7 +6,7 @@ import { requireStaff, type Staff } from "@/lib/auth";
 import { can } from "@/lib/chat-permissions";
 import { answerFact, factCategory } from "@/lib/brief-facts";
 import { canOverride, type GateKey, type ReviewStamp } from "@/lib/brief-gate";
-import type { LintIssue } from "@/lib/brief-lint";
+import { LINT_SCHEMA, type LintIssue } from "@/lib/brief-lint";
 import { COPY_FIELDS, FIELD_LABEL, PATCH_SCHEMA, applyBriefPatch, briefOf, diffStates, stateOf, type BriefChange, type BriefState, type FieldDiff, type PatchField } from "@/lib/brief-patch";
 import { SPEC_RULE, composeBrief } from "@/lib/brief-spec";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -80,13 +80,6 @@ const toInput = (b: Loaded) => ({ clientId: b.clientId, title: b.title, brief: b
 
 export type CheckResult = { ok: true; check: import("@/lib/brief-check").BriefCheck; ai: LintIssue[] | null; canOverride: boolean; canEdit: boolean; copyOnly: boolean } | Fail;
 
-const AI_LINT = {
-  type: "object",
-  properties: { issues: { type: "array", items: { type: "object", properties: { message: { type: "string" }, severity: { type: "string", enum: ["hard", "soft"] }, fix: { type: "string" } }, required: ["message", "severity", "fix"], additionalProperties: false } } },
-  required: ["issues"],
-  additionalProperties: false,
-};
-
 /** The ready check; withAi adds the AI's consistency pass (contradictions the code rules can't see, claims against the Bible) */
 export async function checkBrief(t: BriefTarget, withAi = false): Promise<CheckResult> {
   const me = await requireStaff();
@@ -107,7 +100,7 @@ export async function checkBrief(t: BriefTarget, withAi = false): Promise<CheckR
         clientId: b.clientId,
         override: { model: "sonnet", effort: "low" },
         maxTokens: 3000,
-        schema: AI_LINT,
+        schema: LINT_SCHEMA,
         system: `${AGENCY_SYSTEM}
 
 You check one creative brief for contradictions inside it before it goes to the editor or designer, the way an editor reading it would trip on them. Look only for real conflicts between two things the brief (or its sizes and formats) says, or between the brief and the client's context: sizes against file names and placements (Kaizen makes 4:5 and 9:16 only), logo or branding rules against the hook or end card, "evergreen" or "no event-specific content" against event footage or dates, claims or proof against what the Brand Bible and client memory cleared, durations against the platform (Reels and Stories), the format against what's asked (a static asked for motion). hard: the maker can't follow both; soft: worth a look. message: one plain sentence naming both sides. fix: an instruction to resolve it, as you'd type it to the person editing the brief. No style notes, nothing about wording you'd prefer, nothing already fine. [] when there's nothing. No em dashes.`,
@@ -234,7 +227,7 @@ Their correction: ${say}`,
         });
       }
     }
-    return { ok: true, reply: (out.reply ?? "").replace(/\s*\u2014\s*/g, ", ").slice(0, 600) || (applied.length ? "Done." : "Nothing to change."), state, brief, diff, correctionId, refused: refused.map((c) => FIELD_LABEL[c.field]) };
+    return { ok: true, reply: (out.reply ?? "").replace(/\s*\u2014\s*/g, ", ").slice(0, 600) || (applied.length ? "Done." : "Nothing to change."), state, brief, diff, correctionId, refused: refused.map((c) => FIELD_LABEL[c.field] ?? String(c.field)) };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't change it. Try again." };
   }

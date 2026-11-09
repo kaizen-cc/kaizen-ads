@@ -241,47 +241,35 @@ export function withSpec(brief: string, sp: BriefSpec | null | undefined) {
   return composeBrief(parseBrief(brief).overview, sp);
 }
 
-/** The JSON shape the brief writers fill (inside draft.spec) */
-export const SPEC_SCHEMA = {
-  type: "object",
-  properties: {
-    insight: { type: "string" },
-    insightSource: { type: "string" },
-    keyMessage: { type: "string" },
-    hook: { type: "string" },
-    proof: { type: "array", items: { type: "string" } },
-    slides: { type: "array", items: { type: "string" } },
-    constraints: { type: "array", items: { type: "string" } },
-    dos: { type: "array", items: { type: "string" } },
-    donts: { type: "array", items: { type: "string" } },
-    assets: {
-      type: "array",
-      items: { type: "object", properties: { item: { type: "string" }, status: { type: "string", enum: ["have", "need", "shoot", "missing"] } }, required: ["item", "status"], additionalProperties: false },
-    },
-    kpi: { type: "string" },
-    success: { type: "string" },
-    yourCall: { type: "string" },
-    script: { type: "string" },
-    confirm: {
-      type: "array",
-      items: { type: "object", properties: { question: { type: "string" }, answer: { type: "string" }, source: { type: "string" } }, required: ["question", "answer", "source"], additionalProperties: false },
-    },
-  },
-  required: ["insight", "insightSource", "keyMessage", "hook", "proof", "slides", "constraints", "dos", "donts", "assets", "kpi", "success", "yourCall", "script", "confirm"],
-  additionalProperties: false,
-} as const;
+/**
+ * A writer's brief, written as one string under the fixed headings (no nested schema: the API refuses grammars that
+ * are too large), read back here: tidied (cleanSpec), the client-only facts it doesn't answer added to "Confirm with
+ * client", and written again. Never loses a brief: one that doesn't read as sections, or anything that goes wrong
+ * reading it, comes back exactly as written (free text).
+ */
+export function structureBrief(brief: string, title: string, addFacts?: (sp: BriefSpec, title: string) => BriefSpec): string {
+  try {
+    const p = parseBrief(brief);
+    if (!p.structured) return brief;
+    const sp = cleanSpec(p.spec);
+    return composeBrief(p.overview, addFacts ? addFacts(sp, title) : sp);
+  } catch {
+    return brief;
+  }
+}
 
-/** How the writers fill the spec: the same words for every writer (roles, never names; no em dashes) */
-export const SPEC_RULE = `THE BRIEF'S SHAPE (precise on WHAT and WHY; the HOW belongs to the editor or designer):
-- brief: two to four plain lines, the idea in words a maker gets in ten seconds. Everything else goes in spec.
-- spec.insight: the specific, true thing the ad says or shows (the reveal, the tip, the fact). Say exactly which one. spec.insightSource: where it comes from in the context (Brand Bible, client memory, a call and its date, the intake, a document), "" when it isn't in the context.
-- spec.keyMessage: the one thing people should take away. spec.hook: the opening line or visual idea, not a shot list.
-- spec.proof: only claims the client cleared (in the Brand Bible, client memory or a document they sent). Nothing else.
-- spec.constraints: sizes 4:5 and 9:16 only (never 1:1, never one size alone unless the request says so), safe zones, legal and consent (people on camera, testimonials, music rights), platform limits. Every constraint must agree with every other line: no logo rule against a hook that shows the logo, no "evergreen" rule against event footage, no size rule against the file names.
-- spec.dos and spec.donts: the client's rules that matter here, each short.
-- spec.slides: a carousel's slides as the message each one carries (not how it looks); [] otherwise.
-- spec.assets: each asset with its status: have (on Drive, say which folder), need (we must get it), shoot (the client has to film or photograph it), missing (a link we were given doesn't open). Never write a placeholder like MISSING or TBD in place of a link.
-- spec.kpi: the metric this is judged on (from the client's KPIs); spec.success: what a win looks like in numbers or behaviour.
-- spec.yourCall: one or two lines handing style, pacing, music, edit structure and exact beats to the maker. Never direct those yourself.
-- spec.script: "" unless the request explicitly asked for a script or voiceover text.
-- spec.confirm: every fact the concept depends on that only the client knows (which seat or spot, the tip, the stat, the offer's terms, a date) and that the context doesn't answer: the question to ask them, short and specific ("Which seat, at which venue, and why?"), answer "". When the context does answer it, use it, put it in answer and name the source. NEVER invent such a fact: an ad that promises a reveal without the reveal is not ready, and saying so is the right answer.`;
+/** How the writers write the brief: the same words for every writer (roles, never names; no em dashes) */
+export const SPEC_RULE = `THE BRIEF'S SHAPE (precise on WHAT and WHY; the HOW belongs to the editor or designer). Write draft.brief as plain text: first two to four lines with the idea in words a maker gets in ten seconds, then these sections, each starting on its own line with the heading exactly as written here, a blank line between sections, list items as "- " lines. Leave a section out when there's nothing to say.
+Insight: the specific, true thing the ad says or shows (the reveal, the tip, the fact). Say exactly which one, then where it comes from in the context in brackets, e.g. "(Source: Brand Bible)", "(Source: call Oct 12)"; no source when it isn't in the context.
+Key message: the one thing people should take away.
+Hook: the opening line or visual idea, not a shot list.
+Proof: (list) only claims the client cleared (in the Brand Bible, client memory or a document they sent). Nothing else.
+Slides: (numbered list, carousels only) the message each slide carries, not how it looks.
+Constraints: (list) sizes 4:5 and 9:16 only (never 1:1, never one size alone unless the request says so), safe zones, legal and consent (people on camera, testimonials, music rights), platform limits. Every line of the brief must agree with every other: no logo rule against a hook that shows the logo, no "evergreen" rule against event footage, no size rule against the file names.
+Do: (list) and Don't: (list) the client's rules that matter here, each short.
+Assets: (list) each item starting with its status: "- Have: <asset> (Drive: <folder>)", "- Need: <asset>", "- Client to shoot: <asset>", "- Missing: <a link that doesn't open>". Never write a placeholder like MISSING or TBD in place of a link.
+KPI: the metric this is judged on (from the client's KPIs).
+Success looks like: what a win looks like in numbers or behaviour.
+Your call: one or two lines handing style, pacing, music, edit structure and exact beats to the maker. Never direct those yourself.
+Script: only when the request explicitly asked for a script or voiceover text.
+Confirm with client: (list) every fact the concept depends on that only the client knows (which seat or spot, the tip, the stat, the offer's terms, a date) and that the context doesn't answer, as the question to ask them, short and specific ("- Which seat, at which venue, and why?"). When the context does answer it, use it and write "- <question> Answer: <answer> (Source: <where>)". NEVER invent such a fact: an ad that promises a reveal without the reveal is not ready, and saying so is the right answer.`;

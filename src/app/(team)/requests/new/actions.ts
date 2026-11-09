@@ -34,7 +34,7 @@ import { notLive } from "@/lib/live-guard";
 import type { QuickBrief } from "@/lib/quick-brief";
 import { clampFormats, fitsAnyFormat, fitsFormat, formatsFor, formatsOutside, formatsPhrase, formatsRule, marketFormatOf } from "@/lib/creative-formats";
 import { promiseSince } from "@/lib/promise-window";
-import { parseBrief, withSpec } from "@/lib/brief-spec";
+import { composeBrief, parseBrief } from "@/lib/brief-spec";
 
 /** A request in formats this person doesn't make requests for (a designer and video, a video editor and images): refused */
 function outsideFormats(me: { role: string; isExec?: boolean; isLead?: boolean }, formats: string[]): string | null {
@@ -551,7 +551,8 @@ export async function promisesFor(clientId: string): Promise<Promise_[]> {
 function toPatch(d: import("@/lib/suggestions").SuggestionDraft): Partial<Draft> {
   // A brief with its spec (insight, hook, constraints...): one concept is already said by the spec, so only the hooks
   // each version tests join the idea above the spec's sections. Several concepts keep their list (split next).
-  const structured = Boolean(d.spec) && (d.concepts?.length ?? 0) <= 1;
+  const parsed = parseBrief(d.brief ?? "");
+  const structured = parsed.structured && (d.concepts?.length ?? 0) <= 1;
   const concepts = d.concepts?.length && !structured ? `\n\nConcepts:\n${d.concepts.map((c, i) => `${i + 1}. ${c.name}\n   Hook: ${c.hook}\n   Visual: ${c.visual}\n   Copy: ${c.copy}`).join("\n")}` : "";
   const hooks = d.hooks?.length ? `\n\nHooks to try:\n${d.hooks.map((h) => `- ${h}`).join("\n")}` : "";
   return {
@@ -559,7 +560,7 @@ function toPatch(d: import("@/lib/suggestions").SuggestionDraft): Partial<Draft>
     angle: d.angle,
     ...(d.avatar?.trim() ? { avatar: d.avatar.trim(), avatarTest: Boolean(d.avatarTest) } : {}),
     audience: d.audience,
-    brief: structured ? withSpec(`${parseBrief(d.brief).overview}${hooks}`, d.spec) : `${d.brief}${concepts}${hooks}`,
+    brief: structured ? composeBrief(`${parsed.overview}${hooks}`, parsed.spec) : `${d.brief}${concepts}${hooks}`,
     formats: Object.fromEntries(d.formats.map((f) => [f.format, { new: f.new, variations: f.variations }])),
     sizes: d.sizes.filter((x) => SIZES.includes(x)),
     landing: d.landing || "",

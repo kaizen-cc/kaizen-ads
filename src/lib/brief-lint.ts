@@ -141,3 +141,14 @@ export function applyTextFix(text: string, from: string, to: string) {
 }
 
 export const hardIssues = (xs: LintIssue[]) => xs.filter((x) => x.severity === "hard");
+
+/**
+ * The AI consistency pass's answer: flat, strings only (severity is checked in code: no enums, since the API refuses
+ * grammars that are too large)
+ */
+export const LINT_SCHEMA = {
+  type: "object",
+  properties: { issues: { type: "array", items: { type: "object", properties: { message: { type: "string" }, severity: { type: "string" }, fix: { type: "string" } }, required: ["message", "severity", "fix"], additionalProperties: false } } },
+  required: ["issues"],
+  additionalProperties: false,
+};
