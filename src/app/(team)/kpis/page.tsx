@@ -6,7 +6,7 @@ import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { KpiBoard, type KpiRow } from "./kpi-board";
+import { KpiBoard, type MissingKpi, type KpiRow } from "./kpi-board";
 import { latestAudits } from "@/lib/audit-summary";
 import { changeKey, loadChanges } from "@/lib/account-changes";
 import { loadSprints } from "@/lib/sprints";
@@ -130,6 +130,27 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
     })
     .sort((a, b) => a.client.localeCompare(b.client) || (a.label ?? "").localeCompare(b.label ?? ""));
 
+  // Clients that run Meta or Google ads with no KPI target on that platform: they still belong on the board (as
+  // "needs a KPI target"), with their buyer, so nobody loses sight of them
+  const [{ data: svc }, { data: allSeats }] = await Promise.all([
+    supabase.from("clients").select("id, name, slug, services").in("status", ["active", "onboarding"]).is("archived_at", null),
+    supabase.from("client_assignments").select("client_id, role, profile_id, profiles(full_name)").in("role", ["meta_buyer", "google_buyer"]),
+  ]);
+  const hasTarget = new Set((targets ?? []).map((t) => `${t.client_id}:${t.platform === "google" ? "google" : "meta"}`));
+  const missing: MissingKpi[] = [];
+  for (const c of svc ?? []) {
+    const services = (c.services ?? []) as string[];
+    for (const platform of ["meta", "google"] as const) {
+      if (!services.includes(platform === "meta" ? "facebook-ads" : "google-ads")) continue;
+      if (hasTarget.has(`${c.id}:${platform}`)) continue;
+      if (team && team !== platform) continue;
+      const seat = (allSeats ?? []).find((x) => x.client_id === c.id && x.role === (platform === "meta" ? "meta_buyer" : "google_buyer"));
+      if (buyer && !(seat && seat.profile_id === me.id)) continue;
+      missing.push({ clientId: c.id as string, client: c.name as string, slug: c.slug as string, platform, buyerId: (seat?.profile_id as string | undefined) ?? null, buyer: (seat?.profiles as unknown as { full_name: string } | null)?.full_name ?? null });
+    }
+  }
+  missing.sort((x, y) => x.client.localeCompare(y.client));
+
   // Ad accounts Meta shares with us that no client has yet (server-side bookmark; execs link them)
   const { data: accounts } = me.isExec && adminConfigured() ? await createAdminClient().from("sync_state").select("last_result").eq("source", "meta:accounts").maybeSingle() : { data: null };
   const unlinked = ((accounts?.last_result as { unlinked?: { id: string; name: string }[] } | null)?.unlinked ?? []).slice(0, 50);
@@ -149,6 +170,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   return (
     <KpiBoard
       rows={rows}
+      missing={missing}
       buyers={(buyers ?? []).map((b) => ({ id: b.id, name: b.full_name }))}
       clients={clients ?? []}
       me={{ id: me.id, firstName: me.fullName.split(" ")[0] }}

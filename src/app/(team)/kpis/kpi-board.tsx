@@ -1705,7 +1705,7 @@ function MovesTip({ items, google, onMove }: { items: QuickAction[]; google: boo
   );
 }
 
-function AddKpi({ clients, buyers, platform, onDone }: { clients: { id: string; name: string }[]; buyers: Person[]; platform: "meta" | "google"; onDone: () => void }) {
+function AddKpi({ clients, buyers, platform, preset = null, onDone }: { clients: { id: string; name: string }[]; buyers: Person[]; platform: "meta" | "google"; preset?: string | null; onDone: () => void }) {
   return (
     <div className="grid gap-4 rounded-[14px] border border-line bg-surface p-4 sm:p-6">
       <div className="flex items-center justify-between">
@@ -1718,7 +1718,7 @@ function AddKpi({ clients, buyers, platform, onDone }: { clients: { id: string; 
         <input type="hidden" name="platform" value={platform} />
         <label className={label}>
           Client
-          <select name="client_id" required defaultValue="" className={field}>
+          <select name="client_id" required defaultValue={preset ?? ""} className={field}>
             <option value="" disabled>
               Pick a client
             </option>
@@ -1775,8 +1775,12 @@ function Unlinked({ accounts, clients }: { accounts: { id: string; name: string 
 }
 
 /** The KPI dashboard: how every account is pacing toward its target and its budget. */
+/** A client running Meta or Google ads with no KPI target on that platform yet */
+export type MissingKpi = { clientId: string; client: string; slug: string; platform: "meta" | "google"; buyerId: string | null; buyer: string | null };
+
 export function KpiBoard({
   rows,
+  missing = [],
   buyers,
   clients,
   me,
@@ -1788,6 +1792,7 @@ export function KpiBoard({
   only = null,
 }: {
   rows: KpiRow[];
+  missing?: MissingKpi[];
   buyers: Person[];
   clients: { id: string; name: string }[];
   me: { id: string; firstName: string };
@@ -1831,7 +1836,10 @@ export function KpiBoard({
     go({ q: v.trim() || null }, "replace");
   };
   const close = () => setOpen(null);
-  const [adding, setAdding] = useState(false);
+  // ?add=<client id> (from the client page or a "needs a KPI target" row) opens the form with that client picked
+  const askedAdd = sp.get("add");
+  const [adding, setAdding] = useState(Boolean(askedAdd));
+  const [preset, setPreset] = useState<string | null>(askedAdd);
   // The focused card scrolls into view once it's on screen
   useEffect(() => {
     if (!focus) return;
@@ -1845,6 +1853,7 @@ export function KpiBoard({
   const owners = (() => {
     const names = new Map<string, string>();
     for (const r of rows) if (r.platform === platform && r.owner) names.set(ownerKey(r)!, r.owner);
+    for (const m of missing) if (m.platform === platform && m.buyerId && m.buyer && !names.has(m.buyerId)) names.set(m.buyerId, m.buyer);
     return [...names.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   })();
 
@@ -1854,6 +1863,7 @@ export function KpiBoard({
     .filter((r) => (status === "all" || r.status === status) && (pace === "all" || r.pace?.status === pace) && (term.length < 2 || `${r.client} ${r.label ?? ""} ${r.kaizenId ?? ""}`.toLowerCase().includes(term)))
     .sort((a, b) => RANK[a.status] - RANK[b.status] || (b.deviation ?? -9) - (a.deviation ?? -9) || a.client.localeCompare(b.client));
 
+  const needs = missing.filter((m) => m.platform === platform && (owner === "all" || m.buyerId === owner) && status === "all" && pace === "all" && (term.length < 2 || m.client.toLowerCase().includes(term)));
   const openRow = open ? (rows.find((r) => r.id === open) ?? null) : null;
   const step = (dir: 1 | -1) => {
     const at = shown.findIndex((r) => r.id === open);
@@ -1953,7 +1963,20 @@ export function KpiBoard({
 
       {platform === "meta" && unlinked.length > 0 && <Unlinked accounts={unlinked} clients={clients} />}
 
-      {adding && <AddKpi clients={clients} buyers={buyers} platform={platform} onDone={() => setAdding(false)} />}
+      {adding && (
+        <AddKpi
+          key={preset ?? "new"}
+          clients={clients}
+          buyers={buyers}
+          platform={platform}
+          preset={preset}
+          onDone={() => {
+            setAdding(false);
+            setPreset(null);
+            go({ add: null }, "replace");
+          }}
+        />
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1991,10 +2014,36 @@ export function KpiBoard({
         </p>
       )}
 
-      {shown.length ? (
+      {shown.length || needs.length ? (
         <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {shown.map((r) => (
             <Card key={r.id} r={r} active={open === r.id} onOpen={() => setOpen(r.id)} onMove={(i) => go({ open: r.id, tab: "actions", move: String(i), target: null, client: null, platform: null })} />
+          ))}
+          {/* Clients running ads on this platform with no KPI yet: a card of their own, so the buyer or lead sets it up */}
+          {needs.map((m) => (
+            <li key={`${m.clientId}:${m.platform}`} className="grid min-h-[176px] min-w-0 content-between gap-4 rounded-[18px] border border-dashed border-warn/45 bg-warn-soft/10 p-4 md:p-5">
+              <div className="grid min-w-0 gap-1.5">
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <Link href={`/clients/${m.slug}`} className="truncate font-heading text-[16px] hover:underline">
+                    {m.client}
+                  </Link>
+                  <span className="shrink-0 rounded-full bg-warn-soft px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.1em] text-warn">No KPI set</span>
+                </div>
+                <p className="truncate text-xs text-muted">{m.buyer ?? "No buyer assigned"}</p>
+                <p className="text-[13px] leading-snug text-muted">Runs {m.platform === "google" ? "Google Ads" : "Meta"} with no target yet, so pacing, audits and briefs have nothing to aim at.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPreset(m.clientId);
+                  setAdding(true);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className="min-h-11 justify-self-start rounded-full bg-fg px-4 text-[13px] font-medium text-bg hover:opacity-90 md:min-h-9"
+              >
+                Set the KPI
+              </button>
+            </li>
           ))}
         </ul>
       ) : (
