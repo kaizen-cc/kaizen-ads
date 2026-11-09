@@ -59,6 +59,26 @@ export async function removeBusinessManagerToken(id: string): Promise<Done> {
   return r;
 }
 
+/** Execs: add a partner Business Manager (then Connect pastes its token) */
+export async function addBusinessManagerAction(name: string): Promise<Done> {
+  await requireExec();
+  if (!adminConfigured()) return { ok: false, error: "Can't save here." };
+  const { addBusinessManager } = await import("@/lib/meta-tokens");
+  const r = await addBusinessManager(createAdminClient(), name ?? "");
+  revalidate();
+  return r;
+}
+
+/** Execs: the partnership ended: off the list, token deleted, its clients back on Kaizen */
+export async function retireBusinessManagerAction(id: string): Promise<Done> {
+  await requireExec();
+  if (!adminConfigured()) return { ok: false, error: "Can't save here." };
+  const { retireBusinessManager } = await import("@/lib/meta-tokens");
+  const r = await retireBusinessManager(createAdminClient(), id);
+  revalidate();
+  return r;
+}
+
 /** Everyone on the team: which Business Manager a client runs through, and whether its token reaches their accounts. */
 export async function loadClientBusinessManager(clientId: string): Promise<{ ok: true; data: ClientBusinessManager } | { ok: false; error: string }> {
   await requireStaff();

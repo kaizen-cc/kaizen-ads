@@ -127,7 +127,8 @@ describe("the Business Managers migration", () => {
     expect(sql).toMatch(/\('ZenChange', false, 1, 'not_connected'\)/);
     expect(sql).toMatch(/\('Get Me Friends', false, 2, 'not_connected'\)/);
     expect(sql).toMatch(/\('Blue Cherry Group', false, 3, 'not_connected'\)/);
-    expect(sql).toMatch(/on conflict \(name\) do nothing/);
+    expect(sql).toMatch(/on conflict do nothing/);
+    expect(sql).toMatch(/archived_at\s+timestamptz/);
   });
   it("gives each client a Business Manager (null: Kaizen) and keeps tokens server only", () => {
     expect(sql).toMatch(/add column if not exists meta_business uuid references public\.meta_business_tokens \(id\) on delete set null/);

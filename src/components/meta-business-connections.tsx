@@ -9,6 +9,8 @@ import {
   loadClientBusinessManager,
   recheckBusinessManager,
   removeBusinessManagerToken,
+  addBusinessManagerAction,
+  retireBusinessManagerAction,
   setClientBusinessManagerAction,
   type BusinessManagerView,
   type BusinessManagersResult,
@@ -102,6 +104,7 @@ export function BusinessManagers() {
           ))}
         </ul>
       )}
+      {data && <AddManager onAdded={reload} />}
 
       <HowTo />
     </div>
@@ -190,6 +193,24 @@ function Manager({
               className="inline-flex min-h-11 flex-1 items-center justify-center rounded-full border border-bad/30 px-3.5 text-[12.5px] text-bad hover:bg-bad-soft disabled:opacity-60 sm:flex-none md:min-h-9"
             >
               Remove
+            </button>
+          )}
+          {!m.isDefault && !form && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                const who = m.clientCount ? ` ${m.clientCount} ${m.clientCount === 1 ? "client goes" : "clients go"} back to Kaizen.` : "";
+                if (!confirm(`End the partnership with ${m.name}? It comes off the list and every client's picker, its token is deleted.${who}`)) return;
+                start(async () => {
+                  const r = await retireBusinessManagerAction(m.id).catch(() => ({ ok: false as const, error: "Couldn't remove it." }));
+                  setError(r.ok ? null : r.error);
+                  onChanged();
+                });
+              }}
+              className="inline-flex min-h-11 flex-1 items-center justify-center rounded-full px-3 text-[12.5px] text-faint hover:text-bad disabled:opacity-60 sm:flex-none md:min-h-9"
+            >
+              End partnership
             </button>
           )}
         </div>
@@ -456,5 +477,50 @@ export function ClientBusinessManagerSelect({ clientId, slug, canEdit }: { clien
       )}
       {data && !data.accounts.length && <p className="text-[12px] text-faint">No Meta ad account is on the KPI board for them yet.</p>}
     </div>
+  );
+}
+
+/** A new partner Business Manager: added by name, then connected with its token */
+function AddManager({ onAdded }: { onAdded: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  if (!open)
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="min-h-11 justify-self-start rounded-full border border-dashed border-line px-4 text-[12.5px] text-muted hover:border-brand/50 hover:text-fg md:min-h-9">
+        + Add a Business Manager
+      </button>
+    );
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        start(async () => {
+          const r = await addBusinessManagerAction(name).catch(() => ({ ok: false as const, error: "Couldn't add it." }));
+          if (!r.ok) return setError(r.error);
+          setName("");
+          setError(null);
+          setOpen(false);
+          onAdded();
+        });
+      }}
+      className="grid gap-2 rounded-[14px] border border-line bg-surface p-3.5"
+    >
+      <label className="grid gap-1 text-[12.5px] text-muted">
+        The partner&rsquo;s name (as the team calls it)
+        <input value={name} onChange={(e) => setName(e.target.value)} autoFocus maxLength={60} placeholder="e.g. ZenChange" className="h-11 rounded-[10px] border border-line bg-bg px-3 text-[16px] text-fg outline-none focus:border-brand/60 md:h-9 md:text-sm" />
+      </label>
+      {error && <p className="text-[12.5px] text-bad">{error}</p>}
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" disabled={busy || name.trim().length < 2} className="min-h-11 rounded-full bg-brand px-4 text-[12.5px] font-medium text-white hover:bg-brand-hover disabled:opacity-50 md:min-h-9">
+          {busy ? "Adding…" : "Add"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className="min-h-11 rounded-full px-3 text-[12.5px] text-muted hover:text-fg md:min-h-9">
+          Cancel
+        </button>
+      </div>
+      <p className="text-[11.5px] text-faint">It shows in every client&rsquo;s Business Manager picker once it&rsquo;s connected with its token.</p>
+    </form>
   );
 }

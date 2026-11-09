@@ -364,6 +364,36 @@ export async function checkBusinessToken(admin: SupabaseClient, id: string): Pro
  * Remove a partner's token: the row stays (its name, who connected it), marked revoked, with the encrypted token and
  * what it reached deleted. Its clients go back to Kaizen's own token until it's connected again.
  */
+/** A new partner Business Manager (not connected yet): it shows in Settings and in every client's picker */
+export async function addBusinessManager(admin: SupabaseClient, name: string) {
+  const n = name.replace(/\s+/g, " ").trim();
+  if (n.length < 2 || n.length > 60) return { ok: false as const, error: "Give it a name (2 to 60 characters)." };
+  const { data: live } = await admin.from("meta_business_tokens").select("name, sort").is("archived_at", null);
+  if ((live ?? []).some((r) => String(r.name).toLowerCase() === n.toLowerCase())) return { ok: false as const, error: `${n} is already in the list.` };
+  const sort = Math.max(0, ...(live ?? []).map((r) => Number(r.sort) || 0)) + 1;
+  const { error } = await admin.from("meta_business_tokens").insert({ name: n, is_default: false, sort, status: "not_connected" });
+  clearTokenCache();
+  return error ? { ok: false as const, error: error.message } : { ok: true as const };
+}
+
+/**
+ * The partnership ended: the Business Manager comes off every list and picker, its token is deleted, and its clients
+ * go back to Kaizen (the row stays, archived, so the history of who ran through it is kept).
+ */
+export async function retireBusinessManager(admin: SupabaseClient, id: string) {
+  const { data: bm } = await admin.from("meta_business_tokens").select("is_default").eq("id", id).maybeSingle();
+  if (!bm) return { ok: false as const, error: "That Business Manager isn't in the list." };
+  if (bm.is_default) return { ok: false as const, error: "Kaizen is the default and can't be removed." };
+  await admin.from("clients").update({ meta_business: null }).eq("meta_business", id);
+  await admin.from("meta_business_token_accounts").delete().eq("business_token_id", id);
+  const { error } = await admin
+    .from("meta_business_tokens")
+    .update({ status: "revoked", token_iv: null, token_tag: null, token_ciphertext: null, token_last4: null, last_error: null, archived_at: new Date().toISOString() })
+    .eq("id", id);
+  clearTokenCache();
+  return error ? { ok: false as const, error: error.message } : { ok: true as const };
+}
+
 export async function removeBusinessToken(admin: SupabaseClient, id: string) {
   const { data: bm } = await admin.from("meta_business_tokens").select("is_default").eq("id", id).maybeSingle();
   if (!bm) return { ok: false as const, error: "That Business Manager isn't in the list." };
@@ -402,6 +432,7 @@ export async function listBusinessManagers(admin: SupabaseClient): Promise<Busin
   const { data, error } = await admin
     .from("meta_business_tokens")
     .select("id, name, is_default, sort, status, business_id, business_name, token_last4, scopes, expires_at, system_user_name, connected_at, last_checked_at, last_error, profiles(full_name)")
+    .is("archived_at", null)
     .order("sort", { ascending: true })
     .order("name", { ascending: true });
   if (error) return null;
@@ -450,7 +481,7 @@ export type ClientBusinessManager = {
  */
 export async function clientBusinessManager(admin: SupabaseClient, clientId: string): Promise<ClientBusinessManager | null> {
   const [{ data: rows, error }, { data: client }, { data: targets }] = await Promise.all([
-    admin.from("meta_business_tokens").select("id, name, is_default, sort, status, last_checked_at").order("sort", { ascending: true }),
+    admin.from("meta_business_tokens").select("id, name, is_default, sort, status, last_checked_at").is("archived_at", null).order("sort", { ascending: true }),
     admin.from("clients").select("meta_business").eq("id", clientId).maybeSingle(),
     admin.from("kpi_targets").select("ad_account_id, label, active").eq("client_id", clientId).eq("platform", "meta"),
   ]);
@@ -496,7 +527,7 @@ export async function setClientBusinessManager(admin: SupabaseClient, clientId: 
 
 /** Once a day: every Business Manager's token checked with Meta; a partner token that stopped working is told to the execs. */
 export async function checkAllBusinessTokens(admin: SupabaseClient) {
-  const { data, error } = await admin.from("meta_business_tokens").select("id, name, is_default, last_checked_at, status").in("status", ["active", "invalid"]);
+  const { data, error } = await admin.from("meta_business_tokens").select("id, name, is_default, last_checked_at, status").is("archived_at", null).in("status", ["active", "invalid"]);
   if (error) return { skipped: "Business Managers aren't set up yet." };
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   const out: { id: string; ok: boolean; status: string }[] = [];
