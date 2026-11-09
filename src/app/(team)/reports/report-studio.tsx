@@ -8,7 +8,7 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
 import { PdfPreview, type PdfField } from "./pdf-preview";
 import { RecapDeckButton } from "./recap-deck-button";
-import { METRIC_KEYS, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
+import { METRIC_KEYS, clockTime, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, setReportCampaignExcluded, skipReport } from "./actions";
@@ -96,7 +96,7 @@ function Mrkdwn({ text }: { text: string }) {
 
 /** The message as it will look in the client's Slack channel: who it's from, the text, the PDF. */
 function SlackPreview({ from, text, file }: { from: { name: string; image: string | null; app: boolean }; text: string; file: string }) {
-  const now = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const now = clockTime(new Date());
   return (
     <div className="overflow-hidden rounded-[12px] border border-ink/10 bg-[#1a1d21] font-[Lato,ui-sans-serif,system-ui]">
       <div className="flex items-center gap-2 border-b border-ink/[0.06] px-4 py-2.5 text-[13px] text-[#d1d2d3]">
@@ -114,7 +114,8 @@ function SlackPreview({ from, text, file }: { from: { name: string; image: strin
           <p className="flex items-center gap-1.5 text-[15px]">
             <b className="text-fg">{from.name}</b>
             {from.app && <span className="rounded-[3px] bg-ink/10 px-1 text-[10px] font-semibold text-[#ababad]">APP</span>}
-            <span className="text-[12px] text-[#ababad]">{now}</span>
+            {/* The clock can tick over between the server drawing the page and the browser picking it up */}
+            <span suppressHydrationWarning className="text-[12px] text-[#ababad]">{now}</span>
           </p>
           <Mrkdwn text={text || "(empty)"} />
           <div className="mt-2 flex max-w-[360px] items-center gap-3 rounded-[8px] border border-ink/10 bg-[#222529] px-3 py-2.5">
