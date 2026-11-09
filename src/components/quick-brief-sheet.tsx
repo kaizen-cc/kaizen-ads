@@ -284,6 +284,26 @@ export function QuickBriefSheet({
                 <Line value={brief.concept} onChange={(v) => set({ concept: v })} label="The idea" className="text-[15.5px] leading-relaxed" placeholder="What the creative shows and does" />
               </Block>
 
+              {(brief.facts ?? []).length > 0 && (
+                <div className="grid gap-3 rounded-[18px] border border-warn/40 bg-warn-soft/40 p-4" role="group" aria-label="Only the client knows">
+                  <div className="grid gap-0.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-warn">Only the client knows this</p>
+                    <p className="text-[12.5px] leading-snug text-muted">The idea hangs on it, and the AI won&apos;t make it up. Answer what you know; anything left blank goes in the brief as &ldquo;Confirm with client&rdquo; and holds it until it&apos;s answered.</p>
+                  </div>
+                  {(brief.facts ?? []).map((f, i) => (
+                    <label key={f.question} className="grid gap-1.5">
+                      <span className="text-[14px] font-medium leading-snug">{f.question}</span>
+                      <input
+                        value={f.answer}
+                        onChange={(e) => set({ facts: (brief.facts ?? []).map((x, j) => (j === i ? { ...x, answer: e.target.value } : x)) })}
+                        placeholder="If you know it (otherwise we ask the client)"
+                        className="h-11 w-full rounded-[12px] border border-line bg-surface px-3.5 text-[16px] outline-none transition-colors placeholder:text-faint focus:border-brand/60 md:text-[14px]"
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+
               <div className="relative rounded-[18px] border border-line bg-surface px-4 pb-3 pt-3.5">
                 <span aria-hidden className="absolute -top-3 left-4 rounded-full bg-bg px-2 font-heading text-[26px] leading-none text-brand-text">&ldquo;</span>
                 <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Hook</span>

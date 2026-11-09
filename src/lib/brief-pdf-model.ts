@@ -111,7 +111,10 @@ export function specsChecklist(formats: Partial<Record<PdfFormat, PdfCounts>>, s
   if (sizes.some((z) => z.replace(":", "x") === "4x5")) out.push("4:5: nothing that matters within 60 px of the edges; text readable on a phone at arm's length");
   if (fs.includes("carousel")) out.push("Carousel: each slide works on its own, the first one stops the scroll, the last one asks for the click");
   const stem = `${client}_${title}`.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "Client_Concept";
-  out.push(`File names: ${stem}_V1_4x5, ${stem}_V1_9x16 (sizes of one version share a name, so they upload as one design)`);
+  // File names in the sizes this request makes, never one it doesn't (a "9:16 only" brief gets no 4x5 name)
+  const keys = sizes.map((z) => z.replace(":", "x")).filter((z) => z === "4x5" || z === "9x16");
+  const names = (keys.length ? keys : ["4x5", "9x16"]).map((k) => `${stem}_V1_${k}`);
+  out.push(`File names: ${names.join(", ")}${names.length > 1 ? " (sizes of one version share a name, so they upload as one design)" : ""}`);
   out.push("Deliver on the ticket in Kaizen Ads with every size together, then run the AI review before internal review");
   return out;
 }

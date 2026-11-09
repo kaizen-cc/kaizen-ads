@@ -22,7 +22,7 @@ export async function structureBrief(d: StructureSource & { clientId: string; cl
       maxTokens: 6000,
       schema: STRUCTURE_SCHEMA as unknown as Record<string, unknown>,
       system:
-        "You turn a written creative brief into a one-page production sheet that the designer or video editor reads at a glance. You restructure, you don't write a new brief: use the brief's own ideas and words, tightened. Never invent offers, prices, numbers, claims, testimonials, product names or rules the brief doesn't state; when the brief doesn't say something, leave that field empty. Plain words, short lines, no em dashes, no hype.",
+        "You turn a written creative brief into a one-page production sheet that the designer or video editor reads at a glance: precise on what and why, the how (style, pacing, music, edit structure) left to them. You restructure, you don't write a new brief: use the brief's own ideas and words, tightened. Never invent offers, prices, numbers, claims, testimonials, product names or rules the brief doesn't state; when the brief doesn't say something, leave that field empty. Plain words, short lines, no em dashes, no hype.",
       prompt: [
         `Client: ${d.client}`,
         `Title: ${d.title || "(none)"}`,
@@ -37,7 +37,7 @@ export async function structureBrief(d: StructureSource & { clientId: string; cl
         "Fill in:",
         "- oneLine: the idea in one line (under 20 words).",
         "- summary: 3 to 5 bullets, each under 25 words: what we're making, who it's for, why it should work, what to avoid. Skip a point the brief doesn't support.",
-        `- versions: exactly ${n} rows, V1 first. headline = the on-image text (or the video's opening line), subline = the supporting line under it, visual = what the frame shows and how, hook = what stops the scroll. Versions differ the way the brief says they should (hooks, headlines, visuals); when the brief only names V1, later rows are variations of V1 that change one thing the brief suggests, and their fields may stay empty rather than be made up.`,
+        `- versions: exactly ${n} rows, V1 first. headline = the on-image text (or the video's opening line), subline = the supporting line under it, visual = what must be in the frame (the subject, the product, the proof), never how to shoot, pace or edit it (that's the maker's call), hook = what stops the scroll. Versions differ the way the brief says they should (hooks, headlines, visuals); when the brief only names V1, later rows are variations of V1 that change one thing the brief suggests, and their fields may stay empty rather than be made up.`,
         cards ? `- slides: exactly ${cards} rows in order, what each slide says (headline, subline) and shows (visual).` : "- slides: an empty list (not a carousel).",
         "- dos and donts: the brand rules, compliance points and things the client rejected that the brief states, each under 18 words.",
         "- copy: primary text, headlines and the call to action only when the brief gives them (empty otherwise).",

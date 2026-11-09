@@ -34,6 +34,7 @@ import { notLive } from "@/lib/live-guard";
 import type { QuickBrief } from "@/lib/quick-brief";
 import { clampFormats, fitsAnyFormat, fitsFormat, formatsFor, formatsOutside, formatsPhrase, formatsRule, marketFormatOf } from "@/lib/creative-formats";
 import { promiseSince } from "@/lib/promise-window";
+import { parseBrief, withSpec } from "@/lib/brief-spec";
 
 /** A request in formats this person doesn't make requests for (a designer and video, a video editor and images): refused */
 function outsideFormats(me: { role: string; isExec?: boolean; isLead?: boolean }, formats: string[]): string | null {
@@ -79,7 +80,20 @@ async function reviewGate(me: Awaited<ReturnType<typeof requireStaff>>, draft: D
   return { ok: false, error: "This brief was changed, so the AI checks it before it goes out.", needsReview: true };
 }
 
-type Fail = { ok: false; error: string; /** Sent without the AI review, and it isn't the AI's own unchanged brief */ needsReview?: boolean };
+type Fail = { ok: false; error: string; /** Sent without the AI review, and it isn't the AI's own unchanged brief */ needsReview?: boolean; /** Not ready for the maker (src/lib/brief-gate.ts): what holds it */ gate?: string };
+
+/**
+ * The ready gate: a brief that hangs on a fact only the client knows, waits on assets, or contradicts itself doesn't
+ * go to the editor or designer (tickets or Asana) unless a lead sent it on with a reason (src/lib/brief-check.ts).
+ * A migration from Asana is already being made, so it isn't held.
+ */
+async function readyGate(draft: Draft): Promise<Fail | null> {
+  if (!draft.clientId || draft.migration || !adminConfigured()) return null;
+  const [{ checkBriefNow }, { blockedLine }] = await Promise.all([import("@/lib/brief-check"), import("@/lib/brief-gate")]);
+  const c = await checkBriefNow(createAdminClient(), { clientId: draft.clientId, title: draft.title, brief: draft.brief, sizes: draft.sizes, formats: selectedFormats(draft), refs: refLinks(draft.refs), priority: draft.priority });
+  const line = blockedLine(c);
+  return line ? { ok: false, error: line, gate: c.status } : null;
+}
 
 /**
  * Only people who write briefs draft or send one (src/lib/chat-permissions.ts): never the copywriter or customer
@@ -372,6 +386,10 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
     const gate = await reviewGate(me, draft, Boolean(review), Boolean(opts?.reviewFailed));
     if (gate) return gate;
   }
+  {
+    const held = await readyGate(draft);
+    if (held) return held;
+  }
 
   const supabase = await createClient();
   const { data: batch, error } = await supabase.rpc("create_request_batch", {
@@ -420,6 +438,13 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
       for (const id of ids) await importCopy(admin, id, mig.copy, approved, me.id).catch((e) => console.error("[migrate] copy:", e instanceof Error ? e.message : e));
     }
     await admin.from("asana_tasks").update({ request_id: ids[0], migrated_at: now, migrated_by: me.id }).eq("gid", mig.gid);
+  }
+
+  // The brief's review stamp and any lead override, written on the draft, now kept with its first ticket (the stamp
+  // itself is found by the brief's hash, so it shows on every ticket made from this exact brief)
+  if (rows?.length && adminConfigured() && draft.brief.trim()) {
+    const { briefHash } = await import("@/lib/brief-check");
+    await createAdminClient().from("brief_corrections").update({ request_id: rows[0].id }).eq("client_id", draft.clientId).eq("brief_hash", briefHash(draft.brief.trim(), draft.sizes)).is("request_id", null);
   }
 
   // Who it's for (a Brand Bible avatar, or a new one under test): on every ticket, so files and folders can be named by it
@@ -524,14 +549,17 @@ export async function promisesFor(clientId: string): Promise<Promise_[]> {
 /** The brief for a promise, ready to drop into the form (written now if it wasn't already). */
 /** A strategist's brief as form fields: everything the request needs, concepts and hooks folded into the brief. */
 function toPatch(d: import("@/lib/suggestions").SuggestionDraft): Partial<Draft> {
-  const concepts = d.concepts?.length ? `\n\nConcepts:\n${d.concepts.map((c, i) => `${i + 1}. ${c.name}\n   Hook: ${c.hook}\n   Visual: ${c.visual}\n   Copy: ${c.copy}`).join("\n")}` : "";
+  // A brief with its spec (insight, hook, constraints...): one concept is already said by the spec, so only the hooks
+  // each version tests join the idea above the spec's sections. Several concepts keep their list (split next).
+  const structured = Boolean(d.spec) && (d.concepts?.length ?? 0) <= 1;
+  const concepts = d.concepts?.length && !structured ? `\n\nConcepts:\n${d.concepts.map((c, i) => `${i + 1}. ${c.name}\n   Hook: ${c.hook}\n   Visual: ${c.visual}\n   Copy: ${c.copy}`).join("\n")}` : "";
   const hooks = d.hooks?.length ? `\n\nHooks to try:\n${d.hooks.map((h) => `- ${h}`).join("\n")}` : "";
   return {
     title: d.title,
     angle: d.angle,
     ...(d.avatar?.trim() ? { avatar: d.avatar.trim(), avatarTest: Boolean(d.avatarTest) } : {}),
     audience: d.audience,
-    brief: `${d.brief}${concepts}${hooks}`,
+    brief: structured ? withSpec(`${parseBrief(d.brief).overview}${hooks}`, d.spec) : `${d.brief}${concepts}${hooks}`,
     formats: Object.fromEntries(d.formats.map((f) => [f.format, { new: f.new, variations: f.variations }])),
     sizes: d.sizes.filter((x) => SIZES.includes(x)),
     landing: d.landing || "",
@@ -923,6 +951,10 @@ async function asanaSend(draft: Draft, me: Awaited<ReturnType<typeof requireStaf
   {
     const why = await gate();
     if (why) return why;
+  }
+  {
+    const held = await readyGate(draft);
+    if (held) return held;
   }
   const { asanaConfigured } = await import("@/lib/asana");
   if (!asanaConfigured() || !adminConfigured()) return { ok: false, error: "Asana isn't connected." };

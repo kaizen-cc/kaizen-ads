@@ -16,6 +16,8 @@ import { baseRole } from "@/lib/roles";
 import { applySeed, seedBlock, type QuickBrief } from "@/lib/quick-brief";
 import { assetsBlock, loadAssets } from "@/lib/client-assets";
 import { promiseSince } from "@/lib/promise-window";
+import { SPEC_RULE, SPEC_SCHEMA, cleanSpec, withSpec, type BriefSpec } from "@/lib/brief-spec";
+import { withDetectedFacts } from "@/lib/brief-facts";
 export { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 
 /** format/new/variations (and a carousel's slides): what this one concept makes. One concept per brief: a request with several is split into one brief each */
@@ -42,6 +44,8 @@ export type SuggestionDraft = {
   avatar?: string;
   /** A new avatar under test (not in the Bible): only when someone on the team asked to test one */
   avatarTest?: boolean;
+  /** The brief's WHAT and WHY (src/lib/brief-spec.ts), folded into brief as its sections */
+  spec?: BriefSpec;
 };
 
 export type Signal = { kind: SuggestionKind; weight: number; line: string; facts: string[] };
@@ -215,8 +219,9 @@ const SCHEMA = {
         refs: { type: "array", items: { type: "string" } },
         assets: { type: "object", properties: { have: { type: "array", items: { type: "string" } }, need: { type: "array", items: { type: "string" } } }, required: ["have", "need"], additionalProperties: false },
         avatar: { type: "string" },
+        spec: SPEC_SCHEMA,
       },
-      required: ["title", "angle", "audience", "brief", "hooks", "concepts", "formats", "sizes", "landing", "refs", "assets", "avatar"],
+      required: ["title", "angle", "audience", "brief", "hooks", "concepts", "formats", "sizes", "landing", "refs", "assets", "avatar", "spec"],
       additionalProperties: false,
     },
     reply: { type: "string" },
@@ -239,12 +244,14 @@ You are the agency's strategist. You watch the accounts and, when the data says 
 - Only facts from the context. Never invent prices, offers, dates or claims. If the offer's details aren't known, say what to confirm in the brief.
 - Formats and counts: ${ALLOTMENT_RULE} The total must fit what's left of the allotment. Variations up to ${MAX_VARIATIONS} per format. cards: a carousel's slides (2 to 10; say what each slide shows in the brief), 0 for images and videos.
 - One concept per request: concepts has exactly one entry, unless you're told otherwise. Its name, the hook (first line or on-image headline), the visual (what's shown, in a sentence or two), the copy direction, and what it makes: its format, net new count, variations count and a carousel's slides (cards); its counts are the formats. The versions (net new designs and variations) are versions of this one idea, each testing one thing (hooks lists what each version tests). Never put several distinct ideas in one request: a different idea is a different request.
-- The brief is what the designer reads: 5 to 10 lines, specific.
+- The brief and its spec are what the designer or editor reads: precise on what and why, short and scannable, the how left to them (THE BRIEF'S SHAPE below).
 - ${AVATAR_RULE}
 - The team's past decisions on your suggestions are the most important thing you read. Never suggest again what they declined for a reason that still holds; lean into what they approved.
 - Balance the team's time across clients (work_in_motion). If what's already in motion for this client answers the signal, don't add more: set suggest to false. A client with well above the average open work needs a strong reason for more; a client nobody has touched in weeks deserves the attention. When designers or editors are near capacity, keep it small (2 to 3 versions of what works) and say so in why.
 - If the signal isn't real or something is already in the works that covers it, set suggest to false and say why in skipReason (the rest can be empty).
-- Make it from what we have. Check assets_on_drive before you pick concepts: a concept that needs product photos, lifestyle shots, people or footage only works if we have them (or it's clearly stock or graphic design). assets.have: the assets on Drive each concept uses (folder or file names). assets.need: what we'd have to get from the client for it (specific shots, e.g. "15s vertical clip of the team plating a dish", "close-up product photos on white"); empty when we have everything. When a concept depends on something we don't have, either swap it for one we can make now or keep it and list the need. End the brief with one line "Assets:" saying which Drive folders to use and what's still needed.`;
+- Make it from what we have. Check assets_on_drive before you pick concepts: a concept that needs product photos, lifestyle shots, people or footage only works if we have them (or it's clearly stock or graphic design). assets.have: the assets on Drive each concept uses (folder or file names). assets.need: what we'd have to get from the client for it (specific shots, e.g. "15s vertical clip of the team plating a dish", "close-up product photos on white"); empty when we have everything. When a concept depends on something we don't have, either swap it for one we can make now or keep it and list the need. List every asset in spec.assets with its status (have, with the Drive folder; need; shoot when the client has to film or photograph it).
+
+${SPEC_RULE}`;
 
 // ─── One quality bar: the request review's standard, written to and then checked before anyone sees the brief ───
 
@@ -521,6 +528,7 @@ const countsOf = (format: Fmt3, n: number | undefined, v: number | undefined, ca
  * byConcept), a draft that came back with several concepts keeps the first, with its own counts.
  */
 const clean = (d: SuggestionDraft, many = 0): SuggestionDraft => {
+  const spec = d.spec ? withDetectedFacts(cleanSpec(d.spec), d.title) : undefined;
   const concepts = d.concepts.slice(0, Math.max(1, many)).map((c) => (c.format ? { ...c, ...countsOf(c.format, c.new, c.variations, c.cards) } : c));
   const single = !many && d.concepts.length > 1 && concepts[0]?.format && (concepts[0].new ?? 0) + (concepts[0].variations ?? 0) > 0;
   const formats = single ? [countsOf(concepts[0].format!, concepts[0].new, concepts[0].variations, concepts[0].cards)] : d.formats;
@@ -536,6 +544,9 @@ const clean = (d: SuggestionDraft, many = 0): SuggestionDraft => {
     concepts,
     refs: [...new Set((d.refs ?? []).filter((u) => /^https?:\/\/\S+$/i.test(u)))].slice(0, 6),
     assets: d.assets ? { have: d.assets.have.slice(0, 8), need: d.assets.need.slice(0, 8) } : undefined,
+    // The WHAT and WHY: kept as data and folded into the brief's text (once: cleaning again never doubles it), with
+    // every fact only the client knows that it doesn't answer added to "Confirm with client"
+    ...(spec ? { spec, brief: withSpec(d.brief, spec) } : {}),
   };
 };
 

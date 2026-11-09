@@ -101,8 +101,25 @@ export async function POST(request: Request) {
   const ruleDonts = (rules ?? []).filter((r) => r.polarity === "dont").map((r) => String(r.rule));
   const merge = (a: string[], extra: string[]) => [...new Set([...a, ...extra.filter((x) => !a.some((y) => y.toLowerCase() === x.toLowerCase()))])].slice(0, 7);
 
+  // The brief's insight, what's the maker's call, the facts still to confirm with the client, and the review stamp
+  // when someone reviewed this exact brief (text and sizes)
+  const { parseBrief } = await import("@/lib/brief-spec");
+  const { openFacts, withDetectedFacts } = await import("@/lib/brief-facts");
+  const spec = withDetectedFacts(parseBrief(source.brief).spec, source.title);
+  let reviewed: string | null = null;
+  if (admin && source.brief.trim()) {
+    const [{ briefHash, stampAndOverride }, { stampLine }] = await Promise.all([import("@/lib/brief-check"), import("@/lib/brief-gate")]);
+    const rawSizes = (b.sizes ?? []).map((z) => String(z).replace(":", "x"));
+    const { stamp } = await stampAndOverride(admin, b.clientId, briefHash(source.brief, rawSizes)).catch(() => ({ stamp: null }));
+    reviewed = stamp ? stampLine(stamp) : null;
+  }
+
   const { briefPdf } = await import("@/lib/brief-pdf");
   const pdf = await briefPdf({
+    insight: spec.insight || null,
+    yourCall: spec.yourCall || null,
+    confirm: openFacts(spec).map((f) => f.question),
+    reviewed,
     client: client.name as string,
     title: source.title,
     number: typeof b.number === "number" && b.number > 0 ? Math.floor(b.number) : null,

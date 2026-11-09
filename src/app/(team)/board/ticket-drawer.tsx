@@ -11,6 +11,7 @@ import { FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stageInfo, type Ph
 import { MoveDialog } from "./move-dialog";
 import { assignTicket, commentTicket, deleteTicket, moveTicket, setTicketDue, setTicketPriority, ticketHistory, type TicketEvent } from "./actions";
 import { briefChanges, type BriefChange, type Design } from "./design-actions";
+import { TicketBrief } from "./ticket-brief";
 
 /** What the maker had to change from the brief, said when they uploaded: right under the brief for the lead to see. */
 function BriefAdjustments({ ticketId }: { ticketId: string }) {
@@ -667,11 +668,7 @@ export function TicketDrawer({
                 )}
               </div>
             )}
-            {ticket.brief ? (
-              <p className="whitespace-pre-wrap rounded-[10px] border border-line bg-surface px-5 py-4 text-sm leading-relaxed text-muted max-md:px-4">{ticket.brief}</p>
-            ) : (
-              <p className="text-sm text-faint">No brief written.</p>
-            )}
+            <TicketBrief key={ticket.id} ticket={ticket} demo={demo} />
             {!demo && <BriefAdjustments ticketId={ticket.id} />}
             {ticket.refs.length > 0 && (
               <ul className="grid gap-1.5">

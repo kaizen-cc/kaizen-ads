@@ -23,6 +23,12 @@ export type QuickBrief = {
   avatarTest?: boolean;
   /** Links the person added as references (any page: Motion, Pinterest, Instagram, TikTok, the Ads Library, YouTube) */
   refs?: string[];
+  /**
+   * Facts only the client knows that this concept hangs on (src/lib/brief-facts.ts: which seat, the tip, the stat, the
+   * offer's terms), asked before the full brief is written. Answered ones go into the brief; the rest go in as
+   * "Confirm with client" and hold the brief until someone answers them.
+   */
+  facts?: { question: string; answer: string }[];
 };
 
 /** What a brief can be started from. Serializable, so it can travel to the server and into a background job. */
@@ -103,6 +109,7 @@ export function quickEdited(was: QuickBrief, now: QuickBrief) {
   if (keys.some((k) => norm(was[k]) !== norm(now[k]))) return true;
   if (norm(was.avatar ?? "") !== norm(now.avatar ?? "") || Boolean(was.avatarTest) !== Boolean(now.avatarTest)) return true;
   if ((was.refs ?? []).join(" ") !== (now.refs ?? []).join(" ")) return true;
+  if ((now.facts ?? []).some((f) => norm(f.answer))) return true;
   const fmt = (x: QuickFormat[]) =>
     x
       .filter((f) => f.new + f.variations > 0)
@@ -110,6 +117,18 @@ export function quickEdited(was: QuickBrief, now: QuickBrief) {
       .sort()
       .join("|");
   return fmt(was.formats) !== fmt(now.formats);
+}
+
+/** The client-only facts, answered or not, for the writer: answers are facts to use, the rest go in spec.confirm */
+function factsBlock(facts: QuickBrief["facts"]) {
+  const xs = (facts ?? []).filter((f) => norm(f.question));
+  if (!xs.length) return "";
+  const answered = xs.filter((f) => norm(f.answer));
+  const open = xs.filter((f) => !norm(f.answer));
+  return [
+    answered.length ? `\nFacts the team confirmed (use them exactly; put each in spec.confirm with its answer and source "the team, when briefing"):\n${answered.map((f) => `- ${f.question} Answer: ${f.answer.trim()}`).join("\n")}` : "",
+    open.length ? `\nNot known yet (only the client knows; NEVER invent them): put each in spec.confirm with answer "" and write the brief around them:\n${open.map((f) => `- ${f.question}`).join("\n")}` : "",
+  ].join("");
 }
 
 /** The agreed direction, for the prompt that writes the full brief */
@@ -126,7 +145,7 @@ Angle: ${seed.angle || "(yours to write)"}
 Audience: ${seed.audience || "(yours to write)"}
 Hook: ${seed.hook || "(yours to write)"}
 Making: ${makingLine(seed.formats)}
-Why it fits: ${seed.why || "(yours to write)"}${norm(seed.note) ? `\nTheir note: ${seed.note.trim()}` : ""}${seed.refs?.length ? `\nReferences they added (keep every one in draft.refs and say what to take from each): ${seed.refs.join(" ")}` : ""}
+Why it fits: ${seed.why || "(yours to write)"}${norm(seed.note) ? `\nTheir note: ${seed.note.trim()}` : ""}${seed.refs?.length ? `\nReferences they added (keep every one in draft.refs and say what to take from each): ${seed.refs.join(" ")}` : ""}${factsBlock(seed.facts)}
 </agreed_direction>`;
 }
 

@@ -12,6 +12,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { SuggestionDraft } from "@/lib/suggestions";
 import { avatarsOf, matchAvatar, type BibleAvatar } from "@/lib/bible-sections";
 import { loadInMotion, motionMatches, type MotionItem } from "@/lib/in-motion";
+import { detectClientFacts } from "@/lib/brief-facts";
 
 // The quick preview every brief starts from (src/lib/quick-brief.ts): a short summary in a few seconds, from a fast
 // model at low effort, or at once when the brief is already written. The full brief is written after, from what the
@@ -173,7 +174,15 @@ export async function previewBrief(clientId: string, source: BriefSource, given?
     return hit ? { ...b, avatar: hit.name, avatarTest: false } : avatars.length && !b.avatarTest ? { ...b, avatar: "" } : b;
   };
   const done = (all: QuickBrief[], instant: boolean, picked: string[] = []): PreviewResult => {
-    const fitted = all.map(fit).map(avatarOf);
+    // A concept built on a fact only the client knows (which seat, the tip, the stat, the offer's terms): asked here,
+    // before the full brief is written, so it's never invented (answers already given are kept)
+    const asked = (b: QuickBrief): QuickBrief => {
+      const found = detectClientFacts(`${b.title}. ${b.hook}. ${b.concept}`).map((f) => f.question);
+      const have = b.facts ?? [];
+      const facts = [...have, ...found.filter((q) => !have.some((h) => h.question === q)).map((question) => ({ question, answer: "" }))].slice(0, 4);
+      return facts.length ? { ...b, facts } : b;
+    };
+    const fitted = all.map(fit).map(avatarOf).map(asked);
     // Clamped to their formats: no longer exactly what was written, so it's written again from what they agree
     const changed = fitted.some((b, i) => b.formats.length !== (all[i].formats ?? []).length);
     // The ones the AI named, and any whose title reads like this brief
@@ -250,6 +259,7 @@ Give the quick first look at this request for ${ctx.name}.`,
       avatar: clean(b.avatar ?? "", 80),
       avatarTest: source.kind === "talk" && source.current?.avatarTest && clean(b.avatar ?? "", 80) === source.current.avatar ? true : false,
       refs: source.kind === "talk" ? [...new Set([...(source.current?.refs ?? []), ...(source.refs ?? [])])].slice(0, 10) : [],
+      ...(source.kind === "talk" && source.current?.facts?.length ? { facts: source.current.facts } : {}),
     }));
     if (!briefs.length) return { ok: false, error: "Couldn't sketch it. Try again." };
     return done(source.kind === "talk" && source.current ? briefs.slice(0, 1) : briefs, false, r.inMotion ?? []);

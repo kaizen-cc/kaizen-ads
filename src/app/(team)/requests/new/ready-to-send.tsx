@@ -5,6 +5,7 @@ import { PersonAvatar } from "@/components/person-avatar";
 import { RefThumb } from "@/components/ref-thumb";
 import { SavedConcepts } from "@/components/saved-concepts";
 import { AvatarField } from "@/components/avatar-field";
+import { BriefCheck } from "@/components/brief-check";
 import { LinkCards, LinkInput } from "@/components/link-refs";
 import { Line } from "@/components/quick-brief-sheet";
 import type { Allotment } from "@/lib/allotment";
@@ -51,7 +52,7 @@ export function briefConcepts(brief: string) {
 }
 
 /** The brief as sections a person can read: headings ("Hooks to try:"), lists, labelled lines ("Assets: …") */
-function BriefText({ text }: { text: string }) {
+export function BriefText({ text }: { text: string }) {
   const blocks = text.trim().split(/\n\s*\n/);
   return (
     <div className="grid gap-4 text-[15px] leading-relaxed">
@@ -61,7 +62,7 @@ function BriefText({ text }: { text: string }) {
         const body = head ? lines.slice(1) : lines;
         return (
           <section key={i} className="grid gap-1.5">
-            {head && <h4 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-text">{head}</h4>}
+            {head && <h4 className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${head === "Confirm with client" ? "text-warn" : "text-brand-text"}`}>{head}</h4>}
             {body.map((l, j) => {
               const t = l.trim();
               if (!t) return null;
@@ -308,6 +309,24 @@ export function ReadyToSend({
               <BriefText text={draft.brief} />
             </button>
           ) : null}
+          {/* Before it goes to the maker: client-only facts, assets, contradictions, the revise chat and the review stamp */}
+          {draft.clientId && !draft.migration && (
+            <BriefCheck
+              demo={demo}
+              brief={draft.brief}
+              signature={`${draft.title}\u0000${draft.sizes.join(",")}\u0000${formats.join(",")}\u0000${draft.priority}\u0000${draft.refs}\u0000${draft.brief}`}
+              target={{ kind: "draft", clientId: draft.clientId, title: draft.title, angle: draft.angle, audience: draft.audience, sizes: draft.sizes, brief: draft.brief, refs: links, formats, priority: draft.priority, suggestionId: draft.origin?.suggestionId ?? null }}
+              onChange={(c) =>
+                onChange({
+                  brief: c.brief,
+                  ...(c.title !== undefined && c.title.trim() ? { title: c.title } : {}),
+                  ...(c.angle !== undefined ? { angle: c.angle } : {}),
+                  ...(c.audience !== undefined ? { audience: c.audience } : {}),
+                  ...(c.sizes ? { sizes: SIZES.filter((z) => c.sizes!.includes(z)) } : {}),
+                })
+              }
+            />
+          )}
           {draft.migration?.needsCopy && (
             <Field label="The copy as it stands" id="rts-copy">
               <textarea value={draft.migration.copy} onChange={(e) => onChange({ migration: { ...draft.migration!, copy: e.target.value } })} rows={5} className="w-full rounded-[14px] border border-line bg-surface px-4 py-3 text-[16px] leading-relaxed outline-none focus:border-brand/60 md:text-[14px]" />

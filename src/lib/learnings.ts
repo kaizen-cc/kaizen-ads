@@ -8,13 +8,13 @@ import { pickWinner, rankLearnings, scopeLabel, widenScope, type ClientPlace, ty
 // conditional learning (what holds, under which condition, for whom), consolidated nightly (duplicates merged,
 // contradictions settled or put to an exec, stale ones retired), and every call reads only the few that fit it.
 
-export type LearningSource = "creative_review_disagreements" | "audit_rebuttals" | "copy_rule_overrides" | "audit_item_messages";
+export type LearningSource = "creative_review_disagreements" | "audit_rebuttals" | "copy_rule_overrides" | "audit_item_messages" | "brief_corrections";
 
 /**
  * The agent that learns from each kind of pushback, unless the caller names it (a Google audit's rebuttal teaches the
  * Google auditor; a lesson taught in the Why chat on a Google idea plan teaches the Google launcher)
  */
-export const SOURCE_AGENT: Record<LearningSource, AgentKey> = { creative_review_disagreements: "creativereview", audit_rebuttals: "auditor", copy_rule_overrides: "copy", audit_item_messages: "google_launcher" };
+export const SOURCE_AGENT: Record<LearningSource, AgentKey> = { creative_review_disagreements: "creativereview", audit_rebuttals: "auditor", copy_rule_overrides: "copy", audit_item_messages: "google_launcher", brief_corrections: "strategist" };
 
 type Row = {
   id: string;
@@ -118,7 +118,7 @@ export async function classifyLearning(admin: SupabaseClient, id: string) {
     schema: CLASSIFY,
     override: { model: "sonnet", effort: "low" },
     maxTokens: 1500,
-    system: `You turn a moment where Kaizen's team pushed back on an AI agent's work into a precise, conditional learning, so the agent gets better without getting more rigid. Kaizen is a paid social agency; the agents review creative, write copy and audit ad accounts.
+    system: `You turn a moment where Kaizen's team pushed back on an AI agent's work into a precise, conditional learning, so the agent gets better without getting more rigid. Kaizen is a paid social agency; the agents write creative briefs, review creative, write copy and audit ad accounts.
 Return:
 - lesson: one or two sentences, in the agent's voice as an instruction ("Don't flag…", "Treat … as allowed when …"), concrete, no people's names, no client name unless it's a fact about that client's brand.
 - condition: when it holds, as specifically as the pushback supports ("when the client confirmed the claim in writing", "for top-of-funnel video", "only for this ad set", "for subscription offers"). "" only if it truly holds always.
