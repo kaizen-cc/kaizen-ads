@@ -14,6 +14,8 @@ import { BundleCard, Empty, Group, ReportCard, type CardBundle, type CardReport,
 import { RegenerateButton, RegenWatcher } from "./regenerate-button";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 import { teamPlatform } from "@/lib/roles";
+import { readHistory } from "@/lib/reports/history";
+import { SendHistory } from "./send-history";
 
 export const metadata: Metadata = { title: "Reports" };
 export const maxDuration = 300;
@@ -94,6 +96,9 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const { data: builders } = builderIds.length && admin ? await admin.from("profiles").select("id, full_name").in("id", builderIds) : { data: [] as { id: string; full_name: string | null }[] };
   const builderName = new Map((builders ?? []).map((p) => [p.id as string, (p.full_name as string | null) ?? null]));
   const builtRows = reach.filter((b) => b.status !== "sent");
+  // The send history: every report that went to the clients this person reports on (everything for an exec), never
+  // trimmed by age; a client at a time on the page
+  const history = (admin ? await readHistory(admin, { clientIds: me.isExec ? null : clientIds, limit: 400 }, today) : []).filter((s) => !line || !s.platform || s.platform === line);
   const sentBuilt = reach.filter((b) => b.status === "sent" && (b.sent_at ?? b.created_at) >= daysAgo(30));
   const yesterday = new Date(Date.parse(`${today}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 
@@ -183,7 +188,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   // they report on; a buyer: their own). Approved, sent and still-writing ones are left as they are
   const regenable = (x: { status: string; owner_id: string | null }) => ["draft", "failed"].includes(x.status) && (lead || x.owner_id === me.id);
   const regenAll = (ids: string[], label: string) => (ids.length > 1 ? <RegenerateButton kind="many" variant="bulk" ids={ids} label={label} /> : undefined);
-  const sentCount = sentReports.length + sentBuilt.length;
+  const sentCount = history.length || sentReports.length + sentBuilt.length;
   // Land on what needs doing; with nothing waiting, on building one
   const view = asked ?? (readyCount ? "ready" : "build");
   const href = (patch: Record<string, string | null>) => {
@@ -205,7 +210,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const TABS = [
     { key: "build", title: "Build a report", sub: "Any client, any dates", n: null },
     { key: "ready", title: "Ready to send", sub: "Drafted and waiting on review", n: readyCount },
-    { key: "sent", title: "Sent", sub: "The last 30 days", n: sentCount },
+    { key: "sent", title: "Sent", sub: "Every report, to review and resend", n: sentCount },
   ] as const;
 
   return (
@@ -255,7 +260,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
           )}
 
           {/* Meta or Google (execs; everyone else is on their own line), then one buyer at a time */}
-          {(platforms.length > 1 || people(view === "ready" ? readyReports : sentReports, view === "ready" ? builtRows : sentBuilt).length > 1) && (
+          {!(view === "sent" && history.length) && (platforms.length > 1 || people(view === "ready" ? readyReports : sentReports, view === "ready" ? builtRows : sentBuilt).length > 1) && (
             <div className="flex flex-wrap items-center gap-2">
               {platforms.length > 1 && (
                 <span className="inline-flex rounded-full border border-line bg-surface p-1">
@@ -321,7 +326,19 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
               </>
             ))}
 
+          {view === "sent" && history.length > 0 && (
+            <section className="grid gap-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="flex items-baseline gap-2 font-heading text-[19px]">
+                  Sent <span className="tabular text-sm text-faint">{history.length}</span>
+                </h3>
+                <span className="text-xs text-faint">Who sent it, when, where and to whom · the PDF as it went</span>
+              </div>
+              <SendHistory items={history} filterable />
+            </section>
+          )}
           {view === "sent" &&
+            !history.length &&
             (sentShown.length + sentBuiltShown.length === 0 ? (
               <Empty title="Nothing sent yet" body="Reports that go out land here for 30 days. Every one stays in the client's history." />
             ) : (

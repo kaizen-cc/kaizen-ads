@@ -15,6 +15,9 @@ import { ReportStudio } from "../report-studio";
 import { after } from "next/server";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { writeStatus } from "@/lib/write-status";
+import { lastFullWeek, periodMismatch, rangeLabel, todayIn } from "@/lib/reports/period";
+import { clientDelivery } from "@/lib/reports/send";
+import { readHistory } from "@/lib/reports/history";
 
 export const metadata: Metadata = { title: "Report" };
 // Revising and checking a report, putting a joint message together and posting it with its PDF can take a minute
@@ -28,7 +31,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const db = await createClient();
   const { data: r } = await db
     .from("reports")
-    .select("id, kind, platform, status, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, previous, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)")
+    .select("id, kind, platform, status, client_id, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, previous, clients(name, slug, slack_channel_id), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)")
     .eq("id", id)
     .maybeSingle();
   if (!r) notFound();
@@ -51,9 +54,25 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   ]);
   const client = r.clients as unknown as { name: string; slug: string; slack_channel_id: string | null };
   const metrics = (r.metrics as ReportMetrics | null) ?? null;
-  const ranges = (bundle?.ranges ?? []) as { label: string }[];
-  const periodLabel = r.kind === "built" && ranges.length ? ranges.map((x) => x.label).join(" + ") : r.kind === "monthly" ? monthLabel(r.period_start) : (metrics?.main.label ?? `${r.period_start} – ${r.period_end}`);
+  const ranges = (bundle?.ranges ?? []) as { key?: string; label: string }[];
+  const today = todayIn();
+  // The report's own dates are the one source of truth (the numbers follow them), so the header never shows stale ones
+  const own = rangeLabel({ start: r.period_start, end: r.period_end }, today);
+  const periodLabel = r.kind === "built" && ranges.length ? [own, ...ranges.slice(1).map((x) => x.label)].join(" + ") : r.kind === "monthly" ? monthLabel(r.period_start) : own;
   const name = (p: unknown) => (p as { full_name: string } | null)?.full_name ?? null;
+  const admin = adminConfigured() ? createAdminClient() : null;
+  const sentNow = r.status === "posted" || bundle?.status === "sent";
+  const [delivery, history, { data: keyRow }] = await Promise.all([
+    admin && r.kind !== "monthly" && !sentNow ? clientDelivery(admin, r.client_id as string).catch(() => null) : Promise.resolve(null),
+    admin ? readHistory(admin, { reportId: r.id, bundleId: r.bundle_id, limit: 40 }, today) : Promise.resolve([]),
+    db.from("reports").select("period_key").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)),
+  ]);
+  // Every page drawn for the report's dates? (a page for other dates is redrawn before it can go out)
+  const stale = !["queued", "drafting", "failed"].includes(r.status) && metrics && r.kind !== "monthly" ? periodMismatch({ start: r.period_start, end: r.period_end }, metrics, r.sections as Sections | null) : [];
+  // A weekly still on an older week than the one that just ended: offered last week in one tap
+  const week = lastFullWeek(today);
+  const behind = r.kind === "weekly" && !sentNow && r.period_end < week.end ? rangeLabel(week, today) : null;
+  const locked = sentNow ? "It went to the client with these dates. Duplicate it from the history for other dates." : r.kind === "monthly" ? "A monthly recap covers its month." : r.kind === "built" && bundle?.created_by && bundle.created_by !== me.id && !me.isExec ? "Whoever built the report sets its dates." : null;
 
   return (
     <div className="mx-auto grid max-w-6xl gap-5">
@@ -85,7 +104,10 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           error: r.error,
           owner: name(r.profiles),
           regen: canUndo({ status: r.status, previous: r.previous as Previous | null }) ? { at: (r.previous as Previous).at, by: (r.previous as Previous).by } : null,
+          period: { start: r.period_start, end: r.period_end, key: (keyRow?.period_key as string | null) ?? null, today, stale, behind, locked },
         }}
+        delivery={delivery}
+        history={history}
         client={{ name: client.name, slug: client.slug, hasChannel: Boolean(client.slack_channel_id) }}
         bundle={
           bundle

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { SlackConnect } from "@/components/slack-connect";
@@ -10,10 +11,14 @@ import { RecapDeckButton } from "./recap-deck-button";
 import { METRIC_KEYS, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
-import { approveBuiltMessage, approveMyPart, builtMessage, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, setReportCampaignExcluded, skipReport } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, setReportCampaignExcluded, skipReport } from "./actions";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
+import { buildReportEmail, channelsLabel, type Delivery } from "@/lib/reports/delivery-core";
+import { DeliveryPicker, type DeliveryOptions } from "./delivery-picker";
+import { PeriodPicker } from "./period-picker";
+import { SendHistory, type HistoryItem } from "./send-history";
 
 // One report, start to finish, in three steps: the report (a live preview of the document: click any line to change
 // it, or ask the AI on the side and watch it change), then the Slack message (shown as it will look in the client's
@@ -41,6 +46,11 @@ export type StudioReport = {
   owner: string | null;
   /** Regenerated in the last day: when and by whom, and the draft it replaced can still be brought back */
   regen: { at: string; by: string | null } | null;
+  /**
+   * The report's dates, the one source of truth for every page: the preset they came from, today where the client is,
+   * the pages not drawn for them yet (stale), a newer week to move a weekly to (behind), and why they can't change
+   */
+  period: { start: string; end: string; key: string | null; today: string; stale: string[]; behind: string | null; locked: string | null };
 };
 export type StudioBundle = {
   id: string;
@@ -120,6 +130,50 @@ function SlackPreview({ from, text, file }: { from: { name: string; image: strin
   );
 }
 
+/** The email as the client will get it: the subject, who it's to, the short note, the key numbers and the PDF */
+function EmailPreview({ mail, to, file }: { mail: ReturnType<typeof buildReportEmail>; to: string[]; file: string }) {
+  return (
+    <div className="grid gap-2">
+      <p className="text-[13px] text-muted">The email, from the agency&rsquo;s address with replies to you. It&rsquo;s written from the report, so it always matches it.</p>
+      <div className="overflow-hidden rounded-[14px] border border-line bg-surface">
+        <div className="grid gap-1 border-b border-line px-4 py-3 text-[13px]">
+          <p className="truncate">
+            <span className="text-faint">To </span>
+            {to.length ? to.join(", ") : <span className="text-warn">nobody picked yet</span>}
+          </p>
+          <p className="font-medium leading-snug">{mail.subject}</p>
+        </div>
+        <div className="grid gap-3 px-4 py-4 text-[14px] leading-relaxed">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-text">{mail.kicker}</p>
+          <p className="font-heading text-[19px] leading-tight">{mail.title}</p>
+          <p>{mail.hello}</p>
+          {mail.lines.map((l, i) => (
+            <p key={i} className="text-muted">
+              {l}
+            </p>
+          ))}
+          {mail.bullets.length > 0 && (
+            <ul className="grid gap-1">
+              {mail.bullets.map((b, i) => (
+                <li key={i} className="flex gap-2">
+                  <span className="text-brand-text">•</span>
+                  <span>{b}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {mail.cta && <span className="w-fit rounded-[6px] bg-brand px-4 py-2.5 text-[13px] font-medium text-white">{mail.cta.label}</span>}
+          <p className="text-[12.5px] text-faint">{mail.note}</p>
+          <div className="flex max-w-[360px] items-center gap-3 rounded-[10px] border border-line bg-surface-2 px-3 py-2.5">
+            <span className="grid h-10 w-9 shrink-0 place-items-center rounded-[4px] bg-[#e01e5a] text-[10px] font-bold text-white">PDF</span>
+            <span className="min-w-0 truncate text-[13px] font-medium">{file}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PanelButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <button type="button" aria-label={label} title={label} onClick={onClick} className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line text-[15px] text-muted transition-colors hover:border-faint hover:text-fg md:h-9 md:w-9">
@@ -134,6 +188,8 @@ export function ReportStudio({
   bundle,
   slack,
   act = null,
+  delivery = null,
+  history = [],
 }: {
   report: StudioReport;
   client: { name: string; slug: string; hasChannel: boolean };
@@ -141,6 +197,10 @@ export function ReportStudio({
   slack: { connected: boolean; name: string | null; image: string | null; me: string };
   /** Acting on the report's next steps: whether changes can be written to its account, and who can switch them on */
   act?: { write: WriteStatus | null; canSwitch: boolean } | null;
+  /** Where it can go (Slack, email to the client's contacts) and how this client got their last one */
+  delivery?: DeliveryOptions | null;
+  /** Every time this report went to the client */
+  history?: HistoryItem[];
 }) {
   const router = useRouter();
   const built = report.kind === "built";
@@ -289,8 +349,15 @@ export function ReportStudio({
     setNote(null);
     const r = await reviseWithAi(report.id, text);
     setAsking(false);
-    if (!r.ok) return setNote({ ok: false, text: r.error });
+    if (!r.ok) {
+      setNote({ ok: false, text: r.error });
+      // The dates asked for already have a report on this account: open that one
+      if ("openId" in r && r.openId && confirm(`${r.error} Open it?`)) router.push(`/reports/${r.openId}`);
+      return;
+    }
     setChat(r.chat);
+    // New dates: the whole report is being redrawn (every page), so the page follows it
+    if (r.redrawing) return router.refresh();
     setSectionsState(r.sections);
     if (!built) setMessage(r.message);
     if (r.qa) setQa(r.qa);
@@ -317,30 +384,38 @@ export function ReportStudio({
       setStep("message");
     });
 
+  // Where it goes: Slack, email or both (the client's last choice to start with)
+  const [route, setRoute] = useState<Delivery>(delivery?.initial ?? { channels: ["slack"], recipients: [] });
+  const [emailNote, setEmailNote] = useState("");
+  const viaSlack = route.channels.includes("slack");
+  const viaEmail = route.channels.includes("email");
+  const [sentNote, setSentNote] = useState<string | null>(null);
   const send = () =>
     start(async () => {
       setNote(null);
       if (built && bundle) {
-        const r = await approveBuiltMessage(bundle.id, message);
+        const r = await approveBuiltMessage(bundle.id, message, route);
         if (!r.ok) return setNote({ ok: false, text: r.error });
         if (r.sent) setStep("done");
-        else setNote({ ok: true, text: `Approved. It goes out the moment ${r.waitingOn.join(" and ")} approve${r.waitingOn.length === 1 ? "s" : ""} their part: one message, one PDF.` });
+        else setNote({ ok: true, text: `Approved. It goes out the moment ${r.waitingOn.join(" and ")} approve${r.waitingOn.length === 1 ? "s" : ""} their part: one report, by ${channelsLabel(route.channels).toLowerCase()}.` });
         router.refresh();
         return;
       }
       await saveReport(report.id, { message });
-      const r = await sendReport(report.id);
+      const r = await sendReport(report.id, route, emailNote);
       if (!r.ok) return setNote({ ok: false, text: r.error });
+      setSentNote(r.note);
       setStep("done");
       router.refresh();
     });
+  const stale = report.period.stale.length > 0 && !sent && !busy;
 
   const from = joint ? { name: "Kaizen", image: null, app: true } : { name: slack.name || slack.me, image: slack.image, app: false };
   const fileName = `${client.name} - ${built ? "Report" : `${platformName(report.platform).replace(" Ads", "")} report`} - ${report.periodLabel}.pdf`;
   const waitingParts = bundle?.parts.filter((p) => p.status !== "submitted" && p.status !== "posted") ?? [];
   const STEPS = [
     { key: "report", label: built && joint ? "Your part" : "Report" },
-    ...(report.kind === "monthly" || (built && !bundle?.isBuilder) ? [] : [{ key: "message", label: "Slack message" }]),
+    ...(report.kind === "monthly" || (built && !bundle?.isBuilder) ? [] : [{ key: "message", label: "Send" }]),
     { key: "done", label: "Sent" },
   ];
 
@@ -388,6 +463,45 @@ export function ReportStudio({
         </div>
       </div>
 
+      {/* The report's dates: one dropdown, every page follows them */}
+      {report.kind !== "monthly" && !sent && (
+        <PeriodPicker reportId={report.id} start={report.period.start} end={report.period.end} periodKey={report.period.key} today={report.period.today} locked={busy ? "It's being written right now." : report.period.locked} />
+      )}
+      {report.period.behind && !busy && !sent && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3">
+          <p className="min-w-0 flex-1 basis-64 text-[13px] leading-snug text-fg">
+            This report covers {report.periodLabel}. Last week was <b>{report.period.behind}</b>.
+          </p>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await changePeriod(report.id, "lastWeek");
+                if (!r.ok) {
+                  setNote({ ok: false, text: r.error });
+                  if (r.openId && confirm(`${r.error} Open it?`)) router.push(`/reports/${r.openId}`);
+                  return;
+                }
+                router.refresh();
+              })
+            }
+            className="h-11 shrink-0 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 md:h-9"
+          >
+            Move it to last week
+          </button>
+        </div>
+      )}
+      {stale && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border border-bad/40 bg-bad-soft/40 px-4 py-3">
+          <p className="min-w-0 flex-1 basis-64 text-[13px] leading-snug text-fg">
+            Not every page is for {report.periodLabel} yet ({report.period.stale.join(", ")}). Redraw it with fresh numbers before it goes out.
+          </p>
+          <button type="button" disabled={pending} onClick={regenerateNow} className="h-11 shrink-0 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 md:h-9">
+            Redraw every page
+          </button>
+        </div>
+      )}
       {note && <p className={`rounded-[12px] px-4 py-3 text-sm ${note.ok ? "bg-ok-soft text-ok" : "bg-bad-soft text-bad"}`}>{note.text}</p>}
       {gone.length > 0 && !busy && (
         <div className="grid gap-2">
@@ -944,7 +1058,7 @@ ${t}` : t);
                     )}
                   </p>
                 ) : (
-                  <button type="button" disabled={pending} onClick={approve} className="h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50 max-md:h-12">
+                  <button type="button" disabled={pending || stale} title={stale ? "Redraw every page for the report's dates first" : undefined} onClick={approve} className="h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50 max-md:h-12">
                     {pending ? "One moment…" : report.kind === "monthly" ? "Approve and submit my part" : built ? (bundle?.isBuilder ? "Approve report →" : "Approve my part") : "Approve report →"}
                   </button>
                 )}
@@ -1008,20 +1122,25 @@ ${t}` : t);
               </p>
             ) : (
               <>
-                {/* What posts in Slack, and that it can be changed here before it goes */}
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[13px] text-muted">This is exactly what posts in the client&rsquo;s Slack channel, with the PDF. Change anything before you send.</p>
-                  <button type="button" onClick={() => setEditMsg((x) => !x)} className={`h-10 rounded-full px-4 text-[13px] ${editMsg ? "bg-fg text-bg" : "border border-brand/60 text-brand-text hover:bg-brand/10"}`}>
-                    {editMsg ? "✓ Done editing" : "✎ Edit the message"}
-                  </button>
-                </div>
-                {editMsg ? (
-                  <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={16} autoFocus className="w-full rounded-[12px] border border-brand/50 bg-surface px-4 py-3 font-mono text-[13px] leading-relaxed outline-none focus:border-brand-text/60" />
-                ) : (
-                  <button type="button" onClick={() => setEditMsg(true)} className="block w-full cursor-text rounded-[12px] text-left ring-brand/40 transition-shadow hover:ring-2" aria-label="Edit the message">
-                    <SlackPreview from={from} text={message} file={fileName} />
-                  </button>
+                {viaSlack && (
+                  <>
+                    {/* What posts in Slack, and that it can be changed here before it goes */}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[13px] text-muted">This is exactly what posts in the client&rsquo;s Slack channel, with the PDF. Change anything before you send.</p>
+                      <button type="button" onClick={() => setEditMsg((x) => !x)} className={`h-10 rounded-full px-4 text-[13px] ${editMsg ? "bg-fg text-bg" : "border border-brand/60 text-brand-text hover:bg-brand/10"}`}>
+                        {editMsg ? "✓ Done editing" : "✎ Edit the message"}
+                      </button>
+                    </div>
+                    {editMsg ? (
+                      <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={16} autoFocus className="w-full rounded-[12px] border border-brand/50 bg-surface px-4 py-3 font-mono text-[13px] leading-relaxed outline-none focus:border-brand-text/60" />
+                    ) : (
+                      <button type="button" onClick={() => setEditMsg(true)} className="block w-full cursor-text rounded-[12px] text-left ring-brand/40 transition-shadow hover:ring-2" aria-label="Edit the message">
+                        <SlackPreview from={from} text={message} file={fileName} />
+                      </button>
+                    )}
+                  </>
                 )}
+                {viaEmail && <EmailPreview mail={buildReportEmail({ client: client.name, kind: report.kind, periodLabel: report.periodLabel, parts: [{ platform: report.platform, metrics: report.metrics, sections }], from: { name: slack.me, email: null }, first: route.recipients[0]?.name?.split(" ")[0] ?? null, note: emailNote })} to={route.recipients.map((r) => r.email)} file={fileName} />}
               </>
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
@@ -1030,7 +1149,7 @@ ${t}` : t);
                   Put it together again from the parts
                 </button>
               )}
-              <span>*bold* · _italic_ · • bullets, as Slack shows them</span>
+              {viaSlack && <span>*bold* · _italic_ · • bullets, as Slack shows them</span>}
               {/* Approved by mistake, or one more change: back to the report (nothing has gone out) */}
               <button
                 type="button"
@@ -1050,14 +1169,20 @@ ${t}` : t);
             </div>
           </div>
           <aside className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 lg:sticky lg:top-20">
-            <p className="text-sm font-medium">{joint ? "One report, from Kaizen" : "From you, in their channel"}</p>
+            <p className="text-sm font-medium">{joint ? "One report, from Kaizen" : "From you"}</p>
             <p className="text-xs leading-relaxed text-muted">
               {joint
-                ? "Every service in one message and one PDF (the whole account first, then each service), posted by the Kaizen app so the client gets a single report."
-                : "Posted in the client's channel as you, with the PDF attached."}
+                ? "Every service in one PDF (the whole account first, then each service): in Slack one message from the Kaizen app, by email one email from the agency."
+                : "In Slack, posted in their channel as you. By email, from the agency's address with replies to you. The PDF goes with both."}
             </p>
-            {!client.hasChannel && <p className="rounded-[10px] bg-warn-soft px-3 py-2 text-xs text-warn">This client has no Slack channel linked. Add it on the client page first.</p>}
-            {!joint && !slack.connected && (
+            <DeliveryPicker value={route} onChange={setRoute} options={delivery ?? { contacts: [], initial: route, slackChannel: client.hasChannel, emailReady: true }} disabled={pending || Boolean(bundle?.messageApproved && !sent)} />
+            {viaEmail && (
+              <label className="grid gap-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">A line for the email (optional)</span>
+                <textarea value={emailNote} onChange={(e) => setEmailNote(e.target.value)} rows={2} maxLength={600} placeholder="e.g. Happy to walk through it on Thursday's call." className="resize-none rounded-[12px] border border-line bg-bg px-3 py-2 text-sm outline-none [field-sizing:content] focus:border-brand-text/60" />
+              </label>
+            )}
+            {viaSlack && !joint && !slack.connected && (
               <div className="grid gap-2 rounded-[10px] border border-warn/40 bg-warn-soft/40 px-3 py-3">
                 <p className="text-xs text-warn">Connect your Slack so it goes out as you, with your name and photo.</p>
                 <SlackConnect connected={false} />
@@ -1073,11 +1198,11 @@ ${t}` : t);
             ) : (
               <button
                 type="button"
-                disabled={pending || !message.trim() || !client.hasChannel || (!joint && !slack.connected)}
+                disabled={pending || stale || (viaSlack && (!message.trim() || !client.hasChannel || (!joint && !slack.connected))) || (viaEmail && (!route.recipients.length || delivery?.emailReady === false))}
                 onClick={send}
                 className="h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-40 max-md:h-12"
               >
-                {pending ? "Sending…" : built && waitingParts.length ? "Approve the message" : "Approve and send"}
+                {pending ? "Sending…" : built && waitingParts.length ? "Approve the message" : `Approve and send by ${channelsLabel(route.channels).toLowerCase()}`}
               </button>
             )}
           </aside>
@@ -1085,13 +1210,32 @@ ${t}` : t);
       )}
 
       {step === "done" && (
-        <div className="grid place-items-center gap-3 rounded-[16px] border border-line bg-surface px-6 py-16 text-center">
-          <span className="grid h-12 w-12 place-items-center rounded-full bg-ok-soft text-xl text-ok">✓</span>
-          <p className="font-heading text-xl">Sent to {client.name}</p>
-          <p className="max-w-md text-sm text-muted">{joint ? "One message and one PDF covering every service, in their Slack channel." : "In their Slack channel, with the PDF."}</p>
-          <a href={`/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="text-sm text-muted underline-offset-4 hover:text-fg hover:underline">
-            Open the PDF ↗
-          </a>
+        <div className="grid gap-5">
+          <div className="relative isolate grid place-items-center gap-3 overflow-hidden rounded-[20px] border border-line bg-surface px-6 py-12 text-center">
+            <span aria-hidden className="pointer-events-none absolute -top-24 left-1/2 -z-10 h-48 w-80 -translate-x-1/2 rounded-full bg-[rgba(52,195,143,0.18)] blur-[70px]" />
+            <span className="grid h-12 w-12 place-items-center rounded-full bg-ok-soft text-xl text-ok">✓</span>
+            <p className="font-heading text-xl">Sent to {client.name}</p>
+            <p className="max-w-md text-sm text-muted">{sentNote ?? (history[0] ? `${report.periodLabel}, by ${channelsLabel(history[0].channels).toLowerCase()}${history[0].to.length ? ` to ${history[0].to.join(", ")}` : ""}.` : `${report.periodLabel}, with the PDF.`)}</p>
+            <a href={history[0] ? `/api/reports/sends/${history[0].id}/pdf` : `/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm text-muted underline-offset-4 hover:text-fg hover:underline">
+              Open the PDF that went ↗
+            </a>
+          </div>
+          {/* Every time it went, to review, send again or carry on next week */}
+          <section className="grid gap-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="font-heading text-[19px]">Sent</h3>
+              <Link href="/reports?view=sent" className="inline-flex min-h-11 items-center text-xs text-faint hover:text-fg md:min-h-0">
+                Every report sent →
+              </Link>
+            </div>
+            <SendHistory items={history} showClient={false} empty={<p className="rounded-[14px] border border-line bg-surface px-4 py-6 text-center text-sm text-muted">It went out before sends were kept here. Open the PDF above to review it.</p>} />
+          </section>
+          {report.metrics && sections && (
+            <section className="grid gap-3">
+              <h3 className="font-heading text-[19px]">The report</h3>
+              <PdfPreview source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`} baseKey={`sent:${report.id}`} patch={(input) => input} patchKey="sent" fields={[]} editable={false} onSave={() => {}} onRemove={() => {}} />
+            </section>
+          )}
         </div>
       )}
     </div>

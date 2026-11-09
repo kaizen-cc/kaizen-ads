@@ -6,6 +6,7 @@ import { metricsText, reportMetrics, trendSeries, type ReportMetrics, type Trend
 import { METRIC_KEYS, leftOutText, reportBasis, type MetricKey } from "./format";
 import { voiceOf, workDone } from "./work";
 import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
+import { daysIn, previousPeriod, rangeLabel, todayIn } from "./period";
 
 // Writing a client report: the numbers (reportMetrics), the work behind them (workDone), the buyer's own voice (their
 // recaps in client channels), what this client likes in a report (learned from past edits), and what the buyer added
@@ -168,10 +169,12 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
   await admin.from("reports").update({ status: "drafting", error: null, updated_at: new Date().toISOString() }).eq("id", reportId);
   try {
     const c = await context(admin, reportId);
-    const kind = c.r.kind as Kind;
     const dayAfter = (d: string) => new Date(Date.parse(`${d}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
-    const range = kind === "custom" || kind === "built" ? { start: c.r.period_start as string, end: c.r.period_end as string } : undefined;
-    const [metrics, voice] = await Promise.all([reportMetrics(admin, c.target, kind === "built" ? "custom" : kind, dayAfter(c.r.period_end), range), voiceOf(admin, c.owner, c.r.client_id)]);
+    // The report's own dates, for every number on every page (a weekly too: its period can be changed in the studio)
+    const range = c.r.kind === "monthly" ? undefined : { start: c.r.period_start as string, end: c.r.period_end as string };
+    // A weekly moved to other than seven days reads like an on-demand recap (its dates against the days just before)
+    const kind = (c.r.kind === "weekly" && range && daysIn(range) !== 7 ? "custom" : c.r.kind) as Kind;
+    const [metrics, voice] = await Promise.all([reportMetrics(admin, c.target, c.r.kind === "built" ? "custom" : (c.r.kind as "weekly" | "monthly" | "custom"), dayAfter(c.r.period_end), range), voiceOf(admin, c.owner, c.r.client_id)]);
     // A built report's other date ranges, each against its own comparison
     let extra: ReportMetrics[] = [];
     if (kind === "built" && c.r.bundle_id) {
@@ -248,8 +251,18 @@ export async function refreshMessage(admin: SupabaseClient, reportId: string) {
   return { message: out.message, basis };
 }
 
+/** Today and the report's own dates, so the AI never reads "Nov 2 to 8" as another year or writes another period's numbers in */
+function datesBlock(r: { period_start: string; period_end: string; kind: string }) {
+  const today = todayIn();
+  const period = { start: r.period_start, end: r.period_end };
+  const prev = previousPeriod(period);
+  return `<today timezone="America/New_York">${today}</today>\n<report_period>${rangeLabel(period, today)} (${period.start} to ${period.end})${r.kind === "monthly" ? "" : `, compared with ${rangeLabel(prev, today)} (${prev.start} to ${prev.end})`}. Every page of the report (tiles, tables, campaigns, top ads, charts) is drawn by the app for exactly these dates.</report_period>`;
+}
+
+const PERIOD_RULE = `The report's dates are set by the app, never by you: don't write numbers for other dates into the report as if they were its period. If the buyer wants the whole report for other dates, tell them to pick them in the period menu at the top (or ask "change the dates to Nov 2 to 8"), which redraws every page with fresh numbers. Numbers you look up for other dates are only for comparisons, and always say their dates.`;
+
 /** The buyer asks for a change; the report is rewritten, the QA runs again, and a lasting preference is remembered. */
-export async function reviseReport(admin: SupabaseClient, reportId: string, ask: string, by: string) {
+export async function reviseReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { echo?: boolean } = {}) {
   const c = await context(admin, reportId);
   const metrics = c.r.metrics as ReportMetrics;
   const work = ((c.r as unknown as { work?: { text?: string } }).work?.text) ?? "";
@@ -261,12 +274,12 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
     agent: agentFor(c.r.platform),
     label: "revise report",
     clientId: c.r.client_id,
-    system: `${writerSystem(c.r.kind as Kind, c.r.platform)}\n\n${REVISE_SYSTEM}\n\n${toolsLine(tools)}`,
+    system: `${writerSystem(c.r.kind as Kind, c.r.platform)}\n\n${REVISE_SYSTEM}\n${PERIOD_RULE}\n\n${toolsLine(tools)}`,
     schema: REVISE_SCHEMA,
     tools,
     maxRounds: 6,
     maxTokens: 16000,
-    prompt: `${sourcesBlock(c, metrics, work, "")}\n\n<current_message>\n${c.r.message ?? ""}\n</current_message>\n<current_sections>\n${JSON.stringify(c.r.sections ?? {})}\n</current_sections>\n\n<conversation>\n${chat
+    prompt: `${datesBlock(c.r as { period_start: string; period_end: string; kind: string })}\n\n${sourcesBlock(c, metrics, work, "")}\n\n<current_message>\n${c.r.message ?? ""}\n</current_message>\n<current_sections>\n${JSON.stringify(c.r.sections ?? {})}\n</current_sections>\n\n<conversation>\n${chat
       .slice(-10)
       .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
       .join("\n")}\n</conversation>\n\nThe buyer asks: ${ask.trim().slice(0, 2000)}`,
@@ -275,7 +288,8 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
   const data = pulled.map((x) => `[${x.label}]\n${x.data}`).join("\n\n").slice(0, 20_000);
   const next: ChatTurn[] = [
     ...chat,
-    { role: "user" as const, text: ask.trim(), at: now, by },
+    // Already in the chat when the ask also moved the report's dates (this is its second half, after the redraw)
+    ...(opts.echo === false ? [] : [{ role: "user" as const, text: ask.trim(), at: now, by }]),
     { role: "assistant" as const, text: out.reply, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
   ].slice(-40);
   out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end);

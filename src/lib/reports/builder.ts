@@ -3,8 +3,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { isExecOrLead, type Staff } from "@/lib/auth";
 import { nyParts } from "@/lib/kpi/calc";
-import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { canReportOn, reportListeners } from "./access";
+import { channelsLabel, normalizeDelivery, pdfFileName, type Delivery } from "./delivery-core";
+import { isPeriodKey, periodMismatch, resolvePeriod } from "./period";
+import { deliver } from "./send";
 import { renderReportPdf, type ReportPart, type ReportPdfInput } from "./pdf";
 import type { ReportMetrics } from "./metrics";
 import type { ReportLayout } from "./format";
@@ -19,6 +21,7 @@ import { draftReport, type Sections } from "./write";
 // Kaizen app: one message combining what each buyer said, and one PDF with the whole account and each service.
 
 export const RANGES = [
+  { key: "lastWeek", label: "Last week" },
   { key: "last7", label: "Last 7 days" },
   { key: "last14", label: "Last 14 days" },
   { key: "last30", label: "Last 30 days" },
@@ -30,28 +33,18 @@ export type RangeKey = (typeof RANGES)[number]["key"];
 export type BuiltRange = { key: string; label: string; start: string; end: string };
 
 const SITE = () => process.env.NEXT_PUBLIC_SITE_URL || "https://ads.kaizenmarketing.agency";
-const shift = (day: string, n: number) => new Date(Date.parse(`${day}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const fmt = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 const monthName = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 
-/** A range as dates (data runs through yesterday, New York). */
+/** A range as dates (data runs through yesterday, New York): the same presets as a report's period picker. */
 export function resolveRange(key: string, today = nyParts(new Date()).date, custom?: { start: string; end: string }): BuiltRange | null {
-  const end = shift(today, -1);
-  if (key === "last7") return { key, label: "Last 7 days", start: shift(end, -6), end };
-  if (key === "last14") return { key, label: "Last 14 days", start: shift(end, -13), end };
-  if (key === "last30") return { key, label: "Last 30 days", start: shift(end, -29), end };
-  if (key === "mtd") {
-    const start = `${today.slice(0, 8)}01`;
-    // On the 1st there's nothing this month yet: the month just ended
-    return start > end ? { key, label: monthName(end), start: `${end.slice(0, 8)}01`, end } : { key, label: `${monthName(today).split(" ")[0]} to date`, start, end };
-  }
-  if (key === "lastMonth") {
-    const last = shift(`${today.slice(0, 8)}01`, -1);
-    return { key, label: monthName(last), start: `${last.slice(0, 8)}01`, end: last };
-  }
-  if (key === "custom" && custom && /^\d{4}-\d{2}-\d{2}$/.test(custom.start) && /^\d{4}-\d{2}-\d{2}$/.test(custom.end) && custom.start <= custom.end && custom.start <= end)
-    return { key, label: `${fmt(custom.start)} – ${fmt(custom.end > end ? end : custom.end)}`, start: custom.start, end: custom.end > end ? end : custom.end };
-  return null;
+  const p = resolvePeriod(key === "mtd" ? "thisMonth" : isPeriodKey(key) ? key : "custom", today, key === "custom" ? custom : null);
+  if (!p || (!isPeriodKey(key) && key !== "mtd")) return null;
+  if (key === "lastWeek") return { key, label: `Week of ${fmt(p.start)}`, start: p.start, end: p.end };
+  if (key === "mtd") return p.start === `${today.slice(0, 8)}01` ? { key, label: `${monthName(today).split(" ")[0]} to date`, start: p.start, end: p.end } : { key, label: monthName(p.end), start: p.start, end: p.end };
+  if (key === "lastMonth") return { key, label: monthName(p.start), start: p.start, end: p.end };
+  if (key === "custom") return { key, label: `${fmt(p.start)} – ${fmt(p.end)}`, start: p.start, end: p.end };
+  return { key, label: p.label, start: p.start, end: p.end };
 }
 
 export const rangesLabel = (ranges: BuiltRange[]) => ranges.map((r) => r.label).join(" + ");
@@ -79,7 +72,7 @@ export async function buildReport(admin: SupabaseClient, db: SupabaseClient, me:
   const main = ranges[0];
   const { data: was } = await admin.from("report_bundles").select("id, status").eq("client_id", clientId).eq("kind", "built").eq("period_start", main.start).maybeSingle();
   if (was?.status === "sent") throw new Error(`A report starting ${fmt(main.start)} already went to this client. Pick different dates.`);
-  const row = { client_id: clientId, kind: "built", period_start: main.start, period_end: main.end, ranges, services: [...new Set(targets.map((t) => t.platform))], created_by: me.id, status: "collecting", message: null, message_approved_at: null, message_approved_by: null, error: null };
+  const row = { client_id: clientId, kind: "built", period_start: main.start, period_end: main.end, ranges, services: [...new Set(targets.map((t) => t.platform))], created_by: me.id, status: "collecting", message: null, message_approved_at: null, message_approved_by: null, error: null, hidden_at: null };
   const { data: bundle, error } = was ? await admin.from("report_bundles").update(row).eq("id", was.id).select("id").single() : await admin.from("report_bundles").insert(row).select("id").single();
   if (error || !bundle) throw new Error(error?.message ?? "Couldn't start it.");
   // A rebuild: parts no longer asked for are set aside
@@ -180,13 +173,18 @@ export async function approvePart(admin: SupabaseClient, reportId: string, by: S
   return { sent: false, waitingOn: waiting.map((p) => `${p.profiles?.full_name ?? "the other buyer"} (${platformName(p.platform)})`) };
 }
 
-/** The builder approves the Slack message: it goes now if every part is in, otherwise as soon as the last one is. */
-export async function approveMessage(admin: SupabaseClient, bundleId: string, by: Staff, message: string) {
+/**
+ * The builder approves the message and where it goes (Slack, email or both): it goes now if every part is in,
+ * otherwise as soon as the last one is.
+ */
+export async function approveMessage(admin: SupabaseClient, bundleId: string, by: Staff, message: string, delivery: Delivery = { channels: ["slack"], recipients: [] }) {
   const text = message.trim().slice(0, 12000);
-  if (!text) throw new Error("Write the message first.");
+  if (!text && delivery.channels.includes("slack")) throw new Error("Write the message first.");
   const { b, parts } = await loadParts(admin, bundleId);
   if (b.created_by && b.created_by !== by.id && !by.isExec) throw new Error("The person who built the report approves its message.");
   await admin.from("report_bundles").update({ message: text, message_approved_at: new Date().toISOString(), message_approved_by: by.id, status: "waiting" }).eq("id", bundleId);
+  const { error } = await admin.from("report_bundles").update({ delivery }).eq("id", bundleId);
+  if (error && !delivery.channels.every((c) => c === "slack")) throw new Error("Email for built reports needs the latest database update. Send it by Slack for now.");
   const waiting = parts.filter((p) => p.status !== "submitted" && p.status !== "posted");
   if (waiting.length) return { sent: false, waitingOn: waiting.map((p) => `${p.profiles?.full_name ?? "the other buyer"} (${platformName(p.platform)})`) };
   await deliverBuilt(admin, bundleId, by.id);
@@ -211,32 +209,54 @@ export async function builtInput(admin: SupabaseClient, bundleId: string, edit =
   };
 }
 
-/** Sends it: one service as its buyer (their Slack), a joint report from the Kaizen app. One message, one PDF. */
+/**
+ * Sends it where the builder chose (Slack, email or both; kept on the bundle when the message was approved): in Slack,
+ * one service as its buyer, a joint report from the Kaizen app; by email from the agency, replies to the builder. One
+ * message, one PDF, and the send kept in the history.
+ */
 export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: string) {
   const { data: claimed } = await admin.from("report_bundles").update({ status: "sending" }).eq("id", bundleId).in("status", ["waiting", "collecting"]).select("id").maybeSingle();
   if (!claimed) return;
   try {
     const { b, parts, client, ranges } = await loadParts(admin, bundleId);
-    if (!client.slack_channel_id) throw new Error("This client has no Slack channel set. Add it on the client page.");
+    const { data: chosen } = await admin.from("report_bundles").select("delivery").eq("id", bundleId).maybeSingle().then((r) => (r.error ? { data: null } : r));
+    const delivery = normalizeDelivery(chosen?.delivery ?? null);
+    if (delivery.channels.includes("slack") && !client.slack_channel_id) throw new Error("This client has no Slack channel set. Add it on the client page, or send it by email.");
+    // Every part drawn for the report's dates (a part redrawn for other dates can't go out with the rest)
+    const main = ranges[0];
+    const stale = main ? parts.filter((p) => periodMismatch(main, p.metrics, p.sections).length) : [];
+    if (stale.length) throw new Error(`The ${stale.map((p) => platformName(p.platform)).join(" and ")} part isn't for ${main.label} yet. Regenerate it first.`);
     const bytes = await builtPdf(admin, bundleId);
     const label = rangesLabel(ranges);
-    const pdf = { filename: `${client.name} - Report - ${label}.pdf`.replace(/[\\/:*?"<>|]/g, "-"), title: `${client.name} · Report · ${label}`, bytes };
-    const text = b.message ?? "";
+    const pdf = { filename: pdfFileName(client.name, "Report", label), title: `${client.name} · Report · ${label}`, bytes };
     const joint = parts.length > 1;
-    let out: { ok: boolean; ts?: string; channel?: string; error?: string };
-    if (!joint) out = await postAsUser(parts[0].owner_id ?? by, { channel: client.slack_channel_id, text, pdf });
-    else out = await postAsApp({ channel: client.slack_channel_id, text, pdf });
-    // Couldn't attach the PDF: the message still goes, from the app, with the link to the report
-    if (!out.ok) out = await postAsApp({ channel: client.slack_channel_id, text: `${text}\n\nThe full report: ${SITE()}/r/${b.token}` });
-    if (!out.ok) throw new Error(out.error ?? "Slack didn't take the message.");
+    const { data: me } = await admin.from("profiles").select("full_name, email").eq("id", by).maybeSingle();
+    const out = await deliver(admin, {
+      client: { id: b.client_id as string, ...client },
+      kind: "built",
+      platform: joint ? null : parts[0].platform,
+      period: { start: main?.start ?? null, end: main?.end ?? null, label },
+      message: b.message ?? "",
+      pdf,
+      parts: parts.map((p) => ({ platform: p.platform === "google" ? "google" : "meta", metrics: p.metrics, sections: p.sections })),
+      by: { id: by, fullName: (me?.full_name as string | null) ?? "Kaizen", email: (me?.email as string | null) ?? null },
+      delivery,
+      slackAs: joint ? "app" : "user",
+      slackUserId: joint ? null : (parts[0].owner_id ?? by),
+      // Couldn't post as the buyer: the message still goes, from the app, with the link to the report
+      appFallback: `\n\nThe full report: ${SITE()}/r/${b.token}`,
+      bundleId,
+      reportId: joint ? null : parts[0].id,
+    });
+    if (!out.ok) throw new Error(out.error ?? "It didn't go out.");
     const now = new Date().toISOString();
-    await admin.from("report_bundles").update({ status: "sent", sent_at: now, delivered: { slack: { channel: client.slack_channel_id, ts: out.ts, as: joint ? "app" : "buyer" } } }).eq("id", bundleId);
+    await admin.from("report_bundles").update({ status: "sent", sent_at: now, delivered: { ...(out.slack && "channel" in out.slack ? { slack: out.slack } : {}), ...(out.email?.to.length ? { email: out.email.to } : {}) } }).eq("id", bundleId);
     await admin.from("reports").update({ status: "posted", posted_at: now, posted_by: by }).eq("bundle_id", bundleId).eq("status", "submitted");
     const told = await reportListeners(admin, [b.created_by, ...parts.map((p) => p.owner_id)]);
     const owners = [...told];
     if (owners.length)
       await admin.from("notifications").upsert(
-        owners.map((id) => ({ profile_id: id, kind: "report", title: `${client.name} report sent`, body: `${label}${joint ? ", one message and one PDF for every service, from the Kaizen app" : ""}.`, href: `/reports/${parts.find((p) => p.owner_id === id)?.id ?? parts[0].id}`, client_id: b.client_id, key: `report-sent:${bundleId}`, priority: "normal" })),
+        owners.map((id) => ({ profile_id: id, kind: "report", title: `${client.name} report sent`, body: `${label}, by ${channelsLabel(out.went).toLowerCase()}${joint && out.went.includes("slack") ? " (one message and one PDF for every service, from the Kaizen app)" : ""}.`, href: `/reports/${parts.find((p) => p.owner_id === id)?.id ?? parts[0].id}`, client_id: b.client_id, key: `report-sent:${bundleId}`, priority: "normal" })),
         { onConflict: "profile_id,key", ignoreDuplicates: true },
       );
   } catch (e) {

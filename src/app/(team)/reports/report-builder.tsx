@@ -6,6 +6,7 @@ import { useMemo, useState, useTransition } from "react";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { buildReportAction } from "./actions";
 import { TagChip, type Tag } from "./report-cards";
+import { isPeriodKey, resolvePeriod, shiftDay } from "@/lib/reports/period";
 
 // The report builder: the client, the date ranges (as many as the report needs: the last 7 days AND the month), and
 // the services. Another buyer's service is drafted for them and they're asked to approve it; the whole thing goes to
@@ -16,6 +17,7 @@ export type QuickPick = { clientId: string; ranges: string[]; services: string[]
 export type BuilderClient = { id: string; name: string; slug: string; hasChannel: boolean; services: { platform: "meta" | "google"; owner: string | null; mine: boolean }[] };
 
 const RANGES = [
+  { key: "lastWeek", label: "Last week", hint: "Monday to Sunday" },
   { key: "last7", label: "Last 7 days", hint: "This week's pulse" },
   { key: "last14", label: "Last 14 days", hint: "Two-week trend" },
   { key: "last30", label: "Last 30 days", hint: "A rolling month" },
@@ -28,20 +30,12 @@ const PLATFORM = {
   google: { name: "Google Ads", color: "#34c38f", glow: "rgba(52,195,143,0.3)" },
 } as const;
 
-const shift = (d: string, n: number) => new Date(Date.parse(`${d}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const fmt = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-/** The dates a range covers, as of yesterday (where the data runs to) */
+/** The dates a range covers, as of yesterday (where the data runs to): the same presets as a report's period */
 function datesOf(key: string, yesterday: string, custom: { start: string; end: string }) {
-  if (key === "last7") return [shift(yesterday, -6), yesterday];
-  if (key === "last14") return [shift(yesterday, -13), yesterday];
-  if (key === "last30") return [shift(yesterday, -29), yesterday];
-  if (key === "mtd") return [`${yesterday.slice(0, 8)}01`, yesterday];
-  if (key === "lastMonth") {
-    const today = shift(yesterday, 1);
-    const end = shift(`${today.slice(0, 8)}01`, -1);
-    return [`${end.slice(0, 8)}01`, end];
-  }
-  return custom.start ? [custom.start, custom.end] : null;
+  if (key === "custom") return custom.start ? [custom.start, custom.end] : null;
+  const p = resolvePeriod(key === "mtd" ? "thisMonth" : isPeriodKey(key) ? key : "last7", shiftDay(yesterday, 1));
+  return p ? [p.start, p.end] : null;
 }
 const initials = (n: string) => n.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 

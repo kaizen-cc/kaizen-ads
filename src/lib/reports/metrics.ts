@@ -8,6 +8,7 @@ import { accountRows, goalsFor } from "@/lib/kpi/sync";
 import { actionLabel } from "@/lib/kpi/explore";
 import { metricNumber, type MetricKey } from "./format";
 import type { Diagnosis, Opportunity } from "./diagnose";
+import { lastFullWeek, previousPeriod } from "./period";
 
 // A report's numbers, from the same daily rows the KPI board reads, with the campaigns left out of the KPI left out here
 // too. On Meta, results are what each campaign is optimized for, read from the ad account (submit application, schedule,
@@ -107,19 +108,21 @@ const span = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00:00Z`) 
 const fmt = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 const monthName = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
 
-/** The periods a report covers, as of a day (the day it's written; data runs through the day before). Custom: the
- * dates asked for, against the same number of days just before them. */
+/**
+ * The periods a report covers, as of a day (the day it's written; data runs through the day before). The report's own
+ * dates (`range`) always win: every number, the comparison (the same number of days just before) and, on a weekly,
+ * the month so far up to its last day all follow them. Without dates: a weekly is the last full week, Monday to
+ * Sunday; a monthly, last month.
+ */
 export function periodsFor(kind: "weekly" | "monthly" | "custom", today: string, range?: { start: string; end: string }) {
-  if (kind === "custom" && range) {
-    const n = span(range.start, range.end);
-    const cEnd = shift(range.start, -1);
-    const cStart = shift(cEnd, -(n - 1));
+  if (kind !== "monthly" && range) {
+    const prev = previousPeriod(range);
     const sameMonth = range.start === monthStart(range.start) && range.end.slice(0, 7) === range.start.slice(0, 7);
+    const label = kind === "weekly" ? `${fmt(range.start)} – ${fmt(range.end)}` : sameMonth && range.end === lastDay(range.start) ? monthName(range.start) : sameMonth ? `${monthName(range.start)} 1 – ${fmt(range.end)}` : `${fmt(range.start)} – ${fmt(range.end)}`;
     return {
-      main: { start: range.start, end: range.end, label: sameMonth && range.end === lastDay(range.start) ? monthName(range.start) : sameMonth ? `${monthName(range.start)} 1 – ${fmt(range.end)}` : `${fmt(range.start)} – ${fmt(range.end)}` },
-      compare: { start: cStart, end: cEnd, label: `${fmt(cStart)} – ${fmt(cEnd)}` },
-      mtd: null,
-      mtdCompare: null,
+      main: { start: range.start, end: range.end, label },
+      compare: { start: prev.start, end: prev.end, label: `${fmt(prev.start)} – ${fmt(prev.end)}` },
+      ...(kind === "weekly" ? monthSoFar(range.end) : { mtd: null, mtdCompare: null }),
     };
   }
   const end = shift(today, -1);
@@ -129,15 +132,17 @@ export function periodsFor(kind: "weekly" | "monthly" | "custom", today: string,
     const pEnd = shift(mStart, -1);
     return { main: { start: mStart, end: mEnd, label: monthName(mStart) }, compare: { start: monthStart(pEnd), end: pEnd, label: monthName(pEnd) }, mtd: null, mtdCompare: null };
   }
-  const start = shift(end, -6);
-  const cEnd = shift(start, -1);
+  // A weekly: the last full week, Monday to Sunday (on a Monday, the seven days that just ended)
+  return periodsFor("weekly", today, lastFullWeek(today));
+}
+
+/** The month so far up to a day, against the same days of the month before */
+function monthSoFar(end: string) {
   const mStart = monthStart(end);
   const n = span(mStart, end);
   const lmStart = monthStart(prevMonth(mStart));
   const lmEnd = shift(lmStart, Math.min(n, span(lmStart, lastDay(lmStart))) - 1);
   return {
-    main: { start, end, label: `${fmt(start)} – ${fmt(end)}` },
-    compare: { start: shift(cEnd, -6), end: cEnd, label: `${fmt(shift(cEnd, -6))} – ${fmt(cEnd)}` },
     mtd: { start: mStart, end, label: `${monthName(mStart)} 1 – ${fmt(end)}` },
     mtdCompare: { start: lmStart, end: lmEnd, label: `${monthName(lmStart)} 1 – ${fmt(lmEnd)}` },
   };

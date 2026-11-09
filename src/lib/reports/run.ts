@@ -12,6 +12,9 @@ import { platformName } from "./format";
 import { draftReport, type Sections } from "./write";
 import { freshen } from "./regenerate";
 import { reportListeners } from "./access";
+import { periodMismatch } from "./period";
+import { pdfFileName, type Delivery } from "./delivery-core";
+import { clientDelivery, deliver, recordSend } from "./send";
 
 // The reporting cadence. Mondays: a weekly report is queued for every live account that spent in the last week, and
 // drafted a few at a time. The 1st: the monthly recap, one part per buyer on the client (Meta, Google), held until
@@ -136,20 +139,57 @@ const dashboardLine = (r: { client: { slug?: string; portal_live?: boolean } }) 
   return url ? `\n\n<${url}|See every number on your live dashboard>` : "";
 };
 
-/** A weekly report (or an on-demand recap) goes to the client's Slack channel, as the buyer, with its PDF. */
-export async function postWeekly(admin: SupabaseClient, id: string, by: { id: string }) {
+/**
+ * A weekly report (or an on-demand recap) goes to the client where the buyer chose: their Slack channel as the buyer,
+ * email to the people picked (the PDF attached, replies to the buyer), or both. Every page must be for the report's
+ * dates first; what went is kept in the history.
+ */
+export async function sendWeekly(admin: SupabaseClient, id: string, by: { id: string; fullName: string; email: string | null }, delivery: Delivery, note?: string | null) {
   const r = await load(admin, id);
-  if (!r.client.slack_channel_id) throw new Error("This client has no Slack channel set. Add it on the client page.");
-  if (!r.message?.trim()) throw new Error("There's no message to post yet.");
+  if (delivery.channels.includes("slack") && !r.message?.trim()) throw new Error("There's no message to post yet.");
+  const stale = periodMismatch({ start: r.period_start, end: r.period_end }, r.metrics, r.sections);
+  if (stale.length) throw new Error(`Part of the report isn't for ${label(r.period_start, r.period_end)} yet (${stale.join(", ")}). Regenerate it with fresh data first.`);
   const bytes = await reportPdf(admin, [r]);
-  const out = await postAsUser(by.id, {
-    channel: r.client.slack_channel_id,
-    text: `${r.message}${dashboardLine(r)}`,
-    pdf: { filename: `${r.client.name} - ${r.platform === "google" ? "Google" : "Meta"} - ${label(r.period_start, r.period_end)}.pdf`, title: `${r.client.name} · ${r.platform === "google" ? "Google" : "Meta"} Ads · ${label(r.period_start, r.period_end)}`, bytes },
+  const service = r.platform === "google" ? "Google" : "Meta";
+  const period = label(r.period_start, r.period_end);
+  const out = await deliver(admin, {
+    client: { id: r.client_id, ...r.client },
+    kind: r.kind,
+    platform: r.platform,
+    period: { start: r.period_start, end: r.period_end, label: period },
+    message: r.message ?? "",
+    pdf: { filename: pdfFileName(r.client.name, service, period), title: `${r.client.name} · ${service} Ads · ${period}`, bytes },
+    parts: [{ platform: r.platform, metrics: r.metrics, sections: r.sections }],
+    by,
+    delivery,
+    slackAs: "user",
+    reportId: id,
+    note,
   });
   if (!out.ok) return out;
-  await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id, slack_channel: out.channel, slack_ts: out.ts || null, updated_at: new Date().toISOString() }).eq("id", id);
+  const slack = out.slack && "channel" in out.slack ? out.slack : null;
+  await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id, slack_channel: slack?.channel ?? null, slack_ts: slack?.ts ?? null, updated_at: new Date().toISOString() }).eq("id", id);
   return out;
+}
+
+/** A monthly recap's whole PDF (every finished part), for a send in the history drawn again */
+export async function bundlePdf(admin: SupabaseClient, bundleId: string) {
+  const { data: ids } = await admin.from("reports").select("id").eq("bundle_id", bundleId).in("status", ["submitted", "posted"]);
+  if (!ids?.length) return null;
+  return reportPdf(admin, await Promise.all(ids.map((x) => load(admin, x.id))));
+}
+
+/** Who's sending, for the history and the email's reply-to */
+async function sender(admin: SupabaseClient, id: string) {
+  const { data } = await admin.from("profiles").select("full_name, email").eq("id", id).maybeSingle();
+  return { id, fullName: (data?.full_name as string | null) ?? "Kaizen", email: (data?.email as string | null) ?? null };
+}
+
+/** The people this client's recap emails go to: the ones picked for their reports, else every contact (primary first) */
+async function recapRecipients(admin: SupabaseClient, clientId: string) {
+  const { saved, contacts } = await clientDelivery(admin, clientId);
+  const picked = saved?.channels.includes("email") && saved.recipients.length ? saved.recipients : contacts;
+  return picked.slice(0, 6).map((c) => ({ email: c.email, full_name: c.name ?? null }));
 }
 
 /**
@@ -225,10 +265,9 @@ async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: stri
     const fallback = !out.ok ? await botPost(r.client.slack_channel_id, text) : null;
     delivered.slack = out.ok ? { channel: out.channel, ts: out.ts } : fallback?.ok ? { channel: r.client.slack_channel_id, ts: fallback.ts, as: "app" } : { error: out.error };
   }
-  const { data: links } = await admin.from("contact_clients").select("contacts(email, full_name)").eq("client_id", b.client_id);
   const sentTo: string[] = [];
   let logged: { subject: string; text: string; html: string } | null = null;
-  for (const c of (links ?? []).map((l) => l.contacts as unknown as { email: string; full_name: string | null } | null).filter((x): x is { email: string; full_name: string | null } => Boolean(x?.email)).slice(0, 6)) {
+  for (const c of await recapRecipients(admin, b.client_id as string)) {
     const parts = { kicker: r.client.name, title: `${service} is in your ${month} recap`, hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`, lines: [r.sections?.headline ?? `The ${service} part of your ${month} recap is ready.`], cta: { label: "See the recap →", url: link } };
     const mail = { subject: `Your ${month} recap from Kaizen: ${service} is in`, text: emailText(parts), html: emailHtml(parts) };
     const res = await sendEmail({ to: c.email, ...mail });
@@ -238,6 +277,33 @@ async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: stri
   if (logged) await logClientEmail(admin, { clientId: b.client_id as string, kind: "recap", ...logged, to: sentTo, by: by.id });
   delivered.email = sentTo;
   await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id }).eq("id", id);
+  await keepRecapSend(admin, { clientId: b.client_id as string, name: r.client.name, bundleId: r.bundle_id!, reportId: id, platform: r.platform, start: r.period_start, end: r.period_end, month, text, bytes, filename: `${r.client.name} - ${service} ${month}.pdf`, delivered, by: by.id, parts: [r] });
+}
+
+/** A monthly recap (or a late part of one) in the send history, with its PDF as it went */
+async function keepRecapSend(admin: SupabaseClient, x: { clientId: string; name: string; bundleId: string; reportId?: string; platform: string | null; start: string; end: string; month: string; text: string; bytes: Uint8Array; filename: string; delivered: Record<string, unknown>; by: string; parts: Loaded[] }) {
+  const slack = (x.delivered.slack ?? null) as { channel: string; ts?: string; as?: string } | { error: string } | null;
+  const to = (x.delivered.email ?? []) as string[];
+  const went = [...(slack && "channel" in slack ? (["slack"] as const) : []), ...(to.length ? (["email"] as const) : [])];
+  if (!went.length) return;
+  await recordSend(
+    admin,
+    {
+      client: { id: x.clientId, name: x.name, slack_channel_id: null },
+      kind: "monthly",
+      platform: x.platform,
+      period: { start: x.start, end: x.end, label: x.month },
+      message: x.text,
+      pdf: { bytes: x.bytes, filename: x.filename, title: x.filename.replace(/\.pdf$/, "") },
+      parts: x.parts.map((p) => ({ platform: p.platform, metrics: p.metrics, sections: p.sections })),
+      by: await sender(admin, x.by),
+      delivery: { channels: [...went], recipients: to.map((email) => ({ email })) },
+      slackAs: "user",
+      reportId: x.reportId ?? null,
+      bundleId: x.bundleId,
+    },
+    { went: [...went], slack, email: to.length ? { to, failed: [], subject: `Your ${x.month} recap from Kaizen` } : null, status: "sent" },
+  ).catch(() => null);
 }
 
 /** Sends the monthly recap to the client: a Slack post (as the buyer who completed it) and an email to their contacts. */
@@ -262,9 +328,8 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
       const fallback = !out.ok ? await botPost(client.slack_channel_id, text) : null;
       delivered.slack = out.ok ? { channel: out.channel, ts: out.ts } : fallback?.ok ? { channel: client.slack_channel_id, ts: fallback.ts, as: "app" } : { error: out.error };
     }
-    // Email to the client's contacts (primary first)
-    const { data: links } = await admin.from("contact_clients").select("is_primary, contacts(email, full_name)").eq("client_id", b.client_id);
-    const to = (links ?? []).map((l) => l.contacts as unknown as { email: string; full_name: string | null } | null).filter((c): c is { email: string; full_name: string | null } => Boolean(c?.email));
+    // Email to the people picked for this client's reports, else their contacts (primary first)
+    const to = await recapRecipients(admin, b.client_id as string);
     const headline = parts.map((p) => p.sections?.headline).filter(Boolean).join(" · ");
     const sentTo: string[] = [];
     let logged: { subject: string; text: string; html: string } | null = null;
@@ -290,6 +355,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     delivered.email = sentTo;
     await admin.from("report_bundles").update({ status: "sent", sent_at: new Date().toISOString(), delivered }).eq("id", bundleId);
     await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id }).eq("bundle_id", bundleId).eq("status", "submitted");
+    await keepRecapSend(admin, { clientId: b.client_id as string, name: client.name, bundleId, platform: parts.length === 1 ? parts[0].platform : null, start: parts[0].period_start, end: parts[0].period_end, month, text, bytes, filename: `${client.name} - ${month} recap.pdf`, delivered, by: by.id, parts });
   } catch (e) {
     await admin.from("report_bundles").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 400) }).eq("id", bundleId);
     throw e;

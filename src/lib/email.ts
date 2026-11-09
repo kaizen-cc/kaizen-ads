@@ -11,11 +11,14 @@ const BACKOFF_MS = [1000, 2000];
 export type SendResult = { ok: true; id?: string } | { ok: false; error: string };
 
 export async function sendEmail(params: {
-  to: string;
+  to: string | string[];
   subject: string;
   html: string;
   text: string;
   replyTo?: string;
+  cc?: string[];
+  /** Files to attach (a report's PDF): the bytes, base64 */
+  attachments?: { filename: string; content: string }[];
 }): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return { ok: false, error: "Email isn't set up yet (RESEND_API_KEY missing in Vercel)" };
@@ -27,6 +30,8 @@ export async function sendEmail(params: {
     html: params.html,
     text: params.text,
     reply_to: params.replyTo ?? DEFAULT_REPLY_TO,
+    ...(params.cc?.length ? { cc: params.cc } : {}),
+    ...(params.attachments?.length ? { attachments: params.attachments } : {}),
   });
 
   let lastError = "Email delivery failed";

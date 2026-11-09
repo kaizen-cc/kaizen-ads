@@ -83,6 +83,53 @@ export async function regenerateNow(admin: SupabaseClient, id: string) {
   await draftReport(admin, id);
 }
 
+export type PeriodChange = { ok: true; ids: string[]; same: boolean } | { ok: false; error: string; openId?: string };
+
+/**
+ * Sets a report's period (the one source of truth for every page) and marks it to be redrawn with fresh numbers:
+ * every tile, table, campaign line, top ad and chart follows, and the comparison is the same number of days just
+ * before. A built report moves its main range on every part. A sent report keeps the dates it went with (duplicate it
+ * for other dates); a monthly recap covers its month. Another unsent report on the same account and dates is opened
+ * instead of making a second one.
+ */
+export async function setPeriod(admin: SupabaseClient, id: string, p: { key: string; label: string; start: string; end: string }, by: string): Promise<PeriodChange> {
+  const { data: r } = await admin.from("reports").select("id, kind, status, target_id, bundle_id, period_start, period_end").eq("id", id).maybeSingle();
+  if (!r) return { ok: false, error: "Not found." };
+  if (r.status === "posted") return { ok: false, error: "This one already went to the client with its dates. Duplicate it from the history for other dates." };
+  if (r.kind === "monthly") return { ok: false, error: "A monthly recap covers its month. Build a report for other dates." };
+  if (r.status === "drafting" || r.status === "queued") return { ok: false, error: "It's being written right now. Pick the dates again when it's done." };
+  const same = r.period_start === p.start && r.period_end === p.end;
+  const now = new Date().toISOString();
+  let ids = [id];
+  if (r.kind === "built" && r.bundle_id) {
+    const { data: b } = await admin.from("report_bundles").select("id, status, ranges").eq("id", r.bundle_id).maybeSingle();
+    if (!b || b.status === "sent") return { ok: false, error: "This report already went to the client with its dates." };
+    const { data: parts } = await admin.from("reports").select("id, status").eq("bundle_id", b.id).neq("status", "skipped");
+    if ((parts ?? []).some((x) => x.status === "drafting" || x.status === "queued")) return { ok: false, error: "A part is being written right now. Pick the dates again when it's done." };
+    ids = (parts ?? []).filter((x) => x.status !== "posted").map((x) => x.id as string);
+    if (!same) {
+      const ranges = ((b.ranges ?? []) as { key: string; label: string; start: string; end: string }[]).slice();
+      ranges[0] = { key: p.key, label: p.label, start: p.start, end: p.end };
+      const { error } = await admin.from("report_bundles").update({ ranges, period_start: p.start, period_end: p.end }).eq("id", b.id);
+      if (error) return { ok: false, error: /duplicate|unique/i.test(error.message) ? "There's already a report built for this client starting on those dates." : error.message };
+      const { error: e2 } = await admin.from("reports").update({ period_start: p.start, period_end: p.end, updated_at: now }).in("id", ids);
+      if (e2) return { ok: false, error: e2.message };
+    }
+  } else if (!same) {
+    const { data: twin } = await admin.from("reports").select("id, status").eq("target_id", r.target_id).eq("kind", r.kind).eq("period_start", p.start).neq("id", id).maybeSingle();
+    if (twin)
+      return twin.status === "posted"
+        ? { ok: false, error: "A report for these dates already went to the client. It's open to review and resend in the history.", openId: twin.id as string }
+        : { ok: false, error: "There's already a report for these dates on this account.", openId: twin.id as string };
+    const { error } = await admin.from("reports").update({ period_start: p.start, period_end: p.end, updated_at: now }).eq("id", id);
+    if (error) return { ok: false, error: error.message };
+  }
+  // The preset it came from, for the picker (kept apart: the column may not be there before its migration)
+  await admin.from("reports").update({ period_key: p.key }).in("id", ids).then(() => null, () => null);
+  const marked = await markForRegenerate(admin, ids, by, ids.length <= 2 ? "drafting" : "queued");
+  return { ok: true, ids: marked, same };
+}
+
 /** Back to the draft a regenerate replaced (within a day). */
 export async function undoRegenerate(admin: SupabaseClient, id: string) {
   const { data: r } = await admin.from("reports").select("status, previous").eq("id", id).maybeSingle();
@@ -95,4 +142,8 @@ export async function undoRegenerate(admin: SupabaseClient, id: string) {
     .eq("id", id)
     .in("status", ["draft", "failed"]);
   if (error) throw new Error(error.message);
+  // The dates go back with the draft (it was drawn for them), so every page still follows the report's period
+  const m = p!.metrics as { main?: { start: string; end: string }; kind?: string } | null;
+  const { data: now } = await admin.from("reports").select("kind, bundle_id").eq("id", id).maybeSingle();
+  if (m?.main && now && now.kind !== "monthly" && !now.bundle_id) await admin.from("reports").update({ period_start: m.main.start, period_end: m.main.end }).eq("id", id).then(() => null, () => null);
 }

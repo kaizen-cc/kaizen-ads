@@ -7,11 +7,13 @@ import { revalidatePath } from "next/cache";
 import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { draftQueued, postWeekly, submitMonthly } from "@/lib/reports/run";
+import { draftQueued, sendWeekly, submitMonthly } from "@/lib/reports/run";
 import { draftReport, qaReport, reviseReport, type ChatTurn, type Qa, type Sections } from "@/lib/reports/write";
 import { periodsFor } from "@/lib/reports/metrics";
 import { nyParts } from "@/lib/kpi/calc";
 import { canReportOn } from "@/lib/reports/access";
+import { isPeriodKey, nextPeriod, parseDates, previousPeriod, rangeLabel, resolvePeriod, restOfAsk, shiftDay, todayIn, type PeriodKey } from "@/lib/reports/period";
+import { normalizeDelivery, type Delivery } from "@/lib/reports/delivery-core";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -147,11 +149,70 @@ export async function loadCampaignEvents(id: string): Promise<Result> {
   return { ok: true };
 }
 
+/**
+ * The report's dates: a preset (last week, the last 7, 14 or 30 days, this month, last month) or custom dates, as of
+ * today where the client is. Every page is redrawn for them with fresh numbers, against the days just before. Another
+ * unsent report already on those dates is opened instead (openId).
+ */
+export async function changePeriod(id: string, key: PeriodKey, custom?: { start: string; end: string }): Promise<Result<{ label: string }> & { openId?: string }> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (!isPeriodKey(key)) return { ok: false, error: "Pick the dates." };
+  const today = todayIn();
+  const p = resolvePeriod(key, today, custom);
+  if (!p) return { ok: false, error: "Pick a start and an end date that are over (the data runs through yesterday)." };
+  return movePeriod(id, ok.me, p, today);
+}
+
+async function movePeriod(id: string, me: Staff, p: { key: PeriodKey; label: string; start: string; end: string }, today: string, then?: (admin: ReturnType<typeof createAdminClient>) => Promise<unknown>): Promise<Result<{ label: string }> & { openId?: string }> {
+  const admin = createAdminClient();
+  // A built report's dates are every part's: whoever built it (or an exec) moves them
+  const { data: r } = await admin.from("reports").select("kind, report_bundles(created_by)").eq("id", id).maybeSingle();
+  const builder = (r?.report_bundles as unknown as { created_by: string | null } | null)?.created_by ?? null;
+  if (r?.kind === "built" && builder && builder !== me.id && !me.isExec) return { ok: false, error: "Whoever built the report sets its dates." };
+  const { setPeriod, regenerateNow } = await import("@/lib/reports/regenerate");
+  const out = await setPeriod(admin, id, p, me.fullName);
+  if (!out.ok) return { ok: false, error: out.error, ...(out.openId ? { openId: out.openId } : {}) };
+  if (out.ids.length <= 2)
+    after(async () => {
+      await Promise.all(out.ids.map((x) => regenerateNow(admin, x)));
+      await then?.(admin);
+    });
+  else after(() => draftQueued(admin, 200_000, { regenerated: true }));
+  done(id);
+  return { ok: true, label: rangeLabel(p, today) };
+}
+
 /** Asks the AI to change the report ("add lead quality", "shorter"); what the client always wants is remembered. */
-export async function reviseWithAi(id: string, ask: string): Promise<Result<{ chat: ChatTurn[]; message: string; sections: Sections; qa: Qa | null; lesson: string | null }>> {
+export async function reviseWithAi(id: string, ask: string): Promise<Result<{ chat: ChatTurn[]; message: string; sections: Sections; qa: Qa | null; lesson: string | null; redrawing?: boolean; openId?: string }>> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   if (!ask.trim()) return { ok: false, error: "Say what to change." };
+  // New dates for the whole report ("Nov 2 to 8", "last week"): the report's period moves and every page is redrawn
+  // with fresh numbers (never just the first one); anything else asked for is done once it's redrawn
+  const today = todayIn();
+  const dates = ok.r.kind === "monthly" ? null : parseDates(ask, today);
+  if (dates && !dates.compare) {
+    const admin = createAdminClient();
+    const { data: cur } = await admin.from("reports").select("chat, message, sections, qa, period_start, period_end").eq("id", id).single();
+    const chat = (cur?.chat ?? []) as ChatTurn[];
+    const at = new Date().toISOString();
+    if (!dates.ok) return { ok: false, error: dates.error };
+    const p = dates.period;
+    const label = rangeLabel(p, today);
+    const before = rangeLabel(previousPeriod(p), today);
+    const rest = restOfAsk(ask, dates.matched).split(" ").filter(Boolean).length >= 1;
+    const same = cur?.period_start === p.start && cur?.period_end === p.end;
+    const reply = `${same ? "The report already covers" : "Moving the whole report to"} ${label} (against ${before}) and redrawing every page with fresh numbers: the tiles, tables, campaigns, top ads and charts.${rest ? " Then I'll make the rest of your change." : ""}`;
+    const next: ChatTurn[] = [...chat, { role: "user" as const, text: ask.trim(), at, by: ok.me.fullName }, { role: "assistant" as const, text: reply, at }].slice(-40);
+    await admin.from("reports").update({ chat: next }).eq("id", id);
+    const moved = await movePeriod(id, ok.me, p, today, rest ? (a) => reviseReport(a, id, `The report has just been redrawn for ${label}. Now, from the buyer's message, everything except the dates: ${ask.trim().slice(0, 2000)}`, ok.me.fullName, { echo: false }).catch(() => null) : undefined);
+    if (!moved.ok) {
+      await admin.from("reports").update({ chat }).eq("id", id);
+      return { ok: false, error: moved.error, ...(moved.openId ? { openId: moved.openId } : {}) };
+    }
+    return { ok: true, chat: next, message: (cur?.message as string) ?? "", sections: cur?.sections as Sections, qa: (cur?.qa as Qa | null) ?? null, lesson: null, redrawing: true };
+  }
   try {
     const out = await reviseReport(createAdminClient(), id, ask, ok.me.fullName);
     done(id);
@@ -247,17 +308,26 @@ export async function regenProgress(ids: string[]): Promise<{ id: string; status
   return (data ?? []).map((r) => ({ id: r.id as string, status: r.status as string, client: (r.clients as unknown as { name: string } | null)?.name ?? "" }));
 }
 
-/** Weekly: post it to the client's channel as you. Monthly: submit your part (it goes out when every part is in). */
-export async function sendReport(id: string): Promise<Result<{ note: string; needsConnect?: boolean }>> {
+/**
+ * Weekly (or on demand): send it where the buyer picked, Slack as them, email to the people chosen (with the PDF), or
+ * both, and remember that choice for this client. Monthly: submit your part (it goes out when every part is in).
+ */
+export async function sendReport(id: string, delivery?: Delivery, note?: string): Promise<Result<{ note: string; needsConnect?: boolean }>> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.status === "posted") return { ok: false, error: "It's already gone out. Resend it from the history." };
   const admin = createAdminClient();
   try {
     if (ok.r.kind !== "monthly") {
-      const out = await postWeekly(admin, id, ok.me);
-      if (!out.ok) return { ok: false, error: out.error, ...("needsConnect" in out && out.needsConnect ? { needsConnect: true } : {}) } as { ok: false; error: string };
+      const d = normalizeDelivery(delivery ?? null);
+      if (d.channels.includes("email") && !d.recipients.length) return { ok: false, error: "Add at least one email address to send it to." };
+      const out = await sendWeekly(admin, id, { id: ok.me.id, fullName: ok.me.fullName, email: ok.me.email }, d, note?.slice(0, 600) ?? null);
+      if (!out.ok) return { ok: false, error: out.error ?? "It didn't go out.", ...(out.needsConnect ? { needsConnect: true } : {}) } as { ok: false; error: string };
+      const { rememberDelivery, sentNote } = await import("@/lib/reports/send");
+      await rememberDelivery(admin, ok.r.client_id as string, d, ok.me.id).catch(() => null);
       done(id);
-      return { ok: true, note: "Posted to the client's channel as you." };
+      revalidatePath("/reports");
+      return { ok: true, note: sentNote(out, "the client") };
     }
     const out = await submitMonthly(admin, id, ok.me);
     done(id);
@@ -318,7 +388,7 @@ export async function reportForRange(targetIds: string[], start: string, end: st
     }
     const { data: row } = await admin
       .from("reports")
-      .upsert({ client_id: t.client_id, target_id: t.id, platform: t.platform, kind: "custom", period_start: start, period_end: until, owner_id: t.owner_id ?? me.id, status: "drafting", posted_at: null, slack_ts: null, chat: [] }, { onConflict: "target_id,kind,period_start" })
+      .upsert({ client_id: t.client_id, target_id: t.id, platform: t.platform, kind: "custom", period_start: start, period_end: until, owner_id: t.owner_id ?? me.id, status: "drafting", posted_at: null, slack_ts: null, chat: [], hidden_at: null }, { onConflict: "target_id,kind,period_start" })
       .select("id")
       .single();
     if (!row) continue;
@@ -345,7 +415,7 @@ export async function draftNow(targetId: string, kind: "weekly" | "monthly"): Pr
   }
   const { data: row } = await admin
     .from("reports")
-    .upsert({ client_id: t.client_id, target_id: t.id, bundle_id: bundle, platform: t.platform, kind, period_start: p.start, period_end: p.end, owner_id: t.owner_id, status: "drafting" }, { onConflict: "target_id,kind,period_start" })
+    .upsert({ client_id: t.client_id, target_id: t.id, bundle_id: bundle, platform: t.platform, kind, period_start: p.start, period_end: p.end, owner_id: t.owner_id, status: "drafting", hidden_at: null }, { onConflict: "target_id,kind,period_start" })
     .select("id")
     .single();
   if (!row) return { ok: false, error: "Couldn't start it." };
@@ -448,13 +518,18 @@ export async function builtMessage(bundleId: string, fresh = false): Promise<Res
   }
 }
 
-/** The builder approves the message: it goes now, or as soon as the last part is approved. */
-export async function approveBuiltMessage(bundleId: string, message: string): Promise<Result<{ sent: boolean; waitingOn: string[] }>> {
+/** The builder approves the message and where it goes (Slack, email or both): now, or as soon as the last part is approved. */
+export async function approveBuiltMessage(bundleId: string, message: string, delivery?: Delivery): Promise<Result<{ sent: boolean; waitingOn: string[] }>> {
   const ok = await myBundle(bundleId);
   if (!ok) return { ok: false, error: "Not found." };
+  const d = normalizeDelivery(delivery ?? null);
+  if (d.channels.includes("email") && !d.recipients.length) return { ok: false, error: "Add at least one email address to send it to." };
   const { approveMessage } = await import("@/lib/reports/builder");
   try {
-    const out = await approveMessage(createAdminClient(), bundleId, ok.me, message);
+    const admin = createAdminClient();
+    const out = await approveMessage(admin, bundleId, ok.me, message, d);
+    const { data: b } = await admin.from("report_bundles").select("client_id").eq("id", bundleId).maybeSingle();
+    if (b?.client_id) await (await import("@/lib/reports/send")).rememberDelivery(admin, b.client_id as string, d, ok.me.id).catch(() => null);
     revalidatePath("/reports");
     return { ok: true, ...out };
   } catch (e) {
@@ -463,33 +538,120 @@ export async function approveBuiltMessage(bundleId: string, message: string): Pr
 }
 
 /**
- * Takes a report off "Reports generated". Not sent yet: it's deleted (every part of a built report). Sent: it stays
- * in the client's history and is only hidden from the list.
+ * Takes a report off "Ready to send". Nothing is deleted: one not sent yet is set aside (skipped, every part of a
+ * built report), one that was sent only leaves the list. Every report stays in the client's history.
  */
 export async function removeGenerated(kind: "bundle" | "report", id: string): Promise<Result<{ deleted: boolean }>> {
   const me = await requireStaff();
   const db = await createClient();
   const admin = createAdminClient();
+  const now = new Date().toISOString();
   if (kind === "bundle") {
     const { data: b } = await db.from("report_bundles").select("id, status, created_by").eq("id", id).eq("kind", "built").maybeSingle();
     if (!b) return { ok: false, error: "Not found." };
     if (b.created_by !== me.id && !me.isExec) return { ok: false, error: "Only whoever built it can remove it." };
-    if (b.status === "sent") {
-      await admin.from("report_bundles").update({ hidden_at: new Date().toISOString() }).eq("id", id);
-      revalidatePath("/reports");
-      return { ok: true, deleted: false };
-    }
-    await admin.from("reports").delete().eq("bundle_id", id).neq("status", "posted");
-    await admin.from("report_bundles").delete().eq("id", id);
+    await admin.from("report_bundles").update({ hidden_at: now }).eq("id", id);
+    if (b.status !== "sent") await admin.from("reports").update({ status: "skipped", hidden_at: now, updated_at: now }).eq("bundle_id", id).neq("status", "posted");
     revalidatePath("/reports");
-    return { ok: true, deleted: true };
+    return { ok: true, deleted: false };
   }
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
-  if (ok.r.status === "posted") await admin.from("reports").update({ hidden_at: new Date().toISOString() }).eq("id", id);
-  else await admin.from("reports").delete().eq("id", id);
+  await admin.from("reports").update(ok.r.status === "posted" ? { hidden_at: now } : { status: "skipped", hidden_at: now, updated_at: now }).eq("id", id);
   revalidatePath("/reports");
-  return { ok: true, deleted: ok.r.status !== "posted" };
+  return { ok: true, deleted: false };
+}
+
+// ─── Sent reports: the history, resend, duplicate ──────────────────────────────
+
+/** A send in the history, if this person may see it: the report's account (any part's, for a built one) is theirs to report on */
+async function mySend(sendId: string) {
+  const me = await requireStaff();
+  if (!/^[0-9a-f-]{36}$/i.test(sendId)) return null;
+  const db = await createClient();
+  const admin = createAdminClient();
+  const { data: s } = await admin.from("report_sends").select("id, client_id, report_id, bundle_id, kind, period_start, period_end").eq("id", sendId).maybeSingle();
+  if (!s) return null;
+  const q = admin.from("reports").select("owner_id, kpi_targets(id, client_id, platform, owner_id)");
+  const { data: rows } = s.report_id ? await q.eq("id", s.report_id) : s.bundle_id ? await q.eq("bundle_id", s.bundle_id) : { data: [] };
+  for (const r of rows ?? []) {
+    const t = r.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
+    if (r.owner_id === me.id || (t && (await canReportOn(db, me, t)))) return { me, s };
+  }
+  return null;
+}
+
+/** For the Resend sheet: the client's contacts and how the report went last time (its channels and recipients first) */
+export async function deliveryForSend(sendId: string): Promise<Result<{ options: { contacts: { email: string; name?: string | null; primary: boolean }[]; initial: Delivery; slackChannel: boolean; emailReady: boolean } }>> {
+  const ok = await mySend(sendId);
+  if (!ok) return { ok: false, error: "Not found." };
+  const admin = createAdminClient();
+  const { clientDelivery } = await import("@/lib/reports/send");
+  const options = await clientDelivery(admin, ok.s.client_id as string);
+  const { data: last } = await admin.from("report_sends").select("channels, email").eq("id", sendId).maybeSingle();
+  const went = normalizeDelivery({ channels: last?.channels ?? [], recipients: ((last?.email as { to?: string[] } | null)?.to ?? []).map((email) => ({ email, name: options.contacts.find((c) => c.email === email)?.name ?? null })) }, options.initial);
+  return { ok: true, options: { ...options, initial: went.channels.length ? { channels: went.channels, recipients: went.recipients.length ? went.recipients : options.initial.recipients } : options.initial } };
+}
+
+/** Sends a report again, exactly as it went, by the channel (or channels) and to the people picked now */
+export async function resendReport(sendId: string, delivery: Delivery, note?: string): Promise<Result<{ note: string }>> {
+  const ok = await mySend(sendId);
+  if (!ok) return { ok: false, error: "Not found." };
+  const d = normalizeDelivery(delivery);
+  if (d.channels.includes("email") && !d.recipients.length) return { ok: false, error: "Add at least one email address to send it to." };
+  try {
+    const { resendReport: resend, sentNote } = await import("@/lib/reports/send");
+    const out = await resend(createAdminClient(), sendId, { id: ok.me.id, fullName: ok.me.fullName, email: ok.me.email }, d, note?.slice(0, 600) ?? null);
+    if (!out.ok) return { ok: false, error: out.error ?? "It didn't go out." };
+    revalidatePath("/reports");
+    if (ok.s.report_id) revalidatePath(`/reports/${ok.s.report_id}`);
+    return { ok: true, note: sentNote(out, "the client") };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't send it again." };
+  }
+}
+
+/**
+ * The same report for the period after (the next week, for a weekly): a fresh draft on the same account and layout,
+ * written now, for review like any other. One already there is opened instead.
+ */
+export async function duplicateForNext(sendId: string): Promise<Result<{ id: string }>> {
+  const ok = await mySend(sendId);
+  if (!ok) return { ok: false, error: "Not found." };
+  const admin = createAdminClient();
+  const today = todayIn();
+  const { s } = ok;
+  if (!s.period_start || !s.period_end) return { ok: false, error: "This send has no dates to move on from." };
+  const lastDay = (d: string) => shiftDay(`${shiftDay(`${d.slice(0, 8)}01`, 32).slice(0, 8)}01`, -1);
+  // A month moves to the next month; anything else to the same number of days just after
+  const next = s.kind === "monthly" ? (() => {
+    const start = shiftDay(s.period_end as string, 1);
+    const yesterday = shiftDay(today, -1);
+    return start > yesterday ? null : { start, end: lastDay(start) > yesterday ? yesterday : lastDay(start) };
+  })() : nextPeriod({ start: s.period_start as string, end: s.period_end as string }, today);
+  if (!next) return { ok: false, error: "The next period isn't over yet: the data runs through yesterday." };
+  if (s.bundle_id && s.kind === "built") {
+    const { data: b } = await admin.from("report_bundles").select("client_id, services").eq("id", s.bundle_id).single();
+    if (!b) return { ok: false, error: "Not found." };
+    const out = await buildReportAction(b.client_id as string, [{ key: "custom", start: next.start, end: next.end }], (b.services ?? []) as string[]);
+    return out.ok ? { ok: true, id: out.id } : out;
+  }
+  const reportId = s.report_id ?? (s.bundle_id ? ((await admin.from("reports").select("id").eq("bundle_id", s.bundle_id).limit(1).maybeSingle()).data?.id as string | undefined) : undefined);
+  if (!reportId) return { ok: false, error: "Not found." };
+  const { data: r } = await admin.from("reports").select("client_id, target_id, platform, kind, owner_id, layout").eq("id", reportId).single();
+  if (!r) return { ok: false, error: "Not found." };
+  const kind = r.kind === "weekly" ? "weekly" : "custom";
+  const { data: was } = await admin.from("reports").select("id, status").eq("target_id", r.target_id).eq("kind", kind).eq("period_start", next.start).maybeSingle();
+  if (was && was.status !== "skipped") return { ok: true, id: was.id as string };
+  const { data: row, error } = await admin
+    .from("reports")
+    .upsert({ client_id: r.client_id, target_id: r.target_id, platform: r.platform, kind, period_start: next.start, period_end: next.end, owner_id: r.owner_id ?? ok.me.id, status: "drafting", layout: r.layout ?? null, posted_at: null, slack_ts: null, chat: [], hidden_at: null }, { onConflict: "target_id,kind,period_start" })
+    .select("id")
+    .single();
+  if (error || !row) return { ok: false, error: error?.message ?? "Couldn't start it." };
+  after(() => draftReport(admin, row.id));
+  revalidatePath("/reports");
+  return { ok: true, id: row.id as string };
 }
 
 /**
