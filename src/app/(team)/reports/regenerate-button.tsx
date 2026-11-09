@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "@/components/toasts";
+import { clockTime } from "@/lib/reports/format";
 import { regenerate, regenerateMany, regenProgress, undoRegenerate } from "./actions";
 
 // Regenerate: an unsent report written again from scratch with the account's freshest numbers and the latest report
@@ -220,7 +221,7 @@ export function UndoRegenerate({ id, at, by }: { id: string; at: string; by: str
   const [pending, start] = useTransition();
   const [gone, setGone] = useState(false);
   if (gone) return null;
-  const when = new Date(at).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const when = clockTime(at, true);
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-[14px] border border-line bg-surface px-4 py-2.5 text-sm">
       <span className="flex items-center gap-2 text-muted">

@@ -87,6 +87,10 @@ export function shortRange(start: string, end: string) {
   return start.slice(0, 7) === end.slice(0, 7) ? `${f(start, { month: "short", day: "numeric" })}-${f(end, { day: "numeric" })}` : `${f(start, { month: "short", day: "numeric" })}-${f(end, { month: "short", day: "numeric" })}`;
 }
 
+/** "3:05 PM" / "Mon 3:05 PM" in New York time: pinned so the server (UTC) and the browser (local) draw the same text. */
+export const clockTime = (at: Date | string, weekday = false) =>
+  new Date(at).toLocaleString("en-US", { ...(weekday ? { weekday: "short" as const } : {}), hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
+
 /** "September 2026". */
 export const monthLabel = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 
