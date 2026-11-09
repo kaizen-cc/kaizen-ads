@@ -8,7 +8,7 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
 import { PdfPreview, type PdfField } from "./pdf-preview";
 import { RecapDeckButton } from "./recap-deck-button";
-import { METRIC_KEYS, clockTime, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
+import { METRIC_KEYS, clockTime, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tableKeys, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, setReportCampaignExcluded, skipReport } from "./actions";
@@ -559,7 +559,7 @@ export function ReportStudio({
                 const fields: PdfField[] = [
                   { id: "headline", label: "Headline", value: sections.headline },
                   { id: "summary", label: "Summary", value: sections.summary },
-                  ...LISTS.flatMap(([k, label]) => sections[k].map((v, i) => ({ id: `${k}.${i}`, label, value: v, removable: true }))),
+                  ...LISTS.flatMap(([k, label]) => (sections[k] ?? []).map((v, i, all) => ({ id: `${k}.${i}`, label, value: v, removable: true, list: { at: i, count: all.length } }))),
                   { id: "extras", label: "Also (sales from their CRM, other channels…)", value: extras, removable: true },
                   // Each trend chart's words (the chart itself is drawn from the ad account)
                   ...(sections.stories ?? []).flatMap((st, i) => [
@@ -575,14 +575,31 @@ export function ReportStudio({
                   const story = id.match(/^story-(\d+)-(title|see|why|next)$/);
                   if (story) return setSections({ ...sections, stories: (sections.stories ?? []).map((st, i) => (i === Number(story[1]) ? { ...st, [story[2]]: v ?? "" } : st)) });
                   const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
-                  setSections({ ...sections, [k]: v ? sections[k].map((y, j) => (j === Number(n) ? v : y)) : sections[k].filter((_, j) => j !== Number(n)) });
+                  setSections({ ...sections, [k]: v ? (sections[k] ?? []).map((y, j) => (j === Number(n) ? v : y)) : (sections[k] ?? []).filter((_, j) => j !== Number(n)) });
+                };
+                // A new point just below one in the same list (that one's words too, when changed in the same box)
+                const addBelow = (id: string, v: string, current?: string) => {
+                  const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
+                  const list = (sections[k] ?? []).map((y, j) => (j === Number(n) && current ? current : y));
+                  if (v) list.splice(Number(n) + 1, 0, v);
+                  setSections({ ...sections, [k]: list });
+                };
+                // A point one place up or down in its list
+                const move = (id: string, by: -1 | 1) => {
+                  const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
+                  const list = [...(sections[k] ?? [])];
+                  const i = Number(n);
+                  const j = i + by;
+                  if (j < 0 || j >= list.length) return;
+                  [list[i], list[j]] = [list[j], list[i]];
+                  setSections({ ...sections, [k]: list });
                 };
                 // The metrics on the page now, as the PDF draws them
                 const goneNames = new Set(gone.map((g) => g.name));
                 const m = report.metrics && goneNames.size ? { ...report.metrics, campaigns: report.metrics.campaigns.filter((c) => !goneNames.has(c.name)) } : report.metrics;
                 const monthlyTiles = report.kind === "monthly";
                 const tiles = m ? tileKeys(m, layout, monthlyTiles) : [];
-                const table = layout?.table?.length ? layout.table : TABLE_DEFAULT;
+                const table = m ? tableKeys(m, layout) : TABLE_DEFAULT;
                 const columns = m ? columnKeys(m, layout) : [];
                 const hasTable = report.kind !== "weekly";
                 const limit = report.kind === "weekly" ? 6 : 8;
@@ -850,7 +867,7 @@ export function ReportStudio({
                               if (!t) return;
                               if (adding.key === "extras") setExtras(extras.trim() ? `${extras.trim()}
 ${t}` : t);
-                              else setSections({ ...sections, [adding.key]: [...sections[adding.key], t] });
+                              else setSections({ ...sections, [adding.key]: [...(sections[adding.key] ?? []), t] });
                               setAdding(null);
                             }}
                             className="flex flex-wrap gap-2"
@@ -873,6 +890,8 @@ ${t}` : t);
                       editable={editable}
                       onSave={(id, v) => save(id, v)}
                       onRemove={(id) => save(id, null)}
+                      onAdd={addBelow}
+                      onMove={move}
                       hotMenu={hotMenu}
                     />
                   </div>
@@ -880,7 +899,7 @@ ${t}` : t);
               })()
             )}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
-              {editable && <span>This is the PDF the client gets. Click any line you wrote to change it; the pages update once it saves.</span>}
+              {editable && <span>This is the PDF the client gets. Click any line you wrote to change it, add one below it or move it; the pages update once it saves.</span>}
               <a href={`/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center md:min-h-0 hover:text-fg">
                 {joint ? "Preview the whole report (PDF) ↗" : "Preview the PDF ↗"}
               </a>

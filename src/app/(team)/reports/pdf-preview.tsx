@@ -8,7 +8,8 @@ import type { ReportPdfInput } from "@/lib/reports/report-doc";
 // in the preview's PDF only: the buyer's words (headline, summary, each point, the note) open a text box; metrics, rows,
 // columns and campaigns open their menu; "View ad" and other links open.
 
-export type PdfField = { id: string; label: string; value: string; removable?: boolean };
+/** list: a point in a list (What we did, What's next...): its place in it, so a line can be added below it or moved */
+export type PdfField = { id: string; label: string; value: string; removable?: boolean; list?: { at: number; count: number } };
 type Box = { left: number; top: number; width: number; height: number; url: string };
 type Page = { key: string; canvas: HTMLCanvasElement; ratio: number; links: Box[] };
 type Base = { input: ReportPdfInput; images: (string | null)[][] };
@@ -34,6 +35,8 @@ export function PdfPreview({
   editable,
   onSave,
   onRemove,
+  onAdd,
+  onMove,
   hotMenu,
 }: {
   /** Where the report's document input and pictures come from (read again when baseKey changes) */
@@ -46,6 +49,10 @@ export function PdfPreview({
   editable: boolean;
   onSave: (id: string, value: string) => void;
   onRemove: (id: string) => void;
+  /** A new line in the same list as this point, just below it (with this point's own words, when changed in the same box) */
+  onAdd?: (id: string, value: string, current?: string) => void;
+  /** A point moved one place up (-1) or down (1) in its list */
+  onMove?: (id: string, by: -1 | 1) => void;
   /** The menu for a metric, row, column or campaign clicked on the page ("meta/tile/2"); close() shuts it */
   hotMenu?: (target: string, close: () => void) => React.ReactNode;
 }) {
@@ -203,6 +210,22 @@ export function PdfPreview({
                     }
                   : undefined
               }
+              onAdd={
+                field.list && onAdd
+                  ? (v, current) => {
+                      setEdit(null);
+                      onAdd(field.id, v.trim(), current.trim() && current.trim() !== field.value.trim() ? current.trim() : undefined);
+                    }
+                  : undefined
+              }
+              onMove={
+                field.list && onMove
+                  ? (by) => {
+                      setEdit(null);
+                      onMove(field.id, by);
+                    }
+                  : undefined
+              }
             />
           )}
         </div>
@@ -211,8 +234,29 @@ export function PdfPreview({
   );
 }
 
-function Editor({ field, at, onSave, onClose, onRemove }: { field: PdfField; at: { x: number; y: number }; onSave: (v: string) => void; onClose: () => void; onRemove?: () => void }) {
+function Editor({
+  field,
+  at,
+  onSave,
+  onClose,
+  onRemove,
+  onAdd,
+  onMove,
+}: {
+  field: PdfField;
+  at: { x: number; y: number };
+  onSave: (v: string) => void;
+  onClose: () => void;
+  onRemove?: () => void;
+  onAdd?: (v: string, current: string) => void;
+  onMove?: (by: -1 | 1) => void;
+}) {
   const [draft, setDraft] = useState(field.value);
+  // Writing a new line below this one (this one's words kept as they are in the box)
+  const [fresh, setFresh] = useState<string | null>(null);
+  const adding = fresh != null;
+  const save = () => (adding ? fresh.trim() && onAdd?.(fresh, draft) : onSave(draft));
+  const list = field.list;
   return (
     <>
       <button type="button" aria-label="Close" onClick={onClose} className="fixed inset-0 z-40 cursor-default bg-black/10 md:bg-transparent" />
@@ -220,33 +264,54 @@ function Editor({ field, at, onSave, onClose, onRemove }: { field: PdfField; at:
         className="z-50 grid gap-2 rounded-[14px] border border-line bg-surface p-3 text-fg shadow-[0_24px_60px_-20px_rgba(0,0,0,0.6)] max-md:fixed max-md:inset-x-3 max-md:bottom-[calc(0.75rem+env(safe-area-inset-bottom))] md:absolute md:w-[min(520px,90%)]"
         style={{ left: `min(${at.x * 100}%, calc(100% - min(520px, 90%) - 12px))`, top: `${at.y * 100}%` }}
       >
-        <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">{field.label}</p>
+        <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">{adding ? `New line in ${field.label}` : field.label}</p>
         <textarea data-chat
-          value={draft}
+          key={adding ? "fresh" : "line"}
+          value={adding ? fresh : draft}
           autoFocus
-          onChange={(e) => setDraft(e.target.value)}
+          placeholder={adding ? "Write it as it should read in the report" : undefined}
+          onChange={(e) => (adding ? setFresh(e.target.value) : setDraft(e.target.value))}
           onKeyDown={(e) => {
             if (e.key === "Escape") onClose();
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
-              onSave(draft);
+              save();
             }
           }}
           rows={3}
           className="w-full resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-[14px] leading-relaxed outline-none [field-sizing:content] focus:border-brand-text/60 md:max-h-[40vh]"
         />
+        {!adding && list && (onAdd || onMove) && (
+          <div className="flex flex-wrap items-center gap-1">
+            {onAdd && (
+              <button type="button" onClick={() => setFresh("")} className="h-10 rounded-full border border-line px-3 text-[13px] text-muted hover:text-fg md:h-9">
+                + Add a line below
+              </button>
+            )}
+            {onMove && list.count > 1 && (
+              <>
+                <button type="button" disabled={list.at === 0} onClick={() => onMove(-1)} aria-label="Move this line up" className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg disabled:opacity-30 md:h-9">
+                  ↑ Up
+                </button>
+                <button type="button" disabled={list.at >= list.count - 1} onClick={() => onMove(1)} aria-label="Move this line down" className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg disabled:opacity-30 md:h-9">
+                  ↓ Down
+                </button>
+              </>
+            )}
+          </div>
+        )}
         <div className="flex items-center gap-2">
-          {onRemove && (
+          {onRemove && !adding && (
             <button type="button" onClick={onRemove} className="h-10 rounded-full px-3 text-[13px] text-bad hover:bg-bad-soft/40 md:h-9">
               Remove this line
             </button>
           )}
-          <span className="ml-auto text-[11px] text-faint max-md:hidden">Ctrl+Enter to save</span>
-          <button type="button" onClick={onClose} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg md:h-9">
-            Cancel
+          <span className="ml-auto text-[11px] text-faint max-md:hidden">Ctrl+Enter to {adding ? "add" : "save"}</span>
+          <button type="button" onClick={adding ? () => setFresh(null) : onClose} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg md:h-9">
+            {adding ? "Back" : "Cancel"}
           </button>
-          <button type="button" onClick={() => onSave(draft)} className="h-10 rounded-full bg-fg px-4 text-[13px] text-bg md:h-9">
-            Save
+          <button type="button" disabled={adding && !fresh.trim()} onClick={save} className="h-10 rounded-full bg-fg px-4 text-[13px] text-bg disabled:opacity-40 md:h-9">
+            {adding ? "Add" : "Save"}
           </button>
         </div>
       </div>

@@ -410,7 +410,7 @@ function Overview({ input }: { input: ReportPdfInput }) {
                 <Text style={[s.td, { width: w[1], textAlign: "right" }]}>{money(m.main.spend)}</Text>
                 <Text style={[s.td, { width: w[2], textAlign: "right" }]}>{count(m.main.results)}</Text>
                 <Text style={[s.td, { width: w[3], textAlign: "right" }]}>{money(m.main.costPerResult)}</Text>
-                <Text style={[s.td, { width: w[4], textAlign: "right" }]}>{m.main.roas != null ? multiple(m.main.roas) : "–"}</Text>
+                <Text style={[s.td, { width: w[4], textAlign: "right" }]}>{m.roasKpi && m.main.roas != null ? multiple(m.main.roas) : "–"}</Text>
               </View>
             ))}
           </View>
@@ -817,7 +817,7 @@ function DeckPlan({ input, part }: { input: ReportPdfInput; part: ReportPart }) 
 
 /** The close: next month in a line per platform, and where to see it live */
 function DeckClose({ input }: { input: ReportPdfInput }) {
-  const next = input.parts.flatMap((p) => p.sections.next.slice(0, 3).map((x) => ({ p: p.platform, x })));
+  const next = input.parts.flatMap((p) => p.sections.next.slice(0, input.parts.length > 1 ? 4 : 7).map((x) => ({ p: p.platform, x })));
   const b = brandOf(input);
   const shotsUrl = linkFor(b, input.shots?.url);
   return (

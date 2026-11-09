@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { accountFromPath, bareAccount, isWriteCall, redactTokens } from "@/lib/meta-token-core";
 import { compact } from "./shared";
 import { isLive, LIVE } from "@/lib/live";
-import { META_ATTRIBUTION, PURCHASE_TYPES } from "@/lib/kpi/conversions";
+import { CONVERSION_FIELDS, CONVERSIONS_READ_FROM, META_ATTRIBUTION, PURCHASE_TYPES, foldConversions } from "@/lib/kpi/conversions";
 import { videoMetrics } from "@/lib/kpi/video";
 
 // Reads ad performance with the CommandCenter system user (META_SYSTEM_USER_TOKEN, ads_read).
@@ -267,6 +267,7 @@ const DAILY_FIELDS = [
   "quality_ranking",
   "engagement_rate_ranking",
   "conversion_rate_ranking",
+  CONVERSION_FIELDS, // standard events (schedules, contacts, applications...), folded into actions when saved
 ].join(",");
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
@@ -378,7 +379,8 @@ async function syncDaily(admin: SupabaseClient, clientId: string, adAccountId: s
     admin.from("clients").select("meta_backfilled_at").eq("id", clientId).single(),
   ]);
   const today = new Date();
-  const backfill = !c?.meta_backfilled_at;
+  // Accounts last read in full before standard events were asked for are read in full once more (see CONVERSIONS_READ_FROM)
+  const backfill = !c?.meta_backfilled_at || Date.parse(c.meta_backfilled_at) < Date.parse(CONVERSIONS_READ_FROM);
   const since = !last || backfill ? new Date(today.getTime() - 180 * 86_400_000) : new Date(Math.min(Date.parse(`${last.date}T12:00:00Z`), today.getTime()) - REVISE_DAYS * 86_400_000);
   const rows = await asyncReport(act, {
     level: "ad",
@@ -398,7 +400,7 @@ async function syncDaily(admin: SupabaseClient, clientId: string, adAccountId: s
       adset_name: r.adset_name ?? null,
       campaign_id: r.campaign_id ?? null,
       campaign_name: r.campaign_name ?? null,
-      metrics: r,
+      metrics: foldConversions(r),
       updated_at: new Date().toISOString(),
     }));
   for (let i = 0; i < records.length; i += 500) {

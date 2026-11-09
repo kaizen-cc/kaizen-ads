@@ -6,7 +6,7 @@ import { digits, googleActivity, googleAdsConfigured, googleAdsMissing, syncGoog
 import { pool } from "@/lib/context/run";
 import { computeSnapshot, nyParts, toDays } from "./calc";
 import { benchmarkTarget, benchmarksFor } from "./benchmark";
-import { conversionFor } from "./conversions";
+import { CONVERSION_FIELDS, CONVERSIONS_READ_FROM, conversionFor, foldConversions } from "./conversions";
 import { businessModel, googleHealth } from "@/lib/google-flags";
 import { LIVE } from "@/lib/live";
 import { orderSeats, type SeatRow } from "@/lib/buyer-seats";
@@ -17,8 +17,7 @@ import { orderSeats, type SeatRow } from "@/lib/buyer-seats";
 // only the last REVISE_DAYS are re-read (Meta keeps revising them: purchases land on the click's day up to 7 days later). No AI is involved, so running often costs nothing extra.
 
 const BACKFILL_DAYS = 200;
-const FIELDS = "campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,unique_inline_link_clicks,actions,action_values";
-
+const FIELDS = `campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,unique_inline_link_clicks,actions,action_values,${CONVERSION_FIELDS}`;
 type Action = { action_type: string; value: string };
 const toMap = (list: unknown) => {
   const out: Record<string, number> = {};
@@ -31,7 +30,10 @@ const ymd = (d: Date) => d.toISOString().slice(0, 10);
 export async function syncMetaCampaigns(admin: SupabaseClient, account: string) {
   const { data: last } = await admin.from("meta_campaign_daily").select("date").eq("ad_account_id", account).order("date", { ascending: false }).limit(1).maybeSingle();
   const now = new Date();
-  const since = last ? new Date(new Date(`${last.date}T12:00:00Z`).getTime() - REVISE_DAYS * 86_400_000) : new Date(now.getTime() - BACKFILL_DAYS * 86_400_000);
+  const full = new Date(now.getTime() - BACKFILL_DAYS * 86_400_000);
+  // Days read before standard events were asked for: the whole range once more, so older reports count them too
+  const { data: stale } = last ? await admin.from("meta_campaign_daily").select("date").eq("ad_account_id", account).gte("date", ymd(full)).lt("updated_at", CONVERSIONS_READ_FROM).limit(1).maybeSingle() : { data: null };
+  const since = last && !stale ? new Date(new Date(`${last.date}T12:00:00Z`).getTime() - REVISE_DAYS * 86_400_000) : full;
   const rows: InsightRow[] = await asyncReport(`act_${account}`, {
     level: "campaign",
     time_increment: "1",
@@ -40,6 +42,7 @@ export async function syncMetaCampaigns(admin: SupabaseClient, account: string) 
   });
   const records = rows
     .filter((r) => r.campaign_id)
+    .map(foldConversions)
     .map((r) => ({
       ad_account_id: account,
       campaign_id: String(r.campaign_id),
@@ -58,6 +61,8 @@ export async function syncMetaCampaigns(admin: SupabaseClient, account: string) 
     const { error } = await admin.from("meta_campaign_daily").upsert(records.slice(i, i + 500), { onConflict: "campaign_id,date" });
     if (error) throw new Error(`Saving campaign days: ${error.message}`);
   }
+  // A day Meta no longer returns (a deleted campaign) has nothing more to read: marked done so it isn't read again
+  if (stale) await admin.from("meta_campaign_daily").update({ updated_at: now.toISOString() }).eq("ad_account_id", account).gte("date", ymd(full)).lt("updated_at", CONVERSIONS_READ_FROM);
   // What each campaign is optimized for, for KPIs that count each campaign by its own goal
   const goals = await saveCampaignGoals(admin, account).catch(() => 0);
   return { from: ymd(since), rows: records.length, goals };

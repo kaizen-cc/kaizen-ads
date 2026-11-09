@@ -30,9 +30,14 @@ export function delta(now: number | null | undefined, before: number | null | un
   return { text: `${up ? "+" : "-"}${Math.abs(rounded)}%`, tone };
 }
 
-const hasRevenue = (m: ReportMetrics) => m.main.revenue > 0 || m.compare.revenue > 0;
+/**
+ * ROAS (and revenue) show by default only on a ROAS KPI with purchase value. A report judged on bookings, leads or
+ * applications shows its own result and its cost: purchase value there is a side number the buyer can still add as a
+ * tile, row or column, never put in front of the client on its own.
+ */
+export const hasRevenue = (m: Pick<ReportMetrics, "roasKpi" | "main" | "compare">) => Boolean(m.roasKpi) && (m.main.revenue > 0 || m.compare.revenue > 0);
 
-/** The four headline tiles: spend, results (with their cost), CTR, and ROAS when there's revenue (else cost per result). */
+/** The four headline tiles: spend, results (with their cost), CTR, and ROAS on a ROAS KPI with revenue (else cost per result). */
 export function headlineTiles(m: ReportMetrics, main: Period = m.main, compare: Period = m.compare): Tile[] {
   const one = singular(m.conversion);
   const tiles: Tile[] = [
@@ -75,7 +80,7 @@ export function kpiRows(m: ReportMetrics): KpiRow[] {
     row("CPM", money, a.cpm, b.cpm, "down"),
     row(m.conversion, count, a.results, b.results, "up"),
     row(`Cost per ${singular(m.conversion)}`, money, a.costPerResult, b.costPerResult, "down", m.target != null && !m.roasKpi ? money(m.target) : "–"),
-    row("ROAS", multiple, a.roas, b.roas, "up", m.target != null && m.roasKpi ? multiple(m.target) : "–"),
+    ...(m.roasKpi ? [row("ROAS", multiple, a.roas, b.roas, "up", m.target != null ? multiple(m.target) : "–")] : []),
   ];
 }
 
@@ -157,6 +162,12 @@ export function tilesFor(m: ReportMetrics, keys: MetricKey[], main: Period = m.m
 
 export const TABLE_DEFAULT: MetricKey[] = ["spend", "ctr", "cpc", "cpm", "results", "cost_per_result", "roas"];
 
+/** The key metrics rows a report shows now: the buyer's choice, else the default (ROAS only when it's the KPI) */
+export function tableKeys(m: Pick<ReportMetrics, "roasKpi">, layout: ReportLayout | null | undefined): MetricKey[] {
+  if (layout?.table?.length) return layout.table;
+  return TABLE_DEFAULT.filter((k) => k !== "roas" || m.roasKpi);
+}
+
 /** The key metrics rows for the chosen metrics, with the target where the KPI has one */
 export function rowsFor(m: ReportMetrics, keys: MetricKey[]): KpiRow[] {
   return keys.map((k) => ({
@@ -168,10 +179,10 @@ export function rowsFor(m: ReportMetrics, keys: MetricKey[]): KpiRow[] {
   }));
 }
 
-/** The campaign table's columns: the buyer's choice, else spend, results, their cost, and ROAS when any has revenue */
+/** The campaign table's columns: the buyer's choice, else spend, results, their cost, and ROAS on a ROAS KPI when any has revenue */
 export function columnKeys(m: ReportMetrics, layout: ReportLayout | null | undefined): MetricKey[] {
   if (layout?.columns?.length) return layout.columns;
-  return ["spend", "results", "cost_per_result", ...(m.campaigns.some((c) => c.roas != null) ? (["roas"] as const) : [])];
+  return ["spend", "results", "cost_per_result", ...(m.roasKpi && m.campaigns.some((c) => c.roas != null) ? (["roas"] as const) : [])];
 }
 
 /** The campaign lines a report shows: the biggest spenders (minus any taken out) and any added, by spend */

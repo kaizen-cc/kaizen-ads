@@ -3,7 +3,7 @@ import { businessModel, googleHealth, googleHealthText, type GoogleHealth } from
 import type { BenchmarkTarget } from "@/lib/kpi/success";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { campaignIncluded, inScope, pickType, resultsOf, toDays, nyParts, type Day } from "@/lib/kpi/calc";
-import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
+import { PURCHASE_TYPES, conversionFor, conversionLabel, reportedType } from "@/lib/kpi/conversions";
 import { accountRows, goalsFor } from "@/lib/kpi/sync";
 import { actionLabel } from "@/lib/kpi/explore";
 import { metricNumber, type MetricKey } from "./format";
@@ -88,7 +88,8 @@ const PLURAL: [RegExp, string][] = [
   [/subscri/i, "Subscriptions"],
   [/trial/i, "Trials"],
 ];
-const pluralOf = (label: string) => PLURAL.find(([re]) => re.test(label))?.[1] ?? `${label} results`;
+// Ads Manager's names ("Website schedules") already read as the thing counted
+export const pluralOf = (label: string) => PLURAL.find(([re]) => re.test(label))?.[1] ?? (/^Website /.test(label) ? label : `${label} results`);
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
 const shift = (day: string, n: number) => {
@@ -150,7 +151,19 @@ function monthSoFar(end: string) {
 
 type Row = Awaited<ReturnType<typeof accountRows>>[number] & { impressions?: number | string | null };
 
-function period(rows: Row[], days: Day[], p: { start: string; end: string; label: string }, conv: ReturnType<typeof conversionFor>, type: string | null): Period {
+/**
+ * Where a report's revenue comes from, whatever its KPI: purchase value only, never what a booking, registration or
+ * add to cart is worth. On Meta, ONE of the purchase types (omni_purchase, then purchase, then the pixel's), chosen once
+ * over every day so a purchase reported under all its aliases is counted once, in the attribution every pull asks for
+ * (7-day click, 1-day view, as Ads Manager). On Google, conversion value.
+ */
+export function revenueType(days: Pick<Day, "values">[], platform: "meta" | "google"): string | null {
+  if (platform === "google") return "conversions";
+  return reportedType(days.map((d) => d.values), PURCHASE_TYPES);
+}
+
+/** One period's numbers from the days. Revenue is the purchase value (see revenueType), never the result's own value. */
+export function period(rows: { date: string; impressions?: number | string | null }[], days: Day[], p: { start: string; end: string; label: string }, conv: ReturnType<typeof conversionFor>, type: string | null, valueType: string | null): Period {
   const inside = (d: string) => d >= p.start && d <= p.end;
   const ds = days.filter((d) => inside(d.date));
   let spend = 0;
@@ -161,7 +174,7 @@ function period(rows: Row[], days: Day[], p: { start: string; end: string; label
     spend += d.spend;
     results += resultsOf(d, conv, type);
     clicks += d.linkClicks ?? 0;
-    if (type) revenue += d.values[type] ?? 0;
+    if (valueType) revenue += d.values[valueType] ?? 0;
   }
   const impressions = rows.filter((r) => inside(r.date)).reduce((n, r) => n + (Number(r.impressions) || 0), 0);
   return {
@@ -241,7 +254,8 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
   const conv = useGoals ? conversionFor("campaign_goal") : kpiConv;
   const days = toDays(all, null, null, useGoals ? (goals ?? new Map()) : undefined, platform);
   const type = useGoals ? "campaign_goal" : pickType(days, conv, t.custom_action);
-  const main = period(all, days, ps.main, conv, type);
+  const valueType = revenueType(days, platform);
+  const main = period(all, days, ps.main, conv, type, valueType);
 
   // Each goal's results in the main period, and the one most of the spend goes to (what the report talks about)
   const byGoal = new Map<string, Row[]>();
@@ -255,7 +269,7 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
     }
   const goalLines = [...byGoal.entries()]
     .map(([label, rows]) => {
-      const p = period(rows, toDays(rows, null, null, goals ?? new Map(), platform), ps.main, conv, type);
+      const p = period(rows, toDays(rows, null, null, goals ?? new Map(), platform), ps.main, conv, type, valueType);
       return { label, spend: p.spend, results: p.results, costPerResult: p.costPerResult };
     })
     .filter((g) => g.spend > 0 || g.results > 0)
@@ -272,7 +286,7 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
     .map(([name, rows]) => {
       const id = String(rows[0].campaign_id);
       const mine = own?.get(id);
-      const p = mine?.length ? period(rows, toDays(rows, null, null, new Map([[id, mine]]), platform), ps.main, conversionFor("campaign_goal"), "campaign_goal") : period(rows, toDays(rows, null, null, useGoals ? (goals ?? new Map()) : undefined, platform), ps.main, conv, type);
+      const p = mine?.length ? period(rows, toDays(rows, null, null, new Map([[id, mine]]), platform), ps.main, conversionFor("campaign_goal"), "campaign_goal", valueType) : period(rows, toDays(rows, null, null, useGoals ? (goals ?? new Map()) : undefined, platform), ps.main, conv, type, valueType);
       return { name, id, result: labels.get(id) || null, spend: p.spend, results: p.results, costPerResult: p.costPerResult, roas: p.roas, ctr: p.ctr, impressions: p.impressions, clicks: p.clicks, cpc: p.cpc, cpm: p.cpm, revenue: p.revenue, events: eventsOf(rows) };
     })
     .filter((c) => c.spend > 0)
@@ -334,9 +348,9 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
     target: t.target == null ? null : Number(t.target),
     monthlyBudget: t.monthly_budget == null || Number(t.monthly_budget) < 20 ? null : Number(t.monthly_budget),
     main,
-    compare: period(all, days, ps.compare, conv, type),
-    mtd: ps.mtd ? period(all, days, ps.mtd, conv, type) : null,
-    mtdCompare: ps.mtdCompare ? period(all, days, ps.mtdCompare, conv, type) : null,
+    compare: period(all, days, ps.compare, conv, type, valueType),
+    mtd: ps.mtd ? period(all, days, ps.mtd, conv, type, valueType) : null,
+    mtdCompare: ps.mtdCompare ? period(all, days, ps.mtdCompare, conv, type, valueType) : null,
     campaigns,
     ...(leftOut.length ? { leftOut } : {}),
     topAds,
@@ -348,7 +362,7 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
     ...(opts.daily
       ? {
           daily: [...new Set(all.filter((r) => r.date >= ps.main.start && r.date <= ps.main.end).map((r) => r.date))].sort().map((d) => {
-            const p = period(all, days, { start: d, end: d, label: d }, conv, type);
+            const p = period(all, days, { start: d, end: d, label: d }, conv, type, valueType);
             return { date: d, spend: p.spend, results: p.results, revenue: p.revenue, clicks: p.clicks, impressions: p.impressions };
           }),
         }
@@ -360,15 +374,17 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
 export function metricsText(m: ReportMetrics) {
   const money = (x: number | null) => (x == null ? "—" : `$${x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
   const line = (p: Period) =>
-    `${p.label}: spend ${money(p.spend)}, ${p.results} ${m.conversion.toLowerCase()}, cost per result ${money(p.costPerResult)}${p.revenue ? `, revenue ${money(p.revenue)}, ROAS ${p.roas ?? "—"}` : ""}, impressions ${p.impressions.toLocaleString("en-US")}, link clicks ${p.clicks.toLocaleString("en-US")}, CTR ${p.ctr ?? "—"}%, CPC ${money(p.cpc)}, CPM ${money(p.cpm)} (${p.days} days with data)`;
+    `${p.label}: spend ${money(p.spend)}, ${p.results} ${m.conversion.toLowerCase()}, cost per result ${money(p.costPerResult)}${m.roasKpi && p.revenue ? `, revenue ${money(p.revenue)}, ROAS ${p.roas ?? "—"}` : ""}, impressions ${p.impressions.toLocaleString("en-US")}, link clicks ${p.clicks.toLocaleString("en-US")}, CTR ${p.ctr ?? "—"}%, CPC ${money(p.cpc)}, CPM ${money(p.cpm)} (${p.days} days with data)`;
   return [
     `Platform: ${m.platform === "google" ? "Google Ads" : "Meta Ads"}. KPI: ${m.conversion}${m.roasKpi ? " (judged on ROAS)" : ""}${m.target != null ? `, target ${m.roasKpi ? `${m.target}x ROAS` : money(m.target)}` : m.benchmark ? `, no target set: judged against the ${m.benchmark.vertical} industry benchmark of ${m.roasKpi ? `${m.benchmark.value}x ROAS` : money(m.benchmark.value)} (${m.benchmark.source} ${m.benchmark.year}); aim to beat it` : ", no target set"}${m.monthlyBudget ? `, monthly budget ${money(m.monthlyBudget)}` : ""}. Data through ${m.dataThrough ?? "?"}.`,
     line(m.main),
+    // Not a ROAS KPI: purchase value is context only, never the story (the client is judged on its own result)
+    ...(!m.roasKpi && m.main.revenue > 0 ? [`Purchase value Meta tracked in ${m.main.label} (not this KPI: leave ROAS out unless the buyer puts it in the report): ${money(m.main.revenue)}, ROAS ${m.main.roas ?? "n/a"}.`] : []),
     line(m.compare),
     ...(m.mtd ? [line(m.mtd)] : []),
     ...(m.mtdCompare ? [line(m.mtdCompare)] : []),
     "Campaigns (main period, by spend):",
-    ...m.campaigns.slice(0, 15).map((c) => `- ${c.name}: ${money(c.spend)}, ${c.results} ${c.result ? `${c.result.toLowerCase()} (what it's optimized for)` : "results"}, ${money(c.costPerResult)} each${c.roas ? `, ROAS ${c.roas}` : ""}, CTR ${c.ctr ?? "—"}%`),
+    ...m.campaigns.slice(0, 15).map((c) => `- ${c.name}: ${money(c.spend)}, ${c.results} ${c.result ? `${c.result.toLowerCase()} (what it's optimized for)` : "results"}, ${money(c.costPerResult)} each${m.roasKpi && c.roas ? `, ROAS ${c.roas}` : ""}, CTR ${c.ctr ?? "—"}%`),
     ...(m.topAds.length ? ["Top ads (main period):", ...m.topAds.map((a, i) => `${i + 1}. ${a.name} (${a.campaign ?? "?"}): ${a.results} results at ${money(a.costPerResult)}, ${money(a.spend)} spent, ${a.clicks} link clicks, CTR ${a.ctr ?? "—"}%${a.link ? `, preview ${a.link}` : ""}`)] : []),
     ...(m.goals && m.goals.length > 1 ? ["Results by what the campaigns are optimized for (main period):", ...m.goals.map((g) => `- ${g.label}: ${g.results} at ${money(g.costPerResult)} each, ${money(g.spend)} spent`)] : m.goals?.length ? [`The campaigns are optimized for: ${m.goals[0].label}.`] : []),
     ...(m.gaps.length ? [`Days with no data in the main period: ${m.gaps.join(", ")}`] : []),
