@@ -4,7 +4,7 @@ import { ActionButton, ActionForm } from "@/components/action-form";
 import { Section, field, label } from "@/components/ui";
 import type { Digest } from "@/lib/ai";
 import { SLOTS, seatNeeded } from "@/lib/roles";
-import { AssignSelect, type Option } from "../assign-select";
+import { AssignSelect, SecondaryBuyers, type Option } from "../assign-select";
 import type { Freshness } from "@/lib/dates";
 import { BriefingPanel } from "./briefing-panel";
 import { ConnectionStatus } from "./connection-status";
@@ -151,7 +151,8 @@ export type ClientViewProps = {
   execution?: React.ReactNode;
   today: string; // YYYY-MM-DD in New York
   packageLabel: string | null;
-  team: Record<string, { current: Option | null; options: Option[] }>;
+  /** Each seat's primary, who can hold it, and (the buyer seats) its secondaries */
+  team: Record<string, { current: Option | null; options: Option[]; secondaries?: Option[] }>;
   contacts: { id: string; email: string; full_name: string | null; auth_user_id: string | null }[];
   angles: { id: string; name: string; kind: string; description: string | null; status: string }[];
   memory: { id: string; kind: string; body: string; source: string; shareReason?: string | null; by: string | null; dated?: string | null }[];
@@ -646,9 +647,35 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
               {/* The same seats as the client cards: a video-only package needs no designer, an images-only one no editor */}
               {SLOTS.filter((slot) => seatNeeded(slot.value, { images, videos }) || team[slot.value]?.current).map((slot) => (
                 <div key={slot.value} className="grid grid-cols-[100px_minmax(0,1fr)] items-center gap-3">
-                  <dt className="text-sm text-muted">{slot.label}</dt>
+                  <dt className="self-start pt-3 text-sm text-muted md:pt-2.5">{slot.label}</dt>
                   <dd className="min-w-0">
-                    <AssignSelect clientId={client.id} slot={slot.value} label={slot.label} current={team[slot.value]?.current ?? null} options={team[slot.value]?.options ?? []} canEdit={can.assign} size="md" />
+                    {(() => {
+                      const seat = team[slot.value];
+                      const buyerSeat = slot.value === "meta_buyer" || slot.value === "google_buyer";
+                      const more = seat?.secondaries ?? [];
+                      return (
+                        <>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className="min-w-0 flex-1">
+                              <AssignSelect clientId={client.id} slot={slot.value} label={slot.label} current={seat?.current ?? null} options={seat?.options ?? []} canEdit={can.assign} size="md" />
+                            </div>
+                            {buyerSeat && more.length > 0 && seat?.current && <span className="shrink-0 pr-1 text-xs text-faint">Primary</span>}
+                          </div>
+                          {buyerSeat && (
+                            <SecondaryBuyers
+                              key={`${seat?.current?.id ?? ""}:${more.map((s) => s.id).join(",")}`}
+                              clientId={client.id}
+                              slot={slot.value}
+                              label={slot.label}
+                              primary={seat?.current ?? null}
+                              secondaries={more}
+                              options={seat?.options ?? []}
+                              canEdit={can.assign && !demo}
+                            />
+                          )}
+                        </>
+                      );
+                    })()}
                   </dd>
                 </div>
               ))}

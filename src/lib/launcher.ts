@@ -2,6 +2,7 @@ import "server-only";
 import { reworkAds } from "@/lib/partial-approval";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
+import { primarySeat, withCoBuyers } from "@/lib/buyer-seats";
 import { metaGraph, pageLeadForms } from "@/lib/context/meta";
 import { liveAccounts, metaWrite, metaWriteSetting, writeBlocked } from "@/lib/meta-write";
 
@@ -1063,18 +1064,21 @@ type TicketRow = { id: string; number: number; title: string; client_id: string;
 /** Whose the launch is: the ticket's buyer, else the client's Meta buyer. */
 async function buyerOf(admin: SupabaseClient, t: TicketRow) {
   if (t.buyer_id) return t.buyer_id;
-  const { data } = await admin.from("client_assignments").select("profile_id").eq("client_id", t.client_id).eq("role", "meta_buyer").limit(1).maybeSingle();
-  return (data?.profile_id as string | undefined) ?? null;
+  return primarySeat(admin, t.client_id, "meta_buyer");
 }
 
-/** A note on the ticket from Kaizen Ads, the ticket handed to the buyer, and a notification to them. */
+/** A note on the ticket from Kaizen Ads, the ticket handed to the buyer, and a notification to them (and the client's secondary Meta buyers). */
 async function handTo(admin: SupabaseClient, t: TicketRow, buyer: string | null, note: string, n: { title: string; body: string; priority: "critical" | "normal"; key: string }) {
   await admin.from("request_events").insert({ request_id: t.id, kind: "comment", actor_id: null, body: note.slice(0, 2000) });
   if (!buyer) return;
   await admin.from("requests").update({ assignee_id: buyer }).eq("id", t.id);
+  const to = await withCoBuyers(admin, t.client_id, "meta", [buyer]);
   await admin
     .from("notifications")
-    .upsert({ profile_id: buyer, kind: "launch", title: n.title.slice(0, 200), body: n.body.slice(0, 500), href: `/board?t=${t.number}`, key: n.key, priority: n.priority }, { onConflict: "profile_id,key", ignoreDuplicates: true });
+    .upsert(
+      to.map((id) => ({ profile_id: id, kind: "launch", title: n.title.slice(0, 200), body: n.body.slice(0, 500), href: `/board?t=${t.number}`, key: n.key, priority: n.priority })),
+      { onConflict: "profile_id,key", ignoreDuplicates: true },
+    );
 }
 
 /**
@@ -1390,7 +1394,7 @@ export async function watchHandMoves(admin: SupabaseClient) {
     const [from, to] = await Promise.all([adsetRef(result.adsetId), adsetRef(moved)]);
     await update(admin, l.id, { pending_move: { from, to, seen: new Date().toISOString() }, result: { ...result, adsetId: moved } });
     const t = l.requests as unknown as { number: number; title: string; buyer_id: string | null; client_id: string; clients: { name: string } | null };
-    const buyer = t.buyer_id ?? ((await admin.from("client_assignments").select("profile_id").eq("client_id", t.client_id).eq("role", "meta_buyer").limit(1).maybeSingle()).data?.profile_id as string | undefined) ?? null;
+    const buyer = t.buyer_id ?? (await primarySeat(admin, t.client_id, "meta_buyer"));
     if (buyer && !l.sandbox)
       await admin.from("notifications").upsert(
         {

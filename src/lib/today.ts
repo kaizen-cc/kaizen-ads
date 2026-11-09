@@ -9,6 +9,7 @@ import { loadSaidPromises } from "@/lib/message-promises";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
 import { LIVE } from "@/lib/live";
 import { isCreativeRole } from "@/lib/roles";
+import { secondarySeatKeys } from "@/lib/buyer-seats";
 import { INTAKE_WAIT_DAYS, addBusinessDays as addBizDays } from "@/lib/brand-bible";
 import { countLooks, hideKeyOf, type Looks } from "@/lib/today-counts";
 
@@ -381,12 +382,15 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
 
   // Accounts off target, weighted by how far off, how much is spent and how important the account is
   // Each service line on its own, for the people on it: execs both, the Head of Meta Meta, the Head of Google Google,
-  // a buyer only the accounts they own
-  let kq = db.from("kpi_targets").select("id, label, platform, ad_account_id, conversion, target, monthly_budget, sheet, client_id, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
-  if (!manager) kq = kq.eq("owner_id", me.id);
+  // a buyer only the accounts they own (and the ones they're a secondary buyer on)
+  let kq = db.from("kpi_targets").select("id, label, platform, ad_account_id, conversion, target, monthly_budget, sheet, owner_id, client_id, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
+  const co = !manager && topics.has("accounts") ? await secondarySeatKeys(db, me.id) : new Set<string>();
+  const coClients = [...new Set([...co].map((k) => k.split(":")[0]))];
+  if (!manager) kq = coClients.length ? kq.or(`owner_id.eq.${me.id},client_id.in.(${coClients.join(",")})`) : kq.eq("owner_id", me.id);
   else if (me.role === "head_of_meta") kq = kq.eq("platform", "meta");
   else if (me.role === "head_of_google") kq = kq.eq("platform", "google");
-  const { data: targets } = topics.has("accounts") ? await kq : { data: [] };
+  const { data: found } = topics.has("accounts") ? await kq : { data: [] };
+  const targets = (found ?? []).filter((t) => manager || t.owner_id === me.id || co.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`));
   const ids = (targets ?? []).map((t) => t.id as string);
   const [{ data: snaps }, worked] = await Promise.all([
     ids.length ? db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget").in("target_id", ids) : Promise.resolve({ data: [] as Record<string, unknown>[] }),

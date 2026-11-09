@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { runAudit } from "@/lib/audit";
 import { inPlatform } from "@/lib/in-platform";
+import { withCoBuyers } from "@/lib/buyer-seats";
 
 // Accounts in the red get audited without anyone asking: when a KPI is off target and has no audit yet, or its last
 // audit is three days old and nobody has started on it (no action ticked, no change made from it, no sprint move
@@ -92,9 +93,11 @@ async function tellBuyer(admin: SupabaseClient, auditId: string, t: Off) {
   const quick = actions.filter((x) => x.owner === "media_buyer" && inPlatform(x, platform));
   const label = (x: Action) => x.short?.trim() || x.title;
   const list = (quick.length ? quick : actions).slice(0, 3).map((x) => `· ${label(x)}`);
+  // The KPI's owner, and the client's secondary buyers on that platform
+  const to = await withCoBuyers(admin, t.client_id, platform, [t.owner_id]);
   await admin.from("notifications").upsert(
-    {
-      profile_id: t.owner_id,
+    to.map((id) => ({
+      profile_id: id,
       kind: "kpi",
       title: `${t.clients.name} is off target: the audit is ready`,
       body: [res?.verdict?.headline ?? "", list.length ? `${quick.length ? `${quick.length} you can do from Kaizen Ads` : `${actions.length} actions`}:\n${list.join("\n")}` : ""].filter(Boolean).join("\n\n").slice(0, 1000),
@@ -102,7 +105,7 @@ async function tellBuyer(admin: SupabaseClient, auditId: string, t: Off) {
       client_id: t.client_id,
       key: `auto-audit:${auditId}`,
       priority: "critical",
-    },
+    })),
     { onConflict: "profile_id,key", ignoreDuplicates: true },
   );
 }

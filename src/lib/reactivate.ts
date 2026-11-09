@@ -8,6 +8,7 @@ import { sheetConfigured, syncAccountSheet } from "@/lib/account-sheet";
 import { clientReadiness } from "@/lib/readiness";
 import { hardSyncClient } from "@/lib/client-hard-sync";
 import { startComebacks } from "@/lib/handoff";
+import { primarySeat } from "@/lib/buyer-seats";
 
 // A client going live again (restored from the archive, set back to active from paused, or made active again in
 // Kaizen Track) goes straight back into the cycle instead of waiting for each scheduled run. A client with no ad
@@ -37,8 +38,8 @@ export async function backInCycle(admin: SupabaseClient, clientId: string, byId?
   if (c.meta_ad_account_id) {
     const { data: has } = await admin.from("kpi_targets").select("id").eq("client_id", clientId).eq("platform", "meta").limit(1);
     if (!has?.length) {
-      const { data: buyer } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", "meta_buyer").limit(1).maybeSingle();
-      await admin.from("kpi_targets").insert({ client_id: clientId, platform: "meta", ad_account_id: c.meta_ad_account_id, conversion: "purchases", owner_id: buyer?.profile_id ?? null });
+      const buyer = await primarySeat(admin, clientId, "meta_buyer");
+      await admin.from("kpi_targets").insert({ client_id: clientId, platform: "meta", ad_account_id: c.meta_ad_account_id, conversion: "purchases", owner_id: buyer });
       out.kpiRowAdded = true;
     }
   }

@@ -2,6 +2,7 @@ import "server-only";
 import { allotmentLine, allotmentPools, cycleElapsed, usageCounts } from "@/lib/allotment";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
+import { secondarySeatKeys } from "@/lib/buyer-seats";
 import type { Staff } from "@/lib/auth";
 import { nyToday } from "@/lib/dates";
 import { baseRole, roleLabel, type TeamRole } from "@/lib/roles";
@@ -287,10 +288,14 @@ export const workedOn = (worked: Map<string, { at: string; who: string | null }>
  */
 export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?: string; platform?: "meta" | "google" }): Promise<KpiPulse | null> {
   const { owner, platform } = typeof opts === "string" ? { owner: opts, platform: undefined } : (opts ?? {});
-  let q = db.from("kpi_targets").select("id, label, platform, ad_account_id, owner_id, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
-  if (owner) q = q.eq("owner_id", owner);
+  let q = db.from("kpi_targets").select("id, client_id, label, platform, ad_account_id, owner_id, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
+  // Someone's accounts: the ones they own, and the ones they're a secondary buyer on (that client, that platform)
+  const co = owner ? await secondarySeatKeys(db, owner) : new Set<string>();
+  const coClients = [...new Set([...co].map((k) => k.split(":")[0]))];
+  if (owner) q = coClients.length ? q.or(`owner_id.eq.${owner},client_id.in.(${coClients.join(",")})`) : q.eq("owner_id", owner);
   if (platform) q = q.eq("platform", platform);
-  const [{ data: targets }, { data: snaps }] = await Promise.all([q, db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget, computed_at")]);
+  const [{ data: found }, { data: snaps }] = await Promise.all([q, db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget, computed_at")]);
+  const targets = (found ?? []).filter((t) => !owner || t.owner_id === owner || co.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`));
   if (!targets?.length) return null;
   const snapBy = new Map((snaps ?? []).map((x) => [x.target_id as string, x]));
   const counts = { excellent: 0, good: 0, close: 0, off: 0, idle: 0, setup: 0 };

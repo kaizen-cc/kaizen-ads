@@ -4,6 +4,7 @@ import { askJson } from "@/lib/ai";
 import { addBusinessDays } from "@/lib/brand-bible";
 import { gtmForContext } from "@/lib/gtm";
 import { servicesOf } from "@/lib/services";
+import { isBuyerRole, platformOf, primaryOf, withCoBuyers, type SeatRow } from "@/lib/buyer-seats";
 import { ROLE_LABEL, baseTasks, mergeTasks, nextStatuses, relations, type OwnerRole, type TaskRow, type TaskSpec } from "@/lib/task-graph";
 
 // The final execution plan. Once the client approves their plan, the team reviews the Meta and Google go-to-market
@@ -223,10 +224,11 @@ export function planMarkdown(p: ExecutionPlan) {
 /** Who holds each role on this client (the seats, then the leads), for task owners */
 export async function owners(admin: SupabaseClient, clientId: string): Promise<Partial<Record<OwnerRole, string>>> {
   const [{ data: seats }, { data: leads }] = await Promise.all([
-    admin.from("client_assignments").select("role, profile_id").eq("client_id", clientId),
+    admin.from("client_assignments").select("role, profile_id, is_primary, created_at").eq("client_id", clientId),
     admin.from("profiles").select("id, role").eq("is_active", true).in("role", ["head_of_creative", "head_of_meta", "head_of_google"]),
   ]);
-  const seat = (r: string) => (seats ?? []).find((s) => s.role === r)?.profile_id as string | undefined;
+  // A task has one owner: the seat's primary
+  const seat = (r: string) => primaryOf((seats ?? []) as SeatRow[], r)?.profile_id;
   const lead = (r: string) => (leads ?? []).find((p) => p.role === r)?.id as string | undefined;
   return {
     meta_buyer: seat("meta_buyer") ?? lead("head_of_meta"),
@@ -332,9 +334,11 @@ export async function refreshTasks(admin: SupabaseClient, clientId: string) {
     const t = tasks.find((x) => x.key === ch.key)!;
     if (!t.owner_id) continue;
     const { holdingUp } = relations(tasks, t.key);
+    // A buyer's task: the client's secondary buyers on that platform hear it too
+    const to = isBuyerRole(t.owner_role) ? await withCoBuyers(admin, clientId, platformOf(t.owner_role), [t.owner_id]) : [t.owner_id];
     await admin.from("notifications").upsert(
-      {
-        profile_id: t.owner_id,
+      to.map((id) => ({
+        profile_id: id,
         kind: "task",
         title: `Your turn: ${t.title}`.slice(0, 200),
         body: `${client?.name ?? "A client"}: everything it waited on is done.${holdingUp.length ? ` It's holding up ${holdingUp.map((h) => h.title).join(", ")}.` : ""}`.slice(0, 1000),
@@ -342,7 +346,7 @@ export async function refreshTasks(admin: SupabaseClient, clientId: string) {
         client_id: clientId,
         key: `task-ready:${t.id}`,
         priority: holdingUp.length ? "high" : "normal",
-      },
+      })),
       { onConflict: "profile_id,key", ignoreDuplicates: true },
     );
   }

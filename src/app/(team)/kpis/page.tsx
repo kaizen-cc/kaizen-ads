@@ -1,5 +1,6 @@
 import { googleAdsConfigured } from "@/lib/context/google-ads";
 import { teamPlatform } from "@/lib/roles";
+import { buyerRole, orderSeats, type SeatRow } from "@/lib/buyer-seats";
 import { clientPerms } from "@/lib/chat-permissions";
 import { requireStaff } from "@/lib/auth";
 import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
@@ -41,7 +42,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   const team = teamPlatform(me.role);
   // A buyer: only the accounts they're on (they own the KPI, or they're the client's buyer for that platform)
   const buyer = Boolean(team) && !me.isExec && !me.isLead;
-  const [{ data: targets }, { data: snaps }, { data: buyers }, { data: clients }, auditBy, { data: activity }, { data: seats }] = await Promise.all([
+  const [{ data: targets }, { data: snaps }, { data: buyers }, { data: clients }, auditBy, { data: activity }, { data: seats }, { data: allSeats }] = await Promise.all([
     supabase
       .from("kpi_targets")
       .select("id, client_id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, source, owner_id, owner_name, extra_metrics, sheet, clients!inner(name, slug, status, kaizen_id), profiles!kpi_targets_owner_id_fkey(full_name)")
@@ -53,7 +54,18 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
     latestAudits(supabase),
     supabase.from("ad_account_activity").select("ad_account_id, last_change_at, last_change, checked_at, error"),
     buyer ? supabase.from("client_assignments").select("client_id, role").eq("profile_id", me.id).in("role", ["meta_buyer", "google_buyer"]) : Promise.resolve({ data: [] as { client_id: string; role: string }[] }),
+    // Every buyer seat, primary first: the "needs a KPI" rows' buyer, and each card's secondary buyers
+    supabase.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("role", ["meta_buyer", "google_buyer"]),
   ]);
+  type Seat = SeatRow & { client_id: string; profiles: { full_name: string } | null };
+  const buyerSeats = orderSeats((allSeats ?? []) as unknown as Seat[]);
+  const seatsOn = (clientId: string, platform: string) => buyerSeats.filter((s) => s.client_id === clientId && s.role === buyerRole(platform));
+  // A card's secondary buyers: everyone on the seat but its primary, and never the card's own owner
+  const coBuyersOf = (clientId: string, platform: string, ownerId: string | null) =>
+    seatsOn(clientId, platform)
+      .slice(1)
+      .filter((s) => s.profile_id !== ownerId)
+      .map((s) => ({ id: s.profile_id, name: s.profiles?.full_name ?? "Unknown" }));
   const snapBy = new Map((snaps ?? []).map((s) => [s.target_id as string, s as unknown as Snap]));
   const activityBy = new Map((activity ?? []).map((x) => [x.ad_account_id as string, x]));
   // The sprints, and each account's last 10 changes for its change history, together
@@ -103,6 +115,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
         source: t.source as "strategy" | "client",
         ownerId: t.owner_id,
         owner: (t.profiles as unknown as { full_name: string } | null)?.full_name ?? t.owner_name ?? null,
+        coBuyers: coBuyersOf(t.client_id as string, t.platform as string, t.owner_id as string | null),
         status,
         deviation: s?.deviation == null ? null : Number(s.deviation),
         vsMonth,
@@ -132,10 +145,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
 
   // Clients that run Meta or Google ads with no KPI target on that platform: they still belong on the board (as
   // "needs a KPI target"), with their buyer, so nobody loses sight of them
-  const [{ data: svc }, { data: allSeats }] = await Promise.all([
-    supabase.from("clients").select("id, name, slug, services").in("status", ["active", "onboarding"]).is("archived_at", null),
-    supabase.from("client_assignments").select("client_id, role, profile_id, profiles(full_name)").in("role", ["meta_buyer", "google_buyer"]),
-  ]);
+  const { data: svc } = await supabase.from("clients").select("id, name, slug, services").in("status", ["active", "onboarding"]).is("archived_at", null);
   const hasTarget = new Set((targets ?? []).map((t) => `${t.client_id}:${t.platform === "google" ? "google" : "meta"}`));
   const missing: MissingKpi[] = [];
   for (const c of svc ?? []) {
@@ -144,9 +154,11 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       if (!services.includes(platform === "meta" ? "facebook-ads" : "google-ads")) continue;
       if (hasTarget.has(`${c.id}:${platform}`)) continue;
       if (team && team !== platform) continue;
-      const seat = (allSeats ?? []).find((x) => x.client_id === c.id && x.role === (platform === "meta" ? "meta_buyer" : "google_buyer"));
-      if (buyer && !(seat && seat.profile_id === me.id)) continue;
-      missing.push({ clientId: c.id as string, client: c.name as string, slug: c.slug as string, platform, buyerId: (seat?.profile_id as string | undefined) ?? null, buyer: (seat?.profiles as unknown as { full_name: string } | null)?.full_name ?? null });
+      // The seat's primary is the row's buyer; a buyer sees it when they're on the seat at all
+      const onSeat = seatsOn(c.id as string, platform);
+      const seat = onSeat[0];
+      if (buyer && !onSeat.some((s) => s.profile_id === me.id)) continue;
+      missing.push({ clientId: c.id as string, client: c.name as string, slug: c.slug as string, platform, buyerId: seat?.profile_id ?? null, buyer: seat?.profiles?.full_name ?? null, coBuyers: coBuyersOf(c.id as string, platform, seat?.profile_id ?? null) });
     }
   }
   missing.sort((x, y) => x.client.localeCompare(y.client));
@@ -156,7 +168,8 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   const unlinked = ((accounts?.last_result as { unlinked?: { id: string; name: string; bm?: { id: string; name: string } }[] } | null)?.unlinked ?? []).slice(0, 50);
 
   const lastSync = (snaps ?? []).map((s) => s.computed_at as string).sort().at(-1) ?? null;
-  const mine = rows.some((r) => r.ownerId === me.id);
+  // A buyer opens on their own accounts: the ones they own and the ones they're a secondary buyer on
+  const mine = rows.some((r) => r.ownerId === me.id || r.coBuyers?.some((b) => b.id === me.id));
   // Opened from somewhere about one account (?target=<id>, or ?client=<slug> with an optional &platform=): that card
   // opens on its own tab, with everyone's accounts showing so it's never filtered out
   const want = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);

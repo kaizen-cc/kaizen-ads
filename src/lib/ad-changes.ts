@@ -379,14 +379,13 @@ async function send(admin: SupabaseClient, platform: string, account: string, op
 
 /** A new media buyer for the client: the same assignment (and, for Meta, the same handoff) as the client page. */
 async function assignBuyer(admin: SupabaseClient, clientId: string, op: Extract<ChangeOp, { kind: "assign_buyer" }>, me: Staff) {
-  const { data: before } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", op.slot);
-  const { error: delError } = await admin.from("client_assignments").delete().eq("client_id", clientId).eq("role", op.slot);
-  if (delError) throw new Error(delError.message);
-  const { error } = await admin.from("client_assignments").insert({ client_id: clientId, role: op.slot, profile_id: op.toId });
-  if (error) throw new Error(error.message);
-  if (op.slot === "meta_buyer" && !(before ?? []).some((b) => b.profile_id === op.toId)) {
+  // The new primary; the seat's secondaries stay on it
+  const { setPrimarySeat } = await import("@/lib/buyer-seats");
+  const res = await setPrimarySeat(admin, clientId, op.slot, op.toId);
+  if (!res.ok) throw new Error(res.error);
+  if (op.slot === "meta_buyer" && res.to && res.to !== res.from) {
     const { handOff, writeHandoff } = await import("@/lib/handoff");
-    const id = await handOff(admin, clientId, (before?.[0]?.profile_id as string | undefined) ?? null, op.toId, me.id, "app");
+    const id = await handOff(admin, clientId, res.from, res.to, me.id, "app");
     if (id) await writeHandoff(admin, id).catch(() => null);
   }
 }

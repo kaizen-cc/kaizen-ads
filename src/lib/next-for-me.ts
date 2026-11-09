@@ -7,6 +7,7 @@ import { loadWatchList } from "@/lib/fatigue";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
 import { formatsFor } from "@/lib/creative-formats";
 import { isCreativeRole } from "@/lib/roles";
+import { seatKeys, type SeatRow } from "@/lib/buyer-seats";
 import { loadBiblesToReview } from "@/lib/bible-review";
 
 // Everything that's on one person, in one list: what to do now, what to decide, what to keep an eye on, and what's
@@ -78,10 +79,12 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
   const metaSide = me.role !== "google_buyer" && me.role !== "head_of_google";
   // My clients: the ones I'm assigned to and the ad accounts I own in the KPI tracker
   const [{ data: assigned }, { data: owned }] = await Promise.all([
-    db.from("client_assignments").select("client_id").eq("profile_id", me.id),
+    db.from("client_assignments").select("client_id, profile_id, role, is_primary").eq("profile_id", me.id),
     db.from("kpi_targets").select("client_id").eq("owner_id", me.id).eq("active", true),
   ]);
   const myClients = new Set([...(assigned ?? []), ...(owned ?? [])].map((r) => r.client_id as string));
+  // The accounts I'm a secondary buyer on: their launches and sprints are mine to follow too
+  const coSeats = seatKeys(((assigned ?? []) as SeatRow[]).filter((a) => a.is_primary === false), me.id);
 
   const [h, kpis, fatigue, onboarding, promises, suggestions, bibleList] = await Promise.all([
     loadHome(db, me),
@@ -184,7 +187,7 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
 
   // ─── A buyer's own launches and clients who owe a response ───
   if (me.isBuyer) {
-    for (const r of h.rows.filter((x) => x.buyer_id === me.id && x.assignee_id !== me.id)) {
+    for (const r of h.rows.filter((x) => (x.buyer_id === me.id || (x.buyer_id && coSeats.has(`${x.client_id}:meta`))) && x.assignee_id !== me.id)) {
       if (r.stage === "ready_for_launch")
         now.push({ id: `l-${r.id}`, kind: "launch", tone: "warn", client: r.client_name, title: r.title, why: "Approved and ready to launch", when: `Waiting ${businessDuration(r.minutes_in_stage)}`, href: `/board?t=${r.number}`, action: "Launch it" });
       else if (r.stage === "client_review" && r.minutes_over > 0)
@@ -220,11 +223,17 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
 
   // ─── Optimization sprints: mine to work, or ones I started or watch ───
   const { loadSprints } = await import("@/lib/sprints");
-  const sprints = buyerish ? await loadSprints(db, { personId: me.id }) : [];
+  // (and the sprints on accounts I'm a secondary buyer on)
+  const coClients = [...new Set([...coSeats].map((k) => k.split(":")[0]))];
+  const { data: coTargets } = buyerish && coClients.length ? await db.from("kpi_targets").select("id, client_id, platform").in("client_id", coClients).eq("active", true) : { data: [] };
+  const coTargetIds = new Set((coTargets ?? []).filter((t) => coSeats.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`)).map((t) => t.id as string));
+  const sprints = buyerish
+    ? await Promise.all([loadSprints(db, { personId: me.id }), coTargetIds.size ? loadSprints(db, { targetIds: [...coTargetIds] }) : Promise.resolve([])]).then(([a, b]) => [...a, ...b.filter((x) => !a.some((y) => y.sprint.id === x.sprint.id))])
+    : [];
   const sprinting = new Set(sprints.map((x) => x.targetId));
   for (const x of sprints) {
     const s = x.sprint;
-    const mine = s.buyerId === me.id;
+    const mine = s.buyerId === me.id || coTargetIds.has(x.targetId);
     const urgent = s.verdict === "no_action" || s.verdict === "wrong_move" || s.verdict === "worse";
     const item: NextItem = {
       id: `sp-${s.id}`,

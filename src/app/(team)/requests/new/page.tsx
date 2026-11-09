@@ -9,6 +9,7 @@ import type { CreativeFormat } from "@/lib/creative-formats";
 import { createClient } from "@/lib/supabase/server";
 import { RequestForm } from "./request-form";
 import { LIVE } from "@/lib/live";
+import { orderSeats, type SeatRow } from "@/lib/buyer-seats";
 import { startSections } from "@/lib/request-start";
 import { formatsFor } from "@/lib/creative-formats";
 import type { PreviewItem } from "./start-flow";
@@ -34,7 +35,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
     supabase.from("clients").select("id, name, slug, status, creative_package").is("archived_at", null).in("status", LIVE).order("name"),
     supabase.from("client_allotment_usage").select("*"),
     supabase.from("angles").select("client_id, name").eq("status", "active").order("name"),
-    supabase.from("client_assignments").select("client_id, role, profiles(full_name)"),
+    supabase.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)"),
   ]);
 
   // Clients whose package is live (a sprint counts until its end date) can be picked.
@@ -48,8 +49,9 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   const anglesByClient: Record<string, string[]> = {};
   for (const a of angles ?? []) (anglesByClient[a.client_id] ??= []).push(a.name);
   const teamByClient: Record<string, Record<string, string>> = {};
-  for (const a of assignments ?? []) {
-    (teamByClient[a.client_id] ??= {})[a.role] = (a.profiles as unknown as { full_name: string } | null)?.full_name ?? "";
+  // Each seat's primary (secondaries first, so the primary's name is the one kept)
+  for (const a of orderSeats((assignments ?? []) as unknown as (SeatRow & { client_id: string; profiles: unknown })[]).reverse()) {
+    (teamByClient[a.client_id] ??= {})[a.role] = (a.profiles as { full_name: string } | null)?.full_name ?? "";
   }
 
   // Starting again from a deleted ticket (Settings › Deleted): its brief, ready to send as is or to edit

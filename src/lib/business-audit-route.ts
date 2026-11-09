@@ -4,6 +4,7 @@ import { askJson } from "@/lib/ai";
 import type { BusinessAuditResult, BusinessChannel } from "@/lib/business-audit";
 import { firstPass, mergePlan, similarity, SAME, type CandidateMove, type ExistingMove, type MergeVerdict } from "@/lib/business-audit-merge";
 import type { OwnerRole } from "@/lib/task-graph";
+import { withCoBuyers } from "@/lib/buyer-seats";
 
 // After a business audit: its moves go to the people who do them. Meta and Google moves go on that account's
 // optimization sprint, to its buyer (the head of the platform follows). If a sprint is already being worked, the plan
@@ -147,7 +148,8 @@ export async function routeBusinessAudit(admin: SupabaseClient, auditId: string)
           "Your moves and progress stay as they were.",
         ].filter(Boolean).join(" ");
         const title = `${client.name}: ${plan.add.length ? `${plan.add.length} ${plan.add.length === 1 ? "move" : "moves"} added to your ${platform === "meta" ? "Meta" : "Google"} sprint` : `the business audit has a call for you on your ${platform === "meta" ? "Meta" : "Google"} sprint`}`;
-        for (const pid of new Set([open.buyer_id as string | null, headId].filter(Boolean) as string[]))
+        // The sprint's buyer (and the client's secondary buyers on the platform), and the head of the platform
+        for (const pid of new Set([...(await withCoBuyers(admin, clientId, platform, [open.buyer_id as string | null])), headId].filter(Boolean) as string[]))
           notices.push({ profileId: pid, title, body, href: `/kpis/sprint/${open.id}`, key: `ba:${auditId}:${platform}`, priority: conflicts.length ? "critical" : "normal" });
       }
     } else {
@@ -164,7 +166,7 @@ export async function routeBusinessAudit(admin: SupabaseClient, auditId: string)
       routing.channels[platform] = { kind: "created", platform, sprintId, owner: buyer, added: first.kept.length, duplicates: 0, conflicts: [] };
       const title = `${client.name}: a ${platform === "meta" ? "Meta" : "Google"} sprint from the business audit`;
       const body = `${first.kept.length} ${first.kept.length === 1 ? "move" : "moves"} to work: ${first.kept.map((m) => m.title).join("; ")}.`;
-      for (const pid of new Set([buyer, headId].filter(Boolean) as string[])) notices.push({ profileId: pid, title, body, href: `/kpis/sprint/${sprintId}`, key: `ba:${auditId}:${platform}`, priority: "normal" });
+      for (const pid of new Set([...(await withCoBuyers(admin, clientId, platform, [buyer])), headId].filter(Boolean) as string[])) notices.push({ profileId: pid, title, body, href: `/kpis/sprint/${sprintId}`, key: `ba:${auditId}:${platform}`, priority: "normal" });
     }
   }
 

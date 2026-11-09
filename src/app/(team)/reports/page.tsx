@@ -14,6 +14,7 @@ import { BundleCard, Empty, Group, ReportCard, type CardBundle, type CardReport,
 import { RegenerateButton, RegenWatcher } from "./regenerate-button";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 import { teamPlatform } from "@/lib/roles";
+import { buyerRole, orderSeats, primaryOf, type SeatRow } from "@/lib/buyer-seats";
 import { readHistory } from "@/lib/reports/history";
 import { SendHistory } from "./send-history";
 
@@ -69,18 +70,24 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const [{ data: allTargets }, { data: slots }, { data: built }] = admin && clientIds.length
     ? await Promise.all([
         admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line ? [line] : ["meta", "google"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
-        admin.from("client_assignments").select("client_id, role, profile_id, profiles(full_name)").in("client_id", clientIds).in("role", ["meta_buyer", "google_buyer"]),
+        admin.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("client_id", clientIds).in("role", ["meta_buyer", "google_buyer"]),
         admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, sent_at, clients(name), reports(id, platform, status, owner_id, viewed_at, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).gte("created_at", daysAgo(60)).order("created_at", { ascending: false }).limit(150),
       ])
     : [{ data: [] }, { data: [] }, { data: [] }];
+  // The buyer seats, primary first. A secondary buyer's accounts are theirs to report on like the owner's: their
+  // reports count as theirs, and a buyer's chip holds the accounts they're a secondary on too
+  type Slot = SeatRow & { client_id: string; profiles: { full_name: string } | null };
+  const seatRows = orderSeats((slots ?? []) as unknown as Slot[]);
+  const coSeats = (clientId: string, platform: string) => seatRows.filter((s) => s.client_id === clientId && s.role === buyerRole(platform) && s.is_primary === false);
+  const isMine = (clientId: string, p: { owner_id: string | null; platform: string }) => p.owner_id === me.id || coSeats(clientId, p.platform).some((s) => s.profile_id === me.id);
   const byClient = new Map<string, BuilderClient>();
   for (const t of (allTargets ?? []) as unknown as { client_id: string; platform: "meta" | "google"; owner_id: string | null; clients: { name: string; slug: string; slack_channel_id: string | null }; profiles: { full_name: string } | null }[]) {
     const c = byClient.get(t.client_id) ?? { id: t.client_id, name: t.clients.name, slug: t.clients.slug, hasChannel: Boolean(t.clients.slack_channel_id), services: [] };
     if (c.services.some((x) => x.platform === t.platform)) continue;
-    const slot = (slots ?? []).find((x) => x.client_id === t.client_id && x.role === (t.platform === "google" ? "google_buyer" : "meta_buyer"));
-    const ownerId = t.owner_id ?? (slot?.profile_id as string | undefined) ?? null;
-    const owner = t.profiles?.full_name ?? (slot?.profiles as unknown as { full_name: string } | null)?.full_name ?? null;
-    c.services.push({ platform: t.platform, owner, mine: ownerId === me.id });
+    const slot = primaryOf(seatRows, buyerRole(t.platform), t.client_id);
+    const ownerId = t.owner_id ?? slot?.profile_id ?? null;
+    const owner = t.profiles?.full_name ?? slot?.profiles?.full_name ?? null;
+    c.services.push({ platform: t.platform, owner, mine: isMine(t.client_id, { owner_id: ownerId, platform: t.platform }) });
     byClient.set(t.client_id, c);
   }
   const builderClients = [...byClient.values()].map((c) => ({ ...c, services: c.services.sort((a, b) => (a.platform === "meta" ? 0 : 1) - (b.platform === "meta" ? 0 : 1)) })).sort((a, b) => a.name.localeCompare(b.name));
@@ -89,7 +96,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   // a buyer the ones they built or have a part in
   const headLine = me.isExec ? null : me.role === "head_of_meta" ? "meta" : me.role === "head_of_google" ? "google" : null;
   const reach = ((built ?? []) as unknown as BuiltRow[]).filter(
-    (b) => me.isExec || b.created_by === me.id || b.reports.some((p) => p.owner_id === me.id) || (headLine != null && b.reports.some((p) => p.platform === headLine)),
+    (b) => me.isExec || b.created_by === me.id || b.reports.some((p) => isMine(b.client_id, p)) || (headLine != null && b.reports.some((p) => p.platform === headLine)),
   );
   // Who built each one, by name
   const builderIds = [...new Set(reach.map((b) => b.created_by).filter((x): x is string => Boolean(x)))];
@@ -138,10 +145,10 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       : r.kind === "monthly"
         ? { kind: "monthly", label: "Monthly recap", dates: new Date(`${r.period_start}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" }) }
         : { kind: "built", label: "Built by hand", dates: `${short(r.period_start)} – ${short(r.period_end)}` };
-  const card = (r: Row): CardReport => ({ id: r.id, client: r.clients.name, platform: r.platform, status: r.status, qa: r.qa, tag: tagOf(r), owner: r.profiles?.full_name ?? null, mine: r.owner_id === me.id, viewedAt: r.viewed_at, postedAt: r.posted_at });
+  const card = (r: Row): CardReport => ({ id: r.id, client: r.clients.name, platform: r.platform, status: r.status, qa: r.qa, tag: tagOf(r), owner: r.profiles?.full_name ?? null, mine: isMine(r.client_id, r), viewedAt: r.viewed_at, postedAt: r.posted_at });
   const bundleCard = (b: (typeof reach)[number]): CardBundle => {
     const parts = b.reports.filter((p) => p.status !== "skipped");
-    const mine = parts.find((p) => p.owner_id === me.id) ?? parts[0];
+    const mine = parts.find((p) => p.owner_id === me.id) ?? parts.find((p) => isMine(b.client_id, p)) ?? parts[0];
     return {
       id: b.id,
       client: b.clients.name,
@@ -150,12 +157,12 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       sentAt: b.sent_at,
       createdAt: b.created_at,
       createdBy: b.created_by === me.id ? "you" : b.created_by ? (builderName.get(b.created_by) ?? null) : null,
-      parts: parts.map((p) => ({ id: p.id, platform: p.platform, status: p.status, owner: p.profiles?.full_name ?? null, mine: p.owner_id === me.id, viewedAt: p.viewed_at })),
+      parts: parts.map((p) => ({ id: p.id, platform: p.platform, status: p.status, owner: p.profiles?.full_name ?? null, mine: isMine(b.client_id, p), viewedAt: p.viewed_at })),
       href: mine ? `/reports/${mine.id}` : "/reports",
-      yourTurn: parts.some((p) => p.owner_id === me.id && ["draft", "drafting", "queued"].includes(p.status)),
+      yourTurn: parts.some((p) => isMine(b.client_id, p) && ["draft", "drafting", "queued"].includes(p.status)),
       removable: b.created_by === me.id || me.isExec,
       // Their own parts (approved ones too: it goes back to review); an exec or lead also the ones still in review
-      regenIds: b.status === "sent" ? [] : parts.filter((p) => (p.owner_id === me.id && ["draft", "failed", "submitted"].includes(p.status)) || (lead && ["draft", "failed"].includes(p.status))).map((p) => p.id),
+      regenIds: b.status === "sent" ? [] : parts.filter((p) => (isMine(b.client_id, p) && ["draft", "failed", "submitted"].includes(p.status)) || (lead && ["draft", "failed"].includes(p.status))).map((p) => p.id),
     };
   };
 
@@ -171,11 +178,15 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       ...new Map([
         ...list.filter((r) => plat(r) === wp && r.owner_id).map((r) => [r.owner_id!, r.owner_id === me.id ? "You" : (r.profiles?.full_name ?? "Buyer")] as const),
         ...bundles.flatMap((b) => b.reports.filter((p) => plat(p) === wp && p.owner_id).map((p) => [p.owner_id!, p.owner_id === me.id ? "You" : (p.profiles?.full_name ?? "Buyer")] as const)),
+        // The secondary buyers on those accounts
+        ...[...list.map((r) => r.client_id), ...bundles.map((b) => b.client_id)].flatMap((c) => coSeats(c, wp).map((s) => [s.profile_id, s.profile_id === me.id ? "You" : (s.profiles?.full_name ?? "Buyer")] as const)),
       ]).entries(),
     ].sort((a, b) => (a[1] === "You" ? -1 : b[1] === "You" ? 1 : a[1].localeCompare(b[1])));
   const wb = pick("wb");
-  const fits = (r: Row) => plat(r) === wp && (!wb || r.owner_id === wb);
-  const fitsBundle = (b: (typeof reach)[number]) => b.reports.some((p) => plat(p) === wp && (!wb || p.owner_id === wb));
+  // One buyer's: the reports they own, and the ones on accounts they're a secondary buyer on
+  const forBuyer = (clientId: string, p: { owner_id: string | null; platform: string }) => !wb || p.owner_id === wb || coSeats(clientId, p.platform).some((s) => s.profile_id === wb);
+  const fits = (r: Row) => plat(r) === wp && forBuyer(r.client_id, r);
+  const fitsBundle = (b: (typeof reach)[number]) => b.reports.some((p) => plat(p) === wp && forBuyer(b.client_id, p));
   const byName = (a: { clients: { name: string } }, b: { clients: { name: string } }) => a.clients.name.localeCompare(b.clients.name, "en", { sensitivity: "base", numeric: true });
   const monthlyShown = allMonthly.filter(fits).sort(byName);
   const weeklyShown = allWeekly.filter(fits).sort(byName);
@@ -186,7 +197,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const readyCount = readyReports.length + builtRows.length;
   // Regenerate all shown: every draft in a section, with the platform and person picked (an exec or lead: anyone's
   // they report on; a buyer: their own). Approved, sent and still-writing ones are left as they are
-  const regenable = (x: { status: string; owner_id: string | null }) => ["draft", "failed"].includes(x.status) && (lead || x.owner_id === me.id);
+  const regenable = (x: { status: string; owner_id: string | null; platform: string }, clientId: string) => ["draft", "failed"].includes(x.status) && (lead || isMine(clientId, x));
   const regenAll = (ids: string[], label: string) => (ids.length > 1 ? <RegenerateButton kind="many" variant="bulk" ids={ids} label={label} /> : undefined);
   const sentCount = history.length || sentReports.length + sentBuilt.length;
   // Land on what needs doing; with nothing waiting, on building one
@@ -198,7 +209,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   };
   // The Monday drafts already waiting for this person, by client: the builder offers them before building another
   const waitingFor: Record<string, { id: string; tag: Tag; platform: string }[]> = {};
-  for (const r of [...allMonthly, ...allWeekly].filter((r) => r.owner_id === me.id && ["draft", "queued", "drafting"].includes(r.status))) (waitingFor[r.client_id] ??= []).push({ id: r.id, tag: tagOf(r), platform: plat(r) });
+  for (const r of [...allMonthly, ...allWeekly].filter((r) => isMine(r.client_id, r) && ["draft", "queued", "drafting"].includes(r.status))) (waitingFor[r.client_id] ??= []).push({ id: r.id, tag: tagOf(r), platform: plat(r) });
   const drafts = readyReports.filter((r) => r.status === "draft");
   const stats = [
     { n: drafts.length, label: "ready to review", tone: "text-fg" },
@@ -295,14 +306,14 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
             ) : (
               <>
                 {monthlyShown.length > 0 && (
-                  <Group title={`${monthName} recap`} count={monthlyShown.length} note="The full month · goes out once every buyer on the account approves" action={regenAll(monthlyShown.filter(regenable).map((r) => r.id), `${monthName} recaps`)}>
+                  <Group title={`${monthName} recap`} count={monthlyShown.length} note="The full month · goes out once every buyer on the account approves" action={regenAll(monthlyShown.filter((r) => regenable(r, r.client_id)).map((r) => r.id), `${monthName} recaps`)}>
                     {monthlyShown.map((r) => (
                       <ReportCard key={r.id} r={card(r)} showOwner={lead} />
                     ))}
                   </Group>
                 )}
                 {weeklyShown.length > 0 && (
-                  <Group title="Monday weekly" count={weeklyShown.length} note={`${weeklyShown.filter((r) => r.status === "draft").length} ready to review · next Monday's replace them`} action={regenAll(weeklyShown.filter(regenable).map((r) => r.id), "Monday weeklies")}>
+                  <Group title="Monday weekly" count={weeklyShown.length} note={`${weeklyShown.filter((r) => r.status === "draft").length} ready to review · next Monday's replace them`} action={regenAll(weeklyShown.filter((r) => regenable(r, r.client_id)).map((r) => r.id), "Monday weeklies")}>
                     {weeklyShown.map((r) => (
                       <ReportCard key={r.id} r={card(r)} showOwner={lead} />
                     ))}
@@ -313,7 +324,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
                     title="Built by hand"
                     count={builtShown.length + customShown.length}
                     note="Here until they're sent"
-                    action={regenAll([...builtShown.flatMap((b) => b.reports.filter((p) => plat(p) === wp && (!wb || p.owner_id === wb) && regenable(p)).map((p) => p.id)), ...customShown.filter(regenable).map((r) => r.id)], "Reports built by hand")}
+                    action={regenAll([...builtShown.flatMap((b) => b.reports.filter((p) => plat(p) === wp && forBuyer(b.client_id, p) && regenable(p, b.client_id)).map((p) => p.id)), ...customShown.filter((r) => regenable(r, r.client_id)).map((r) => r.id)], "Reports built by hand")}
                   >
                     {builtShown.map((b) => (
                       <BundleCard key={b.id} b={bundleCard(b)} showOwner={lead} />

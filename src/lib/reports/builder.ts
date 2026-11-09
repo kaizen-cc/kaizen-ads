@@ -4,6 +4,7 @@ import { askJson } from "@/lib/ai";
 import { isExecOrLead, type Staff } from "@/lib/auth";
 import { nyParts } from "@/lib/kpi/calc";
 import { canReportOn, reportListeners } from "./access";
+import { buyerRole, primarySeat, withCoBuyers } from "@/lib/buyer-seats";
 import { channelsLabel, normalizeDelivery, pdfFileName, type Delivery } from "./delivery-core";
 import { isPeriodKey, periodMismatch, resolvePeriod } from "./period";
 import { deliver } from "./send";
@@ -53,8 +54,8 @@ const platformName = (p: string) => (p === "google" ? "Google Ads" : "Meta Ads")
 /** Who writes and approves a service's part: the account's owner, else the client's buyer for it, else the builder. */
 async function ownerFor(admin: SupabaseClient, t: { client_id: string; platform: string; owner_id: string | null }, fallback: string) {
   if (t.owner_id) return t.owner_id;
-  const { data } = await admin.from("client_assignments").select("profile_id").eq("client_id", t.client_id).eq("role", t.platform === "google" ? "google_buyer" : "meta_buyer").maybeSingle();
-  return (data?.profile_id as string | undefined) ?? fallback;
+  // The seat's primary (a seat with a secondary too has two rows, which maybeSingle() read as none)
+  return (await primarySeat(admin, t.client_id, buyerRole(t.platform))) ?? fallback;
 }
 
 /** Builds a report: the parts are created and written in the background. Returns the bundle and the builder's own part. */
@@ -90,19 +91,25 @@ export async function buildReport(admin: SupabaseClient, db: SupabaseClient, me:
   }
   // Another buyer's part: they're asked for it (only executives and media buyers hear about reports)
   const { data: client } = await admin.from("clients").select("name").eq("id", clientId).single();
-  const askable = await reportListeners(admin, parts.map((x) => x.owner));
-  for (const p of parts.filter((x) => x.owner !== me.id && askable.has(x.owner)))
+  // The part's owner, with the client's secondary buyers on that platform copied in (never the builder themselves)
+  const askOf = new Map<string, string[]>();
+  for (const p of parts.filter((x) => x.owner !== me.id)) askOf.set(p.id, (await withCoBuyers(admin, clientId, p.platform, [p.owner])).filter((id) => id !== me.id));
+  const askable = await reportListeners(admin, [...askOf.values()].flat());
+  for (const p of parts.filter((x) => askOf.get(x.id)?.some((id) => askable.has(id))))
     await admin.from("notifications").upsert(
-      {
-        profile_id: p.owner,
-        kind: "report",
-        title: `${me.fullName.split(" ")[0]} needs your ${platformName(p.platform)} part: ${client?.name ?? "a client"} report`,
-        body: `${rangesLabel(ranges)}. It's drafted for you: read it, adjust it, approve it. It goes to the client together with the rest, as one report.`,
-        href: `/reports/${p.id}`,
-        client_id: clientId,
-        key: `report-part:${p.id}:${main.start}`,
-        priority: "critical",
-      },
+      askOf
+        .get(p.id)!
+        .filter((id) => askable.has(id))
+        .map((id) => ({
+          profile_id: id,
+          kind: "report",
+          title: `${me.fullName.split(" ")[0]} needs your ${platformName(p.platform)} part: ${client?.name ?? "a client"} report`,
+          body: `${rangesLabel(ranges)}. It's drafted for you: read it, adjust it, approve it. It goes to the client together with the rest, as one report.`,
+          href: `/reports/${p.id}`,
+          client_id: clientId,
+          key: `report-part:${p.id}:${main.start}`,
+          priority: "critical",
+        })),
       { onConflict: "profile_id,key", ignoreDuplicates: true },
     );
   const mine = parts.find((p) => p.owner === me.id) ?? parts[0];
@@ -252,7 +259,9 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
     const now = new Date().toISOString();
     await admin.from("report_bundles").update({ status: "sent", sent_at: now, delivered: { ...(out.slack && "channel" in out.slack ? { slack: out.slack } : {}), ...(out.email?.to.length ? { email: out.email.to } : {}) } }).eq("id", bundleId);
     await admin.from("reports").update({ status: "posted", posted_at: now, posted_by: by }).eq("bundle_id", bundleId).eq("status", "submitted");
-    const told = await reportListeners(admin, [b.created_by, ...parts.map((p) => p.owner_id)]);
+    // The builder and each part's owner, with the client's secondary buyers on those platforms copied in
+    const co = (await Promise.all(parts.map((p) => withCoBuyers(admin, b.client_id as string, p.platform, [p.owner_id])))).flat();
+    const told = await reportListeners(admin, [b.created_by, ...parts.map((p) => p.owner_id), ...co]);
     const owners = [...told];
     if (owners.length)
       await admin.from("notifications").upsert(

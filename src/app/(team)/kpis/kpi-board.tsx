@@ -7,6 +7,7 @@ import { ActionButton, ActionForm } from "@/components/action-form";
 import { field, label } from "@/components/ui";
 import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
 import { CONVERSIONS } from "@/lib/kpi/conversions";
+import { onCard } from "@/lib/buyer-seats";
 import { STATUS, deviationTone, kpiValue, money } from "@/lib/kpi/format";
 import { freshness } from "@/lib/dates";
 import { addKpiTarget, archiveKpiTarget, exploreKpi, linkAdAccount, pullClientKpis, saveAccountNotes, saveKpiTarget, setExtraMetrics, type NoteKey } from "./actions";
@@ -64,6 +65,8 @@ export type KpiRow = {
   source: "strategy" | "client";
   ownerId: string | null;
   owner: string | null;
+  /** The client's secondary buyers on this platform: the card is in their view too */
+  coBuyers?: Person[];
   status: Status;
   deviation: number | null;
   vsMonth: number | null;
@@ -87,6 +90,11 @@ export type KpiRow = {
 };
 
 type Person = { id: string; name: string };
+/** " · Owner + Secondary": who's on the account, the owner first */
+const buyersLine = (r: KpiRow) => {
+  const names = [r.owner, ...(r.coBuyers ?? []).map((b) => b.name)].filter(Boolean);
+  return names.length ? ` · ${names.join(" + ")}` : "";
+};
 const RANK: Record<Status, number> = { off: 0, close: 1, good: 2, excellent: 3, idle: 4, setup: 5 };
 const TILES: Status[] = ["excellent", "good", "close", "off"];
 
@@ -710,7 +718,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
               <p className="truncate text-xs text-faint">
                 {r.kaizenId != null && <span className="tabular">ID {r.kaizenId} · </span>}
                 {r.platform === "google" ? "Google Ads" : "Meta"} · {r.conversionLabel}
-                {r.owner && ` · ${r.owner}`}
+                {buyersLine(r)}
                 {r.targetFrom && ` · ${TARGET_FROM[r.targetFrom].toLowerCase()}`}
               </p>
             </div>
@@ -1439,7 +1447,7 @@ function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpe
             <p className="mt-0.5 truncate text-xs text-faint">
               {r.kaizenId != null && <span className="tabular">ID {r.kaizenId} · </span>}
               {r.conversionLabel}
-              {r.owner && ` · ${r.owner}`}
+              {buyersLine(r)}
             </p>
           </div>
           <span className="relative mt-1.5 flex h-2.5 w-2.5 shrink-0">
@@ -1776,7 +1784,7 @@ function Unlinked({ accounts, clients }: { accounts: { id: string; name: string;
 
 /** The KPI dashboard: how every account is pacing toward its target and its budget. */
 /** A client running Meta or Google ads with no KPI target on that platform yet */
-export type MissingKpi = { clientId: string; client: string; slug: string; platform: "meta" | "google"; buyerId: string | null; buyer: string | null };
+export type MissingKpi = { clientId: string; client: string; slug: string; platform: "meta" | "google"; buyerId: string | null; buyer: string | null; coBuyers?: Person[] };
 
 export function KpiBoard({
   rows,
@@ -1854,16 +1862,18 @@ export function KpiBoard({
     const names = new Map<string, string>();
     for (const r of rows) if (r.platform === platform && r.owner) names.set(ownerKey(r)!, r.owner);
     for (const m of missing) if (m.platform === platform && m.buyerId && m.buyer && !names.has(m.buyerId)) names.set(m.buyerId, m.buyer);
+    // Secondary buyers get a chip too: their view holds the accounts they're on
+    for (const x of [...rows, ...missing]) if (x.platform === platform) for (const b of x.coBuyers ?? []) if (!names.has(b.id)) names.set(b.id, b.name);
     return [...names.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   })();
 
-  const base = rows.filter((r) => r.platform === platform && (owner === "all" || ownerKey(r) === owner));
+  const base = rows.filter((r) => r.platform === platform && (owner === "all" || onCard(owner, { ownerKey: ownerKey(r), buyerIds: r.coBuyers?.map((b) => b.id) })));
   const term = q.trim().toLowerCase();
   const shown = base
     .filter((r) => (status === "all" || r.status === status) && (pace === "all" || r.pace?.status === pace) && (term.length < 2 || `${r.client} ${r.label ?? ""} ${r.kaizenId ?? ""}`.toLowerCase().includes(term)))
     .sort((a, b) => RANK[a.status] - RANK[b.status] || (b.deviation ?? -9) - (a.deviation ?? -9) || a.client.localeCompare(b.client));
 
-  const needs = missing.filter((m) => m.platform === platform && (owner === "all" || m.buyerId === owner) && status === "all" && pace === "all" && (term.length < 2 || m.client.toLowerCase().includes(term)));
+  const needs = missing.filter((m) => m.platform === platform && (owner === "all" || onCard(owner, { ownerKey: m.buyerId, buyerIds: m.coBuyers?.map((b) => b.id) })) && status === "all" && pace === "all" && (term.length < 2 || m.client.toLowerCase().includes(term)));
   const openRow = open ? (rows.find((r) => r.id === open) ?? null) : null;
   const step = (dir: 1 | -1) => {
     const at = shown.findIndex((r) => r.id === open);

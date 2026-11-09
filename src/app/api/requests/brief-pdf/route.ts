@@ -2,6 +2,7 @@ import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { toAllotment, type UsageRow } from "@/lib/allotment";
+import { primaryOf, type SeatRow } from "@/lib/buyer-seats";
 import { MAKER_ROLE, allotmentDraw, dayLabel, dueFor, fitStructure, formatChips, picked, specsChecklist, structureKey, versionCount, type BriefStructure, type PdfCounts, type PdfFormat } from "@/lib/brief-pdf-model";
 
 export const runtime = "nodejs";
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
   const { gatherReferences } = await import("@/lib/brief-pdf-data");
   const [{ data: usage }, { data: seats }, { data: rules }, refs] = await Promise.all([
     db.from("client_allotment_usage").select("*").eq("client_id", b.clientId).maybeSingle(),
-    db.from("client_assignments").select("role, profiles(full_name)").eq("client_id", b.clientId),
+    db.from("client_assignments").select("role, profile_id, is_primary, created_at, profiles(full_name)").eq("client_id", b.clientId),
     read.from("client_bible_rules").select("rule, polarity").eq("client_id", b.clientId).eq("status", "rule").order("count", { ascending: false }).limit(12),
     gatherReferences(db, admin, {
       origin: b.origin ?? null,
@@ -77,7 +78,8 @@ export async function POST(request: Request) {
 
   // Who makes each format, and when it's due if it's sent today
   const fs = picked(formats);
-  const seat = (role: string) => ((seats ?? []).find((x) => x.role === role)?.profiles as unknown as { full_name?: string } | null)?.full_name?.trim() || null;
+  // Each seat's primary
+  const seat = (role: string) => primaryOf((seats ?? []) as unknown as (SeatRow & { profiles: { full_name?: string } | null })[], role)?.profiles?.full_name?.trim() || null;
   const makers = [...new Set(fs.map((f) => MAKER_ROLE[f]))].map((m) => {
     const name = seat(m.role);
     return name ? `${name} (${m.label})` : `The ${m.label} (unassigned)`;

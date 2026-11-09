@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { asana, asanaWrite, projectGid } from "@/lib/asana";
 import { conceptLine, unitsFor } from "@/lib/allotment";
+import { primaryOf, type SeatRow } from "@/lib/buyer-seats";
 
 // A creative request briefed in Kaizen Ads, sent to the Creative board in Asana built exactly like the Google Form's
 // tasks, so the creative team sees nothing different while briefing moves here: one task per format, named
@@ -69,11 +70,12 @@ async function template(admin: SupabaseClient): Promise<Template> {
 export async function planAsanaRequest(admin: SupabaseClient, d: AsanaDraft): Promise<PlannedTask[]> {
   const [{ data: c }, { data: seats }, t] = await Promise.all([
     admin.from("clients").select("name, kaizen_id, website, drive_folder_id, creative_db").eq("id", d.clientId).single(),
-    admin.from("client_assignments").select("role, profiles(full_name, email)").eq("client_id", d.clientId),
+    admin.from("client_assignments").select("role, profile_id, is_primary, created_at, profiles(full_name, email)").eq("client_id", d.clientId),
     template(admin),
   ]);
   if (!c) throw new Error("Client not found.");
-  const seat = (role: string) => (seats ?? []).map((s) => ({ role: s.role as string, p: s.profiles as unknown as { full_name: string; email: string | null } | null })).find((s) => s.role === role)?.p ?? null;
+  // The seat's primary (a client with a secondary buyer still has one buyer on the task)
+  const seat = (role: string) => (primaryOf((seats ?? []) as unknown as (SeatRow & { profiles: { full_name: string; email: string | null } | null })[], role)?.profiles ?? null);
   const buyer = seat("meta_buyer");
   const urgent = d.priority === "urgent";
   const high = urgent || d.priority === "high";

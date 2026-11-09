@@ -1,6 +1,7 @@
 import { hasEveryClient, isExecOrLead, requireStaff } from "@/lib/auth";
 import { freshness, nyToday } from "@/lib/dates";
 import { SLOTS, canHold, seatNeeded, type SlotRole } from "@/lib/roles";
+import { primaryOf } from "@/lib/buyer-seats";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { Option } from "./assign-select";
@@ -26,7 +27,7 @@ type Row = {
   services_extra: string[] | null;
   services_removed: string[] | null;
   creative_packages: { label: string } | null;
-  client_assignments: { role: string; profile_id: string; profiles: { full_name: string } | null }[];
+  client_assignments: { role: string; profile_id: string; is_primary: boolean | null; created_at: string | null; profiles: { full_name: string } | null }[];
   contact_clients: { contact_id: string }[];
 };
 
@@ -38,7 +39,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const req = supabase
     .from("clients")
     .select(
-      "id, name, slug, status, kaizen_id, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, services_removed, creative_packages(label), client_assignments(role, profile_id, profiles(full_name)), contact_clients(contact_id)",
+      "id, name, slug, status, kaizen_id, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, services_removed, creative_packages(label), client_assignments(role, profile_id, is_primary, created_at, profiles(full_name)), contact_clients(contact_id)",
     )
     .neq("status", "offboarded")
     .order("name");
@@ -88,7 +89,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const optionsFor = (slot: (typeof SLOTS)[number]): Option[] => (staff ?? []).filter((p) => canHold(slot, p)).map((p) => ({ id: p.id, name: p.full_name }));
   const slotOptions = Object.fromEntries(SLOTS.map((s) => [s.value, optionsFor(s)])) as Record<SlotRole, Option[]>;
   const current = (r: Row, slot: string): Option | null => {
-    const a = r.client_assignments.find((x) => x.role === slot);
+    const a = primaryOf(r.client_assignments, slot);
     return a ? { id: a.profile_id, name: a.profiles?.full_name ?? "Unknown" } : null;
   };
   // The monthly allotment: a video-only package needs no designer, an images-only one no video editor

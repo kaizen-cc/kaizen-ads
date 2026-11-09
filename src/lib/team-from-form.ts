@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { aiEnabled, askJson } from "@/lib/ai";
 import { serviceFromName } from "@/lib/services";
+import { primaryOf, unique, type SeatRow } from "@/lib/buyer-seats";
 
 // The enrollment and upsell forms name the client's team (media buyer, designer, video editor, copywriter, customer
 // success). Those names become the client's assignments here, which is what decides who sees the client: a media
@@ -68,15 +69,19 @@ export async function applyTeam(admin: SupabaseClient, clientId: string, raw: Re
       else unmatched.push(`${name} (${slot === "google_buyer" ? "Google buyer" : slot === "meta_buyer" ? "Meta buyer" : slot.replace("_", " ")})`);
     }
     if (!ids.length) continue;
-    const { data: before } = slot === "meta_buyer" ? await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", slot) : { data: [] };
-    // The form is the source of truth for this role on this client
-    await admin.from("client_assignments").delete().eq("client_id", clientId).eq("role", slot).not("profile_id", "in", `(${ids.join(",")})`);
-    await admin.from("client_assignments").upsert(ids.map((id) => ({ client_id: clientId, profile_id: id, role: slot })), { onConflict: "client_id,role,profile_id" });
-    assigned[slot] = ids.map((id) => people!.find((p) => p.id === id)!.full_name).join(", ");
+    const named = unique(ids);
+    const { data: before } = await admin.from("client_assignments").select("profile_id, role, is_primary, created_at").eq("client_id", clientId).eq("role", slot);
+    const was = primaryOf((before ?? []) as SeatRow[], slot)?.profile_id ?? null;
+    // The form is the source of truth for this role on this client: the first person named is the primary, anyone after
+    // a secondary (one primary per seat, so the others step down before the first steps up)
+    await admin.from("client_assignments").delete().eq("client_id", clientId).eq("role", slot).not("profile_id", "in", `(${named.join(",")})`);
+    await admin.from("client_assignments").update({ is_primary: false }).eq("client_id", clientId).eq("role", slot).neq("profile_id", named[0]);
+    await admin.from("client_assignments").upsert(named.map((id, i) => ({ client_id: clientId, profile_id: id, role: slot, is_primary: i === 0 })), { onConflict: "client_id,role,profile_id" });
+    assigned[slot] = named.map((id) => people!.find((p) => p.id === id)!.full_name).join(", ");
     // A new buyer: the account's work moves to them and they get a handoff
-    if (slot === "meta_buyer" && !(before ?? []).some((b) => b.profile_id === ids[0])) {
+    if (slot === "meta_buyer" && was !== named[0]) {
       const { handOff, writeHandoff } = await import("@/lib/handoff");
-      const id = await handOff(admin, clientId, (before?.[0]?.profile_id as string | undefined) ?? null, ids[0], null, "form");
+      const id = await handOff(admin, clientId, was, named[0], null, "form");
       if (id) await writeHandoff(admin, id);
     }
   }

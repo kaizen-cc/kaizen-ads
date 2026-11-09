@@ -9,6 +9,7 @@ import { notFound } from "next/navigation";
 import type { Digest } from "@/lib/ai";
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
 import { SLOTS, canHold, canSeeReports, isCreativeRole } from "@/lib/roles";
+import { orderSeats, primaryOf, type SeatRow } from "@/lib/buyer-seats";
 import { freshness, nyToday } from "@/lib/dates";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -182,7 +183,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     hasPlan,
   ] = await Promise.all([
     t("core", Promise.all([
-      supabase.from("client_assignments").select("role, profile_id, profiles(full_name)").eq("client_id", client.id),
+      supabase.from("client_assignments").select("role, profile_id, is_primary, created_at, profiles(full_name)").eq("client_id", client.id),
       supabase.from("contact_clients").select("is_primary, contacts(id, email, full_name, auth_user_id)").eq("client_id", client.id),
       supabase.from("angles").select("id, name, kind, description, status").eq("client_id", client.id).order("status").order("name"),
       supabase.from("client_allotment_usage").select("*").eq("client_id", client.id).maybeSingle(),
@@ -303,10 +304,14 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   const digest = briefing?.digest && Object.keys(briefing.digest).length ? (briefing.digest as Digest) : null;
   const packageLabel = (client.creative_packages as unknown as { label: string } | null)?.label;
 
+  // Each seat's primary, and (for the buyer seats) its secondaries
+  const seatRows = orderSeats((assignments ?? []) as unknown as (SeatRow & { profiles: { full_name: string } | null })[]);
+  const asOption = (a: (typeof seatRows)[number]) => ({ id: a.profile_id, name: a.profiles?.full_name ?? "Unknown" });
   const currentIn = (slot: string) => {
-    const a = (assignments ?? []).find((x) => x.role === slot);
-    return a ? { id: a.profile_id, name: (a.profiles as unknown as { full_name: string } | null)?.full_name ?? "Unknown" } : null;
+    const a = primaryOf(seatRows, slot);
+    return a ? asOption(a) : null;
   };
+  const secondariesIn = (slot: string) => seatRows.filter((a) => a.role === slot && a !== primaryOf(seatRows, slot)).map(asOption);
   const optionsFor = (slot: (typeof SLOTS)[number]) => (staff ?? []).filter((p) => canHold(slot, p)).map((p) => ({ id: p.id, name: p.full_name }));
   const contacts = (links ?? []).flatMap((l: { is_primary: boolean; contacts: unknown }) => {
     const c = l.contacts as { id: string; email: string; full_name: string | null; auth_user_id: string | null } | null;
@@ -481,7 +486,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       keywordLists={keywordLists}
       canDeployGoogle={perms.change.google}
       today={nyToday()}
-      team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot) }]))}
+      team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot), secondaries: secondariesIn(slot.value) }]))}
       contacts={contacts}
       angles={angles ?? []}
       memory={(memory ?? []).map((m) => ({ id: m.id, kind: m.kind, body: m.body, source: m.source, shareReason: m.share_reason, dated: m.dated, by: (m.profiles as unknown as { full_name: string } | null)?.full_name ?? null }))}

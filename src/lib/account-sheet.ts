@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { JWT } from "google-auth-library";
+import { setPrimarySeat } from "@/lib/buyer-seats";
 
 // The Kaizen Account Overview sheet, the source of truth for each account while the team moves over: its Meta and
 // Google tabs give every ad account's media buyer, monthly budget and KPI target, plus the team's notes (priority, the
@@ -108,13 +109,15 @@ export async function syncAccountSheet(admin: SupabaseClient) {
     const assign = async (clientId: string, platform: "meta" | "google", buyer: { id: string }) => {
       const slot = platform === "google" ? "google_buyer" : "meta_buyer";
       const { data: cur } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", slot);
+      // Already on the seat (primary or secondary): nothing to change
       if ((cur ?? []).some((c) => c.profile_id === buyer.id)) return;
-      await admin.from("client_assignments").delete().eq("client_id", clientId).eq("role", slot);
-      await admin.from("client_assignments").insert({ client_id: clientId, profile_id: buyer.id, role: slot });
+      // The sheet's buyer becomes the primary; any secondaries stay
+      const res = await setPrimarySeat(admin, clientId, slot, buyer.id);
+      if (!res.ok) return;
       out.buyers++;
       if (slot === "meta_buyer") {
         const { handOff } = await import("@/lib/handoff");
-        const id = await handOff(admin, clientId, (cur?.[0]?.profile_id as string | undefined) ?? null, buyer.id, null, "sheet");
+        const id = await handOff(admin, clientId, res.from, buyer.id, null, "sheet");
         if (id) handoffs.push(id);
       }
     };

@@ -9,6 +9,7 @@ import { benchmarkTarget, benchmarksFor } from "./benchmark";
 import { conversionFor } from "./conversions";
 import { businessModel, googleHealth } from "@/lib/google-flags";
 import { LIVE } from "@/lib/live";
+import { orderSeats, type SeatRow } from "@/lib/buyer-seats";
 
 // Pulls Meta and Google Ads numbers per campaign per day for every ad account with a KPI target, then recomputes
 // each target (the same math for both; Google's days live in google_campaign_daily).
@@ -248,10 +249,11 @@ export async function adoptNewAccounts(admin: SupabaseClient) {
   const [{ data: clients }, { data: targets }, { data: buyers }] = await Promise.all([
     admin.from("clients").select("id, meta_ad_account_id").is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null),
     admin.from("kpi_targets").select("client_id").eq("platform", "meta"),
-    admin.from("client_assignments").select("client_id, profile_id").eq("role", "meta_buyer"),
+    admin.from("client_assignments").select("client_id, profile_id, role, is_primary, created_at").eq("role", "meta_buyer"),
   ]);
   const has = new Set((targets ?? []).map((t) => t.client_id));
-  const buyer = new Map((buyers ?? []).map((b) => [b.client_id, b.profile_id]));
+  // The new KPI card is the primary Meta buyer's (primaries last, so they win)
+  const buyer = new Map(orderSeats((buyers ?? []) as SeatRow[]).reverse().map((b) => [b.client_id, b.profile_id]));
   const fresh = (clients ?? [])
     .filter((c) => !has.has(c.id))
     .map((c) => ({ client_id: c.id, platform: "meta", ad_account_id: c.meta_ad_account_id, conversion: "purchases", owner_id: buyer.get(c.id) ?? null }));

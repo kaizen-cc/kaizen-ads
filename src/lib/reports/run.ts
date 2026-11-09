@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { nyParts } from "@/lib/kpi/calc";
+import { ccFrom, loadBuyerSeats, unique } from "@/lib/buyer-seats";
 import { LIVE } from "@/lib/live";
 import { sendEmail } from "@/lib/email";
 import { emailHtml, emailText } from "@/lib/email-layout";
@@ -228,14 +229,17 @@ export async function sendPartNow(admin: SupabaseClient, id: string, by: { id: s
   const { data: waiting } = await admin.from("reports").select("id, platform, owner_id").eq("bundle_id", r.bundle_id).not("status", "in", "(submitted,posted,skipped)");
   await deliverBundle(admin, r.bundle_id, by);
   const name = (p: string) => (p === "google" ? "Google" : "Meta");
-  // Only executives and media buyers hear about reports
-  const told = await reportListeners(admin, (waiting ?? []).map((w) => w.owner_id as string | null));
-  if (waiting?.some((w) => told.has(w.owner_id as string)))
+  // Each waiting part's owner, with the client's secondary buyers on that platform copied in (only executives and
+  // media buyers hear about reports)
+  const seats = await loadBuyerSeats(admin, [r.client_id]);
+  const to = (waiting ?? []).flatMap((w) => ccFrom(seats, w.platform as string, [w.owner_id as string | null]).map((id) => ({ ...w, to: id })));
+  const told = await reportListeners(admin, to.map((w) => w.to));
+  if (to.some((w) => told.has(w.to)))
     await admin.from("notifications").upsert(
-      waiting
-        .filter((w) => told.has(w.owner_id as string))
+      to
+        .filter((w) => told.has(w.to))
         .map((w) => ({
-          profile_id: w.owner_id,
+          profile_id: w.to,
           kind: "report",
           title: `${by.fullName.split(" ")[0]} sent the ${name(r.platform)} part of ${r.client.name}'s recap on its own`,
           body: `Your ${name(w.platform)} part goes to the client by itself as soon as you approve it, on the same recap link.`,
@@ -364,19 +368,23 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
 
 /** Reminders: weekly reports not posted by Monday afternoon; monthly parts not submitted as the 5th nears (Slack-free: in the app and by email via notifications). */
 export async function remindReports(admin: SupabaseClient, today = nyParts(new Date()).date) {
-  const { data } = await admin.from("reports").select("id, kind, owner_id, client_id, period_start, status, clients(name)").in("status", ["draft", "failed"]).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
+  const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, status, clients(name)").in("status", ["draft", "failed"]).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
   const day = Number(today.slice(8, 10));
   let n = 0;
+  // The report's owner, with the client's secondary buyers on that platform copied in
+  const seats = await loadBuyerSeats(admin, unique((data ?? []).map((r) => r.client_id as string)));
+  const toOf = (r: { client_id: unknown; platform: unknown; owner_id: unknown }) => ccFrom(seats.filter((s) => s.client_id === r.client_id), String(r.platform), [r.owner_id as string | null]);
   // Only executives and media buyers hear about reports
-  const told = await reportListeners(admin, (data ?? []).map((r) => r.owner_id as string | null));
+  const told = await reportListeners(admin, (data ?? []).flatMap(toOf));
   for (const r of data ?? []) {
-    if (!r.owner_id || !told.has(r.owner_id as string)) continue;
+    const to = r.owner_id ? toOf(r).filter((id) => told.has(id)) : [];
+    if (!to.length) continue;
     const name = (r.clients as unknown as { name: string }).name;
     const monthly = r.kind === "monthly";
     if (monthly && day > 5) continue;
     await admin.from("notifications").upsert(
-      {
-        profile_id: r.owner_id,
+      to.map((id) => ({
+        profile_id: id,
         kind: "report",
         title: monthly ? `${name}: the monthly recap is due by the 5th` : `${name}: this week's report hasn't gone out`,
         body: monthly ? "Submit your part so it can go to the client. It goes out once every buyer on the account has submitted." : "It's drafted and checked: read it over and post it.",
@@ -384,7 +392,7 @@ export async function remindReports(admin: SupabaseClient, today = nyParts(new D
         client_id: r.client_id,
         key: `report-remind:${r.id}:${today}`,
         priority: monthly && day >= 4 ? "critical" : "normal",
-      },
+      })),
       { onConflict: "profile_id,key", ignoreDuplicates: true },
     );
     n++;

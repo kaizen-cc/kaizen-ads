@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { gtmForContext } from "@/lib/gtm";
 import { servicesOf } from "@/lib/services";
+import { orderSeats, type SeatRow } from "@/lib/buyer-seats";
 import { planSignedOff, strategyCalls } from "@/lib/execution-plan";
 
 // Two messages in a new client's external Slack channel. "Meet your team" goes on its own (once) as soon as the channel
@@ -183,9 +184,10 @@ const SERVICE_LINE: Record<string, string> = {
 type Seats = Record<string, { id: string; name: string }>;
 
 async function seatsOf(admin: SupabaseClient, clientId: string): Promise<Seats> {
-  const { data } = await admin.from("client_assignments").select("role, profile_id, profiles(full_name)").eq("client_id", clientId);
+  const { data } = await admin.from("client_assignments").select("role, profile_id, is_primary, created_at, profiles(full_name)").eq("client_id", clientId);
   const out: Seats = {};
-  for (const s of data ?? []) {
+  // Each seat's primary
+  for (const s of orderSeats((data ?? []) as unknown as (SeatRow & { profiles: unknown })[])) {
     const name = (s.profiles as unknown as { full_name: string } | null)?.full_name;
     if (name && !out[s.role as string]) out[s.role as string] = { id: s.profile_id as string, name };
   }

@@ -266,7 +266,8 @@ export async function regenerateMany(ids: string[], approvedToo = false): Promis
   const allowed: string[] = [];
   for (const r of data ?? []) {
     const t = r.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
-    const own = r.owner_id === me.id;
+    // A buyer's own: the reports they own, and (a secondary buyer) the ones on the account they hold the seat on
+    const own = r.owner_id === me.id || (!isExecOrLead(me) && t != null && (await canReportOn(db, me, t)));
     if (!own && !(isExecOrLead(me) && t && (await canReportOn(db, me, t)))) continue;
     if (r.status === "draft" || r.status === "failed" || (approvedToo && own && r.status === "submitted")) allowed.push(r.id);
   }
