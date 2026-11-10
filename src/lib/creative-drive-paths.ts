@@ -1,14 +1,20 @@
 // Where a ticket's creative goes in the client's Drive, and what each file is called. Pure: no Drive calls, no database,
 // so the paths, the names and the idempotent folder logic are unit-tested with a fake Drive.
 //
-// Ad Creative / Liquidating Seller / Cash in a week / 2026-11 Summer Sale / Acme - Summer Sale - V2 - 4x5.png
-//                                                                          Acme - Summer Sale - V1 - Slide 03 - 4x5.png
-//                                                                          _Replaced / (files taken off the ticket)
-// No avatar: "_Not tied to an avatar"; an avatar under test: "_Avatar tests / <avatar>"; no angle: "_No angle".
-// Format and size live in the file name, not in folders.
+// Ad Creatives / 2026 / 11 - November / #1234 Best Seat Hack / Acme_Best_Seat_Hack_V2_4x5.png
+//                                                               Acme_Best_Seat_Hack_V1_Slide03_4x5.png
+//                                                               _Replaced / (files taken off the ticket)
+// The year and month folders follow the naming the client's folder already uses ("November", "11. Nov", "2026-11");
+// "2026" / "11 - November" when there's none yet. The month is the ticket's (when it was made, New York time), so every
+// round of a ticket lands in the same folder. One folder per ticket, named by its number and title; format and size
+// live in the file name, which follows the brief's file naming.
 
 export const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 export const REPLACED = "_Replaced";
+/** The folder made in the client's Drive folder when they have none */
+export const AD_CREATIVES = "Ad Creatives";
+/** The start of the ticket's message when the client has no Drive folder at all (the file stays in Kaizen Ads) */
+export const NO_DRIVE = "Drive isn't connected for this client";
 
 /** En and em dashes, written as code points so the source holds none */
 const DASHES = new RegExp(`[${String.fromCharCode(0x2013, 0x2014)}]`, "g");
@@ -28,83 +34,116 @@ export function cleanName(s: string | null | undefined, max = 80) {
   return out.slice(0, max).replace(/\s+\S*$/, "").trim() || out.slice(0, max).trim();
 }
 
-export const NO_AVATAR = "_Not tied to an avatar";
-export const AVATAR_TESTS = "_Avatar tests";
-export const NO_ANGLE = "_No angle";
-
-/** Year and month name in New York time, the agency's calendar (a ticket made late on the 31st is still that month). */
+/** Year and month in New York time, the agency's calendar (a ticket made late on the 31st is still that month). */
 export function yearMonth(at: string | Date, timeZone = "America/New_York") {
   const d = typeof at === "string" ? new Date(at) : at;
   const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "numeric" }).formatToParts(d);
   const year = parts.find((p) => p.type === "year")!.value;
-  const month = Number(parts.find((p) => p.type === "month")!.value);
-  return { year, month: MONTHS[month - 1], key: `${year}-${String(month).padStart(2, "0")}` };
+  const num = Number(parts.find((p) => p.type === "month")!.value);
+  return { year, num, month: MONTHS[num - 1], key: `${year}-${String(num).padStart(2, "0")}` };
 }
 
-/** Bold markers and quotes the Bible or a brief may wrap a name in */
-const unwrap = (s: string) => s.replace(/\*\*|__|[`"“”]/g, "").trim();
+// ─── Year and month folders, named the way the client's folder already names them ─────────────────────────────────
+
+/** "2026", "FY2026", "Year 2026": the year, else null */
+export function parseYearFolder(name: string) {
+  const m = /^(?:fy|year)?[\s_-]*(20\d{2})[\s_-]*$/i.exec(name.normalize("NFC").trim());
+  return m ? Number(m[1]) : null;
+}
+
+/** A new year folder named like the ones already there ("FY2025" makes "FY2026"), else just the year */
+export function yearFolderName(year: string, siblings: string[]) {
+  const like = siblings.find((s) => parseYearFolder(s) != null);
+  return like ? cleanName(like.trim().replace(/20\d{2}/, year)) : year;
+}
+
+/** How a client names month folders: "{NUM} - {NAME}" with the number padded, the name full or short, its case */
+export type MonthStyle = { template: string; pad: boolean | null; abbr: boolean; case: "title" | "upper" | "lower" };
+export const DEFAULT_MONTH_STYLE: MonthStyle = { template: "{NUM} - {NAME}", pad: true, abbr: false, case: "title" };
+
+const MONTH_WORD = /(?<![a-z])(january|february|march|april|may|june|july|august|september|october|november|december|sept|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)(?![a-z])/i;
 
 /**
- * An avatar's folder name: the Bible profile's name without its letter ("A · ", "B. ") or its confidence ("(Likely)"),
- * and without a description after a colon or a spaced dash. Null when nothing is left.
+ * A month folder's month and naming: "11 - November", "November", "11. Nov", "2026-11", "11". Null when it isn't
+ * one: anything besides the month, its number, the year and separators ("11 Promo ideas") isn't a month folder.
  */
-export function avatarFolderName(avatar: string | null | undefined) {
-  let s = unwrap((avatar ?? "").normalize("NFC")).replace(DASHES, " - ");
-  s = s.replace(/^[A-Z0-9]{1,2}\s*[·.:)-]\s+/, "");
-  s = s.split(/\s*:\s+|\s+-\s+/)[0];
-  for (let prev = ""; prev !== s; ) {
-    prev = s;
-    s = s.replace(/\s*\([^()]*\)\s*$/, "").trim();
+export function parseMonthFolder(raw: string): { month: number; style: MonthStyle } | null {
+  const name = raw.normalize("NFC").trim();
+  if (!name || name.length > 30) return null;
+  let t = name;
+  let month: number | null = null;
+  let abbr = false;
+  let kase: MonthStyle["case"] = "title";
+  const w = MONTH_WORD.exec(t);
+  if (w) {
+    const word = w[1];
+    const i = MONTHS.findIndex((m) => m.toLowerCase().startsWith(word.toLowerCase().slice(0, 3)));
+    month = i + 1;
+    abbr = word.toLowerCase() !== MONTHS[i].toLowerCase();
+    kase = word.length > 1 && word === word.toUpperCase() ? "upper" : word === word.toLowerCase() ? "lower" : "title";
+    t = `${t.slice(0, w.index)}{NAME}${t.slice(w.index + word.length)}`;
   }
-  s = s.split(/\s+/).filter(Boolean).slice(0, 6).join(" ");
-  const out = cleanName(s, 50);
-  return out === "Untitled" ? null : out;
+  t = t.replace(/(?<!\d)20\d{2}(?!\d)/, "{YEAR}");
+  let pad: boolean | null = null;
+  const n = /(?<!\d)(\d{1,2})(?!\d)/.exec(t);
+  if (n) {
+    const v = Number(n[1]);
+    if (v < 1 || v > 12 || (month && month !== v)) return null;
+    month = v;
+    pad = n[1].length === 2 ? true : v < 10 ? false : null;
+    t = `${t.slice(0, n.index)}{NUM}${t.slice(n.index + n[1].length)}`;
+  }
+  if (!month) return null;
+  if (/[\p{L}\p{N}]/u.test(t.replace(/\{(?:NAME|NUM|YEAR)\}/g, ""))) return null;
+  return { month, style: { template: t, pad, abbr, case: kase } };
 }
 
-/** Words an angle's short name never ends on ("Cash in a week for" reads as "Cash in a week") */
-const DANGLING = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "of", "on", "or", "so", "the", "to", "via", "vs", "with", "your", "their", "our", "that", "who", "when"]);
-
-/**
- * An angle's folder name, the same every time for the same angle: its first clause (up to a comma, period, colon,
- * semicolon, bracket or spaced dash), at most five words, no dangling "and"/"for" at the end, first letter capital.
- * Null when nothing is left.
- */
-export function angleFolderName(angle: string | null | undefined) {
-  const s = unwrap((angle ?? "").normalize("NFC")).replace(DASHES, " - ");
-  const clause = s.split(/[,.;:!?()[\]\n]|\s+-\s+|\s+\/\s+/).map((c) => c.trim()).find(Boolean) ?? "";
-  const words = clause.split(/\s+/).filter(Boolean).slice(0, 5);
-  while (words.length > 1 && DANGLING.has(words[words.length - 1].toLowerCase())) words.pop();
-  const joined = words.join(" ");
-  const out = cleanName(joined.charAt(0).toUpperCase() + joined.slice(1), 50);
-  return out === "Untitled" ? null : out;
+/** The naming most of these month folders share (padding taken from any that shows it), or null when none is a month */
+export function monthStyleOf(names: string[]): MonthStyle | null {
+  const groups = new Map<string, MonthStyle[]>();
+  for (const n of names) {
+    const p = parseMonthFolder(n);
+    if (!p) continue;
+    const k = `${p.style.template}|${p.style.abbr}|${p.style.case}`;
+    groups.set(k, [...(groups.get(k) ?? []), p.style]);
+  }
+  let best: MonthStyle[] | null = null;
+  for (const g of groups.values()) if (!best || g.length > best.length) best = g;
+  if (!best) return null;
+  const pad = best.find((s) => s.pad != null)?.pad ?? true;
+  return { ...best[0], pad };
 }
 
-/** The avatar's folders: its own, inside "_Avatar tests" when it's under test, or "_Not tied to an avatar" */
-export function avatarSegments(avatar: string | null | undefined, test?: boolean | null) {
-  const name = avatarFolderName(avatar);
-  if (!name) return [NO_AVATAR];
-  return test ? [AVATAR_TESTS, name] : [name];
+/** A month folder's name in a style: "11 - November", "Nov", "2026-11" */
+export function monthFolderName(month: number, year: string, style: MonthStyle = DEFAULT_MONTH_STYLE) {
+  const full = MONTHS[month - 1];
+  const word = style.abbr ? full.slice(0, 3) : full;
+  const cased = style.case === "upper" ? word.toUpperCase() : style.case === "lower" ? word.toLowerCase() : word;
+  const num = style.pad === false ? String(month) : String(month).padStart(2, "0");
+  return cleanName(style.template.replace("{NAME}", cased).replace("{NUM}", num).replace("{YEAR}", year));
 }
 
-/**
- * The concept folder: the ticket's title. Two tickets for the client in the same month with the same title would mix
- * their files, so the later one carries its number.
- */
-export function conceptName(title: string | null | undefined, number: number | null, sameTitleEarlier: boolean) {
-  const base = cleanName(title, 70);
-  return sameTitleEarlier && number ? `${base} #${number}` : base;
+// ─── The ticket's folder ──────────────────────────────────────────────────────────────────────────────────────────
+
+/** "#1234 Best Seat Hack": the ticket's number and a short title */
+export function ticketFolderName(number: number, title: string | null | undefined) {
+  const t = (title ?? "").trim();
+  return t ? cleanName(`#${number} ${cleanName(t, 50)}`) : `#${number}`;
 }
 
-/** The folders under Ad Creative, in order: avatar (or "_Avatar tests / avatar"), angle, "2026-11 Concept". */
-export function folderSegments(p: { createdAt: string | Date; concept: string; avatar?: string | null; avatarTest?: boolean | null; angle?: string | null }) {
-  return [...avatarSegments(p.avatar, p.avatarTest), angleFolderName(p.angle) ?? NO_ANGLE, `${yearMonth(p.createdAt).key} ${p.concept}`];
+/** The ticket's folder by its number ("#1234 ...", "1234 - ..."), whatever its title was when it was made */
+export const isTicketFolder = (name: string, number: number) => new RegExp(`^#?\\s*${number}(?!\\d)`).test(name.trim());
+
+/** The ticket folder's place in the cache and on the row (drive_path): "2026/11/#1234", stable whatever the names are */
+export function ticketPath(createdAt: string | Date, number: number) {
+  const ym = yearMonth(createdAt);
+  return `${ym.year}/${String(ym.num).padStart(2, "0")}/#${number}`;
 }
 
-/** A Year or Year / Month folder from the first Ad Creative layout, left in place after its files moved */
-export const isOldLayoutPath = (path: string) => {
-  const [year, month, ...rest] = path.split("/");
-  return /^\d{4}$/.test(year) && !rest.length && (month === undefined || MONTHS.includes(month));
-};
+/** A top-level folder of an earlier layout (avatar folders, "_Not tied to an avatar"), left in place after its files moved */
+export const isOldLayoutPath = (path: string) => !path.includes("/") && !/^\d{4}$/.test(path);
+
+// ─── File names ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** A file's slot in its design: the same slot in the next round is the same Drive file (a new revision). */
 export function slotOf(f: { card: number | null; aspect: string | null; original_name: string }) {
@@ -131,25 +170,41 @@ export function extOf(name: string, mime: string | null | undefined) {
 /** "1x1" stays "1x1"; a pixel size "1200x628" stays as is; nothing → nothing. Drive names can't hold ":". */
 const sizeLabel = (aspect: string | null) => (aspect ? (aspect === "191x100" ? "1.91x1" : aspect) : null);
 
+/** The brief's file name stem, "Acme_Best_Seat_Hack" (the same formula as the brief's specs checklist) */
+export const briefFileStem = (client: string, title: string) =>
+  `${client}_${title}`.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "Client_Concept";
+
 /**
- * "<Client> - <Concept> - V2 - 4x5.png": V is the design's number on the ticket (D2 on the board), so a new round of
- * D2 keeps the same name and becomes a revision of the same file. Carousels add the slide: "... - V1 - Slide 03 - 4x5.png".
+ * The brief's file naming: "Acme_Best_Seat_Hack_V2_4x5.png". V is the design's number on the ticket (D2 on the board),
+ * so a new round of D2 keeps the same name and becomes a revision of the same file. Carousels add the slide:
+ * "..._V1_Slide03_4x5.png". No size known: the uploaded file's own name tells files apart.
  */
-export function driveFileName(p: { client: string; concept: string; position: number; card: number | null; aspect: string | null; originalName: string; mime: string | null }) {
-  const parts = [cleanName(p.client, 60), p.concept, `V${p.position}`];
-  if (p.card != null) parts.push(`Slide ${String(p.card).padStart(2, "0")}`);
+export function driveFileName(p: { client: string; title: string; position: number; card: number | null; aspect: string | null; originalName: string; mime: string | null }) {
+  const parts = [briefFileStem(p.client, p.title), `V${p.position}`];
+  if (p.card != null) parts.push(`Slide${String(p.card).padStart(2, "0")}`);
   const size = sizeLabel(p.aspect);
   if (size) parts.push(size);
-  else if (p.card == null) parts.push(cleanName(p.originalName.replace(/^\d+-[0-9a-f]{4}-/, "").replace(/\.[a-z0-9]{2,5}$/i, ""), 40));
-  return `${parts.join(" - ")}.${extOf(p.originalName, p.mime)}`;
+  else if (p.card == null)
+    parts.push(
+      p.originalName
+        .replace(/^\d+-[0-9a-f]{4}-/, "")
+        .replace(/\.[a-z0-9]{2,5}$/i, "")
+        .replace(/[^\w]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 40) || "file",
+    );
+  return `${parts.join("_")}.${extOf(p.originalName, p.mime)}`;
 }
 
 // ─── Folders, found or made once ───────────────────────────────────────────────────────────────────────────────────
 
 /** The Drive calls the folder logic needs (the real one in creative-drive.ts, a fake in the tests). */
 export type FolderDrive = {
+  /** Oldest first */
   listFolders(parent: string): Promise<{ id: string; name: string }[]>;
   createFolder(parent: string, name: string): Promise<string>;
+  /** An empty folder this run made that lost a race to another run's: to the Drive trash */
+  trashFolder?(id: string): Promise<void>;
 };
 
 /** Folder ids already known (client_drive_folders). put returns the id that won when two runs raced. */
@@ -159,31 +214,84 @@ export type FolderCache = {
   forget(): Promise<void>;
 };
 
-const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+/**
+ * One folder level: its key in the cache, which existing folder counts as it ("November" for the month), and the name
+ * a new one gets (it can look at the folders already there, to name it like them).
+ */
+export type FolderStep = { key: string; match: (name: string) => boolean; name: (siblings: { id: string; name: string }[]) => string | Promise<string> };
 
-/** One folder by name under a parent: the existing one (by name, any case), else a new one. */
-export async function findOrCreateFolder(drive: FolderDrive, parent: string, name: string) {
-  const hit = (await drive.listFolders(parent)).find((f) => sameName(f.name, name));
-  return hit ? hit.id : drive.createFolder(parent, name);
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const exact = (name: string): FolderStep => ({ key: name, match: (n) => sameName(n, name), name: () => name });
+const toStep = (s: FolderStep | string) => (typeof s === "string" ? exact(s) : s);
+
+/**
+ * One folder under a parent: the existing one, else a new one. Two uploads racing can each make one: after making it,
+ * the oldest match wins and a losing new folder (empty) goes to the trash, so there's never a duplicate.
+ */
+export async function findOrCreateFolder(drive: FolderDrive, parent: string, step: FolderStep | string): Promise<{ id: string; created: boolean }> {
+  const s = toStep(step);
+  const siblings = await drive.listFolders(parent);
+  const hit = siblings.find((f) => s.match(f.name));
+  if (hit) return { id: hit.id, created: false };
+  const id = await drive.createFolder(parent, await s.name(siblings));
+  const winner = (await drive.listFolders(parent)).find((f) => s.match(f.name))?.id ?? id;
+  if (winner !== id) {
+    await drive.trashFolder?.(id);
+    return { id: winner, created: false };
+  }
+  return { id, created: true };
 }
 
 /**
- * Year / month / concept / format under the Ad Creative folder, each found or made once: the cache first, then Drive by
- * name (someone may have made "November" by hand), then a new folder. Running it twice makes nothing twice.
+ * Folder levels under the Ad Creatives folder, each found or made once: the cache first, then Drive (someone may
+ * have made "November" by hand), then a new folder. Running it twice, or two runs at once, makes nothing twice.
  */
-export async function ensureFolderPath(drive: FolderDrive, cache: FolderCache, root: string, segments: string[]) {
+export async function ensureFolderPath(drive: FolderDrive, cache: FolderCache, root: string, steps: (FolderStep | string)[]) {
   let parent = root;
-  for (let i = 0; i < segments.length; i++) {
-    const path = segments.slice(0, i + 1).join("/");
+  const keys: string[] = [];
+  for (const raw of steps) {
+    const step = toStep(raw);
+    keys.push(step.key);
+    const path = keys.join("/");
     const known = await cache.get(path);
     if (known) {
       parent = known;
       continue;
     }
-    const id = await findOrCreateFolder(drive, parent, segments[i]);
-    parent = await cache.put(path, id);
+    const { id, created } = await findOrCreateFolder(drive, parent, step);
+    const won = await cache.put(path, id);
+    if (won !== id && created) await drive.trashFolder?.(id);
+    parent = won;
   }
   return parent;
+}
+
+/**
+ * Year / month / ticket under the Ad Creatives folder. A new year or month folder is named like the ones already there
+ * (this year's months, else the latest other year's), "2026" / "11 - November" when there are none.
+ */
+export function ticketSteps(drive: Pick<FolderDrive, "listFolders">, root: string, p: { createdAt: string | Date; number: number; title: string | null }): FolderStep[] {
+  const ym = yearMonth(p.createdAt);
+  const otherYears = async () => {
+    const years = (await drive.listFolders(root))
+      .map((f) => ({ ...f, year: parseYearFolder(f.name) }))
+      .filter((f) => f.year != null && String(f.year) !== ym.year)
+      .sort((a, b) => b.year! - a.year!);
+    for (const y of years.slice(0, 2)) {
+      const style = monthStyleOf((await drive.listFolders(y.id)).map((f) => f.name));
+      if (style) return style;
+    }
+    return null;
+  };
+  return [
+    { key: ym.year, match: (n) => parseYearFolder(n) === Number(ym.year), name: (sib) => yearFolderName(ym.year, sib.map((s) => s.name)) },
+    {
+      key: String(ym.num).padStart(2, "0"),
+      match: (n) => parseMonthFolder(n)?.month === ym.num,
+      name: async (sib) => monthFolderName(ym.num, ym.year, monthStyleOf(sib.map((s) => s.name)) ?? (await otherYears()) ?? DEFAULT_MONTH_STYLE),
+    },
+    { key: `#${p.number}`, match: (n) => isTicketFolder(n, p.number), name: () => ticketFolderName(p.number, p.title) },
+  ];
 }
 
 /** What moving a file already in Drive needs on top of folders: where it is, and moving or renaming it (never a re-upload, never a delete) */
@@ -195,19 +303,19 @@ export type MoveDrive = FolderDrive & {
 };
 
 /**
- * A file already in Drive, put where the layout says: its concept folder (made once, like an upload's), or the
+ * A file already in Drive, put where the layout says: its ticket folder (made once, like an upload's), or the
  * "_Replaced" folder inside it when it was taken off the ticket. Moves only change the file's parents (and its name
- * when the concept was renamed); the old folders stay where they are.
+ * when the title changed); the old folders stay where they are.
  */
 export async function relocateFile(
   drive: MoveDrive,
   cache: FolderCache,
   root: string,
-  p: { fileId: string; segments: string[]; replaced: boolean; name?: string | null },
+  p: { fileId: string; steps: (FolderStep | string)[]; replaced: boolean; name?: string | null },
 ): Promise<{ result: "moved" | "in_place" | "renamed" | "gone"; folder: string | null }> {
   const at = await drive.where(p.fileId);
   if (!at || at.trashed) return { result: "gone", folder: null };
-  const folder = await ensureFolderPath(drive, cache, root, p.replaced ? [...p.segments, REPLACED] : p.segments);
+  const folder = await ensureFolderPath(drive, cache, root, p.replaced ? [...p.steps, REPLACED] : p.steps);
   const rename = p.name && p.name !== at.name ? p.name : undefined;
   if (at.parents.length === 1 && at.parents[0] === folder) {
     if (!rename) return { result: "in_place", folder };
@@ -218,22 +326,50 @@ export async function relocateFile(
   return { result: "moved", folder };
 }
 
-/** "Ad Creative", "Ad Creatives", "Ads Creative", "ad-creative": the folder every client has. */
-export const isAdCreativeName = (name: string) => /^ads?[\s_-]*creatives?$/i.test(name.trim());
+// ─── The client's Ad Creatives folder ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * The client's Ad Creative folder: a folder of that name in their client folder, or one level down (inside "Marketing"
- * or "Kaizen"). Never made: if it isn't there, the ticket says so and someone sets it on the client page.
- */
+const AD_CREATIVE_WORDS = /(^|[^a-z])ads?[\s_-]*creatives?([^a-z]|$)/i;
+const NOT_IN_USE = /\b(old|archived?|backups?|copy|unused)\b/i;
+
+/** "Ad Creatives", "20 - Ad Creatives", "Ad Creative", "ads-creative": the folder every client has (not an old copy) */
+export const isAdCreativeName = (name: string) => AD_CREATIVE_WORDS.test(name) && !NOT_IN_USE.test(name);
+
+/** Exactly "Ad Creatives" once its numbering ("20 - ") is set aside: preferred over a longer name that mentions it */
+const isPlainAdCreative = (name: string) => /^ads?[\s_-]*creatives?$/i.test(name.trim().replace(/^[\d.\s_-]+/, ""));
+
+const pick = (folders: { id: string; name: string }[]) => {
+  const hits = folders.filter((f) => isAdCreativeName(f.name));
+  return (hits.find((f) => isPlainAdCreative(f.name)) ?? hits[0])?.id ?? null;
+};
+
+/** The client's Ad Creatives folder: in their client folder first, else one level down (inside "Marketing" or "Kaizen"). */
 export async function locateAdCreative(drive: Pick<FolderDrive, "listFolders">, clientFolder: string) {
   const top = await drive.listFolders(clientFolder);
-  const direct = top.find((f) => isAdCreativeName(f.name));
-  if (direct) return direct.id;
+  const direct = pick(top);
+  if (direct) return direct;
   for (const f of top.slice(0, 30)) {
-    const hit = (await drive.listFolders(f.id)).find((x) => isAdCreativeName(x.name));
-    if (hit) return hit.id;
+    const hit = pick(await drive.listFolders(f.id));
+    if (hit) return hit;
   }
   return null;
+}
+
+/** The Ad Creatives folder, or a new "Ad Creatives" in the client's folder when there's none (made once, even racing) */
+export async function ensureAdCreative(drive: FolderDrive, clientFolder: string): Promise<{ id: string; made: boolean }> {
+  const found = await locateAdCreative(drive, clientFolder);
+  if (found) return { id: found, made: false };
+  const r = await findOrCreateFolder(drive, clientFolder, { key: AD_CREATIVES, match: isAdCreativeName, name: () => AD_CREATIVES });
+  return { id: r.id, made: r.created };
+}
+
+/**
+ * Where a client's uploads go before any Drive call: the Ad Creatives folder set by hand or found earlier, else look
+ * in (or make it in) their Drive folder, else nowhere: Drive isn't connected for them, the file stays in Kaizen Ads.
+ */
+export function rootPlan(c: { ad_creative_folder_id?: string | null; drive_folder_id?: string | null } | null): { use: string } | { lookIn: string } | { noDrive: true } {
+  if (c?.ad_creative_folder_id) return { use: c.ad_creative_folder_id };
+  if (c?.drive_folder_id) return { lookIn: c.drive_folder_id };
+  return { noDrive: true };
 }
 
 /** A folder ID from a pasted link ("…/folders/<id>", "…?id=<id>") or the bare ID. */

@@ -1,44 +1,59 @@
 import { describe, expect, it } from "vitest";
 import {
-  angleFolderName,
-  avatarFolderName,
-  avatarSegments,
+  briefFileStem,
   classifyDriveError,
   cleanName,
-  conceptName,
+  DEFAULT_MONTH_STYLE,
   driveFileName,
+  ensureAdCreative,
   ensureFolderPath,
+  findOrCreateFolder,
   folderIdOf,
-  folderSegments,
   isAdCreativeName,
   isOldLayoutPath,
+  isTicketFolder,
   locateAdCreative,
   MAX_ATTEMPTS,
+  monthFolderName,
+  monthStyleOf,
+  NO_DRIVE,
   nextAttempt,
+  rootPlan,
+  parseMonthFolder,
+  parseYearFolder,
   relocateFile,
   slotOf,
+  ticketFolderName,
+  ticketPath,
+  ticketSteps,
+  yearFolderName,
   yearMonth,
   type FolderCache,
   type FolderDrive,
   type MoveDrive,
 } from "@/lib/creative-drive-paths";
+import { specsChecklist } from "@/lib/brief-pdf-model";
 import { driveStates, type DriveStateRow } from "@/lib/creative-drive";
 
-/** A Drive with folders only, counting what it makes */
+/** A Drive with folders only (oldest first), counting what it makes and trashes */
 function fakeDrive(seed: Record<string, { id: string; name: string }[]> = {}) {
   const children = new Map(Object.entries(seed).map(([k, v]) => [k, [...v]]));
   let n = 0;
-  const calls = { list: 0, create: 0 };
-  const drive: FolderDrive = {
+  const calls = { list: 0, create: 0, trash: 0 };
+  const drive: FolderDrive & { trashFolder(id: string): Promise<void> } = {
     async listFolders(parent) {
       calls.list++;
-      return children.get(parent) ?? [];
+      return [...(children.get(parent) ?? [])];
     },
     async createFolder(parent, name) {
       calls.create++;
       const id = `new${++n}`;
       children.set(parent, [...(children.get(parent) ?? []), { id, name }]);
       return id;
+    },
+    async trashFolder(id) {
+      calls.trash++;
+      for (const [k, v] of children) children.set(k, v.filter((f) => f.id !== id));
     },
   };
   return { drive, calls, children };
@@ -61,6 +76,8 @@ function memoryCache(): FolderCache & { map: Map<string, string> } {
   };
 }
 
+const names = (c: Map<string, { id: string; name: string }[]>, parent: string) => (c.get(parent) ?? []).map((f) => f.name);
+
 describe("names", () => {
   it("cleans what Drive and computers can't hold", () => {
     expect(cleanName('Summer / Sale: "50%" off?')).toBe("Summer Sale 50% off");
@@ -71,66 +88,43 @@ describe("names", () => {
     expect(cleanName("...hidden.")).toBe("hidden");
   });
 
-  it("names files by client, concept, design number and size", () => {
-    expect(driveFileName({ client: "Acme Co", concept: "Summer Sale", position: 2, card: null, aspect: "4x5", originalName: "01-ab12-final.PNG", mime: "image/png" })).toBe("Acme Co - Summer Sale - V2 - 4x5.png");
-    expect(driveFileName({ client: "Acme", concept: "Promo", position: 1, card: 3, aspect: "4x5", originalName: "x.jpg", mime: "image/jpeg" })).toBe("Acme - Promo - V1 - Slide 03 - 4x5.jpg");
-    expect(driveFileName({ client: "Acme", concept: "Promo", position: 1, card: null, aspect: "9x16", originalName: "clip", mime: "video/mp4" })).toBe("Acme - Promo - V1 - 9x16.mp4");
+  it("names files the way the brief does, by design number and size", () => {
+    expect(driveFileName({ client: "Acme Co", title: "Summer Sale", position: 2, card: null, aspect: "4x5", originalName: "01-ab12-final.PNG", mime: "image/png" })).toBe("Acme_Co_Summer_Sale_V2_4x5.png");
+    expect(driveFileName({ client: "Acme", title: "Promo", position: 1, card: 3, aspect: "4x5", originalName: "x.jpg", mime: "image/jpeg" })).toBe("Acme_Promo_V1_Slide03_4x5.jpg");
+    expect(driveFileName({ client: "Acme", title: "Promo", position: 1, card: null, aspect: "9x16", originalName: "clip", mime: "video/mp4" })).toBe("Acme_Promo_V1_9x16.mp4");
     // No size known: the original name tells files apart
-    expect(driveFileName({ client: "Acme", concept: "Promo", position: 1, card: null, aspect: null, originalName: "01-ab12-hero shot.mov", mime: "video/quicktime" })).toBe("Acme - Promo - V1 - hero shot.mov");
+    expect(driveFileName({ client: "Acme", title: "Promo", position: 1, card: null, aspect: null, originalName: "01-ab12-hero shot.mov", mime: "video/quicktime" })).toBe("Acme_Promo_V1_hero_shot.mov");
   });
 
-  it("keeps a concept's number only when another ticket that month has the same title", () => {
-    expect(conceptName("Summer Sale", 42, false)).toBe("Summer Sale");
-    expect(conceptName("Summer Sale", 42, true)).toBe("Summer Sale #42");
+  it("uses the same file name stem as the brief's specs checklist", () => {
+    const stem = briefFileStem("Alcoa Tickets", "Best Seat Hack");
+    expect(stem).toBe("Alcoa_Tickets_Best_Seat_Hack");
+    expect(specsChecklist({}, ["4x5"], "Alcoa Tickets", "Best Seat Hack").some((l) => l.includes(`${stem}_V1_4x5`))).toBe(true);
   });
 
-  it("names an avatar's folder by its Bible name, without the letter, the confidence or a description", () => {
-    expect(avatarFolderName("A · Liquidating Seller (Likely)")).toBe("Liquidating Seller");
-    expect(avatarFolderName("**B. Fresh-Fish Seeker**: buys every week (Proven)")).toBe("Fresh-Fish Seeker");
-    expect(avatarFolderName(`C) Weekend Warrior Dad ${String.fromCharCode(0x2014)} 35 to 50`)).toBe("Weekend Warrior Dad");
-    expect(avatarFolderName("Busy Mom")).toBe("Busy Mom");
-    expect(avatarFolderName("  ")).toBeNull();
-    expect(avatarFolderName(null)).toBeNull();
-    expect(avatarSegments(null)).toEqual(["_Not tied to an avatar"]);
-    expect(avatarSegments("", true)).toEqual(["_Not tied to an avatar"]);
-    expect(avatarSegments("Weekend Warrior Dad", true)).toEqual(["_Avatar tests", "Weekend Warrior Dad"]);
-    expect(avatarSegments("A · Liquidating Seller (Likely)", false)).toEqual(["Liquidating Seller"]);
+  it("names the ticket's folder by its number and a short title, and knows it by number", () => {
+    expect(ticketFolderName(1234, "Best Seat Hack")).toBe("#1234 Best Seat Hack");
+    expect(ticketFolderName(1234, "  ")).toBe("#1234");
+    expect(ticketFolderName(7, "Sale: 50% / off")).toBe("#7 Sale 50% off");
+    expect(isTicketFolder("#1234 Best Seat Hack", 1234)).toBe(true);
+    expect(isTicketFolder("1234 - Old title", 1234)).toBe(true);
+    expect(isTicketFolder("#12345 Other", 1234)).toBe(false);
+    expect(isTicketFolder("#123 Other", 1234)).toBe(false);
   });
 
-  it("shortens an angle to its first clause, five words at most, the same every time", () => {
-    expect(angleFolderName("Cash in a week, without open houses or repairs")).toBe("Cash in a week");
-    expect(angleFolderName("fear of missing out for busy parents")).toBe("Fear of missing out");
-    expect(angleFolderName(`Speed ${String.fromCharCode(0x2014)} sold in 7 days`)).toBe("Speed");
-    expect(angleFolderName('"Stop overpaying": the real cost of agents')).toBe("Stop overpaying");
-    expect(angleFolderName("Before / after: the kitchen")).toBe("Before");
-    expect(angleFolderName("Social proof")).toBe(angleFolderName("Social proof"));
-    expect(angleFolderName("  ")).toBeNull();
-    expect(angleFolderName(null)).toBeNull();
-  });
-
-  it("lays folders out by avatar, angle, then the dated concept (New York month)", () => {
+  it("files a ticket by its New York month, stable whatever the folder names are", () => {
     // 2am UTC on Dec 1 is still Nov 30 in New York
-    expect(yearMonth("2026-12-01T02:00:00Z")).toEqual({ year: "2026", month: "November", key: "2026-11" });
-    expect(folderSegments({ createdAt: "2026-12-01T02:00:00Z", concept: "Promo", avatar: "A · Liquidating Seller (Likely)", angle: "Cash in a week, no repairs" })).toEqual([
-      "Liquidating Seller",
-      "Cash in a week",
-      "2026-11 Promo",
-    ]);
-    expect(folderSegments({ createdAt: "2027-01-15T15:00:00Z", concept: "Summer Sale #42", avatar: "Weekend Warrior Dad", avatarTest: true, angle: null })).toEqual([
-      "_Avatar tests",
-      "Weekend Warrior Dad",
-      "_No angle",
-      "2027-01 Summer Sale #42",
-    ]);
-    expect(folderSegments({ createdAt: "2027-01-15T15:00:00Z", concept: "Promo" })).toEqual(["_Not tied to an avatar", "_No angle", "2027-01 Promo"]);
+    expect(yearMonth("2026-12-01T02:00:00Z")).toEqual({ year: "2026", num: 11, month: "November", key: "2026-11" });
+    expect(ticketPath("2026-12-01T02:00:00Z", 1234)).toBe("2026/11/#1234");
+    expect(ticketPath("2027-01-15T15:00:00Z", 9)).toBe("2027/01/#9");
   });
 
-  it("knows the first layout's Year and Month folders", () => {
-    expect(isOldLayoutPath("2026")).toBe(true);
-    expect(isOldLayoutPath("2026/November")).toBe(true);
-    expect(isOldLayoutPath("2026/November/Promo")).toBe(false);
-    expect(isOldLayoutPath("Liquidating Seller")).toBe(false);
-    expect(isOldLayoutPath("2026/Cash in a week")).toBe(false);
+  it("knows an earlier layout's top folders", () => {
+    expect(isOldLayoutPath("Liquidating Seller")).toBe(true);
+    expect(isOldLayoutPath("_Not tied to an avatar")).toBe(true);
+    expect(isOldLayoutPath("2026")).toBe(false);
+    expect(isOldLayoutPath("2026/11/#1234")).toBe(false);
+    expect(isOldLayoutPath("Liquidating Seller/Cash in a week")).toBe(false);
   });
 
   it("gives each size and slide a stable slot (the next round is the same Drive file)", () => {
@@ -140,59 +134,159 @@ describe("names", () => {
   });
 });
 
+describe("year and month naming", () => {
+  it("reads year folders and names a new one like them", () => {
+    expect(parseYearFolder("2026")).toBe(2026);
+    expect(parseYearFolder("FY2025")).toBe(2025);
+    expect(parseYearFolder("Year 2024")).toBe(2024);
+    expect(parseYearFolder("2026 Promo")).toBeNull();
+    expect(parseYearFolder("Brand")).toBeNull();
+    expect(yearFolderName("2026", ["Brand", "FY2025"])).toBe("FY2026");
+    expect(yearFolderName("2026", ["Brand"])).toBe("2026");
+  });
+
+  it("reads month folders in any common naming", () => {
+    expect(parseMonthFolder("11 - November")).toEqual({ month: 11, style: { template: "{NUM} - {NAME}", pad: true, abbr: false, case: "title" } });
+    expect(parseMonthFolder("November")?.style.template).toBe("{NAME}");
+    expect(parseMonthFolder("03. Mar")).toEqual({ month: 3, style: { template: "{NUM}. {NAME}", pad: true, abbr: true, case: "title" } });
+    expect(parseMonthFolder("2026-11")).toEqual({ month: 11, style: { template: "{YEAR}-{NUM}", pad: true, abbr: false, case: "title" } });
+    expect(parseMonthFolder("4 APRIL")).toEqual({ month: 4, style: { template: "{NUM} {NAME}", pad: false, abbr: false, case: "upper" } });
+    expect(parseMonthFolder("11")?.month).toBe(11);
+    // Not month folders
+    expect(parseMonthFolder("11 Promo ideas")).toBeNull();
+    expect(parseMonthFolder("13")).toBeNull();
+    expect(parseMonthFolder("03 - November")).toBeNull();
+    expect(parseMonthFolder("#1234 Best Seat Hack")).toBeNull();
+    expect(parseMonthFolder("Mayhem")).toBeNull();
+  });
+
+  it("names a new month like the client's other months, else 11 - November", () => {
+    expect(monthFolderName(11, "2026")).toBe("11 - November");
+    expect(monthFolderName(3, "2026", DEFAULT_MONTH_STYLE)).toBe("03 - March");
+    expect(monthFolderName(11, "2026", monthStyleOf(["September", "October", "Brief docs"])!)).toBe("November");
+    expect(monthFolderName(2, "2027", monthStyleOf(["11. Nov", "12. Dec"])!)).toBe("02. Feb");
+    expect(monthFolderName(2, "2027", monthStyleOf(["1 jan", "12 dec"])!)).toBe("2 feb");
+    expect(monthFolderName(1, "2027", monthStyleOf(["2026-11", "2026-12"])!)).toBe("2027-01");
+    // Padding learned from any month that shows it ("10" alone can't tell)
+    expect(monthStyleOf(["10 - October"])!.pad).toBe(true);
+    expect(monthStyleOf(["Brand", "#12 Promo"])).toBeNull();
+  });
+});
+
 describe("folders", () => {
-  it("makes avatar, angle and concept once, then reuses them", async () => {
-    const { drive, calls } = fakeDrive();
+  const ticket = { createdAt: "2026-11-10T15:00:00Z", number: 1234, title: "Best Seat Hack" };
+
+  it("makes Year / Month / #ticket once, then reuses them", async () => {
+    const { drive, calls, children } = fakeDrive();
     const cache = memoryCache();
-    const segs = ["Liquidating Seller", "Cash in a week", "2026-11 Summer Sale"];
-    const a = await ensureFolderPath(drive, cache, "root", segs);
+    const a = await ensureFolderPath(drive, cache, "root", ticketSteps(drive, "root", ticket));
     expect(calls.create).toBe(3);
-    const b = await ensureFolderPath(drive, cache, "root", segs);
+    expect(names(children, "root")).toEqual(["2026"]);
+    expect(names(children, cache.map.get("2026")!)).toEqual(["11 - November"]);
+    expect(names(children, cache.map.get("2026/11")!)).toEqual(["#1234 Best Seat Hack"]);
+    expect(cache.map.get("2026/11/#1234")).toBe(a);
+    const b = await ensureFolderPath(drive, cache, "root", ticketSteps(drive, "root", ticket));
     expect(b).toBe(a);
     expect(calls.create).toBe(3); // nothing made twice
-    // A sibling concept reuses the avatar and angle
-    await ensureFolderPath(drive, cache, "root", ["Liquidating Seller", "Cash in a week", "2026-11 Black Friday"]);
+    // Another ticket the same month reuses the year and month
+    await ensureFolderPath(drive, cache, "root", ticketSteps(drive, "root", { ...ticket, number: 1235, title: "Promo" }));
     expect(calls.create).toBe(4);
   });
 
-  it("uses folders someone already made by hand (any case), without the cache", async () => {
-    const { drive, calls } = fakeDrive({ root: [{ id: "av", name: "liquidating seller" }], av: [{ id: "an", name: "Cash In A Week" }] });
+  it("uses the year and month folders already there, in their naming, without the cache", async () => {
+    const { drive, calls, children } = fakeDrive({
+      root: [{ id: "y25", name: "2025" }, { id: "y", name: "2026" }],
+      y: [{ id: "oct", name: "October" }, { id: "nov", name: "november" }],
+      nov: [{ id: "t", name: "#1234 Old title" }],
+    });
     const cache = memoryCache();
-    await ensureFolderPath(drive, cache, "root", ["Liquidating Seller", "Cash in a week", "2026-11 Promo"]);
-    expect(calls.create).toBe(1);
-    expect(cache.map.get("Liquidating Seller")).toBe("av");
-    expect(cache.map.get("Liquidating Seller/Cash in a week")).toBe("an");
+    expect(await ensureFolderPath(drive, cache, "root", ticketSteps(drive, "root", ticket))).toBe("t");
+    expect(calls.create).toBe(0);
+    expect(cache.map.get("2026/11")).toBe("nov");
+    // A new month in that year is named like its siblings
+    await ensureFolderPath(drive, cache, "root", ticketSteps(drive, "root", { ...ticket, createdAt: "2026-12-10T15:00:00Z" }));
+    expect(names(children, "y")).toContain("December");
   });
 
-  it("makes nothing twice after the cache is forgotten (found by name again)", async () => {
+  it("names a new year's first month like the latest year before it", async () => {
+    const { drive, children } = fakeDrive({ root: [{ id: "y", name: "2026" }], y: [{ id: "a", name: "11. Nov" }, { id: "b", name: "12. Dec" }] });
+    const cache = memoryCache();
+    await ensureFolderPath(drive, cache, "root", ticketSteps(drive, "root", { ...ticket, createdAt: "2027-01-10T15:00:00Z" }));
+    expect(names(children, "root")).toEqual(["2026", "2027"]);
+    expect(names(children, cache.map.get("2027")!)).toEqual(["01. Jan"]);
+  });
+
+  it("makes nothing twice after the cache is forgotten (found again)", async () => {
     const { drive, calls } = fakeDrive();
     const cache = memoryCache();
-    const segs = ["_Not tied to an avatar", "_No angle", "2026-11 Promo"];
-    const first = await ensureFolderPath(drive, cache, "root", segs);
+    const first = await ensureFolderPath(drive, cache, "root", ticketSteps(drive, "root", ticket));
     await cache.forget();
-    expect(await ensureFolderPath(drive, cache, "root", segs)).toBe(first);
+    expect(await ensureFolderPath(drive, cache, "root", ticketSteps(drive, "root", ticket))).toBe(first);
     expect(calls.create).toBe(3);
   });
 
-  it("keeps the cached id that won a race", async () => {
-    const { drive } = fakeDrive();
-    const cache = memoryCache();
-    cache.map.set("2026", "winner");
-    expect(await ensureFolderPath(drive, cache, "root", ["2026"])).toBe("winner");
+  it("two uploads racing end on one folder: the loser's empty folder goes to the trash", async () => {
+    const { drive, calls, children } = fakeDrive();
+    // Both look before either makes: each makes a "2026"
+    const racing: FolderDrive & { trashFolder(id: string): Promise<void> } = {
+      ...drive,
+      listFolders: async (p) => (calls.create < 2 && p === "root" && calls.list++ < 2 ? [] : drive.listFolders(p)),
+    };
+    const step = ticketSteps(racing, "root", ticket)[0];
+    const [a, b] = await Promise.all([findOrCreateFolder(racing, "root", step), findOrCreateFolder(racing, "root", step)]);
+    expect(a.id).toBe(b.id);
+    expect(calls.trash).toBe(1);
+    expect(names(children, "root")).toEqual(["2026"]);
   });
 
-  it("finds the Ad Creative folder in the client folder or one level down, never makes it", async () => {
-    expect(isAdCreativeName("Ad Creative")).toBe(true);
-    expect(isAdCreativeName("ad creatives")).toBe(true);
+  it("keeps the cached id that won a race, trashing the one it just made", async () => {
+    const { drive, calls } = fakeDrive();
+    const cache = memoryCache();
+    const slow: FolderCache = { ...cache, get: async () => null, put: async (p) => (p === "2026" ? "winner" : cache.put(p, "x")) };
+    const steps = ticketSteps(drive, "root", ticket).slice(0, 1);
+    expect(await ensureFolderPath(drive, slow, "root", steps)).toBe("winner");
+    expect(calls.trash).toBe(1);
+  });
+
+  it("finds the Ad Creatives folder by name, preferring the client folder's own", async () => {
+    expect(isAdCreativeName("Ad Creatives")).toBe(true);
+    expect(isAdCreativeName("20 - Ad Creatives")).toBe(true);
+    expect(isAdCreativeName("ad creative")).toBe(true);
     expect(isAdCreativeName("Ads-Creative")).toBe(true);
-    expect(isAdCreativeName("Ad Creative Old")).toBe(false);
-    const direct = fakeDrive({ c: [{ id: "x", name: "Brand" }, { id: "ac", name: "Ad Creative" }] });
+    expect(isAdCreativeName("Ad Creatives OLD")).toBe(false);
+    expect(isAdCreativeName("Best Tickets - Headquarters")).toBe(false);
+    const direct = fakeDrive({ c: [{ id: "x", name: "Best Tickets - Headquarters" }, { id: "ac", name: "20 - Ad Creatives" }], x: [{ id: "deep", name: "Ad Creatives" }] });
     expect(await locateAdCreative(direct.drive, "c")).toBe("ac");
+    const plain = fakeDrive({ c: [{ id: "long", name: "Ad Creatives - Archive of ideas 2024" }, { id: "p", name: "Ad Creatives" }] });
+    expect(await locateAdCreative(plain.drive, "c")).toBe("p");
     const nested = fakeDrive({ c: [{ id: "k", name: "Kaizen" }], k: [{ id: "ac2", name: "AD CREATIVE" }] });
     expect(await locateAdCreative(nested.drive, "c")).toBe("ac2");
     const none = fakeDrive({ c: [{ id: "k", name: "Kaizen" }] });
     expect(await locateAdCreative(none.drive, "c")).toBeNull();
     expect(none.calls.create).toBe(0);
+  });
+
+  it("makes an Ad Creatives folder in the client folder when there is none, once", async () => {
+    const { drive, calls, children } = fakeDrive({ c: [{ id: "k", name: "Brand" }] });
+    const first = await ensureAdCreative(drive, "c");
+    expect(first.made).toBe(true);
+    expect(names(children, "c")).toEqual(["Brand", "Ad Creatives"]);
+    expect(await ensureAdCreative(drive, "c")).toEqual({ id: first.id, made: false });
+    expect(calls.create).toBe(1);
+    // Found ones are never made
+    const has = fakeDrive({ c: [{ id: "ac", name: "20 - Ad Creatives" }] });
+    expect(await ensureAdCreative(has.drive, "c")).toEqual({ id: "ac", made: false });
+    expect(has.calls.create).toBe(0);
+  });
+
+  it("with no Drive folder, nothing is looked for or made: the ticket says Drive isn't connected", () => {
+    expect(rootPlan({ ad_creative_folder_id: "set", drive_folder_id: "c" })).toEqual({ use: "set" }); // a choice by hand wins
+    expect(rootPlan({ ad_creative_folder_id: null, drive_folder_id: "c" })).toEqual({ lookIn: "c" });
+    expect(rootPlan({ ad_creative_folder_id: null, drive_folder_id: null })).toEqual({ noDrive: true });
+    expect(rootPlan(null)).toEqual({ noDrive: true });
+    const s = driveStates([{ want_file_id: "f", synced_file_id: null, status: "error", drive_url: null, op: "upload", attempts: 0, error: `${NO_DRIVE}. The file is saved here`, error_kind: "no_folder" }]);
+    expect(s.get("f")).toMatchObject({ status: "error", kind: "no_folder" });
+    expect(s.get("f")!.error!.startsWith(NO_DRIVE)).toBe(true);
   });
 
   it("reads a folder id from a pasted link", () => {
@@ -228,66 +322,56 @@ function fakeMoveDrive(seed: Record<string, { id: string; name: string }[]>, fil
 }
 
 describe("moving what's already in Drive", () => {
-  // The first layout: Ad Creative / 2026 / November / Promo / Images / the file
-  const oldLayout = () => ({
-    root: [{ id: "y", name: "2026" }],
-    y: [{ id: "m", name: "November" }],
-    m: [{ id: "c", name: "Promo" }],
-    c: [{ id: "img", name: "Images" }, { id: "rep", name: "_Replaced" }],
+  // The avatar layout: Ad Creative / Liquidating Seller / Cash in a week / 2026-11 Promo / the file
+  const avatarLayout = () => ({
+    root: [{ id: "av", name: "Liquidating Seller" }],
+    av: [{ id: "an", name: "Cash in a week" }],
+    an: [{ id: "c", name: "2026-11 Promo" }],
+    c: [{ id: "rep", name: "_Replaced" }],
   });
-  const segments = ["Liquidating Seller", "Cash in a week", "2026-11 Promo"];
+  const t = { createdAt: "2026-11-10T15:00:00Z", number: 1234, title: "Promo" };
 
-  it("moves a file into avatar / angle / concept, once, and leaves the old folders where they are", async () => {
-    const f = fakeMoveDrive(oldLayout(), { f1: { parents: ["img"], name: "Acme - Promo - V1 - 4x5.png" } });
+  it("moves a file into Year / Month / #ticket, once, and leaves the old folders where they are", async () => {
+    const f = fakeMoveDrive(avatarLayout(), { f1: { parents: ["c"], name: "Acme - Promo - V1 - 4x5.png" } });
     const cache = memoryCache();
-    const first = await relocateFile(f.drive, cache, "root", { fileId: "f1", segments, replaced: false, name: "Acme - Promo - V1 - 4x5.png" });
+    const steps = () => ticketSteps(f.drive, "root", t);
+    const first = await relocateFile(f.drive, cache, "root", { fileId: "f1", steps: steps(), replaced: false, name: "Acme_Promo_V1_4x5.png" });
     expect(first.result).toBe("moved");
-    expect(f.files.f1.parents).toEqual([first.folder]);
-    expect(cache.map.get(segments.join("/"))).toBe(first.folder);
-    expect(f.calls.move).toBe(1);
-    expect(f.calls.rename).toBe(0);
-    // The old Year / Month / Concept / Format folders are still there (nothing deleted)
-    expect(f.children.get("root")!.map((x) => x.name)).toEqual(["2026", "Liquidating Seller"]);
-    expect(f.children.get("c")!.map((x) => x.id)).toEqual(["img", "rep"]);
+    expect(f.files.f1).toEqual({ parents: [first.folder], name: "Acme_Promo_V1_4x5.png" });
+    expect(cache.map.get("2026/11/#1234")).toBe(first.folder);
+    // The avatar folders are still there (nothing deleted)
+    expect(names(f.children, "root")).toEqual(["Liquidating Seller", "2026"]);
     // Running again moves nothing and makes nothing
-    const again = await relocateFile(f.drive, cache, "root", { fileId: "f1", segments, replaced: false, name: "Acme - Promo - V1 - 4x5.png" });
+    const again = await relocateFile(f.drive, cache, "root", { fileId: "f1", steps: steps(), replaced: false, name: "Acme_Promo_V1_4x5.png" });
     expect(again).toEqual({ result: "in_place", folder: first.folder });
     expect(f.calls.move).toBe(1);
     expect(f.base.calls.create).toBe(3);
   });
 
-  it("puts a replaced file in _Replaced inside its new concept folder", async () => {
-    const f = fakeMoveDrive(oldLayout(), { f2: { parents: ["rep"], name: "Acme - Promo - V2 - 9x16.mp4" } });
+  it("puts a replaced file in _Replaced inside its ticket folder", async () => {
+    const f = fakeMoveDrive(avatarLayout(), { f2: { parents: ["rep"], name: "x.mp4" } });
     const cache = memoryCache();
-    const r = await relocateFile(f.drive, cache, "root", { fileId: "f2", segments, replaced: true });
+    const r = await relocateFile(f.drive, cache, "root", { fileId: "f2", steps: ticketSteps(f.drive, "root", t), replaced: true });
     expect(r.result).toBe("moved");
-    const concept = cache.map.get(segments.join("/"))!;
-    expect(f.children.get(concept)).toEqual([{ id: r.folder, name: "_Replaced" }]);
-    expect(f.files.f2.parents).toEqual([r.folder]);
-    expect(f.files.f2.name).toBe("Acme - Promo - V2 - 9x16.mp4"); // no name given: kept
+    const folder = cache.map.get("2026/11/#1234")!;
+    expect(f.children.get(folder)).toEqual([{ id: r.folder, name: "_Replaced" }]);
+    expect(f.files.f2.name).toBe("x.mp4"); // no name given: kept
   });
 
-  it("follows a ticket whose avatar or angle changed, renaming only when the concept did", async () => {
-    const f = fakeMoveDrive(oldLayout(), { f3: { parents: ["img"], name: "Acme - Promo - V1 - 4x5.png" } });
+  it("a renamed ticket keeps its folder and only renames the file", async () => {
+    const f = fakeMoveDrive(avatarLayout(), { f3: { parents: ["c"], name: "Acme_Promo_V1_4x5.png" } });
     const cache = memoryCache();
-    const a = await relocateFile(f.drive, cache, "root", { fileId: "f3", segments, replaced: false });
-    const changed = ["_Avatar tests", "Weekend Warrior Dad", "_No angle", "2026-11 Promo"];
-    const b = await relocateFile(f.drive, cache, "root", { fileId: "f3", segments: changed, replaced: false, name: "Acme - Promo - V1 - 4x5.png" });
-    expect(b.result).toBe("moved");
-    expect(b.folder).not.toBe(a.folder);
-    expect(f.files.f3.parents).toEqual([b.folder]);
-    // Same place, new title: renamed in place, not moved
-    const c = await relocateFile(f.drive, cache, "root", { fileId: "f3", segments: changed, replaced: false, name: "Acme - Spring Promo - V1 - 4x5.png" });
-    expect(c.result).toBe("renamed");
-    expect(f.files.f3.name).toBe("Acme - Spring Promo - V1 - 4x5.png");
-    expect(f.calls.move).toBe(2);
+    const a = await relocateFile(f.drive, cache, "root", { fileId: "f3", steps: ticketSteps(f.drive, "root", t), replaced: false });
+    const b = await relocateFile(f.drive, cache, "root", { fileId: "f3", steps: ticketSteps(f.drive, "root", { ...t, title: "Spring Promo" }), replaced: false, name: "Acme_Spring_Promo_V1_4x5.png" });
+    expect(b).toEqual({ result: "renamed", folder: a.folder });
+    expect(f.files.f3.name).toBe("Acme_Spring_Promo_V1_4x5.png");
   });
 
   it("leaves a file deleted or trashed in Drive alone, making no folders for it", async () => {
-    const f = fakeMoveDrive(oldLayout(), { t: { parents: ["img"], name: "x.png", trashed: true } });
+    const f = fakeMoveDrive(avatarLayout(), { t: { parents: ["c"], name: "x.png", trashed: true } });
     const cache = memoryCache();
-    expect((await relocateFile(f.drive, cache, "root", { fileId: "t", segments, replaced: false })).result).toBe("gone");
-    expect((await relocateFile(f.drive, cache, "root", { fileId: "missing", segments, replaced: false })).result).toBe("gone");
+    expect((await relocateFile(f.drive, cache, "root", { fileId: "t", steps: ticketSteps(f.drive, "root", t), replaced: false })).result).toBe("gone");
+    expect((await relocateFile(f.drive, cache, "root", { fileId: "missing", steps: ticketSteps(f.drive, "root", t), replaced: false })).result).toBe("gone");
     expect(f.base.calls.create).toBe(0);
     expect(f.calls.move).toBe(0);
   });

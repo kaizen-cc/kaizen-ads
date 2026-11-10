@@ -4,24 +4,25 @@ import { after } from "next/server";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import {
   classifyDriveError,
-  conceptName,
   driveFileName,
+  ensureAdCreative,
   ensureFolderPath,
   findOrCreateFolder,
-  folderSegments,
   isOldLayoutPath,
-  locateAdCreative,
+  NO_DRIVE,
   nextAttempt,
   REPLACED,
   relocateFile,
+  rootPlan,
   slotOf,
-  yearMonth,
+  ticketPath,
+  ticketSteps,
   type FolderCache,
   type FolderDrive,
   type MoveDrive,
 } from "@/lib/creative-drive-paths";
 
-// Creative uploaded on a ticket, copied into the client's Google Drive ("Ad Creative / Avatar / Angle / 2026-11 Concept").
+// Creative uploaded on a ticket, copied into the client's Google Drive ("Ad Creatives / 2026 / 11 - November / #1234 Title").
 // Everything here runs after the response or on the schedule: the upload itself never waits for Drive.
 //
 // Needs (Vercel env): GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_DRIVE_USER (a Workspace person who can open every client
@@ -100,6 +101,7 @@ export const drive = {
           q: `'${parent.replace(/'/g, "")}' in parents and mimeType = '${FOLDER}' and trashed = false`,
           fields: "nextPageToken, files(id, name)",
           pageSize: "1000",
+          orderBy: "createdTime",
           corpora: "allDrives",
           includeItemsFromAllDrives: "true",
           ...ALL,
@@ -114,6 +116,10 @@ export const drive = {
   async createFolder(parent: string, name: string) {
     const { data } = await call<{ id: string }>("POST", API, { params: { fields: "id", ...ALL }, json: { name, mimeType: FOLDER, parents: [parent] } });
     return data.id;
+  },
+  /** A folder this run just made that lost a race (empty): to the trash, never deleted */
+  async trashFolder(id: string) {
+    await call("PATCH", `${API}/${id}`, { params: { fields: "id", ...ALL }, json: { trashed: true } });
   },
   /** Folder or file: whether it's there, what it is, where it sits */
   async meta(id: string) {
@@ -144,7 +150,7 @@ export const drive = {
   },
 };
 
-const folderDrive: FolderDrive = { listFolders: drive.listFolders, createFolder: drive.createFolder };
+const folderDrive: FolderDrive = { listFolders: drive.listFolders, createFolder: drive.createFolder, trashFolder: drive.trashFolder };
 const moveDrive: MoveDrive = {
   ...folderDrive,
   async where(id) {
@@ -181,21 +187,30 @@ export function folderCache(admin: SupabaseClient, clientId: string, root: strin
 
 class NoFolder extends Error {}
 
-/** The client's Ad Creative folder: set on the client page, found earlier, or looked for now inside their Drive folder */
+/** The ticket's plain message when the client has no Drive folder: the file stays in Kaizen Ads, nothing stray is made */
+const NO_DRIVE_TEXT = `${NO_DRIVE}. The file is saved here; add their Drive folder on the client page and it's copied over.`;
+
+/**
+ * The client's Ad Creatives folder: the one set by hand on the client page (remembered per client), one found earlier,
+ * or looked for now in their Drive folder ("20 - Ad Creatives", one level down too), and made there when they have
+ * none. No Drive folder at all: nothing is made anywhere, the ticket says Drive isn't connected.
+ */
 async function adCreativeRoot(admin: SupabaseClient, clientId: string) {
   const { data: c } = await admin.from("clients").select("drive_folder_id, ad_creative_folder_id").eq("id", clientId).maybeSingle();
-  if (c?.ad_creative_folder_id) return c.ad_creative_folder_id as string;
-  if (!c?.drive_folder_id) throw new NoFolder("No Ad Creative folder found for this client");
-  let found: string | null = null;
+  const plan = rootPlan(c as { ad_creative_folder_id: string | null; drive_folder_id: string | null } | null);
+  if ("use" in plan) return plan.use;
+  if ("noDrive" in plan) throw new NoFolder(NO_DRIVE_TEXT);
+  let found: string;
   try {
-    found = await locateAdCreative(folderDrive, c.drive_folder_id as string);
+    found = (await ensureAdCreative(folderDrive, plan.lookIn)).id;
   } catch (e) {
-    if (e instanceof DriveError && e.status === 404) throw new NoFolder("No Ad Creative folder found for this client (their Drive folder can't be opened)");
+    if (e instanceof DriveError && e.status === 404) throw new NoFolder(`${NO_DRIVE}: Kaizen's Drive account can't open their Drive folder. Share it, or set the Ad Creatives folder on the client page.`);
     throw e;
   }
-  if (!found) throw new NoFolder("No Ad Creative folder found for this client");
-  await admin.from("clients").update({ ad_creative_folder_id: found, ad_creative_folder_source: "found" }).eq("id", clientId);
-  return found;
+  // Only if nobody set one by hand meanwhile
+  await admin.from("clients").update({ ad_creative_folder_id: found, ad_creative_folder_source: "found" }).eq("id", clientId).is("ad_creative_folder_id", null);
+  const { data: now } = await admin.from("clients").select("ad_creative_folder_id").eq("id", clientId).maybeSingle();
+  return (now?.ad_creative_folder_id as string | null) ?? found;
 }
 
 // ─── What should be in Drive ──────────────────────────────────────────────────────────────────────────────────────
@@ -222,27 +237,12 @@ type SlotRow = {
   drive_path?: string | null;
 };
 
-type RequestPlace = { id: string; number: number; title: string | null; created_at: string; avatar: string | null; avatar_test: boolean | null; angles: { name: string } | null };
-const PLACE_COLUMNS = "id, number, title, created_at, avatar, avatar_test, angles(name)";
+type RequestPlace = { id: string; number: number; title: string | null; created_at: string };
+const PLACE_COLUMNS = "id, number, title, created_at";
 
-/**
- * Where a ticket's creative lives under Ad Creative: avatar, angle, "2026-11 Concept". Another ticket for the client the
- * same month with the same title makes this one carry its number, so their files never mix.
- */
-async function placeOf(admin: SupabaseClient, clientId: string, r: RequestPlace) {
-  const ym = yearMonth(r.created_at);
-  const { data: twins } = await admin
-    .from("requests")
-    .select("created_at")
-    .eq("client_id", clientId)
-    .ilike("title", (r.title ?? "").replace(/[%_\\]/g, "\\$&"))
-    .lt("number", r.number)
-    .gte("created_at", new Date(new Date(r.created_at).getTime() - 32 * 86_400_000).toISOString())
-    .limit(20);
-  const earlier = (twins ?? []).some((t) => yearMonth(t.created_at as string).key === ym.key);
-  const concept = conceptName(r.title, r.number, earlier);
-  const segments = folderSegments({ createdAt: r.created_at, concept, avatar: r.avatar, avatarTest: r.avatar_test, angle: r.angles?.name });
-  return { concept, segments, path: segments.join("/") };
+/** Where a ticket's creative lives under Ad Creatives: its year, month and "#1234 Title" folder */
+function placeOf(root: string, r: RequestPlace) {
+  return { title: r.title ?? "", steps: ticketSteps(folderDrive, root, { createdAt: r.created_at, number: r.number, title: r.title }), path: ticketPath(r.created_at, r.number) };
 }
 
 /**
@@ -335,7 +335,7 @@ export async function processDriveQueue(admin: SupabaseClient, opts: { designId?
   if (opts.designId) q = q.eq("design_id", opts.designId);
   if (opts.clientId) q = q.eq("client_id", opts.clientId);
   const { data: due } = await q;
-  const noFolder = new Set<string>(); // clients found to have no Ad Creative folder this run
+  const noFolder = new Map<string, string>(); // clients found to have no Drive or Ad Creatives folder this run, and why
 
   for (const row of (due ?? []) as SlotRow[]) {
     if (Date.now() - started > budget) break;
@@ -345,14 +345,14 @@ export async function processDriveQueue(admin: SupabaseClient, opts: { designId?
     const { data: claimed } = await claim.select("id").maybeSingle();
     if (!claimed) continue;
     try {
-      if (noFolder.has(row.client_id)) throw new NoFolder("No Ad Creative folder found for this client");
+      if (noFolder.has(row.client_id)) throw new NoFolder(noFolder.get(row.client_id));
       const r = row.op === "retire" ? await retireOne(admin, row) : await uploadOne(admin, row);
       out[r]++;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       out.failed++;
       if (e instanceof NoFolder) {
-        noFolder.add(row.client_id);
+        noFolder.set(row.client_id, message);
         await admin.from("creative_drive_files").update({ status: "error", error_kind: "no_folder", error: message, locked_at: null, updated_at: new Date().toISOString() }).eq("id", row.id);
         continue;
       }
@@ -414,12 +414,12 @@ async function uploadOne(admin: SupabaseClient, row: SlotRow): Promise<"synced" 
   ]);
   if (!d || !r || !c) throw new Error("The ticket or client isn't there anymore");
 
-  const { concept, segments, path } = await placeOf(admin, row.client_id, r as unknown as RequestPlace);
   const root = await adCreativeRoot(admin, row.client_id);
+  const { title, steps, path } = placeOf(root, r as unknown as RequestPlace);
   const cache = folderCache(admin, row.client_id, root);
   let parent: string;
   try {
-    parent = await ensureFolderPath(folderDrive, cache, root, segments);
+    parent = await ensureFolderPath(folderDrive, cache, root, steps);
   } catch (e) {
     if (e instanceof DriveError && e.status === 404) {
       // The Ad Creative folder itself is gone or moved out of reach: look for it again next time
@@ -432,7 +432,7 @@ async function uploadOne(admin: SupabaseClient, row: SlotRow): Promise<"synced" 
   const { data: blob, error } = await admin.storage.from(BUCKET).download(file.path);
   if (!blob) throw new Error(`Not in storage: ${error?.message ?? file.path}`);
   const bytes = blob;
-  const name = driveFileName({ client: c.name as string, concept, position: d.position as number, card: file.card, aspect: file.aspect, originalName: file.original_name, mime: file.mime });
+  const name = driveFileName({ client: c.name as string, title, position: d.position as number, card: file.card, aspect: file.aspect, originalName: file.original_name, mime: file.mime });
 
   let uploaded: { id: string; webViewLink?: string } | null = null;
   if (row.drive_file_id && !row.retired_at) {
@@ -440,7 +440,7 @@ async function uploadOne(admin: SupabaseClient, row: SlotRow): Promise<"synced" 
       const m = await drive.meta(row.drive_file_id);
       if (!m.trashed) {
         uploaded = await drive.upload({ fileId: row.drive_file_id, name, mime: file.mime, bytes });
-        // The avatar, angle or concept folder changed (an edited ticket, or the first layout): the file follows
+        // Filed under an earlier layout (or the folder was set elsewhere since): the file follows
         if (m.parents?.length && !m.parents.includes(parent)) await drive.move(row.drive_file_id, parent, m.parents);
       }
     } catch (e) {
@@ -494,7 +494,7 @@ async function retireOne(admin: SupabaseClient, row: SlotRow): Promise<"retired"
     await finish();
     return "skipped";
   }
-  const replaced = await findOrCreateFolder(folderDrive, from[0], REPLACED);
+  const { id: replaced } = await findOrCreateFolder(folderDrive, from[0], REPLACED);
   if (!from.includes(replaced)) await drive.move(row.drive_file_id, replaced, from);
   await finish();
   return "retired";
@@ -503,10 +503,11 @@ async function retireOne(admin: SupabaseClient, row: SlotRow): Promise<"retired"
 // ─── Keeping files where the layout says ──────────────────────────────────────────────────────────────────────────
 
 /**
- * Files already in Drive put where they belong now: everything synced under the first layout (Year / Month / Concept /
- * Format) and any ticket whose avatar, angle or title changed since (a trigger clears drive_path). Each file is moved,
- * never copied, re-uploaded or deleted; files taken off the ticket go to "_Replaced" in their new concept folder. The old
- * Year / Month folders are left where they are and listed, for someone to tidy by hand once they're empty.
+ * Files already in Drive put where they belong now (Year / Month / "#1234 Title"): everything synced under an earlier
+ * layout (Year / Month / Concept / Format, then Avatar / Angle / Concept) and any ticket whose title changed since (a
+ * trigger clears drive_path, and the file is renamed). Each file is moved, never copied, re-uploaded or deleted; files
+ * taken off the ticket go to "_Replaced" in their ticket folder. The earlier layout's top folders are left where they
+ * are and listed, for someone to tidy by hand once they're empty.
  */
 export async function relayoutDrive(admin: SupabaseClient, opts: { clientId?: string; limit?: number; budgetMs?: number } = {}) {
   const started = Date.now();
@@ -514,17 +515,29 @@ export async function relayoutDrive(admin: SupabaseClient, opts: { clientId?: st
   const out = { moved: 0, renamed: 0, inPlace: 0, gone: 0, failed: 0, waiting: 0, oldFolders: [] as { client_id: string; path: string; folder_id: string }[] };
   if (!driveWriteConfigured()) return out;
 
-  let q = admin
-    .from("creative_drive_files")
-    .select("id, client_id, request_id, design_id, status, synced_file_id, drive_file_id, drive_name")
-    .is("drive_path", null)
-    .not("drive_file_id", "is", null)
-    .in("status", ["synced", "retired"])
-    .order("updated_at", { ascending: true })
-    .limit(opts.limit ?? 500);
-  if (opts.clientId) q = q.eq("client_id", opts.clientId);
-  const { data: rows } = await q;
-  const list = (rows ?? []) as Pick<SlotRow, "id" | "client_id" | "request_id" | "design_id" | "status" | "synced_file_id" | "drive_file_id" | "drive_name">[];
+  // Not checked yet (null), or filed under the avatar layout (anything but "2026/11/#1234")
+  const due = (old: boolean) => {
+    let q = admin
+      .from("creative_drive_files")
+      .select("id, client_id, request_id, design_id, status, synced_file_id, drive_file_id, drive_name, drive_path")
+      .not("drive_file_id", "is", null)
+      .in("status", ["synced", "retired"])
+      .order("updated_at", { ascending: true })
+      .limit(opts.limit ?? 500);
+    // Not null and not "" (no ticket) either: SQL comparisons leave nulls out
+    if (old) q = q.filter("drive_path", "neq", "").filter("drive_path", "not.like", "2___/__/#%");
+    else q = q.is("drive_path", null);
+    if (opts.clientId) q = q.eq("client_id", opts.clientId);
+    return q;
+  };
+  const [{ data: fresh }, { data: earlier }] = await Promise.all([due(false), due(true)]);
+  type Row = Pick<SlotRow, "id" | "client_id" | "request_id" | "design_id" | "status" | "synced_file_id" | "drive_file_id" | "drive_name" | "drive_path">;
+  const list = [...(fresh ?? []), ...(earlier ?? [])].slice(0, opts.limit ?? 500) as Row[];
+  /** The row, only if nothing changed meanwhile (an upload took it, or the ticket was edited again) */
+  const update = (row: Row, patch: Record<string, unknown>) => {
+    const q = admin.from("creative_drive_files").update(patch).eq("id", row.id);
+    return row.drive_path == null ? q.is("drive_path", null) : q.eq("drive_path", row.drive_path);
+  };
 
   const requestIds = [...new Set(list.map((r) => r.request_id).filter((x): x is string => Boolean(x)))];
   const clientIds = [...new Set(list.map((r) => r.client_id))];
@@ -541,14 +554,14 @@ export async function relayoutDrive(admin: SupabaseClient, opts: { clientId?: st
   const fileById = new Map(((files ?? []) as { id: string; original_name: string; mime: string | null; aspect: string | null; card: number | null }[]).map((f) => [f.id, f]));
   const position = new Map(((designs ?? []) as { id: string; position: number }[]).map((d) => [d.id, d.position]));
 
-  const places = new Map<string, Awaited<ReturnType<typeof placeOf>>>();
+  const places = new Map<string, ReturnType<typeof placeOf>>();
   const roots = new Map<string, string | null>(); // null: no Ad Creative folder, those wait
   for (const row of list) {
     if (Date.now() - started > budget) break;
     const r = row.request_id ? reqById.get(row.request_id) : undefined;
     if (!r) {
       // No ticket to place it by: left where it is, and not looked at again
-      await admin.from("creative_drive_files").update({ drive_path: "" }).eq("id", row.id).is("drive_path", null);
+      await update(row, { drive_path: "" });
       continue;
     }
     try {
@@ -565,23 +578,22 @@ export async function relayoutDrive(admin: SupabaseClient, opts: { clientId?: st
         out.waiting++;
         continue;
       }
-      if (!places.has(r.id)) places.set(r.id, await placeOf(admin, row.client_id, r));
+      if (!places.has(r.id)) places.set(r.id, placeOf(root, r));
       const place = places.get(r.id)!;
       const f = row.synced_file_id ? fileById.get(row.synced_file_id) : undefined;
       const pos = position.get(row.design_id);
       const name =
         f && pos != null && clientName.has(row.client_id)
-          ? driveFileName({ client: clientName.get(row.client_id)!, concept: place.concept, position: pos, card: f.card, aspect: f.aspect, originalName: f.original_name, mime: f.mime })
+          ? driveFileName({ client: clientName.get(row.client_id)!, title: place.title, position: pos, card: f.card, aspect: f.aspect, originalName: f.original_name, mime: f.mime })
           : null;
       const cache = folderCache(admin, row.client_id, root);
-      const { result } = await relocateFile(moveDrive, cache, root, { fileId: row.drive_file_id!, segments: place.segments, replaced: row.status === "retired", name });
+      const { result } = await relocateFile(moveDrive, cache, root, { fileId: row.drive_file_id!, steps: place.steps, replaced: row.status === "retired", name });
       if (result === "moved") out.moved++;
       else if (result === "renamed") out.renamed++;
       else if (result === "gone") out.gone++;
       else out.inPlace++;
       const renamed = name && (result === "moved" || result === "renamed") ? { drive_name: name } : {};
-      // Only if nothing changed meanwhile (an upload took the row, or the ticket was edited again)
-      await admin.from("creative_drive_files").update({ drive_path: place.path, ...renamed }).eq("id", row.id).eq("status", row.status).is("drive_path", null);
+      await update(row, { drive_path: place.path, ...renamed }).eq("status", row.status);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       out.failed++;
@@ -593,8 +605,8 @@ export async function relayoutDrive(admin: SupabaseClient, opts: { clientId?: st
     }
   }
 
-  // The first layout's Year / Month folders: left in place (never deleted), listed so someone can tidy them by hand
-  let old = admin.from("client_drive_folders").select("client_id, path, folder_id").like("path", "2___%").limit(2000);
+  // The avatar layout's top folders: left in place (never deleted), listed so someone can tidy them by hand
+  let old = admin.from("client_drive_folders").select("client_id, path, folder_id").not("path", "like", "%/%").limit(2000);
   if (opts.clientId) old = old.eq("client_id", opts.clientId);
   const { data: oldRows } = await old;
   out.oldFolders = ((oldRows ?? []) as { client_id: string; path: string; folder_id: string }[]).filter((f) => isOldLayoutPath(f.path)).slice(0, 100);
@@ -623,7 +635,7 @@ export function driveAfterResponse(designIds: string[]) {
 
 // ─── For the ticket and the client page ───────────────────────────────────────────────────────────────────────────
 
-export type DriveState = { status: "synced" | "syncing" | "error"; url: string | null; error: string | null; kind: string | null; fixUrl?: string | null };
+export type DriveState = { status: "synced" | "syncing" | "error"; url: string | null; error: string | null; kind: string | null; fixUrl?: string | null; fixLabel?: string | null };
 
 /** Each file's Drive state, by design_files id: in Drive (with its link), syncing, or what went wrong */
 export type DriveStateRow = Pick<SlotRow, "want_file_id" | "synced_file_id" | "status" | "drive_url" | "op" | "attempts"> & { error: string | null; error_kind: string | null };

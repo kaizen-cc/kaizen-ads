@@ -8,7 +8,8 @@ import { adCreativeDrive, setAdCreativeFolder, syncExistingToDrive } from "./dri
 const DOT = { ok: "bg-ok shadow-[0_0_0_3px_var(--ok-soft)]", warn: "bg-warn", bad: "bg-bad", off: "bg-faint/50" } as const;
 
 /**
- * Where the client's ticket creative lands in Drive: their "Ad Creative" folder (found by name, or a pasted link),
+ * Where the client's ticket creative lands in Drive: their "Ad Creatives" folder (found by name, made when there's none,
+ * or a pasted link remembered for the client), in Year / Month / "#1234 Title" folders,
  * how many files are there, on their way or stuck, and for execs the backfill of what was uploaded before.
  */
 export function AdCreativeDrive({ clientId, slug, exec, demo = false }: { clientId: string; slug: string; exec: boolean; demo?: boolean }) {
@@ -77,13 +78,15 @@ export function AdCreativeDrive({ clientId, slug, exec, demo = false }: { client
               ? `${s.synced} file${s.synced === 1 ? "" : "s"} in Drive`
               : s.folderId
                 ? "Ready: new uploads go here"
-                : "Found on the first upload";
+                : s.hasClientFolder
+                  ? "Found (or made) on the first upload"
+                  : "Drive isn't connected for this client: add their Drive folder in the details, or paste the Ad Creatives folder here";
 
   return (
     <div id="ad-creative-drive" className="grid scroll-mt-24 gap-3">
       <label className="grid gap-1.5 text-sm font-medium">
         <span>
-          Ad Creative folder <span className="font-normal text-faint">(where ticket uploads are copied)</span>
+          Ad Creatives folder <span className="font-normal text-faint">(ticket uploads go in Year / Month / #ticket folders inside it)</span>
         </span>
         <input
           value={link}
@@ -92,7 +95,7 @@ export function AdCreativeDrive({ clientId, slug, exec, demo = false }: { client
           onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), save(e.currentTarget.value))}
           disabled={saving || demo}
           className={field}
-          placeholder={s?.hasClientFolder === false ? "Paste the Ad Creative folder link" : "Found by name in their Drive folder"}
+          placeholder={s?.hasClientFolder === false ? "Paste the Ad Creatives folder link" : "Found by name in their Drive folder"}
           inputMode="url"
         />
       </label>
@@ -104,7 +107,8 @@ export function AdCreativeDrive({ clientId, slug, exec, demo = false }: { client
             Open in Drive
           </a>
         )}
-        {s?.source === "found" && <span className="text-faint">· found by name</span>}
+        {s?.source === "found" && <span className="text-faint">· found automatically</span>}
+        {s?.source === "set" && <span className="text-faint">· set by hand, kept for this client</span>}
         {!!s?.replaced && <span className="text-faint">· {s.replaced} in _Replaced</span>}
       </span>
       {s?.errorKind === "no_access" && <p className="rounded-[8px] bg-bad/10 px-3 py-2 text-xs text-bad">A Workspace admin needs to allow the Drive scope (https://www.googleapis.com/auth/drive) for Kaizen&apos;s service account, then sync again.</p>}

@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { AiUnavailable, askJson, CREATIVE_CHECK_SCHEMA, CREATIVE_CHECK_SYSTEM, type CreativeCheck } from "@/lib/ai";
 import { aspectLabel } from "@/lib/uploads/media";
 import { driveAfterResponse, driveStates, type DriveState, type DriveStateRow } from "@/lib/creative-drive";
+import { NO_DRIVE } from "@/lib/creative-drive-paths";
 
 export type DesignFile = {
   id: string;
@@ -98,11 +99,16 @@ export async function ticketDesigns(requestId: string): Promise<Design[]> {
       designs.map((d) => d.id),
     );
   const drive = driveStates((driveRows ?? []) as DriveStateRow[]);
-  // No Ad Creative folder: the file says so with a link to set it on the client page
+  // No Drive folder (or none Kaizen can open): the file is saved here and says so, with a link to the client page
   if ([...drive.values()].some((x) => x.kind === "no_folder")) {
     const { data: r } = await supabase.from("requests").select("clients(slug)").eq("id", requestId).maybeSingle();
     const slug = (r?.clients as unknown as { slug: string } | null)?.slug;
-    if (slug) for (const x of drive.values()) if (x.kind === "no_folder") x.fixUrl = `/clients/${slug}?tab=team#ad-creative-drive`;
+    if (slug)
+      for (const x of drive.values())
+        if (x.kind === "no_folder") {
+          x.fixUrl = `/clients/${slug}?tab=team#ad-creative-drive`;
+          x.fixLabel = x.error?.startsWith(NO_DRIVE) ? "Connect Drive" : "Set the folder";
+        }
   }
 
   return designs.map((d) => ({

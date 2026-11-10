@@ -630,7 +630,7 @@ export function Deliverables({ ticket, demoDesigns, onState, canDisagree = false
 }
 
 /**
- * Each file's copy in the client's Drive (Ad Creative / Avatar / Angle / Month Concept): "In Drive ✓" with a link per
+ * Each file's copy in the client's Drive (Ad Creatives / Year / Month / #ticket): "In Drive ✓" with a link per
  * size or slide, "Syncing…", or what stopped it, with where to fix it. Nothing until the file is lined up for Drive.
  */
 function DriveStatus({ files }: { files: Design["versions"][number]["files"] }) {
@@ -642,13 +642,15 @@ function DriveStatus({ files }: { files: Design["versions"][number]["files"] }) 
   const synced = tracked.filter((f) => f.drive!.status === "synced");
   if (failed.length) {
     const d = failed[0].drive!;
+    // No Drive for the client isn't a failure: the file is saved here, it just isn't copied yet
+    const noDrive = d.fixLabel === "Connect Drive";
     return (
-      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-snug text-bad" title={failed.map((f) => `${label(f)}: ${f.drive!.error ?? "failed"}`).join("\n")}>
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-bad" />
+      <p className={`flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-snug ${noDrive ? "text-warn" : "text-bad"}`} title={failed.map((f) => `${label(f)}: ${f.drive!.error ?? "failed"}`).join("\n")}>
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${noDrive ? "bg-warn" : "bg-bad"}`} />
         <span className="min-w-0">{d.error ?? "Couldn't copy to Drive"}</span>
         {d.fixUrl && (
           <a href={d.fixUrl} className="font-medium text-fg underline underline-offset-2 max-md:inline-flex max-md:min-h-10 max-md:items-center">
-            Set the folder
+            {d.fixLabel ?? "Set the folder"}
           </a>
         )}
       </p>
