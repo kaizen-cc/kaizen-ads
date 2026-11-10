@@ -65,10 +65,16 @@ const PACE = {
 export const paceMeta = (p: Pacing) => PACE[p.status];
 
 /** Month-to-date spend against the budget: the tick is where an even spend would be now, the ghost is where the month lands. */
-export function PaceBar({ pace, note, compact = false }: { pace: Pacing | null; note?: string | null; compact?: boolean }) {
+export function PaceBar({ pace, note, compact = false, spent }: { pace: Pacing | null; note?: string | null; compact?: boolean; spent?: number | null }) {
   if (!pace)
     return (
       <div className="grid gap-1">
+        {/* No budget: what's been spent this month, without a pace to judge it by */}
+        {spent != null && (
+          <span className="tabular text-xs">
+            {money(spent)} <span className="text-faint">spent this month</span>
+          </span>
+        )}
         <span className="text-xs text-faint">No monthly budget</span>
         {note && !compact && <span className="line-clamp-2 text-[11px] leading-snug text-faint/80">{note}</span>}
       </div>

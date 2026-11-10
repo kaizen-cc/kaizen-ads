@@ -15,7 +15,7 @@ export type ServiceCard =
   | { id: string; kind: "other"; label: string; tier: string | null };
 
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
-const RANK = { off: 0, close: 1, setup: 2, idle: 3, good: 4, excellent: 5 } as const;
+const RANK = { off: 0, close: 1, setup: 2, idle: 3, unset: 3, good: 4, excellent: 5 } as const;
 const COLOR: Record<string, string> = { meta: "#6c7ee1", google: "#5be3a5", tiktok: "#e0508c" };
 
 export function BusinessOverview({ cards, audits, sprints }: { cards: ServiceCard[]; audits: Record<string, AuditSummary>; sprints: Record<string, SprintSummary> }) {

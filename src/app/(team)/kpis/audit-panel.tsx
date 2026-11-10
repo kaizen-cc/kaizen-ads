@@ -86,7 +86,8 @@ const ranRecently = (iso: string) => Date.now() - Date.parse(iso) < 24 * 3_600_0
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 /** The account audit on a KPI card: start one, follow it while it runs, then the verdict and the way into the full audit. */
-export function AuditPanel({ targetId, audit, platform }: { targetId: string; audit: AuditSummary; platform: string }) {
+/** blocked: why an audit can't run yet (no KPI set), with the way to fix it; the buttons stay, disabled, saying so */
+export function AuditPanel({ targetId, audit, platform, blocked }: { targetId: string; audit: AuditSummary; platform: string; blocked?: { reason: string; onFix?: () => void } | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -110,10 +111,11 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
     <button
       type="button"
       onClick={go}
-      disabled={pending || running}
-      className={`h-11 w-full shrink-0 rounded-full px-4 text-sm transition-colors disabled:opacity-60 sm:w-auto md:h-9 ${primary ? "bg-fg text-bg hover:bg-fg/90" : "border border-line text-muted hover:text-fg"}`}
+      disabled={pending || running || Boolean(blocked)}
+      title={blocked?.reason}
+      className={`h-11 w-full shrink-0 rounded-full px-4 text-sm transition-colors disabled:opacity-60 sm:w-auto md:h-9 ${primary ? "bg-fg text-bg hover:bg-fg/90" : "border border-line text-muted hover:text-fg"} ${blocked ? "cursor-not-allowed" : ""}`}
     >
-      {pending ? "Starting…" : label}
+      {pending ? "Starting…" : blocked ? blocked.reason : label}
     </button>
   );
 
@@ -136,10 +138,11 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
               <button
                 type="button"
                 onClick={() => (ranRecently(audit.createdAt) && !confirm ? setConfirm(true) : go())}
-                disabled={pending}
+                disabled={pending || Boolean(blocked)}
+                title={blocked?.reason}
                 className="h-11 shrink-0 rounded-full border border-line px-4 text-sm text-muted transition-colors hover:text-fg disabled:opacity-60 md:h-9"
               >
-                {pending ? "Starting…" : "Run again"}
+                {pending ? "Starting…" : blocked ? blocked.reason : "Run again"}
               </button>
               <Link href={`/kpis/audit/${audit.id}`} className="grid h-11 flex-1 place-items-center rounded-full bg-fg px-4 text-sm text-bg hover:bg-fg/90 sm:flex-none md:h-9">
                 Open the audit →
@@ -172,6 +175,16 @@ export function AuditPanel({ targetId, audit, platform }: { targetId: string; au
           </div>
         )}
 
+        {blocked && (
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[12px] border border-dashed border-line px-4 py-3 text-sm text-muted">
+            An audit judges the account against its KPI, so it runs once the KPI is set.
+            {blocked.onFix && (
+              <button type="button" onClick={blocked.onFix} className="inline-flex min-h-11 items-center text-fg underline-offset-2 hover:underline md:min-h-0">
+                Set the KPI →
+              </button>
+            )}
+          </p>
+        )}
         {!audit && (
           <p className="max-w-3xl text-sm leading-relaxed text-muted">
             {platform === "google"

@@ -91,7 +91,7 @@ const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "Ameri
 const chip = "inline-flex items-center rounded-full px-2.5 py-1 text-xs";
 const row = "flex items-start justify-between gap-3 rounded-[8px] bg-surface-2/70 px-4 py-3 text-sm";
 
-const RANK: Record<Status, number> = { off: 0, close: 1, setup: 2, idle: 3, good: 4, excellent: 5 };
+const RANK: Record<Status, number> = { off: 0, close: 1, setup: 2, idle: 3, unset: 3, good: 4, excellent: 5 };
 const worstOf = (ks: ClientKpi[]) => [...ks].sort((a, b) => RANK[a.status] - RANK[b.status])[0] ?? null;
 /** A service's dot on the switch: its worst account */
 const toneOf = (ks: ClientKpi[]): "bad" | "warn" | "ok" | null => {

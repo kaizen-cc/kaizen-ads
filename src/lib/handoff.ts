@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, clientContext, contextBlock } from "@/lib/ai";
 import { LIVE } from "@/lib/live";
+import { shownStatus } from "@/lib/kpi/calc";
 
 // Handing an account to a new media buyer. Whoever changes the buyer (on the client page, from the Account Overview
 // sheet, from the team form), the account's work follows: the KPI, open tickets and the optimization sprint become
@@ -268,7 +269,7 @@ async function comebackFacts(admin: SupabaseClient, clientId: string) {
     `<kpi_now note="after a fresh sync today">`,
     ...(targets ?? []).map((t) => {
       const s = snap.get(t.id as string);
-      return `- ${t.platform}${t.label ? ` · ${t.label}` : ""} (${t.ad_account_id ?? "no account"}): counts ${t.conversion}, target ${t.target ?? "not set"}, monthly budget ${t.monthly_budget ?? "not set"}; status ${s?.status ?? "no numbers"}, data through ${s?.data_through ?? "n/a"}; windows ${JSON.stringify(s?.windows ?? {}).slice(0, 1500)}${t.sheet ? `; buyer's notes ${JSON.stringify(t.sheet).slice(0, 800)}` : ""}`;
+      return `- ${t.platform}${t.label ? ` · ${t.label}` : ""} (${t.ad_account_id ?? "no account"}): counts ${t.conversion}, target ${t.target ?? "not set"}, monthly budget ${t.monthly_budget ?? "not set"}; status ${s ? shownStatus(s.status as string | null, t.target as number | null) : "no numbers"}, data through ${s?.data_through ?? "n/a"}; windows ${JSON.stringify(s?.windows ?? {}).slice(0, 1500)}${t.sheet ? `; buyer's notes ${JSON.stringify(t.sheet).slice(0, 800)}` : ""}`;
     }),
     `</kpi_now>`,
     `<ad_account_changes newest_first>`,

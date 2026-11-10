@@ -53,9 +53,10 @@ export type KpiRow = {
   customAction: string | null;
   campaignMatch: string | null;
   roas: boolean;
-  /** The target, or the industry benchmark standing in for a missing one (targetFrom says which) */
+  /** The KPI target; null when none is set yet (status "unset": numbers only, never judged) */
   target: number | null;
   targetFrom: TargetFrom | null;
+  /** No target set: the industry benchmark, shown as a hint for setting one, never to judge by */
   benchmark: BenchmarkTarget | null;
   /** Trending toward the target? */
   success: Success | null;
@@ -96,7 +97,7 @@ const buyersLine = (r: KpiRow) => {
   const names = [r.owner, ...(r.coBuyers ?? []).map((b) => b.name)].filter(Boolean);
   return names.length ? ` · ${names.join(" + ")}` : "";
 };
-const RANK: Record<Status, number> = { off: 0, close: 1, good: 2, excellent: 3, idle: 4, setup: 5 };
+const RANK: Record<Status, number> = { off: 0, close: 1, good: 2, excellent: 3, idle: 4, unset: 5, setup: 6 };
 const TILES: Status[] = ["excellent", "good", "close", "off"];
 
 /** "16% above target" — said the way a buyer would for a cost, or for ROAS. */
@@ -109,12 +110,12 @@ function gapText(r: KpiRow) {
   return `${n}% ${better ? "below" : "above"} target`;
 }
 
-function Delta({ label: name, value }: { label: string; value: number | null }) {
-  // value: positive = worse. Show the change in the KPI itself, colored by whether it's good.
+function Delta({ label: name, value, neutral }: { label: string; value: number | null; neutral?: boolean }) {
+  // value: positive = worse. Show the change in the KPI itself, colored by whether it's good (never with no KPI set).
   return (
     <div className="flex items-baseline justify-between gap-2 whitespace-nowrap text-xs">
       <span className="text-faint">{name}</span>
-      <span className={`tabular font-medium ${value == null ? "text-faint" : value > 0.05 ? "text-bad" : value < -0.05 ? "text-ok" : "text-muted"}`}>
+      <span className={`tabular font-medium ${value == null ? "text-faint" : neutral ? "text-muted" : value > 0.05 ? "text-bad" : value < -0.05 ? "text-ok" : "text-muted"}`}>
         {value == null ? "—" : Math.abs(value) < 0.01 ? "same" : `${Math.round(Math.abs(value) * 100)}% ${value > 0 ? "worse" : "better"}`}
       </span>
     </div>
@@ -123,7 +124,24 @@ function Delta({ label: name, value }: { label: string; value: number | null }) 
 
 function StatusPill({ status }: { status: Status }) {
   const s = STATUS[status];
-  return <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-[11px] font-medium ${s.tone}`}>{s.label}</span>;
+  return <span className={`inline-flex h-6 items-center rounded-full px-2.5 text-[11px] font-medium ${s.tone} ${status === "unset" ? "border border-dashed border-faint/60" : ""}`}>{s.label}</span>;
+}
+
+/** The trend of the last 3 days, colored only when there's a KPI to judge it by */
+function TrendLine({ r }: { r: KpiRow }) {
+  if (!r.trend || r.status === "setup") return null;
+  const neutral = r.status === "unset";
+  return (
+    <span className={`text-xs ${neutral ? "text-muted" : r.trend === "improving" ? "text-ok" : r.trend === "slipping" ? "text-bad" : "text-faint"}`}>
+      {r.trend === "improving" ? "Last 3 days improving" : r.trend === "slipping" ? "Last 3 days slipping" : "Last 3 days steady"}
+    </span>
+  );
+}
+
+/** The industry benchmark for an account with no KPI set: a hint for setting one, never what it's judged by */
+function benchmarkHint(r: KpiRow) {
+  if (!r.benchmark) return null;
+  return `${r.benchmark.vertical} industry benchmark: ${kpiValue(r.benchmark.value, r.roas)} (${r.benchmark.source.replace(/^https?:\/\/(www\.)?/, "").split("/")[0]}, ${r.benchmark.year})`;
 }
 
 /** The fields a buyer sets. Shared by edit and add. */
@@ -147,7 +165,8 @@ function TargetFields({ row, buyers, platform, ctl }: { row?: KpiRow; buyers: Pe
       </label>
       <label className={label}>
         {CONVERSIONS.find((c) => c.key === conv)?.roas ? "Target ROAS" : "Target cost per result"}
-        <input name="target" inputMode="decimal" defaultValue={row?.targetFrom === "benchmark" ? "" : (row?.target ?? "")} placeholder={CONVERSIONS.find((c) => c.key === conv)?.roas ? "3.0" : "$45"} className={`${field} tabular`} />
+        <input name="target" inputMode="decimal" defaultValue={row?.target ?? ""} placeholder={CONVERSIONS.find((c) => c.key === conv)?.roas ? "3.0" : "$45"} className={`${field} tabular`} />
+        {row && row.target == null && benchmarkHint(row) && <span className="text-[11px] font-normal text-faint">For reference: {benchmarkHint(row)}</span>}
       </label>
       <label className={label}>
         Monthly budget
@@ -694,11 +713,13 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Last 30 days</p>
           <p className="text-sm text-muted">{roas ? `${convLabel} per day` : `Cost per ${convLabel.toLowerCase().replace(/s$/, "")}, 3-day rolling`}</p>
         </div>
-        <span className="flex gap-3 text-[11px] text-faint">
-          <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#3fb27f]" />Beating</span>
-          <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#e0a63a]" />Close</span>
-          <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#e0505c]" />Over</span>
-        </span>
+        {r.target != null && (
+          <span className="flex gap-3 text-[11px] text-faint">
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#3fb27f]" />Beating</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#e0a63a]" />Close</span>
+            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-[#e0505c]" />Over</span>
+          </span>
+        )}
       </div>
       <HealthChart id={`${r.id}-detail`} daily={daily} target={r.target} roas={roas} status={r.status} unit={convLabel.toLowerCase().replace(/s$/, "")} />
       <p className="text-[11px] text-faint">Faint bars are daily spend. Point at a day for its numbers.</p>
@@ -737,7 +758,28 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
             {r.status === "setup" ? (
               <div className="flex items-center gap-2">
                 <StatusPill status="setup" />
-                <span className="text-xs text-faint">{r.error ?? (r.target ? "Waiting for data" : "Add a target in Settings")}</span>
+                <span className="text-xs text-faint">{r.error ?? "Waiting for data"}</span>
+                {r.target == null && (
+                  <button type="button" onClick={() => setTab("settings")} className="inline-flex h-11 items-center rounded-full border border-dashed border-faint/60 px-4 text-xs text-muted hover:text-fg md:h-7 md:px-3">
+                    No KPI set · Set the KPI
+                  </button>
+                )}
+              </div>
+            ) : r.status === "unset" ? (
+              // No KPI set: every number, no colors and no verdict until someone sets it
+              <div className="grid gap-1.5">
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="tabular font-display text-[34px] leading-none tracking-tight text-fg">{kpiValue(d14?.value, r.roas)}</span>
+                  <span className="tabular text-sm text-faint">14 days · no target yet</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill status="unset" />
+                  <button type="button" onClick={() => setTab("settings")} className="inline-flex h-11 items-center rounded-full bg-fg px-4 text-xs font-medium text-bg md:h-7 md:px-3">
+                    Set the KPI
+                  </button>
+                </div>
+                {benchmarkHint(r) && <p className="text-[11.5px] text-faint">For reference only: {benchmarkHint(r)}. Colors and audits start once the KPI is set.</p>}
+                {r.googleFlags.length > 0 && <GoogleFlags flags={r.googleFlags} full />}
               </div>
             ) : (
               <div className="grid gap-1.5">
@@ -745,18 +787,13 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                   <span className="tabular font-display text-[34px] leading-none tracking-tight" style={{ color }}>
                     {kpiValue(d14?.value, r.roas)}
                   </span>
-                  <span className="tabular text-sm text-faint">/ {kpiValue(r.target, r.roas)} {r.targetFrom === "benchmark" ? "industry benchmark" : "target"} · 14 days</span>
+                  <span className="tabular text-sm text-faint">/ {kpiValue(r.target, r.roas)} target · 14 days</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusPill status={r.status} />
                   {r.success && <SuccessTag r={r} />}
                   {gap && <span className="text-xs text-muted">{gap}</span>}
                 </div>
-                {r.benchmark && r.targetFrom === "benchmark" && (
-                  <p className="text-[11.5px] text-faint">
-                    No target set yet: judged against the {r.benchmark.vertical} benchmark ({r.benchmark.source.replace(/^https?:\/\/(www\.)?/, "").split("/")[0]}, {r.benchmark.year}). Beat the industry, then set a real target.
-                  </p>
-                )}
                 {r.googleFlags.length > 0 && <GoogleFlags flags={r.googleFlags} full />}
               </div>
             )}
@@ -768,7 +805,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                 live
                 perms={r.perms}
                 scope={r.accountId && !tiktok ? { platform: r.platform === "google" ? "google" : "meta", targetId: r.id } : null}
-                targets={r.accountId && !tiktok ? [{ id: r.id, label: `${platformShort(r.platform)}${r.label ? ` · ${r.label}` : ""}`, status: r.audit?.status ?? "none", auditId: r.audit?.id ?? null }] : []}
+                targets={r.accountId && !tiktok && r.target != null ? [{ id: r.id, label: `${platformShort(r.platform)}${r.label ? ` · ${r.label}` : ""}`, status: r.audit?.status ?? "none", auditId: r.audit?.id ?? null }] : []}
               />
               <Link href={`/clients/${r.slug}?service=${r.platform}`} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-sm text-muted hover:text-fg md:h-9">
                 Client page →
@@ -826,7 +863,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                   <div className="grid content-start gap-3">
                     <div className="grid gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Budget this month</p>
-                      <PaceBar pace={r.pace} note={r.budgetNote} />
+                      <PaceBar pace={r.pace} note={r.budgetNote} spent={r.months.mtd?.spend ?? null} />
                       {r.pace && r.pace.dailyNeeded != null && r.pace.status !== "early" && (
                         <p className="text-xs leading-relaxed text-muted">
                           About <span className="tabular text-fg">{money(r.pace.dailyNeeded)}</span> a day for the next {Math.ceil(r.pace.daysLeft)} days lands it on budget.
@@ -835,13 +872,9 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                     </div>
                     <div className="grid gap-2 rounded-[20px] border border-line bg-surface p-4 md:p-5">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Momentum</p>
-                      <Delta label="vs last month" value={r.vsMonth} />
-                      <Delta label="vs last quarter" value={r.vsQuarter} />
-                      {r.trend && r.status !== "setup" && (
-                        <span className={`text-xs ${r.trend === "improving" ? "text-ok" : r.trend === "slipping" ? "text-bad" : "text-faint"}`}>
-                          {r.trend === "improving" ? "Last 3 days improving" : r.trend === "slipping" ? "Last 3 days slipping" : "Last 3 days steady"}
-                        </span>
-                      )}
+                      <Delta label="vs last month" value={r.vsMonth} neutral={r.status === "unset"} />
+                      <Delta label="vs last quarter" value={r.vsQuarter} neutral={r.status === "unset"} />
+                      <TrendLine r={r} />
                     </div>
                   </div>
                 </div>
@@ -857,7 +890,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                     <PlanStep key={`${r.id}:${r.sheet.solution}`} targetId={r.id} step={r.sheet.solution} platform={r.platform} />
                   </section>
                 )}
-                {r.accountId && <Campaigns key={`${r.id}:${r.conversion}:${r.target}`} id={r.id} target={r.targetFrom === "benchmark" ? null : r.target} conversion={r.conversion} platform={r.platform} />}
+                {r.accountId && <Campaigns key={`${r.id}:${r.conversion}:${r.target}`} id={r.id} target={r.target} conversion={r.conversion} platform={r.platform} />}
                 {r.platform !== "tiktok" && r.audit?.status === "ready" && r.audit.quick && r.audit.quick.length > 0 && (
                   <section className="grid gap-1 rounded-[20px] border border-line bg-surface px-4 pb-4 md:px-5 md:pb-5">
                     <QuickActions key={r.audit.id} auditId={r.audit.id} items={r.audit.quick} platform={r.audit.platform ?? r.platform} />
@@ -918,7 +951,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                       Nobody&apos;s optimizing this account yet{r.lastChange?.at ? `: no changes in ${sinceText(r.lastChange.at)}` : ""}. Run the audit and make the first moves below.
                     </p>
                   )}
-                  <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} />
+                  <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} blocked={r.target == null ? { reason: "Set the KPI first", onFix: () => setTab("settings") } : null} />
                   {r.sprint && <SprintStrip s={r.sprint} />}
                 </>
               ) : (
@@ -1269,7 +1302,7 @@ function NextMove({ r, moves, onActions, onNotes }: { r: KpiRow; moves: number; 
         ) : r.audit?.status === "running" || r.audit?.status === "queued" ? (
           <span className="text-sm text-brand-text">{r.audit.status === "running" ? `The audit is running (${r.audit.progress}%)` : "The audit is queued"}</span>
         ) : (
-          <span className="text-sm text-muted">No audit yet. Run one and the moves to make in the account show up here.</span>
+          <span className="text-sm text-muted">{r.target == null ? "No KPI set yet. Set it and the audit can judge the account against it." : "No audit yet. Run one and the moves to make in the account show up here."}</span>
         )}
       </button>
       <button type="button" onClick={onNotes} className="group grid content-start gap-2 rounded-[20px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint/70 md:p-5">
@@ -1383,7 +1416,7 @@ function CreativeTab({ r }: { r: KpiRow }) {
   );
 }
 
-function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpen: () => void; onMove: (index: number) => void }) {
+function Card({ r, active, onOpen, onMove, onSetKpi }: { r: KpiRow; active: boolean; onOpen: () => void; onMove: (index: number) => void; onSetKpi: () => void }) {
   const d14 = r.windows.d14;
   const gap = gapText(r);
   const color = healthHex(healthOf(r.status));
@@ -1424,7 +1457,18 @@ function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpe
         {r.status === "setup" ? (
           <div className="grid gap-1">
             <StatusPill status="setup" />
-            <span className="truncate text-xs text-faint">{r.error ?? (r.target ? "Waiting for data" : "Add a target")}</span>
+            <span className="truncate text-xs text-faint">{r.error ?? "Waiting for data"}</span>
+            {r.target == null && <SetKpiChip onSetKpi={onSetKpi} />}
+          </div>
+        ) : r.status === "unset" ? (
+          // No KPI set: the numbers, neutral, and the way to set it
+          <div className="grid gap-1.5">
+            <div className="flex items-baseline gap-2">
+              <span className="tabular font-display text-[30px] leading-none tracking-tight text-fg">{kpiValue(d14?.value, r.roas)}</span>
+              <span className="tabular truncate text-xs text-faint">14 days</span>
+            </div>
+            <SetKpiChip onSetKpi={onSetKpi} />
+            {r.benchmark && <span className="truncate text-[11px] text-faint">Industry benchmark {kpiValue(r.benchmark.value, r.roas)} · {r.benchmark.vertical}</span>}
           </div>
         ) : (
           <div className="grid gap-1.5">
@@ -1439,7 +1483,6 @@ function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpe
               <StatusPill status={r.status} />
               {r.success ? <SuccessTag r={r} /> : gap && <span className="truncate text-[11px] text-muted">{gap}</span>}
             </span>
-            {r.targetFrom === "benchmark" && <span className="truncate text-[11px] text-faint">vs industry benchmark{r.benchmark ? ` · ${r.benchmark.vertical}` : ""}</span>}
           </div>
         )}
 
@@ -1449,16 +1492,12 @@ function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpe
             <div className="kpi-chart">
               <HealthChart id={r.id} daily={r.daily} target={r.target} roas={r.roas} status={r.status} compact height={44} unit={r.conversionLabel.toLowerCase().replace(/s$/, "")} />
             </div>
-            <PaceBar pace={r.pace} note={r.budgetNote} compact />
+            <PaceBar pace={r.pace} note={r.budgetNote} compact spent={r.months.mtd?.spend ?? null} />
           </div>
           <div className="pointer-events-none absolute inset-0 grid content-start gap-1.5 overflow-hidden opacity-0 transition-opacity duration-200 group-focus-visible:opacity-100 [.group:hover:not(:has(.kpi-chart:hover,.kpi-chip:hover))_&]:opacity-100">
-            <Delta label="vs last month" value={r.vsMonth} />
-            <Delta label="vs last quarter" value={r.vsQuarter} />
-            {r.trend && r.status !== "setup" && (
-              <span className={`text-xs ${r.trend === "improving" ? "text-ok" : r.trend === "slipping" ? "text-bad" : "text-faint"}`}>
-                {r.trend === "improving" ? "Last 3 days improving" : r.trend === "slipping" ? "Last 3 days slipping" : "Last 3 days steady"}
-              </span>
-            )}
+            <Delta label="vs last month" value={r.vsMonth} neutral={r.status === "unset"} />
+            <Delta label="vs last quarter" value={r.vsQuarter} neutral={r.status === "unset"} />
+            <TrendLine r={r} />
             {headline ? <span className="line-clamp-2 text-xs leading-snug text-fg/85">{headline}</span> : r.pace?.dailyNeeded != null && r.pace.status !== "early" ? <span className="text-xs text-muted">{money(r.pace.dailyNeeded)}/day lands it on budget</span> : null}
             {r.lastChange?.at && <span suppressHydrationWarning className="truncate text-[11px] text-faint">Changed {sinceText(r.lastChange.at)} ago{r.lastChange.who ? ` by ${r.lastChange.who}` : ""}</span>}
           </div>
@@ -1496,7 +1535,29 @@ function Card({ r, active, onOpen, onMove }: { r: KpiRow; active: boolean; onOpe
  * A chip on a card with a read of its own on hover, drawn above the page so the card's edges don't cut it off. The
  * pointer can travel into it and pick something there; it closes a moment after the pointer leaves both.
  */
-/** Are we trending toward the target (or the benchmark): the last days and the month-over-month move, against the gap */
+/**
+ * "No KPI set" on a card, with "Set the KPI" opening its Settings tab. The card is one big button, so this is a span
+ * that acts on click (keyboard users get the same from the open card's header).
+ */
+function SetKpiChip({ onSetKpi }: { onSetKpi: () => void }) {
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-2">
+      <StatusPill status="unset" />
+      <span
+        role="link"
+        onClick={(e) => {
+          e.stopPropagation();
+          onSetKpi();
+        }}
+        className="kpi-chip inline-flex min-h-11 items-center text-[11.5px] font-medium text-fg underline-offset-2 hover:underline md:min-h-6"
+      >
+        Set the KPI →
+      </span>
+    </span>
+  );
+}
+
+/** Are we trending toward the target: the last days and the month-over-month move, against the gap */
 function SuccessTag({ r }: { r: KpiRow }) {
   if (!r.success) return null;
   const s = SUCCESS[r.success];
@@ -1746,13 +1807,12 @@ function Unlinked({ accounts, clients }: { accounts: { id: string; name: string;
   );
 }
 
-/** The KPI dashboard: how every account is pacing toward its target and its budget. */
-/** A client running Meta or Google ads with no KPI target on that platform yet */
-export type MissingKpi = { clientId: string; client: string; slug: string; platform: KpiPlatform; buyerId: string | null; buyer: string | null; coBuyers?: Person[] };
-
+/**
+ * The KPI dashboard: how every account is pacing toward its target and its budget. A client running ads with no KPI
+ * set has a real card too (made for it automatically): every number, neutral, until someone sets the KPI.
+ */
 export function KpiBoard({
   rows,
-  missing = [],
   buyers,
   clients,
   me,
@@ -1765,7 +1825,6 @@ export function KpiBoard({
   only = null,
 }: {
   rows: KpiRow[];
-  missing?: MissingKpi[];
   buyers: Person[];
   clients: { id: string; name: string }[];
   me: { id: string; firstName: string };
@@ -1816,7 +1875,7 @@ export function KpiBoard({
     go({ q: v.trim() || null }, "replace");
   };
   const close = () => setOpen(null);
-  // ?add=<client id> (from the client page or a "needs a KPI target" row) opens the form with that client picked
+  // ?add=<client id> (from the client page) opens the form with that client picked
   const askedAdd = sp.get("add");
   const [adding, setAdding] = useState(Boolean(askedAdd));
   const [preset, setPreset] = useState<string | null>(askedAdd);
@@ -1833,9 +1892,8 @@ export function KpiBoard({
   const owners = (() => {
     const names = new Map<string, string>();
     for (const r of rows) if (r.platform === platform && r.owner) names.set(ownerKey(r)!, r.owner);
-    for (const m of missing) if (m.platform === platform && m.buyerId && m.buyer && !names.has(m.buyerId)) names.set(m.buyerId, m.buyer);
     // Secondary buyers get a chip too: their view holds the accounts they're on
-    for (const x of [...rows, ...missing]) if (x.platform === platform) for (const b of x.coBuyers ?? []) if (!names.has(b.id)) names.set(b.id, b.name);
+    for (const x of rows) if (x.platform === platform) for (const b of x.coBuyers ?? []) if (!names.has(b.id)) names.set(b.id, b.name);
     return [...names.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   })();
 
@@ -1844,8 +1902,6 @@ export function KpiBoard({
   const shown = base
     .filter((r) => (status === "all" || r.status === status) && (pace === "all" || r.pace?.status === pace) && (term.length < 2 || `${r.client} ${r.label ?? ""} ${r.kaizenId ?? ""}`.toLowerCase().includes(term)))
     .sort((a, b) => RANK[a.status] - RANK[b.status] || (b.deviation ?? -9) - (a.deviation ?? -9) || a.client.localeCompare(b.client));
-
-  const needs = missing.filter((m) => m.platform === platform && (owner === "all" || onCard(owner, { ownerKey: m.buyerId, buyerIds: m.coBuyers?.map((b) => b.id) })) && status === "all" && pace === "all" && (term.length < 2 || m.client.toLowerCase().includes(term)));
   const openRow = open ? (rows.find((r) => r.id === open) ?? null) : null;
   const step = (dir: 1 | -1) => {
     const at = shown.findIndex((r) => r.id === open);
@@ -1858,6 +1914,8 @@ export function KpiBoard({
   const budget = paced.reduce((t, r) => t + (r.pace?.budget ?? 0), 0);
   const projected = paced.reduce((t, r) => t + (r.pace?.projected ?? 0), 0);
   const setup = count("setup") + count("idle");
+  // No KPI set: out of the status tiles (never judged), counted on their own
+  const unset = count("unset");
   const synced = freshness(lastSync);
 
   return (
@@ -1996,36 +2054,17 @@ export function KpiBoard({
         </p>
       )}
 
-      {shown.length || needs.length ? (
+      {shown.length ? (
         <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {shown.map((r) => (
-            <Card key={r.id} r={r} active={open === r.id} onOpen={() => setOpen(r.id)} onMove={(i) => go({ open: r.id, tab: "actions", move: String(i), target: null, client: null, platform: null })} />
-          ))}
-          {/* Clients running ads on this platform with no KPI yet: a card of their own, so the buyer or lead sets it up */}
-          {needs.map((m) => (
-            <li key={`${m.clientId}:${m.platform}`} className="grid min-h-[176px] min-w-0 content-between gap-4 rounded-[18px] border border-dashed border-warn/45 bg-warn-soft/10 p-4 md:p-5">
-              <div className="grid min-w-0 gap-1.5">
-                <div className="flex min-w-0 items-center justify-between gap-2">
-                  <Link href={`/clients/${m.slug}`} className="truncate font-heading text-[16px] hover:underline">
-                    {m.client}
-                  </Link>
-                  <span className="shrink-0 rounded-full bg-warn-soft px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-[0.1em] text-warn">No KPI set</span>
-                </div>
-                <p className="truncate text-xs text-muted">{m.buyer ?? "No buyer assigned"}</p>
-                <p className="text-[13px] leading-snug text-muted">Runs {platformLabel(m.platform)} with no target yet, so pacing, audits and briefs have nothing to aim at.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setPreset(m.clientId);
-                  setAdding(true);
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-                className="min-h-11 justify-self-start rounded-full bg-fg px-4 text-[13px] font-medium text-bg hover:opacity-90 md:min-h-9"
-              >
-                Set the KPI
-              </button>
-            </li>
+            <Card
+              key={r.id}
+              r={r}
+              active={open === r.id}
+              onOpen={() => setOpen(r.id)}
+              onMove={(i) => go({ open: r.id, tab: "actions", move: String(i), target: null, client: null, platform: null })}
+              onSetKpi={() => go({ open: r.id, tab: "settings", move: null, target: null, client: null, platform: null })}
+            />
           ))}
         </ul>
       ) : (
@@ -2033,9 +2072,17 @@ export function KpiBoard({
       )}
       {openRow && <Detail key={openRow.id} r={openRow} buyers={buyers} tab={tab} setTab={setTab} onClose={close} onStep={step} />}
 
+      {unset > 0 && status === "all" && (
+        <p className="text-center text-xs text-faint">
+          <button type="button" onClick={() => setStatus("unset")} className="py-2 text-muted underline-offset-4 hover:text-fg hover:underline md:py-0">
+            {unset} with no KPI set
+          </button>{" "}
+          · their numbers show, without colors or audits, until the KPI is set
+        </p>
+      )}
       {setup > 0 && status === "all" && (
         <p className="text-center text-xs text-faint">
-          {setup} {setup === 1 ? "KPI isn't" : "KPIs aren't"} reporting yet: no target, no spend, or Meta can&apos;t see the ad account.{" "}
+          {setup} {setup === 1 ? "KPI isn't" : "KPIs aren't"} reporting yet: no spend, or {platformLabel(platform)} can&apos;t see the ad account.{" "}
           <Link href="/clients" className="text-muted hover:text-fg">
             Clients
           </Link>
@@ -2072,7 +2119,7 @@ export function KpiExtras({ k }: { k: { id: string; target: number | null; targe
           router.refresh();
         }}
       />
-      <Campaigns key={`${k.id}:${k.conversion}:${k.target}`} id={k.id} target={k.targetFrom === "benchmark" ? null : k.target} conversion={k.conversion} platform={k.platform} />
+      <Campaigns key={`${k.id}:${k.conversion}:${k.target}`} id={k.id} target={k.target} conversion={k.conversion} platform={k.platform} />
     </div>
   );
 }

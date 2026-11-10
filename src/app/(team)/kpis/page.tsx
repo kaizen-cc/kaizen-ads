@@ -3,17 +3,17 @@ import { teamPlatform } from "@/lib/roles";
 import { orderSeats, platformOf, seatRoleFor, type SeatRow } from "@/lib/buyer-seats";
 import { clientPerms } from "@/lib/chat-permissions";
 import { requireStaff } from "@/lib/auth";
-import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
+import { shownStatus, type Agg, type Pacing, type Status, type Trend } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { KpiBoard, type MissingKpi, type KpiRow } from "./kpi-board";
+import { KpiBoard, type KpiRow } from "./kpi-board";
 import { latestAudits } from "@/lib/audit-summary";
 import { changeKey, loadChanges } from "@/lib/account-changes";
 import { loadSprints } from "@/lib/sprints";
 import { successOf, type BenchmarkTarget } from "@/lib/kpi/success";
 import type { GoogleHealth } from "@/lib/google-flags";
-import { asKpiPlatform, type KpiPlatform } from "@/lib/kpi/platform";
+import { asKpiPlatform } from "@/lib/kpi/platform";
 import { tiktokConfigured } from "@/lib/tiktok/core";
 
 // Pulling one client's numbers from Meta on demand can take a minute; an audit runs a few minutes after the click
@@ -91,8 +91,9 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       const c = t.clients as unknown as { name: string; slug: string; status: string; kaizen_id: number | null } | null;
       const s = snapBy.get(t.id);
       const pace = s?.budget && "pace" in s.budget ? (s.budget as Pacing) : null;
+      // No KPI set: the industry benchmark is a hint for setting one; the card is never judged against it
       const benchmark = t.target == null ? (s?.benchmark ?? null) : null;
-      const status = (s?.status ?? "setup") as Status;
+      const status = shownStatus(s?.status, t.target);
       const vsMonth = s?.vs_month == null ? null : Number(s.vs_month);
       return {
         id: t.id,
@@ -110,8 +111,8 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
         customAction: t.custom_action,
         campaignMatch: t.campaign_match,
         roas: Boolean(conversionFor(t.conversion).roas),
-        target: t.target == null ? (benchmark?.value ?? null) : Number(t.target),
-        targetFrom: t.target != null ? (t.source as "strategy" | "client") : benchmark ? ("benchmark" as const) : null,
+        target: t.target == null ? null : Number(t.target),
+        targetFrom: t.target != null ? (t.source as "strategy" | "client") : null,
         benchmark,
         success: successOf(status, s?.trend ?? null, vsMonth),
         googleFlags: s?.google_health?.flags ?? [],
@@ -122,7 +123,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
         owner: (t.profiles as unknown as { full_name: string } | null)?.full_name ?? t.owner_name ?? null,
         coBuyers: coBuyersOf(t.client_id as string, t.platform as string, t.owner_id as string | null),
         status,
-        deviation: s?.deviation == null ? null : Number(s.deviation),
+        deviation: status === "unset" || s?.deviation == null ? null : Number(s.deviation),
         vsMonth,
         vsQuarter: s?.vs_quarter == null ? null : Number(s.vs_quarter),
         trend: s?.trend ?? null,
@@ -148,29 +149,10 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
     })
     .sort((a, b) => a.client.localeCompare(b.client) || (a.label ?? "").localeCompare(b.label ?? ""));
 
-  // Clients that run Meta or Google ads with no KPI target on that platform: they still belong on the board (as
-  // "needs a KPI target"), with their buyer, so nobody loses sight of them
-  const { data: svc } = await supabase.from("clients").select("id, name, slug, services").in("status", ["active", "onboarding"]).is("archived_at", null);
-  const hasTarget = new Set((targets ?? []).map((t) => `${t.client_id}:${asKpiPlatform(t.platform)}`));
+  // A client running ads with no KPI set has a real card (kpi_targets.needs_target, made by the database when the client
+  // gains the service), so it's in `rows` like any other
   // TikTok shows on the board once it's set up and connected (or already has cards); dormant until then
   const tiktokOn = tiktokConfigured() && ((targets ?? []).some((t) => t.platform === "tiktok") || (adminConfigured() && (await (await import("@/lib/tiktok/store")).tiktokConnected(createAdminClient()).catch(() => false))));
-  const SERVICE: Record<KpiPlatform, string> = { meta: "facebook-ads", google: "google-ads", tiktok: "tiktok-ads" };
-  const missing: MissingKpi[] = [];
-  for (const c of svc ?? []) {
-    const services = (c.services ?? []) as string[];
-    for (const platform of ["meta", "google", ...(tiktokOn ? ["tiktok" as const] : [])] as KpiPlatform[]) {
-      if (!services.includes(SERVICE[platform])) continue;
-      if (hasTarget.has(`${c.id}:${platform}`)) continue;
-      // TikTok is bought by the Meta team
-      if (team && team !== (platform === "google" ? "google" : "meta")) continue;
-      // The seat's primary is the row's buyer; a buyer sees it when they're on the seat at all
-      const onSeat = seatsOn(c.id as string, platform);
-      const seat = onSeat[0];
-      if (buyer && !onSeat.some((s) => s.profile_id === me.id)) continue;
-      missing.push({ clientId: c.id as string, client: c.name as string, slug: c.slug as string, platform, buyerId: seat?.profile_id ?? null, buyer: seat?.profiles?.full_name ?? null, coBuyers: coBuyersOf(c.id as string, platform, seat?.profile_id ?? null) });
-    }
-  }
-  missing.sort((x, y) => x.client.localeCompare(y.client));
 
   // Ad accounts Meta shares with us that no client has yet (server-side bookmark; execs link them)
   const { data: accounts } = me.isExec && adminConfigured() ? await createAdminClient().from("sync_state").select("last_result").eq("source", "meta:accounts").maybeSingle() : { data: null };
@@ -192,7 +174,6 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   return (
     <KpiBoard
       rows={rows}
-      missing={missing}
       buyers={(buyers ?? []).map((b) => ({ id: b.id, name: b.full_name }))}
       clients={clients ?? []}
       me={{ id: me.id, firstName: me.fullName.split(" ")[0] }}
