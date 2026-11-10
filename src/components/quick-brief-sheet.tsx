@@ -288,7 +288,7 @@ export function QuickBriefSheet({
                 <div className="grid gap-3 rounded-[18px] border border-warn/40 bg-warn-soft/40 p-4" role="group" aria-label="Only the client knows">
                   <div className="grid gap-0.5">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-warn">Only the client knows this</p>
-                    <p className="text-[12.5px] leading-snug text-muted">The idea hangs on it, and the AI won&apos;t make it up. Answer what you know; anything left blank goes in the brief as &ldquo;Confirm with client&rdquo; and holds it until it&apos;s answered.</p>
+                    <p className="text-[12.5px] leading-snug text-muted">The idea hangs on it, and the AI won&apos;t make it up. Answer what you know; anything left blank goes in the brief as &ldquo;Confirm with client&rdquo;, and the maker confirms it once they have the ticket. It never holds the brief.</p>
                   </div>
                   {(brief.facts ?? []).map((f, i) => (
                     <label key={f.question} className="grid gap-1.5">

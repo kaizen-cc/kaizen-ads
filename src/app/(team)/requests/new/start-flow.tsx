@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 import type { Winner } from "@/lib/industry";
 import type { MarketAd } from "@/lib/market";
-import type { StartData } from "@/lib/request-start";
+import type { StartCore, StartData, StartRest } from "@/lib/request-start";
 import { allotmentPools, cycleElapsed, type Allotment } from "@/lib/allotment";
 import { AllotmentPools } from "@/components/allotment-pools";
 import type { Draft } from "./draft";
@@ -24,54 +24,116 @@ import { metaAdId, savedHref, SOURCE_LABEL, type SaveInput, type SavedRef, type 
 
 // The new request's first two steps, built like the report builder: pick the client from big cards (recent first,
 // filtered as you type), then "How do you want to start?" as one full-width visual page. Everything on it is already
-// stored (the briefs written every day, promises from calls, patterns, winners, Motion's market ads) and comes in one
-// read, fetched the moment a client is hovered: nothing waits on the AI until a card is picked.
+// stored (the briefs written every day, promises from calls, patterns, winners, Motion's market ads) and comes in two
+// reads fetched the moment a client is hovered (the briefs first, the heavier sections streamed after): nothing waits
+// on the AI until a card is picked.
 
-// ─── One read per client, kept for the visit and asked for ahead ──────────────────────────────────────────────
+// ─── One read per client, in two parts, kept for the visit and asked for ahead ─────────────────────────────────
+// The briefs already written (with promises and saves) come in one quick read and show at once; patterns, winners and
+// the market (heavier) stream in after, never holding the briefs. What was read last time in this tab shows first,
+// while a fresh read comes in behind it.
 
-const cache = new Map<string, Promise<StartData>>();
+type Part = "core" | "rest";
+const cache = new Map<string, Promise<StartCore | StartRest>>();
+const STASH = (clientId: string) => `kz:request-start:${clientId}`;
+const STASH_MS = 15 * 60_000;
 
-/** Ask for a client's start page ahead (a hover, a focus, a tap): the request goes once and is reused */
-export function prefetchStart(clientId: string) {
-  if (!cache.has(clientId))
+function fetchPart(clientId: string, part: "core"): Promise<StartCore>;
+function fetchPart(clientId: string, part: "rest"): Promise<StartRest>;
+function fetchPart(clientId: string, part: Part): Promise<StartCore | StartRest> {
+  const k = `${clientId}:${part}`;
+  if (!cache.has(k))
     cache.set(
-      clientId,
-      fetch(`/api/requests/start?client=${clientId}`)
-        .then((r) => (r.ok ? (r.json() as Promise<StartData>) : Promise.reject(new Error(String(r.status)))))
+      k,
+      fetch(`/api/requests/start?client=${clientId}&part=${part}`)
+        .then((r) => (r.ok ? (r.json() as Promise<StartCore | StartRest>) : Promise.reject(new Error(String(r.status)))))
         .catch((e) => {
-          cache.delete(clientId);
+          cache.delete(k);
           throw e;
         }),
     );
-  return cache.get(clientId)!;
+  return cache.get(k)!;
 }
 
-/** Read the client's start page again next time (a saved reference was just used up) */
+/** Ask for a client's start page ahead (a hover, a focus, a tap): each part goes once and is reused */
+export function prefetchStart(clientId: string) {
+  return Promise.all([fetchPart(clientId, "core"), fetchPart(clientId, "rest")]);
+}
+
+/** Read the client's start page again next time (a saved reference was just used up, a brief was sent) */
 export function forgetStart(clientId: string) {
-  cache.delete(clientId);
+  cache.delete(`${clientId}:core`);
+  cache.delete(`${clientId}:rest`);
+  try {
+    sessionStorage.removeItem(STASH(clientId));
+  } catch {}
   refreshSaves();
 }
 
-/** Seed the cache with what the server already read (?client= in the address) */
-export function seedStart(data: StartData) {
-  if (!cache.has(data.clientId)) cache.set(data.clientId, Promise.resolve(data));
+/** Seed the cache with what the server is already reading (?client= in the address): a promise, never waited on there */
+export function seedStart(clientId: string, core: StartCore | Promise<StartCore | null>) {
+  const k = `${clientId}:core`;
+  if (cache.has(k)) return;
+  const p = Promise.resolve(core).then((d) => d ?? Promise.reject(new Error("not read")));
+  cache.set(
+    k,
+    p.catch(() => {
+      // The server couldn't read it: asked for here instead
+      cache.delete(k);
+      return fetchPart(clientId, "core");
+    }),
+  );
 }
 
+type Stash = { at: number; core: StartCore | null; rest: StartRest | null };
+const readStash = (clientId: string): Stash | null => {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(STASH(clientId)) ?? "null") as Stash | null;
+    return s && Date.now() - s.at < STASH_MS ? s : null;
+  } catch {
+    return null;
+  }
+};
+const writeStash = (clientId: string, patch: Partial<Stash>) => {
+  try {
+    const was = readStash(clientId);
+    sessionStorage.setItem(STASH(clientId), JSON.stringify({ core: was?.core ?? null, rest: was?.rest ?? null, ...patch, at: Date.now() }));
+  } catch {}
+};
+
 function useStart(clientId: string) {
-  const [data, setData] = useState<{ id: string; d: StartData } | null>(null);
+  const [core, setCore] = useState<{ id: string; d: StartCore } | null>(null);
+  const [rest, setRest] = useState<{ id: string; d: StartRest } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
-    prefetchStart(clientId)
-      .then((d) => live && setData({ id: clientId, d }))
-      .catch(() => live && setFailed(clientId));
+    // Last time's read first (this tab, the last 15 minutes), then the fresh one in its place
+    const stash = readStash(clientId);
+    void Promise.resolve().then(() => {
+      if (!live || !stash) return;
+      if (stash.core) setCore((c) => (c?.id === clientId ? c : { id: clientId, d: stash.core! }));
+      if (stash.rest) setRest((r) => (r?.id === clientId ? r : { id: clientId, d: stash.rest! }));
+    });
+    fetchPart(clientId, "core")
+      .then((d) => {
+        if (!live) return;
+        setCore({ id: clientId, d });
+        writeStash(clientId, { core: d });
+      })
+      .catch(() => live && !stash?.core && setFailed(clientId));
+    fetchPart(clientId, "rest")
+      .then((d) => {
+        if (!live) return;
+        setRest({ id: clientId, d });
+        writeStash(clientId, { rest: d });
+      })
+      .catch(() => live && setRest((r) => r ?? { id: clientId, d: { clientId, patterns: [], winners: [], winnersLabel: null, winnersTier: null, detail: null, market: [], marketMore: false, marketLabel: null } }));
     return () => {
       live = false;
     };
   }, [clientId]);
-  return { data: data?.id === clientId ? data.d : null, failed: failed === clientId };
+  return { core: core?.id === clientId ? core.d : null, rest: rest?.id === clientId ? rest.d : null, failed: failed === clientId };
 }
-
 // ─── The quick preview: every way into a brief opens it first ──────────────────────────────────────────────
 
 /** A brief about to be previewed (serializable: it's kept with the request in progress, for a split's next briefs) */
@@ -338,12 +400,16 @@ export function StartPage({
   onManual: () => void;
   onTalk: () => void;
 }) {
-  const { data, failed } = useStart(clientId);
+  const { core, rest, failed } = useStart(clientId);
+  // The briefs already written show the moment they're read; the heavier sections fill in as they come
+  const loading = !core && !failed;
+  const restLoading = !rest && !failed;
+  const data = core || rest ? { briefs: core?.briefs ?? [], promises: core?.promises ?? null, saved: core?.saved ?? null, patterns: rest?.patterns ?? [], winners: rest?.winners ?? [], detail: rest?.detail ?? null, market: rest?.market ?? [], marketMore: rest?.marketMore ?? false, marketLabel: rest?.marketLabel ?? null } : null;
   // This person's saves (every star on the page shares them); what the server read shows until they're in
   const everything = useSaves();
   useEffect(() => {
-    if (data?.saved) seedSaves(clientId, data.saved);
-  }, [data, clientId]);
+    if (core?.saved) seedSaves(clientId, core.saved);
+  }, [core, clientId]);
   const mine = everything ?? data?.saved ?? [];
   // Read for this person's formats on the server already; a star added here keeps to them too
   const allowed = useCreativeFormats();
@@ -378,7 +444,6 @@ export function StartPage({
     setExtra({ id: clientId, ads: [...(extra?.id === clientId ? extra.ads : []), ...r.ads.filter((a) => !seen.has(a.id))], more: r.more });
   };
 
-  const loading = !data && !failed;
   const similar = (data?.patterns.length ?? 0) + (data?.winners.length ?? 0);
   const what = data?.detail ? data.detail.toLowerCase() : null;
   const similarSub =
@@ -390,7 +455,7 @@ export function StartPage({
   // The owner's rule: winners only from clients selling the same thing or in the same niche. When there are none, no
   // winners section: lead with what we promised instead (patterns stay, they're proven across the group). Either way
   // the critical ones come first (promises, what's wearing out), then what this person saved, then ideas to browse
-  const winnersHere = loading || (data?.winners.length ?? 0) > 0;
+  const winnersHere = restLoading || (data?.winners.length ?? 0) > 0;
   const showSimilar = winnersHere || (data?.patterns.length ?? 0) > 0;
   const order: ("fix" | "promises" | "saved" | "similar" | "market")[] = winnersHere ? ["fix", "promises", "saved", "similar", "market"] : ["promises", "fix", "saved", "market", "similar"];
   const numbered = order.filter((k) => k !== "promises" && (k !== "similar" || showSimilar));
@@ -428,7 +493,7 @@ export function StartPage({
       ))}
     </Section>
   );
-  const promisesStrip = !data ? null : (
+  const promisesStrip = !data?.promises ? null : (
     <div className={order[0] === "promises" ? "" : "-mt-4"}>
       {data.promises.length > 0 ? promises(data.promises) : <EmptyState title="Nothing promised and waiting" line={`every promise from ${clientName}'s calls is in motion`} />}
     </div>
@@ -480,7 +545,7 @@ export function StartPage({
       n={num("similar")}
       title={winnersHere ? "Working for similar clients" : "Proven for businesses like them"}
       sub={similarSub}
-      loading={loading}
+      loading={restLoading}
       empty={<EmptyState tone="neutral" icon="spark" title="Nothing proven yet" line={`for businesses like ${clientName}; their market has fresh ideas meanwhile`} action={{ label: "Browse in the market", href: marketHref }} />}
       count={similar}
     >
@@ -535,9 +600,9 @@ export function StartPage({
         n={num("market")}
         title="In the market"
         sub={`Live ads from their competitors and brands like them${data?.marketLabel ? ` in ${data.marketLabel.toLowerCase()}` : ""}, from Motion: the longest running, and new ones live 14+ days. Star one to save it for ${clientName}.`}
-        count={loading ? undefined : market.length}
+        count={restLoading ? undefined : market.length}
       />
-      {loading ? (
+      {restLoading ? (
         <Skeleton />
       ) : market.length ? (
         <Carousel label="Market ads">
@@ -601,7 +666,7 @@ export function StartPage({
             <span className="grid h-12 w-12 place-items-center rounded-[14px] bg-surface-2 text-[22px]">✎</span>
             <span className="grid gap-1.5">
               <span className="font-heading text-[22px] leading-tight">Write it myself</span>
-              <span className="text-[14px] leading-relaxed text-muted">Formats, direction and the brief, step by step. The AI suggests along the way and reviews it before it goes.</span>
+              <span className="text-[14px] leading-relaxed text-muted">Formats, direction and the brief, step by step. The AI suggests along the way and reads it over as it goes.</span>
               <span className="pt-2 text-[13px] text-faint group-hover:text-fg">Start writing →</span>
             </span>
           </button>
@@ -612,7 +677,7 @@ export function StartPage({
             </span>
             <span className="grid gap-1.5">
               <span className="font-heading text-[22px] leading-tight">Talk it through</span>
-              <span className="text-[14px] leading-relaxed text-muted">Tell the strategist the idea in your own words. It asks only what it needs and builds the full brief from {clientName}&rsquo;s Bible, numbers and assets as you go.</span>
+              <span className="text-[14px] leading-relaxed text-muted">Tell the strategist the idea in your own words. It asks only what it needs, then writes the full brief from {clientName}&rsquo;s Bible, numbers and assets, ready to send.</span>
               <span className="pt-2 text-[13px] text-brand-text">Start the conversation →</span>
             </span>
           </button>

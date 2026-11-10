@@ -2,31 +2,32 @@ import type { AssetGate } from "./brief-assets";
 import type { ClientFact } from "./brief-spec";
 import type { LintIssue } from "./brief-lint";
 
-// Where a brief stands before it goes to the maker, in one word, and what stops it: a fact only the client knows
-// ("Needs client input"), assets not in ("Waiting on assets"), contradictions inside it ("Fix contradictions"). Any of
-// these blocks sending it to the editor or designer. A lead or an exec can send it anyway with a reason, gate by gate
-// (logged). Once nothing blocks it, it's "Ready", and "Reviewed" once someone looked it over and stamped it. Pure.
+// Where a brief stands before it goes to the maker, in one word, and the one thing that can hold it. Facts only the
+// client knows ("Confirm with client") and assets not in yet ("Waiting on assets") are heads-ups, never gates: they go
+// in the brief, and the maker confirms them once they have the ticket. Only a contradiction inside the brief (the maker
+// can't follow both sides) holds it, with a one-click fix where there is one, and a lead or an exec can still send it
+// anyway (logged). Nothing holding it: "Ready", and "Reviewed" once someone looked it over and stamped it. Pure.
 
 export type GateKey = "facts" | "assets" | "conflicts";
-export type BriefStatus = "needs_client_input" | "waiting_on_assets" | "has_conflicts" | "ready" | "reviewed";
+export type BriefStatus = "has_conflicts" | "ready" | "reviewed";
 export type Override = { gates: GateKey[]; reason: string; by: string; at: string };
 export type ReviewStamp = { by: string; at: string };
 
 export const STATUS_LABEL: Record<BriefStatus, string> = {
-  needs_client_input: "Needs client input",
-  waiting_on_assets: "Waiting on assets",
   has_conflicts: "Fix contradictions",
   ready: "Ready",
   reviewed: "Reviewed",
 };
-export const GATE_LABEL: Record<GateKey, string> = { facts: "Needs client input", assets: "Waiting on assets", conflicts: "Contradictions" };
+export const GATE_LABEL: Record<GateKey, string> = { facts: "Confirm with client", assets: "Waiting on assets", conflicts: "Contradictions" };
 
 export type GateSummary = {
   status: BriefStatus;
-  /** What still blocks it (not overridden) */
+  /** What still holds it (not overridden): only ever contradictions */
   blocking: GateKey[];
-  /** Blocked, but a lead sent it on with a reason */
+  /** Held, but a lead sent it on with a reason */
   overridden: GateKey[];
+  /** Heads-ups that go with the brief and never hold it: facts to confirm with the client, assets still to come */
+  heads: GateKey[];
   openFacts: ClientFact[];
   hard: LintIssue[];
   soft: LintIssue[];
@@ -38,26 +39,31 @@ export type GateSummary = {
 export function summarizeGate(i: { openFacts: ClientFact[]; lint: LintIssue[]; assets: AssetGate | null; override?: Override | null; stamp?: ReviewStamp | null }): GateSummary {
   const hard = i.lint.filter((x) => x.severity === "hard");
   const soft = i.lint.filter((x) => x.severity === "soft");
-  const raw: GateKey[] = [...(i.openFacts.length ? (["facts"] as const) : []), ...(i.assets?.state === "waiting" ? (["assets"] as const) : []), ...(hard.length ? (["conflicts"] as const) : [])];
+  const heads: GateKey[] = [...(i.openFacts.length ? (["facts"] as const) : []), ...(i.assets?.state === "waiting" ? (["assets"] as const) : [])];
+  const raw: GateKey[] = hard.length ? ["conflicts"] : [];
   const over = new Set(i.override?.gates ?? []);
   const blocking = raw.filter((g) => !over.has(g));
   const overridden = raw.filter((g) => over.has(g));
-  const status: BriefStatus = blocking.includes("facts") ? "needs_client_input" : blocking.includes("assets") ? "waiting_on_assets" : blocking.includes("conflicts") ? "has_conflicts" : i.stamp ? "reviewed" : "ready";
-  return { status, blocking, overridden, openFacts: i.openFacts, hard, soft, assets: i.assets, override: i.override ?? null, stamp: i.stamp ?? null };
+  const status: BriefStatus = blocking.length ? "has_conflicts" : i.stamp ? "reviewed" : "ready";
+  return { status, blocking, overridden, heads, openFacts: i.openFacts, hard, soft, assets: i.assets, override: i.override ?? null, stamp: i.stamp ?? null };
 }
 
-/** One sentence for a refused send: what blocks it and how it moves */
-export function blockedLine(g: Pick<GateSummary, "blocking" | "openFacts" | "assets" | "hard">) {
+/** One sentence for a held send: the contradiction and how it moves (facts and assets never hold a brief) */
+export function blockedLine(g: Pick<GateSummary, "blocking" | "hard">) {
+  if (!g.blocking.includes("conflicts")) return null;
+  return `It contradicts itself: ${g.hard[0]?.message ?? "see the check above"} Use the fix in the check above${g.hard.length > 1 ? ` (${g.hard.length} to fix)` : ""}, or a lead can send it anyway.`;
+}
+
+/** The heads-ups a brief goes out with, in a few words ("2 to confirm with the client · waiting on assets"), or null */
+export function headsLine(g: Pick<GateSummary, "openFacts" | "assets">) {
   const parts: string[] = [];
-  if (g.blocking.includes("facts")) parts.push(`it needs an answer from the client (${g.openFacts[0]?.question ?? "a fact only they know"})`);
-  if (g.blocking.includes("assets")) parts.push(`it's waiting on assets (${g.assets?.waiting.map((x) => x.label).slice(0, 2).join(", ") || "files from the client"})`);
-  if (g.blocking.includes("conflicts")) parts.push(`it contradicts itself (${g.hard[0]?.message ?? "see the check"})`);
-  if (!parts.length) return null;
-  return `Not ready for the maker yet: ${parts.join("; ")}. Fix it above, or a lead can send it anyway with a reason.`;
+  if (g.openFacts.length) parts.push(`${g.openFacts.length} to confirm with the client`);
+  if (g.assets?.state === "waiting") parts.push("waiting on assets");
+  return parts.length ? parts.join(" · ") : null;
 }
 
 /** "Generated by Kaizen Ads · reviewed by Dana Lee, Nov 9" */
 export const stampLine = (s: ReviewStamp) => `Generated by Kaizen Ads · reviewed by ${s.by}, ${new Date(s.at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/New_York" })}`;
 
-/** Who may send a blocked brief anyway: leads and execs */
+/** Who may send a held brief anyway: leads and execs */
 export const canOverride = (me: { isLead?: boolean | null; isExec?: boolean | null; role?: string | null }) => Boolean(me.isExec || me.isLead || me.role === "executive" || me.role === "head_of_creative");

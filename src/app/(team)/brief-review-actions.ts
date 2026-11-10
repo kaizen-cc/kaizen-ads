@@ -322,8 +322,8 @@ export async function answerBriefFact(t: BriefTarget, question: string, answer: 
 
 /**
  * A client-only fact asked of the client: added to the Brand Bible's open questions, which routes it (the client in
- * their portal first, then the team member for that kind of question). The brief stays "Needs client input" until
- * the answer is put in it.
+ * their portal first, then the team member for that kind of question). The brief keeps it under "Confirm with client"
+ * (never a hold on sending it) until the answer is put in it.
  */
 export async function askClientFact(t: BriefTarget, question: string): Promise<{ ok: true } | Fail> {
   const me = await requireStaff();

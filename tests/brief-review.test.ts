@@ -4,7 +4,7 @@ import { answerFact, detectClientFacts, factCovered, openFacts, withDetectedFact
 import { applyTextFix, hardIssues, lintBrief } from "@/lib/brief-lint";
 import { assetGate, businessDaysBetween, driveLinks } from "@/lib/brief-assets";
 import { applyBriefPatch, briefOf, diffStates, stateOf, type BriefChange } from "@/lib/brief-patch";
-import { blockedLine, canOverride, stampLine, summarizeGate } from "@/lib/brief-gate";
+import { blockedLine, canOverride, headsLine, stampLine, summarizeGate } from "@/lib/brief-gate";
 
 // The lead video editor's test brief (Best Tickets, "The Seat Most Fans Miss"): a reveal with no reveal, Drive links
 // marked MISSING, "9:16 only" next to 4x5 file names, "show Best Tickets in the first 3s" next to "no logo / no
@@ -192,22 +192,34 @@ describe("the asset gate", () => {
 describe("the gate and its status", () => {
   const assets = assetGate({ assets: [{ item: "Seat photos: MISSING", status: "have" }], links: [], formats: ["image"], drive: { videos: 0, images: 0, matching: 0 }, today: new Date(2026, 10, 9), due: null });
 
-  it("needs client input first, then assets, then contradictions; ready, then reviewed", () => {
+  it("never holds a brief for a fact only the client knows or for assets: they are heads-ups", () => {
     const fact = [{ question: "Which seat, at which venue, and why?", answer: "", source: "" }];
-    const lint = lintBrief({ text: "9:16 only", sizes: ["4x5", "9x16"], formats: ["image"] });
-    expect(summarizeGate({ openFacts: fact, lint, assets }).status).toBe("needs_client_input");
-    expect(summarizeGate({ openFacts: [], lint, assets }).status).toBe("waiting_on_assets");
-    expect(summarizeGate({ openFacts: [], lint, assets: null }).status).toBe("has_conflicts");
-    expect(summarizeGate({ openFacts: [], lint: [], assets: null }).status).toBe("ready");
-    expect(summarizeGate({ openFacts: [], lint: [], assets: null, stamp: { by: "A Lead", at: "2026-11-09T15:00:00Z" } }).status).toBe("reviewed");
+    const g = summarizeGate({ openFacts: fact, lint: [], assets });
+    expect(g.status).toBe("ready");
+    expect(g.blocking).toEqual([]);
+    expect(g.heads).toEqual(["facts", "assets"]);
+    expect(blockedLine(g)).toBeNull();
+    expect(headsLine(g)).toBe("1 to confirm with the client · waiting on assets");
+    expect(headsLine(summarizeGate({ openFacts: [], lint: [], assets: null }))).toBeNull();
   });
 
-  it("lets a lead's override through, gate by gate, and says what blocks it otherwise", () => {
-    const g = summarizeGate({ openFacts: [], lint: [], assets, override: { gates: ["assets"], reason: "Footage lands Monday", by: "A Lead", at: "" } });
+  it("holds only a contradiction; ready, then reviewed", () => {
+    const fact = [{ question: "Which seat, at which venue, and why?", answer: "", source: "" }];
+    const lint = lintBrief({ text: "9:16 only", sizes: ["4x5", "9x16"], formats: ["image"] });
+    expect(summarizeGate({ openFacts: fact, lint, assets }).status).toBe("has_conflicts");
+    expect(summarizeGate({ openFacts: fact, lint, assets }).blocking).toEqual(["conflicts"]);
+    expect(summarizeGate({ openFacts: [], lint: [], assets: null }).status).toBe("ready");
+    expect(summarizeGate({ openFacts: fact, lint: [], assets, stamp: { by: "A Lead", at: "2026-11-09T15:00:00Z" } }).status).toBe("reviewed");
+  });
+
+  it("lets a lead's override through, and says what holds it otherwise", () => {
+    const lint = lintBrief({ text: "9:16 only", sizes: ["4x5", "9x16"], formats: ["image"] });
+    const g = summarizeGate({ openFacts: [], lint, assets, override: { gates: ["conflicts"], reason: "The client asked for both", by: "A Lead", at: "" } });
     expect(g.blocking).toEqual([]);
-    expect(g.overridden).toEqual(["assets"]);
+    expect(g.overridden).toEqual(["conflicts"]);
+    expect(g.status).toBe("ready");
     expect(blockedLine(g)).toBeNull();
-    expect(blockedLine(summarizeGate({ openFacts: [], lint: [], assets }))).toMatch(/waiting on assets \(Seat photos\)/);
+    expect(blockedLine(summarizeGate({ openFacts: [], lint, assets }))).toMatch(/^It contradicts itself: .+ a lead can send it anyway\.$/);
     expect(canOverride({ isLead: true })).toBe(true);
     expect(canOverride({ role: "video_editor" })).toBe(false);
   });

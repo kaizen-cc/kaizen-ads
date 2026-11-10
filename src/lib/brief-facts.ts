@@ -85,7 +85,7 @@ export const factText = (title: string, sp: Pick<BriefSpec, "hook" | "insight" |
 
 /**
  * The spec with every detected fact it doesn't cover added to "Confirm with client" as a question (never an answer),
- * so the brief shows it and stays "Needs client input" until someone answers it.
+ * so the brief shows it for the maker to confirm (a heads-up that never holds the brief) until someone answers it.
  */
 export function withDetectedFacts(sp: BriefSpec, title: string): BriefSpec {
   const found = detectClientFacts(factText(title, sp)).filter((f) => !factCovered(f, sp));

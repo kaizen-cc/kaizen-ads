@@ -26,7 +26,7 @@ export function AsanaSend({
   onSent?: (tasks: SentTask[]) => void;
   className?: string;
   label?: string;
-  /** Before the preview opens: false holds it (the request form runs its AI review first, then opens it through handleRef) */
+  /** Before the preview opens: false holds it (the request form applies a typed correction first) */
   gate?: () => boolean;
   /** Opens the preview from outside, past the gate */
   handleRef?: React.MutableRefObject<{ open: () => void } | null>;

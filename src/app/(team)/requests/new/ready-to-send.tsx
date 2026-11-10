@@ -176,7 +176,7 @@ export function ReadyToSend({
         if (field === "brief") setEditBrief(true);
         requestAnimationFrame(() => {
           const el = document.getElementById(`rts-${field}`);
-          el?.scrollIntoView({ behavior: "smooth", block: "center" });
+          el?.scrollIntoView({ behavior: "smooth", block: field === "check" ? "start" : "center" });
           (el as HTMLElement | null)?.focus?.({ preventScroll: true });
         });
       },
@@ -347,14 +347,16 @@ export function ReadyToSend({
           ) : null}
           {/* Before it goes to the maker: client-only facts, assets, contradictions, the revise chat and the review stamp */}
           {draft.clientId && !draft.migration && (
-            <BriefCheck
-              demo={demo}
-              brief={draft.brief}
-              signature={`${draft.title}\u0000${draft.sizes.join(",")}\u0000${formats.join(",")}\u0000${draft.priority}\u0000${draft.refs}\u0000${draft.brief}`}
-              target={{ kind: "draft", clientId: draft.clientId, title: draft.title, angle: draft.angle, audience: draft.audience, sizes: draft.sizes, brief: draft.brief, refs: links, formats, priority: draft.priority, suggestionId: draft.origin?.suggestionId ?? null }}
-              onChange={(c) => onChange(draftPatch(c))}
-              pendingRef={pendingRef}
-            />
+            <div id="rts-check" tabIndex={-1} className="min-w-0 scroll-mt-24 outline-none">
+              <BriefCheck
+                demo={demo}
+                brief={draft.brief}
+                signature={`${draft.title}\u0000${draft.sizes.join(",")}\u0000${formats.join(",")}\u0000${draft.priority}\u0000${draft.refs}\u0000${draft.brief}`}
+                target={{ kind: "draft", clientId: draft.clientId, title: draft.title, angle: draft.angle, audience: draft.audience, sizes: draft.sizes, brief: draft.brief, refs: links, formats, priority: draft.priority, suggestionId: draft.origin?.suggestionId ?? null }}
+                onChange={(c) => onChange(draftPatch(c))}
+                pendingRef={pendingRef}
+              />
+            </div>
           )}
           {draft.migration?.needsCopy && (
             <Field label="The copy as it stands" id="rts-copy">

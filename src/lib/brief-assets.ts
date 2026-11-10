@@ -1,9 +1,9 @@
 import type { SpecAsset } from "./brief-spec";
 
-// The asset gate. A brief goes to the editor or designer only when what it's made from is in: Drive links that open,
-// footage for a video, files the client still has to send or shoot. Anything missing makes it "Waiting on assets"
-// (it can't be sent), says who to chase, and when the client has to shoot something, whether the due date survives it
-// ("Client needs to shoot; due Nov 14 is at risk"). A lead can send it anyway with a reason (logged). Pure: tested in
+// The asset heads-up. What a brief is made from: Drive links that open, footage for a video, files the client still
+// has to send or shoot. Anything missing makes it "Waiting on assets" (a heads-up that goes with the brief, never a
+// hold on sending it), says who to chase, and when the client has to shoot something, whether the due date survives it
+// ("Client needs to shoot; due Nov 14 is at risk"). Pure: tested in
 // tests/brief-assets.test.ts. The Drive reads and the client's catalogue are gathered on the server.
 
 export type LinkCheck = { url: string; ok: boolean; note?: string | null };

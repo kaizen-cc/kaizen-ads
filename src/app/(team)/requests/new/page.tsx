@@ -10,7 +10,7 @@ import { createClient } from "@/lib/supabase/server";
 import { RequestForm } from "./request-form";
 import { LIVE } from "@/lib/live";
 import { orderSeats, type SeatRow } from "@/lib/buyer-seats";
-import { startSections } from "@/lib/request-start";
+import { startCore } from "@/lib/request-start";
 import { formatsFor } from "@/lib/creative-formats";
 import type { PreviewItem } from "./start-flow";
 
@@ -72,8 +72,9 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   // An audit's creative idea: its quick preview opens first, over the client's start page
   const auditIdea = !restart && (typeof audit === "string" || typeof business === "string") ? await fromAuditIdea(supabase, typeof business === "string" ? "business" : "account", (typeof business === "string" ? business : audit) as string, Number(idea) || 0) : null;
   const initialClient = restart?.draft.clientId ?? auditIdea?.clientId ?? (typeof client === "string" ? (clients.find((c) => c.slug === client && c.creative)?.id ?? null) : null);
-  // Arriving with ?client=: its start page is read here, so it's on screen with the page (stored data only, no AI)
-  const initialStart = initialClient && !restart ? await startSections(supabase, initialClient, formatsFor(me), me.id).catch(() => null) : null;
+  // Arriving with ?client=: the briefs already written start being read here and stream to the page as a promise (never
+  // waited on, so the page itself is never held); the heavier sections are asked for by the page (stored data, no AI)
+  const initialStart = initialClient && !restart ? { clientId: initialClient, core: startCore(supabase, initialClient, formatsFor(me), me.id).catch(() => null) } : null;
 
   return (
     <div className="mx-auto max-w-6xl">

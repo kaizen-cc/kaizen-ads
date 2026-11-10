@@ -7,8 +7,8 @@ import { PromisesStrip } from "./promises-strip";
 import { ClientPicker, StartPage, forgetStart, prefetchStart, rememberClient, seedStart, type PreviewItem } from "./start-flow";
 import { QuickBriefSheet, useQuickPreview } from "@/components/quick-brief-sheet";
 import { ReadyToSend, MAKER, TURNAROUND, plural, type ReadyHandle } from "./ready-to-send";
-import type { StartData } from "@/lib/request-start";
-import { RequestChat, recordTalkPreview } from "./request-chat";
+import type { StartCore } from "@/lib/request-start";
+import { RequestChat, forgetTalk, recordTalkPreview } from "./request-chat";
 import { AvatarField } from "@/components/avatar-field";
 import { AsanaSend, BriefPdfButton } from "@/components/asana-send";
 import Link from "next/link";
@@ -27,7 +27,8 @@ import { FORMATS, INSPIRE_KEY, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormat
 import { AllotmentBars, AspectOption, Chip, Progress, Spark, Stepper, conceptLine, type ClientOption } from "./parts";
 import { SavedConcepts } from "@/components/saved-concepts";
 import { savedHref, savedLine } from "@/lib/saved-references";
-import { aiUnedited } from "@/lib/brief-fingerprint";
+import { aiWritten, savedGivesWay, sendAction, sendLabel } from "@/lib/brief-send";
+import { useFabClear } from "@/components/fab-clear";
 
 const STEPS = ["Client", "Start", "Formats", "Direction", "Brief", "Review"];
 // Each step in the address (?step=formats), so back returns to the step before
@@ -123,8 +124,8 @@ export function RequestForm({
   initialDraft?: Partial<Draft> | null;
   /** Open straight on the review step (the brief as it was) */
   startAtReview?: boolean;
-  /** The start page's sections, already read on the server for ?client= (no wait at all) */
-  initialStart?: StartData | null;
+  /** The start page's briefs, being read on the server for ?client= (a promise streamed in, never waited on) */
+  initialStart?: { clientId: string; core: Promise<StartCore | null> } | null;
   /** Arriving with an idea to brief (an audit's creative idea): its quick preview opens first */
   initialPreview?: PreviewItem | null;
   /** A brief written from a call's promise: sending it puts the promise in motion */
@@ -132,7 +133,7 @@ export function RequestForm({
 }) {
   // Seeded once, before anything asks for it
   useState(() => {
-    if (initialStart) seedStart(initialStart);
+    if (initialStart) seedStart(initialStart.clientId, initialStart.core);
     return null;
   });
   const router = useRouter();
@@ -185,13 +186,29 @@ export function RequestForm({
   const total = formats.reduce((n, f) => n + totalFor(draft.formats[f]), 0);
   const s = ai.status === "ready" ? ai.s : null;
   const allotment = draft.clientId ? allotments[draft.clientId] : undefined;
-  // Written entirely by the AI and not changed since: it goes straight through, no review (the server checks it again).
-  // Any edit to what the review reads brings the review back; edited back to how it was, it's unchanged again.
-  const [serverEdited, setServerEdited] = useState(false); // the server found it changed after all: reviewed from here on
-  const unedited = aiOn && !demo && !serverEdited && aiUnedited(draft);
-  // Where the person asked it to go once the review is through
-  const intent = useRef<"here" | "asana">("here");
+  // Written by the AI (talked through, a suggested brief, the market, a winner, a promise): it sends at once, never a
+  // second AI review, whatever small edits it had on the way (src/lib/brief-send.ts). A brief written by hand gets the
+  // review when it's sent, and the review never stops it.
+  const byAi = aiOn && !demo && aiWritten(draft);
   const asanaRef = useRef<{ open: () => void } | null>(null);
+  // A contradiction held the send (the only thing that can): what it said, and whether this person can send it anyway
+  const [heldAt, setHeld] = useState<{ line: string; canSendAnyway: boolean; sig: string } | null>(null);
+  const briefSig = `${draft.title}\u0000${draft.sizes.join(",")}\u0000${draft.brief}`;
+  // Changed since (a fix applied): no longer said
+  const held = heldAt && heldAt.sig === briefSig ? heldAt : null;
+  // A review that's no longer wanted ("Send now" while it ran, or the brief changed) is ignored when it comes back
+  const reviewSeq = useRef(0);
+  // The fixed action bar's height: the feedback bubble keeps above it, so it never covers Send
+  const barRef = useRef<HTMLDivElement>(null);
+  const [barH, setBarH] = useState(0);
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setBarH(Math.ceil(el.getBoundingClientRect().height)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [step]);
+  useFabClear(barH, step > 0 && barH > 0 && !created && !asanaSent);
 
   // Prepared suggestions come from the twice-daily briefing and load instantly. Live ones ask the AI now,
   // using what's filled in; that's also the fallback for a client with no briefing yet.
@@ -220,8 +237,7 @@ export function RequestForm({
   useEffect(() => {
     const kept = readSaved(saveKey);
     // A brief rewritten since this copy was saved (its quick preview changed and written again): the new writing wins
-    const was = initialDraft?.origin?.writtenAt ?? null;
-    const rewritten = Boolean(kept && was && (kept.draft.origin?.writtenAt ? kept.draft.origin.writtenAt !== was : kept.at < Date.parse(was)));
+    const rewritten = savedGivesWay(kept, initialDraft?.origin?.writtenAt);
     const saved = rewritten ? null : kept;
     if (rewritten) writeSaved(null, saveKey);
     // Read storage after mount (the server can't), then apply it
@@ -374,25 +390,30 @@ export function RequestForm({
     };
   };
 
-  const send = (r: Review | null, reviewFailed = false) =>
+  const send = (r: Review | null, opts?: { sendAnyway?: boolean }) =>
     start(async () => {
       setError(null);
+      setHeld(null);
+      // A review still running is no longer wanted: it never sends a second time when it comes back
+      reviewSeq.current++;
       if (demo) {
         writeSaved(null, saveKey);
         setCreated(formats.map((_, i) => 1061 + i));
         return;
       }
-      const res = await createBatch(draft, r, decisionsOf(r), { reviewFailed });
-      // The server didn't find it to be the AI's unchanged brief: it gets the review after all
-      if (!res.ok && res.needsReview) {
-        setServerEdited(true);
-        intent.current = "here";
-        runReview();
+      const res = await createBatch(draft, r, decisionsOf(r), { sendAnyway: opts?.sendAnyway });
+      if (!res.ok && res.gate) {
+        // Held by a contradiction: what it is (the check above has the one-click fix), and a lead's "Send anyway"
+        setHeld({ line: res.error, canSendAnyway: Boolean(res.canSendAnyway), sig: briefSig });
+        if (review.status === "running") setReview({ status: "idle" });
         return;
       }
       if (res.ok) {
         writeSaved(null, saveKey);
-        if (draft.clientId) forgetStart(draft.clientId);
+        if (draft.clientId) {
+          forgetStart(draft.clientId);
+          forgetTalk(draft.clientId);
+        }
         // Migrated past production: open the ticket to upload its creative
         if (draft.migration?.needsCreative && res.numbers[0]) {
           router.push(`/board?t=${res.numbers[0]}`);
@@ -411,26 +432,34 @@ export function RequestForm({
     setError(p ? "Your change in Tell me what to change is in the brief now. Look it over, then send." : "Send your change in Tell me what to change first, or clear it.");
   };
 
-  const runReview = (to: "here" | "asana" = intent.current) => {
-    intent.current = to;
-    if (!aiOn) return to === "asana" ? asanaRef.current?.open() : send(null);
+  // A brief written by hand: the AI reads it over as it's sent. Nothing to look at, it goes on by itself; otherwise its
+  // notes show as suggestions, with "Send anyway" one click away (and "Send now" while it runs)
+  const runReview = () => {
+    if (!aiOn) return send(null);
+    const id = ++reviewSeq.current;
     setReview({ status: "running" });
     reveal(reviewRef, "center");
     const ask: Promise<ReviewResult> = demo
       ? new Promise((r) => setTimeout(() => r({ ok: true, review: demo.review, similar: demo.similar ?? [], refs: [] }), 3200))
-      : reviewRequest(draft);
-    ask.then((res) => {
+      : reviewRequest(draft).catch((): ReviewResult => ({ ok: false, error: "The review didn't come back." }));
+    void ask.then((res) => {
+      if (id !== reviewSeq.current) return;
       if (!res.ok) return setReview({ status: "error", error: res.error });
       const h = startHandled(res.review, res.similar, draft.brief);
       setHandled(h);
       setReview({ status: "done", review: res.review, similar: res.similar, refs: res.refs });
       reveal(reviewRef, "start");
-      // Nothing to look at: straight to the team (or on to Asana's preview)
-      if (res.review.issues.length === 0 && res.similar.length === 0 && h.brief === "none") {
-        if (intent.current === "asana") asanaRef.current?.open();
-        else send(res.review);
-      }
+      // Nothing to look at: straight to the team
+      if (res.review.issues.length === 0 && res.similar.length === 0 && h.brief === "none") send(res.review);
     });
+  };
+
+  // The one primary button: apply a typed correction, send, or (a brief written by hand) read it over first
+  const primary = () => {
+    const act = sendAction({ pendingRevise: Boolean(readyRef.current?.pendingRevise.has()), aiOn, aiWritten: byAi, review: review.status });
+    if (act === "apply-pending") return void applyPending();
+    if (act === "review") return runReview();
+    send(review.status === "done" ? review.review : null);
   };
 
   // Text changes from the review keep the review on screen (a manual edit starts a fresh review)
@@ -545,24 +574,24 @@ export function RequestForm({
     setBriefAi({ status: "idle" });
     setCreated(null);
     setQueue([]);
-    setServerEdited(false);
+    setHeld(null);
     go(0);
   };
 
   const heading = [
     ["Who’s it for?", "Search by name. The work goes to that client’s designer or editor."],
     talking
-      ? ["Talk it through", "Tell the strategist what you want to make. It asks only what it needs and builds the brief as you go."]
+      ? ["Talk it through", "Tell the strategist what you want to make. It asks only what it needs, writes the full brief, and opens it ready to send."]
       : ["How do you want to start?", "Briefs ready for this client, what works for similar clients and in their market, or your own idea."],
     ["What are we making?", "Pick every format you need. Each one becomes its own ticket for the right person."],
     ["What’s the direction?", "Name it and set the angle, so the team and the copy agent aim the same way."],
     ["Brief the team", "What to show, what to say, and what to stay away from."],
     [
       "Ready to send",
-      unedited
-        ? "This is what the team receives, as the AI wrote it. Change anything right here; a changed brief is scrubbed against the client’s history before it goes out."
+      byAi
+        ? "This is what the team receives, as the strategist wrote it. Change anything right here, then send."
         : aiOn
-          ? "This is what the team receives. Change anything right here; the AI scrubs it against the client’s history before it goes out."
+          ? "This is what the team receives. Change anything right here; the AI reads it over as it goes, and its notes are only suggestions."
           : "This is what the team receives. Change anything right here before it goes out.",
     ],
   ][step];
@@ -987,10 +1016,10 @@ export function RequestForm({
                   }}
                 />
 
-                {aiOn && !demo && draft.ai && review.status === "idle" && (
+                {byAi && review.status === "idle" && (
                   <p className="flex items-center gap-2 px-1 text-[12.5px] text-faint" aria-live="polite">
-                    <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${unedited ? "bg-ok" : "bg-warn"}`} />
-                    {unedited ? `Written by ${draft.ai.source.kind === "kaizen-ai" ? "Kaizen AI" : "the strategist"}, unchanged: goes straight through` : "Edited: the AI checks it before it goes out"}
+                    <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
+                    Written by {draft.ai?.source.kind === "kaizen-ai" ? "Kaizen AI" : "the strategist"}: it goes straight to the team, no second review
                   </p>
                 )}
 
@@ -1021,107 +1050,96 @@ export function RequestForm({
             )}
 
             {/* Footer */}
-            {/* Phones: Back and Continue stay under the thumb, just above the tab bar */}
-            {step === STEPS.length - 1 && (
-              <div className="grid gap-1 px-1">
-                <p className="font-heading text-[18px]">Where should it go?</p>
-                <p className="text-[13px] text-muted">Create it here (the Board, the allotment and the AI review), send it to the Creative board in Asana exactly like a form request, or download it as a branded PDF.</p>
-              </div>
-            )}
+            {/* Phones: Back and the one primary action stay under the thumb, just above the tab bar. Ready to send:
+                one row (Back, Asana, PDF, Send), the feedback bubble kept above it (useFabClear), so Send is never
+                covered; a held send's line sits above the buttons, never pushing them off screen. */}
             <div
-              className={`sticky z-20 -mx-4 flex flex-wrap items-center justify-between gap-3 border-t border-line bg-bg/95 px-4 py-3 backdrop-blur-xl md:mx-0 md:px-0 ${step === STEPS.length - 1 ? "bottom-[calc(59px+env(safe-area-inset-bottom))] md:bottom-0 md:rounded-[22px] md:border md:bg-surface/95 md:px-4 md:shadow-[0_20px_50px_-30px_rgba(0,0,0,0.6)]" : "bottom-[calc(59px+env(safe-area-inset-bottom))] md:static md:z-auto md:bg-transparent md:pb-0 md:pt-6 md:backdrop-blur-none"} ${step === 0 ? "hidden" : ""}`}
+              ref={barRef}
+              className={`sticky z-20 -mx-4 grid gap-2 border-t border-line bg-bg/95 px-4 py-3 backdrop-blur-xl md:mx-0 md:px-0 ${step === STEPS.length - 1 ? "bottom-[calc(59px+env(safe-area-inset-bottom))] md:bottom-0 md:rounded-[22px] md:border md:bg-surface/95 md:px-4 md:shadow-[0_20px_50px_-30px_rgba(0,0,0,0.6)]" : "bottom-[calc(59px+env(safe-area-inset-bottom))] md:static md:z-auto md:bg-transparent md:pb-0 md:pt-6 md:backdrop-blur-none"} ${step === 0 ? "hidden" : ""}`}
             >
-              <div>
-                {step > 0 && (
-                  <button type="button" onClick={() => go(step - 1)} className="-ml-3 h-12 rounded-brand px-3 text-sm text-muted hover:bg-surface hover:text-fg md:ml-0 md:h-11 md:px-4">
-                    ← Back
-                  </button>
-                )}
-              </div>
-              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-3 gap-y-2 md:flex-none md:gap-3">
-                {(error || (blocked && step > 0)) && <span className={`text-right text-xs md:text-left md:text-sm ${error ? "text-brand-text" : "text-faint"}`}>{error ?? blocked}</span>}
-                {step === STEPS.length - 1 && draft.clientId && !demo && (
-                  <span className="flex items-center gap-2">
-                    <AsanaSend
-                      handleRef={asanaRef}
-                      // A changed or hand-written brief gets the AI review first; the AI's own unchanged brief opens straight away
-                      gate={() => {
-                        if (readyRef.current?.pendingRevise.has()) {
-                          void applyPending();
-                          return false;
-                        }
-                        if (unedited || !aiOn || review.status === "done" || review.status === "error") return true;
-                        if (review.status !== "running") runReview("asana");
-                        return false;
-                      }}
-                      preview={() => asanaPreview(draft)}
-                      send={async () => {
-                        const r = await sendToAsana(draft, review.status === "done" ? review.review : null, { reviewFailed: review.status === "error" });
-                        // The server didn't find it to be the AI's unchanged brief: reviewed next time
-                        if (!r.ok && r.needsReview) setServerEdited(true);
-                        return r.ok || !r.needsReview ? r : { ok: false as const, error: "This brief was changed, so the AI checks it first. Close this and press Asana again." };
-                      }}
-                      label="Asana"
-                      className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint md:h-11"
-                      onSent={(tasks) => {
-                        writeSaved(null, saveKey);
-                        if (draft.clientId) forgetStart(draft.clientId);
-                        setAsanaSent(tasks.map((t) => ({ name: t.name, url: t.url })));
-                      }}
-                    />
-                    <BriefPdfButton body={async () => ({ ...draft, ...((await readyRef.current?.pendingRevise.apply()) ?? {}), clientId: draft.clientId })} onStructure={(pdfCache) => setDraft((d) => ({ ...d, pdfCache }))} className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint disabled:opacity-60 md:h-11" />
-                  </span>
-                )}
-                {step < STEPS.length - 1 ? (
-                  step > 0 && (
-                    <button disabled={Boolean(blocked)} className="h-12 rounded-brand md:h-11 bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:bg-surface-2 disabled:text-faint disabled:shadow-none">
-                      Continue
+              {step === STEPS.length - 1 && (held || error) && (
+                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5" role="status" aria-live="polite">
+                  <p className={`line-clamp-2 min-w-0 flex-1 text-[12.5px] leading-snug md:text-[13px] ${held ? "text-bad" : "text-brand-text"}`}>{held?.line ?? error}</p>
+                  {held && (
+                    <span className="flex shrink-0 gap-2">
+                      <button type="button" onClick={() => readyRef.current?.focus("check")} className="min-h-11 rounded-full border border-line px-3.5 text-[13px] text-fg hover:border-faint md:min-h-9">
+                        See the fix
+                      </button>
+                      {held.canSendAnyway && (
+                        <button type="button" disabled={pending} onClick={() => send(review.status === "done" ? review.review : null, { sendAnyway: true })} className="min-h-11 rounded-full bg-fg px-3.5 text-[13px] font-medium text-bg hover:opacity-90 disabled:opacity-60 md:min-h-9">
+                          Send anyway (lead)
+                        </button>
+                      )}
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="flex min-w-0 items-center justify-between gap-2 md:gap-3">
+                <div className="shrink-0">
+                  {step > 0 && (
+                    <button type="button" onClick={() => go(step - 1)} aria-label="Back" className="-ml-3 inline-flex h-12 items-center rounded-brand px-3 text-sm text-muted hover:bg-surface hover:text-fg md:ml-0 md:h-11 md:px-4">
+                      ←<span className={step === STEPS.length - 1 ? "hidden md:inline" : ""}>&nbsp;Back</span>
                     </button>
-                  )
-                ) : review.status === "done" && handled ? (
-                  (() => {
-                    const openItems = handled.issues.filter((x) => x === "open").length + Object.values(handled.similar).filter((x) => x === "open").length;
-                    return openItems > 0 ? (
-                      <button
-                        type="button"
-                        disabled={pending || Boolean(handled.fixing)}
-                        onClick={() => send(review.review)}
-                        className="h-12 rounded-brand md:h-11 border border-line px-5 text-sm text-muted hover:border-faint hover:text-fg disabled:opacity-60"
-                        title="Anything still open is noted on the tickets as dismissed"
-                      >
-                        {pending ? "Creating…" : `Send anyway · ${openItems} open`}
+                  )}
+                </div>
+                <div className="flex min-w-0 flex-1 items-center justify-end gap-2 md:flex-none md:gap-3">
+                  {step < STEPS.length - 1 && (error || (blocked && step > 0)) && <span className={`text-right text-xs md:text-left md:text-sm ${error ? "text-brand-text" : "text-faint"}`}>{error ?? blocked}</span>}
+                  {step === STEPS.length - 1 && draft.clientId && !demo && (
+                    <span className="flex shrink-0 items-center gap-2">
+                      <AsanaSend
+                        handleRef={asanaRef}
+                        // A correction typed and not sent goes in first; nothing else stands before Asana's preview
+                        gate={() => {
+                          if (readyRef.current?.pendingRevise.has()) {
+                            void applyPending();
+                            return false;
+                          }
+                          return true;
+                        }}
+                        preview={() => asanaPreview(draft)}
+                        send={() => sendToAsana(draft, { sendAnyway: Boolean(held?.canSendAnyway) })}
+                        label="Asana"
+                        className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-3.5 text-[14px] text-fg hover:border-faint md:h-11 md:px-4"
+                        onSent={(tasks) => {
+                          writeSaved(null, saveKey);
+                          if (draft.clientId) {
+                            forgetStart(draft.clientId);
+                            forgetTalk(draft.clientId);
+                          }
+                          setAsanaSent(tasks.map((t) => ({ name: t.name, url: t.url })));
+                        }}
+                      />
+                      <BriefPdfButton body={async () => ({ ...draft, ...((await readyRef.current?.pendingRevise.apply()) ?? {}), clientId: draft.clientId })} onStructure={(pdfCache) => setDraft((d) => ({ ...d, pdfCache }))} className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-3.5 text-[14px] text-fg hover:border-faint disabled:opacity-60 md:h-11 md:px-4" />
+                    </span>
+                  )}
+                  {step < STEPS.length - 1 ? (
+                    step > 0 && (
+                      <button disabled={Boolean(blocked)} className="h-12 rounded-brand md:h-11 bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:bg-surface-2 disabled:text-faint disabled:shadow-none">
+                        Continue
                       </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={pending || Boolean(handled.fixing)}
-                        onClick={() => send(review.review)}
-                        className="inline-flex h-12 items-center md:h-11 gap-2 rounded-brand bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] hover:bg-brand-hover disabled:opacity-70"
-                      >
-                        {pending ? "Creating…" : `Send to the team · ${plural(formats.length, "ticket")}`}
-                      </button>
-                    );
-                  })()
-                ) : (
-                  <button
-                    type="button"
-                    disabled={pending || review.status === "running"}
-                    // The AI's own unchanged brief: created at once, no review
-                    onClick={() => (readyRef.current?.pendingRevise.has() ? void applyPending() : unedited && review.status !== "running" ? send(null) : review.status === "error" ? send(null, true) : runReview("here"))}
-                    className="inline-flex h-12 items-center md:h-11 gap-2 rounded-brand bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:opacity-70"
-                  >
-                    {aiOn && !unedited && review.status !== "error" && <Spark size={12} />}
-                    {pending
-                      ? "Creating…"
-                      : review.status === "running"
-                        ? "Reviewing…"
-                        : review.status === "error"
-                          ? "Send without review"
-                          : aiOn
-                            ? "Create here"
-                            : `Create ${plural(formats.length, "ticket")}`}
-                  </button>
-                )}
+                    )
+                  ) : (
+                    (() => {
+                      const openItems = review.status === "done" && handled ? handled.issues.filter((x) => x === "open").length + Object.values(handled.similar).filter((x) => x === "open").length : 0;
+                      const label = sendLabel({ pending, review: review.status, openItems, tickets: formats.length, aiOn, aiWritten: byAi });
+                      const short = pending ? "Sending…" : review.status === "running" && !byAi && aiOn ? "Send now" : openItems > 0 ? "Send anyway" : "Send";
+                      return (
+                        <button
+                          type="button"
+                          // Never held by the review: while it runs this sends now, and with notes open it sends anyway
+                          disabled={pending || Boolean(handled?.fixing)}
+                          onClick={primary}
+                          title={openItems > 0 ? "The notes still open go with the tickets as seen and passed" : undefined}
+                          className="inline-flex h-12 min-w-0 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-brand bg-brand px-5 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:opacity-70 md:h-11 md:px-6"
+                        >
+                          {review.status === "running" && !pending && <span aria-hidden className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />}
+                          <span className="md:hidden">{short}</span>
+                          <span className="hidden md:inline">{label}</span>
+                        </button>
+                      );
+                    })()
+                  )}
+                </div>
               </div>
             </div>
           </form>

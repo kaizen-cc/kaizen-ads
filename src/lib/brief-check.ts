@@ -9,8 +9,8 @@ import { parseBrief, type BriefSpec } from "@/lib/brief-spec";
 
 // The ready check on the server: the brief read into its spec, the client-only facts still open, the contradictions
 // (code rules), the asset gate with the Drive links actually opened and the client's catalogue counted, and any lead
-// override or review stamp for this exact brief. Used by the brief's check panel, the send (tickets and Asana) and the
-// PDF. Every row it reads was written by src/app/(team)/brief-review-actions.ts.
+// override or review stamp for this exact brief. Used by the brief's check panel and the PDF; the send (tickets and
+// Asana) uses conflictsNow, since only a contradiction can hold a brief. Every row it reads was written by src/app/(team)/brief-review-actions.ts.
 
 export type BriefInput = {
   clientId: string;
@@ -111,6 +111,22 @@ export async function stampAndOverride(admin: SupabaseClient, clientId: string, 
 }
 
 export type BriefCheck = GateSummary & { spec: BriefSpec; structured: boolean; hash: string; due: string | null };
+
+/**
+ * The send's check, quick: only what can hold a brief (its contradictions, by the code rules) and any lead override of
+ * this exact brief. Facts to confirm and assets still to come never hold it, so no Drive reads here: a send never waits.
+ */
+export async function conflictsNow(admin: SupabaseClient, i: Pick<BriefInput, "clientId" | "title" | "brief" | "sizes" | "formats">): Promise<GateSummary & { hash: string }> {
+  const hash = briefHash(i.brief, i.sizes);
+  const [{ data: client }, so] = await Promise.all([admin.from("clients").select("name").eq("id", i.clientId).maybeSingle(), stampAndOverride(admin, i.clientId, hash)]);
+  const lint = lintBrief({ text: i.brief, title: i.title, sizes: i.sizes, formats: i.formats, client: (client?.name as string | null) ?? null });
+  return { ...summarizeGate({ openFacts: [], lint, assets: null, override: so.override, stamp: so.stamp }), hash };
+}
+
+/** A lead sends a held brief on from Ready to send in one click: their override of its contradictions, logged */
+export async function recordSendAnyway(admin: SupabaseClient, i: { clientId: string; profileId: string; hash: string; formats: string[] }) {
+  await admin.from("brief_corrections").insert({ client_id: i.clientId, profile_id: i.profileId, kind: "override", gates: ["conflicts"], reason: "Sent anyway from Ready to send", brief_hash: i.hash, format: i.formats.join(",") || null });
+}
 
 /** The whole ready check for one brief (no AI: the code rules; the AI pass is asked for separately) */
 export async function checkBriefNow(admin: SupabaseClient, i: BriefInput): Promise<BriefCheck> {

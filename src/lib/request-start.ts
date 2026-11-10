@@ -51,20 +51,27 @@ async function timed<T>(timings: Record<string, number>, key: string, run: () =>
   }
 }
 
+/** The quick part of the page: the briefs already written, promises from calls and this person's saves (three plain reads) */
+export type StartCore = Pick<StartData, "clientId" | "briefs" | "promises" | "saved" | "timings">;
+/** The slower part: patterns, winners from similar clients and the market (heavier reads), streamed in after */
+export type StartRest = Omit<StartData, "briefs" | "promises" | "saved">;
+
 /**
  * The start page's sections for one client, read in parallel with the person's own access (db is their client). Only
- * what fits the formats the person works in (`allowed`, from their role): a designer never sees video examples.
+ * what fits the formats the person works in (`allowed`, from their role): a designer never sees video examples. Two
+ * parts, so the briefs already written show at once and never wait on the market or the winners.
  */
 export async function startSections(db: SupabaseClient, clientId: string, allowed: ReadonlySet<CreativeFormat> = new Set(CREATIVE_FORMATS), meId: string | null = null): Promise<StartData> {
+  const [core, rest] = await Promise.all([startCore(db, clientId, allowed, meId), startRest(db, clientId, allowed)]);
+  return { ...rest, ...core, timings: { ...rest.timings, ...core.timings } };
+}
+
+/** The briefs already written, the promises and this person's saves: on screen first */
+export async function startCore(db: SupabaseClient, clientId: string, allowed: ReadonlySet<CreativeFormat> = new Set(CREATIVE_FORMATS), meId: string | null = null): Promise<StartCore> {
   const all = seesAllFormats(allowed);
   const t0 = Date.now();
   const timings: Record<string, number> = {};
-  const { data: c } = await db.from("clients").select("id, industry, industry_detail").eq("id", clientId).maybeSingle();
-  timings.client = Date.now() - t0;
-  const industry = c?.industry && c.industry !== "other" ? (c.industry as string) : null;
-  if (!c) return { clientId, briefs: [], promises: [], patterns: [], winners: [], winnersLabel: null, winnersTier: null, detail: null, market: [], marketMore: false, marketLabel: null, saved: [], timings };
-
-  const [briefs, promises, patterns, winners, market, saved] = await Promise.all([
+  const [briefs, promises, saved] = await Promise.all([
     timed(
       timings,
       "briefs",
@@ -111,6 +118,42 @@ export async function startSections(db: SupabaseClient, clientId: string, allowe
     ),
     timed(
       timings,
+      "saved",
+      async () => {
+        // This person's own: open ones, and ones someone else put in motion (until they dismiss the notice)
+        if (!meId) return [];
+        const { data } = await db
+          .from("client_saved_references")
+          .select(SAVED_COLS)
+          .eq("client_id", clientId)
+          .eq("saved_by", meId)
+          .is("dismissed_at", null)
+          .or(`used_at.is.null,used_by.neq.${meId}`)
+          .order("created_at", { ascending: false })
+          .limit(40);
+        return (data ?? []).map((r) => toSaved(r as Record<string, unknown>)).filter((r) => fitsFormat(allowed, r.format));
+      },
+      [] as SavedRef[],
+    ),
+  ]);
+  timings.core = Date.now() - t0;
+  if (process.env.NODE_ENV !== "production") console.info("[request start] core", clientId, JSON.stringify(timings));
+  return { clientId, briefs, promises, saved, timings };
+}
+
+/** Patterns, winners from similar clients and the market: streamed in after the briefs */
+export async function startRest(db: SupabaseClient, clientId: string, allowed: ReadonlySet<CreativeFormat> = new Set(CREATIVE_FORMATS)): Promise<StartRest> {
+  const all = seesAllFormats(allowed);
+  const t0 = Date.now();
+  const timings: Record<string, number> = {};
+  const { data: c } = await db.from("clients").select("id, industry, industry_detail").eq("id", clientId).maybeSingle();
+  timings.client = Date.now() - t0;
+  const industry = c?.industry && c.industry !== "other" ? (c.industry as string) : null;
+  if (!c) return { clientId, patterns: [], winners: [], winnersLabel: null, winnersTier: null, detail: null, market: [], marketMore: false, marketLabel: null, timings };
+
+  const [patterns, winners, market] = await Promise.all([
+    timed(
+      timings,
       "patterns",
       async () => {
         const { patternsForClient } = await import("@/lib/patterns");
@@ -139,34 +182,13 @@ export async function startSections(db: SupabaseClient, clientId: string, allowe
       [] as Winner[],
     ),
     timed(timings, "market", () => marketPage(db, clientId, 0, MARKET_PAGE, allowed), { ads: [] as MarketAd[], more: false }),
-    timed(
-      timings,
-      "saved",
-      async () => {
-        // This person's own: open ones, and ones someone else put in motion (until they dismiss the notice)
-        if (!meId) return [];
-        const { data } = await db
-          .from("client_saved_references")
-          .select(SAVED_COLS)
-          .eq("client_id", clientId)
-          .eq("saved_by", meId)
-          .is("dismissed_at", null)
-          .or(`used_at.is.null,used_by.neq.${meId}`)
-          .order("created_at", { ascending: false })
-          .limit(40);
-        return (data ?? []).map((r) => toSaved(r as Record<string, unknown>)).filter((r) => fitsFormat(allowed, r.format));
-      },
-      [] as SavedRef[],
-    ),
   ]);
-  timings.total = Date.now() - t0;
-  if (process.env.NODE_ENV !== "production") console.info("[request start]", clientId, JSON.stringify(timings));
+  timings.rest = Date.now() - t0;
+  if (process.env.NODE_ENV !== "production") console.info("[request start] rest", clientId, JSON.stringify(timings));
   const label = industry ? ((c.industry_detail as string | null) ?? industryLabel(industry)) : null;
   const winnersTier = winners.length ? (Math.min(...winners.map((w) => w.match?.tier ?? 2)) as 1 | 2) : null;
   return {
     clientId,
-    briefs,
-    promises,
     patterns,
     winners,
     winnersLabel: industry ? industryLabel(industry) : null,
@@ -175,7 +197,6 @@ export async function startSections(db: SupabaseClient, clientId: string, allowe
     market: market.ads,
     marketMore: market.more,
     marketLabel: label,
-    saved,
     timings,
   };
 }
