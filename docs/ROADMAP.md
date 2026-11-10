@@ -79,7 +79,7 @@ Where things stand on 2026-10-31 and what comes next, in order. The target is th
 ## Next: close the approval loop (Phase 1, before BFCM)
 
 1. ~~Client portal~~ and ~~revisions loop~~: built (see above); each client goes live when an exec switches them on.
-2. **Notifications and chasing** (deliberately last): Slack posts to each client's channel, plus 24h and 48h reminders in business time. After 48h the item goes to customer success's queue; auto-approval happens only for clients who opted in.
+2. ~~Notifications and chasing~~: built, off for every client. Creative reaching "With client" gets one short post in the client's Slack channel and an email to their portal contacts (one per batch, at most once a day, with the portal link), a reminder at 24 business hours and another at 48 (1 and 2 business days on the business clock), and at 48 the ticket goes to customer success's Waiting on the client list (the execs when nobody holds the seat) with a notification. Clients who opted into auto-approval have it approved for them at 48 instead, with a note to them and the team. Every notice is logged once per ticket and round and shows on the ticket's timeline and the client's Team & setup. It reaches a client only with their portal live, the client outreach hold lifted and their own Client notifications switch on (an exec's). White label clients' messages never name Kaizen.
 
 ## Then: launch and learn (Phase 2)
 

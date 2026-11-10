@@ -174,6 +174,8 @@ export async function runApprovalNotices(admin: Admin, now = new Date()) {
   const out = { clients: 0, posted: 0, reminded24: 0, reminded48: 0, escalated: 0, autoApproved: 0, errors: [] as string[] };
   if (!rows.length) return out;
 
+  // A run that died mid-send leaves its claims: after half an hour they're let go, so the next run tries again
+  await admin.from("approval_notices").delete().eq("status", "sending").lt("created_at", new Date(now.getTime() - 30 * 60_000).toISOString());
   const ids = rows.map((r) => r.id);
   const clientIds = [...new Set(rows.map((r) => r.client_id))];
   const dayStart = new Date(now.getTime() - 36 * 3_600_000).toISOString();
