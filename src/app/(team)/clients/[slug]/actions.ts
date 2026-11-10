@@ -182,6 +182,11 @@ export async function setClientService(clientId: string, slug: string, service: 
     removed.add(service);
   }
   const { error } = await admin.from("clients").update({ services_extra: [...extra], services_removed: [...removed] }).eq("id", clientId);
+  // Running ads now: its KPI card is on the board straight away, numbers showing, waiting for its KPI
+  if (!error && on && (service === "facebook-ads" || service === "google-ads")) {
+    await (await import("@/lib/kpi/ensure")).ensureKpiCards(admin, clientId).catch(() => 0);
+    revalidatePath("/kpis");
+  }
   return done(slug, error);
 }
 

@@ -22,7 +22,7 @@ export type ClientKpi = {
   roas: boolean;
   target: number | null;
   source: "strategy" | "client";
-  /** Where the target came from; "benchmark" when there's none and the industry benchmark stands in */
+  /** Where the target came from; null when none is set (the status is then "unset" and the benchmark only a hint) */
   targetFrom: TargetFrom | null;
   benchmark: BenchmarkTarget | null;
   /** Trending toward the target (or the benchmark)? */

@@ -80,7 +80,7 @@ export function Glance({
                     <Link href={`/kpis?target=${k.id}`} className="max-md:basis-full md:text-right">
                       <span className={`tabular block font-display text-3xl leading-none ${s.text}`}>{kpiValue(k.windows.d14?.value, k.roas)}</span>
                       <span className="text-[11px] text-ink/45">
-                        14 days · target {kpiValue(k.target, k.roas)}
+                        14 days · {k.target == null ? "no KPI set" : `target ${kpiValue(k.target, k.roas)}`}
                         {k.trend ? ` · ${k.trend}` : ""}
                       </span>
                     </Link>

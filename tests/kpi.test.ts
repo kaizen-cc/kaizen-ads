@@ -33,7 +33,8 @@ describe("KPI math", () => {
     expect(statusFor(0.3, spent, true)).toBe("off");
     expect(statusFor(null, spent, true)).toBe("off"); // spend, no results
     expect(statusFor(null, { spend: 0, results: 0, value: null }, true)).toBe("idle");
-    expect(statusFor(0.3, spent, false)).toBe("setup");
+    // No target: never judged, whatever the numbers
+    expect(statusFor(0.3, spent, false)).toBe("unset");
   });
 
   it("budget pacing projects the month from month to date", () => {

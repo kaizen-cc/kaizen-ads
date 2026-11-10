@@ -217,5 +217,7 @@ export async function applyServices(admin: SupabaseClient, clientId: string, nam
   const extra = new Set([...((c.services_extra ?? []) as string[]), ...slugs]);
   const removed = ((c.services_removed ?? []) as string[]).filter((s) => !slugs.has(s as never));
   await admin.from("clients").update({ services_extra: [...extra], services_removed: removed }).eq("id", clientId);
+  // Ads ticked: the client's KPI card is on the board straight away, waiting for its KPI
+  if (slugs.has("facebook-ads") || slugs.has("google-ads")) await (await import("@/lib/kpi/ensure")).ensureKpiCards(admin, clientId).catch(() => 0);
   return [...slugs];
 }

@@ -52,8 +52,10 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
           {kpis.map((k) => {
             const s = STATUS[k.status];
             const live = k.status !== "setup" && k.status !== "idle";
-            const month = change(k.vsMonth);
-            const trend = k.trend ? TREND[k.trend] : null;
+            // No KPI set: the numbers, never colored or judged
+            const unset = k.status === "unset";
+            const month = unset ? { ...change(k.vsMonth), tone: "text-muted" } : change(k.vsMonth);
+            const trend = k.trend ? (unset ? { ...TREND[k.trend], tone: "text-muted" } : TREND[k.trend]) : null;
             return (
               <article key={k.id} className="@container grid gap-4 rounded-[14px] border border-line bg-bg/40 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -79,11 +81,21 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                   </div>
                   {live && (
                     <div className="max-md:basis-full md:text-right">
-                      <p className={`tabular font-display text-3xl leading-none ${s.text}`}>{kpiValue(k.windows.d14?.value, k.roas)}</p>
-                      <p className="mt-1 text-[11px] text-faint">
-                        last 14 days · {k.targetFrom === "benchmark" ? "industry benchmark" : "target"} <span className="tabular text-muted">{kpiValue(k.target, k.roas)}</span>
-                        {k.targetFrom === "client" ? " (client's)" : k.targetFrom === "benchmark" && k.benchmark ? ` (${k.benchmark.vertical}, ${k.benchmark.year})` : ""}
-                      </p>
+                      <p className={`tabular font-display text-3xl leading-none ${unset ? "text-fg" : s.text}`}>{kpiValue(k.windows.d14?.value, k.roas)}</p>
+                      {unset ? (
+                        <p className="mt-1 text-[11px] text-faint">
+                          last 14 days ·{" "}
+                          <Link href={`/kpis?open=${k.id}&tab=settings&p=${k.platform}`} className="text-muted underline-offset-2 hover:text-fg hover:underline">
+                            Set the KPI
+                          </Link>
+                          {k.benchmark ? ` · benchmark ${kpiValue(k.benchmark.value, k.roas)} (${k.benchmark.vertical})` : ""}
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-[11px] text-faint">
+                          last 14 days · target <span className="tabular text-muted">{kpiValue(k.target, k.roas)}</span>
+                          {k.targetFrom === "client" ? " (client's)" : ""}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -117,12 +129,12 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                     {gap(k) && <p className={`text-sm ${s.text}`}>{gap(k)} over the last 14 days.</p>}
                     <div className="grid gap-4 @xl:grid-cols-[minmax(0,1fr)_220px]">
                       <div className="grid gap-1">
-                        <p className="text-[11px] text-faint">Last 30 days against target, in the account&apos;s color</p>
+                        <p className="text-[11px] text-faint">{unset ? "Last 30 days (no KPI set yet, so no colors)" : "Last 30 days against target, in the account's color"}</p>
                         <HealthChart id={k.id} daily={k.daily.slice(-30)} target={k.target} roas={k.roas} status={k.status} height={150} unit={k.conversionLabel.toLowerCase().replace(/s$/, "")} />
                       </div>
                       <div className="grid content-start gap-1">
                         <p className="text-[11px] text-faint">This month&apos;s budget</p>
-                        <PaceBar pace={k.pace} />
+                        <PaceBar pace={k.pace} spent={k.months.mtd?.spend ?? null} />
                       </div>
                     </div>
                   </>
@@ -132,7 +144,7 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                 {/* The same metric boxes and campaigns as the KPI board's card: changed here or there, it's the same KPI */}
                 {k.accountId && k.status !== "setup" && <KpiExtras k={{ id: k.id, target: k.target, targetFrom: k.targetFrom, conversion: k.conversion, customAction: k.customAction, campaignMatch: k.campaignMatch, platform: k.platform, extraMetrics: k.extraMetrics }} />}
                 {/* TikTok is read only: no audits or change history from Kaizen Ads yet */}
-                {audits && k.accountId && k.platform !== "tiktok" && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} />}
+                {audits && k.accountId && k.platform !== "tiktok" && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} blocked={k.target == null ? { reason: "Set the KPI first" } : null} />}
                 {changes && k.accountId && k.platform !== "tiktok" && <ChangeLog changes={changes[k.id] ?? []} platform={k.platform} limit={30} collapsed={5} />}
               </article>
             );

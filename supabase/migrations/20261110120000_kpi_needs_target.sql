@@ -65,6 +65,22 @@ drop trigger if exists clients_ensure_kpis on public.clients;
 create trigger clients_ensure_kpis after insert or update of services, services_extra, services_removed, status, archived_at on public.clients
   for each row execute function private.client_kpis_on_change();
 
+-- A card made before its buyer was seated (the form ticks the service, then sets the team) takes the seat's primary
+create or replace function private.kpi_owner_from_seat() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.is_primary and new.role::text in ('meta_buyer', 'google_buyer') then
+    update public.kpi_targets t
+       set owner_id = new.profile_id
+     where t.client_id = new.client_id and t.active and t.needs_target and t.owner_id is null
+       and t.platform = case when new.role::text = 'google_buyer' then 'google' else 'meta' end;
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists client_assignments_kpi_owner on public.client_assignments;
+create trigger client_assignments_kpi_owner after insert or update of is_primary, profile_id on public.client_assignments
+  for each row execute function private.kpi_owner_from_seat();
+
 -- Setting a target clears the mark, from wherever it's saved
 create or replace function private.kpi_target_set() returns trigger language plpgsql as $$
 begin
