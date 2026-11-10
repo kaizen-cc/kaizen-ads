@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { notLive } from "@/lib/live-guard";
+import { hasKpiTarget } from "@/lib/kpi/calc";
 
 // Three audits at a time per person, so a burst of clicks doesn't pile up AI and Meta calls. A fourth (and fifth…)
 // waits as "queued" in the order it was asked for; when a slot frees up the person picks which one to start.
@@ -22,6 +23,16 @@ async function runningFor(admin: SupabaseClient, personId: string) {
 }
 
 /**
+ * Why a KPI can't be audited, or null when it can: an audit judges the account against its KPI, so there must be a
+ * target to judge by (the card says "Set the KPI first") and a Meta or Google account to read.
+ */
+export function auditRefusal(t: { platform: string; ad_account_id: string | null; target: number | string | null }): string | null {
+  if (!hasKpiTarget(t.target)) return "Set the KPI first.";
+  if (!["meta", "google"].includes(t.platform) || !t.ad_account_id) return "This KPI has no ad account to audit.";
+  return null;
+}
+
+/**
  * Asks for an audit: of a KPI's account (`targetId`), or starting one already queued (`auditId`). Returns "running"
  * (the caller runs it) or "queued" (no free slot: it waits, in order, for the person to start it).
  */
@@ -36,9 +47,10 @@ export async function requestAudit(db: SupabaseClient, admin: SupabaseClient, me
     return { status: "running", id: a.id, client, started: true } as AuditStart;
   }
 
-  const { data: t } = await db.from("kpi_targets").select("client_id, ad_account_id, platform, clients(name)").eq("id", ask.targetId ?? "").maybeSingle();
+  const { data: t } = await db.from("kpi_targets").select("client_id, ad_account_id, platform, target, clients(name)").eq("id", ask.targetId ?? "").maybeSingle();
   if (!t) return { error: "You don't work on this client." };
-  if (!["meta", "google"].includes(t.platform) || !t.ad_account_id) return { error: "This KPI has no ad account to audit." };
+  const refused = auditRefusal(t);
+  if (refused) return { error: refused };
   const why = await notLive(db, t.client_id);
   if (why) return { error: why };
   const client = (t.clients as unknown as { name: string } | null)?.name ?? "";

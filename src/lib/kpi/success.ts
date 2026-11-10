@@ -24,7 +24,7 @@ export function direction(trend: Trend | null, vsMonth: number | null) {
 }
 
 export function successOf(status: Status, trend: Trend | null, vsMonth: number | null): Success | null {
-  if (status === "setup" || status === "idle") return null;
+  if (status === "setup" || status === "idle" || status === "unset") return null;
   const dir = direction(trend, vsMonth);
   if (status === "excellent" || status === "good") return dir < 0 && status === "good" ? "close" : "on_track";
   if (status === "close") return dir > 0 ? "on_track" : dir < 0 ? "off_track" : "close";

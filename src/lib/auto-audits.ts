@@ -40,6 +40,8 @@ async function due(admin: SupabaseClient) {
     .eq("active", true)
     .in("platform", ["meta", "google"])
     .not("ad_account_id", "is", null)
+    // No KPI set: nothing to audit against (an older snapshot may still say "off")
+    .not("target", "is", null)
     .is("clients.archived_at", null)
     .in("clients.status", LIVE)
     .in("id", [...dev.keys()]);

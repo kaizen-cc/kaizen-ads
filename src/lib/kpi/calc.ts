@@ -11,7 +11,8 @@ export type Day = {
 };
 
 export type Agg = { spend: number; results: number; value: number | null };
-export type Status = "excellent" | "good" | "close" | "off" | "idle" | "setup";
+/** "unset": the account runs but has no KPI target yet, so it's shown with every number but never judged */
+export type Status = "excellent" | "good" | "close" | "off" | "idle" | "setup" | "unset";
 export type Trend = "improving" | "steady" | "slipping";
 export type Pacing = {
   spent: number;
@@ -101,13 +102,26 @@ export function worseBy(value: number | null, reference: number | null | undefin
 }
 
 export function statusFor(deviation: number | null, d14: Agg, hasTarget: boolean): Status {
-  if (!hasTarget) return "setup";
+  if (!hasTarget) return "unset";
   if (d14.spend === 0) return "idle";
   if (deviation == null) return "off"; // spending with no results
   if (deviation <= BANDS.excellent) return "excellent";
   if (deviation <= BANDS.good) return "good";
   if (deviation <= BANDS.close) return "close";
   return "off";
+}
+
+/** Whether a KPI has a target to be judged (and audited) against */
+export const hasKpiTarget = (target: number | string | null | undefined) => target != null && target !== "" && Number(target) > 0;
+
+/**
+ * The status to show for a KPI. One with no target is never judged, whatever an older snapshot says (one computed
+ * against the industry benchmark, say): "unset", or "setup" while the account itself isn't set up.
+ */
+export function shownStatus(status: string | null | undefined, target: number | string | null | undefined): Status {
+  const s = (status ?? "setup") as Status;
+  if (!hasKpiTarget(target)) return s === "setup" ? "setup" : "unset";
+  return s === "unset" ? "setup" : s;
 }
 
 /** Budget pacing: month to date against where an even spend would be right now, and where the month lands. */

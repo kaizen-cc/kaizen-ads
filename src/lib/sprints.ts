@@ -409,11 +409,16 @@ ${snapshot.text}
 
 /** The scheduled step: every active sprint whose check is due, a few at a time. */
 export async function checkDueSprints(admin: SupabaseClient, deadline = Date.now() + 600_000) {
-  const { data } = await admin.from("optimization_sprints").select("id").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(25);
+  const { data } = await admin.from("optimization_sprints").select("id, kpi_targets(target)").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(25);
   let checked = 0;
   const errors: string[] = [];
   for (const s of data ?? []) {
     if (Date.now() > deadline) break;
+    // No KPI set on the account (any more): nothing to judge the sprint by, so it waits until there is one
+    if ((s.kpi_targets as unknown as { target: number | null } | null)?.target == null) {
+      await admin.from("optimization_sprints").update({ next_check_at: new Date(Date.now() + 24 * 3_600_000).toISOString() }).eq("id", s.id);
+      continue;
+    }
     try {
       await checkSprint(admin, s.id);
       checked++;

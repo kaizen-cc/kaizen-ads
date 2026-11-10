@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Agg, Pacing, Status, Trend } from "./calc";
+import { shownStatus, type Agg, type Pacing, type Status, type Trend } from "./calc";
 import { conversionFor, conversionLabel } from "./conversions";
 import { successOf, successLine, type BenchmarkTarget, type Success, type TargetFrom } from "./success";
 import type { GoogleHealth } from "@/lib/google-flags";
@@ -54,8 +54,9 @@ export async function loadClientKpis(db: SupabaseClient, clientId: string): Prom
   return targets
     .map((t) => {
       const s = (snaps ?? []).find((x) => x.target_id === t.id);
+      // No target: the industry benchmark is a hint only; the KPI is never judged against it
       const benchmark = t.target == null ? ((s?.benchmark ?? null) as BenchmarkTarget | null) : null;
-      const status = (s?.status ?? "setup") as Status;
+      const status = shownStatus(s?.status, t.target);
       return {
         id: t.id,
         label: t.label,
@@ -67,15 +68,15 @@ export async function loadClientKpis(db: SupabaseClient, clientId: string): Prom
         campaignMatch: (t.campaign_match as string | null) ?? null,
         extraMetrics: (t.extra_metrics ?? []) as string[],
         roas: Boolean(conversionFor(t.conversion).roas),
-        target: t.target == null ? (benchmark?.value ?? null) : Number(t.target),
+        target: t.target == null ? null : Number(t.target),
         source: t.source as "strategy" | "client",
-        targetFrom: (t.target != null ? (t.source as "strategy" | "client") : benchmark ? "benchmark" : null) as TargetFrom | null,
+        targetFrom: (t.target != null ? (t.source as "strategy" | "client") : null) as TargetFrom | null,
         benchmark,
         success: successOf(status, s?.trend ?? null, s?.vs_month == null ? null : Number(s.vs_month)),
         google: (s?.google_health ?? null) as GoogleHealth | null,
         owner: (t.profiles as unknown as { full_name: string } | null)?.full_name ?? t.owner_name ?? null,
         status,
-        deviation: s?.deviation == null ? null : Number(s.deviation),
+        deviation: status === "unset" || s?.deviation == null ? null : Number(s.deviation),
         vsMonth: s?.vs_month == null ? null : Number(s.vs_month),
         trend: s?.trend ?? null,
         windows: (s?.windows ?? {}) as ClientKpi["windows"],
@@ -94,7 +95,7 @@ export async function loadClientKpis(db: SupabaseClient, clientId: string): Prom
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export const kpiOf = (a: Agg | undefined, _roas?: boolean) => a?.value ?? null;
 
-const STATUS_WORDS: Record<Status, string> = { excellent: "well ahead of target", good: "on target", close: "close to target", off: "OFF TARGET", idle: "not spending", setup: "not set up yet" };
+const STATUS_WORDS: Record<Status, string> = { excellent: "well ahead of target", good: "on target", close: "close to target", off: "OFF TARGET", idle: "not spending", setup: "not set up yet", unset: "no KPI target set yet (numbers only, not judged on or off target)" };
 
 /** The KPI picture in plain lines, for the AI. */
 export function describeKpis(kpis: ClientKpi[]) {
@@ -107,7 +108,8 @@ export function describeKpis(kpis: ClientKpi[]) {
       if (k.status === "setup" || k.status === "idle") return `- ${name}: ${STATUS_WORDS[k.status]}.`;
       const parts = [
         `${STATUS_WORDS[k.status]}`,
-        k.target != null && (k.targetFrom === "benchmark" && k.benchmark ? `no target set; judged against the ${k.benchmark.vertical} industry benchmark of ${v(k.target, k.roas)} (${k.benchmark.source} ${k.benchmark.year})` : `target ${v(k.target, k.roas)} (set by ${k.source === "client" ? "the client" : "Kaizen"})`),
+        k.target != null && `target ${v(k.target, k.roas)} (set by ${k.source === "client" ? "the client" : "Kaizen"})`,
+        k.target == null && k.benchmark && `for reference only, the ${k.benchmark.vertical} industry benchmark is ${v(k.benchmark.value, k.roas)} (${k.benchmark.source} ${k.benchmark.year}); don't call it on or off target`,
         k.success && `${successLine(k.success, k.targetFrom ?? "strategy").toLowerCase()}`,
         `last 7 days ${v(kpiOf(k.windows.d7, k.roas), k.roas)}, last 14 days ${v(kpiOf(k.windows.d14, k.roas), k.roas)}, last 30 days ${v(kpiOf(k.windows.d30, k.roas), k.roas)}`,
         k.deviation != null && `14 days are ${pctWorse(k.deviation)} than target`,

@@ -20,6 +20,7 @@ export const STATUS: Record<Status, { label: string; tone: string; dot: string; 
   off: { label: "Off target", tone: "bg-bad-soft text-bad", dot: "bg-bad", text: "text-bad" },
   idle: { label: "Not spending", tone: "bg-surface-2 text-faint", dot: "bg-faint/60", text: "text-faint" },
   setup: { label: "Needs setup", tone: "bg-surface-2 text-muted", dot: "border border-faint", text: "text-muted" },
+  unset: { label: "No KPI set", tone: "bg-surface-2 text-muted", dot: "border border-dashed border-faint", text: "text-muted" },
 };
 
 /** Tone of a deviation against the same bands as the status (positive = worse). */

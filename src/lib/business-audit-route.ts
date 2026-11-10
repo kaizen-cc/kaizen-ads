@@ -112,8 +112,8 @@ export async function routeBusinessAudit(admin: SupabaseClient, auditId: string)
   for (const platform of ["meta", "google"] as const) {
     const moves = doable.filter(({ a }) => a.channel === platform && (a.owner === "media_buyer" || a.owner === "strategist"));
     if (!moves.length) continue;
-    const { data: targets } = await admin.from("kpi_targets").select("id, owner_id").eq("client_id", clientId).eq("platform", platform).eq("active", true);
-    if (!targets?.length) continue; // no account to run a sprint on: they become tasks below
+    const { data: targets } = await admin.from("kpi_targets").select("id, owner_id").eq("client_id", clientId).eq("platform", platform).eq("active", true).not("target", "is", null);
+    if (!targets?.length) continue; // no account with a KPI set to run a sprint on: they become tasks below
     const ids = targets.map((t) => t.id as string);
     const { data: open } = await admin.from("optimization_sprints").select("id, target_id, buyer_id").in("target_id", ids).eq("status", "active").order("started_at", { ascending: false }).limit(1).maybeSingle();
     const candidates: CandidateMove[] = moves.map(({ a, index }) => ({ index, title: a.title, why: a.why }));

@@ -138,13 +138,13 @@ async function saveSnapshot(admin: SupabaseClient, t: Target, fields: Record<str
 export async function computeAccount(admin: SupabaseClient, account: string, targets: Target[], error?: string, platform = "meta") {
   const rows = await accountRows(admin, account, platform);
   const now = new Date();
-  // No target: the client's industry benchmark stands in, said so
+  // No target: the client's industry benchmark is kept as a hint on the card, never to judge it by
   const benches = targets.some((t) => t.target == null) ? await benchmarksFor(admin, [...new Set(targets.map((t) => t.client_id))]).catch(() => new Map()) : new Map();
   const since30 = ymd(new Date(now.getTime() - 30 * 86_400_000));
   for (const t of targets) {
     const goals = t.conversion === "campaign_goal" ? await goalsFor(admin, account, platform, t.campaign_results) : undefined;
     const roas = Boolean(conversionFor(t.conversion).roas);
-    // TikTok has no researched benchmarks yet: a card without a target waits for one
+    // TikTok has no researched benchmarks yet
     const benchmark = t.target == null && platform !== "tiktok" ? benchmarkTarget(benches.get(t.client_id), platform, roas) : null;
     // Google: brand share, search impression share, conversion rate and CTR over the last 30 days
     const health =
@@ -157,7 +157,8 @@ export async function computeAccount(admin: SupabaseClient, account: string, tar
     const s = computeSnapshot(toDays(rows, t.campaign_match, t.excluded_campaigns, goals, platform), {
       conversion: t.conversion,
       custom: t.custom_action,
-      target: t.target == null ? (benchmark?.value ?? null) : Number(t.target),
+      // No target: every number, never a status ("unset": no colors, never off target) until the KPI is set
+      target: t.target == null ? null : Number(t.target),
       budget: t.monthly_budget == null ? null : Number(t.monthly_budget),
       now,
     });

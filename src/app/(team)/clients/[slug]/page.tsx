@@ -352,8 +352,9 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   const changes = Object.fromEntries(kpis.filter((k) => k.accountId).map((k) => [k.id, changeBy.get(changeKey(k.platform, k.accountId!)) ?? []]));
   // What this person may do on this client (src/lib/chat-permissions.ts): the chat and its cards offer only that
   const perms = admin ? await permsOn(admin, me, client.id) : clientPerms(me);
+  // An audit judges the account against its KPI: none until the KPI is set
   const targets: AuditTarget[] = kpis
-    .filter((k) => k.accountId)
+    .filter((k) => k.accountId && k.target != null)
     .map((k) => {
       const a = auditBy.get(k.id);
       return { id: k.id, label: `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""}`, status: a?.status ?? "none", auditId: a?.id ?? null };
