@@ -97,9 +97,10 @@ describe("audits wait for the KPI", () => {
     expect(auditRefusal({ platform: "google", ad_account_id: "2698564936", target: null })).toBe("Set the KPI first.");
   });
 
-  it("still needs a Meta or Google account", () => {
+  it("still needs an ad account on a platform we read", () => {
     expect(auditRefusal({ platform: "meta", ad_account_id: null, target: 40 })).toBe("This KPI has no ad account to audit.");
-    expect(auditRefusal({ platform: "tiktok", ad_account_id: "7", target: 40 })).toBe("This KPI has no ad account to audit.");
+    expect(auditRefusal({ platform: "linkedin", ad_account_id: "7", target: 40 })).toBe("This KPI has no ad account to audit.");
+    expect(auditRefusal({ platform: "tiktok", ad_account_id: "7", target: 40 })).toBeNull();
   });
 
   it("runs with a target and an account", () => {
