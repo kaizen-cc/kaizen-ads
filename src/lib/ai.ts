@@ -326,26 +326,38 @@ export async function askJson<T>({
   };
   const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
   const who = adminConfigured() ? actorNow() : Promise.resolve(AUTO);
-  try {
-    let res;
+  const send = async (req: typeof request) => {
     if (onText || maxTokens > 16000) {
       // Streamed, so the caller can show what's been written so far; long answers always stream (the SDK refuses a
       // plain request that could run past 10 minutes)
-      const stream = anthropic().messages.stream(request);
+      const stream = anthropic().messages.stream(req);
       if (onText) stream.on("text", (_delta, soFar) => onText(soFar));
-      res = await stream.finalMessage();
-    } else if (cfg.model === "haiku") {
-      // Haiku has no server-side fallback model, so it's a plain request
-      res = await anthropic().messages.create(request);
-    } else
-      try {
-        // With a server-side fallback model in case the main one declines
-        res = await anthropic().beta.messages.create({ ...request, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" });
-      } catch (e) {
-        if (!(e instanceof Anthropic.BadRequestError)) throw e;
-        console.error("[ai] request with fallbacks rejected, retrying without:", e.message);
-        res = await anthropic().messages.create(request);
-      }
+      return stream.finalMessage();
+    }
+    // Haiku has no server-side fallback model, so it's a plain request
+    if (cfg.model === "haiku") return anthropic().messages.create(req);
+    try {
+      // With a server-side fallback model in case the main one declines
+      return await anthropic().beta.messages.create({ ...req, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" });
+    } catch (e) {
+      if (!(e instanceof Anthropic.BadRequestError)) throw e;
+      // The answer format itself refused: no point sending it again as is
+      if (grammarTooLarge(e)) throw e;
+      console.error("[ai] request with fallbacks rejected, retrying without:", e.message);
+      return anthropic().messages.create(req);
+    }
+  };
+  try {
+    let res;
+    try {
+      res = await send(request);
+    } catch (e) {
+      if (!grammarTooLarge(e)) throw e;
+      // The API can't compile this answer format into a grammar: the same call with the format in the instructions,
+      // the answer read as JSON (never a failed launch or brief over the format's size)
+      console.error(`[ai] ${label}: answer format too large for the API, asking for plain JSON instead`);
+      res = await send(freeForm(request, schema) as typeof request);
+    }
     const ms = Date.now() - started;
     const bad = res.stop_reason === "refusal" || res.stop_reason === "max_tokens";
     console.log(`[ai] ${label} · ${res.model} · ${ms}ms · ${res.usage.input_tokens} in (${res.usage.cache_read_input_tokens ?? 0} cached) / ${res.usage.output_tokens} out`);
@@ -354,7 +366,7 @@ export async function askJson<T>({
     if (res.stop_reason === "max_tokens") throw new AiUnavailable("The AI ran out of room. Try again.");
     const text = (res.content as { type: string; text?: string }[]).find((b) => b.type === "text");
     if (!text?.text) throw new AiUnavailable("The AI didn't answer. Try again.");
-    const parsed = JSON.parse(text.text) as T;
+    const parsed = jsonOf(text.text) as T;
     // Kept as a sample (the last 30 per place in the app), so a change to this agent can be replayed and judged first
     if (!bare && !systemOverride && !noSample && adminConfigured())
       void import("@/lib/agent-evals")
@@ -416,20 +428,33 @@ export async function askJsonWithTools<T>({
   const used = { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 };
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: wellFormed(prompt) }];
   const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
+  // Set when the API can't compile the answer format: the format goes in the instructions instead
+  let plain = false;
+  const sys = () => (plain ? `${withAgent(system, cfg)}\n\n${formatInstruction(schema)}` : withAgent(system, cfg));
   try {
     for (let round = 0; ; round++) {
       // The last round has no tools: whatever was found, it answers now
       const last = round >= maxRounds;
-      const res = await anthropic()
-        .messages.stream({
-        model: MODEL_IDS[cfg.model],
-        max_tokens: maxTokens,
-        system: cached(withAgent(system, cfg)),
-        output_config: { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
-        ...(last ? {} : { tools: defs }),
-        messages,
-      })
-        .finalMessage();
+      const ask = () =>
+        anthropic()
+          .messages.stream({
+            model: MODEL_IDS[cfg.model],
+            max_tokens: maxTokens,
+            system: cached(sys()),
+            output_config: plain ? { effort: cfg.effort } : { effort: cfg.effort, format: { type: "json_schema" as const, schema } },
+            ...(last ? {} : { tools: defs }),
+            messages,
+          })
+          .finalMessage();
+      let res;
+      try {
+        res = await ask();
+      } catch (e) {
+        if (plain || !grammarTooLarge(e)) throw e;
+        console.error(`[ai] ${label}: answer format too large for the API, asking for plain JSON instead`);
+        plain = true;
+        res = await ask();
+      }
       const u = usageOf(res.usage);
       used.input_tokens += u.input_tokens;
       used.output_tokens += u.output_tokens;
@@ -465,7 +490,7 @@ export async function askJsonWithTools<T>({
       if (res.stop_reason === "max_tokens") throw new AiUnavailable("The AI ran out of room. Try again.");
       const text = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
       if (!text?.text) throw new AiUnavailable("The AI didn't answer. Try again.");
-      return JSON.parse(text.text) as T;
+      return jsonOf(text.text) as T;
     }
   } catch (e) {
     if (e instanceof AiUnavailable) throw e;
@@ -554,6 +579,39 @@ export async function researchWeb({ agent, label, system, prompt, maxSearches = 
 }
 
 /** The API's own explanation, without the status prefix the SDK adds. */
+/** The API refused the answer format as too large a grammar ("The compiled grammar is too large…") */
+export function grammarTooLarge(e: unknown) {
+  if (!(e instanceof Anthropic.BadRequestError)) return false;
+  return /grammar is too large|schema is too (large|complex)|too many strict/i.test(apiMessage(e));
+}
+
+/** The answer format written as an instruction, for when it can't be enforced */
+export function formatInstruction(schema: Record<string, unknown>) {
+  return `Answer with one JSON object only: no words before or after it and no code fences. It must match this JSON schema exactly, with every listed key present (an empty string, 0 or [] when there's nothing for it):\n${JSON.stringify(schema)}`;
+}
+
+/** The request without an enforced format: the format told in the system prompt instead */
+function freeForm<R extends { system: unknown; output_config: { effort: Effort; format?: unknown } }>(req: R, schema: Record<string, unknown>) {
+  const rule = formatInstruction(schema);
+  const system = Array.isArray(req.system)
+    ? [...(req.system as { type: "text"; text: string }[]), { type: "text" as const, text: rule }]
+    : `${String(req.system ?? "")}\n\n${rule}`;
+  return { ...req, system, output_config: { effort: req.output_config.effort } };
+}
+
+/** The JSON in an answer: as is, or the object inside code fences or surrounding words */
+export function jsonOf(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const t = text.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+    const a = t.indexOf("{");
+    const b = t.lastIndexOf("}");
+    if (a >= 0 && b > a) return JSON.parse(t.slice(a, b + 1));
+    throw new AiUnavailable("The AI's answer wasn't in the right shape. Try again.");
+  }
+}
+
 function apiMessage(e: InstanceType<typeof Anthropic.APIError>) {
   const err = (e.error as { error?: { message?: string } } | undefined)?.error?.message;
   return (err ?? e.message).slice(0, 220);

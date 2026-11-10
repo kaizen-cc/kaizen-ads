@@ -750,7 +750,7 @@ export async function setGoogleSuggestion(admin: SupabaseClient, id: string, key
 const PLAN = obj({
   note: S,
   campaigns: arr(
-    obj({ key: S, mode: S, existingId: S, name: S, type: S, budget: N, bidding: S, targetCpa: N, targetRoas: N, locations: arr(S), excludedLocations: arr(S), negatives: arr(S), sitelinks: arr(S), callouts: arr(S), snippets: arr(S) }),
+    obj({ key: S, mode: S, existingId: S, name: S, type: S, budget: N, bidding: S, targetCpa: N, targetRoas: N, locations: arr(S), negatives: arr(S), sitelinks: arr(S), callouts: arr(S), snippets: arr(S) }),
   ),
   adGroups: arr(obj({ key: S, campaignKey: S, mode: S, existingId: S, name: S, fromRead: I, finalUrl: S, keywords: arr(S), negatives: arr(S), rsas: arr(obj({ headlines: arr(S), descriptions: arr(S), path1: S, path2: S, finalUrl: S })) })),
   assetGroups: arr(obj({ key: S, campaignKey: S, existingId: S, name: S, finalUrl: S, headlines: arr(S), longHeadlines: arr(S), descriptions: arr(S), searchThemes: arr(S), byHand: arr(S) })),
@@ -761,9 +761,38 @@ type RawPlan = {
   adGroups: { key: string; campaignKey: string; mode: string; existingId: string; name: string; fromRead: number; finalUrl: string; keywords: string[]; negatives: string[]; rsas: { headlines: string[]; descriptions: string[]; path1: string; path2: string; finalUrl: string }[] }[];
   assetGroups: GoogleProposal["assetGroups"];
 };
+const strs = (x: unknown) => (Array.isArray(x) ? x.filter((y) => typeof y === "string" || typeof y === "number").map(String) : []);
+const str = (x: unknown) => (typeof x === "string" ? x : x == null ? "" : String(x));
+const numOf = (x: unknown, d = 0) => (Number.isFinite(Number(x)) && x !== "" && x != null ? Number(x) : d);
+const list = (x: unknown) => (Array.isArray(x) ? x.filter((y): y is Record<string, unknown> => Boolean(y) && typeof y === "object") : []);
+/** Every key the plan needs, with an empty value where the answer left one out */
+export function rawPlanOf(x: unknown): RawPlan {
+  const o = (x && typeof x === "object" ? x : {}) as Record<string, unknown>;
+  return {
+    note: str(o.note),
+    campaigns: list(o.campaigns).map((c) => ({
+      key: str(c.key), mode: str(c.mode), existingId: str(c.existingId), name: str(c.name), type: str(c.type), budget: numOf(c.budget), bidding: str(c.bidding),
+      // Places left out come as "-Hawaii" in locations (kept out of the answer format to keep it small)
+      targetCpa: numOf(c.targetCpa), targetRoas: numOf(c.targetRoas),
+      locations: strs(c.locations).filter((l) => !/^\s*-/.test(l)).map((l) => l.trim()).filter(Boolean),
+      excludedLocations: [...strs(c.excludedLocations), ...strs(c.locations).filter((l) => /^\s*-/.test(l)).map((l) => l.replace(/^\s*-\s*/, "").trim())].filter(Boolean),
+      negatives: strs(c.negatives), sitelinks: strs(c.sitelinks), callouts: strs(c.callouts), snippets: strs(c.snippets),
+    })),
+    adGroups: list(o.adGroups).map((g) => ({
+      key: str(g.key), campaignKey: str(g.campaignKey), mode: str(g.mode), existingId: str(g.existingId), name: str(g.name), fromRead: numOf(g.fromRead, -1),
+      finalUrl: str(g.finalUrl), keywords: strs(g.keywords), negatives: strs(g.negatives),
+      rsas: list(g.rsas).map((a) => ({ headlines: strs(a.headlines), descriptions: strs(a.descriptions), path1: str(a.path1), path2: str(a.path2), finalUrl: str(a.finalUrl) })),
+    })),
+    assetGroups: list(o.assetGroups).map((a) => ({
+      key: str(a.key), campaignKey: str(a.campaignKey), existingId: str(a.existingId), name: str(a.name), finalUrl: str(a.finalUrl),
+      headlines: strs(a.headlines), longHeadlines: strs(a.longHeadlines), descriptions: strs(a.descriptions), searchThemes: strs(a.searchThemes), byHand: strs(a.byHand),
+    })) as RawPlan["assetGroups"],
+  };
+}
 const BIDDINGS: Bidding[] = ["MAXIMIZE_CONVERSIONS", "MAXIMIZE_CONVERSION_VALUE", "MAXIMIZE_CLICKS", "MANUAL_CPC"];
 /** The flat answer turned back into the plan's shape: modes, types and biddings checked, pins and assets parsed */
-export function proposalFrom(r: RawPlan): GoogleProposal {
+export function proposalFrom(given: RawPlan): GoogleProposal {
+  const r = rawPlanOf(given);
   const mode = (m: string): "new" | "existing" => (/exist/i.test(m) ? "existing" : "new");
   const lines = (xs: string[], max: 2 | 3) =>
     xs.map((x) => {
@@ -970,7 +999,7 @@ export async function planGoogleRun(admin: SupabaseClient, id: string) {
       label: "google launch plan",
       clientId: run.client_id,
       system: `You lay out the Google launch the buyer agreed to, exactly as answered, as campaigns, ad groups and asset groups. Formats: mode "new" or "existing"; type "SEARCH" or "PERFORMANCE_MAX"; bidding one of MAXIMIZE_CONVERSIONS, MAXIMIZE_CONVERSION_VALUE, MAXIMIZE_CLICKS, MANUAL_CPC; each headline or description is a plain string, with " (pin 1)" at the end only when pinned; a sitelink is "link text | line 1 | line 2 | https://url"; a structured snippet is "Header: value, value, value". Code copies what was read (keywords, negatives and copy of an ad group in <read>) straight from it: point at it with fromRead (its # number) and leave keywords and rsas for that ad group empty unless the buyer added more in the conversation. fromRead -1 for an ad group not in <read>.
-- campaigns: key ("c1"…). mode "existing" with existingId (an id from <account>, only a [Kaizen] one) when the buyer chose that campaign; else "new" with existingId "", a name in the account's naming pattern for its Kaizen campaigns, always with Kaizen in it (${kaizenNames.length ? `like ${kaizenNames.slice(0, 3).map((n) => `"${n}"`).join(", ")}` : `e.g. "Search | Non Brand | Kaizen"`}), type SEARCH unless they chose Performance Max, budget (daily dollars, as agreed), bidding (MAXIMIZE_CONVERSIONS unless agreed otherwise; MAXIMIZE_CONVERSION_VALUE for a ROAS goal), targetCpa / targetRoas only when agreed (else 0), locations as place names Google knows ("United States", "Texas", "Houston, Texas") and excludedLocations as the places left out ("Hawaii", "Alaska"; "the lower 48" is locations ["United States"], excludedLocations ["Alaska", "Hawaii"]). For an existing campaign budget 0, locations [] and excludedLocations []. negatives: campaign negatives with notation ("free", [diy]). sitelinks, callouts, snippets: only when the buyer asked for them or took a suggestion that adds them, and only where <live_setup> shows they're missing.
+- campaigns: key ("c1"…). mode "existing" with existingId (an id from <account>, only a [Kaizen] one) when the buyer chose that campaign; else "new" with existingId "", a name in the account's naming pattern for its Kaizen campaigns, always with Kaizen in it (${kaizenNames.length ? `like ${kaizenNames.slice(0, 3).map((n) => `"${n}"`).join(", ")}` : `e.g. "Search | Non Brand | Kaizen"`}), type SEARCH unless they chose Performance Max, budget (daily dollars, as agreed), bidding (MAXIMIZE_CONVERSIONS unless agreed otherwise; MAXIMIZE_CONVERSION_VALUE for a ROAS goal), targetCpa / targetRoas only when agreed (else 0), locations as place names Google knows ("United States", "Texas", "Houston, Texas"), each place left out with a minus in front ("-Hawaii"; "the lower 48" is ["United States", "-Alaska", "-Hawaii"]). For an existing campaign budget 0 and locations []. negatives: campaign negatives with notation ("free", [diy]). sitelinks, callouts, snippets: only when the buyer asked for them or took a suggestion that adds them, and only where <live_setup> shows they're missing.
 - adGroups: key ("g1"…), campaignKey, mode "existing" with existingId (an ad group id from <account>) only when the buyer chose to add into it, else "new" with a name in the account's pattern. finalUrl: the landing page for its ads. keywords and negatives with notation ([exact], "phrase", broad plain) when they come from the conversation or a suggestion taken. rsas: only ads the buyer wrote in the conversation, or that they asked you to write (then up to 15 headlines of at most 30 characters and 4 descriptions of at most 90, built on the client's winning lines and away from the tired ones, pin 0 unless asked; pin 1 to 3 for headlines, 1 to 2 for descriptions).
 - assetGroups: only for Performance Max: an existing asset group (existingId from <account>) gets the text agreed (headlines 30, long headlines 90, descriptions 90); searchThemes and byHand (images, videos, audience signals the buyer described) are listed for doing by hand.
 Include the suggestions the buyer took; leave out the ones they skipped. Bidding, targets and budgets follow <account_history> (the KPI target, what converts, the monthly budget's pacing) and never contradict the latest audit or the open sprint actions. note: 1 to 3 sentences on how the plan follows what was agreed${chosen && chosen.status !== "ENABLED" && choice?.mode === "existing" && choice.revive ? `, and that "${chosen.name}" is turned back on when it's deployed while everything new in it is created paused for the buyer to switch on` : ""}.
