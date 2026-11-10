@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { addBusinessDays, assetGate, driveLinks, type LinkCheck } from "@/lib/brief-assets";
 import { withDetectedFacts, openFacts } from "@/lib/brief-facts";
 import { summarizeGate, type GateKey, type GateSummary, type Override, type ReviewStamp } from "@/lib/brief-gate";
+import { loadAiRule } from "@/lib/ai-content-rule";
 import { lintBrief } from "@/lib/brief-lint";
 import { parseBrief, type BriefSpec } from "@/lib/brief-spec";
 
@@ -118,8 +119,8 @@ export type BriefCheck = GateSummary & { spec: BriefSpec; structured: boolean; h
  */
 export async function conflictsNow(admin: SupabaseClient, i: Pick<BriefInput, "clientId" | "title" | "brief" | "sizes" | "formats">): Promise<GateSummary & { hash: string }> {
   const hash = briefHash(i.brief, i.sizes);
-  const [{ data: client }, so] = await Promise.all([admin.from("clients").select("name").eq("id", i.clientId).maybeSingle(), stampAndOverride(admin, i.clientId, hash)]);
-  const lint = lintBrief({ text: i.brief, title: i.title, sizes: i.sizes, formats: i.formats, client: (client?.name as string | null) ?? null });
+  const [{ data: client }, so, ai] = await Promise.all([admin.from("clients").select("name").eq("id", i.clientId).maybeSingle(), stampAndOverride(admin, i.clientId, hash), loadAiRule(admin, i.clientId)]);
+  const lint = lintBrief({ text: i.brief, title: i.title, sizes: i.sizes, formats: i.formats, client: (client?.name as string | null) ?? null, noAiRule: ai.rule });
   return { ...summarizeGate({ openFacts: [], lint, assets: null, override: so.override, stamp: so.stamp }), hash };
 }
 
@@ -134,14 +135,15 @@ export async function checkBriefNow(admin: SupabaseClient, i: BriefInput): Promi
   const spec = withDetectedFacts(parsed.spec, i.title);
   const hash = briefHash(i.brief, i.sizes);
   const due = i.due ? new Date(i.due) : draftDue(i.formats, i.priority);
-  const [{ data: client }, links, drive, chaser, so] = await Promise.all([
+  const [{ data: client }, links, drive, chaser, so, ai] = await Promise.all([
     admin.from("clients").select("name").eq("id", i.clientId).maybeSingle(),
     checkDriveLinks([...new Set([...driveLinks(i.brief), ...i.refs.flatMap(driveLinks)])]),
     driveOf(admin, i.clientId, i.title),
     chaserOf(admin, i.clientId),
     stampAndOverride(admin, i.clientId, hash),
+    loadAiRule(admin, i.clientId),
   ]);
-  const lint = lintBrief({ text: i.brief, title: i.title, sizes: i.sizes, formats: i.formats, client: (client?.name as string | null) ?? null });
+  const lint = lintBrief({ text: i.brief, title: i.title, sizes: i.sizes, formats: i.formats, client: (client?.name as string | null) ?? null, noAiRule: ai.rule });
   const assets = assetGate({ assets: spec.assets, links, formats: i.formats, drive, due, today: new Date(), chaser });
   const g = summarizeGate({ openFacts: openFacts(spec), lint, assets, override: so.override, stamp: so.stamp });
   return { ...g, spec, structured: parsed.structured, hash, due: due ? due.toISOString() : null };

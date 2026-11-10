@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { AGENCY_SYSTEM, AiUnavailable, askJson, clientContext, contextBlock, getAgent, type Script } from "@/lib/ai";
+import { NO_AI_MEDIA_NOTE } from "@/lib/ai-content";
 import * as jobs from "@/lib/ai-media-jobs";
 import { requireStaff, type Staff } from "@/lib/auth";
 import { messageOf } from "@/lib/connector-http";
@@ -18,12 +19,18 @@ import { createClient } from "@/lib/supabase/server";
 
 type Fail = { ok: false; error: string };
 
-export type MediaAccess = { canGenerate: boolean; elevenlabs: boolean; higgsfield: boolean };
+/** noAi: the client said no to AI content (src/lib/ai-content.ts), so no AI voices, images or video are offered for them */
+export type MediaAccess = { canGenerate: boolean; elevenlabs: boolean; higgsfield: boolean; noAi: string | null };
 
-/** What this person can do here, and which connectors have their keys */
-export async function mediaAccess(): Promise<MediaAccess> {
+/** What this person can do here, which connectors have their keys, and whether this ticket's or client's client takes AI media */
+export async function mediaAccess(where: { requestId?: string | null; clientId?: string | null } = {}): Promise<MediaAccess> {
   const me = await requireStaff();
-  return { canGenerate: canGenerateMedia(me), elevenlabs: elevenlabsConfigured(), higgsfield: higgsfieldConfigured() };
+  let noAi: string | null = null;
+  if ((where.requestId || where.clientId) && adminConfigured()) {
+    const clientId = where.requestId ? ((await ticketOf(where.requestId))?.client_id ?? null) : where.clientId && (await canSeeClient(where.clientId)) ? where.clientId : null;
+    if (clientId) noAi = await jobs.noAiMediaFor(createAdminClient(), { clientId }).catch(() => null);
+  }
+  return { canGenerate: canGenerateMedia(me), elevenlabs: elevenlabsConfigured(), higgsfield: higgsfieldConfigured(), noAi };
 }
 
 /** The ticket (seen through the person's own access) and its client */
@@ -242,6 +249,7 @@ export async function writeMediaPrompt(requestId: string, kind: "image" | "video
   const supabase = await createClient();
   const ctx = await clientContext(supabase, t.client_id);
   if (!ctx) return { ok: false, error: "You don't work on this client." };
+  if (ctx.aiRule) return { ok: false, error: `${NO_AI_MEDIA_NOTE} They told us: "${ctx.aiRule}"` };
   const { data: sc } = await supabase.from("request_scripts").select("content").eq("request_id", requestId).maybeSingle();
   const script = sc?.content as Script | null;
   try {

@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { NO_AI_MEDIA_NOTE } from "@/lib/ai-content";
 import { ConnectorError, messageOf } from "@/lib/connector-http";
 import { textToSpeech } from "@/lib/elevenlabs";
 import * as hf from "@/lib/higgsfield";
@@ -53,10 +54,28 @@ async function expectedMs(admin: SupabaseClient, kind: string, model: string | n
 
 export type VoiceoverInput = { voiceId: string; voiceName?: string | null; text: string; model?: VoModel; settings?: Partial<VoiceSettings>; clientId?: string | null; requestId?: string | null; attach?: boolean };
 
+/**
+ * A client who said no to AI content (src/lib/ai-content.ts) gets no AI voices, images or video, from the panels or
+ * from Kaizen AI's tools: the reason, or null when it's fine. The client is read from the ticket when only that's given.
+ */
+export async function noAiMediaFor(admin: SupabaseClient, where: { clientId?: string | null; requestId?: string | null }): Promise<string | null> {
+  let clientId = where.clientId ?? null;
+  if (!clientId && where.requestId) {
+    const { data } = await admin.from("requests").select("client_id").eq("id", where.requestId).maybeSingle();
+    clientId = (data?.client_id as string | undefined) ?? null;
+  }
+  if (!clientId) return null;
+  const { loadAiRule } = await import("@/lib/ai-content-rule");
+  const rule = await loadAiRule(admin, clientId);
+  return rule.allowed ? null : `${NO_AI_MEDIA_NOTE} They told us: "${rule.rule}"`;
+}
+
 /** Reads the text in the voice, keeps the MP3, logs it. Returns the job id (failed jobs are logged too). */
 export async function makeVoiceover(admin: SupabaseClient, who: Who, v: VoiceoverInput): Promise<{ ok: true; id: string } | { ok: false; error: string; id?: string }> {
   const t = voText(v.text);
   if (!t.ok) return t;
+  const noAi = await noAiMediaFor(admin, v);
+  if (noAi) return { ok: false, error: noAi };
   const started = new Date();
   const { data: job, error } = await admin
     .from("ai_media_jobs")
@@ -114,6 +133,8 @@ export type GenerateInput = {
 export async function startGeneration(admin: SupabaseClient, who: Who, g: GenerateInput): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const m = hfModel(g.model);
   if (!m) return { ok: false, error: "Pick a model." };
+  const noAi = await noAiMediaFor(admin, g);
+  if (noAi) return { ok: false, error: noAi };
   const prompt = g.prompt.trim();
   const now = new Date().toISOString();
   const { data: job, error } = await admin

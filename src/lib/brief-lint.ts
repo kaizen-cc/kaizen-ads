@@ -6,6 +6,7 @@
 // replace) or an instruction the revise chat carries out. The AI pass (consistency against the Brand Bible's cleared
 // claims and the rest) adds to these on the server. Pure: tested in tests/brief-lint.test.ts.
 
+import { aiMediaIn, hasConsentLine, hasDisclaimerLine, likenessIn } from "./ai-content";
 import { checkPayoff } from "./brief-payoff";
 import { parseBrief } from "./brief-spec";
 
@@ -23,6 +24,8 @@ export type LintInput = {
   formats: string[];
   /** The client's name, to catch it shown on screen against a no-branding rule */
   client?: string | null;
+  /** What the client said against AI content (src/lib/ai-content.ts aiContentRule), when they did */
+  noAiRule?: string | null;
 };
 
 const KAIZEN_SIZES = ["4x5", "9x16"];
@@ -134,6 +137,28 @@ export function lintBrief(i: LintInput): LintIssue[] {
     const instruction = `The hook promises "${pay.promise}" but the brief never says what it is. State exactly what it is in the Insight line, where it comes from (client memory, the Brand Bible, a call, the footage) and how it shows on screen. If the context doesn't hold it, change the hook to one whose payoff we know, or keep it under Confirm with client with a "Fallback:" line giving a version that works without it.`;
     if (!pay.pending) issues.push({ id: "payoff", severity: "soft", message: `The hook promises "${pay.promise}", but the brief never says what it is.`, fixes: [{ kind: "ai", instruction, label: "Pay off the promise" }] });
     else if (!pay.fallback) issues.push({ id: "payoff-fallback", severity: "soft", message: `"${pay.promise}" waits on the client. Add a fallback version that works if they can't confirm it.`, fixes: [{ kind: "ai", instruction: `The hook's payoff ("${pay.promise}") waits on the client. Keep the question under Confirm with client and add a line in the opening that starts "Fallback:" with a version of the concept that works without it.`, label: "Add a fallback" }] });
+  }
+
+  // AI media for a client who said no to it: a real contradiction with their own rule (a lead can still send it anyway)
+  const aiMedia = i.noAiRule ? aiMediaIn(text) : null;
+  if (i.noAiRule && aiMedia)
+    issues.push({
+      id: "no-ai-content",
+      severity: "hard",
+      message: `This client said no AI content ("${i.noAiRule}"), but the brief uses "${aiMedia}".`,
+      fixes: [{ kind: "ai", instruction: `This client said no AI content: "${i.noAiRule}". Replace every AI avatar, AI or cloned voice, AI narration and AI-generated video, footage or image in the brief ("${aiMedia}" and any other) with real footage, real photos, real people and a real voiceover, keeping the idea, and add "No AI-generated video, images or voices (client rule)" under Don't.`, label: "Make it without AI" }],
+    });
+
+  // A real person's face or voice altered or generated: the client's written consent and an on-screen disclaimer
+  const likeness = aiMedia ? null : likenessIn(text);
+  if (likeness && (!hasConsentLine(text) || !hasDisclaimerLine(text))) {
+    const missing = [!hasConsentLine(text) && "the client's written consent", !hasDisclaimerLine(text) && "an on-screen disclaimer"].filter(Boolean).join(" and ");
+    issues.push({
+      id: "likeness-consent",
+      severity: "soft",
+      message: `"${likeness}" alters or generates a real person's face or voice: that needs ${missing}.`,
+      fixes: [{ kind: "ai", instruction: `The brief uses "${likeness}", which alters or generates a real person's likeness or voice. ${!hasConsentLine(text) ? `Add under Confirm with client: "Get the client's written consent for <who>'s likeness/voice", naming who the person is (e.g. the customer in the testimonial). ` : ""}${!hasDisclaimerLine(text) ? `Add a Constraints line: "Disclaimer: <the on-screen line, e.g. AI-generated likeness, used with permission; or Voice altered>". ` : ""}If it's a stock AI presenter and not a real person, say so instead. Change nothing else.`, label: "Add consent and disclaimer" }],
+    });
   }
 
   // Shot-by-shot direction: the HOW is the maker's unless a script was asked for

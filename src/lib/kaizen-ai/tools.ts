@@ -653,6 +653,16 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           ((input.formats ?? []) as BriefCard["formats"]).filter((f) => ["image", "video", "carousel"].includes(f.format)).map((f) => ({ format: f.format, new: Math.max(0, Math.min(10, Number(f.new) || 0)), variations: Math.max(0, Math.min(10, Number(f.variations) || 0)) })),
           formatsFor(ctx.me),
         );
+        // A client who said no to AI content: the card isn't shown with AI media in it; the model rewrites it first
+        const briefText = `${String(input.title ?? "")}\n${String(input.brief ?? "")}`;
+        const { aiMediaIn, likenessIn, hasConsentLine } = await import("@/lib/ai-content");
+        const aiMedia = aiMediaIn(briefText);
+        if (aiMedia) {
+          const { loadAiRule } = await import("@/lib/ai-content-rule");
+          const rule = await loadAiRule(ctx.admin, c.id);
+          if (!rule.allowed) return { shown: false, error: `${c.name} said no to AI content ("${rule.rule}"), and this brief uses "${aiMedia}". Rewrite it with real footage, real photos, real people and a real voiceover, then make the card again.` };
+        }
+        const likeness = likenessIn(briefText);
         const index = ctx.cards.length;
         const b: BriefCard = {
           type: "brief",
@@ -666,7 +676,10 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           href: `/requests/new?ai=${ctx.messageId}&card=${index}`,
         };
         card(b);
-        return { shown: true, note: "The card is on screen. Brief it opens its quick preview there; the full brief is written only if they choose it, and lands in Ready to send." };
+        return {
+          shown: true,
+          note: `The card is on screen. Brief it opens its quick preview there; the full brief is written only if they choose it, and lands in Ready to send.${likeness && !hasConsentLine(briefText) ? ` It alters or generates a real person's face or voice ("${likeness}"): tell them it needs the client's written consent for that person's likeness/voice and an on-screen disclaimer.` : ""}`,
+        };
       },
     },
     {

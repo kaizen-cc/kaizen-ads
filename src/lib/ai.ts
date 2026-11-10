@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { LIKENESS_RULE, noAiContentRule } from "@/lib/ai-content";
 import { MAX_VARIATIONS, describeAllotment, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { motionBlock } from "@/lib/in-motion";
 import { describeMeta } from "@/lib/context/meta";
@@ -634,6 +635,8 @@ export type ClientContext = {
   adAccountConnected: boolean;
   /** TikTok Ads, last 30 days against the 30 before (read only), when they run it and it's connected */
   tiktok?: string;
+  /** What the client said against AI content (src/lib/ai-content.ts), when they did: no AI avatars, voices or generated media */
+  aiRule?: string | null;
   allotment: Allotment | null;
   digest: Digest | null; // from the twice-daily briefing: Slack, email and Drive, already summarized
   meta: string | null; // the latest Meta ad performance, in readable lines
@@ -691,7 +694,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
   if (!c) return null;
   // The Bible's living learnings: what their ads proved since it was written, newest first
   const learned = ((bible?.learnings ?? []) as { at: string; kind: string; text: string }[]).slice(-30).reverse();
-  const [newer, siteIssues, gtm, googleGtm, business, documents, playbook, peers, patterns, reports, winners, kpis, intake, tiring, activity, motion, tiktok] = await Promise.all([
+  const [newer, siteIssues, gtm, googleGtm, business, documents, playbook, peers, patterns, reports, winners, kpis, intake, tiring, activity, motion, tiktok, aiRule] = await Promise.all([
     // Slack and email that came in after the briefing was written, so suggestions and the review are current
     supabase
       .from("context_items")
@@ -765,6 +768,8 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
     import("@/lib/in-motion").then(({ loadInMotion }) => loadInMotion(supabase, clientId)).catch(() => []),
     // TikTok's numbers (read only; empty while TikTok isn't set up or they don't run it)
     import("@/lib/tiktok/store").then(({ tiktokBrief }) => tiktokBrief(supabase, clientId)).catch(() => ""),
+    // Whether they take AI content at all (memory, the Bible's rules log, calls): a "no" is told to every writer
+    import("@/lib/ai-content-rule").then(({ loadAiRule }) => loadAiRule(supabase, clientId)).catch(() => null),
   ]);
   return {
     brandBible:
@@ -796,6 +801,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
     activity,
     motion,
     ...(tiktok ? { tiktok } : {}),
+    aiRule: aiRule?.allowed === false ? aiRule.rule : null,
     angles: angles ?? [],
     memory: (memory ?? []) as ClientContext["memory"],
     recent: (recent ?? []).map((r) => ({
@@ -825,6 +831,8 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
     recent: on("recent_requests") ? ctx.recent : [],
   };
   const lines: string[] = [`<client name="${ctx.name}"${ctx.website ? ` website="${ctx.website}"` : ""}>`];
+  // Always read, whatever the agent's sources: a client who said no to AI content
+  if (ctx.aiRule) lines.push("<ai_content_rule>", noAiContentRule(ctx.aiRule), "</ai_content_rule>");
   if (ctx.brandBible) lines.push("<brand_bible>", "The client's Brand Bible. Its audience profiles, voice, banned claims and rules are hard limits.", ctx.brandBible, "</brand_bible>");
   if (ctx.gtm)
     lines.push("<go_to_market_strategy>", "The client's Meta go-to-market strategy: the angles, offers, customer and KPI targets the team works from. Stay inside it unless the data says otherwise, and never treat an unconfirmed item as confirmed.", ctx.gtm, "</go_to_market_strategy>");
@@ -928,6 +936,8 @@ Sizes are 4:5 (feed) and 9:16 (stories, reels). Kaizen no longer designs 1:1: ne
 The client pays for a monthly allotment of images (carousels count here too) and videos. Every version counts: net new and each variation alike, and a carousel once per slide; sizes don't count. Never suggest more than what's left; if nothing is left, say an upgrade or a sprint is needed.
 Client memory holds what the team has learned about the client. Items marked "avoid" are things the client asked us not to do or that failed before; never suggest them. Items marked "prefer" are what works for them.
 Base everything on the client context you're given. When there's little context, keep suggestions sensible and generic rather than inventing facts about the business (prices, offers, locations, claims).
+${LIKENESS_RULE}
+When the client context has an ai_content_rule, the client said no to AI content: follow it in everything you write for them.
 Write plainly, like a sharp media buyer briefing a designer. No hype, no emojis.`;
 
 // ─── Schemas ────────────────────────────────────────────────────────────────
@@ -1208,7 +1218,7 @@ Each ticket is one concept and asks for a number of net new designs and a number
 
 You get one picture per design (S1, S2… are in this upload; D1, D2… are already on the ticket). For every S design, say whether it is new, a variation (of which S or D design) or the same design as another (which one). A design can only be a variation of, or the same as, a design that is itself new, and an S design should point at an earlier S or at a D. When in doubt between new and variation, look at the layout: same layout = variation.
 reason: one short sentence a designer would agree with, about what's the same and what's different ("Same layout and photo, only the headline changes").
-summary: one sentence on the batch as a whole, plain and specific.`;
+summary: one sentence on the batch as a whole, plain and specific. When a design shows what looks like an AI avatar, a face swap or a real person's altered face, add that it needs the client's written consent and an on-screen disclaimer.`;
 
 // ─── Creative review notes (for the reviewer) ───────────────────────────────
 
@@ -1245,6 +1255,8 @@ Go through every picture carefully. Read all the text on it, word by word.
 - Sizes and variations: sizes of the same design should carry the same message with nothing cropped; variations should differ only in what they test.
 - Craft: blurry or pixelated images, compression artefacts, bad cut-outs, misaligned elements, stock watermarks, odd AI-generated details (hands, text, faces).
 - Policy: Meta ad policy risks: before-and-after images, calling out personal attributes ("Struggling with your weight?"), unrealistic results or guarantees, health or financial claims.
+- Real people: an AI avatar of a real person, a face swap, a cloned or pitch-shifted voice, or a testimonial re-voiced or rebuilt with AI needs the client's written consent and an on-screen disclaimer. No disclaimer on the creative: a fix; consent not on the brief: a watch note saying to get it. A stock AI presenter who isn't a real person needs neither.
+- AI content: when the client context has an ai_content_rule, the client said no to AI content: an AI avatar, an AI or synthetic voice, or AI-generated footage or images (or what clearly looks like it) is a fix.
 
 You review one design at a time: every size of it. For a variation you also see the design it varies, only for comparison: review the variation, and check it differs only in what it's testing.
 Severity: fix = a mistake that shouldn't reach the client; watch = a judgement call or risk to decide on; good = what's working (at most 1).

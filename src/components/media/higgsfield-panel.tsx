@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { cancelMedia, clientMedia, mediaAccess, mediaToDeliverables, mediaToDrive, referenceUpload, startHiggsfield, ticketMedia, writeMediaPrompt, type MediaAccess } from "@/app/(team)/media-actions";
 import { activeMedia, MediaProgress, trackMediaJob, useMediaJobs } from "@/components/media-jobs";
+import { NoAiNote } from "@/components/media/no-ai-note";
 import { HF_MODELS, MAX_PROMPT_CHARS, type HfModel, type MediaJob } from "@/lib/media-models";
 import { createClient } from "@/lib/supabase/client";
 
@@ -39,7 +40,7 @@ export function HiggsfieldPanel({ requestId, clientId, deliverables = true }: { 
   };
   useEffect(() => {
     let on = true;
-    void mediaAccess().then((a) => on && setAccess(a));
+    void mediaAccess({ requestId: requestId ?? null, clientId: clientId ?? null }).then((a) => on && setAccess(a));
     const l = requestId ? ticketMedia(requestId, ["image", "video"]) : clientId ? clientMedia(clientId, ["image", "video"]) : Promise.resolve([]);
     void l.then((x) => on && setList(x));
     // A job finishing anywhere: read the list again so the result shows here
@@ -109,7 +110,8 @@ export function HiggsfieldPanel({ requestId, clientId, deliverables = true }: { 
 
   // The live status (from the bell's poll) wins over what was read when the panel opened
   const jobs = (list ?? []).map((j) => live.find((x) => x.id === j.id) ?? j);
-  const can = access?.canGenerate && access.higgsfield;
+  // A client who said no to AI content: no AI images or video are offered for them
+  const can = access?.canGenerate && access.higgsfield && !access.noAi;
   const needsPrompt = model.promptRequired || !(ref && model.reference !== "none");
 
   return (
@@ -118,6 +120,8 @@ export function HiggsfieldPanel({ requestId, clientId, deliverables = true }: { 
         <h3 className="text-xs font-medium uppercase tracking-[0.12em] text-faint">AI images and video</h3>
         {access && !access.higgsfield && <span className="text-[11px] text-faint">Higgsfield isn&apos;t connected yet</span>}
       </div>
+
+      {access?.noAi && <NoAiNote text={access.noAi} />}
 
       {can && !open && (
         <button

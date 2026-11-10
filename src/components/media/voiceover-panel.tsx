@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { clientMedia, generateVoiceover, mediaAccess, mediaToDrive, scriptVoiceover, ticketMedia, voices as loadVoices, type MediaAccess } from "@/app/(team)/media-actions";
+import { NoAiNote } from "@/components/media/no-ai-note";
 import type { Voice } from "@/lib/elevenlabs";
 import { clampVoiceSettings, DEFAULT_VO_MODEL, DEFAULT_VOICE_SETTINGS, MAX_VO_CHARS, VO_MODELS, type MediaJob, type VoiceSettings, type VoModel } from "@/lib/media-models";
 
@@ -56,7 +57,7 @@ export function VoiceoverPanel({ requestId, clientId, fromScript = false }: { re
 
   useEffect(() => {
     let live = true;
-    void mediaAccess().then((a) => live && setAccess(a));
+    void mediaAccess({ requestId: requestId ?? null, clientId: clientId ?? null }).then((a) => live && setAccess(a));
     const list = requestId ? ticketMedia(requestId, "voiceover") : clientId ? clientMedia(clientId, "voiceover") : Promise.resolve([]);
     void list.then((l) => live && setTakes(l));
     return () => {
@@ -136,7 +137,8 @@ export function VoiceoverPanel({ requestId, clientId, fromScript = false }: { re
       setTakes((t) => (t ?? []).map((x) => (x.id === j.id ? { ...x, driveNote: r.note } : x)));
     });
 
-  const can = access?.canGenerate && access.elevenlabs;
+  // A client who said no to AI content: no AI voices are offered for them
+  const can = access?.canGenerate && access.elevenlabs && !access.noAi;
   const chars = text.trim().length;
 
   return (
@@ -145,6 +147,8 @@ export function VoiceoverPanel({ requestId, clientId, fromScript = false }: { re
         <h3 className="text-xs font-medium uppercase tracking-[0.12em] text-faint">Voiceover</h3>
         {access && !access.elevenlabs && <span className="text-[11px] text-faint">ElevenLabs isn&apos;t connected yet</span>}
       </div>
+
+      {access?.noAi && <NoAiNote text={access.noAi} />}
 
       {can && !open && (
         <button

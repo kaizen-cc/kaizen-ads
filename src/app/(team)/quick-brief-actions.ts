@@ -70,7 +70,8 @@ One concept per brief. briefs: one entry per distinct concept (one idea, one ang
 - why: one or two sentences on why it fits this client now (their offer, audience, goal, what's working for them, and the allotment if it limited the counts).
 - ${AVATAR_RULE}
 inMotion: the keys (R123, A456...) of items in already_in_motion that cover or overlap this request (the same offer, product, promo, moment or idea); [] when none. If one already covers it, say so in why ("Already in motion: #123 Holiday promo (in production)") and keep this one to what it adds. Never say nothing exists for something listed there.
-Only facts from the client context: never invent prices, offers, dates or claims. Never name another business or client.`;
+Only facts from the client context: never invent prices, offers, dates or claims. Never name another business or client.
+A concept that alters or generates a real person's face or voice (an AI avatar of a customer, a cloned or pitch-shifted voice, a face swap) ends with "Consent to confirm: the client's written consent for <who>'s likeness/voice, and an on-screen disclaimer". For a client with an ai_content_rule, no concept uses an AI avatar, an AI voice or AI-generated video or images.`;
 
 const clean = (s: string, max: number) => s.replace(/\s+/g, " ").trim().slice(0, max);
 
