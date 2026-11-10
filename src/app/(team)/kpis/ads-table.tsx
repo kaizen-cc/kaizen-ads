@@ -39,9 +39,9 @@ export function AdsThisWeek({ a }: { a: KpiAds }) {
     if (key === "spend") return <span className="tabular">{money(x.spend)}</span>;
     if (key === "results") return <span className="tabular">{Math.round(x.results * 10) / 10}</span>;
     if (key === "cost") return <span className={`tabular ${x.value == null ? "text-faint" : ""}`}>{cost(x)}</span>;
-    if (key === "ctr") return <span className="tabular">{x.ctr != null ? `${x.ctr}%` : "—"}</span>;
+    if (key === "ctr") return <span className="tabular">{x.ctr != null ? `${x.ctr}%` : "–"}</span>;
     const [v, good, approx] = key === "hook" ? [x.hookRate, HOOK_GOOD, false] : key === "hold" ? [x.holdRate, HOLD_GOOD, false] : [x.watchPct, WATCH_GOOD, x.watchEstimated];
-    if (v == null) return <span className="text-faint">{x.plays ? "n/a" : "—"}</span>;
+    if (v == null) return <span className="text-faint">{x.plays ? "n/a" : "–"}</span>;
     const tone = videoTone(v, good);
     const tip = key === "watch" ? (approx ? VIDEO_HELP.estimate : x.avgWatchSec != null && x.videoSeconds ? `Watched ${x.avgWatchSec}s of ${x.videoSeconds}s on average.` : undefined) : undefined;
     return (

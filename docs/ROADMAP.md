@@ -94,3 +94,15 @@ Where things stand on 2026-10-31 and what comes next, in order. The target is th
 - **PDF knowledge** in Settings (only text files today), and per-client knowledge for the agents.
 - **Agent evals**: replay recent requests against a changed prompt or model before saving, to see what would differ.
 - **TikTok, organic social, white-label portal**, and the move into Kaizen OS.
+
+## Head media buyer's review (Nov 4): open items
+
+All built.
+
+1. ~~**"Why?" on every audit item**~~: built. Ask the agent that wrote an audit action, cause or sprint move why, answered from the numbers that audit read (src/app/(team)/kpis/why-actions.ts, src/lib/audit-why.ts).
+2. ~~**Loom audits into the Media Buyer's knowledge**~~: built. Looms from Slack links, /api/loom, bulk paste and Atlassian's MCP server, distilled into media-buying insights by platform and industry (src/lib/buying-insights.ts).
+3. ~~**Request flow fixes**~~: built. Similar clients match on what the business sells, thumbnails that never break, a star to save any brief for later.
+4. ~~**Creative suggestions in the audit**~~: built. "Creative I'd make" on every audit, from the creative analysis, the playbook, our Hall of Fame and the Brand Bible, each opening its quick preview.
+5. ~~**Open in Ads Manager on every in-platform action**~~: built. Every audit action, sprint move and planned change that names a Meta campaign, ad set or ad links to that exact object in Ads Manager (selected_campaign_ids / selected_adset_ids / selected_ad_ids), and Google ones to the campaign or ad group in Google Ads; audits and sprint moves from before Nov 5 are linked by the names in their text.
+6. ~~**Numbers that match Ads Manager**~~: built. The $598 per purchase (Ads Manager: $299, Oct 28 to Nov 3) was a part day's spend counted over a week whose late purchase hadn't been read yet; windows are complete days ending yesterday, the last 8 days are read again on every sync, one purchase type is counted (never its aliases added together), every read asks for 7-day click, 1-day view, and purchases are booked on the impression's day as Ads Manager does.
+7. ~~**Hook rate, hold rate and watch time on the KPI card's ads**~~: built. "Ads this week" is a sortable table (spend, result, cost per result or ROAS, CTR, hook rate, hold rate, watched), a card per ad on phones. See-more rate stays n/a: Meta doesn't report taps on "See more".

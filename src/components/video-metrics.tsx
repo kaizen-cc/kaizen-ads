@@ -1,9 +1,9 @@
-import { HOOK_GOOD, TONE_CLASS, VIDEO_HELP, WATCH_GOOD, videoTone } from "@/lib/kpi/video";
+import { HOLD_GOOD, HOOK_GOOD, TONE_CLASS, VIDEO_HELP, WATCH_GOOD, videoTone } from "@/lib/kpi/video";
 
 // A video ad's hook rate and how much of it people watch, colored against Kaizen's lines (hook 30%, watch 35%), each
 // with its explanation on hover (and on tap, for phones: the badge takes focus).
 
-type V = { hookRate: number | null; watchPct: number | null; avgWatchSec?: number | null; videoSeconds?: number | null; watchEstimated?: boolean };
+type V = { hookRate: number | null; holdRate?: number | null; watchPct: number | null; avgWatchSec?: number | null; videoSeconds?: number | null; watchEstimated?: boolean };
 
 function Badge({ label, value, good, help, detail, size, focusable, approx = false }: { label: string; value: number | null; good: number; help: string; detail?: string | null; size: "sm" | "md"; focusable: boolean; approx?: boolean }) {
   const tone = videoTone(value, good);
@@ -31,6 +31,7 @@ export function VideoMetrics({ v, size = "sm", focusable = true }: { v: V; size?
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
       <Badge label="Hook" value={v.hookRate} good={HOOK_GOOD} help={VIDEO_HELP.hook} size={size} focusable={focusable} />
+      {v.holdRate != null && <Badge label="Hold" value={v.holdRate} good={HOLD_GOOD} help={VIDEO_HELP.hold} size={size} focusable={focusable} />}
       <Badge label="Watched" value={v.watchPct} good={WATCH_GOOD} help={VIDEO_HELP.watch} detail={watched} size={size} focusable={focusable} approx={Boolean(v.watchEstimated)} />
     </span>
   );
