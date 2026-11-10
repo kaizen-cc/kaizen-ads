@@ -4,12 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import type { SuggestionDraft, TalkTurn } from "@/lib/suggestions";
 import type { QuickBrief } from "@/lib/quick-brief";
 import { linksIn } from "@/lib/saved-references";
-import { QUICK_PICKS, inlineAsks, talkStep, wantsWrite } from "@/lib/talk-flow";
+import { inlineAsks, talkStep, wantsWrite } from "@/lib/talk-flow";
 import type { Draft } from "./draft";
 import { talkRequest, type TalkResult } from "./actions";
 import { Spark } from "./parts";
 import { AiProgress } from "@/components/ai-progress";
-import { BriefJobSlot } from "@/components/brief-jobs";
 import { LinkCards } from "@/components/link-refs";
 import type { PreviewItem } from "./start-flow";
 import { AttachButton, AttachedFiles, useBriefFiles, useFileDrop } from "@/components/brief-attach";
@@ -59,7 +58,10 @@ export function recordTalkPreview(clientId: string, brief: QuickBrief) {
 const GO_BACK = /^\s*(please\s+)?(go|take (me|us)|bring (it|me))\s+back(\s+to\s+(the|my|our|that|this)\s+(brief|preview|version|idea))?\s*[.!]*\s*$|^\s*(restore|undo)\b|\bgo back to the (brief|preview)\b/i;
 const sameBrief = (a: QuickBrief | undefined, b: QuickBrief) => Boolean(a) && JSON.stringify(a) === JSON.stringify(b);
 
-export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: { clientId: string; clientName: string; onUse: (patch: Partial<Draft>) => void; /** Before the first full brief: its quick preview */ onPreview: (item: PreviewItem) => void; onBack: () => void }) {
+/** What the page's Continue button does here: write the brief from the conversation (whatever is typed goes with it) */
+export type ChatHandle = { canContinue: boolean; continue: () => void };
+
+export function RequestChat({ clientId, clientName, onUse, onPreview, onBack, onHandle }: { clientId: string; clientName: string; onUse: (patch: Partial<Draft>) => void; /** Before the first full brief: its quick preview */ onPreview: (item: PreviewItem) => void; onBack: () => void; /** The page's Continue: told when it can go, and what it does */ onHandle?: (h: ChatHandle) => void }) {
   const [state, setState] = useState<Saved>({ turns: [], draft: null, ready: false, patch: null });
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -176,7 +178,7 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
   const send = async (force = false, typed?: string) => {
     if (!force && files.uploading) return setError("Wait for the files to finish uploading.");
     const sent = force ? [] : files.ready;
-    const said = force ? "Write it with what we have." : (typed ?? text).trim() || (sent.length ? "Use these as references for this brief." : "");
+    const said = force ? text.trim() || "Write it with what we have." : (typed ?? text).trim() || (sent.length ? "Use these as references for this brief." : "");
     if (!said || busy) return;
     // The files go with the message (named in it, so the conversation keeps them) and onto the brief as references
     const t = sent.length ? `${said}\n${sent.map(fileMention).join(" ")}` : said;
@@ -185,7 +187,7 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
       files.clear();
     }
     const turns: TalkTurn[] = [...state.turns, { role: "user", text: t }];
-    if (!force && typed === undefined) setText("");
+    if (typed === undefined) setText("");
     setError(null);
 
     // "Go back to the brief": the brief as it stood, no AI (nothing is rewritten)
@@ -248,9 +250,20 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
   };
 
   // This conversation's brief, keyed by how it started (jobKeyOf): a background write from its preview shows here
-  const talkSource = state.turns.length ? ({ kind: "talk", turns: state.turns } as const) : null;
-  const lastAi = state.turns.length - 1;
-  const asked = lastAi >= 0 && state.turns[lastAi].role === "ai" && Boolean(state.asks?.[lastAi]);
+  // The page's Continue: write the brief once there's an idea (said or typed), never while it's working
+  const canContinue = !busy && (state.turns.some((t) => t.role === "user") || Boolean(text.trim()));
+  const handleRef = useRef(onHandle);
+  useEffect(() => {
+    handleRef.current = onHandle;
+  });
+  const sendRef = useRef(send);
+  useEffect(() => {
+    sendRef.current = send;
+  });
+  useEffect(() => {
+    handleRef.current?.({ canContinue, continue: () => void sendRef.current(true) });
+  }, [canContinue]);
+
   const said = state.turns.some((t) => t.role === "user");
   return (
     <section {...drop.bind} className={`relative mx-auto flex min-h-[460px] w-full min-w-0 max-w-3xl flex-col overflow-hidden rounded-[22px] border bg-surface ${drop.dragging ? "border-brand/60" : "border-line"}`}>
@@ -314,16 +327,6 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
             </div>
           );
         })}
-        {/* Quick picks under the latest questions: an answer without typing */}
-        {asked && !busy && (
-          <div className="flex flex-wrap gap-2 justify-self-start">
-            {QUICK_PICKS.map((p) => (
-              <button key={p} type="button" onClick={() => void (p === "Write it now" ? send(true) : send(false, "Your call on those. Fill them in from what you know and write it."))} className="min-h-11 rounded-full border border-brand/40 bg-brand-soft/40 px-4 text-[13.5px] text-fg hover:border-brand md:min-h-9">
-                {p}
-              </button>
-            ))}
-          </div>
-        )}
         {busy && phase === "checking" && <div className="justify-self-start rounded-[18px] bg-surface-2 px-4 py-2.5 text-[14px] text-muted">Reading it through…</div>}
         {busy && phase === "writing" && (
           <div className="w-full justify-self-start rounded-[18px] border border-line bg-bg/60 px-4 py-3">
@@ -335,7 +338,7 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
             {error}
             {said && (
               <button type="button" onClick={() => void send(true)} className="min-h-9 rounded-full border border-bad/40 px-3 text-[12.5px] hover:bg-bad/10">
-                Write it again
+                Try again
               </button>
             )}
           </p>
@@ -373,24 +376,13 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
             placeholder={state.turns.length ? "Answer, refine, or paste a reference link…" : "Describe the creative you want…"}
             className="min-h-11 flex-1 resize-none rounded-[14px] border border-line bg-bg px-4 py-2.5 text-[16px] outline-none placeholder:text-faint focus:border-brand-text/60 md:text-[14.5px]"
           />
-          <button type="button" onClick={() => void send()} disabled={(!text.trim() && !files.ready.length) || busy} className="h-11 shrink-0 rounded-full bg-brand px-5 text-[14px] font-medium text-white disabled:opacity-50">
-            Send
-          </button>
-        </div>
-        {/* Once there's an idea: write it now, or (optional) see the quick preview first */}
-        {said && !busy && (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
-            <button type="button" onClick={() => void send(true)} className="min-h-11 text-[13px] font-medium text-brand-text hover:underline md:min-h-8">
-              Write the brief now
+          {/* Send shows only once there's something to send; moving on is the page's Continue */}
+          {(text.trim() || files.ready.length > 0) && (
+            <button type="button" onClick={() => void send()} disabled={busy} className="h-11 shrink-0 rounded-full border border-line px-5 text-[14px] font-medium text-fg hover:border-faint disabled:opacity-50 animate-[sheet-fade_.15s_ease-out]">
+              Send
             </button>
-            <span aria-hidden className="text-faint">·</span>
-            <BriefJobSlot source={talkSource} clientId={clientId} compact>
-              <button type="button" onClick={() => preview(state.turns, false)} className="min-h-11 text-[13px] text-muted hover:text-fg hover:underline md:min-h-8">
-                Preview first
-              </button>
-            </BriefJobSlot>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </section>
   );

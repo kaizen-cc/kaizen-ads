@@ -96,6 +96,8 @@ export function QuickBriefSheet({
   const [attempt, setAttempt] = useState(0);
   const sourceKey = JSON.stringify(source);
   const router = useRouter();
+  // A brief started from this sheet opens for review the moment it's written (the sheet shows its progress till then)
+  const startedHere = useRef(false);
   // Already being written from here (or written): its progress, then "Brief ready", in place of a second write
   const job = useBriefJobFor(source, clientId);
   const writing = job?.status === "writing";
@@ -114,6 +116,7 @@ export function QuickBriefSheet({
       if ("ready" in r) return router.push(readyHref(r.ready));
       if ("job" in r) {
         trackJob(r.job);
+        startedHere.current = true;
         started++;
       } else router.push(readyHref(r.suggestion.id));
     }
@@ -181,7 +184,14 @@ export function QuickBriefSheet({
     void inBackground([brief], edited);
   };
 
-  const action = ready?.instant && !edited ? "Use this brief" : ready?.instant && !split ? "Rewrite with my changes" : "Write the full brief";
+  // One way on: Continue writes the full brief (or takes the one already written) and opens it for review
+  const action = "Continue";
+  useEffect(() => {
+    if (startedHere.current && job?.status === "ready") {
+      startedHere.current = false;
+      router.push(readyHref(job.job.suggestionId));
+    }
+  }, [job, router]);
   const doSplit = () => {
     if (!ready) return;
     setBriefs([...briefs.slice(0, 1), ...ready.others]);
@@ -378,7 +388,7 @@ export function QuickBriefSheet({
               <BriefJobStatus source={source} clientId={clientId} compact={false} />
             </div>
           )}
-          {!job && ready && !(ready.instant && !edited) && <p className="text-[12px] text-faint">Written in the background (about a minute or two). This shows its progress; you&apos;ll get a notice when it&apos;s ready to open in Ready to send.</p>}
+          {!job && ready && !(ready.instant && !edited) && <p className="text-[12px] text-faint">Continue writes the full brief (about a minute) and opens it for review.</p>}
           {split && (onWriteAll || !onWrite) && briefs.length > 1 && !writing && (
             <button
               type="button"
@@ -403,7 +413,7 @@ export function QuickBriefSheet({
               className="inline-flex min-h-12 items-center gap-2 rounded-full bg-brand px-6 text-[14.5px] font-medium text-white shadow-[0_10px_30px_-10px_rgba(200,16,46,0.8)] transition hover:bg-brand-hover disabled:opacity-50 disabled:shadow-none"
             >
               {!ready?.instant || edited ? <Spark size={13} /> : null}
-              {writing ? "Writing in the background" : job?.status === "ready" && !(ready?.instant && !edited) ? "Write another" : action}
+              {writing ? "Writing the brief…" : action}
             </button>
           </div>
         </div>

@@ -8,7 +8,7 @@ import { ClientPicker, StartPage, forgetStart, prefetchStart, rememberClient, se
 import { QuickBriefSheet, useQuickPreview } from "@/components/quick-brief-sheet";
 import { ReadyToSend, MAKER, TURNAROUND, plural, type ReadyHandle } from "./ready-to-send";
 import type { StartCore } from "@/lib/request-start";
-import { RequestChat, forgetTalk, recordTalkPreview } from "./request-chat";
+import { RequestChat, forgetTalk, recordTalkPreview, type ChatHandle } from "./request-chat";
 import { AvatarField } from "@/components/avatar-field";
 import { AsanaSend, BriefPdfButton } from "@/components/asana-send";
 import Link from "next/link";
@@ -167,6 +167,8 @@ export function RequestForm({
   const readyRef = useRef<ReadyHandle | null>(null);
   // Start: talking the idea through with the strategist (in the address, so back returns to the cards)
   const talking = useParam("path") === "talk";
+  // Talk it through's Continue (write the brief), as the chat tells it
+  const [chat, setChat] = useState<ChatHandle | null>(null);
   // Phones: the winners and market ideas open as a bottom sheet instead of pushing the form down
   const ideasOpen = useParam("ideas") === "1";
   const aiRef = useRef(ai);
@@ -646,6 +648,8 @@ export function RequestForm({
             key={step}
             onSubmit={(e) => {
               e.preventDefault();
+              // Talking it through: Continue writes the brief from the conversation (it opens in Ready to send)
+              if (step === 1 && talking) return void (chat?.canContinue && chat.continue());
               if (step < STEPS.length - 1 && !blocked) go(step + 1);
             }}
             className="grid gap-8 animate-[step-in_.35s_cubic-bezier(.2,.8,.2,1)]"
@@ -667,7 +671,7 @@ export function RequestForm({
 
             {step === 1 && draft.clientId && client && (
               talking ? (
-                <RequestChat clientId={draft.clientId} clientName={client.name} onUse={applyIdea} onPreview={(item) => preview.open(item.key, item)} onBack={() => closeParams("path")} />
+                <RequestChat clientId={draft.clientId} clientName={client.name} onUse={applyIdea} onPreview={(item) => preview.open(item.key, item)} onBack={() => closeParams("path")} onHandle={setChat} />
               ) : (
                 <StartPage
                   key={draft.clientId}
@@ -1114,7 +1118,7 @@ export function RequestForm({
                   )}
                   {step < STEPS.length - 1 ? (
                     step > 0 && (
-                      <button disabled={Boolean(blocked)} className="h-12 rounded-brand md:h-11 bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:bg-surface-2 disabled:text-faint disabled:shadow-none">
+                      <button disabled={step === 1 && talking ? !chat?.canContinue : Boolean(blocked)} className="h-12 rounded-brand md:h-11 bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:bg-surface-2 disabled:text-faint disabled:shadow-none">
                         Continue
                       </button>
                     )
