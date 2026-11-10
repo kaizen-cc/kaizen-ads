@@ -78,7 +78,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   return (
     <div className="mx-auto max-w-6xl">
       <RequestForm
-        key={written ? `draft-${draft}` : "new"}
+        key={written ? `draft-${draft}-${written.draft.origin?.writtenAt ?? ""}` : "new"}
         initialDraft={restart?.draft ?? null}
         startAtReview={Boolean(restart) && (brief === "same" || Boolean(written))}
         initialPromise={written?.promise ?? null}
@@ -98,7 +98,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
 /** A brief written in the background from a quick preview (read through the person's own session), as the draft */
 async function fromWritten(db: Awaited<ReturnType<typeof createClient>>, id: string, allowed: ReadonlySet<CreativeFormat>): Promise<{ draft: Partial<Draft> & { clientId: string }; promise: { id: string; clientId: string } | null } | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
-  const { data: s } = await db.from("creative_suggestions").select("client_id, call_commitment_id").eq("id", id).maybeSingle();
+  const { data: s } = await db.from("creative_suggestions").select("client_id, call_commitment_id, updated_at").eq("id", id).maybeSingle();
   if (!s) return null;
   // Only a written brief: a summary nobody has picked yet is never sent as it is
   const { suggestionPatch } = await import("./actions");
@@ -107,6 +107,8 @@ async function fromWritten(db: Awaited<ReturnType<typeof createClient>>, id: str
   const clientId = s.client_id as string;
   // Written entirely by the strategist: sent unchanged, it skips the AI review (src/lib/brief-fingerprint.ts)
   const fields: Partial<Draft> = { sizes: ["4x5", "9x16"], ...r.patch };
+  // Which writing of the brief this is: a copy saved on this device from an earlier one gives way to it
+  if (fields.origin) fields.origin = { ...fields.origin, writtenAt: (s.updated_at as string | null) ?? null };
   return {
     draft: { ...fields, priority: "normal", clientId, ai: stampAi(fields, { kind: "suggestion", id }, allowed) },
     promise: s.call_commitment_id ? { id: s.call_commitment_id as string, clientId } : null,

@@ -218,7 +218,12 @@ export function RequestForm({
   const saveKey = demo ? `${SAVE_KEY}:preview` : initialDraft?.migration ? `${SAVE_KEY}:asana:${initialDraft.migration.gid}` : initialPromise || initialDraft?.origin?.suggestionId ? `${SAVE_KEY}:brief:${initialDraft?.origin?.suggestionId ?? initialPromise?.id}` : SAVE_KEY;
   const [loaded, setLoaded] = useState(false); // nothing is saved until the saved copy has been read
   useEffect(() => {
-    const saved = readSaved(saveKey);
+    const kept = readSaved(saveKey);
+    // A brief rewritten since this copy was saved (its quick preview changed and written again): the new writing wins
+    const was = initialDraft?.origin?.writtenAt ?? null;
+    const rewritten = Boolean(kept && was && (kept.draft.origin?.writtenAt ? kept.draft.origin.writtenAt !== was : kept.at < Date.parse(was)));
+    const saved = rewritten ? null : kept;
+    if (rewritten) writeSaved(null, saveKey);
     // Read storage after mount (the server can't), then apply it
     void Promise.resolve().then(() => {
       if (saved && saved.draft.clientId && (!initialClient || saved.draft.clientId === initialClient)) {

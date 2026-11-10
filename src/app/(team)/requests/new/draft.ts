@@ -60,7 +60,8 @@ export const briefCardDraft = (b: import("@/lib/kaizen-ai/types").BriefCard): Pa
 export type Migration = { gid: string; name: string; url: string; stage: string; stageLabel: string; needsCreative: boolean; needsCopy: boolean; assigneeId: string | null; creativeLink: string; copy: string };
 
 /** What a request is built on, kept on its tickets so the creative team sees the idea behind it. */
-export type Origin = { kind: "winner" | "market" | "promise" | "brief"; label: string; link?: string | null; thumb?: string | null; suggestionId?: string | null };
+/** writtenAt: when the brief it opens was last written (a rewrite after it was saved here replaces the saved copy) */
+export type Origin = { kind: "winner" | "market" | "promise" | "brief"; label: string; link?: string | null; thumb?: string | null; suggestionId?: string | null; writtenAt?: string | null };
 
 export const emptyDraft = (clientId: string | null): Draft => ({
   clientId,
