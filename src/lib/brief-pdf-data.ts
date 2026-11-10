@@ -3,6 +3,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiUnavailable, aiEnabled, askJson } from "@/lib/ai";
 import { STRUCTURE_SCHEMA, fitStructure, plainStructure, slidesFor, versionCount, type BriefStructure, type StructureSource } from "@/lib/brief-pdf-model";
 import type { PdfReference } from "@/lib/brief-pdf";
+import { attachLinks } from "@/lib/asset-links";
+import { BRIEF_BUCKET, parseBriefFileUrl } from "@/lib/brief-files";
+import { parseBrief } from "@/lib/brief-spec";
 
 // What the brief PDF reads on the server: the brief restructured into a production sheet (one fast AI pass, cached on
 // the draft by the caller), and the pictures of what the request is built on (a market ad, a winner, a saved idea),
@@ -10,7 +13,15 @@ import type { PdfReference } from "@/lib/brief-pdf";
 
 /** One fast pass that restructures the brief into the sheet's fields. Never invents: what the brief doesn't say stays empty. */
 export async function structureBrief(d: StructureSource & { clientId: string; client: string }): Promise<BriefStructure> {
-  if (!aiEnabled()) return plainStructure(d);
+  // Every asset keeps the Drive link the brief gave it (the AI's shorter lines get theirs back from the brief's own)
+  const linked = (s: BriefStructure): BriefStructure => {
+    try {
+      return { ...s, assets: attachLinks(s.assets, parseBrief(d.brief ?? "").spec.assets) };
+    } catch {
+      return s;
+    }
+  };
+  if (!aiEnabled()) return linked(plainStructure(d));
   const n = Math.max(1, versionCount(d.formats));
   const cards = slidesFor(d.formats);
   try {
@@ -41,13 +52,13 @@ export async function structureBrief(d: StructureSource & { clientId: string; cl
         cards ? `- slides: exactly ${cards} rows in order, what each slide says (headline, subline) and shows (visual).` : "- slides: an empty list (not a carousel).",
         "- dos and donts: the brand rules, compliance points and things the client rejected that the brief states, each under 18 words.",
         "- copy: primary text, headlines and the call to action only when the brief gives them (empty otherwise).",
-        "- assets: what it's made from (footage, photos, logos on Drive) and what to get from the client, when the brief says.",
+        "- assets: what it's made from (footage, photos, logos on Drive) and what to get from the client, when the brief says. Keep each asset's link at the end of its line exactly as the brief has it.",
       ].join("\n"),
     });
-    return fitStructure(out, d, true);
+    return linked(fitStructure(out, d, true));
   } catch (e) {
     if (!(e instanceof AiUnavailable)) console.error("[brief-pdf] structure", e instanceof Error ? e.message : e);
-    return plainStructure(d);
+    return linked(plainStructure(d));
   }
 }
 
@@ -219,6 +230,28 @@ export async function gatherReferences(db: SupabaseClient, admin: SupabaseClient
   for (const raw of input.refs) {
     const u = abs(raw, input.appOrigin);
     if (!u) continue;
+    // A file added to the brief: its picture (a video's first frame) read from storage, and its link
+    const file = parseBriefFileUrl(u);
+    if (file) {
+      const pic = file.kind === "image" ? file.path : file.kind === "video" ? file.thumb : null;
+      if (pic && admin && out.length < 6) {
+        add({
+          key: `file:${file.path}`,
+          kicker: file.kind === "video" ? "Added video" : "Added picture",
+          title: file.name,
+          brand: null,
+          days: null,
+          video: file.kind === "video",
+          note: null,
+          links: [{ label: "Open the file", url: u }],
+          picture: async () => {
+            const { data } = await admin.storage.from(BRIEF_BUCKET).download(pic);
+            return data ? toJpeg(new Uint8Array(await data.arrayBuffer())) : null;
+          },
+        });
+      } else links.push({ label: `Added ${file.kind === "pdf" ? "PDF" : file.kind}: ${file.name}`, url: u });
+      continue;
+    }
     const x = new URL(u);
     const mine = x.origin === new URL(input.appOrigin).origin;
     const ad = /\/api\/ad-media\/(\d{5,25})/.exec(x.pathname)?.[1] ?? (mine && x.pathname === "/winners" ? x.searchParams.get("ad") : null);

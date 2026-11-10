@@ -13,6 +13,7 @@ import type { SuggestionDraft } from "@/lib/suggestions";
 import { avatarsOf, matchAvatar, type BibleAvatar } from "@/lib/bible-sections";
 import { loadInMotion, motionMatches, type MotionItem } from "@/lib/in-motion";
 import { detectClientFacts } from "@/lib/brief-facts";
+import { conceptPays, promiseIn } from "@/lib/brief-payoff";
 
 // The quick preview every brief starts from (src/lib/quick-brief.ts): a short summary in a few seconds, from a fast
 // model at low effort, or at once when the brief is already written. The full brief is written after, from what the
@@ -64,7 +65,7 @@ One concept per brief. briefs: one entry per distinct concept (one idea, one ang
 - concept: one or two sentences on what the creative shows and does.
 - angle: the angle in a few words.
 - audience: who it's for, in one line.
-- hook: the opening line or on-image headline it leads with, in the client's voice.
+- hook: the opening line or on-image headline it leads with, in the client's voice. When it promises a reveal, a tip, a hack, a trick, a secret or "what most people miss", the concept says exactly what that is and where it comes from (client memory, the Brand Bible, a call, the footage). If the context doesn't say, pick a hook whose payoff we know; only when the idea is worth keeping anyway, keep it and end the concept with "Payoff to confirm with the client: <what exactly>". Never tease something you can't name.
 - formats: what gets made for this one concept, each format with net new and variations (0 to 5). Every version counts toward the allotment (net new and variations alike, and each carousel slide; sizes of the same version don't), so the total must fit what's left (images and carousels share the image pool).
 - why: one or two sentences on why it fits this client now (their offer, audience, goal, what's working for them, and the allotment if it limited the counts).
 - ${AVATAR_RULE}
@@ -177,6 +178,9 @@ export async function previewBrief(clientId: string, source: BriefSource, given?
     // before the full brief is written, so it's never invented (answers already given are kept)
     const asked = (b: QuickBrief): QuickBrief => {
       const found = detectClientFacts(`${b.title}. ${b.hook}. ${b.concept}`).map((f) => f.question);
+      // A hook that promises something (a hack, a tip, a secret) the concept doesn't name: its payoff is asked for too
+      const promise = promiseIn(`${b.title}. ${b.hook}`);
+      if (promise && !found.length && !conceptPays(b.concept)) found.push(`What exactly is "${promise}"? The hook promises it, so the brief has to say it (or the hook changes).`);
       const have = b.facts ?? [];
       const facts = [...have, ...found.filter((q) => !have.some((h) => h.question === q)).map((question) => ({ question, answer: "" }))].slice(0, 4);
       return facts.length ? { ...b, facts } : b;

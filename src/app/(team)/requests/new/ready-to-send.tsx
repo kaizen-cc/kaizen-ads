@@ -10,6 +10,8 @@ import { LinkCards, LinkInput } from "@/components/link-refs";
 import { Line } from "@/components/quick-brief-sheet";
 import type { Allotment } from "@/lib/allotment";
 import { savedHref, savedLine } from "@/lib/saved-references";
+import { linkWord } from "@/lib/asset-links";
+import { parseBriefFileUrl } from "@/lib/brief-files";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { FormatIcon } from "@/app/(team)/board/ticket-card";
 import { SIZES, refLinks, selectedFormats, type Draft, type Size } from "./draft";
@@ -52,6 +54,21 @@ export function briefConcepts(brief: string) {
 }
 
 /** The brief as sections a person can read: headings ("Hooks to try:"), lists, labelled lines ("Assets: …") */
+/** A line with its links as short "Open in Drive" links (an asset's Drive file, a folder, a page), never a raw address */
+function withLinks(line: string): React.ReactNode {
+  const parts = line.split(/(https?:\/\/[^\s<>"')]+)/g);
+  if (parts.length === 1) return line;
+  return parts.map((p, i) =>
+    i % 2 ? (
+      <a key={i} href={p.replace(/[.,;:!?]+$/, "")} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="whitespace-nowrap text-[0.92em] font-medium text-brand-text hover:underline">
+        {linkWord(p)} ↗
+      </a>
+    ) : (
+      p
+    ),
+  );
+}
+
 export function BriefText({ text }: { text: string }) {
   const blocks = text.trim().split(/\n\s*\n/);
   return (
@@ -71,10 +88,10 @@ export function BriefText({ text }: { text: string }) {
               const labelled = /^([A-Z][A-Za-z /&'-]{1,28}):\s+(.+)$/.exec(t.replace(/^[-•]\s+/, ""));
               const content = labelled ? (
                 <>
-                  <b className="font-medium text-fg">{labelled[1]}:</b> <span className="text-fg/85">{labelled[2]}</span>
+                  <b className="font-medium text-fg">{labelled[1]}:</b> <span className="text-fg/85">{withLinks(labelled[2])}</span>
                 </>
               ) : (
-                <span className="text-fg/90">{t.replace(/^[-•]\s+/, "").replace(/^\d+\.\s+/, "")}</span>
+                <span className="text-fg/90">{withLinks(t.replace(/^[-•]\s+/, "").replace(/^\d+\.\s+/, ""))}</span>
               );
               if (num) return <p key={j} className="mt-1 font-heading text-[16px] leading-snug"><span className="tabular mr-2 text-faint">{num[1]}</span>{t.replace(/^\d+\.\s+/, "")}</p>;
               if (bullet)
@@ -115,6 +132,7 @@ const draftPatch = (c: Change): Partial<Draft> => ({
   ...(c.angle !== undefined ? { angle: c.angle } : {}),
   ...(c.audience !== undefined ? { audience: c.audience } : {}),
   ...(c.sizes ? { sizes: SIZES.filter((z) => c.sizes!.includes(z)) } : {}),
+  ...(c.refs ? { refs: c.refs.join("\n") } : {}),
 });
 
 /** focus: land on a field. pendingRevise: a correction typed in "Tell me what to change" and not sent yet (has one; apply it, giving the draft's changes) */
@@ -147,7 +165,7 @@ export function ReadyToSend({
   const formats = selectedFormats(draft);
   const links = refLinks(draft.refs);
   // The app's own pictures (a kept Meta ad, a direct image) show as they are; any other link gets a preview card
-  const own = links.filter((u) => !/^https?:/i.test(u) || refPicture(u).adId || refPicture(u).src);
+  const own = links.filter((u) => !parseBriefFileUrl(u) && (!/^https?:/i.test(u) || refPicture(u).adId || refPicture(u).src));
   const pasted = links.filter((u) => !own.includes(u));
   const { base, concepts } = briefConcepts(draft.brief);
 

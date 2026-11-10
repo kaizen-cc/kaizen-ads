@@ -215,7 +215,7 @@ export function fitStructure(raw: Partial<BriefStructure> | null | undefined, d:
     dos: list(raw?.dos, 6).length ? list(raw?.dos, 6) : plain.dos,
     donts: list(raw?.donts, 6).length ? list(raw?.donts, 6) : plain.donts,
     copy: { primary: list(raw?.copy?.primary, 3, 600), headlines: list(raw?.copy?.headlines, 5, 120), cta: t(raw?.copy?.cta, 40) },
-    assets: list(raw?.assets, 6, 200),
+    assets: list(raw?.assets, 6, 420),
     ai,
   };
 }

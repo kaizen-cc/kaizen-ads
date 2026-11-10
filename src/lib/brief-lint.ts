@@ -6,6 +6,9 @@
 // replace) or an instruction the revise chat carries out. The AI pass (consistency against the Brand Bible's cleared
 // claims and the rest) adds to these on the server. Pure: tested in tests/brief-lint.test.ts.
 
+import { checkPayoff } from "./brief-payoff";
+import { parseBrief } from "./brief-spec";
+
 export type LintFix =
   | { kind: "sizes"; sizes: string[]; label: string }
   | { kind: "replace"; from: string; to: string; label: string }
@@ -123,6 +126,15 @@ export function lintBrief(i: LintInput): LintIssue[] {
   // Placeholders where something real belongs
   const holder = /\b(?:MISSING|TBD|TBC|TK|XXX)\b|\[(?:link|url|insert[^\]]*)\]/.exec(i.text);
   if (holder) issues.push({ id: "placeholder", severity: "hard", message: `"${holder[0]}" is a placeholder. Put the real thing in, or list it under Assets as needed.`, fixes: [] });
+
+  // A hook that promises a reveal, a tip or a hack, and a brief that never says what it is
+  const parsed = parseBrief(i.text);
+  const pay = checkPayoff({ title: i.title, overview: parsed.overview, spec: parsed.spec, text: i.text });
+  if (pay.promise && !pay.paid) {
+    const instruction = `The hook promises "${pay.promise}" but the brief never says what it is. State exactly what it is in the Insight line, where it comes from (client memory, the Brand Bible, a call, the footage) and how it shows on screen. If the context doesn't hold it, change the hook to one whose payoff we know, or keep it under Confirm with client with a "Fallback:" line giving a version that works without it.`;
+    if (!pay.pending) issues.push({ id: "payoff", severity: "hard", message: `The hook promises "${pay.promise}", but the brief never says what it is.`, fixes: [{ kind: "ai", instruction, label: "Pay off the promise" }] });
+    else if (!pay.fallback) issues.push({ id: "payoff-fallback", severity: "soft", message: `"${pay.promise}" waits on the client. Add a fallback version that works if they can't confirm it.`, fixes: [{ kind: "ai", instruction: `The hook's payoff ("${pay.promise}") waits on the client. Keep the question under Confirm with client and add a line in the opening that starts "Fallback:" with a version of the concept that works without it.`, label: "Add a fallback" }] });
+  }
 
   // Shot-by-shot direction: the HOW is the maker's unless a script was asked for
   const beats = (i.text.match(/(?:^|\n)\s*(?:[-•]\s*)?(?:\d{1,2}(?:\.\d)?\s?[-–]\s?\d{1,2}(?:\.\d)?\s?s(?:ec)?\b|beat \d|scene \d|shot \d|frame \d)/gi) ?? []).length;

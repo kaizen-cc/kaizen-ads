@@ -8,6 +8,8 @@
 // renders a spec to that text and reads it back. Pure: safe in the browser and on the server, tested in
 // tests/brief-spec.test.ts.
 
+import { PAYOFF_RULE } from "./brief-payoff";
+
 export type AssetStatus = "have" | "need" | "shoot" | "missing";
 export type SpecAsset = { item: string; status: AssetStatus };
 /** A fact only the client knows (the reveal, the tip, the stat, the offer's terms, the date): never invented */
@@ -213,7 +215,7 @@ export function cleanSpec(raw: Partial<BriefSpec> | null | undefined): BriefSpec
     dos: xs(raw?.dos, 8, 200),
     donts: xs(raw?.donts, 8, 200),
     assets: (Array.isArray(raw?.assets) ? raw.assets : [])
-      .map((a) => ({ item: t(a?.item, 300), status: (statuses.includes(a?.status as string) ? a.status : "need") as AssetStatus }))
+      .map((a) => ({ item: t(a?.item, 460), status: (statuses.includes(a?.status as string) ? a.status : "need") as AssetStatus }))
       .filter((a) => a.item)
       .slice(0, 10),
     kpi: t(raw?.kpi, 200),
@@ -267,9 +269,10 @@ Proof: (list) only claims the client cleared (in the Brand Bible, client memory 
 Slides: (numbered list, carousels only) the message each slide carries, not how it looks.
 Constraints: (list) sizes 4:5 and 9:16 only (never 1:1, never one size alone unless the request says so), safe zones, legal and consent (people on camera, testimonials, music rights), platform limits. Every line of the brief must agree with every other: no logo rule against a hook that shows the logo, no "evergreen" rule against event footage, no size rule against the file names.
 Do: (list) and Don't: (list) the client's rules that matter here, each short.
-Assets: (list) each item starting with its status: "- Have: <asset> (Drive: <folder>)", "- Need: <asset>", "- Client to shoot: <asset>", "- Missing: <a link that doesn't open>". Never write a placeholder like MISSING or TBD in place of a link.
+Assets: (list) each item starting with its status: "- Have: <the file or folder exactly as assets_on_drive names it> (Drive: <folder>), <what it's for in this concept>", "- Need: <asset>", "- Client to shoot: <asset>", "- Missing: <a link that doesn't open>". Prefer a specific file over a whole folder when the file list shows it. List a file only when what we know about it (its name, folder, date) clearly fits this angle; when nothing on Drive clearly fits, write "- Need: <what to look for or get>" instead of pointing at a clip that may be unrelated. Don't write Drive links yourself: the app adds each file's link from its name. Never write a placeholder like MISSING or TBD in place of a link.
 KPI: the metric this is judged on (from the client's KPIs).
 Success looks like: what a win looks like in numbers or behaviour.
 Your call: one or two lines handing style, pacing, music, edit structure and exact beats to the maker. Never direct those yourself.
 Script: only when the request explicitly asked for a script or voiceover text.
-Confirm with client: (list) every fact the concept depends on that only the client knows (which seat or spot, the tip, the stat, the offer's terms, a date) and that the context doesn't answer, as the question to ask them, short and specific ("- Which seat, at which venue, and why?"). When the context does answer it, use it and write "- <question> Answer: <answer> (Source: <where>)". NEVER invent such a fact: an ad that promises a reveal without the reveal is not ready, and saying so is the right answer.`;
+Confirm with client: (list) every fact the concept depends on that only the client knows (which seat or spot, the tip, the stat, the offer's terms, a date) and that the context doesn't answer, as the question to ask them, short and specific ("- Which seat, at which venue, and why?"). When the context does answer it, use it and write "- <question> Answer: <answer> (Source: <where>)". NEVER invent such a fact: an ad that promises a reveal without the reveal is not ready, and saying so is the right answer.
+${PAYOFF_RULE}`;

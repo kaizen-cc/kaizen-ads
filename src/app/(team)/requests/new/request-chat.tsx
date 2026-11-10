@@ -10,6 +10,10 @@ import { Spark } from "./parts";
 import { BriefJobSlot } from "@/components/brief-jobs";
 import { LinkCards } from "@/components/link-refs";
 import type { PreviewItem } from "./start-flow";
+import { AttachButton, AttachedFiles, useBriefFiles, useFileDrop } from "@/components/brief-attach";
+import { MarketRefCards } from "@/components/market-ref-cards";
+import { briefFileUrl, fileMention } from "@/lib/brief-files";
+import type { Reference } from "@/lib/ai-tools/motion";
 
 /**
  * "Talk it through": the team member tells the strategist the idea, it asks only what it needs (one or two questions
@@ -33,8 +37,10 @@ type Saved = {
   at?: number;
   /** Earlier full drafts, oldest first (the current one is draft) */
   drafts?: { draft: SuggestionDraft; patch: Partial<Draft> | null }[];
-  /** Links pasted as references for this brief */
+  /** Links pasted as references for this brief (and files added to the conversation) */
   refs?: string[];
+  /** Live market ads the strategist brought up, by the index of its message */
+  market?: Record<number, Reference[]>;
 };
 const key = (clientId: string) => `kz:request-chat:${clientId}`;
 const FMT = { image: "image", video: "video", carousel: "carousel" } as const;
@@ -56,6 +62,9 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
   const endRef = useRef<HTMLDivElement>(null);
   // The next preview that arrives is a new version (something was said since); edits after it change that version
   const nextIsNew = useRef(false);
+  // Files added to the next message (pictures, videos, audio, PDFs), and dropping them on the conversation
+  const files = useBriefFiles(clientId);
+  const drop = useFileDrop((f) => void files.add(f));
 
   useEffect(() => {
     try {
@@ -103,7 +112,8 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
 
   const [phase, setPhase] = useState<"checking" | "writing" | null>(null);
   /** fresh: something was said since the version shown, so it comes back refined as the next version of the same brief */
-  const preview = (turns: TalkTurn[], fresh: boolean) => {
+  const preview = (turns: TalkTurn[], fresh: boolean, added: string[] = []) => {
+    const refs = [...new Set([...(state.refs ?? []), ...added])];
     if (current && fresh) nextIsNew.current = true;
     onPreview({
       key: `talk-${turns.length}-${at}${fresh ? "-r" : ""}`,
@@ -115,11 +125,31 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
 
   const say = (turns: TalkTurn[], reply: string) => setState((s) => ({ ...s, turns: [...turns, { role: "ai", text: reply }] }));
 
+  /** Links (and files) as references for this brief: on the preview shown, the draft and the request */
+  const addRefs = (urls: string[]) =>
+    setState((s) => ({
+      ...s,
+      refs: [...new Set([...(s.refs ?? []), ...urls])].slice(0, 10),
+      previews: (s.previews ?? []).map((b, i) => (i === Math.min(s.at ?? (s.previews ?? []).length - 1, (s.previews ?? []).length - 1) ? { ...b, refs: [...new Set([...(b.refs ?? []), ...urls])].slice(0, 10) } : b)),
+      draft: s.draft ? { ...s.draft, refs: [...new Set([...(s.draft.refs ?? []), ...urls])].slice(0, 10) } : s.draft,
+      patch: s.patch ? { ...s.patch, refs: [...new Set([...(s.patch.refs ?? "").split(/\s+/).filter(Boolean), ...urls])].join("\n") } : s.patch,
+    }));
+
   const send = async (force = false) => {
     // Nothing written yet: "write it" opens the quick preview first, and the full brief follows what's agreed there
     if (force && !state.draft) return preview(state.turns, false);
-    const t = force ? "Go ahead and write it with what we have." : text.trim();
-    if (!t || busy) return;
+    if (!force && files.uploading) return setError("Wait for the files to finish uploading.");
+    const sent = force ? [] : files.ready;
+    const typed = force ? "Go ahead and write it with what we have." : text.trim() || (sent.length ? "Use these as references for this brief." : "");
+    if (!typed || busy) return;
+    // The files go with the message (named in it, so the conversation keeps them) and onto the brief as references
+    const t = sent.length ? `${typed}\n${sent.map(fileMention).join(" ")}` : typed;
+    const sentUrls: string[] = [];
+    if (sent.length) {
+      sentUrls.push(...sent.map((f) => briefFileUrl(window.location.origin, f)));
+      addRefs(sentUrls);
+      files.clear();
+    }
     const turns: TalkTurn[] = [...state.turns, { role: "user", text: t }];
     if (!force) setText("");
     setError(null);
@@ -132,20 +162,19 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
     }
 
     // A pasted link is a reference for this brief: attached, and the brief stays as it is
-    const urls = force ? [] : linksIn(t);
+    const urls = force ? [] : linksIn(typed);
     if (urls.length) {
-      const nextRefs = [...new Set([...refs, ...urls])].slice(0, 10);
-      const rest = urls.reduce((s, u) => s.replace(u, " "), t).replace(/\s+/g, " ").trim();
+      const rest = urls.reduce((s, u) => s.replace(u, " "), typed).replace(/\s+/g, " ").trim();
       setState((s) => ({
         ...s,
-        refs: nextRefs,
+        refs: [...new Set([...(s.refs ?? []), ...urls])].slice(0, 10),
         // The preview shown keeps them too
         previews: (s.previews ?? []).map((b, i) => (i === at ? { ...b, refs: [...new Set([...(b.refs ?? []), ...urls])].slice(0, 10) } : b)),
         draft: s.draft ? { ...s.draft, refs: [...new Set([...(s.draft.refs ?? []), ...urls])].slice(0, 10) } : s.draft,
         patch: s.patch ? { ...s.patch, refs: [...new Set([...(s.patch.refs ?? "").split(/\s+/).filter(Boolean), ...urls])].join("\n") } : s.patch,
       }));
       // Only a link (or "use this as a reference"): nothing for the strategist to rewrite
-      if (!rest || /^(use (this|these|it|them)|for reference|as (a )?reference|ref(erence)?|like this|see|check (this|these)( out)?)[.!:]*$/i.test(rest)) {
+      if (!sent.length && (!rest || /^(use (this|these|it|them)|for reference|as (a )?reference|ref(erence)?|like this|see|check (this|these)( out)?)[.!:]*$/i.test(rest))) {
         say(turns, `Added ${urls.length === 1 ? "it" : "them"} as ${urls.length === 1 ? "a reference" : "references"} to this brief. Everything else stays as it is.`);
         return;
       }
@@ -154,7 +183,7 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
     setState((s) => ({ ...s, turns }));
     setBusy(true);
     setPhase(force ? "writing" : "checking");
-    const r = await talkRequest(clientId, turns, state.draft, force, !state.draft).catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
+    const r = await talkRequest(clientId, turns, state.draft, force, !state.draft, sent).catch(() => ({ ok: false as const, error: "Something went wrong. Try again." }));
     setBusy(false);
     setPhase(null);
     if (!r.ok) {
@@ -169,6 +198,8 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
       return {
         ...s,
         turns: [...turns, { role: "ai", text: r.reply }],
+        // The market ads it brought up show under its message
+        market: r.market?.length ? { ...(s.market ?? {}), [turns.length]: r.market } : s.market,
         draft: keepRefs(r.draft) ?? s.draft,
         drafts,
         ready: r.ready,
@@ -176,7 +207,7 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
         open: r.building || r.previewReady ? null : { questions: r.questions, conflicts: r.conflicts },
       };
     });
-    if (r.previewReady) preview([...turns, { role: "ai", text: r.reply }], true);
+    if (r.previewReady) preview([...turns, { role: "ai", text: r.reply }], true, sentUrls);
   };
 
   const use = () => {
@@ -235,7 +266,8 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
   return (
     <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
       {/* The conversation */}
-      <section className="flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-[20px] border border-line bg-surface">
+      <section {...drop.bind} className={`relative flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-[20px] border bg-surface ${drop.dragging ? "border-brand/60" : "border-line"}`}>
+        {drop.dragging && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-bg/80 text-[14px] font-medium text-fg">Drop to add to the brief</div>}
         <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
           <span className="flex items-center gap-2 text-sm font-medium">
             <span className="grid h-7 w-7 place-items-center rounded-full bg-brand text-white">
@@ -262,15 +294,23 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
             </div>
           )}
           {state.turns.map((t, i) => (
-            <div key={i} className={`max-w-[88%] whitespace-pre-wrap break-words rounded-[16px] px-4 py-2.5 text-[14px] leading-relaxed ${t.role === "user" ? "justify-self-end bg-fg text-bg" : "justify-self-start bg-surface-2 text-fg"}`}>
-              {t.text}
+            <div key={i} className={`grid min-w-0 gap-2 ${t.role === "user" ? "justify-items-end" : "justify-items-start"}`}>
+              <div className={`max-w-[88%] whitespace-pre-wrap break-words rounded-[16px] px-4 py-2.5 text-[14px] leading-relaxed ${t.role === "user" ? "bg-fg text-bg" : "bg-surface-2 text-fg"}`}>{t.text}</div>
+              {t.role === "ai" && state.market?.[i]?.length ? <MarketRefCards refs={state.market[i]} added={refs} onAdd={(u) => addRefs([u])} /> : null}
             </div>
           ))}
           {busy && <div className="justify-self-start rounded-[16px] bg-surface-2 px-4 py-2.5 text-[14px] text-muted">{phase === "writing" ? "Writing the brief…" : "Reading it through…"}</div>}
           {error && <p className="rounded-[12px] border border-bad/30 bg-bad-soft px-3 py-2 text-[13px] text-bad">{error}</p>}
           <div ref={endRef} />
         </div>
+        {(files.items.length > 0 || files.error) && (
+          <div className="grid gap-1.5 border-t border-line px-3 pt-2.5">
+            <AttachedFiles items={files.items} onRemove={files.remove} />
+            {files.error && <p className="text-[12.5px] text-bad">{files.error}</p>}
+          </div>
+        )}
         <div className="flex items-end gap-2 border-t border-line p-3">
+          <AttachButton onPick={(f) => void files.add(f)} disabled={busy} />
           <textarea
             data-chat
             value={text}
@@ -285,7 +325,7 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack }: 
             placeholder={state.turns.length ? "Answer, refine, or paste a reference link…" : "Describe the creative you want…"}
             className="min-h-11 flex-1 resize-none rounded-[14px] border border-line bg-bg px-4 py-2.5 text-[16px] outline-none placeholder:text-faint focus:border-brand-text/60 md:text-[14.5px]"
           />
-          <button type="button" onClick={() => void send()} disabled={!text.trim() || busy} className="h-11 shrink-0 rounded-full bg-brand px-5 text-[14px] font-medium text-white disabled:opacity-50">
+          <button type="button" onClick={() => void send()} disabled={(!text.trim() && !files.ready.length) || busy} className="h-11 shrink-0 rounded-full bg-brand px-5 text-[14px] font-medium text-white disabled:opacity-50">
             Send
           </button>
         </div>

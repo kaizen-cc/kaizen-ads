@@ -4,6 +4,7 @@ import { loadClientMarket, loadMarket, swipeFile, type MarketAd } from "@/lib/ma
 import { motionConnected, MotionNotConnected, openSession } from "@/lib/motion";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { marketForTalk } from "@/lib/market-fit";
 import { num, str, type AiTool } from "./types";
 
 // Motion for the Kaizen AI chat and the "References from Motion" pickers: the market ads Motion's sync keeps
@@ -49,6 +50,20 @@ export async function searchMarketAds(db: SupabaseClient, opts: { clientId?: str
     .slice(0, opts.limit ?? 24)
     .map(toReference)
     .filter((r) => r.url);
+}
+
+/**
+ * Live market ads for a conversation about one client's brief: their own market only (competitors and their
+ * sub-vertical, src/lib/market-fit.ts), the ones closest to what's being said first, US brands with a picture.
+ */
+export async function marketForClientTalk(db: SupabaseClient, clientId: string, text: string, n = 6): Promise<Reference[]> {
+  const { data: c } = await db.from("clients").select("id, vertical_id, industry").eq("id", clientId).maybeSingle();
+  if (!c) return [];
+  const pool = (await loadClientMarket(db, clientId, { limit: 400 })).filter((a) => a.media.length && (a.country == null || a.country === "US"));
+  return marketForTalk(pool, { id: c.id as string, verticalId: (c.vertical_id as string | null) ?? null, industry: (c.industry as string | null) ?? null }, text, n * 2)
+    .map(toReference)
+    .filter((r) => r.url)
+    .slice(0, n);
 }
 
 const canSee = async (clientId: string) => Boolean((await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle()).data);

@@ -47,6 +47,8 @@ import { ScriptPanel } from "./script-panel";
 import { addTicketRef } from "../media-actions";
 import { HiggsfieldPanel } from "@/components/media/higgsfield-panel";
 import { MotionReferences } from "@/components/media/motion-references";
+import { LinkCards } from "@/components/link-refs";
+import { parseBriefFileUrl } from "@/lib/brief-files";
 import { SavedConcepts } from "@/components/saved-concepts";
 import { markSavedUsed } from "../requests/new/saved-actions";
 import { savedHref } from "@/lib/saved-references";
@@ -673,9 +675,11 @@ export function TicketDrawer({
             )}
             <TicketBrief key={ticket.id} ticket={ticket} demo={demo} />
             {!demo && <BriefAdjustments ticketId={ticket.id} />}
-            {ticket.refs.length > 0 && (
+            {/* Files added to the brief (pictures, videos, audio, PDFs): cards with their picture */}
+            {ticket.refs.some((r) => parseBriefFileUrl(r)) && <LinkCards urls={ticket.refs.filter((r) => parseBriefFileUrl(r))} size="sm" />}
+            {ticket.refs.some((r) => !parseBriefFileUrl(r)) && (
               <ul className="grid gap-1.5">
-                {ticket.refs.map((r) => (
+                {ticket.refs.filter((r) => !parseBriefFileUrl(r)).map((r) => (
                   <li key={r} className="flex min-w-0 items-center gap-2 text-sm">
                     {/motionapp\.com|facebook\.com\/ads\/library/i.test(r) && (
                       <span className="shrink-0 rounded-full bg-[#6c5ce7]/15 px-2 py-0.5 text-[10px] font-medium text-[#8b7cf6]">{/motionapp\.com/i.test(r) ? "Motion" : "Ad Library"}</span>

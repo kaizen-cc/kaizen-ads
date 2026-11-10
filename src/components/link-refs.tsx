@@ -5,6 +5,7 @@ import { RefThumb } from "@/components/ref-thumb";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 import { linkPreviews } from "@/app/(team)/requests/new/saved-actions";
 import { LINK_LABEL, linkKind, linkSaveInput, linksIn, type LinkPreview } from "@/lib/saved-references";
+import { briefFilePreview } from "@/lib/brief-files";
 
 // Any link as a reference, wherever a brief is made (the quick preview, talk it through, Ready to send): paste a Motion
 // share link, a Pinterest pin, an Instagram or TikTok post, an Ad Library ad, a YouTube video or any page, and it shows
@@ -25,6 +26,9 @@ const subscribe = (f: () => void) => {
 
 /** A plain card for a link while (or when) its preview can't be read */
 export const bareLink = (url: string): LinkPreview => {
+  // A file added to the brief: its name and picture, as it is
+  const file = briefFilePreview(url);
+  if (file) return file;
   let site = url;
   try {
     site = new URL(url).hostname.replace(/^www\./, "");
@@ -38,7 +42,7 @@ export function useLinkPreviews(urls: string[]): LinkPreview[] {
   useSyncExternalStore(subscribe, () => version, () => 0);
   const key = urls.join("\n");
   useEffect(() => {
-    const missing = key.split("\n").filter((u) => u && !asked.has(u));
+    const missing = key.split("\n").filter((u) => u && !asked.has(u) && !briefFilePreview(u));
     if (!missing.length) return;
     missing.forEach((u) => asked.add(u));
     linkPreviews(missing)

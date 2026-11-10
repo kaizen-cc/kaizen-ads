@@ -1,6 +1,7 @@
 import "server-only";
 import { Document, Font, Image, Link, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer";
 import type { BriefStructure } from "@/lib/brief-pdf-model";
+import { linkWord, splitLink } from "@/lib/asset-links";
 
 // A creative request as a Kaizen-branded PDF, to share outside the app (a freelancer, a client, a meeting) and to make
 // from: a black cover band with the client, the title, the idea in one line and what gets made; who makes it, when
@@ -297,6 +298,33 @@ function List({ items, mark, color }: { items: string[]; mark: string; color: st
   );
 }
 
+/** The assets, each with its Drive link as a short tappable "Open in Drive" (never a raw address) */
+function AssetList({ items, color }: { items: string[]; color: string }) {
+  return (
+    <>
+      {items.map((x, i) => {
+        const { text, url } = splitLink(x);
+        return (
+          <View key={i} style={s.item} wrap={false}>
+            <Text style={[s.itemMark, { color }]}>•</Text>
+            <Text style={s.itemTxt}>
+              {text}
+              {url ? (
+                <>
+                  {"  "}
+                  <Link src={url} style={s.link}>
+                    {linkWord(url)}
+                  </Link>
+                </>
+              ) : null}
+            </Text>
+          </View>
+        );
+      })}
+    </>
+  );
+}
+
 const trim = (x: string, n: number) => (x.length > n ? `${x.slice(0, n - 1).trimEnd()}…` : x);
 
 export function BriefDocument({ b }: { b: BriefPdfInput }) {
@@ -516,7 +544,7 @@ export function BriefDocument({ b }: { b: BriefPdfInput }) {
               {st.assets.length > 0 && (
                 <View style={{ flex: 1 }} wrap={false}>
                   <Text style={s.label}>Assets</Text>
-                  <List items={st.assets} mark="•" color={RED} />
+                  <AssetList items={st.assets} color={RED} />
                 </View>
               )}
             </View>

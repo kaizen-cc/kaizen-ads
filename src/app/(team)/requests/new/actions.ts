@@ -873,10 +873,11 @@ export async function ideaPatch(clientId: string, idea: { label: string; text: s
   }
 }
 
-export type TalkResult = { ok: true; reply: string; questions: string[]; conflicts: string[]; ready: boolean; building: boolean; previewReady: boolean; draft: import("@/lib/suggestions").SuggestionDraft | null; patch: Partial<Draft> | null } | Fail;
+export type TalkResult = { ok: true; reply: string; questions: string[]; conflicts: string[]; ready: boolean; building: boolean; previewReady: boolean; draft: import("@/lib/suggestions").SuggestionDraft | null; patch: Partial<Draft> | null; /** Live ads from the client's own market the strategist brought up (cards to add to the brief) */ market: import("@/lib/ai-tools/motion").Reference[] } | Fail;
 
 /** "Talk it through": the strategist's next turn, and the request as it stands */
-export async function talkRequest(clientId: string, turns: import("@/lib/suggestions").TalkTurn[], current: import("@/lib/suggestions").SuggestionDraft | null, force = false, previewFirst = false): Promise<TalkResult> {
+/** files: what was added to the last message (src/lib/brief-files.ts), read by the strategist with it */
+export async function talkRequest(clientId: string, turns: import("@/lib/suggestions").TalkTurn[], current: import("@/lib/suggestions").SuggestionDraft | null, force = false, previewFirst = false, files: import("@/lib/brief-files").BriefFile[] = []): Promise<TalkResult> {
   const no = await briefer();
   if (no) return no;
   const allowed = formatsFor(await requireStaff());
@@ -888,7 +889,14 @@ export async function talkRequest(clientId: string, turns: import("@/lib/suggest
   if (!clean.length || clean[clean.length - 1].role !== "user") return { ok: false, error: "Say what you have in mind first." };
   try {
     const { talkBrief } = await import("@/lib/suggestions");
-    const r = await talkBrief(createAdminClient(), clientId, clean, current, force, previewFirst, formatsRule(allowed));
+    const admin = createAdminClient();
+    // The files added to the last message, and live ads from the client's own market (Motion) that fit what's said
+    const [{ briefFileMedia }, { marketForClientTalk }] = await Promise.all([import("@/lib/brief-file-media"), import("@/lib/ai-tools/motion")]);
+    const [media, market] = await Promise.all([
+      briefFileMedia(admin, clientId, (files ?? []).slice(0, 6)).catch(() => null),
+      marketForClientTalk(admin, clientId, clean.filter((t) => t.role === "user").map((t) => t.text).join(" ") + (current ? ` ${current.title} ${current.angle} ${current.concepts?.[0]?.hook ?? ""}` : ""), 6).catch(() => []),
+    ]);
+    const r = await talkBrief(admin, clientId, clean, current, force, previewFirst, formatsRule(allowed), { media, market });
     // Kept to the formats this person requests, whatever the conversation said
     const draft = r.draft ? { ...r.draft, formats: clampFormats(r.draft.formats ?? [], allowed) } : null;
     // The strategist's brief, signed as written: used as it is, it goes out without the review
@@ -899,7 +907,7 @@ export async function talkRequest(clientId: string, turns: import("@/lib/suggest
       const seal = sealBrief(clientId, fingerprint);
       patch = { ...patch, ai: seal ? { source: { kind: "talk", seal }, fingerprint } : null };
     }
-    return { ok: true, reply: r.reply, questions: r.questions, conflicts: r.conflicts, ready: r.ready, building: r.building, previewReady: Boolean(r.previewReady), draft, patch };
+    return { ok: true, reply: r.reply, questions: r.questions, conflicts: r.conflicts, ready: r.ready, building: r.building, previewReady: Boolean(r.previewReady), draft, patch, market: r.market ?? [] };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "The strategist couldn't answer. Try again." };
   }

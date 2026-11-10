@@ -9,6 +9,7 @@ import { canOverride, type GateKey, type ReviewStamp } from "@/lib/brief-gate";
 import { LINT_SCHEMA, type LintIssue } from "@/lib/brief-lint";
 import { COPY_FIELDS, FIELD_LABEL, PATCH_SCHEMA, applyBriefPatch, briefOf, diffStates, stateOf, type BriefChange, type BriefState, type FieldDiff, type PatchField } from "@/lib/brief-patch";
 import { SPEC_RULE, composeBrief } from "@/lib/brief-spec";
+import { briefFileUrl, ownPath, type BriefFile } from "@/lib/brief-files";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -78,7 +79,7 @@ function editable(me: Staff, formats: string[]): { fields: PatchField[] | null }
 
 const toInput = (b: Loaded) => ({ clientId: b.clientId, title: b.title, brief: b.brief, sizes: b.sizes, formats: b.formats, refs: b.refs, due: b.due, priority: b.priority });
 
-export type CheckResult = { ok: true; check: import("@/lib/brief-check").BriefCheck; ai: LintIssue[] | null; canOverride: boolean; canEdit: boolean; copyOnly: boolean } | Fail;
+export type CheckResult = { ok: true; check: import("@/lib/brief-check").BriefCheck; ai: LintIssue[] | null; canOverride: boolean; canEdit: boolean; copyOnly: boolean; /** Whose brief it is (files added in the revise chat go under it) */ clientId: string } | Fail;
 
 /** The ready check; withAi adds the AI's consistency pass (contradictions the code rules can't see, claims against the Bible) */
 export async function checkBrief(t: BriefTarget, withAi = false): Promise<CheckResult> {
@@ -122,12 +123,12 @@ Already found by the code checks (don't repeat these): ${[...check.hard, ...chec
       ai = null;
     }
   }
-  return { ok: true, check, ai, canOverride: canOverride(me), canEdit: !("ok" in ed), copyOnly: !("ok" in ed) && ed.fields !== null };
+  return { ok: true, check, ai, canOverride: canOverride(me), canEdit: !("ok" in ed), copyOnly: !("ok" in ed) && ed.fields !== null, clientId: b.clientId };
 }
 
 export type ReviseTurn = { role: "user" | "ai"; text: string };
 export type ReviseResult =
-  | { ok: true; reply: string; state: BriefState; brief: string; diff: FieldDiff[]; correctionId: string | null; refused: string[] }
+  | { ok: true; reply: string; state: BriefState; brief: string; diff: FieldDiff[]; correctionId: string | null; refused: string[]; /** The brief's references with the files added to this message */ refs: string[] | null }
   | Fail;
 
 const REVISE_SYSTEM = `${AGENCY_SYSTEM}
@@ -137,14 +138,19 @@ You edit a creative brief that's already written, from a correction someone on t
 - Fields: title, angle, audience, overview (the idea in two to four lines), insight, insightSource, keyMessage, hook, kpi, success, yourCall, script (text: op "set", or "remove" to clear), and the lists proof, slides, constraints, dos, donts, assets, confirm, sizes (op "add" a new item, "replace" the item at index, "remove" the item at index, "set" to make the list just this one item). index: the item's position from 0 as listed, -1 when not used. assets: value is the item, status have, need, shoot or missing. confirm: value is the question, answer and source fill in an answer. sizes: "4x5" or "9x16" only (Kaizen makes nothing else). Unused fields of a change: "" (status "" when not assets).
 - When they need data to make the change (a KPI, what's worked, which assets are on Drive, a cleared claim), take it from the context and say where it came from. Never invent a price, an offer, a stat, a claim, a date or the fact a concept reveals: if they give you such a fact, record it in confirm with their answer and source "the team"; if it's still unknown, keep (or add) it in confirm with answer "".
 - Keep the brief precise on what and why, and leave the how (style, pacing, music, edit structure, exact beats) to the maker in yourCall, unless they ask for a script.
+- A hook that promises a reveal, a tip, a hack, a secret or "what most people miss" must be paid off: when the brief doesn't say what it is, state it in insight with insightSource from the context, or, when the context doesn't hold it, change the hook to one whose payoff we know, or add the question to confirm and a "Fallback:" line in overview. Never invent the payoff.
+- Assets: name a Drive file or folder exactly as assets_on_drive lists it (the app adds its link), and only when it clearly fits the angle; otherwise a "need" item saying what to look for. Never write a Drive link yourself.
+- Files they add with the message (pictures, frames from a video, PDFs, audio by name) are references for this brief: use what you can see in them and say what to take from each.
 - reply: one or two short sentences: what you changed, or why you couldn't (and what you need). No em dashes. Roles, never people's names.
 
 ${SPEC_RULE}`;
 
 /** One correction typed under a brief: the AI's patch applied, shown, logged and learned from */
-export async function reviseBrief(t: BriefTarget, instruction: string, history: ReviseTurn[] = []): Promise<ReviseResult> {
+/** files: what was added to the message (src/lib/brief-files.ts): read with it, and kept on the brief as references */
+export async function reviseBrief(t: BriefTarget, instruction: string, history: ReviseTurn[] = [], files: BriefFile[] = [], origin = ""): Promise<ReviseResult> {
   const me = await requireStaff();
-  const say = instruction.trim().slice(0, 2000);
+  const said = instruction.trim().slice(0, 2000);
+  const say = said || (files.length ? "Use the files I added as references for this brief." : "");
   if (!say) return { ok: false, error: "Say what to change." };
   const b = await load(t);
   if ("ok" in b) return b;
@@ -155,8 +161,8 @@ export async function reviseBrief(t: BriefTarget, instruction: string, history: 
   const before = stateOf(b);
   const numbered = (xs: string[]) => xs.map((x, i) => `  [${i}] ${x}`).join("\n") || "  (none)";
   try {
-    const [ctx, { loadAssets, assetsBlock }] = await Promise.all([clientContext(admin, b.clientId), import("@/lib/client-assets")]);
-    const assets = await loadAssets(admin, b.clientId).catch(() => null);
+    const [ctx, { loadAssets, assetsBlock }, { briefFileMedia }] = await Promise.all([clientContext(admin, b.clientId), import("@/lib/client-assets"), import("@/lib/brief-file-media")]);
+    const [assets, media] = await Promise.all([loadAssets(admin, b.clientId).catch(() => null), briefFileMedia(admin, b.clientId, files.slice(0, 6)).catch(() => null)]);
     const out = await askJson<{ reply: string; changes: BriefChange[] }>({
       agent: "strategist",
       label: "brief revise",
@@ -165,6 +171,7 @@ export async function reviseBrief(t: BriefTarget, instruction: string, history: 
       maxTokens: 4000,
       schema: PATCH_SCHEMA as unknown as Record<string, unknown>,
       system: REVISE_SYSTEM,
+      ...(media ? { images: media.images, pdfs: media.pdfs } : {}),
       prompt: `${ctx ? contextBlock(ctx) : ""}
 ${assets ? `\n${assetsBlock(assets)}` : ""}
 
@@ -199,12 +206,20 @@ confirm:
 ${numbered(before.spec.confirm.map((c) => `${c.question}${c.answer ? ` | answer: ${c.answer}${c.source ? ` | source: ${c.source}` : ""}` : " | (not answered)"}`))}
 </the_brief>
 ${ed.fields ? `\nThis person is the copywriter: they may change only ${ed.fields.map((f) => FIELD_LABEL[f]).join(" and ")}. Change nothing else; if they ask for more, say a member of the creative team or a lead makes that change.` : ""}
-${history.length ? `\n<conversation_so_far>\n${history.slice(-8).map((h) => `${h.role === "user" ? "Team member" : "You"}: ${h.text.slice(0, 800)}`).join("\n")}\n</conversation_so_far>` : ""}
+${media?.text ? `\n${media.text}\n` : ""}${history.length ? `\n<conversation_so_far>\n${history.slice(-8).map((h) => `${h.role === "user" ? "Team member" : "You"}: ${h.text.slice(0, 800)}`).join("\n")}\n</conversation_so_far>` : ""}
 
 Their correction: ${say}`,
     });
-    const { state, applied, refused } = applyBriefPatch(before, out.changes ?? [], ed.fields);
+    const patched = applyBriefPatch(before, out.changes ?? [], ed.fields);
+    const { applied, refused } = patched;
+    // Each asset it names on Drive with its link (src/lib/asset-links.ts)
+    const { linkAssetItems } = await import("@/lib/asset-links");
+    const state: BriefState = assets?.catalog.length ? { ...patched.state, spec: { ...patched.state.spec, assets: linkAssetItems(patched.state.spec.assets, assets.catalog) } } : patched.state;
     const brief = briefOf(state);
+    // The files added become references on the brief (a ticket's are saved on it)
+    const added = /^https?:\/\/[\w.-]+(?::\d+)?$/.test(origin) ? files.filter((f) => ownPath(f.path, b.clientId)).map((f) => briefFileUrl(origin, f)) : [];
+    const refs = added.length ? [...new Set([...b.refs, ...added])].slice(0, 20) : null;
+    if (refs && b.requestId) await admin.from("requests").update({ refs }).eq("id", b.requestId);
     const diff = diffStates(before, state);
     let correctionId: string | null = null;
     if (applied.length) {
@@ -227,7 +242,7 @@ Their correction: ${say}`,
         });
       }
     }
-    return { ok: true, reply: (out.reply ?? "").replace(/\s*\u2014\s*/g, ", ").slice(0, 600) || (applied.length ? "Done." : "Nothing to change."), state, brief, diff, correctionId, refused: refused.map((c) => FIELD_LABEL[c.field] ?? String(c.field)) };
+    return { ok: true, reply: (out.reply ?? "").replace(/\s*\u2014\s*/g, ", ").slice(0, 600) || (applied.length ? "Done." : refs ? "Added them as references." : "Nothing to change."), state, brief, diff, correctionId, refused: refused.map((c) => FIELD_LABEL[c.field] ?? String(c.field)), refs };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't change it. Try again." };
   }

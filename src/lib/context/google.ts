@@ -417,7 +417,7 @@ export async function collectDrive(admin: SupabaseClient, since: Date, t?: Track
     }
 
   const items: ContextItem[] = [];
-  const assets: { file_id: string; client_id: string; name: string; mime: string; kind: string; folder: string | null; url: string; created_at: string; seen_at: string }[] = [];
+  const assets: { file_id: string; client_id: string; name: string; mime: string; kind: string; folder: string | null; folder_id?: string | null; url: string; created_at: string; seen_at: string }[] = [];
   const kindOf = (mime: string, name: string) =>
     mime.startsWith("image/") ? "image" : mime.startsWith("video/") ? "video" : /photoshop|illustrator|figma|\.(psd|ai|fig|sketch|indd)$/i.test(`${mime} ${name}`) ? "design" : null;
   t?.phase("Filing new files under their clients", files.length);
@@ -437,7 +437,7 @@ export async function collectDrive(admin: SupabaseClient, since: Date, t?: Track
     if (!clientId) continue;
     const url = f.webViewLink ?? `https://drive.google.com/file/d/${f.id}/view`;
     const kind = kindOf(f.mimeType, f.name);
-    if (kind) assets.push({ file_id: f.id, client_id: clientId, name: f.name, mime: f.mimeType, kind, folder: path.filter(Boolean).join(" / ") || null, url, created_at: f.createdTime, seen_at: new Date().toISOString() });
+    if (kind) assets.push({ file_id: f.id, client_id: clientId, name: f.name, mime: f.mimeType, kind, folder: path.filter(Boolean).join(" / ") || null, folder_id: f.parents?.[0] ?? null, url, created_at: f.createdTime, seen_at: new Date().toISOString() });
     // The feed of what's new only takes files from its own window (the full catalogue run reads further back)
     if (f.createdTime <= feedFrom(top)) continue;
     items.push({
@@ -455,7 +455,12 @@ export async function collectDrive(admin: SupabaseClient, since: Date, t?: Track
   }
   // Save first, then mark every client folder as read, so a failure never skips a folder's backfill
   await saveItems(admin, items);
-  for (let i = 0; i < assets.length; i += 500) await admin.from("client_assets").upsert(assets.slice(i, i + 500), { onConflict: "file_id" });
+  // The folder's id (its link on a brief) once the column is there; before the migration, saved without it
+  for (let i = 0; i < assets.length; i += 500) {
+    const part = assets.slice(i, i + 500);
+    const { error } = await admin.from("client_assets").upsert(part, { onConflict: "file_id" });
+    if (error && /folder_id/.test(error.message)) await admin.from("client_assets").upsert(part.map(({ folder_id: _f, ...r }) => (void _f, r)), { onConflict: "file_id" });
+  }
   const now = new Date().toISOString();
   await admin.from("sync_state").upsert([...clientOfFolder.keys()].map((f) => ({ source: `drive:${f}`, cursor_at: now, last_run_at: now, last_result: {} })));
   await admin.from("sync_state").upsert([...clientOfFolder.keys()].filter((f) => !catalogued.has(f)).map((f) => ({ source: `assets:${f}`, cursor_at: now, last_run_at: now, last_result: {} })));

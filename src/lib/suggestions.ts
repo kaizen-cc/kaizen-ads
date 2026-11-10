@@ -14,7 +14,9 @@ import type { SuggestionKind } from "@/lib/suggestion-kinds";
 import { LIVE, isLive } from "@/lib/live";
 import { baseRole } from "@/lib/roles";
 import { applySeed, seedBlock, type QuickBrief } from "@/lib/quick-brief";
-import { assetsBlock, loadAssets } from "@/lib/client-assets";
+import { assetsBlock, loadAssets, loadCatalog } from "@/lib/client-assets";
+import { linkBriefAssets, linkHaveLines } from "@/lib/asset-links";
+import { pickedMarket } from "@/lib/market-fit";
 import { promiseSince } from "@/lib/promise-window";
 import { SPEC_RULE, structureBrief } from "@/lib/brief-spec";
 import { withDetectedFacts } from "@/lib/brief-facts";
@@ -265,7 +267,9 @@ export const BRIEF_STANDARD = `THE BRIEF STANDARD (the request review checks eve
 - Only facts from the context: no invented prices, offers, dates, numbers or claims; anything not confirmed is marked to confirm.
 - No contradictions inside the request: the brief, concepts, formats and sizes all describe the same work.
 - Nothing Meta would reject: personal attributes, before and after, guaranteed results, health or financial claims.
-- References: say what to take from each one; nothing that disagrees with the landing page.`;
+- References: say what to take from each one; nothing that disagrees with the landing page.
+- Every promise paid off: a hook or title that promises a reveal, tip, hack, trick, secret or "what most people miss" has the actual thing stated in the Insight line with its source and how it shows on screen. If the context doesn't hold it, the hook changes to one whose payoff we know, or the question goes under Confirm with client with a "Fallback:" line in the opening that works without it.
+- Assets that fit: every "Have" asset is a file or folder named exactly as assets_on_drive lists it and clearly fits this angle (by its name, folder and date); one that doesn't clearly fit becomes a "Need" line saying what to look for.`;
 
 const REPAIR_SCHEMA = {
   type: "object",
@@ -281,7 +285,7 @@ const REPAIR_SYSTEM = `${AGENCY_SYSTEM}
 
 You are the agency's request reviewer. A strategist has just written a creative request; before anyone on the team sees it, check it against the standard below and the client context, and return it corrected.
 ${BRIEF_STANDARD}
-Fix only real problems, in place: write the missing on-image lines and variation headlines from the brief's own direction and the client's voice, take out or reword anything against client memory, resolve contradictions. Keep everything that's right exactly as it is: the idea, the concepts, the counts, the formats, the evidence. Never add facts, prices, offers or claims, and don't restyle what's fine.
+Fix only real problems, in place: write the missing on-image lines and variation headlines from the brief's own direction and the client's voice, take out or reword anything against client memory, resolve contradictions. An unpaid promise is a real problem: when the hook promises a hack, tip, secret or reveal and the brief never says what it is, state it from the context (with its source) or, when the context doesn't hold it, change the hook to one whose payoff is known, or keep it under Confirm with client with a "Fallback:" line; never invent the payoff. An asset listed as Have that doesn't clearly fit the angle becomes a Need line saying what to look for. Keep everything that's right exactly as it is: the idea, the concepts, the counts, the formats, the evidence. Never add facts, prices, offers or claims, and don't restyle what's fine.
 fixes: one short line per change you made (empty when it already met the standard). draft: the full request, corrected.`;
 
 /**
@@ -292,7 +296,21 @@ fixes: one short line per change you made (empty when it already met the standar
 async function writeBrief(admin: SupabaseClient, clientId: string, opts: Parameters<typeof askJson<Out>>[0]): Promise<Out> {
   const out = await askJson<Out>({ ...opts, clientId, system: `${opts.system}\n\n${BRIEF_STANDARD}` });
   if (!out.suggest || !out.draft?.brief) return out;
-  return { ...out, draft: await selfReview(admin, clientId, out.draft) };
+  return { ...out, draft: await withAssetLinks(admin, clientId, await selfReview(admin, clientId, out.draft)) };
+}
+
+/**
+ * Each "Have" asset the brief names with its Drive link (src/lib/asset-links.ts), in the brief's Assets section and in
+ * draft.assets: matched by the file or folder name the writer used, never guessed. Unchanged when nothing matches.
+ */
+export async function withAssetLinks(admin: SupabaseClient, clientId: string, d: SuggestionDraft): Promise<SuggestionDraft> {
+  try {
+    const files = await loadCatalog(admin, clientId);
+    if (!files.length) return d;
+    return { ...d, brief: linkBriefAssets(d.brief ?? "", files), ...(d.assets ? { assets: { ...d.assets, have: linkHaveLines(d.assets.have ?? [], files) } } : {}) };
+  } catch {
+    return d;
+  }
 }
 
 /** The reviewer's pass on one written brief: corrected in place, or as it was when there's nothing to fix. */
@@ -1040,7 +1058,7 @@ suggest: true. signal: one line on what this first round sets out to learn. evid
   });
   if (!out.drafts?.length) throw new Error("The strategist didn't write any concepts");
   // Each brief through the reviewer, side by side
-  const reviewed = await Promise.all(out.drafts.slice(0, 4).map((d) => (d?.brief ? selfReview(admin, clientId, d) : Promise.resolve(d))));
+  const reviewed = await Promise.all(out.drafts.slice(0, 4).map((d) => (d?.brief ? selfReview(admin, clientId, d).then((x) => withAssetLinks(admin, clientId, x)) : Promise.resolve(d))));
   const batchId = crypto.randomUUID();
   const rows = firstRoundRows(clientId, { ...out, drafts: reviewed }, { batchId, refs: liked });
   if (!rows.length) throw new Error("The strategist didn't write any concepts");
@@ -1431,14 +1449,30 @@ const TALK_SCHEMA = {
   additionalProperties: false,
 };
 
+/** What a talk turn can come with: the files added to the message (as the AI reads them) and the client's market ads */
+export type TalkExtras = { media?: import("@/lib/brief-file-media").AskMedia | null; market?: import("@/lib/ai-tools/motion").Reference[] };
+
+/** The client's live market ads for the conversation, each with an id the AI picks by (M1, M2...) */
+function marketRefsBlock(market: TalkExtras["market"]) {
+  if (!market?.length) return "";
+  return `\n\n<market_references>
+Live ads running now in this client's own market (their competitors and their sub-vertical, from Motion). When one, two or at most three of them would genuinely help this idea (an angle, a hook, a structure, a format worth borrowing), mention them in your reply by brand with what to take from each, in one short line each, with the ad's id in square brackets right after the brand (e.g. "the Bean Co ad [M2]: the 60-second demo structure"). They show as reference cards the team member can add to the brief. Never copy them, and never name another brand in the brief itself. Mention none when none helps.
+${market.map((r, i) => `M${i + 1} · ${r.brand} · ${r.video ? "video" : (r.format ?? "image")}${r.days ? ` · running ${r.days} days` : ""}${r.proven ? " (proven)" : ""}${r.hook ? ` · Hook: ${r.hook.slice(0, 160)}` : ""}${r.angle ? ` · Angle: ${r.angle.slice(0, 120)}` : ""}${r.why ? ` · Why it works: ${r.why.slice(0, 200)}` : r.headline ? ` · Headline: ${r.headline.slice(0, 120)}` : ""}`).join("\n")}
+</market_references>`;
+}
+
+
 /**
  * "Talk it through" on the request form: someone on the team explains the creative they want, in their own words, and
  * the strategist turns it into a full request (the same brief the standard checks), asking only what it truly needs,
  * one or two questions at a time. Every turn returns the brief as it stands, so it's built in front of them.
  */
-export async function talkBrief(admin: SupabaseClient, clientId: string, turns: TalkTurn[], current: SuggestionDraft | null, force = false, previewFirst = false, formatRule = ""): Promise<TalkOut & { building: boolean; conflicts: string[]; previewReady?: boolean }> {
-  // The formats the person in the conversation works in (src/lib/creative-formats.ts formatsRule), when not every one
-  const fr = formatRule ? `\n\n${formatRule}` : "";
+export async function talkBrief(admin: SupabaseClient, clientId: string, turns: TalkTurn[], current: SuggestionDraft | null, force = false, previewFirst = false, formatRule = "", extras: TalkExtras = {}): Promise<TalkOut & { building: boolean; conflicts: string[]; previewReady?: boolean; market: import("@/lib/ai-tools/motion").Reference[] }> {
+  // The formats the person in the conversation works in (src/lib/creative-formats.ts formatsRule), when not every one;
+  // the files added to the last message, and the live market ads to bring up when they help
+  const media = extras.media;
+  const fr = `${formatRule ? `\n\n${formatRule}` : ""}${media?.text ? `\n\n${media.text}` : ""}${marketRefsBlock(extras.market)}`;
+  const seeing = media ? { images: media.images, pdfs: media.pdfs } : {};
   const prompt = await promptFor(admin, clientId, [{ kind: "kpi", weight: 1, line: "A team member's own creative idea", facts: [] }], undefined, true);
   if (!prompt) throw new Error("Client not found");
   const convo = `<conversation>\n${turns.map((t) => `${t.role === "user" ? "Team member" : "You"}: ${t.text}`).join("\n\n")}\n</conversation>`;
@@ -1451,18 +1485,21 @@ export async function talkBrief(admin: SupabaseClient, clientId: string, turns: 
       clientId,
       override: { model: "sonnet", effort: "low" },
       maxTokens: 3000,
-      system: `${SYSTEM}\n\nA member of the team is telling you, in a conversation, the creative they want made for this client. Before anything is written, decide whether you can build it well right now. Look for: (1) conflicts with what the client told us or approved (offers, prices, discounts, claims, dates, rules in the Brand Bible and client memory, what's been rejected), and (2) missing details that would change the brief and that the context can't answer (which offer exactly, which product, the dates, the format or counts, the landing page). If there are any, ask about them: at most three short, plain questions, and list each conflict in one line with what the client said and when. Never ask what the context already answers, and never ask for the sake of asking. If everything needed is clear, or the team member already answered or said to go ahead with assumptions, build: true. reply: a short, warm message (what's unclear or conflicting and the questions; or that you're writing it now). questions: the questions. conflicts: the conflicts. build: true only when it's ready to write.`,
+      ...seeing,
+      system: `${SYSTEM}\n\nA member of the team is telling you, in a conversation, the creative they want made for this client. Before anything is written, decide whether you can build it well right now. A hook that promises a reveal, a tip, a hack or a secret needs its payoff: if the conversation and the context don't say what it is, ask for it (or suggest a hook whose payoff we know). Look for: (1) conflicts with what the client told us or approved (offers, prices, discounts, claims, dates, rules in the Brand Bible and client memory, what's been rejected), and (2) missing details that would change the brief and that the context can't answer (which offer exactly, which product, the dates, the format or counts, the landing page). If there are any, ask about them: at most three short, plain questions, and list each conflict in one line with what the client said and when. Never ask what the context already answers, and never ask for the sake of asking. If everything needed is clear, or the team member already answered or said to go ahead with assumptions, build: true. reply: a short, warm message (what's unclear or conflicting and the questions; or that you're writing it now). questions: the questions. conflicts: the conflicts. build: true only when it's ready to write.`,
       schema: { type: "object", properties: { reply: { type: "string" }, questions: { type: "array", items: { type: "string" } }, conflicts: { type: "array", items: { type: "string" } }, build: { type: "boolean" } }, required: ["reply", "questions", "conflicts", "build"], additionalProperties: false },
       prompt: `${prompt}\n\n${current ? `<request_so_far>\n${JSON.stringify(current, null, 1)}\n</request_so_far>\n\n` : ""}${convo}${fr}\n\n${TALK_KEEP}\n\nAnswer the team member's last message.`,
     });
-    if (!check.build) return { reply: check.reply, questions: (check.questions ?? []).slice(0, 3), conflicts: (check.conflicts ?? []).slice(0, 4), ready: false, draft: current ?? (null as unknown as SuggestionDraft), building: false };
+    const { reply, picked: market } = pickedMarket(check.reply ?? "", extras.market);
+    if (!check.build) return { reply, questions: (check.questions ?? []).slice(0, 3), conflicts: (check.conflicts ?? []).slice(0, 4), ready: false, draft: current ?? (null as unknown as SuggestionDraft), building: false, market };
     // Clear enough to write, and nothing written yet: the quick preview comes first (the full brief follows it)
-    if (previewFirst && !current) return { reply: check.reply, questions: [], conflicts: [], ready: false, draft: null as unknown as SuggestionDraft, building: false, previewReady: true };
+    if (previewFirst && !current) return { reply, questions: [], conflicts: [], ready: false, draft: null as unknown as SuggestionDraft, building: false, previewReady: true, market };
   }
   const out = await askJson<TalkOut>({
     agent: "strategist",
     label: "request chat",
     clientId,
+    ...seeing,
     system: `${SYSTEM}\n\n${BRIEF_STANDARD}\n\n${TALK_KEEP}\n\nThis time you're not watching the accounts: a member of the team is telling you, in a conversation, the creative idea they want made for this client. Build their idea, not yours: keep what they asked for (the idea, the format, the counts they named), and make it complete and strong with the client's context (Brand Bible, KPIs, what's working, the patterns across clients, assets on Drive, the allotment). Ask a question only when the answer would change the request and the context can't answer it (which offer, which product, how many); at most two at a time, short and plain, never one the context already answers. Otherwise fill the gaps yourself and say what you assumed. reply: a short, warm message to them (what you built or changed, any assumption, then your questions if any). questions: the questions you asked, if any. ready: true when the request is complete enough to send. draft: the full request as it stands now, always complete (title, angle, audience, brief, hooks, concepts, formats within what's left of the allotment, sizes, landing, refs, assets).`,
     schema: TALK_SCHEMA,
     maxTokens: 12000,
@@ -1474,7 +1511,8 @@ ${turns.map((t) => `${t.role === "user" ? "Team member" : "You"}: ${t.text}`).jo
 
 Answer the team member's last message.`,
   });
-  return { reply: out.reply, questions: (out.questions ?? []).slice(0, 2), ready: Boolean(out.ready), draft: clean(out.draft), building: true, conflicts: [] };
+  const said = pickedMarket(out.reply ?? "", extras.market);
+  return { reply: said.reply, questions: (out.questions ?? []).slice(0, 2), ready: Boolean(out.ready), draft: clean(await withAssetLinks(admin, clientId, out.draft)), building: true, conflicts: [], market: said.picked };
 }
 
 /** The answer formats every brief writer fills, for tests/brief-schema-size.test.ts (kept flat: the API refuses grammars that are too large) */
