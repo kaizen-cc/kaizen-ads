@@ -9,11 +9,12 @@ import { requestAudit } from "@/components/audit-watcher";
 import { addToActionList, startSprint } from "../../sprint-actions";
 import { GoogleChange } from "../../google-change";
 import { ObjectLinks } from "@/components/object-links";
+import { TikTokManagerLink } from "@/components/tiktok-manager-link";
 
 const OWNER: Record<string, string> = { media_buyer: "Media buyer", creative: "Creative team", client: "Client", strategist: "Strategist" };
 
 /** One action in the plan: tick it off when it's done (everyone sees who did and when). */
-export function ActionCard({ auditId, index, action, area, done, listed, writable = null, talk = null, brief = null }: { auditId: string; index: number; action: AuditResult["actions"][number]; area: string; done: { by: string; at: string } | null; listed: string | null; writable?: "google" | "meta" | null; /** Ask why, and disagree with this move (for those who may) */ talk?: React.ReactNode; /** A creative move: brief it right here (its quick preview) */ brief?: React.ReactNode }) {
+export function ActionCard({ auditId, index, action, area, done, listed, writable = null, tiktok = null, talk = null, brief = null }: { auditId: string; index: number; action: AuditResult["actions"][number]; area: string; done: { by: string; at: string } | null; listed: string | null; writable?: "google" | "meta" | null; /** A TikTok move (read only): made in TikTok Ads Manager, linked instead of a change button */ tiktok?: { advertiserId: string | null } | null; /** Ask why, and disagree with this move (for those who may) */ talk?: React.ReactNode; /** A creative move: brief it right here (its quick preview) */ brief?: React.ReactNode }) {
   const router = useRouter();
   const [adding, startAdd] = useTransition();
   const [, start] = useTransition();
@@ -63,6 +64,7 @@ export function ActionCard({ auditId, index, action, area, done, listed, writabl
           {open && <p className="text-[12.5px] leading-relaxed text-muted">{action.why}</p>}
           <ObjectLinks objects={action.objects} />
           {writable && !checked && inPlatform(action, writable) && <GoogleChange platform={writable} from={{ source: "audit", auditId, index }} />}
+          {tiktok && !checked && inPlatform(action, "tiktok") && <TikTokManagerLink advertiserId={tiktok.advertiserId} />}
           {!checked && brief}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <button type="button" onClick={() => setOpen(!open)} className="-my-2 min-h-11 pr-3 text-[11.5px] text-faint hover:text-fg md:my-0 md:min-h-0 md:pr-0">

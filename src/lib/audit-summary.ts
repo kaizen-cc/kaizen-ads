@@ -17,7 +17,8 @@ export async function latestAudits(db: SupabaseClient, targetIds?: string[]) {
   for (const a of audits ?? []) {
     if (by.has(a.target_id)) continue;
     const res = a.result as { verdict?: NonNullable<AuditSummary>["verdict"]; actions?: Raw[] } | null;
-    const platform = ((a.kpi_targets as unknown as { platform: string } | null)?.platform === "google" ? "google" : "meta") as "google" | "meta";
+    const raw = (a.kpi_targets as unknown as { platform: string } | null)?.platform;
+    const platform: "google" | "meta" | "tiktok" = raw === "google" ? "google" : raw === "tiktok" ? "tiktok" : "meta";
     const done = (a.done ?? {}) as Record<string, unknown>;
     // The moves Kaizen Ads can make in the ad account itself, for the quick list under the verdict
     const quick: QuickAction[] = (res?.actions ?? [])

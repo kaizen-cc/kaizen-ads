@@ -48,6 +48,8 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
   // Google accounts: a move can be made in the account from the list
   const target = s.kpi_targets as unknown as { platform: string; ad_account_id: string | null } | null;
   const platform = target?.platform;
+  // TikTok is read only: its moves link to TikTok Ads Manager instead of a change button
+  const tiktok = platform === "tiktok" ? { advertiserId: target?.ad_account_id ?? null } : null;
   const writable = platform === "google" ? (googleAdsConfigured() ? "google" : null) : platform === "meta" ? (metaConfigured() ? "meta" : null) : null;
   const base = s.baseline as Kpi;
   const latest = s.latest as Kpi;
@@ -154,7 +156,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
             <>
               {/* Open moves first (in progress, then to do); finished ones drop to the bottom */}
               {[...list.filter((a) => a.status === "doing"), ...list.filter((a) => a.status === "todo")].map((a) => (
-                <ActionRow key={a.id} a={a} readOnly={!active} writable={writable} asked={asked[`${a.id}|task`] ?? 0} agent={agent} />
+                <ActionRow key={a.id} a={a} readOnly={!active} writable={writable} tiktok={tiktok} asked={asked[`${a.id}|task`] ?? 0} agent={agent} />
               ))}
               {!list.some((a) => a.status === "todo" || a.status === "doing") && <p className="rounded-[14px] border border-dashed border-line px-4 py-6 text-center text-sm text-muted">Every move is done or skipped.</p>}
               {list.some((a) => a.status === "done" || a.status === "skipped") && (
@@ -164,7 +166,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
                 </p>
               )}
               {[...list.filter((a) => a.status === "done").sort((x, y) => (y.doneAt ?? "").localeCompare(x.doneAt ?? "")), ...list.filter((a) => a.status === "skipped")].map((a) => (
-                <ActionRow key={a.id} a={a} readOnly={!active} writable={writable} asked={asked[`${a.id}|task`] ?? 0} agent={agent} />
+                <ActionRow key={a.id} a={a} readOnly={!active} writable={writable} tiktok={tiktok} asked={asked[`${a.id}|task`] ?? 0} agent={agent} />
               ))}
             </>
           ) : (

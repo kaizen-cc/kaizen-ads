@@ -5,6 +5,7 @@ import { useEffect, useState, useTransition } from "react";
 import { tickAuditAction } from "./audit-actions";
 import type { QuickAction } from "./audit-panel";
 import { GoogleChange } from "./google-change";
+import { TikTokManagerLink } from "@/components/tiktok-manager-link";
 
 // Under an audit's verdict: the moves Kaizen Ads can make in the ad account itself, one line each, stacked. Hover and
 // the line opens a little in place with the gist; click to open the whole move with the button that makes it. No need
@@ -23,7 +24,7 @@ const KIND: { test: RegExp; icon: string; tone: string }[] = [
 const kindOf = (a: QuickAction) => KIND.find((k) => k.test.test(`${a.label} ${a.title}`)) ?? { icon: "M4 6h16M4 12h16M4 18h10", tone: "text-muted bg-surface-3" };
 const WHEN: Record<string, string> = { now: "Today", this_week: "This week", next: "Next" };
 
-export function QuickActions({ auditId, items, platform }: { auditId: string; items: QuickAction[]; platform: "meta" | "google" }) {
+export function QuickActions({ auditId, items, platform, advertiserId = null }: { auditId: string; items: QuickAction[]; platform: "meta" | "google" | "tiktok"; /** TikTok: the account the moves open in (read only) */ advertiserId?: string | null }) {
   const router = useRouter();
   const [hover, setHover] = useState<number | null>(null);
   // ?move=<n>: one move picked from a card's hover, opened and brought into view
@@ -34,7 +35,8 @@ export function QuickActions({ auditId, items, platform }: { auditId: string; it
   }, [auditId, picked]);
   const [done, setDone] = useState<Record<number, boolean>>(() => Object.fromEntries(items.map((a) => [a.index, a.done])));
   const [, start] = useTransition();
-  const name = platform === "google" ? "Google Ads" : "Meta";
+  const name = platform === "google" ? "Google Ads" : platform === "tiktok" ? "TikTok Ads Manager" : "Meta";
+  const tiktok = platform === "tiktok";
   const left = items.filter((a) => !done[a.index]).length;
 
   const tick = (i: number) =>
@@ -49,7 +51,7 @@ export function QuickActions({ auditId, items, platform }: { auditId: string; it
     <div className="grid gap-2.5 border-t border-line pt-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-faint">
-          Quick actions in {name} <span className="normal-case tracking-normal">· done from here</span>
+          Quick actions in {name} <span className="normal-case tracking-normal">· {tiktok ? "a checklist, made there" : "done from here"}</span>
         </p>
         <span className="text-[11px] text-faint">{left ? `${left} to do` : "All done"}</span>
       </div>
@@ -86,7 +88,7 @@ export function QuickActions({ auditId, items, platform }: { auditId: string; it
                             {a.steps.length > 1 ? ` · +${a.steps.length - 1} more` : ""}
                           </p>
                         )}
-                        <p className="text-[11px] text-faint">Click to open it and make the change in {name}</p>
+                        <p className="text-[11px] text-faint">{tiktok ? `Click to open the steps for ${name}` : `Click to open it and make the change in ${name}`}</p>
                       </div>
                     </div>
                   </div>
@@ -108,7 +110,7 @@ export function QuickActions({ auditId, items, platform }: { auditId: string; it
                       </ol>
                     )}
                     <p className="text-xs leading-relaxed text-muted">{a.why}</p>
-                    {!isDone && <GoogleChange platform={platform} from={{ source: "audit", auditId, index: a.index }} />}
+                    {!isDone && (tiktok ? <TikTokManagerLink advertiserId={advertiserId} /> : <GoogleChange platform={platform} from={{ source: "audit", auditId, index: a.index }} />)}
                     <button type="button" onClick={() => tick(a.index)} className="justify-self-start rounded-full border border-line px-3.5 py-1.5 text-xs text-muted hover:text-fg max-md:min-h-11">
                       {isDone ? "Mark as not done" : "Mark as done"}
                     </button>

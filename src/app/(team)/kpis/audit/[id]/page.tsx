@@ -243,6 +243,7 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
                     done={done[String(i)] ?? null}
                     listed={replaced ? "replaced" : (onList.get(x.title) ?? null)}
                     writable={x.owner === "media_buyer" ? writable : null}
+                    tiktok={t.platform === "tiktok" && x.owner === "media_buyer" ? { advertiserId: t.ad_account_id } : null}
                     talk={talk(`action:${i}`, x.title)}
                     brief={
                       x.owner === "creative" || x.area === "creative" ? (

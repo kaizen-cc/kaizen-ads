@@ -143,8 +143,8 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                 )}
                 {/* The same metric boxes and campaigns as the KPI board's card: changed here or there, it's the same KPI */}
                 {k.accountId && k.status !== "setup" && <KpiExtras k={{ id: k.id, target: k.target, targetFrom: k.targetFrom, conversion: k.conversion, customAction: k.customAction, campaignMatch: k.campaignMatch, platform: k.platform, extraMetrics: k.extraMetrics }} />}
-                {/* TikTok is read only: no audits or change history from Kaizen Ads yet */}
-                {audits && k.accountId && k.platform !== "tiktok" && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} blocked={k.target == null ? { reason: "Set the KPI first" } : null} />}
+                {/* TikTok is read only: its audit's moves are a checklist for TikTok Ads Manager, and there's no change history */}
+                {audits && k.accountId && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} advertiserId={k.platform === "tiktok" ? k.accountId : null} blocked={k.target == null ? { reason: "Set the KPI first" } : null} />}
                 {changes && k.accountId && k.platform !== "tiktok" && <ChangeLog changes={changes[k.id] ?? []} platform={k.platform} limit={30} collapsed={5} />}
               </article>
             );

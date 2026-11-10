@@ -1,7 +1,9 @@
 import "server-only";
 import { businessModel, googleHealth, googleHealthText } from "@/lib/google-flags";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { askJson, clientContext, contextBlock } from "@/lib/ai";
+import { agentOffline, askJson, clientContext, contextBlock, type AgentKey } from "@/lib/ai";
+import { adStateText, TIKTOK_FRAMING, tiktokAuditAgent, tiktokDigest, type TikTokAdState, type TikTokAuditRow } from "@/lib/tiktok/audit-core";
+import { diagnosticsText } from "@/lib/tiktok/diagnostics-core";
 import { aggregate, completeDays, pickType, type Day } from "@/lib/kpi/calc";
 import { PURCHASE_TYPES, conversionFor, conversionLabel, countResult, type Conversion } from "@/lib/kpi/conversions";
 import { videoMetrics } from "@/lib/kpi/video";
@@ -11,7 +13,7 @@ import { analyzeGoogleCopy, GOOGLE_CREATIVE_READ_RULES, googleCreativeText, type
 import { accountRows, type CampaignRow } from "@/lib/kpi/sync";
 import type { Benchmark } from "@/lib/verticals";
 import type { AuditObject } from "@/lib/chat-change-core";
-import { googleIndex, metaIndex, resolveObjects, type ObjectIndex, type ObjectRef } from "@/lib/audit-objects";
+import { googleIndex, metaIndex, resolveObjects, tiktokIndex, type ObjectIndex, type ObjectRef } from "@/lib/audit-objects";
 import { inScope, scopeRows, scopeText, type KpiScope } from "@/lib/kpi/scope";
 import { CREATIVE_READ_RULES, CREATIVE_READ_SCHEMA, creativeAnalysisText, type CreativeAnalysis } from "@/lib/creative-analysis-core";
 import { SETUP_RULE, checkAgainstSetup, type SetupFacts } from "@/lib/setup-check";
@@ -105,6 +107,25 @@ diagnosis: 2 to 4 short paragraphs, first person, on why the metrics aren't hitt
 causes: the root causes, most important first: area, severity, how confident you are (low when the data is thin), and evidence lines with real numbers and the names of campaigns, ad sets or ads.
 tracking: anything that looks like a tracking or attribution problem (results that don't add up, a pixel event missing, attribution windows mixed). Empty if none.
 learnings: 2 to 4 lasting lessons about this account for the client page, so the team and every agent remember them next time: what keeps going wrong (kind avoid), what works for this account (kind prefer), or a fact to keep in mind (kind note). Each one sentence, written as a rule that will still be true in a month ("Prevention angles haven't converted for this account; keep budget on treatment-urgency creative"), never this week's numbers. Read the client memory you were given first: don't repeat a lesson that's already there. If a problem it already warns about has happened again, write it again with resurfaced true and say it came back ("Resurfaced: …").`;
+
+const TIKTOK_BASE = `You are Kaizen Marketing's head of paid media, auditing one TikTok ad account for the media buyer who runs it. This is a real audit of the account and the buyer acts on it today. Speak to the buyer directly, in the first person ("I found", "I'd"), plain and specific.
+Read everything given: the target and how far off it is, 90 days of numbers by campaign, ad group and ad (spend, results and their cost, CTR, CPM, the hook rate and 2-second rate, frequency), the tiring ads, the ads' live state (on, off, rejected), the pixel and its events, TikTok's own diagnosis of the ad groups, the client page (Brand Bible, go-to-market strategy, intake, calls, memory, what's in production), the sub-vertical playbook and benchmarks, our winners on TikTok and on Meta, and the market.
+Argue from this account's data, using TikTok best practice as of today. Read campaigns, then ad groups, then ads. Judge money by ROAS when purchases are tracked, otherwise by cost per result against the target. When something that was winning stopped, check whether it was switched off, rejected or simply tired before blaming the audience. When the account also runs Meta, say what Meta's winning angles, hooks and audiences mean for TikTok and the other way round. Patterns across clients (patterns_across_clients): what's proven profitable for several businesses like this one; cite one when it answers a root cause. Respect the client's rules (what they told us to avoid, claims never to make). If the data is too thin to judge something, say so instead of guessing. Refer to people by role, never by name. No em dashes.`;
+
+/** The Meta audit's instructions, made TikTok's: its base, TikTok's names for things, and the framing on top */
+const swapTikTok = (system: string) =>
+  `${system
+    .replace(BASE, TIKTOK_BASE)
+    .replace(/campaigns, ad sets or ads/g, "campaigns, ad groups or ads")
+    .replace(/which campaign or ad set/g, "which campaign or ad group")
+    .replace(/setup in Meta/g, "setup in TikTok Ads Manager")
+    .replace(/a pixel event missing/g, "a TikTok pixel event not firing")
+    .replace(/image, video or carousel, and the length or card count/g, "vertical 9:16 video unless the account proves another format, and the length")}
+
+${TIKTOK_FRAMING}`;
+
+/** On TikTok nothing is changed from Kaizen Ads: every move is a checklist for TikTok Ads Manager */
+const TIKTOK_PLAN_NOTE = `On TikTok, Kaizen Ads can't make any change: every action is a checklist the buyer works through in TikTok Ads Manager. inPlatform: true when the move is made inside TikTok Ads Manager (switching campaigns, ad groups or ads on or off, budgets, bids, the optimization event, uploading the new ads), false for anything done elsewhere (the site, the pixel install, the offer, briefing creative). steps: the exact clicks and settings in TikTok Ads Manager, naming each campaign, ad group or ad. objects: type campaign, ad_group or ad, with its name exactly as it appears in the numbers.`;
 
 const swapBase = (system: string) => system.replace(BASE, GOOGLE_BASE).replace(/campaigns, ad sets or ads/g, "campaigns, ad groups, keywords or search terms").replace(/which campaign or ad set/g, "which campaign, ad group or keyword").replace(/setup in Meta/g, "setup in Google Ads").replace(/a pixel event missing/g, "a conversion action counting the wrong thing");
 
@@ -374,8 +395,15 @@ const STEPS: { key: string; label: string; weight: number }[] = [
 ];
 
 /** Keeps the audit's steps and progress in step with what it's really doing, for the card to follow. */
+const TIKTOK_LABELS: Record<string, string> = {
+  numbers: "Reading 90 days of the TikTok account",
+  setup: "Checking the ads, the pixel and TikTok's diagnosis",
+  fatigue: "Checking for tiring creative (hook rate and frequency)",
+  creative: "Ranking the creatives by hook rate against the KPI",
+};
+
 function milestones(admin: SupabaseClient, id: string, platform = "meta") {
-  const label = (s: (typeof STEPS)[number]) => (platform === "google" && s.key === "setup" ? "Checking the live setup, keywords and search terms in Google Ads" : platform === "google" && s.key === "numbers" ? "Reading 90 days of the Google Ads account" : platform === "google" && s.key === "creative" ? "Ranking the headlines, descriptions and asset groups against the KPI" : s.label);
+  const label = (s: (typeof STEPS)[number]) => (platform === "tiktok" && TIKTOK_LABELS[s.key] ? TIKTOK_LABELS[s.key] :platform === "google" && s.key === "setup" ? "Checking the live setup, keywords and search terms in Google Ads" : platform === "google" && s.key === "numbers" ? "Reading 90 days of the Google Ads account" : platform === "google" && s.key === "creative" ? "Ranking the headlines, descriptions and asset groups against the KPI" : s.label);
   const steps: AuditStep[] = STEPS.map((s) => ({ key: s.key, label: label(s), status: "pending", detail: null, startedAt: null, finishedAt: null }));
   let partial = 0; // how far through the running step (0 to 1), for the long AI steps
   const pct = () => {
@@ -424,6 +452,7 @@ export async function runAudit(admin: SupabaseClient, id: string) {
   if (!a) return;
   const { data: t0 } = await admin.from("kpi_targets").select("platform").eq("id", a.target_id).maybeSingle();
   if (t0?.platform === "google") return runGoogleAudit(admin, id, a);
+  if (t0?.platform === "tiktok") return runTikTokAudit(admin, id, a);
   const m = milestones(admin, id);
   try {
     const { data: t } = await admin.from("kpi_targets").select("ad_account_id, conversion, custom_action, campaign_match, excluded_campaigns, target, monthly_budget, budget_note, sheet").eq("id", a.target_id).single();
@@ -520,7 +549,12 @@ export async function runAudit(admin: SupabaseClient, id: string) {
 
 type Milestones = ReturnType<typeof milestones>;
 type AuditInput = {
-  platform: "meta" | "google";
+  platform: "meta" | "google" | "tiktok";
+  /** Who writes it (TikTok: its own auditor once online, the Meta auditor with TikTok framing until then) */
+  agent?: AgentKey;
+  /** TikTok: what the tiring-creative and creative steps found, worked out from the account's own days */
+  fatigueNote?: string;
+  creativeNote?: string;
   t: { conversion: string; custom_action: string | null; campaign_match: string | null; target: number | string | null; monthly_budget: number | string | null; budget_note: string | null; sheet: unknown };
   conv: Conversion;
   type: string | null;
@@ -576,6 +610,7 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
     const scopedAds = x.creative ? new Set(x.creative.rows.map((r) => r.ad_id)) : null;
     const fatigue = (allFatigue ?? []).filter((f) => !scopedAds || scopedAds.has(f.ad_id as string)).slice(0, 15);
     if (x.platform === "meta") await m.finish("fatigue", fatigue?.length ? `${fatigue.length} ${fatigue.length === 1 ? "ad" : "ads"} flagged as tiring` : "No ads flagged as tiring");
+    else if (x.fatigueNote) await m.finish("fatigue", x.fatigueNote);
     else await m.finish("fatigue", "Ad fatigue is watched on Meta only for now", "skipped");
 
     // The creative analysis (Meta): the KPI's creatives ranked, compared and checked for gaps
@@ -591,7 +626,8 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
     } else if (x.googleCreative) {
       const g = x.googleCreative;
       await m.finish("creative", `${g.headlines.top.length + g.headlines.bottom.length} headlines and ${g.descriptions.top.length + g.descriptions.bottom.length} descriptions ranked · ${g.groups.length} asset groups · ${g.themes.length} search themes · ${g.low} rated Low`);
-    } else await m.finish("creative", "No ad copy with enough impressions to rank", "skipped");
+    } else if (x.creativeNote) await m.finish("creative", x.creativeNote);
+    else await m.finish("creative", "No ad copy with enough impressions to rank", "skipped");
 
     // 5. The sub-vertical
     await m.start("vertical");
@@ -600,12 +636,17 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
       // Google audits read the Google playbook (our Google winners in this sub-vertical); Meta audits the Meta one
       x.platform === "google" ? import("@/lib/google-playbooks").then(({ googlePlaybookBlock }) => googlePlaybookBlock(admin, a.client_id)).catch(() => "") : playbookBlock(admin, a.client_id).catch(() => ""),
       marketBlock(admin, a.client_id, client.industry ?? null, 8).catch(() => ""),
-      client.industry && client.industry !== "other" ? industryWinners(admin, client.industry, a.client_id, 8).catch(() => []) : Promise.resolve([]),
+      client.industry && client.industry !== "other"
+        ? industryWinners(admin, client.industry, a.client_id, 8)
+            .catch(() => [])
+            // A TikTok audit also reads our own TikTok winners from the most similar clients (labelled TikTok)
+            .then(async (w) => (x.platform === "tiktok" ? [...w, ...(await import("@/lib/industry").then((i) => i.tiktokPeerWinners(admin, a.client_id, 4)).catch(() => []))] : w))
+        : Promise.resolve([]),
       client.vertical_id ? admin.from("verticals").select("name, benchmarks, google_benchmarks").eq("id", client.vertical_id).maybeSingle() : Promise.resolve({ data: null }),
       client.vertical_id
         ? admin.from("hall_of_fame").select("creative, value, target, roas, conversion, days_live, client_id").eq("vertical_id", client.vertical_id).gt("expires_at", new Date().toISOString()).order("beat_by", { ascending: false }).limit(10)
         : Promise.resolve({ data: [] }),
-      rebuttalsBlock(admin, a.client_id, `${x.platform === "google" ? "google ads search" : "meta facebook instagram"} account audit`).catch(() => ""),
+      rebuttalsBlock(admin, a.client_id, `${x.platform === "google" ? "google ads search" : x.platform === "tiktok" ? "tiktok" : "meta facebook instagram"} account audit`).catch(() => ""),
     ]);
     // The platform's own benchmarks (Google's are researched separately, WordStream first)
     const benchmarks = ((x.platform === "google" ? sub?.google_benchmarks : sub?.benchmarks) ?? []) as Benchmark[];
@@ -637,7 +678,7 @@ async function finishAudit(admin: SupabaseClient, id: string, a: { target_id: st
 
 <target>
 ${client.name}: ${label}. Target: ${target == null ? "not set" : `${roas ? `${target}x ROAS` : `$${target} per result`}${bench ? ` (no target set: the ${sub?.name ?? "industry"} benchmark, ${bench.source} ${bench.year}; beat the industry)` : ""}`}. Last 14 days: ${x.last14 == null ? "no results" : roas ? `${x.last14}x` : `$${x.last14}`} (${gap == null ? "?" : gap > 0 ? `${gap}% worse than target` : `${-gap}% better than target`}); the 14 days before: ${x.prev14 ?? "no results"}.
-Monthly budget: ${t.monthly_budget ? `$${t.monthly_budget}` : "not set"}${t.budget_note ? ` (${t.budget_note})` : ""}.${x.scopeNote ? ` ${x.scopeNote}` : t.campaign_match ? ` Only campaigns containing "${t.campaign_match}" count toward this KPI.` : ""} Results are counted as ${x.platform === "google" ? "Google's" : "Meta's"} "${type ?? "?"}".
+Monthly budget: ${t.monthly_budget ? `$${t.monthly_budget}` : "not set"}${t.budget_note ? ` (${t.budget_note})` : ""}.${x.scopeNote ? ` ${x.scopeNote}` : t.campaign_match ? ` Only campaigns containing "${t.campaign_match}" count toward this KPI.` : ""} Results are counted as ${x.platform === "google" ? "Google's" : x.platform === "tiktok" ? "TikTok's" : "Meta's"} "${type ?? "?"}".
 </target>
 
 <account_numbers platform="${x.platform}">
@@ -662,7 +703,7 @@ ${creative ? `<creative_analysis note="the KPI's campaigns only">\n${creativeAna
 ${(fatigue ?? []).map((f) => `- ${f.ad_name}: ${f.severity}, ${JSON.stringify(f.signals).slice(0, 300)}`).join("\n") || "(none flagged)"}
 </ads_tiring>
 
-<benchmarks platform="${x.platform}" sub_vertical="${sub?.name ?? "not placed"}">
+<benchmarks platform="${x.platform === "tiktok" ? "meta" : x.platform}" sub_vertical="${sub?.name ?? "not placed"}"${x.platform === "tiktok" ? ` note="Meta's benchmarks: TikTok's aren't researched yet. TikTok CPMs and CPAs run differently, so use them only as a rough bar"` : ""}>
 ${bm || "(not researched yet)"}
 </benchmarks>
 ${playbook ? `\n${playbook}\n` : ""}
@@ -675,18 +716,26 @@ ${market ? `\n${market}\n` : ""}${pushback ? `\n${pushback}\n` : ""}
 Today is ${new Date().toISOString().slice(0, 10)}.`;
 
     // 6. What I found
+    const auditAgent: AgentKey = x.agent ?? (x.platform === "google" ? "google_auditor" : "auditor");
     await m.start("found");
     let last = 0;
     const found = await askJson<Pick<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking"> & { learnings: { kind: "avoid" | "prefer" | "note"; body: string; resurfaced: boolean }[]; creativeRead?: CreativeAnalysis["read"] }>({
-      agent: x.platform === "google" ? "google_auditor" : "auditor",
+      agent: auditAgent,
       label: `audit ${client.name} · findings`,
       clientId: a.client_id,
-      system: x.platform === "google" ? `${swapBase(FOUND_SYSTEM)}${x.googleCreative ? `\n${GOOGLE_CREATIVE_READ_RULES}` : ""}
+      system:
+        x.platform === "tiktok"
+          ? `${swapTikTok(FOUND_SYSTEM)}
 
-${SETUP_RULE}` : `${FOUND_SYSTEM}\n${CREATIVE_READ_RULES}
+${SETUP_RULE}`
+          : x.platform === "google"
+            ? `${swapBase(FOUND_SYSTEM)}${x.googleCreative ? `\n${GOOGLE_CREATIVE_READ_RULES}` : ""}
+
+${SETUP_RULE}`
+            : `${FOUND_SYSTEM}\n${CREATIVE_READ_RULES}
 
 ${SETUP_RULE}`,
-      schema: x.platform === "google" && !x.googleCreative ? FOUND_SCHEMA : FOUND_SCHEMA_META,
+      schema: x.platform === "tiktok" || (x.platform === "google" && !x.googleCreative) ? FOUND_SCHEMA : FOUND_SCHEMA_META,
       maxTokens: 32000,
       onText: (so) => {
         if (Date.now() - last < 4000) return;
@@ -722,10 +771,10 @@ ${SETUP_RULE}`,
     last = 0;
     type Plan = Omit<AuditResult, "verdict" | "diagnosis" | "causes" | "tracking" | "actions"> & { actions: (Omit<AuditResult["actions"][number], "objects"> & { objects?: ObjectRef[] })[] };
     const raw = await askJson<Plan>({
-      agent: x.platform === "google" ? "google_auditor" : "auditor",
+      agent: auditAgent,
       label: `audit ${client.name} · plan`,
       clientId: a.client_id,
-      system: `${x.platform === "google" ? `${swapBase(PLAN_SYSTEM)}\nOn Google the creative is the copy: each creative item is new copy to write next, from the creative analysis (more of what the top headlines say, a replacement for what Google rates Low, a converting search theme no headline answers yet) and what's proven on Meta for this client. concept: the message; angle; hook: the lead headline as written (30 characters or less); format: RSA headlines and descriptions, a Performance Max asset group, or sitelinks and callouts; why with the evidence.` : PLAN_SYSTEM}
+      system: `${x.platform === "tiktok" ? `${swapTikTok(PLAN_SYSTEM)}\n\n${TIKTOK_PLAN_NOTE}` : x.platform === "google" ? `${swapBase(PLAN_SYSTEM)}\nOn Google the creative is the copy: each creative item is new copy to write next, from the creative analysis (more of what the top headlines say, a replacement for what Google rates Low, a converting search theme no headline answers yet) and what's proven on Meta for this client. concept: the message; angle; hook: the lead headline as written (30 characters or less); format: RSA headlines and descriptions, a Performance Max asset group, or sitelinks and callouts; why with the evidence.` : PLAN_SYSTEM}
 
 ${SETUP_RULE}`,
       schema: PLAN_SCHEMA,
@@ -765,7 +814,7 @@ Now write what you'd do if you were the buyer, and what you'd watch out for.`,
         result: clean({ ...findings, ...plan, learnings: lessons, creativeAnalysis, googleCreative }),
         // What the audit read, kept for the "Why?" chat on each item: the target, the numbers, the scorecard and the setup
         numbers: [`<target>\n${context.split("<target>")[1]?.split("</target>")[0]?.trim() ?? ""}\n</target>`, `<account_numbers platform="${x.platform}">\n${x.numbersText}\n</account_numbers>`, scorecard ? `<campaigns_scorecard>\n${scorecard}\n</campaigns_scorecard>` : "", `<live_setup>\n${x.setupBlock}\n</live_setup>`].filter(Boolean).join("\n\n").slice(0, 400_000),
-        inputs: { ...x.inputs, platform: x.platform, fatigue: fatigue?.length ?? 0, hallOfFame: fame?.length ?? 0, playbook: Boolean(playbook), market: Boolean(market), benchmarks: Boolean(bm) },
+        inputs: { ...x.inputs, platform: x.platform, agent: auditAgent, fatigue: fatigue?.length ?? 0, hallOfFame: fame?.length ?? 0, playbook: Boolean(playbook), market: Boolean(market), benchmarks: Boolean(bm) },
         finished_at: new Date().toISOString(),
       })
       .eq("id", id);
@@ -829,6 +878,84 @@ async function runGoogleAudit(admin: SupabaseClient, id: string, a: { target_id:
       scopeNote: scopeText(t as KpiScope, leftOut) + (leftOut.length ? " The keywords and search terms in the live setup may include those campaigns: leave them out." : ""),
       googleCreative,
       inputs: { days: d.days, campaigns: d.campaigns, liveSetup: Boolean(setup), keywords: detail.counts.keywords, searchTerms: detail.counts.searchTerms },
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    await m.failRunning(message);
+    await admin.from("account_audits").update({ status: "failed", error: message, finished_at: new Date().toISOString() }).eq("id", id);
+  }
+}
+
+/**
+ * A TikTok account: its ad-level days (from Kaizen's daily TikTok sync), the ads' live state, the pixel and TikTok's
+ * diagnosis, then the same audit as Meta's, framed for TikTok (hook rate, creative fatigue, frequency, CPA against the
+ * target, structure). Read only: the plan is a checklist for TikTok Ads Manager. Written by the TikTok auditor once the
+ * TikTok Ads Buyer is online, by the Meta auditor until then.
+ */
+async function runTikTokAudit(admin: SupabaseClient, id: string, a: { target_id: string; client_id: string }) {
+  const m = milestones(admin, id, "tiktok");
+  try {
+    const { data: t } = await admin.from("kpi_targets").select("ad_account_id, conversion, custom_action, campaign_match, excluded_campaigns, target, monthly_budget, budget_note, sheet").eq("id", a.target_id).single();
+    if (!t?.ad_account_id) throw new Error("No TikTok advertiser on this KPI. Link the TikTok ad account in Settings > Sync health > TikTok.");
+    const conv = conversionFor(t.conversion);
+    const account = String(t.ad_account_id);
+
+    await m.start("numbers");
+    const since = new Date(Date.now() - 90 * DAY).toISOString().slice(0, 10);
+    const rows: TikTokAuditRow[] = [];
+    for (let page = 0; page < 40; page++) {
+      const { data } = await admin
+        .from("tiktok_ad_daily")
+        .select("date, ad_id, ad_name, campaign_id, campaign_name, adgroup_id, adgroup_name, spend, impressions, clicks, conversions, purchases, conversion_value, video_2s, video_6s, frequency")
+        .eq("ad_account_id", account)
+        .gte("date", since)
+        .order("date")
+        .range(page * 1000, page * 1000 + 999);
+      rows.push(...((data ?? []) as TikTokAuditRow[]));
+      if (!data || data.length < 1000) break;
+    }
+    const scoped = scopeRows(rows, t as KpiScope);
+    if (!scoped.length)
+      throw new Error(rows.length ? `No ads in the campaigns this KPI counts in the last 90 days. Check "Only campaigns containing" and the campaigns left out on this KPI.` : "No TikTok ad numbers for this account yet: the TikTok sync pulls them every two hours once the account is linked.");
+    const leftOut = [...new Set(rows.filter((r) => !inScope(t as KpiScope, { id: r.campaign_id, name: r.campaign_name })).map((r) => r.campaign_name ?? r.campaign_id ?? ""))].filter(Boolean);
+    // Windows end on the last complete day, like the KPI board
+    const yesterday = completeDays(1, new Date()).to;
+    const lastDay = scoped[scoped.length - 1].date;
+    const today = lastDay < yesterday ? lastDay : yesterday;
+    const d = tiktokDigest(scoped, t.conversion, today);
+    const spend90 = scoped.reduce((s, r) => s + n(r.spend), 0);
+    await m.finish("numbers", `${d.days} days · ${d.campaigns} campaigns · ${d.adgroups} ad groups · ${d.ads} ads · $${n0(spend90)} spent`);
+
+    await m.start("setup");
+    const [{ data: ads }, diag] = await Promise.all([
+      admin.from("tiktok_ads").select("ad_id, ad_name, campaign_id, adgroup_id, status, secondary_status").eq("ad_account_id", account).limit(3000),
+      import("@/lib/tiktok/store").then((s) => s.clientDiagnostics(admin, [account])).catch(() => null),
+    ]);
+    const campaignName = new Map(scoped.map((r) => [r.campaign_id, r.campaign_name]));
+    const inKpi = ((ads ?? []) as TikTokAdState[]).filter((x) => inScope(t as KpiScope, { id: x.campaign_id, name: campaignName.get(x.campaign_id) ?? null }));
+    const health = diagnosticsText(diag);
+    const setupBlock = `LIVE STATE IN TIKTOK (from Kaizen's TikTok sync; read only: changes are made in TikTok Ads Manager)
+${adStateText(inKpi, (cid) => campaignName.get(cid) ?? null)}
+
+${health || "Tracking and delivery checks (pixel events, TikTok's diagnosis): not read yet; they run once a day with the TikTok sync."}`;
+    await m.finish("setup", `${inKpi.length} ads read${diag ? ` · ${diag.pixels.length} ${diag.pixels.length === 1 ? "pixel" : "pixels"} · ${diag.warnings.length} ${diag.warnings.length === 1 ? "warning" : "warnings"} from TikTok` : " · pixel and diagnosis not checked yet"}`);
+
+    const agent = tiktokAuditAgent(await agentOffline("tiktok_auditor"));
+    await finishAudit(admin, id, a, m, {
+      platform: "tiktok",
+      agent,
+      t,
+      conv,
+      type: conv.types?.[0] ?? null,
+      numbersText: d.text,
+      last14: d.last14,
+      prev14: d.prev14,
+      setupBlock,
+      index: tiktokIndex(account, scoped),
+      scopeNote: scopeText(t as KpiScope, leftOut),
+      fatigueNote: d.fatigue.length ? `${d.fatigue.length} ${d.fatigue.length === 1 ? "ad is" : "ads are"} tiring (hook rate or cost turning, with frequency)` : "No ad tiring week over week",
+      creativeNote: `${d.ads} ads ranked · account hook rate ${d.hook ?? "?"}% (6-second views over impressions)`,
+      inputs: { days: d.days, ads: d.ads, campaigns: d.campaigns, adgroups: d.adgroups, liveSetup: Boolean((ads ?? []).length), diagnostics: Boolean(diag) },
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

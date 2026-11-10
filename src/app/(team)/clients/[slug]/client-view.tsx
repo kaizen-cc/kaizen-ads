@@ -1027,7 +1027,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       hint: "Against target, the last 30 days, campaigns and top ads (read only)",
                       content: (
                         <div className="grid gap-6">
-                          {kpis && tiktokKpis.length > 0 ? <KpiPanel kpis={tiktokKpis} audits={null} changes={null} /> : <p className="text-sm text-faint">No TikTok KPI yet. Link their TikTok ad account in Settings &gt; Sync health &gt; TikTok and a KPI card is made for it.</p>}
+                          {kpis && tiktokKpis.length > 0 ? <KpiPanel kpis={tiktokKpis} audits={audits} changes={null} /> : <p className="text-sm text-faint">No TikTok KPI yet. Link their TikTok ad account in Settings &gt; Sync health &gt; TikTok and a KPI card is made for it.</p>}
                           {tiktok?.data ? <TikTokPanel t={tiktok.data} /> : <p className="text-sm text-faint">No TikTok numbers yet: their ad account isn&apos;t linked, or the first pull hasn&apos;t run.</p>}
                         </div>
                       ),

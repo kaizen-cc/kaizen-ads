@@ -227,7 +227,10 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Checks every report before it goes out: numbers match the data, nothing invented, Kaizen's writing rules", where: "Reports", trigger: "auto", when: "Right after each report is written", labels: ["report QA"] },
   ],
   // The TikTok Ads Buyer ships offline: these are where its skills will run once an exec brings it online
-  tiktok_auditor: [{ title: "Offline for now. Will audit a TikTok account against its KPI target (campaigns, ad groups, creative and hook rates, pixel events)", where: "KPI board · a TikTok card", trigger: "click", when: "Once the TikTok Ads Buyer is online", labels: ["tiktok audit"] }],
+  tiktok_auditor: [
+    { title: "Audits a TikTok account against its KPI target (hook rate and creative fatigue, frequency, cost per result, structure, rejected ads, pixel events, TikTok's diagnosis); the moves are a checklist for TikTok Ads Manager. Offline until the TikTok Ads Buyer is online: until then the Meta auditor writes TikTok audits with TikTok framing", where: "KPI board · a TikTok card · Actions", trigger: "click", when: "When someone runs a TikTok audit, or a TikTok account is off target (auto audit)", labels: ["tiktok audit", "audit "] },
+    { title: "Checks a TikTok sprint every day: which ads went on, off or were rejected, what the buyer ticked, and how the KPI moved", where: "KPIs · Sprint", trigger: "auto", when: "Every morning a TikTok sprint is due", labels: ["sprint check"] },
+  ],
   tiktok_launcher: [{ title: "Offline for now. Will push approved ads to TikTok, paused, for the buyer to confirm (TikTok writes stay off)", where: "Client page · client chat", trigger: "click", when: "Once the TikTok Ads Buyer is online and TikTok writes are connected", labels: ["tiktok launch"] }],
   tiktok_reporter: [{ title: "Offline for now. Will write the weekly and monthly TikTok report (until then the Meta reporter writes it)", where: "Reports · KPIs", trigger: "auto", when: "Once the TikTok Ads Buyer is online", labels: ["tiktok report"] }],
   fatigue: [{ title: "Flags ads wearing out from their own numbers (no AI call; the strategist writes the refresh)", where: "Overview · Client page · Next for me", trigger: "auto", when: "After every Meta sync", labels: [] }],

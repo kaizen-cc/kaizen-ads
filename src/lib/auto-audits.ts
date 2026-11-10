@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { runAudit } from "@/lib/audit";
 import { inPlatform } from "@/lib/in-platform";
 import { withCoBuyers } from "@/lib/buyer-seats";
+import { tiktokConfigured } from "@/lib/tiktok/core";
 
 // Accounts in the red get audited without anyone asking: when a KPI is off target and has no audit yet, or its last
 // audit is three days old and nobody has started on it (no action ticked, no change made from it, no sprint move
@@ -38,7 +39,8 @@ async function due(admin: SupabaseClient) {
     .from("kpi_targets")
     .select("id, client_id, platform, owner_id, label, clients!inner(name, status, archived_at)")
     .eq("active", true)
-    .in("platform", ["meta", "google"])
+    // TikTok too once it is set up (its audit is a checklist for TikTok Ads Manager)
+    .in("platform", tiktokConfigured() ? ["meta", "google", "tiktok"] : ["meta", "google"])
     .not("ad_account_id", "is", null)
     // No KPI set: nothing to audit against (an older snapshot may still say "off")
     .not("target", "is", null)
@@ -90,7 +92,7 @@ async function tellBuyer(admin: SupabaseClient, auditId: string, t: Off) {
   const { data: a } = await admin.from("account_audits").select("status, result").eq("id", auditId).single();
   if (a?.status !== "ready" || !t.owner_id) return;
   const res = a.result as { verdict?: { headline?: string }; actions?: Action[] } | null;
-  const platform = t.platform === "google" ? "google" : "meta";
+  const platform = t.platform === "google" ? "google" : t.platform === "tiktok" ? "tiktok" : "meta";
   const actions = res?.actions ?? [];
   const quick = actions.filter((x) => x.owner === "media_buyer" && inPlatform(x, platform));
   const label = (x: Action) => x.short?.trim() || x.title;
@@ -102,7 +104,7 @@ async function tellBuyer(admin: SupabaseClient, auditId: string, t: Off) {
       profile_id: id,
       kind: "kpi",
       title: `${t.clients.name} is off target: the audit is ready`,
-      body: [res?.verdict?.headline ?? "", list.length ? `${quick.length ? `${quick.length} you can do from Kaizen Ads` : `${actions.length} actions`}:\n${list.join("\n")}` : ""].filter(Boolean).join("\n\n").slice(0, 1000),
+      body: [res?.verdict?.headline ?? "", list.length ? `${quick.length ? (platform === "tiktok" ? `${quick.length} to make in TikTok Ads Manager` : `${quick.length} you can do from Kaizen Ads`) : `${actions.length} actions`}:\n${list.join("\n")}` : ""].filter(Boolean).join("\n\n").slice(0, 1000),
       href: `/kpis/audit/${auditId}`,
       client_id: t.client_id,
       key: `auto-audit:${auditId}`,

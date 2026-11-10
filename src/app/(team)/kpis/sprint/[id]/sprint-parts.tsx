@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import { addMove, answerQuestions, checkNow, closeSprint, setActionStatus, watchSprint } from "../../sprint-actions";
 import { GoogleChange } from "../../google-change";
 import { ObjectLinks } from "@/components/object-links";
+import { TikTokManagerLink } from "@/components/tiktok-manager-link";
 import { AuditWhy } from "@/components/audit-why";
 import type { AuditObject } from "@/lib/chat-change-core";
 
@@ -129,7 +130,7 @@ const OWNER: Record<string, string> = { media_buyer: "Media buyer", creative: "C
 const WHEN: Record<string, string> = { now: "Today", this_week: "This week", next: "Next" };
 
 /** One move on the action list: tick it, mark it doing or skipped, and leave a note the next check reads. */
-export function ActionRow({ a, readOnly, writable = null, asked = 0, agent = "auditor" }: { a: SprintAction; readOnly: boolean; writable?: "google" | "meta" | null; /** "Why?" messages on it so far */ asked?: number; agent?: "auditor" | "google_auditor" }) {
+export function ActionRow({ a, readOnly, writable = null, tiktok = null, asked = 0, agent = "auditor" }: { a: SprintAction; readOnly: boolean; writable?: "google" | "meta" | null; /** A TikTok sprint (read only): its moves link to TikTok Ads Manager */ tiktok?: { advertiserId: string | null } | null; /** "Why?" messages on it so far */ asked?: number; agent?: "auditor" | "google_auditor" }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(a.status !== "done" && a.status !== "skipped");
@@ -211,6 +212,7 @@ export function ActionRow({ a, readOnly, writable = null, asked = 0, agent = "au
           {a.watch && <p className="text-xs text-muted">How the check judges it: {a.watch}</p>}
           <ObjectLinks objects={a.objects} />
           {writable && !readOnly && inPlatform(a, writable) && <GoogleChange platform={writable} from={{ source: "sprint", actionId: a.id }} />}
+          {tiktok && !readOnly && a.status !== "done" && inPlatform(a, "tiktok") && <TikTokManagerLink advertiserId={tiktok.advertiserId} />}
           {!readOnly && (
             <div className="flex flex-wrap items-center gap-2">
               <input

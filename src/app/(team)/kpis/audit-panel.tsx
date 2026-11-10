@@ -21,7 +21,7 @@ export type AuditSummary = {
   steps: AuditStep[];
   /** The moves Kaizen Ads can make in the ad account itself (pause, turn on, budgets; bids and negatives on Google) */
   quick?: QuickAction[];
-  platform?: "meta" | "google";
+  platform?: "meta" | "google" | "tiktok";
 } | null;
 export type QuickAction = { index: number; label: string; title: string; area: string; when: string; effort: string; impact: string; steps: string[]; why: string; done: boolean };
 export type AuditStep = { key: string; label: string; status: "pending" | "running" | "done" | "skipped" | "failed"; detail: string | null; startedAt: string | null; finishedAt: string | null };
@@ -87,7 +87,7 @@ const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: 
 
 /** The account audit on a KPI card: start one, follow it while it runs, then the verdict and the way into the full audit. */
 /** blocked: why an audit can't run yet (no KPI set), with the way to fix it; the buttons stay, disabled, saying so */
-export function AuditPanel({ targetId, audit, platform, blocked }: { targetId: string; audit: AuditSummary; platform: string; blocked?: { reason: string; onFix?: () => void } | null }) {
+export function AuditPanel({ targetId, audit, platform, blocked, advertiserId = null }: { targetId: string; audit: AuditSummary; platform: string; blocked?: { reason: string; onFix?: () => void } | null; /** TikTok: the account its moves open in TikTok Ads Manager */ advertiserId?: string | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +98,7 @@ export function AuditPanel({ targetId, audit, platform, blocked }: { targetId: s
     const t = setInterval(() => router.refresh(), 4000);
     return () => clearInterval(t);
   }, [running, router]);
-  if (platform !== "meta" && platform !== "google") return null;
+  if (platform !== "meta" && platform !== "google" && platform !== "tiktok") return null;
 
   const go = () =>
     start(async () => {
@@ -155,7 +155,7 @@ export function AuditPanel({ targetId, audit, platform, blocked }: { targetId: s
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
             <span suppressHydrationWarning>
               This account was audited {agoText(audit.createdAt)}
-              {audit.by ? ` by ${audit.by}` : ""}. A new audit costs a few minutes of AI and {platform === "google" ? "Google" : "Meta"} calls; the last one is probably still current.
+              {audit.by ? ` by ${audit.by}` : ""}. A new audit costs a few minutes of AI{platform === "tiktok" ? "" : ` and ${platform === "google" ? "Google" : "Meta"} calls`}; the last one is probably still current.
             </span>
             <span className="flex w-full gap-2 sm:w-auto">
               <button type="button" onClick={() => setConfirm(false)} className="h-10 flex-1 rounded-full border border-line bg-surface px-3 text-xs text-muted hover:text-fg sm:flex-none md:h-8">
@@ -189,9 +189,11 @@ export function AuditPanel({ targetId, audit, platform, blocked }: { targetId: s
           <p className="max-w-3xl text-sm leading-relaxed text-muted">
             {platform === "google"
               ? "Scrubs 90 days of the Google Ads account by campaign, its live setup (bidding and targets, budgets, conversion actions), impression share, ad groups, keywords and search terms, devices, the "
-              : "Scrubs 90 days of the account by campaign, ad set and ad, its live setup in Meta (objectives, budgets, bidding, learning, audiences, placements), the funnel, tiring ads, the "}
+              : platform === "tiktok"
+                ? "Scrubs 90 days of the TikTok account by campaign, ad group and ad: hook rate and creative fatigue, frequency, cost per result against the target, the structure, rejected ads, the pixel's events and TikTok's own diagnosis, the "
+                : "Scrubs 90 days of the account by campaign, ad set and ad, its live setup in Meta (objectives, budgets, bidding, learning, audiences, placements), the funnel, tiring ads, the "}
             client&apos;s Brand Bible and strategy, the sub-vertical playbook and benchmarks, our Hall of Fame and the market. Then it writes the diagnosis and the action plan. A few
-            minutes.
+            minutes.{platform === "tiktok" ? " TikTok is read only: the moves are a checklist to make in TikTok Ads Manager." : ""}
           </p>
         )}
 
@@ -224,7 +226,7 @@ export function AuditPanel({ targetId, audit, platform, blocked }: { targetId: s
                 {audit.by ? ` · run by ${audit.by}` : ""}
               </span>
             </div>
-            {audit.quick && audit.quick.length > 0 && <QuickActions auditId={audit.id} items={audit.quick} platform={audit.platform ?? (platform === "google" ? "google" : "meta")} />}
+            {audit.quick && audit.quick.length > 0 && <QuickActions auditId={audit.id} items={audit.quick} platform={audit.platform ?? (platform === "google" ? "google" : platform === "tiktok" ? "tiktok" : "meta")} advertiserId={advertiserId} />}
           </div>
         )}
         {audit?.status === "queued" && (

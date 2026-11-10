@@ -28,7 +28,7 @@ async function runningFor(admin: SupabaseClient, personId: string) {
  */
 export function auditRefusal(t: { platform: string; ad_account_id: string | null; target: number | string | null }): string | null {
   if (!hasKpiTarget(t.target)) return "Set the KPI first.";
-  if (!["meta", "google"].includes(t.platform) || !t.ad_account_id) return "This KPI has no ad account to audit.";
+  if (!["meta", "google", "tiktok"].includes(t.platform) || !t.ad_account_id) return "This KPI has no ad account to audit.";
   return null;
 }
 

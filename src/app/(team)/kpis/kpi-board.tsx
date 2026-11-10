@@ -697,7 +697,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
   const tabs: { id: Tab; label: string; count?: number | null; hint: string }[] = [
     { id: "overview", label: "Overview", hint: tiktok ? "Where it stands, the 30 days, budget and the campaigns (TikTok is read only)" : "Where it stands, the 30 days, budget and the next move" },
     { id: "numbers", label: "Numbers", hint: `Every window, month and quarter, and the metrics ${platformShort(r.platform)} reports` },
-    ...(tiktok ? [] : [{ id: "actions" as const, label: "Actions", count: moves || null, hint: "The audit and the moves to make in the ad account" }]),
+    { id: "actions" as const, label: "Actions", count: moves || null, hint: tiktok ? "The audit and the moves to make in TikTok Ads Manager (read only)" : "The audit and the moves to make in the ad account" },
     ...(r.platform === "google" ? [{ id: "policy" as const, label: "Policy", hint: "Disapproved and limited ads, assets and keywords: the trigger, Google's policy and the fix" }] : []),
     ...(tiktok ? [] : [{ id: "creative" as const, label: "Creative", hint: "Ads wearing out, what has worked for them, and what's live in their market" }]),
     { id: "notes", label: "Notes", count: notes || null, hint: "The #1 problem, the plan, this week's updates and every change in the account" },
@@ -879,7 +879,12 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                   </div>
                 </div>
                 {tiktok ? (
-                  <p className="rounded-[14px] border border-dashed border-line px-4 py-3 text-[13px] leading-relaxed text-muted">TikTok is read only for now: Kaizen Ads pulls its numbers, but audits, moves and changes in the account aren&apos;t connected yet. Make changes in TikTok Ads Manager.</p>
+                  <p className="rounded-[14px] border border-dashed border-line px-4 py-3 text-[13px] leading-relaxed text-muted">
+                    TikTok is read only: Kaizen Ads audits the account and writes the moves, and you make them in TikTok Ads Manager.{" "}
+                    <button type="button" onClick={() => setTab("actions")} className="inline-flex min-h-11 items-center text-fg underline-offset-4 hover:underline md:min-h-0">
+                      The audit and its moves →
+                    </button>
+                  </p>
                 ) : (
                   <NextMove r={r} moves={moves} onActions={() => setTab("actions")} onNotes={() => setTab("notes")} />
                 )}
@@ -891,9 +896,9 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                   </section>
                 )}
                 {r.accountId && <Campaigns key={`${r.id}:${r.conversion}:${r.target}`} id={r.id} target={r.target} conversion={r.conversion} platform={r.platform} />}
-                {r.platform !== "tiktok" && r.audit?.status === "ready" && r.audit.quick && r.audit.quick.length > 0 && (
+                {r.audit?.status === "ready" && r.audit.quick && r.audit.quick.length > 0 && (
                   <section className="grid gap-1 rounded-[20px] border border-line bg-surface px-4 pb-4 md:px-5 md:pb-5">
-                    <QuickActions key={r.audit.id} auditId={r.audit.id} items={r.audit.quick} platform={r.audit.platform ?? r.platform} />
+                    <QuickActions key={r.audit.id} auditId={r.audit.id} items={r.audit.quick} platform={r.audit.platform ?? r.platform} advertiserId={tiktok ? r.accountId : null} />
                     <button type="button" onClick={() => setTab("actions")} className="justify-self-start py-2 text-xs text-muted hover:text-fg">
                       The whole audit, with why and every step →
                     </button>
@@ -951,7 +956,7 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
                       Nobody&apos;s optimizing this account yet{r.lastChange?.at ? `: no changes in ${sinceText(r.lastChange.at)}` : ""}. Run the audit and make the first moves below.
                     </p>
                   )}
-                  <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} blocked={r.target == null ? { reason: "Set the KPI first", onFix: () => setTab("settings") } : null} />
+                  <AuditPanel targetId={r.id} audit={r.audit} platform={r.platform} blocked={r.target == null ? { reason: "Set the KPI first", onFix: () => setTab("settings") } : null} advertiserId={tiktok ? r.accountId : null} />
                   {r.sprint && <SprintStrip s={r.sprint} />}
                 </>
               ) : (
@@ -1854,7 +1859,7 @@ export function KpiBoard({
   const open = sp.get("open") ?? (linked ? (focus?.id ?? null) : null);
   const asTab = (TABS as string[]).includes(sp.get("tab") ?? "") ? (sp.get("tab") as Tab) : "overview";
   // TikTok cards are read only: no Actions, Policy or Creative tab to land on
-  const tab: Tab = platform === "tiktok" && ["actions", "policy", "creative"].includes(asTab) ? "overview" : asTab;
+  const tab: Tab = platform === "tiktok" && ["policy", "creative"].includes(asTab) ? "overview" : asTab;
   const [q, setQ] = useState(() => sp.get("q") ?? "");
   const go = (patch: Record<string, string | null>, how: "push" | "replace" = "push") => {
     const u = new URL(window.location.href);

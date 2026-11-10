@@ -1,10 +1,11 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { askJson } from "@/lib/ai";
+import { agentOffline, askJson } from "@/lib/ai";
 import type { AuditResult } from "@/lib/audit";
 import { accountSetup, metaConfigured, type AccountSetup } from "@/lib/context/meta";
 import { googleActivity, googleAdsConfigured, googleSetup, type GoogleSetup } from "@/lib/context/google-ads";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
+import { tiktokAuditAgent, tiktokSetupChanges, type TikTokSetup } from "@/lib/tiktok/audit-core";
 
 // Optimization sprints: an audit's plan, followed through with the buyer. The audit opens one on its account, assigned
 // to the KPI's buyer and watched by whoever ran it. Every day (or on the follow-up date it set) the check re-reads the
@@ -63,7 +64,7 @@ export async function openSprint(admin: SupabaseClient, auditId: string) {
       .update({ audit_id: auditId, next_check_at: checkAt(1), watcher_ids: [...new Set([...((open!.watcher_ids ?? []) as string[]), ...watchers])] })
       .eq("id", sprintId);
   } else {
-    const setup = await liveSetup(t?.platform ?? "meta", t?.ad_account_id ?? null);
+    const setup = await liveSetup(t?.platform ?? "meta", t?.ad_account_id ?? null, admin);
     const { data, error } = await admin
       .from("optimization_sprints")
       .insert({ target_id: a.target_id, client_id: a.client_id, audit_id: auditId, buyer_id: buyer, watcher_ids: watchers, created_by: a.created_by, baseline: kpi, latest: kpi, setup, next_check_at: checkAt(1) })
@@ -110,7 +111,7 @@ export type BusinessMove = { index: number; title: string; area: string; owner: 
 export async function openBusinessSprint(admin: SupabaseClient, o: { targetId: string; clientId: string; businessAuditId: string; buyer: string | null; watchers: string[]; createdBy: string | null; moves: BusinessMove[]; headline: string }) {
   const { data: t } = await admin.from("kpi_targets").select("ad_account_id, platform").eq("id", o.targetId).single();
   const kpi = await kpiNow(admin, o.targetId);
-  const setup = await liveSetup(t?.platform ?? "meta", t?.ad_account_id ?? null).catch(() => null);
+  const setup = await liveSetup(t?.platform ?? "meta", t?.ad_account_id ?? null, admin).catch(() => null);
   const { data, error } = await admin
     .from("optimization_sprints")
     .insert({ target_id: o.targetId, client_id: o.clientId, business_audit_id: o.businessAuditId, buyer_id: o.buyer, watcher_ids: o.watchers, created_by: o.createdBy, baseline: kpi, latest: kpi, setup, next_check_at: checkAt(1) })
@@ -182,10 +183,41 @@ export async function addAuditAction(admin: SupabaseClient, auditId: string, ind
 // ─── What changed in the account ────────────────────────────────────────────
 
 /** The account's setup now, from Meta or Google Ads (null when it can't be read). */
-async function liveSetup(platform: string, account: string | null): Promise<AccountSetup | GoogleSetup | null> {
+async function liveSetup(platform: string, account: string | null, admin?: SupabaseClient): Promise<AccountSetup | GoogleSetup | TikTokSetup | null> {
   if (!account) return null;
   if (platform === "google") return googleAdsConfigured() ? googleSetup(account).catch(() => null) : null;
+  if (platform === "tiktok") return admin ? tiktokSetup(admin, account).catch(() => null) : null;
   return metaConfigured() ? accountSetup(account.replace(/^act_/, "")).catch(() => null) : null;
+}
+
+/** TikTok (read only, no change history for us): each ad's status as the TikTok sync last read it */
+async function tiktokSetup(admin: SupabaseClient, account: string): Promise<TikTokSetup | null> {
+  const { data, error } = await admin.from("tiktok_ads").select("ad_id, ad_name, status, secondary_status").eq("ad_account_id", account).limit(3000);
+  if (error) return null;
+  return { platform: "tiktok", ads: (data ?? []).map((a) => ({ id: String(a.ad_id), name: (a.ad_name as string | null) ?? null, status: (a.status as string | null) ?? null, secondary: (a.secondary_status as string | null) ?? null })) };
+}
+
+/** TikTok ads that started or stopped spending since the last check */
+async function tiktokAdChanges(admin: SupabaseClient, account: string, since: string) {
+  const from = new Date(Date.parse(since) - 7 * DAY).toISOString().slice(0, 10);
+  const { data } = await admin.from("tiktok_ad_daily").select("date, ad_id, ad_name, spend").eq("ad_account_id", account).gte("date", from).limit(5000);
+  const cut = since.slice(0, 10);
+  const before = new Set<string>();
+  const after = new Map<string, string>();
+  for (const r of data ?? []) {
+    if (!(Number(r.spend) > 0)) continue;
+    if (r.date < cut) before.add(String(r.ad_id));
+    else after.set(String(r.ad_id), (r.ad_name as string | null) ?? String(r.ad_id));
+  }
+  const out: string[] = [];
+  const started = [...after].filter(([id]) => !before.has(id));
+  if (started.length) out.push(`${started.length} ${started.length === 1 ? "ad" : "ads"} started spending: ${started.slice(0, 5).map(([, n]) => `"${n}"`).join(", ")}`);
+  const stopped = [...before].filter((id) => !after.has(id));
+  if (stopped.length) {
+    const names = [...new Set((data ?? []).filter((r) => stopped.includes(String(r.ad_id))).map((r) => r.ad_name))];
+    out.push(`${stopped.length} ${stopped.length === 1 ? "ad" : "ads"} stopped spending: ${names.slice(0, 5).map((n) => `"${n}"`).join(", ")}`);
+  }
+  return out;
 }
 
 /** Google: what changed in campaigns (status, budget, bidding and its target) between two reads. */
@@ -307,6 +339,13 @@ actions: for each action on the list (by its number), whether the Meta changes s
 learning: the lesson for the client page, only when it's earned. kind prefer when a completed move clearly improved results with enough data to trust it (a week or more, real volume); kind avoid when a change clearly made it worse. body: one sentence written as a rule for next time ("Consolidating to one broad ad set brought cost per purchase down for this account; keep it consolidated"). from: the numbers of the actions it came from. Otherwise kind none and body empty. Never repeat a lesson already learned from the same actions.
 Never invent changes or numbers. Refer to people by role, never by name. No em dashes.`;
 
+/** The check on a TikTok account: TikTok's names, its pitfalls, and what can and can't be seen of the buyer's changes */
+const TIKTOK_CHECK_SYSTEM = `${CHECK_SYSTEM.replace(/\bMeta best practice\b/g, "TikTok best practice")
+  .replace(/\bMeta\b/g, "TikTok")
+  .replace(/ad sets/g, "ad groups")
+  .replace(/resetting learning on a winner, starving the best ad set, splitting budget thinner/, "resetting learning on a winning ad group, letting tired creative run on, splitting a small budget across more ad groups")}
+TikTok is read only in Kaizen Ads: the buyer makes every change in TikTok Ads Manager. What you can see is each ad's status (on, off, rejected) and which ads started or stopped spending; budget, bid and targeting changes aren't visible, so for those go by what the buyer ticked and noted. On TikTok creative tires in days: new ads going live is often the right move.`;
+
 const fmt = (k: Kpi, v: number | null) => (v == null ? "no results" : k.roas ? `${v}x ROAS` : `$${v} per ${k.label.toLowerCase().replace(/s$/, "")}`);
 
 type ActionForCheck = { status: string; done_at: string | null; source: string | null; learned: boolean | null; title: string; watch: string | null; note: string | null; answers: unknown };
@@ -323,20 +362,25 @@ export async function checkSprint(admin: SupabaseClient, sprintId: string) {
   if (!s || s.status !== "active") return null;
   const kt = s.kpi_targets as unknown as { ad_account_id: string | null; platform: string } | null;
   const google = kt?.platform === "google";
-  const where = google ? "Google Ads" : "Meta";
-  const account = google ? (kt?.ad_account_id ?? null) : (kt?.ad_account_id?.replace(/^act_/, "") ?? null);
+  // TikTok is read only: what the check sees is each ad's status and spend from the TikTok sync, and the buyer's ticks
+  const tiktok = kt?.platform === "tiktok";
+  const where = google ? "Google Ads" : tiktok ? "TikTok" : "Meta";
+  const tag = google ? "google_ads" : tiktok ? "tiktok" : "meta";
+  const account = google || tiktok ? (kt?.ad_account_id ?? null) : (kt?.ad_account_id?.replace(/^act_/, "") ?? null);
   const since = (s.last_check_at ?? s.started_at) as string;
   const [kpi, setupNow, { data: actions }, { data: audit }] = await Promise.all([
     kpiNow(admin, s.target_id),
-    liveSetup(kt?.platform ?? "meta", account),
+    liveSetup(kt?.platform ?? "meta", account, admin),
     admin.from("sprint_actions").select("id, title, why, status, note, done_at, \"when\", watch, answers, source, learned").eq("sprint_id", sprintId).order("sort_order"),
     s.audit_id ? admin.from("account_audits").select("result").eq("id", s.audit_id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   const changes = google
     ? [...googleSetupChanges(s.setup as GoogleSetup | null, setupNow as GoogleSetup | null), ...(account && googleAdsConfigured() ? await googleHistory(account, since) : [])]
-    : [...setupChanges(s.setup as AccountSetup | null, setupNow as AccountSetup | null), ...(account ? await adChanges(admin, s.client_id, account, since) : [])];
+    : tiktok
+      ? [...tiktokSetupChanges(s.setup as TikTokSetup | null, setupNow as TikTokSetup | null), ...(account ? await tiktokAdChanges(admin, account, since) : [])]
+      : [...setupChanges(s.setup as AccountSetup | null, setupNow as AccountSetup | null), ...(account ? await adChanges(admin, s.client_id, account, since) : [])];
   // What's in place now (audiences, lists, assets, negatives, conversion settings): a setup move already in place is done
-  const snapshot = await import("@/lib/setup-snapshot").then((m) => m.setupSnapshot(kt?.platform, account, google ? null : (setupNow as AccountSetup | null)));
+  const snapshot = tiktok ? null : await import("@/lib/setup-snapshot").then((m) => m.setupSnapshot(kt?.platform, account, google ? null : (setupNow as AccountSetup | null)));
   const ticked = (actions ?? []).filter((x) => x.done_at && x.done_at > since);
   const base = s.baseline as Kpi;
   const r = audit?.result as AuditResult | null;
@@ -349,10 +393,10 @@ export async function checkSprint(admin: SupabaseClient, sprintId: string) {
     actions: { n: number; status: string; note: string }[];
     learning: { kind: "none" | "prefer" | "avoid"; body: string; from: number[] };
   }>({
-    agent: google ? "google_auditor" : "auditor",
+    agent: google ? "google_auditor" : tiktok ? tiktokAuditAgent(await agentOffline("tiktok_auditor")) : "auditor",
     label: `sprint check ${(s.clients as unknown as { name: string } | null)?.name ?? ""}`,
     clientId: s.client_id as string,
-    system: google ? CHECK_SYSTEM.replace(/\bMeta\b/g, "Google Ads").replace(/resetting learning on a winner, starving the best ad set, splitting budget thinner/, "resetting smart bidding by changing the target too far at once, cutting the budget of the campaign that converts, broadening match types without negatives") : CHECK_SYSTEM,
+    system: google ? CHECK_SYSTEM.replace(/\bMeta\b/g, "Google Ads").replace(/resetting learning on a winner, starving the best ad set, splitting budget thinner/, "resetting smart bidding by changing the target too far at once, cutting the budget of the campaign that converts, broadening match types without negatives") : tiktok ? TIKTOK_CHECK_SYSTEM : CHECK_SYSTEM,
     schema: CHECK_SCHEMA,
     prompt: `<sprint client="${(s.clients as unknown as { name: string } | null)?.name ?? ""}" day="${days}">
 KPI: ${base.label}. Target: ${fmt(base, base.target)}.
@@ -369,9 +413,9 @@ ${r ? `${r.verdict.headline}\n${r.diagnosis}\nRoot causes: ${r.causes.map((c) =>
 ${(actions ?? []).map((x, i) => actionLine(x, i)).join("\n") || "(empty)"}
 </action_list>
 
-<changes_in_${google ? "google_ads" : "meta"}_since_last_check>
-${changes.length ? changes.map((c) => `- ${c}`).join("\n") : setupNow ? (google ? "(none: no changes in campaigns, budgets or bidding, and nothing in Google's change history)" : "(none: nothing changed in campaigns, ad sets, budgets, bidding or audiences, and no ads started or stopped)") : `(couldn't read the live setup from ${where})`}
-</changes_in_${google ? "google_ads" : "meta"}_since_last_check>
+<changes_in_${tag}_since_last_check>
+${changes.length ? changes.map((c) => `- ${c}`).join("\n") : setupNow ? (google ? "(none: no changes in campaigns, budgets or bidding, and nothing in Google's change history)" : tiktok ? "(none seen: no ad switched on or off, rejected, started or stopped spending; budget and bid changes in TikTok aren't visible to us, so go by the buyer's ticks for those)" : "(none: nothing changed in campaigns, ad sets, budgets, bidding or audiences, and no ads started or stopped)") : `(couldn't read the live setup from ${where})`}
+</changes_in_${tag}_since_last_check>
 
 <ticked_since_last_check>
 ${ticked.map((x) => `- ${x.title}`).join("\n") || "(nothing)"}
