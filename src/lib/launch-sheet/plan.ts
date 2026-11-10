@@ -150,6 +150,14 @@ export function buildPlan(p: Proposal, ctx: PlanContext): { plan: LaunchPlan; wa
       warnings.push(liveSet ? `The ad set "${liveSet.name}" ${isKaizenAdset(liveSet) ? "isn't in the campaign planned" : "wasn't set up by Kaizen"}, so a new ad set is planned instead.` : `Ad set ${existing} isn't in the account, so a new one is planned.`);
       existing = null;
     }
+    // Into an existing campaign: a Kaizen ad set already there by that name is the one built into, never made again
+    // (a launch that already made it adds to it; Meta would take a second copy under the same name)
+    if (!existing && !cloneFrom && scope && parent?.mode === "existing" && parent.existingId) {
+      const same = (x: string) => x.toLowerCase().replace(/[\s|_-]+/g, " ").replace(/kaizen/g, "").trim();
+      const there = (scope.adsets ?? []).find((x) => x.campaignId === parent.existingId && isKaizenAdset(x) && same(x.name) === same(s.name));
+      if (there) existing = there.id;
+    }
+    const liveNow = existing ? adsetById.get(existing) ?? liveSet : null;
     if (!cloneFrom && !existing && g0(cities, regions, countries, s.zips)) warnings.push(`Ad set "${s.name}" has no location.`);
     const newName = s.name.trim() || "New ad set";
     return {
@@ -159,7 +167,7 @@ export function buildPlan(p: Proposal, ctx: PlanContext): { plan: LaunchPlan; wa
       campaignKey: s.campaignKey,
       mode: existing ? "existing" : "new",
       existingId: existing,
-      name: existing ? (liveSet?.name ?? s.name.trim()) : setsKaizen ? withKaizen(newName, kaizenSetNames) : newName,
+      name: existing ? (liveNow?.name ?? s.name.trim()) : setsKaizen ? withKaizen(newName, kaizenSetNames) : newName,
       optimizationGoal: "OFFSITE_CONVERSIONS",
       pixelId: res.pixel?.id ?? null,
       event: s.event || "PURCHASE",

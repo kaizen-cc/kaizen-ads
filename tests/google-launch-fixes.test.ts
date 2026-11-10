@@ -239,3 +239,24 @@ describe("the plan card has every field", () => {
     expect(checkGooglePlan(plan).filter((i) => i.key === "targeting:c1")).toEqual([]);
   });
 });
+
+describe("building into a campaign that already has the ad groups", () => {
+  it("adds to the ad group already there by that name instead of making it again (Google takes a name once)", () => {
+    const raw = {
+      note: "Into the paused test campaign.",
+      campaigns: [{ key: "c1", mode: "existing", existingId: "24454142377", name: "Kaizen | Search | MOF | Box Themes | [TEST]", type: "SEARCH", budget: 0, bidding: "", targetCpa: 0, targetRoas: 0, locations: [], excludedLocations: [], negatives: [], sitelinks: [], callouts: [], snippets: [] }],
+      adGroups: [
+        { key: "g1", campaignKey: "c1", mode: "new", existingId: "", name: "salmon lovers box", fromRead: -1, finalUrl: "https://oceanbox.com/products/salmon-lovers-box", keywords: ['"salmon box"'], negatives: [], rsas: [] },
+        { key: "g2", campaignKey: "c1", mode: "new", existingId: "", name: "Gift Boxes", fromRead: -1, finalUrl: "https://oceanbox.com/collections/gift-boxes", keywords: ['"seafood gift box"'], negatives: [], rsas: [] },
+      ],
+      assetGroups: [],
+    };
+    const { plan } = buildGooglePlan(proposalFrom(raw), { account: "9907548733", draft: { adGroups: [], campaignNegatives: [], notes: [] }, res: { campaigns: camps, adGroups: groups, assetGroups: [] }, finalUrl: null, locations: new Map(), locationAsk: null });
+    expect(plan.adGroups[0]).toMatchObject({ mode: "existing", existingId: "g9", name: "Salmon Lovers Box" });
+    expect(plan.adGroups[1]).toMatchObject({ mode: "new", existingId: null });
+    const { ops } = googleOperations(plan, "9907548733");
+    // No second "Salmon Lovers Box": its keyword goes straight into the ad group that's there
+    expect(JSON.stringify(ops)).not.toContain('"name":"Salmon Lovers Box"');
+    expect(JSON.stringify(ops)).toContain("customers/9907548733/adGroups/g9");
+  });
+});

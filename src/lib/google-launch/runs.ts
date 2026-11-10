@@ -905,6 +905,7 @@ export function buildGooglePlan(
   });
   for (const c of campaigns) if (c.mode === "new" && c.unresolvedPlaces?.length) warnings.push(`Couldn't resolve "${c.locationAsk}" as places Google knows (${c.unresolvedPlaces.map((m) => `"${m}"`).join(", ")}): it won't deploy until the places are fixed.`);
   const adGroups: GAdGroup[] = [];
+  const read0 = (g: (typeof p.adGroups)[number]) => (g.fromRead >= 0 ? ctx.draft.adGroups[g.fromRead] : undefined);
   for (const g of p.adGroups) {
     let live = g.mode === "existing" ? ctx.res.adGroups.find((x) => x.id === digits(g.existingId)) : null;
     if (g.mode === "existing" && !live) warnings.push(`"${g.name}" isn't an ad group in the account, so it's planned as a new one.`);
@@ -912,6 +913,14 @@ export function buildGooglePlan(
     if (live && !kaizenIds.has(live.campaignId)) {
       warnings.push(`"${live.name}" is in "${live.campaign}", which Kaizen didn't set up, so it's planned as a new ad group.`);
       live = null;
+    }
+    // Into an existing campaign: an ad group already there by that name is the one built into (Google takes a name
+    // once per campaign, and a launch that already made it must add to it, not make it again)
+    const target = campaigns.find((x) => x.key === g.campaignKey);
+    if (!live && target?.mode === "existing" && target.existingId) {
+      const same = (a: string) => a.toLowerCase().replace(/[\s|_-]+/g, " ").replace(/kaizen/g, "").trim();
+      const there = ctx.res.adGroups.find((x) => x.campaignId === target.existingId && (same(x.name) === same(g.name) || same(x.name) === same(read0(g)?.name ?? "")));
+      if (there) live = there;
     }
     let campaignKey = g.campaignKey;
     if (live) {
@@ -1071,7 +1080,9 @@ export async function checkGoogleRun(admin: SupabaseClient, id: string) {
     if (i.status === "existing") continue;
     const errs = local.filter((x) => x.key === i.key && x.level === "error");
     const warns = local.filter((x) => x.key === i.key && x.level === "warn");
-    const g = (google.by.get(i.key) ?? []).map(plainGoogleError);
+    // A line under one Google refused (its ad group, its campaign) fails with it: said as that, not as "gone"
+    const parentBad = Boolean(i.parentKey && items.find((x) => x.key === i.parentKey)?.status === "invalid");
+    const g = (google.by.get(i.key) ?? []).map((e) => (parentBad && /NOT_FOUND/.test(e.code) ? { plain: "It goes in with the line above it, which Google refused.", fix: "Fix that line and this one goes in with it." } : plainGoogleError(e)));
     const hand = byHand.find((b) => b.key === i.key);
     i.checked = at;
     if (errs.length || g.length) {
