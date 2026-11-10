@@ -11,6 +11,7 @@ import type { Draft } from "./draft";
 import type { ClientOption } from "./parts";
 import { Spark } from "./parts";
 import { moreMarket } from "./actions";
+import { removeIdea } from "../../pipeline/suggestion-actions";
 import type { BriefSource, QuickBrief } from "@/lib/quick-brief";
 import { BriefJobSlot } from "@/components/brief-jobs";
 import type { WinnerSource } from "@/lib/suggestions";
@@ -401,6 +402,20 @@ export function StartPage({
   onTalk: () => void;
 }) {
   const { core, rest, failed } = useStart(clientId);
+  // "Your idea" briefs taken off the page (gone at once; the server puts them away)
+  const [removed, setRemoved] = useState<string[]>([]);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const remove = async (id: string) => {
+    setRemoveError(null);
+    setRemoved((r) => [...r, id]);
+    const r = await removeIdea(id).catch(() => ({ ok: false as const, error: "Couldn't remove it. Try again." }));
+    if (!r.ok) {
+      setRemoved((x) => x.filter((y) => y !== id));
+      setRemoveError(r.error);
+      return;
+    }
+    forgetStart(clientId);
+  };
   // The briefs already written show the moment they're read; the heavier sections fill in as they come
   const loading = !core && !failed;
   const restLoading = !rest && !failed;
@@ -470,7 +485,8 @@ export function StartPage({
       empty={<EmptyState title="All clear" line={`nothing tiring or off for ${clientName} right now`} />}
       count={data?.briefs.length ?? 0}
     >
-      {(data?.briefs ?? []).map((b) => (
+      {removeError && <p className="col-span-full rounded-[12px] border border-bad/30 bg-bad-soft px-3 py-2 text-[13px] text-bad">{removeError}</p>}
+      {(data?.briefs ?? []).filter((b) => !removed.includes(b.id)).map((b) => (
         <Card
           key={b.id}
           thumb={b.thumb}
@@ -488,6 +504,7 @@ export function StartPage({
           action="Brief on this"
           onClick={() => onPreview({ key: `s-${b.id}`, source: { kind: "suggestion", id: b.id }, from: { kicker: KIND_LABEL[b.kind as SuggestionKind] ?? "Suggested brief", label: b.signal, thumb: b.thumb, adId: b.adId }, progressLabel: "brief rewrite from a preview+brief self-review", savedRefId: savedId(find("brief", b.id)) })}
           star={star(saveBrief(b))}
+          onRemove={b.kind === "idea" ? () => void remove(b.id) : undefined}
           brief={{ source: { kind: "suggestion", id: b.id }, clientId }}
         />
       ))}
@@ -790,6 +807,7 @@ function Card({
   link,
   fixed = false,
   brief = null,
+  onRemove,
 }: {
   thumb: string | null;
   /** A Meta ad behind it: its kept picture when the link we have has expired */
@@ -819,16 +837,41 @@ function Card({
   link?: string | null;
   /** A set width, for a sideways row */
   fixed?: boolean;
+  /** Take it off the page ("Your idea" briefs): a second tap confirms */
+  onRemove?: () => void;
   /** What its brief is written from: its background job shows here in place of the action */
   brief?: { source: BriefSource; clientId: string } | null;
 }) {
   const media = thumb || adId || video;
+  const [sure, setSure] = useState(false);
   return (
     <article className={`group flex shrink-0 snap-start flex-col overflow-hidden rounded-[22px] border border-line bg-surface transition hover:-translate-y-0.5 hover:border-faint ${fixed ? "w-[78vw] max-w-[300px] sm:w-[290px]" : "w-[80vw] max-w-[340px] sm:w-auto sm:max-w-none"}`}>
       <div className={`relative w-full overflow-hidden bg-gradient-to-br ${tint ?? "from-surface-2"} to-surface-2 ${media && ratio === "4/5" ? "aspect-[4/5]" : "aspect-[16/11]"}`}>
         {media ? <RefThumb src={thumb} adId={adId} video={video} format={format} /> : <span className="absolute inset-0 grid place-items-center px-7 text-center font-heading text-[19px] leading-snug text-fg/85">{fallback ?? title}</span>}
         <span className={`absolute left-3 top-3 max-w-[64%] truncate rounded-full px-2.5 py-1 text-[11px] font-semibold ${TONE[tone]}`}>{chip}</span>
-        {star && <span className="absolute right-2 top-2">{star}</span>}
+        {(star || onRemove) && (
+          <span className="absolute right-2 top-2 flex items-center gap-1.5">
+            {onRemove && (
+              <button
+                type="button"
+                onClick={() => (sure ? onRemove() : setSure(true))}
+                onBlur={() => setSure(false)}
+                aria-label={sure ? "Tap again to remove this idea" : "Remove this idea"}
+                title="Remove this idea"
+                className={`grid h-11 place-items-center rounded-full text-white backdrop-blur transition ${sure ? "bg-bad px-3.5 text-[12.5px] font-medium" : "w-11 bg-black/55 hover:bg-black/75"}`}
+              >
+                {sure ? (
+                  "Remove"
+                ) : (
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" />
+                  </svg>
+                )}
+              </button>
+            )}
+            {star}
+          </span>
+        )}
         {format && <span className="absolute bottom-3 left-3 rounded-full bg-black/65 px-2.5 py-1 text-[11px] text-white backdrop-blur">{FMT[format]}</span>}
         {link && (
           <a href={link} target="_blank" rel="noreferrer" className="absolute bottom-2 right-2 grid h-11 min-w-11 place-items-center rounded-full bg-black/55 px-3 text-[12px] text-white opacity-100 backdrop-blur transition hover:bg-black/75 md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100">

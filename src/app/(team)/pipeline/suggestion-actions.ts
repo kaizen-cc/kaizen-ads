@@ -170,6 +170,31 @@ export async function approveRound(batchId: string): Promise<Result<{ numbers: n
   return { ok: true, numbers, skipped };
 }
 
+/**
+ * A brief someone wrote from their own idea (talked through, "Your idea"), taken off the start page when it's not wanted
+ * any more: put away (expired), not declined, so the strategist doesn't learn from it. Whoever started it, or a lead.
+ */
+export async function removeIdea(id: string): Promise<Result> {
+  const me = await requireStaff();
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, error: "That idea isn't there." };
+  const supabase = await createClient();
+  const { data: s } = await supabase.from("creative_suggestions").select("client_id, kind, status, created_by").eq("id", id).maybeSingle();
+  if (!s || s.kind !== "idea") return { ok: false, error: "Only your own ideas can be removed here." };
+  if (s.status !== "open") return { ok: true };
+  if (s.created_by !== me.id && !isExecOrLead(me)) return { ok: false, error: "Only whoever started it, or a lead, can remove it." };
+  const db = adminConfigured() ? createAdminClient() : supabase;
+  const { error } = await db
+    .from("creative_suggestions")
+    .update({ status: "expired", decline_reason: `Removed from the start page by ${me.fullName}`.slice(0, 600), decided_by: me.id, decided_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("status", "open");
+  if (error) return { ok: false, error: "Couldn't remove it. Try again." };
+  await markItem(supabase, me.id, `brief:${id}`, "dismissed", { topic: "briefs", clientId: s.client_id as string });
+  await reviewsChanged();
+  revalidatePath("/pipeline");
+  return { ok: true };
+}
+
 /** Decline, with the reason (the strategist reads it next time). Optionally remembered for the client too. */
 export async function declineSuggestion(id: string, reason: string, remember: boolean): Promise<Result> {
   const me = await requireStaff(); // the suggestion's own rules decide: execs, leads, or whoever started it from a winner
