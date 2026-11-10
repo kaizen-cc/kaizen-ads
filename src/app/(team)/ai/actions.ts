@@ -118,6 +118,46 @@ export async function pickableClients(): Promise<{ id: string; name: string; slu
   return (data ?? []) as { id: string; name: string; slug: string }[];
 }
 
+/**
+ * Which client each imported Claude chat is about, for the ones no client name in the title or opening settled: the AI
+ * reads each one's title and how it starts and picks the client from the list, or none (personal, internal, not about
+ * one client). Up to 120 chats a call; only the person's own chats are sent, and nothing is kept.
+ */
+export async function matchImportClients(chats: { id: string; title: string; opening: string }[]): Promise<Record<string, string>> {
+  await requireStaff();
+  const { aiEnabled, askJson } = await import("@/lib/ai");
+  if (!aiEnabled() || !chats.length) return {};
+  const db = await createClient();
+  const { data } = await db.from("clients").select("id, name, industry, website").is("archived_at", null).order("name").limit(1000);
+  const clients = (data ?? []) as { id: string; name: string; industry: string | null; website: string | null }[];
+  if (!clients.length) return {};
+  const list = clients.map((c, i) => `C${i + 1} · ${c.name}${c.industry ? ` · ${c.industry}` : ""}${c.website ? ` · ${c.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/.*$/, "")}` : ""}`).join("\n");
+  const batch = chats.slice(0, 120);
+  try {
+    const out = await askJson<{ matches: { chat: number; client: string }[] }>({
+      agent: "review",
+      label: "claude import client match",
+      bare: true,
+      override: { model: "haiku", effort: "low" },
+      maxTokens: 4000,
+      schema: { type: "object", properties: { matches: { type: "array", items: { type: "object", properties: { chat: { type: "number" }, client: { type: "string" } }, required: ["chat", "client"], additionalProperties: false } } }, required: ["matches"], additionalProperties: false },
+      system:
+        "You sort a marketing agency team member's past AI chats by the agency client each one is about. For each chat, pick the client from the list when the chat is clearly about that client's business (their ads, brand, products, reports, creative, website, offer), even when the client is named differently (spacing, abbreviation, a product or location of theirs). Answer the client's code (C12). Use \"\" when it's about no single client: personal matters, the agency itself, tools and code, general questions, or when you're unsure. Never guess.",
+      prompt: `<clients>\n${list}\n</clients>\n\n<chats>\n${batch.map((c, i) => `${i + 1}. ${c.title.slice(0, 160)}${c.opening ? ` :: ${c.opening.replace(/\s+/g, " ").slice(0, 280)}` : ""}`).join("\n")}\n</chats>\n\nmatches: one entry per chat you can place (chat: its number, client: the code).`,
+    });
+    const res: Record<string, string> = {};
+    for (const m of out.matches ?? []) {
+      const chat = batch[Math.round(m.chat) - 1];
+      const n = Number(String(m.client).replace(/\D/g, ""));
+      const c = n >= 1 ? clients[n - 1] : null;
+      if (chat && c) res[chat.id] = c.id;
+    }
+    return res;
+  } catch {
+    return {};
+  }
+}
+
 /** Upload links for files the browser sends straight to storage (in the person's own folder) */
 export async function uploadSlots(files: { name: string; mime: string; bytes: number; role?: "file" | "frame" | "audio" }[]): Promise<Ok<{ slots: { path: string; token: string }[] }>> {
   const me = await requireStaff();

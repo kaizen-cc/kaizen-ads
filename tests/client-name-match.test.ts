@@ -76,3 +76,16 @@ describe("client name matching", () => {
     expect(matchClientName("nothing about anyone", clients)).toEqual({ sure: null, maybe: [] });
   });
 });
+
+describe("a one-word brand written as two words", () => {
+  const clients = [
+    { id: "ob", name: "OceanBox", website: null },
+    { id: "bt", name: "Best Tickets", website: null },
+  ];
+  it("reads \"Ocean Box\" as OceanBox", () => {
+    expect(matchClientName("Meta and Google performance report for Ocean Box", clients).sure?.id).toBe("ob");
+  });
+  it("leaves a short one alone", () => {
+    expect(matchClientName("Box Themes for Q4", [{ id: "x", name: "BoxTh", website: null }]).sure).toBeNull();
+  });
+});

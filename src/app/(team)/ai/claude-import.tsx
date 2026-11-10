@@ -5,7 +5,7 @@ import { batches, notImported, ownChats, parseConversations, parseProjects, part
 import { linksExpired, missingFiles, sameFile, wantedFiles, type Manifest, type ManifestFile } from "@/lib/kaizen-ai/claude-export-manifest";
 import { readClaudeExportFiles, readManifest } from "@/lib/kaizen-ai/claude-import-file";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
-import { claudeImportState, deleteClaudeImport, finishClaudeImport, startClaudeImport, type ClaudeImport } from "./actions";
+import { claudeImportState, deleteClaudeImport, finishClaudeImport, matchImportClients, startClaudeImport, type ClaudeImport } from "./actions";
 
 // Import from Claude: the person exports their data from claude.ai, drops the file from Claude's email here (the manifest's download links are shown, then the parts they downloaded are read), picks the chats (each with the
 // client it's about, suggested from its title and opening), and they come in as their own private threads, in
@@ -660,12 +660,39 @@ function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at:
   const [more, setMore] = useState(SHOW);
   const [menu, setMenu] = useState<string | null>(null);
   const byId = useMemo(() => new Map(clients.map((c) => [c.id, c])), [clients]);
-  const clientOf = (uuid: string) => (uuid in client ? client[uuid] : (suggested.get(uuid) ?? null));
+  // The chats no client name settled: the AI places them while the list is open (by title and how each starts)
+  const [ai, setAi] = useState<{ found: Record<string, string>; left: number }>({ found: {}, left: 0 });
+  useEffect(() => {
+    const ids = new Set(clients.map((c) => c.id));
+    const todo = convs
+      .filter((c) => !suggested.get(c.uuid))
+      .map((c) => ({ id: c.uuid, title: c.title, opening: c.messages.find((m) => m.role === "user")?.text.slice(0, 300) ?? "" }));
+    if (!todo.length || !ids.size) return;
+    let live = true;
+    const chunks: (typeof todo)[] = [];
+    for (let i = 0; i < todo.length; i += 120) chunks.push(todo.slice(i, i + 120));
+    void Promise.resolve().then(() => live && setAi({ found: {}, left: chunks.length }));
+    // Three at a time, each folded in as it comes back
+    let next = 0;
+    const run = async () => {
+      while (live && next < chunks.length) {
+        const part = chunks[next++];
+        const got = await matchImportClients(part).catch(() => ({}) as Record<string, string>);
+        if (!live) return;
+        setAi((a) => ({ found: { ...a.found, ...Object.fromEntries(Object.entries(got).filter(([, v]) => ids.has(v))) }, left: Math.max(0, a.left - 1) }));
+      }
+    };
+    void Promise.all([run(), run(), run()]);
+    return () => {
+      live = false;
+    };
+  }, [convs, clients, suggested]);
+  const clientOf = (uuid: string) => (uuid in client ? client[uuid] : (suggested.get(uuid) ?? ai.found[uuid] ?? null));
   const s = q.trim().toLowerCase();
   const shown = s ? convs.filter((c) => c.title.toLowerCase().includes(s) || (byId.get(clientOf(c.uuid) ?? "")?.name ?? "").toLowerCase().includes(s)) : convs;
   const n = convs.filter((c) => picked.has(c.uuid)).length;
   const np = projects.filter((p) => picked.has(`project:${p.uuid}`)).length;
-  const matched = convs.filter((c) => suggested.get(c.uuid)).length;
+  const matched = convs.filter((c) => suggested.get(c.uuid) || ai.found[c.uuid]).length;
   const toggle = (k: string) =>
     setPicked((p) => {
       const x = new Set(p);
@@ -697,6 +724,7 @@ function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at:
           </span>
           {already ? <span>· {already} already imported, skipped</span> : null}
           {matched ? <span>· {matched} matched to a client</span> : null}
+          {ai.left > 0 && <span className="animate-pulse">· matching the rest…</span>}
         </div>
         {notice ? <p className="rounded-[12px] bg-brand-soft/40 px-3 py-2 text-[12.5px] leading-relaxed text-fg/90">{notice}</p> : null}
         <div className="flex items-center gap-2">

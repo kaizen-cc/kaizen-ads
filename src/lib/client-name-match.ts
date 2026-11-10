@@ -90,7 +90,9 @@ export function scoreClient(text: string, c: NamedClient, siteCounts = true) {
   const lead = b.find((w) => w.t.length >= 4) ?? null;
   const brandJoined = b.map((w) => w.t).join("");
   // A one-word brand has to be written as a name (capitalized mid-sentence), so "Elevate the ads" isn't the client Elevate
-  const brandAll = b.every((w) => has(w.t, b.length === 1 ? "name" : null)) || (b.length > 1 && joined.has(brandJoined));
+  // and a one-word brand written as two capitalized words ("Ocean Box" for OceanBox) counts too
+  const capPairs = new Set(ws.flatMap((x, i) => (i + 1 < ws.length && x.cap && ws[i + 1].cap ? [x.t + ws[i + 1].t] : [])));
+  const brandAll = b.every((w) => has(w.t, b.length === 1 ? "name" : null)) || (b.length > 1 && joined.has(brandJoined)) || (b.length === 1 && brandJoined.length >= 6 && capPairs.has(brandJoined));
   const brandLead = Boolean(lead && has(lead.t, "cap"));
   const locAll = l.length > 0 && l.some((w) => w.t.length >= 4) && l.every((w) => has(w.t));
   if (!l.length) return brandAll && brandJoined.length >= 4 ? 3 : brandLead ? 1 : 0;
