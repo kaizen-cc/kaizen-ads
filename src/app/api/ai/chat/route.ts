@@ -19,6 +19,8 @@ type Body = {
   clientId?: string | null;
   projectId?: string | null;
   mode?: "send" | "regenerate" | "edit";
+  connectors?: string[];
+  approve?: string | null;
 };
 
 export async function POST(request: Request) {
@@ -62,6 +64,8 @@ export async function POST(request: Request) {
           clientId: body.clientId === undefined ? undefined : typeof body.clientId === "string" && /^[0-9a-f-]{36}$/.test(body.clientId) ? body.clientId : null,
           projectId: typeof body.projectId === "string" && /^[0-9a-f-]{36}$/.test(body.projectId) ? body.projectId : null,
           mode,
+          connectors: Array.isArray(body.connectors) ? body.connectors.filter((k): k is string => typeof k === "string" && /^[a-z][a-z0-9_-]{1,39}$/.test(k)).slice(0, 20) : undefined,
+          approve: typeof body.approve === "string" && /^[0-9a-f-]{36}$/.test(body.approve) ? body.approve : null,
           signal: request.signal,
           emit,
         });

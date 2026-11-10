@@ -50,7 +50,7 @@ export function kindOf(mime: string, name: string): AttachmentKind | null {
 export const MAX_FILES = 10;
 export const MAX_BYTES: Record<AttachmentKind, number> = { image: 10_000_000, pdf: 32_000_000, doc: 30_000_000, text: 5_000_000, video: 500_000_000 };
 
-export type ToolRun ={ id: string; name: string; label: string; ok: boolean | null; ms?: number; summary?: string };
+export type ToolRun ={ id: string; name: string; label: string; ok: boolean | null; ms?: number; summary?: string; /** A connector's tool (MCP): which service, and its input and result for the expandable step */ connector?: string; input?: string; output?: string };
 
 // ─── Rich cards a tool can return ───────────────────────────────────────────
 
@@ -93,7 +93,11 @@ export type PlanCard = { type: "plan"; id: string; client: string; platform: str
 export type ListCard = { type: "list"; title: string; items: { title: string; detail?: string; tone?: "ok" | "warn" | "bad" | null; href?: string | null; when?: string | null }[] };
 /** A launch from a launch sheet: read, checked, asked about, planned and created on the card */
 export type LaunchCardRef = { type: "launch"; id: string; client: string };
-export type Card = MetricsCard | CopyCard | BriefCard | LinkCard | PlanCard | ListCard | LaunchCardRef;
+/** A connector the chat needs that isn't connected (or needs a new sign in): Connect right there */
+export type ConnectCard = { type: "connect"; key: string; name: string; reason: string; reconnect?: boolean; auth?: string };
+/** A connector's tool that changes something, waiting for the person's Run (or Cancel) before it's switched on */
+export type ConnectorConfirmCard = { type: "connector_confirm"; id: string; key: string; name: string; tool: string; summary: string; input: string; status: "pending" | "approved" | "cancelled" };
+export type Card = MetricsCard | CopyCard | BriefCard | LinkCard | PlanCard | ListCard | LaunchCardRef | ConnectCard | ConnectorConfirmCard;
 
 export type ChatMessage = {
   id: string;

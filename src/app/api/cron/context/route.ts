@@ -99,6 +99,7 @@ function due(step: string | null) {
   if (step === "creative_drive") return true; // every 10 minutes (vercel.json): ticket creative copied into each client's Drive, retries
   if (step === "bibles") return true; // every 10 minutes (vercel.json): every client gets a Brand Bible, kept current
   if (step === "meta_tokens") return true; // daily (vercel.json): each Business Manager's Meta token checked, execs told when one stops working
+  if (step === "connectors") return true; // daily (vercel.json): the MCP registry's remote servers into the connector catalog, offered ones kept current
   if (step === "bible_write") return true; // started by a Bible build once its research is in (?client=<id>)
   if (step === "presentation_write") return true; // started once a Bible is written (?client=<id>): its client presentation, drafted (never sent)
   if (step === "presentations") return true; // every 10 minutes (vercel.json): a new client's presentation, written and sent
@@ -158,6 +159,7 @@ export async function GET(request: Request) {
     if (step === "kpi") return Response.json(await refreshAllKpis(admin));
     if (step === "tiktok") return Response.json(await (await import("@/lib/tiktok/store")).syncAllTikTok(admin));
     if (step === "meta_tokens") return Response.json(await (await import("@/lib/meta-tokens")).checkAllBusinessTokens(admin));
+    if (step === "connectors") return Response.json(await (await import("@/lib/connectors/registry-sync")).syncConnectorRegistry(admin));
     if (step === "google_ideas") {
       const { googleAdsConfigured } = await import("@/lib/context/google-ads");
       if (!googleAdsConfigured()) return Response.json({ skipped: "Google Ads isn't connected" });

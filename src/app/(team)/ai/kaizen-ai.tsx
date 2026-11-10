@@ -14,6 +14,7 @@ import { moveThreadToProject, threadProjects } from "./project-actions";
 import { MoveToProject, ProjectView, ProjectsHome, useProject } from "./projects";
 
 type ProjectRef = { id: string; name: string };
+import { ConnectorsMenu, RUN_EVENT, type RunDetail } from "./connectors-ui";
 
 // Kaizen AI: a chat like Claude's, for the team. Threads on the left (search, pinned, grouped by client, shared with
 // me), the conversation in the middle with streaming answers, tool status and cards, and a composer with files,
@@ -93,6 +94,12 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ model: AiModel; agent: ChatAgent | null; client: ClientOpt | null }>({ model: "opus", agent: null, client: null });
   const [notice, setNotice] = useState<string | null>(null);
+  // Connectors switched on before the first message (null: every connected one); a thread keeps its own
+  const [draftConnectors, setDraftConnectors] = useState<string[] | null>(null);
+  // Back from connecting a service (?connected= or ?connect_error=)
+  const connectedParam = useParam("connected");
+  const connectError = useParam("connect_error");
+  const flash = connectError ?? (connectedParam ? `Connected. It's on in this chat.` : null);
   const abort = useRef<AbortController | null>(null);
   const streamingThread = useRef<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
@@ -232,7 +239,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
   };
 
   // ─── A turn: sent, the answer streamed back ───
-  const run = async (mode: "send" | "regenerate" | "edit", body: string) => {
+  const run = async (mode: "send" | "regenerate" | "edit", body: string, extra?: { approve?: string }) => {
     if (live?.busy || !on) return;
     const ready = files.filter((f) => f.status === "ready" && f.att).map((f) => f.att!);
     if (mode === "send" && !body.trim() && !ready.length) return;
@@ -266,7 +273,8 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
       attachments: mode === "send" ? ready : [],
       model,
       mode,
-      ...(thread ? {} : { agent: draft.agent, clientId: draft.client?.id ?? undefined, projectId: projectData?.project.id ?? undefined }),
+      ...(thread ? {} : { agent: draft.agent, clientId: draft.client?.id ?? undefined, projectId: projectData?.project.id ?? undefined, ...(draftConnectors ? { connectors: draftConnectors } : {}) }),
+      ...(extra?.approve ? { approve: extra.approve } : {}),
     };
     const startedIn = thread ? null : projectData ? { id: projectData.project.id, name: projectData.project.name } : null;
     const handle = (e: ChatEvent) => {
@@ -332,6 +340,20 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
 
   const stop = () => abort.current?.abort();
 
+  // Run on a connector's confirm card: sent as the next message, with the card it approves
+  const runRef = useRef(run);
+  useEffect(() => {
+    runRef.current = run;
+  });
+  useEffect(() => {
+    const onRun = (e: Event) => {
+      const d = (e as CustomEvent<RunDetail>).detail;
+      if (d?.id) void runRef.current("send", d.text, { approve: d.id });
+    };
+    window.addEventListener(RUN_EVENT, onRun);
+    return () => window.removeEventListener(RUN_EVENT, onRun);
+  }, []);
+
   // ─── Thread settings ───
   const patchThread = async (p: Parameters<typeof updateThread>[1], local: Partial<Thread>) => {
     if (!thread) return;
@@ -348,6 +370,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
   const newChat = () => {
     if (live?.busy) return;
     setDraft({ model: thread?.model ?? draft.model, agent: null, client: null });
+    setDraftConnectors(null);
     pushParams({ t: null, list: null, p: null, projects: null });
     setTimeout(() => input.current?.focus(), 50);
   };
@@ -465,8 +488,12 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
             onAttach={attach}
             busy={Boolean(live?.busy)}
             on={on}
-            notice={notice}
-            onDismiss={() => setNotice(null)}
+            notice={notice ?? flash}
+            onDismiss={() => {
+              setNotice(null);
+              if (flash) replaceParams({ connected: null, connect_error: null });
+            }}
+            connectors={<ConnectorsMenu key={`${thread?.id ?? "new"}-${messages.length}`} threadId={thread?.id ?? null} draft={draftConnectors} onDraft={setDraftConnectors} />}
             onSend={() => void run("send", text)}
             onStop={stop}
             agent={agentPick}
@@ -1194,6 +1221,7 @@ function Composer({
   groups,
   quickIds,
   placeholder,
+  connectors,
 }: {
   placeholder?: string;
   input: React.RefObject<HTMLTextAreaElement | null>;
@@ -1217,6 +1245,8 @@ function Composer({
   onTemplatesChanged: () => void;
   groups: QuickAction["group"][];
   quickIds: string[];
+  /** The connections menu (connectors switched on in this chat) */
+  connectors?: React.ReactNode;
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [agentMenu, setAgentMenu] = useState(false);
@@ -1340,6 +1370,7 @@ function Composer({
             <button type="button" onClick={() => fileInput.current?.click()} className="grid h-11 w-11 place-items-center rounded-full text-muted hover:bg-ink/[0.05] hover:text-fg" aria-label="Attach files">
               <Icon d={P.clip} />
             </button>
+            {connectors}
             <div className="relative">
               <button type="button" onClick={() => setAgentMenu(!agentMenu)} className="flex min-h-10 max-w-[230px] items-center gap-1.5 rounded-full px-3 text-[12.5px] text-muted hover:bg-ink/[0.05] hover:text-fg">
                 <span className="truncate">

@@ -4,6 +4,7 @@ import { BusinessManagers } from "@/components/meta-business-connections";
 import { TikTokConnection } from "@/components/tiktok-connection";
 import { tiktokConfigured } from "@/lib/tiktok/core";
 import { Connections } from "./connections";
+import { ConnectorsTab, MyConnectionsTab } from "./connectors-tab";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -46,13 +47,17 @@ const TABS = [
   ["data", "Raw data"],
   ["sync", "Sync health"],
   ["connections", "Connections"],
+  ["connectors", "Connectors"],
+  ["my-connections", "Your connections"],
   ["errors", "Errors"],
   ["deleted", "Deleted"],
 ] as const;
 // Leads see the team and the deleted log; execs see everything. The heads of Meta, Google and Creative also see
-// AI agents, with only their own line's agent in it (canTrainAgent)
+// AI agents, with only their own line's agent in it (canTrainAgent). Everyone sees Your connections (their own
+// accounts for Kaizen AI's connectors)
 const LEAD_TABS = ["team", "connections", "deleted"];
 const HEAD_TABS = ["agents"];
+const EVERYONE_TABS = ["my-connections"];
 
 const day = (offset: number) => {
   const d = new Date(`${nyParts(new Date()).date}T12:00:00Z`);
@@ -881,8 +886,8 @@ async function Deleted() {
 export default async function Settings({ searchParams }: PageProps<"/settings">) {
   const me = await requireStaff();
   const trains = trainableRoles(me).length > 0;
-  if (!isExecOrLead(me) && !trains) redirect("/pipeline");
-  const tabs = me.isExec ? TABS : TABS.filter(([k]) => (isExecOrLead(me) && LEAD_TABS.includes(k)) || (trains && HEAD_TABS.includes(k)));
+  const tabs = me.isExec ? TABS : TABS.filter(([k]) => (isExecOrLead(me) && LEAD_TABS.includes(k)) || (trains && HEAD_TABS.includes(k)) || EVERYONE_TABS.includes(k));
+  if (!tabs.length) redirect("/pipeline");
   const sp = await searchParams;
   const tab = tabs.some(([k]) => k === sp.tab) ? (sp.tab as (typeof TABS)[number][0]) : tabs[0][0];
   const valid = (d: unknown) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
@@ -893,7 +898,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
     <div className="grid grid-cols-[minmax(0,1fr)] gap-5 md:gap-7">
       <header>
         <h1 className="font-heading text-[26px] leading-tight md:text-[32px]">Settings</h1>
-        <p className="mt-1.5 text-sm text-muted">Tune the AI agents and look under the hood at the data behind every number.</p>
+        <p className="mt-1.5 text-sm text-muted">{isExecOrLead(me) || trains ? "Tune the AI agents and look under the hood at the data behind every number." : "Connect your own accounts to use them in Kaizen AI."}</p>
       </header>
       {/* Phones: one row of pills that scrolls sideways and snaps; desktop: the row wraps as before */}
       <nav className="no-scrollbar -mx-4 flex snap-x snap-mandatory scroll-px-4 gap-1.5 overflow-x-auto px-4 md:mx-0 md:snap-none md:flex-wrap md:overflow-visible md:px-0">
@@ -922,6 +927,8 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       {tab === "data" && <Data target={typeof sp.target === "string" ? sp.target : null} from={from} to={to} />}
       {tab === "sync" && <Sync motion={typeof sp.motion === "string" ? sp.motion : null} />}
       {tab === "connections" && <Connections isExec={me.isExec} />}
+      {tab === "connectors" && <ConnectorsTab me={me} view={typeof sp.view === "string" ? sp.view : null} q={typeof sp.q === "string" ? sp.q : null} />}
+      {tab === "my-connections" && <MyConnectionsTab me={me} />}
       {tab === "errors" && <Errors all={sp.show === "all"} />}
       {tab === "deleted" && <Deleted />}
     </div>

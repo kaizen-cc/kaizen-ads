@@ -333,13 +333,6 @@ export async function threadProjects(): Promise<Record<string, { id: string; nam
  */
 export async function myConnectorKeys(): Promise<string[]> {
   const me = await requireStaff();
-  const db = await createClient();
-  for (const [table, col] of [
-    ["mcp_connections", "connector_key"],
-    ["ai_connections", "connector_key"],
-  ] as const) {
-    const { data, error } = await db.from(table).select(col).eq("profile_id", me.id);
-    if (!error) return [...new Set((data ?? []).map((r) => String((r as Record<string, unknown>)[col] ?? "").toLowerCase()).filter(Boolean))];
-  }
-  return [];
+  const { connectedKeys } = await import("@/lib/connectors/server");
+  return connectedKeys(me.id).catch(() => []);
 }

@@ -5,6 +5,7 @@ import { Markdown } from "@/components/markdown";
 import { ChatPlan } from "@/app/(team)/clients/[slug]/chat-plan";
 import { LaunchCard } from "@/app/(team)/clients/[slug]/launch-card";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
+import { ConfirmCardView, ConnectCardView, ConnectorSteps } from "./connectors-ui";
 import type { BriefCard, Card, CopyCard, CopyField, LinkCard, ListCard, MetricsCard, ToolRun } from "@/lib/kaizen-ai/types";
 
 // What Kaizen AI's tools put on screen: metrics tables, copy sets with character counts, briefs ready to send, report
@@ -60,9 +61,14 @@ export function ChatMarkdown({ text }: { text: string }) {
   );
 }
 
-export function ToolChips({ runs }: { runs: ToolRun[] }) {
-  if (!runs.length) return null;
+export function ToolChips({ runs: all }: { runs: ToolRun[] }) {
+  // A connector's tools (Shopify, Drive, ...) show as expandable steps with their input and result
+  const steps = all.filter((r) => r.connector);
+  const runs = all.filter((r) => !r.connector);
+  if (!all.length) return null;
+  if (!runs.length) return <ConnectorSteps runs={steps} />;
   return (
+    <div className="grid gap-1.5">
     <div className="flex flex-wrap gap-1.5">
       {runs.map((r) => (
         <span key={r.id} title={r.summary ?? undefined} className={`inline-flex min-h-8 items-center gap-2 rounded-full border px-3 text-[12.5px] ${r.ok === false ? "border-bad/30 bg-bad-soft/40 text-bad" : "border-line bg-surface text-muted"}`}>
@@ -79,6 +85,8 @@ export function ToolChips({ runs }: { runs: ToolRun[] }) {
           {r.ok === false && r.summary ? <span className="max-w-[260px] truncate text-bad/80">· {r.summary}</span> : null}
         </span>
       ))}
+    </div>
+    <ConnectorSteps runs={steps} />
     </div>
   );
 }
@@ -370,6 +378,10 @@ export function CardView({ card }: { card: Card }) {
           <ChatPlan id={card.id} />
         </div>
       );
+    case "connect":
+      return <ConnectCardView c={card} />;
+    case "connector_confirm":
+      return <ConfirmCardView c={card} />;
     case "launch":
       return (
         <div className="grid gap-1">

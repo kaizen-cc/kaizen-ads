@@ -10,6 +10,7 @@ import { permsOn } from "@/lib/chat-permissions-server";
 import { agentLabel, isChatAgent, pickAgent } from "./agents";
 import { attachmentBlocks } from "./files";
 import { projectContext, threadProjectId, visibleProject } from "./projects-server";
+import { connectorTurn } from "./connectors";
 import { chatTools, clientBrief } from "./tools";
 import { AGENT_LABEL, type AiModel, type Attachment, type Card, type ChatAgent, type ChatEvent, type ToolRun } from "./types";
 
@@ -52,6 +53,10 @@ export type TurnInput = {
   clientId: string | null | undefined; // picked in the header (undefined = unchanged, null = unpinned)
   projectId?: string | null; // a new chat started inside a project
   mode: "send" | "regenerate" | "edit";
+  /** Connectors switched on in the composer before the thread existed (undefined: the thread's own, or every connected one) */
+  connectors?: string[];
+  /** The connector confirm card the person pressed Run on */
+  approve?: string | null;
   signal: AbortSignal;
   emit: (e: ChatEvent) => void;
 };
@@ -355,10 +360,14 @@ export async function runTurn(input: TurnInput): Promise<void> {
   const userFiles = (rows.at(-1)?.attachments ?? []) as Attachment[];
   const cards: Card[] = [];
   const tools = await chatTools({ me, db, admin, clientId: client?.id ?? null, messageId, cards, files: userFiles, copyContextFor: copyCtx && client ? `${client.id}|${copyPlatform}` : null });
+  const runs: ToolRun[] = [];
+  // The person's own connectors (MCP) switched on in this thread: servers, toolsets and what the model is told
+  const conn = await connectorTurn({ me, admin, threadId: thread.id, initial: created ? input.connectors : undefined, approve: input.approve, text: userText, rows, cards, runs, emit });
+  tools.push(...conn.tools);
+  if (conn.system) system.push({ type: "text", text: conn.system });
   const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
   if (defs.length) (defs[defs.length - 1] as Anthropic.Tool).cache_control = { type: "ephemeral" };
-  const messages = convo.messages;
-  const runs: ToolRun[] = [];
+  const messages = convo.messages as Anthropic.Beta.BetaMessageParam[];
   const used = { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 };
   let text = "";
   let error: string | null = null;
@@ -368,18 +377,22 @@ export async function runTurn(input: TurnInput): Promise<void> {
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const last = round === MAX_ROUNDS - 1;
       let gap = text.length > 0;
-      const stream = anthropicClient().messages.stream(
+      // The beta endpoint (the MCP connector is a beta); connectors' toolsets stay on in the last round (they run on
+      // Anthropic's side), the app's own tools don't
+      const stream = anthropicClient().beta.messages.stream(
         {
           model: MODEL_IDS[model],
           max_tokens: 32_000,
           system,
           thinking: { type: "adaptive" },
           output_config: { effort: cfg.effort },
-          ...(last ? {} : { tools: defs }),
+          ...(last ? (conn.toolsets.length ? { tools: conn.toolsets } : {}) : { tools: [...defs, ...conn.toolsets] }),
+          ...(conn.servers.length ? { mcp_servers: conn.servers, betas: conn.betas as Anthropic.Beta.AnthropicBeta[] } : {}),
           messages,
         },
         { signal },
       );
+      stream.on("contentBlock", (b) => conn.onBlock(b as unknown as { type: string }));
       stream.on("text", (d) => {
         if (gap && d) {
           text += "\n\n";
@@ -389,7 +402,17 @@ export async function runTurn(input: TurnInput): Promise<void> {
         text += d;
         emit({ t: "text", d });
       });
-      const res = await stream.finalMessage();
+      let res: Anthropic.Beta.BetaMessage;
+      try {
+        res = await stream.finalMessage();
+      } catch (e) {
+        // A connector the API couldn't reach or sign in to: this round again without it (said plainly in the chat)
+        if (!signal.aborted && !text && conn.servers.length && e instanceof Anthropic.APIError && conn.drop(e)) {
+          round--;
+          continue;
+        }
+        throw e;
+      }
       const u = usageFor(res.usage);
       used.input_tokens += u.input_tokens;
       used.output_tokens += u.output_tokens;
@@ -403,6 +426,11 @@ export async function runTurn(input: TurnInput): Promise<void> {
         text += "\n\n_(The answer ran out of room. Ask me to continue.)_";
         emit({ t: "text", d: "\n\n_(The answer ran out of room. Ask me to continue.)_" });
         break;
+      }
+      // A long run of connector calls pauses: send it back as it is to carry on
+      if (res.stop_reason === "pause_turn") {
+        messages.push({ role: "assistant", content: res.content });
+        continue;
       }
       if (res.stop_reason !== "tool_use") break;
       messages.push({ role: "assistant", content: res.content });
