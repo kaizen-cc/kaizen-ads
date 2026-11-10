@@ -146,7 +146,7 @@ export function accountTopics(d: SharedTopics): Built[] {
     const name = k.platform === "google" ? "Google" : k.platform === "meta" ? "Meta" : "Ad";
     const id = `kpis-${k.platform}`;
     const on = k.counts.excellent + k.counts.good;
-    const live = k.accounts - k.counts.setup;
+    const live = k.accounts - k.counts.setup - (k.counts.unset ?? 0);
     const pacing = k.pacing.filter((p) => p.status !== "check").length;
     // The alarm is what's off target with nobody on it lately; accounts changed in the last few days are counted apart
     const fresh = k.offFresh;

@@ -2,6 +2,7 @@ import "server-only";
 import { allotmentLine, allotmentPools, cycleElapsed, usageCounts } from "@/lib/allotment";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
+import { shownStatus } from "@/lib/kpi/calc";
 import { secondarySeatKeys } from "@/lib/buyer-seats";
 import type { Staff } from "@/lib/auth";
 import { nyToday } from "@/lib/dates";
@@ -243,9 +244,10 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
 export type KpiPulse = {
   platform: "meta" | "google" | "all";
   accounts: number;
-  counts: Record<"excellent" | "good" | "close" | "off" | "idle" | "setup", number>;
-  /** "Needs setup", split: a new client with no ad account yet, and an account we can't read (access) */
-  setup: { noAccount: string[]; cantRead: string[] };
+  /** unset: accounts with no KPI set yet, shown on the board but never judged (kept out of the bar) */
+  counts: Record<"excellent" | "good" | "close" | "off" | "idle" | "setup" | "unset", number>;
+  /** "Needs setup", split: a new client with no ad account yet, and an account we can't read (access); and the accounts with no KPI set */
+  setup: { noAccount: string[]; cantRead: string[]; noKpi?: string[] };
   spend30: number;
   off: { id: string; client: string; slug: string; platform: string; label: string; deviation: number | null; status: string }[];
   offTotal: number;
@@ -288,7 +290,7 @@ export const workedOn = (worked: Map<string, { at: string; who: string | null }>
  */
 export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?: string; platform?: "meta" | "google" }): Promise<KpiPulse | null> {
   const { owner, platform } = typeof opts === "string" ? { owner: opts, platform: undefined } : (opts ?? {});
-  let q = db.from("kpi_targets").select("id, client_id, label, platform, ad_account_id, owner_id, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
+  let q = db.from("kpi_targets").select("id, client_id, label, platform, ad_account_id, owner_id, target, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
   // Someone's accounts: the ones they own, and the ones they're a secondary buyer on (that client, that platform)
   const co = owner ? await secondarySeatKeys(db, owner) : new Set<string>();
   const coClients = [...new Set([...co].map((k) => k.split(":")[0]))];
@@ -298,8 +300,8 @@ export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?:
   const targets = (found ?? []).filter((t) => !owner || t.owner_id === owner || co.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`));
   if (!targets?.length) return null;
   const snapBy = new Map((snaps ?? []).map((x) => [x.target_id as string, x]));
-  const counts = { excellent: 0, good: 0, close: 0, off: 0, idle: 0, setup: 0 };
-  const setup: KpiPulse["setup"] = { noAccount: [], cantRead: [] };
+  const counts = { excellent: 0, good: 0, close: 0, off: 0, idle: 0, setup: 0, unset: 0 };
+  const setup: Required<KpiPulse["setup"]> = { noAccount: [], cantRead: [], noKpi: [] };
   const off: KpiPulse["off"] = [];
   const pacing: KpiPulse["pacing"] = [];
   let spend30 = 0;
@@ -307,10 +309,12 @@ export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?:
   for (const t of targets) {
     const c = t.clients as unknown as { name: string; slug: string } | null;
     const snap = snapBy.get(t.id);
-    const status = ((snap?.status as keyof typeof counts | null) ?? "setup") as keyof typeof counts;
+    // No KPI set: counted apart, never off target
+    const status = shownStatus(snap?.status as string | null, t.target as number | null) as keyof typeof counts;
     counts[status] = (counts[status] ?? 0) + 1;
     const name = c?.name ?? "Unknown";
     if (status === "setup") (t.ad_account_id ? setup.cantRead : setup.noAccount).push(name);
+    if (status === "unset") setup.noKpi.push(name);
     // Without a platform filter the label says which service line it is
     const label = [platform ? null : PLATFORM[t.platform as keyof typeof PLATFORM], t.label].filter(Boolean).join(" · ");
     spend30 += Number((snap?.windows as { d30?: { spend?: number } } | null)?.d30?.spend ?? 0);

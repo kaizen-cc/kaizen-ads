@@ -72,7 +72,7 @@ export type ReportMetrics = {
   opportunity?: Opportunity | null;
   /** Google: brand share, search impression share, conversion rate and CTR in the main period, with what's flagged */
   google?: GoogleHealth;
-  /** No target set: the industry benchmark it's judged against instead */
+  /** No target set: the industry benchmark, for reference only (the account is never judged against it) */
   benchmark?: BenchmarkTarget | null;
 };
 
@@ -426,7 +426,7 @@ export function metricsText(m: ReportMetrics) {
   const line = (p: Period) =>
     `${p.label}: spend ${money(p.spend)}, ${p.results} ${m.conversion.toLowerCase()}, cost per result ${money(p.costPerResult)}${m.roasKpi && p.revenue ? `, revenue ${money(p.revenue)}, ROAS ${p.roas ?? "—"}` : ""}, impressions ${p.impressions.toLocaleString("en-US")}, link clicks ${p.clicks.toLocaleString("en-US")}, CTR ${p.ctr ?? "—"}%, CPC ${money(p.cpc)}, CPM ${money(p.cpm)} (${p.days} days with data)`;
   return [
-    `Platform: ${m.platform === "google" ? "Google Ads" : m.platform === "tiktok" ? "TikTok Ads (read only in Kaizen Ads: nothing was changed in TikTok from here)" : "Meta Ads"}. KPI: ${m.conversion}${m.roasKpi ? " (judged on ROAS)" : ""}${m.target != null ? `, target ${m.roasKpi ? `${m.target}x ROAS` : money(m.target)}` : m.benchmark ? `, no target set: judged against the ${m.benchmark.vertical} industry benchmark of ${m.roasKpi ? `${m.benchmark.value}x ROAS` : money(m.benchmark.value)} (${m.benchmark.source} ${m.benchmark.year}); aim to beat it` : ", no target set"}${m.monthlyBudget ? `, monthly budget ${money(m.monthlyBudget)}` : ""}. Data through ${m.dataThrough ?? "?"}.`,
+    `Platform: ${m.platform === "google" ? "Google Ads" : m.platform === "tiktok" ? "TikTok Ads (read only in Kaizen Ads: nothing was changed in TikTok from here)" : "Meta Ads"}. KPI: ${m.conversion}${m.roasKpi ? " (judged on ROAS)" : ""}${m.target != null ? `, target ${m.roasKpi ? `${m.target}x ROAS` : money(m.target)}` : `, no KPI target set yet, so never call the results on, off or close to target${m.benchmark ? ` (for reference only, the ${m.benchmark.vertical} industry benchmark is ${m.roasKpi ? `${m.benchmark.value}x ROAS` : money(m.benchmark.value)}, ${m.benchmark.source} ${m.benchmark.year})` : ""}`}${m.monthlyBudget ? `, monthly budget ${money(m.monthlyBudget)}` : ""}. Data through ${m.dataThrough ?? "?"}.`,
     line(m.main),
     ...(m.main.views6s != null ? [`TikTok video in ${m.main.label}: ${m.main.views6s.toLocaleString("en-US")} 6-second views, hook rate ${m.main.hookRate ?? "n/a"}% (6-second views over impressions); ${m.compare.label}: ${(m.compare.views6s ?? 0).toLocaleString("en-US")} 6-second views, hook rate ${m.compare.hookRate ?? "n/a"}%.`] : []),
     // Not a ROAS KPI: purchase value is context only, never the story (the client is judged on its own result)

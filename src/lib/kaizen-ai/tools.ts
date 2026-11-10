@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import type { AiTool } from "@/lib/ai";
 import { conversionFor } from "@/lib/kpi/conversions";
+import { shownStatus } from "@/lib/kpi/calc";
 import { extensionTools } from "./extensions";
 import { clampFormats, formatList, formatsFor, formatsRule } from "@/lib/creative-formats";
 import { can, roleWidePerms, type Who } from "@/lib/chat-permissions";
@@ -345,7 +346,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           platform,
           title: `${c.name} · ${platform === "google" ? "Google Ads" : "Meta"} · ${level.replace("_", " ")}`,
           range: `${since} to ${until}`,
-          kpi: { label: conv.label, target: t.target == null ? null : Number(t.target), roas: Boolean(conv.roas), value: w[`d${days >= 30 ? 30 : days >= 14 ? 14 : days >= 7 ? 7 : 3}`]?.value ?? null, status: snap?.status ?? null },
+          kpi: { label: conv.label, target: t.target == null ? null : Number(t.target), roas: Boolean(conv.roas), value: w[`d${days >= 30 ? 30 : days >= 14 ? 14 : days >= 7 ? 7 : 3}`]?.value ?? null, status: snap ? shownStatus(snap.status as string | null, t.target) : null },
           budget: b && b.budget ? { budget: b.budget, spent: b.spent, projected: b.projected, pace: b.pace, status: b.status } : null,
           windows: (["d3", "d7", "d14", "d30"] as const).filter((k) => w[k]).map((k) => ({ label: `${k.slice(1)} days`, spend: w[k].spend, results: w[k].results, value: w[k].value })),
           rows: shown,
@@ -357,7 +358,8 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           range: m.range,
           kpi: `${conv.label}${t.target != null ? `, target ${conv.roas ? `${t.target}x ROAS` : `$${t.target} per result`}` : ", no target set"}`,
           kpi_windows: m.windows,
-          kpi_status: snap?.status ?? null,
+          // No KPI set: "unset", numbers only, never on or off target
+          kpi_status: snap ? shownStatus(snap.status as string | null, t.target) : null,
           data_through: snap?.data_through ?? null,
           budget_pacing: m.budget ?? (t.monthly_budget ? { budget: Number(t.monthly_budget) } : "no monthly budget set"),
           before: previous,

@@ -398,7 +398,8 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   ]);
   for (const t of targets ?? []) {
     const s = (snaps ?? []).find((x) => x.target_id === t.id);
-    if (!s || !["off", "close"].includes(s.status as string)) continue;
+    // No KPI set: never off target, whatever an older snapshot says
+    if (!s || t.target == null || !["off", "close"].includes(s.status as string)) continue;
     // Changed in the last few days: someone's on it, so it's given time before it comes back as an item
     if (workedOn(worked, t as { platform: string; ad_account_id: string | null })) continue;
     const c = t.clients as unknown as { name: string; slug: string };

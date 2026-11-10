@@ -66,7 +66,7 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
   const [{ data: allUsage }, { data: open }, { data: kpis }, { data: snaps }, { data: items }, { data: rounds }, { data: recentReqs }, { data: watched }, { data: live }] = await Promise.all([
     admin.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used, period_start, period_end"),
     admin.from("requests").select("client_id, stage, allotment_units").neq("stage", "launched").is("deleted_at", null),
-    admin.from("kpi_snapshots").select("client_id, status, trend, deviation, kpi_targets(label)"),
+    admin.from("kpi_snapshots").select("client_id, status, trend, deviation, kpi_targets(label, target)"),
     admin.from("meta_snapshots").select("client_id, ads, weekly, fetched_at").gte("fetched_at", since7).order("fetched_at", { ascending: false }).limit(1000),
     admin.from("context_items").select("client_id, source, occurred_at, author, title, body").gte("occurred_at", since7).neq("source", "drive").order("occurred_at", { ascending: false }).limit(3000),
     admin.from("client_rounds").select("decision, created_at, requests(client_id)").gte("created_at", since30),
@@ -103,7 +103,10 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
 
   // KPIs off or slipping
   for (const k of kpis ?? []) {
-    const label = (k.kpi_targets as unknown as { label: string } | null)?.label ?? "Account";
+    const kt = k.kpi_targets as unknown as { label: string | null; target: number | null } | null;
+    // No KPI set: never off target
+    if (kt?.target == null) continue;
+    const label = kt.label ?? "Account";
     const dev = k.deviation == null ? null : Math.round(Number(k.deviation) * 100);
     if (k.status === "off")
       add(k.client_id, { kind: "kpi", weight: 5 + Math.min(3, (dev ?? 50) / 25), line: `${label} is off target${dev != null ? ` (${dev}% worse over 14 days)` : " (spending with no results)"}`, facts: [`Trend: ${k.trend ?? "unknown"}`] });

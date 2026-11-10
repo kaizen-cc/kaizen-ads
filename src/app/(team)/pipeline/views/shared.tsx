@@ -374,8 +374,9 @@ const KPI_BANDS: { key: keyof KpiPulseData["counts"]; label: string; bar: string
 /** The ad accounts against their KPI targets: where they stand, who's off, and budget pacing. */
 export function KpiPulse({ k, title = "Ad accounts" }: { k: KpiPulseData; title?: string }) {
   const synced = k.syncedMinutes;
-  // The bar is the accounts we can read; the ones still being set up are said underneath, by why
-  const live = k.accounts - k.counts.setup;
+  // The bar is the accounts we can read and judge; the ones still being set up, or with no KPI set, are said underneath
+  const live = k.accounts - k.counts.setup - (k.counts.unset ?? 0);
+  const noKpi = k.setup.noKpi ?? [];
   return (
     <section className="grid gap-4 rounded-brand border border-line bg-surface p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -396,7 +397,7 @@ export function KpiPulse({ k, title = "Ad accounts" }: { k: KpiPulseData; title?
           </span>
         ))}
       </div>
-      {(k.setup.cantRead.length > 0 || k.setup.noAccount.length > 0) && (
+      {(k.setup.cantRead.length > 0 || k.setup.noAccount.length > 0 || noKpi.length > 0) && (
         <div className="grid gap-1 text-xs text-faint">
           {k.setup.cantRead.length > 0 && (
             <p>
@@ -406,6 +407,11 @@ export function KpiPulse({ k, title = "Ad accounts" }: { k: KpiPulseData; title?
           {k.setup.noAccount.length > 0 && (
             <p>
               <span className="text-muted">No ad account yet {k.setup.noAccount.length}</span> (new clients): {k.setup.noAccount.join(", ")}
+            </p>
+          )}
+          {noKpi.length > 0 && (
+            <p>
+              <span className="text-muted">No KPI set {noKpi.length}</span> (numbers only until it&apos;s set): {noKpi.join(", ")}
             </p>
           )}
         </div>
