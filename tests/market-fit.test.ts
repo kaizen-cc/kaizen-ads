@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fitsClientMarket, keywords, marketForTalk, pickedMarket, type FitAd } from "@/lib/market-fit";
+import { fitsClientMarket, keywords, marketForTalk, mentionNote, pickedMarket, type FitAd } from "@/lib/market-fit";
 
 // Talk it through brings up live ads from the client's own market only: never a shoe brand for a coffee client.
 
@@ -43,6 +43,21 @@ describe("pickedMarket", () => {
     const out = pickedMarket("Two worth a look: the Bean Co ad [M2]: the 60-second demo. Roast House [M1] for the voice. And [M9] isn't one.", ["a", "b", "c"]);
     expect(out.picked).toEqual(["b", "a"]);
     expect(out.reply).toBe("Two worth a look: the Bean Co ad: the 60-second demo. Roast House for the voice. And isn't one.");
-    expect(pickedMarket("No ads here.", undefined)).toEqual({ reply: "No ads here.", picked: [] });
+    expect(pickedMarket("No ads here.", undefined)).toEqual({ reply: "No ads here.", picked: [], notes: [] });
+  });
+});
+
+describe("why the strategist brought an ad up", () => {
+  const reply = "Two worth a look: the Bean Co ad [M2]: the 60-second demo structure. Roast House [M1] for the warm founder voice. And [M9] isn't one.";
+  it("takes what it said after the ad's id", () => {
+    expect(mentionNote(reply, 2)).toBe("The 60-second demo structure");
+    expect(mentionNote(reply, 1)).toBe("For the warm founder voice");
+  });
+  it("comes back with the notes in the order the ads were picked", () => {
+    expect(pickedMarket(reply, ["a", "b", "c"]).notes).toEqual(["The 60-second demo structure", "For the warm founder voice"]);
+  });
+  it("falls back to the whole sentence when nothing follows the id", () => {
+    expect(mentionNote("Look at how Roast House [M1].", 1)).toBe("Look at how Roast House");
+    expect(mentionNote("Nothing here.", 3)).toBe("");
   });
 });

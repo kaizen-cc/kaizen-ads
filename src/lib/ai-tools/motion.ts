@@ -11,7 +11,8 @@ import { num, str, type AiTool } from "./types";
 // (src/lib/market.ts), searched for a client or an industry, the client's swipe file, and Motion's own read-only
 // tools over its MCP (creative reports, boards) when Motion is connected.
 
-export type Reference = { id: string; brand: string; format: string | null; headline: string | null; hook: string | null; angle: string | null; why: string | null; days: number | null; proven: boolean; thumb: string | null; video: boolean; url: string };
+/** note: why the strategist brought it up in this conversation; media: what plays in its preview */
+export type Reference = { id: string; brand: string; format: string | null; headline: string | null; hook: string | null; angle: string | null; why: string | null; days: number | null; proven: boolean; thumb: string | null; video: boolean; url: string; note?: string | null; media?: { type: "image" | "video"; url: string; thumb: string | null } | null };
 
 export const toReference = (a: MarketAd): Reference => ({
   id: a.id,
@@ -26,6 +27,7 @@ export const toReference = (a: MarketAd): Reference => ({
   thumb: a.media[0]?.thumb ?? (a.media[0]?.type === "image" ? a.media[0].url : null),
   video: a.media[0]?.type === "video" || /video/i.test(a.format ?? ""),
   url: a.motionUrl ?? a.libraryUrl ?? a.landingUrl ?? a.media[0]?.url ?? "",
+  media: a.media[0] ?? null,
 });
 
 /** Words in a search, each matched against the ad's brand, copy, angle, hook and tags */

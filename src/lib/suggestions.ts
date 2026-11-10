@@ -1492,7 +1492,9 @@ export async function talkBrief(admin: SupabaseClient, clientId: string, turns: 
       schema: { type: "object", properties: { reply: { type: "string" }, questions: { type: "array", items: { type: "string" } }, conflicts: { type: "array", items: { type: "string" } }, build: { type: "boolean" } }, required: ["reply", "questions", "conflicts", "build"], additionalProperties: false },
       prompt: `${prompt}\n\n${current ? `<request_so_far>\n${JSON.stringify(current, null, 1)}\n</request_so_far>\n\n` : ""}${convo}${fr}\n\n${TALK_KEEP}\n\nAnswer the team member's last message.`,
     });
-    const { reply, picked: market } = pickedMarket(check.reply ?? "", extras.market);
+    const seen = pickedMarket(check.reply ?? "", extras.market);
+    const reply = seen.reply;
+    const market = seen.picked.map((m, i) => ({ ...m, note: seen.notes[i] || null }));
     if (!check.build) return { reply, questions: (check.questions ?? []).slice(0, 3), conflicts: (check.conflicts ?? []).slice(0, 4), ready: false, draft: current ?? (null as unknown as SuggestionDraft), building: false, market };
     // Clear enough to write, and nothing written yet: the quick preview comes first (the full brief follows it)
     if (previewFirst && !current) return { reply, questions: [], conflicts: [], ready: false, draft: null as unknown as SuggestionDraft, building: false, previewReady: true, market };
@@ -1514,7 +1516,7 @@ ${turns.map((t) => `${t.role === "user" ? "Team member" : "You"}: ${t.text}`).jo
 Answer the team member's last message.`,
   });
   const said = pickedMarket(out.reply ?? "", extras.market);
-  return { reply: said.reply, questions: (out.questions ?? []).slice(0, 2), ready: Boolean(out.ready), draft: clean(await withAssetLinks(admin, clientId, out.draft)), building: true, conflicts: [], market: said.picked };
+  return { reply: said.reply, questions: (out.questions ?? []).slice(0, 2), ready: Boolean(out.ready), draft: clean(await withAssetLinks(admin, clientId, out.draft)), building: true, conflicts: [], market: said.picked.map((m, i) => ({ ...m, note: said.notes[i] || null })) };
 }
 
 /** The answer formats every brief writer fills, for tests/brief-schema-size.test.ts (kept flat: the API refuses grammars that are too large) */

@@ -54,8 +54,24 @@ export function marketForTalk<T extends FitAd>(ads: T[], client: MarketClient, t
  * The market ads the AI brought up in its reply (by id in brackets, "[M2]"), at most three, and the reply without the
  * ids (the cards under it show which ads they are).
  */
-export function pickedMarket<T>(reply: string, market: T[] | undefined): { reply: string; picked: T[] } {
+export function pickedMarket<T>(reply: string, market: T[] | undefined): { reply: string; picked: T[]; notes: string[] } {
   const ids = [...reply.matchAll(/\[M(\d{1,2})\]/gi)].map((m) => Number(m[1])).filter((n) => n >= 1 && n <= (market?.length ?? 0));
-  const picked = [...new Set(ids)].slice(0, 3).map((n) => market![n - 1]);
-  return { reply: reply.replace(/\s*\[M\d{1,2}\]/gi, "").trim(), picked };
+  const chosen = [...new Set(ids)].slice(0, 3);
+  return { reply: reply.replace(/\s*\[M\d{1,2}\]/gi, "").trim(), picked: chosen.map((n) => market![n - 1]), notes: chosen.map((n) => mentionNote(reply, n)) };
+}
+
+/**
+ * What the strategist said about one ad it brought up ("the Bean Co ad [M2]: the 60-second demo structure" gives "The
+ * 60-second demo structure"): the words after the id up to the end of that sentence, or the whole sentence without the
+ * ids when nothing follows. Shown when the ad's card is hovered, as why it's suggested.
+ */
+export function mentionNote(reply: string, n: number): string {
+  const tag = new RegExp(`\\[M${n}\\]`, "i");
+  const sentence = reply.split(/(?<=[.!?])\s+|\n+/).find((x) => tag.test(x));
+  if (!sentence) return "";
+  const after = sentence.slice(sentence.search(tag)).replace(tag, "").replace(/^\s*[:,\-]?\s*/, "");
+  const raw = /\[M\d{1,2}\]/i.test(after) ? after.slice(0, after.search(/\[M\d{1,2}\]/i)) : after;
+  const text = (raw.replace(/[.;,\s]+$/, "").length >= 12 ? raw : sentence).replace(/\s*\[M\d{1,2}\]/gi, "").replace(/[.;,\s]+$/, "").trim();
+  const out = text.length > 180 ? `${text.slice(0, 177).replace(/\s+\S*$/, "")}…` : text;
+  return out ? out[0].toUpperCase() + out.slice(1) : "";
 }
