@@ -33,6 +33,13 @@ import { useFabClear } from "@/components/fab-clear";
 const STEPS = ["Client", "Start", "Formats", "Direction", "Brief", "Review"];
 // Each step in the address (?step=formats), so back returns to the step before
 const STEP_KEYS = STEPS.map((x) => x.toLowerCase());
+/** Write it myself is one page: Formats, Direction and Brief (steps 2 to 4) show together */
+const WRITE = [2, 3, 4];
+const writing = (step: number) => WRITE.includes(step);
+/** What the progress bar shows, and the step each of its dots goes to */
+const SHOWN = ["Client", "Start", "Write", "Review"];
+const SHOWN_AT = [0, 1, 2, 5];
+const shownOf = (step: number) => (step <= 1 ? step : writing(step) ? 2 : 3);
 const FIELD_ID: Record<ReviewIssue["field"], string> = { formats: "formats", sizes: "sizes", title: "title", angle: "angle", audience: "audience", brief: "brief", references: "references" };
 const input =
   "h-12 w-full rounded-[8px] border border-line bg-surface px-4 text-[15px] outline-none transition-colors placeholder:text-faint focus:border-brand-text/70";
@@ -326,16 +333,13 @@ export function RequestForm({
 
   const toggleSize = (z: Size) => set({ sizes: draft.sizes.includes(z) ? draft.sizes.filter((x) => x !== z) : SIZES.filter((x) => x === z || draft.sizes.includes(x)) });
 
-  const blocked = [
-    !draft.clientId && "Pick a client to continue.",
-    false,
+  const formatsBlocked =
     (formats.length === 0 && "Pick at least one format.") ||
-      (formats.some((f) => totalFor(draft.formats[f]) === 0) && "Each format needs at least one creative.") ||
-      (draft.sizes.length === 0 && "Pick at least one size."),
-    !draft.title.trim() && "Give it a title.",
-    false,
-    false,
-  ][step];
+    (formats.some((f) => totalFor(draft.formats[f]) === 0) && "Each format needs at least one creative.") ||
+    (draft.sizes.length === 0 && "Pick at least one size.");
+  // On the one writing page: what's still missing before the review
+  const writeBlocked = formatsBlocked || (!draft.title.trim() && "Give it a title.") || (!draft.brief.trim() && "Write the brief.");
+  const blocked = [!draft.clientId && "Pick a client to continue.", false, writeBlocked, writeBlocked, writeBlocked, false][step];
 
   function go(i: number, d: Draft = draft) {
     setError(null);
@@ -436,8 +440,8 @@ export function RequestForm({
 
   // A brief written by hand: the AI reads it over as it's sent. Nothing to look at, it goes on by itself; otherwise its
   // notes show as suggestions, with "Send anyway" one click away (and "Send now" while it runs)
-  const runReview = () => {
-    if (!aiOn) return send(null);
+  const runReview = (checkOnly = false) => {
+    if (!aiOn) return checkOnly ? undefined : send(null);
     const id = ++reviewSeq.current;
     setReview({ status: "running" });
     reveal(reviewRef, "center");
@@ -452,7 +456,7 @@ export function RequestForm({
       setReview({ status: "done", review: res.review, similar: res.similar, refs: res.refs });
       reveal(reviewRef, "start");
       // Nothing to look at: straight to the team
-      if (res.review.issues.length === 0 && res.similar.length === 0 && h.brief === "none") send(res.review);
+      if (!checkOnly && res.review.issues.length === 0 && res.similar.length === 0 && h.brief === "none") send(res.review);
     });
   };
 
@@ -585,9 +589,9 @@ export function RequestForm({
     talking
       ? ["Talk it through", "Tell the strategist what you want to make. It asks only what it needs, writes the full brief, and opens it ready to send."]
       : ["How do you want to start?", "Briefs ready for this client, what works for similar clients and in their market, or your own idea."],
-    ["What are we making?", "Pick every format you need. Each one becomes its own ticket for the right person."],
-    ["What’s the direction?", "Name it and set the angle, so the team and the copy agent aim the same way."],
-    ["Brief the team", "What to show, what to say, and what to stay away from."],
+    ["Write it yourself", "What you're making, the direction and the brief, on one page. Continue and the AI reads it against the client before it goes out."],
+    ["Write it yourself", "What you're making, the direction and the brief, on one page. Continue and the AI reads it against the client before it goes out."],
+    ["Write it yourself", "What you're making, the direction and the brief, on one page. Continue and the AI reads it against the client before it goes out."],
     [
       "Ready to send",
       byAi
@@ -617,7 +621,7 @@ export function RequestForm({
             </span>
           )}
           {!created && draft.migration && <MigrationPanel m={draft.migration} onChange={(m) => set({ migration: m })} />}
-          {!created && !readOnly && <Progress steps={STEPS} current={step} onJump={go} />}
+          {!created && !readOnly && <Progress steps={SHOWN} current={shownOf(step)} onJump={(i) => go(SHOWN_AT[i])} />}
           {!created && !readOnly && step >= 2 && <AiStrip aiOn={aiOn} ai={ai} clientName={client?.name ?? null} onRefresh={() => suggest(draft, true)} />}
         </div>
 
@@ -650,6 +654,13 @@ export function RequestForm({
               e.preventDefault();
               // Talking it through: Continue writes the brief from the conversation (it opens in Ready to send)
               if (step === 1 && talking) return void (chat?.canContinue && chat.continue());
+              if (writing(step)) {
+                if (blocked) return;
+                go(STEPS.length - 1);
+                // A brief written by hand: the AI reads it against the client right away (conflicts, risks for the creative)
+                if (aiOn && !byAi && !demo && draft.brief.trim()) runReview(true);
+                return;
+              }
               if (step < STEPS.length - 1 && !blocked) go(step + 1);
             }}
             className="grid gap-8 animate-[step-in_.35s_cubic-bezier(.2,.8,.2,1)]"
@@ -690,7 +701,7 @@ export function RequestForm({
               )
             )}
 
-            {step === 2 && (
+            {writing(step) && (
               <div className="grid gap-8">
                 {leftOut.length > 0 && <LeftOutNote outside={leftOut} />}
                 <div className={`grid gap-3 ${allowed.size >= 3 ? "sm:grid-cols-3" : allowed.size === 2 ? "sm:grid-cols-2" : ""}`}>
@@ -805,10 +816,11 @@ export function RequestForm({
               </div>
             )}
 
-            {step === 3 && (
-              <div className="grid gap-8">
+            {writing(step) && (
+              <div className="grid gap-8 border-t border-line pt-8">
+                <h2 className="font-heading text-[22px] leading-tight tracking-tight">The direction</h2>
                 <Field id="title" label="Title">
-                  <input id="title" autoFocus value={draft.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. BFCM · Buy More, Save More" className={input} />
+                  <input id="title" value={draft.title} onChange={(e) => set({ title: e.target.value })} placeholder="e.g. BFCM · Buy More, Save More" className={input} />
                   <Suggest loading={ai.status === "loading"}>
                     {s?.titles.map((t) => (
                       <Chip key={t} ai on={draft.title === t} onClick={() => set({ title: t })}>
@@ -880,8 +892,9 @@ export function RequestForm({
               </div>
             )}
 
-            {step === 4 && (
-              <div className="grid gap-8">
+            {writing(step) && (
+              <div className="grid gap-8 border-t border-line pt-8">
+                <h2 className="font-heading text-[22px] leading-tight tracking-tight">The brief</h2>
                 <Field
                   id="brief"
                   label="Brief"
@@ -907,7 +920,6 @@ export function RequestForm({
                 >
                   <textarea
                     id="brief"
-                    autoFocus
                     rows={10}
                     value={draft.brief}
                     onChange={(e) => set({ brief: e.target.value })}
@@ -1081,7 +1093,7 @@ export function RequestForm({
               <div className="flex min-w-0 items-center justify-between gap-2 md:gap-3">
                 <div className="shrink-0">
                   {step > 0 && (
-                    <button type="button" onClick={() => go(step - 1)} aria-label="Back" className="-ml-3 inline-flex h-12 items-center rounded-brand px-3 text-sm text-muted hover:bg-surface hover:text-fg md:ml-0 md:h-11 md:px-4">
+                    <button type="button" onClick={() => go(step === STEPS.length - 1 ? 2 : writing(step) ? 1 : step - 1)} aria-label="Back" className="-ml-3 inline-flex h-12 items-center rounded-brand px-3 text-sm text-muted hover:bg-surface hover:text-fg md:ml-0 md:h-11 md:px-4">
                       ←<span className={step === STEPS.length - 1 ? "hidden md:inline" : ""}>&nbsp;Back</span>
                     </button>
                   )}
