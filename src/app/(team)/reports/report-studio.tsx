@@ -10,6 +10,7 @@ import { PdfPreview, type PdfField } from "./pdf-preview";
 import { RecapDeckButton } from "./recap-deck-button";
 import { metricKeysFor, clockTime, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tableKeys, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
+import { jointNote, type JointInfo, type JointNote } from "@/lib/reports/joint-core";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, setReportCampaignExcluded, skipReport } from "./actions";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
@@ -30,6 +31,8 @@ export type StudioReport = {
   id: string;
   kind: "weekly" | "monthly" | "custom" | "built";
   platform: "meta" | "google" | "tiktok";
+  /** Meta + TikTok in one weekly report: the Meta report this TikTok part goes with, or the TikTok part riding on this one */
+  joint?: JointInfo | null;
   status: string;
   periodLabel: string;
   message: string;
@@ -184,6 +187,25 @@ function PanelButton({ label, onClick, children }: { label: string; onClick: () 
   );
 }
 
+/** Meta + TikTok in one weekly report, said plainly: "Goes out with the Meta report, sent by …" or "Includes TikTok" */
+function JointBanner({ note, compact = false }: { note: JointNote; compact?: boolean }) {
+  const tone = note.tone === "warn" ? "border-warn/40 bg-warn-soft/40" : note.tone === "ok" ? "border-ok/30 bg-ok-soft/40" : "border-line bg-surface";
+  return (
+    <div className={`grid gap-1 rounded-[14px] border ${tone} ${compact ? "px-3 py-2.5" : "px-4 py-3"}`}>
+      <p className={`flex flex-wrap items-center gap-2 font-medium ${compact ? "text-[13px]" : "text-sm"}`}>
+        <span className="rounded-full bg-fg px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-bg">Meta + TikTok</span>
+        {note.title}
+      </p>
+      <p className="text-xs leading-relaxed text-muted">{note.detail}</p>
+      {note.link && (
+        <a href={note.link.href} className="inline-flex min-h-11 items-center justify-self-start text-xs text-fg underline-offset-4 hover:underline md:min-h-0">
+          {note.link.label}
+        </a>
+      )}
+    </div>
+  );
+}
+
 export function ReportStudio({
   report,
   client,
@@ -211,6 +233,9 @@ export function ReportStudio({
   const busy = report.status === "queued" || report.status === "drafting";
   const sent = report.status === "posted" || bundle?.status === "sent";
   const mineDone = report.status === "submitted";
+  // A TikTok part riding on the Meta report is reviewed here but never sent on its own; a Meta report says it includes TikTok
+  const jn = jointNote(report.joint);
+  const rider = Boolean(report.joint?.goesWith);
   const [sections, setSectionsState] = useState<Sections | null>(report.sections);
   const [extras, setExtrasState] = useState(report.extras);
   const [message, setMessage] = useState(built ? (bundle?.message ?? "") : report.message);
@@ -418,7 +443,7 @@ export function ReportStudio({
   const waitingParts = bundle?.parts.filter((p) => p.status !== "submitted" && p.status !== "posted") ?? [];
   const STEPS = [
     { key: "report", label: built && joint ? "Your part" : "Report" },
-    ...(report.kind === "monthly" || (built && !bundle?.isBuilder) ? [] : [{ key: "message", label: "Send" }]),
+    ...(report.kind === "monthly" || rider || (built && !bundle?.isBuilder) ? [] : [{ key: "message", label: "Send" }]),
     { key: "done", label: "Sent" },
   ];
 
@@ -465,6 +490,9 @@ export function ReportStudio({
           {!busy && <RegenerateButton kind="one" variant="header" id={report.id} label={`${client.name}'s report`} sent={sent} approved={report.status === "submitted"} />}
         </div>
       </div>
+
+      {/* Meta + TikTok in one report: where this part goes, or what this report carries */}
+      {jn && step !== "done" && <JointBanner note={jn} />}
 
       {/* The report's dates: one dropdown, every page follows them */}
       {report.kind !== "monthly" && !sent && (
@@ -1029,7 +1057,9 @@ ${t}` : t);
                 )}
               </div>
             );
-            const approveBlock = !sent && sections && !busy && (
+            const approveBlock = rider ? (
+              !sent && jn && <JointBanner note={jn} compact />
+            ) : !sent && sections && !busy && (
               <div className="grid gap-2 border-t border-line pt-3">
                 {mineDone ? (
                   <p className="text-sm text-ok">
@@ -1211,6 +1241,7 @@ ${t}` : t);
                 <SlackConnect connected={false} />
               </div>
             )}
+            {jn && !rider && <JointBanner note={jn} compact />}
             {built && waitingParts.length > 0 && (
               <p className="rounded-[10px] bg-surface-2 px-3 py-2 text-xs text-muted">
                 Waiting on {waitingParts.map((p) => `${p.owner ?? "the other buyer"} (${platformName(p.platform as "meta" | "google" | "tiktok").replace(" Ads", "")})`).join(" and ")}. Approve the message now and it goes out the moment they approve theirs.

@@ -32,7 +32,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const db = await createClient();
   const { data: r } = await db
     .from("reports")
-    .select("id, kind, platform, status, client_id, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, previous, clients(name, slug, slack_channel_id, client_type), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)")
+    .select("id, kind, platform, status, client_id, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, previous, joined_to, clients(name, slug, slack_channel_id, client_type), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)")
     .eq("id", id)
     .maybeSingle();
   if (!r) notFound();
@@ -63,6 +63,13 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const name = (p: unknown) => (p as { full_name: string } | null)?.full_name ?? null;
   const admin = adminConfigured() ? createAdminClient() : null;
   const sentNow = r.status === "posted" || bundle?.status === "sent";
+  // Meta and TikTok in one weekly report: the Meta report this TikTok part goes out with, or the TikTok part riding on this one
+  const joinedTo = (r as { joined_to?: string | null }).joined_to ?? null;
+  const [{ data: goesWith }, { data: riders }] = await Promise.all([
+    joinedTo ? db.from("reports").select("id, status, profiles!reports_owner_id_fkey(full_name)").eq("id", joinedTo).maybeSingle() : Promise.resolve({ data: null }),
+    r.kind === "weekly" && !joinedTo ? db.from("reports").select("id, platform, status").eq("joined_to", r.id) : Promise.resolve({ data: [] as { id: string; platform: string; status: string }[] }),
+  ]);
+  const joint = joinedTo || riders?.length ? { goesWith: goesWith ? { id: goesWith.id as string, owner: name(goesWith.profiles), status: goesWith.status as string } : null, riders: (riders ?? []) as { id: string; platform: string; status: string }[] } : null;
   const [delivery, history, { data: keyRow }] = await Promise.all([
     admin && r.kind !== "monthly" && !sentNow ? clientDelivery(admin, r.client_id as string).catch(() => null) : Promise.resolve(null),
     admin ? readHistory(admin, { reportId: r.id, bundleId: r.bundle_id, limit: 40 }, today) : Promise.resolve([]),
@@ -83,14 +90,15 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
         </Link>
         <h1 className="font-heading text-[28px] leading-tight [overflow-wrap:anywhere]">{client.name}</h1>
         <p className="text-sm text-muted">
-          {r.kind === "built" && (parts?.length ?? 0) > 1 ? "Joint report" : r.platform === "google" ? "Google Ads" : "Meta Ads"} · {periodLabel}
+          {r.kind === "built" && (parts?.length ?? 0) > 1 ? "Joint report" : r.platform === "google" ? "Google Ads" : r.platform === "tiktok" ? (joinedTo ? "TikTok Ads · goes with the Meta report" : "TikTok Ads") : joint?.riders.some((x) => x.status !== "skipped") ? "Meta Ads + TikTok" : "Meta Ads"} · {periodLabel}
         </p>
       </header>
       <ReportStudio
         report={{
           id: r.id,
           kind: r.kind as "weekly" | "monthly" | "custom" | "built",
-          platform: r.platform as "meta" | "google",
+          platform: r.platform as "meta" | "google" | "tiktok",
+          joint,
           status: r.status,
           periodLabel,
           message: r.message ?? "",
