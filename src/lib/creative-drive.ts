@@ -9,6 +9,7 @@ import {
   ensureFolderPath,
   findOrCreateFolder,
   isOldLayoutPath,
+  locateAdCreative,
   NO_DRIVE,
   nextAttempt,
   REPLACED,
@@ -652,6 +653,44 @@ export function driveStates(rows: DriveStateRow[]) {
 }
 
 /** A client's Drive sync at a glance, for the client page */
+/**
+ * Every client's Ad Creatives folder filled in on its own: the onboarding Zap makes it inside the client's Drive folder,
+ * so once the Drive folder is known (from enrollment or the Drive sync), this finds it ("20 - Ad Creatives", one level
+ * down too) and sets it on the client, the way a person would on the client page. Only found, never made here (an
+ * upload makes one if a client truly has none), and never over a folder set by hand. Runs with the Drive queue.
+ */
+export async function fillAdCreativeFolders(admin: SupabaseClient, opts: { limit?: number; budgetMs?: number } = {}) {
+  const started = Date.now();
+  const { data } = await admin
+    .from("clients")
+    .select("id, drive_folder_id")
+    .is("archived_at", null)
+    .is("ad_creative_folder_id", null)
+    .not("drive_folder_id", "is", null)
+    .limit(500);
+  // A different slice each run, so a client whose folder isn't there yet never holds up the rest
+  const todo = (data ?? []).sort(() => Math.random() - 0.5).slice(0, opts.limit ?? 40);
+  let found = 0;
+  let missing = 0;
+  let failed = 0;
+  for (const c of todo) {
+    if (Date.now() - started > (opts.budgetMs ?? 60_000)) break;
+    try {
+      const id = await locateAdCreative(folderDrive, c.drive_folder_id as string);
+      if (!id) {
+        missing++;
+        continue;
+      }
+      const { error } = await admin.from("clients").update({ ad_creative_folder_id: id, ad_creative_folder_source: "found" }).eq("id", c.id).is("ad_creative_folder_id", null);
+      if (error) failed++;
+      else found++;
+    } catch {
+      failed++;
+    }
+  }
+  return { checked: todo.length, found, missing, failed };
+}
+
 export async function clientDriveSummary(admin: SupabaseClient, clientId: string) {
   const [{ data: c }, { data: rows }] = await Promise.all([
     admin.from("clients").select("drive_folder_id, ad_creative_folder_id, ad_creative_folder_source").eq("id", clientId).maybeSingle(),

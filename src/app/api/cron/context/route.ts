@@ -276,7 +276,9 @@ export async function GET(request: Request) {
       const lib = await import("@/lib/creative-drive");
       const queue = await lib.processDriveQueue(admin, { limit: 200, budgetMs: 480_000 });
       const relayout = await lib.relayoutDrive(admin, { budgetMs: 150_000 }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-      return Response.json({ ...queue, relayout });
+      // Each client's Ad Creatives folder, found and set on its own (new clients as soon as their Drive folder is known)
+      const adCreatives = await lib.fillAdCreativeFolders(admin, { limit: 120, budgetMs: 90_000 }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      return Response.json({ ...queue, relayout, adCreatives });
     }
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     if (step === "bibles") return Response.json(await (await import("@/lib/brand-bible")).autoBibles(admin, 3));
