@@ -17,6 +17,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Reads an Asana task into the request form when it's moved into Kaizen Ads", where: "Board \u00b7 Asana task \u2192 Migrate to Kaizen Ads", trigger: "click", when: "When someone migrates an Asana task", labels: ["asana migration"] },
   ],
   review: [
+    { title: "Sorts imported Claude chats by the client each is about", where: "Kaizen AI · Import from Claude", trigger: "auto", when: "When the import list opens, for the chats no client name settles", labels: ["claude import client match"] },
     { title: "Checks a request before it goes to the team", where: "New request form · Review", trigger: "auto", when: "When someone reaches the Review step", labels: ["review"] },
     { title: "Summarises what the client asked for in a revision", where: "Client portal → ticket", trigger: "auto", when: "When a client sends changes", labels: ["revision summary", "client summary"] },
     { title: "Turns client notes into lessons in client memory", where: "Client portal → client memory", trigger: "auto", when: "When a client approves or sends changes", labels: ["client lessons"] },
