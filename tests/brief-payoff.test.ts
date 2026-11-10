@@ -57,8 +57,8 @@ describe("checkPayoff", () => {
 
 describe("the brief lint", () => {
   const ids = (text: string) => lintBrief({ text, sizes: ["9x16"], formats: ["video"] }).map((x) => `${x.id}:${x.severity}`);
-  it("blocks a promise the brief never pays off", () => {
-    expect(ids(unpaid)).toContain("payoff:hard");
+  it("flags a promise the brief never pays off (a warning, never a block)", () => {
+    expect(ids(unpaid)).toContain("payoff:soft");
   });
   it("is quiet when the brief says what it is", () => {
     expect(ids(paid).some((x) => x.startsWith("payoff"))).toBe(false);

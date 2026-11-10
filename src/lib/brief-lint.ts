@@ -132,7 +132,7 @@ export function lintBrief(i: LintInput): LintIssue[] {
   const pay = checkPayoff({ title: i.title, overview: parsed.overview, spec: parsed.spec, text: i.text });
   if (pay.promise && !pay.paid) {
     const instruction = `The hook promises "${pay.promise}" but the brief never says what it is. State exactly what it is in the Insight line, where it comes from (client memory, the Brand Bible, a call, the footage) and how it shows on screen. If the context doesn't hold it, change the hook to one whose payoff we know, or keep it under Confirm with client with a "Fallback:" line giving a version that works without it.`;
-    if (!pay.pending) issues.push({ id: "payoff", severity: "hard", message: `The hook promises "${pay.promise}", but the brief never says what it is.`, fixes: [{ kind: "ai", instruction, label: "Pay off the promise" }] });
+    if (!pay.pending) issues.push({ id: "payoff", severity: "soft", message: `The hook promises "${pay.promise}", but the brief never says what it is.`, fixes: [{ kind: "ai", instruction, label: "Pay off the promise" }] });
     else if (!pay.fallback) issues.push({ id: "payoff-fallback", severity: "soft", message: `"${pay.promise}" waits on the client. Add a fallback version that works if they can't confirm it.`, fixes: [{ kind: "ai", instruction: `The hook's payoff ("${pay.promise}") waits on the client. Keep the question under Confirm with client and add a line in the opening that starts "Fallback:" with a version of the concept that works without it.`, label: "Add a fallback" }] });
   }
 
