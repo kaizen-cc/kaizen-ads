@@ -136,7 +136,7 @@ export function AsanaSend({
 
 /** Downloads the request as a Kaizen-branded PDF. The brief is restructured for it once (onStructure keeps that with the
  *  draft, so the next export of the same brief is instant). */
-export function BriefPdfButton({ body, onStructure, className = "" }: { body: () => Record<string, unknown>; onStructure?: (cache: { key: string; structure: BriefStructure }) => void; className?: string }) {
+export function BriefPdfButton({ body, onStructure, className = "" }: { body: () => Record<string, unknown> | Promise<Record<string, unknown>>; onStructure?: (cache: { key: string; structure: BriefStructure }) => void; className?: string }) {
   const [busy, setBusy] = useState<"read" | "make" | null>(null);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -148,7 +148,7 @@ export function BriefPdfButton({ body, onStructure, className = "" }: { body: ()
           setBusy("read");
           setError(null);
           try {
-            const payload = body();
+            const payload = await body();
             const post = (extra: Record<string, unknown>) => fetch("/api/requests/brief-pdf", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, ...extra }) });
             // The brief as a production sheet first (instant when the draft already has it for this brief)
             const sr = await post({ mode: "structure" });

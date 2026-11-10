@@ -132,7 +132,8 @@ function factsBlock(facts: QuickBrief["facts"]) {
 }
 
 /** The agreed direction, for the prompt that writes the full brief */
-export function seedBlock(seed: QuickBrief | null | undefined) {
+/** talk: the brief comes from a conversation, whose later instructions win over the preview where they differ */
+export function seedBlock(seed: QuickBrief | null | undefined, talk = false) {
   if (!seed) return "";
   return `
 
@@ -145,7 +146,7 @@ Angle: ${seed.angle || "(yours to write)"}
 Audience: ${seed.audience || "(yours to write)"}
 Hook: ${seed.hook || "(yours to write)"}
 Making: ${makingLine(seed.formats)}
-Why it fits: ${seed.why || "(yours to write)"}${norm(seed.note) ? `\nTheir note: ${seed.note.trim()}` : ""}${seed.refs?.length ? `\nReferences they added (keep every one in draft.refs and say what to take from each): ${seed.refs.join(" ")}` : ""}${factsBlock(seed.facts)}
+Why it fits: ${seed.why || "(yours to write)"}${norm(seed.note) ? `\nTheir note: ${seed.note.trim()}` : ""}${seed.refs?.length ? `\nReferences they added (keep every one in draft.refs and say what to take from each): ${seed.refs.join(" ")}` : ""}${factsBlock(seed.facts)}${talk ? "\nThe preview was made during the conversation above. Where the team member said something later in the conversation that the preview doesn't reflect (a change, a correction, something not to depend on), follow what they said: their latest word wins over this preview." : ""}
 </agreed_direction>`;
 }
 

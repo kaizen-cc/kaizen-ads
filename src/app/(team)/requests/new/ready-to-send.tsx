@@ -5,7 +5,7 @@ import { PersonAvatar } from "@/components/person-avatar";
 import { RefThumb } from "@/components/ref-thumb";
 import { SavedConcepts } from "@/components/saved-concepts";
 import { AvatarField } from "@/components/avatar-field";
-import { BriefCheck } from "@/components/brief-check";
+import { BriefCheck, type Change, type PendingRevise } from "@/components/brief-check";
 import { LinkCards, LinkInput } from "@/components/link-refs";
 import { Line } from "@/components/quick-brief-sheet";
 import type { Allotment } from "@/lib/allotment";
@@ -108,7 +108,17 @@ const host = (u: string) => {
   }
 };
 
-export type ReadyHandle = { focus: (field: string) => void };
+/** A change from the brief check, as the draft's fields */
+const draftPatch = (c: Change): Partial<Draft> => ({
+  brief: c.brief,
+  ...(c.title !== undefined && c.title.trim() ? { title: c.title } : {}),
+  ...(c.angle !== undefined ? { angle: c.angle } : {}),
+  ...(c.audience !== undefined ? { audience: c.audience } : {}),
+  ...(c.sizes ? { sizes: SIZES.filter((z) => c.sizes!.includes(z)) } : {}),
+});
+
+/** focus: land on a field. pendingRevise: a correction typed in "Tell me what to change" and not sent yet (has one; apply it, giving the draft's changes) */
+export type ReadyHandle = { focus: (field: string) => void; pendingRevise: { has: () => boolean; apply: () => Promise<Partial<Draft> | null> } };
 
 export function ReadyToSend({
   draft,
@@ -133,6 +143,7 @@ export function ReadyToSend({
 }) {
   const [editBrief, setEditBrief] = useState(!draft.brief.trim());
   const briefRef = useRef<HTMLTextAreaElement>(null);
+  const pendingRef = useRef<PendingRevise | null>(null);
   const formats = selectedFormats(draft);
   const links = refLinks(draft.refs);
   // The app's own pictures (a kept Meta ad, a direct image) show as they are; any other link gets a preview card
@@ -150,6 +161,13 @@ export function ReadyToSend({
           el?.scrollIntoView({ behavior: "smooth", block: "center" });
           (el as HTMLElement | null)?.focus?.({ preventScroll: true });
         });
+      },
+      pendingRevise: {
+        has: () => pendingRef.current?.has() ?? false,
+        apply: async () => {
+          const c = await pendingRef.current?.apply();
+          return c ? draftPatch(c) : null;
+        },
       },
     };
   }, [handleRef]);
@@ -316,15 +334,8 @@ export function ReadyToSend({
               brief={draft.brief}
               signature={`${draft.title}\u0000${draft.sizes.join(",")}\u0000${formats.join(",")}\u0000${draft.priority}\u0000${draft.refs}\u0000${draft.brief}`}
               target={{ kind: "draft", clientId: draft.clientId, title: draft.title, angle: draft.angle, audience: draft.audience, sizes: draft.sizes, brief: draft.brief, refs: links, formats, priority: draft.priority, suggestionId: draft.origin?.suggestionId ?? null }}
-              onChange={(c) =>
-                onChange({
-                  brief: c.brief,
-                  ...(c.title !== undefined && c.title.trim() ? { title: c.title } : {}),
-                  ...(c.angle !== undefined ? { angle: c.angle } : {}),
-                  ...(c.audience !== undefined ? { audience: c.audience } : {}),
-                  ...(c.sizes ? { sizes: SIZES.filter((z) => c.sizes!.includes(z)) } : {}),
-                })
-              }
+              onChange={(c) => onChange(draftPatch(c))}
+              pendingRef={pendingRef}
             />
           )}
           {draft.migration?.needsCopy && (

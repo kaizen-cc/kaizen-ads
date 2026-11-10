@@ -1391,7 +1391,7 @@ export async function suggestFromIdea(admin: SupabaseClient, clientId: string, i
 ${idea.label}
 ${idea.text}
 </the_idea>
-${seedBlock(seed)}
+${seedBlock(seed, idea.label === "Talked through with the strategist")}
 
 Someone on the team wants a request for this client built on this idea. Write the full request: brief, angle, audience, formats and counts within what's left of the allotment, sizes, exactly one concept (one concept per brief) with its hooks, and every asset in draft.assets. suggest: true. kind: "kpi". signal: one line on the idea. evidence: 2 to 4 lines on why it fits this client. why: two sentences. reply: "".`,
   });

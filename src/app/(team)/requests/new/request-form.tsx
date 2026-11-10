@@ -399,6 +399,13 @@ export function RequestForm({
       else setError(res.error);
     });
 
+  // A correction typed in "Tell me what to change" and not sent: applied first, then a look before it goes out
+  const applyPending = async () => {
+    setError(null);
+    const p = await readyRef.current?.pendingRevise.apply();
+    setError(p ? "Your change in Tell me what to change is in the brief now. Look it over, then send." : "Send your change in Tell me what to change first, or clear it.");
+  };
+
   const runReview = (to: "here" | "asana" = intent.current) => {
     intent.current = to;
     if (!aiOn) return to === "asana" ? asanaRef.current?.open() : send(null);
@@ -1034,6 +1041,10 @@ export function RequestForm({
                       handleRef={asanaRef}
                       // A changed or hand-written brief gets the AI review first; the AI's own unchanged brief opens straight away
                       gate={() => {
+                        if (readyRef.current?.pendingRevise.has()) {
+                          void applyPending();
+                          return false;
+                        }
                         if (unedited || !aiOn || review.status === "done" || review.status === "error") return true;
                         if (review.status !== "running") runReview("asana");
                         return false;
@@ -1053,7 +1064,7 @@ export function RequestForm({
                         setAsanaSent(tasks.map((t) => ({ name: t.name, url: t.url })));
                       }}
                     />
-                    <BriefPdfButton body={() => ({ ...draft, clientId: draft.clientId })} onStructure={(pdfCache) => setDraft((d) => ({ ...d, pdfCache }))} className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint disabled:opacity-60 md:h-11" />
+                    <BriefPdfButton body={async () => ({ ...draft, ...((await readyRef.current?.pendingRevise.apply()) ?? {}), clientId: draft.clientId })} onStructure={(pdfCache) => setDraft((d) => ({ ...d, pdfCache }))} className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-4 text-[14px] text-fg hover:border-faint disabled:opacity-60 md:h-11" />
                   </span>
                 )}
                 {step < STEPS.length - 1 ? (
@@ -1091,7 +1102,7 @@ export function RequestForm({
                     type="button"
                     disabled={pending || review.status === "running"}
                     // The AI's own unchanged brief: created at once, no review
-                    onClick={() => (unedited && review.status !== "running" ? send(null) : review.status === "error" ? send(null, true) : runReview("here"))}
+                    onClick={() => (readyRef.current?.pendingRevise.has() ? void applyPending() : unedited && review.status !== "running" ? send(null) : review.status === "error" ? send(null, true) : runReview("here"))}
                     className="inline-flex h-12 items-center md:h-11 gap-2 rounded-brand bg-brand px-6 text-sm font-medium text-white shadow-[0_8px_30px_-8px_rgba(178,30,44,0.7)] transition-colors hover:bg-brand-hover disabled:opacity-70"
                   >
                     {aiOn && !unedited && review.status !== "error" && <Spark size={12} />}
