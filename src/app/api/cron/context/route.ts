@@ -50,6 +50,8 @@ function nyNow() {
  * - sheet: 12pm and 5pm, the Account Overview sheet (buyer, budget and KPI target per account, and the team's notes)
  * - remind: 11am and 3pm on weekdays, a nudge for anyone who hasn't been through their daily recap
  * - notify: every 10 minutes, critical notifications still unread are emailed
+ * - approvals: every 15 minutes on weekdays 8am to 6pm, creative with the client: the Slack post and email, reminders at
+ *   24 and 48 business hours, customer success's queue, and auto-approval for clients who opted in
  * - docs: every 30 minutes, new and edited Google Docs and Slides across the Workspace, read for the client they're about
  * - asana: every 5 minutes, mirroring open tasks on Asana's Creative board while the team moves over
  * - sprints: every hour, checking each optimization sprint whose next check is due (daily, or the follow-up date it set)
@@ -90,6 +92,7 @@ function due(step: string | null) {
   if (step === "audits") return hour >= 6 && hour <= 21;
   if (step === "ledger") return hour >= 5 && hour <= 22; // hourly (vercel.json): each client's playbook, oldest first
   if (step === "owed") return !["Sat", "Sun"].includes(weekday) && hour >= 8 && hour <= 19; // every 15 minutes (vercel.json): unanswered messages, nudged then escalated
+  if (step === "approvals") return businessHours; // every 15 minutes (vercel.json), weekdays 8am to 6pm: creative with the client posted, reminded at 24 and 48 business hours, chased or auto-approved
   if (step === "launches") return true; // every 5 minutes (vercel.json): launch what reached Ready to launch, complete what was turned on
 
   if (step === "market") return hour === 8;
@@ -329,6 +332,7 @@ export async function GET(request: Request) {
       return Response.json(due.length ? await runPatterns(admin, 200_000, due) : { done: "this week" });
     }
     if (step === "owed") return Response.json(await (await import("@/lib/owed-replies")).runOwedReplies(admin));
+    if (step === "approvals") return Response.json(await (await import("@/lib/approval-notices")).runApprovalNotices(admin));
     if (step === "market") return Response.json(await syncMarket(admin));
     if (step === "clients")
       return Response.json({

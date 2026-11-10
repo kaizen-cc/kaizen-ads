@@ -38,6 +38,10 @@
       "schedule": "10,25,40,55 * * * *"
     },
     {
+      "path": "/api/cron/context?step=approvals",
+      "schedule": "2,17,32,47 * * * 1-5"
+    },
+    {
       "path": "/api/cron/context?step=google_market",
       "schedule": "0 11 * * 1"
     },
