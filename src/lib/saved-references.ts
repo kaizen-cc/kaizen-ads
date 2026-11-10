@@ -207,7 +207,10 @@ export const SOURCE_LABEL: Record<SavedSource, string> = {
 
 /** A Meta ad id, whose picture the app keeps (/api/ad-media/<id>) because Meta's own links expire */
 export const metaAdId = (s: SavedRef) =>
-  (s.source === "winner" || s.source === "fatigue") && /^\d{5,25}$/.test(s.refId) ? s.refId : typeof s.data.adId === "string" && /^\d{5,25}$/.test(s.data.adId) ? s.data.adId : null;
+  // A TikTok winner's id is numeric too, but its picture comes from the TikTok sync (its thumbnail), never from Meta
+  s.data.platform === "tiktok" || (s.data.winner as { platform?: string } | undefined)?.platform === "tiktok"
+    ? null
+    : (s.source === "winner" || s.source === "fatigue") && /^\d{5,25}$/.test(s.refId) ? s.refId : typeof s.data.adId === "string" && /^\d{5,25}$/.test(s.data.adId) ? s.data.adId : null;
 
 /** A link to open the reference, absolute when the app's own (a winner opens in the winners library) */
 export function savedHref(s: SavedRef, origin?: string) {

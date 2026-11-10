@@ -14,6 +14,7 @@ import { moreMarket } from "./actions";
 import type { BriefSource, QuickBrief } from "@/lib/quick-brief";
 import { BriefJobSlot } from "@/components/brief-jobs";
 import type { WinnerSource } from "@/lib/suggestions";
+import { isTikTokWinner, winnerChip, winnerFoot, winnerMetaAdId, winnerSourceOf } from "@/lib/winner-source";
 import { RefThumb } from "@/components/ref-thumb";
 import { useCreativeFormats } from "@/components/creative-formats-provider";
 import { fitsFormat, marketFormatOf } from "@/lib/creative-formats";
@@ -90,7 +91,8 @@ export type PreviewItem = {
   origin?: Draft["origin"];
 };
 
-const winnerSource = (w: Winner): WinnerSource => ({ adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual });
+// A Meta winner, or one of our own TikTok winners (labelled TikTok, with its numbers and link, its picture from the TikTok sync)
+const winnerSource = (w: Winner): WinnerSource => winnerSourceOf(w);
 
 // ─── Recent clients (this browser) ────────────────────────────────────────────────────────────────────────
 
@@ -275,7 +277,16 @@ const KIND_TINT: Partial<Record<string, string>> = {
 
 // What a star saves, per kind of card (each carries the brief source, so a saved one briefs the same way later)
 const saveMarket = (a: MarketAd): SaveInput => ({ source: "market", refId: a.id, url: a.motionUrl ?? a.libraryUrl ?? a.landingUrl, thumbnail: marketStill(a), title: a.angle ?? a.headline ?? "Untitled ad", subtitle: a.brand, format: marketFormat(a), data: { video: marketVideo(a), days: a.daysActive, brief: { kind: "market", adId: a.id, format: marketFormat(a) } } });
-const saveWinner = (w: Winner): SaveInput => ({ source: "winner", refId: w.id, url: null, thumbnail: w.thumbnail, title: w.headline ?? w.name, subtitle: `${w.client}${w.detail ? ` · ${w.detail}` : ""}`, format: w.format, data: { winner: w, why: w.match?.why ?? null, brief: { kind: "winner", winner: winnerSource(w), format: w.format } } });
+const saveWinner = (w: Winner): SaveInput => ({
+  source: "winner",
+  refId: w.id,
+  url: isTikTokWinner(w) ? (w.link ?? null) : null,
+  thumbnail: w.thumbnail,
+  title: w.headline ?? w.name,
+  subtitle: `${isTikTokWinner(w) ? "TikTok · " : ""}${w.client}${w.detail ? ` · ${w.detail}` : ""}`,
+  format: w.format,
+  data: { winner: w, why: w.match?.why ?? null, brief: { kind: "winner", winner: winnerSource(w), format: w.format }, ...(isTikTokWinner(w) ? { platform: "tiktok" } : {}) },
+});
 const savePattern = (p: StartData["patterns"][number]): SaveInput => ({ source: "pattern", refId: p.id, url: null, thumbnail: null, title: p.title, subtitle: p.group, format: null, data: { detail: p.detail, brief: { kind: "pattern", patternId: p.id } } });
 const saveBrief = (b: StartData["briefs"][number]): SaveInput => ({ source: "brief", refId: b.id, url: null, thumbnail: b.thumb, title: b.title || b.signal, subtitle: b.title ? b.signal : null, format: null, data: { adId: b.adId, brief: { kind: "suggestion", id: b.id } } });
 
@@ -495,22 +506,23 @@ export function StartPage({
       ))}
       {(data?.winners ?? []).map((w: Winner) => (
         <Card
-          key={`w-${w.id}`}
+          key={`w-${w.platform ?? "meta"}-${w.id}`}
           thumb={w.thumbnail}
-          adId={w.id}
+          adId={winnerMetaAdId(w)}
           ratio="4/5"
-          chip={`${w.ratio}x their usual`}
+          chip={winnerChip(w)}
           tone="ok"
           format={w.format}
           title={w.headline ?? w.name}
-          signal={w.client}
+          signal={isTikTokWinner(w) ? `TikTok · ${w.client}` : w.client}
           match={w.match ? { text: w.match.why, close: true } : null}
           why={w.text ? w.text.slice(0, 180) : null}
-          foot={w.result ? `Beat their usual cost per ${w.result}` : ""}
+          foot={winnerFoot(w)}
+          link={isTikTokWinner(w) ? (w.link ?? null) : null}
           busy={false}
           disabled={!aiOn}
           action="Brief on this"
-          onClick={() => onPreview({ key: `w-${w.id}`, source: { kind: "winner", winner: winnerSource(w), format: w.format }, from: { kicker: `A winner · ${w.ratio}x their usual`, label: w.headline ?? w.name, thumb: w.thumbnail, adId: w.id, format: w.format }, progressLabel: "brief from a winner+brief self-review", savedRefId: savedId(find("winner", w.id)) })}
+          onClick={() => onPreview({ key: `w-${w.id}`, source: { kind: "winner", winner: winnerSource(w), format: w.format }, from: { kicker: isTikTokWinner(w) ? `A TikTok winner · ${winnerChip(w).replace(/^TikTok · /, "")}` : `A winner · ${w.ratio}x their usual`, label: w.headline ?? w.name, thumb: w.thumbnail, adId: winnerMetaAdId(w), format: w.format }, progressLabel: "brief from a winner+brief self-review", savedRefId: savedId(find("winner", w.id)) })}
           star={star(saveWinner(w))}
           brief={{ source: { kind: "winner", winner: winnerSource(w), format: w.format }, clientId }}
         />

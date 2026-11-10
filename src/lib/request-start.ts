@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { industryLabel, industryWinners, type Winner } from "@/lib/industry";
+import { industryLabel, industryWinners, tiktokPeerWinners, type Winner } from "@/lib/industry";
 import type { MarketAd } from "@/lib/market";
 import type { SuggestionDraft } from "@/lib/suggestions";
 import { SAVED_COLS, toSaved, type SavedRef } from "@/lib/saved-references";
@@ -122,7 +122,22 @@ export async function startSections(db: SupabaseClient, clientId: string, allowe
       },
       [] as StartPattern[],
     ),
-    timed(timings, "winners", async () => (industry ? (await industryWinners(db, industry, clientId, all ? 6 : 24)).filter((w) => fitsFormat(allowed, w.format)).slice(0, 6) : []), [] as Winner[]),
+    timed(
+      timings,
+      "winners",
+      async () => {
+        // Meta's winners from the most similar clients, then our own TikTok winners from the same kind of peers (labelled
+        // TikTok, their pictures from the TikTok sync); the same rule for both: same product or niche, never broader
+        const [meta, tiktok] = await Promise.all([
+          industry ? industryWinners(db, industry, clientId, all ? 6 : 24).then((ws) => ws.filter((w) => fitsFormat(allowed, w.format)).slice(0, 6)) : Promise.resolve([] as Winner[]),
+          tiktokPeerWinners(db, clientId, 4)
+            .then((ws) => ws.filter((w) => fitsFormat(allowed, w.format)).slice(0, 3))
+            .catch(() => [] as Winner[]),
+        ]);
+        return [...meta, ...tiktok];
+      },
+      [] as Winner[],
+    ),
     timed(timings, "market", () => marketPage(db, clientId, 0, MARKET_PAGE, allowed), { ads: [] as MarketAd[], more: false }),
     timed(
       timings,

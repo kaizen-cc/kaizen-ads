@@ -198,6 +198,8 @@ export type Winner = {
   platform?: "meta" | "tiktok";
   /** A TikTok winner: TikTok's 6-second views over impressions, as a percent */
   sixSecRate?: number | null;
+  /** A TikTok winner: its landing page (TikTok ads have no shareable public link) */
+  link?: string | null;
 };
 
 type SnapAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null; image?: string | null; format?: "image" | "video" | "carousel" | null; live?: boolean; spend?: number; results?: number; result?: string | null; costPerResult?: number | null; ctr?: number };
@@ -346,6 +348,7 @@ export function tiktokWinner(a: import("@/lib/tiktok/ideas").TikTokIdea, peer: {
     fame: { basis: a.targetSource, roas: a.roas, days: a.daysLive, beatBy: a.beatBy },
     platform: "tiktok",
     sixSecRate: a.sixSecRate,
+    link: a.link,
     ...(match ? { match } : {}),
   };
 }

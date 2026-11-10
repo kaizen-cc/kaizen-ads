@@ -514,7 +514,10 @@ export async function industryWinnersFor(clientId: string): Promise<WinnersResul
   const supabase = await createClient();
   const { data: c } = await supabase.from("clients").select("industry, industry_detail").eq("id", clientId).maybeSingle();
   if (!c?.industry || c.industry === "other") return { industry: null, label: null, detail: null, winners: [] };
-  return { industry: c.industry, label: industryLabel(c.industry), detail: c.industry_detail, winners: (await industryWinners(supabase, c.industry, clientId, 24)).filter((w) => fitsFormat(allowed, w.format)).slice(0, 6) };
+  const { tiktokPeerWinners } = await import("@/lib/industry");
+  // Meta's winners, then our own TikTok winners from the same kind of peers (labelled TikTok)
+  const [meta, tiktok] = await Promise.all([industryWinners(supabase, c.industry, clientId, 24), tiktokPeerWinners(supabase, clientId, 4).catch(() => [] as Winner[])]);
+  return { industry: c.industry, label: industryLabel(c.industry), detail: c.industry_detail, winners: [...meta.filter((w) => fitsFormat(allowed, w.format)).slice(0, 6), ...tiktok.filter((w) => fitsFormat(allowed, w.format)).slice(0, 3)] };
 }
 
 export type Promise_ = {
@@ -609,7 +612,9 @@ export async function moreMarket(clientId: string, offset: number): Promise<{ ad
  * work, fitted to the client), and it comes back as form fields plus where it came from.
  */
 export async function ideaDraft(
-  source: { kind: "winner"; winner: Pick<import("@/lib/industry").Winner, "id" | "client" | "detail" | "headline" | "text" | "thumbnail" | "ratio" | "result" | "costPerResult" | "usual"> } | { kind: "market"; adId: string },
+  source:
+    | { kind: "winner"; winner: Pick<import("@/lib/industry").Winner, "id" | "client" | "detail" | "headline" | "text" | "thumbnail" | "ratio" | "result" | "costPerResult" | "usual"> & Partial<Pick<import("@/lib/industry").Winner, "platform" | "link" | "sixSecRate" | "fame" | "spend" | "clientId">> }
+    | { kind: "market"; adId: string },
   clientId: string,
   format?: "image" | "video" | "carousel",
   seed?: QuickBrief | null,
@@ -629,9 +634,15 @@ export async function ideaDraft(
     let origin: NonNullable<Draft["origin"]>;
     if (source.kind === "winner") {
       const w = source.winner;
-      id = await suggestFromWinner(admin, clientId, { adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual }, me.id, format, seed);
-      // The kept copy of its picture: Meta's own links expire within days
-      origin = { kind: "winner", label: `${w.client}'s winning ad (${w.ratio}x their usual cost per ${w.result ?? "result"})${w.headline ? `: "${w.headline}"` : ""}`.slice(0, 200), thumb: /^\d{5,25}$/.test(w.id) ? `/api/ad-media/${w.id}` : w.thumbnail, suggestionId: id };
+      const tiktok = w.platform === "tiktok";
+      const { winnerSourceOf } = await import("@/lib/winner-source");
+      // A TikTok winner goes in labelled TikTok, with its numbers and link
+      const src = tiktok ? winnerSourceOf({ ...w, spend: w.spend ?? 0 } as import("@/lib/industry").Winner) : { adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual };
+      id = await suggestFromWinner(admin, clientId, src, me.id, format, seed);
+      // The kept copy of its picture: Meta's own links expire within days (a TikTok winner's comes from the TikTok sync)
+      origin = tiktok
+        ? { kind: "winner", label: `${w.client}'s winning TikTok ad (${w.ratio}x their TikTok target)${w.headline ? `: "${w.headline}"` : ""}`.slice(0, 200), link: w.link ?? null, thumb: w.thumbnail, suggestionId: id }
+        : { kind: "winner", label: `${w.client}'s winning ad (${w.ratio}x their usual cost per ${w.result ?? "result"})${w.headline ? `: "${w.headline}"` : ""}`.slice(0, 200), thumb: /^\d{5,25}$/.test(w.id) ? `/api/ad-media/${w.id}` : w.thumbnail, suggestionId: id };
     } else {
       const { loadMarketAd } = await import("@/lib/market");
       const a = await loadMarketAd(admin, source.adId);
