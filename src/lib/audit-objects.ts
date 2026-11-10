@@ -72,6 +72,26 @@ export function googleIndex(account: string, rows: { campaign_id: string; campai
   return [...m.values()];
 }
 
+/** A TikTok account's campaigns, ad groups and ads from its ad-level days (weighted by spend); read only, so they link to the account */
+export function tiktokIndex(account: string, rows: { ad_id: string; ad_name: string | null; adgroup_id: string | null; adgroup_name: string | null; campaign_id: string | null; campaign_name: string | null; spend?: number | string | null }[]): ObjectIndex {
+  const advertiser = String(account).replace(/\D/g, "");
+  const m = new Map<string, Entry>();
+  const add = (type: AuditObject["type"], id: string | null, name: string | null, spend: number, campaignId: string | null = null, adGroupId: string | null = null) => {
+    if (!id || !name) return;
+    const k = `${type}:${id}`;
+    const e = m.get(k);
+    if (e) e.weight += spend;
+    else m.set(k, { platform: "tiktok", type, id: String(id), name, key: nameKey(name), account: advertiser, campaignId, adGroupId, weight: spend + 0.001 });
+  };
+  for (const r of rows) {
+    const spend = Number(r.spend) || 0;
+    add("campaign", r.campaign_id, r.campaign_name, spend);
+    add("ad_group", r.adgroup_id, r.adgroup_name, spend, r.campaign_id);
+    add("ad", r.ad_id, r.ad_name, spend, r.campaign_id, r.adgroup_id);
+  }
+  return [...m.values()];
+}
+
 /**
  * The objects an action names, found by exact name (case and spacing aside) in the account's data: the same type
  * first, any type when the model called it the wrong thing. When one name is several objects (an ad copied into

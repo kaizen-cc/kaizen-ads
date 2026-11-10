@@ -173,3 +173,43 @@ export async function imageUrls(token: string, advertiserId: string, imageIds: s
   }
   return out;
 }
+
+// ─── Tracking and delivery checks ──────────────────────────────────────────
+// Raw data blocks, parsed defensively in ./diagnostics-core.ts (these answers aren't documented field by field)
+
+/** The pixels on an advertiser and their events (paged, 20 a page as TikTok allows) */
+export async function pixelList(token: string, advertiserId: string): Promise<unknown[]> {
+  const out: unknown[] = [];
+  for (let page = 1; page <= 10; page++) {
+    const d = await ttGet<{ pixels?: unknown[]; list?: unknown[]; page_info?: PageInfo }>("/pixel/list/", { advertiser_id: advertiserId, page, page_size: 20 }, token);
+    const list = d.pixels ?? d.list ?? [];
+    out.push(...list);
+    if (page >= (d.page_info?.total_page ?? 1) || !list.length) break;
+  }
+  return out;
+}
+
+/** Each pixel's event counts over a date range */
+export async function pixelEventStats(token: string, advertiserId: string, pixelIds: string[], start: string, end: string): Promise<unknown> {
+  return ttGet<unknown>("/pixel/event/stats/", { advertiser_id: advertiserId, pixel_ids: pixelIds, date_range: { start_date: start, end_date: end } }, token);
+}
+
+export type TikTokAdGroup = { adgroup_id: string; adgroup_name?: string; campaign_id?: string; operation_status?: string; secondary_status?: string };
+
+/** The ad groups (with their secondary status: learning, limited, rejected), paged */
+export async function adGroups(token: string, advertiserId: string): Promise<TikTokAdGroup[]> {
+  const out: TikTokAdGroup[] = [];
+  for (let page = 1; page <= 20; page++) {
+    const d = await ttGet<{ list?: (Omit<TikTokAdGroup, "adgroup_id" | "campaign_id"> & { adgroup_id: string | number; campaign_id?: string | number })[]; page_info?: PageInfo }>("/adgroup/get/", { advertiser_id: advertiserId, page, page_size: 1000 }, token);
+    out.push(...(d.list ?? []).map((g) => ({ ...g, adgroup_id: String(g.adgroup_id), campaign_id: g.campaign_id != null ? String(g.campaign_id) : undefined })));
+    if (page >= (d.page_info?.total_page ?? 1) || !(d.list ?? []).length) break;
+  }
+  return out;
+}
+
+/** TikTok's own diagnosis of up to 20 ad groups a call (delivery, creative, bid and budget, and tracking issues) */
+export async function adDiagnosis(token: string, advertiserId: string, adgroupIds: string[]): Promise<unknown[]> {
+  const out: unknown[] = [];
+  for (let i = 0; i < adgroupIds.length; i += 20) out.push(await ttGet<unknown>("/tool/diagnosis/get/", { advertiser_id: advertiserId, filtering: { adgroup_ids: adgroupIds.slice(i, i + 20) } }, token));
+  return out;
+}

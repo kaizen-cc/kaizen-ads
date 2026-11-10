@@ -4,7 +4,7 @@ import { objectLink, type AuditObject } from "@/lib/chat-change-core";
 // the campaign, ad set or ad it names, so the buyer can check where it lives and watch it change.
 
 const TYPE: Record<AuditObject["type"], string> = { campaign: "Campaign", adset: "Ad set", ad: "Ad", ad_group: "Ad group", keyword: "Keyword" };
-const where = (p: AuditObject["platform"]) => (p === "google" ? "Google Ads" : "Ads Manager");
+const where = (p: AuditObject["platform"]) => (p === "google" ? "Google Ads" : p === "tiktok" ? "TikTok Ads Manager" : "Ads Manager");
 
 export function ObjectLinks({ objects, className = "" }: { objects?: AuditObject[] | null; className?: string }) {
   const list = (objects ?? []).filter((o) => o?.id && o.account);

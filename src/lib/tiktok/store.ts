@@ -5,7 +5,8 @@ import { matchClientName } from "@/lib/client-name-match";
 import { LIVE } from "@/lib/live";
 import { nyParts } from "@/lib/kpi/calc";
 import { orderSeats, type SeatRow } from "@/lib/buyer-seats";
-import { advertiserInfo, advertisersOf, ads as listAds, exchangeCode, imageUrls, report, TikTokError, videoCovers } from "./api";
+import { adDiagnosis, adGroups, advertiserInfo, advertisersOf, ads as listAds, exchangeCode, imageUrls, pixelEventStats, pixelList, report, TikTokError, videoCovers } from "./api";
+import { diagnosticsText, parseDiagnosis, parsePixels, parsePixelStats, statusWarning, withCounts, type DiagnosisWarning, type PixelView, type TikTokDiagnostics } from "./diagnostics-core";
 import { AD_ATTRS, CAMPAIGN_ATTRS, REPORT_METRICS, adDayRow, addUp, campaignDayRow, chunkRange, shiftDay, statusWord, summarize, summaryLine, tiktokConfigured, type TikTokSummary } from "./core";
 
 // TikTok Ads in Kaizen Ads: the connection (an exec's OAuth grant, its token encrypted at rest), the advertisers it
@@ -345,6 +346,8 @@ export async function syncAllTikTok(admin: SupabaseClient, budgetMs = 600_000) {
     try {
       const r = await syncTikTokAds(admin, account);
       synced++;
+      // The pixels and TikTok's diagnosis, once a day (this step runs every two hours); a failure never fails the sync
+      if (await diagnosticsDue(admin, account)) await syncTikTokDiagnostics(admin, account).catch((e) => console.error(`[tiktok] diagnostics ${account}:`, errText(e)));
       await admin.from("sync_state").upsert({ source: `tiktok:${account}`, last_run_at: new Date().toISOString(), last_result: { ...r, error: null } });
     } catch (e) {
       errors.push(`${account}: ${errText(e)}`);
@@ -375,11 +378,93 @@ export async function adoptTikTokTargets(admin: SupabaseClient): Promise<number>
   return n;
 }
 
+// ─── Tracking and delivery checks (daily) ──────────────────────────────────
+
+const DIAGNOSTICS_EVERY_MS = 20 * 3_600_000;
+
+/** Whether an advertiser's checks are due (none yet, or the last one is 20+ hours old); false before the migration */
+async function diagnosticsDue(admin: SupabaseClient, account: string) {
+  const { data, error } = await admin.from("tiktok_diagnostics").select("checked_at").eq("advertiser_id", account).maybeSingle();
+  if (error) return false;
+  return !data?.checked_at || Date.now() - Date.parse(String(data.checked_at)) > DIAGNOSTICS_EVERY_MS;
+}
+
+/**
+ * One advertiser's tracking and delivery checks: its pixels and their events over the last 7 days, the ad groups
+ * TikTok has learning-limited or held back, the rejected ads, and TikTok's own diagnosis of the active ad groups. Each
+ * check stands alone: one TikTok refuses (its code and message are logged by the API layer and kept in errors) leaves
+ * the others, so the tab and the audit still get what was read.
+ */
+export async function syncTikTokDiagnostics(admin: SupabaseClient, account: string): Promise<TikTokDiagnostics> {
+  return withToken(admin, account, async (token) => {
+    const errors: string[] = [];
+    const note = (what: string) => (e: unknown) => {
+      errors.push(`${what}: ${errText(e).slice(0, 160)}`);
+      return null;
+    };
+    const end = shiftDay(today(), -1);
+    const start = shiftDay(end, -6);
+    const raw = await pixelList(token, account).catch(note("pixels"));
+    let pixels: PixelView[] = raw ? parsePixels({ pixels: raw }) : [];
+    if (pixels.length) {
+      const stats = await pixelEventStats(
+        token,
+        account,
+        pixels.map((p) => p.id),
+        start,
+        end,
+      ).catch(note("pixel events"));
+      if (stats) pixels = withCounts(pixels, parsePixelStats(stats));
+    }
+    const warnings: DiagnosisWarning[] = [];
+    const groups = await adGroups(token, account).catch(note("ad groups"));
+    for (const g of groups ?? []) {
+      const w = statusWarning("adgroup", { id: g.adgroup_id, name: g.adgroup_name ?? null, secondary_status: g.secondary_status ?? null });
+      if (w) warnings.push(w);
+    }
+    // Rejected ads, from what the ads sync just stored
+    const { data: stored } = await admin.from("tiktok_ads").select("ad_id, ad_name, secondary_status").eq("ad_account_id", account).limit(2000);
+    for (const a of stored ?? []) {
+      const w = statusWarning("ad", { id: String(a.ad_id), name: (a.ad_name as string | null) ?? null, secondary_status: (a.secondary_status as string | null) ?? null });
+      if (w?.kind === "rejected") warnings.push(w);
+    }
+    // TikTok's own diagnosis of the ad groups switched on (at most 100 of them, 20 a call)
+    const active = (groups ?? []).filter((g) => /^(ENABLE|ACTIVE)$/i.test(String(g.operation_status ?? ""))).map((g) => g.adgroup_id).slice(0, 100);
+    if (active.length) {
+      const blocks = await adDiagnosis(token, account, active).catch(note("diagnosis"));
+      const names = new Map((groups ?? []).map((g) => [g.adgroup_id, g.adgroup_name ?? null]));
+      for (const b of blocks ?? []) for (const w of parseDiagnosis(b)) warnings.push({ ...w, name: w.name ?? (w.id ? (names.get(w.id) ?? null) : null) });
+    }
+    const out: TikTokDiagnostics = { pixels: pixels.slice(0, 10), warnings: warnings.slice(0, 60), checkedAt: new Date().toISOString(), errors };
+    const { error } = await admin.from("tiktok_diagnostics").upsert({ advertiser_id: account, pixels: out.pixels, warnings: out.warnings, errors, checked_at: out.checkedAt, updated_at: out.checkedAt }, { onConflict: "advertiser_id" });
+    if (error) throw new Error(`Saving TikTok diagnostics: ${error.message}`);
+    return out;
+  });
+}
+
+/** The stored checks of a client's advertisers, together (null before the first one, or before the migration) */
+export async function clientDiagnostics(db: SupabaseClient, accounts: string[]): Promise<TikTokDiagnostics | null> {
+  if (!accounts.length) return null;
+  const { data, error } = await db.from("tiktok_diagnostics").select("pixels, warnings, errors, checked_at").in("advertiser_id", accounts);
+  if (error || !data?.length) return null;
+  return {
+    pixels: data.flatMap((d) => (d.pixels ?? []) as PixelView[]),
+    warnings: data.flatMap((d) => (d.warnings ?? []) as DiagnosisWarning[]),
+    errors: data.flatMap((d) => (d.errors ?? []) as string[]),
+    checkedAt:
+      data
+        .map((d) => d.checked_at as string | null)
+        .filter((x): x is string => Boolean(x))
+        .sort()
+        .at(-1) ?? null,
+  };
+}
+
 // ─── What a client's page and the AI read ──────────────────────────────────
 
 export type TikTokTopAd = { id: string; name: string; campaign: string | null; status: string | null; text: string | null; cta: string | null; thumbnail: string | null; spend: number; conversions: number; cpa: number | null; ctr: number | null; hookRate: number | null; views6s: number };
 export type TikTokCampaign = { id: string; name: string; spend: number; conversions: number; cpa: number | null; purchases: number; roas: number | null; ctr: number | null; hookRate: number | null };
-export type ClientTikTok = { accounts: { id: string; name: string | null; currency: string | null }[]; now: TikTokSummary; before: TikTokSummary; campaigns: TikTokCampaign[]; topAds: TikTokTopAd[]; dataThrough: string | null };
+export type ClientTikTok = { accounts: { id: string; name: string | null; currency: string | null }[]; now: TikTokSummary; before: TikTokSummary; campaigns: TikTokCampaign[]; topAds: TikTokTopAd[]; dataThrough: string | null; /** The pixels and TikTok's delivery warnings (checked daily), null before the first check */ diagnostics: TikTokDiagnostics | null };
 
 /** A client's TikTok over the last 30 days against the 30 before: totals, campaigns and top ads with their thumbnails */
 export async function clientTikTok(db: SupabaseClient, clientId: string): Promise<ClientTikTok | null> {
@@ -424,6 +509,7 @@ export async function clientTikTok(db: SupabaseClient, clientId: string): Promis
     campaigns,
     topAds,
     dataThrough: rows.map((r) => r.date as string).sort().at(-1) ?? null,
+    diagnostics: await clientDiagnostics(db, ids).catch(() => null),
   };
 }
 
@@ -438,5 +524,8 @@ export async function tiktokBrief(db: SupabaseClient, clientId: string): Promise
     `- ${summaryLine("The 30 days before", t.before, cur)}`,
     ...t.campaigns.slice(0, 8).map((c) => `- Campaign ${c.name}: $${c.spend} spent, ${c.conversions} conversions${c.cpa != null ? ` at $${c.cpa}` : ""}${c.roas ? `, ROAS ${c.roas}x` : ""}, CTR ${c.ctr ?? "n/a"}%, hook rate ${c.hookRate ?? "n/a"}%`),
     ...t.topAds.slice(0, 3).map((a, i) => `- Top ad ${i + 1}: ${a.name}: ${a.conversions} conversions${a.cpa != null ? ` at $${a.cpa}` : ""}, hook rate ${a.hookRate ?? "n/a"}%${a.text ? `, text "${a.text.slice(0, 120)}"` : ""}`),
-  ].join("\n");
+    ...(t.diagnostics ? [diagnosticsText(t.diagnostics)] : []),
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

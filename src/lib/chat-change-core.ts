@@ -2,6 +2,8 @@
 // Google Ads (so the buyer can check the change landed), swapping the link inside a Meta creative's spec, and the
 // edits a buyer makes to a plan before confirming it. Shared by the server and the plan card.
 
+import { tiktokManagerLink } from "@/lib/tiktok/audit-core";
+
 export type Metrics = { spend: number; results: number; cpr: number | null; ctr: number | null; freq: number | null };
 
 /** What the plan card shows for an object it will touch: its place, its look, its numbers. */
@@ -53,7 +55,8 @@ export function googleDeepLink(customer: string, level: "campaign" | "ad_group" 
  * points at an ID the model made up.
  */
 export type AuditObject = {
-  platform: "meta" | "google";
+  /** TikTok is read only: its objects open the account in TikTok Ads Manager */
+  platform: "meta" | "google" | "tiktok";
   type: "campaign" | "adset" | "ad" | "ad_group" | "keyword";
   id: string;
   name: string;
@@ -64,6 +67,7 @@ export type AuditObject = {
 
 /** Straight to the object in Ads Manager or Google Ads. */
 export function objectLink(o: AuditObject) {
+  if (o.platform === "tiktok") return tiktokManagerLink(o.account);
   if (o.platform === "meta") return metaDeepLink(o.account, o.type === "campaign" || o.type === "adset" || o.type === "ad" ? o.type : "account", o.id);
   const level = o.type === "campaign" || o.type === "ad_group" || o.type === "keyword" ? o.type : "account";
   return googleDeepLink(o.account, level, { campaignId: o.campaignId ?? (o.type === "campaign" ? o.id : null), adGroupId: o.adGroupId ?? (o.type === "ad_group" ? o.id : null) });
