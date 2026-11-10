@@ -525,7 +525,7 @@ export function BoardClient({
           onFix={() => replaceParams({ move: null, to: null, t: String(dropped.ticket.number) })}
         />
       )}
-      {open && <TicketDrawer key={open.id} ticket={open} people={people} can={can} onClose={() => closeParams("t", "move", "to", "design", "ver", "pin", "copy")} onOptimisticMove={optimisticMove} demo={demo} />}
+      {open && <TicketDrawer key={open.id} ticket={open} people={people} can={can} meId={me?.id ?? null} onClose={() => closeParams("t", "move", "to", "design", "ver", "pin", "copy", "tab")} onOptimisticMove={optimisticMove} demo={demo} />}
 
     </div>
   );

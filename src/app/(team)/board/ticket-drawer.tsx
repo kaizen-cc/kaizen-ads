@@ -3,10 +3,12 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { PriorityBadge } from "@/components/priority-badge";
-import { closeParams, pushParams, useParam } from "@/lib/url-state";
+import { useFabClear } from "@/components/fab-clear";
+import { closeParams, closeThen, pushParams, useParam } from "@/lib/url-state";
+import { COPY_STAGES, MAKING, TAB_LABEL, activeTab, ticketLayout, ticketRole, type TicketTab } from "@/lib/ticket-layout";
 import { FORMAT_LABEL, PHASE_LABEL, businessDuration, health, stageInfo, type Phase, type Priority, type Stage } from "@/lib/stages";
 import { MoveDialog } from "./move-dialog";
 import { assignTicket, commentTicket, deleteTicket, moveTicket, setTicketDue, setTicketPriority, ticketHistory, type TicketEvent } from "./actions";
@@ -57,7 +59,8 @@ import { ReviewPanel } from "./review-panel";
 import { AiGate } from "./ai-review";
 import { CopyPanel } from "./copy-panel";
 import { LaunchPanel } from "./launch-panel";
-import { ClientTag, FormatIcon, TimeStamp } from "./ticket-card";
+import { ClientTag, TimeStamp } from "./ticket-card";
+import { BriefEssentials, versionsLabel } from "./ticket-essentials";
 import type { Person, Ticket } from "./types";
 
 /** Comment text with its links as short, clickable labels instead of long raw URLs (an Ads Manager link reads
@@ -79,14 +82,6 @@ function linkify(text: string) {
 }
 
 const PHASES: Phase[] = ["brief", "make", "review", "client", "launch"];
-
-// "Send back" moves where the flow allows going backwards.
-const BACK: Partial<Record<Stage, { to: Stage; label: string }>> = {
-  in_production: { to: "requested", label: "Back to request" },
-  internal_review: { to: "in_production", label: "Send back to creative" },
-  client_review: { to: "client_revision", label: "Client asked for changes" },
-  ready_for_launch: { to: "client_review", label: "Back to client" },
-};
 
 const DEMO_HISTORY = (t: Ticket): TicketEvent[] => [
   { id: "d1", kind: "created", fromStage: null, toStage: "requested", actor: t.buyerName, body: null, data: {}, at: t.createdAt },
@@ -283,16 +278,33 @@ const DEMO_COPY = {
   },
 };
 
-// These stages have their own panel instead of the generic "next step" button
-const SPECIAL: Stage[] = ["internal_review", "copy", "copy_review"];
-// Making stages: the upload area takes the place of the note, and the next step appears once a file is up
-const MAKING: Stage[] = ["in_production", "client_revision"];
-const COPY_STAGES: Stage[] = ["copy", "copy_review", "ready_for_client", "client_review", "client_revision", "ready_for_launch", "launched"];
+/** A section that opens with a tap: what's one tap away without being a long page */
+function Disclosure({ title, hint, defaultOpen = false, children }: { title: string; hint?: string | null; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className="grid min-w-0 overflow-hidden rounded-[14px] border border-line">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex min-h-12 w-full items-center justify-between gap-3 px-5 py-3 text-left transition-colors hover:bg-surface max-md:px-4">
+        <span className="min-w-0">
+          <span className="block text-sm font-medium">{title}</span>
+          {hint && <span className="block truncate text-xs text-faint">{hint}</span>}
+        </span>
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden className={`shrink-0 text-faint transition-transform ${open ? "rotate-180" : ""}`}>
+          <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {/* Kept mounted while closed, so what it loads (and anything it has open) stays */}
+      <div hidden={!open} className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5 border-t border-line px-5 py-5 max-md:px-4">
+        {children}
+      </div>
+    </section>
+  );
+}
 
 export function TicketDrawer({
   ticket,
   people,
   can = { review: false, approveCopy: false },
+  meId = null,
   onClose,
   onOptimisticMove,
   demo = false,
@@ -300,6 +312,8 @@ export function TicketDrawer({
   ticket: Ticket;
   people: Person[];
   can?: { review: boolean; approveCopy: boolean; exec?: boolean };
+  /** Who's looking: the ticket opens on what they act on (their own ticket in production, a review for the reviewer) */
+  meId?: string | null;
   onClose: () => void;
   onOptimisticMove: (id: string, stage: Stage) => void;
   demo?: boolean; // design preview: sample history, no server calls
@@ -309,16 +323,29 @@ export function TicketDrawer({
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState("");
   const [moveNote, setMoveNote] = useState("");
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   // The move dialog is a place of its own (?move=number), so back closes it before the ticket
   const moving = useParam("move") === String(ticket.number);
   const [uploads, setUploads] = useState<UploadState>({ uploaded: 0, uploading: 0, loaded: false, missing: [] });
   const onUploads = useCallback((u: UploadState) => setUploads(u), []);
   const hasCreative = uploads.uploaded > 0 || demo;
   const making = MAKING.includes(ticket.stage);
-  const filesFirst = !making && ticket.stage !== "requested";
   const info = stageInfo(ticket.stage);
-  const back = BACK[ticket.stage];
   const h = health(ticket.minutesOver, ticket.stage);
+
+  // The stage decides what the ticket opens on; the tab is in the address (?tab=), so back returns to the last one
+  const layout = ticketLayout(ticket.stage, ticketRole(can, Boolean(meId && meId === ticket.assigneeId)));
+  const tabParam = useParam("tab");
+  // A creative open in the viewer (?design=) lives in the Creative tab: a link to it shows that tab under the viewer
+  const viewing = useParam("design") !== null;
+  const tab: TicketTab = viewing ? "creative" : activeTab(layout, tabParam);
+  const goTab = (t: TicketTab) => pushParams({ tab: t === layout.defaultTab ? null : t });
+
+  const scroller = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    scroller.current?.scrollTo({ top: 0 });
+  }, [tab]);
 
   const reload = () =>
     demo
@@ -327,7 +354,6 @@ export function TicketDrawer({
   // The board remounts this drawer per ticket (key), so history starts empty for each one
   useEffect(() => {
     reload();
-    // Escape closes what's on top: the move dialog handles its own
     // Escape closes what's on top: the move dialog, the copy studio and the creative viewer handle their own
     const esc = (e: KeyboardEvent) => {
       const q = new URLSearchParams(window.location.search);
@@ -366,43 +392,188 @@ export function TicketDrawer({
     });
   };
 
-  const currentPhaseIndex = PHASES.indexOf(info.phase);
-  // Phones: the generic next step also sits in a bar pinned to the bottom of the screen, in thumb reach
-  const nextBar = ticket.stage !== "launched" && !SPECIAL.includes(ticket.stage) && !making && Boolean(info.next);
+  // The primary action: a move from the bar, or a panel's own action the bar takes you to. While that panel's action is
+  // on screen the bar says who has it instead, so there's only ever one primary button in sight.
+  const act = layout.action;
+  const panelAct = act?.kind === "panel" ? act : null;
+  const [targetSeen, setTargetSeen] = useState(false);
+  useEffect(() => {
+    const root = scroller.current;
+    const target = panelAct?.target;
+    if (!target || tab !== panelAct?.tab || !root) return;
+    const el = root.querySelector(`[data-target="${target}"]`);
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => setTargetSeen(e.isIntersecting), { root, threshold: 0.2 });
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      setTargetSeen(false);
+    };
+  }, [panelAct?.tab, panelAct?.target, tab, hasCreative, uploads.uploading]);
+  const toTarget = (target: string) =>
+    setTimeout(() => scroller.current?.querySelector(`[data-target="${target}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+  const primary = () => {
+    if (!act) return;
+    if (act.kind === "move") return move(act.to);
+    if (act.kind !== "panel") return;
+    if (tab !== act.tab) goTab(act.tab);
+    toTarget(act.target);
+  };
+  const showPrimary = act?.kind === "move" || (panelAct !== null && !(tab === panelAct.tab && targetSeen));
+  const who = ticket.assigneeName ?? (info.owner || null);
+  const canMove = ticket.stage !== "launched" && !demo;
+  const bar = Boolean(act) || canMove;
 
-  const section = "grid gap-3";
+  // The bar's height keeps the feedback bubble above it, so it never covers the primary action
+  const barRef = useRef<HTMLDivElement>(null);
+  const [barH, setBarH] = useState(0);
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setBarH(Math.ceil(el.getBoundingClientRect().height)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [bar]);
+  useFabClear(barH, bar && barH > 0);
+
+  const currentPhaseIndex = PHASES.indexOf(info.phase);
   const sectionTitle = "text-[11px] font-semibold uppercase tracking-[0.14em] text-faint";
   const control =
     "h-9 w-full min-w-0 rounded-brand border border-transparent bg-transparent px-2.5 text-sm text-fg outline-none transition-colors hover:border-line hover:bg-surface-2 focus:border-brand-text/60 disabled:opacity-60 max-md:h-11 max-md:border-line/60 max-md:bg-surface";
-  const counts =
-    [ticket.newCount && `${ticket.newCount} new`, ticket.variationCount && `${ticket.variationCount} variation${ticket.variationCount === 1 ? "" : "s"}`].filter(Boolean).join(" + ") ||
-    `${ticket.quantity} creative${ticket.quantity === 1 ? "" : "s"}`;
+  const panel = (t: TicketTab) => ({ role: "tabpanel" as const, id: `tp-${t}`, "aria-labelledby": `tb-${t}`, hidden: tab !== t, className: "grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-6 max-md:gap-5" });
+  const refFiles = ticket.refs.filter((r) => parseBriefFileUrl(r));
+  const refLinks = ticket.refs.filter((r) => !parseBriefFileUrl(r));
+
+  const gate = (
+    <div data-target="ai-gate" className="grid min-w-0 grid-cols-[minmax(0,1fr)] scroll-mt-4">
+      {hasCreative && uploads.uploading === 0 ? (
+        // Remounts after each upload, so it always knows whether the review is about the current files
+        <AiGate
+          ticket={ticket}
+          demo={demo}
+          missing={uploads.missing}
+          onSent={moved}
+          back={
+            layout.gateBack && (
+              <button disabled={pending} onClick={() => move(layout.gateBack!.to)} className="h-10 rounded-brand px-3 text-xs text-faint hover:text-fg disabled:opacity-60 max-md:h-11">
+                ↩ {layout.gateBack.label}
+              </button>
+            )
+          }
+        />
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-dashed border-line px-4 py-3 text-xs text-faint">
+          <span>{uploads.uploading > 0 ? "Uploading… the next step appears when it's done." : "Upload the creative to send it to creative review."}</span>
+          {layout.gateBack && (
+            <button disabled={pending} onClick={() => move(layout.gateBack!.to)} className="rounded-full px-3 py-1.5 text-muted hover:text-fg disabled:opacity-60 max-md:min-h-11">
+              ↩ {layout.gateBack.label}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`Ticket ${ticket.number}`}>
       <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-[2px] animate-[sheet-fade_.2s_ease-out]" />
-      <aside className="relative flex h-full w-full max-w-[600px] flex-col border-l border-line bg-bg shadow-2xl animate-[drawer-right_.25s_cubic-bezier(.2,.8,.2,1)] max-md:border-l-0">
-        {/* Header: who, what, and where it is in the journey */}
-        <header className="grid gap-5 border-b border-line px-7 pb-6 pt-5 max-md:gap-4 max-md:px-4 max-md:pb-4 max-md:pt-[calc(0.5rem+env(safe-area-inset-top))]">
+      <aside className="relative flex h-full w-full max-w-[640px] flex-col border-l border-line bg-bg shadow-2xl animate-[drawer-right_.25s_cubic-bezier(.2,.8,.2,1)] max-md:border-l-0">
+        {/* Header, always in sight: which ticket, where it is, what's next and who has it, when it's due */}
+        <header className="grid gap-3 px-7 pb-3 pt-5 max-md:gap-2.5 max-md:px-4 max-md:pt-[calc(0.5rem+env(safe-area-inset-top))]">
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <ClientTag name={ticket.clientName} />
               <span className="tabular text-xs text-faint">#{ticket.number}</span>
               <PriorityBadge priority={ticket.priority} size="md" />
             </div>
-            <button onClick={onClose} className="-mr-2 grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg max-md:h-11 max-md:w-11 max-md:bg-surface max-md:text-base" aria-label="Close ticket">
+            <button onClick={onClose} className="-mr-2 grid h-9 w-9 shrink-0 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg max-md:h-11 max-md:w-11 max-md:bg-surface max-md:text-base" aria-label="Close ticket">
               ✕
             </button>
           </div>
 
-          <div className="grid gap-2.5">
-            <h2 className="font-heading text-[26px] leading-tight max-md:text-[22px] max-md:[overflow-wrap:anywhere]">{ticket.title}</h2>
+          <h2 className="line-clamp-2 font-heading text-[24px] leading-tight max-md:text-[20px] max-md:[overflow-wrap:anywhere]">{ticket.title}</h2>
+
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 text-xs font-medium text-fg">
+              <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${h === "bad" ? "bg-bad" : h === "warn" ? "bg-warn" : ticket.stage === "launched" ? "bg-ok" : "bg-brand"}`} />
+              {info.label}
+            </span>
+            <span className="min-w-0 text-xs text-muted">
+              {info.nextLabel && <>Next: <span className="text-fg">{info.nextLabel}</span></>}
+              {info.nextLabel && who && <span className="text-faint"> · </span>}
+              {who && (
+                <button type="button" onClick={() => goTab("activity")} className="hover:text-fg hover:underline max-md:py-1" title="Change who has it in Activity">
+                  with {who}
+                </button>
+              )}
+            </span>
+            <span className="ml-auto flex items-center gap-2 max-md:ml-0">
+              {ticket.stageDueAt && (
+                <button type="button" onClick={() => goTab("activity")} className="tabular text-xs text-muted hover:text-fg max-md:py-1" title="Change the due date in Activity">
+                  Due {fmtDate(ticket.stageDueAt)}
+                </button>
+              )}
+              <TimeStamp ticket={ticket} label />
+            </span>
+          </div>
+
+          {/* Journey: five phases, the current one lit */}
+          <div className="grid grid-cols-5 gap-1" aria-label={`Phase: ${PHASE_LABEL[info.phase]}`}>
+            {PHASES.map((p, i) => (
+              <span
+                key={p}
+                title={PHASE_LABEL[p]}
+                className={`h-1 rounded-full ${i < currentPhaseIndex ? "bg-fg/40" : i === currentPhaseIndex ? (h === "bad" ? "bg-bad" : h === "warn" ? "bg-warn" : "bg-brand") : "bg-surface-2"}`}
+              />
+            ))}
+          </div>
+        </header>
+
+        {/* Tabs: the stage's own first lit with a dot when you're elsewhere */}
+        <nav role="tablist" aria-label="Ticket" className="flex gap-1 border-b border-line px-5 max-md:gap-0 max-md:px-2">
+          {layout.tabs.map((t) => (
+            <button
+              key={t}
+              id={`tb-${t}`}
+              role="tab"
+              type="button"
+              aria-selected={tab === t}
+              aria-controls={`tp-${t}`}
+              onClick={() => t !== tab && goTab(t)}
+              className={`relative flex h-11 items-center justify-center gap-1.5 px-3 text-sm transition-colors max-md:flex-1 max-md:px-1 ${tab === t ? "font-medium text-fg" : "text-muted hover:text-fg"}`}
+            >
+              {TAB_LABEL[t]}
+              {t === layout.defaultTab && tab !== t && <span aria-label="(this stage)" className="h-1.5 w-1.5 rounded-full bg-brand" />}
+              <span aria-hidden className={`absolute inset-x-2 -bottom-px h-0.5 rounded-full transition-colors ${tab === t ? "bg-brand" : "bg-transparent"}`} />
+            </button>
+          ))}
+        </nav>
+
+        {/* One column, as wide as the drawer: a long link or file name wraps instead of pushing everything off the side */}
+        <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden max-md:overscroll-contain">
+          <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-6 px-7 py-6 [overflow-wrap:anywhere] max-md:gap-5 max-md:px-4 max-md:py-5 ${bar ? "" : "max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))]"}`}>
             {ticket.migration && (
-              <div className="grid gap-1.5 rounded-[10px] border border-warn/40 bg-warn-soft px-3.5 py-3 text-sm">
+              <div className="grid gap-1.5 rounded-[12px] border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
                 <p className="font-medium text-warn">Finish moving this from Asana</p>
                 <ul className="grid gap-1 text-[13px] text-fg">
-                  {ticket.migration.needsCreative && <li>· Upload the creative as it stands (Deliverables, below). The client portal only shows tickets with their files here.</li>}
-                  {ticket.migration.needsCopy && <li>· Add the copy set (Copy, below): it&apos;s past copy, so the client needs to see it.</li>}
+                  {ticket.migration.needsCreative && (
+                    <li>
+                      · Upload the creative as it stands in{" "}
+                      <button type="button" onClick={() => goTab("creative")} className="underline underline-offset-2 hover:text-brand-text max-md:py-1">
+                        Creative
+                      </button>
+                      . The client portal only shows tickets with their files here.
+                    </li>
+                  )}
+                  {ticket.migration.needsCopy && (
+                    <li>
+                      · Add the copy set in{" "}
+                      <button type="button" onClick={() => goTab("copy")} className="underline underline-offset-2 hover:text-brand-text max-md:py-1">
+                        Copy
+                      </button>
+                      : it&apos;s past copy, so the client needs to see it.
+                    </li>
+                  )}
                 </ul>
                 {ticket.migration.url && (
                   <a href={ticket.migration.url} target="_blank" rel="noreferrer" className="text-xs text-muted hover:text-fg max-md:py-2">
@@ -411,375 +582,307 @@ export function TicketDrawer({
                 )}
               </div>
             )}
-            {ticket.parentNumber && (
-              <p className="text-xs text-ok">
-                Split from #{ticket.parentNumber}: the designs and copy the client approved, ready to launch while the rest is reworked.
-              </p>
-            )}
-            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
-              <span className="inline-flex items-center gap-1.5 text-fg">
-                <FormatIcon format={ticket.format} /> {FORMAT_LABEL[ticket.format]}
-              </span>
-              <span className="text-faint">·</span>
-              <span>{counts}</span>
-              {((ticket.internalRounds ?? 0) > 0 || (ticket.clientRounds ?? 0) > 0) && (
-                <>
-                  <span className="text-faint">·</span>
-                  <span className={(ticket.clientRounds ?? 0) >= 2 ? "text-warn" : ""}>
-                    Revisions: {ticket.internalRounds ?? 0} internal, {ticket.clientRounds ?? 0} client
-                  </span>
-                </>
-              )}
-              {ticket.avatar && (
-                <>
-                  <span className="text-faint">·</span>
-                  <span className={ticket.avatarTest ? "text-warn" : ""}>{ticket.avatarTest ? "Avatar test" : "Avatar"}: {ticket.avatar}</span>
-                </>
-              )}
-              {ticket.angleName && (
-                <>
-                  <span className="text-faint">·</span>
-                  <span>Angle: {ticket.angleName}</span>
-                </>
-              )}
-            </p>
-          </div>
+            {ticket.parentNumber && <p className="text-xs text-ok">Split from #{ticket.parentNumber}: the designs and copy the client approved, ready to launch while the rest is reworked.</p>}
+            {error && !bar && <p className="rounded-[10px] bg-bad-soft px-4 py-3 text-sm text-bad">{error}</p>}
 
-          {/* Journey: five phases, current one lit */}
-          <div className="grid grid-cols-5 gap-1.5">
-            {PHASES.map((p, i) => (
-              <div key={p} className="grid gap-1.5">
-                <div
-                  className={`h-1 rounded-full ${
-                    i < currentPhaseIndex ? "bg-fg/40" : i === currentPhaseIndex ? (h === "bad" ? "bg-bad" : h === "warn" ? "bg-warn" : "bg-brand") : "bg-surface-2"
-                  }`}
-                />
-                <span className={`text-[11px] ${i === currentPhaseIndex ? "text-fg" : "text-faint"}`}>{PHASE_LABEL[p]}</span>
-              </div>
-            ))}
-          </div>
-        </header>
-
-        {/* One column, as wide as the drawer: a long link or file name wraps instead of pushing everything off the side */}
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden max-md:overscroll-contain">
-          <div
-            className={`grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-9 px-7 py-7 [overflow-wrap:anywhere] max-md:gap-8 max-md:px-4 max-md:py-5 ${nextBar ? "" : "max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))]"}`}
-          >
-          {/* Where it is and what happens next */}
-          <section className="overflow-hidden rounded-[10px] border border-line bg-surface">
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 max-md:px-4">
-              <div className="min-w-0">
-                <p className="font-medium">{info.label}</p>
-                <p className="mt-0.5 text-xs text-muted">{ticket.stageDueAt ? <>Due {fmtDate(ticket.stageDueAt)}</> : "No turnaround in this stage"}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <TimeStamp ticket={ticket} label />
-                {ticket.stage !== "launched" && !demo && (
-                  <button type="button" onClick={() => pushParams({ move: String(ticket.number) })} className="h-8 rounded-full border border-line px-3 text-xs text-muted hover:border-faint hover:text-fg max-md:h-10" title="Move it to any stage: back to production, on to the client…">
-                    Move to…
-                  </button>
+            {/* Brief: the essentials first; the full text, its check and the references a tap away */}
+            <div {...panel("brief")}>
+              <BriefEssentials ticket={ticket} />
+              {!demo && <BriefAdjustments ticketId={ticket.id} />}
+              <Disclosure title="Full brief" hint="The brief as written, with the brief check and the revise chat" defaultOpen={layout.defaultTab !== "brief"}>
+                <TicketBrief key={ticket.id} ticket={ticket} demo={demo} />
+              </Disclosure>
+              <Disclosure title="References" hint={ticket.refs.length ? `${ticket.refs.length} on this ticket` : "Live ads from Motion, saved concepts"} defaultOpen={ticket.refs.length > 0 && layout.defaultTab !== "brief"}>
+                {/* Files added to the brief (pictures, videos, audio, PDFs): cards with their picture */}
+                {refFiles.length > 0 && <LinkCards urls={refFiles} size="sm" />}
+                {refLinks.length > 0 && (
+                  <ul className="grid gap-1.5">
+                    {refLinks.map((r) => (
+                      <li key={r} className="flex min-w-0 items-center gap-2 text-sm">
+                        {/motionapp\.com|facebook\.com\/ads\/library/i.test(r) && (
+                          <span className="shrink-0 rounded-full bg-[#6c5ce7]/15 px-2 py-0.5 text-[10px] font-medium text-[#8b7cf6]">{/motionapp\.com/i.test(r) ? "Motion" : "Ad Library"}</span>
+                        )}
+                        <a href={r} target="_blank" rel="noreferrer" className="truncate text-brand-text hover:underline max-md:min-w-0 max-md:py-2">
+                          {r}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
                 )}
+                {!demo && <MotionReferences clientId={ticket.clientId} name={`t${ticket.number}`} picked={ticket.refs} onPick={(r) => addTicketRef(ticket.id, r.url)} />}
+                {!demo && (
+                  <SavedConcepts
+                    key={ticket.id}
+                    clientId={ticket.clientId}
+                    only={(r) => Boolean(savedHref(r))}
+                    hint="Starred for this client by the team. Add one to this ticket's references; it leaves Saved once it's used."
+                    onAdd={async (r) => {
+                      const href = savedHref(r, window.location.origin);
+                      if (!href) return { ok: false, error: "That one has no link to add." };
+                      const added = await addTicketRef(ticket.id, href);
+                      if (!added.ok) return added;
+                      await markSavedUsed([r.id], ticket.id);
+                      return { ok: true };
+                    }}
+                  />
+                )}
+                {demo && !ticket.refs.length && <p className="text-sm text-faint">No references yet.</p>}
+              </Disclosure>
+            </div>
+
+            {/* Creative: what to make, what the client or the reviewer said, the files, and sending it on */}
+            <div {...panel("creative")}>
+              {layout.clientView && (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-line bg-surface px-4 py-3">
+                  <span className="text-sm text-muted">
+                    {ticket.stage === "client_review" ? "Waiting on the client in their portal." : ticket.stage === "client_revision" ? "The client asked for changes: they're below, pinned on the creative." : "The client's portal shows where this stands."}
+                    {ticket.clientProgress && <span className="mt-0.5 block text-xs text-ok">{ticket.clientProgress}</span>}
+                  </span>
+                  <a href={`/c/${ticket.clientSlug}`} target="_blank" rel="noreferrer" className="inline-flex min-h-9 items-center rounded-full border border-line px-3.5 text-xs text-muted hover:border-faint hover:text-fg max-md:min-h-11">
+                    Open the client&apos;s view ↗
+                  </a>
+                </div>
+              )}
+              {making && (
+                <Disclosure title="What to make" hint={`${versionsLabel(ticket)} · ${ticket.sizes.map((s) => s.replace("x", ":")).join(", ") || FORMAT_LABEL[ticket.format]} · specs, file names, assets`} defaultOpen={ticket.stage === "in_production"}>
+                  <BriefEssentials ticket={ticket} variant="make" />
+                </Disclosure>
+              )}
+              {/* Making: the open comments to fix come before the files */}
+              {making && <ReviewPanel ticket={ticket} canReview={can.review} onMoved={moved} demo={demo} />}
+              <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} canDisagree={can.review} />
+              {making && gate}
+              {!making && (
+                <div data-target="review" className="grid min-w-0 grid-cols-[minmax(0,1fr)] scroll-mt-4">
+                  <ReviewPanel ticket={ticket} canReview={can.review} onMoved={moved} demo={demo} />
+                </div>
+              )}
+              <Disclosure
+                title={ticket.format === "video" ? "Script, voiceover and AI footage" : "AI images and video"}
+                hint={ticket.format === "video" ? "The video script writer, voices, Higgsfield" : "Higgsfield, on this ticket"}
+              >
+                {ticket.format === "video" && <ScriptPanel requestId={ticket.id} demo={demo ? null : undefined} />}
+                {!demo && ticket.format === "video" && <VoiceoverPanel requestId={ticket.id} fromScript />}
+                {!demo && <HiggsfieldPanel requestId={ticket.id} />}
+                {demo && ticket.format !== "video" && <p className="text-sm text-faint">AI images and video are made here on a live ticket.</p>}
+              </Disclosure>
+            </div>
+
+            {/* Copy: the set and the copy studio */}
+            {COPY_STAGES.includes(ticket.stage) && (
+              <div {...panel("copy")}>
+                <div data-target="copy" className="grid min-w-0 grid-cols-[minmax(0,1fr)] scroll-mt-4">
+                  <CopyPanel ticket={ticket} canApprove={can.approveCopy} canForce={can.review} onMoved={moved} demo={demo ? DEMO_COPY : undefined} />
+                </div>
+              </div>
+            )}
+
+            {/* Launch: the launcher, and once launched from here, what it made */}
+            {layout.tabs.includes("launch") && (
+              <div {...panel("launch")}>
+                <div data-target="launch" className="grid min-w-0 grid-cols-[minmax(0,1fr)] scroll-mt-4">
+                  {!demo ? (
+                    <LaunchPanel requestId={ticket.id} isExec={Boolean(can.exec)} launched={ticket.stage === "launched"} />
+                  ) : (
+                    <p className="rounded-[12px] border border-dashed border-line px-4 py-5 text-sm text-faint">The launcher opens here on a live ticket.</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Activity: the settings, then everything that happened */}
+            <div {...panel("activity")}>
+              <section className="grid gap-3">
+                <h3 className={sectionTitle}>Details</h3>
+                <dl className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-x-4 gap-y-1 text-sm max-md:grid-cols-[96px_minmax(0,1fr)] max-md:gap-x-3 max-md:gap-y-2">
+                  <dt className="text-muted">Assigned to</dt>
+                  <dd className="flex min-w-0 items-center gap-1">
+                    <PersonAvatar name={ticket.assigneeName ?? "?"} size={22} muted={!ticket.assigneeName} />
+                    <select aria-label="Assigned to" value={ticket.assigneeId ?? ""} disabled={pending} onChange={(e) => run(() => assignTicket(ticket.id, e.target.value || null))} className={control}>
+                      <option value="">Unassigned</option>
+                      {people.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} · {p.role}
+                        </option>
+                      ))}
+                    </select>
+                  </dd>
+
+                  <dt className="text-muted">Due (ET)</dt>
+                  <dd className="min-w-0">
+                    <input
+                      type="datetime-local"
+                      aria-label="Due date, Eastern time"
+                      defaultValue={toLocalInput(ticket.stageDueAt)}
+                      key={ticket.stageDueAt ?? "none"}
+                      disabled={pending || !ticket.stageDueAt}
+                      onBlur={(e) => e.target.value && e.target.value !== toLocalInput(ticket.stageDueAt) && run(() => setTicketDue(ticket.id, fromLocalInput(e.target.value)))}
+                      className={control}
+                    />
+                  </dd>
+
+                  <dt className="text-muted">Priority</dt>
+                  <dd className="flex gap-1 px-1 py-1 max-md:px-0">
+                    {(["normal", "high", "urgent"] as Priority[]).map((p) => (
+                      <button
+                        key={p}
+                        disabled={pending}
+                        onClick={() => p !== ticket.priority && run(() => setTicketPriority(ticket.id, p))}
+                        aria-pressed={ticket.priority === p}
+                        className={`h-7 rounded-full px-3 text-xs capitalize transition-colors disabled:opacity-60 max-md:h-11 max-md:flex-1 max-md:text-sm ${
+                          ticket.priority === p ? (p === "urgent" ? "bg-bad-soft text-bad" : p === "high" ? "bg-warn-soft text-warn" : "bg-surface-2 text-fg") : "text-faint hover:bg-surface-2 hover:text-fg"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </dd>
+
+                  {[
+                    ["Creative", ticket.creativeName],
+                    ["Media buyer", ticket.buyerName],
+                    ["Requested", fmtDate(ticket.createdAt)],
+                    ["In this stage", `${businessDuration(ticket.minutesInStage)} business time`],
+                    ["Revisions", (ticket.internalRounds ?? 0) > 0 || (ticket.clientRounds ?? 0) > 0 ? `${ticket.internalRounds ?? 0} internal, ${ticket.clientRounds ?? 0} client` : null],
+                  ].map(([k, v]) => (
+                    <div key={k} className="contents">
+                      <dt className="text-muted">{k}</dt>
+                      <dd className={`flex h-9 min-w-0 items-center truncate px-2.5 ${k === "Revisions" && (ticket.clientRounds ?? 0) >= 2 ? "text-warn" : ""}`}>{v ?? <span className="text-faint">None</span>}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+
+              <section className="grid gap-4">
+                <h3 className={sectionTitle}>Activity</h3>
+                {history === null ? (
+                  <p className="text-xs text-faint">Loading…</p>
+                ) : (
+                  <ol className="relative grid gap-5 before:absolute before:bottom-3 before:left-[13px] before:top-3 before:w-px before:bg-line">
+                    {history.map((e) => (
+                      <li key={e.id} className="relative grid grid-cols-[28px_minmax(0,1fr)] gap-3">
+                        {e.actor ? (
+                          <PersonAvatar name={e.actor} size={28} />
+                        ) : (
+                          <span className="relative grid h-7 w-7 place-items-center rounded-full border border-line bg-surface">
+                            <Image src="/kaizen-mark.png" alt="Kaizen Ads" width={18} height={18} />
+                          </span>
+                        )}
+                        <div className="grid min-w-0 gap-1.5 pt-1">
+                          <p className="text-sm leading-snug text-muted">
+                            <span className="font-medium text-fg">{e.actor ?? "Kaizen Ads"}</span> {describe(e)}
+                            <span className="ml-2 whitespace-nowrap text-xs text-faint">{fmtDate(e.at)}</span>
+                          </p>
+                          {e.body && <p className="whitespace-pre-wrap rounded-[8px] bg-surface px-3.5 py-2.5 text-sm leading-relaxed">{linkify(e.body)}</p>}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (comment.trim()) run(() => commentTicket(ticket.id, comment), () => setComment(""));
+                  }}
+                  className="mt-1 flex gap-2"
+                >
+                  <input
+                    value={comment}
+                    onChange={(e) => setComment(e.target.value)}
+                    placeholder="Write a comment…"
+                    aria-label="Comment"
+                    className="h-10 min-w-0 flex-1 rounded-brand border border-line bg-surface px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:h-11"
+                  />
+                  <button disabled={pending || !comment.trim()} className="h-10 rounded-brand bg-surface-2 px-4 text-sm hover:bg-line disabled:opacity-50 max-md:h-11">
+                    Post
+                  </button>
+                </form>
+              </section>
+
+              <div className="grid gap-3 border-t border-line pt-5">
+                <Link href={`/clients/${ticket.clientSlug}`} className="justify-self-start text-xs text-muted hover:text-fg max-md:py-3">
+                  {ticket.clientName} client page →
+                </Link>
+                {can.review && <DeleteTicket ticket={ticket} onDeleted={onClose} />}
               </div>
             </div>
-            {making && (
-              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 border-t border-line px-5 py-5 max-md:px-3 max-md:py-4">
-                <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} canDisagree={can.review} />
-                {hasCreative && uploads.uploading === 0 ? (
-                  // Remounts after each upload, so it always knows whether the review is about the current files
-                  <AiGate
-                    ticket={ticket}
-                    demo={demo}
-                    missing={uploads.missing}
-                    onSent={moved}
-                    back={
-                      back && (
-                        <button disabled={pending} onClick={() => move(back.to)} className="h-10 rounded-brand px-3 text-xs text-faint hover:text-fg disabled:opacity-60 max-md:h-11">
-                          ↩ {back.label}
-                        </button>
-                      )
-                    }
-                  />
-                ) : (
-                  <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-faint">
-                    <span>{uploads.uploading > 0 ? "Uploading… the next step appears when it's done." : "Upload the creative to send it to creative review."}</span>
-                    {back && (
-                      <button disabled={pending} onClick={() => move(back.to)} className="rounded-full px-3 py-1.5 text-muted hover:text-fg disabled:opacity-60 max-md:min-h-11">
-                        ↩ {back.label}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-            {ticket.stage !== "launched" && !SPECIAL.includes(ticket.stage) && !making && (
-              <div className="grid gap-3 border-t border-line px-5 py-4 max-md:px-4">
-                <input
-                  value={moveNote}
-                  onChange={(e) => setMoveNote(e.target.value)}
-                  placeholder="Add a note with this move (optional)"
-                  aria-label="Note for this move"
-                  className="h-10 rounded-brand border border-line bg-bg px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:h-11"
-                />
-                <div className={`flex flex-wrap items-center gap-2 ${!back ? "max-md:hidden" : ""}`}>
-                  {info.next && (
-                    <button
-                      disabled={pending}
-                      onClick={() => move(info.next!)}
-                      className="h-10 rounded-brand bg-brand px-4 text-sm font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:bg-brand-hover disabled:opacity-60 max-md:hidden"
-                    >
-                      {info.nextLabel} →
-                    </button>
-                  )}
-                  {back && (
-                    <button disabled={pending} onClick={() => move(back.to)} className="h-10 rounded-brand border border-line px-4 text-sm text-muted hover:border-faint hover:text-fg disabled:opacity-60 max-md:h-11 max-md:w-full">
-                      ↩ {back.label}
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-            {["ready_for_client", "client_review", "client_revision", "ready_for_launch"].includes(ticket.stage) && (
-              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-5 py-3 text-xs max-md:px-4">
-                <span className="text-faint">
-                  {ticket.stage === "client_review" ? "Waiting on the client in their portal." : "The client's portal shows where this stands."}
-                </span>
-                <a href={`/c/${ticket.clientSlug}`} target="_blank" rel="noreferrer" className="rounded-full border border-line px-3 py-1 text-muted hover:border-faint hover:text-fg max-md:py-3">
-                  Open the client&apos;s view ↗
-                </a>
-              </div>
-            )}
-            {error && <p className="border-t border-line px-5 py-3 text-sm text-brand-text max-md:px-4">{error}</p>}
-          </section>
-
-          {/* Ready to launch: the launcher (and, once launched from here, what it made) */}
-          {!demo && (ticket.stage === "ready_for_launch" || ticket.stage === "launched") && <LaunchPanel requestId={ticket.id} isExec={Boolean(can.exec)} launched={ticket.stage === "launched"} />}
-
-          {/* Once there's creative, the files come first */}
-          {filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} canDisagree={can.review} />}
-
-          <ReviewPanel ticket={ticket} canReview={can.review} onMoved={moved} demo={demo} />
-          {(COPY_STAGES.includes(ticket.stage)) && <CopyPanel ticket={ticket} canApprove={can.approveCopy} canForce={can.review} onMoved={moved} demo={demo ? DEMO_COPY : undefined} />}
-
-          {/* Properties: label on the left, editable value on the right */}
-          <section className={section}>
-            <h3 className={sectionTitle}>Details</h3>
-            <dl className="grid grid-cols-[120px_minmax(0,1fr)] items-center gap-x-4 gap-y-1 text-sm max-md:grid-cols-[96px_minmax(0,1fr)] max-md:gap-x-3 max-md:gap-y-2">
-              <dt className="text-muted">Assigned to</dt>
-              <dd className="flex min-w-0 items-center gap-1">
-                <PersonAvatar name={ticket.assigneeName ?? "?"} size={22} muted={!ticket.assigneeName} />
-                <select
-                  aria-label="Assigned to"
-                  value={ticket.assigneeId ?? ""}
-                  disabled={pending}
-                  onChange={(e) => run(() => assignTicket(ticket.id, e.target.value || null))}
-                  className={control}
-                >
-                  <option value="">Unassigned</option>
-                  {people.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} · {p.role}
-                    </option>
-                  ))}
-                </select>
-              </dd>
-
-              <dt className="text-muted">Due (ET)</dt>
-              <dd className="min-w-0">
-                <input
-                  type="datetime-local"
-                  aria-label="Due date, Eastern time"
-                  defaultValue={toLocalInput(ticket.stageDueAt)}
-                  key={ticket.stageDueAt ?? "none"}
-                  disabled={pending || !ticket.stageDueAt}
-                  onBlur={(e) => e.target.value && e.target.value !== toLocalInput(ticket.stageDueAt) && run(() => setTicketDue(ticket.id, fromLocalInput(e.target.value)))}
-                  className={control}
-                />
-              </dd>
-
-              <dt className="text-muted">Priority</dt>
-              <dd className="flex gap-1 px-1 py-1 max-md:px-0">
-                {(["normal", "high", "urgent"] as Priority[]).map((p) => (
-                  <button
-                    key={p}
-                    disabled={pending}
-                    onClick={() => p !== ticket.priority && run(() => setTicketPriority(ticket.id, p))}
-                    aria-pressed={ticket.priority === p}
-                    className={`h-7 rounded-full px-3 text-xs capitalize transition-colors disabled:opacity-60 max-md:h-11 max-md:flex-1 max-md:text-sm ${
-                      ticket.priority === p
-                        ? p === "urgent"
-                          ? "bg-bad-soft text-bad"
-                          : p === "high"
-                            ? "bg-warn-soft text-warn"
-                            : "bg-surface-2 text-fg"
-                        : "text-faint hover:bg-surface-2 hover:text-fg"
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </dd>
-
-              {[
-                ["Creative", ticket.creativeName],
-                ["Media buyer", ticket.buyerName],
-                ["Requested", fmtDate(ticket.createdAt)],
-                ["In this stage", `${businessDuration(ticket.minutesInStage)} business time`],
-              ].map(([k, v]) => (
-                <div key={k} className="contents">
-                  <dt className="text-muted">{k}</dt>
-                  <dd className="flex h-9 min-w-0 items-center truncate px-2.5">{v ?? <span className="text-faint">—</span>}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-
-          {/* Brief */}
-          <section className={section}>
-            <h3 className={sectionTitle}>Brief</h3>
-            {(ticket.audience || ticket.sizes.length > 0) && (
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                {ticket.sizes.map((s) => (
-                  <span key={s} className="tabular rounded-full border border-line px-2.5 py-0.5 text-xs text-muted">
-                    {s.replace("x", ":")}
-                  </span>
-                ))}
-                {ticket.audience && <span className="text-muted">{ticket.audience}</span>}
-              </div>
-            )}
-            {ticket.landingUrl && (
-              <p className="flex items-center gap-2 text-sm">
-                <span className="text-faint max-md:shrink-0">Landing page</span>
-                <a href={ticket.landingUrl} target="_blank" rel="noreferrer" className="truncate text-brand-text hover:underline max-md:min-w-0 max-md:py-2">
-                  {ticket.landingUrl.replace(/^https?:\/\//, "")}
-                </a>
-              </p>
-            )}
-            {ticket.origin && (
-              <div className="flex items-center gap-3 rounded-[12px] border border-brand/25 bg-brand-soft/30 px-3 py-2.5">
-                {ticket.origin.thumb && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={ticket.origin.thumb} alt="" className="h-11 w-11 shrink-0 rounded-[8px] object-cover" />
-                )}
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[10px] font-medium uppercase tracking-[0.14em] text-brand-text">
-                    Built on {ticket.origin.kind === "winner" ? "a winning ad" : ticket.origin.kind === "market" ? "a live ad in the market" : ticket.origin.kind === "promise" ? "a promise from a call" : "an AI brief"}
-                  </span>
-                  <span className="block truncate text-sm">{ticket.origin.label}</span>
-                </span>
-                {ticket.origin.link && (
-                  <a href={ticket.origin.link} target="_blank" rel="noreferrer" className="shrink-0 rounded-full border border-line px-3 py-1 text-xs text-muted hover:text-fg max-md:py-3">
-                    See it ↗
-                  </a>
-                )}
-              </div>
-            )}
-            <TicketBrief key={ticket.id} ticket={ticket} demo={demo} />
-            {!demo && <BriefAdjustments ticketId={ticket.id} />}
-            {/* Files added to the brief (pictures, videos, audio, PDFs): cards with their picture */}
-            {ticket.refs.some((r) => parseBriefFileUrl(r)) && <LinkCards urls={ticket.refs.filter((r) => parseBriefFileUrl(r))} size="sm" />}
-            {ticket.refs.some((r) => !parseBriefFileUrl(r)) && (
-              <ul className="grid gap-1.5">
-                {ticket.refs.filter((r) => !parseBriefFileUrl(r)).map((r) => (
-                  <li key={r} className="flex min-w-0 items-center gap-2 text-sm">
-                    {/motionapp\.com|facebook\.com\/ads\/library/i.test(r) && (
-                      <span className="shrink-0 rounded-full bg-[#6c5ce7]/15 px-2 py-0.5 text-[10px] font-medium text-[#8b7cf6]">{/motionapp\.com/i.test(r) ? "Motion" : "Ad Library"}</span>
-                    )}
-                    <a href={r} target="_blank" rel="noreferrer" className="truncate text-brand-text hover:underline max-md:min-w-0 max-md:py-2">
-                      {r}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {!demo && <MotionReferences clientId={ticket.clientId} name={`t${ticket.number}`} picked={ticket.refs} onPick={(r) => addTicketRef(ticket.id, r.url)} />}
-            {!demo && (
-              <SavedConcepts
-                key={ticket.id}
-                clientId={ticket.clientId}
-                only={(r) => Boolean(savedHref(r))}
-                hint="Starred for this client by the team. Add one to this ticket's references; it leaves Saved once it's used."
-                onAdd={async (r) => {
-                  const href = savedHref(r, window.location.origin);
-                  if (!href) return { ok: false, error: "That one has no link to add." };
-                  const added = await addTicketRef(ticket.id, href);
-                  if (!added.ok) return added;
-                  await markSavedUsed([r.id], ticket.id);
-                  return { ok: true };
-                }}
-              />
-            )}
-          </section>
-
-          {ticket.format === "video" && <ScriptPanel requestId={ticket.id} demo={demo ? null : undefined} />}
-          {!demo && ticket.format === "video" && <VoiceoverPanel requestId={ticket.id} fromScript />}
-          {!demo && <HiggsfieldPanel requestId={ticket.id} />}
-
-          {!making && !filesFirst && <Deliverables ticket={ticket} demoDesigns={demo ? DEMO_DESIGNS : undefined} onState={onUploads} canDisagree={can.review} />}
-
-          {can.review && <DeleteTicket ticket={ticket} onDeleted={onClose} />}
-
-          {/* Activity */}
-          <section className="grid gap-4">
-            <h3 className={sectionTitle}>Activity</h3>
-            {history === null ? (
-              <p className="text-xs text-faint">Loading…</p>
-            ) : (
-              <ol className="relative grid gap-5 before:absolute before:bottom-3 before:left-[13px] before:top-3 before:w-px before:bg-line">
-                {history.map((e) => (
-                  <li key={e.id} className="relative grid grid-cols-[28px_minmax(0,1fr)] gap-3">
-                    {e.actor ? (
-                      <PersonAvatar name={e.actor} size={28} />
-                    ) : (
-                      <span className="relative grid h-7 w-7 place-items-center rounded-full border border-line bg-white">
-                        <Image src="/kaizen-mark.png" alt="Kaizen Ads" width={18} height={18} />
-                      </span>
-                    )}
-                    <div className="grid min-w-0 gap-1.5 pt-1">
-                      <p className="text-sm leading-snug text-muted">
-                        <span className="font-medium text-fg">{e.actor ?? "Kaizen Ads"}</span> {describe(e)}
-                        <span className="ml-2 whitespace-nowrap text-xs text-faint">{fmtDate(e.at)}</span>
-                      </p>
-                      {e.body && <p className="whitespace-pre-wrap rounded-[8px] bg-surface px-3.5 py-2.5 text-sm leading-relaxed">{linkify(e.body)}</p>}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (comment.trim()) run(() => commentTicket(ticket.id, comment), () => setComment(""));
-              }}
-              className="mt-1 flex gap-2"
-            >
-              <input
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                placeholder="Write a comment…"
-                aria-label="Comment"
-                className="h-10 min-w-0 flex-1 rounded-brand border border-line bg-surface px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:h-11"
-              />
-              <button disabled={pending || !comment.trim()} className="h-10 rounded-brand bg-surface-2 px-4 text-sm hover:bg-line disabled:opacity-50 max-md:h-11">
-                Post
-              </button>
-            </form>
-          </section>
-
-          <Link href={`/clients/${ticket.clientSlug}`} className="border-t border-line pt-5 text-xs text-muted hover:text-fg max-md:pb-3">
-            {ticket.clientName} client page →
-          </Link>
           </div>
         </div>
 
-        {nextBar && (
-          <div className="border-t border-line bg-bg/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl md:hidden">
-            <button
-              disabled={pending}
-              onClick={() => move(info.next!)}
-              className="h-12 w-full rounded-brand bg-brand px-4 text-[15px] font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] active:bg-brand-hover disabled:opacity-60"
-            >
-              {info.nextLabel} →
-            </button>
+        {/* The stage's one primary action, pinned at the bottom in thumb reach; everything else under "More" */}
+        {bar && (
+          <div ref={barRef} className="relative grid gap-2.5 border-t border-line bg-bg/95 px-7 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl max-md:px-4">
+            {error && <p className="text-sm text-bad">{error}</p>}
+            {noteOpen && (
+              <input
+                autoFocus
+                value={moveNote}
+                onChange={(e) => setMoveNote(e.target.value)}
+                placeholder="Add a note with this move (optional)"
+                aria-label="Note for this move"
+                className="h-11 rounded-brand border border-line bg-surface px-3 text-sm outline-none placeholder:text-faint focus:border-brand-text/60"
+              />
+            )}
+            <div className="flex items-center gap-2">
+              {act && showPrimary ? (
+                <button
+                  disabled={pending}
+                  onClick={primary}
+                  className="h-12 min-w-0 flex-1 truncate rounded-brand bg-brand px-5 text-[15px] font-medium text-white shadow-[0_8px_24px_-10px_rgba(178,30,44,0.9)] hover:bg-brand-hover active:bg-brand-hover disabled:opacity-60 md:flex-none md:h-11 md:text-sm"
+                >
+                  {act.label} {act.kind === "move" ? "→" : "↓"}
+                </button>
+              ) : (
+                <p className="flex h-12 min-w-0 flex-1 items-center truncate text-sm text-muted md:h-11">
+                  {act?.kind === "wait" ? act.label : who ? `${info.label}, with ${who}` : info.label}
+                </p>
+              )}
+              {layout.secondary.map((m) => (
+                <button key={m.to} disabled={pending} onClick={() => move(m.to)} className="h-11 shrink-0 rounded-brand border border-line px-4 text-sm text-muted hover:border-faint hover:text-fg disabled:opacity-60 max-md:hidden">
+                  {m.to === "launched" ? m.label : `↩ ${m.label}`}
+                </button>
+              ))}
+              {(canMove || layout.secondary.length > 0) && (
+                <div className="relative ml-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setMenuOpen((o) => !o)}
+                    aria-expanded={menuOpen}
+                    aria-haspopup="menu"
+                    aria-label="More actions"
+                    className="grid h-12 w-12 place-items-center rounded-brand border border-line text-muted hover:border-faint hover:text-fg md:h-11 md:w-11"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+                      <circle cx="3" cy="8" r="1.4" fill="currentColor" />
+                      <circle cx="8" cy="8" r="1.4" fill="currentColor" />
+                      <circle cx="13" cy="8" r="1.4" fill="currentColor" />
+                    </svg>
+                  </button>
+                  {menuOpen && (
+                    <>
+                      <button type="button" aria-label="Close menu" onClick={() => setMenuOpen(false)} className="fixed inset-0 z-10 cursor-default" />
+                      <div role="menu" className="absolute bottom-[calc(100%+8px)] right-0 z-20 grid w-64 gap-0.5 rounded-[12px] border border-line bg-surface p-1.5 shadow-2xl">
+                        {layout.secondary.map((m) => (
+                          <button key={m.to} role="menuitem" type="button" disabled={pending} onClick={() => (setMenuOpen(false), move(m.to))} className="flex min-h-11 items-center rounded-[8px] px-3 text-left text-sm hover:bg-surface-2 disabled:opacity-60 md:hidden">
+                            {m.to === "launched" ? m.label : `↩ ${m.label}`}
+                          </button>
+                        ))}
+                        {(act?.kind === "move" || layout.secondary.length > 0) && (
+                          <button role="menuitem" type="button" onClick={() => (setMenuOpen(false), setNoteOpen((o) => !o))} className="flex min-h-11 items-center rounded-[8px] px-3 text-left text-sm hover:bg-surface-2">
+                            {noteOpen ? "Remove the note" : "Add a note to the move"}
+                          </button>
+                        )}
+                        {canMove && (
+                          <button role="menuitem" type="button" onClick={() => (setMenuOpen(false), pushParams({ move: String(ticket.number) }))} className="flex min-h-11 items-center rounded-[8px] px-3 text-left text-sm hover:bg-surface-2" title="Move it to any stage: back to production, on to the client…">
+                            Move to any stage…
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
         {moving && (
@@ -789,10 +892,13 @@ export function TicketDrawer({
             onClose={() => closeParams("move")}
             // Moved: the ticket closes too (closing the ticket takes the dialog with it)
             onMoved={moved}
-            onFix={(fix) => {
-              closeParams("move");
-              document.querySelector(fix === "upload" ? "[data-deliverables]" : "[data-copy]")?.scrollIntoView({ behavior: "smooth", block: "start" });
-            }}
+            onFix={(fix) =>
+              closeThen(() => {
+                const t: TicketTab = fix === "upload" ? "creative" : "copy";
+                if (t !== tab) goTab(t);
+                setTimeout(() => document.querySelector(fix === "upload" ? "[data-deliverables]" : "[data-copy]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+              }, "move")
+            }
           />
         )}
       </aside>
