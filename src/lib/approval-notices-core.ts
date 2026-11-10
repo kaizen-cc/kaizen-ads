@@ -237,5 +237,5 @@ export function timelineLine(kind: NoticeKind, channels: string[]) {
   if (kind === "remind_24") return `reminded the client after 24 business hours${where ? ` (${where})` : ""}`;
   if (kind === "remind_48") return `reminded the client again after 48 business hours${where ? ` (${where})` : ""}`;
   if (kind === "escalated") return "moved it to customer success: waiting on the client 48 business hours";
-  return AUTO_APPROVED_BY;
+  return "approved it automatically after 48 business hours (client opted in)";
 }

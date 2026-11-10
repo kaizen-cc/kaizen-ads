@@ -34,7 +34,6 @@ import {
 type Admin = SupabaseClient;
 type ClientRow = { id: string; name: string; slug: string; portal_live: boolean; client_notifications: boolean; auto_approve_opt_in: boolean; client_type: string | null; slack_channel_id: string | null; internal_slack_channel_id: string | null; archived_at: string | null };
 type ReqRow = { id: string; number: number; title: string; client_id: string; stage_entered_at: string; buyer_id: string | null; clients: ClientRow };
-type NoticeRow = { key: string; kind: NoticeKind; request_id: string | null; client_id: string; round_at: string | null; status: string; channels: string[] | null; detail: string | null; created_at: string };
 
 /** Whether Kaizen may reach clients on its own at all (the outreach hold), read once */
 export async function outreachOn(admin: Admin) {

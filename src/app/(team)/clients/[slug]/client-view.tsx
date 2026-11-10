@@ -209,6 +209,8 @@ export type ClientViewProps = {
   setup?: React.ReactNode;
   /** Their emails: the one for where they are now, to preview and push, and every one sent */
   emails?: React.ReactNode;
+  /** Client notifications on creative with them: the switch, the last posts, the reminders coming */
+  notices?: React.ReactNode;
   /** The full business audit panel, for the Overview */
   businessAudit?: React.ReactNode;
   /** What works for businesses like this one, across our clients, and whether they use it */
@@ -216,7 +218,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, docs = null, reports = null, playbook = null, setup = null, emails = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -772,6 +774,11 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             </div>
             {contacts.length === 0 && <p className="rounded-[8px] bg-warn-soft/50 px-3 py-2 text-xs text-warn">Needs a contact: add who approves ads before going live.</p>}
           </Section>
+                  {notices && (
+                    <Section title="Client notifications" description="Their Slack post and email when creative is ready for them, reminders at 24 and 48 business hours, then customer success. Off until an exec switches it on.">
+                      {notices}
+                    </Section>
+                  )}
                   <Section title="Details">
             {can.admin ? (
               <ActionForm action={saveClientDetails.bind(null, client.id, client.slug)} submitLabel="Save details" autosave className="grid gap-5">

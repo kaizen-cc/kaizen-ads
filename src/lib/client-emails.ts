@@ -18,7 +18,9 @@ export const EMAIL_KINDS: { kind: ClientEmailKind; name: string; what: string }[
   { kind: "presentation", name: "Review how we see you", what: "Their brand plan, to approve or tell us what's off" },
   { kind: "live", name: "You're live", what: "Their first campaign is running, with the link to their dashboard" },
 ];
-export const kindName = (k: string) => EMAIL_KINDS.find((x) => x.kind === k)?.name ?? (k === "recap" ? "Monthly recap" : k);
+// Sent by the approval loop (lib/approval-notices.ts): new creative ready, the reminders, and auto-approval
+const LOOP_NAMES: Record<string, string> = { recap: "Monthly recap", review: "Creative ready for review", review_reminder: "Review reminder", review_auto: "Approved automatically" };
+export const kindName = (k: string) => EMAIL_KINDS.find((x) => x.kind === k)?.name ?? LOOP_NAMES[k] ?? k;
 
 type Contact = { email: string; first: string | null };
 const hello = (first: string | null) => (first ? `Hi ${first},` : "Hi there,");

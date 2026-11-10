@@ -400,6 +400,22 @@ export async function setPortalLive(clientId: string, slug: string, live: boolea
   return done(slug, error);
 }
 
+/**
+ * Execs: this client's notifications on creative waiting for their review (the Slack post and email, the 24 and 48
+ * business hour reminders, auto-approval when they opted in). Off by default; it reaches them only with the portal live
+ * and the client outreach hold lifted too.
+ */
+export async function setClientNotifications(clientId: string, slug: string, on: boolean): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!me.isExec) return { ok: false, error: "Only an exec can switch client notifications." };
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const { error } = await createAdminClient()
+    .from("clients")
+    .update({ client_notifications: on, client_notifications_at: new Date().toISOString(), client_notifications_by: me.id })
+    .eq("id", clientId);
+  return done(slug, error);
+}
+
 /** Execs and leads: set the client's industry by hand (the AI never overwrites it), or hand it back to the AI ("auto"). */
 export async function setClientIndustry(clientId: string, slug: string, industry: string, detail: string): Promise<ActionResult> {
   const me = await requireStaff();

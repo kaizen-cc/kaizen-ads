@@ -236,6 +236,9 @@ function describe(e: TicketEvent) {
         default:
           return "reviewed it";
       }
+    case "client_notice":
+      // A post or reminder to the client, customer success taking it on, or the automatic approval
+      return <span className={e.data.action === "escalated" ? "text-warn" : e.data.action === "auto_approved" ? "text-ok" : undefined}>{String(e.data.line ?? "notified the client")}</span>;
     case "copy":
       if (e.data.action === "revised_for_client") return e.data.scope === "rewrite" ? "rewrote the copy for the client's notes (AI)" : "amended the copy for the client's notes (AI)";
       return e.data.action === "drafted" ? "drafted the copy with the AI" : e.data.action === "redrafted" ? "rewrote the copy with the AI" : e.data.action === "reused" ? "reused approved copy" : "approved the copy";

@@ -37,6 +37,8 @@ export type NextForMe = {
   watch: NextItem[];
   /** The creative team: Brand Bibles ready for their review, each tagged with whether it was built from the intake form */
   bibles: NextItem[];
+  /** Customer success (the execs when nobody holds the seat): tickets 48 business hours with the client and no decision */
+  waiting: NextItem[];
   coming: NextItem[];
   stats: { onMe: number; late: number; dueToday: number; toDecide: number };
 };
@@ -86,7 +88,7 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
   // The accounts I'm a secondary buyer on: their launches and sprints are mine to follow too
   const coSeats = seatKeys(((assigned ?? []) as SeatRow[]).filter((a) => a.is_primary === false), me.id);
 
-  const [h, kpis, fatigue, onboarding, promises, suggestions, bibleList] = await Promise.all([
+  const [h, kpis, fatigue, onboarding, promises, suggestions, bibleList, waitingList] = await Promise.all([
     loadHome(db, me),
     buyerish ? loadKpiPulse(db, me.id) : Promise.resolve(null),
     // Ads wearing out: a buyer's own; the creative team's, on the clients they make for (the Head of Creative every client)
@@ -101,6 +103,7 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     buyerish || me.role === "head_of_creative" ? loadCallPromises(db) : Promise.resolve([]),
     me.isLead || me.isExec ? loadSuggestions(db, formatsFor(me)) : Promise.resolve(null),
     creative ? loadBiblesToReview(db, me).catch(() => []) : Promise.resolve([]),
+    creative ? Promise.resolve([]) : import("@/lib/approval-notices").then(({ loadWaitingOnClient }) => loadWaitingOnClient(db, me)).catch(() => []),
   ]);
 
   const now: NextItem[] = [];
@@ -121,6 +124,18 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     action: "Read it",
     chip: b.fromIntake ? { label: "From the intake form", tone: "ok" } : { label: "Without the intake form", tone: "quiet" },
     bible: { clientId: b.clientId, version: b.version },
+  }));
+  // ─── Waiting on the client: 48 business hours with them and no decision, mine to chase ───
+  const waiting: NextItem[] = waitingList.map((w) => ({
+    id: `wc-${w.requestId}`,
+    kind: "client",
+    tone: "warn",
+    client: w.client,
+    title: w.title,
+    why: `#${w.number} · no decision after 48 business hours: a call or a nudge`,
+    when: `With them since ${new Date(w.since).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}`,
+    href: `/board?t=${w.number}`,
+    action: "Chase them",
   }));
   const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York" });
   const dueToday = (iso: string | null) => Boolean(iso && new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York" }) === today);
@@ -274,6 +289,7 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     decide: sort(decide),
     watch: sort(watch),
     bibles,
+    waiting,
     coming,
     stats: { onMe: h.mine.length, late: h.mine.filter((r) => r.minutes_over > 0).length, dueToday: h.dueToday, toDecide: decide.length },
   };

@@ -23,11 +23,12 @@ const SECTIONS: { key: Key; title: string; hint: string; accent: string; glow: s
   { key: "now", title: "Now", hint: "Late, due today, or waiting on you", accent: "#ff4d5e", glow: "rgba(200,16,46,0.45)", icon: "bolt" },
   { key: "decide", title: "To decide", hint: "Briefs the AI suggests for your clients", accent: "#9aa8ff", glow: "rgba(90,110,255,0.32)", icon: "split" },
   { key: "bibles", title: "Brand Bibles to review", hint: "Read each one, then mark it reviewed", accent: "#ff6b78", glow: "rgba(178,30,44,0.4)", icon: "book" },
+  { key: "waiting", title: "Waiting on the client", hint: "48 business hours with them and no decision: chase them", accent: "#f2b14c", glow: "rgba(224,150,40,0.35)", icon: "eye" },
   { key: "watch", title: "Keep an eye on", hint: "Your accounts and clients", accent: "#f2b14c", glow: "rgba(224,150,40,0.35)", icon: "eye" },
   { key: "coming", title: "Coming up", hint: "On you, not due yet", accent: "#5be3a5", glow: "rgba(40,180,120,0.3)", icon: "calendar" },
 ];
 // Sections that only show when they have something in them (the rest fold into the "All clear" line when empty)
-const OPTIONAL = new Set<string>(["bibles", "coming"]);
+const OPTIONAL = new Set<string>(["bibles", "waiting", "coming"]);
 
 // Which sections someone folded away, remembered per person in this browser (kz:next:closed:<their id>). Before the
 // browser has said (the server render), every section is open.
@@ -132,7 +133,7 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
   };
   const bibles = data.bibles.filter((it) => !reviewed.includes(it.id));
   const itemsOf = (k: Key) => (k === "bibles" ? bibles : data[k]);
-  const total = data.now.length + data.decide.length + data.watch.length + bibles.length;
+  const total = data.now.length + data.decide.length + data.watch.length + bibles.length + data.waiting.length;
   const shown = SECTIONS.filter((s) => itemsOf(s.key).length > 0);
   const clear = SECTIONS.filter((s) => !itemsOf(s.key).length && !OPTIONAL.has(s.key));
 

@@ -34,7 +34,7 @@ import type { HistoryReport } from "./reports-history";
 import { monthLabel } from "@/lib/reports/format";
 import { timed } from "@/lib/perf";
 import { inNewFlow } from "@/lib/presentation-types";
-import { BusinessAuditStream, BusinessStream, EmailsStream, ExecutionStream, PatternsStream, SetupStream, Streamed } from "./client-streams";
+import { BusinessAuditStream, BusinessStream, ClientNoticesStream, EmailsStream, ExecutionStream, PatternsStream, SetupStream, Streamed } from "./client-streams";
 
 /** The day some days back, for loading what's recent (marketing moments from the last few months on) */
 const daysBack = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
@@ -449,6 +449,11 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       emails={
         <Streamed>
           <EmailsStream client={base} />
+        </Streamed>
+      }
+      notices={
+        <Streamed h="h-48">
+          <ClientNoticesStream client={base} canEdit={me.isExec} />
         </Streamed>
       }
       campaigns={campaigns}

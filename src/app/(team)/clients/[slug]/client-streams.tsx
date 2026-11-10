@@ -62,6 +62,14 @@ export async function EmailsStream({ client }: { client: Base }) {
   return <EmailsPanel clientId={client.id} slug={client.slug} stage={stage} sent={sent} />;
 }
 
+/** Client notifications on creative with them: the switch, the last posts and the reminders coming */
+export async function ClientNoticesStream({ client, canEdit }: { client: Base; canEdit: boolean }) {
+  if (!adminConfigured()) return null;
+  const [{ loadClientNotices }, { ClientNoticesPanel }, { setClientNotifications }] = await Promise.all([import("@/lib/approval-notices"), import("./client-notices-panel"), import("./actions")]);
+  const data = await T("client notices", loadClientNotices(createAdminClient(), client.id));
+  return <ClientNoticesPanel data={data} canEdit={canEdit} toggle={setClientNotifications.bind(null, client.id, client.slug)} />;
+}
+
 /** What works for businesses like this one, across every client of its kind */
 export async function PatternsStream({ clientId }: { clientId: string }) {
   const supabase = await createClient();
