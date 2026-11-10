@@ -5,6 +5,8 @@ import { requireStaff } from "@/lib/auth";
 import { googleAdsConfigured } from "@/lib/context/google-ads";
 import { metaConfigured } from "@/lib/context/meta";
 import { createClient } from "@/lib/supabase/server";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
+import { linkMoves } from "@/lib/audit-objects";
 import { whyCounts } from "@/lib/audit-why";
 import type { AuditObject } from "@/lib/chat-change-core";
 import { ActionRow, AddMove, CheckNow, CloseSprint, WatchToggle, type SprintAction } from "./sprint-parts";
@@ -33,7 +35,7 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
   const supabase = await createClient();
   const { data: s } = await supabase
     .from("optimization_sprints")
-    .select("*, clients(name, slug), kpi_targets(label, platform), buyer:profiles!optimization_sprints_buyer_id_fkey(full_name), starter:profiles!optimization_sprints_created_by_fkey(full_name)")
+    .select("*, clients(name, slug), kpi_targets(label, platform, ad_account_id), buyer:profiles!optimization_sprints_buyer_id_fkey(full_name), starter:profiles!optimization_sprints_created_by_fkey(full_name)")
     .eq("id", id)
     .maybeSingle();
   if (!s) notFound();
@@ -44,11 +46,12 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
   ]);
   const client = s.clients as unknown as { name: string; slug: string };
   // Google accounts: a move can be made in the account from the list
-  const platform = (s.kpi_targets as unknown as { platform: string } | null)?.platform;
+  const target = s.kpi_targets as unknown as { platform: string; ad_account_id: string | null } | null;
+  const platform = target?.platform;
   const writable = platform === "google" ? (googleAdsConfigured() ? "google" : null) : platform === "meta" ? (metaConfigured() ? "meta" : null) : null;
   const base = s.baseline as Kpi;
   const latest = s.latest as Kpi;
-  const list: SprintAction[] = (actions ?? []).map((a) => ({
+  const listed: SprintAction[] = (actions ?? []).map((a) => ({
     id: a.id,
     title: a.title,
     area: a.area,
@@ -70,6 +73,10 @@ export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id
     learned: Boolean(a.learned),
     objects: (a.objects ?? []) as AuditObject[],
   }));
+  // Moves from before actions listed their objects: linked to the campaigns, ad sets and ads their text names (saved once found)
+  const admin = adminConfigured() ? createAdminClient() : null;
+  const { moves: list, filled } = await linkMoves(admin, platform, target?.ad_account_id, listed);
+  if (admin && filled.length) await Promise.all(filled.map((i) => admin.from("sprint_actions").update({ objects: list[i].objects }).eq("id", list[i].id).then(() => null, () => null)));
   // How many "Why?" messages each move has
   const asked = await whyCounts(supabase, list.map((a) => a.id)).catch(() => ({}) as Record<string, number>);
   const agent = platform === "google" ? "google_auditor" : "auditor";

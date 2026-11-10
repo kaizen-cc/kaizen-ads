@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
 import { auditRebuttals, mayRebut } from "@/lib/audit-rebuttals";
+import { linkMoves } from "@/lib/audit-objects";
 import { platformOf } from "@/lib/rebut-permission";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { Rebut } from "@/components/audit-rebut";
@@ -50,12 +51,12 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
   const supabase = await createClient();
   const { data: a } = await supabase
     .from("account_audits")
-    .select("id, target_id, client_id, status, result, done, inputs, steps, created_at, error, profiles(full_name), clients(name, slug), kpi_targets(conversion, custom_action, target, label, platform)")
+    .select("id, target_id, client_id, status, result, done, inputs, steps, created_at, error, profiles(full_name), clients(name, slug), kpi_targets(conversion, custom_action, target, label, platform, ad_account_id)")
     .eq("id", id)
     .maybeSingle();
   if (!a) notFound();
   const client = a.clients as unknown as { name: string; slug: string };
-  const t = a.kpi_targets as unknown as { conversion: string; custom_action: string | null; target: number | null; label: string | null; platform: string };
+  const t = a.kpi_targets as unknown as { conversion: string; custom_action: string | null; target: number | null; label: string | null; platform: string; ad_account_id: string | null };
   // Google accounts: a buyer's action can be made in the account from here
   // Where an action can become a change made from here: Google Ads, or Meta (behind the sandbox switch)
   const writable = t.platform === "google" ? (googleAdsConfigured() ? "google" : null) : t.platform === "meta" ? (metaConfigured() ? "meta" : null) : null;
@@ -102,6 +103,13 @@ export default async function AuditPage({ params }: PageProps<"/kpis/audit/[id]"
       </div>
     );
 
+  // Moves written before actions listed their objects: the campaigns, ad sets and ads their text names, linked
+  // (saved once found, so the next visit reads them straight away)
+  const linked = await linkMoves(admin, t.platform, t.ad_account_id, r.actions);
+  if (linked.filled.length) {
+    r.actions = linked.moves;
+    if (admin) await admin.from("account_audits").update({ result: r }).eq("id", a.id).then(() => null, () => null);
+  }
   const roas = Boolean(conversionFor(t.conversion).roas);
   const d14 = (snap?.windows as { d14?: { value: number | null } } | null)?.d14?.value ?? null;
   const done = (a.done ?? {}) as Record<string, { by: string; at: string }>;

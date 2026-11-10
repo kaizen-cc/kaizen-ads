@@ -123,3 +123,98 @@ export async function clientObjectIndex(admin: SupabaseClient, clientId: string)
   }
   return { meta: metaIdx, google: googleIdx };
 }
+
+// ─── Moves written before actions listed their objects ──────────────────────
+// Audits and sprint moves from before Nov 5 have no objects, only the names in their text. Each name of the account's
+// campaigns, ad sets and ads that appears whole in a move's text is linked (longest names first, so "Broad" inside
+// "Broad | Purchase" isn't linked on its own). Short names (under 4 characters) are skipped: too likely to be words.
+
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The objects whose exact names (or [ids]) appear in a move's text, best known first. */
+export function namedIn(index: ObjectIndex, text: string, max = 6): AuditObject[] {
+  const hay = String(text ?? "").toLowerCase().replace(/\s+/g, " ");
+  if (!hay.trim() || !index.length) return [];
+  const out: AuditObject[] = [];
+  const seen = new Set<string>();
+  const taken: [number, number][] = [];
+  const push = (e: Entry) => {
+    if (seen.has(`${e.type}:${e.id}`) || out.length >= max) return;
+    seen.add(`${e.type}:${e.id}`);
+    out.push({ platform: e.platform, type: e.type, id: e.id, name: e.name, account: e.account, campaignId: e.campaignId ?? null, adGroupId: e.adGroupId ?? null });
+  };
+  for (const id of hay.match(/\[(\d{5,})\]/g) ?? []) {
+    const hit = index.find((e) => e.id === id.slice(1, -1));
+    if (hit) push(hit);
+  }
+  // One entry per name (the object that spent the most), the longest names first
+  const byName = new Map<string, Entry>();
+  for (const e of index) {
+    const k = e.name.toLowerCase().replace(/\s+/g, " ").trim();
+    if (k.length < 4) continue;
+    const have = byName.get(k);
+    if (!have || e.weight > have.weight) byName.set(k, e);
+  }
+  for (const [k, e] of [...byName].sort((a, b) => b[0].length - a[0].length)) {
+    const re = new RegExp(`(^|[^a-z0-9])${esc(k)}(?=$|[^a-z0-9])`, "g");
+    for (let m = re.exec(hay); m; m = re.exec(hay)) {
+      const at = m.index + m[1].length;
+      if (taken.some(([s, f]) => at < f && at + k.length > s)) continue;
+      taken.push([at, at + k.length]);
+      push(e);
+      break;
+    }
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** One account's campaigns, ad sets and ads by name (Meta: the last 120 days of rows, names only; Google: campaigns). */
+export async function accountObjectIndex(admin: SupabaseClient, platform: string, account: string): Promise<ObjectIndex> {
+  const since = new Date(Date.now() - 120 * 86_400_000).toISOString().slice(0, 10);
+  if (platform === "google") {
+    const { accountRows } = await import("@/lib/kpi/sync");
+    return googleIndex(account, (await accountRows(admin, account, "google").catch(() => [])).filter((r) => r.date >= since));
+  }
+  if (platform !== "meta") return [];
+  const bare = String(account).replace(/^act_/, "");
+  const rows: MetaRow[] = [];
+  for (let page = 0; page < 30; page++) {
+    const { data } = await admin.from("meta_ad_daily").select("ad_id, ad_name, adset_id, adset_name, campaign_id, campaign_name").eq("ad_account_id", bare).gte("date", since).range(page * 1000, page * 1000 + 999);
+    // Each day an object ran counts as its weight, standing in for spend (the metrics aren't read here)
+    rows.push(...((data ?? []) as MetaRow[]).map((r) => ({ ...r, metrics: { spend: 1 } })));
+    if (!data || data.length < 1000) break;
+  }
+  return metaIndex(bare, rows);
+}
+
+type Move = { title?: string | null; steps?: string[] | null; why?: string | null; impact?: string | null; objects?: AuditObject[] | null };
+
+/**
+ * Moves without objects get the ones their text names (see namedIn). Returns the moves (same order) and the indexes
+ * of those that gained links, so the caller can save them once.
+ */
+export function fillObjects<T extends Move>(index: ObjectIndex, moves: T[]): { moves: T[]; filled: number[] } {
+  const filled: number[] = [];
+  const out = moves.map((m, i) => {
+    if (m.objects?.length) return m;
+    const found = namedIn(index, [m.title, ...(m.steps ?? []), m.why, m.impact].filter(Boolean).join("\n"));
+    if (!found.length) return m;
+    filled.push(i);
+    return { ...m, objects: found };
+  });
+  return { moves: out, filled };
+}
+
+/**
+ * The audit page's and sprint page's moves with their links: those written before moves listed objects get the ones
+ * their text names, read from the account once and only when some move needs it. Never throws (links are a help).
+ */
+export async function linkMoves<T extends Move>(admin: SupabaseClient | null, platform: string | null | undefined, account: string | null | undefined, moves: T[]): Promise<{ moves: T[]; filled: number[] }> {
+  if (!admin || !platform || !account || !moves.some((m) => !m.objects?.length)) return { moves, filled: [] };
+  try {
+    return fillObjects(await accountObjectIndex(admin, platform, account), moves);
+  } catch {
+    return { moves, filled: [] };
+  }
+}
