@@ -34,6 +34,7 @@ export type MetaRow = {
   avgWatchSec: number | null;
   videoSeconds: number | null;
   watchPct: number | null;
+  watchEstimated?: boolean;
 };
 export type ClientCreative = { moving: CreativeRow[]; launched: CreativeRow[]; live: MetaRow[]; paused: MetaRow[]; syncedAt: string | null; asana: AsanaWork[] };
 /** Open work still on the Asana creative board (not moved into Kaizen Ads yet): it counts as in production */
@@ -82,7 +83,7 @@ export async function loadClientCreative(db: SupabaseClient, clientId: string): 
   // In motion: in board order, so it reads like the board
   const order = (s: Stage) => (BOARD_ORDER.indexOf(s) < 0 ? 99 : BOARD_ORDER.indexOf(s));
 
-  type SnapAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null; image?: string | null; live?: boolean; spend?: number; results?: number; result?: string | null; costPerResult?: number | null; ctr?: number; hookRate?: number | null; avgWatchSec?: number | null; videoSeconds?: number | null; watchPct?: number | null };
+  type SnapAd = { id: string; name: string; headline: string | null; text: string | null; thumbnail: string | null; image?: string | null; live?: boolean; spend?: number; results?: number; result?: string | null; costPerResult?: number | null; ctr?: number; hookRate?: number | null; avgWatchSec?: number | null; videoSeconds?: number | null; watchPct?: number | null; watchEstimated?: boolean };
   const ads = ((snap?.ads ?? []) as SnapAd[]).map((a) => ({
     row: {
       id: a.id,
@@ -99,6 +100,7 @@ export async function loadClientCreative(db: SupabaseClient, clientId: string): 
       avgWatchSec: a.avgWatchSec ?? null,
       videoSeconds: a.videoSeconds ?? null,
       watchPct: a.watchPct ?? null,
+      watchEstimated: a.watchEstimated ?? false,
     },
     live: a.live,
   }));

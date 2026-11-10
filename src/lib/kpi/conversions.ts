@@ -53,6 +53,14 @@ export const PURCHASE_TYPES = ["omni_purchase", "purchase", "offsite_conversion.
 /** Kaizen's attribution standard for every Meta insights request: 7-day click, 1-day view (what Ads Manager shows by default). */
 export const META_ATTRIBUTION = ["7d_click", "1d_view"] as const;
 
+/**
+ * Kaizen's report time for every Meta insights request: a conversion is booked on the day of the ad impression that led
+ * to it, as Ads Manager shows it by default. Meta's API otherwise books website purchases on the day they happened
+ * ("mixed"), so a week read from the API and the same week in Ads Manager disagree (a purchase on a day the ad didn't
+ * even run, while the week it was clicked in looks a purchase short).
+ */
+export const META_REPORT_TIME = "impression";
+
 /** Meta's actions list ([{ action_type, value }]) or an already-built map, as action_type → number. */
 export function actionMap(list: unknown): Record<string, number> {
   if (!list) return {};
@@ -74,6 +82,15 @@ export const CONVERSION_FIELDS = "conversions,conversion_values";
  * with any such day still in range is read again in full once, then only its last days as usual.
  */
 export const CONVERSIONS_READ_FROM = "2026-11-09T18:00:00Z";
+
+/**
+ * Days stored before this were read with Meta's default report time (website purchases on the day they happened, not
+ * the impression's day; see META_REPORT_TIME): every account is read again in full once. The later of the two dates is
+ * the one that counts (META_READ_FROM).
+ */
+export const REPORT_TIME_READ_FROM = "2026-11-10T14:30:00Z";
+/** Days stored before this are read again in full once (the latest change to what a Meta read returns). */
+export const META_READ_FROM = CONVERSIONS_READ_FROM > REPORT_TIME_READ_FROM ? CONVERSIONS_READ_FROM : REPORT_TIME_READ_FROM;
 
 type ActionList = { action_type?: string; value?: unknown }[];
 

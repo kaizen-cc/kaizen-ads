@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, clientContext, contextBlock } from "@/lib/ai";
 import { aggregate, completeDays, pickType, type Day } from "@/lib/kpi/calc";
 import { PURCHASE_TYPES, conversionFor, conversionLabel, countResult, type Conversion } from "@/lib/kpi/conversions";
+import { videoMetrics } from "@/lib/kpi/video";
 import { accountSetup, metaConfigured, syncClientAds, type AccountSetup } from "@/lib/context/meta";
 import { googleAuditDetail, googleConvertingTerms, googleCopyAssets, googleSetup, googleWritableSetup, type GoogleSetup } from "@/lib/context/google-ads";
 import { analyzeGoogleCopy, GOOGLE_CREATIVE_READ_RULES, googleCreativeText, type GoogleCreativeAnalysis } from "@/lib/google-creative-core";
@@ -130,9 +131,9 @@ function stats(rows: Row[], conv: Conversion, type: string | null) {
   const agg = aggregate(days, conv, type);
   let impressions = 0;
   let clicks = 0;
-  let plays = 0;
-  let thru = 0;
   let freqW = 0;
+  // Hook rate is 3-second views per impression and hold is ThruPlays per 3-second view, as Meta and the KPI card define them
+  const video = videoMetrics(rows.map((r) => r.metrics));
   const funnel: Record<string, number> = {};
   // Purchases by the one shared counter (one purchase type for the whole period, never its aliases added together)
   const { type: pType, count: purchases } = countResult(days.map((d) => d.actions), PURCHASE_TYPES);
@@ -141,8 +142,6 @@ function stats(rows: Row[], conv: Conversion, type: string | null) {
     const imp = n(r.metrics.impressions);
     impressions += imp;
     clicks += n(r.metrics.inline_link_clicks);
-    plays += n(((r.metrics.video_play_actions ?? []) as { value: string }[])[0]?.value);
-    thru += n(((r.metrics.video_thruplay_watched_actions ?? []) as { value: string }[])[0]?.value);
     freqW += n(r.metrics.frequency) * imp;
     const a = acts(r.metrics.actions);
     for (const k of ["landing_page_view", "omni_view_content", "view_content", "omni_add_to_cart", "add_to_cart", "omni_initiated_checkout", "initiate_checkout", "lead", "onsite_conversion.lead_grouped"]) if (a[k]) funnel[k] = (funnel[k] ?? 0) + a[k];
@@ -160,8 +159,8 @@ function stats(rows: Row[], conv: Conversion, type: string | null) {
     cpc: clicks ? r2(agg.spend / clicks) : null,
     clickToResult: pct(agg.results, clicks),
     lpvRate: pct(lpv, clicks),
-    hookRate: plays ? pct(plays, impressions) : null,
-    holdRate: plays ? pct(thru, plays) : null,
+    hookRate: video.plays ? video.hookRate : null,
+    holdRate: video.plays ? video.holdRate : null,
     freq: impressions ? r2(freqW / impressions) : null,
     funnel: { linkClicks: clicks, landingPageViews: lpv, viewContent: funnel.omni_view_content ?? funnel.view_content ?? 0, addToCart: funnel.omni_add_to_cart ?? funnel.add_to_cart ?? 0, checkout: funnel.omni_initiated_checkout ?? funnel.initiate_checkout ?? 0, leads: funnel.lead ?? funnel["onsite_conversion.lead_grouped"] ?? 0 },
     purchases,

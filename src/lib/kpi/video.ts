@@ -8,10 +8,15 @@
 export const HOOK_GOOD = 30;
 /** Average watch time as a share of the video. 35% and up holds people. */
 export const WATCH_GOOD = 35;
+/** ThruPlays (15 seconds, or the whole video when shorter) per 3-second view. 25% and up keeps people past the hook. */
+export const HOLD_GOOD = 25;
 
 export const VIDEO_HELP = {
   hook: `Hook rate: 3-second video views per impression, how many people stop scrolling for it. Good is ${HOOK_GOOD}% or more; under ${Math.round(HOOK_GOOD * 0.67)}% the first seconds aren't stopping anyone.`,
   watch: `Average watch time as a share of the video's length: how much of it people actually watch. Good is ${WATCH_GOOD}% or more; under ${Math.round(WATCH_GOOD * 0.67)}% they leave early, so the middle needs work.`,
+  hold: `Hold rate: ThruPlays (15 seconds, or the whole video when it's shorter) per 3-second view, how many people the hook keeps watching. Good is ${HOLD_GOOD}% or more.`,
+  estimate: "Estimated from how many plays reached 25%, 50%, 75% and 100% of the video (the video's length isn't known yet).",
+  seeMore: "Meta's insights don't report taps on \"See more\" (no field or action for it, only all clicks and link clicks), so it can't be measured per ad.",
 } as const;
 
 type Action = { action_type?: string; value?: unknown };
@@ -25,11 +30,29 @@ export type VideoMetrics = {
   /** Video starts (video_play_actions) */
   plays: number;
   hookRate: number | null;
+  /** ThruPlays (video_thruplay_watched_actions) */
+  thruplays: number;
+  /** ThruPlays per 3-second view */
+  holdRate: number | null;
   /** Seconds, averaged over every play in the period */
   avgWatchSec: number | null;
   videoSeconds: number | null;
   watchPct: number | null;
+  /** watchPct is an estimate from the 25/50/75/100% completion counts (no video length) */
+  watchEstimated: boolean;
 };
+
+/**
+ * The share of a video people watch on average, from how many plays reached each quarter of it: the area under the
+ * "still watching" curve (everyone at the start, then the share past 25%, 50%, 75% and 100%), joined by straight lines.
+ */
+export function watchFromQuartiles(plays: number, q: [number, number, number, number]): number | null {
+  if (!plays || !q.some((x) => x > 0)) return null;
+  const s = [1, ...q.map((x) => Math.min(1, x / plays))];
+  let area = 0;
+  for (let i = 1; i < s.length; i++) area += 0.25 * ((s[i - 1] + s[i]) / 2);
+  return r1(area * 100);
+}
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
@@ -43,11 +66,18 @@ export function videoMetrics(days: Record<string, unknown>[], videoSeconds: numb
   let plays = 0;
   let watched = 0;
   let weighted = 0;
+  let thruplays = 0;
+  const q: [number, number, number, number] = [0, 0, 0, 0];
   for (const m of days) {
     impressions += Number(m.impressions) || 0;
     views3s += sumOf(m.actions, "video_view");
     const p = first(m.video_play_actions);
     plays += p;
+    thruplays += first(m.video_thruplay_watched_actions);
+    q[0] += first(m.video_p25_watched_actions);
+    q[1] += first(m.video_p50_watched_actions);
+    q[2] += first(m.video_p75_watched_actions);
+    q[3] += first(m.video_p100_watched_actions);
     const avg = first(m.video_avg_time_watched_actions);
     if (p && avg) {
       watched += avg * p;
@@ -56,15 +86,20 @@ export function videoMetrics(days: Record<string, unknown>[], videoSeconds: numb
   }
   const avgWatchSec = weighted ? r1(watched / weighted) : null;
   const seconds = videoSeconds && videoSeconds > 0 ? videoSeconds : null;
+  // A long-watched loop can average more than its length: capped at 100%
+  const exact = avgWatchSec != null && seconds ? Math.min(100, r1((avgWatchSec / seconds) * 100)) : null;
+  const estimate = exact == null ? watchFromQuartiles(plays, q) : null;
   return {
     impressions,
     views3s,
     plays,
     hookRate: impressions && views3s ? r1((views3s / impressions) * 100) : null,
+    thruplays,
+    holdRate: views3s && plays ? Math.min(100, r1((thruplays / views3s) * 100)) : null,
     avgWatchSec,
     videoSeconds: seconds,
-    // A long-watched loop can average more than its length: capped at 100%
-    watchPct: avgWatchSec != null && seconds ? Math.min(100, r1((avgWatchSec / seconds) * 100)) : null,
+    watchPct: exact ?? estimate,
+    watchEstimated: exact == null && estimate != null,
   };
 }
 

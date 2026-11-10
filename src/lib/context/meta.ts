@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { accountFromPath, bareAccount, isWriteCall, redactTokens } from "@/lib/meta-token-core";
 import { compact } from "./shared";
 import { isLive, LIVE } from "@/lib/live";
-import { CONVERSION_FIELDS, CONVERSIONS_READ_FROM, META_ATTRIBUTION, PURCHASE_TYPES, foldConversions } from "@/lib/kpi/conversions";
+import { CONVERSION_FIELDS, META_ATTRIBUTION, META_READ_FROM, META_REPORT_TIME, PURCHASE_TYPES, foldConversions } from "@/lib/kpi/conversions";
 import { videoMetrics } from "@/lib/kpi/video";
 
 // Reads ad performance with the CommandCenter system user (META_SYSTEM_USER_TOKEN, ads_read).
@@ -99,12 +99,13 @@ const unseen = (e: unknown) => {
 export const metaGraphAs = <T>(token: string, path: string, params: Record<string, string> = {}, method: "GET" | "POST" = "GET") => send<T>(token, path, params, method);
 
 /**
- * Every insights request on an ad account asks for Kaizen's attribution explicitly (7-day click, 1-day view), so our
- * purchases match Ads Manager's default columns whatever the ad sets' own settings or Meta's API default.
+ * Every insights request on an ad account asks for Kaizen's attribution explicitly (7-day click, 1-day view) and books
+ * each conversion on its impression's day, so our purchases match Ads Manager's default columns whatever the ad sets'
+ * own settings or Meta's API defaults. A caller that asks for its own window or report time keeps it.
  */
 export function withAttribution(path: string, params: Record<string, string>): Record<string, string> {
-  if (!/^act_\d+\/insights$/.test(path) || params.action_attribution_windows) return params;
-  return { ...params, action_attribution_windows: JSON.stringify(META_ATTRIBUTION) };
+  if (!/^act_\d+\/insights$/.test(path)) return params;
+  return { action_attribution_windows: JSON.stringify(META_ATTRIBUTION), action_report_time: META_REPORT_TIME, ...params };
 }
 
 /**
@@ -358,6 +359,8 @@ export type MetaAd = MetaSummary & {
   avgWatchSec?: number | null;
   videoSeconds?: number | null;
   watchPct?: number | null;
+  /** watchPct estimated from the 25/50/75/100% completion counts (the video's length isn't known) */
+  watchEstimated?: boolean;
 };
 
 // ─── Sync one ad account ────────────────────────────────────────────────────
@@ -379,8 +382,9 @@ async function syncDaily(admin: SupabaseClient, clientId: string, adAccountId: s
     admin.from("clients").select("meta_backfilled_at").eq("id", clientId).single(),
   ]);
   const today = new Date();
-  // Accounts last read in full before standard events were asked for are read in full once more (see CONVERSIONS_READ_FROM)
-  const backfill = !c?.meta_backfilled_at || Date.parse(c.meta_backfilled_at) < Date.parse(CONVERSIONS_READ_FROM);
+  // Accounts last read in full before a change to what a read returns (standard events, the impression's day) are read
+  // in full once more (see META_READ_FROM)
+  const backfill = !c?.meta_backfilled_at || Date.parse(c.meta_backfilled_at) < Date.parse(META_READ_FROM);
   const since = !last || backfill ? new Date(today.getTime() - 180 * 86_400_000) : new Date(Math.min(Date.parse(`${last.date}T12:00:00Z`), today.getTime()) - REVISE_DAYS * 86_400_000);
   const rows = await asyncReport(act, {
     level: "ad",
@@ -545,6 +549,7 @@ async function snapshot(admin: SupabaseClient, clientId: string, adAccountId: st
       avgWatchSec: v.avgWatchSec,
       videoSeconds: v.videoSeconds,
       watchPct: v.watchPct,
+      watchEstimated: v.watchEstimated,
       id,
       name: String(latest.ad_name ?? ""),
       campaign: String(latest.campaign_name ?? ""),

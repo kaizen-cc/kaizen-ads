@@ -51,7 +51,6 @@ export async function analyzeCreative(
     const impressions = list.reduce((s, r) => s + n(r.metrics.impressions), 0);
     const clicks = list.reduce((s, r) => s + n(r.metrics.inline_link_clicks), 0);
     const plays = list.reduce((s, r) => s + n(((r.metrics.video_play_actions ?? []) as { value: string }[])[0]?.value), 0);
-    const thru = list.reduce((s, r) => s + n(((r.metrics.video_thruplay_watched_actions ?? []) as { value: string }[])[0]?.value), 0);
     const v = videoMetrics(list.map((r) => r.metrics), lengths.get(id) ?? null);
     const x = detail.get(id);
     const f = tiring.get(id);
@@ -70,7 +69,8 @@ export async function analyzeCreative(
       revenue,
       ctr: pct(clicks, impressions),
       hookRate: plays ? v.hookRate : null,
-      holdRate: plays ? pct(thru, plays) : null,
+      // ThruPlays per 3-second view, as Meta defines hold (not per play start)
+      holdRate: plays ? v.holdRate : null,
       watchPct: v.watchPct,
       age: Math.round((Date.parse(o.today) - Date.parse(firstSeen.get(id) ?? o.today)) / DAY),
       fatigue: f ? (f.severity as "tiring" | "tired") : null,

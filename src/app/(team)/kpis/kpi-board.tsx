@@ -24,8 +24,8 @@ import type { SprintSummary } from "@/lib/sprints";
 import type { LedgerItem } from "@/lib/ledger";
 import { FatigueWatch } from "@/components/fatigue-watch";
 import { MarketPanel } from "../clients/[slug]/market-panel";
-import { kpiCreative, type KpiAds, type KpiCreative } from "./creative-actions";
-import { VideoMetrics } from "@/components/video-metrics";
+import { kpiCreative, type KpiCreative } from "./creative-actions";
+import { AdsThisWeek } from "./ads-table";
 import { QuickActions } from "./quick-actions";
 import { PlanStep } from "./plan-step";
 import { Layer } from "../clients/[slug]/layer";
@@ -1296,49 +1296,6 @@ function NextMove({ r, moves, onActions, onNotes }: { r: KpiRow; moves: number; 
 }
 
 const ledgerMetric = (i: LedgerItem) => (i.roas != null ? `${i.roas}x ROAS` : i.costPerResult != null ? `${money(i.costPerResult)} each` : `${Math.round(i.results)} results`);
-
-const shortDay = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-
-/** The account's ads over the last 7 complete days, biggest spend first, with hook rate and watch time on video. */
-function AdsThisWeek({ a }: { a: KpiAds }) {
-  return (
-    <section className="grid gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
-      <div>
-        <h2 className="font-heading text-[17px]">Ads this week</h2>
-        <p className="mt-1 text-sm text-muted">
-          {shortDay(a.from)} to {shortDay(a.to)}, complete days like Ads Manager. {a.result} counted as the card counts them; video ads show hook rate and how much of the video people watch.
-        </p>
-      </div>
-      {a.ads.length ? (
-        <ul className="grid gap-1.5">
-          {a.ads.map((x) => (
-            <li key={x.id} className="flex items-center gap-3 rounded-[14px] bg-bg/50 p-2.5">
-              {x.thumbnail ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={x.thumbnail} alt="" loading="lazy" className="h-12 w-10 shrink-0 rounded-[8px] bg-surface-2 object-cover" onError={(e) => (e.currentTarget.style.visibility = "hidden")} />
-              ) : (
-                <span className="h-12 w-10 shrink-0 rounded-[8px] bg-surface-2" />
-              )}
-              <span className="grid min-w-0 flex-1 gap-1 md:grid-cols-[minmax(0,1fr)_auto] md:items-center md:gap-4">
-                <span className="truncate text-sm" title={x.name}>
-                  {x.name}
-                </span>
-                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted md:justify-end">
-                  <span className="tabular">{money(x.spend)}</span>
-                  <span className="tabular">{a.roas ? (x.value != null ? `${x.value}x ROAS` : "no sales") : x.value != null ? `${Math.round(x.results * 10) / 10} at ${money(x.value)}` : "no results"}</span>
-                  {x.ctr != null && <span className="tabular">CTR {x.ctr}%</span>}
-                  <VideoMetrics v={x} />
-                </span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm text-faint">No ad spent in these days.</p>
-      )}
-    </section>
-  );
-}
 
 /** Creative, read when the tab opens: ads wearing out, what has and hasn't worked for this client, their market. */
 function CreativeTab({ r }: { r: KpiRow }) {

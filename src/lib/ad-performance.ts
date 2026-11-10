@@ -6,7 +6,8 @@ import { videoMetrics } from "@/lib/kpi/video";
 import { videoLengths } from "@/lib/video-length";
 
 // Each ad in a Meta account over its last 7 complete days, for the KPI card's Creative tab: spend and the KPI's result
-// (counted the way the card counts it), CTR, and for video ads the hook rate and how much of the video people watch.
+// (counted the way the card counts it), CTR, and for video ads the hook rate, the hold rate and how much of the video
+// people watch (from the video's length, or estimated from the 25/50/75/100% completion counts while it isn't known).
 
 export type AdPerf = {
   id: string;
@@ -18,15 +19,21 @@ export type AdPerf = {
   value: number | null;
   ctr: number | null;
   hookRate: number | null;
+  /** ThruPlays per 3-second view */
+  holdRate: number | null;
   avgWatchSec: number | null;
   videoSeconds: number | null;
   watchPct: number | null;
+  /** watchPct is estimated from completion counts (the video's length isn't known) */
+  watchEstimated: boolean;
+  /** Video plays in the window: 0 for image and carousel ads */
+  plays: number;
 };
 
 const n = (v: unknown) => Number(v) || 0;
 const r2 = (x: number) => Math.round(x * 100) / 100;
 
-export async function adPerformance(db: SupabaseClient, admin: SupabaseClient | null, clientId: string, account: string, t: { conversion: string; custom_action: string | null }, limit = 12) {
+export async function adPerformance(db: SupabaseClient, admin: SupabaseClient | null, clientId: string, account: string, t: { conversion: string; custom_action: string | null }, limit = 30) {
   const w = completeDays(7, new Date());
   const acct = account.replace(/^act_/, "");
   type Row = { date: string; ad_id: string; ad_name: string | null; metrics: Record<string, unknown> };
@@ -67,10 +74,13 @@ export async function adPerformance(db: SupabaseClient, admin: SupabaseClient | 
       results: Math.round(results * 10) / 10,
       value: conv.roas ? (spend ? r2(revenue / spend) : null) : results ? r2(spend / results) : null,
       ctr: imp ? r2((clicks / imp) * 100) : null,
-      hookRate: v.hookRate,
+      hookRate: v.plays ? v.hookRate : null,
+      holdRate: v.plays ? v.holdRate : null,
       avgWatchSec: v.avgWatchSec,
       videoSeconds: v.videoSeconds,
-      watchPct: v.watchPct,
+      watchPct: v.plays ? v.watchPct : null,
+      watchEstimated: v.watchEstimated,
+      plays: v.plays,
     };
   });
   return { ads, window: w, roas: Boolean(conv.roas), result: conv.label };
