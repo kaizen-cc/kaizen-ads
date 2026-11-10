@@ -9,6 +9,7 @@ import { buyingPlatform, permsPrompt, roleWidePerms } from "@/lib/chat-permissio
 import { permsOn } from "@/lib/chat-permissions-server";
 import { agentLabel, isChatAgent, pickAgent } from "./agents";
 import { attachmentBlocks } from "./files";
+import { projectContext, threadProjectId, visibleProject } from "./projects-server";
 import { chatTools, clientBrief } from "./tools";
 import { AGENT_LABEL, type AiModel, type Attachment, type Card, type ChatAgent, type ChatEvent, type ToolRun } from "./types";
 
@@ -49,6 +50,7 @@ export type TurnInput = {
   model: AiModel | null;
   agent: ChatAgent | null | undefined; // switched on the chip (kept on the thread); null = back to automatic, undefined = unchanged
   clientId: string | null | undefined; // picked in the header (undefined = unchanged, null = unpinned)
+  projectId?: string | null; // a new chat started inside a project
   mode: "send" | "regenerate" | "edit";
   signal: AbortSignal;
   emit: (e: ChatEvent) => void;
@@ -190,30 +192,46 @@ export async function runTurn(input: TurnInput): Promise<void> {
   type T = { id: string; title: string; client_id: string | null; client_confirmed: boolean; agent_key: string | null; model: AiModel; source?: string | null; history_summary?: string | null; history_summary_upto?: string | null; notes?: { name: string; text: string }[] | null };
   let thread: T | null = null;
   let created = false;
+  // A project's chat: started in it (the person must be able to see it), or the thread's own (guarded before the migration)
+  let projectId: string | null = null;
+  let projectClient: string | null = null;
   if (input.threadId) {
     const { data } = await db.from("ai_threads").select("id, title, client_id, client_confirmed, agent_key, model, source, history_summary, history_summary_upto, notes").eq("id", input.threadId).eq("profile_id", me.id).maybeSingle();
     if (!data) return emit({ t: "error", message: "That thread isn't yours (shared threads are read only)." });
     thread = data as T;
+    projectId = await threadProjectId(db, thread.id);
   } else {
     if (input.mode !== "send") return emit({ t: "error", message: "Nothing to redo yet." });
-    const { data, error } = await admin.from("ai_threads").insert({ profile_id: me.id, title: titleOf(input.text || input.attachments[0]?.name || "New chat"), model: input.model ?? "opus" }).select("id, title, client_id, client_confirmed, agent_key, model").single();
+    if (input.projectId) {
+      const p = await visibleProject(db, input.projectId);
+      if (!p) return emit({ t: "error", message: "You can't see that project." });
+      projectId = p.id;
+      projectClient = p.client_id;
+    }
+    const { data, error } = await admin.from("ai_threads").insert({ profile_id: me.id, title: titleOf(input.text || input.attachments[0]?.name || "New chat"), model: input.model ?? "opus", ...(projectId ? { project_id: projectId } : {}) }).select("id, title, client_id, client_confirmed, agent_key, model").single();
     if (error || !data) return emit({ t: "error", message: "Couldn't start the thread." });
     thread = data as T;
     created = true;
   }
   emit({ t: "thread", id: thread.id, title: thread.title, created });
+  // A new chat in a project about one client: pinned to that client (when the person can see them)
+  let clientPick = input.clientId;
+  if (created && projectClient && clientPick === undefined) {
+    const { data: c } = await db.from("clients").select("id").eq("id", projectClient).maybeSingle();
+    if (c) clientPick = projectClient;
+  }
   const patch: Record<string, unknown> = {};
   if (input.model && input.model !== thread.model) patch.model = thread.model = input.model;
   if (input.agent !== undefined && input.agent !== (thread.agent_key as ChatAgent | null)) patch.agent_key = thread.agent_key = input.agent;
 
   // ─── The client: picked in the header, or found in the message and confirmed later with the chip ───
-  if (input.clientId !== undefined) {
-    if (input.clientId) {
-      const { data: c } = await db.from("clients").select("id").eq("id", input.clientId).maybeSingle();
+  if (clientPick !== undefined) {
+    if (clientPick) {
+      const { data: c } = await db.from("clients").select("id").eq("id", clientPick).maybeSingle();
       if (!c) return emit({ t: "error", message: "You can't see that client." });
     }
-    patch.client_id = thread.client_id = input.clientId;
-    patch.client_confirmed = thread.client_confirmed = Boolean(input.clientId);
+    patch.client_id = thread.client_id = clientPick;
+    patch.client_confirmed = thread.client_confirmed = Boolean(clientPick);
   } else if (!thread.client_id && input.text) {
     const found = await detectClient(db, input.text).catch(() => null);
     if (found) {
@@ -293,13 +311,15 @@ export async function runTurn(input: TurnInput): Promise<void> {
   // Google copy when the message is about Google or the Google buyer answers; else Meta (both platforms' proven lines come either way)
   const copyPlatform = agent === "google_auditor" || wantsGoogle(userText) ? "google" : "meta";
   const copyAsked = agent === "copy" || wantsCopy(userText);
-  const [brief, knowledge, convo, copyCtx, aiRule] = await Promise.all([
+  const [brief, knowledge, convo, copyCtx, aiRule, project] = await Promise.all([
     client ? clientBrief(admin, client.id).catch((e) => `(The client's context couldn't be read: ${e instanceof Error ? e.message : "unknown"})`) : Promise.resolve(""),
     knowledgeFor(agent, label, userText.slice(0, 6000), client?.id ?? null).catch(() => ""),
     history(admin, recent),
     client && copyAsked ? import("@/lib/copy-library").then(({ copyContext }) => copyContext(admin, client!.id, 14_000, copyPlatform)).catch(() => "") : Promise.resolve(""),
     // A pinned client who said no to AI content: told outright, not left to be found in the context
     client ? import("@/lib/ai-content-rule").then(({ loadAiRule }) => loadAiRule(admin, client!.id)) : Promise.resolve(null),
+    // The project's instructions and knowledge, read with the person's own access (none when they can't see it)
+    projectId ? projectContext(db, projectId, `${thread.title}\n${userText}`).catch(() => null) : Promise.resolve(null),
   ]);
   const aiRuleLine = aiRule && !aiRule.allowed && aiRule.rule ? `<ai_content_rule>\n${noAiContentRule(aiRule.rule)}\n</ai_content_rule>` : "";
   for (const [id, files] of convo.updated) await admin.from("ai_messages").update({ attachments: files }).eq("id", id);
@@ -307,9 +327,9 @@ export async function runTurn(input: TurnInput): Promise<void> {
   const system: Anthropic.TextBlockParam[] = [cachedBlock(withAgent(`${SYSTEM}\n\nYou're answering as Kaizen's ${agentLabel(agent)}: use that role's judgement, skills and playbook below.`, cfg))];
   // The copy context rides in the client's cached block (the cache takes four marks)
   if (brief) system.push(cachedBlock(`<client name="${client!.name.replace(/"/g, "'")}" note="this thread is pinned to them${thread.client_confirmed ? "" : " (detected from the message; not yet confirmed)"}; newest first">\n${brief}\n</client>${copyCtx ? `\n\n${copyCtx}\nWrite any copy for this client from the copy_context above: model new lines on the proven ones (new words, same hooks and structure), never reuse a tired line as it is, never break a rule or anything to avoid, keep to the platform's limits, then show it with write_ad_copy.` : ""}`));
-  // Imported threads: the person's private notes and the summary of older turns, in one cached block (the cache
-  // takes four marks: the system, the client, this and the tools)
-  const imported: string[] = [];
+  // The project's instructions and knowledge, and for imported threads the person's private notes and the summary of
+  // older turns, in one cached block (the cache takes four marks: the system, the client, this and the tools)
+  const imported: string[] = project?.block ? [project.block] : [];
   const notes = (Array.isArray(thread.notes) ? thread.notes : []).filter((n) => n?.text);
   if (notes.length) {
     let room = 120_000;

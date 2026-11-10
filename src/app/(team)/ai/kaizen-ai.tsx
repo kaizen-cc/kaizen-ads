@@ -10,6 +10,10 @@ import type { TeamRole } from "@/lib/roles";
 import { deleteImportedThread, deleteTemplate, listTemplates, listThreads, loadThread, saveTemplate, shareThread, teammates, updateThread, uploadSlots, usedTemplate, type Template, skipClaudeImport } from "./actions";
 import { ClaudeImportSheet, useClaudeImport, type ImportJob } from "./claude-import";
 import { CardView, ChatMarkdown, CopyButton, ToolChips } from "./cards";
+import { moveThreadToProject, threadProjects } from "./project-actions";
+import { MoveToProject, ProjectView, ProjectsHome, useProject } from "./projects";
+
+type ProjectRef = { id: string; name: string };
 
 // Kaizen AI: a chat like Claude's, for the team. Threads on the left (search, pinned, grouped by client, shared with
 // me), the conversation in the middle with streaming answers, tool status and cards, and a composer with files,
@@ -61,12 +65,20 @@ const P = {
   chevron: "M6 9l6 6 6-6",
   download: "M12 3v12M7 10l5 5 5-5M5 21h14",
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
 };
 
-export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, groups, quickIds, homeAgent, mustImport = false }: { me: Me; on: boolean; initialThreads: Thread[]; initialTemplates: Template[]; clients: ClientOpt[]; groups: QuickAction["group"][]; /** The quick actions this person may use (by role) */ quickIds: string[]; homeAgent: { key: ChatAgent; label: string }; mustImport?: boolean }) {
+export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThreadProjects = {}, clients, groups, quickIds, homeAgent, mustImport = false }: { me: Me; on: boolean; initialThreads: Thread[]; initialTemplates: Template[]; /** The project each thread is in */ initialThreadProjects?: Record<string, ProjectRef>; clients: ClientOpt[]; groups: QuickAction["group"][]; /** The quick actions this person may use (by role) */ quickIds: string[]; homeAgent: { key: ChatAgent; label: string }; mustImport?: boolean }) {
   const t = useParam("t");
   const listOpen = useParam("list") === "1";
   const importOpen = useParam("import") === "1";
+  // Projects: the list (?projects=1), one project's page (?p=), and a chat's "move to a project" (?move=)
+  const projectsOpen = useParam("projects") === "1";
+  const projectParam = useParam("p");
+  const moveFor = useParam("move");
+  const [threadProj, setThreadProj] = useState<Record<string, ProjectRef>>(initialThreadProjects);
+  const openProject = useProject(projectParam);
+  const projectData = openProject.data && openProject.data !== "missing" ? openProject.data : null;
   const [extra, setExtra] = useState<{ earlier: number; notes: { name: string; chars: number }[] }>({ earlier: 0, notes: [] });
   const [threads, setThreads] = useState(initialThreads);
   const [templates, setTemplates] = useState(initialTemplates);
@@ -91,7 +103,17 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
   const agentPick: ChatAgent | null = thread ? ((thread.agent_key as ChatAgent | null) ?? null) : draft.agent;
   const client: ClientOpt | null = thread?.client_id ? (clients.find((c) => c.id === thread.client_id) ?? (thread.clients ? { id: thread.client_id, name: thread.clients.name, slug: thread.clients.slug } : null)) : draft.client;
 
-  const refreshThreads = useCallback(() => void listThreads().then(setThreads), []);
+  const refreshThreads = useCallback(() => {
+    void listThreads().then(setThreads);
+    void threadProjects().then(setThreadProj);
+  }, []);
+  const threadProject: ProjectRef | null = thread ? (threadProj[thread.id] ?? null) : null;
+  // A project link that no longer opens (deleted, or no longer shared): back to the list
+  useEffect(() => {
+    if (openProject.data !== "missing") return;
+    setNotice("That project isn't there any more, or it isn't shared with you.");
+    replaceParams({ p: null, projects: "1" });
+  }, [openProject.data]);
   const claude = useClaudeImport(refreshThreads);
   // First step before anyone's first chat: bring their Claude history over (or say they have none). Starting an import
   // opens the chat right away; it keeps importing behind.
@@ -244,8 +266,9 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
       attachments: mode === "send" ? ready : [],
       model,
       mode,
-      ...(thread ? {} : { agent: draft.agent, clientId: draft.client?.id ?? undefined }),
+      ...(thread ? {} : { agent: draft.agent, clientId: draft.client?.id ?? undefined, projectId: projectData?.project.id ?? undefined }),
     };
+    const startedIn = thread ? null : projectData ? { id: projectData.project.id, name: projectData.project.name } : null;
     const handle = (e: ChatEvent) => {
       if (e.t === "thread") {
         threadId = e.id;
@@ -254,7 +277,11 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
           const fresh: Thread = { id: e.id, title: e.title, client_id: draft.client?.id ?? null, client_confirmed: Boolean(draft.client), agent_key: draft.agent, model, pinned: false, shared_with: [], last_message_at: now, profile_id: me.id, clients: draft.client ? { name: draft.client.name, slug: draft.client.slug } : null };
           setThread(fresh);
           setThreads((ts) => [fresh, ...ts]);
-          replaceParams({ t: e.id });
+          // Started on a project's page: a new step, so back returns to the project
+          if (startedIn) {
+            setThreadProj((m) => ({ ...m, [e.id]: startedIn }));
+            pushParams({ t: e.id });
+          } else replaceParams({ t: e.id });
         }
         setLive((l) => (l ? { ...l, thread: e.id } : l));
       } else if (e.t === "client") setThread((th) => (th ? { ...th, client_id: e.id, client_confirmed: e.confirmed, clients: { name: e.name, slug: e.slug } } : th));
@@ -300,6 +327,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
     setLive((l) => (l?.error ? { ...l, busy: false } : null));
     abort.current = null;
     refreshThreads();
+    if (startedIn) openProject.reload();
   };
 
   const stop = () => abort.current?.abort();
@@ -320,7 +348,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
   const newChat = () => {
     if (live?.busy) return;
     setDraft({ model: thread?.model ?? draft.model, agent: null, client: null });
-    pushParams({ t: null, list: null });
+    pushParams({ t: null, list: null, p: null, projects: null });
     setTimeout(() => input.current?.focus(), 50);
   };
 
@@ -349,15 +377,22 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
         active={thread?.id ?? null}
         meId={me.id}
         onNew={newChat}
-        onPick={(id) => pushParams({ t: id, list: null })}
+        onPick={(id) => pushParams({ t: id, list: null, p: null, projects: null })}
         onClose={() => closeParams("list")}
         onChanged={refreshThreads}
         onImport={() => pushParams({ import: "1", list: null })}
         onDelete={(id) => void removeImported(id)}
+        onProjects={() => pushParams({ projects: "1", p: null, t: null, list: null })}
+        projectsActive={(projectsOpen || Boolean(projectParam)) && !t}
+        onMove={(id) => pushParams({ move: id, list: null })}
+        threadProj={threadProj}
         job={claude.job}
       />
 
-      {/* The conversation */}
+      {projectsOpen && !t && !projectParam ? (
+        <ProjectsHome clients={clients} onMenu={() => pushParams({ list: "1" })} />
+      ) : (
+      /* The conversation */
       <section className="flex min-w-0 flex-1 flex-col bg-bg">
         <Header
           thread={thread}
@@ -372,11 +407,23 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
           onList={() => pushParams({ list: "1" })}
           onNew={newChat}
           onShared={refreshThreads}
+          project={thread ? threadProject : projectParam ? (projectData ? { id: projectData.project.id, name: projectData.project.name } : { id: projectParam, name: "Project" }) : null}
+          onProject={(id) => (thread ? pushParams({ p: id, t: null, projects: null }) : pushParams({ projects: "1", p: null }))}
         />
 
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto grid w-full max-w-[820px] gap-7 px-4 pb-6 pt-6 md:px-8">
-            {gate && !thread ? (
+          <div className={`mx-auto grid w-full gap-7 px-4 pb-6 pt-6 md:px-8 ${projectParam && !thread ? "max-w-[1080px]" : "max-w-[820px]"}`}>
+            {projectParam && !thread ? (
+              projectData ? (
+                <ProjectView data={projectData} meId={me.id} clients={clients} onOpenChat={(id) => pushParams({ t: id })} onChanged={openProject.reload} />
+              ) : (
+                <div className="grid gap-3 pt-6">
+                  <div className="h-9 w-2/3 animate-pulse rounded-[12px] bg-ink/[0.06]" />
+                  <div className="h-4 w-1/2 animate-pulse rounded-full bg-ink/[0.05]" />
+                  <div className="mt-4 h-28 animate-pulse rounded-[20px] bg-ink/[0.04]" />
+                </div>
+              )
+            ) : gate && !thread ? (
               <ImportFirst first={me.first} onImport={() => pushParams({ import: "1" })} onSkip={() => void skipImport()} />
             ) : !thread && !messages.length && !live && lastMine && !fresh ? (
               <PickUp title={lastMine.title} client={lastMine.clients?.name ?? null} at={lastMine.last_message_at} now={now} onPickUp={() => pushParams({ t: lastMine.id })} onFresh={() => setFresh(true)} />
@@ -406,7 +453,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
           </div>
         </div>
 
-        {gate && !thread ? null : readOnly ? (
+        {(gate && !thread && !projectParam) || (projectParam && !thread && !projectData) ? null : readOnly ? (
           <p className="border-t border-line px-4 py-4 text-center text-[13px] text-muted">Shared with you by {owner ?? "a teammate"} · read only</p>
         ) : (
           <Composer
@@ -431,9 +478,24 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, clients, gr
             onTemplatesChanged={() => void listTemplates().then(setTemplates)}
             groups={groups}
             quickIds={quickIds}
+            placeholder={projectData && !thread ? `Start a chat in ${projectData.project.name}…` : undefined}
           />
         )}
       </section>
+      )}
+      {moveFor ? (
+        <MoveToProject
+          current={threadProj[moveFor]?.id ?? null}
+          onClose={() => closeParams("move")}
+          onMove={async (pid) => {
+            const r = await moveThreadToProject(moveFor, pid);
+            if (!r.ok) return r.error;
+            refreshThreads();
+            if (projectParam) openProject.reload();
+            return null;
+          }}
+        />
+      ) : null}
       {importOpen ? (
         <ClaudeImportSheet
           clients={clients}
@@ -507,6 +569,10 @@ function Rail({
   onChanged,
   onImport,
   onDelete,
+  onProjects,
+  projectsActive,
+  onMove,
+  threadProj,
   job,
 }: {
   open: boolean;
@@ -519,6 +585,10 @@ function Rail({
   onChanged: () => void;
   onImport: () => void;
   onDelete: (id: string) => void;
+  onProjects: () => void;
+  projectsActive: boolean;
+  onMove: (id: string) => void;
+  threadProj: Record<string, ProjectRef>;
   job: ImportJob | null;
 }) {
   const [q, setQ] = useState("");
@@ -571,6 +641,10 @@ function Rail({
           <Icon d={P.x} />
         </button>
       </div>
+      <button type="button" onClick={onProjects} aria-current={projectsActive ? "page" : undefined} className={`mx-3 mb-2 flex min-h-11 items-center gap-2.5 rounded-[12px] px-3 text-left text-[14px] transition ${projectsActive ? "bg-ink/[0.07] font-medium text-fg" : "text-muted hover:bg-ink/[0.04] hover:text-fg"}`}>
+        <Icon d={P.folder} size={17} />
+        Projects
+      </button>
       {job?.running ? (
         <button type="button" onClick={onImport} className="mx-3 mb-2 grid gap-1.5 rounded-[14px] border border-line bg-ink/[0.02] px-3 py-2 text-left">
           <span className="flex items-baseline justify-between gap-2 text-[12.5px]">
@@ -589,11 +663,11 @@ function Rail({
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search chats" className="w-full bg-transparent text-[13.5px] text-fg outline-none placeholder:text-faint" />
       </label>
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-6">
-        {pinned.length ? <RailGroup title="Pinned" items={pinned} active={active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} mine /> : null}
+        {pinned.length ? <RailGroup title="Pinned" items={pinned} active={active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} onMove={onMove} threadProj={threadProj} mine /> : null}
         {groups.map(([name, items]) => (
-          <RailGroup key={name || "none"} title={name || "Everything else"} items={items} active={active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} mine />
+          <RailGroup key={name || "none"} title={name || "Everything else"} items={items} active={active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} onMove={onMove} threadProj={threadProj} mine />
         ))}
-        {shared.length ? <RailGroup title="Shared with me" items={shared} active={active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} mine={false} /> : null}
+        {shared.length ? <RailGroup title="Shared with me" items={shared} active={active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} onMove={onMove} threadProj={threadProj} mine={false} /> : null}
         {!threads.length ? <p className="px-3 py-6 text-[13px] text-faint">Your chats show here.</p> : null}
       </nav>
     </div>
@@ -611,20 +685,21 @@ function Rail({
   );
 }
 
-function RailGroup({ title, items, active, onPick, onChanged, onDelete, mine }: { title: string; items: Thread[]; active: string | null; onPick: (id: string) => void; onChanged: () => void; onDelete: (id: string) => void; mine: boolean }) {
+function RailGroup({ title, items, active, onPick, onChanged, onDelete, onMove, threadProj, mine }: { title: string; items: Thread[]; active: string | null; onPick: (id: string) => void; onChanged: () => void; onDelete: (id: string) => void; onMove: (id: string) => void; threadProj: Record<string, ProjectRef>; mine: boolean }) {
   return (
     <div className="mt-3">
       <p className="truncate px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">{title}</p>
       <ul className="grid gap-0.5">
         {items.map((x) => (
-          <RailItem key={x.id} x={x} active={x.id === active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} mine={mine} />
+          <RailItem key={x.id} x={x} active={x.id === active} onPick={onPick} onChanged={onChanged} onDelete={onDelete} onMove={onMove} threadProj={threadProj} mine={mine} />
         ))}
       </ul>
     </div>
   );
 }
 
-function RailItem({ x, active, onPick, onChanged, onDelete, mine }: { x: Thread; active: boolean; onPick: (id: string) => void; onChanged: () => void; onDelete: (id: string) => void; mine: boolean }) {
+function RailItem({ x, active, onPick, onChanged, onDelete, onMove, threadProj, mine }: { x: Thread; active: boolean; onPick: (id: string) => void; onChanged: () => void; onDelete: (id: string) => void; onMove: (id: string) => void; threadProj: Record<string, ProjectRef>; mine: boolean }) {
+  const inProject = threadProj[x.id] ?? null;
   const [menu, setMenu] = useState(false);
   const act = async (p: Parameters<typeof updateThread>[1]) => {
     setMenu(false);
@@ -635,6 +710,11 @@ function RailItem({ x, active, onPick, onChanged, onDelete, mine }: { x: Thread;
     <li className="group relative">
       <button type="button" onClick={() => onPick(x.id)} className={`flex min-h-10 w-full items-center gap-2 rounded-[12px] py-2 pl-3 pr-9 text-left text-[13.5px] transition ${active ? "bg-ink/[0.07] text-fg" : "text-muted hover:bg-ink/[0.04] hover:text-fg"}`}>
         {x.pinned ? <span className="text-brand-text"><Icon d={P.pin} size={13} /></span> : null}
+        {inProject ? (
+          <span className="shrink-0 text-faint" title={`In ${inProject.name}`}>
+            <Icon d={P.folder} size={13} />
+          </span>
+        ) : null}
         <span className="truncate">{x.title}</span>
         {x.source ? <span className="ml-auto shrink-0 rounded-full bg-ink/[0.06] px-1.5 py-px text-[10px] font-medium uppercase tracking-[0.06em] text-faint" title="Imported from Claude">Claude</span> : null}
       </button>
@@ -658,6 +738,16 @@ function RailItem({ x, active, onPick, onChanged, onDelete, mine }: { x: Thread;
             }}
           >
             Rename
+          </button>
+          <button
+            type="button"
+            className="min-h-10 rounded-[10px] px-3 text-left text-[13px] hover:bg-ink/[0.05]"
+            onClick={() => {
+              setMenu(false);
+              onMove(x.id);
+            }}
+          >
+            {inProject ? "Change project" : "Move to project"}
           </button>
           <button type="button" className="min-h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40" onClick={() => void act({ archived: true })}>
             Archive
@@ -695,7 +785,12 @@ function Header({
   onList,
   onNew,
   onShared,
+  project,
+  onProject,
 }: {
+  /** The open chat's project, or the project whose page is open */
+  project: ProjectRef | null;
+  onProject: (id: string) => void;
   thread: Thread | null;
   readOnly: boolean;
   owner: string | null;
@@ -717,7 +812,13 @@ function Header({
         <Icon d={P.menu} />
       </button>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[15px] font-semibold text-fg">{thread?.title ?? "Kaizen AI"}</p>
+        {project ? (
+          <button type="button" onClick={() => onProject(project.id)} className="-my-1 flex max-w-full items-center gap-1 rounded-full py-1 text-[12px] text-muted hover:text-fg" title={thread ? `Open ${project.name}` : "All projects"}>
+            <Icon d={P.folder} size={12} />
+            <span className="truncate">{thread ? project.name : "Projects"}</span>
+          </button>
+        ) : null}
+        <p className="truncate text-[15px] font-semibold text-fg">{thread?.title ?? project?.name ?? "Kaizen AI"}</p>
         {readOnly ? <p className="text-[12px] text-faint">Shared by {owner}</p> : thread?.source ? <p className="text-[12px] text-faint">Imported from Claude · private</p> : null}
       </div>
       {detected && client && !readOnly ? (
@@ -1092,7 +1193,9 @@ function Composer({
   onTemplatesChanged,
   groups,
   quickIds,
+  placeholder,
 }: {
+  placeholder?: string;
   input: React.RefObject<HTMLTextAreaElement | null>;
   text: string;
   setText: (v: string) => void;
@@ -1219,7 +1322,7 @@ function Composer({
               if (e.key === "Escape" && slash !== null) setText("");
             }}
             rows={1}
-            placeholder={on ? "Ask Kaizen AI…  ( / for quick actions)" : "AI isn't connected yet"}
+            placeholder={on ? (placeholder ?? "Ask Kaizen AI…  ( / for quick actions)") : "AI isn't connected yet"}
             className="block max-h-[260px] min-h-[52px] w-full resize-none [field-sizing:content] bg-transparent px-4 pt-3.5 text-[15px] leading-relaxed text-fg outline-none placeholder:text-faint"
           />
           <div className="flex items-center gap-1 px-2 pb-2">

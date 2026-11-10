@@ -90,12 +90,15 @@ describe("reading a Claude export", () => {
     expect(list[0].title.length).toBeLessThanOrEqual(60);
   });
 
-  it("reads project docs as notes, with the project's instructions first", () => {
+  it("reads every project: its instructions apart from its docs, empty docs left out", () => {
     const projects = parseProjects([
       { uuid: "p1", name: "Agency work", prompt_template: "Be concise", docs: [{ filename: "voice.md", content: "Our voice" }, { filename: "empty.md", content: "" }] },
       { uuid: "p2", name: "No docs", docs: [] },
     ]);
-    expect(projects).toEqual([{ uuid: "p1", name: "Agency work", docs: [{ name: "Project instructions", text: "Be concise" }, { name: "voice.md", text: "Our voice" }], creator: null }]);
+    expect(projects).toEqual([
+      { uuid: "p1", name: "Agency work", description: "", instructions: "Be concise", docs: [{ name: "voice.md", text: "Our voice" }], creator: null, sharing: { visibility: "private", everyoneCanEdit: false, people: [] } },
+      { uuid: "p2", name: "No docs", description: "", instructions: "", docs: [], creator: null, sharing: { visibility: "private", everyoneCanEdit: false, people: [] } },
+    ]);
   });
 });
 

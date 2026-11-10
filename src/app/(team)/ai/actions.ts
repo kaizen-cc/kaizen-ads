@@ -188,7 +188,7 @@ export async function uploadSlots(files: { name: string; mime: string; bytes: nu
 export type ClaudeImport = { id: string; fileName: string | null; created: number; skipped: number; threads: number; status: string; createdAt: string };
 
 /** What the person already imported (Claude conversation ids, so they're skipped) and their imports */
-export async function claudeImportState(): Promise<{ imported: string[]; imports: ClaudeImport[] }> {
+export async function claudeImportState(): Promise<{ imported: string[]; projects: string[]; imports: ClaudeImport[] }> {
   const me = await requireStaff();
   const db = await createClient();
   const { data: imps } = await db.from("ai_imports").select("id, file_name, created, skipped, status, created_at").eq("profile_id", me.id).order("created_at", { ascending: false }).limit(20);
@@ -201,8 +201,11 @@ export async function claudeImportState(): Promise<{ imported: string[]; imports
   }
   const per = new Map<string, number>();
   for (const r of rows) if (r.import_id) per.set(r.import_id as string, (per.get(r.import_id as string) ?? 0) + 1);
+  // Claude projects already made into Kaizen AI projects (none before the projects migration is applied)
+  const { data: projs } = await db.from("ai_projects").select("source_id").eq("created_by", me.id).eq("source", "claude").limit(2000);
   return {
     imported: rows.map((r) => String(r.source_id)),
+    projects: (projs ?? []).map((p) => String(p.source_id)),
     imports: (imps ?? []).filter((i) => i.file_name !== NO_IMPORT).map((i) => ({ id: i.id as string, fileName: (i.file_name as string | null) ?? null, created: Number(i.created) || 0, skipped: Number(i.skipped) || 0, threads: per.get(i.id as string) ?? 0, status: String(i.status), createdAt: String(i.created_at) })),
   };
 }

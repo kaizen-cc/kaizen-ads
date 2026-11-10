@@ -155,7 +155,7 @@ export async function addKnowledgeText(
 // ─── Reading a file ─────────────────────────────────────────────────────────
 
 /** A PDF's text, page by page, straight from the file (empty pages when it's a scan) */
-async function pdfPages(buf: Buffer): Promise<string[] | null> {
+export async function pdfPages(buf: Buffer): Promise<string[] | null> {
   try {
     const g = globalThis as unknown as { pdfjsWorker?: unknown };
     // The worker's code runs in this process (no worker thread on the server)

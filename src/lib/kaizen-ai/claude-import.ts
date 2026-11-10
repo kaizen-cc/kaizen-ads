@@ -1,4 +1,5 @@
 import { matchClientName, type NamedClient } from "@/lib/client-name-match";
+import { sharingOf, type ImportedSharing } from "./projects";
 
 // Reading a Claude data export (claude.ai: Settings, Privacy, Export data; or an owner's organization export, filtered
 // to the importer's own chats by ownChats below) into conversations Kaizen AI can import:
@@ -29,7 +30,22 @@ export type ImportedConversation = {
   /** Characters in it (for batching and the preview) */
   chars: number;
 };
-export type ImportedProject = { uuid: string; name: string; docs: { name: string; text: string }[]; creator: string | null };
+export type ImportedProject = {
+  uuid: string;
+  name: string;
+  description: string;
+  /** The project's custom instructions (prompt_template; other names in other shapes) */
+  instructions: string;
+  /** Its knowledge docs with text (the instructions aren't among them) */
+  docs: { name: string; text: string }[];
+  creator: string | null;
+  /** How it was shared in Claude, when the export says (private when it doesn't) */
+  sharing: ImportedSharing;
+};
+/** What a Kaizen AI project is made from, sent with a project's import item */
+export type ImportProjectPayload = { name: string; description: string; instructions: string; docs: { name: string; text: string }[]; sharing: ImportedSharing; chatUuids: string[] };
+/** The most kept from a project's custom instructions */
+export const MAX_INSTRUCTIONS_CHARS = 40_000;
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : null);
@@ -156,7 +172,10 @@ export function parseConversations(raw: unknown, now = new Date().toISOString())
   return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-/** Projects with docs that have text (projects.json) */
+/**
+ * Every project in projects.json: name, description, custom instructions (prompt_template, or instructions /
+ * custom_instructions / system_prompt in other shapes) and the docs that have text, read defensively.
+ */
 export function parseProjects(raw: unknown): ImportedProject[] {
   const list = Array.isArray(raw) ? raw : Array.isArray(obj(raw)?.projects) ? (obj(raw)!.projects as unknown[]) : [];
   return list.flatMap((x) => {
@@ -169,11 +188,21 @@ export function parseProjects(raw: unknown): ImportedProject[] {
       if (!d || !text || room <= 0) return [];
       const kept = cut(text, room);
       room -= kept.length;
-      return [{ name: (str(d.filename) || str(d.name) || "Document").slice(0, 200), text: kept }];
+      return [{ name: (str(d.filename) || str(d.name) || str(d.title) || "Document").slice(0, 200), text: kept }];
     });
-    const prompt = str(p.prompt_template).trim();
-    if (prompt && room > 0) docs.unshift({ name: "Project instructions", text: cut(prompt, Math.min(room, 20_000)) });
-    return docs.length ? [{ uuid: uuid.slice(0, 100), name: str(p.name).trim().slice(0, 100) || "Claude project", docs, creator: creatorOf(p) }] : [];
+    const settings = obj(p.settings) ?? {};
+    const instructions = [p.prompt_template, p.custom_instructions, p.instructions, p.system_prompt, settings.prompt_template, settings.custom_instructions].map(str).find((s) => s.trim()) ?? "";
+    return [
+      {
+        uuid: uuid.slice(0, 100),
+        name: str(p.name).trim().slice(0, 100) || "Claude project",
+        description: str(p.description).trim().slice(0, 4000),
+        instructions: cut(instructions.trim(), MAX_INSTRUCTIONS_CHARS),
+        docs,
+        creator: creatorOf(p),
+        sharing: sharingOf(p),
+      },
+    ];
   });
 }
 
@@ -211,6 +240,10 @@ export type ImportItem = {
   last: boolean;
   /** The Claude account it came from (conversation's account, project's creator), when the export says */
   account?: string | null;
+  /** A chat: the Claude project it was in (put inside that project once it's in Kaizen AI) */
+  projectUuid?: string | null;
+  /** A project: what the Kaizen AI project is made from */
+  project?: ImportProjectPayload;
 };
 
 const sizeOf = (m: ImportedMessage) => m.text.length + m.files.reduce((n, f) => n + (f.text?.length ?? 0) + f.name.length + 40, 0) + 120;
@@ -232,13 +265,33 @@ export function partsOf(base: Omit<ImportItem, "messages" | "part" | "last">, me
   return parts.map((ms, i) => ({ ...base, notes: i === 0 ? base.notes : [], messages: ms, part: i, last: i === parts.length - 1 }));
 }
 
+/** A project as its import item (sent before the chats, so they land inside it) */
+export function projectItem(p: ImportedProject, chatUuids: string[], clientId: string | null, now: string): ImportItem {
+  return {
+    uuid: `project:${p.uuid}`,
+    kind: "project",
+    title: p.name,
+    createdAt: now,
+    updatedAt: now,
+    clientId,
+    messages: [],
+    notes: [],
+    part: 0,
+    last: true,
+    account: p.creator,
+    project: { name: p.name, description: p.description, instructions: p.instructions, docs: p.docs, sharing: p.sharing, chatUuids: chatUuids.slice(0, 5000) },
+  };
+}
+
+const projectSize = (p: ImportProjectPayload | undefined) => (p ? p.instructions.length + p.description.length + p.docs.reduce((n, d) => n + d.text.length + d.name.length, 0) + p.chatUuids.length * 40 : 0);
+
 /** Import items grouped into requests that each stay under the size limit */
 export function batches(items: ImportItem[], max = MAX_BATCH_CHARS, maxItems = 40): ImportItem[][] {
   const out: ImportItem[][] = [];
   let cur: ImportItem[] = [];
   let size = 0;
   for (const it of items) {
-    const s = it.messages.reduce((n, m) => n + sizeOf(m), 0) + it.notes.reduce((n, d) => n + d.text.length, 0) + 300;
+    const s = it.messages.reduce((n, m) => n + sizeOf(m), 0) + it.notes.reduce((n, d) => n + d.text.length, 0) + projectSize(it.project) + 300;
     if (cur.length && (size + s > max || cur.length >= maxItems)) {
       out.push(cur);
       cur = [];

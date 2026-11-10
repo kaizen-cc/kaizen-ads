@@ -6,12 +6,13 @@ import { agentForRole, groupsFor, quickActionIds } from "@/lib/kaizen-ai/agents"
 import { AGENT_LABEL } from "@/lib/kaizen-ai/types";
 import { listTemplates, listThreads, needsClaudeImport, pickableClients } from "./actions";
 import { KaizenAi } from "./kaizen-ai";
+import { threadProjects } from "./project-actions";
 
 export const metadata: Metadata = { title: "Kaizen AI" };
 
 export default async function KaizenAiPage() {
   const me = await requireStaff();
-  const [threads, templates, clients, mustImport] = await Promise.all([listThreads(), listTemplates(), pickableClients(), needsClaudeImport().catch(() => false)]);
+  const [threads, templates, clients, mustImport, inProjects] = await Promise.all([listThreads(), listTemplates(), pickableClients(), needsClaudeImport().catch(() => false), threadProjects().catch(() => ({}))]);
   const home = agentForRole(me.role);
   return (
     <Suspense>
@@ -20,6 +21,7 @@ export default async function KaizenAiPage() {
         on={aiEnabled()}
         initialThreads={threads}
         initialTemplates={templates}
+        initialThreadProjects={inProjects}
         clients={clients}
         groups={groupsFor(me.role)}
         quickIds={quickActionIds(me)}

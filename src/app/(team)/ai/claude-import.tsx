@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { batches, notImported, ownChats, parseConversations, parseProjects, partsOf, suggestClient, type ImportedConversation, type ImportedProject, type ImportItem } from "@/lib/kaizen-ai/claude-import";
+import { batches, notImported, ownChats, parseConversations, parseProjects, partsOf, projectItem, suggestClient, type ImportedConversation, type ImportedProject, type ImportItem } from "@/lib/kaizen-ai/claude-import";
 import { linksExpired, missingFiles, sameFile, wantedFiles, type Manifest, type ManifestFile } from "@/lib/kaizen-ai/claude-export-manifest";
 import { readClaudeExportFiles, readManifest } from "@/lib/kaizen-ai/claude-import-file";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
@@ -84,7 +84,7 @@ export function useClaudeImport(onProgress: () => void) {
   return { job, start, clear: () => setJob((j) => (j?.running ? j : null)) };
 }
 
-type Step = { at: "drop" } | { at: "reading"; pct: number; label?: string } | { at: "preview"; fileName: string; convs: ImportedConversation[]; projects: ImportedProject[]; already: number; account: string | null; notice: string | null };
+type Step = { at: "drop" } | { at: "reading"; pct: number; label?: string } | { at: "preview"; fileName: string; convs: ImportedConversation[]; projects: ImportedProject[]; projectChats: Record<string, string[]>; already: number; account: string | null; notice: string | null };
 type Problem = { text: string; emails?: string[] };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -97,7 +97,7 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
   const [step, setStep] = useState<Step>({ at: "drop" });
   const [error, setProblem] = useState<Problem | null>(null);
   const setError = (e: string | Problem | null) => setProblem(typeof e === "string" ? { text: e } : e);
-  const [state, setState] = useState<{ imported: string[]; imports: ClaudeImport[] } | null>(null);
+  const [state, setState] = useState<{ imported: string[]; projects: string[]; imports: ClaudeImport[] } | null>(null);
   const [drag, setDrag] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   // Claude's export manifest: its links live only here, in memory on this device (never in the address or sent anywhere)
@@ -154,18 +154,19 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
       }
       const all = parseConversations(own.conversations);
       if (!all.length) throw new Error(own.kind === "org" ? "You don't have any chats in this export." : `No chats with messages in ${listOf(names)}.`);
-      const known = state?.imported ?? (await claudeImportState()).imported;
-      const convs = notImported(all, known);
-      const projects = notImported(
-        parseProjects(own.projects).map((p) => ({ ...p, uuid: `project:${p.uuid}` })),
-        known,
-      ).map((p) => ({ ...p, uuid: p.uuid.slice("project:".length) }));
+      const st = state ?? (await claudeImportState());
+      const convs = notImported(all, st.imported);
+      // Projects not yet made into Kaizen AI projects (by Claude's project id, per person)
+      const projects = notImported(parseProjects(own.projects), st.projects ?? []);
+      // Every chat each project holds, imported before or now: they're all put inside it
+      const projectChats: Record<string, string[]> = {};
+      for (const c of all) if (c.projectUuid) (projectChats[c.projectUuid] ??= []).push(c.uuid);
       const notice =
         own.kind === "org"
           ? `This is your organization's export: only your own ${plural(all.length, "chat is", "chats are")} shown; the other ${plural(own.otherPeople, "person's", "people's")} chats are skipped and never leave your browser.`
           : null;
       const fileName = names.length > 1 ? `${names[0]} + ${names.length - 1} more` : (names[0] ?? "Claude export");
-      setStep({ at: "preview", fileName, convs, projects, already: all.length - convs.length, account: own.account, notice });
+      setStep({ at: "preview", fileName, convs, projects, projectChats, already: all.length - convs.length, account: own.account, notice });
     } catch (e) {
       setStep({ at: "drop" });
       setError(e instanceof Error ? e.message : "Couldn't read those files.");
@@ -323,7 +324,7 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
               {error ? <ErrorNote error={error} /> : null}
 
               <p className="text-[12.5px] leading-relaxed text-faint">
-                What comes over: each chat&rsquo;s messages with their dates, and the text Claude read from files you attached. Claude Projects&rsquo; knowledge files aren&rsquo;t in the export, except the docs listed in its projects.json, which you can bring as private notes. Imported chats are never shared or used to teach Kaizen&rsquo;s agents.
+                What comes over: each chat&rsquo;s messages with their dates, and the text Claude read from files you attached. Projects you made in Claude become Kaizen AI projects with their instructions, the knowledge docs in projects.json (uploaded files Claude only stored aren&rsquo;t in the export) and their chats inside them, shared the way they were in Claude when the export says so, private otherwise. Imported chats are never shared or used to teach Kaizen&rsquo;s agents.
               </p>
 
               {state?.imports.length ? (
@@ -703,14 +704,21 @@ function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at:
 
   const go = () => {
     const now = new Date().toISOString();
-    const docsOf = new Map(projects.filter((p) => picked.has(`project:${p.uuid}`)).map((p) => [p.uuid, p.docs]));
+    // A project's client: named in it, else the client most of its chats are about
+    const projectClient = (p: ImportedProject) => {
+      const named = suggestClient({ title: `${p.name}\n${p.description}`, messages: [] }, clients)?.id;
+      if (named) return named;
+      const tally = new Map<string, number>();
+      for (const c of convs) if (c.projectUuid === p.uuid && clientOf(c.uuid)) tally.set(clientOf(c.uuid)!, (tally.get(clientOf(c.uuid)!) ?? 0) + 1);
+      const top = [...tally].sort((a, b) => b[1] - a[1])[0];
+      return top && top[1] >= 2 ? top[0] : null;
+    };
+    // Projects first, so the chats land inside them as they arrive
     const items: ImportItem[] = [
+      ...projects.filter((p) => picked.has(`project:${p.uuid}`)).map((p) => projectItem(p, step.projectChats[p.uuid] ?? [], projectClient(p), now)),
       ...convs
         .filter((c) => picked.has(c.uuid))
-        .flatMap((c) => partsOf({ uuid: c.uuid, kind: "chat", title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt, clientId: clientOf(c.uuid), notes: (c.projectUuid && docsOf.get(c.projectUuid)) || [], account: c.account }, c.messages)),
-      ...projects
-        .filter((p) => picked.has(`project:${p.uuid}`))
-        .flatMap((p) => partsOf({ uuid: `project:${p.uuid}`, kind: "project", title: `${p.name} · project docs`, createdAt: now, updatedAt: now, clientId: suggestClient({ title: p.name, messages: [] }, clients)?.id ?? null, notes: p.docs, account: p.creator }, [])),
+        .flatMap((c) => partsOf({ uuid: c.uuid, kind: "chat", title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt, clientId: clientOf(c.uuid), notes: [], account: c.account, projectUuid: c.projectUuid }, c.messages)),
     ];
     if (items.length) onStart(items, n + np);
   };
@@ -757,18 +765,20 @@ function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at:
 
       {projects.length ? (
         <div className="grid gap-1 border-b border-line/70 px-3 py-3">
-          <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Project docs, as private notes</p>
-          {projects.map((p) => (
-            <label key={p.uuid} className="flex min-h-12 cursor-pointer items-center gap-3 rounded-[12px] px-2 hover:bg-ink/[0.03]">
-              <input type="checkbox" checked={picked.has(`project:${p.uuid}`)} onChange={() => toggle(`project:${p.uuid}`)} className="h-4 w-4 shrink-0 accent-[var(--brand)]" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[14px] text-fg">{p.name}</span>
-                <span className="block truncate text-[12px] text-faint">
-                  {p.docs.length} {p.docs.length === 1 ? "doc" : "docs"}: {p.docs.map((d) => d.name).join(", ")}
+          <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Projects, with their instructions, knowledge and chats</p>
+          {projects.map((p) => {
+            const chats = step.projectChats[p.uuid]?.length ?? 0;
+            const bits = [p.instructions ? "instructions" : "", p.docs.length ? plural(p.docs.length, "doc", "docs") : "", chats ? plural(chats, "chat", "chats") : "", p.sharing.visibility === "everyone" ? "shared with everyone" : p.sharing.visibility === "people" ? "shared with people" : "private"].filter(Boolean);
+            return (
+              <label key={p.uuid} className="flex min-h-12 cursor-pointer items-center gap-3 rounded-[12px] px-2 hover:bg-ink/[0.03]">
+                <input type="checkbox" checked={picked.has(`project:${p.uuid}`)} onChange={() => toggle(`project:${p.uuid}`)} className="h-4 w-4 shrink-0 accent-[var(--brand)]" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px] text-fg">{p.name}</span>
+                  <span className="block truncate text-[12px] text-faint">{bits.join(" · ")}</span>
                 </span>
-              </span>
-            </label>
-          ))}
+              </label>
+            );
+          })}
         </div>
       ) : null}
 

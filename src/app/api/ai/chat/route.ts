@@ -17,6 +17,7 @@ type Body = {
   model?: string;
   agent?: string | null;
   clientId?: string | null;
+  projectId?: string | null;
   mode?: "send" | "regenerate" | "edit";
 };
 
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
           model: body.model === "sonnet" ? "sonnet" : body.model === "opus" ? "opus" : null,
           agent: body.agent === undefined ? undefined : isChatAgent(body.agent) ? body.agent : null,
           clientId: body.clientId === undefined ? undefined : typeof body.clientId === "string" && /^[0-9a-f-]{36}$/.test(body.clientId) ? body.clientId : null,
+          projectId: typeof body.projectId === "string" && /^[0-9a-f-]{36}$/.test(body.projectId) ? body.projectId : null,
           mode,
           signal: request.signal,
           emit,

@@ -1,5 +1,6 @@
 import { requireStaff } from "@/lib/auth";
 import { foreignItems, IMPORT_SOURCE, MAX_FILE_CHARS, MAX_MESSAGE_CHARS, MAX_NOTES_CHARS, type ImportItem } from "@/lib/kaizen-ai/claude-import";
+import { importProject, projectsForChats, projectsReady } from "@/lib/kaizen-ai/projects-server";
 import type { Attachment } from "@/lib/kaizen-ai/types";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -51,9 +52,30 @@ export async function POST(request: Request) {
   let created = 0;
   let skipped = 0;
   const now = new Date().toISOString();
+  // Projects (once the projects migration is in): a project item makes the Kaizen AI project; a chat from a Claude
+  // project goes inside the Kaizen AI project made from it, when there is one the person can see
+  const withProjects = await projectsReady(db);
+  for (const it of items) {
+    if (it?.kind !== "project" || !withProjects) continue;
+    try {
+      const r = await importProject(admin, me, imp.id as string, it, it.clientId && visible.has(it.clientId) ? it.clientId : null);
+      if (r.status === "created") created++;
+      else if (r.status === "skipped") skipped++;
+      results.push({ uuid: it.uuid, status: r.status, ...(r.error ? { error: r.error } : {}) });
+    } catch (e) {
+      console.error("[kaizen ai import] project", e instanceof Error ? e.message : e);
+      results.push({ uuid: it.uuid, status: "failed", error: "Couldn't import this project." });
+    }
+  }
+  const inProject = withProjects ? await projectsForChats(db, me.id, [...new Set(items.flatMap((i) => (i?.kind !== "project" && typeof i?.projectUuid === "string" && i.projectUuid ? [i.projectUuid.slice(0, 100)] : [])))]) : new Map<string, string>();
   for (const it of items) {
     const sid = sourceId(it);
     if (!sid) continue;
+    if (it.kind === "project") {
+      // Before the projects migration: nothing to make yet (offered again next time)
+      if (!withProjects) results.push({ uuid: it.uuid, status: "skipped" });
+      continue;
+    }
     try {
       const had = existing.get(sid);
       let threadId: string;
@@ -87,6 +109,7 @@ export async function POST(request: Request) {
             import_id: imp.id,
             source_complete: false,
             notes,
+            ...(withProjects && typeof it.projectUuid === "string" && it.projectUuid ? { source_project: it.projectUuid.slice(0, 100), project_id: inProject.get(it.projectUuid.slice(0, 100)) ?? null } : {}),
             last_message_at: updatedAt,
             created_at: createdAt,
             updated_at: now,
