@@ -1,27 +1,38 @@
 import "server-only";
-import { Document, Font, Image, Link, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer";
-import { PAGE_ONE_ROOM, ideaHeight, pacing, type BriefBeat, type BriefFrame, type BriefSlide, type BriefStructure } from "@/lib/brief-pdf-model";
-import { linkWord, splitLink } from "@/lib/asset-links";
+import { Circle, Document, Font, Link, Page, Path, Rect, StyleSheet, Svg, Text, View, renderToBuffer } from "@react-pdf/renderer";
+import { pacing, type BriefBeat, type BriefFrame, type BriefSlide, type BriefStructure } from "@/lib/brief-pdf-model";
+import { ICON_STROKE, ICON_VIEWBOX, ICONS, iconFor, type BriefIcon, type IconTone } from "@/lib/brief-icons";
+import { linkWord } from "@/lib/asset-links";
+import { assetRow, curly, dashTime, driveRows, fitSize, quoteLine, sourceLabel, type ClientDrive } from "@/lib/brief-cards";
 
 // A creative request as a Kaizen-branded PDF, to share outside the app (a freelancer, a client, a meeting) and to make
-// from. Two pages, as clean as the lead video editor's own brief. Page one is the idea: the client, the stage, the
-// format and the sizes over the concept and its payoff in one line; when it's due, who makes it, the versions and the
-// length; why it works and who it's for; the build (a video's beats with their exact lines and a pacing bar, a
-// carousel's slides top to bottom, a single image's frame); and the versions, only what changes. Page two is the
-// guardrails: Must and Never, Your call, the assets with "Open in Drive", the copy, what to confirm with the client
-// (only when something's open), the references and the export line. Every link is clickable.
+// from. Modelled exactly on the lead video editor's own brief: Letter landscape, two pages, a black band (KAIZEN, the
+// client, stage and size in red, a big title, the idea in one line, and Due / Length / Size / Versions on the right),
+// then section labels with a short red rule. Page one is the idea: why it works and who it's for in one compact row,
+// then the build as a grid of rounded grey cards (a video's beats, a carousel's slides, a single image's frame), each
+// with its red number, its name, a line pictogram, the words on screen in a pink callout, what we see, and what's said
+// in a white quote box with a red edge; a video gets the pacing bar under it, a carousel the slide order. Page two is
+// the guardrails: the versions as compact cards, Do and Don't, Your call and the copy, the assets and export with
+// "Open in Drive", and what to confirm with the client only when something's open. Every link is clickable.
 
 const RED = "#b21e2c";
-const RED_ON_INK = "#ff5a68";
+const RED_ON_INK = "#e0505c";
 const INK = "#0b0b0c";
-const BODY = "#2b2b30";
-const MUTED = "#5f5f68";
-const FAINT = "#9a9aa3";
-const LINE = "#e6e6ea";
-const SOFT = "#f6f6f7";
-const PAGE_X = 44;
-// Pages after the first start this far down (the first page's band runs to the top edge)
-const PAGE_TOP = 34;
+const BODY = "#1f1f23";
+const MUTED = "#6b6b72";
+const FAINT = "#8e8e96";
+const LINE = "#e2e2e5";
+const CARD = "#f5f5f6";
+const PINK = "#f8e1e4";
+const PINK_LINE = "#ebc0c6";
+const TONE: Record<IconTone, string> = { ink: INK, red: RED, pink: "#f3d0d5" };
+
+const W = 792;
+const PAGE_X = 30;
+const CONTENT_W = W - PAGE_X * 2;
+const GAP = 12;
+// Pages a section runs onto start this far down (each page's band runs to the top edge)
+const PAGE_TOP = 30;
 
 // Words are never split across lines (the default hyphenates "sun-set")
 Font.registerHyphenationCallback((word) => [word]);
@@ -45,6 +56,8 @@ export type BriefPdfInput = {
   number: number | null;
   /** The header under the client: the stage, the format, the sizes */
   header: string[];
+  /** The sizes it's made in ("9:16", "4x5"); read from the header when not given */
+  sizes?: string[];
   due: string | null;
   makers: string[];
   priority: "normal" | "high" | "urgent";
@@ -66,91 +79,112 @@ export type BriefPdfInput = {
   reviewed?: string | null;
   /** Which builds to draw (a request can make more than one format) */
   formats: ("image" | "video" | "carousel")[];
+  /** The client's Drive headquarters and Ad Creatives folder: the first rows of Assets, on every brief */
+  drive?: ClientDrive | null;
 };
 
+const LABEL = { fontFamily: "Helvetica-Bold", textTransform: "uppercase" as const };
+
 const s = StyleSheet.create({
-  page: { fontFamily: "Helvetica", fontSize: 9.5, color: INK, paddingTop: PAGE_TOP, paddingBottom: 50, backgroundColor: "#ffffff" },
-  band: { backgroundColor: INK, paddingHorizontal: PAGE_X, paddingTop: 22, paddingBottom: 18, marginTop: -PAGE_TOP },
-  bandTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 14 },
+  page: { fontFamily: "Helvetica", fontSize: 8.6, color: INK, paddingTop: PAGE_TOP, paddingBottom: 30, backgroundColor: "#ffffff" },
+  // the band
+  band: { backgroundColor: INK, paddingHorizontal: PAGE_X, paddingTop: 19, paddingBottom: 13, marginTop: -PAGE_TOP },
+  bandRow: { flexDirection: "row", alignItems: "flex-start" },
   mark: { flexDirection: "row", alignItems: "center" },
-  markSq: { width: 10, height: 10, backgroundColor: RED, marginRight: 7 },
-  markTxt: { fontSize: 8, letterSpacing: 2.4, color: "#ffffff", fontFamily: "Helvetica-Bold" },
-  bandMeta: { fontSize: 7.5, letterSpacing: 1.4, color: FAINT, fontFamily: "Helvetica-Bold", textTransform: "uppercase" },
-  kicker: { fontSize: 8.5, letterSpacing: 1.6, color: RED_ON_INK, fontFamily: "Helvetica-Bold", textTransform: "uppercase" },
-  title: { fontSize: 24, fontFamily: "Helvetica-Bold", letterSpacing: -0.5, color: "#ffffff", marginTop: 6, lineHeight: 1.12 },
-  oneLine: { fontSize: 11, color: "#d6d6dc", marginTop: 7, lineHeight: 1.45, maxWidth: 490 },
-  fallback: { fontSize: 8.5, color: FAINT, marginTop: 5, lineHeight: 1.4, maxWidth: 490 },
-  strip: { flexDirection: "row", backgroundColor: SOFT, borderBottomWidth: 1, borderBottomColor: LINE, paddingHorizontal: PAGE_X, paddingVertical: 9 },
-  stripCell: { flex: 1, paddingRight: 10 },
-  label: { fontSize: 6.8, letterSpacing: 1.4, color: MUTED, fontFamily: "Helvetica-Bold", textTransform: "uppercase", marginBottom: 3 },
-  stripVal: { fontSize: 9.5, color: INK, lineHeight: 1.35 },
-  body: { paddingHorizontal: PAGE_X, paddingTop: 2 },
-  section: { marginTop: 12 },
+  markSq: { width: 7, height: 7, backgroundColor: RED, marginRight: 6 },
+  markTxt: { ...LABEL, fontSize: 7.2, letterSpacing: 2.8, color: "#ffffff" },
+  kicker: { ...LABEL, fontSize: 6.8, letterSpacing: 2.2, color: RED_ON_INK, marginTop: 10 },
+  title: { fontSize: 20.5, fontFamily: "Helvetica-Bold", letterSpacing: -0.3, color: "#ffffff", marginTop: 4, lineHeight: 1.12 },
+  oneLine: { fontSize: 9, color: "#c4c4cb", marginTop: 6, lineHeight: 1.4 },
+  fallback: { fontSize: 7.6, color: FAINT, marginTop: 3, lineHeight: 1.4 },
+  stamp: { ...LABEL, fontSize: 6, letterSpacing: 1.2, color: FAINT, marginTop: 5 },
+  cells: { flexDirection: "row", paddingTop: 22 },
+  cell: { width: 84 },
+  cellLabel: { ...LABEL, fontSize: 5.8, letterSpacing: 1.8, color: "#8f8f98" },
+  cellVal: { fontSize: 9.6, color: "#ffffff", marginTop: 6, lineHeight: 1.3 },
+  cellSub: { fontSize: 6.2, color: "#8f8f98", marginTop: 2, lineHeight: 1.3 },
+  // sections
+  body: { paddingHorizontal: PAGE_X },
+  section: { marginTop: 11 },
   head: { flexDirection: "row", alignItems: "center", marginBottom: 7 },
-  headBar: { width: 14, height: 2.5, backgroundColor: RED, marginRight: 7 },
-  headTxt: { fontSize: 8, letterSpacing: 1.8, fontFamily: "Helvetica-Bold", textTransform: "uppercase", color: INK },
-  headNote: { fontSize: 7.5, color: FAINT, marginLeft: 8 },
-  small: { fontSize: 9, lineHeight: 1.45, color: BODY },
-  src: { fontSize: 7.5, color: MUTED, marginTop: 3 },
-  // beats
-  beat: { flexDirection: "row", borderTopWidth: 1, borderTopColor: LINE, paddingVertical: 5 },
-  beatNo: { width: 54 },
-  beatNum: { fontSize: 13, fontFamily: "Helvetica-Bold", color: RED, lineHeight: 1 },
-  beatTime: { fontSize: 7.5, color: MUTED, marginTop: 3 },
-  beatMid: { flex: 1, paddingRight: 12 },
-  beatName: { fontSize: 8, letterSpacing: 1.3, fontFamily: "Helvetica-Bold", textTransform: "uppercase", color: INK, marginBottom: 2.5 },
-  beatSee: { fontSize: 8.8, lineHeight: 1.38, color: BODY },
-  beatRight: { flex: 1.15 },
-  beatLabel: { fontSize: 6.3, letterSpacing: 1.2, color: MUTED, fontFamily: "Helvetica-Bold", textTransform: "uppercase", marginBottom: 2 },
-  beatLine: { fontSize: 9, lineHeight: 1.38, color: INK, fontFamily: "Helvetica-Bold" },
+  headBar: { width: 14, height: 2, backgroundColor: RED, marginRight: 8 },
+  headTxt: { ...LABEL, fontSize: 7.4, letterSpacing: 2.4, color: INK },
+  headNote: { fontSize: 7, color: FAINT, marginLeft: 8 },
+  text: { fontSize: 8.6, lineHeight: 1.38, color: BODY },
+  src: { fontSize: 6.8, color: MUTED, marginTop: 2 },
+  // cards
+  card: { backgroundColor: CARD, borderWidth: 0.75, borderColor: LINE, borderRadius: 6, padding: 9 },
+  cardTop: { flexDirection: "row", alignItems: "flex-start" },
+  num: { fontSize: 15, fontFamily: "Helvetica-Bold", color: RED, width: 25, lineHeight: 1 },
+  time: { fontSize: 7, color: MUTED, lineHeight: 1 },
+  name: { ...LABEL, fontSize: 7.4, letterSpacing: 1.5, color: INK, marginTop: 3, lineHeight: 1.2 },
+  iconBox: { width: 46, height: 29, backgroundColor: "#ffffff", borderRadius: 4, alignItems: "center", justifyContent: "center", marginLeft: 6 },
+  callout: { backgroundColor: PINK, borderRadius: 4, paddingVertical: 4.5, paddingHorizontal: 7, marginTop: 7 },
+  calloutLabel: { ...LABEL, fontSize: 5.6, letterSpacing: 0.5, color: RED },
+  calloutTxt: { fontSize: 8.6, fontFamily: "Helvetica-Bold", color: INK, lineHeight: 1.3, marginTop: 2 },
+  see: { fontSize: 8.6, lineHeight: 1.36, color: BODY, marginTop: 6 },
+  quote: { backgroundColor: "#ffffff", borderLeftWidth: 1.6, borderLeftColor: RED, borderTopRightRadius: 3, borderBottomRightRadius: 3, paddingVertical: 4.5, paddingHorizontal: 7, marginTop: 7 },
+  quoteLabel: { ...LABEL, fontSize: 5.4, letterSpacing: 1.3, color: MUTED },
+  quoteTxt: { fontSize: 8.4, fontFamily: "Helvetica-Oblique", color: INK, lineHeight: 1.35, marginTop: 2 },
   // pacing
-  bar: { flexDirection: "row", height: 16, borderRadius: 3, overflow: "hidden", marginTop: 4 },
-  barSeg: { justifyContent: "center", paddingLeft: 4, borderRightWidth: 1, borderRightColor: "#ffffff" },
-  barTxt: { fontSize: 6.5, color: "#ffffff", fontFamily: "Helvetica-Bold" },
-  // tables
-  tr: { flexDirection: "row", borderBottomWidth: 1, borderColor: LINE, paddingVertical: 4.5 },
-  tdNo: { width: 30, fontSize: 9, fontFamily: "Helvetica-Bold", color: RED },
-  td: { fontSize: 8.8, lineHeight: 1.36, color: BODY },
-  tdStrong: { fontSize: 9.2, lineHeight: 1.36, fontFamily: "Helvetica-Bold", color: INK },
-  job: { fontSize: 6.8, letterSpacing: 1.2, color: RED, fontFamily: "Helvetica-Bold", textTransform: "uppercase" },
-  // frame
-  frame: { borderWidth: 1, borderColor: LINE, borderRadius: 8, padding: 14, flexDirection: "row" },
-  frameHead: { fontSize: 16, fontFamily: "Helvetica-Bold", lineHeight: 1.2, color: INK },
-  // must / never
-  cols: { flexDirection: "row" },
-  col: { flex: 1, borderWidth: 1, borderColor: LINE, borderRadius: 6, paddingHorizontal: 11, paddingTop: 9, paddingBottom: 4 },
-  colHead: { fontSize: 7.5, letterSpacing: 1.6, fontFamily: "Helvetica-Bold", marginBottom: 7 },
-  item: { flexDirection: "row", marginBottom: 4 },
-  itemMark: { width: 12, fontSize: 9, fontFamily: "Helvetica-Bold" },
-  itemTxt: { flex: 1, fontSize: 9, lineHeight: 1.4, color: BODY },
-  panel: { backgroundColor: SOFT, borderRadius: 6, paddingVertical: 7, paddingHorizontal: 12, borderLeftWidth: 3, borderLeftColor: RED },
-  // assets
-  asset: { flexDirection: "row", alignItems: "center", borderBottomWidth: 1, borderBottomColor: LINE, paddingVertical: 4 },
-  open: { fontSize: 8, color: RED, borderWidth: 1, borderColor: RED, borderRadius: 9, paddingVertical: 2.5, paddingHorizontal: 8, textDecoration: "none", marginLeft: 10 },
-  need: { fontSize: 6.8, letterSpacing: 1, color: "#8a5a00", backgroundColor: "#fff3d6", borderRadius: 7, paddingVertical: 2, paddingHorizontal: 6, marginRight: 7, fontFamily: "Helvetica-Bold" },
-  // copy
-  quote: { fontSize: 9, lineHeight: 1.42, color: INK, borderLeftWidth: 2, borderLeftColor: LINE, paddingLeft: 9, marginBottom: 5 },
-  cta: { alignSelf: "flex-start", fontSize: 8.5, color: "#ffffff", backgroundColor: INK, borderRadius: 9, paddingVertical: 4, paddingHorizontal: 10, fontFamily: "Helvetica-Bold" },
-  // references
-  imgBox: { backgroundColor: SOFT, borderRadius: 5, overflow: "hidden", position: "relative", borderWidth: 1, borderColor: LINE },
-  img: { width: "100%", height: "100%", objectFit: "contain" },
-  pill: { fontSize: 7, color: RED, borderWidth: 1, borderColor: RED, borderRadius: 8, paddingVertical: 2.5, paddingHorizontal: 6, marginRight: 4, marginBottom: 4, textDecoration: "none" },
-  // export
-  export: { backgroundColor: INK, borderRadius: 7, paddingVertical: 8, paddingHorizontal: 14, flexDirection: "row" },
-  exportLabel: { fontSize: 7, letterSpacing: 1.8, color: RED_ON_INK, fontFamily: "Helvetica-Bold", width: 54, marginTop: 1.5 },
-  exportTxt: { flex: 1, fontSize: 8.6, color: "#ffffff", lineHeight: 1.45 },
-  link: { fontSize: 9, color: RED, textDecoration: "none" },
-  footer: { position: "absolute", bottom: 22, left: PAGE_X, right: PAGE_X, flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderTopWidth: 1, borderTopColor: LINE, paddingTop: 7 },
-  footTxt: { fontSize: 7, color: FAINT },
+  bar: { flexDirection: "row", height: 16 },
+  seg: { borderRadius: 3, justifyContent: "center", paddingLeft: 6, overflow: "hidden" },
+  segTxt: { fontSize: 6.8, color: "#ffffff", maxLines: 1 },
+  tick: { position: "absolute", top: 0, width: 30, fontSize: 6.4, color: MUTED },
+  // page two
+  item: { flexDirection: "row", marginBottom: 3.5 },
+  itemMark: { width: 14, fontSize: 8.6, fontFamily: "Helvetica-Bold" },
+  itemTxt: { flex: 1, fontSize: 8.6, lineHeight: 1.38, color: BODY },
+  colHead: { ...LABEL, fontSize: 7, letterSpacing: 2.2, marginBottom: 7 },
+  row: { flexDirection: "row", alignItems: "center", borderBottomWidth: 0.75, borderBottomColor: LINE, paddingVertical: 4.5 },
+  rowLabel: { ...LABEL, width: 122, paddingRight: 10, fontSize: 6.2, letterSpacing: 1.6, color: MUTED },
+  open: { flexDirection: "row", alignItems: "center", marginLeft: 10, textDecoration: "none" },
+  openTxt: { fontSize: 8.6, fontFamily: "Helvetica-Bold", color: RED, textDecoration: "underline" },
+  cta: { alignSelf: "flex-start", fontSize: 8, color: "#ffffff", backgroundColor: INK, borderRadius: 9, paddingVertical: 3.5, paddingHorizontal: 10, fontFamily: "Helvetica-Bold", marginTop: 3 },
+  footer: { position: "absolute", bottom: 14, left: PAGE_X, right: PAGE_X, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  footTxt: { fontSize: 6.4, color: FAINT },
 });
 
-const CONTENT_W = 612 - PAGE_X * 2;
-const trim = (x: string, n: number) => (x.length > n ? `${x.slice(0, n - 1).trimEnd()}…` : x);
+// Nothing is ever cut with "…": long text wraps, a step smaller (fitSize), and the spacing tightens before a word drops
 const two = (n: number) => String(n).padStart(2, "0");
+// The PDF's built-in Helvetica has no arrows: "entrance → aisle" reads "entrance › aisle"
+const pdfText = (x: string) => x.replace(/\s*(→|->|⟶)\s*/g, " › ").replace(/—/g, ", ");
+/** A line said or shown on screen, in its curly quotes */
+const quoted = (x: string) => quoteLine(pdfText(x));
+const clock = (sec: number) => `${Math.floor(sec / 60)}:${two(Math.round(sec % 60))}`;
+const SIZE_PX: Record<string, string> = { "9:16": "1080×1920", "4:5": "1080×1350", "1:1": "1080×1080", "16:9": "1920×1080" };
+const RATIO = /^\d{1,2}\s?[:x]\s?\d{1,2}(\s*,\s*\d{1,2}\s?[:x]\s?\d{1,2})*$/;
+const FORMAT = /^(video|single image|image|carousel)\b/i;
+
+function Icon({ name, size = 40 }: { name: BriefIcon; size?: number }) {
+  const c = (t?: IconTone) => (t ? TONE[t] : "none");
+  return (
+    <Svg viewBox={ICON_VIEWBOX} width={size} height={(size * 32) / 48}>
+      {ICONS[name].map((p, i) =>
+        p.k === "circle" ? (
+          <Circle key={i} cx={p.cx} cy={p.cy} r={p.r} stroke={c(p.stroke)} strokeWidth={p.w ?? ICON_STROKE} fill={c(p.fill)} />
+        ) : p.k === "rect" ? (
+          <Rect key={i} x={p.x} y={p.y} width={p.w} height={p.h} rx={p.rx ?? 0} stroke={c(p.stroke)} strokeWidth={p.sw ?? ICON_STROKE} fill={c(p.fill)} />
+        ) : (
+          <Path key={i} d={p.d} stroke={c(p.stroke)} strokeWidth={p.w ?? ICON_STROKE} fill={c(p.fill)} strokeDasharray={p.dash} strokeLinecap="round" strokeLinejoin="round" />
+        ),
+      )}
+    </Svg>
+  );
+}
+
+/** A small "↗" (the built-in font has no arrows) */
+function Arrow() {
+  return (
+    <Svg viewBox="0 0 10 10" width={6} height={6} style={{ marginLeft: 3 }}>
+      <Path d="M2 8 L8 2 M3.5 2 H8 V6.5" stroke={RED} strokeWidth={1.6} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
 
 function Head({ children, note }: { children: string; note?: string | null }) {
   return (
-    <View style={s.head} minPresenceAhead={60}>
+    <View style={s.head} minPresenceAhead={70}>
       <View style={s.headBar} />
       <Text style={s.headTxt}>{children}</Text>
       {note ? <Text style={s.headNote}>{note}</Text> : null}
@@ -158,155 +192,253 @@ function Head({ children, note }: { children: string; note?: string | null }) {
   );
 }
 
-function List({ items, mark, color }: { items: string[]; mark: string; color: string }) {
+function Open({ url, word }: { url: string; word?: string }) {
+  return (
+    <Link src={url} style={s.open}>
+      <Text style={s.openTxt}>{word ?? (/drive\.google\.com|docs\.google\.com/.test(url) ? "Open in Drive" : linkWord(url))}</Text>
+      <Arrow />
+    </Link>
+  );
+}
+
+// ─── The band ────────────────────────────────────────────────────────
+
+function Band({ b, compact }: { b: BriefPdfInput; compact?: boolean }) {
+  const st = b.structure;
+  const multi = b.formats.length > 1;
+  // His header line: the client, the stage and the size (the format too when a request makes more than one)
+  const kicker = [b.client, ...b.header.filter((h) => multi || !FORMAT.test(h))].filter(Boolean);
+  const sizes = (b.sizes?.length ? b.sizes : b.header.filter((h) => RATIO.test(h.trim())).flatMap((h) => h.split(","))).map((z) => z.trim().replace("x", ":")).filter(Boolean);
+  const [count, ...month] = b.versions.split(" · ");
+  const priority = b.priority === "urgent" ? "Urgent" : b.priority === "high" ? "High priority" : null;
+  const cells: { label: string; value: string; sub?: string | null }[] = [
+    { label: "Due", value: b.due ?? "When it's sent", sub: priority },
+    ...(b.measure ? [{ label: b.measure.label, value: b.measure.value }] : []),
+    ...(sizes.length ? [{ label: sizes.length > 1 ? "Sizes" : "Size", value: sizes.map((z) => SIZE_PX[z] ?? z).join("\n") }] : []),
+    { label: "Versions", value: count || "1", sub: month.join(" · ") || null },
+  ];
+  return (
+    <View style={[s.band, compact ? { paddingTop: 15, paddingBottom: 10 } : {}]}>
+      <View style={s.bandRow}>
+        <View style={{ flex: 1, paddingRight: 18 }}>
+          <View style={s.mark}>
+            <View style={s.markSq} />
+            <Text style={s.markTxt}>KAIZEN</Text>
+          </View>
+          <Text style={s.kicker}>{kicker.join("  ·  ")}</Text>
+          <Text style={s.title}>{b.title || "Creative request"}</Text>
+        </View>
+        <View style={s.cells}>
+          {cells.map((c) => (
+            <View key={c.label} style={[s.cell, c.label === "Due" && c.value.length > 14 ? { width: 118 } : {}]}>
+              <Text style={s.cellLabel}>{c.label}</Text>
+              <Text style={s.cellVal}>{c.value}</Text>
+              {c.sub && !(compact && c.label === "Versions") ? <Text style={[s.cellSub, c.label === "Due" ? { color: RED_ON_INK, fontFamily: "Helvetica-Bold" } : {}]}>{c.sub}</Text> : null}
+            </View>
+          ))}
+        </View>
+      </View>
+      {!compact && st.oneLine ? <Text style={[s.oneLine, { fontSize: fitSize(st.oneLine, 9, 170, 0.7) }]}>{curly(pdfText(st.oneLine))}</Text> : null}
+      {!compact && st.fallback ? <Text style={[s.fallback, { fontSize: fitSize(st.fallback, 7.6, 200, 0.4) }]}>Fallback: {curly(pdfText(st.fallback))}</Text> : null}
+      {!compact && b.reviewed ? <Text style={s.stamp}>{b.reviewed}</Text> : null}
+    </View>
+  );
+}
+
+// ─── The cards ────────────────────────────────────────────────────────
+
+type CardData = { num: string; time: string; name: string; icon: BriefIcon; calloutLabel: string; callout: string; see: string; quoteLabel: string; quote: string };
+
+/** One beat, slide or frame card: number, time, name and pictogram, then the callout, what we see and the quote box */
+function Card({ c, width, n }: { c: CardData; width: number; n: number }) {
+  // Narrower cards (four or five across) reach the smaller step sooner
+  const room = n > 3 ? 60 : 90;
+  return (
+    <View style={[s.card, { width }]} wrap={false}>
+      <View style={s.cardTop}>
+        <Text style={s.num}>{c.num}</Text>
+        <View style={{ flex: 1, paddingTop: 1 }}>
+          {c.time ? <Text style={s.time}>{c.time}</Text> : null}
+          <Text style={s.name}>{c.name}</Text>
+        </View>
+        <View style={s.iconBox}>
+          <Icon name={c.icon} size={38} />
+        </View>
+      </View>
+      {c.callout ? (
+        <View style={s.callout}>
+          <Text style={s.calloutLabel}>{c.calloutLabel}</Text>
+          <Text style={[s.calloutTxt, { fontSize: fitSize(c.callout, 8.6, room, 0.6) }]}>{c.callout}</Text>
+        </View>
+      ) : null}
+      {c.see ? <Text style={[s.see, { fontSize: fitSize(c.see, 8.6, room * 1.2, 0.6) }]}>{c.see}</Text> : null}
+      <View style={{ flexGrow: 1 }} />
+      {c.quote ? (
+        <View style={s.quote}>
+          <Text style={s.quoteLabel}>{c.quoteLabel}</Text>
+          <Text style={[s.quoteTxt, { fontSize: fitSize(c.quote, 8.4, room * 1.1, 0.6) }]}>{c.quote}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** Cards in rows (three across, four or five when there are more), every card in a row as tall as the tallest */
+function Grid({ cards }: { cards: CardData[] }) {
+  const per = cards.length <= 6 ? 3 : cards.length <= 8 ? 4 : 5;
+  const w = (CONTENT_W - GAP * (per - 1)) / per;
+  const rows: CardData[][] = [];
+  for (let i = 0; i < cards.length; i += per) rows.push(cards.slice(i, i + per));
   return (
     <>
-      {items.map((x, i) => (
-        <View key={i} style={s.item} wrap={false}>
-          <Text style={[s.itemMark, { color }]}>{mark}</Text>
-          <Text style={s.itemTxt}>{trim(x, 90)}</Text>
+      {rows.map((r, i) => (
+        <View key={i} style={{ flexDirection: "row", marginTop: i ? 9 : 0 }} wrap={false}>
+          {r.map((c, j) => (
+            <View key={j} style={{ marginRight: j < per - 1 ? GAP : 0, flexDirection: "row" }}>
+              <Card c={c} width={w} n={per} />
+            </View>
+          ))}
         </View>
       ))}
     </>
   );
 }
 
-// ─── The build ────────────────────────────────────────────────────────
-
-function Beats({ beats, audio, length }: { beats: BriefBeat[]; audio: string; length: string }) {
-  if (!beats.length) return null;
-  const p = pacing(beats);
-  const shades = [INK, "#3a3a42", RED, "#5a5a63", "#7d1520", "#2b2b30"];
-  // A beat with words on screen and a spoken line: three columns (what we see, the words on screen, what's said), so
-  // six beats stay on the first page
-  const three = beats.some((b) => b.text && b.says);
-  const lineOf = (label: string, v: string, n: number, bold: boolean) => (
-    <View>
-      <Text style={s.beatLabel}>{label}</Text>
-      <Text style={[s.beatLine, bold ? {} : { fontFamily: "Helvetica" }]}>{trim(v, n)}</Text>
-    </View>
-  );
-  const says = (b: BriefBeat) => lineOf(b.source ? `Says · ${trim(b.source, three ? 26 : 40)}` : "Says", b.says, three ? 80 : 100, false);
+/** The pacing bar: dark segments sized by time ("1 Hook", "2 The Team"), the time ticks under it */
+function Strip({ parts, total, ticks }: { parts: { name: string; share: number }[]; total: number | null; ticks: number[] }) {
+  const room = CONTENT_W - 2 * (parts.length - 1);
+  const marks = total ? [...ticks, ...(ticks[ticks.length - 1] !== total && total - (ticks[ticks.length - 1] ?? 0) >= 3 ? [total] : [])] : [];
   return (
-    <View style={s.section}>
-      <Head note={length ? `about ${length.replace(/^~/, "")}` : null}>{`The video in ${beats.length} beats`}</Head>
-      {beats.map((b, i) => (
-        <View key={i} style={[s.beat, i === beats.length - 1 ? { borderBottomWidth: 1, borderBottomColor: LINE } : {}]} wrap={false}>
-          <View style={s.beatNo}>
-            <Text style={s.beatNum}>{two(i + 1)}</Text>
-            {b.time ? <Text style={s.beatTime}>{b.time}</Text> : null}
-          </View>
-          <View style={s.beatMid}>
-            <Text style={s.beatName}>{b.name || `Beat ${i + 1}`}</Text>
-            {b.onScreen ? <Text style={s.beatSee}>{trim(b.onScreen, three ? 80 : 85)}</Text> : null}
-          </View>
-          {three ? (
-            <>
-              <View style={{ flex: 0.9, paddingRight: 10 }}>{b.text ? lineOf("On-screen text", b.text, 80, true) : null}</View>
-              <View style={{ flex: 1 }}>{b.says ? says(b) : null}</View>
-            </>
-          ) : (
-            <View style={s.beatRight}>{b.says ? says(b) : b.text ? lineOf("On-screen text", b.text, 90, true) : null}</View>
-          )}
-        </View>
-      ))}
-      <View style={{ flexDirection: "row", marginTop: 9 }} wrap={false}>
-        <View style={{ width: 200, paddingRight: 14 }}>
-          <Text style={s.label}>Audio</Text>
-          <Text style={s.small}>{audio ? trim(audio, 110) : "Your call, within the rules."}</Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={s.label}>Pacing</Text>
-          <View style={s.bar}>
-            {p.parts.map((x, i) => (
-              <View key={i} style={[s.barSeg, { width: `${(x.share * 100).toFixed(2)}%`, backgroundColor: shades[i % shades.length] }]}>
-                <Text style={s.barTxt}>{i + 1}</Text>
-              </View>
-            ))}
-          </View>
-          {p.total ? (
-            <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 2 }}>
-              <Text style={{ fontSize: 6, color: FAINT }}>0:00</Text>
-              <Text style={{ fontSize: 6, color: FAINT }}>{`${Math.floor(p.total / 60)}:${two(Math.round(p.total % 60))}`}</Text>
+    <View wrap={false}>
+      <View style={s.bar}>
+        {parts.map((x, i) => {
+          const w = x.share * room;
+          return (
+            <View key={i} style={[s.seg, { width: w, marginRight: i < parts.length - 1 ? 2 : 0, backgroundColor: i % 2 ? "#3a3a3f" : INK }]}>
+              {/* The name only where it fits whole (the card above carries it either way) */}
+              <Text style={s.segTxt}>{w < 22 + titleCase(x.name).length * 3.7 ? String(i + 1) : `${i + 1}  ${titleCase(x.name)}`}</Text>
             </View>
-          ) : null}
-        </View>
+          );
+        })}
       </View>
+      {marks.length ? (
+        <View style={{ position: "relative", height: 9, marginTop: 5 }}>
+          {marks.map((t, i) => {
+            const x = (t / total!) * CONTENT_W;
+            const last = i === marks.length - 1 && t === total;
+            return <Text key={t} style={[s.tick, i === 0 ? { left: 0 } : last ? { right: 0, textAlign: "right" } : { left: x - 15, textAlign: "center" }]}>{clock(t)}</Text>;
+          })}
+        </View>
+      ) : null}
     </View>
   );
 }
 
-function Slides({ slides, cards }: { slides: BriefSlide[]; cards: number }) {
-  if (!slides.length) return null;
+const titleCase = (x: string) => x.replace(/\b([a-z])/g, (m) => m.toUpperCase());
+
+function Beats({ beats, audio }: { beats: BriefBeat[]; audio: string }) {
+  if (!beats.length) return null;
+  const p = pacing(beats);
+  const lastSays = Boolean(beats[beats.length - 1]?.says);
+  const cards: CardData[] = beats.map((b, i) => {
+    const end = i === beats.length - 1;
+    const audioHere = end && !b.says && Boolean(audio);
+    return {
+      num: two(i + 1),
+      time: dashTime(b.time),
+      name: b.name || `Beat ${i + 1}`,
+      icon: iconFor(b.name, b.onScreen, "play"),
+      calloutLabel: "On-screen text",
+      callout: b.text ? quoted(b.text) : "",
+      see: curly(pdfText(b.onScreen)),
+      quoteLabel: audioHere ? "Audio" : sourceLabel(b.source),
+      quote: b.says ? quoted(b.says) : audioHere ? curly(pdfText(audio)) : "",
+    };
+  });
   return (
-    <View style={s.section}>
-      <Head note={`${slides.length} of ${cards} slides, top to bottom`}>The carousel, slide by slide</Head>
-      {slides.map((x, i) => (
-        <View key={i} style={[s.tr, i === 0 ? { borderTopWidth: 1 } : {}]} wrap={false}>
-          <Text style={s.tdNo}>{`S${i + 1}`}</Text>
-          <View style={{ width: 62, paddingRight: 8, paddingTop: 1.5 }}>
-            <Text style={s.job}>{x.job || (i === 0 ? "Hook" : i === slides.length - 1 ? "CTA" : "")}</Text>
-          </View>
-          <Text style={[s.tdStrong, { width: 170, paddingRight: 10 }]}>{trim(x.headline, 80) || "–"}</Text>
-          <Text style={[s.td, { flex: 1 }]}>{trim(x.shows, 110)}</Text>
-        </View>
-      ))}
-    </View>
+    <>
+      <View style={s.section}>
+        <Head>{`The video in ${beats.length} beats`}</Head>
+        <Grid cards={cards} />
+      </View>
+      <View style={s.section} wrap={false}>
+        <Head note={lastSays && audio ? `Audio: ${audio}` : null}>Pacing</Head>
+        <Strip parts={p.parts} total={p.total} ticks={p.ticks} />
+      </View>
+    </>
+  );
+}
+
+function Slides({ slides, cards: n }: { slides: BriefSlide[]; cards: number }) {
+  if (!slides.length) return null;
+  const jobOf = (x: BriefSlide, i: number) => x.job || (i === 0 ? "Hook" : i === slides.length - 1 ? "CTA" : `Slide ${i + 1}`);
+  const cards: CardData[] = slides.map((x, i) => ({
+    num: two(i + 1),
+    time: `Slide ${i + 1} of ${n}`,
+    name: jobOf(x, i),
+    icon: iconFor(jobOf(x, i), `${x.headline} ${x.shows}`, i === 0 ? "person" : "ticket"),
+    calloutLabel: "Headline",
+    callout: x.headline ? quoted(x.headline) : "",
+    see: curly(pdfText(x.shows)),
+    quoteLabel: "",
+    quote: "",
+  }));
+  return (
+    <>
+      <View style={s.section}>
+        <Head note={n > slides.length ? `${slides.length} of ${n} slides written, top to bottom` : null}>{`The carousel in ${n} slides`}</Head>
+        <Grid cards={cards} />
+      </View>
+      <View style={s.section} wrap={false}>
+        <Head note="each slide works on its own; the first stops the scroll, the last asks for the click">Slide order</Head>
+        <Strip parts={slides.map((x, i) => ({ name: jobOf(x, i), share: 1 / slides.length }))} total={null} ticks={[]} />
+      </View>
+    </>
   );
 }
 
 function FrameBlock({ f }: { f: BriefFrame | null }) {
   if (!f || !(f.headline || f.shows)) return null;
-  const rows = (
-    [
-      ["What's in the frame", f.shows],
-      ["Reads first", f.readsFirst],
-      ["CTA on the image", f.cta],
-    ] as [string, string][]
-  ).filter(([, v]) => v);
   return (
     <View style={s.section} wrap={false}>
       <Head>The frame</Head>
-      <View style={s.frame}>
-        <View style={rows.length ? { flex: 1.1, paddingRight: 16, borderRightWidth: 1, borderRightColor: LINE } : { flex: 1 }}>
-          <Text style={s.label}>Headline</Text>
-          <Text style={s.frameHead}>{trim(f.headline, 90) || "–"}</Text>
+      <View style={[s.card, { flexDirection: "row", padding: 16 }]}>
+        <View style={{ flex: 1.3, paddingRight: 22 }}>
+          <View style={[s.callout, { marginTop: 0, padding: 12 }]}>
+            <Text style={[s.calloutLabel, { fontSize: 6.4 }]}>Headline</Text>
+            <Text style={[s.calloutTxt, { fontSize: 17, lineHeight: 1.2, marginTop: 4 }]}>{curly(pdfText(f.headline)) || "–"}</Text>
+          </View>
           {f.subline ? (
-            <>
-              <Text style={[s.label, { marginTop: 8 }]}>Subline</Text>
-              <Text style={s.small}>{trim(f.subline, 120)}</Text>
-            </>
+            <View style={{ marginTop: 12 }}>
+              <Text style={s.quoteLabel}>Subline</Text>
+              <Text style={[s.see, { fontSize: 10.5, marginTop: 3 }]}>{curly(pdfText(f.subline))}</Text>
+            </View>
+          ) : null}
+          {f.shows ? (
+            <View style={{ marginTop: 12 }}>
+              <Text style={s.quoteLabel}>What&apos;s in the frame</Text>
+              <Text style={[s.see, { fontSize: 9.6, marginTop: 3 }]}>{curly(pdfText(f.shows))}</Text>
+            </View>
           ) : null}
         </View>
-        {rows.length > 0 && (
-          <View style={{ flex: 1, paddingLeft: 16 }}>
-            {rows.map(([k, v]) => (
-              <View key={k} style={{ marginBottom: 7 }}>
-                <Text style={s.label}>{k}</Text>
-                <Text style={s.small}>{trim(v, 140)}</Text>
-              </View>
-            ))}
+        <View style={{ flex: 1 }}>
+          <View style={[s.iconBox, { width: 92, height: 62, marginLeft: 0, alignSelf: "flex-end" }]}>
+            <Icon name={iconFor("", `${f.headline} ${f.shows}`, "check")} size={78} />
           </View>
-        )}
-      </View>
-    </View>
-  );
-}
-
-function Versions({ versions, word }: { versions: string[]; word: string }) {
-  if (!versions.some(Boolean)) return null;
-  // Its rows may run onto the next page (the heading never sits alone at the bottom of one)
-  return (
-    <View style={s.section}>
-      <Head note={`only the ${word} changes; V1 is net new`}>{`The versions (${versions.length})`}</Head>
-      {/* More than three: two columns, so the idea stays on one page */}
-      <View style={{ flexDirection: "row", flexWrap: "wrap", borderTopWidth: 1, borderTopColor: LINE }}>
-        {versions.map((v, i) => (
-          <View key={i} style={[s.tr, { width: versions.length > 3 ? "50%" : "100%", paddingRight: versions.length > 3 ? 10 : 0 }]} wrap={false}>
-            <Text style={s.tdNo}>{`V${i + 1}`}</Text>
-            <Text style={[v ? s.tdStrong : [s.td, { color: FAINT }], { flex: 1 }]}>{v ? trim(v, versions.length > 3 ? 80 : 110) : "A variation of V1: one line changes"}</Text>
-          </View>
-        ))}
+          <View style={{ flexGrow: 1 }} />
+          {f.readsFirst ? (
+            <View style={[s.quote, { marginTop: 14 }]}>
+              <Text style={s.quoteLabel}>Reads first</Text>
+              <Text style={[s.quoteTxt, { fontSize: 9.4 }]}>{curly(pdfText(f.readsFirst))}</Text>
+            </View>
+          ) : null}
+          {f.cta ? (
+            <View style={{ marginTop: 12 }}>
+              <Text style={s.quoteLabel}>CTA on the image</Text>
+              <Text style={[s.cta, { fontSize: 9, marginTop: 4 }]}>{f.cta}</Text>
+            </View>
+          ) : null}
+        </View>
       </View>
     </View>
   );
@@ -314,59 +446,31 @@ function Versions({ versions, word }: { versions: string[]; word: string }) {
 
 // ─── Page two ────────────────────────────────────────────────────────
 
-/** The assets, each with its Drive link as a short tappable "Open in Drive" (never a raw address) */
-function Assets({ items }: { items: string[] }) {
-  if (!items.length) return null;
+function List({ items, mark, color }: { items: string[]; mark: string; color: string }) {
   return (
-    <View style={s.section} wrap={false}>
-      <Head>Assets</Head>
-      {items.map((x, i) => {
-        const { text, url } = splitLink(x);
-        const need = /^(Need|Client to shoot|Missing):\s*/i.exec(text);
-        return (
-          <View key={i} style={[s.asset, i === 0 ? { borderTopWidth: 1, borderTopColor: LINE } : {}]}>
-            {need ? <Text style={s.need}>{need[1].toUpperCase()}</Text> : null}
-            <Text style={[s.itemTxt, { flex: 1 }]}>{trim(need ? text.slice(need[0].length) : text, 120)}</Text>
-            {url ? (
-              <Link src={url} style={s.open}>
-                {linkWord(url)} ›
-              </Link>
-            ) : null}
-          </View>
-        );
-      })}
-    </View>
+    <>
+      {items.map((x, i) => (
+        <View key={i} style={s.item} wrap={false}>
+          <Text style={[s.itemMark, { color }]}>{mark}</Text>
+          <Text style={s.itemTxt}>{curly(pdfText(x))}</Text>
+        </View>
+      ))}
+    </>
   );
 }
 
-function References({ refs }: { refs: PdfReference[] }) {
-  if (!refs.length) return null;
-  const per = 3;
-  const gap = 10;
-  const w = (CONTENT_W - gap * (per - 1)) / per;
+function Versions({ versions, word }: { versions: string[]; word: string }) {
+  if (!versions.some(Boolean)) return null;
+  const per = Math.max(3, versions.length);
+  const w = (CONTENT_W - 8 * (per - 1)) / per;
   return (
     <View style={s.section} wrap={false}>
-      <Head note={refs.length > 1 ? `${refs.length} references` : null}>{refs.length > 1 ? "References" : "Built on"}</Head>
+      <Head note={versions.length > 1 ? `only the ${word} changes; V1 is net new` : null}>{`The versions (${versions.length})`}</Head>
       <View style={{ flexDirection: "row" }}>
-        {refs.slice(0, per).map((r, j) => (
-          <View key={j} style={{ width: w, marginRight: j < per - 1 ? gap : 0, flexDirection: "row" }}>
-            <View style={[s.imgBox, { width: 38, height: 48 }]}>
-              {r.image ? (
-                // eslint-disable-next-line jsx-a11y/alt-text -- a PDF image has no alt text
-                <Image src={{ data: r.image, format: "jpg" }} style={s.img} />
-              ) : null}
-            </View>
-            <View style={{ flex: 1, paddingLeft: 7 }}>
-              <Text style={s.job}>{trim(r.kicker.replace(/^Built on\s+/i, ""), 30)}</Text>
-              <Text style={{ fontSize: 8, fontFamily: "Helvetica-Bold", marginTop: 2 }}>{trim(r.brand ?? r.title, 34)}</Text>
-              <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 3 }}>
-                {r.links.slice(0, 2).map((l) => (
-                  <Link key={l.url + l.label} src={l.url} style={s.pill}>
-                    {l.label.replace("Meta Ad Library", "Ad Library").replace("Their landing page", "Landing page").replace("Open in Kaizen Ads", "Kaizen Ads")} ›
-                  </Link>
-                ))}
-              </View>
-            </View>
+        {versions.map((v, i) => (
+          <View key={i} style={[s.card, { width: w, marginRight: i < versions.length - 1 ? 8 : 0, flexDirection: "row", paddingVertical: 6 }]}>
+            <Text style={[s.num, { fontSize: 11, width: 22, paddingTop: 0.5 }]}>{`V${i + 1}`}</Text>
+            <Text style={[s.itemTxt, v ? { fontFamily: "Helvetica-Bold", color: INK } : { color: FAINT }, per > 3 ? { fontSize: fitSize(v, 8.2, 40, 0.5), lineHeight: 1.3 } : {}]}>{v ? curly(pdfText(v)) : "A variation of V1: one line changes"}</Text>
           </View>
         ))}
       </View>
@@ -374,205 +478,193 @@ function References({ refs }: { refs: PdfReference[] }) {
   );
 }
 
-function Band({ b, compact }: { b: BriefPdfInput; compact?: boolean }) {
+/** The Assets table (his "Assets and export"): the client's Drive first, the brief's assets, references, the export */
+function AssetsAndExport({ b }: { b: BriefPdfInput }) {
   const st = b.structure;
-  const date = b.date ?? new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/New_York" });
-  const ref = b.number ? `Request #${b.number}` : "Draft request";
+  const rows: { label: string; what: string; url: string | null; word?: string; need?: string | null }[] = [
+    ...driveRows(b.drive),
+    ...st.assets.map(assetRow),
+    ...b.references.slice(0, 3).map((r) => {
+      const l = r.links[0];
+      const word = l ? l.label.replace("Meta Ad Library", "Ad Library").replace("Their landing page", "Landing page").replace("Open in Kaizen Ads", "Kaizen Ads") : undefined;
+      return { label: b.references.length > 1 ? "Reference" : "Built on", what: [r.brand ?? r.title, r.kicker.replace(/^Built on\s+/i, "")].filter(Boolean).join(" · "), url: l?.url ?? null, word };
+    }),
+    ...b.links.slice(0, 3).map((l) => ({ label: l.label, what: l.url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, ""), url: l.url, word: "Open" })),
+  ];
+  if (!rows.length && !b.exportLine) return null;
   return (
-    <View style={[s.band, compact ? { paddingTop: 14, paddingBottom: 11 } : {}]}>
-      <View style={[s.bandTop, compact ? { marginBottom: 7 } : {}]}>
-        <View style={s.mark}>
-          <View style={s.markSq} />
-          <Text style={s.markTxt}>KAIZEN</Text>
-        </View>
-        <Text style={s.bandMeta}>
-          Creative brief · {ref} · {date}
-        </Text>
+    <View style={s.section}>
+      <Head>Assets and export</Head>
+      <View style={[s.card, { paddingVertical: 2, paddingHorizontal: 12 }]}>
+        {rows.map((r, i) => (
+          <View key={i} style={s.row} wrap={false}>
+            <Text style={[s.rowLabel, r.need ? { color: RED } : {}]}>{r.label}</Text>
+            <View style={{ flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+              <Text style={[s.text, { flexShrink: 1 }]}>{curly(pdfText(r.what))}</Text>
+              {r.url ? <Open url={r.url} word={r.word} /> : null}
+            </View>
+          </View>
+        ))}
+        {b.exportLine ? (
+          <View style={[s.row, { borderBottomWidth: 0, alignItems: "flex-start" }]} wrap={false}>
+            <Text style={[s.rowLabel, { paddingTop: 1.5 }]}>Export</Text>
+            <Text style={[s.text, { flex: 1 }]}>{b.exportLine.replace(/(\d{3,4})x(\d{3,4})/g, "$1×$2")}</Text>
+          </View>
+        ) : null}
       </View>
-      <Text style={s.kicker}>{[b.client, ...b.header, ...(compact ? [b.title] : [])].join("  ·  ")}</Text>
-      {compact ? null : <Text style={s.title}>{b.title || "Creative request"}</Text>}
-      {!compact && st.oneLine ? <Text style={s.oneLine}>{trim(st.oneLine, 170)}</Text> : null}
-      {!compact && st.fallback ? <Text style={s.fallback}>Fallback: {trim(st.fallback, 150)}</Text> : null}
-      {!compact && b.reviewed ? <Text style={[s.bandMeta, { marginTop: 8 }]}>{b.reviewed}</Text> : null}
     </View>
   );
 }
 
-function Strip({ b }: { b: BriefPdfInput }) {
-  const priority = b.priority === "urgent" ? "Urgent" : b.priority === "high" ? "High priority" : null;
+function Confirm({ items }: { items: string[] }) {
+  if (!items.length) return null;
   return (
-    <View style={s.strip}>
-      <View style={s.stripCell}>
-        <Text style={s.label}>Due</Text>
-        <Text style={s.stripVal}>
-          {b.due ?? "When it's sent"}
-          {priority ? <Text style={{ color: RED, fontFamily: "Helvetica-Bold" }}>{`  ${priority}`}</Text> : null}
-        </Text>
-      </View>
-      <View style={[s.stripCell, { flex: 1.2 }]}>
-        <Text style={s.label}>Made by</Text>
-        <Text style={s.stripVal}>{b.makers.join(", ") || "To assign"}</Text>
-      </View>
-      <View style={[s.stripCell, { flex: 1.4 }]}>
-        <Text style={s.label}>Versions</Text>
-        <Text style={s.stripVal}>{b.versions}</Text>
-      </View>
-      {b.measure ? (
-        <View style={[s.stripCell, { flex: 0.6, paddingRight: 0 }]}>
-          <Text style={s.label}>{b.measure.label}</Text>
-          <Text style={s.stripVal}>{b.measure.value}</Text>
+    <View style={[s.callout, { marginTop: 8, paddingVertical: 6, paddingHorizontal: 10 }]} wrap={false}>
+      <Text style={[s.calloutLabel, { fontSize: 5.8, letterSpacing: 1.4, marginBottom: 4 }]}>Confirm with client · doesn&apos;t hold the work</Text>
+      {items.map((x, i) => (
+        <View key={i} style={[s.item, { marginBottom: i < items.length - 1 ? 3 : 0 }]}>
+          <Text style={[s.itemMark, { color: RED }]}>?</Text>
+          <Text style={[s.itemTxt, { color: INK }]}>{curly(pdfText(x))}</Text>
         </View>
-      ) : null}
+      ))}
+    </View>
+  );
+}
+
+function YourCall({ text }: { text: string }) {
+  if (!text) return null;
+  return (
+    <View style={s.section} wrap={false}>
+      <Head>Your call</Head>
+      <View style={[s.callout, { marginTop: 0, padding: 9 }]}>
+        <Text style={[s.text, { color: INK }]}>{curly(pdfText(text))}</Text>
+      </View>
+    </View>
+  );
+}
+
+function Copy({ copy }: { copy: BriefStructure["copy"] }) {
+  if (!(copy.primary.length > 0 || copy.headlines.length > 0 || copy.cta)) return null;
+  return (
+    <View style={s.section} wrap={false}>
+      <Head>Copy</Head>
+      <View style={[s.card, { paddingTop: 8 }]}>
+        {copy.primary.length > 0 && <Text style={s.quoteLabel}>Primary text</Text>}
+        {copy.primary.map((x, i) => (
+          <View key={i} style={[s.quote, { marginTop: i ? 4 : 3 }]}>
+            <Text style={[s.text, { color: INK }]}>{curly(pdfText(x))}</Text>
+          </View>
+        ))}
+        {copy.headlines.length > 0 && (
+          <View style={{ marginTop: copy.primary.length ? 8 : 0 }}>
+            <Text style={[s.quoteLabel, { marginBottom: 3 }]}>Headlines</Text>
+            {copy.headlines.map((x, i) => (
+              <Text key={i} style={[s.text, { fontFamily: "Helvetica-Bold", color: INK, marginBottom: 2 }]}>
+                {curly(pdfText(x))}
+              </Text>
+            ))}
+          </View>
+        )}
+        {copy.cta ? (
+          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6 }}>
+            <Text style={[s.quoteLabel, { marginRight: 8 }]}>Call to action</Text>
+            <Text style={[s.cta, { marginTop: 0 }]}>{copy.cta}</Text>
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
 
 export function BriefDocument({ b }: { b: BriefPdfInput }) {
   const st = b.structure;
-  const ref = b.number ? `Request #${b.number}` : "Draft request";
-  const hasCopy = st.copy.primary.length > 0 || st.copy.headlines.length > 0 || Boolean(st.copy.cta);
+  const ref = b.number ? `Request #${b.number}` : null;
   const word = b.formats.includes("video") ? "hook" : "headline";
-  const cards = st.slides.length;
+  const confirm = (b.confirm ?? []).slice(0, 5);
+  const footer = (
+    <View style={s.footer} fixed>
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <View style={{ width: 5, height: 5, backgroundColor: RED, marginRight: 6 }} />
+        <Text style={s.footTxt}>{["Kaizen Marketing", b.client, ref, b.makers.length ? `made by ${b.makers.join(", ")}` : null, b.reviewed ? b.reviewed : b.by ? `briefed by ${b.by}` : null].filter(Boolean).join(" · ")}</Text>
+      </View>
+      <Text style={s.footTxt} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+    </View>
+  );
+  const side = Boolean(st.yourCall) || st.copy.primary.length > 0 || st.copy.headlines.length > 0 || Boolean(st.copy.cta);
+  // What to confirm goes under the shorter column (about how tall each one is, from how many lines its text wraps to)
+  const lines = (x: string, per: number) => Math.max(1, Math.ceil(x.length / per));
+  const left = [...driveRows(b.drive), ...st.assets.map(assetRow)].reduce((h, r) => h + 10 + lines(r.what + r.label, 62) * 12, 0) + b.references.length * 22 + (b.exportLine ? 10 + lines(b.exportLine, 70) * 12 : 0);
+  const right = (st.yourCall ? 44 + lines(st.yourCall, 70) * 12 : 0) + st.copy.primary.reduce((h, x) => h + 12 + lines(x, 64) * 12, 0) + st.copy.headlines.reduce((h, x) => h + 3 + lines(x, 52) * 12, 0) + (st.copy.cta ? 26 : 0) + (st.copy.primary.length || st.copy.headlines.length || st.copy.cta ? 44 : 0);
+  const confirmRight = side && right + 20 < left;
   return (
     <Document title={`${b.client} · ${b.title}`} author="Kaizen Marketing" subject="Creative brief" creator="Kaizen Ads">
-      <Page size="LETTER" style={s.page}>
-        {/* Page one: the idea */}
+      {/* Page one: the idea */}
+      <Page size="LETTER" orientation="landscape" style={s.page}>
         <Band b={b} />
-        <Strip b={b} />
         <View style={s.body}>
           {(st.why || st.who) && (
             <View style={[s.section, { flexDirection: "row" }]} wrap={false}>
               {st.why ? (
-                <View style={{ flex: 1.5, paddingRight: st.who ? 18 : 0 }}>
+                <View style={{ flex: 1.55, paddingRight: st.who ? 24 : 0 }}>
                   <Head>Why it works</Head>
-                  <Text style={[s.small, { fontSize: 9.5, color: INK }]}>{trim(st.why, 200)}</Text>
+                  <Text style={[s.text, { color: INK }]}>{curly(pdfText(st.why))}</Text>
                   {st.whySource ? <Text style={s.src}>Source: {st.whySource}</Text> : null}
                 </View>
               ) : null}
               {st.who ? (
                 <View style={{ flex: 1 }}>
                   <Head>Who it&apos;s for</Head>
-                  <Text style={s.small}>{trim(st.who, 110)}</Text>
+                  <Text style={[s.text, { color: INK }]}>{curly(pdfText(st.who))}</Text>
                   <Text style={s.src}>Targeting is the media buyer&apos;s call.</Text>
                 </View>
               ) : null}
             </View>
           )}
-
-          {b.formats.includes("video") ? <Beats beats={st.beats} audio={st.audio} length={st.length} /> : null}
-          {b.formats.includes("carousel") ? <Slides slides={st.slides} cards={b.measure?.label === "Slides" ? Number(b.measure.value) || cards : cards} /> : null}
+          {b.formats.includes("video") ? <Beats beats={st.beats} audio={st.audio} /> : null}
+          {b.formats.includes("carousel") ? <Slides slides={st.slides} cards={b.measure?.label === "Slides" ? Number(b.measure.value) || st.slides.length : st.slides.length} /> : null}
           {b.formats.includes("image") ? <FrameBlock f={st.frame} /> : null}
-
-          <Versions versions={st.versions} word={word} />
         </View>
+        {footer}
+      </Page>
 
-        {/* Page two: the guardrails, on a page of their own when the idea fits on the first */}
-        {ideaHeight(st, b.formats, b.title) <= PAGE_ONE_ROOM ? (
-          <View break>
-            <Band b={b} compact />
-          </View>
-        ) : null}
+      {/* Page two: the guardrails. The versions and Do and Don't across, then the assets (with what to confirm) beside
+          Your call and the copy, so it all stays on one page */}
+      <Page size="LETTER" orientation="landscape" style={s.page}>
+        <Band b={b} compact />
         <View style={s.body}>
+          <Versions versions={st.versions} word={word} />
+
           {(st.must.length > 0 || st.never.length > 0) && (
             <View style={s.section} wrap={false}>
-              <Head>Must and never</Head>
-              <View style={s.cols}>
-                <View style={[s.col, { marginRight: 10 }]}>
-                  <Text style={[s.colHead, { color: INK }]}>MUST</Text>
-                  {st.must.length ? <List items={st.must} mark="+" color={INK} /> : <Text style={[s.itemTxt, { color: FAINT }]}>Follow the brand.</Text>}
-                </View>
-                <View style={[s.col, { borderColor: "#f0c9cd" }]}>
-                  <Text style={[s.colHead, { color: RED }]}>NEVER</Text>
-                  {st.never.length ? <List items={st.never} mark="×" color={RED} /> : <Text style={[s.itemTxt, { color: FAINT }]}>Nothing ruled out.</Text>}
-                </View>
-              </View>
-            </View>
-          )}
-
-          {st.yourCall ? (
-            <View style={s.section} wrap={false}>
-              <View style={s.panel}>
-                <Text style={[s.label, { color: RED }]}>Your call</Text>
-                <Text style={[s.small, { color: INK }]}>{trim(st.yourCall, 220)}</Text>
-              </View>
-            </View>
-          ) : null}
-
-          <Assets items={st.assets} />
-
-          {hasCopy && (
-            <View style={s.section} wrap={false}>
-              <Head>Copy</Head>
+              <Head>Do and don&apos;t</Head>
               <View style={{ flexDirection: "row" }}>
-                <View style={{ flex: 1.5, paddingRight: 16 }}>
-                  {st.copy.primary.length > 0 && <Text style={s.label}>Primary text</Text>}
-                  {st.copy.primary.map((x, i) => (
-                    <Text key={i} style={s.quote}>
-                      {trim(x, 170)}
-                    </Text>
-                  ))}
+                <View style={[s.card, { flex: 1, marginRight: 14, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6 }]}>
+                  <Text style={[s.colHead, { color: INK }]}>Do</Text>
+                  {st.must.length ? <List items={st.must} mark="+" color={INK} /> : <Text style={[s.itemTxt, { color: FAINT, marginBottom: 4 }]}>Follow the brand.</Text>}
                 </View>
-                <View style={{ flex: 1 }}>
-                  {st.copy.headlines.length > 0 && (
-                    <View style={{ marginBottom: 6 }}>
-                      <Text style={s.label}>Headlines</Text>
-                      <List items={st.copy.headlines} mark="•" color={RED} />
-                    </View>
-                  )}
-                  {st.copy.cta ? (
-                    <>
-                      <Text style={s.label}>Call to action</Text>
-                      <Text style={s.cta}>{st.copy.cta}</Text>
-                    </>
-                  ) : null}
+                <View style={[s.card, { flex: 1, backgroundColor: "#ffffff", borderColor: PINK_LINE, paddingHorizontal: 14, paddingTop: 10, paddingBottom: 6 }]}>
+                  <Text style={[s.colHead, { color: RED }]}>Don&apos;t</Text>
+                  {st.never.length ? <List items={st.never} mark={"×"} color={RED} /> : <Text style={[s.itemTxt, { color: FAINT, marginBottom: 4 }]}>Nothing ruled out.</Text>}
                 </View>
               </View>
             </View>
           )}
 
-          {(b.confirm ?? []).length > 0 && (
-            <View style={[s.section, { borderWidth: 1, borderColor: RED, borderRadius: 6, padding: 10 }]} wrap={false}>
-              <Text style={[s.label, { color: RED }]}>CONFIRM WITH CLIENT (doesn&apos;t hold the work)</Text>
-              <List items={(b.confirm ?? []).slice(0, 5)} mark="?" color={RED} />
+          <View style={{ flexDirection: "row" }}>
+            <View style={{ flex: 1.55, marginRight: side ? 14 : 0 }}>
+              <AssetsAndExport b={b} />
+              {confirmRight ? null : <Confirm items={confirm} />}
             </View>
-          )}
-
-          <References refs={b.references} />
-
-          {b.links.length > 0 && (
-            <View style={s.section} wrap={false}>
-              <Head>Links</Head>
-              {b.links.slice(0, 5).map((l) => (
-                <Text key={l.url} style={[s.small, { marginBottom: 3 }]}>
-                  <Text style={{ fontFamily: "Helvetica-Bold", color: INK }}>{l.label}: </Text>
-                  <Link src={l.url} style={s.link}>
-                    {trim(l.url.replace(/^https?:\/\/(www\.)?/, ""), 90)}
-                  </Link>
-                </Text>
-              ))}
-            </View>
-          )}
-
-          {b.exportLine ? (
-            <View style={s.section} wrap={false}>
-              <View style={s.export}>
-                <Text style={s.exportLabel}>EXPORT</Text>
-                <Text style={s.exportTxt}>{b.exportLine}</Text>
+            {side ? (
+              <View style={{ flex: 1 }}>
+                <YourCall text={st.yourCall} />
+                <Copy copy={st.copy} />
+                {confirmRight ? <Confirm items={confirm} /> : null}
               </View>
-            </View>
-          ) : null}
-        </View>
-
-        <View style={s.footer} fixed>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <View style={{ width: 6, height: 6, backgroundColor: RED, marginRight: 6 }} />
-            <Text style={s.footTxt}>
-              Kaizen Marketing · {ref} · {b.client}
-              {b.reviewed ? ` · ${b.reviewed}` : b.by ? ` · briefed by ${b.by}` : ""}
-            </Text>
+            ) : null}
           </View>
-          <Text style={s.footTxt} render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
         </View>
+        {footer}
       </Page>
     </Document>
   );

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { toAllotment, type UsageRow } from "@/lib/allotment";
 import { primaryOf, type SeatRow } from "@/lib/buyer-seats";
+import { clientDriveOf } from "@/lib/brief-cards";
 import { MAKER_ROLE, dayLabel, dueFor, fitStructure, headerLine, picked, slidesFor, structureKey, versionsStrip, type BriefStructure, type PdfCounts, type PdfFormat } from "@/lib/brief-pdf-model";
 
 export const runtime = "nodejs";
@@ -40,7 +41,7 @@ export async function POST(request: Request) {
   const b = (await request.json().catch(() => null)) as Body | null;
   if (!b || !/^[0-9a-f-]{36}$/i.test(b.clientId ?? "")) return new Response("Bad request", { status: 400 });
   const db = await createClient();
-  const { data: client } = await db.from("clients").select("name").eq("id", b.clientId).maybeSingle();
+  const { data: client } = await db.from("clients").select("name, drive_folder_id, ad_creative_folder_id").eq("id", b.clientId).maybeSingle();
   if (!client) return new Response("Not found", { status: 404 });
 
   const formats: Partial<Record<PdfFormat, PdfCounts>> = {};
@@ -129,6 +130,8 @@ export async function POST(request: Request) {
     links: [...(landing ? [{ label: "Landing page", url: landing }] : []), ...refs.links],
     formats: fs,
     by: me.fullName,
+    sizes,
+    drive: clientDriveOf(client as { drive_folder_id: string | null; ad_creative_folder_id: string | null }),
   });
   const name = `${client.name} - ${b.title || "Creative request"}.pdf`.replace(/[^\w .()-]+/g, "").slice(0, 120);
   return new Response(pdf as BodyInit, { headers: { "content-type": "application/pdf", "content-disposition": `attachment; filename="${name}"`, "cache-control": "private, no-store" } });

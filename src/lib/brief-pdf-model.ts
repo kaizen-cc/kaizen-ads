@@ -6,8 +6,8 @@ export { beatSpan, pacing } from "@/lib/brief-spec";
 
 // The brief PDF's content, as plain data: the brief in its one structure (src/lib/brief-spec.ts), the same for every
 // format with only the build changing (a video's beats, a carousel's slides, a single image's frame), in two pages:
-// the idea (the header, the strip, why it works and who it's for, the build, the versions) and the guardrails (Must,
-// Never, Your call, the assets, the copy, what to confirm, the export line). A brief written in today's sections is read
+// the idea (the header, the strip, why it works and who it's for, the build) and the guardrails (the versions, Do and
+// Don't, Your call, the copy, the assets and export, what to confirm). Nothing is cut with "…". A brief written in today's sections is read
 // as it is, no AI; an older or free-text brief gets one fast AI pass in brief-pdf-data that fills only what its own
 // sections don't say. Pure, so it's tested without a network; the drawing lives in brief-pdf.
 
@@ -182,15 +182,8 @@ export function briefSections(brief: string) {
 }
 
 const clean = (s: string) => s.replace(/^[-•*]\s+/, "").replace(/^\d+[.)]\s+/, "").trim();
-const sentence = (s: string, max = 180) => {
-  const t = s.replace(/\s+/g, " ").trim();
-  const first = /^(.{20,}?[.!?])(\s|$)/.exec(t)?.[1] ?? t;
-  return first.length > max ? `${first.slice(0, max - 1).trimEnd()}…` : first;
-};
-const cut = (s: string, max: number) => {
-  const t = s.replace(/\s*\u2014\s*/g, ", ").replace(/\s+/g, " ").trim();
-  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
-};
+// Text is never cut with "…" (the owner, Nov 11 2026: show every field in full; the PDF wraps it a step smaller)
+const cut = (s: string) => s.replace(/\s*\u2014\s*/g, ", ").replace(/\s+/g, " ").trim();
 const asset = (a: { item: string; status: keyof typeof ASSET_WORD }) => (a.status === "have" ? a.item : `${ASSET_WORD[a.status]}: ${a.item}`);
 
 /**
@@ -214,7 +207,7 @@ export function plainStructure(d: StructureSource): BriefStructure {
   const hooks = (sections.get("hooks to try") ?? sections.get("hooks") ?? []).map(clean).filter(Boolean);
   const n = Math.max(1, versionCount(d.formats));
   const own = sp.versions.filter(Boolean);
-  const versions = Array.from({ length: n }, (_, i) => cut(own[i] ?? (i === 0 ? hookOf(sp) : "") ?? "", 200) || cut(hooks[i] ?? concepts[i]?.hook ?? (i === 0 ? concepts[0]?.copy || concepts[0]?.name || "" : ""), 200));
+  const versions = Array.from({ length: n }, (_, i) => cut(own[i] ?? (i === 0 ? hookOf(sp) : "") ?? "") || cut(hooks[i] ?? concepts[i]?.hook ?? (i === 0 ? concepts[0]?.copy || concepts[0]?.name || "" : "")));
 
   // Must and Never: the brief's own lists, or (an older free-text brief) its do and don't lines
   const all = d.brief.split("\n").map(clean).filter(Boolean);
@@ -223,8 +216,8 @@ export function plainStructure(d: StructureSource): BriefStructure {
   const structured = p.structured;
   // An older brief's Constraints join Must, but not its sizes and safe zones (the export line says those once)
   const constraints = sp.constraints.filter((x) => !/(?<![\d.])\d{1,2}\s?[:x×]\s?\d{1,2}(?!\d)|safe zone|\bpx\b|\bsizes?\b|file names?/i.test(x));
-  const must = (structured ? [...sp.dos, ...constraints] : looseMust).map((x) => cut(x, 200)).slice(0, LIMITS.must);
-  const never = (structured ? sp.donts : looseNever).map((x) => cut(x, 200)).slice(0, LIMITS.never);
+  const must = (structured ? [...sp.dos, ...constraints] : looseMust).map((x) => cut(x)).slice(0, LIMITS.must);
+  const never = (structured ? sp.donts : looseNever).map((x) => cut(x)).slice(0, LIMITS.never);
 
   const pick = (re: RegExp) => all.map((l) => re.exec(l)?.[1]?.trim()).filter((x): x is string => Boolean(x));
   const ownCopy = copyOf(sp.copy);
@@ -237,61 +230,26 @@ export function plainStructure(d: StructureSource): BriefStructure {
   const frame = frameOf(sp.frame);
   const hasFrame = Boolean(frame.headline || frame.subline || frame.shows || frame.readsFirst || frame.cta);
   return {
-    oneLine: cut(sentence(lines.join(" ") || d.angle || d.title, 220), 220),
-    fallback: cut(fallback, 220),
-    stage: cut(sp.stage, 40),
-    why: cut(sp.insight, 360),
-    whySource: cut(sp.insightSource, 120),
-    who: cut(sp.who || d.audience, 200),
-    length: cut(sp.length, 20),
-    audio: cut(sp.audio, 200),
+    oneLine: cut(lines.join(" ") || d.angle || d.title),
+    fallback: cut(fallback),
+    stage: cut(sp.stage),
+    why: cut(sp.insight),
+    whySource: cut(sp.insightSource),
+    who: cut(sp.who || d.audience),
+    length: cut(sp.length),
+    audio: cut(sp.audio),
     beats: d.formats.video ? beatRows(sp).slice(0, LIMITS.beats) : [],
     slides: cards ? slideRows(sp).slice(0, cards) : [],
     frame: d.formats.image ? (hasFrame ? frame : versions[0] ? { headline: versions[0], subline: "", shows: "", readsFirst: "", cta: "" } : null) : null,
     versions,
     must,
     never,
-    yourCall: cut(sp.yourCall, 300),
+    yourCall: cut(sp.yourCall),
     copy,
     assets: sp.assets.length ? sp.assets.map(asset).slice(0, LIMITS.assets) : [...(sections.get("assets") ?? []), ...(sections.get("what to use") ?? [])].map(clean).slice(0, LIMITS.assets),
     ai: false,
   };
 }
-
-/**
- * About how tall page one is (points on a Letter page): the band, the strip, why it works, the build and the versions,
- * from how many lines each field wraps to. The guardrails start on a page of their own only when the idea fits on the
- * first one; otherwise they follow it, so a dense brief never spends a page on a few leftover lines.
- */
-export function ideaHeight(st: BriefStructure, formats: PdfFormat[], title: string) {
-  const lines = (s: string, perLine: number) => (s.trim() ? Math.ceil(s.trim().length / perLine) : 0);
-  let h = 22 + 22 + 12 + lines(title, 38) * 28 + lines(st.oneLine, 88) * 16 + (st.fallback ? lines(st.fallback, 110) * 12 + 5 : 0) + 18; // band
-  h += 46; // strip
-  if (st.why || st.who) h += 12 + 20 + Math.max(lines(st.why, 62) * 14 + (st.whySource ? 13 : 0), lines(st.who, 42) * 13 + 13);
-  if (formats.includes("video") && st.beats.length) {
-    const three = st.beats.some((b) => b.text && b.says);
-    h += 12 + 20;
-    for (const b of st.beats) {
-      const mid = 11 + lines(b.onScreen, three ? 36 : 50) * 12.2;
-      const text = b.text ? 9 + lines(b.text, three ? 30 : 50) * 12.4 : 0;
-      const says = b.says ? 9 + lines(b.says, three ? 36 : 50) * 12.4 : 0;
-      h += 12 + Math.max(mid, three ? Math.max(text, says) : says || text);
-    }
-    h += 48; // audio and pacing
-  }
-  if (formats.includes("carousel") && st.slides.length) h += 12 + 20 + st.slides.reduce((n, x) => n + 9 + Math.max(lines(x.headline, 32), lines(x.shows, 45), 1) * 12.4, 0);
-  if (formats.includes("image") && st.frame) h += 12 + 20 + 110;
-  if (st.versions.some(Boolean)) {
-    const two = st.versions.length > 3;
-    const rows = two ? Math.ceil(st.versions.length / 2) : st.versions.length;
-    const longest = Math.max(...st.versions.map((v) => lines(v || "A variation of V1", two ? 42 : 84)), 1);
-    h += 12 + 20 + rows * (9 + longest * 12.5);
-  }
-  return h;
-}
-
-/** Page one's room on a Letter page, below the band's top edge and above the footer */
-export const PAGE_ONE_ROOM = 742;
 
 /** The brief already says everything the format needs (no AI pass to make) */
 export function needsStructure(s: BriefStructure, d: StructureSource) {
@@ -309,18 +267,18 @@ export function needsStructure(s: BriefStructure, d: StructureSource) {
  */
 export function fitStructure(raw: Partial<BriefStructure> | null | undefined, d: StructureSource, ai: boolean): BriefStructure {
   const plain = plainStructure(d);
-  const t = (s: unknown, max = 400) => (typeof s === "string" ? cut(s, max) : "");
-  const list = (xs: unknown, n: number, max = 200) => (Array.isArray(xs) ? xs.map((x) => t(x, max)).filter(Boolean).slice(0, n) : []);
+  const t = (s: unknown) => (typeof s === "string" ? cut(s) : "");
+  const list = (xs: unknown, n: number) => (Array.isArray(xs) ? xs.map((x) => t(x)).filter(Boolean).slice(0, n) : []);
   const n = Math.max(1, versionCount(d.formats));
   const rv = Array.isArray(raw?.versions) ? raw!.versions : [];
-  const versions = Array.from({ length: n }, (_, i) => plain.versions[i] || t(rv[i], 200));
-  const beat = (b: Partial<BriefBeat>): BriefBeat => ({ time: t(b?.time, 16), name: t(b?.name, 40), onScreen: t(b?.onScreen, 160), text: t(b?.text, 160), says: t(b?.says, 200), source: t(b?.source, 80) });
+  const versions = Array.from({ length: n }, (_, i) => plain.versions[i] || t(rv[i]));
+  const beat = (b: Partial<BriefBeat>): BriefBeat => ({ time: t(b?.time), name: t(b?.name), onScreen: t(b?.onScreen), text: t(b?.text), says: t(b?.says), source: t(b?.source) });
   const beats = plain.beats.length ? plain.beats : d.formats.video && Array.isArray(raw?.beats) ? raw!.beats.map(beat).filter((b) => b.name || b.onScreen || b.says || b.text).slice(0, LIMITS.beats) : [];
   const cards = slidesFor(d.formats);
-  const slide = (s: Partial<BriefSlide>): BriefSlide => ({ job: t(s?.job, 30), headline: t(s?.headline, 140), shows: t(s?.shows, 200) });
+  const slide = (s: Partial<BriefSlide>): BriefSlide => ({ job: t(s?.job), headline: t(s?.headline), shows: t(s?.shows) });
   const slides = plain.slides.length >= 2 ? plain.slides : cards && Array.isArray(raw?.slides) ? raw!.slides.map(slide).filter((s) => s.headline || s.shows).slice(0, cards) : plain.slides;
   const rf = raw?.frame as Partial<BriefFrame> | null | undefined;
-  const aiFrame: BriefFrame | null = d.formats.image && rf ? { headline: t(rf.headline, 140), subline: t(rf.subline, 200), shows: t(rf.shows, 240), readsFirst: t(rf.readsFirst, 160), cta: t(rf.cta, 40) } : null;
+  const aiFrame: BriefFrame | null = d.formats.image && rf ? { headline: t(rf.headline), subline: t(rf.subline), shows: t(rf.shows), readsFirst: t(rf.readsFirst), cta: t(rf.cta) } : null;
   // The frame field by field: the brief's own (or V1's line as its headline) wins, the AI fills the empty ones
   const pf = plain.frame;
   const frame: BriefFrame | null = !pf ? (aiFrame?.headline ? aiFrame : null) : aiFrame ? { headline: pf.headline || aiFrame.headline, subline: pf.subline || aiFrame.subline, shows: pf.shows || aiFrame.shows, readsFirst: pf.readsFirst || aiFrame.readsFirst, cta: pf.cta || aiFrame.cta } : pf;
@@ -328,23 +286,23 @@ export function fitStructure(raw: Partial<BriefStructure> | null | undefined, d:
   const hasCopy = plain.copy.primary.length || plain.copy.headlines.length || plain.copy.cta;
   const or = <T,>(a: T[], b: T[]) => (a.length ? a : b);
   return {
-    oneLine: plain.oneLine && plain.oneLine !== cut(d.title, 220) ? plain.oneLine : t(raw?.oneLine, 220) || plain.oneLine,
+    oneLine: plain.oneLine && plain.oneLine !== cut(d.title) ? plain.oneLine : t(raw?.oneLine) || plain.oneLine,
     fallback: plain.fallback,
-    stage: plain.stage || t(raw?.stage, 40),
-    why: plain.why || t(raw?.why, 360),
-    whySource: plain.why ? plain.whySource : t(raw?.whySource, 120),
-    who: plain.who || t(raw?.who, 200),
-    length: plain.length || (d.formats.video ? t(raw?.length, 20) : ""),
-    audio: plain.audio || (d.formats.video ? t(raw?.audio, 200) : ""),
+    stage: plain.stage || t(raw?.stage),
+    why: plain.why || t(raw?.why),
+    whySource: plain.why ? plain.whySource : t(raw?.whySource),
+    who: plain.who || t(raw?.who),
+    length: plain.length || (d.formats.video ? t(raw?.length) : ""),
+    audio: plain.audio || (d.formats.video ? t(raw?.audio) : ""),
     beats,
     slides,
     frame,
     versions,
     must: or(plain.must, list(raw?.must, LIMITS.must)),
     never: or(plain.never, list(raw?.never, LIMITS.never)),
-    yourCall: plain.yourCall || t(raw?.yourCall, 300),
-    copy: hasCopy ? plain.copy : { primary: list(rc?.primary, LIMITS.primary, 600), headlines: list(rc?.headlines, LIMITS.headlines, 120), cta: t(rc?.cta, 40) },
-    assets: or(plain.assets, list(raw?.assets, LIMITS.assets, 420)),
+    yourCall: plain.yourCall || t(raw?.yourCall),
+    copy: hasCopy ? plain.copy : { primary: list(rc?.primary, LIMITS.primary), headlines: list(rc?.headlines, LIMITS.headlines), cta: t(rc?.cta) },
+    assets: or(plain.assets, list(raw?.assets, LIMITS.assets)),
     ai,
   };
 }

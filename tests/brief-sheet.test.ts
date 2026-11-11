@@ -2,13 +2,14 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BriefText } from "@/components/brief-sheet";
+import type { ClientDrive } from "@/lib/brief-cards";
 import { composeBrief, emptySpec, exportLineFor, type BriefSpec } from "@/lib/brief-spec";
 
 // The brief on screen (Ready to send and the ticket) shows the same sections as the PDF, for every format, and an
 // older or free-text brief still reads.
 
 const spec = (p: Partial<BriefSpec>): BriefSpec => ({ ...emptySpec(), ...p });
-const html = (text: string, exportLine?: string) => renderToStaticMarkup(createElement(BriefText, { text, exportLine }));
+const html = (text: string, exportLine?: string, drive?: ClientDrive) => renderToStaticMarkup(createElement(BriefText, { text, exportLine, drive }));
 
 describe("the brief on screen", () => {
   it("shows a video brief's sections in order, with the beats, the pacing and the export line", () => {
@@ -31,20 +32,29 @@ describe("the brief on screen", () => {
         confirm: [{ question: "Is checkout working?", answer: "", source: "" }],
       }),
     );
-    const out = html(text, exportLineFor(["video"], ["9x16"], "Best Tickets", "The Detail"));
-    const order = ["Evergreen TOF", "The owner&#x27;s answer is the detail.", "Why it works", "Who it&#x27;s for", "The video in 2 beats", "Pacing", "The versions (2)", "Must", "Never", "Your call", "Assets", "Open in Drive", "Copy", "Confirm with client", "Export"];
+    const drive = { headquarters: "https://drive.google.com/drive/folders/hq123", adCreatives: "https://drive.google.com/drive/folders/ads456" };
+    const out = html(text, exportLineFor(["video"], ["9x16"], "Best Tickets", "The Detail"), drive);
+    // His order: the idea, the beats as cards and the pacing bar, the versions, Do and Don't, Your call, the copy, the
+    // assets (the client's Drive first) and export, what to confirm
+    const order = ["Evergreen TOF", "The owner’s answer is the detail.", "Why it works", "Who it&#x27;s for", "The video in 2 beats", "On-screen text", "“The detail most people miss”", "Pacing", "The versions (2)", "Do and don&#x27;t", "Your call", "Copy", "Assets and export", "Client Drive (headquarters)", "Ad Creatives folder", "Owner interview", "Open in Drive", "Export", "Confirm with client"];
     let at = -1;
     for (const s of order) {
       const i = out.indexOf(s, at + 1);
       expect(i, s).toBeGreaterThan(at);
       at = i;
     }
-    expect(out).toContain("Says · source Interview 0:12");
+    expect(out).toContain("Interview · Source 0:12");
+    expect(out).toContain('href="https://drive.google.com/drive/folders/hq123"');
+    expect(out).toContain('href="https://drive.google.com/drive/folders/ads456"');
+    expect(out).not.toContain("…");
+    // A client with no Drive folders on file gets no Drive rows
+    expect(html(text)).not.toContain("Client Drive (headquarters)");
   });
 
   it("shows a carousel's slides and a single image's frame", () => {
     const c = html(composeBrief("Section 112 is the payoff.", spec({ insight: "Behind the bench.", slides: ["Hook | Headline: The seat most fans skip | Shows: The arena", "CTA | Headline: Find your seat"], versions: ["The seat most fans skip"] })));
-    expect(c).toContain("The carousel, slide by slide");
+    expect(c).toContain("The carousel in 2 slides");
+    expect(c).toContain("Slide order");
     expect(c).toContain("The seat most fans skip");
     const i = html(composeBrief("Golden hour sells Friday.", spec({ insight: "Patio ads win.", frame: ["Headline: Fridays on the patio", "Reads first: Headline, then the button"], versions: ["Fridays on the patio"] })));
     expect(i).toContain("The frame");

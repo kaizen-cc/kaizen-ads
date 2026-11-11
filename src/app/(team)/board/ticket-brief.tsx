@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { BriefCheck } from "@/components/brief-check";
 import { BriefText } from "@/components/brief-sheet";
+import { useClientDrive } from "@/components/use-client-drive";
 import { exportLineFor } from "@/lib/brief-spec";
 import type { Ticket } from "./types";
 
@@ -13,11 +14,12 @@ export function TicketBrief({ ticket, demo = false }: { ticket: Ticket; demo?: b
   const router = useRouter();
   const [brief, setBrief] = useState(ticket.brief ?? "");
   const [sizes, setSizes] = useState(ticket.sizes);
+  const drive = useClientDrive(demo ? null : ticket.clientId);
   if (!brief.trim()) return <p className="text-sm text-faint">No brief written.</p>;
   return (
     <div className="grid min-w-0 gap-3">
       <div className="rounded-[10px] border border-line bg-surface px-5 py-4 max-md:px-4">
-        <BriefText text={brief} exportLine={exportLineFor([ticket.format], sizes, ticket.clientName, ticket.title)} />
+        <BriefText text={brief} exportLine={exportLineFor([ticket.format], sizes, ticket.clientName, ticket.title)} drive={drive} />
       </div>
       <BriefCheck
         demo={demo}

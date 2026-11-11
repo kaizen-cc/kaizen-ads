@@ -13,6 +13,7 @@ import { savedHref, savedLine } from "@/lib/saved-references";
 import { parseBriefFileUrl } from "@/lib/brief-files";
 import { exportLineFor } from "@/lib/brief-spec";
 import { BriefText } from "@/components/brief-sheet";
+import { useClientDrive } from "@/components/use-client-drive";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { FormatIcon } from "@/app/(team)/board/ticket-card";
 import { SIZES, refLinks, selectedFormats, type Draft, type Size } from "./draft";
@@ -108,6 +109,7 @@ export function ReadyToSend({
   const pendingRef = useRef<PendingRevise | null>(null);
   const formats = selectedFormats(draft);
   const links = refLinks(draft.refs);
+  const drive = useClientDrive(demo ? null : draft.clientId);
   // The app's own pictures (a kept Meta ad, a direct image) show as they are; any other link gets a preview card
   const own = links.filter((u) => !parseBriefFileUrl(u) && (!/^https?:/i.test(u) || refPicture(u).adId || refPicture(u).src));
   const pasted = links.filter((u) => !own.includes(u));
@@ -286,7 +288,7 @@ export function ReadyToSend({
             />
           ) : draft.brief.trim() ? (
             <button id="rts-brief" type="button" onClick={() => setEditBrief(true)} className="cursor-text rounded-[16px] text-left outline-none focus-visible:ring-2 focus-visible:ring-brand/50" aria-label="Edit the brief">
-              <BriefText text={draft.brief} exportLine={exportLineFor(formats, draft.sizes, clientName, draft.title)} />
+              <BriefText text={draft.brief} exportLine={exportLineFor(formats, draft.sizes, clientName, draft.title)} drive={drive} />
             </button>
           ) : null}
           {/* Before it goes to the maker: client-only facts, assets, contradictions, the revise chat and the review stamp */}

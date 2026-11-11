@@ -21,6 +21,9 @@
   --ink: #ffffff;
   --deep: #0b0a0e;
   --deep-2: #17131a;
+  /* The brief's cards (the lead video editor's look): card and quote box surfaces */
+  --brief-card: var(--surface);
+  --brief-quote: var(--bg);
 
   /* Status colors (on time / due soon / overdue) */
   --ok: #3fb27f;
@@ -52,6 +55,8 @@
   --ink: #1b1820;
   --deep: #ffffff;
   --deep-2: #f6f3ee;
+  --brief-card: #f5f5f6;
+  --brief-quote: #ffffff;
   --ok: #13804d;
   --ok-soft: rgba(19, 128, 77, 0.09);
   --warn: #9a5f00;
@@ -155,6 +160,8 @@
     --ink: #1b1820;
     --deep: #ffffff;
     --deep-2: #f6f3ee;
+    --brief-card: #f5f5f6;
+    --brief-quote: #ffffff;
     --ok: #13804d;
     --ok-soft: rgba(19, 128, 77, 0.09);
     --warn: #9a5f00;
@@ -261,6 +268,9 @@
   --ink: #ffffff;
   --deep: #0b0a0e;
   --deep-2: #17131a;
+  /* The brief's cards (the lead video editor's look): card and quote box surfaces */
+  --brief-card: var(--surface);
+  --brief-quote: var(--bg);
 
   /* Status colors (on time / due soon / overdue) */
   --ok: #3fb27f;
