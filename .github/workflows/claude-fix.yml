@@ -1,6 +1,9 @@
-# "Have Claude fix it" in an error email opens an issue labelled claude-fix. Claude reads it, finds the
-# cause, and opens a pull request with the fix. Nothing goes live until someone merges that PR.
-# Needs the ANTHROPIC_API_KEY repository secret (Settings › Secrets and variables › Actions).
+# An issue labelled claude-fix (from the error monitor, or a bug the team reported in Kaizen Ads) has Claude find the
+# cause and open a pull request on claude/fix-<n>. Then every check runs on it. A fix labelled auto-merge that stays
+# clear of the safety rails merges itself as kaizen-cc; any other fix that passes waits for the owner, who approves it
+# in Kaizen Ads (that adds the approved-merge label, and the merge-approved job below checks it again and merges it).
+# Needs the ANTHROPIC_API_KEY repository secret (Settings › Secrets and variables › Actions); test:db reads
+# SUPABASE_DB_URL. The app's GITHUB_TOKEN must be a token whose label events start workflows (a PAT), as today.
 name: Claude fix
 
 on:
@@ -61,43 +64,94 @@ jobs:
                What happened · Why it happened · What changed · How it was checked. End the body with "Closes #${{ github.event.issue.number }}".
             6. Comment on the issue with the PR link.
 
-      # Low severity (the issue is labelled auto-merge): once Claude's pull request is up, run the same checks as
-      # every push and, if they all pass and the fix doesn't touch the database, merge it so it goes live with no one
-      # waiting on it. Medium and high fixes are left for someone to review and merge.
-      - name: Merge a low-severity fix that passes the checks
-        if: contains(github.event.issue.labels.*.name, 'auto-merge')
+      # Every fix is checked here once Claude's pull request is up. One labelled auto-merge that stays clear of the
+      # safety rails (the database, sign-in and permissions, ad-account writes, billing, secrets and env, this
+      # pipeline) and isn't large merges itself, so it goes live with no one waiting on it. Any other fix that passes
+      # waits for the owner's approval in Kaizen Ads. When Claude changed nothing, the issue is closed.
+      - name: Check the fix, and merge it if it may ship itself
         env:
           ISSUE: ${{ github.event.issue.number }}
+          AUTO: ${{ contains(github.event.issue.labels.*.name, 'auto-merge') }}
+          MAX_FILES: ${{ vars.AUTO_MERGE_MAX_FILES || '8' }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -e
           PR=$(gh pr list --head "claude/fix-$ISSUE" --state open --json number --jq '.[0].number')
-          if [ -z "$PR" ]; then echo "No fix pull request (Claude found nothing of ours to fix)"; exit 0; fi
-          if gh pr diff "$PR" --name-only | grep -q '^supabase/migrations/'; then
-            gh pr comment "$PR" --body "This fix changes the database, so it waits for a person to apply the migration and merge it."
+          if [ -z "$PR" ]; then
+            echo "No fix pull request (Claude found nothing of ours to fix)"
+            gh issue close "$ISSUE" --reason "not planned" --comment "Claude changed nothing: the reason is in the comment above." || true
             exit 0
           fi
-          # What an automatic fix never ships (sign-in, permissions, ad-account writes, billing, secrets, the pipeline
-          # itself), and anything bigger than a small change: a person reviews and merges those
           FILES=$(gh pr diff "$PR" --name-only)
-          PROTECTED=$(echo "$FILES" | grep -E '^(src/lib/auth\.ts|src/proxy\.ts|src/lib/supabase/|src/lib/meta-write|src/lib/google-write|src/lib/.*(stripe|billing)|\.github/|\.env|vercel\.json|next\.config\.)' || true)
           COUNT=$(echo "$FILES" | grep -c . || true)
-          if [ -n "$PROTECTED" ] || [ "$COUNT" -gt 5 ]; then
-            gh pr comment "$PR" --body "This fix touches files an automatic fix never ships ($COUNT files${PROTECTED:+; protected: $(echo $PROTECTED | tr '\n' ' ')}), so it waits for a person to review and merge it."
-            exit 0
-          fi
+          MIGRATIONS=$(echo "$FILES" | grep '^supabase/migrations/' || true)
+          PROTECTED=$(echo "$FILES" | grep -E '^(src/lib/auth\.ts|src/proxy\.ts|src/lib/supabase/|src/lib/meta-write|src/lib/google-write|src/lib/.*(stripe|billing)|\.github/|\.env|vercel\.json|next\.config\.)' || true)
+          REASONS=""
+          if [ "$AUTO" != "true" ]; then REASONS="it was sent for approval from the start"; fi
+          if [ -n "$MIGRATIONS" ]; then REASONS="${REASONS:+$REASONS; }it changes the database ($(echo $MIGRATIONS | tr '\n' ' '))"; fi
+          if [ -n "$PROTECTED" ]; then REASONS="${REASONS:+$REASONS; }it touches protected files ($(echo $PROTECTED | tr '\n' ' '))"; fi
+          if [ "$COUNT" -gt "$MAX_FILES" ]; then REASONS="${REASONS:+$REASONS; }it changes $COUNT files"; fi
           git fetch origin "claude/fix-$ISSUE" && git checkout "claude/fix-$ISSUE"
           npm ci
-          if npx eslint src tests && npx next typegen && npx tsc --noEmit && npm test && npm run test:db; then
-            # One commit on main authored as kaizen-cc, the only identity Vercel deploys (Claude's own commits are
-            # claude[bot], which Vercel skips)
-            TITLE=$(gh pr view "$PR" --json title --jq .title)
-            git checkout main && git pull --ff-only origin main
-            git merge --squash "origin/claude/fix-$ISSUE"
-            git commit -m "$TITLE" -m "Low-severity fix by Claude from #$ISSUE, merged automatically after every check passed."
-            git push origin main
-            gh pr close "$PR" --delete-branch --comment "Merged into main as $(git rev-parse --short HEAD) (every check passed)."
-            gh issue close "$ISSUE" --comment "Low severity, and every check passed: merged automatically. It goes live with this Vercel deploy."
-          else
-            gh pr comment "$PR" --body "A check failed, so this one wasn't merged automatically. It needs a look."
+          if ! (npx eslint src tests && npx next typegen && npx tsc --noEmit && npm test && npm run test:db); then
+            gh pr comment "$PR" --body "A check failed, so this fix wasn't merged. It needs another try."
+            exit 0
           fi
+          if [ -n "$REASONS" ]; then
+            gh pr comment "$PR" --body "Every check passed. It needs approval: $REASONS. The owner approves it in Kaizen Ads (Feedback, Needs your approval)."
+            exit 0
+          fi
+          # One commit on main authored as kaizen-cc, the only identity Vercel deploys (Claude's own commits are
+          # claude[bot], which Vercel skips)
+          TITLE=$(gh pr view "$PR" --json title --jq .title)
+          git checkout main && git pull --ff-only origin main
+          git merge --squash "origin/claude/fix-$ISSUE"
+          git commit -m "$TITLE" -m "Fix by Claude from #$ISSUE, merged automatically after every check passed."
+          git push origin main
+          gh pr close "$PR" --delete-branch --comment "Merged into main as $(git rev-parse --short HEAD) (every check passed)."
+          gh issue close "$ISSUE" --comment "Every check passed: merged automatically. It goes live with this Vercel deploy."
+
+  # The owner approved a fix in Kaizen Ads (the issue got the approved-merge label): check it again on top of the
+  # latest main and merge it the same way, as kaizen-cc. A database change in it is called out so it gets applied.
+  merge-approved:
+    if: github.event.label.name == 'approved-merge'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ISSUE: ${{ github.event.issue.number }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: git config user.name "kaizen-cc" && git config user.email "santi@kaizenmarketing.agency"
+      - name: Merge the approved fix
+        run: |
+          set -e
+          PR=$(gh pr list --head "claude/fix-$ISSUE" --state open --json number --jq '.[0].number')
+          if [ -z "$PR" ]; then gh issue comment "$ISSUE" --body "Approved, but there's no open fix pull request to merge."; exit 0; fi
+          git fetch origin "claude/fix-$ISSUE"
+          git checkout main && git pull --ff-only origin main
+          if ! git merge --squash "origin/claude/fix-$ISSUE"; then
+            git reset --hard origin/main
+            gh pr comment "$PR" --body "A check failed: the approved fix no longer applies cleanly on main. It needs another try."
+            exit 0
+          fi
+          npm ci
+          if ! (npx eslint src tests && npx next typegen && npx tsc --noEmit && npm test && npm run test:db); then
+            gh pr comment "$PR" --body "A check failed after approval, so it wasn't merged. It needs another try."
+            exit 0
+          fi
+          TITLE=$(gh pr view "$PR" --json title --jq .title)
+          git commit -m "$TITLE" -m "Fix by Claude from #$ISSUE, approved by the owner in Kaizen Ads and merged after every check passed."
+          git push origin main
+          MIGRATIONS=$(git show --name-only --format= HEAD | grep '^supabase/migrations/' || true)
+          NOTE=""
+          if [ -n "$MIGRATIONS" ]; then NOTE=" It includes a database change to apply: $(echo $MIGRATIONS | tr '\n' ' ')."; fi
+          gh pr close "$PR" --delete-branch --comment "Merged into main as $(git rev-parse --short HEAD) (approved; every check passed).$NOTE"
+          gh issue close "$ISSUE" --comment "Approved, and every check passed: merged automatically after approval. It goes live with this Vercel deploy.$NOTE"
