@@ -1,4 +1,5 @@
 import "server-only";
+import { liveAds } from "@/lib/ticket-completion";
 import { reworkAds } from "@/lib/partial-approval";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
@@ -1189,10 +1190,13 @@ export async function watchLaunches(admin: SupabaseClient) {
     if (!ads.length) continue;
     const res = await metaGraph<Record<string, { status?: string; effective_status?: string }>>("", { ids: ads.map((a) => a.adId).join(","), fields: "status,effective_status" }).catch(() => null);
     if (!res) continue;
-    const on = ads.filter((a) => res[a.adId!]?.status === "ACTIVE");
+    const on = liveAds(ads, res);
     if (!on.length) continue;
     await admin.rpc("system_move_request", { p_request: l.request_id, p_stage: "launched", p_note: `Turned on in Meta: ${on.map((a) => a.name).join("; ")}`.slice(0, 1000) });
-    await admin.from("launches").update({ live_at: new Date().toISOString() }).eq("id", l.id);
+    const now = new Date().toISOString();
+    await admin.from("launches").update({ live_at: now }).eq("id", l.id);
+    // Completed by the system (the column comes with 20261111190000_ticket_stage_views.sql; before it, launched is completed)
+    await admin.from("requests").update({ completed_at: now, completed_by: null }).eq("id", l.request_id).is("completed_at", null);
     moved++;
   }
   return moved;

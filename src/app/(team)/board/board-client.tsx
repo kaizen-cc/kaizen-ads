@@ -13,6 +13,7 @@ import { MoveDialog } from "./move-dialog";
 import { ShadowCard, ShadowSheet } from "./shadow";
 import type { ShadowTicket } from "@/lib/asana";
 import { TicketDrawer } from "./ticket-drawer";
+import { CompletedLog, closeCompleted } from "./completed-log";
 import type { ClientOption, Person, Ticket } from "./types";
 
 const HEALTH_RANK: Record<Health, number> = { bad: 0, warn: 1, ok: 2 };
@@ -159,7 +160,10 @@ export function BoardClient({
     return m;
   }, [filtered]);
 
-  const open = tickets.find((x) => String(x.number) === openNumber) ?? null;
+  // Completed tickets opened from the log (they're off the board), read-only
+  const [completedOpened, setCompletedOpened] = useState<Ticket[]>([]);
+  const completedOpen = params.get("completed") === "1";
+  const open = tickets.find((x) => String(x.number) === openNumber) ?? completedOpened.find((x) => String(x.number) === openNumber) ?? null;
   // The board's own move dialog; one opened from inside a ticket is drawn by the ticket
   const moving = open ? null : (tickets.find((x) => String(x.number) === moveNumber) ?? null);
   const dropped = moving && moveTo && BOARD_ORDER.includes(moveTo) && moveTo !== moving.stage ? { ticket: moving, to: moveTo } : null;
@@ -255,6 +259,17 @@ export function BoardClient({
             )}
           </p>
         </div>
+        <div className="flex items-center gap-2 max-md:w-full">
+        <button
+          type="button"
+          onClick={() => pushParams({ completed: "1" })}
+          className="flex h-11 items-center gap-2 rounded-brand border border-line px-4 text-sm text-muted hover:border-faint hover:text-fg max-md:flex-1 max-md:justify-center"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="m3.5 8.5 3 3 6-7" />
+          </svg>
+          Completed tasks
+        </button>
         {canRequest && (
           <Link
             href={`/requests/new${client ? `?client=${client}` : ""}`}
@@ -263,6 +278,7 @@ export function BoardClient({
             <span className="text-lg leading-none">+</span> New request
           </Link>
         )}
+        </div>
       </div>
 
       {/* Filters + health */}
@@ -525,7 +541,28 @@ export function BoardClient({
           onFix={() => replaceParams({ move: null, to: null, t: String(dropped.ticket.number) })}
         />
       )}
-      {open && <TicketDrawer key={open.id} ticket={open} people={people} can={can} meId={me?.id ?? null} onClose={() => closeParams("t", "move", "to", "design", "ver", "pin", "copy", "tab")} onOptimisticMove={optimisticMove} demo={demo} />}
+      {completedOpen && (
+        <CompletedLog
+          clients={clients}
+          onClose={closeCompleted}
+          onOpen={(t) => {
+            setCompletedOpened((all) => [...all.filter((x) => x.id !== t.id), t]);
+            pushParams({ t: String(t.number) });
+          }}
+        />
+      )}
+      {open && (
+        <TicketDrawer
+          key={open.id}
+          ticket={open}
+          people={people}
+          can={can}
+          meId={me?.id ?? null}
+          onClose={() => closeParams("t", "move", "to", "design", "ver", "pin", "copy", "tab", "brief", "launcher", "revise")}
+          onOptimisticMove={optimisticMove}
+          demo={demo}
+        />
+      )}
 
     </div>
   );
