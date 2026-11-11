@@ -16,7 +16,10 @@ export type ChatKind =
   | "copy-studio"
   | "ads-lab"
   | "suggested-brief"
-  | "brand-bible";
+  | "brand-bible"
+  | "ticket-brief"
+  | "ticket-copy"
+  | "ticket-launch";
 
 export const CHAT_LABEL: Record<ChatKind, string> = {
   "kaizen-ai": "Kaizen AI",
@@ -31,6 +34,9 @@ export const CHAT_LABEL: Record<ChatKind, string> = {
   "ads-lab": "the Ads Lab",
   "suggested-brief": "a suggested brief's chat",
   "brand-bible": "the Brand Bible chat",
+  "ticket-brief": "a ticket's brief chat",
+  "ticket-copy": "a ticket's copywriter chat",
+  "ticket-launch": "the Ads launcher chat",
 };
 const KINDS = Object.keys(CHAT_LABEL) as ChatKind[];
 
