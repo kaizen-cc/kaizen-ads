@@ -9,7 +9,7 @@ import { prepareVideos } from "./prepare-videos";
 
 const clockOf = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
 /** Open the creative at the note's comment (the deliverables listen) */
-const openComment = (requestId: string, n: CreativeNote) => n.designId && window.dispatchEvent(new CustomEvent("kz:open-comment", { detail: { requestId, designId: n.designId, commentId: n.commentId ?? null } }));
+export const openComment = (requestId: string, n: CreativeNote) => n.designId && window.dispatchEvent(new CustomEvent("kz:open-comment", { detail: { requestId, designId: n.designId, commentId: n.commentId ?? null } }));
 import type { Ticket } from "./types";
 
 // The AI review: the maker runs it before sending the work on (QA), fixes and replaces files, runs it again, then sends it
@@ -21,7 +21,7 @@ const SECTIONS: { key: CreativeNote["severity"]; label: string; dot: string; tex
   { key: "watch", label: "Keep an eye on", dot: "bg-warn", text: "text-warn" },
   { key: "good", label: "Working well", dot: "bg-ok", text: "text-ok" },
 ];
-const VERDICT: Record<CreativeNotes["verdict"], { label: string; cls: string }> = {
+export const VERDICT: Record<CreativeNotes["verdict"], { label: string; cls: string }> = {
   fix: { label: "Needs fixes", cls: "bg-bad-soft text-bad" },
   minor: { label: "A few things to check", cls: "bg-warn-soft text-warn" },
   ready: { label: "Looks ready", cls: "bg-ok/15 text-ok" },
@@ -43,14 +43,14 @@ const DEMO_DESIGNS = [
   { ref: "D2", name: "Calzone pull · CTA test" },
 ];
 
-const ScanIcon = ({ className = "" }: { className?: string }) => (
+export const ScanIcon = ({ className = "" }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
     <path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M7 12h10" />
   </svg>
 );
 
 /** Live progress: real steps (files opened, designs checked), eased in between so the bar never sits still. */
-function Progress({ p }: { p: ReviewProgress }) {
+export function Progress({ p }: { p: ReviewProgress }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 400);
@@ -216,7 +216,7 @@ const firstPinned = (notes: CreativeNotes) =>
   [...notes.notes.filter((n) => n.commentId && n.designId && n.severity !== "good")].sort((a, b) => (a.severity === "fix" ? 0 : 1) - (b.severity === "fix" ? 0 : 1) || (Number(a.design.slice(1)) || 0) - (Number(b.design.slice(1)) || 0) || (a.atMs ?? 0) - (b.atMs ?? 0))[0] ?? null;
 
 /** Loads the review state and keeps it fresh while a run is going. openWhenDone: the maker's side opens the creative at the first note. */
-function useReview(ticketId: string, demo: boolean, openWhenDone = false) {
+export function useReview(ticketId: string, demo: boolean, openWhenDone = false) {
   const [state, setState] = useState<AiReviewState | null>(demo ? { latest: null, runs: 0, hasCreative: true, forced: null } : null);
   const running = state?.latest?.status === "running";
   useEffect(() => {

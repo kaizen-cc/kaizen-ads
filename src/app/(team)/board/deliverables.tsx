@@ -57,7 +57,22 @@ function uploadOrder(staged: StagedDesign[]) {
 }
 
 /** uploaded: designs with at least one finished file. uploading: files still on their way. missing: what the AI review waits for. */
-export type UploadState = { uploaded: number; uploading: number; loaded: boolean; missing: string[] };
+export type UploadState = {
+  uploaded: number;
+  uploading: number;
+  loaded: boolean;
+  missing: string[];
+  /** Each design's current version, for the ticket's summary rows (sizes, the creative strip) */
+  designs?: DesignSummary[];
+  /** Comments on the current versions: open, resolved, and the first open one to go to */
+  comments?: { open: number; resolved: number; first: { designId: string; commentId: string } | null };
+};
+export type DesignSummary = { id: string; position: number; name: string; isVariation: boolean; version: number; versions: number; thumbUrl: string | null; video: boolean; files: { aspect: string | null; card: number | null }[] };
+
+/** Ask the ticket's creative to open the file picker (new designs, or a new version of the one with comments) */
+export const pickFiles = (requestId: string, mode: "new" | "version") => window.dispatchEvent(new CustomEvent("kz:pick-files", { detail: { requestId, mode } }));
+/** Files dropped anywhere on the ticket: they upload like a drop on the creative */
+export const dropFiles = (requestId: string, files: Picked[]) => window.dispatchEvent(new CustomEvent("kz:drop-files", { detail: { requestId, files } }));
 
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|avi|mkv)$/i;
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|heic|psd|tiff?|svg)$/i;
@@ -77,7 +92,20 @@ function wrongFormat(files: File[], format: Ticket["format"]) {
 
 type Busy = null | "reading" | "grouping" | "starting";
 
-export function Deliverables({ ticket, demoDesigns, onState, canDisagree = false }: { ticket: Ticket; demoDesigns?: Design[]; onState?: (s: UploadState) => void; canDisagree?: boolean }) {
+export function Deliverables({
+  ticket,
+  demoDesigns,
+  onState,
+  canDisagree = false,
+  mode = "full",
+}: {
+  ticket: Ticket;
+  demoDesigns?: Design[];
+  onState?: (s: UploadState) => void;
+  canDisagree?: boolean;
+  /** viewer: only the creative viewer (the ticket shows the creative its own way and opens it on click) */
+  mode?: "full" | "viewer";
+}) {
   const uploads = useUploads();
   const demo = Boolean(demoDesigns);
   // What was loaded before shows at once; it refreshes behind
@@ -187,8 +215,66 @@ export function Deliverables({ ticket, demoDesigns, onState, canDisagree = false
   // Tell the drawer whether there's a finished creative (it gates moving past production) and what's still missing
   const uploadedCount = (designs ?? []).filter((d) => d.versions[0]?.files.length).length;
   useEffect(() => {
-    onState?.({ uploaded: uploadedCount, uploading: pending.length, loaded: designs !== null, missing: missingKey ? missingKey.split("|") : [] });
-  }, [onState, uploadedCount, pending.length, designs, missingKey]);
+    const current = comments.filter((c) => designs?.some((d) => d.id === c.designId && d.currentVersion === c.version) && !c.disagreed);
+    const open = current.filter((c) => !c.resolved);
+    const pos = (id: string) => designs?.find((d) => d.id === id)?.position ?? 0;
+    const first = [...open].sort((a, b) => pos(a.designId) - pos(b.designId) || (a.tMs ?? 0) - (b.tMs ?? 0))[0];
+    onState?.({
+      uploaded: uploadedCount,
+      uploading: pending.length,
+      loaded: designs !== null,
+      missing: missingKey ? missingKey.split("|") : [],
+      designs: (designs ?? []).map((d) => {
+        const v = d.versions[0];
+        const cover = v?.files.find((f) => f.aspect === "4x5") ?? v?.files[0];
+        return { id: d.id, position: d.position, name: d.name, isVariation: d.isVariation, version: d.currentVersion, versions: d.versions.length, thumbUrl: cover?.thumbUrl ?? null, video: Boolean(cover?.mime.startsWith("video/")), files: (v?.files ?? []).map((f) => ({ aspect: f.aspect, card: f.card })) };
+      }),
+      comments: { open: open.length, resolved: current.length - open.length, first: first ? { designId: first.designId, commentId: first.id } : null },
+    });
+  }, [onState, uploadedCount, pending.length, designs, missingKey, comments]);
+
+  // The ticket's own buttons: "Upload creative" / "Upload new version" open the picker, and a drop anywhere on the ticket uploads
+  const takeRef = useRef<(all: Picked[]) => Promise<void>>(async () => undefined);
+  const commentsRef = useRef(comments);
+  useEffect(() => {
+    commentsRef.current = comments;
+  }, [comments]);
+  useEffect(() => {
+    const pick = (e: Event) => {
+      const d = (e as CustomEvent<{ requestId: string; mode: "new" | "version" }>).detail;
+      if (d.requestId !== ticket.id) return;
+      const list = designsRef.current ?? [];
+      if (d.mode === "version") {
+        // The design the comments are on (or the only one) gets the new version; with several, Replace under each picks
+        const withOpen = list.filter((x) => !x.clientApproved && commentsRef.current.some((c) => c.designId === x.id && c.version === x.currentVersion && !c.resolved));
+        const target = withOpen.length === 1 ? withOpen[0] : list.length === 1 && !list[0].clientApproved ? list[0] : null;
+        if (target) {
+          replaceFor.current = { design: target, card: null };
+          replaceInput.current?.click();
+          return;
+        }
+        document.querySelector("[data-deliverables]")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        setError("Pick the design to update: Replace under it uploads its new version.");
+        return;
+      }
+      if (ticket.format === "carousel") {
+        document.querySelector("[data-deliverables]")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      filesInput.current?.click();
+    };
+    const drop = (e: Event) => {
+      const d = (e as CustomEvent<{ requestId: string; files: Picked[] }>).detail;
+      if (d.requestId !== ticket.id || ticket.format === "carousel") return;
+      void takeRef.current(d.files);
+    };
+    window.addEventListener("kz:pick-files", pick);
+    window.addEventListener("kz:drop-files", drop);
+    return () => {
+      window.removeEventListener("kz:pick-files", pick);
+      window.removeEventListener("kz:drop-files", drop);
+    };
+  }, [ticket.id, ticket.format]);
 
   /** Files into storage: each design's files under its own version, carousel cards numbered in order. */
   const send = (d: { name: string; files: StagedFile[] }, s: { versionId: string; designId: string; version: number }, prefix: string, cardFrom = 1) => {
@@ -322,6 +408,29 @@ export function Deliverables({ ticket, demoDesigns, onState, canDisagree = false
   const vars = (designs ?? []).filter((d) => d.isVariation).length;
   const making = ["requested", "in_production", "client_revision"].includes(ticket.stage);
   const tooMany = net > asked.new || vars > asked.variations;
+
+  // The ticket's drop and picker reach the upload through here (declared above it)
+  useEffect(() => {
+    takeRef.current = take;
+  });
+
+  const viewer = viewing && (
+    <ReviewViewer
+      key={viewing.design.id}
+      requestId={ticket.id}
+      design={viewing.design}
+      version={viewing.version}
+      format={ticket.format}
+      comments={comments}
+      onComments={(c) => (setComments(c), updateMedia(ticket.id, { comments: c }))}
+      onVersion={(n) => replaceParams({ ver: n === viewing.design.currentVersion ? null : String(n) })}
+      onClose={() => (markSeen(viewing.design.id), closeParams("design", "ver", "pin"))}
+      focus={viewing.focus ?? null}
+      demo={demo}
+      canDisagree={canDisagree}
+    />
+  );
+  if (mode === "viewer") return <>{viewer}</>;
 
   return (
     <section
@@ -609,22 +718,7 @@ export function Deliverables({ ticket, demoDesigns, onState, canDisagree = false
         </div>
       )}
 
-      {viewing && (
-        <ReviewViewer
-          key={viewing.design.id}
-          requestId={ticket.id}
-          design={viewing.design}
-          version={viewing.version}
-          format={ticket.format}
-          comments={comments}
-          onComments={(c) => (setComments(c), updateMedia(ticket.id, { comments: c }))}
-          onVersion={(n) => replaceParams({ ver: n === viewing.design.currentVersion ? null : String(n) })}
-          onClose={() => (markSeen(viewing.design.id), closeParams("design", "ver", "pin"))}
-          focus={viewing.focus ?? null}
-          demo={demo}
-          canDisagree={canDisagree}
-        />
-      )}
+      {viewer}
     </section>
   );
 }

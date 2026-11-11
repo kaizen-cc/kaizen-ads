@@ -1,115 +1,142 @@
 import { describe, expect, it } from "vitest";
 import { STAGES, type Stage } from "@/lib/stages";
-import { activeTab, ticketLayout, ticketRole, type TicketRole } from "@/lib/ticket-layout";
+import { makingMinutes, productionBar, span, ticketRole, ticketView, type ProductionState, type TicketRole } from "@/lib/ticket-layout";
 
 const ROLES: TicketRole[] = ["lead", "copywriter", "maker", "team"];
+const base: ProductionState = { uploaded: 0, uploading: 0, missing: [], review: { status: "none", current: false }, openComments: 0 };
+const p = (x: Partial<ProductionState>): ProductionState => ({ ...base, ...x, review: { ...base.review, ...x.review } });
+const kinds = (b: ReturnType<typeof productionBar>) => [b.primary?.kind ?? null, ...b.secondary.map((c) => c.kind)];
 
-describe("ticketLayout: each stage opens on what its person acts on", () => {
-  it("requested opens on the brief with Start production", () => {
-    const l = ticketLayout("requested", "maker");
-    expect(l.focus).toBe("brief");
-    expect(l.defaultTab).toBe("brief");
-    expect(l.action).toEqual({ kind: "move", to: "in_production", label: "Start production" });
-    expect(l.tabs).toEqual(["brief", "creative", "activity"]);
-  });
-
-  it("in production opens on the creative: upload, then the AI review gate sends it on (going back sits with the gate)", () => {
-    const l = ticketLayout("in_production", "maker");
-    expect(l.focus).toBe("make");
-    expect(l.defaultTab).toBe("creative");
-    expect(l.action).toMatchObject({ kind: "panel", tab: "creative", target: "ai-gate" });
-    expect(l.secondary).toEqual([]);
-    expect(l.gateBack).toEqual({ to: "requested", label: "Back to request" });
-  });
-
-  it("creative review: the reviewer approves or sends back; anyone else sees who has it", () => {
-    const lead = ticketLayout("internal_review", "lead");
-    expect(lead.focus).toBe("review");
-    expect(lead.defaultTab).toBe("creative");
-    expect(lead.action).toMatchObject({ kind: "panel", target: "review", label: "Approve or send back" });
-    for (const r of ["copywriter", "maker", "team"] as TicketRole[]) expect(ticketLayout("internal_review", r).action?.kind).toBe("wait");
-    for (const r of ROLES) expect(ticketLayout("internal_review", r).secondary).toEqual([]);
-  });
-
-  it("copy opens the copy tab, for every role", () => {
-    for (const s of ["copy", "copy_review"] as Stage[])
+describe("ticketView: each stage shows only what it needs, with one main action", () => {
+  it("every stage has a view, and the main action is a single button (or who has it)", () => {
+    for (const s of STAGES.map((x) => x.key as Stage))
       for (const r of ROLES) {
-        const l = ticketLayout(s, r);
-        expect(l.focus).toBe("copy");
-        expect(l.defaultTab).toBe("copy");
-        expect(l.action).toMatchObject({ kind: "panel", tab: "copy", target: "copy" });
-      }
-    expect(ticketLayout("copy_review", "copywriter").action?.label).toBe("Review and approve the copy");
-    expect(ticketLayout("copy_review", "team").action?.label).toBe("Open the copy");
-  });
-
-  it("with the client: what the client said, Client approved, and the way back for their changes", () => {
-    const l = ticketLayout("client_review", "team");
-    expect(l.focus).toBe("client");
-    expect(l.defaultTab).toBe("creative");
-    expect(l.clientView).toBe(true);
-    expect(l.action).toEqual({ kind: "move", to: "ready_for_launch", label: "Client approved" });
-    expect(l.secondary).toEqual([{ to: "client_revision", label: "Client asked for changes" }]);
-  });
-
-  it("client changes: the maker fixes what the client pinned, then sends it to review", () => {
-    const l = ticketLayout("client_revision", "maker");
-    expect(l.focus).toBe("fix");
-    expect(l.defaultTab).toBe("creative");
-    expect(l.action).toMatchObject({ kind: "panel", target: "ai-gate" });
-    expect(l.tabs).toContain("copy");
-  });
-
-  it("ready to launch opens the launcher; Mark launched and Back to client stay one tap away", () => {
-    const l = ticketLayout("ready_for_launch", "lead");
-    expect(l.focus).toBe("launch");
-    expect(l.defaultTab).toBe("launch");
-    expect(l.action).toMatchObject({ kind: "panel", tab: "launch", target: "launch" });
-    expect(l.secondary.map((m) => m.to)).toEqual(["client_review", "launched"]);
-    expect(l.tabs).toEqual(["brief", "creative", "copy", "launch", "activity"]);
-  });
-
-  it("launched has no action and shows the launch", () => {
-    const l = ticketLayout("launched", "team");
-    expect(l.action).toBeNull();
-    expect(l.defaultTab).toBe("launch");
-    expect(l.clientView).toBe(false);
-  });
-
-  it("every stage and role gives a default tab it shows, Brief and Activity always, and at most five tabs", () => {
-    for (const s of STAGES.map((x) => x.key))
-      for (const r of ROLES) {
-        const l = ticketLayout(s, r);
-        expect(l.tabs).toContain(l.defaultTab);
-        expect(l.tabs[0]).toBe("brief");
-        expect(l.tabs.at(-1)).toBe("activity");
-        expect(l.tabs.length).toBeLessThanOrEqual(5);
-        if (l.action?.kind === "panel") expect(l.tabs).toContain(l.action.tab);
+        const v = ticketView(s, r);
+        expect(v.bar.secondary.length).toBeLessThanOrEqual(2);
+        expect(Boolean(v.bar.primary) || Boolean(v.bar.wait) || s === "launched").toBe(true);
       }
   });
 
-  it("Copy and Launch tabs only once there is copy or a launch", () => {
-    expect(ticketLayout("in_production", "lead").tabs).not.toContain("copy");
-    expect(ticketLayout("internal_review", "lead").tabs).not.toContain("copy");
-    expect(ticketLayout("client_review", "lead").tabs).not.toContain("launch");
+  it("requested: the brief chat, and Start production", () => {
+    const v = ticketView("requested", "maker");
+    expect(v.sections).toEqual(["brief-chat"]);
+    expect(v.bar.primary).toEqual({ kind: "start-production", label: "Start production" });
+  });
+
+  it("in production: the copy or script, the sizes, the creative", () => {
+    expect(ticketView("in_production", "maker").sections).toEqual(["copy-draft", "ratios", "creative"]);
+    expect(ticketView("client_revision", "maker").sections[0]).toBe("client-notes");
+  });
+
+  it("creative review: View creative first, then Approve creative with Review creative; others see who has it", () => {
+    expect(ticketView("internal_review", "lead").sections).toEqual(["ai-summary", "story", "creative-strip"]);
+    expect(ticketView("internal_review", "lead").bar.primary?.kind).toBe("view-creative");
+    const after = ticketView("internal_review", "lead", { opened: true }).bar;
+    expect(after.primary?.kind).toBe("approve-creative");
+    expect(after.secondary.map((c) => c.kind)).toEqual(["review-creative"]);
+    for (const r of ["copywriter", "maker", "team"] as TicketRole[]) {
+      const b = ticketView("internal_review", r, { opened: true }).bar;
+      expect(b.primary).toBeNull();
+      expect(b.wait).toMatch(/Head of Creative/);
+    }
+  });
+
+  it("copy: automatic, nobody's button", () => {
+    const b = ticketView("copy", "lead").bar;
+    expect(b.primary).toBeNull();
+    expect(b.wait).toMatch(/copywriter/i);
+  });
+
+  it("copy review: View copy first, then Approve copy with Review copy", () => {
+    expect(ticketView("copy_review", "copywriter").bar.primary?.kind).toBe("view-copy");
+    const b = ticketView("copy_review", "copywriter", { opened: true }).bar;
+    expect(b.primary?.kind).toBe("approve-copy");
+    expect(b.secondary.map((c) => c.kind)).toEqual(["review-copy"]);
+    expect(ticketView("copy_review", "maker", { opened: true }).bar.primary).toBeNull();
+  });
+
+  it("with the client: summary, creative and copy on click; Approved by client or Send for revision", () => {
+    const v = ticketView("client_review", "team");
+    expect(v.sections).toEqual(["creative-strip", "copy-strip"]);
+    expect(v.bar.primary?.kind).toBe("client-approved");
+    expect(v.bar.secondary.map((c) => c.kind)).toEqual(["client-revision"]);
+  });
+
+  it("ready to launch: Make campaign live, then View in Ads Manager and Complete task once launched", () => {
+    expect(ticketView("ready_for_launch", "team").sections).toEqual(["creative-strip", "copy-strip", "launcher"]);
+    expect(ticketView("ready_for_launch", "team").bar.primary?.kind).toBe("make-live");
+    for (const status of ["none", "planning", "ready", "blocked", "failed"] as const) expect(ticketView("ready_for_launch", "team", { launch: { status, link: null, sandbox: false } }).bar.primary?.kind).toBe("make-live");
+    expect(ticketView("ready_for_launch", "team", { launch: { status: "launching", link: null, sandbox: false } }).bar.wait).toMatch(/Meta/);
+    const done = ticketView("ready_for_launch", "team", { launch: { status: "launched", link: "https://adsmanager.facebook.com/x", sandbox: false } }).bar;
+    expect(done.primary?.kind).toBe("ads-manager");
+    expect(done.secondary.map((c) => c.kind)).toEqual(["complete"]);
+  });
+
+  it("completed: read-only, with the Ads Manager link when there is one", () => {
+    const v = ticketView("launched", "lead", { launch: { status: "launched", link: "https://x", sandbox: false } });
+    expect(v.readOnly).toBe(true);
+    expect(v.bar.primary?.kind).toBe("ads-manager");
+    expect(ticketView("launched", "lead").bar.primary).toBeNull();
   });
 });
 
-describe("activeTab", () => {
-  const l = ticketLayout("in_production", "maker");
-  it("takes the address's tab when the stage has it", () => expect(activeTab(l, "brief")).toBe("brief"));
-  it("falls back to the stage's own for none or one this stage doesn't have", () => {
-    expect(activeTab(l, null)).toBe("creative");
-    expect(activeTab(l, "copy")).toBe("creative");
-    expect(activeTab(l, "nonsense")).toBe("creative");
+describe("productionBar: the main action moves with the work", () => {
+  it("no uploads: Upload creative", () => {
+    expect(kinds(productionBar(base))).toEqual(["upload"]);
+  });
+  it("uploading: says so, no button", () => {
+    const b = productionBar(p({ uploaded: 1, uploading: 2 }));
+    expect(b.primary).toBeNull();
+    expect(b.wait).toMatch(/Uploading/);
+  });
+  it("sizes missing: uploading them is the step", () => {
+    expect(kinds(productionBar(p({ uploaded: 1, missing: ["Missing 9:16 for D1"] })))).toEqual(["upload"]);
+  });
+  it("uploaded, everything in, not reviewed: Review my creative", () => {
+    expect(kinds(productionBar(p({ uploaded: 2 })))).toEqual(["ai-review"]);
+  });
+  it("review running: says so", () => {
+    expect(productionBar(p({ uploaded: 2, review: { status: "running", current: true } })).wait).toMatch(/reviewing/);
+  });
+  it("reviewed with comments: View comments, then Upload new version and Send for approval", () => {
+    expect(kinds(productionBar(p({ uploaded: 2, review: { status: "done", current: true }, openComments: 3 })))).toEqual(["view-comments", "upload-version", "send-approval"]);
+  });
+  it("reviewed clean: Send for approval", () => {
+    expect(kinds(productionBar(p({ uploaded: 2, review: { status: "done", current: true } })))).toEqual(["send-approval", "upload-version"]);
+  });
+  it("new version since the review: review it again, and it can still be sent", () => {
+    expect(kinds(productionBar(p({ uploaded: 2, review: { status: "done", current: false }, openComments: 1 })))).toEqual(["ai-review", "view-comments", "send-approval"]);
+  });
+  it("a failed review: run it again", () => {
+    expect(kinds(productionBar(p({ uploaded: 1, review: { status: "failed", current: false } })))).toEqual(["ai-review"]);
   });
 });
 
 describe("ticketRole", () => {
-  it("reads the role from what the person can do and whether it's theirs", () => {
-    expect(ticketRole({ review: true, approveCopy: true })).toBe("lead");
-    expect(ticketRole({ review: false, approveCopy: true }, true)).toBe("copywriter");
-    expect(ticketRole({ review: false, approveCopy: false }, true)).toBe("maker");
+  it("leads review, copywriters approve copy, the assignee makes", () => {
+    expect(ticketRole({ review: true })).toBe("lead");
+    expect(ticketRole({ approveCopy: true })).toBe("copywriter");
+    expect(ticketRole({}, true)).toBe("maker");
     expect(ticketRole({})).toBe("team");
+  });
+});
+
+describe("makingMinutes: time in production from the ticket's moves", () => {
+  it("adds up production and client changes, until now when it's still there", () => {
+    const at = (h: number) => new Date(Date.UTC(2026, 10, 10, h)).toISOString();
+    const events = [
+      { kind: "created", toStage: "requested" as Stage, at: at(0) },
+      { kind: "stage", toStage: "in_production" as Stage, at: at(1) },
+      { kind: "stage", toStage: "internal_review" as Stage, at: at(4) },
+      { kind: "stage", toStage: "client_revision" as Stage, at: at(10) },
+    ];
+    expect(makingMinutes(events, Date.parse(at(12)))).toBe(5 * 60);
+    expect(span(5 * 60)).toBe("5h");
+    expect(span(26 * 60 + 30)).toBe("1d 2h");
+    expect(span(45)).toBe("45m");
+  });
+  it("ignores deletes and restores", () => {
+    const events = [{ kind: "stage", toStage: "in_production" as Stage, at: "2026-11-10T00:00:00Z", data: { action: "restored" } }];
+    expect(makingMinutes(events, Date.parse("2026-11-10T05:00:00Z"))).toBe(0);
   });
 });
