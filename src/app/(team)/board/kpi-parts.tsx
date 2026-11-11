@@ -950,3 +950,32 @@ export function TiringCard({ r, copy = false }: { r: WatchRow; /** Shown as copy
     </article>
   );
 }
+
+/**
+ * An "Act on this first" row. A link to this same KPI page (a person's plate, the allotments behind, the tiring ads)
+ * opens its panel or scrolls to its section right away, in the browser: the address changes so back returns, with no
+ * reload of every number. Anything else (a ticket, a client) is a normal link.
+ */
+export function ActionLink({ href, className, children }: { href: string; className?: string; children: React.ReactNode }) {
+  const here = href.startsWith("/board?view=kpis");
+  if (!here) return <Link href={href} className={className}>{children}</Link>;
+  return (
+    <a
+      href={href}
+      className={className}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        e.preventDefault();
+        const u = new URL(href, window.location.origin);
+        const patch: Record<string, string | null> = {};
+        for (const k of ["person", "allot", "winners", "brief", "refresh"]) if (u.searchParams.has(k)) patch[k] = u.searchParams.get(k);
+        if (Object.keys(patch).length) pushParams(patch);
+        // The section it points at (an allotment filter lands on the allotments)
+        const target = u.hash.slice(1) || (u.searchParams.has("allot") ? "allotments" : "");
+        if (target) requestAnimationFrame(() => document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+      }}
+    >
+      {children}
+    </a>
+  );
+}

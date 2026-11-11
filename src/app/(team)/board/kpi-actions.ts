@@ -1,7 +1,8 @@
 "use server";
 
 import { after } from "next/server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+import { BOARD_KPIS_TAG } from "@/lib/board-kpis-cache";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { aiEnabled } from "@/lib/ai";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -21,6 +22,7 @@ export async function dismissAllotment(clientId: string, periodStart: string, re
     .from("allotment_dismissals")
     .upsert({ client_id: clientId, period_start: periodStart, reason: reason.trim().slice(0, 300), dismissed_by: me.id, dismissed_at: new Date().toISOString() });
   if (error) return { ok: false, error: "Couldn't save it. Try again." };
+  revalidateTag(BOARD_KPIS_TAG, "max");
   revalidatePath("/board");
   return { ok: true };
 }
@@ -31,6 +33,7 @@ export async function restoreAllotment(clientId: string, periodStart: string): P
   if (!isExecOrLead(me)) return { ok: false, error: "Only execs and leads can change this." };
   const { error } = await createAdminClient().from("allotment_dismissals").delete().eq("client_id", clientId).eq("period_start", periodStart);
   if (error) return { ok: false, error: "Couldn't save it. Try again." };
+  revalidateTag(BOARD_KPIS_TAG, "max");
   revalidatePath("/board");
   return { ok: true };
 }
@@ -44,6 +47,7 @@ export async function checkErrorsNow(): Promise<Result> {
   after(async () => {
     const { keepCreativeErrors } = await import("@/lib/creative-errors");
     await keepCreativeErrors(admin).catch((e) => console.error("[creative errors]", e instanceof Error ? e.message : e));
+    revalidateTag(BOARD_KPIS_TAG, "max");
     revalidatePath("/board");
   });
   return { ok: true };

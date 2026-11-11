@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { PERIODS, type CreativeKpis, type Headline, type Maker, type Period } from "@/lib/creative-kpis";
 import { LiveRefresh, Tween } from "./live-kpis";
-import { AllotmentList, CheckErrors, ClientRevisions, LateRow, PersonCard, PersonSheet, TiringCard, WinnerCard, WinnersSheet } from "./kpi-parts";
+import { ActionLink, AllotmentList, CheckErrors, ClientRevisions, LateRow, PersonCard, PersonSheet, TiringCard, WinnerCard, WinnersSheet } from "./kpi-parts";
 
 // The creative team's KPIs (execs and leads, a tab on the Board), built to read top to bottom: how it's going in six
 // numbers, the few things to act on, the team by role (tap anyone for everything on their plate, glance into what came
@@ -161,14 +161,14 @@ export function CreativeKpisView({ k, canDismiss }: { k: CreativeKpis; canDismis
             <ul className="grid md:grid-cols-2">
               {k.actions.map((a) => (
                 <li key={a.key}>
-                  <Link href={a.href} className="group flex h-full items-start gap-3 rounded-[16px] px-3 py-3 hover:bg-ink/[0.04]">
+                  <ActionLink href={a.href} className="group flex h-full items-start gap-3 rounded-[16px] px-3 py-3 hover:bg-ink/[0.04]">
                     <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${a.tone === "bad" ? "bg-bad" : "bg-warn"}`} />
                     <span className="min-w-0 flex-1">
                       <span className="block text-[14px] font-medium leading-snug">{a.title}</span>
                       <span className="block truncate text-[12px] text-muted">{a.detail}</span>
                     </span>
                     <span className="shrink-0 text-[12px] text-faint group-hover:text-fg">→</span>
-                  </Link>
+                  </ActionLink>
                 </li>
               ))}
             </ul>

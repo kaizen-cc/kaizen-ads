@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
@@ -17,20 +18,26 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
   const lead = isExecOrLead(me);
   // The creative team's KPIs: execs and leads only (anyone else asking for it gets the Board)
   if (view === "kpis" && lead) {
-    const { loadCreativeKpis } = await import("@/lib/creative-kpis");
-    const k = await loadCreativeKpis(supabase, period === "30" || period === "90" ? period : "cycle");
+    const { cachedCreativeKpis } = await import("@/lib/board-kpis-cache");
+    const k = await cachedCreativeKpis(period === "30" || period === "90" ? period : "cycle");
     return (
       <CreativeKpisView k={k} canDismiss={lead} />
     );
   }
   // The copy team's KPIs: execs and leads only
   if (view === "copy-kpis" && lead) {
-    const [{ loadCopyKpis }, { CopyKpisView }] = await Promise.all([import("@/lib/copy-kpis"), import("./copy-kpis")]);
-    const k = await loadCopyKpis(supabase, period === "30" || period === "90" ? period : "cycle");
+    const [{ cachedCopyKpis }, { CopyKpisView }] = await Promise.all([import("@/lib/board-kpis-cache"), import("./copy-kpis")]);
+    const k = await cachedCopyKpis(period === "30" || period === "90" ? period : "cycle");
     return (
       <CopyKpisView k={k} />
     );
   }
+  // Execs and leads: the KPI tabs worked out while they look at the Board, so switching to them is instant
+  if (lead)
+    after(async () => {
+      const { cachedCreativeKpis, cachedCopyKpis } = await import("@/lib/board-kpis-cache");
+      await Promise.all([cachedCreativeKpis("cycle"), cachedCopyKpis("cycle")]).catch(() => null);
+    });
   const asked = typeof t === "string" && /^\d+$/.test(t) ? Number(t) : null;
 
   // Two rounds, each all at once: what's on the board (and the Asana outlines), then what each ticket has made
