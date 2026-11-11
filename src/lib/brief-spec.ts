@@ -1,14 +1,17 @@
-// The brief as the maker reads it: precise on WHAT and WHY, and leaving the HOW to them (the lead video editor's
-// feedback, Nov 2026, agreed by the owner). Insight, angle, hook, key message, cleared proof, constraints, assets (each
-// with its status), the KPI and what success looks like, then a short "Your call" that hands style, pacing, music and
-// edit structure to the editor or designer. A beat-by-beat script only when the request asked for one; a carousel's
-// slides as messages, not designs. Anything only the client can tell us sits in "Confirm with client" until answered.
+// The brief as the maker reads it: one structure for every format, as simple as the lead video editor's own brief,
+// with the few things Kaizen adds (the insight and its source, who it's for, versions that test one variable, the copy,
+// the client's rules folded in, the allotment). Fixed by the brief: the message, the payoff, the hook lines, the musts
+// and the nevers. The maker's call: how it's made. Only "the build" changes by format: a video's beats, a carousel's
+// slides, a single image's frame. Anything only the client can tell us sits in "Confirm with client" (it never holds
+// the brief). Two pages at most: every list five items or fewer, every line short.
 //
 // The brief stays text everywhere it travels (tickets, Asana, the PDF), written with fixed headings, so this module
-// renders a spec to that text and reads it back. Pure: safe in the browser and on the server, tested in
-// tests/brief-spec.test.ts.
+// renders a spec to that text and reads it back. Older briefs (Insight, Hook, Do, Don't, Constraints, KPI...) still
+// read, and render with their sections. Pure: safe in the browser and on the server, tested in tests/brief-spec.test.ts
+// and tests/brief-review.test.ts.
 
 import { PAYOFF_RULE } from "./brief-payoff";
+import { briefFileStem } from "./creative-drive-paths";
 
 export type AssetStatus = "have" | "need" | "shoot" | "missing";
 export type SpecAsset = { item: string; status: AssetStatus };
@@ -16,43 +19,298 @@ export type SpecAsset = { item: string; status: AssetStatus };
 export type ClientFact = { question: string; answer: string; source: string };
 
 export type BriefSpec = {
-  /** The specific, true thing the ad says or shows */
+  /** Why it works: the specific, true thing the ad says or shows */
   insight: string;
   /** Where the insight comes from (Brand Bible, a call, client memory), when it's from the context */
   insightSource: string;
+  /** Who it's for, in one line (targeting is the media buyer's) */
+  who: string;
+  /** The funnel stage ("Evergreen TOF", "Retargeting") */
+  stage: string;
+  /** Older briefs: the one thing to take away */
   keyMessage: string;
-  /** The opening line or visual idea, not a shot list */
+  /** Older briefs, or a hook that isn't V1's line */
   hook: string;
-  /** Only claims the client cleared */
+  /** Older briefs: cleared claims */
   proof: string[];
-  /** A carousel's slides, as the message each one carries */
+  /** Video: about how long ("~30s") */
+  length: string;
+  /** Video: 4 to 6 beats, one line each (beatOf / beatLine) */
+  beats: string[];
+  /** Video: music and voiceover in one line */
+  audio: string;
+  /** Carousel: one line per slide (slideOf / slideLine); older briefs, the message each slide carries */
   slides: string[];
-  /** Formats, legal and consent, safe zones, platform rules */
+  /** Single image: the frame's lines ("Headline: ...", frameOf / frameLines) */
+  frame: string[];
+  /** What changes per version (the hook or the headline), V1 first */
+  versions: string[];
+  /** Older briefs: formats, legal, safe zones */
   constraints: string[];
+  /** Must (older briefs: Do) */
   dos: string[];
+  /** Never (older briefs: Don't) */
   donts: string[];
   assets: SpecAsset[];
+  /** The ad's copy, one labelled line each ("Primary: ...", copyOf / copyLines) */
+  copy: string[];
   kpi: string;
   success: string;
-  /** What's left to the maker: style, pacing, music, edit structure */
+  /** What's left to the maker: edit style, cut points, transitions, which clips, music within the rules */
   yourCall: string;
   /** Only when the request asked for a script */
   script: string;
   confirm: ClientFact[];
+  /** One line: specs, safe zone and file names (the app writes it from the request when it's empty) */
+  exportLine: string;
 };
 
-export const emptySpec = (): BriefSpec => ({ insight: "", insightSource: "", keyMessage: "", hook: "", proof: [], slides: [], constraints: [], dos: [], donts: [], assets: [], kpi: "", success: "", yourCall: "", script: "", confirm: [] });
+export const emptySpec = (): BriefSpec => ({
+  insight: "",
+  insightSource: "",
+  who: "",
+  stage: "",
+  keyMessage: "",
+  hook: "",
+  proof: [],
+  length: "",
+  beats: [],
+  audio: "",
+  slides: [],
+  frame: [],
+  versions: [],
+  constraints: [],
+  dos: [],
+  donts: [],
+  assets: [],
+  copy: [],
+  kpi: "",
+  success: "",
+  yourCall: "",
+  script: "",
+  confirm: [],
+  exportLine: "",
+});
 
 /** What the maker decides, said the same way on every brief unless the writer narrows it */
-export const YOUR_CALL_DEFAULT = "Style, pacing, music, edit structure and the exact beats are yours. Hit the insight, the hook and the constraints; everything else is your craft.";
+export const YOUR_CALL_DEFAULT = "Edit style, cut points, transitions, layout, which clips or photos within the folders, and music within the rules are yours. Keep the message, the payoff, the hook lines and the musts.";
 
 export const ASSET_WORD: Record<AssetStatus, string> = { have: "Have", need: "Need", shoot: "Client to shoot", missing: "Missing" };
 
 /** The headings the brief is written with, in order (the text a maker reads, and what's parsed back) */
-export const SPEC_HEADINGS = ["Insight", "Key message", "Hook", "Proof", "Slides", "Constraints", "Do", "Don't", "Assets", "KPI", "Success looks like", "Your call", "Script", "Confirm with client"] as const;
+export const SPEC_HEADINGS = [
+  "Stage",
+  "Why it works",
+  "Who it's for",
+  "Key message",
+  "Hook",
+  "Proof",
+  "Length",
+  "Beats",
+  "Audio",
+  "Slides",
+  "Frame",
+  "Versions",
+  "Constraints",
+  "Must",
+  "Never",
+  "Your call",
+  "Assets",
+  "Copy",
+  "KPI",
+  "Success looks like",
+  "Script",
+  "Confirm with client",
+  "Export",
+] as const;
+type Heading = (typeof SPEC_HEADINGS)[number];
+
+/** The caps every writer's brief is held to (two pages: every list five or fewer) */
+export const LIMITS = { must: 5, never: 5, beats: 6, slides: 10, assets: 5, primary: 2, headlines: 2, confirm: 5, versions: 10 } as const;
 
 const one = (s: string) => s.replace(/\s*\u2014\s*/g, ", ").replace(/\s+/g, " ").trim();
 const list = (xs: string[]) => xs.map(one).filter(Boolean);
+
+// ─── The build: beats, slides, the frame; and the versions and the copy ─────────────────────────────────
+
+export type Beat = { time: string; name: string; onScreen: string; text: string; says: string; source: string };
+export type SlideRow = { job: string; headline: string; shows: string };
+export type Frame = { headline: string; subline: string; shows: string; readsFirst: string; cta: string };
+export type CopySet = { primary: string[]; headlines: string[]; cta: string };
+
+const TIME = /^~?\d{1,2}(?::\d{2})?(?:\.\d)?\s?s?\s*[-–]\s*\d{1,2}(?::\d{2})?(?:\.\d)?\s?s?$/i;
+const TIME_LEAD = /^(~?\d{1,2}(?::\d{2})?(?:\.\d)?\s?s?\s*[-–]\s*\d{1,2}(?::\d{2})?(?:\.\d)?\s?s?)\s*[:.|-]?\s+(.*)$/i;
+const SEP = /\s+\|\s+/;
+const sourced = (s: string) => /^(.*?)\s*\(Source:\s*([^)]*)\)\s*$/i.exec(s);
+
+/** A beat line read back: "0:00-0:05 | Hook | On screen: ... | Says: "..." (Source: interview 0:00-0:04)" */
+export function beatOf(line: string): Beat {
+  const b: Beat = { time: "", name: "", onScreen: "", text: "", says: "", source: "" };
+  const raw = one(line.replace(/^[-•*]\s+/, "").replace(/^\d+[.)]\s+(?=\S)/, ""));
+  let parts = raw.split(SEP).filter(Boolean);
+  // A line with no separators: "0-3s: the opening line" keeps its time, the rest is what happens
+  if (parts.length === 1) {
+    const m = TIME_LEAD.exec(raw);
+    if (m) {
+      b.time = m[1].replace(/\s+/g, "");
+      b.onScreen = m[2].trim();
+      parts = [];
+    }
+  }
+  for (const p of parts) {
+    const m = /^(On screen|Shows|Visual|On-screen text|Text|Says|Said|Line|VO|Source)\s*:\s*(.*)$/i.exec(p);
+    if (m) {
+      const k = m[1].toLowerCase();
+      const v = m[2].trim();
+      if (k === "on screen" || k === "shows" || k === "visual") b.onScreen = [b.onScreen, v].filter(Boolean).join(" ");
+      else if (k === "text" || k === "on-screen text") b.text = v;
+      else if (k === "source") b.source = v;
+      else b.says = v;
+    } else if (!b.time && TIME.test(p)) b.time = p.replace(/\s+/g, "");
+    else if (!b.name && p.split(/\s+/).length <= 4) b.name = p;
+    else b.onScreen = [b.onScreen, p].filter(Boolean).join(" ");
+  }
+  const s = sourced(b.says);
+  if (s) {
+    b.says = s[1].trim();
+    b.source = b.source || s[2].trim();
+  }
+  return b;
+}
+
+/** A beat as its line (the inverse of beatOf) */
+export function beatLine(b: Beat) {
+  const says = b.says ? `Says: ${one(b.says)}${b.source ? ` (Source: ${one(b.source)})` : ""}` : b.source ? `Source: ${one(b.source)}` : "";
+  return [one(b.time), one(b.name), b.onScreen && `On screen: ${one(b.onScreen)}`, b.text && `Text: ${one(b.text)}`, says].filter(Boolean).join(" | ");
+}
+
+const SLIDE_JOB = /^(hook|problem|proof|payoff|reveal|benefit|feature|offer|how it works|story|step \d+|cta|close|end card|the turn|context|myth|truth|tip \d*)$/i;
+
+/** A slide line read back: "Hook | Headline: ... | Shows: ..."; an older slide (one plain line) is its headline */
+export function slideOf(line: string): SlideRow {
+  const s: SlideRow = { job: "", headline: "", shows: "" };
+  const parts = one(line.replace(/^[-•*]\s+/, "").replace(/^\d+[.)]\s+/, "")).split(SEP).filter(Boolean);
+  const labelled = parts.some((p) => /^(Headline|Says|Shows|Visual|Job)\s*:/i.test(p));
+  for (const p of parts) {
+    const m = /^(Headline|Says|Shows|Visual|Job)\s*:\s*(.*)$/i.exec(p);
+    if (m) {
+      const k = m[1].toLowerCase();
+      if (k === "job") s.job = m[2].trim();
+      else if (k === "shows" || k === "visual") s.shows = [s.shows, m[2].trim()].filter(Boolean).join(" ");
+      else s.headline = m[2].trim();
+    } else if (!s.job && (labelled || parts.length > 1) && (SLIDE_JOB.test(p) || p.split(/\s+/).length <= 3)) s.job = p;
+    else if (!s.headline) s.headline = p;
+    else s.shows = [s.shows, p].filter(Boolean).join(" ");
+  }
+  return s;
+}
+
+export function slideLine(s: SlideRow) {
+  if (!s.job && !s.shows) return one(s.headline);
+  return [one(s.job), s.headline && `Headline: ${one(s.headline)}`, s.shows && `Shows: ${one(s.shows)}`].filter(Boolean).join(" | ");
+}
+
+/** The frame's lines read back */
+export function frameOf(lines: string[]): Frame {
+  const f: Frame = { headline: "", subline: "", shows: "", readsFirst: "", cta: "" };
+  for (const raw of lines) {
+    const t = one(raw.replace(/^[-•*]\s+/, ""));
+    const m = /^(Headline|Subline|Shows|In the frame|Visual|Reads first|Hierarchy|CTA|Button)\s*:\s*(.*)$/i.exec(t);
+    if (!m) {
+      f.shows = [f.shows, t].filter(Boolean).join(" ");
+      continue;
+    }
+    const k = m[1].toLowerCase();
+    const v = m[2].trim();
+    if (k === "headline") f.headline = v;
+    else if (k === "subline") f.subline = v;
+    else if (k === "reads first" || k === "hierarchy") f.readsFirst = v;
+    else if (k === "cta" || k === "button") f.cta = v;
+    else f.shows = [f.shows, v].filter(Boolean).join(" ");
+  }
+  return f;
+}
+
+export function frameLines(f: Frame) {
+  return [f.headline && `Headline: ${one(f.headline)}`, f.subline && `Subline: ${one(f.subline)}`, f.shows && `Shows: ${one(f.shows)}`, f.readsFirst && `Reads first: ${one(f.readsFirst)}`, f.cta && `CTA: ${one(f.cta)}`].filter((x): x is string => Boolean(x));
+}
+
+/** The copy's lines read back, capped (primary text up to 2, headlines up to 2, one CTA) */
+export function copyOf(lines: string[]): CopySet {
+  const c: CopySet = { primary: [], headlines: [], cta: "" };
+  for (const raw of lines) {
+    const t = one(raw.replace(/^[-•*]\s+/, ""));
+    const m = /^(Primary(?: text)?|Headlines?|CTA|Call to action)\s*:\s*(.*)$/i.exec(t);
+    const v = (m ? m[2] : t).trim();
+    if (!v) continue;
+    const k = m?.[1].toLowerCase() ?? "primary";
+    if (k.startsWith("headline")) c.headlines.push(v);
+    else if (k === "cta" || k === "call to action") c.cta = c.cta || v;
+    else c.primary.push(v);
+  }
+  return { primary: c.primary.slice(0, LIMITS.primary), headlines: c.headlines.slice(0, LIMITS.headlines), cta: c.cta };
+}
+
+export function copyLines(c: CopySet) {
+  return [...c.primary.map((x) => `Primary: ${one(x)}`), ...c.headlines.map((x) => `Headline: ${one(x)}`), ...(c.cta ? [`CTA: ${one(c.cta)}`] : [])];
+}
+
+/** A version line without its "V2:" */
+const versionText = (s: string) => one(s.replace(/^[-•*]\s+/, "").replace(/^V\d{1,2}\s*[:.)\-–]\s*/i, ""));
+
+/** The hook as the brief has it: its Hook line, or V1's line */
+export const hookOf = (sp: Pick<BriefSpec, "hook"> & { versions?: string[] }) => sp.hook.trim() || versionText(sp.versions?.[0] ?? "");
+
+/** The brief's build as rows: the beats, the slides and the frame, read from their lines */
+export const beatRows = (sp: Pick<BriefSpec, "beats">) => sp.beats.map(beatOf).filter((b) => b.name || b.onScreen || b.says || b.text);
+export const slideRows = (sp: Pick<BriefSpec, "slides">) => sp.slides.map(slideOf).filter((s) => s.headline || s.shows || s.job);
+export const frameOfSpec = (sp: Pick<BriefSpec, "frame">) => frameOf(sp.frame);
+
+/** A beat's time in seconds ("0:05-0:09", "3-6s", "0:27–0:30"), or null when it doesn't read */
+export function beatSpan(time: string): [number, number] | null {
+  const m = /^~?(\d{1,2}(?::\d{2})?(?:\.\d)?)\s?s?\s*[-–]\s*(\d{1,2}(?::\d{2})?(?:\.\d)?)\s?s?$/i.exec(time.trim());
+  if (!m) return null;
+  const sec = (x: string) => (x.includes(":") ? Number(x.split(":")[0]) * 60 + Number(x.split(":")[1]) : Number(x));
+  const a = sec(m[1]);
+  const b = sec(m[2]);
+  return Number.isFinite(a) && Number.isFinite(b) && b > a ? [a, b] : null;
+}
+
+/** The pacing bar: each beat's share of the video (equal shares when the times don't read), and the ticks every 5s */
+export function pacing(beats: Beat[]) {
+  const spans = beats.map((b) => beatSpan(b.time));
+  const known = spans.every(Boolean) && spans.length > 0;
+  const total = known ? Math.max(...spans.map((s) => s![1])) : beats.length;
+  const parts = beats.map((b, i) => ({ name: b.name || `Beat ${i + 1}`, share: known ? (spans[i]![1] - spans[i]![0]) / total : 1 / Math.max(1, beats.length) }));
+  const ticks = known ? Array.from({ length: Math.floor(total / 5) + 1 }, (_, i) => i * 5).filter((s) => s <= total) : [];
+  return { parts, total: known ? total : null, ticks };
+}
+
+// ─── The export line ────────────────────────────────────────────────────────
+
+export type BuildFormat = "image" | "video" | "carousel";
+const PX: Record<string, string> = { "4x5": "1080x1350 (4:5)", "9x16": "1080x1920 (9:16)" };
+
+/**
+ * The one export line, from the request: the specs, the 9:16 safe zone and the file names. Kaizen makes 4:5 and 9:16
+ * only; a carousel's slides are 1080x1350; a video is MP4 H.264 with captions burned in.
+ */
+export function exportLineFor(formats: BuildFormat[], sizes: string[], client: string, title: string) {
+  const keys = sizes.map((z) => z.replace(":", "x")).filter((z) => z === "4x5" || z === "9x16");
+  const use = keys.length ? keys : ["4x5", "9x16"];
+  const stem = briefFileStem(client, title);
+  const parts: string[] = [];
+  if (formats.includes("video")) parts.push(`Video: MP4 H.264, ${use.map((k) => PX[k]).join(" and ")}, captions burned in`);
+  if (formats.includes("image")) parts.push(`Image: ${use.map((k) => PX[k]).join(" and ")}`);
+  if (formats.includes("carousel")) parts.push("Carousel slides: 1080x1350 (4:5)");
+  if (!parts.length) parts.push(use.map((k) => PX[k]).join(" and "));
+  if (use.includes("9x16") && !(formats.length === 1 && formats[0] === "carousel")) parts.push("9:16 safe zone: nothing in the top 270 px or bottom 670 px");
+  const names = (formats.length === 1 && formats[0] === "carousel" ? ["4x5"] : use).map((k) => `${stem}_V1_${k}`);
+  parts.push(`Files: ${names.join(", ")}${formats.includes("carousel") ? " (slides add _Slide01)" : ""}`);
+  return parts.join(" · ");
+}
+
+// ─── Text ────────────────────────────────────────────────────────
 
 /** The confirm line: "Which seat, at which venue, and why? Answer: ... (Source: ...)" */
 export function factLine(f: ClientFact) {
@@ -71,33 +329,50 @@ export function parseFactLine(line: string): ClientFact {
 /** The spec as the brief's text, its sections in order, empty ones left out */
 export function renderSpec(sp: BriefSpec): string {
   const blocks: string[] = [];
-  const line = (h: string, v: string) => v.trim() && blocks.push(`${h}: ${one(v)}`);
-  const bullets = (h: string, xs: string[]) => list(xs).length && blocks.push(`${h}:\n${list(xs).map((x) => `- ${x}`).join("\n")}`);
-  line("Insight", sp.insight.trim() ? `${one(sp.insight)}${sp.insightSource.trim() ? ` (Source: ${one(sp.insightSource)})` : ""}` : "");
+  const line = (h: Heading, v: string) => v.trim() && blocks.push(`${h}: ${one(v)}`);
+  const bullets = (h: Heading, xs: string[]) => list(xs).length && blocks.push(`${h}:\n${list(xs).map((x) => `- ${x}`).join("\n")}`);
+  line("Stage", sp.stage);
+  line("Why it works", sp.insight.trim() ? `${one(sp.insight)}${sp.insightSource.trim() ? ` (Source: ${one(sp.insightSource)})` : ""}` : "");
+  line("Who it's for", sp.who);
   line("Key message", sp.keyMessage);
   line("Hook", sp.hook);
   bullets("Proof", sp.proof);
+  line("Length", sp.length);
+  bullets("Beats", sp.beats);
+  line("Audio", sp.audio);
   if (list(sp.slides).length) blocks.push(`Slides:\n${list(sp.slides).map((x, i) => `${i + 1}. ${x}`).join("\n")}`);
+  bullets("Frame", sp.frame);
+  const versions = sp.versions.map(versionText).filter(Boolean);
+  if (versions.length) blocks.push(`Versions:\n${versions.map((x, i) => `- V${i + 1}: ${x}`).join("\n")}`);
   bullets("Constraints", sp.constraints);
-  bullets("Do", sp.dos);
-  bullets("Don't", sp.donts);
+  bullets("Must", sp.dos);
+  bullets("Never", sp.donts);
+  line("Your call", sp.yourCall);
   const assets = sp.assets.filter((a) => one(a.item));
   if (assets.length) blocks.push(`Assets:\n${assets.map((a) => `- ${ASSET_WORD[a.status]}: ${one(a.item)}`).join("\n")}`);
+  bullets("Copy", sp.copy);
   line("KPI", sp.kpi);
   line("Success looks like", sp.success);
-  line("Your call", sp.yourCall);
   if (sp.script.trim()) blocks.push(`Script:\n${sp.script.trim()}`);
   const facts = sp.confirm.filter((f) => one(f.question));
   if (facts.length) blocks.push(`Confirm with client:\n${facts.map((f) => `- ${factLine(f)}`).join("\n")}`);
+  line("Export", sp.exportLine);
   return blocks.join("\n\n");
 }
 
-const HEAD_KEY: Record<string, (typeof SPEC_HEADINGS)[number]> = Object.fromEntries(SPEC_HEADINGS.map((h) => [h.toLowerCase(), h]));
+const HEAD_KEY: Record<string, Heading> = Object.fromEntries(SPEC_HEADINGS.map((h) => [h.toLowerCase(), h]));
 // Older spellings read the same way
-HEAD_KEY["dos"] = "Do";
-HEAD_KEY["don'ts"] = "Don't";
-HEAD_KEY["donts"] = "Don't";
+HEAD_KEY["insight"] = "Why it works";
+HEAD_KEY["who it is for"] = "Who it's for";
+HEAD_KEY["funnel stage"] = "Stage";
+HEAD_KEY["do"] = "Must";
+HEAD_KEY["dos"] = "Must";
+HEAD_KEY["don't"] = "Never";
+HEAD_KEY["don'ts"] = "Never";
+HEAD_KEY["donts"] = "Never";
 HEAD_KEY["success"] = "Success looks like";
+HEAD_KEY["the frame"] = "Frame";
+HEAD_KEY["the beats"] = "Beats";
 
 const assetOf = (raw: string): SpecAsset => {
   const t = raw.replace(/^[-•*]\s+/, "").trim();
@@ -109,17 +384,19 @@ const assetOf = (raw: string): SpecAsset => {
 
 /**
  * The brief's text read back into its parts: overview (the lines before the first heading, and anything under a
- * heading this doesn't know) and the spec. structured: it had at least the insight, hook or "Your call" heading.
+ * heading this doesn't know) and the spec. structured: it had at least two headings, one of them the insight, the
+ * hook, the versions, the beats or "Your call".
  */
 export function parseBrief(text: string): { overview: string; spec: BriefSpec; structured: boolean } {
   const sp = emptySpec();
   const rest: string[] = [];
-  let head: (typeof SPEC_HEADINGS)[number] | null = null;
+  let head: Heading | null = null;
   const script: string[] = [];
   let seen = 0;
   for (const raw of text.replace(/\r\n/g, "\n").split("\n")) {
     const t = raw.trim();
-    const h = /^([A-Z][A-Za-z' ]{1,30}):\s*(.*)$/.exec(t);
+    // A heading starts its line: an indented "Hook:" or "Copy:" belongs to an older brief's concept list
+    const h = /^\s/.test(raw) ? null : /^([A-Z][A-Za-z' ]{1,30}):\s*(.*)$/.exec(t);
     const key = h ? HEAD_KEY[h[1].toLowerCase()] : undefined;
     if (h && key) {
       head = key;
@@ -143,29 +420,45 @@ export function parseBrief(text: string): { overview: string; spec: BriefSpec; s
       rest.push(raw.replace(/\s+$/, ""));
     }
   }
-  function take(key: (typeof SPEC_HEADINGS)[number], v: string, inline: boolean) {
+  function take(key: Heading, v: string, inline: boolean) {
     const item = v.replace(/^[-•*]\s+/, "").replace(/^\d+[.)]\s+/, "").trim();
+    const join = (was: string) => [was, v].filter(Boolean).join(" ");
     switch (key) {
-      case "Insight": {
-        const m = /^(.*?)\s*\(Source:\s*([^)]*)\)\s*$/.exec(v);
+      case "Why it works": {
+        const m = sourced(v);
         sp.insight = [sp.insight, m ? m[1] : v].filter(Boolean).join(" ");
         if (m) sp.insightSource = m[2].trim();
         return;
       }
+      case "Who it's for":
+        sp.who = join(sp.who);
+        return;
+      case "Stage":
+        sp.stage = join(sp.stage);
+        return;
       case "Key message":
-        sp.keyMessage = [sp.keyMessage, v].filter(Boolean).join(" ");
+        sp.keyMessage = join(sp.keyMessage);
         return;
       case "Hook":
-        sp.hook = [sp.hook, v].filter(Boolean).join(" ");
+        sp.hook = join(sp.hook);
+        return;
+      case "Length":
+        sp.length = join(sp.length);
+        return;
+      case "Audio":
+        sp.audio = join(sp.audio);
         return;
       case "KPI":
-        sp.kpi = [sp.kpi, v].filter(Boolean).join(" ");
+        sp.kpi = join(sp.kpi);
         return;
       case "Success looks like":
-        sp.success = [sp.success, v].filter(Boolean).join(" ");
+        sp.success = join(sp.success);
         return;
       case "Your call":
-        sp.yourCall = [sp.yourCall, v].filter(Boolean).join(" ");
+        sp.yourCall = join(sp.yourCall);
+        return;
+      case "Export":
+        sp.exportLine = join(sp.exportLine);
         return;
       case "Script":
         script.push(inline ? v.trim() : v);
@@ -173,20 +466,32 @@ export function parseBrief(text: string): { overview: string; spec: BriefSpec; s
       case "Proof":
         sp.proof.push(item);
         return;
+      case "Beats":
+        sp.beats.push(v.replace(/^[-•*]\s+/, "").trim());
+        return;
       case "Slides":
         sp.slides.push(item);
+        return;
+      case "Frame":
+        sp.frame.push(item);
+        return;
+      case "Versions":
+        sp.versions.push(versionText(v));
         return;
       case "Constraints":
         sp.constraints.push(item);
         return;
-      case "Do":
+      case "Must":
         sp.dos.push(item);
         return;
-      case "Don't":
+      case "Never":
         sp.donts.push(item);
         return;
       case "Assets":
         sp.assets.push(assetOf(v));
+        return;
+      case "Copy":
+        sp.copy.push(item);
         return;
       case "Confirm with client":
         sp.confirm.push(parseFactLine(v));
@@ -195,29 +500,39 @@ export function parseBrief(text: string): { overview: string; spec: BriefSpec; s
   }
   sp.script = script.join("\n").trim();
   const overview = rest.join("\n").replace(/\n{3,}/g, "\n\n").trim();
-  const structured = Boolean(sp.insight || sp.hook || sp.yourCall) && seen >= 2;
+  const structured = Boolean(sp.insight || sp.hook || sp.yourCall || sp.versions.length || sp.beats.length) && seen >= 2;
   return { overview, spec: sp, structured };
 }
 
-/** A writer's spec made safe to keep: trimmed, capped, no em dashes, "Your call" always said */
+/** A writer's spec made safe to keep: trimmed, capped (two pages), no em dashes, "Your call" always said */
 export function cleanSpec(raw: Partial<BriefSpec> | null | undefined): BriefSpec {
   const t = (s: unknown, max = 600) => (typeof s === "string" ? one(s).slice(0, max) : "");
   const xs = (v: unknown, n = 8, max = 300) => (Array.isArray(v) ? v.map((x) => t(x, max)).filter(Boolean).slice(0, n) : []);
   const statuses = ["have", "need", "shoot", "missing"];
+  const beats = xs(raw?.beats, LIMITS.beats, 500).map((x) => beatLine(beatOf(x))).filter(Boolean);
+  const slides = xs(raw?.slides, LIMITS.slides, 300).map((x) => slideLine(slideOf(x))).filter(Boolean);
   return {
     insight: t(raw?.insight, 700),
     insightSource: t(raw?.insightSource, 160),
+    who: t(raw?.who, 240),
+    stage: t(raw?.stage, 60),
     keyMessage: t(raw?.keyMessage, 300),
     hook: t(raw?.hook, 300),
     proof: xs(raw?.proof, 6),
-    slides: xs(raw?.slides, 10, 240),
+    length: t(raw?.length, 40),
+    beats,
+    audio: t(raw?.audio, 240),
+    slides,
+    frame: frameLines(frameOf(xs(raw?.frame, 8, 300))),
+    versions: xs(raw?.versions, LIMITS.versions, 240).map(versionText).filter(Boolean),
     constraints: xs(raw?.constraints, 10),
-    dos: xs(raw?.dos, 8, 200),
-    donts: xs(raw?.donts, 8, 200),
+    dos: xs(raw?.dos, LIMITS.must, 200),
+    donts: xs(raw?.donts, LIMITS.never, 200),
     assets: (Array.isArray(raw?.assets) ? raw.assets : [])
       .map((a) => ({ item: t(a?.item, 460), status: (statuses.includes(a?.status as string) ? a.status : "need") as AssetStatus }))
       .filter((a) => a.item)
-      .slice(0, 10),
+      .slice(0, LIMITS.assets),
+    copy: copyLines(copyOf(xs(raw?.copy, 10, 600))),
     kpi: t(raw?.kpi, 200),
     success: t(raw?.success, 300),
     yourCall: t(raw?.yourCall, 400) || YOUR_CALL_DEFAULT,
@@ -225,7 +540,8 @@ export function cleanSpec(raw: Partial<BriefSpec> | null | undefined): BriefSpec
     confirm: (Array.isArray(raw?.confirm) ? raw.confirm : [])
       .map((c) => ({ question: t(c?.question, 300), answer: t(c?.answer, 600), source: t(c?.source, 120) }))
       .filter((c) => c.question)
-      .slice(0, 6),
+      .slice(0, LIMITS.confirm),
+    exportLine: t(raw?.exportLine, 400),
   };
 }
 
@@ -261,18 +577,24 @@ export function structureBrief(brief: string, title: string, addFacts?: (sp: Bri
 }
 
 /** How the writers write the brief: the same words for every writer (roles, never names; no em dashes) */
-export const SPEC_RULE = `THE BRIEF'S SHAPE (precise on WHAT and WHY; the HOW belongs to the editor or designer). Write draft.brief as plain text: first two to four lines with the idea in words a maker gets in ten seconds, then these sections, each starting on its own line with the heading exactly as written here, a blank line between sections, list items as "- " lines. Leave a section out when there's nothing to say.
-Insight: the specific, true thing the ad says or shows (the reveal, the tip, the fact). Say exactly which one, then where it comes from in the context in brackets, e.g. "(Source: Brand Bible)", "(Source: call Oct 12)"; no source when it isn't in the context.
-Key message: the one thing people should take away.
-Hook: the opening line or visual idea, not a shot list.
-Proof: (list) only claims the client cleared (in the Brand Bible, client memory or a document they sent). Nothing else.
-Slides: (numbered list, carousels only) the message each slide carries, not how it looks.
-Constraints: (list) sizes 4:5 and 9:16 only (never 1:1, never one size alone unless the request says so), safe zones, legal and consent (people on camera, testimonials, music rights), platform limits. A real person's face or voice altered or generated (an AI avatar of a customer, a cloned or pitch-shifted voice, a face swap) gets a "Disclaimer: <the on-screen line>" item here and "Get the client's written consent for <who>'s likeness/voice" under Confirm with client. Every line of the brief must agree with every other: no logo rule against a hook that shows the logo, no "evergreen" rule against event footage, no size rule against the file names.
-Do: (list) and Don't: (list) the client's rules that matter here, each short.
-Assets: (list) each item starting with its status: "- Have: <the file or folder exactly as assets_on_drive names it> (Drive: <folder>), <what it's for in this concept>", "- Need: <asset>", "- Client to shoot: <asset>", "- Missing: <a link that doesn't open>". Prefer a specific file over a whole folder when the file list shows it. List a file only when what we know about it (its name, folder, date) clearly fits this angle; when nothing on Drive clearly fits, write "- Need: <what to look for or get>" instead of pointing at a clip that may be unrelated. Don't write Drive links yourself: the app adds each file's link from its name. Never write a placeholder like MISSING or TBD in place of a link.
-KPI: the metric this is judged on (from the client's KPIs).
-Success looks like: what a win looks like in numbers or behaviour.
-Your call: one or two lines handing style, pacing, music, edit structure and exact beats to the maker. Never direct those yourself.
-Script: only when the request explicitly asked for a script or voiceover text.
-Confirm with client: (list) every fact the concept depends on that only the client knows (which seat or spot, the tip, the stat, the offer's terms, a date) and that the context doesn't answer, as the question to ask them, short and specific ("- Which seat, at which venue, and why?"). When the context does answer it, use it and write "- <question> Answer: <answer> (Source: <where>)". NEVER invent such a fact: an ad that promises a reveal without the reveal is not ready, and saying so is the right answer.
+export const SPEC_RULE = `THE BRIEF'S SHAPE. One structure for every format; only The build changes. The brief fixes the message, the payoff, the hook lines, the musts and the nevers; how it's made is the maker's call. Not so structured that the creative team is boxed in, not so loose that they run wild. It fits on two pages: every list 5 items or fewer, every line one short sentence, nothing said twice.
+Write draft.brief as plain text: first ONE line with the idea and its concrete payoff (what the viewer learns or gets, e.g. "The owner's one-word answer, Convenience, is the detail: a real local team and more than one way to buy"), then these sections, each starting on its own line with the heading exactly as written here, a blank line between sections, list items as "- " lines. Leave a section out when there's nothing to say.
+Stage: the funnel stage in a few words ("Evergreen TOF", "Retargeting BOF").
+Why it works: the insight in one or two sentences, the specific, true thing the ad says or shows, then where it comes from in the context in brackets, e.g. "(Source: Brand Bible)", "(Source: call Oct 12)"; no source when it isn't in the context.
+Who it's for: one line, the avatar and what they want. Targeting is the media buyer's call: no ages, places or interest lists.
+THE BUILD, for the request's format (only the one that applies; a request with several formats gets each):
+Length: (video) about how long, e.g. "~30s".
+Beats: (video, 4 to 6) one line each: "- <time> | <name> | On screen: <what we see, a few words> | Says: "<the exact spoken line>" (Source: <file> <timestamp>)", or "| Text: "<on-screen text>"" for words put on screen. Quote a line from footage only when assets_on_drive or a transcript gives it, with its file and timestamp; otherwise write the line to record or to put on screen. The first beat is the hook, the last the end card. A beat says what happens, never how to cut it.
+Audio: (video) music and voiceover direction in one line.
+Slides: (carousel) one numbered line per slide, read top to bottom as a flow: "1. <job: Hook, Proof, Payoff or CTA> | Headline: <the words on the slide> | Shows: <what it shows>".
+Frame: (single image) "- Headline: <the words>", "- Subline: <the words>", "- Shows: <what's in the frame>", "- Reads first: <the order the eye takes, e.g. headline, then the product, then the button>", "- CTA: <the button text>" (only when it's on the image).
+Versions: one line per version with only what changes (the hook or the headline): "- V1: <the line> (net new)", "- V2: <the line>". V1 is net new; every other version changes that one variable and nothing else.
+Must: (up to 5) what has to be there: the logo moment, captions, the cleared claims only, the client's Brand Bible rules that matter here folded in. A real person's face or voice altered or generated (an AI avatar of a customer, a cloned or pitch-shifted voice, a face swap) gets a "Disclaimer: <the on-screen line>" item here and "Get the client's written consent for <who>'s likeness/voice" under Confirm with client.
+Never: (up to 5, specific) the exact lines, assets and claims not to use ("Don't use: 'two great offices', the VIP lounge"), and the client's don'ts that matter here, folded in, never appended as a long list.
+Your call: one line handing the maker edit style, cut points, transitions, which clips or photos within the folders, and music within the rules. Never direct those yourself.
+Assets: (3 to 5 groups) each starting with its status: "- Have: <the file or folder exactly as assets_on_drive names it> (Drive: <folder>), <what to take from it, in a few words>", "- Need: <asset>", "- Client to shoot: <asset>", "- Missing: <a link that doesn't open>". Prefer a specific file over a whole folder when the file list shows it. List a file only when what we know about it (its name, folder, date) clearly fits this angle; when nothing on Drive clearly fits, write "- Need: <what to look for or get>" instead of pointing at a clip that may be unrelated. Don't write Drive links yourself: the app adds each file's link from its name. Never write a placeholder like MISSING or TBD in place of a link.
+Copy: "- Primary: <text>" (up to 2), "- Headline: <text>" (up to 2), "- CTA: <the button>".
+Script: only when the request explicitly asked for a script or voiceover text. Beats are not a script.
+Confirm with client: (only when something is open) every fact the concept depends on that only the client knows (which seat or spot, the tip, the stat, the offer's terms, a date) and that the context doesn't answer, as the question to ask them, short and specific ("- Which seat, at which venue, and why?"). When the context does answer it, use it and write "- <question> Answer: <answer> (Source: <where>)". NEVER invent such a fact. It never holds the brief: when the concept hangs on the answer, add a line after the idea that starts "Fallback:" with a version that works without it.
+Never write specs, sizes, safe zones or file names (the app adds the export line), a "next step", delivery instructions, or a summary that repeats the sections. Every line must agree with every other: no logo rule against a hook that shows the logo, no "evergreen" rule against event footage.
 ${PAYOFF_RULE}`;

@@ -531,7 +531,8 @@ function toPatch(d: import("@/lib/suggestions").SuggestionDraft): Partial<Draft>
   const parsed = parseBrief(d.brief ?? "");
   const structured = parsed.structured && (d.concepts?.length ?? 0) <= 1;
   const concepts = d.concepts?.length && !structured ? `\n\nConcepts:\n${d.concepts.map((c, i) => `${i + 1}. ${c.name}\n   Hook: ${c.hook}\n   Visual: ${c.visual}\n   Copy: ${c.copy}`).join("\n")}` : "";
-  const hooks = d.hooks?.length ? `\n\nHooks to try:\n${d.hooks.map((h) => `- ${h}`).join("\n")}` : "";
+  // A brief with its Versions already says what each version tests: no second list of hooks
+  const hooks = d.hooks?.length && !(structured && parsed.spec.versions.length) ? `\n\nHooks to try:\n${d.hooks.map((h) => `- ${h}`).join("\n")}` : "";
   return {
     title: d.title,
     angle: d.angle,

@@ -34,7 +34,7 @@ describe("the brief's shape (what and why, the how left to the maker)", () => {
   it("renders with fixed headings and reads back to the same spec", () => {
     const text = composeBrief("A carousel that reveals the seat most fans skip.", sp);
     expect(text).toMatch(/^A carousel/);
-    expect(text).toContain("Insight: Section 112 sits behind the bench: you hear the coaches (Source: Brand Bible)");
+    expect(text).toContain("Why it works: Section 112 sits behind the bench: you hear the coaches (Source: Brand Bible)");
     expect(text).toContain("Assets:\n- Have: Arena photos (Drive: Venues)\n- Client to shoot: Phone clip from Section 112");
     expect(text).toContain("Confirm with client:\n- Which seat, at which venue, and why? Answer: Section 112 at the Arena, behind the bench (Source: the team)\n- Is the 4.8 rating current?");
     const back = parseBrief(text);
@@ -133,11 +133,13 @@ describe("contradictions inside a brief", () => {
     expect(ids(xs)).toContain("event-vs-footage");
   });
 
-  it("flags durations past what Reels and Stories run, a placeholder, and beat-by-beat direction", () => {
+  it("flags durations past what Reels and Stories run, a placeholder, and edit-level direction (not the beats)", () => {
     expect(ids(lintBrief({ text: "A 120 seconds walkthrough.", sizes: ["9x16"], formats: ["video"] }))).toContain("duration-long");
     expect(ids(lintBrief({ text: "Drive: MISSING", sizes: ["9x16"], formats: ["video"] }))).toContain("placeholder");
-    const beats = lintBrief({ text: "0-3s: hook\n3-6s: the seat\n6-10s: the view\n10-15s: CTA", sizes: ["9x16"], formats: ["video"] });
-    expect(beats.find((x) => x.id === "beats")?.severity).toBe("soft");
+    // Beats are the video's spine now: timings alone are fine
+    expect(ids(lintBrief({ text: "0-3s: hook\n3-6s: the seat\n6-10s: the view\n10-15s: CTA", sizes: ["9x16"], formats: ["video"] }))).toEqual([]);
+    const over = lintBrief({ text: "0-3s: hook, push-in on the seat\n3-6s: whip transition to the view\n6-10s: cut at 7.5s to the crowd", sizes: ["9x16"], formats: ["video"] });
+    expect(over.find((x) => x.id === "over-direction")?.severity).toBe("soft");
   });
 
   it("finds nothing in a brief that agrees with itself", () => {
@@ -247,7 +249,7 @@ describe("the revise chat's patches", () => {
     expect(state.sizes).toEqual(["4x5", "9x16"]);
     expect(state.spec.confirm[0]).toEqual({ question: "Which seat, at which venue, and why?", answer: "Section 112 at the Arena", source: "the team" });
     expect(state.spec.assets[0]).toEqual({ item: "Seat photos", status: "have" });
-    expect(briefOf(state)).toContain("Insight: Section 112 is behind the bench");
+    expect(briefOf(state)).toContain("Why it works: Section 112 is behind the bench");
     expect(diffStates(before, state).map((d) => d.field)).toEqual(["insight", "constraints", "dos", "assets", "confirm", "sizes"]);
   });
 

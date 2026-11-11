@@ -126,8 +126,8 @@ function factsBlock(facts: QuickBrief["facts"]) {
   const answered = xs.filter((f) => norm(f.answer));
   const open = xs.filter((f) => !norm(f.answer));
   return [
-    answered.length ? `\nFacts the team confirmed (use them exactly; put each in spec.confirm with its answer and source "the team, when briefing"):\n${answered.map((f) => `- ${f.question} Answer: ${f.answer.trim()}`).join("\n")}` : "",
-    open.length ? `\nNot known yet (only the client knows; NEVER invent them): put each in spec.confirm with answer "" and write the brief around them:\n${open.map((f) => `- ${f.question}`).join("\n")}` : "",
+    answered.length ? `\nFacts the team confirmed (use them exactly; put each under Confirm with client with its answer and source "the team, when briefing"):\n${answered.map((f) => `- ${f.question} Answer: ${f.answer.trim()}`).join("\n")}` : "",
+    open.length ? `\nNot known yet (only the client knows; NEVER invent them): put each under Confirm with client as an open question, and write the brief so it works without them (a "Fallback:" line):\n${open.map((f) => `- ${f.question}`).join("\n")}` : "",
   ].join("");
 }
 

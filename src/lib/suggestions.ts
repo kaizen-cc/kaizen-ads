@@ -262,15 +262,16 @@ ${SPEC_RULE}`;
  * by the AI that reviews it. The same points the review checks (src/app/(team)/requests/new/actions.ts).
  */
 export const BRIEF_STANDARD = `THE BRIEF STANDARD (the request review checks every brief against this; meet it as you write):
-- One concept per brief, ready to design without questions: its actual on-image line (the words on the creative, not a description of them) and, when the request has variations, the specific headline or line each version tests. Several distinct concepts are several briefs, never one.
+- One concept per brief, ready to make without questions: the idea and its payoff in one line, the build for its format (a video's 4 to 6 beats with the exact lines, a carousel's slides, a single image's frame) with the actual words on the creative (not a description of them), and under Versions the specific hook or headline each version tests. Several distinct concepts are several briefs, never one.
+- Two pages at most: Must and Never 5 items each or fewer, the client's Brand Bible rules folded into them (not appended), 3 to 5 asset groups, no specs, file names, "next step" or delivery lines (the app adds the export line).
 - Client memory is a hard rule. Nothing goes against an "avoid" item, and no line comes close to a claim the client asked us not to make (no implying it, no comparing our way around it). When in doubt, leave the claim out.
 - Only facts from the context: no invented prices, offers, dates, numbers or claims; anything not confirmed is marked to confirm.
 - No contradictions inside the request: the brief, concepts, formats and sizes all describe the same work.
 - Nothing Meta would reject: personal attributes, before and after, guaranteed results, health or financial claims.
 - References: say what to take from each one; nothing that disagrees with the landing page.
-- Every promise paid off: a hook or title that promises a reveal, tip, hack, trick, secret or "what most people miss" has the actual thing stated in the Insight line with its source and how it shows on screen. If the context doesn't hold it, the hook changes to one whose payoff we know, or the question goes under Confirm with client with a "Fallback:" line in the opening that works without it.
+- Every promise paid off: a hook or title that promises a reveal, tip, hack, trick, secret or "what most people miss" has the actual thing stated in "Why it works" with its source and how it shows on screen (in the beats, the slides or the frame). If the context doesn't hold it, the hook changes to one whose payoff we know, or the question goes under Confirm with client with a "Fallback:" line in the opening that works without it.
 - Assets that fit: every "Have" asset is a file or folder named exactly as assets_on_drive lists it and clearly fits this angle (by its name, folder and date); one that doesn't clearly fit becomes a "Need" line saying what to look for.
-- Real people's faces and voices: a real person's likeness or voice altered or generated (an AI avatar of a customer, a cloned or pitch-shifted voice, a face swap, a testimonial rebuilt with AI) has "Get the client's written consent for <who>'s likeness/voice" under Confirm with client and a "Disclaimer:" line under Constraints.
+- Real people's faces and voices: a real person's likeness or voice altered or generated (an AI avatar of a customer, a cloned or pitch-shifted voice, a face swap, a testimonial rebuilt with AI) has "Get the client's written consent for <who>'s likeness/voice" under Confirm with client and a "Disclaimer:" line under Must.
 - The client's AI content rule: when the client context has an ai_content_rule, nothing in the brief uses an AI avatar, an AI or cloned voice, AI narration or AI-generated video, footage or images; real footage, photos, people and voiceover instead.`;
 
 const REPAIR_SCHEMA = {

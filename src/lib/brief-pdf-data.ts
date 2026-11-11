@@ -1,17 +1,20 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiUnavailable, aiEnabled, askJson } from "@/lib/ai";
-import { STRUCTURE_SCHEMA, fitStructure, plainStructure, slidesFor, versionCount, type BriefStructure, type StructureSource } from "@/lib/brief-pdf-model";
+import { STRUCTURE_SCHEMA, fitStructure, needsStructure, plainStructure, slidesFor, versionCount, type BriefStructure, type StructureSource } from "@/lib/brief-pdf-model";
 import type { PdfReference } from "@/lib/brief-pdf";
 import { attachLinks } from "@/lib/asset-links";
 import { BRIEF_BUCKET, parseBriefFileUrl } from "@/lib/brief-files";
 import { parseBrief } from "@/lib/brief-spec";
 
-// What the brief PDF reads on the server: the brief restructured into a production sheet (one fast AI pass, cached on
-// the draft by the caller), and the pictures of what the request is built on (a market ad, a winner, a saved idea),
-// fetched here and made small JPEGs, each with its links.
+// What the brief PDF reads on the server: the brief in its one structure (read as it is when it's written in today's
+// sections; one fast AI pass, cached on the draft by the caller, for an older or free-text brief), and the pictures of
+// what the request is built on (a market ad, a winner, a saved idea), fetched here and made small JPEGs, with links.
 
-/** One fast pass that restructures the brief into the sheet's fields. Never invents: what the brief doesn't say stays empty. */
+/**
+ * The brief as the sheet's fields. A brief in today's sections needs no AI (its own lines are the sheet); otherwise one
+ * fast pass fills only what its sections leave empty. Never invents: what the brief doesn't say stays empty.
+ */
 export async function structureBrief(d: StructureSource & { clientId: string; client: string }): Promise<BriefStructure> {
   // Every asset keeps the Drive link the brief gave it (the AI's shorter lines get theirs back from the brief's own)
   const linked = (s: BriefStructure): BriefStructure => {
@@ -21,7 +24,8 @@ export async function structureBrief(d: StructureSource & { clientId: string; cl
       return s;
     }
   };
-  if (!aiEnabled()) return linked(plainStructure(d));
+  const plain = plainStructure(d);
+  if (!aiEnabled() || !needsStructure(plain, d)) return linked(plain);
   const n = Math.max(1, versionCount(d.formats));
   const cards = slidesFor(d.formats);
   try {
@@ -33,7 +37,7 @@ export async function structureBrief(d: StructureSource & { clientId: string; cl
       maxTokens: 6000,
       schema: STRUCTURE_SCHEMA as unknown as Record<string, unknown>,
       system:
-        "You turn a written creative brief into a one-page production sheet that the designer or video editor reads at a glance: precise on what and why, the how (style, pacing, music, edit structure) left to them. You restructure, you don't write a new brief: use the brief's own ideas and words, tightened. Never invent offers, prices, numbers, claims, testimonials, product names or rules the brief doesn't state; when the brief doesn't say something, leave that field empty. Plain words, short lines, no em dashes, no hype.",
+        "You turn a written creative brief into a two-page production sheet the designer or video editor reads at a glance. The brief fixes the message, the payoff, the hook lines, the musts and the nevers; how it's made (edit style, cut points, transitions, which clips, music within the rules) is the maker's call. You restructure, you don't write a new brief: use the brief's own ideas and words, tightened. Never invent offers, prices, numbers, claims, testimonials, quotes, timestamps, product names or rules the brief doesn't state; when the brief doesn't say something, leave that field empty. Every list 5 items or fewer, every line one short sentence. Plain words, no em dashes, no hype.",
       prompt: [
         `Client: ${d.client}`,
         `Title: ${d.title || "(none)"}`,
@@ -46,19 +50,27 @@ export async function structureBrief(d: StructureSource & { clientId: string; cl
         d.brief || "(empty)",
         "",
         "Fill in:",
-        "- oneLine: the idea in one line (under 20 words).",
-        "- summary: 3 to 5 bullets, each under 25 words: what we're making, who it's for, why it should work, what to avoid. Skip a point the brief doesn't support.",
-        `- versions: exactly ${n} rows, V1 first. headline = the on-image text (or the video's opening line), subline = the supporting line under it, visual = what must be in the frame (the subject, the product, the proof), never how to shoot, pace or edit it (that's the maker's call), hook = what stops the scroll. Versions differ the way the brief says they should (hooks, headlines, visuals); when the brief only names V1, later rows are variations of V1 that change one thing the brief suggests, and their fields may stay empty rather than be made up.`,
-        cards ? `- slides: exactly ${cards} rows in order, what each slide says (headline, subline) and shows (visual).` : "- slides: an empty list (not a carousel).",
-        "- dos and donts: the brand rules, compliance points and things the client rejected that the brief states, each under 18 words.",
-        "- copy: primary text, headlines and the call to action only when the brief gives them (empty otherwise).",
-        "- assets: what it's made from (footage, photos, logos on Drive) and what to get from the client, when the brief says. Keep each asset's link at the end of its line exactly as the brief has it.",
+        "- oneLine: the idea and its concrete payoff in one line (under 22 words): what the viewer learns or gets, never a tease.",
+        "- stage: the funnel stage when the brief says it (e.g. Evergreen TOF), else empty.",
+        "- why and whySource: why it works, the insight in one or two sentences, and where it comes from when the brief says (Brand Bible, a call).",
+        "- who: who it's for in one line (no targeting lists: that's the media buyer's).",
+        d.formats.video
+          ? "- length, audio and beats: about how long (e.g. ~30s), music and voiceover in one line, and 4 to 6 beats in order, the hook first and the end card last: time (e.g. 0:00-0:05), name (one to three words), onScreen (what we see, a few words), text (words put on screen, quoted), says (the exact spoken line, quoted, only when the brief gives it), source (the file and timestamp the line comes from, only when the brief gives it). What happens and what's said, never how to cut it."
+          : "- length, audio: empty. beats: an empty list (not a video).",
+        cards ? `- slides: up to ${cards} rows in order, read top to bottom as a flow: job (Hook, Proof, Payoff, CTA), headline (the words on the slide), shows (what it shows).` : "- slides: an empty list (not a carousel).",
+        d.formats.image ? "- frame: the single image: headline (the words on it), subline, shows (what's in the frame), readsFirst (the order the eye takes), cta (only when it's on the image)." : "- frame: every field empty (not a single image).",
+        `- versions: exactly ${n} lines, V1 first: only what changes per version (the hook or the headline), the words themselves. V1 is net new; when the brief only names V1, leave the others empty rather than make them up.`,
+        "- must and never: up to 5 each, specific: what has to be there (the logo moment, captions, cleared claims) and the exact lines, assets and claims not to use, as the brief states them, each under 18 words.",
+        "- yourCall: what's left to the maker, in one line, when the brief says.",
+        "- copy: primary text (up to 2), headlines (up to 2) and the call to action only when the brief gives them (empty otherwise).",
+        "- assets: 3 to 5 groups it's made from (footage, photos, logos on Drive), one short line each on what to take, and what to get from the client, when the brief says. Keep each asset's link at the end of its line exactly as the brief has it.",
+        "Never: specs, sizes, file names, next steps or delivery lines (the sheet adds the export line).",
       ].join("\n"),
     });
     return linked(fitStructure(out, d, true));
   } catch (e) {
     if (!(e instanceof AiUnavailable)) console.error("[brief-pdf] structure", e instanceof Error ? e.message : e);
-    return linked(plainStructure(d));
+    return linked(plain);
   }
 }
 

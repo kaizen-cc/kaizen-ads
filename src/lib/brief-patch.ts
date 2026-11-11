@@ -1,4 +1,4 @@
-import { ASSET_WORD, composeBrief, emptySpec, parseBrief, type AssetStatus, type BriefSpec } from "./brief-spec";
+import { ASSET_WORD, beatLine, beatOf, composeBrief, emptySpec, parseBrief, slideLine, slideOf, type AssetStatus, type BriefSpec } from "./brief-spec";
 
 // The revise chat's edits, as data. Under a brief, the creative (or the lead) types a correction ("the seat is
 // Section 112 at MSG, and it's because of the view of the bench"); the AI answers with a structured patch (set a field,
@@ -9,8 +9,8 @@ import { ASSET_WORD, composeBrief, emptySpec, parseBrief, type AssetStatus, type
 /** The brief as one thing the chat edits: the request's own lines and the brief's spec */
 export type BriefState = { title: string; angle: string; audience: string; sizes: string[]; overview: string; spec: BriefSpec };
 
-export const TEXT_FIELDS = ["title", "angle", "audience", "overview", "insight", "insightSource", "keyMessage", "hook", "kpi", "success", "yourCall", "script"] as const;
-export const LIST_FIELDS = ["proof", "slides", "constraints", "dos", "donts", "assets", "confirm", "sizes"] as const;
+export const TEXT_FIELDS = ["title", "angle", "audience", "overview", "stage", "insight", "insightSource", "who", "keyMessage", "hook", "length", "audio", "kpi", "success", "yourCall", "script", "exportLine"] as const;
+export const LIST_FIELDS = ["proof", "beats", "slides", "frame", "versions", "constraints", "dos", "donts", "assets", "copy", "confirm", "sizes"] as const;
 export type PatchField = (typeof TEXT_FIELDS)[number] | (typeof LIST_FIELDS)[number];
 export type BriefChange = {
   field: PatchField;
@@ -31,26 +31,35 @@ export const FIELD_LABEL: Record<PatchField, string> = {
   angle: "Angle",
   audience: "Audience",
   overview: "The idea",
-  insight: "Insight",
+  stage: "Stage",
+  insight: "Why it works",
   insightSource: "Insight source",
+  who: "Who it's for",
   keyMessage: "Key message",
   hook: "Hook",
+  length: "Length",
+  audio: "Audio",
   kpi: "KPI",
   success: "Success looks like",
   yourCall: "Your call",
   script: "Script",
+  exportLine: "Export",
   proof: "Proof",
+  beats: "Beats",
   slides: "Slides",
+  frame: "Frame",
+  versions: "Versions",
   constraints: "Constraints",
-  dos: "Do",
-  donts: "Don't",
+  dos: "Must",
+  donts: "Never",
   assets: "Assets",
+  copy: "Copy",
   confirm: "Confirm with client",
   sizes: "Sizes",
 };
 
-/** The lines a copywriter may correct (copy, never the brief's direction) */
-export const COPY_FIELDS: PatchField[] = ["hook", "keyMessage"];
+/** The lines a copywriter may correct (copy and the hook lines, never the brief's direction) */
+export const COPY_FIELDS: PatchField[] = ["hook", "keyMessage", "versions", "copy"];
 
 export const stateOf = (r: { title: string; angle: string; audience: string; sizes: string[]; brief: string }): BriefState => {
   const p = parseBrief(r.brief);
@@ -118,8 +127,10 @@ export function applyBriefPatch(s: BriefState, changes: BriefChange[], allowed?:
       const item = value || was ? { question: value || was?.question || "", answer: clip(c.answer ?? "", 600), source: clip(c.source ?? "", 120) } : null;
       next = { ...next, spec: { ...next.spec, confirm: editList(next.spec.confirm, c, item) } };
     } else {
-      const f = c.field as "proof" | "slides" | "constraints" | "dos" | "donts";
-      next = { ...next, spec: { ...next.spec, [f]: editList(next.spec[f], c, value || null) } };
+      const f = c.field as "proof" | "beats" | "slides" | "frame" | "versions" | "constraints" | "dos" | "donts" | "copy";
+      // A beat or a slide is kept as its one line (src/lib/brief-spec.ts beatLine, slideLine); a version without its "V2:"
+      const v = !value ? "" : f === "beats" ? beatLine(beatOf(value)) : f === "slides" ? slideLine(slideOf(value)) : f === "versions" ? value.replace(/^V\d{1,2}\s*[:.)-]\s*/i, "") : value;
+      next = { ...next, spec: { ...next.spec, [f]: editList(next.spec[f], c, v || null) } };
     }
     if (JSON.stringify(next) === before) refused.push(c);
     else applied.push(c);
@@ -143,10 +154,14 @@ const show = (s: BriefState, f: PatchField): string => {
     case "confirm":
       return s.spec.confirm.map((c) => `${c.question}${c.answer ? ` Answer: ${c.answer}` : ""}`).join("\n");
     case "proof":
+    case "beats":
     case "slides":
+    case "frame":
+    case "versions":
     case "constraints":
     case "dos":
     case "donts":
+    case "copy":
       return s.spec[f].join("\n");
     default:
       return s.spec[f];

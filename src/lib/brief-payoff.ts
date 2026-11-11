@@ -16,7 +16,7 @@ export function promiseIn(text: string): string | null {
 }
 
 /** The rule, for every brief writer and reviewer (roles, never names; no em dashes) */
-export const PAYOFF_RULE = `PAY OFF EVERY PROMISE. A hook or title that promises a reveal, a tip, a hack, a trick, a secret, a mistake or "what most people miss" is only a concept once the brief delivers it. In the Insight line, say exactly what it is (the actual hack, the actual tip, the actual seat and why), where it comes from (client memory, the Brand Bible, a call, the footage, a document they sent) in "(Source: ...)", and how it shows on screen. When the context doesn't hold the payoff and only the client could tell us, don't build the concept on it: choose a different hook whose payoff we know. Only when the idea is worth keeping anyway, keep it with the question under "Confirm with client" and a line in the opening that starts "Fallback:" giving a version that works without it, said plainly. Never write a hook that teases something the brief doesn't say.`;
+export const PAYOFF_RULE = `PAY OFF EVERY PROMISE. A hook or title that promises a reveal, a tip, a hack, a trick, a secret, a mistake or "what most people miss" is only a concept once the brief delivers it. In "Why it works", say exactly what it is (the actual hack, the actual tip, the actual seat and why), where it comes from (client memory, the Brand Bible, a call, the footage, a document they sent) in "(Source: ...)", and how it shows on screen. When the context doesn't hold the payoff and only the client could tell us, don't build the concept on it: choose a different hook whose payoff we know. Only when the idea is worth keeping anyway, keep it with the question under "Confirm with client" and a line in the opening that starts "Fallback:" giving a version that works without it, said plainly. Never write a hook that teases something the brief doesn't say.`;
 
 /**
  * Does a quick preview's concept name what its hook promises? It does when it says "the hack is ..." or "the tip: ...",
@@ -43,7 +43,7 @@ export type PayoffCheck = {
   fallback: boolean;
 };
 
-type SpecLike = { hook: string; insight: string; insightSource: string; confirm: { question: string; answer: string }[] };
+type SpecLike = { hook: string; insight: string; insightSource: string; confirm: { question: string; answer: string }[]; /** V1's line is the hook when there's no Hook line */ versions?: string[] };
 
 /**
  * Does this brief pay off what its hook promises? Read from the title, the Hook and the opening lines (never the Do
@@ -51,7 +51,8 @@ type SpecLike = { hook: string; insight: string; insightSource: string; confirm:
  */
 export function checkPayoff(i: { title?: string; overview: string; spec: SpecLike; /** The whole brief, where a fallback line may sit */ text?: string }): PayoffCheck {
   const opening = i.overview.split(/\n/).slice(0, 4).join(" ");
-  const promise = promiseIn([i.title ?? "", i.spec.hook, opening].join(" . "));
+  const hook = i.spec.hook.trim() || (i.spec.versions?.[0] ?? "").replace(/^V\d{1,2}\s*[:.)\-–]\s*/i, "");
+  const promise = promiseIn([i.title ?? "", hook, opening].join(" . "));
   const insight = i.spec.insight.trim();
   const sourced = Boolean(i.spec.insightSource.trim()) && insight.length > 30 && !(promiseIn(insight) && insight.split(/\s+/).length < 14);
   const answered = i.spec.confirm.some((c) => c.answer.trim());

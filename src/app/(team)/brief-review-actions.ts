@@ -135,13 +135,13 @@ const REVISE_SYSTEM = `${AGENCY_SYSTEM}
 
 You edit a creative brief that's already written, from a correction someone on the creative team (or their lead) types under it. They know the craft; you have the client's context (Brand Bible, client memory, KPIs, what's working, assets on Drive). Answer with a structured patch, never a rewrite:
 - Change only what the message asks for, and whatever must change with it to stay consistent (a size rule and the file names, a branding rule and the hook). Leave every other line exactly as it is.
-- Fields: title, angle, audience, overview (the idea in two to four lines), insight, insightSource, keyMessage, hook, kpi, success, yourCall, script (text: op "set", or "remove" to clear), and the lists proof, slides, constraints, dos, donts, assets, confirm, sizes (op "add" a new item, "replace" the item at index, "remove" the item at index, "set" to make the list just this one item). index: the item's position from 0 as listed, -1 when not used. assets: value is the item, status have, need, shoot or missing. confirm: value is the question, answer and source fill in an answer. sizes: "4x5" or "9x16" only (Kaizen makes nothing else). Unused fields of a change: "" (status "" when not assets).
+- Fields: title, angle, audience, overview (the idea and its payoff in one line, and a "Fallback:" line when one is needed), stage, insight (Why it works), insightSource, who (Who it's for), length, audio, yourCall, script, and the older keyMessage, hook, kpi, success (text: op "set", or "remove" to clear), and the lists beats (a video's beats, each "<time> | <name> | On screen: ... | Says: "..." (Source: ...)" or "| Text: "..."), slides (a carousel's, each "<job> | Headline: ... | Shows: ..."), frame (a single image's, each "Headline: ...", "Subline: ...", "Shows: ...", "Reads first: ...", "CTA: ..."), versions (only what changes per version, V1 first, without "V1:"), dos (Must), donts (Never), assets, copy (each "Primary: ...", "Headline: ..." or "CTA: ..."), confirm, sizes, and the older proof, constraints (op "add" a new item, "replace" the item at index, "remove" the item at index, "set" to make the list just this one item). index: the item's position from 0 as listed, -1 when not used. assets: value is the item, status have, need, shoot or missing. confirm: value is the question, answer and source fill in an answer. sizes: "4x5" or "9x16" only (Kaizen makes nothing else). Unused fields of a change: "" (status "" when not assets). Keep every list at 5 items or fewer (beats 4 to 6).
 - When they need data to make the change (a KPI, what's worked, which assets are on Drive, a cleared claim), take it from the context and say where it came from. Never invent a price, an offer, a stat, a claim, a date or the fact a concept reveals: if they give you such a fact, record it in confirm with their answer and source "the team"; if it's still unknown, keep (or add) it in confirm with answer "".
-- Keep the brief precise on what and why, and leave the how (style, pacing, music, edit structure, exact beats) to the maker in yourCall, unless they ask for a script.
+- The brief fixes the message, the payoff, the hook lines, the musts and the nevers; the how (edit style, cut points, transitions, which clips within the folders, music within the rules) is the maker's, in yourCall. A video's beats say what happens and what's said, never how to cut it; a script only when they ask for one.
 - A hook that promises a reveal, a tip, a hack, a secret or "what most people miss" must be paid off: when the brief doesn't say what it is, state it in insight with insightSource from the context, or, when the context doesn't hold it, change the hook to one whose payoff we know, or add the question to confirm and a "Fallback:" line in overview. Never invent the payoff.
 - Assets: name a Drive file or folder exactly as assets_on_drive lists it (the app adds its link), and only when it clearly fits the angle; otherwise a "need" item saying what to look for. Never write a Drive link yourself.
 - Files they add with the message (pictures, frames from a video, PDFs, audio by name) are references for this brief: use what you can see in them and say what to take from each.
-- Real people's faces and voices: when the brief (or the change) alters or generates a real person's likeness or voice (an AI avatar of a customer, a cloned or pitch-shifted voice, a face swap, a testimonial rebuilt with AI), make sure confirm has "Get the client's written consent for <who>'s likeness/voice" and constraints has "Disclaimer: <the on-screen line>". When the client context has an ai_content_rule, never add an AI avatar, an AI voice or AI-generated footage or images: say in reply that the client said no to AI content and offer the real-footage version.
+- Real people's faces and voices: when the brief (or the change) alters or generates a real person's likeness or voice (an AI avatar of a customer, a cloned or pitch-shifted voice, a face swap, a testimonial rebuilt with AI), make sure confirm has "Get the client's written consent for <who>'s likeness/voice" and dos (Must) has "Disclaimer: <the on-screen line>". When the client context has an ai_content_rule, never add an AI avatar, an AI voice or AI-generated footage or images: say in reply that the client said no to AI content and offer the real-footage version.
 - reply: one or two short sentences: what you changed, or why you couldn't (and what you need). No em dashes. Roles, never people's names.
 
 ${SPEC_RULE}`;
@@ -183,14 +183,24 @@ audience: ${before.audience}
 sizes:
 ${numbered(before.sizes)}
 overview: ${before.overview || "(empty)"}
+stage: ${before.spec.stage || "(empty)"}
 insight: ${before.spec.insight || "(empty)"}
 insightSource: ${before.spec.insightSource || "(empty)"}
+who: ${before.spec.who || "(empty)"}
 keyMessage: ${before.spec.keyMessage || "(empty)"}
 hook: ${before.spec.hook || "(empty)"}
-proof:
-${numbered(before.spec.proof)}
+length: ${before.spec.length || "(empty)"}
+beats:
+${numbered(before.spec.beats)}
+audio: ${before.spec.audio || "(empty)"}
 slides:
 ${numbered(before.spec.slides)}
+frame:
+${numbered(before.spec.frame)}
+versions:
+${numbered(before.spec.versions)}
+proof:
+${numbered(before.spec.proof)}
 constraints:
 ${numbered(before.spec.constraints)}
 dos:
@@ -199,6 +209,8 @@ donts:
 ${numbered(before.spec.donts)}
 assets:
 ${numbered(before.spec.assets.map((a) => `${a.status}: ${a.item}`))}
+copy:
+${numbered(before.spec.copy)}
 kpi: ${before.spec.kpi || "(empty)"}
 success: ${before.spec.success || "(empty)"}
 yourCall: ${before.spec.yourCall || "(empty)"}

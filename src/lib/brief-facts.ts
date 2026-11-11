@@ -80,8 +80,8 @@ export function factCovered(f: DetectedFact, sp: Pick<BriefSpec, "confirm" | "in
   return false;
 }
 
-/** The text a concept's facts are read from: its title, hook, insight and key message */
-export const factText = (title: string, sp: Pick<BriefSpec, "hook" | "insight" | "keyMessage">) => [title, sp.hook, sp.insight, sp.keyMessage].filter(Boolean).join(". ");
+/** The text a concept's facts are read from: its title, hook (or V1's line), insight and key message */
+export const factText = (title: string, sp: Pick<BriefSpec, "hook" | "insight" | "keyMessage"> & { versions?: string[] }) => [title, sp.hook || sp.versions?.[0], sp.insight, sp.keyMessage].filter(Boolean).join(". ");
 
 /**
  * The spec with every detected fact it doesn't cover added to "Confirm with client" as a question (never an answer),

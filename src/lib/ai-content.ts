@@ -188,11 +188,11 @@ export const hasDisclaimerLine = (text: string) => /\bdisclaimer\b|\bdisclos(?:e
 // ─── For the prompts ────────────────────────────────────────────────────────
 
 /** Every brief writer and creative AI reads this */
-export const LIKENESS_RULE = `REAL PEOPLE'S FACES AND VOICES: altering or generating a real person's likeness or voice (an AI avatar of a customer, the owner or staff, a cloned or pitch-shifted voice, a face swap, a testimonial re-voiced or rebuilt with AI) needs the client's written consent and an on-screen disclaimer. Never suggest it without saying so. When a brief includes it, add "Get the client's written consent for <who>'s likeness/voice" under Confirm with client (who the person is, e.g. "the customer in the March testimonial"), and a Constraints line "Disclaimer: <the on-screen line, e.g. AI-generated likeness, used with permission; or Voice altered>". A stock AI presenter who isn't a real person needs neither: say it's a stock avatar.`;
+export const LIKENESS_RULE = `REAL PEOPLE'S FACES AND VOICES: altering or generating a real person's likeness or voice (an AI avatar of a customer, the owner or staff, a cloned or pitch-shifted voice, a face swap, a testimonial re-voiced or rebuilt with AI) needs the client's written consent and an on-screen disclaimer. Never suggest it without saying so. When a brief includes it, add "Get the client's written consent for <who>'s likeness/voice" under Confirm with client (who the person is, e.g. "the customer in the March testimonial"), and a Must line "Disclaimer: <the on-screen line, e.g. AI-generated likeness, used with permission; or Voice altered>". A stock AI presenter who isn't a real person needs neither: say it's a stock avatar.`;
 
 /** What the writers read for a client who said no to AI content */
 export function noAiContentRule(rule: string) {
-  return `NO AI CONTENT FOR THIS CLIENT. They told us: "${rule}". Never suggest or write an AI avatar, an AI, cloned or synthetic voice, AI narration, AI-generated video, footage, B-roll or images, or a Higgsfield or ElevenLabs generation for them. Use real footage, real photos, real people (with consent) and a real voiceover. When it matters to the brief, put "No AI-generated video, images or voices (client rule)" under Don't.`;
+  return `NO AI CONTENT FOR THIS CLIENT. They told us: "${rule}". Never suggest or write an AI avatar, an AI, cloned or synthetic voice, AI narration, AI-generated video, footage, B-roll or images, or a Higgsfield or ElevenLabs generation for them. Use real footage, real photos, real people (with consent) and a real voiceover. When it matters to the brief, put "No AI-generated video, images or voices (client rule)" under Never.`;
 }
 
 /** The note on the AI media panels for that client */

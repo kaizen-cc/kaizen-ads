@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { toAllotment, type UsageRow } from "@/lib/allotment";
 import { primaryOf, type SeatRow } from "@/lib/buyer-seats";
-import { MAKER_ROLE, allotmentDraw, dayLabel, dueFor, fitStructure, formatChips, picked, specsChecklist, structureKey, versionCount, type BriefStructure, type PdfCounts, type PdfFormat } from "@/lib/brief-pdf-model";
+import { MAKER_ROLE, dayLabel, dueFor, fitStructure, headerLine, picked, slidesFor, structureKey, versionsStrip, type BriefStructure, type PdfCounts, type PdfFormat } from "@/lib/brief-pdf-model";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -32,8 +32,9 @@ type Body = {
 const num = (x: unknown, max: number) => Math.max(0, Math.min(max, Math.floor(Number(x) || 0)));
 
 // POST /api/requests/brief-pdf: a creative request as a Kaizen-branded PDF (from the request form, for anyone on the
-// team who can see the client). The brief is restructured once (the AI, cached on the draft by key) into the sheet the
-// maker reads; the references it's built on come with their pictures and links.
+// team who can see the client), two pages in the brief's one structure. A brief written in today's sections is read as
+// it is; an older one is restructured once (the AI, cached on the draft by key). The references it's built on come with
+// their pictures and links.
 export async function POST(request: Request) {
   const me = await requireStaff();
   const b = (await request.json().catch(() => null)) as Body | null;
@@ -87,25 +88,17 @@ export async function POST(request: Request) {
   const priority = b.priority === "urgent" || b.priority === "high" ? b.priority : "normal";
   const dues = fs.map((f) => ({ f, d: dueFor(f, priority) }));
   const due = !dues.length ? null : dues.length === 1 || dues.every((x) => dayLabel(x.d) === dayLabel(dues[0].d)) ? dayLabel(dues[0].d) : dues.map((x) => `${x.f === "video" ? "Video" : x.f === "carousel" ? "Carousel" : "Image"} ${dayLabel(x.d)}`).join(" · ");
-  const last = dues.reduce<Date | null>((m, x) => (!m || x.d > m ? x.d : m), null);
   const sizes = (b.sizes ?? []).map((z) => String(z).replace("x", ":")).filter((z) => /^\d{1,2}:\d{1,2}$/.test(z));
-  const n = versionCount(formats);
-  const who = fs.length === 1 ? (seat(MAKER_ROLE[fs[0]].role)?.split(/\s+/)[0] ?? `The ${MAKER_ROLE[fs[0]].label}`) : "The creative team";
-  const next = n
-    ? [
-        `${who} makes ${n} version${n === 1 ? "" : "s"}${sizes.length ? ` in ${sizes.join(" and ")}` : ""}${last ? ` by ${dayLabel(last)}` : ""}, delivered on the ticket.`,
-        "Then the AI review and internal review, the copy, and the client's approval. Questions on the brief go to whoever briefed it before work starts.",
-      ]
-    : [];
 
-  // The client's standing dos and don'ts (Brand Bible rules in force) after the brief's own
+  // The client's standing rules (Brand Bible rules in force) folded in only where the brief leaves room: Must and Never
+  // stay five each, the brief's own first
   const ruleDos = (rules ?? []).filter((r) => r.polarity === "do").map((r) => String(r.rule));
   const ruleDonts = (rules ?? []).filter((r) => r.polarity === "dont").map((r) => String(r.rule));
-  const merge = (a: string[], extra: string[]) => [...new Set([...a, ...extra.filter((x) => !a.some((y) => y.toLowerCase() === x.toLowerCase()))])].slice(0, 7);
+  const merge = (a: string[], extra: string[]) => [...new Set([...a, ...extra.filter((x) => x.length <= 140 && !a.some((y) => y.toLowerCase() === x.toLowerCase()))])].slice(0, 5);
 
   // The brief's insight, what's the maker's call, the facts still to confirm with the client, and the review stamp
   // when someone reviewed this exact brief (text and sizes)
-  const { parseBrief } = await import("@/lib/brief-spec");
+  const { parseBrief, exportLineFor } = await import("@/lib/brief-spec");
   const { openFacts, withDetectedFacts } = await import("@/lib/brief-facts");
   const spec = withDetectedFacts(parseBrief(source.brief).spec, source.title);
   let reviewed: string | null = null;
@@ -117,27 +110,24 @@ export async function POST(request: Request) {
   }
 
   const { briefPdf } = await import("@/lib/brief-pdf");
+  const cards = slidesFor(formats);
   const pdf = await briefPdf({
-    insight: spec.insight || null,
-    yourCall: spec.yourCall || null,
     confirm: openFacts(spec).map((f) => f.question),
     reviewed,
     client: client.name as string,
     title: source.title,
     number: typeof b.number === "number" && b.number > 0 ? Math.floor(b.number) : null,
-    chips: formatChips(formats, sizes),
+    header: headerLine(formats, sizes, structure.stage),
     due,
     makers,
     priority,
-    allotment: allotmentDraw(formats, usage ? toAllotment(usage as UsageRow) : null),
-    angle: source.angle,
-    audience: source.audience,
+    versions: versionsStrip(formats, usage ? toAllotment(usage as UsageRow) : null),
+    measure: formats.video && structure.length ? { label: "Length", value: structure.length } : cards ? { label: "Slides", value: String(cards) } : null,
     references: refs.refs,
-    structure: { ...structure, dos: merge(structure.dos, ruleDos), donts: merge(structure.donts, ruleDonts) },
-    specs: specsChecklist(formats, sizes, client.name as string, source.title),
-    next,
-    landing,
-    links: refs.links,
+    structure: { ...structure, must: merge(structure.must, ruleDos), never: merge(structure.never, ruleDonts) },
+    exportLine: spec.exportLine || exportLineFor(fs, sizes, client.name as string, source.title),
+    links: [...(landing ? [{ label: "Landing page", url: landing }] : []), ...refs.links],
+    formats: fs,
     by: me.fullName,
   });
   const name = `${client.name} - ${b.title || "Creative request"}.pdf`.replace(/[^\w .()-]+/g, "").slice(0, 120);

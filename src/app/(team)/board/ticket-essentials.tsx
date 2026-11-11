@@ -1,14 +1,15 @@
 "use client";
 
-import { parseBrief, ASSET_WORD, type AssetStatus } from "@/lib/brief-spec";
+import { parseBrief, ASSET_WORD, beatRows, frameOf, hookOf, slideRows, type AssetStatus } from "@/lib/brief-spec";
 import { linkWord, splitLink } from "@/lib/asset-links";
 import { briefFileStem } from "@/lib/creative-drive-paths";
 import { FORMAT_LABEL } from "@/lib/stages";
 import { FormatIcon } from "./ticket-card";
 import type { Ticket } from "./types";
 
-// The brief at a glance, above the fold: what the maker reads in ten seconds (the idea, the hook, how many versions, the
-// sizes, when it's due and who makes it) and the assets with their Drive links. "make" is the production sheet: what to
+// The brief at a glance, above the fold: what the maker reads in ten seconds (the idea and its payoff, why it works, the
+// hook, the build in a line, how many versions, the sizes, when it's due and who makes it) and the assets with their
+// Drive links, the same sections as the full brief (src/components/brief-sheet.tsx) and the PDF, shortened. "make" is the production sheet: what to
 // make, the specs per size and the file names to deliver. The full brief, its check and the references sit one tap away.
 
 const SPECS: Record<string, string> = { "4x5": "4:5 at 1080 x 1350", "9x16": "9:16 at 1080 x 1920", "1x1": "1:1 at 1080 x 1080" };
@@ -17,11 +18,21 @@ const STATUS_CLS: Record<AssetStatus, string> = { have: "bg-ok/15 text-ok", need
 const fmtDue = (iso: string) =>
   new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).format(new Date(iso));
 
-/** The opening lines of the brief, before any heading: the idea in words a maker gets in ten seconds */
+/** The opening lines of the brief, before any heading: the idea in words a maker gets in ten seconds (not its Fallback) */
 function ideaOf(overview: string) {
   const first = overview.split(/\n\s*\n/)[0] ?? "";
-  const lines = first.split("\n").map((l) => l.trim()).filter((l) => l && !/^[A-Z][^.!?\n]{0,48}:\s*$/.test(l));
+  const lines = first.split("\n").map((l) => l.trim()).filter((l) => l && !/^[A-Z][^.!?\n]{0,48}:\s*$/.test(l) && !/^fallback\s*:/i.test(l));
   return lines.join(" ");
+}
+
+/** The build in one line: "6 beats, ~30s: Hook, The team, Your way..." / "5 slides: ..." / "Headline: ..." */
+function buildLine(spec: ReturnType<typeof parseBrief>["spec"]) {
+  const beats = beatRows(spec);
+  if (beats.length) return `${beats.length} beats${spec.length ? `, ${spec.length}` : ""}: ${beats.map((b) => b.name).filter(Boolean).join(" · ")}`;
+  const slides = slideRows(spec);
+  if (slides.length) return `${slides.length} slides: ${slides.map((s) => s.job || s.headline).filter(Boolean).slice(0, 6).join(" · ")}`;
+  const f = frameOf(spec.frame);
+  return f.headline ? `Headline: ${f.headline}` : "";
 }
 
 export function versionsLabel(t: Pick<Ticket, "newCount" | "variationCount" | "quantity">) {
@@ -43,6 +54,8 @@ const label = "text-[11px] font-semibold uppercase tracking-[0.14em] text-faint"
 export function BriefEssentials({ ticket, variant = "brief" }: { ticket: Ticket; variant?: "brief" | "make" }) {
   const { overview, spec } = parseBrief(ticket.brief ?? "");
   const idea = ideaOf(overview);
+  const hook = hookOf(spec);
+  const build = buildLine(spec);
   const assets = spec.assets.filter((a) => a.item.trim());
   const maker = ticket.assigneeName ?? ticket.creativeName;
   const make = variant === "make";
@@ -69,13 +82,29 @@ export function BriefEssentials({ ticket, variant = "brief" }: { ticket: Ticket;
   return (
     <section className="grid min-w-0 overflow-hidden rounded-[14px] border border-line bg-surface">
       {/* The idea and the hook */}
-      {(idea || spec.hook || spec.keyMessage) && !make ? (
+      {(idea || hook || spec.keyMessage) && !make ? (
         <div className="grid gap-3 px-5 pb-4 pt-5 max-md:px-4">
+          {spec.stage && <span className="w-fit rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">{spec.stage}</span>}
           {idea && <p className="font-heading text-[18px] leading-snug text-fg max-md:text-[17px]">{idea}</p>}
-          {spec.hook && (
+          {spec.insight && (
+            <p className="grid gap-1">
+              <span className={label}>Why it works</span>
+              <span className="text-sm leading-relaxed text-fg/85">
+                {spec.insight}
+                {spec.insightSource && <span className="text-faint"> (Source: {spec.insightSource})</span>}
+              </span>
+            </p>
+          )}
+          {hook && (
             <p className="grid gap-1">
               <span className={label}>Hook</span>
-              <span className="text-[15px] leading-relaxed text-fg/90">{spec.hook}</span>
+              <span className="text-[15px] leading-relaxed text-fg/90">{hook}</span>
+            </p>
+          )}
+          {build && (
+            <p className="grid gap-1">
+              <span className={label}>The build</span>
+              <span className="text-sm leading-relaxed text-fg/85">{build}</span>
             </p>
           )}
           {spec.keyMessage && (
@@ -85,10 +114,11 @@ export function BriefEssentials({ ticket, variant = "brief" }: { ticket: Ticket;
             </p>
           )}
         </div>
-      ) : make && (spec.hook || idea) ? (
+      ) : make && (hook || idea) ? (
         <div className="grid gap-1 px-5 pb-3 pt-4 max-md:px-4">
           <span className={label}>What to make</span>
-          <p className="text-[15px] leading-relaxed text-fg/90">{spec.hook ? <>Opens on: {spec.hook}</> : idea}</p>
+          <p className="text-[15px] leading-relaxed text-fg/90">{hook ? <>Opens on: {hook}</> : idea}</p>
+          {build && <p className="text-sm leading-relaxed text-muted">{build}</p>}
         </div>
       ) : !ticket.brief?.trim() ? (
         <p className="px-5 pt-4 text-sm text-faint max-md:px-4">No brief written.</p>
@@ -158,12 +188,12 @@ export function BriefEssentials({ ticket, variant = "brief" }: { ticket: Ticket;
       )}
 
       {/* Where it lands and what it's built on */}
-      {(ticket.landingUrl || ticket.origin || ticket.audience) && (
+      {(ticket.landingUrl || ticket.origin || ticket.audience || spec.who) && (
         <div className="grid gap-2.5 border-t border-line px-5 py-4 max-md:px-4">
-          {ticket.audience && (
+          {(spec.who || ticket.audience) && (
             <p className="text-sm">
               <span className="mr-2 text-muted">For</span>
-              {ticket.audience}
+              {spec.who || ticket.audience}
             </p>
           )}
           {ticket.landingUrl && (

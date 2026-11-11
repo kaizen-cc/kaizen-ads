@@ -1,31 +1,50 @@
 import { createHash } from "node:crypto";
 import { draws, slidesOf, type Allotment } from "@/lib/allotment";
+import { ASSET_WORD, LIMITS, beatRows, copyOf, frameOf, hookOf, parseBrief, slideRows, type Beat, type CopySet, type Frame, type SlideRow } from "@/lib/brief-spec";
 
-// The brief PDF's content, as plain data: what the request asks for (chips, due, who makes it, what it takes from the
-// allotment), the brief restructured into what a maker reads at a glance (the idea in 30 seconds, one row per version or
-// slide, dos and don'ts, copy, assets), the specs checklist and the next step. Pure, so it's tested without a network;
-// the AI pass that restructures a brief lives in brief-pdf-data, and the drawing in brief-pdf.
+export { beatSpan, pacing } from "@/lib/brief-spec";
+
+// The brief PDF's content, as plain data: the brief in its one structure (src/lib/brief-spec.ts), the same for every
+// format with only the build changing (a video's beats, a carousel's slides, a single image's frame), in two pages:
+// the idea (the header, the strip, why it works and who it's for, the build, the versions) and the guardrails (Must,
+// Never, Your call, the assets, the copy, what to confirm, the export line). A brief written in today's sections is read
+// as it is, no AI; an older or free-text brief gets one fast AI pass in brief-pdf-data that fills only what its own
+// sections don't say. Pure, so it's tested without a network; the drawing lives in brief-pdf.
 
 export type PdfFormat = "image" | "video" | "carousel";
 export type PdfCounts = { new: number; variations: number; cards?: number };
 
-export type BriefVersion = { headline: string; subline: string; visual: string; hook: string };
-export type BriefSlide = { headline: string; subline: string; visual: string };
+export type BriefBeat = Beat;
+export type BriefSlide = SlideRow;
+export type BriefFrame = Frame;
 
 /** The brief as a production sheet. Cached on the draft (by key) so an export doesn't run the AI again. */
 export type BriefStructure = {
-  /** The idea in one line */
+  /** The idea and its payoff, in one line */
   oneLine: string;
-  /** The idea in 30 seconds: what, for whom, why it should work, what to avoid (3 to 5) */
-  summary: string[];
-  /** One per version, V1 first */
-  versions: BriefVersion[];
-  /** A carousel's slides in order (empty otherwise) */
+  /** "Fallback: ..." when the concept waits on the client */
+  fallback: string;
+  /** The funnel stage ("Evergreen TOF") */
+  stage: string;
+  /** Why it works: the insight in one or two sentences, and where it comes from */
+  why: string;
+  whySource: string;
+  /** Who it's for, one line */
+  who: string;
+  /** Video: about how long, and the music and voiceover in one line */
+  length: string;
+  audio: string;
+  /** The build: a video's 4 to 6 beats, a carousel's slides, a single image's frame */
+  beats: BriefBeat[];
   slides: BriefSlide[];
-  dos: string[];
-  donts: string[];
-  copy: { primary: string[]; headlines: string[]; cta: string };
-  /** What it's made from, and what to get from the client */
+  frame: BriefFrame | null;
+  /** What changes per version (the hook or the headline), one per version asked for, V1 first */
+  versions: string[];
+  must: string[];
+  never: string[];
+  yourCall: string;
+  copy: CopySet;
+  /** Asset groups, each with its Drive link at the end ("Need: ..." when we don't have it) */
   assets: string[];
   /** Restructured by the AI (true) or read plainly from the brief's own sections (false) */
   ai: boolean;
@@ -33,7 +52,7 @@ export type BriefStructure = {
 
 export type StructureSource = { title: string; angle: string; audience: string; brief: string; formats: Partial<Record<PdfFormat, PdfCounts>>; landing?: string | null };
 
-const STRUCTURE_VERSION = "v1";
+const STRUCTURE_VERSION = "v2";
 
 /** What the structure depends on: the same brief always gives the same key, any edit a new one */
 export function structureKey(d: StructureSource) {
@@ -59,6 +78,12 @@ export function formatChips(formats: Partial<Record<PdfFormat, PdfCounts>>, size
   return chips;
 }
 
+/** The header line under the client: the stage, the format and the sizes ("Evergreen TOF · Video · 9:16") */
+export function headerLine(formats: Partial<Record<PdfFormat, PdfCounts>>, sizes: string[], stage: string) {
+  const fs = picked(formats).map((f) => (f === "carousel" ? `Carousel of ${slidesOf(formats.carousel?.cards)}` : FORMAT_NAME[f]));
+  return [stage.trim(), fs.join(" + "), sizes.map((z) => z.replace("x", ":")).join(", ")].filter(Boolean);
+}
+
 /** What it takes from this month's allotment, and what's left after it ("Takes 5 of 20 images · 7 left after") */
 export function allotmentDraw(formats: Partial<Record<PdfFormat, PdfCounts>>, a: Allotment | null | undefined) {
   const d = draws(formats);
@@ -72,6 +97,19 @@ export function allotmentDraw(formats: Partial<Record<PdfFormat, PdfCounts>>, a:
   pool(d.images, a?.images, a?.imagesUsed ?? 0, "image");
   pool(d.videos, a?.videos, a?.videosUsed ?? 0, "video");
   return parts.length ? `Takes ${parts.join(" · ")}` : null;
+}
+
+/** The strip's Versions: "3 · 3 of 5 videos this month" (over the allotment says so) */
+export function versionsStrip(formats: Partial<Record<PdfFormat, PdfCounts>>, a: Allotment | null | undefined) {
+  const n = versionCount(formats);
+  const d = draws(formats);
+  const month = (k: number, cap: number | null | undefined, used: number, word: string) => {
+    if (!k || cap == null) return null;
+    const after = cap - used - k;
+    return `${k} of ${cap} ${word}s this month${after < 0 ? `, ${-after} over` : ""}`;
+  };
+  const parts = [month(d.videos, a?.videos, a?.videosUsed ?? 0, "video"), month(d.images, a?.images, a?.imagesUsed ?? 0, "image")].filter(Boolean);
+  return [String(n), ...parts].join(" · ");
 }
 
 /** Business days from a day (New York), skipping weekends */
@@ -100,7 +138,7 @@ export function dueFor(f: PdfFormat, priority: string, now = new Date()) {
 }
 export const dayLabel = (d: Date) => d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
-/** The checklist every maker ticks before delivering */
+/** The specs, safe zones and file names a maker checks before delivering (the export line says it in one line) */
 export function specsChecklist(formats: Partial<Record<PdfFormat, PdfCounts>>, sizes: string[], client: string, title: string) {
   const fs = picked(formats);
   const out: string[] = [];
@@ -115,7 +153,6 @@ export function specsChecklist(formats: Partial<Record<PdfFormat, PdfCounts>>, s
   const keys = sizes.map((z) => z.replace(":", "x")).filter((z) => z === "4x5" || z === "9x16");
   const names = (keys.length ? keys : ["4x5", "9x16"]).map((k) => `${stem}_V1_${k}`);
   out.push(`File names: ${names.join(", ")}${names.length > 1 ? " (sizes of one version share a name, so they upload as one design)" : ""}`);
-  out.push("Deliver on the ticket in Kaizen Ads with every size together, then run the AI review before internal review");
   return out;
 }
 
@@ -150,9 +187,21 @@ const sentence = (s: string, max = 180) => {
   const first = /^(.{20,}?[.!?])(\s|$)/.exec(t)?.[1] ?? t;
   return first.length > max ? `${first.slice(0, max - 1).trimEnd()}…` : first;
 };
+const cut = (s: string, max: number) => {
+  const t = s.replace(/\s*\u2014\s*/g, ", ").replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+};
+const asset = (a: { item: string; status: keyof typeof ASSET_WORD }) => (a.status === "have" ? a.item : `${ASSET_WORD[a.status]}: ${a.item}`);
 
+/**
+ * The brief read as it's written: a brief in today's sections fills every part from its own lines; an older one gives
+ * what it can (its concepts and hooks as versions, its do and don't lines, its copy lines).
+ */
 export function plainStructure(d: StructureSource): BriefStructure {
-  const { base, sections } = briefSections(d.brief);
+  const p = parseBrief(d.brief);
+  const sp = p.spec;
+  const { base, sections } = briefSections(p.overview || d.brief);
+  // Older briefs: "Concepts:" with Hook / Visual / Copy lines, and "Hooks to try:"
   const concepts: { name: string; hook: string; visual: string; copy: string }[] = [];
   for (const line of sections.get("concepts") ?? []) {
     if (/^\d+[.)]\s+/.test(line)) concepts.push({ name: clean(line), hook: "", visual: "", copy: "" });
@@ -164,78 +213,163 @@ export function plainStructure(d: StructureSource): BriefStructure {
   }
   const hooks = (sections.get("hooks to try") ?? sections.get("hooks") ?? []).map(clean).filter(Boolean);
   const n = Math.max(1, versionCount(d.formats));
-  const versions: BriefVersion[] = Array.from({ length: n }, (_, i) => {
-    const c = concepts[i] ?? (i === 0 ? concepts[0] : undefined);
-    return { headline: c?.copy || c?.name || "", subline: "", visual: c?.visual || (i > 0 ? "A variation of V1" : ""), hook: c?.hook || hooks[i] || "" };
-  });
+  const own = sp.versions.filter(Boolean);
+  const versions = Array.from({ length: n }, (_, i) => cut(own[i] ?? (i === 0 ? hookOf(sp) : "") ?? "", 200) || cut(hooks[i] ?? concepts[i]?.hook ?? (i === 0 ? concepts[0]?.copy || concepts[0]?.name || "" : ""), 200));
+
+  // Must and Never: the brief's own lists, or (an older free-text brief) its do and don't lines
   const all = d.brief.split("\n").map(clean).filter(Boolean);
-  const donts = all.filter((l) => /^(don'?t|do not|never|avoid|no )\b/i.test(l)).slice(0, 6);
-  const dos = all.filter((l) => /^(do|always|make sure|use|show|keep)\b/i.test(l) && !donts.includes(l)).slice(0, 6);
+  const looseNever = all.filter((l) => /^(don'?t|do not|never|avoid|no )\b/i.test(l));
+  const looseMust = all.filter((l) => /^(do|always|make sure|use|show|keep)\b/i.test(l) && !looseNever.includes(l));
+  const structured = p.structured;
+  // An older brief's Constraints join Must, but not its sizes and safe zones (the export line says those once)
+  const constraints = sp.constraints.filter((x) => !/(?<![\d.])\d{1,2}\s?[:x×]\s?\d{1,2}(?!\d)|safe zone|\bpx\b|\bsizes?\b|file names?/i.test(x));
+  const must = (structured ? [...sp.dos, ...constraints] : looseMust).map((x) => cut(x, 200)).slice(0, LIMITS.must);
+  const never = (structured ? sp.donts : looseNever).map((x) => cut(x, 200)).slice(0, LIMITS.never);
+
   const pick = (re: RegExp) => all.map((l) => re.exec(l)?.[1]?.trim()).filter((x): x is string => Boolean(x));
-  const lead = base.join(" ");
-  const summary = [lead && sentence(lead, 220), d.audience && `For ${sentence(d.audience, 160).replace(/^for\s+/i, "")}`, d.angle && `The angle: ${sentence(d.angle, 160)}`, donts[0] && `Avoid: ${donts[0].replace(/^(don'?t|do not|never|avoid)\s+/i, "")}`].filter((x): x is string => Boolean(x));
-  const slides: BriefSlide[] = d.formats.carousel ? Array.from({ length: slidesOf(d.formats.carousel.cards) }, () => ({ headline: "", subline: "", visual: "" })) : [];
+  const ownCopy = copyOf(sp.copy);
+  const copy: CopySet = ownCopy.primary.length || ownCopy.headlines.length || ownCopy.cta ? ownCopy : { primary: pick(/^primary text:\s*(.+)$/i).slice(0, LIMITS.primary), headlines: pick(/^headlines?:\s*(.+)$/i).slice(0, LIMITS.headlines), cta: pick(/^cta:\s*(.+)$/i)[0] ?? "" };
+
+  // The idea in one line: the first line of the brief (not its Fallback line)
+  const lines = base.filter((l) => !/^fallback\s*:/i.test(l));
+  const fallback = base.find((l) => /^fallback\s*:/i.test(l))?.replace(/^fallback\s*:\s*/i, "") ?? "";
+  const cards = slidesFor(d.formats);
+  const frame = frameOf(sp.frame);
+  const hasFrame = Boolean(frame.headline || frame.subline || frame.shows || frame.readsFirst || frame.cta);
   return {
-    oneLine: sentence(lead || d.angle || d.title, 170),
-    summary: summary.slice(0, 5),
+    oneLine: cut(sentence(lines.join(" ") || d.angle || d.title, 220), 220),
+    fallback: cut(fallback, 220),
+    stage: cut(sp.stage, 40),
+    why: cut(sp.insight, 360),
+    whySource: cut(sp.insightSource, 120),
+    who: cut(sp.who || d.audience, 200),
+    length: cut(sp.length, 20),
+    audio: cut(sp.audio, 200),
+    beats: d.formats.video ? beatRows(sp).slice(0, LIMITS.beats) : [],
+    slides: cards ? slideRows(sp).slice(0, cards) : [],
+    frame: d.formats.image ? (hasFrame ? frame : versions[0] ? { headline: versions[0], subline: "", shows: "", readsFirst: "", cta: "" } : null) : null,
     versions,
-    slides,
-    dos,
-    donts,
-    copy: { primary: pick(/^primary text:\s*(.+)$/i), headlines: pick(/^headlines?:\s*(.+)$/i), cta: pick(/^cta:\s*(.+)$/i)[0] ?? "" },
-    assets: [...(sections.get("assets") ?? []), ...(sections.get("what to use") ?? [])].map(clean).slice(0, 6),
+    must,
+    never,
+    yourCall: cut(sp.yourCall, 300),
+    copy,
+    assets: sp.assets.length ? sp.assets.map(asset).slice(0, LIMITS.assets) : [...(sections.get("assets") ?? []), ...(sections.get("what to use") ?? [])].map(clean).slice(0, LIMITS.assets),
     ai: false,
   };
 }
 
-/** The AI's answer made safe to draw: trimmed, capped, the rows the request asks for (never more, never fewer) */
+/**
+ * About how tall page one is (points on a Letter page): the band, the strip, why it works, the build and the versions,
+ * from how many lines each field wraps to. The guardrails start on a page of their own only when the idea fits on the
+ * first one; otherwise they follow it, so a dense brief never spends a page on a few leftover lines.
+ */
+export function ideaHeight(st: BriefStructure, formats: PdfFormat[], title: string) {
+  const lines = (s: string, perLine: number) => (s.trim() ? Math.ceil(s.trim().length / perLine) : 0);
+  let h = 22 + 22 + 12 + lines(title, 38) * 28 + lines(st.oneLine, 88) * 16 + (st.fallback ? lines(st.fallback, 110) * 12 + 5 : 0) + 18; // band
+  h += 46; // strip
+  if (st.why || st.who) h += 12 + 20 + Math.max(lines(st.why, 62) * 14 + (st.whySource ? 13 : 0), lines(st.who, 42) * 13 + 13);
+  if (formats.includes("video") && st.beats.length) {
+    const three = st.beats.some((b) => b.text && b.says);
+    h += 12 + 20;
+    for (const b of st.beats) {
+      const mid = 11 + lines(b.onScreen, three ? 36 : 50) * 12.2;
+      const text = b.text ? 9 + lines(b.text, three ? 30 : 50) * 12.4 : 0;
+      const says = b.says ? 9 + lines(b.says, three ? 36 : 50) * 12.4 : 0;
+      h += 12 + Math.max(mid, three ? Math.max(text, says) : says || text);
+    }
+    h += 48; // audio and pacing
+  }
+  if (formats.includes("carousel") && st.slides.length) h += 12 + 20 + st.slides.reduce((n, x) => n + 9 + Math.max(lines(x.headline, 32), lines(x.shows, 45), 1) * 12.4, 0);
+  if (formats.includes("image") && st.frame) h += 12 + 20 + 110;
+  if (st.versions.some(Boolean)) {
+    const two = st.versions.length > 3;
+    const rows = two ? Math.ceil(st.versions.length / 2) : st.versions.length;
+    const longest = Math.max(...st.versions.map((v) => lines(v || "A variation of V1", two ? 42 : 84)), 1);
+    h += 12 + 20 + rows * (9 + longest * 12.5);
+  }
+  return h;
+}
+
+/** Page one's room on a Letter page, below the band's top edge and above the footer */
+export const PAGE_ONE_ROOM = 742;
+
+/** The brief already says everything the format needs (no AI pass to make) */
+export function needsStructure(s: BriefStructure, d: StructureSource) {
+  if (!s.why || !s.oneLine) return true;
+  if (d.formats.video && !s.beats.length) return true;
+  if (d.formats.carousel && s.slides.length < 2) return true;
+  if (d.formats.image && !s.frame?.headline) return true;
+  return false;
+}
+
+/**
+ * The AI's answer fitted to the brief: what the brief's own sections say always wins (it's what was reviewed); the AI
+ * only fills what they leave empty. Trimmed, capped (5 Must, 5 Never, 4 to 6 beats, 5 assets), the rows the request
+ * asks for (never more).
+ */
 export function fitStructure(raw: Partial<BriefStructure> | null | undefined, d: StructureSource, ai: boolean): BriefStructure {
   const plain = plainStructure(d);
-  const t = (s: unknown, max = 400) => (typeof s === "string" ? s.replace(/\s*\u2014\s*/g, ", ").replace(/\s+/g, " ").trim().slice(0, max) : "");
-  const list = (xs: unknown, n: number, max = 260) => (Array.isArray(xs) ? xs.map((x) => t(x, max)).filter(Boolean).slice(0, n) : []);
+  const t = (s: unknown, max = 400) => (typeof s === "string" ? cut(s, max) : "");
+  const list = (xs: unknown, n: number, max = 200) => (Array.isArray(xs) ? xs.map((x) => t(x, max)).filter(Boolean).slice(0, n) : []);
   const n = Math.max(1, versionCount(d.formats));
   const rv = Array.isArray(raw?.versions) ? raw!.versions : [];
-  const versions = Array.from({ length: n }, (_, i) => {
-    const v = (rv[i] ?? {}) as Partial<BriefVersion>;
-    const p = plain.versions[i];
-    return { headline: t(v.headline, 160) || p.headline, subline: t(v.subline, 200), visual: t(v.visual, 360) || p.visual, hook: t(v.hook, 200) || p.hook };
-  });
-  const cards = d.formats.carousel ? slidesOf(d.formats.carousel.cards) : 0;
-  const rs = Array.isArray(raw?.slides) ? raw!.slides : [];
-  const slides = Array.from({ length: cards }, (_, i) => {
-    const s = (rs[i] ?? {}) as Partial<BriefSlide>;
-    return { headline: t(s.headline, 160), subline: t(s.subline, 200), visual: t(s.visual, 300) };
-  });
-  const summary = list(raw?.summary, 5, 240);
+  const versions = Array.from({ length: n }, (_, i) => plain.versions[i] || t(rv[i], 200));
+  const beat = (b: Partial<BriefBeat>): BriefBeat => ({ time: t(b?.time, 16), name: t(b?.name, 40), onScreen: t(b?.onScreen, 160), text: t(b?.text, 160), says: t(b?.says, 200), source: t(b?.source, 80) });
+  const beats = plain.beats.length ? plain.beats : d.formats.video && Array.isArray(raw?.beats) ? raw!.beats.map(beat).filter((b) => b.name || b.onScreen || b.says || b.text).slice(0, LIMITS.beats) : [];
+  const cards = slidesFor(d.formats);
+  const slide = (s: Partial<BriefSlide>): BriefSlide => ({ job: t(s?.job, 30), headline: t(s?.headline, 140), shows: t(s?.shows, 200) });
+  const slides = plain.slides.length >= 2 ? plain.slides : cards && Array.isArray(raw?.slides) ? raw!.slides.map(slide).filter((s) => s.headline || s.shows).slice(0, cards) : plain.slides;
+  const rf = raw?.frame as Partial<BriefFrame> | null | undefined;
+  const aiFrame: BriefFrame | null = d.formats.image && rf ? { headline: t(rf.headline, 140), subline: t(rf.subline, 200), shows: t(rf.shows, 240), readsFirst: t(rf.readsFirst, 160), cta: t(rf.cta, 40) } : null;
+  // The frame field by field: the brief's own (or V1's line as its headline) wins, the AI fills the empty ones
+  const pf = plain.frame;
+  const frame: BriefFrame | null = !pf ? (aiFrame?.headline ? aiFrame : null) : aiFrame ? { headline: pf.headline || aiFrame.headline, subline: pf.subline || aiFrame.subline, shows: pf.shows || aiFrame.shows, readsFirst: pf.readsFirst || aiFrame.readsFirst, cta: pf.cta || aiFrame.cta } : pf;
+  const rc = raw?.copy as Partial<CopySet> | undefined;
+  const hasCopy = plain.copy.primary.length || plain.copy.headlines.length || plain.copy.cta;
+  const or = <T,>(a: T[], b: T[]) => (a.length ? a : b);
   return {
-    oneLine: t(raw?.oneLine, 200) || plain.oneLine,
-    summary: summary.length >= 2 ? summary : plain.summary,
-    versions,
+    oneLine: plain.oneLine && plain.oneLine !== cut(d.title, 220) ? plain.oneLine : t(raw?.oneLine, 220) || plain.oneLine,
+    fallback: plain.fallback,
+    stage: plain.stage || t(raw?.stage, 40),
+    why: plain.why || t(raw?.why, 360),
+    whySource: plain.why ? plain.whySource : t(raw?.whySource, 120),
+    who: plain.who || t(raw?.who, 200),
+    length: plain.length || (d.formats.video ? t(raw?.length, 20) : ""),
+    audio: plain.audio || (d.formats.video ? t(raw?.audio, 200) : ""),
+    beats,
     slides,
-    dos: list(raw?.dos, 6).length ? list(raw?.dos, 6) : plain.dos,
-    donts: list(raw?.donts, 6).length ? list(raw?.donts, 6) : plain.donts,
-    copy: { primary: list(raw?.copy?.primary, 3, 600), headlines: list(raw?.copy?.headlines, 5, 120), cta: t(raw?.copy?.cta, 40) },
-    assets: list(raw?.assets, 6, 420),
+    frame,
+    versions,
+    must: or(plain.must, list(raw?.must, LIMITS.must)),
+    never: or(plain.never, list(raw?.never, LIMITS.never)),
+    yourCall: plain.yourCall || t(raw?.yourCall, 300),
+    copy: hasCopy ? plain.copy : { primary: list(rc?.primary, LIMITS.primary, 600), headlines: list(rc?.headlines, LIMITS.headlines, 120), cta: t(rc?.cta, 40) },
+    assets: or(plain.assets, list(raw?.assets, LIMITS.assets, 420)),
     ai,
   };
 }
 
-/** The JSON shape the AI fills */
+/** The JSON shape the AI fills: small and flat (one level of objects in arrays, no enums) */
 export const STRUCTURE_SCHEMA = {
   type: "object",
   properties: {
     oneLine: { type: "string" },
-    summary: { type: "array", items: { type: "string" } },
-    versions: {
+    stage: { type: "string" },
+    why: { type: "string" },
+    whySource: { type: "string" },
+    who: { type: "string" },
+    length: { type: "string" },
+    audio: { type: "string" },
+    beats: {
       type: "array",
-      items: { type: "object", properties: { headline: { type: "string" }, subline: { type: "string" }, visual: { type: "string" }, hook: { type: "string" } }, required: ["headline", "subline", "visual", "hook"], additionalProperties: false },
+      items: { type: "object", properties: { time: { type: "string" }, name: { type: "string" }, onScreen: { type: "string" }, text: { type: "string" }, says: { type: "string" }, source: { type: "string" } }, required: ["time", "name", "onScreen", "text", "says", "source"], additionalProperties: false },
     },
-    slides: {
-      type: "array",
-      items: { type: "object", properties: { headline: { type: "string" }, subline: { type: "string" }, visual: { type: "string" } }, required: ["headline", "subline", "visual"], additionalProperties: false },
-    },
-    dos: { type: "array", items: { type: "string" } },
-    donts: { type: "array", items: { type: "string" } },
+    slides: { type: "array", items: { type: "object", properties: { job: { type: "string" }, headline: { type: "string" }, shows: { type: "string" } }, required: ["job", "headline", "shows"], additionalProperties: false } },
+    frame: { type: "object", properties: { headline: { type: "string" }, subline: { type: "string" }, shows: { type: "string" }, readsFirst: { type: "string" }, cta: { type: "string" } }, required: ["headline", "subline", "shows", "readsFirst", "cta"], additionalProperties: false },
+    versions: { type: "array", items: { type: "string" } },
+    must: { type: "array", items: { type: "string" } },
+    never: { type: "array", items: { type: "string" } },
+    yourCall: { type: "string" },
     copy: {
       type: "object",
       properties: { primary: { type: "array", items: { type: "string" } }, headlines: { type: "array", items: { type: "string" } }, cta: { type: "string" } },
@@ -244,6 +378,6 @@ export const STRUCTURE_SCHEMA = {
     },
     assets: { type: "array", items: { type: "string" } },
   },
-  required: ["oneLine", "summary", "versions", "slides", "dos", "donts", "copy", "assets"],
+  required: ["oneLine", "stage", "why", "whySource", "who", "length", "audio", "beats", "slides", "frame", "versions", "must", "never", "yourCall", "copy", "assets"],
   additionalProperties: false,
 } as const;

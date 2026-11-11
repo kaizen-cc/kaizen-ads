@@ -10,8 +10,9 @@ import { LinkCards, LinkInput } from "@/components/link-refs";
 import { Line } from "@/components/quick-brief-sheet";
 import type { Allotment } from "@/lib/allotment";
 import { savedHref, savedLine } from "@/lib/saved-references";
-import { linkWord } from "@/lib/asset-links";
 import { parseBriefFileUrl } from "@/lib/brief-files";
+import { exportLineFor } from "@/lib/brief-spec";
+import { BriefText } from "@/components/brief-sheet";
 import { FORMAT_LABEL, type Format, type Priority } from "@/lib/stages";
 import { FormatIcon } from "@/app/(team)/board/ticket-card";
 import { SIZES, refLinks, selectedFormats, type Draft, type Size } from "./draft";
@@ -51,63 +52,6 @@ export function briefConcepts(brief: string) {
     return { name: first.replace(/^\d+\.\s*/, "").trim(), body: rest.map((l) => l.trim()).join("\n") };
   });
   return { base: brief.replace(m[0], m[1]).trim(), concepts };
-}
-
-/** The brief as sections a person can read: headings ("Hooks to try:"), lists, labelled lines ("Assets: …") */
-/** A line with its links as short "Open in Drive" links (an asset's Drive file, a folder, a page), never a raw address */
-function withLinks(line: string): React.ReactNode {
-  const parts = line.split(/(https?:\/\/[^\s<>"')]+)/g);
-  if (parts.length === 1) return line;
-  return parts.map((p, i) =>
-    i % 2 ? (
-      <a key={i} href={p.replace(/[.,;:!?]+$/, "")} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="whitespace-nowrap text-[0.92em] font-medium text-brand-text hover:underline">
-        {linkWord(p)} ↗
-      </a>
-    ) : (
-      p
-    ),
-  );
-}
-
-export function BriefText({ text }: { text: string }) {
-  const blocks = text.trim().split(/\n\s*\n/);
-  return (
-    <div className="grid gap-4 text-[15px] leading-relaxed">
-      {blocks.map((b, i) => {
-        const lines = b.split("\n");
-        const head = /^[A-Z][^.!?\n]{0,48}:\s*$/.test(lines[0].trim()) ? lines[0].trim().replace(/:$/, "") : null;
-        const body = head ? lines.slice(1) : lines;
-        return (
-          <section key={i} className="grid gap-1.5">
-            {head && <h4 className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${head === "Confirm with client" ? "text-warn" : "text-brand-text"}`}>{head}</h4>}
-            {body.map((l, j) => {
-              const t = l.trim();
-              if (!t) return null;
-              const bullet = /^[-•]\s+/.test(t);
-              const num = /^(\d+)\.\s+/.exec(t);
-              const labelled = /^([A-Z][A-Za-z /&'-]{1,28}):\s+(.+)$/.exec(t.replace(/^[-•]\s+/, ""));
-              const content = labelled ? (
-                <>
-                  <b className="font-medium text-fg">{labelled[1]}:</b> <span className="text-fg/85">{withLinks(labelled[2])}</span>
-                </>
-              ) : (
-                <span className="text-fg/90">{withLinks(t.replace(/^[-•]\s+/, "").replace(/^\d+\.\s+/, ""))}</span>
-              );
-              if (num) return <p key={j} className="mt-1 font-heading text-[16px] leading-snug"><span className="tabular mr-2 text-faint">{num[1]}</span>{t.replace(/^\d+\.\s+/, "")}</p>;
-              if (bullet)
-                return (
-                  <p key={j} className="flex gap-2.5 pl-1">
-                    <span aria-hidden className="mt-[10px] h-1.5 w-1.5 shrink-0 rounded-full bg-brand/70" />
-                    <span>{content}</span>
-                  </p>
-                );
-              return <p key={j} className={/^\s/.test(l) ? "pl-6" : ""}>{content}</p>;
-            })}
-          </section>
-        );
-      })}
-    </div>
-  );
 }
 
 /** A picture for a reference link when there is one: the kept copy of a Meta ad, or a direct image */
@@ -342,7 +286,7 @@ export function ReadyToSend({
             />
           ) : draft.brief.trim() ? (
             <button id="rts-brief" type="button" onClick={() => setEditBrief(true)} className="cursor-text rounded-[16px] text-left outline-none focus-visible:ring-2 focus-visible:ring-brand/50" aria-label="Edit the brief">
-              <BriefText text={draft.brief} />
+              <BriefText text={draft.brief} exportLine={exportLineFor(formats, draft.sizes, clientName, draft.title)} />
             </button>
           ) : null}
           {/* Before it goes to the maker: client-only facts, assets, contradictions, the revise chat and the review stamp */}
