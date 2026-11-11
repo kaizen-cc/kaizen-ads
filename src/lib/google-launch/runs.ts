@@ -970,6 +970,27 @@ export function buildGooglePlan(
   return { plan: { account: ctx.account, campaigns, adGroups, assetGroups, note: p.note }, warnings };
 }
 
+/** Ad group names compared the way people write them (case, separators, "Kaizen" set aside) */
+const sameGroupName = (a: string) => a.toLowerCase().replace(/[\s|_-]+/g, " ").replace(/\bkaizen\b/g, "").trim();
+
+/**
+ * New ad groups going into an existing campaign that already has one by that name become that ad group: a launch that
+ * made them earlier adds to them, and Google takes a name once per campaign.
+ */
+export function adoptExistingGroups(plan: GooglePlan, there: { id: string; name: string; campaignId: string }[]): { plan: GooglePlan; names: string[] } {
+  const names: string[] = [];
+  const adGroups = plan.adGroups.map((g) => {
+    if (g.mode !== "new") return g;
+    const camp = plan.campaigns.find((c) => c.key === g.campaignKey);
+    if (!camp || camp.mode !== "existing" || !camp.existingId) return g;
+    const hit = there.find((x) => x.campaignId === digits(camp.existingId) && sameGroupName(x.name) === sameGroupName(g.name));
+    if (!hit) return g;
+    names.push(hit.name);
+    return { ...g, mode: "existing" as const, existingId: hit.id, name: hit.name };
+  });
+  return { plan: { ...plan, adGroups }, names };
+}
+
 /** The plan in words, for the model and the log */
 export function planText(p: GooglePlan) {
   return [
@@ -1060,7 +1081,19 @@ async function writeItems(admin: SupabaseClient, runId: string, items: LaunchIte
 export async function checkGoogleRun(admin: SupabaseClient, id: string) {
   const run = await load(admin, id);
   if (!run?.plan) return;
-  const plan = run.plan;
+  let plan = run.plan;
+  // Into an existing campaign: its ad groups read fresh, so one already there by a new ad group's name (made by an
+  // earlier launch) is built into instead of made again, which Google refuses as a duplicate
+  const into = plan.campaigns.filter((c) => c.mode === "existing" && c.existingId).map((c) => digits(c.existingId));
+  if (into.length && plan.adGroups.some((g) => g.mode === "new") && googleAdsConfigured()) {
+    const rows = (await googleQuery(plan.account, `SELECT ad_group.id, ad_group.name, campaign.id FROM ad_group WHERE campaign.id IN (${into.join(",")}) AND ad_group.status != 'REMOVED'`).catch(() => [])) as Row[];
+    const there = rows.map((r) => ({ id: String(r.adGroup?.id ?? ""), name: String(r.adGroup?.name ?? ""), campaignId: String(r.campaign?.id ?? "") })).filter((g) => g.id);
+    const adopted = adoptExistingGroups(plan, there);
+    if (adopted.names.length) {
+      plan = adopted.plan;
+      await patch(admin, id, { plan });
+    }
+  }
   const at = now();
   const local = checkGooglePlan(plan, new Set(run.resolution?.inAccount ?? []));
   const items = googleItems(plan);

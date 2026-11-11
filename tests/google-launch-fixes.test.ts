@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { campaignPlaces, placesLabel, resolvePlaces } from "@/lib/google-launch/places";
 import { campaignChoice, campaignRefusal, checkGooglePlan, followCampaign, googleItems, googleOperations, googleQuestions, type AccountAdGroup, type AccountCampaign, type GooglePlan } from "@/lib/google-launch/core";
 import { compareReadBack, missingPlan, type Found } from "@/lib/google-launch/readback";
-import { acceptAll, buildGooglePlan, launchStateText, pausedOnce, proposalFrom, withPreset } from "@/lib/google-launch/runs";
+import { acceptAll, adoptExistingGroups, buildGooglePlan, launchStateText, pausedOnce, proposalFrom, withPreset } from "@/lib/google-launch/runs";
 import { appliedIntent, frustrated, wantsEverything } from "@/lib/launch-intent";
 import { justLaunched } from "@/lib/launch-sheet/runs";
 import type { LaunchQuestion } from "@/lib/launch-sheet/types";
@@ -258,5 +258,26 @@ describe("building into a campaign that already has the ad groups", () => {
     // No second "Salmon Lovers Box": its keyword goes straight into the ad group that's there
     expect(JSON.stringify(ops)).not.toContain('"name":"Salmon Lovers Box"');
     expect(JSON.stringify(ops)).toContain("customers/9907548733/adGroups/g9");
+  });
+});
+
+describe("a plan made before the ad groups were seen", () => {
+  it("builds into the ones Google already has in that campaign, whatever the account read missed", () => {
+    const raw = {
+      note: "",
+      campaigns: [{ key: "c1", mode: "existing", existingId: "24454142377", name: "Kaizen | Search | MOF | Box Themes | [TEST]", type: "SEARCH", budget: 0, bidding: "", targetCpa: 0, targetRoas: 0, locations: [], excludedLocations: [], negatives: [], sitelinks: [], callouts: [], snippets: [] }],
+      adGroups: [
+        { key: "g1", campaignKey: "c1", mode: "new", existingId: "", name: "Build Your Own Box", fromRead: -1, finalUrl: "https://oceanbox.com/products/build-your-own-box", keywords: ['"seafood box"'], negatives: [], rsas: [] },
+        { key: "g2", campaignKey: "c1", mode: "new", existingId: "", name: "Brand New Theme", fromRead: -1, finalUrl: "https://oceanbox.com", keywords: ['"x"'], negatives: [], rsas: [] },
+      ],
+      assetGroups: [],
+    };
+    const { plan } = buildGooglePlan(proposalFrom(raw), { account: "9907548733", draft: { adGroups: [], campaignNegatives: [], notes: [] }, res: { campaigns: camps, adGroups: [], assetGroups: [] }, finalUrl: null, locations: new Map(), locationAsk: null });
+    expect(plan.adGroups[0].mode).toBe("new");
+    const { plan: fixed, names } = adoptExistingGroups(plan, [{ id: "777", name: "Build Your Own Box", campaignId: "24454142377" }, { id: "888", name: "Brand New Theme", campaignId: "999" }]);
+    expect(names).toEqual(["Build Your Own Box"]);
+    expect(fixed.adGroups[0]).toMatchObject({ mode: "existing", existingId: "777" });
+    expect(fixed.adGroups[1]).toMatchObject({ mode: "new" });
+    expect(JSON.stringify(googleOperations(fixed, "9907548733").ops)).toContain("customers/9907548733/adGroups/777");
   });
 });

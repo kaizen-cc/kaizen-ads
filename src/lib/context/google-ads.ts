@@ -165,7 +165,7 @@ export async function googleWritableSetup(account: string): Promise<WritableSetu
   const micros = (v: unknown) => (v == null || v === "" ? null : Math.round(Number(v) / 10_000) / 100);
   const [camps, groups, terms] = await Promise.all([
     search(account, "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.bidding_strategy, campaign.target_cpa.target_cpa_micros, campaign.maximize_conversions.target_cpa_micros, campaign.target_roas.target_roas, campaign.maximize_conversion_value.target_roas, campaign_budget.resource_name, campaign_budget.amount_micros, campaign_budget.explicitly_shared FROM campaign WHERE campaign.status != 'REMOVED'"),
-    search(account, "SELECT ad_group.id, ad_group.name, ad_group.status, campaign.id, campaign.name FROM ad_group WHERE ad_group.status != 'REMOVED' AND campaign.status != 'REMOVED' LIMIT 300").catch(() => [] as Row[]),
+    search(account, "SELECT ad_group.id, ad_group.name, ad_group.status, campaign.id, campaign.name FROM ad_group WHERE ad_group.status != 'REMOVED' AND campaign.status != 'REMOVED' LIMIT 5000").catch(() => [] as Row[]),
     search(account, "SELECT search_term_view.search_term, campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.conversions FROM search_term_view WHERE segments.date DURING LAST_30_DAYS AND metrics.conversions = 0 AND metrics.cost_micros > 0 ORDER BY metrics.cost_micros DESC LIMIT 40").catch(() => [] as Row[]),
   ]);
   return {
