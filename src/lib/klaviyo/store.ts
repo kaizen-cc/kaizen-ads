@@ -88,11 +88,10 @@ async function clearNumbers(admin: SupabaseClient, clientId: string) {
   await Promise.all(["klaviyo_campaigns", "klaviyo_flows", "klaviyo_audiences", "klaviyo_daily"].map((t) => admin.from(t).delete().eq("client_id", clientId)));
 }
 
-/** Remove: the key is deleted, and so are the numbers it read (they belong to that account) */
+/** Remove: the key is deleted; the email history already read stays with the client (client knowledge is never deleted) */
 export async function removeKlaviyo(admin: SupabaseClient, clientId: string) {
   const { error } = await admin.from("klaviyo_connections").delete().eq("client_id", clientId);
   if (error) return { ok: false as const, error: error.message };
-  await clearNumbers(admin, clientId);
   return { ok: true as const };
 }
 

@@ -82,7 +82,7 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
                   type="button"
                   disabled={pending}
                   onClick={() => {
-                    if (!confirm("Remove Klaviyo from this client? The key is deleted, and so are the email numbers read with it.")) return;
+                    if (!confirm("Remove Klaviyo from this client? The key is deleted and syncing stops; the email history already read stays.")) return;
                     start(async () => {
                       const r = await removeKlaviyoKey(clientId);
                       setError(r.ok ? null : r.error);
