@@ -953,7 +953,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
             </nav>
           )}
           {section === "yours" && <MyConnectionsTab me={me} />}
-          {section === "team" && <ConnectorsTab me={me} view={typeof sp.view === "string" ? sp.view : null} q={typeof sp.q === "string" ? sp.q : null} />}
+          {section === "team" && <ConnectorsTab />}
           {section === "keys" && <Connections isExec={me.isExec} />}
         </div>
       )}

@@ -18,7 +18,7 @@ export async function chatConnectors(threadId: string | null): Promise<{ items: 
   const [offered, mine] = await Promise.all([offeredConnectors(admin, me), myConnections(admin, me.id)]);
   const items = offered.map((c): ChatConnector => {
     const m = mine.find((x) => x.connector_id === c.id);
-    return { key: c.key, name: c.name, icon_url: c.icon_url, note: c.note, auth: c.auth, state: c.auth === "none" ? "connected" : !m ? "not_connected" : m.status === "active" ? "connected" : "reconnect" };
+    return { key: c.key, name: c.name, icon_url: c.icon_url, note: c.note, auth: c.auth, state: !m ? "not_connected" : c.auth === "none" || m.status === "active" ? "connected" : "reconnect" };
   });
   let on: string[] | null = null;
   if (threadId && /^[0-9a-f-]{36}$/.test(threadId)) {

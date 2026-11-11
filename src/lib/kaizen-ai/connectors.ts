@@ -49,7 +49,7 @@ export async function connectorTurn(p: {
   const offered = await offeredConnectors(admin, me).catch(() => []);
   if (!offered.length) return none();
   const mine = await myConnections(admin, me.id);
-  const usable = offered.filter((c) => c.auth === "none" || mine.some((m) => m.connector_id === c.id)).map((c) => c.key);
+  const usable = offered.filter((c) => mine.some((m) => m.connector_id === c.id)).map((c) => c.key);
   if (p.initial) await setThreadConnectorKeys(admin, p.threadId, p.initial).then(() => {}, () => {});
   const saved = p.initial ?? (await threadConnectorKeys(admin, p.threadId));
   const on = threadKeys(saved, usable);

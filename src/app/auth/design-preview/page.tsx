@@ -22,9 +22,10 @@ import { sampleKpis } from "./sample-kpis";
 import type { WatchRow } from "@/lib/fatigue";
 import type { OnboardingState, OpenSuggestion } from "@/lib/suggestions";
 import { AgentDetail, AgentsOverview, type Agent as AiAgent, type Item as AiItem } from "@/app/(team)/settings/agents";
+import { ConnectorsPreview } from "./connectors-preview";
 
 // Local-only design check with sample data (never served in production).
-// Open /auth/design-preview?view=exec | exec-empty | leader | buyer | creative | board | team | clients | client | request | request-off
+// Open /auth/design-preview?view=exec | exec-empty | connectors | connectors-mine | leader | buyer | creative | board | team | clients | client | request | request-off
 
 const people: Person[] = [
   { id: "1", email: "santi@kaizenmarketing.agency", fullName: "Santi Lozano", role: "executive", isActive: true, joined: true, clientCount: 0 },
@@ -323,6 +324,13 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
             ]}
           />
         )}
+      </div>
+    );
+  } else if (view === "connectors" || view === "connectors-mine") {
+    body = (
+      <div className="grid gap-7">
+        <h1 className="font-heading text-[32px]">Connections</h1>
+        <ConnectorsPreview mine={view === "connectors-mine"} />
       </div>
     );
   } else if (view === "kpis") {

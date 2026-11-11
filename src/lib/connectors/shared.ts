@@ -40,6 +40,34 @@ export function keyFrom(name: string) {
   return /^[a-z]/.test(k) ? k : `c-${k}`.slice(0, 40);
 }
 
+/** A key from a name that no other connector uses ("Shopify" → "shopify", or "shopify-2" when that's taken) */
+export function uniqueKey(name: string, taken: Iterable<string>): string {
+  const used = new Set(taken);
+  const base = keyFrom(name || "connector").slice(0, 36).replace(/-+$/, "") || "connector";
+  const root = KEY_RE.test(base) ? base : keyFrom(`c ${base}`);
+  let key = root;
+  for (let n = 2; used.has(key); n++) key = `${root}-${n}`;
+  return key;
+}
+
+/**
+ * How a server signs people in, from what it says about itself (MCP authorization spec): it answered without asking
+ * for a sign in (nothing to set up), it registers apps itself (OAuth, automatic), it has OAuth but no registration (an
+ * app must be registered with the service first: client id and secret), or it asks for a sign in with no OAuth at all
+ * (each person pastes a token). Null when it didn't answer.
+ */
+export function authFromProbe(p: { reachable: boolean; signIn: boolean; dcr: boolean; meta: unknown }): AuthKind | null {
+  if (!p.reachable) return null;
+  if (!p.signIn) return "none";
+  if (p.dcr) return "oauth";
+  return p.meta ? "oauth_client" : "token";
+}
+
+/** Can this person use this connector in a chat: connected (a no-sign-in one once they switched it on) and active */
+export function usable(c: Pick<Connector, "id" | "auth">, mine: { connector_id: string; status: string }[]) {
+  return mine.some((m) => m.connector_id === c.id && (c.auth === "none" || m.status === "active"));
+}
+
 // ─── Links ─────────────────────────────────────────────────────────────────
 
 /** Settings › Your connections (optionally opened on one connector): where Connect, Reconnect and Disconnect live */

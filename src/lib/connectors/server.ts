@@ -21,6 +21,7 @@ import {
   type Connector,
   type Ready,
   type ToolMeta,
+  usable,
 } from "./core";
 
 // Connectors on the server: the catalog, each person's connections, the OAuth dance (MCP authorization spec: protected
@@ -102,7 +103,7 @@ export async function connectedKeys(profileId: string): Promise<string[]> {
   const { data: p } = await admin.from("profiles").select("role, is_exec").eq("id", profileId).maybeSingle();
   if (!p) return [];
   const [offered, mine] = await Promise.all([offeredConnectors(admin, { role: p.role as Staff["role"], isExec: Boolean(p.is_exec) }), myConnections(admin, profileId)]);
-  return offered.filter((c) => c.auth === "none" || mine.some((m) => m.connector_id === c.id && m.status === "active")).map((c) => c.key);
+  return offered.filter((c) => usable(c, mine)).map((c) => c.key);
 }
 
 // ─── Discovery ─────────────────────────────────────────────────────────────
@@ -375,6 +376,23 @@ export async function savePersonalToken(me: Staff, connectorKey: string, token: 
   if (listed.ok) await admin.from("ai_connections").update({ tools: listed.tools, tools_checked_at: new Date().toISOString() }).eq("id", id);
 }
 
+/** Switch on a connector that needs no sign in: a connection with no token, and the tools it offers */
+export async function connectOpen(me: Staff, connectorKey: string): Promise<Connector> {
+  const admin = createAdminClient();
+  const c = await connectorByKey(admin, connectorKey);
+  if (!c || !offeredTo(c, me.role, me.isExec)) throw new Error("That connector isn't offered to you.");
+  if (c.auth !== "none") throw new Error(`${c.name} needs you to sign in.`);
+  const now = new Date().toISOString();
+  const { data, error } = await admin
+    .from("ai_connections")
+    .upsert({ profile_id: me.id, connector_id: c.id, status: "active", token_last4: null, expires_at: null, scope: null, last_error: null, connected_at: now, updated_at: now }, { onConflict: "profile_id,connector_id" })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(error?.code === "42P01" ? "Connectors need the latest database update first." : "The connection couldn't be saved.");
+  await refreshTools(admin, data.id as string, c, null).catch(() => {});
+  return c;
+}
+
 /** Remove this person's connection (their tokens go with it) */
 export async function disconnect(me: Staff, connectorKey: string): Promise<void> {
   const admin = createAdminClient();
@@ -474,12 +492,12 @@ export async function readyFor(admin: SupabaseClient, me: Staff, keys: string[])
     keys.map(async (k) => {
       const c = offered.find((x) => x.key === k);
       if (!c) return;
-      if (c.auth === "none") {
-        ready.push({ key: c.key, name: c.name, url: c.url, token: null, tools: [] });
-        return;
-      }
       const conn = mine.find((m) => m.connector_id === c.id);
       if (!conn) return problems.push({ key: c.key, name: c.name, text: `${c.name} isn't connected yet.`, reconnect: true });
+      if (c.auth === "none") {
+        ready.push({ key: c.key, name: c.name, url: c.url, token: null, tools: conn.tools });
+        return;
+      }
       if (conn.status !== "active") return problems.push({ key: c.key, name: c.name, text: `${c.name} needs you to sign in again.`, reconnect: true });
       let { access, refresh } = await tokensOf(admin, conn.id);
       if (!access) {
