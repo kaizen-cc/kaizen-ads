@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptionKey, seal, unseal } from "@/lib/meta-token-core";
 import { LIVE } from "@/lib/live";
+import { servicesOf } from "@/lib/services";
 import { audienceSize, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, placedOrderMetric } from "./api";
 import { BACKFILL_DAYS, cleanKey, dayIn, emailContextLine, emptyStats, keyLast4, keyProblem, klaviyoClientState, klaviyoCostMs, pickKlaviyoWindow, rates, redactKey, rollupDays, sumSince, type CampaignInfo, type EmailCampaignLine, type EmailWindow, type KlaviyoClientState, type KlaviyoPlainError, type KlaviyoWindow, type SeriesRow, type Stats } from "./core";
 import { tracker } from "@/lib/progress";
@@ -125,19 +126,21 @@ export async function klaviyoConnection(admin: SupabaseClient, clientId: string)
 export type KlaviyoRosterRow = { id: string; name: string; slug: string; account: string | null; last4: string | null; state: KlaviyoClientState; error: KlaviyoPlainError | null; lastSyncedAt: string | null; window: KlaviyoWindow | null; fullAt: string | null };
 
 /**
- * Every live client with its Klaviyo: connected (account, last read, which window), failing (the error in plain words
+ * Every live client on email marketing (or already connected) with its Klaviyo: connected (account, last read, which window), failing (the error in plain words
  * and its fix), or missing. For Settings › Sync health. null before the Klaviyo migration is applied.
  */
 export async function klaviyoRoster(admin: SupabaseClient): Promise<KlaviyoRosterRow[] | null> {
   const [{ data: conns, error }, { data: clients }, { data: memos }] = await Promise.all([
     admin.from("klaviyo_connections").select("client_id, account_name, key_last4, status, last_synced_at, last_error"),
-    admin.from("clients").select("id, name, slug").is("archived_at", null).in("status", LIVE).order("name"),
+    admin.from("clients").select("id, name, slug, services, services_extra, services_removed").is("archived_at", null).in("status", LIVE).order("name"),
     admin.from("sync_state").select("source, last_result").like("source", "klaviyo:%"),
   ]);
   if (error) return null;
   const by = new Map((conns ?? []).map((c) => [c.client_id as string, c]));
+  // Only the clients Kaizen runs email for: the email marketing service, or a Klaviyo already connected
+  const list = (clients ?? []).filter((c) => by.has(c.id as string) || (servicesOf(c as Parameters<typeof servicesOf>[0]) as string[]).includes("email-marketing"));
   const memo = new Map((memos ?? []).map((m) => [String(m.source).slice("klaviyo:".length), (m.last_result ?? {}) as { window?: KlaviyoWindow; fullAt?: string | null }]));
-  return (clients ?? []).map((c) => {
+  return list.map((c) => {
     const k = by.get(c.id as string);
     const m = memo.get(c.id as string);
     const st = klaviyoClientState(k ? { status: k.status as string, lastSyncedAt: (k.last_synced_at as string | null) ?? null, error: (k.last_error as string | null) ?? null } : null);
