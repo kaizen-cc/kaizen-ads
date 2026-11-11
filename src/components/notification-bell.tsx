@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { clearNotices, markRead, myNotifications, restoreNotices } from "@/app/(team)/notification-actions";
+import { enableRequest } from "@/app/(team)/settings/connector-actions";
 import { submitHandled } from "@/app/handled/actions";
 import type { Notice } from "@/lib/notifications";
 import { toast } from "./toasts";
@@ -26,7 +27,11 @@ const itemOf = (key: string | null) => {
   return m ? { kind: m[1], id: m[2] } : null;
 };
 
+/** Someone asked to enable a connector: execs enable it right from the notice */
+const askOf = (key: string | null) => /^connector-ask:([0-9a-f-]{36})$/.exec(key ?? "")?.[1] ?? null;
+
 const KIND_ICON: Record<string, string> = {
+  connector: "M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4",
   assigned: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0",
   ticket: "M4 6h16M4 12h16M4 18h10",
   client: "M3 21V8l9-5 9 5v13M9 21v-6h6v6",
@@ -129,6 +134,29 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
     setItems((xs) => xs.filter((x) => x.id !== n.id));
     await clearNotices([n.id]).catch(() => null);
     toast({ tone: "ok", title: "Handled", body: r.message || undefined, ms: 4000 });
+    router.refresh();
+  };
+
+  // Enable on a request: it's enabled for the team and everyone who asked hears it's ready. A service that needs its
+  // one-time app opens that step in Settings instead
+  const enableAsked = async (n: Notice, requestId: string) => {
+    setClosing(n.id);
+    const r = await enableRequest({ id: requestId }).catch(() => ({ ok: false as const, error: "Couldn't enable it just now. Try again." }));
+    setClosing(null);
+    if (!r.ok) {
+      if ("needsClient" in r && r.needsClient && r.ref) {
+        setOpen(false);
+        if (!n.read) void markRead(n.id);
+        router.push(`/settings?tab=connections&section=team&add=client&app=${encodeURIComponent(r.ref)}`);
+        return;
+      }
+      toast({ tone: "bad", title: "Couldn't enable it", body: r.error, ms: 6000 });
+      return;
+    }
+    setUnread((u) => Math.max(0, u - (n.read ? 0 : 1)));
+    setItems((xs) => xs.filter((x) => x.id !== n.id));
+    await clearNotices([n.id]).catch(() => null);
+    toast({ tone: "ok", title: `${r.name} is enabled`, body: "Everyone who asked was told it's ready to connect.", ms: 5000 });
     router.refresh();
   };
 
@@ -279,6 +307,18 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                             </span>
                             {!n.read && <span className={`mt-2 h-2 w-2 shrink-0 rounded-full ${n.priority === "critical" ? "bg-brand" : "bg-fg/40"} ${sheet ? "" : "group-hover:opacity-0"}`} />}
                           </button>
+                          {askOf(n.key) && (
+                            <div className="-mt-1 flex gap-2 pb-3 pl-[60px] pr-4">
+                              <button
+                                type="button"
+                                disabled={closing === n.id}
+                                onClick={() => void enableAsked(n, askOf(n.key)!)}
+                                className={`rounded-full bg-fg px-3.5 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50 ${sheet ? "h-11" : "h-8 max-md:h-11"}`}
+                              >
+                                {closing === n.id ? "Enabling…" : "Enable"}
+                              </button>
+                            </div>
+                          )}
                           {itemOf(n.key) && (
                             <div className="-mt-1 flex gap-2 pb-3 pl-[60px] pr-4">
                               {(

@@ -3,15 +3,17 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConnectorIcon } from "@/app/(team)/ai/connectors-ui";
-import { AUTH_KINDS, connectHref, connectionsHref, keyFrom, type AuthKind, type Connector } from "@/lib/connectors/shared";
+import type { RequestGroup } from "@/lib/connectors/requests-core";
+import { appSetupFor, appStepText, AUTH_KINDS, browseHref, chatConnectHref, connectionsHref, keyFrom, type AuthKind, type Connector } from "@/lib/connectors/shared";
 import { ROLES } from "@/lib/roles";
 import { closeThen, pushParams, replaceParams, useParam } from "@/lib/url-state";
-import { addCustomConnector, checkConnectorUrl, deleteConnector, directory, disconnectAction, markCatalogSeen, offerFromRegistry, saveConnector, savePersonalTokenAction, type DirectoryItem } from "./connector-actions";
+import { addCustomConnector, checkConnectorUrl, declineRequest, deleteConnector, directory, enableRequest, markCatalogSeen, offerFromRegistry, saveConnector, type DirectoryItem } from "./connector-actions";
 
-// Connectors, laid out like Claude's. Execs: what's offered to the team, Add connector (the Directory of verified
-// servers from the MCP registry, or a custom connector from a name and a URL), Edit for the finer settings, and Refresh
-// now for the catalog. Everyone: their own accounts, each with Connect, or Connected and a menu. Every sheet and screen
-// lives in the address (add=directory|custom|client, edit=<id>), so back closes it.
+// Connectors, laid out like Claude's organization settings. Execs enable connectors for the team: the team's requests
+// (Enable or Decline), Enable connector (the Directory of verified servers, or a custom connector from a name and a
+// URL), Edit for roles and the finer settings, and Refresh now for the catalog. Everyone else's connecting lives in
+// Kaizen AI's plug menu; Your accounts is a short list that points there. Every sheet and screen lives in the address
+// (add=directory|custom|client, edit=<id>, request=<ref>), so back closes it.
 
 export type AdminItem = Connector & { hasSecret: boolean; registered: boolean; people: number; /** Its registry entry went away (it keeps working until turned off) */ removed: boolean };
 export type MineItem = {
@@ -112,7 +114,8 @@ function useRefresh(): Refresh {
 /** Where the Directory's connectors come from (the server action; a sample in the design preview) */
 export type DirectoryLoader = (q: string, limit: number) => Promise<{ items: DirectoryItem[]; total: number; ready: boolean }>;
 
-type Pending = { kind: "registry"; name: string; title: string; icon: string | null } | { kind: "custom"; name: string; url: string };
+/** A connector waiting on its one-time app: from the Directory, from a request (name is the request's ref), or custom */
+type Pending = { kind: "registry" | "request"; name: string; title: string; icon: string | null; url: string | null } | { kind: "custom"; name: string; url: string };
 
 export function ConnectorsAdmin({
   items,
@@ -123,8 +126,10 @@ export function ConnectorsAdmin({
   syncError,
   syncPartial,
   loadDirectory = directory,
+  requests = [],
 }: {
   items: AdminItem[];
+  requests?: RequestGroup[];
   ready: boolean;
   encryption: boolean;
   catalogTotal: number;
@@ -147,7 +152,7 @@ export function ConnectorsAdmin({
   }, [legacyView]);
   const added = (r: { name: string; key: string }) => {
     setFlash(r);
-    closeThen(() => router.refresh(), "add", "dq");
+    closeThen(() => router.refresh(), "add", "dq", "app", "appname");
   };
   const flashed = flash ? items.find((i) => i.key === flash.key) : null;
 
@@ -155,19 +160,19 @@ export function ConnectorsAdmin({
     <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="max-w-[640px] text-sm text-muted">
-          The services the team can use in Kaizen AI, like the connectors your organization turns on in Claude. Each person connects their own account in Your accounts, then switches it on in a
-          chat.
+          Enable the services the team can use in Kaizen AI, like the connectors an organization turns on in Claude. People connect their own account from the plug button in any chat, and can
+          ask for one that isn&apos;t enabled yet.
         </p>
         <button type="button" disabled={!ready} onClick={() => pushParams({ add: "directory" })} className={`${primary} gap-2`}>
           <PlusIcon />
-          Add connector
+          Enable connector
         </button>
       </div>
       {!ready ? <p className="rounded-[14px] bg-warn-soft/60 px-4 py-3 text-[13px] text-fg">Connectors need the latest database update before the first one can be added.</p> : null}
       {!encryption ? <p className="rounded-[14px] bg-warn-soft/60 px-4 py-3 text-[13px] text-fg">Add TOKEN_ENCRYPTION_KEY in Vercel first: people&apos;s sign ins are stored encrypted with it.</p> : null}
       {flash ? (
         <div className="flex flex-wrap items-center gap-3 rounded-[14px] bg-ok-soft/60 px-4 py-2.5 text-[13px] text-fg">
-          <span className="min-w-0 flex-1">{flash.name} is offered to everyone. People connect it in Your accounts.</span>
+          <span className="min-w-0 flex-1">{flash.name} is enabled for everyone. People connect it from the plug button in Kaizen AI.</span>
           {flashed ? (
             <button type="button" onClick={() => pushParams({ edit: flashed.id })} className="min-h-11 rounded-full px-3 text-[13px] font-medium text-fg underline-offset-4 hover:underline">
               Choose roles
@@ -179,10 +184,18 @@ export function ConnectorsAdmin({
         </div>
       ) : null}
 
+      <Requests
+        groups={requests}
+        onNeedsApp={(p) => {
+          setPending(p);
+          pushParams({ add: "client" });
+        }}
+      />
+      {requests.length && items.length ? <h2 className="-mb-2 font-heading text-[19px] text-fg">Enabled</h2> : null}
       {ready && !items.length ? (
         <div className="grid justify-items-center gap-3 rounded-[20px] border border-dashed border-line px-6 py-14 text-center">
-          <p className="font-heading text-[20px] text-fg">No connectors yet</p>
-          <p className="max-w-[420px] text-[13px] text-muted">Pick Canva, Notion, Zapier or any verified service from the Directory, or add one by its URL.</p>
+          <p className="font-heading text-[20px] text-fg">Nothing enabled yet</p>
+          <p className="max-w-[420px] text-[13px] text-muted">Enable Canva, Notion, Zapier or any verified service from the Directory, or add one by its URL.</p>
           <button type="button" onClick={() => pushParams({ add: "directory" })} className={quiet}>
             Browse the Directory
           </button>
@@ -197,7 +210,7 @@ export function ConnectorsAdmin({
                 <span className="grid min-w-0 flex-1 gap-0.5">
                   <span className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-[15px] font-semibold text-fg">{c.name}</span>
-                    {!c.enabled ? <Pill tone="off">Off</Pill> : null}
+                    {c.enabled ? <Pill tone="ok">Enabled</Pill> : <Pill tone="off">Off</Pill>}
                   </span>
                   {c.note ? <span className="line-clamp-1 text-[13px] text-muted">{c.note}</span> : null}
                   <span className="truncate text-[12px] text-faint">
@@ -235,7 +248,7 @@ export function ConnectorsAdmin({
 
 // ─── Add connector: the Directory, Add custom connector, and the client step ─
 
-const closeAdd = () => closeThen(() => {}, "add", "dq");
+const closeAdd = () => closeThen(() => {}, "add", "dq", "app", "appname");
 
 function AddSheet({
   screen,
@@ -264,7 +277,7 @@ function AddSheet({
       document.body.style.overflow = was;
     };
   }, []);
-  const title = view === "custom" ? "Add custom connector" : view === "client" ? "One more step" : "Directory";
+  const title = view === "custom" ? "Add custom connector" : view === "client" ? "One-time app" : "Enable a connector";
   return (
     <div className="fixed inset-0 z-50 md:grid md:place-items-center md:p-6" role="dialog" aria-modal aria-label={title}>
       <button type="button" className="absolute inset-0 hidden bg-deep/50 backdrop-blur-[3px] md:block" onClick={close} aria-label="Close" tabIndex={-1} />
@@ -335,11 +348,11 @@ ${refresh.busy}`;
   const offer = async (i: DirectoryItem) => {
     setBusy(i.name);
     setErr(null);
-    const r = await offerFromRegistry(i.name, []).catch(() => ({ ok: false as const, error: "Couldn't add it. Try again." }));
+    const r = await offerFromRegistry(i.name, []).catch(() => ({ ok: false as const, error: "Couldn't enable it. Try again." }));
     setBusy(null);
     if (r.ok) return onAdded({ name: r.name, key: r.key });
     if ("needsClient" in r && r.needsClient) {
-      setPending({ kind: "registry", name: i.name, title: i.title, icon: i.icon_url });
+      setPending({ kind: "registry", name: i.name, title: i.title, icon: i.icon_url, url: i.url });
       return pushParams({ add: "client" });
     }
     setErr(`${i.title}: ${r.error}`);
@@ -362,7 +375,7 @@ ${refresh.busy}`;
       {i.offered === "on" ? (
         <span className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full bg-ok-soft/70 px-3 text-[12px] font-medium text-fg">
           <CheckIcon size={12} />
-          Added
+          Enabled
         </span>
       ) : (
         <button
@@ -370,7 +383,7 @@ ${refresh.busy}`;
           onClick={() => void offer(i)}
           disabled={Boolean(busy)}
           className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line text-fg transition hover:border-brand hover:bg-brand hover:text-white disabled:opacity-40"
-          aria-label={i.offered === "off" ? `Turn ${i.title} back on for the team` : `Add ${i.title} for the team`}
+          aria-label={i.offered === "off" ? `Enable ${i.title} again for the team` : `Enable ${i.title} for the team`}
         >
           {busy === i.name ? <span className="h-4 w-4 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" aria-hidden /> : <PlusIcon />}
         </button>
@@ -491,9 +504,14 @@ function CustomScreen({ setPending, onAdded, onCancel }: { setPending: (p: Pendi
   );
 }
 
-function ClientScreen({ pending, onAdded }: { pending: Pending | null; onAdded: (r: { name: string; key: string }) => void }) {
+function ClientScreen({ pending: given, onAdded }: { pending: Pending | null; onAdded: (r: { name: string; key: string }) => void }) {
+  // A link from Kaizen AI's Browse connectors (?app=<registry name>&appname=<title>) opens this step on its own
+  const app = useParam("app");
+  const appName = useParam("appname");
+  const pending: Pending | null = given ?? (app ? { kind: "registry", name: app, title: appName || app.split("/").pop() || app, icon: null, url: null } : null);
   const [clientId, setClientId] = useState("");
   const [secret, setSecret] = useState("");
+  const [withSecret, setWithSecret] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   if (!pending)
@@ -505,14 +523,20 @@ function ClientScreen({ pending, onAdded }: { pending: Pending | null; onAdded: 
         </button>
       </div>
     );
-  const label = pending.kind === "registry" ? pending.title : pending.name;
+  const label = pending.kind === "custom" ? pending.name : pending.title;
+  const setup = pending.url ? appSetupFor(pending.url) : null;
   const go = async () => {
     setBusy(true);
     setErr(null);
-    const client = { id: clientId.trim(), secret: secret.trim() };
-    const r = await (pending.kind === "registry" ? offerFromRegistry(pending.name, [], client) : addCustomConnector({ name: pending.name, url: pending.url, client })).catch(() => ({
+    const client = { id: clientId.trim(), secret: withSecret ? secret.trim() : "" };
+    const r = await (pending.kind === "custom"
+      ? addCustomConnector({ name: pending.name, url: pending.url, client })
+      : pending.kind === "request"
+        ? enableRequest({ ref: pending.name, client })
+        : offerFromRegistry(pending.name, [], client)
+    ).catch(() => ({
       ok: false as const,
-      error: "Couldn't add it. Try again.",
+      error: "Couldn't enable it. Try again.",
     }));
     setBusy(false);
     if (r.ok) return onAdded({ name: r.name, key: r.key });
@@ -528,13 +552,21 @@ function ClientScreen({ pending, onAdded }: { pending: Pending | null; onAdded: 
     >
       <div className="grid min-h-0 flex-1 content-start gap-5 overflow-y-auto px-5 py-5">
         <div className="flex items-center gap-3">
-          <ConnectorIcon name={label} url={pending.kind === "registry" ? pending.icon : null} size={40} />
-          <p className="min-w-0 truncate text-[15px] font-semibold text-fg">{label}</p>
+          <ConnectorIcon name={label} url={pending.kind === "custom" ? null : pending.icon} size={40} />
+          <div className="grid min-w-0">
+            <p className="truncate text-[15px] font-semibold text-fg">{label}</p>
+            <p className="text-[12px] text-faint">Once for the whole team, not per person</p>
+          </div>
         </div>
-        <p className="text-[13.5px] leading-relaxed text-muted">
-          {label} signs people in with OAuth but doesn&apos;t let apps register themselves, so it needs an app registered with {label} first. Register one in {label}&apos;s developer settings with
-          the redirect URL below, then paste its client ID and secret.
-        </p>
+        <p className="text-[13.5px] leading-relaxed text-muted">{appStepText(label)}</p>
+        {setup ? (
+          <a href={setup.url} target="_blank" rel="noreferrer" className={`${quiet} w-fit gap-1.5`}>
+            Open {setup.vendor}&apos;s developer page
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M7 17 17 7M8 7h9v9" />
+            </svg>
+          </a>
+        ) : null}
         <div className="grid gap-1.5">
           <span className="text-[12.5px] text-muted">Redirect URL</span>
           <p className="select-all break-all rounded-[12px] bg-surface-2/70 px-3 py-2.5 text-[13px] text-fg">{REDIRECT}</p>
@@ -543,15 +575,22 @@ function ClientScreen({ pending, onAdded }: { pending: Pending | null; onAdded: 
           <span className="text-[13.5px] font-medium text-fg">Client ID</span>
           <input value={clientId} onChange={(e) => setClientId(e.target.value)} autoComplete="off" spellCheck={false} className={field} />
         </label>
-        <label className="grid gap-1.5">
-          <span className="text-[13.5px] font-medium text-fg">Client secret</span>
-          <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} autoComplete="new-password" placeholder="Leave empty for a public client" className={field} />
-        </label>
+        {withSecret ? (
+          <label className="grid gap-1.5">
+            <span className="text-[13.5px] font-medium text-fg">Client secret</span>
+            <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} autoComplete="new-password" className={field} />
+            <span className="text-[12px] text-faint">Stored encrypted. Nobody can read it back.</span>
+          </label>
+        ) : (
+          <button type="button" onClick={() => setWithSecret(true)} className="-mt-2 w-fit min-h-11 text-left text-[12.5px] text-muted underline-offset-4 hover:text-fg hover:underline">
+            The app also gave a client secret
+          </button>
+        )}
         {err ? <p className="text-[12.5px] text-bad">{err}</p> : null}
       </div>
       <footer className="flex justify-end gap-2 border-t border-line/70 px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
         <button type="submit" disabled={busy || !clientId.trim()} className={primary}>
-          {busy ? "Adding…" : "Add connector"}
+          {busy ? "Enabling…" : "Enable connector"}
         </button>
       </footer>
     </form>
@@ -589,9 +628,9 @@ function Editor({ c }: { c: AdminItem }) {
       r.suggested === "none"
         ? "It answered without asking anyone to sign in."
         : r.suggested === "oauth"
-          ? "It signs in with OAuth and registers Kaizen Ads on its own. Nothing else to add."
+          ? "People just sign in, like in Claude. Nothing else to set up."
           : r.suggested === "oauth_client"
-            ? "It signs in with OAuth but doesn't register apps itself: register an app with the service and paste its client id and secret."
+            ? "It needs its own Kaizen AI app, set up once for the whole team: create it in the service's developer settings and paste its client ID."
             : "It asks for a sign in but has no OAuth details: people paste a personal token.",
     );
   };
@@ -627,13 +666,13 @@ function Editor({ c }: { c: AdminItem }) {
         </header>
         <div className="grid content-start gap-4 overflow-y-auto px-5 py-4">
           <button type="button" role="switch" aria-checked={enabled} onClick={() => setEnabled(!enabled)} className="flex min-h-11 items-center justify-between gap-3 rounded-[12px] px-1 text-left">
-            <span className="text-[13.5px] text-fg">Offered in Kaizen AI</span>
+            <span className="text-[13.5px] text-fg">Enabled in Kaizen AI</span>
             <span className={`relative h-6 w-10 shrink-0 rounded-full transition ${enabled ? "bg-brand" : "bg-ink/[0.15]"}`} aria-hidden>
               <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-surface shadow transition-all ${enabled ? "left-[18px]" : "left-0.5"}`} />
             </span>
           </button>
           <fieldset className="grid gap-1.5">
-            <legend className="mb-1.5 text-[12.5px] text-muted">Offered to</legend>
+            <legend className="mb-1.5 text-[12.5px] text-muted">Enabled for</legend>
             <div className="flex flex-wrap gap-1.5">
               <button type="button" aria-pressed={!roles.length} onClick={() => setRoles([])} className={`min-h-11 rounded-full border px-3.5 text-[12.5px] ${!roles.length ? "border-brand bg-brand-soft/40 text-fg" : "border-line text-muted"}`}>
                 Everyone
@@ -703,7 +742,7 @@ function Editor({ c }: { c: AdminItem }) {
               </label>
               <label className="grid gap-1.5">
                 <span className="text-[12.5px] text-muted">Client secret</span>
-                <input type="password" value={secret ?? ""} onChange={(e) => setSecret(e.target.value)} autoComplete="new-password" placeholder={c.hasSecret ? "Saved (type to replace)" : "Optional for public clients"} className={field} />
+                <input type="password" value={secret ?? ""} onChange={(e) => setSecret(e.target.value)} autoComplete="new-password" placeholder={c.hasSecret ? "Saved (type to replace)" : "Only if the app has one"} className={field} />
               </label>
               <p className="text-[12px] text-faint sm:col-span-2">
                 Redirect URL to register with the service: <span className="select-all text-muted">{REDIRECT}</span>
@@ -738,8 +777,129 @@ function Editor({ c }: { c: AdminItem }) {
   );
 }
 
-// ─── Everyone: their own accounts ──────────────────────────────────────────
+// ─── Execs: requests to enable ─────────────────────────────────────────────
 
+const ago = (iso: string) => {
+  const d = Math.round((Date.now() - Date.parse(iso)) / 86_400_000);
+  return d < 1 ? "today" : d === 1 ? "yesterday" : d < 30 ? `${d} days ago` : when(iso);
+};
+
+/**
+ * What the team asked to enable, one card per connector with who asked (by role), their notes and when. Enable turns
+ * it on for them and tells them it's ready to connect; Decline sends the reason back. ?request=<ref> opens on one.
+ */
+function Requests({ groups, onNeedsApp }: { groups: RequestGroup[]; onNeedsApp: (p: Pending) => void }) {
+  const router = useRouter();
+  const focus = useParam("request");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [declining, setDeclining] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState<{ ref: string; text: string } | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  useEffect(() => {
+    if (focus) document.getElementById(`request-${focus}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [focus]);
+  if (!groups.length) return null;
+  const enable = async (g: RequestGroup) => {
+    setBusy(g.ref);
+    setErr(null);
+    const r = await enableRequest({ ref: g.ref }).catch(() => ({ ok: false as const, error: "Couldn't enable it. Try again." }));
+    setBusy(null);
+    if (r.ok) {
+      setDone(`${r.name} is enabled. ${g.people.length === 1 ? "The person who asked was" : `The ${g.people.length} people who asked were`} told it's ready to connect.`);
+      return router.refresh();
+    }
+    if ("needsClient" in r && r.needsClient) return onNeedsApp({ kind: "request", name: g.ref, title: g.title, icon: g.icon_url, url: r.url ?? null });
+    setErr({ ref: g.ref, text: r.error });
+  };
+  const decline = async (g: RequestGroup) => {
+    setBusy(g.ref);
+    setErr(null);
+    const r = await declineRequest(g.ref, reason).catch(() => ({ ok: false as const, error: "Couldn't decline it. Try again." }));
+    setBusy(null);
+    if (!r.ok) return setErr({ ref: g.ref, text: r.error });
+    setDeclining(null);
+    setReason("");
+    setDone(`Declined. ${g.people.length === 1 ? "The person who asked hears" : "Everyone who asked hears"} why.`);
+    router.refresh();
+  };
+  return (
+    <section className="grid gap-2.5" aria-label="Requests to enable">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="font-heading text-[19px] text-fg">Requests</h2>
+        <p className="text-[12.5px] text-faint">{groups.reduce((n, g) => n + g.people.length, 0)} waiting</p>
+      </div>
+      {done ? <p className="rounded-[14px] bg-ok-soft/60 px-4 py-2.5 text-[13px] text-fg">{done}</p> : null}
+      <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
+        {groups.map((g) => (
+          <li key={g.ref} id={`request-${g.ref}`} className={`grid gap-3 rounded-[20px] border bg-surface px-4 py-3.5 md:px-5 ${focus === g.ref ? "border-brand/50 ring-2 ring-brand/20" : "border-line"}`}>
+            <div className="flex flex-wrap items-center gap-3">
+              <ConnectorIcon name={g.title} url={g.icon_url} size={40} />
+              <div className="grid min-w-0 flex-1 gap-0.5">
+                <p className="truncate text-[15px] font-semibold text-fg">{g.title}</p>
+                <p className="truncate text-[12.5px] text-muted">
+                  {[...new Set(g.people.map((p) => p.role))].join(", ")} asked · {ago(g.first)}
+                </p>
+              </div>
+              {declining !== g.ref ? (
+                <div className="flex w-full shrink-0 justify-end gap-1.5 sm:w-auto">
+                  <button type="button" onClick={() => setDeclining(g.ref)} disabled={Boolean(busy)} className={ghost}>
+                    Decline
+                  </button>
+                  <button type="button" onClick={() => void enable(g)} disabled={Boolean(busy)} className={`${primary} gap-2`}>
+                    {busy === g.ref ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" aria-hidden /> : null}
+                    Enable
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            {g.people.some((p) => p.note) ? (
+              <ul className="grid gap-1.5 sm:pl-[54px]">
+                {g.people
+                  .filter((p) => p.note)
+                  .map((p) => (
+                    <li key={p.id} className="rounded-[12px] bg-surface-2/70 px-3 py-2 text-[13px] leading-relaxed text-fg">
+                      &ldquo;{p.note}&rdquo;
+                      <span className="block text-[11.5px] text-faint">
+                        {p.name}, {p.role} · {ago(p.at)}
+                      </span>
+                    </li>
+                  ))}
+              </ul>
+            ) : null}
+            {declining === g.ref ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void decline(g);
+                }}
+                className="grid gap-2 sm:pl-[54px]"
+              >
+                <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500} placeholder="Why not, for the people who asked (optional)" className={`${field} py-2.5`} />
+                <div className="flex justify-end gap-1.5">
+                  <button type="button" onClick={() => setDeclining(null)} className={ghost}>
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={Boolean(busy)} className="inline-flex min-h-11 items-center rounded-full bg-bad px-4 text-[13px] font-medium text-white disabled:opacity-40">
+                    {busy === g.ref ? "Declining…" : "Decline"}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+            {err?.ref === g.ref ? <p className="text-[12.5px] text-bad sm:pl-[54px]">{err.text}</p> : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+// ─── Everyone: their own accounts (connecting lives in Kaizen AI) ──────────
+
+/**
+ * Your accounts: what you've connected, at a glance. Connecting, reconnecting and disconnecting live in Kaizen AI's plug
+ * menu now (like Claude), so each row opens it there. Links from before (?connector=, ?connected=) still land here.
+ */
 export function MyConnections({ items, isExec }: { items: MineItem[]; isExec: boolean }) {
   const focus = useParam("connector");
   const connected = useParam("connected");
@@ -747,10 +907,14 @@ export function MyConnections({ items, isExec }: { items: MineItem[]; isExec: bo
   const flash = error ?? (connected ? `${items.find((i) => i.key === connected)?.name ?? "It"} is connected. Switch it on in any Kaizen AI chat from the plug button.` : null);
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
-      <p className="max-w-[680px] text-sm text-muted">
-        Connect your own accounts to use them in Kaizen AI, the same way you do in Claude. Your sign ins are stored encrypted and only ever used for your own chats; anything that would change
-        something in a service asks you first.
-      </p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <p className="max-w-[620px] text-sm text-muted">
+          The services you use in Kaizen AI. Connect, reconnect or disconnect them from the plug button in any chat, the same way you do in Claude.
+        </p>
+        <a href={connectionsHref()} className={quiet}>
+          Open in Kaizen AI
+        </a>
+      </div>
       {flash ? (
         <div className={`flex items-center justify-between gap-3 rounded-[14px] px-4 py-2.5 text-[13px] text-fg ${error ? "bg-bad-soft/50" : "bg-ok-soft/60"}`}>
           {flash}
@@ -760,155 +924,35 @@ export function MyConnections({ items, isExec }: { items: MineItem[]; isExec: bo
         </div>
       ) : null}
       {!items.length ? (
-        <div className="grid justify-items-center gap-2 rounded-[20px] border border-dashed border-line px-6 py-14 text-center">
-          <p className="font-heading text-[19px] text-fg">Nothing to connect yet</p>
-          <p className="max-w-[420px] text-[13px] text-muted">{isExec ? "Add the services the team uses in Team connectors." : "When an exec adds a service for your role, it shows up here."}</p>
+        <div className="grid justify-items-center gap-3 rounded-[20px] border border-dashed border-line px-6 py-14 text-center">
+          <p className="font-heading text-[19px] text-fg">Nothing enabled for you yet</p>
+          <p className="max-w-[420px] text-[13px] text-muted">{isExec ? "Enable the services the team uses in Team connectors." : "Browse connectors in Kaizen AI and ask for the one you need."}</p>
+          <a href={isExec ? "/settings?tab=connections&section=team" : browseHref()} className={quiet}>
+            {isExec ? "Team connectors" : "Browse connectors"}
+          </a>
         </div>
       ) : (
-        <ul className="grid grid-cols-[minmax(0,1fr)] rounded-[20px] border border-line bg-surface">
+        <ul className="grid grid-cols-[minmax(0,1fr)] overflow-hidden rounded-[20px] border border-line bg-surface">
           {items.map((i) => (
-            <Row key={i.key} i={i} focused={focus === i.key} />
+            <li key={i.key} className={`border-b border-line/70 last:border-b-0 ${focus === i.key ? "bg-brand-soft/20" : ""}`}>
+              <a href={i.state === "connected" ? connectionsHref(i.key) : chatConnectHref(i.key)} className="flex min-h-[64px] items-center gap-3.5 px-4 py-3 transition hover:bg-ink/[0.03] md:px-5">
+                <ConnectorIcon name={i.name} url={i.icon_url} size={36} />
+                <span className="grid min-w-0 flex-1 gap-0.5">
+                  <span className="truncate text-[14.5px] font-semibold text-fg">{i.name}</span>
+                  <span className={`truncate text-[12px] ${i.state === "reconnect" ? "text-bad" : "text-faint"}`}>
+                    {i.state === "connected"
+                      ? [i.since ? `Connected ${when(i.since)}` : "Connected", i.tools ? `${i.tools} tools${i.writes ? `, ${i.writes} ask first` : ""}` : null].filter(Boolean).join(" · ")
+                      : i.state === "reconnect"
+                        ? "Sign in expired"
+                        : "Not connected"}
+                  </span>
+                </span>
+                <span className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-line px-4 text-[13px] text-fg">{i.state === "connected" ? "Manage" : i.state === "reconnect" ? "Reconnect" : "Connect"}</span>
+              </a>
+            </li>
           ))}
         </ul>
       )}
     </div>
-  );
-}
-
-function RowMenu({ label, items }: { label: string; items: { label: string; onClick: () => void; danger?: boolean }[] }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="relative" onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
-      <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={label} onClick={() => setOpen(!open)} className="grid h-11 w-11 place-items-center rounded-full text-muted transition hover:bg-ink/[0.05] hover:text-fg">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-          <circle cx="5" cy="12" r="1.7" />
-          <circle cx="12" cy="12" r="1.7" />
-          <circle cx="19" cy="12" r="1.7" />
-        </svg>
-      </button>
-      {open ? (
-        <>
-          <button type="button" className="fixed inset-0 z-10 cursor-default" aria-label="Close menu" tabIndex={-1} onClick={() => setOpen(false)} />
-          <div role="menu" className="absolute right-0 top-12 z-20 grid min-w-[190px] rounded-[14px] border border-line bg-surface p-1 shadow-xl">
-            {items.map((x) => (
-              <button
-                key={x.label}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setOpen(false);
-                  x.onClick();
-                }}
-                className={`flex min-h-11 items-center rounded-[10px] px-3 text-left text-[13.5px] transition hover:bg-ink/[0.05] ${x.danger ? "text-bad" : "text-fg"}`}
-              >
-                {x.label}
-              </button>
-            ))}
-          </div>
-        </>
-      ) : null}
-    </div>
-  );
-}
-
-function Row({ i, focused }: { i: MineItem; focused: boolean }) {
-  const router = useRouter();
-  const [pasting, setPasting] = useState(focused && i.auth === "token" && i.state !== "connected");
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [sure, setSure] = useState(false);
-  const back = connectionsHref(i.key);
-  const connect = () => (i.auth === "token" ? setPasting(true) : (window.location.href = connectHref(i.key, back)));
-
-  const saveToken = async () => {
-    setBusy(true);
-    setErr(null);
-    const r = await savePersonalTokenAction(i.key, token);
-    setBusy(false);
-    if (!r.ok) return setErr(r.error);
-    setToken("");
-    setPasting(false);
-    router.refresh();
-  };
-  const remove = async () => {
-    setBusy(true);
-    const r = await disconnectAction(i.key);
-    setBusy(false);
-    setSure(false);
-    if (!r.ok) return setErr(r.error);
-    router.refresh();
-  };
-
-  const menu = [
-    ...(i.auth === "token" ? [{ label: "Replace token", onClick: () => setPasting(true) }] : i.auth !== "none" ? [{ label: "Reconnect", onClick: () => (window.location.href = connectHref(i.key, back)) }] : []),
-    { label: "Disconnect", onClick: () => setSure(true), danger: true },
-  ];
-
-  return (
-    <li className={`grid gap-3 border-b border-line/70 px-4 py-3.5 first:rounded-t-[20px] last:rounded-b-[20px] last:border-b-0 md:px-5 ${focused ? "bg-brand-soft/20" : ""}`}>
-      <div className="flex items-center gap-3.5">
-        <ConnectorIcon name={i.name} url={i.icon_url} size={40} />
-        <div className="grid min-w-0 flex-1 gap-0.5">
-          <p className="truncate text-[15px] font-semibold text-fg">{i.name}</p>
-          {i.note ? <p className="line-clamp-1 text-[13px] text-muted">{i.note}</p> : null}
-          {i.state === "connected" && (i.since || i.tools) ? (
-            <p className="truncate text-[12px] text-faint">
-              {i.since ? `Since ${when(i.since)}` : null}
-              {i.last4 ? ` · ending ${i.last4}` : null}
-              {i.tools ? ` · ${i.tools} tools${i.writes ? `, ${i.writes} ask first` : ""}` : null}
-            </p>
-          ) : null}
-          {i.state === "reconnect" ? <p className="line-clamp-2 text-[12.5px] text-bad">{i.error ?? "The sign in stopped working."}</p> : null}
-        </div>
-        {i.state === "connected" ? (
-          <div className="flex shrink-0 items-center gap-0.5">
-            <span className="inline-flex items-center gap-1.5 pl-1 text-[13px] font-medium text-fg">
-              <span className="grid h-5 w-5 place-items-center rounded-full bg-ok text-white">
-                <CheckIcon size={11} />
-              </span>
-              <span className="hidden sm:inline">Connected</span>
-            </span>
-            <RowMenu label={`${i.name} options`} items={menu} />
-          </div>
-        ) : i.state === "reconnect" ? (
-          <div className="flex shrink-0 items-center gap-0.5">
-            <button type="button" onClick={connect} className={primary}>
-              {i.auth === "token" ? "New token" : "Reconnect"}
-            </button>
-            <RowMenu label={`${i.name} options`} items={[{ label: "Disconnect", onClick: () => setSure(true), danger: true }]} />
-          </div>
-        ) : !pasting ? (
-          <button type="button" onClick={connect} className={quiet}>
-            Connect
-          </button>
-        ) : null}
-      </div>
-      {pasting ? (
-        <div className="grid gap-2 sm:pl-[54px]">
-          <input type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" placeholder={`Your ${i.name} API token`} className={field} />
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setPasting(false)} className={ghost}>
-              Cancel
-            </button>
-            <button type="button" onClick={() => void saveToken()} disabled={busy || token.trim().length < 8} className={primary}>
-              {busy ? "Checking…" : "Save token"}
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {sure ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-[14px] bg-bad-soft/40 px-3 py-2 sm:ml-[54px]">
-          <p className="min-w-0 flex-1 text-[12.5px] text-fg">Disconnect {i.name}? You can connect it again any time.</p>
-          <button type="button" onClick={() => setSure(false)} className={ghost}>
-            Keep it
-          </button>
-          <button type="button" onClick={() => void remove()} disabled={busy} className="inline-flex min-h-11 items-center rounded-full bg-bad px-4 text-[13px] font-medium text-white disabled:opacity-40">
-            {busy ? "Disconnecting…" : "Disconnect"}
-          </button>
-        </div>
-      ) : null}
-      {err ? <p className="text-[12.5px] text-bad sm:pl-[54px]">{err}</p> : null}
-    </li>
   );
 }

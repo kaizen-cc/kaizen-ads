@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type { AuthMeta } from "./discovery";
 import type { Connector } from "./shared";
 
 export * from "./shared";
@@ -168,28 +169,7 @@ export function threadKeys(saved: string[] | null | undefined, connected: string
 
 // ─── Discovery (MCP authorization spec) ────────────────────────────────────
 
-/** resource_metadata="…" from a 401's WWW-Authenticate header */
-export function resourceMetadataFrom(header: string | null | undefined): string | null {
-  const m = /resource_metadata\s*=\s*"([^"]+)"/i.exec(String(header ?? "")) ?? /resource_metadata\s*=\s*([^\s,]+)/i.exec(String(header ?? ""));
-  return m ? m[1] : null;
-}
-
-/** Where a server's protected resource metadata may be: path-aware first, then the root */
-export function protectedResourceUrls(serverUrl: string): string[] {
-  const u = new URL(serverUrl);
-  const path = u.pathname.replace(/\/+$/, "");
-  const out = path && path !== "/" ? [`${u.origin}/.well-known/oauth-protected-resource${path}`] : [];
-  out.push(`${u.origin}/.well-known/oauth-protected-resource`);
-  return out;
-}
-
-/** Where an authorization server's metadata may be (RFC 8414 and OpenID Connect, with and without a path) */
-export function authServerMetadataUrls(issuer: string): string[] {
-  const u = new URL(issuer);
-  const path = u.pathname.replace(/\/+$/, "");
-  if (!path || path === "/") return [`${u.origin}/.well-known/oauth-authorization-server`, `${u.origin}/.well-known/openid-configuration`];
-  return [`${u.origin}/.well-known/oauth-authorization-server${path}`, `${u.origin}/.well-known/openid-configuration${path}`, `${u.origin}${path}/.well-known/openid-configuration`];
-}
+export { authServerMetadataUrls, protectedResourceUrls, resourceMetadataFrom } from "./discovery";
 
 /** The resource indicator sent with authorization and token requests: the server's URL without a fragment */
 export const resourceOf = (serverUrl: string) => {
@@ -198,7 +178,7 @@ export const resourceOf = (serverUrl: string) => {
   return u.toString();
 };
 
-export type AuthMeta = { issuer: string; authorization_endpoint: string; token_endpoint: string; registration_endpoint: string | null; scopes: string | null; token_auth_methods: string[] };
+export type { AuthMeta } from "./discovery";
 
 /** The authorization URL a person is sent to */
 export function authorizeUrl(meta: Pick<AuthMeta, "authorization_endpoint">, p: { clientId: string; redirectUri: string; state: string; challenge: string; scope: string | null; resource: string }) {
@@ -219,7 +199,7 @@ export function authorizeUrl(meta: Pick<AuthMeta, "authorization_endpoint">, p: 
 /** An MCP connector error as the person should read it, and whether reconnecting is the fix */
 export function connectorError(message: string, name: string): { text: string; reconnect: boolean } {
   const m = String(message ?? "");
-  if (/\b401\b|unauthori[sz]ed|invalid[_ ]token|expired|forbidden|\b403\b|authenticat/i.test(m)) return { text: `${name} didn't accept your sign in. Reconnect it in Settings, Connections.`, reconnect: true };
+  if (/\b401\b|unauthori[sz]ed|invalid[_ ]token|expired|forbidden|\b403\b|authenticat/i.test(m)) return { text: `${name} didn't accept your sign in. Reconnect it from the plug menu in Kaizen AI.`, reconnect: true };
   if (/timed? ?out|timeout|ECONN|ENOTFOUND|unreachable|connect|5\d\d|unavailable/i.test(m)) return { text: `${name} isn't answering right now. Try again in a bit.`, reconnect: false };
   return { text: `${name} had a problem with this request. Try again, or switch it off for this chat.`, reconnect: false };
 }

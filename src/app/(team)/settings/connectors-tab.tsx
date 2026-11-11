@@ -4,15 +4,16 @@ import { encryptionKey } from "@/lib/meta-token-core";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { ConnectorsAdmin, MyConnections, type AdminItem, type MineItem } from "./connectors";
 
-// Settings › Connections › Team connectors (execs: what's offered to the team, Add connector with the Directory of the
-// registry's verified servers, synced daily or on Refresh now) and Your accounts (everyone: connect their own account
-// to each one offered to them).
+// Settings › Connections › Team connectors (execs enable connectors for the team: the team's requests, the Directory of
+// verified servers synced daily or on Refresh now, custom ones, roles) and Your accounts (everyone: what they've
+// connected, pointing to Kaizen AI's plug menu where connecting lives).
 
 export async function ConnectorsTab() {
   if (!adminConfigured()) return <p className="text-sm text-muted">Server key missing.</p>;
   const admin = createAdminClient();
   const { listConnectors } = await import("@/lib/connectors/server");
-  const [list, secrets, conns, probe, states, total] = await Promise.all([
+  const { pendingRequests } = await import("@/lib/connectors/requests");
+  const [list, secrets, conns, probe, states, total, requests] = await Promise.all([
     listConnectors(admin),
     admin.from("ai_connector_secrets").select("connector_id, client_secret_ciphertext, reg_client_id").then((r) => r.data ?? []),
     admin.from("ai_connections").select("connector_id, status").then((r) => r.data ?? []),
@@ -23,6 +24,7 @@ export async function ConnectorsTab() {
       .in("id", ["main", "official"])
       .then((r) => (r.data ?? []) as { id: string; last_run_at: string | null; last_error: string | null; cursor: string | null; last_complete_at: string | null }[]),
     admin.from("ai_connector_registry").select("name", { head: true, count: "exact" }).eq("available", true).then((r) => r.count ?? 0),
+    pendingRequests(admin),
   ]);
   // Offered connectors whose registry entry went away: a warning, still working until an exec turns it off
   const fromRegistry = list.filter((c) => c.registry_name).map((c) => c.registry_name!);
@@ -45,6 +47,7 @@ export async function ConnectorsTab() {
       lastSync={latest?.last_run_at ?? null}
       syncError={latest?.last_error ?? null}
       syncPartial={states.some((s) => Boolean(s.cursor))}
+      requests={requests}
     />
   );
 }

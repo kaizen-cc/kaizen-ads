@@ -56,8 +56,8 @@ const TABS = [
 // accounts for Kaizen AI's connectors)
 const LEAD_TABS = ["team", "deleted"];
 const HEAD_TABS = ["agents"];
-// One Connections tab for everyone: your own accounts first; execs also manage the team's connectors and leads and
-// execs see the media keys (ElevenLabs, Higgsfield, Motion)
+// One Connections tab for everyone: your own accounts first (connecting itself lives in Kaizen AI); execs also enable
+// the team's connectors and answer requests, and leads and execs see the media keys (ElevenLabs, Higgsfield, Motion)
 const EVERYONE_TABS = ["connections"];
 const CONNECTION_SECTIONS = [
   ["yours", "Your accounts", "everyone"],
@@ -947,7 +947,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
     <div className="grid grid-cols-[minmax(0,1fr)] gap-5 md:gap-7">
       <header>
         <h1 className="font-heading text-[26px] leading-tight md:text-[32px]">Settings</h1>
-        <p className="mt-1.5 text-sm text-muted">{isExecOrLead(me) || trains ? "Tune the AI agents and look under the hood at the data behind every number." : "Connect your own accounts to use them in Kaizen AI."}</p>
+        <p className="mt-1.5 text-sm text-muted">{isExecOrLead(me) || trains ? "Tune the AI agents and look under the hood at the data behind every number." : "Your connected accounts. Connect and manage them from the plug button in Kaizen AI."}</p>
       </header>
       {/* Phones: one row of pills that scrolls sideways and snaps; desktop: the row wraps as before */}
       <nav className="no-scrollbar -mx-4 flex snap-x snap-mandatory scroll-px-4 gap-1.5 overflow-x-auto px-4 md:mx-0 md:snap-none md:flex-wrap md:overflow-visible md:px-0">

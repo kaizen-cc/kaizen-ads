@@ -6,12 +6,9 @@ import { encryptionKey, last4, NO_KEY, redactTokens, seal, unseal, type Sealed }
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import {
   authorizeUrl,
-  authServerMetadataUrls,
   expiryFrom,
   offeredTo,
   pkcePair,
-  protectedResourceUrls,
-  resourceMetadataFrom,
   resourceOf,
   signState,
   tokenDecision,
@@ -23,14 +20,17 @@ import {
   type ToolMeta,
   usable,
 } from "./core";
+import { CALLBACK_PATH, CLIENT_METADATA_PATH, clientRoute, discoverWith, type Net, type Probe } from "./discovery";
+import { directoryOrder, featuredVendor, VENDORS } from "./registry";
 
 // Connectors on the server: the catalog, each person's connections, the OAuth dance (MCP authorization spec: protected
-// resource metadata, authorization server metadata, dynamic client registration, authorization code with PKCE and a
-// resource indicator), tokens encrypted at rest and refreshed before they run out, and the tools each server offers.
+// resource metadata, authorization server metadata, a Client ID Metadata Document or dynamic client registration,
+// authorization code with PKCE and a resource indicator), the Directory search, tokens encrypted at rest and refreshed before they run out, and the tools each server offers.
 // Every function that touches a token takes the person it's for and only ever reads that person's rows. Before the
 // migration is applied, reads come back empty and nothing breaks.
 
-export const CALLBACK_PATH = "/api/connectors/callback";
+export { CALLBACK_PATH };
+export type { Probe };
 export const COOKIE = "kz_connector_oauth";
 const TIMEOUT = 10_000;
 const TOOLS_FRESH_MS = 24 * 3600_000;
@@ -119,63 +119,31 @@ async function getJson(url: string): Promise<Record<string, unknown> | null> {
   }
 }
 
-/** The server without a token: does it ask for one, and where its resource metadata is (from the 401) */
-async function probe(url: string): Promise<{ status: number; resourceMetadata: string | null } | null> {
-  try {
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Kaizen Ads", version: "1.0" } } }),
-      signal: AbortSignal.timeout(TIMEOUT),
-    });
-    void r.body?.cancel().catch(() => {});
-    return { status: r.status, resourceMetadata: resourceMetadataFrom(r.headers.get("www-authenticate")) };
-  } catch {
-    return null;
-  }
-}
-
-export type Probe = { reachable: boolean; signIn: boolean; meta: AuthMeta | null; dcr: boolean };
+/** The network discovery reads through: JSON GETs, and the MCP initialize without a token (does it ask for a sign in) */
+const net: Net = {
+  json: getJson,
+  probe: async (url) => {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Kaizen AI", version: "1.0" } } }),
+        signal: AbortSignal.timeout(TIMEOUT),
+      });
+      void r.body?.cancel().catch(() => {});
+      return { status: r.status, wwwAuthenticate: r.headers.get("www-authenticate") };
+    } catch {
+      return null;
+    }
+  },
+};
 
 /**
- * How a server signs people in, per the MCP authorization spec: its protected resource metadata (from the 401's
- * WWW-Authenticate, or the well-known paths) names the authorization server; that server's metadata has the endpoints
- * and whether it registers clients itself. A server with neither falls back to the endpoints at its own origin.
+ * How a server signs people in, per the MCP authorization spec (see discovery.ts): whether it asks for a sign in, its
+ * OAuth endpoints, and how Kaizen AI gets a client id there (our metadata document, registering itself, or an app an
+ * exec sets up once).
  */
-export async function discover(url: string): Promise<Probe> {
-  const p = await probe(url);
-  const signIn = p ? p.status === 401 || p.status === 403 : false;
-  let prm: Record<string, unknown> | null = null;
-  for (const u of [...(p?.resourceMetadata ? [p.resourceMetadata] : []), ...protectedResourceUrls(url)]) {
-    prm = await getJson(u);
-    if (prm) break;
-  }
-  const servers = Array.isArray(prm?.authorization_servers) ? (prm!.authorization_servers as unknown[]).filter((s): s is string => typeof s === "string") : [];
-  const issuer = servers[0] ?? new URL(url).origin;
-  let as: Record<string, unknown> | null = null;
-  for (const u of authServerMetadataUrls(issuer)) {
-    as = await getJson(u);
-    if (as?.authorization_endpoint && as?.token_endpoint) break;
-    as = null;
-  }
-  const scopes = Array.isArray(prm?.scopes_supported) ? (prm!.scopes_supported as unknown[]).filter((s): s is string => typeof s === "string").join(" ") : null;
-  let meta: AuthMeta | null = null;
-  if (as) {
-    meta = {
-      issuer: String(as.issuer ?? issuer),
-      authorization_endpoint: String(as.authorization_endpoint),
-      token_endpoint: String(as.token_endpoint),
-      registration_endpoint: typeof as.registration_endpoint === "string" ? as.registration_endpoint : null,
-      scopes: scopes || null,
-      token_auth_methods: Array.isArray(as.token_endpoint_auth_methods_supported) ? (as.token_endpoint_auth_methods_supported as unknown[]).map(String) : [],
-    };
-  } else if (signIn && !prm) {
-    // The earlier spec: no metadata at all means the default paths at the server's origin
-    const o = new URL(url).origin;
-    meta = { issuer: o, authorization_endpoint: `${o}/authorize`, token_endpoint: `${o}/token`, registration_endpoint: `${o}/register`, scopes: null, token_auth_methods: [] };
-  }
-  return { reachable: Boolean(p), signIn: signIn || Boolean(prm), meta, dcr: Boolean(meta?.registration_endpoint) };
-}
+export const discover = (url: string): Promise<Probe> => discoverWith(net, url);
 
 type Secrets = {
   client_secret_iv: string | null;
@@ -223,22 +191,33 @@ async function authMeta(admin: SupabaseClient, c: Connector, sec: Secrets | null
 
 type Client = { id: string; secret: string | null };
 
-/** The OAuth client for this connector: the exec's own, or one registered with the server for this redirect URI */
+/**
+ * The OAuth client for this connector: the app an exec set up; the client used before for this redirect URI (its
+ * people's refresh tokens belong to it); our Client ID Metadata Document when the server takes one; or a client the
+ * server registers for us now. A server with none of these needs the one-time app step.
+ */
 async function clientFor(admin: SupabaseClient, c: Connector, meta: AuthMeta, sec: Secrets | null, redirectUri: string): Promise<Client> {
   if (c.auth === "oauth_client") {
     if (!c.client_id) throw new Error(`${c.name} has no OAuth client id yet. An exec adds it in Settings, Connectors.`);
     return { id: c.client_id, secret: open(sealedOf(sec?.client_secret_iv, sec?.client_secret_tag, sec?.client_secret_ciphertext)) };
   }
   if (sec?.reg_client_id && sec.reg_redirect_uri === redirectUri) return { id: sec.reg_client_id, secret: open(sealedOf(sec.reg_secret_iv, sec.reg_secret_tag, sec.reg_secret_ciphertext)) };
-  if (!meta.registration_endpoint) throw new Error(`${c.name} doesn't register apps on its own. An exec registers one with ${c.name} and switches the connector to "OAuth (our app)".`);
+  const origin = new URL(redirectUri).origin;
+  const route = clientRoute(meta, { httpsOrigin: origin.startsWith("https:") });
+  if (route === "cimd") {
+    const id = `${origin}${CLIENT_METADATA_PATH}`;
+    await saveSecrets(admin, c.id, { reg_client_id: id, reg_redirect_uri: redirectUri, reg_secret_iv: null, reg_secret_tag: null, reg_secret_ciphertext: null });
+    return { id, secret: null };
+  }
+  if (route === "app" || !meta.registration_endpoint) throw new Error(`${c.name} needs its own Kaizen AI app before anyone can sign in. An exec sets it up once for the whole team in Settings, Connections, Team connectors.`);
   const r = await fetch(meta.registration_endpoint, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ client_name: "Kaizen Ads", redirect_uris: [redirectUri], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", ...(c.scopes ? { scope: c.scopes } : {}) }),
+    body: JSON.stringify({ client_name: "Kaizen AI", client_uri: origin, logo_uri: `${origin}/kaizen-logo.png`, redirect_uris: [redirectUri], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none", ...(c.scopes ? { scope: c.scopes } : {}) }),
     signal: AbortSignal.timeout(TIMEOUT),
   });
   const j = (await r.json().catch(() => null)) as { client_id?: string; client_secret?: string; error_description?: string } | null;
-  if (!r.ok || !j?.client_id) throw new Error(`${c.name} wouldn't register Kaizen Ads${j?.error_description ? `: ${j.error_description}` : ""}.`);
+  if (!r.ok || !j?.client_id) throw new Error(`${c.name} wouldn't register Kaizen AI${j?.error_description ? `: ${j.error_description}` : ""}.`);
   const k = key();
   const s = j.client_secret && k ? seal(j.client_secret, k) : null;
   await saveSecrets(admin, c.id, { reg_client_id: j.client_id, reg_redirect_uri: redirectUri, reg_secret_iv: s?.iv ?? null, reg_secret_tag: s?.tag ?? null, reg_secret_ciphertext: s?.ciphertext ?? null });
@@ -341,6 +320,12 @@ export async function startConnect(me: Staff, connectorKey: string, origin: stri
   };
 }
 
+/** Where a sign in started (the chat it came from), read from its signed state; null when the state doesn't hold */
+export function returnOf(state: string | null): string | null {
+  const secret = stateSecret();
+  return state && secret ? (verifyState(state, secret)?.r ?? null) : null;
+}
+
 /** Back from the server's sign in: the state and the cookie must match this person and this browser */
 export async function finishConnect(me: Staff, p: { code: string; state: string; cookie: string | undefined; origin: string }): Promise<{ connector: Connector; ret: string | null }> {
   const secret = stateSecret();
@@ -439,7 +424,7 @@ export async function listTools(url: string, token: string | null): Promise<{ ok
     const init = await fetch(url, {
       method: "POST",
       headers: base,
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Kaizen Ads", version: "1.0" } } }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Kaizen AI", version: "1.0" } } }),
       signal: AbortSignal.timeout(TIMEOUT),
     });
     if (!init.ok) return { ok: false, status: init.status, error: `The server answered ${init.status}.` };
@@ -550,3 +535,80 @@ export async function setThreadConnectorKeys(admin: SupabaseClient, threadId: st
   const clean = [...new Set(keys.filter((k) => /^[a-z][a-z0-9_-]{1,39}$/.test(k)))].slice(0, 20);
   return admin.from("ai_thread_connectors").upsert({ thread_id: threadId, keys: clean, updated_at: new Date().toISOString() }, { onConflict: "thread_id" });
 }
+
+// ─── The Directory ─────────────────────────────────────────────────────────
+
+export type DirRow = {
+  name: string;
+  title: string | null;
+  description: string | null;
+  url: string;
+  icon_url: string | null;
+  website_url: string | null;
+  first_seen_at: string;
+  changed_at: string | null;
+  featured?: boolean | null;
+  vendor?: string | null;
+};
+export type Offer = { id: string; key: string; name: string; registry_name: string | null; url: string; enabled: boolean; roles: string[] | null; auth: Connector["auth"] };
+
+const DIR_COLS = "name, title, description, url, icon_url, website_url, first_seen_at, changed_at";
+
+/**
+ * The Directory's connectors: the featured vendors first, then the newest, searched by name, vendor and description,
+ * one card per server (the ones checked for Kaizen's directory win over the same server listed in the registry), with
+ * every connector already in the catalog. Before the directory migration (no featured column) the featured ones are
+ * found by their URLs instead.
+ */
+export async function searchDirectory(admin: SupabaseClient, q: string, limit = 60): Promise<{ rows: DirRow[]; total: number; ready: boolean; offers: Offer[] }> {
+  const n = Math.max(20, Math.min(600, Math.round(Number(limit) || 60)));
+  const search = String(q ?? "")
+    .replace(/[%_,()*\\"]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60);
+  const match = (cols: string[]) => cols.map((c) => `${c}.ilike.%${search}%`).join(",");
+  let rows: DirRow[] = [];
+  let total = 0;
+  let withFeatured = admin.from("ai_connector_registry").select(`${DIR_COLS}, featured, vendor`, { count: "exact" }).eq("available", true);
+  if (search) withFeatured = withFeatured.or(match(["title", "name", "description", "vendor"]));
+  const first = await withFeatured.order("featured", { ascending: false }).order("first_seen_at", { ascending: false }).limit(n);
+  if (!first.error) {
+    rows = (first.data ?? []) as unknown as DirRow[];
+    total = first.count ?? rows.length;
+  } else {
+    // Before the migration: the plain list, plus the vendors' servers found by their URLs
+    let plainQ = admin.from("ai_connector_registry").select(DIR_COLS, { count: "exact" }).eq("available", true);
+    if (search) plainQ = plainQ.or(match(["title", "name", "description"]));
+    const plain = await plainQ.order("first_seen_at", { ascending: false }).limit(n);
+    if (plain.error) return { rows: [], total: 0, ready: false, offers: [] };
+    let vendorQ = admin
+      .from("ai_connector_registry")
+      .select(DIR_COLS)
+      .eq("available", true)
+      .or(VENDORS.flatMap((v) => v.domains).map((d) => `url.ilike.%${d}/%`).join(","));
+    if (search) vendorQ = vendorQ.or(match(["title", "name", "description"]));
+    const vendorRows = ((await vendorQ.limit(200)).data ?? []) as unknown as DirRow[];
+    const tag = (x: DirRow): DirRow => {
+      const v = featuredVendor(x.name, x.url);
+      return { ...x, featured: Boolean(v), vendor: v };
+    };
+    const seen = new Set<string>();
+    rows = [...vendorRows.map(tag).filter((x) => x.featured), ...((plain.data ?? []) as unknown as DirRow[]).map(tag)]
+      .filter((x) => {
+        if (seen.has(x.name)) return false;
+        seen.add(x.name);
+        return true;
+      })
+      .slice(0, n);
+    total = Math.max(plain.count ?? 0, rows.length);
+  }
+  const urlKey = (u: string) => u.toLowerCase().replace(/\/+$/, "").replace(/\/(sse|mcp)$/, "");
+  const ours = new Set(rows.filter((x) => x.name.startsWith("kaizen.directory/")).map((x) => urlKey(x.url)));
+  rows = directoryOrder(rows.filter((x) => x.name.startsWith("kaizen.directory/") || !ours.has(urlKey(x.url))));
+  const { data: offered } = await admin.from("ai_connectors").select("id, key, name, registry_name, url, enabled, roles, auth");
+  return { rows, total, ready: true, offers: (offered ?? []) as Offer[] };
+}
+
+/** The catalog connector a Directory entry was enabled as (by its registry name, else the same URL) */
+export const offerFor = (offers: Offer[], x: Pick<DirRow, "name" | "url">) => offers.find((c) => c.registry_name === x.name) ?? offers.find((c) => c.url === x.url) ?? null;

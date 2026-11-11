@@ -2,14 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { requireExec, requireStaff } from "@/lib/auth";
-import { AUTH_KINDS, authFromProbe, KEY_RE, keyFrom, uniqueKey, validServerUrl, type AuthKind } from "@/lib/connectors/core";
-import { directoryOrder, faviconForUrl, featuredVendor, VENDORS } from "@/lib/connectors/registry";
+import { appStepText, AUTH_KINDS, authFromProbe, KEY_RE, keyFrom, uniqueKey, validServerUrl, type AuthKind } from "@/lib/connectors/core";
+import { faviconForUrl } from "@/lib/connectors/registry";
+import { rolesAfterEnable } from "@/lib/connectors/requests-core";
 import { ROLES } from "@/lib/roles";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
-// Settings › Connections › Team connectors (execs: the Directory, custom connectors, editing what's offered) and Your
-// accounts (everyone connects their own). Secrets are written, never read back: the screen only learns whether one
-// is set.
+// Settings › Connections › Team connectors (execs enable connectors for the team: the Directory, custom connectors,
+// editing what's enabled, and the team's requests to enable one). People connect their own accounts in Kaizen AI.
+// Secrets are written, never read back: the screen only learns whether one is set.
 
 type Ok = { ok: true } | { ok: false; error: string };
 const NOT_READY = "Connectors need the latest database update first.";
@@ -81,26 +82,25 @@ export async function deleteConnector(id: string): Promise<Ok> {
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
-/** What the server says about signing in: reachable, asks for a sign in, registers apps itself */
+/** What the server says about signing in: reachable, asks for a sign in, gives Kaizen AI a client id itself */
 export async function checkConnectorUrl(raw: string): Promise<{ ok: true; reachable: boolean; signIn: boolean; dcr: boolean; suggested: AuthKind } | { ok: false; error: string }> {
   await requireExec();
   const url = validServerUrl(raw);
   if (!url) return { ok: false, error: "The server URL must be a full https address." };
   const { discover } = await import("@/lib/connectors/server");
   const d = await discover(url);
-  return { ok: true, reachable: d.reachable, signIn: d.signIn, dcr: d.dcr, suggested: authFromProbe(d) ?? "token" };
+  return { ok: true, reachable: d.reachable, signIn: d.signIn, dcr: d.dcr || d.cimd, suggested: authFromProbe(d) ?? "token" };
 }
 
-const needsClientText = (name: string) =>
-  `${name} signs people in with OAuth but doesn't let apps register themselves, so it needs an app registered with ${name} first. Register one in ${name}'s developer settings with the redirect URL below, then paste its client ID and secret.`;
+const needsClientText = appStepText;
 
 /**
  * Add custom connector: a name and the server's URL, and the rest is worked out. The key comes from the name, how it
- * signs in is read from the server (OAuth with dynamic registration, no sign in, or a personal token), the icon is the
- * URL's site, and it's offered to everyone. Only a server with OAuth but no registration needs more: the client ID and
- * secret of an app registered with it (the screen asks, then calls again with them).
+ * signs in is read from the server (a sign in that needs no setup, no sign in, or a personal token), the icon is the
+ * URL's site, and it's enabled for everyone. Only a server that gives apps no client id on its own needs more: the
+ * client ID of an app set up with it once (the screen asks, then calls again with it; a secret only if it has one).
  */
-export async function addCustomConnector(input: { name: string; url: string; client?: { id: string; secret: string } }): Promise<{ ok: true; key: string; name: string } | { ok: false; error: string; needsClient?: boolean }> {
+export async function addCustomConnector(input: { name: string; url: string; client?: { id: string; secret?: string } }): Promise<{ ok: true; key: string; name: string } | { ok: false; error: string; needsClient?: boolean }> {
   await requireExec();
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
   const name = String(input.name ?? "").trim().slice(0, 60);
@@ -111,7 +111,7 @@ export async function addCustomConnector(input: { name: string; url: string; cli
   const { data: all, error: listErr } = await admin.from("ai_connectors").select("key, name, url");
   if (listErr) return { ok: false, error: listErr.code === "42P01" ? NOT_READY : listErr.message };
   const same = (all ?? []).find((c) => c.url === url);
-  if (same) return { ok: false, error: `That server is already offered as ${same.name}.` };
+  if (same) return { ok: false, error: `That server is already enabled as ${same.name}.` };
   const { discover } = await import("@/lib/connectors/server");
   const auth = authFromProbe(await discover(url));
   if (!auth) return { ok: false, error: "The server didn't answer at that address. Check the URL and try again." };
@@ -161,11 +161,11 @@ export async function disconnectAction(key: string): Promise<Ok> {
 // ─── Execs: the Directory ──────────────────────────────────────────────────
 
 /**
- * Offer a Directory server to the team (everyone, unless roles are given): how it signs in is read from the server
- * (OAuth with dynamic registration when it supports it; a server that asks for a sign in without registering apps needs
- * the client id and secret of an app an exec registered, so the screen asks for them and calls again).
+ * Enable a Directory server for the team (everyone, unless roles are given): how it signs in is read from the server
+ * (a sign in that needs no setup when it gives Kaizen AI a client id itself; one that doesn't needs the client id of an
+ * app an exec sets up once, so the screen asks for it and calls again). Anyone who asked for it hears it's ready.
  */
-export async function offerFromRegistry(name: string, roles: string[] = [], client?: { id: string; secret: string }): Promise<{ ok: true; key: string; name: string } | { ok: false; error: string; needsClient?: boolean }> {
+export async function offerFromRegistry(name: string, roles: string[] = [], client?: { id: string; secret?: string }): Promise<{ ok: true; key: string; name: string } | { ok: false; error: string; needsClient?: boolean; url?: string }> {
   const me = await requireExec();
   const admin = createAdminClient();
   const { data: e } = await admin.from("ai_connector_registry").select("name, title, description, url, version, icon_url, available").eq("name", name).maybeSingle();
@@ -178,13 +178,15 @@ export async function offerFromRegistry(name: string, roles: string[] = [], clie
     const found = authFromProbe(await discover(e.url as string));
     if (!found) return { ok: false, error: `${title} didn't answer. Try again in a bit.` };
     auth = found;
-    if (auth === "oauth_client" && !client?.id?.trim()) return { ok: false, needsClient: true, error: needsClientText(title) };
+    if (auth === "oauth_client" && !client?.id?.trim()) return { ok: false, needsClient: true, error: needsClientText(title), url: e.url as string };
   }
   const roleList = (roles ?? []).filter((r) => ROLES.some((x) => x.value === r));
   if (was) {
     const { error } = await admin.from("ai_connectors").update({ enabled: true, roles: roleList.length ? roleList : null, updated_at: new Date().toISOString() }).eq("id", was.id);
     revalidatePath("/settings");
-    return error ? { ok: false, error: error.message } : { ok: true, key: was.key as string, name: title };
+    if (error) return { ok: false, error: error.message };
+    await settle(name, { key: was.key as string, name: title }, me.id);
+    return { ok: true, key: was.key as string, name: title };
   }
   const { data: keys } = await admin.from("ai_connectors").select("key");
   const key = uniqueKey(String(e.title || String(e.name).split("/").pop() || "connector"), (keys ?? []).map((k) => k.key as string));
@@ -203,7 +205,54 @@ export async function offerFromRegistry(name: string, roles: string[] = [], clie
   if (!r.ok) return r;
   await admin.from("ai_connectors").update({ registry_name: e.name, registry_version: e.version, created_by: me.id }).eq("id", r.id);
   revalidatePath("/settings");
+  await settle(name, { key, name: title }, me.id);
   return { ok: true, key, name: title };
+}
+
+/** Everyone waiting on this connector hears it's ready (never fails the enabling) */
+async function settle(ref: string, c: { key: string; name: string }, by: string) {
+  const { settleEnabled } = await import("@/lib/connectors/requests");
+  await settleEnabled(createAdminClient(), ref, c, by).catch((e) => console.error("[connectors] settle", e));
+}
+
+// ─── Execs: requests to enable ─────────────────────────────────────────────
+
+/**
+ * Enable what someone asked for (from Settings, or the bell's Enable, which passes the request's id): a Directory
+ * entry is enabled for everyone (a connector limited to some roles gains the roles of the people who asked), and
+ * everyone who asked hears it's ready. A service that needs its one-time app says so and the screen asks for it.
+ */
+export async function enableRequest(p: { ref?: string; id?: string; client?: { id: string; secret?: string } }): Promise<{ ok: true; key: string; name: string } | { ok: false; error: string; needsClient?: boolean; ref?: string; url?: string }> {
+  const me = await requireExec();
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const admin = createAdminClient();
+  const { askerRoles, refOfRequest } = await import("@/lib/connectors/requests");
+  const ref = p.ref ?? (p.id ? await refOfRequest(admin, p.id) : null);
+  if (!ref) return { ok: false, error: "That request isn't there any more." };
+  const asked = await askerRoles(admin, ref);
+  if (ref.startsWith("connector:")) {
+    const { data: c } = await admin.from("ai_connectors").select("id, key, name, roles").eq("id", ref.slice(10)).maybeSingle();
+    if (!c) return { ok: false, error: "That connector was removed." };
+    const roles = rolesAfterEnable({ roles: (c.roles as string[] | null) ?? null }, asked);
+    const { error } = await admin.from("ai_connectors").update({ enabled: true, roles: roles.length ? roles : null, updated_at: new Date().toISOString() }).eq("id", c.id);
+    if (error) return { ok: false, error: error.message };
+    revalidatePath("/settings");
+    await settle(ref, { key: c.key as string, name: c.name as string }, me.id);
+    return { ok: true, key: c.key as string, name: c.name as string };
+  }
+  const { data: was } = await admin.from("ai_connectors").select("roles").eq("registry_name", ref).maybeSingle();
+  const r = await offerFromRegistry(ref, rolesAfterEnable(was ? { roles: (was.roles as string[] | null) ?? null } : null, asked), p.client);
+  return r.ok ? r : { ...r, ref };
+}
+
+/** Decline what someone asked for: the reason goes back to everyone who asked */
+export async function declineRequest(ref: string, reason: string): Promise<Ok> {
+  const me = await requireExec();
+  if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  const { settleDeclined } = await import("@/lib/connectors/requests");
+  const r = await settleDeclined(createAdminClient(), String(ref ?? ""), reason, me.id);
+  revalidatePath("/settings");
+  return r.ok ? { ok: true } : r;
 }
 
 /** The exec looked at the Directory: "New" and "Updated" count from now on */
@@ -225,71 +274,17 @@ export type DirectoryItem = {
   offered: "on" | "off" | null;
 };
 
-const DIR_COLS = "name, title, description, url, icon_url, website_url, first_seen_at, changed_at";
-type DirRow = { name: string; title: string | null; description: string | null; url: string; icon_url: string | null; website_url: string | null; first_seen_at: string; changed_at: string | null; featured?: boolean | null; vendor?: string | null };
-
-/**
- * The Directory's connectors: the featured vendors first, then the newest, searched by name, vendor and description.
- * Before the directory migration (no featured column) the featured ones are found by their URLs instead.
- */
 export async function directory(q: string, limit = 60): Promise<{ items: DirectoryItem[]; total: number; ready: boolean }> {
   const me = await requireExec();
   if (!adminConfigured()) return { items: [], total: 0, ready: false };
   const admin = createAdminClient();
-  const n = Math.max(20, Math.min(600, Math.round(Number(limit) || 60)));
-  const search = String(q ?? "")
-    .replace(/[%_,()*\\"]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 60);
-  const match = (cols: string[]) => cols.map((c) => `${c}.ilike.%${search}%`).join(",");
-  let rows: DirRow[] = [];
-  let total = 0;
-  let withFeatured = admin.from("ai_connector_registry").select(`${DIR_COLS}, featured, vendor`, { count: "exact" }).eq("available", true);
-  if (search) withFeatured = withFeatured.or(match(["title", "name", "description", "vendor"]));
-  const first = await withFeatured.order("featured", { ascending: false }).order("first_seen_at", { ascending: false }).limit(n);
-  if (!first.error) {
-    rows = (first.data ?? []) as unknown as DirRow[];
-    total = first.count ?? rows.length;
-  } else {
-    // Before the migration: the plain list, plus the vendors' servers found by their URLs
-    let plainQ = admin.from("ai_connector_registry").select(DIR_COLS, { count: "exact" }).eq("available", true);
-    if (search) plainQ = plainQ.or(match(["title", "name", "description"]));
-    const plain = await plainQ.order("first_seen_at", { ascending: false }).limit(n);
-    if (plain.error) return { items: [], total: 0, ready: false };
-    let vendorQ = admin
-      .from("ai_connector_registry")
-      .select(DIR_COLS)
-      .eq("available", true)
-      .or(VENDORS.flatMap((v) => v.domains).map((d) => `url.ilike.%${d}/%`).join(","));
-    if (search) vendorQ = vendorQ.or(match(["title", "name", "description"]));
-    const vendorRows = ((await vendorQ.limit(200)).data ?? []) as unknown as DirRow[];
-    const tag = (x: DirRow): DirRow => {
-      const v = featuredVendor(x.name, x.url);
-      return { ...x, featured: Boolean(v), vendor: v };
-    };
-    const seen = new Set<string>();
-    rows = [...vendorRows.map(tag).filter((x) => x.featured), ...((plain.data ?? []) as unknown as DirRow[]).map(tag)]
-      .filter((x) => {
-        if (seen.has(x.name)) return false;
-        seen.add(x.name);
-        return true;
-      })
-      .slice(0, n);
-    total = Math.max(plain.count ?? 0, rows.length);
-  }
-  // One card per server: the connectors checked for Kaizen's directory win over the same server listed in the registry
-  const urlKey = (u: string) => u.toLowerCase().replace(/\/+$/, "").replace(/\/(sse|mcp)$/, "");
-  const ours = new Set(rows.filter((x) => x.name.startsWith("kaizen.directory/")).map((x) => urlKey(x.url)));
-  rows = rows.filter((x) => x.name.startsWith("kaizen.directory/") || !ours.has(urlKey(x.url)));
-  const [{ data: offered }, { data: seenRow }] = await Promise.all([
-    admin.from("ai_connectors").select("registry_name, url, enabled"),
-    admin.from("ai_connector_registry_seen").select("seen_at").eq("profile_id", me.id).maybeSingle(),
-  ]);
+  const { offerFor, searchDirectory } = await import("@/lib/connectors/server");
+  const found = await searchDirectory(admin, q, limit);
+  if (!found.ready) return { items: [], total: 0, ready: false };
+  const { data: seenRow } = await admin.from("ai_connector_registry_seen").select("seen_at").eq("profile_id", me.id).maybeSingle();
   const seenAt = (seenRow?.seen_at as string | undefined) ?? null;
-  const offers = (offered ?? []) as { registry_name: string | null; url: string; enabled: boolean }[];
-  const items = directoryOrder(rows).map((x): DirectoryItem => {
-    const o = offers.find((c) => c.registry_name === x.name) ?? offers.find((c) => c.url === x.url);
+  const items = found.rows.map((x): DirectoryItem => {
+    const o = offerFor(found.offers, x);
     return {
       name: x.name,
       title: x.title || x.name,
@@ -303,5 +298,5 @@ export async function directory(q: string, limit = 60): Promise<{ items: Directo
       offered: o ? (o.enabled ? "on" : "off") : null,
     };
   });
-  return { items, total, ready: true };
+  return { items, total: found.total, ready: true };
 }

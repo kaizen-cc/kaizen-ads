@@ -5,8 +5,9 @@ import { NextResponse, type NextRequest } from "next/server";
 // /r/ is a client's monthly report link (secret token, read-only); /api/slack/events is Slack's (it checks Slack's
 // signature); /api/portal-chat/avatar draws initials for Slack to show beside a client's portal message; /api/loom checks
 // its own token (LOOM_WEBHOOK_TOKEN); /handled acts only with a signed link from a notice email (or as whoever's signed
-// in); /api/email/inbound is Resend's (it checks the webhook signature)
-const PUBLIC_PATHS = ["/login", "/about", "/privacy", "/terms", "/auth/", "/p/", "/r/", "/api/cron/", "/api/zapier/", "/api/loom", "/api/slack/events", "/api/portal-chat/avatar", "/manifest.webmanifest", "/handled", "/api/email/inbound"];
+// in); /api/email/inbound is Resend's (it checks the webhook signature); /api/connectors/client-metadata.json is Kaizen
+// AI's OAuth Client ID Metadata Document, which a connector's sign in server fetches (public, no secret in it)
+const PUBLIC_PATHS = ["/login", "/about", "/privacy", "/terms", "/auth/", "/p/", "/r/", "/api/cron/", "/api/zapier/", "/api/loom", "/api/slack/events", "/api/portal-chat/avatar", "/manifest.webmanifest", "/handled", "/api/email/inbound", "/api/connectors/client-metadata.json"];
 
 // Refreshes the Supabase session cookie on every request and sends signed-out
 // visitors to /login (keeping where they were headed). Real authorization is RLS.
