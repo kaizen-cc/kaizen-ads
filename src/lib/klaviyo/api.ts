@@ -72,10 +72,10 @@ export async function getAccount(key: string): Promise<KlaviyoAccount> {
   return acc;
 }
 
-/** Campaigns of one channel, newest first, back to `since` (ISO) */
-export async function listCampaigns(key: string, channel: "email" | "sms", since: string): Promise<CampaignInfo[]> {
+/** Campaigns of one channel, newest first, back to `since` (ISO); a recent read looks at fewer pages */
+export async function listCampaigns(key: string, channel: "email" | "sms", since: string, pages = 8): Promise<CampaignInfo[]> {
   const q = new URLSearchParams({ filter: `equals(messages.channel,'${channel}')`, include: "campaign-messages", sort: "-created_at" });
-  const rows = await pagesOf(key, `/api/campaigns/?${q}`, (j) => parseCampaigns(j, channel), 8);
+  const rows = await pagesOf(key, `/api/campaigns/?${q}`, (j) => parseCampaigns(j, channel), pages);
   return rows.filter((c) => !c.sendTime || c.sendTime >= since);
 }
 

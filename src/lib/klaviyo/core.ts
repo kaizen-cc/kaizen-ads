@@ -358,3 +358,64 @@ export function emailContextLine(input: { account: string | null; currency: stri
   ];
   return lines.join("\n");
 }
+
+// ─── Sync health: plain errors, each client's state, and how much to read ─────
+
+/** The read scopes, as a person reads them in Klaviyo's key screen */
+export const KLAVIYO_SCOPE_NAMES = "Accounts, Campaigns, Flows, Lists, Segments and Metrics";
+
+export type KlaviyoPlainError = { message: string; fix: string; severity: "bad" | "warn" };
+
+/**
+ * What a Klaviyo failure means, in plain words, with the fix. `status` is the connection's status ("invalid" once
+ * Klaviyo refused the key). Never repeats a key: the stored errors are already redacted, and this only reads them.
+ */
+export function plainKlaviyoError(raw: string | null | undefined, status?: string | null): KlaviyoPlainError | null {
+  const text = String(raw ?? "").trim();
+  if (status === "invalid" || /refused (this |the )?key|Klaviyo refused/i.test(text))
+    return { message: "Klaviyo refused the key: it was revoked or deleted", fix: "Create a new read-only private key in their Klaviyo and paste it here.", severity: "bad" };
+  if (!text) return null;
+  if (/No Placed Order/i.test(text))
+    return { message: "No Placed Order metric yet, so revenue can't be read", fix: "Connect their store (Shopify or another) inside Klaviyo. Campaigns, flows and lists still sync.", severity: "warn" };
+  if (/can't read everything|\b403\b|lacks|permission/i.test(text))
+    return { message: "The key lacks Read access on something Kaizen reads", fix: `Create a new read-only key with Read on ${KLAVIYO_SCOPE_NAMES}, and paste it here.`, severity: "bad" };
+  if (/key can't be read|can't be decrypted|TOKEN_ENCRYPTION_KEY/i.test(text))
+    return { message: "The saved key can't be unlocked", fix: "Paste the key again (the encryption key in Vercel changed since it was saved).", severity: "bad" };
+  if (/rate limit|\b429\b/i.test(text)) return { message: "Klaviyo is rate limiting this account", fix: "Nothing to do: it tries again on the next run.", severity: "bad" };
+  if (/didn't answer|fetch failed|timed? ?out|ECONNRESET|answered 5\d\d/i.test(text)) return { message: "Klaviyo didn't answer", fix: "Nothing to do: it tries again on the next run.", severity: "bad" };
+  if (/^Saving klaviyo_/i.test(text)) return { message: "The numbers were read but couldn't be saved", fix: "It tries again on the next run. If it keeps failing, the Klaviyo migration may be missing.", severity: "bad" };
+  return { message: text.replace(/^Klaviyo answered /i, "Klaviyo answered ").slice(0, 200), fix: "Sync it again; if it keeps failing, replace the key with a new read-only one.", severity: "bad" };
+}
+
+export type KlaviyoClientState = "connected" | "behind" | "pending" | "failing" | "missing";
+
+/** A day and a bit with no successful read is behind (the same line Sync health uses everywhere) */
+export const KLAVIYO_BEHIND_MS = 26 * 3_600_000;
+
+/** Where one client's Klaviyo stands, from its connection (null when there's none) */
+export function klaviyoClientState(conn: { status: string; lastSyncedAt: string | null; error: string | null } | null, now = Date.now()): { state: KlaviyoClientState; error: KlaviyoPlainError | null } {
+  if (!conn) return { state: "missing", error: null };
+  const error = plainKlaviyoError(conn.error, conn.status);
+  if (error?.severity === "bad") return { state: "failing", error };
+  if (!conn.lastSyncedAt) return { state: "pending", error };
+  return { state: now - Date.parse(conn.lastSyncedAt) > KLAVIYO_BEHIND_MS ? "behind" : "connected", error };
+}
+
+export type KlaviyoWindow = "recent" | "full";
+
+/** The full window (120 days of campaigns, 90 of days, lists and segments) at most this often; recent the rest */
+export const FULL_EVERY_MS = 20 * 3_600_000;
+
+/**
+ * How much a run reads for one client: "full" when it has never had a full read, or its last one is FULL_EVERY_MS
+ * old; otherwise "recent" (today and yesterday's totals, the last 7 days' campaigns, flows' 30 days).
+ */
+export function pickKlaviyoWindow(input: { lastFullAt: string | null; now?: number; everyMs?: number }): KlaviyoWindow {
+  if (!input.lastFullAt) return "full";
+  const at = Date.parse(input.lastFullAt);
+  if (!Number.isFinite(at)) return "full";
+  return (input.now ?? Date.now()) - at >= (input.everyMs ?? FULL_EVERY_MS) ? "full" : "recent";
+}
+
+/** About how long a client's read takes (the Reporting API allows 2 queries a minute per account), for the run's budget */
+export const klaviyoCostMs = (w: KlaviyoWindow) => (w === "full" ? 210_000 : 110_000);

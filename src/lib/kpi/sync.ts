@@ -339,6 +339,30 @@ export async function refreshAllKpis(admin: SupabaseClient, budgetMs = 650_000) 
   }
 }
 
+/**
+ * Sync health's Sync now on the Google Ads card: every live client's Google Ads accounts pulled and recomputed (the
+ * scheduled KPI step does the same along with Meta and TikTok). Each account's error lands on sync_state "kpi:<digits>".
+ */
+export async function refreshGoogleKpis(admin: SupabaseClient, budgetMs = 600_000) {
+  const t = await tracker(admin, "google", "Google Ads accounts");
+  try {
+    const [{ data }, { data: live }] = await Promise.all([
+      admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true).eq("platform", "google"),
+      admin.from("clients").select("id").is("archived_at", null).in("status", LIVE),
+    ]);
+    const on = new Set((live ?? []).map((c) => c.id as string));
+    const targets = ((data ?? []) as Target[]).filter((x) => on.has((x as unknown as { client_id: string }).client_id));
+    const results = (await refreshTargets(admin, targets, true, Date.now() + budgetMs, t)) ?? [];
+    const errors = results.filter((r) => "error" in r && r.error).map((r) => `${r.account}: ${(r as { error: string }).error}`);
+    const deferred = results.filter((r) => "deferred" in r).length;
+    await t.finish({ summary: `${results.length} accounts${errors.length ? `, ${errors.length} failed` : ""}${deferred ? `, ${deferred} left for the next run` : ""}` });
+    return { accounts: results.length, errors, deferred };
+  } catch (e) {
+    await t.finish({ error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
+}
+
 async function refreshAll(admin: SupabaseClient, budgetMs: number, t: Tracker) {
   const adopted = await adoptNewAccounts(admin);
   // Linked TikTok ad accounts get their KPI card (nothing while TikTok isn't set up)

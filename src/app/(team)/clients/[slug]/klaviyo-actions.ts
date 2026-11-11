@@ -30,6 +30,8 @@ export async function connectKlaviyoKey(clientId: string, key: string): Promise<
   const admin = l.admin;
   after(() => syncKlaviyo(admin, clientId).then(() => undefined));
   revalidatePath(`/clients/${l.slug}`);
+  // Connected from Settings › Sync health too: its Klaviyo card shows it
+  revalidatePath("/settings");
   return { ok: true, account: r.account };
 }
 
@@ -46,5 +48,6 @@ export async function syncKlaviyoNow(clientId: string): Promise<Result> {
   if ("error" in l) return { ok: false, error: l.error! };
   const r = await syncKlaviyo(l.admin, clientId);
   revalidatePath(`/clients/${l.slug}`);
+  revalidatePath("/settings");
   return r.ok ? { ok: true } : { ok: false, error: (r.error ?? "The sync failed.").slice(0, 240) };
 }

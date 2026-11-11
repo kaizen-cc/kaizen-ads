@@ -6,13 +6,15 @@ import { requireExec } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/error-report";
 
-export type SyncJob = "kpi" | "slack" | "gmail" | "drive" | "meta" | "tiktok" | "calls" | "verticals" | "asana" | "sheet" | "docs";
-const JOBS: SyncJob[] = ["kpi", "slack", "gmail", "drive", "meta", "tiktok", "calls", "verticals", "asana", "sheet", "docs"];
+export type SyncJob = "kpi" | "google" | "klaviyo" | "slack" | "gmail" | "drive" | "meta" | "tiktok" | "calls" | "verticals" | "asana" | "sheet" | "docs";
+const JOBS: SyncJob[] = ["kpi", "google", "klaviyo", "slack", "gmail", "drive", "meta", "tiktok", "calls", "verticals", "asana", "sheet", "docs"];
 
 /** Runs one job the way the schedule does. */
 async function runJob(job: SyncJob) {
   const admin = createAdminClient();
   if (job === "kpi") return (await import("@/lib/kpi/sync")).refreshAllKpis(admin, 600_000);
+  if (job === "google") return (await import("@/lib/kpi/sync")).refreshGoogleKpis(admin, 600_000);
+  if (job === "klaviyo") return (await import("@/lib/klaviyo/store")).syncAllKlaviyo(admin, { budgetMs: 600_000, force: true });
   if (job === "tiktok") return (await import("@/lib/tiktok/store")).syncAllTikTok(admin, 600_000);
   if (job === "calls") return (await import("@/lib/calls")).collectCalls(admin);
   if (job === "verticals") return (await import("@/lib/verticals")).keepVerticals(admin);
@@ -102,6 +104,15 @@ export async function syncOne(source: string): Promise<{ ok: true; note: string 
       const r = (await (await import("@/lib/context/run")).collectMailbox(admin, source.slice(6))) as { error?: string; items?: number };
       revalidatePath("/settings");
       return r.error ? { error: r.error } : { ok: true, note: `${r.items ?? 0} new` };
+    }
+    if (source.startsWith("klaviyo:")) {
+      const r = await (await import("@/lib/klaviyo/store")).syncKlaviyo(admin, source.slice(8));
+      revalidatePath("/settings");
+      if (!r.ok) {
+        const { plainKlaviyoError } = await import("@/lib/klaviyo/core");
+        return { error: plainKlaviyoError(r.error)?.message ?? "The read failed" };
+      }
+      return { ok: true, note: r.window === "full" ? "Read in full" : "Recent numbers read" };
     }
     return { error: "This one syncs with its whole group" };
   } catch (e) {

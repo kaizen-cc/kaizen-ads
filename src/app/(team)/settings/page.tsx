@@ -4,7 +4,7 @@ import { BusinessManagers } from "@/components/meta-business-connections";
 import { TikTokConnection } from "@/components/tiktok-connection";
 import { tiktokConfigured } from "@/lib/tiktok/core";
 import { Connections } from "./connections";
-import { KlaviyoCard } from "./klaviyo-card";
+import { GoogleAdsCard, KlaviyoSyncCard, summarizeGoogle, summarizeKlaviyo, type PlatformSummary } from "./platform-cards";
 import { ConnectorsTab, MyConnectionsTab } from "./connectors-tab";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
@@ -365,7 +365,7 @@ const GROUPS: [string, string, SyncJob, string, string, string][] = [
 
 /** The sections of Sync health, by what the data is */
 const CATEGORIES = [
-  { key: "ads", label: "Ad platforms", about: "Numbers and ads from Meta and Google, and the market from Motion" },
+  { key: "ads", label: "Ad platforms", about: "Numbers and ads from Meta and Google, email from Klaviyo, and the market from Motion" },
   { key: "talk", label: "Conversations", about: "What clients and the team say: Slack, email and calls" },
   { key: "files", label: "Files and docs", about: "Client folders, assets and the docs written about them" },
   { key: "ops", label: "Operations", about: "Who runs what, and the work still in Asana" },
@@ -571,7 +571,7 @@ const olderThan = (iso: string, ms: number) => Date.now() - Date.parse(iso) > ms
 const timedOut = (x: RunState): RunState =>
   x?.running && (!x.startedAt || olderThan(x.startedAt, 15 * 60_000)) ? { ...x, running: false, error: x.error ?? "It didn't finish (timed out)" } : x;
 // What a job usually takes, until it has run once with progress (then its own last time is used)
-const TYPICAL_MS: Record<string, number> = { kpi: 300_000, meta: 420_000, slack: 120_000, gmail: 240_000, drive: 120_000, calls: 180_000, verticals: 300_000, market: 600_000, asana: 60_000, sheet: 60_000, docs: 240_000 };
+const TYPICAL_MS: Record<string, number> = { kpi: 300_000, meta: 420_000, slack: 120_000, gmail: 240_000, drive: 120_000, calls: 180_000, verticals: 300_000, market: 600_000, google: 180_000, klaviyo: 420_000, asana: 60_000, sheet: 60_000, docs: 240_000 };
 const span = (ms: number) => {
   const s = Math.max(1, Math.round(ms / 1000));
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
@@ -662,11 +662,34 @@ async function Sync({ motion }: { motion: string | null }) {
     const state: "failing" | "behind" | "ok" | "idle" = failing.length ? "failing" : stale.length ? "behind" : list.length ? "ok" : "idle";
     return { prefix, name, job, about, category, cadence, list, failing, stale, offboarded, newest, run, progress: progressOf(job, run), label, state, retry: prefix === "kpi:" || prefix === "gmail:" };
   });
+  // Google Ads and Klaviyo: one card each, per client, counted in the hero like any other sync
+  const [{ googleRoster }, { klaviyoRoster }, { googleAdsConfigured, googleAdsMissing }, { plainGoogleError }] = await Promise.all([
+    import("@/lib/google-sync-health"),
+    import("@/lib/klaviyo/store"),
+    import("@/lib/context/google-ads"),
+    import("@/lib/google-health"),
+  ]);
+  const [googleRows, klaviyoRows] = await Promise.all([googleRoster(admin).catch(() => []), klaviyoRoster(admin).catch(() => null)]);
+  const googleSetup = googleAdsConfigured() ? null : plainGoogleError(`Google Ads isn't connected yet (missing ${googleAdsMissing().join("; ")})`);
+  const platforms: { key: string; name: string; job: SyncJob; summary: PlatformSummary; run: RunState; progress: Progress }[] = [
+    { key: "google", name: "Google Ads", job: "google", summary: summarizeGoogle(googleRows), run: runs.get("google") ?? null, progress: progressOf("google", runs.get("google") ?? null) },
+    { key: "klaviyo", name: "Klaviyo", job: "klaviyo", summary: summarizeKlaviyo(klaviyoRows), run: runs.get("klaviyo") ?? null, progress: progressOf("klaviyo", runs.get("klaviyo") ?? null) },
+  ];
+  const platformCard = (key: string) => {
+    const p = platforms.find((x) => x.key === key)!;
+    return key === "google" ? (
+      <GoogleAdsCard key={key} rows={googleRows} run={p.run} progress={p.progress} summary={p.summary} setupError={googleSetup} />
+    ) : (
+      <KlaviyoSyncCard key={key} rows={klaviyoRows} run={p.run} progress={p.progress} summary={p.summary} />
+    );
+  };
+  const platformAttention = platforms.filter((p) => p.summary.state === "failing" || p.summary.state === "behind");
+
   const attention = syncs.filter((s) => s.state === "failing" || s.state === "behind");
-  const healthy = syncs.filter((s) => s.state === "ok").length;
-  const failingN = syncs.filter((s) => s.state === "failing").length;
-  const behindN = syncs.filter((s) => s.state === "behind").length;
-  const latest = syncs.map((s) => s.newest).filter(Boolean).sort().at(-1);
+  const healthy = syncs.filter((s) => s.state === "ok").length + platforms.filter((p) => p.summary.state === "ok").length;
+  const failingN = syncs.filter((s) => s.state === "failing").length + platforms.filter((p) => p.summary.state === "failing").length;
+  const behindN = syncs.filter((s) => s.state === "behind").length + platforms.filter((p) => p.summary.state === "behind").length;
+  const latest = [...syncs.map((s) => s.newest), ...platforms.map((p) => p.summary.newest)].filter(Boolean).sort().at(-1);
   const DOT = { failing: "bg-bad", behind: "bg-warn", ok: "bg-ok", idle: "bg-line" } as const;
 
   const tile = (s: (typeof syncs)[number]) => (
@@ -737,7 +760,7 @@ async function Sync({ motion }: { motion: string | null }) {
   const syncsPanel = (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-8 md:gap-10">
       {/* What needs someone, first */}
-      {attention.length > 0 && (
+      {attention.length + platformAttention.length > 0 && (
         <section className="grid gap-3">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Needs attention</h2>
           <ul className="grid divide-y divide-line overflow-hidden rounded-[16px] border border-line bg-surface">
@@ -761,6 +784,20 @@ async function Sync({ motion }: { motion: string | null }) {
                 <SyncNowButton job={s.job} run={s.run} progress={s.progress} />
               </li>
             ))}
+            {platformAttention.map((p) => (
+              <li key={p.key} className="flex flex-wrap items-center gap-3 px-4 py-3.5 md:py-3">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${DOT[p.summary.state]}`} />
+                <span className="grid min-w-0 flex-1 gap-0.5">
+                  <span className="text-sm font-medium">{p.name}</span>
+                  <span className="text-xs text-muted max-md:line-clamp-2 max-md:[overflow-wrap:anywhere] md:truncate" title={p.summary.failingLines.join(" · ")}>
+                    {p.summary.failing
+                      ? `${p.summary.failing} failing: ${p.summary.failingLines.slice(0, 2).join(" · ")}`
+                      : `${p.summary.behind} ${p.summary.behind === 1 ? "hasn't" : "haven't"} synced in a day`}
+                  </span>
+                </span>
+                <SyncNowButton job={p.job} run={p.run} progress={p.progress} />
+              </li>
+            ))}
           </ul>
         </section>
       )}
@@ -777,6 +814,7 @@ async function Sync({ motion }: { motion: string | null }) {
             </div>
             <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-3 md:grid-cols-2">
               {mine.map(tile)}
+              {c.key === "ads" && platforms.map((p) => platformCard(p.key))}
               {c.key === "ads" && (
                 <div className="md:col-span-2">
                   <MotionCard notice={motion} />
@@ -796,7 +834,7 @@ async function Sync({ motion }: { motion: string | null }) {
 
   return (
     <SyncShell
-      hero={{ healthy, behind: behindN, failing: failingN, total: syncs.length, latest: latest ? freshness(latest).label.toLowerCase() : null, metaSandbox: write.sandbox, googleLive: googleLive.length }}
+      hero={{ healthy, behind: behindN, failing: failingN, total: syncs.length + platforms.length, latest: latest ? freshness(latest).label.toLowerCase() : null, metaSandbox: write.sandbox, googleLive: googleLive.length }}
       syncs={syncsPanel}
       meta={
         me.isExec ? (
@@ -958,7 +996,15 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
           {section === "keys" && (
             <div className="grid gap-6">
               <Connections isExec={me.isExec} />
-              <KlaviyoCard />
+              {me.isExec && (
+                <p className="text-xs text-faint">
+                  Klaviyo keys are per client: connect, fix or replace them in{" "}
+                  <Link href="/settings?tab=sync" className="text-muted underline underline-offset-2 hover:text-fg">
+                    Sync health › Ad platforms › Klaviyo
+                  </Link>{" "}
+                  or on the client&apos;s Team &amp; setup.
+                </p>
+              )}
             </div>
           )}
         </div>

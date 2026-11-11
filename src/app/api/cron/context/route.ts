@@ -45,6 +45,8 @@ function nyNow() {
  * - google_market: Mondays at 7am, Google in the market by industry: what people search (Keyword Planner)
  * - google_ideas: daily at 6:30am, Google's Hall of Fame and live winners (ads, keywords, search terms)
  * - kpi: every 30 minutes on weekdays 8am to 6pm, every hour otherwise (campaign numbers for the KPI dashboard; no AI)
+ * - klaviyo: on the KPI numbers' cadence; every connected client's recent email numbers, the full window once a day,
+ *   six clients at a time
  * - brief: 12pm and 6pm
  * - market: 8:30am (live ads from Motion for the Market tab, ready for the morning)
  * - sheet: 12pm and 5pm, the Account Overview sheet (buyer, budget and KPI target per account, and the team's notes)
@@ -71,7 +73,7 @@ function due(step: string | null) {
   if (step === "slack" || step === "drive" || step === "gmail") return businessHours || (hour % 3 === 0 && minute < 30);
   if (step === "meta") return hour % 2 === 0;
   if (step === "tiktok") return hour % 2 === 0; // like Meta's ads; does nothing until TikTok's app keys are in Vercel
-  if (step === "klaviyo") return hour >= 1 && hour <= 11; // hourly through the night and morning (vercel.json): each connected client's Klaviyo once a day, a few clients a run
+  if (step === "klaviyo") return businessHours || minute >= 30; // called at :18 and :48 (vercel.json): as often as the KPI numbers; every client's recent numbers each run, the full window once a day
   if (step === "kpi") return businessHours || minute >= 30; // called at :15 and :45 (vercel.json)
   if (step === "google_ideas") return true; // once a day (vercel.json): Google's Hall of Fame and live winners
   if (step === "google_market") return true; // Mondays (vercel.json): Google in the market, by industry

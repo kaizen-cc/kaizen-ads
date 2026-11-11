@@ -50,6 +50,9 @@ import { TikTokReportToggle } from "./tiktok-report-toggle";
 import type { ClientTikTok } from "@/lib/tiktok/store";
 import type { ClientKlaviyo, KlaviyoConnectionView } from "@/lib/klaviyo/store";
 import { KlaviyoConnection } from "./klaviyo-connection";
+import { GoogleSyncPanel } from "@/components/platform-fields";
+import type { GoogleClientHealth } from "@/lib/google-health";
+import { klaviyoClientState } from "@/lib/klaviyo/core";
 import { EmailPanel } from "./email-panel";
 import { DocsPanel } from "./docs-panel";
 import { KnowledgePanel } from "@/components/knowledge-panel";
@@ -203,6 +206,8 @@ export type ClientViewProps = {
   tiktok?: { data: ClientTikTok | null; separate?: boolean } | null;
   /** Klaviyo (email and SMS, read only): null until its migration is applied, so nothing about it shows */
   klaviyo?: { conn: KlaviyoConnectionView | null; data: ClientKlaviyo | null; storeRevenue: number | null } | null;
+  /** Google Ads sync: each account's state and the plain fix when it fails; null when they don't run Google */
+  googleSync?: GoogleClientHealth | null;
   docs?: ClientDoc[] | null; // every file and link shared about them
   /** Knowledge files the agents read for this client only */
   knowledge?: KnowledgeDoc[];
@@ -223,7 +228,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -244,7 +249,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
     ...(!contacts.length ? [{ tone: "warn" as const, text: "No client contact: nobody can approve ads", href: tab("team") }] : []),
     ...(!client.slack_channel_id ? [{ tone: "info" as const, text: "Connect their Slack channel: it's their portal chat too", href: tab("team") }] : []),
   ];
-  const needsSetup = [!contacts.length, !client.slack_channel_id, !client.drive_folder_id].filter(Boolean).length;
+  // Google not connected or failing, and Klaviyo failing, count too (a client without Klaviyo may simply not use it)
+  const klaviyoFailing = klaviyo?.conn ? klaviyoClientState(klaviyo.conn).state === "failing" : false;
+  const needsSetup = [!contacts.length, !client.slack_channel_id, !client.drive_folder_id, googleSync?.state === "missing" || googleSync?.state === "failing", klaviyoFailing].filter(Boolean).length;
   const sprintMoves = Object.values(sprints ?? {}).reduce((n, s) => n + Math.max(0, s.total - s.done), 0);
   const inMotion = [
     { label: "creative in production", value: creative?.moving.length ?? 0, href: `/clients/${client.slug}?service=creative` },
@@ -664,8 +671,13 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       <LiveWritesPanel data={liveWrites} clientId={client.id} slug={client.slug} canEdit={can.admin && !demo} toggle={setLiveAdWrites.bind(null, client.id, client.slug)} />
                     </Section>
                   )}
+                  {googleSync && (
+                    <Section title="Google Ads" description="Their campaign numbers, read through Kaizen's manager account every 30 minutes in business hours (hourly otherwise). When a sync fails, here's why and what fixes it.">
+                      <GoogleSyncPanel clientId={client.id} health={googleSync} canEdit={can.assign && !demo} />
+                    </Section>
+                  )}
                   {klaviyo && (
-                    <Section title="Klaviyo" description="Their email and SMS, read only: campaigns, flows, lists and revenue, synced daily as context for the accounts. A lead or exec connects it with a read-only private API key.">
+                    <Section title="Klaviyo" description="Their email and SMS, read only: campaigns, flows, lists and revenue, refreshed every 30 minutes in business hours (hourly otherwise) as context for the accounts. A lead or exec connects it with a read-only private API key.">
                       <KlaviyoConnection clientId={client.id} conn={klaviyo.conn} canEdit={can.assign && !demo} />
                     </Section>
                   )}

@@ -420,6 +420,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         return { conn, data, storeRevenue: biz?.store && biz.last30.revenue > 0 ? biz.last30.revenue : null };
       })()
     : null;
+  // Google Ads sync: each account's state and, when it fails, why and the fix (null when they don't run Google)
+  const googleSync = admin ? await (await import("@/lib/google-sync-health")).clientGoogleHealth(admin, client.id).catch(() => null) : null;
   const docs = (docRows ?? []).map((d) => ({ id: d.id, kind: d.kind, name: d.name, url: d.url, path: d.path, mime: d.mime, bytes: d.bytes, title: d.title, summary: d.summary, status: d.status, note: d.note, via: d.via, at: d.created_at, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
   const billingHistory = (billingLog ?? []).map((h) => ({ at: h.at as string, oldDay: (h.old_day as number | null) ?? null, newDay: (h.new_day as number | null) ?? null, source: (h.source as string | null) ?? null, note: (h.note as string | null) ?? null, by: (h.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
 
@@ -470,6 +472,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       campaigns={campaigns}
       tiktok={tiktokOn ? { data: tiktok, separate: tiktokSeparate } : null}
       klaviyo={klaviyo}
+      googleSync={googleSync}
       docs={docs}
       knowledge={knowledge}
       loom={loom}

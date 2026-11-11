@@ -3,13 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import type { KlaviyoConnectionView } from "@/lib/klaviyo/store";
+import { KLAVIYO_SCOPE_NAMES, plainKlaviyoError } from "@/lib/klaviyo/core";
+import { sentence } from "@/lib/google-health";
 import { connectKlaviyoKey, removeKlaviyoKey, syncKlaviyoNow } from "./klaviyo-actions";
 
 // Klaviyo in Team & setup: the account it reads (name and time zone, from Klaviyo itself), the key's last 4, when it
 // was last read, and Replace, Remove and Sync now. A lead or exec pastes a read-only private API key; it's never shown
 // again. Read only: Kaizen Ads never sends, edits or schedules anything in Klaviyo.
 
-const SCOPES = "Accounts, Campaigns, Flows, Lists, Segments and Metrics";
+const SCOPES = KLAVIYO_SCOPE_NAMES;
 
 const ago = (iso: string) => {
   const m = Math.round((Date.now() - Date.parse(iso)) / 60_000);
@@ -23,7 +25,9 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const failing = conn && (conn.status !== "active" || conn.error);
+  // Why it isn't reading, in plain words with the fix (a missing Placed Order metric only warns)
+  const plain = conn ? plainKlaviyoError(conn.error, conn.status) : null;
+  const failing = plain?.severity === "bad";
   const open = editing || (!conn && canEdit);
 
   const save = () =>
@@ -47,15 +51,18 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
             <span className="tabular text-[12px] text-faint">key ••••{conn.last4 ?? "????"}</span>
             {conn.timezone && <span className="text-[12px] text-faint">{conn.timezone}</span>}
           </div>
-          <p className={`text-[12px] ${failing ? "text-bad" : "text-muted"}`}>
-            {conn.status === "invalid"
-              ? "Klaviyo refused this key. Replace it with a new read-only key."
-              : conn.error
-                ? conn.error.slice(0, 200)
-                : conn.lastSyncedAt
-                  ? `Read ${ago(conn.lastSyncedAt)}${conn.backfilled ? "" : " · the first 90 days are still being read"}`
-                  : "Connected. The first read (90 days back) runs in the next few minutes."}
-          </p>
+          {plain ? (
+            <p className="grid gap-0.5 text-[12px] leading-relaxed">
+              <span className={plain.severity === "bad" ? "text-bad" : "text-warn"}>{sentence(plain.message)}</span>
+              <span className="text-muted">{plain.fix}</span>
+            </p>
+          ) : (
+            <p className="text-[12px] text-muted">
+              {conn.lastSyncedAt
+                ? `Read ${ago(conn.lastSyncedAt)}${conn.backfilled ? "" : " · the first 90 days are still being read"}`
+                : "Connected. The first read (90 days back) runs in the next few minutes."}
+            </p>
+          )}
           <div className="flex flex-wrap gap-x-4 gap-y-1 pt-0.5">
             <button
               type="button"
