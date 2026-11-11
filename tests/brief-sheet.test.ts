@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { BriefText } from "@/components/brief-sheet";
 import type { ClientDrive } from "@/lib/brief-cards";
 import { composeBrief, emptySpec, exportLineFor, type BriefSpec } from "@/lib/brief-spec";
+import { STATIC_BEST_TICKETS } from "./fixtures/brief-static-best-tickets";
 
 // The brief on screen (Ready to send and the ticket) shows the same sections as the PDF, for every format, and an
 // older or free-text brief still reads.
@@ -59,6 +60,25 @@ describe("the brief on screen", () => {
     const i = html(composeBrief("Golden hour sells Friday.", spec({ insight: "Patio ads win.", frame: ["Headline: Fridays on the patio", "Reads first: Headline, then the button"], versions: ["Fridays on the patio"] })));
     expect(i).toContain("The frame");
     expect(i).toContain("Reads first");
+  });
+
+  it("shows the real static brief like the PDF: one sentence, the versions as the build, nothing that holds the work", () => {
+    const out = html(STATIC_BEST_TICKETS);
+    // The idea is one sentence; the copy direction moved to the Copy section
+    expect(out).toContain("A real phone photo from a real seat, with one big line naming the seat most people skip and a small line saying why.</p>");
+    expect(out).not.toContain("Copy direction");
+    expect(out).not.toContain("The viewer learns");
+    expect(out).toContain("Not every seat in a section sees the same game.");
+    // The four versions are the build, cards with the layout they share; no separate versions list
+    expect(out).toContain("The images in 4 versions");
+    expect(out).toContain("Variation of V1");
+    expect(out).toContain("The layout");
+    expect(out).not.toContain("The versions (4)");
+    expect(out).not.toContain(">The frame<");
+    // The short fallback up top, the rest under Confirm with client; never "hold this ticket"
+    expect(out).toContain("If not:</b> V3 and V4 test the approved line");
+    expect(out).not.toMatch(/hold this ticket|until the client says yes|it waits for December/i);
+    expect(out).toContain("Check before making it.");
   });
 
   it("still reads an older brief and free text", () => {

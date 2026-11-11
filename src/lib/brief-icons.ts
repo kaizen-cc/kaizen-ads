@@ -4,7 +4,7 @@
 // an <svg>, the same shapes in both. iconFor picks one from the beat's name first, then what we see, with a default.
 // Pure: tested in tests/brief-icons.test.ts.
 
-export type BriefIcon = "person" | "group" | "store" | "phone" | "gauge" | "speech" | "crowd" | "box" | "ticket" | "play" | "megaphone" | "check";
+export type BriefIcon = "person" | "group" | "store" | "phone" | "gauge" | "speech" | "crowd" | "box" | "ticket" | "play" | "megaphone" | "check" | "seat" | "photo";
 
 /** ink: the line color; red: the accent; pink: the soft accent fill */
 export type IconTone = "ink" | "red" | "pink";
@@ -86,6 +86,21 @@ export const ICONS: Record<BriefIcon, IconPart[]> = {
   megaphone: [{ k: "path", d: "M9 12 H15 L33 5 V27 L15 20 H9 Z", stroke: "ink" }, line("M13 20 L15 28 H19 L17.5 21"), line("M37 11.5 A6 6 0 0 1 37 20.5", "red"), line("M40.5 8 A11 11 0 0 1 40.5 24")],
   // The payoff, done
   check: [{ k: "circle", cx: 24, cy: 16, r: 12.5, stroke: "ink" }, line("M18 16.5 L22.5 21 L31 11.5", "red", 2.2)],
+  // A stadium seat, side on: the seat view, the section
+  seat: [
+    { k: "path", d: "M15 4.5 H22 A2 2 0 0 1 24 6.5 V18 H15 A2 2 0 0 1 13 16 V6.5 A2 2 0 0 1 15 4.5 Z", stroke: "ink", fill: "pink" },
+    line("M11 18.5 H33 A2 2 0 0 1 35 20.5 V21.5 H11 Z"),
+    line("M15 21.5 L13 29"),
+    line("M31 21.5 L33 29"),
+    line("M28 18.5 V14.5 H35", "red", 1.8),
+    line("M5 29.5 H43"),
+  ],
+  // A photo: the picture in the frame
+  photo: [
+    { k: "rect", x: 7, y: 4, w: 34, h: 24, rx: 3, stroke: "ink" },
+    line("M7 24 L17 15 L24 21.5 L29 17 L41 26.5"),
+    { k: "circle", cx: 32.5, cy: 11, r: 2.8, fill: "red" },
+  ],
 };
 
 // Read from the name first, then what we see: the first rule that matches wins, so order goes from most to least specific
@@ -114,4 +129,26 @@ const match = (s: string) => {
 /** The pictogram for a beat or slide: by its name, else by what we see, else the default */
 export function iconFor(name: string, description = "", fallback: BriefIcon = "play"): BriefIcon {
   return match(name) ?? match(description) ?? fallback;
+}
+
+// A single image shows a thing, not a moment: the seat, the product, the place, the photo (a group only when people
+// are what's in the picture, never because a headline says "most people")
+const IMAGE_RULES: [RegExp, BriefIcon][] = [
+  [/\b(seats?|section|rows?|arena|stadium|bleachers?|seat[- ]views?)\b/i, "seat"],
+  [/\b(products?|box|package|packaging|bottles?|kit|jars?|cans?|bags?|unbox(ing)?)\b/i, "box"],
+  [/\b(stores?|shop|storefront|patio|restaurant|location|dining room|bar)\b/i, "store"],
+  [/\b(tickets?|passes?|admission)\b/i, "ticket"],
+  [/\b(offers?|sale|deals?|promo|discount|% off)\b/i, "megaphone"],
+  [/\b(photos?|pictures?|stills?|shots?|images?|snaps?|views?)\b/i, "photo"],
+  [/\b(app|website|screen|checkout)\b/i, "phone"],
+  [/\b(team|staff|crew|family|founders?|customers? (?:in|at|on)|people (?:in|at|on))\b/i, "group"],
+];
+
+/** The pictogram for a single image's version: by what's in the frame, else its headline, else a photo */
+export function iconForImage(shows: string, headline = "", fallback: BriefIcon = "photo"): BriefIcon {
+  for (const t of [shows, headline]) {
+    if (!t.trim()) continue;
+    for (const [re, icon] of IMAGE_RULES) if (re.test(t)) return icon;
+  }
+  return fallback;
 }

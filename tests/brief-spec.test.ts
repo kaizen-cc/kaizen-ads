@@ -203,3 +203,28 @@ describe("the lint under the new structure", () => {
     expect(ids(lintBrief({ text: "Insight: the seat behind the bench.\n\nHook: The seat\n\nConstraints:\n- 4:5 and 9:16", sizes: ["9x16"], formats: ["video"] }))).toEqual([]);
   });
 });
+
+describe("the opening and what to confirm", () => {
+  it("reads the idea as one sentence and moves copy direction to the Copy", async () => {
+    const { openingOf, withCopyDirection, copyOf } = await import("@/lib/brief-spec");
+    const o = openingOf("The owner's answer is the detail: a real local team. The viewer learns why. Copy direction (for the copywriter; final ad copy is written separately): - Primary: Real seats. - Headline: Know the seat - CTA: Shop Now\nFallback: if they can't say, run the team line instead.");
+    expect(o.idea).toBe("The owner's answer is the detail: a real local team.");
+    expect(o.copy).toEqual(["Primary: Real seats.", "Headline: Know the seat", "CTA: Shop Now"]);
+    expect(o.fallback).toBe("if they can't say, run the team line instead.");
+    expect(o.fallbackMore).toBe("");
+    expect(withCopyDirection(copyOf(["Headline: Own headline"]), o.copy)).toEqual({ primary: ["Real seats."], headlines: ["Own headline"], cta: "Shop Now" });
+    // An older brief keeps what follows its opening
+    expect(openingOf("Show the patio.\n\nHooks to try:\n- One").rest).toBe("Hooks to try:\n- One");
+  });
+
+  it("never tells the maker to hold the work", async () => {
+    const { withoutHold, cleanSpec } = await import("@/lib/brief-spec");
+    expect(withoutHold("Are statics OK in November? On Nov 9 the client set evergreen to video only. Hold this ticket until the client says yes; if not, it waits for December.")).toBe("Are statics OK in November? On Nov 9 the client set evergreen to video only. Check before making it.");
+    expect(withoutHold("Don't start until the client confirms the seat.")).toBe("Check before making it.");
+    expect(withoutHold("Which seat, at which venue, and why?")).toBe("Which seat, at which venue, and why?");
+    expect(withoutHold("Can we hold the shoot at the arena?")).toBe("Can we hold the shoot at the arena?");
+    expect(cleanSpec({ confirm: [{ question: "Is the offer live? Wait for the client before you design.", answer: "", source: "" }] }).confirm[0].question).toBe("Is the offer live? Check before making it.");
+    expect(SPEC_RULE).toMatch(/never write "hold this ticket"/);
+    expect(SPEC_RULE).toMatch(/never copy direction/);
+  });
+});

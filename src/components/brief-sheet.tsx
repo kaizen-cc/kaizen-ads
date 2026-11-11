@@ -1,9 +1,9 @@
 "use client";
 
 import { linkWord } from "@/lib/asset-links";
-import { assetRow, curly, dashTime, driveRows, quoteLine, sourceLabel, type ClientDrive } from "@/lib/brief-cards";
+import { assetRow, curly, dashTime, driveRows, imageVersions, layoutItems, quoteLine, sourceLabel, type ClientDrive } from "@/lib/brief-cards";
 import { ICON_STROKE, ICON_VIEWBOX, ICONS, iconFor, type BriefIcon, type IconTone } from "@/lib/brief-icons";
-import { ASSET_WORD, beatRows, copyOf, frameOf, pacing, parseBrief, slideRows, type BriefSpec } from "@/lib/brief-spec";
+import { ASSET_WORD, beatRows, copyOf, frameOf, openingOf, pacing, parseBrief, slideRows, withCopyDirection, withoutHold, type BriefSpec } from "@/lib/brief-spec";
 
 // The brief on screen in the lead video editor's look, the same as the PDF: his section labels (a short red rule), the
 // idea, why it works and who it's for, the build as rounded cards (a video's beats with their number, time, name and
@@ -144,7 +144,32 @@ function Quote({ label, children, plain }: { label?: string; children: React.Rea
 
 type CardData = { num: string; time: string; name: string; icon: BriefIcon; calloutLabel: string; callout: string; see: string; quoteLabel: string; quote: string };
 
-function Card({ c }: { c: CardData }) {
+function Card({ c, big }: { c: CardData; big?: boolean }) {
+  // A single image's version: the headline is the hero, what's in that frame in the quote box
+  if (big)
+    return (
+      <li className="flex min-w-0 flex-col gap-3 rounded-[12px] border border-line bg-[var(--brief-card)] p-4">
+        <div className="flex items-start gap-3">
+          <span className="tabular font-heading text-[24px] leading-none text-brand-text">{c.num}</span>
+          <span className="min-w-0 flex-1 pt-1 text-[12px] font-semibold uppercase tracking-[0.16em] text-fg">{c.name}</span>
+          <span className="grid h-11 w-16 shrink-0 place-items-center rounded-[8px] bg-[var(--brief-quote)]">
+            <Pictogram name={c.icon} />
+          </span>
+        </div>
+        {c.callout ? (
+          <Callout label={c.calloutLabel} big>
+            {c.callout}
+          </Callout>
+        ) : null}
+        {c.see ? (
+          <div className="mt-auto">
+            <Quote label="In this frame" plain>
+              {c.see}
+            </Quote>
+          </div>
+        ) : null}
+      </li>
+    );
   return (
     <li className="flex min-w-0 flex-col gap-3 rounded-[12px] border border-line bg-[var(--brief-card)] p-4">
       <div className="flex items-start gap-3">
@@ -300,6 +325,36 @@ function FrameView({ sp }: { sp: BriefSpec }) {
   );
 }
 
+/** A single image in N versions: the versions are the build, one card each, then the layout they share */
+function ImageVersionsView({ sp }: { sp: BriefSpec }) {
+  const f = frameOf(sp.frame);
+  const vs = imageVersions(sp.versions.filter(Boolean), f.shows);
+  const layout = layoutItems(f, sp.dos);
+  const cards: CardData[] = vs.map((v) => ({ num: v.num, time: "", name: v.kind, icon: v.icon, calloutLabel: "Headline", callout: v.headline ? quoteLine(v.headline) : "", see: v.shows, quoteLabel: "", quote: "" }));
+  return (
+    <>
+      <Section title={`The images in ${vs.length} versions`} note="only the headline or the photo changes; V1 is net new">
+        <ol className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4">
+          {cards.map((c) => (
+            <Card key={c.num} c={c} big />
+          ))}
+        </ol>
+      </Section>
+      {layout.length > 0 && (
+        <Section title="The layout" note="the same in every version">
+          <div className="grid gap-2 rounded-[12px] border border-line bg-[var(--brief-card)] p-3 @lg:grid-cols-2 @3xl:grid-cols-4">
+            {layout.map((x) => (
+              <Quote key={x.label} label={x.label}>
+                {x.label === "Subline" || x.label === "CTA on the image" ? quoteLine(x.text) : x.text}
+              </Quote>
+            ))}
+          </div>
+        </Section>
+      )}
+    </>
+  );
+}
+
 function Marks({ items, mark, cls }: { items: string[]; mark: string; cls: string }) {
   return (
     <ul className="grid gap-2">
@@ -338,16 +393,16 @@ function AssetRow({ label, what, url, tone }: { label: string; what: string; url
  */
 export function BriefSheet({ text, exportLine, drive }: { text: string; exportLine?: string | null; drive?: ClientDrive | null }) {
   const { overview, spec: sp } = parseBrief(text);
-  const lines = overview.split("\n");
-  const firstBlank = lines.findIndex((l) => !l.trim());
-  const opening = (firstBlank < 0 ? lines : lines.slice(0, firstBlank)).map((l) => l.trim()).filter(Boolean);
-  const idea = opening.filter((l) => !/^fallback\s*:/i.test(l) && !/^[A-Z][^.!?\n]{0,48}:\s*$/.test(l));
-  const fallback = opening.find((l) => /^fallback\s*:/i.test(l));
-  // Anything else in the overview ("Hooks to try:", a heading this doesn't know) reads as its text
-  const rest = firstBlank < 0 ? "" : lines.slice(firstBlank).join("\n").trim();
+  // The idea in one sentence, the fallback short (its rest under Confirm with client), copy direction in the Copy;
+  // anything else in the overview ("Hooks to try:", a heading this doesn't know) reads as its text
+  const { idea, fallback, fallbackMore, copy: direction, rest } = openingOf(overview);
   const versions = sp.versions.filter(Boolean);
   const hook = sp.hook.trim() && sp.hook.trim() !== versions[0] ? sp.hook.trim() : "";
-  const copy = copyOf(sp.copy);
+  const copy = withCopyDirection(copyOf(sp.copy), direction);
+  // A single image in two or more versions: the versions are the build
+  const imageGrid = sp.frame.length > 0 && versions.length > 1 && !beatRows(sp).length && !slideRows(sp).length;
+  // What to confirm never holds the work ("Hold this ticket until..." reads "Check before making it.")
+  const confirm = sp.confirm.map((c) => ({ ...c, question: withoutHold(c.question) })).filter((c) => c.question);
   const assets = sp.assets.filter((a) => a.item.trim());
   const exp = sp.exportLine || exportLine || "";
   const driveLinks = driveRows(drive);
@@ -361,11 +416,11 @@ export function BriefSheet({ text, exportLine, drive }: { text: string; exportLi
 
   return (
     <div className="@container grid min-w-0 gap-7 text-[15px] leading-relaxed">
-      {(idea.length > 0 || sp.stage || fallback) && (
+      {(idea || sp.stage || fallback) && (
         <div className="grid gap-2">
           {sp.stage && <span className="text-[11.5px] font-semibold uppercase tracking-[0.2em] text-brand-text">{sp.stage}</span>}
-          {idea.length > 0 && <p className="font-heading text-[19px] leading-snug text-fg md:text-[21px]">{withLinks(curly(idea.join(" ")))}</p>}
-          {fallback && <p className="text-[13.5px] leading-relaxed text-muted">{fallback}</p>}
+          {idea && <p className="font-heading text-[19px] leading-snug text-fg md:text-[21px]">{withLinks(curly(idea))}</p>}
+          {fallback && <p className="text-[13.5px] leading-relaxed text-muted">Fallback: {curly(fallback)}</p>}
         </div>
       )}
 
@@ -398,9 +453,9 @@ export function BriefSheet({ text, exportLine, drive }: { text: string; exportLi
 
       <Beats sp={sp} />
       <Slides sp={sp} />
-      <FrameView sp={sp} />
+      {imageGrid ? <ImageVersionsView sp={sp} /> : <FrameView sp={sp} />}
 
-      {versions.length > 0 && (
+      {versions.length > 0 && !imageGrid && (
         <Section title={`The versions (${versions.length})`} note={versions.length > 1 ? "only this line changes; V1 is net new" : null}>
           <ol className={GRID}>
             {versions.map((v, i) => (
@@ -504,11 +559,11 @@ export function BriefSheet({ text, exportLine, drive }: { text: string; exportLi
         </Section>
       )}
 
-      {sp.confirm.length > 0 && (
+      {(confirm.length > 0 || fallbackMore) && (
         <div className="grid gap-2 rounded-[12px] bg-brand-soft px-4 py-3">
           <span className={`${SMALL} text-brand-text`}>Confirm with client · doesn&apos;t hold the work</span>
           <ul className="grid gap-1.5">
-            {sp.confirm.map((c, i) => (
+            {confirm.map((c, i) => (
               <li key={i} className="flex gap-3 text-[14px] leading-relaxed">
                 <span aria-hidden className="w-3 shrink-0 font-semibold text-brand-text">
                   ?
@@ -525,6 +580,16 @@ export function BriefSheet({ text, exportLine, drive }: { text: string; exportLi
                 </span>
               </li>
             ))}
+            {fallbackMore && (
+              <li className="flex gap-3 text-[14px] leading-relaxed">
+                <span aria-hidden className="w-3 shrink-0 font-semibold text-brand-text">
+                  ›
+                </span>
+                <span className="min-w-0 text-fg">
+                  <b className="font-semibold">If not:</b> {curly(fallbackMore)}
+                </span>
+              </li>
+            )}
           </ul>
         </div>
       )}

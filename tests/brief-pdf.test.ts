@@ -5,8 +5,10 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import { briefPdf, type BriefPdfInput } from "@/lib/brief-pdf";
 import { allotmentDraw, fitStructure, formatChips, headerLine, needsStructure, picked, plainStructure, slidesFor, specsChecklist, structureKey, versionsStrip, type PdfCounts, type PdfFormat, type StructureSource } from "@/lib/brief-pdf-model";
-import { composeBrief, emptySpec, exportLineFor, type BriefSpec } from "@/lib/brief-spec";
+import { composeBrief, emptySpec, exportLineFor, parseBrief, type BriefSpec } from "@/lib/brief-spec";
 import { structureBrief } from "@/lib/brief-pdf-data";
+import { imageVersions } from "@/lib/brief-cards";
+import { STATIC_BEST_TICKETS } from "./fixtures/brief-static-best-tickets";
 
 // The branded brief PDF in the lead video editor's layout (Letter landscape, cards, callouts, quote boxes, the pacing
 // bar): two pages (the idea, then the guardrails), nothing cut with "…", the build by format
@@ -267,5 +269,50 @@ describe("brief pdf render", () => {
     // An older brief still renders, read plainly
     const old = await render("older", oldSource, ["4x5", "9x16"], "Casa Verde");
     expect(pagesOf(old.pdf)).toBeLessThanOrEqual(2);
+  });
+
+  it("renders the real Best Tickets static brief to two clean pages", { timeout: 60_000 }, async () => {
+    const drive = { headquarters: "https://drive.google.com/drive/folders/hq123", adCreatives: "https://drive.google.com/drive/folders/ads456" };
+    const ref = { kicker: "Built on a live ad in the market", title: "Seat view", brand: "StubHub", days: 31, video: false, note: null, links: [{ label: "Meta Ad Library", url: "https://www.facebook.com/ads/library/?id=1122904563418437" }], image: null };
+    const st = await render("static-best-tickets", staticSource, ["4x5", "9x16"], "Best Tickets", {
+      due: "Fri, Nov 13",
+      makers: ["The designer"],
+      versions: "4 · 4 of 25 images this month",
+      confirm: parseBrief(STATIC_BEST_TICKETS).spec.confirm.map((f) => f.question),
+      references: [ref],
+      links: [
+        { label: "Landing page", url: "https://besttickets.com" },
+        { label: "Meta Ad Library", url: "https://www.facebook.com/ads/library/?id=1122904563418437" },
+      ],
+      drive,
+    });
+    expect(pagesOf(st.pdf)).toBe(2);
+  });
+});
+
+const staticSource: StructureSource = { title: "Real seat view: the section to pick (Best Seat Hack static)", angle: "", audience: "", brief: STATIC_BEST_TICKETS, formats: { image: { new: 2, variations: 2 } } };
+
+describe("the real static brief, read for the PDF", () => {
+  it("shows one sentence as the idea, never the copy direction, and a short fallback", () => {
+    const s = plainStructure(staticSource);
+    expect(s.oneLine).toBe("A real phone photo from a real seat, with one big line naming the seat most people skip and a small line saying why.");
+    expect(s.oneLine).not.toMatch(/copy direction|Primary|CTA/i);
+    expect(s.fallback).toBe("if the client can't name the seat, V1 and V2 run 'Know the seat before you buy.' with the subline 'Our ticket experts are here to help.' over a real seat-view photo.");
+    expect(s.fallbackMore).toMatch(/^V3 and V4 test the approved line/);
+    expect(s.fallbackMore).toMatch(/needs no new fact\.$/);
+    // The copy direction lands in the Copy section
+    expect(s.copy.primary).toEqual(["Not every seat in a section sees the same game. Our ticket experts in San Antonio know which one to pick. Ask us before you buy."]);
+    expect(s.copy.headlines).toEqual(["Know the seat before you buy"]);
+    expect(s.copy.cta).toBe("Shop Now");
+  });
+
+  it("reads the versions as image cards, net new or a variation, with a pictogram that fits", () => {
+    const vs = imageVersions(plainStructure(staticSource).versions);
+    expect(vs.map((v) => v.kind)).toEqual(["Net new", "Net new", "Variation of V1", "Variation of V2"]);
+    expect(vs.map((v) => v.headline)).toEqual(["The seat most people skip.", "The seat most people skip.", "Know the seat before you buy.", "Know the seat before you buy."]);
+    expect(vs[0].shows).toBe("Seat photo A");
+    expect(vs[1].shows).toBe("Seat photo B, a second seat or venue");
+    expect(vs[2].shows).toBe("Same design and photo as V1");
+    expect(vs.every((v) => v.icon === "seat")).toBe(true);
   });
 });

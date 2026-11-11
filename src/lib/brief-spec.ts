@@ -326,6 +326,150 @@ export function parseFactLine(line: string): ClientFact {
   return { question: (m?.[1] ?? t).trim(), answer: (m?.[2] ?? "").trim(), source: (m?.[3] ?? "").trim() };
 }
 
+// ─── The opening: the idea, the fallback, and copy direction that strayed into it ─────────────────────────────
+
+/** Sentences, split where a sentence ends (a period inside quotes, "buy.' with", doesn't end one) */
+export function sentences(text: string) {
+  return one(text)
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9“"‘'(])/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+const words = (x: string) => x.split(/\s+/).filter(Boolean).length;
+const COPY_LABEL = /^(?:[-•*]\s*)?(Primary(?: text)?|Headlines?|CTA|Call to action)\s*:\s*\S/i;
+const COPY_DIRECTION = /\bcopy direction\b[^:]*:\s*/i;
+/** "- Primary: a - Headline: b - CTA: c" on one line, as its lines */
+const copyParts = (x: string) =>
+  x
+    .split(/\s+[-•]\s+(?=(?:Primary(?: text)?|Headlines?|CTA|Call to action)\s*:)/i)
+    .map((p) => p.replace(/^[-•*]\s*/, "").trim())
+    .filter((p) => COPY_LABEL.test(p));
+
+/** A fallback's first sentence, short (about 25 words) for the header; a long one splits at a clause, the rest after */
+export function splitFallback(text: string): { short: string; more: string } {
+  const ss = sentences(text.replace(/^fallback\s*:\s*/i, ""));
+  if (!ss.length) return { short: "", more: "" };
+  let [short] = ss;
+  let more = ss.slice(1).join(" ");
+  if (words(short) > 25) {
+    // A ", and" / "; " boundary outside quotes: the last that leaves a header line of 8 to 28 words, else the first
+    // under 36 (a line that still fits the band once)
+    let best = -1;
+    let len = 0;
+    const re = /(?:,\s+(?:and|but|so|then|or)\s+|;\s+)/g;
+    for (let m = re.exec(short); m; m = re.exec(short)) {
+      const left = short.slice(0, m.index);
+      const quotes = (left.match(/[“”"]/g) ?? []).length + (left.match(/(?:^|\s)['‘]|['’](?=\s|$|[.,;:!?])/g) ?? []).length;
+      const w = words(left);
+      if (w < 8 || quotes % 2 !== 0) continue;
+      if (w <= 28 || (best < 0 && w <= 36)) {
+        best = m.index;
+        len = m[0].length;
+      }
+    }
+    if (best > 0) {
+      const right = short.slice(best + len).trim();
+      more = [right[0].toUpperCase() + right.slice(1), more].filter(Boolean).join(" ");
+      short = `${short.slice(0, best).replace(/[,;:\s]+$/, "")}.`;
+    }
+  }
+  return { short, more };
+}
+
+export type Opening = {
+  /** The idea and its payoff: one sentence, never the copy direction */
+  idea: string;
+  /** The fallback's first sentence (about 25 words), for the header */
+  fallback: string;
+  /** The rest of the fallback, for "Confirm with client" ("If not: ...") */
+  fallbackMore: string;
+  /** Copy lines that strayed into the opening ("Copy direction: - Primary: ..."), for the Copy section */
+  copy: string[];
+  /** Anything else in the overview (an older brief's "Hooks to try:", a heading this doesn't know), as written */
+  rest: string;
+};
+
+/**
+ * The overview read for the header: the idea in one sentence (the first of the opening lines), the fallback split
+ * short, and copy direction a writer put in the opening moved to where it belongs (the Copy section). Older briefs keep
+ * what follows their opening as rest.
+ */
+export function openingOf(overview: string): Opening {
+  const lines = overview.replace(/\r\n/g, "\n").split("\n");
+  const firstBlank = lines.findIndex((l) => !l.trim());
+  const opening = firstBlank < 0 ? lines : lines.slice(0, firstBlank);
+  const after = firstBlank < 0 ? [] : lines.slice(firstBlank);
+  const idea: string[] = [];
+  const fallback: string[] = [];
+  const copy: string[] = [];
+  const rest: string[] = [];
+  let state: "idea" | "copy" | "fallback" = "idea";
+  const read = (raw: string, inOpening: boolean) => {
+    const t = raw.trim();
+    if (!t) return void rest.push("");
+    if (/^\s/.test(raw) && !inOpening) return void rest.push(raw.replace(/\s+$/, ""));
+    if (/^fallback\s*:/i.test(t)) {
+      state = "fallback";
+      return void fallback.push(t.replace(/^fallback\s*:\s*/i, ""));
+    }
+    const dir = COPY_DIRECTION.exec(t);
+    if (dir) {
+      const before = t.slice(0, dir.index).trim();
+      if (before && inOpening && state === "idea") idea.push(before);
+      copy.push(...copyParts(`- ${t.slice(dir.index + dir[0].length)}`));
+      state = "copy";
+      return;
+    }
+    if (COPY_LABEL.test(t) && (state === "copy" || inOpening)) {
+      copy.push(...copyParts(t.startsWith("-") ? t : `- ${t}`));
+      state = "copy";
+      return;
+    }
+    if (!inOpening) return void rest.push(raw.replace(/\s+$/, ""));
+    if (state === "fallback") return void fallback.push(t);
+    if (state === "idea" && !/^[A-Z][^.!?\n]{0,48}:\s*$/.test(t)) return void idea.push(t);
+    rest.push(raw.replace(/\s+$/, ""));
+  };
+  for (const l of opening) read(l, true);
+  state = "idea";
+  for (const l of after) {
+    if (!l.trim()) state = "idea";
+    read(l, false);
+  }
+  const f = splitFallback(fallback.join(" "));
+  return { idea: sentences(idea.join(" "))[0] ?? "", fallback: f.short, fallbackMore: f.more, copy, rest: rest.join("\n").replace(/\n{3,}/g, "\n\n").trim() };
+}
+
+/** Copy the brief's Copy section leaves empty, filled from copy direction found in the opening */
+export function withCopyDirection(own: CopySet, direction: string[]): CopySet {
+  const d = copyOf(direction);
+  return { primary: own.primary.length ? own.primary : d.primary, headlines: own.headlines.length ? own.headlines : d.headlines, cta: own.cta || d.cta };
+}
+
+// "Confirm with client" never holds the work: a line telling the maker to hold, wait or not start says what to check
+const HOLD = [
+  /\b(?:hold|holds|holding|park|pause|freeze)\s+(?:this|the)\s+(?:ticket|brief|work|request|job|design|edit)\b/i,
+  /\buntil the client (?:says|confirms|answers|replies|approves|signs off|agrees|gets back)\b/i,
+  /\b(?:it|this|the (?:ticket|work|brief|request))\s+(?:waits|will wait|is on hold|stays on hold)\b/i,
+  /\bblocks?\s+(?:the|this)\s+(?:work|brief|ticket|request)\b/i,
+  /\b(?:don'?t|do not)\s+(?:start|begin|make it|build it)\b/i,
+  /\bwait (?:for|on) the client\b/i,
+  /\bon hold\b/i,
+];
+
+/** A confirm line without hold, wait or block language ("Hold this ticket until the client says yes" is "Check before making it.") */
+export function withoutHold(line: string) {
+  const ss = sentences(line);
+  if (!ss.some((x) => HOLD.some((re) => re.test(x)))) return one(line);
+  const out: string[] = [];
+  for (const x of ss) {
+    const keep = HOLD.some((re) => re.test(x)) ? "Check before making it." : x;
+    if (!out.includes(keep)) out.push(keep);
+  }
+  return out.join(" ");
+}
+
 /** The spec as the brief's text, its sections in order, empty ones left out */
 export function renderSpec(sp: BriefSpec): string {
   const blocks: string[] = [];
@@ -538,7 +682,7 @@ export function cleanSpec(raw: Partial<BriefSpec> | null | undefined): BriefSpec
     yourCall: t(raw?.yourCall, 400) || YOUR_CALL_DEFAULT,
     script: typeof raw?.script === "string" ? raw.script.replace(/\s*\u2014\s*/g, ", ").trim().slice(0, 4000) : "",
     confirm: (Array.isArray(raw?.confirm) ? raw.confirm : [])
-      .map((c) => ({ question: t(c?.question, 300), answer: t(c?.answer, 600), source: t(c?.source, 120) }))
+      .map((c) => ({ question: withoutHold(t(c?.question, 300)), answer: t(c?.answer, 600), source: t(c?.source, 120) }))
       .filter((c) => c.question)
       .slice(0, LIMITS.confirm),
     exportLine: t(raw?.exportLine, 400),
@@ -578,7 +722,7 @@ export function structureBrief(brief: string, title: string, addFacts?: (sp: Bri
 
 /** How the writers write the brief: the same words for every writer (roles, never names; no em dashes) */
 export const SPEC_RULE = `THE BRIEF'S SHAPE. One structure for every format; only The build changes. The brief fixes the message, the payoff, the hook lines, the musts and the nevers; how it's made is the maker's call. Not so structured that the creative team is boxed in, not so loose that they run wild. It fits on two pages: every list 5 items or fewer, every line one short sentence, nothing said twice.
-Write draft.brief as plain text: first ONE line with the idea and its concrete payoff (what the viewer learns or gets, e.g. "The owner's one-word answer, Convenience, is the detail: a real local team and more than one way to buy"), then these sections, each starting on its own line with the heading exactly as written here, a blank line between sections, list items as "- " lines. Leave a section out when there's nothing to say.
+Write draft.brief as plain text: first ONE sentence with the idea and its concrete payoff (what the viewer learns or gets, e.g. "The owner's one-word answer, Convenience, is the detail: a real local team and more than one way to buy"). That opening is the idea only: never copy direction, primary text, headlines or a CTA there (they go under Copy). Then these sections, each starting on its own line with the heading exactly as written here, a blank line between sections, list items as "- " lines. Leave a section out when there's nothing to say.
 Stage: the funnel stage in a few words ("Evergreen TOF", "Retargeting BOF").
 Why it works: the insight in one or two sentences, the specific, true thing the ad says or shows, then where it comes from in the context in brackets, e.g. "(Source: Brand Bible)", "(Source: call Oct 12)"; no source when it isn't in the context.
 Who it's for: one line, the avatar and what they want. Targeting is the media buyer's call: no ages, places or interest lists.
@@ -593,8 +737,8 @@ Must: (up to 5) what has to be there: the logo moment, captions, the cleared cla
 Never: (up to 5, specific) the exact lines, assets and claims not to use ("Don't use: 'two great offices', the VIP lounge"), and the client's don'ts that matter here, folded in, never appended as a long list.
 Your call: one line handing the maker edit style, cut points, transitions, which clips or photos within the folders, and music within the rules. Never direct those yourself.
 Assets: (3 to 5 groups) each starting with its status: "- Have: <the file or folder exactly as assets_on_drive names it> (Drive: <folder>), <what to take from it, in a few words>", "- Need: <asset>", "- Client to shoot: <asset>", "- Missing: <a link that doesn't open>". Prefer a specific file over a whole folder when the file list shows it. List a file only when what we know about it (its name, folder, date) clearly fits this angle; when nothing on Drive clearly fits, write "- Need: <what to look for or get>" instead of pointing at a clip that may be unrelated. Don't write Drive links yourself: the app adds each file's link from its name. Never write a placeholder like MISSING or TBD in place of a link.
-Copy: "- Primary: <text>" (up to 2), "- Headline: <text>" (up to 2), "- CTA: <the button>".
+Copy: "- Primary: <text>" (up to 2), "- Headline: <text>" (up to 2), "- CTA: <the button>". The concept's copy direction lives here, never in the opening.
 Script: only when the request explicitly asked for a script or voiceover text. Beats are not a script.
-Confirm with client: (only when something is open) every fact the concept depends on that only the client knows (which seat or spot, the tip, the stat, the offer's terms, a date) and that the context doesn't answer, as the question to ask them, short and specific ("- Which seat, at which venue, and why?"). When the context does answer it, use it and write "- <question> Answer: <answer> (Source: <where>)". NEVER invent such a fact. It never holds the brief: when the concept hangs on the answer, add a line after the idea that starts "Fallback:" with a version that works without it.
+Confirm with client: (only when something is open) every fact the concept depends on that only the client knows (which seat or spot, the tip, the stat, the offer's terms, a date) and that the context doesn't answer, as the question to ask them, short and specific ("- Which seat, at which venue, and why?"). When the context does answer it, use it and write "- <question> Answer: <answer> (Source: <where>)". NEVER invent such a fact. It never holds the work: never write "hold this ticket", "wait for the client", "until the client says yes" or "don't start"; the maker goes ahead, and a line says what to check before making it. When the concept hangs on the answer, add a line after the idea that starts "Fallback:" with a version that works without it, in one short sentence (under 25 words).
 Never write specs, sizes, safe zones or file names (the app adds the export line), a "next step", delivery instructions, or a summary that repeats the sections. Every line must agree with every other: no logo rule against a hook that shows the logo, no "evergreen" rule against event footage.
 ${PAYOFF_RULE}`;

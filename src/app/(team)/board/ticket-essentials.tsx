@@ -1,6 +1,6 @@
 "use client";
 
-import { parseBrief, ASSET_WORD, beatRows, frameOf, hookOf, slideRows, type AssetStatus } from "@/lib/brief-spec";
+import { parseBrief, ASSET_WORD, beatRows, frameOf, hookOf, openingOf, slideRows, type AssetStatus } from "@/lib/brief-spec";
 import { linkWord, splitLink } from "@/lib/asset-links";
 import { briefFileStem } from "@/lib/creative-drive-paths";
 import { FORMAT_LABEL } from "@/lib/stages";
@@ -18,12 +18,8 @@ const STATUS_CLS: Record<AssetStatus, string> = { have: "bg-ok/15 text-ok", need
 const fmtDue = (iso: string) =>
   new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }).format(new Date(iso));
 
-/** The opening lines of the brief, before any heading: the idea in words a maker gets in ten seconds (not its Fallback) */
-function ideaOf(overview: string) {
-  const first = overview.split(/\n\s*\n/)[0] ?? "";
-  const lines = first.split("\n").map((l) => l.trim()).filter((l) => l && !/^[A-Z][^.!?\n]{0,48}:\s*$/.test(l) && !/^fallback\s*:/i.test(l));
-  return lines.join(" ");
-}
+/** The idea in one sentence, in words a maker gets in ten seconds (never its Fallback or copy direction) */
+const ideaOf = (overview: string) => openingOf(overview).idea;
 
 /** The build in one line: "6 beats, ~30s: Hook, The team, Your way..." / "5 slides: ..." / "Headline: ..." */
 function buildLine(spec: ReturnType<typeof parseBrief>["spec"]) {

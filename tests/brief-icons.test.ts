@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ICONS, iconFor, type BriefIcon } from "@/lib/brief-icons";
+import { ICONS, iconFor, iconForImage, type BriefIcon } from "@/lib/brief-icons";
 import { assetRow, clientDriveOf, dashTime, driveRows, fitSize, sourceLabel } from "@/lib/brief-cards";
 
 // The brief's cards, as the lead video editor draws them: a line pictogram per beat or slide picked from its name (then
@@ -32,8 +32,16 @@ describe("brief pictograms", () => {
     expect(iconFor("Something", "", "check")).toBe("check");
   });
 
-  it("has twelve drawn icons, each with shapes", () => {
-    expect(Object.keys(ICONS)).toHaveLength(12);
+  it("picks a single image's pictogram from what's in the frame, never a group because a headline says people", () => {
+    expect(iconForImage("Seat photo A", "The seat most people skip.")).toBe("seat");
+    expect(iconForImage("", "The seat most people skip.")).toBe("seat");
+    expect(iconForImage("The bottle on white", "Cold brew, done right")).toBe("box");
+    expect(iconForImage("A real phone photo of the crowd", "")).toBe("photo");
+    expect(iconForImage("", "Nothing to go on")).toBe("photo");
+  });
+
+  it("has fourteen drawn icons, each with shapes", () => {
+    expect(Object.keys(ICONS)).toHaveLength(14);
     for (const parts of Object.values(ICONS)) expect(parts.length).toBeGreaterThan(0);
   });
 });

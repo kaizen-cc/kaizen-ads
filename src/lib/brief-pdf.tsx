@@ -3,7 +3,8 @@ import { Circle, Document, Font, Link, Page, Path, Rect, StyleSheet, Svg, Text, 
 import { pacing, type BriefBeat, type BriefFrame, type BriefSlide, type BriefStructure } from "@/lib/brief-pdf-model";
 import { ICON_STROKE, ICON_VIEWBOX, ICONS, iconFor, type BriefIcon, type IconTone } from "@/lib/brief-icons";
 import { linkWord } from "@/lib/asset-links";
-import { assetRow, curly, dashTime, driveRows, fitSize, quoteLine, sourceLabel, type ClientDrive } from "@/lib/brief-cards";
+import { assetRow, curly, dashTime, driveRows, fitSize, imageVersions, layoutItems, quoteLine, sourceLabel, type ClientDrive } from "@/lib/brief-cards";
+import { withoutHold } from "@/lib/brief-spec";
 
 // A creative request as a Kaizen-branded PDF, to share outside the app (a freelancer, a client, a meeting) and to make
 // from. Modelled exactly on the lead video editor's own brief: Letter landscape, two pages, a black band (KAIZEN, the
@@ -132,14 +133,20 @@ const s = StyleSheet.create({
   segTxt: { fontSize: 6.8, color: "#ffffff", maxLines: 1 },
   tick: { position: "absolute", top: 0, width: 30, fontSize: 6.4, color: MUTED },
   // page two
-  item: { flexDirection: "row", marginBottom: 3.5 },
-  itemMark: { width: 14, fontSize: 8.6, fontFamily: "Helvetica-Bold" },
-  itemTxt: { flex: 1, fontSize: 8.6, lineHeight: 1.38, color: BODY },
-  colHead: { ...LABEL, fontSize: 7, letterSpacing: 2.2, marginBottom: 7 },
-  row: { flexDirection: "row", alignItems: "center", borderBottomWidth: 0.75, borderBottomColor: LINE, paddingVertical: 4.5 },
-  rowLabel: { ...LABEL, width: 122, paddingRight: 10, fontSize: 6.2, letterSpacing: 1.6, color: MUTED },
+  slim: { backgroundColor: INK, paddingHorizontal: PAGE_X, paddingVertical: 9, marginTop: -PAGE_TOP, flexDirection: "row", alignItems: "center" },
+  slimClient: { ...LABEL, fontSize: 6.8, letterSpacing: 2, color: RED_ON_INK, marginLeft: 12 },
+  slimTitle: { fontSize: 9, fontFamily: "Helvetica-Bold", color: "#ffffff", marginLeft: 10, flex: 1 },
+  slimDue: { fontSize: 7.4, color: "#c4c4cb", marginLeft: 12 },
+  item: { flexDirection: "row", marginBottom: 3 },
+  itemMark: { width: 14, fontSize: 8.4, fontFamily: "Helvetica-Bold" },
+  itemTxt: { flex: 1, fontSize: 8.4, lineHeight: 1.34, color: BODY },
+  colHead: { ...LABEL, fontSize: 7, letterSpacing: 2.2, marginBottom: 6 },
+  row: { flexDirection: "row", alignItems: "flex-start", borderBottomWidth: 0.75, borderBottomColor: LINE, paddingVertical: 3.4 },
+  rowLabel: { ...LABEL, width: 96, paddingRight: 8, paddingTop: 1.6, fontSize: 5.8, letterSpacing: 1.3, color: MUTED, lineHeight: 1.3 },
+  rowTxt: { flex: 1, fontSize: 8, lineHeight: 1.32, color: BODY },
+  rowLink: { width: 70, alignItems: "flex-end" },
   open: { flexDirection: "row", alignItems: "center", marginLeft: 10, textDecoration: "none" },
-  openTxt: { fontSize: 8.6, fontFamily: "Helvetica-Bold", color: RED, textDecoration: "underline" },
+  openTxt: { fontSize: 8, fontFamily: "Helvetica-Bold", color: RED, textDecoration: "underline" },
   cta: { alignSelf: "flex-start", fontSize: 8, color: "#ffffff", backgroundColor: INK, borderRadius: 9, paddingVertical: 3.5, paddingHorizontal: 10, fontFamily: "Helvetica-Bold", marginTop: 3 },
   footer: { position: "absolute", bottom: 14, left: PAGE_X, right: PAGE_X, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   footTxt: { fontSize: 6.4, color: FAINT },
@@ -203,6 +210,22 @@ function Open({ url, word }: { url: string; word?: string }) {
 
 // ─── The band ────────────────────────────────────────────────────────
 
+/** Page two's bar: KAIZEN, the client and the title on one line, the due date at the end */
+function SlimBand({ b }: { b: BriefPdfInput }) {
+  // Fixed: a section that runs onto another page (only a brief far past the caps) keeps the bar above it
+  return (
+    <View style={s.slim} fixed>
+      <View style={s.mark}>
+        <View style={s.markSq} />
+        <Text style={s.markTxt}>KAIZEN</Text>
+      </View>
+      <Text style={s.slimClient}>{b.client}</Text>
+      <Text style={s.slimTitle}>{b.title || "Creative request"}</Text>
+      {b.due ? <Text style={s.slimDue}>Due {b.due}</Text> : null}
+    </View>
+  );
+}
+
 function Band({ b, compact }: { b: BriefPdfInput; compact?: boolean }) {
   const st = b.structure;
   const multi = b.formats.length > 1;
@@ -250,29 +273,37 @@ function Band({ b, compact }: { b: BriefPdfInput; compact?: boolean }) {
 type CardData = { num: string; time: string; name: string; icon: BriefIcon; calloutLabel: string; callout: string; see: string; quoteLabel: string; quote: string };
 
 /** One beat, slide or frame card: number, time, name and pictogram, then the callout, what we see and the quote box */
-function Card({ c, width, n }: { c: CardData; width: number; n: number }) {
+function Card({ c, width, n, big }: { c: CardData; width: number; n: number; big?: boolean }) {
   // Narrower cards (four or five across) reach the smaller step sooner
   const room = n > 3 ? 60 : 90;
+  // A single image's version: the headline is the hero (bigger), what's in the frame under it
+  const head = big ? fitSize(c.callout, n > 4 ? 12.5 : 15.5, n > 4 ? 34 : 44, 1.4) : fitSize(c.callout, 8.6, room, 0.6);
   return (
-    <View style={[s.card, { width }]} wrap={false}>
+    <View style={[s.card, { width }, big ? { padding: 11, minHeight: 168 } : {}]} wrap={false}>
       <View style={s.cardTop}>
         <Text style={s.num}>{c.num}</Text>
         <View style={{ flex: 1, paddingTop: 1 }}>
           {c.time ? <Text style={s.time}>{c.time}</Text> : null}
           <Text style={s.name}>{c.name}</Text>
         </View>
-        <View style={s.iconBox}>
-          <Icon name={c.icon} size={38} />
+        <View style={[s.iconBox, big ? { width: 54, height: 36 } : {}]}>
+          <Icon name={c.icon} size={big ? 46 : 38} />
         </View>
       </View>
       {c.callout ? (
-        <View style={s.callout}>
+        <View style={[s.callout, big ? { paddingVertical: 9, paddingHorizontal: 9, marginTop: 10 } : {}]}>
           <Text style={s.calloutLabel}>{c.calloutLabel}</Text>
-          <Text style={[s.calloutTxt, { fontSize: fitSize(c.callout, 8.6, room, 0.6) }]}>{c.callout}</Text>
+          <Text style={[s.calloutTxt, { fontSize: head, lineHeight: big ? 1.2 : 1.3, marginTop: big ? 3 : 2 }]}>{c.callout}</Text>
         </View>
       ) : null}
-      {c.see ? <Text style={[s.see, { fontSize: fitSize(c.see, 8.6, room * 1.2, 0.6) }]}>{c.see}</Text> : null}
+      {c.see && !big ? <Text style={[s.see, { fontSize: fitSize(c.see, 8.6, room * 1.2, 0.6) }]}>{c.see}</Text> : null}
       <View style={{ flexGrow: 1 }} />
+      {c.see && big ? (
+        <View style={[s.quote, { marginTop: 9 }]}>
+          <Text style={s.quoteLabel}>In this frame</Text>
+          <Text style={[s.quoteTxt, { fontFamily: "Helvetica", fontSize: fitSize(c.see, 9, room, 0.6) }]}>{c.see}</Text>
+        </View>
+      ) : null}
       {c.quote ? (
         <View style={s.quote}>
           <Text style={s.quoteLabel}>{c.quoteLabel}</Text>
@@ -284,8 +315,8 @@ function Card({ c, width, n }: { c: CardData; width: number; n: number }) {
 }
 
 /** Cards in rows (three across, four or five when there are more), every card in a row as tall as the tallest */
-function Grid({ cards }: { cards: CardData[] }) {
-  const per = cards.length <= 6 ? 3 : cards.length <= 8 ? 4 : 5;
+function Grid({ cards, per: perIn, big }: { cards: CardData[]; per?: number; big?: boolean }) {
+  const per = perIn ?? (cards.length <= 6 ? 3 : cards.length <= 8 ? 4 : 5);
   const w = (CONTENT_W - GAP * (per - 1)) / per;
   const rows: CardData[][] = [];
   for (let i = 0; i < cards.length; i += per) rows.push(cards.slice(i, i + per));
@@ -295,7 +326,7 @@ function Grid({ cards }: { cards: CardData[] }) {
         <View key={i} style={{ flexDirection: "row", marginTop: i ? 9 : 0 }} wrap={false}>
           {r.map((c, j) => (
             <View key={j} style={{ marginRight: j < per - 1 ? GAP : 0, flexDirection: "row" }}>
-              <Card c={c} width={w} n={per} />
+              <Card c={c} width={w} n={per} big={big} />
             </View>
           ))}
         </View>
@@ -444,6 +475,49 @@ function FrameBlock({ f }: { f: BriefFrame | null }) {
   );
 }
 
+/** A single image in N versions: the versions are the build, one card each (V1, net new or a variation, the headline
+ *  in the callout, what's in that frame, a pictogram), then the layout they share in one compact strip */
+function ImageVersionsBlock({ versions, frame, must }: { versions: string[]; frame: BriefFrame | null; must: string[] }) {
+  const vs = imageVersions(versions, frame?.shows ?? "");
+  // Up to four across (five past eight), rows as even as they go: five is three and two, not four and one
+  const per = vs.length <= 4 ? vs.length : vs.length <= 8 ? Math.ceil(vs.length / 2) : 5;
+  const cards: CardData[] = vs.map((v) => ({
+    num: v.num,
+    time: "",
+    name: v.kind,
+    icon: v.icon,
+    calloutLabel: "Headline",
+    callout: v.headline ? quoted(v.headline) : "",
+    see: curly(pdfText(v.shows)),
+    quoteLabel: "",
+    quote: "",
+  }));
+  const layout = layoutItems(frame, must);
+  return (
+    <>
+      <View style={s.section}>
+        <Head note={vs.length > 1 ? "only the headline or the photo changes; V1 is net new" : null}>{`The images in ${vs.length} versions`}</Head>
+        <Grid cards={cards} per={per} big />
+      </View>
+      {layout.length ? (
+        <View style={s.section} wrap={false}>
+          <Head note="the same in every version">The layout</Head>
+          <View style={[s.card, { flexDirection: "row", paddingVertical: 7, paddingHorizontal: 8 }]}>
+            {layout.map((x, i) => (
+              <View key={x.label} style={[s.quote, { flex: x.text.length > 90 ? 1.6 : 1, marginTop: 0, marginRight: i < layout.length - 1 ? 7 : 0 }]}>
+                <Text style={s.quoteLabel}>{x.label}</Text>
+                <Text style={[s.quoteTxt, { fontSize: fitSize(x.text, 8.2, 110, 0.4), fontFamily: x.label === "Subline" ? "Helvetica-Bold" : "Helvetica-Oblique" }]}>
+                  {x.label === "Subline" || x.label === "CTA on the image" ? quoted(x.text) : curly(pdfText(x.text))}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
 // ─── Page two ────────────────────────────────────────────────────────
 
 function List({ items, mark, color }: { items: string[]; mark: string; color: string }) {
@@ -489,26 +563,33 @@ function AssetsAndExport({ b }: { b: BriefPdfInput }) {
       const word = l ? l.label.replace("Meta Ad Library", "Ad Library").replace("Their landing page", "Landing page").replace("Open in Kaizen Ads", "Kaizen Ads") : undefined;
       return { label: b.references.length > 1 ? "Reference" : "Built on", what: [r.brand ?? r.title, r.kicker.replace(/^Built on\s+/i, "")].filter(Boolean).join(" · "), url: l?.url ?? null, word };
     }),
-    ...b.links.slice(0, 3).map((l) => ({ label: l.label, what: l.url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, ""), url: l.url, word: "Open" })),
   ];
-  if (!rows.length && !b.exportLine) return null;
+  // The landing page and the other links in one compact row, each its own link (one a reference already gives is left out)
+  const seen = new Set(rows.map((r) => r.url).filter(Boolean));
+  const links = b.links
+    .filter((l) => !seen.has(l.url))
+    .slice(0, 4)
+    .map((l) => ({ word: l.label.replace("Meta Ad Library", "Ad Library"), url: l.url }));
+  if (!rows.length && !links.length) return null;
   return (
-    <View style={s.section}>
+    <View style={s.section} wrap={false}>
       <Head>Assets and export</Head>
-      <View style={[s.card, { paddingVertical: 2, paddingHorizontal: 12 }]}>
+      <View style={[s.card, { paddingVertical: 1, paddingHorizontal: 11 }]}>
         {rows.map((r, i) => (
-          <View key={i} style={s.row} wrap={false}>
+          <View key={i} style={[s.row, i === rows.length - 1 && !links.length ? { borderBottomWidth: 0 } : {}]} wrap={false}>
             <Text style={[s.rowLabel, r.need ? { color: RED } : {}]}>{r.label}</Text>
-            <View style={{ flex: 1, flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
-              <Text style={[s.text, { flexShrink: 1 }]}>{curly(pdfText(r.what))}</Text>
-              {r.url ? <Open url={r.url} word={r.word} /> : null}
-            </View>
+            <Text style={s.rowTxt}>{curly(pdfText(r.what))}</Text>
+            <View style={s.rowLink}>{r.url ? <Open url={r.url} word={r.word} /> : null}</View>
           </View>
         ))}
-        {b.exportLine ? (
-          <View style={[s.row, { borderBottomWidth: 0, alignItems: "flex-start" }]} wrap={false}>
-            <Text style={[s.rowLabel, { paddingTop: 1.5 }]}>Export</Text>
-            <Text style={[s.text, { flex: 1 }]}>{b.exportLine.replace(/(\d{3,4})x(\d{3,4})/g, "$1×$2")}</Text>
+        {links.length ? (
+          <View style={[s.row, { borderBottomWidth: 0 }]} wrap={false}>
+            <Text style={s.rowLabel}>Links</Text>
+            <View style={{ flex: 1, flexDirection: "row", flexWrap: "wrap", marginLeft: -10 }}>
+              {links.map((l, i) => (
+                <Open key={i} url={l.url} word={l.word} />
+              ))}
+            </View>
           </View>
         ) : null}
       </View>
@@ -516,17 +597,42 @@ function AssetsAndExport({ b }: { b: BriefPdfInput }) {
   );
 }
 
-function Confirm({ items }: { items: string[] }) {
-  if (!items.length) return null;
+/** The export in one full-width strip under the assets: specs, the safe zone and the file names, in one or two lines */
+function ExportStrip({ line }: { line: string }) {
+  if (!line) return null;
+  return (
+    <View style={s.section} wrap={false}>
+      <Head>Export</Head>
+      <View style={[s.card, { paddingVertical: 5, paddingHorizontal: 11 }]}>
+        <Text style={{ fontSize: 7.8, lineHeight: 1.32, color: BODY }}>{line.replace(/(\d{3,4})x(\d{3,4})/g, "$1×$2")}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** What only the client can tell us, never a reason to stop: hold or wait language reads "Check before making it", and
+ *  the fallback's rest says what to make if the answer is no ("If not: ...") */
+function Confirm({ items, ifNot }: { items: string[]; ifNot?: string }) {
+  const qs = items.map(withoutHold).filter(Boolean);
+  if (!qs.length && !ifNot) return null;
   return (
     <View style={[s.callout, { marginTop: 8, paddingVertical: 6, paddingHorizontal: 10 }]} wrap={false}>
       <Text style={[s.calloutLabel, { fontSize: 5.8, letterSpacing: 1.4, marginBottom: 4 }]}>Confirm with client · doesn&apos;t hold the work</Text>
-      {items.map((x, i) => (
-        <View key={i} style={[s.item, { marginBottom: i < items.length - 1 ? 3 : 0 }]}>
+      {qs.map((x, i) => (
+        <View key={i} style={[s.item, { marginBottom: i < qs.length - 1 || ifNot ? 3 : 0 }]}>
           <Text style={[s.itemMark, { color: RED }]}>?</Text>
           <Text style={[s.itemTxt, { color: INK }]}>{curly(pdfText(x))}</Text>
         </View>
       ))}
+      {ifNot ? (
+        <View style={[s.item, { marginBottom: 0 }]}>
+          <Text style={[s.itemMark, { color: RED }]}>›</Text>
+          <Text style={[s.itemTxt, { color: INK }]}>
+            <Text style={{ fontFamily: "Helvetica-Bold" }}>If not: </Text>
+            {curly(pdfText(ifNot))}
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -581,6 +687,9 @@ export function BriefDocument({ b }: { b: BriefPdfInput }) {
   const ref = b.number ? `Request #${b.number}` : null;
   const word = b.formats.includes("video") ? "hook" : "headline";
   const confirm = (b.confirm ?? []).slice(0, 5);
+  const ifNot = st.fallbackMore?.trim() || "";
+  // A single image in two or more versions: the versions are the build (page one), not a row on page two
+  const imageGrid = b.formats.includes("image") && st.versions.filter(Boolean).length > 1;
   const footer = (
     <View style={s.footer} fixed>
       <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -593,7 +702,7 @@ export function BriefDocument({ b }: { b: BriefPdfInput }) {
   const side = Boolean(st.yourCall) || st.copy.primary.length > 0 || st.copy.headlines.length > 0 || Boolean(st.copy.cta);
   // What to confirm goes under the shorter column (about how tall each one is, from how many lines its text wraps to)
   const lines = (x: string, per: number) => Math.max(1, Math.ceil(x.length / per));
-  const left = [...driveRows(b.drive), ...st.assets.map(assetRow)].reduce((h, r) => h + 10 + lines(r.what + r.label, 62) * 12, 0) + b.references.length * 22 + (b.exportLine ? 10 + lines(b.exportLine, 70) * 12 : 0);
+  const left = [...driveRows(b.drive), ...st.assets.map(assetRow)].reduce((h, r) => h + 8 + lines(r.what, 62) * 11, 0) + b.references.length * 19 + (b.links.length ? 19 : 0);
   const right = (st.yourCall ? 44 + lines(st.yourCall, 70) * 12 : 0) + st.copy.primary.reduce((h, x) => h + 12 + lines(x, 64) * 12, 0) + st.copy.headlines.reduce((h, x) => h + 3 + lines(x, 52) * 12, 0) + (st.copy.cta ? 26 : 0) + (st.copy.primary.length || st.copy.headlines.length || st.copy.cta ? 44 : 0);
   const confirmRight = side && right + 20 < left;
   return (
@@ -622,17 +731,17 @@ export function BriefDocument({ b }: { b: BriefPdfInput }) {
           )}
           {b.formats.includes("video") ? <Beats beats={st.beats} audio={st.audio} /> : null}
           {b.formats.includes("carousel") ? <Slides slides={st.slides} cards={b.measure?.label === "Slides" ? Number(b.measure.value) || st.slides.length : st.slides.length} /> : null}
-          {b.formats.includes("image") ? <FrameBlock f={st.frame} /> : null}
+          {b.formats.includes("image") ? imageGrid ? <ImageVersionsBlock versions={st.versions} frame={st.frame} must={st.must} /> : <FrameBlock f={st.frame} /> : null}
         </View>
         {footer}
       </Page>
 
-      {/* Page two: the guardrails. The versions and Do and Don't across, then the assets (with what to confirm) beside
-          Your call and the copy, so it all stays on one page */}
+      {/* Page two: the guardrails, under a slim bar. The versions (unless they were the build) and Do and Don't across,
+          then the assets (with what to confirm) beside Your call and the copy, so it all stays on one page */}
       <Page size="LETTER" orientation="landscape" style={s.page}>
-        <Band b={b} compact />
+        <SlimBand b={b} />
         <View style={s.body}>
-          <Versions versions={st.versions} word={word} />
+          {imageGrid && b.formats.length === 1 ? null : <Versions versions={st.versions} word={word} />}
 
           {(st.must.length > 0 || st.never.length > 0) && (
             <View style={s.section} wrap={false}>
@@ -653,16 +762,17 @@ export function BriefDocument({ b }: { b: BriefPdfInput }) {
           <View style={{ flexDirection: "row" }}>
             <View style={{ flex: 1.55, marginRight: side ? 14 : 0 }}>
               <AssetsAndExport b={b} />
-              {confirmRight ? null : <Confirm items={confirm} />}
+              {confirmRight ? null : <Confirm items={confirm} ifNot={ifNot} />}
             </View>
             {side ? (
               <View style={{ flex: 1 }}>
                 <YourCall text={st.yourCall} />
                 <Copy copy={st.copy} />
-                {confirmRight ? <Confirm items={confirm} /> : null}
+                {confirmRight ? <Confirm items={confirm} ifNot={ifNot} /> : null}
               </View>
             ) : null}
           </View>
+          <ExportStrip line={b.exportLine} />
         </View>
         {footer}
       </Page>

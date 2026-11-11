@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { draws, slidesOf, type Allotment } from "@/lib/allotment";
-import { ASSET_WORD, LIMITS, beatRows, copyOf, frameOf, hookOf, parseBrief, slideRows, type Beat, type CopySet, type Frame, type SlideRow } from "@/lib/brief-spec";
+import { ASSET_WORD, LIMITS, beatRows, copyOf, frameOf, hookOf, openingOf, parseBrief, slideRows, withCopyDirection, type Beat, type CopySet, type Frame, type SlideRow } from "@/lib/brief-spec";
 
 export { beatSpan, pacing } from "@/lib/brief-spec";
 
@@ -20,10 +20,12 @@ export type BriefFrame = Frame;
 
 /** The brief as a production sheet. Cached on the draft (by key) so an export doesn't run the AI again. */
 export type BriefStructure = {
-  /** The idea and its payoff, in one line */
+  /** The idea and its payoff, in one sentence (never the copy direction) */
   oneLine: string;
-  /** "Fallback: ..." when the concept waits on the client */
+  /** "Fallback: ..." when the concept hangs on the client: its first sentence, short, for the header */
   fallback: string;
+  /** The rest of the fallback, under Confirm with client ("If not: ...") */
+  fallbackMore?: string;
   /** The funnel stage ("Evergreen TOF") */
   stage: string;
   /** Why it works: the insight in one or two sentences, and where it comes from */
@@ -52,7 +54,7 @@ export type BriefStructure = {
 
 export type StructureSource = { title: string; angle: string; audience: string; brief: string; formats: Partial<Record<PdfFormat, PdfCounts>>; landing?: string | null };
 
-const STRUCTURE_VERSION = "v2";
+const STRUCTURE_VERSION = "v3";
 
 /** What the structure depends on: the same brief always gives the same key, any edit a new one */
 export function structureKey(d: StructureSource) {
@@ -193,7 +195,7 @@ const asset = (a: { item: string; status: keyof typeof ASSET_WORD }) => (a.statu
 export function plainStructure(d: StructureSource): BriefStructure {
   const p = parseBrief(d.brief);
   const sp = p.spec;
-  const { base, sections } = briefSections(p.overview || d.brief);
+  const { sections } = briefSections(p.overview || d.brief);
   // Older briefs: "Concepts:" with Hook / Visual / Copy lines, and "Hooks to try:"
   const concepts: { name: string; hook: string; visual: string; copy: string }[] = [];
   for (const line of sections.get("concepts") ?? []) {
@@ -220,18 +222,19 @@ export function plainStructure(d: StructureSource): BriefStructure {
   const never = (structured ? sp.donts : looseNever).map((x) => cut(x)).slice(0, LIMITS.never);
 
   const pick = (re: RegExp) => all.map((l) => re.exec(l)?.[1]?.trim()).filter((x): x is string => Boolean(x));
-  const ownCopy = copyOf(sp.copy);
+  // Copy direction a writer put in the opening fills what the Copy section leaves empty
+  const opening = openingOf(p.overview || d.brief);
+  const ownCopy = withCopyDirection(copyOf(sp.copy), opening.copy);
   const copy: CopySet = ownCopy.primary.length || ownCopy.headlines.length || ownCopy.cta ? ownCopy : { primary: pick(/^primary text:\s*(.+)$/i).slice(0, LIMITS.primary), headlines: pick(/^headlines?:\s*(.+)$/i).slice(0, LIMITS.headlines), cta: pick(/^cta:\s*(.+)$/i)[0] ?? "" };
 
-  // The idea in one line: the first line of the brief (not its Fallback line)
-  const lines = base.filter((l) => !/^fallback\s*:/i.test(l));
-  const fallback = base.find((l) => /^fallback\s*:/i.test(l))?.replace(/^fallback\s*:\s*/i, "") ?? "";
+  // The idea in one sentence (the first of the opening, never its copy direction or Fallback), the fallback short
   const cards = slidesFor(d.formats);
   const frame = frameOf(sp.frame);
   const hasFrame = Boolean(frame.headline || frame.subline || frame.shows || frame.readsFirst || frame.cta);
   return {
-    oneLine: cut(lines.join(" ") || d.angle || d.title),
-    fallback: cut(fallback),
+    oneLine: cut(opening.idea || d.angle || d.title),
+    fallback: cut(opening.fallback),
+    fallbackMore: cut(opening.fallbackMore),
     stage: cut(sp.stage),
     why: cut(sp.insight),
     whySource: cut(sp.insightSource),
@@ -286,8 +289,9 @@ export function fitStructure(raw: Partial<BriefStructure> | null | undefined, d:
   const hasCopy = plain.copy.primary.length || plain.copy.headlines.length || plain.copy.cta;
   const or = <T,>(a: T[], b: T[]) => (a.length ? a : b);
   return {
-    oneLine: plain.oneLine && plain.oneLine !== cut(d.title) ? plain.oneLine : t(raw?.oneLine) || plain.oneLine,
+    oneLine: plain.oneLine && plain.oneLine !== cut(d.title) ? plain.oneLine : openingOf(t(raw?.oneLine)).idea || plain.oneLine,
     fallback: plain.fallback,
+    fallbackMore: plain.fallbackMore ?? "",
     stage: plain.stage || t(raw?.stage),
     why: plain.why || t(raw?.why),
     whySource: plain.why ? plain.whySource : t(raw?.whySource),
