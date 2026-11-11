@@ -278,6 +278,10 @@ export async function directory(q: string, limit = 60): Promise<{ items: Directo
       .slice(0, n);
     total = Math.max(plain.count ?? 0, rows.length);
   }
+  // One card per server: the connectors checked for Kaizen's directory win over the same server listed in the registry
+  const urlKey = (u: string) => u.toLowerCase().replace(/\/+$/, "").replace(/\/(sse|mcp)$/, "");
+  const ours = new Set(rows.filter((x) => x.name.startsWith("kaizen.directory/")).map((x) => urlKey(x.url)));
+  rows = rows.filter((x) => x.name.startsWith("kaizen.directory/") || !ours.has(urlKey(x.url)));
   const [{ data: offered }, { data: seenRow }] = await Promise.all([
     admin.from("ai_connectors").select("registry_name, url, enabled"),
     admin.from("ai_connector_registry_seen").select("seen_at").eq("profile_id", me.id).maybeSingle(),
