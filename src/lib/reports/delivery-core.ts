@@ -56,6 +56,16 @@ export function summaryLines(s: { headline?: string | null; summary?: string | n
   return lines;
 }
 
+/** "What we did: …" and "What's next: …", three points each at most, for the message that carries a weekly */
+export function narrativeLines(s: { did?: string[] | null; next?: string[] | null } | null | undefined, service: string | null = null): string[] {
+  const join = (xs: string[]) => xs.map((x) => x.trim().replace(/[.;]+$/, "")).filter(Boolean).slice(0, 3).join("; ");
+  const pre = service ? `${service}, ` : "";
+  return [
+    ...(s?.did?.length && join(s.did) ? [`${pre}${service ? "what we did" : "What we did"}: ${join(s.did)}.`] : []),
+    ...(s?.next?.length && join(s.next) ? [`${pre}${service ? "what's next" : "What's next"}: ${join(s.next)}.`] : []),
+  ];
+}
+
 /** The key numbers for the email: spend, results (and their cost), and ROAS or cost per result, each against before */
 export function keyNumbers(m: ReportMetrics | null | undefined, service?: string): string[] {
   if (!m) return [];
@@ -69,7 +79,7 @@ export type ReportEmailInput = {
   kind: string;
   periodLabel: string;
   /** One part per service (a joint report has two) */
-  parts: { platform: "meta" | "google" | "tiktok"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null } | null }[];
+  parts: { platform: "meta" | "google" | "tiktok"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null; did?: string[] | null; next?: string[] | null } | null }[];
   /** The buyer sending it: the email is signed by them and replies go to them */
   from: { name: string; email: string | null };
   /** First name of the person it's addressed to, when it goes to one */
@@ -120,7 +130,9 @@ function writeReportEmail(p: ReportEmailInput): ReportEmail {
   const sign = wl ? firstName : `${firstName}, Kaizen Marketing`;
   const note = [p.note?.trim() || "", "Any questions, just reply to this email.", sign].filter(Boolean).join(" ");
   const cta = p.dashboard && !wl ? { label: "See every number on your dashboard", url: p.dashboard } : null;
-  const allLines = [intro, ...lines];
+  // A weekly's narrative travels here, not in the PDF (which holds the numbers): what we did and what's next, briefly
+  const story = p.kind === "weekly" || p.kind === "custom" ? p.parts.flatMap((x) => narrativeLines(x.sections, joint ? platformName(x.platform).replace(" Ads", "") : null)) : [];
+  const allLines = [intro, ...lines, ...story];
   const text = [hello, "", ...allLines.flatMap((l) => [l, ""]), ...(bullets.length ? ["The key numbers:", ...bullets.map((b) => `• ${b}`), ""] : []), ...(cta ? [`${cta.label}: ${cta.url}`, ""] : []), ...(p.note?.trim() ? [p.note.trim(), ""] : []), "Any questions, just reply to this email.", "", firstName, ...(wl ? [] : ["Kaizen Marketing"])].join("\n");
   return {
     whiteLabel: wl,

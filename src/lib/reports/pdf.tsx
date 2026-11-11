@@ -3,8 +3,9 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import sharp from "sharp";
 import { ReportDocument, type ReportPdfInput } from "./report-doc";
 
-// The client report's PDF, on the server: its document (report-doc.tsx, the same one the studio draws) with each top
-// ad's picture fetched and turned into a small JPEG; one that fails is left out.
+// The client report's PDF, on the server: its document (report-doc.tsx, the same one the studio draws) with each ad's
+// picture fetched and turned into a small JPEG (one that fails is left out), and the client's logo and colour beside
+// Kaizen's (brand-server.ts).
 
 export { EDIT_HOST, type ReportPart, type ReportPdfInput } from "./report-doc";
 
@@ -27,14 +28,20 @@ async function adImage(url: string | null, dark = false, size = 240): Promise<st
   }
 }
 
-/** Each part's top ad pictures, as data URIs. Meta's image links are signed and expire within days, so fresh ones are asked
- *  for; the saved link is the fallback */
+/** The ads (or Google asset groups) whose pictures a part shows: the weekly's scorecard has them all, the others three */
+const picturedAds = (input: ReportPdfInput, p: ReportPdfInput["parts"][number]) => (p.platform === "google" ? [] : input.kind === "weekly" ? p.metrics.topAds : p.metrics.topAds.slice(0, 3));
+
+/**
+ * Each part's pictures, as data URIs, in the order the document reads them (the ads in topAds order; on a Google
+ * weekly, each ad group and asset group's picture in googleUnits order). Meta's image links are signed and expire within
+ * days, so fresh ones are asked for; the saved link is the fallback
+ */
 export async function reportImages(input: ReportPdfInput): Promise<(string | null)[][]> {
-  const ids = input.parts.flatMap((p) => (p.platform !== "google" ? p.metrics.topAds.slice(0, 3).map((a) => a.id) : []));
+  const ids = input.parts.flatMap((p) => (p.platform === "meta" ? picturedAds(input, p).map((a) => a.id) : []));
   const { adPreviews, metaConfigured } = await import("@/lib/context/meta");
   const fresh = ids.length && metaConfigured() ? await adPreviews(ids).catch(() => new Map<string, { images: string[] }>()) : new Map<string, { images: string[] }>();
-  // The monthly deck shows the creative large
-  const size = input.kind === "monthly" ? 520 : 240;
+  // The monthly deck shows the creative large; the weekly scorecard as a thumbnail
+  const size = input.kind === "monthly" ? 520 : input.kind === "weekly" ? 160 : 240;
   const imageOf = async (a: { id: string; image: string | null }) => {
     for (const url of [...(fresh.get(a.id)?.images ?? []), a.image]) {
       const got = await adImage(url, false, size);
@@ -44,10 +51,31 @@ export async function reportImages(input: ReportPdfInput): Promise<(string | nul
     const first = fresh.get(a.id)?.images[0] ?? a.image;
     return first ? adImage(first, true, size) : null;
   };
-  return Promise.all(input.parts.map((p) => (p.platform !== "google" ? Promise.all(p.metrics.topAds.slice(0, 3).map(imageOf)) : Promise.resolve([]))));
+  return Promise.all(
+    input.parts.map((p) => {
+      if (p.platform === "google") return input.kind === "weekly" ? Promise.all((p.metrics.googleUnits ?? []).map((u) => (u.image ? adImage(u.image, true, size) : Promise.resolve(null)))) : Promise.resolve([]);
+      return Promise.all(picturedAds(input, p).map(imageOf));
+    }),
+  );
 }
 
-/** The report as a PDF. Weekly: one part. Monthly: a landscape deck of one or two parts (Meta, Google). */
+/** The client's logo and colour, and Kaizen's logo, on the input (once; a white label client's never gets Kaizen's) */
+export async function withBrand(input: ReportPdfInput): Promise<ReportPdfInput> {
+  if (input.brand !== undefined) return input;
+  const { agencyLogo, reportBrand } = await import("./brand-server");
+  const { adminConfigured, createAdminClient } = await import("@/lib/supabase/admin");
+  const client = input.clientId && adminConfigured() ? await reportBrand(createAdminClient(), input.clientId).catch(() => null) : null;
+  return { ...input, brand: { logo: client?.logo ?? null, light: client?.light ?? false, color: client?.color ?? null, agencyLogo: input.whiteLabel ? null : await agencyLogo() } };
+}
+
+/** What the document needs to be drawn (the server's PDF and the studio's preview): the input with its brand, and its pictures */
+export async function prepareReport(input: ReportPdfInput) {
+  const [branded, images] = await Promise.all([withBrand(input), reportImages(input)]);
+  return { input: branded, images };
+}
+
+/** The report as a PDF. Weekly: one document, a section per platform. Monthly: a landscape deck. */
 export async function renderReportPdf(input: ReportPdfInput, images?: (string | null)[][]): Promise<Uint8Array> {
-  return new Uint8Array(await renderToBuffer(<ReportDocument input={input} images={images ?? (await reportImages(input))} />));
+  const ready = images ? { input: await withBrand(input), images } : await prepareReport(input);
+  return new Uint8Array(await renderToBuffer(<ReportDocument input={ready.input} images={ready.images} />));
 }

@@ -9,6 +9,7 @@ import { notFound } from "next/navigation";
 import type { Digest } from "@/lib/ai";
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
 import { SLOTS, canHold, canSeeReports, isCreativeRole } from "@/lib/roles";
+import { ReportLogoPanel } from "./report-logo-panel";
 import { orderSeats, primaryOf, type SeatRow } from "@/lib/buyer-seats";
 import { freshness, nyToday } from "@/lib/dates";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -479,6 +480,13 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       playbook={{ items: ledger, learnings: brandBible?.learnings ?? [] }}
       // Client reports are the executives' and media buyers' only
       reports={canSeeReports(me) ? reportHistory : null}
+      reportLogo={
+        canSeeReports(me) && admin ? (
+          <Streamed h="h-40">
+            <ReportLogoPanel clientId={client.id} slug={client.slug} name={client.name} whiteLabel={client.client_type === "whitelabel"} />
+          </Streamed>
+        ) : null
+      }
       launchRules={launchRules}
       readiness={readiness}
       services={{

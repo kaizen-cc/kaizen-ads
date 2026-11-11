@@ -122,7 +122,9 @@ export const metricKeysFor = (platform: string | null | undefined): MetricKey[] 
  */
 /** campaigns.results: a campaign's result picked by hand (its name → the action type it counts), for accounts where
  *  campaigns run for different conversions */
-export type ReportLayout = { tiles?: MetricKey[]; table?: MetricKey[]; columns?: MetricKey[]; campaigns?: { hide?: string[]; add?: string[]; results?: Record<string, string> } };
+/** notes: the weekly's narrative (headline, summary, what we did, what's next) printed in the PDF too; off by default, as
+ *  it travels in the Slack or email message that carries the report */
+export type ReportLayout = { tiles?: MetricKey[]; table?: MetricKey[]; columns?: MetricKey[]; campaigns?: { hide?: string[]; add?: string[]; results?: Record<string, string> }; notes?: boolean };
 
 type Nums = { spend: number; results: number; costPerResult: number | null; revenue?: number; roas: number | null; ctr: number | null; clicks?: number; cpc?: number | null; cpm?: number | null; impressions?: number; views6s?: number; hookRate?: number | null };
 
@@ -131,7 +133,7 @@ export function metricLabel(m: Pick<ReportMetrics, "conversion">, k: MetricKey, 
   return { spend: "Spend", results: m.conversion, cost_per_result: short ? `Per ${one}` : `Cost per ${one}`, revenue: "Revenue", roas: "ROAS", ctr: short ? "CTR" : "Click-through rate", clicks: "Link clicks", cpc: "CPC", cpm: "CPM", impressions: "Impressions", views_6s: short ? "6s views" : "6-second views", hook_rate: "Hook rate" }[k];
 }
 
-const BETTER: Record<MetricKey, "up" | "down" | "none"> = { spend: "none", results: "up", cost_per_result: "down", revenue: "up", roas: "up", ctr: "up", clicks: "up", cpc: "down", cpm: "down", impressions: "up", views_6s: "up", hook_rate: "up" };
+export const BETTER: Record<MetricKey, "up" | "down" | "none"> = { spend: "none", results: "up", cost_per_result: "down", revenue: "up", roas: "up", ctr: "up", clicks: "up", cpc: "down", cpm: "down", impressions: "up", views_6s: "up", hook_rate: "up" };
 
 export function metricNumber(p: Nums, k: MetricKey): number | null {
   const v = { spend: p.spend, results: p.results, cost_per_result: p.costPerResult, revenue: p.revenue ?? null, roas: p.roas, ctr: p.ctr, clicks: p.clicks ?? null, cpc: p.cpc ?? null, cpm: p.cpm ?? null, impressions: p.impressions ?? null, views_6s: p.views6s ?? null, hook_rate: p.hookRate ?? null }[k];

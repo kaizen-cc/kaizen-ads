@@ -211,8 +211,10 @@ export async function builtPdf(admin: SupabaseClient, bundleId: string, edit = f
 /** The whole report's document input (every part), for the PDF and the studio's preview */
 export async function builtInput(admin: SupabaseClient, bundleId: string, edit = false): Promise<ReportPdfInput> {
   const { parts, client, ranges, whiteLabel } = await loadParts(admin, bundleId);
+  const { data: who } = await admin.from("report_bundles").select("client_id").eq("id", bundleId).maybeSingle();
   return {
     client: client.name,
+    clientId: (who?.client_id as string | undefined) ?? null,
     kind: "built",
     periodLabel: rangesLabel(ranges),
     parts: parts.filter((p) => p.metrics && p.sections).map((p): ReportPart => ({ platform: asKpiPlatform(p.platform), buyer: p.profiles?.full_name ?? null, metrics: p.metrics!, sections: p.sections!, extras: p.extras, extra: p.extra_metrics, layout: layoutOf(p) })),

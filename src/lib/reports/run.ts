@@ -144,6 +144,7 @@ const monthOf = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en
 export async function reportPdf(admin: SupabaseClient, reports: Loaded[]) {
   const first = reports[0];
   return renderReportPdf({
+    clientId: first.client_id,
     whiteLabel: whiteLabelOf(first),
     dashboard: dashboardUrl(first),
     shots: first.kind === "monthly" ? await shotsAsk(admin, first) : null,

@@ -7,6 +7,7 @@ import { SlackConnect } from "@/components/slack-connect";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
 import { PdfPreview, type PdfField } from "./pdf-preview";
+import { takeawaysFor, weeklyTileKeys, type Takeaway } from "@/lib/reports/weekly-core";
 import { RecapDeckButton } from "./recap-deck-button";
 import { metricKeysFor, clockTime, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tableKeys, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
@@ -590,11 +591,18 @@ export function ReportStudio({
               (() => {
                 // Every line the buyer writes, to click and change on the PDF itself
                 const LISTS = [["did", "What we did"], ["doing", "What we're doing"], ["next", "What's next"]] as const;
+                const weekly = report.kind !== "monthly" && report.kind !== "built";
+                const cards: Takeaway[] = weekly && report.metrics ? takeawaysFor(report.metrics, sections.takeaways) : [];
                 const fields: PdfField[] = [
                   { id: "headline", label: "Headline", value: sections.headline },
                   { id: "summary", label: "Summary", value: sections.summary },
                   ...LISTS.flatMap(([k, label]) => (sections[k] ?? []).map((v, i, all) => ({ id: `${k}.${i}`, label, value: v, removable: true, list: { at: i, count: all.length } }))),
                   { id: "extras", label: "Also (sales from their CRM, other channels…)", value: extras, removable: true },
+                  // The weekly's three takeaway cards (worked out from the numbers until the buyer or the AI words them)
+                  ...cards.flatMap((t, i) => [
+                    { id: `takeaway-${i}-title`, label: "Takeaway", value: t.title },
+                    { id: `takeaway-${i}-text`, label: "Takeaway, the numbers", value: t.text },
+                  ]),
                   // Each trend chart's words (the chart itself is drawn from the ad account)
                   ...(sections.stories ?? []).flatMap((st, i) => [
                     { id: `story-${i}-title`, label: "Chart title", value: st.title },
@@ -606,6 +614,8 @@ export function ReportStudio({
                 const save = (id: string, v: string | null) => {
                   if (id === "extras") return setExtras(v ?? "");
                   if (id === "headline" || id === "summary") return setSections({ ...sections, [id]: v ?? "" });
+                  const card = id.match(/^takeaway-(\d+)-(title|text)$/);
+                  if (card) return setSections({ ...sections, takeaways: cards.map((t, i) => (i === Number(card[1]) ? { ...t, [card[2]]: v ?? "" } : t)) });
                   const story = id.match(/^story-(\d+)-(title|see|why|next)$/);
                   if (story) return setSections({ ...sections, stories: (sections.stories ?? []).map((st, i) => (i === Number(story[1]) ? { ...st, [story[2]]: v ?? "" } : st)) });
                   const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
@@ -632,7 +642,8 @@ export function ReportStudio({
                 const goneNames = new Set(gone.map((g) => g.name));
                 const m = report.metrics && goneNames.size ? { ...report.metrics, campaigns: report.metrics.campaigns.filter((c) => !goneNames.has(c.name)) } : report.metrics;
                 const monthlyTiles = report.kind === "monthly";
-                const tiles = m ? tileKeys(m, layout, monthlyTiles) : [];
+                // The weekly leads with its own four (by the client's KPI); the tile clicked is the tile changed
+                const tiles = m ? (weekly ? weeklyTileKeys(m, layout) : tileKeys(m, layout, monthlyTiles)) : [];
                 const table = m ? tableKeys(m, layout) : TABLE_DEFAULT;
                 const columns = m ? columnKeys(m, layout) : [];
                 const hasTable = report.kind !== "weekly";
@@ -810,7 +821,7 @@ export function ReportStudio({
                           <button type="button" disabled={asking} onClick={() => void tweak("Add a trend chart of the cost per result by week for the last 5 weeks, with what we see, why and what's next")} className="h-9 rounded-full border border-line px-3 text-muted hover:text-fg disabled:opacity-40 max-md:h-10">
                             + Trend chart
                           </button>
-                          {([["tiles", "+ Tile"], ...(hasTable ? [["table", "+ Key metric row"]] : []), ["columns", "+ Campaign column"], ["campaign", "+ Campaign"]] as ["tiles" | "table" | "columns" | "campaign", string][]).map(([k, label]) => (
+                          {([["tiles", "+ Tile"], ...(hasTable ? [["table", "+ Key metric row"]] : []), ...(weekly ? [] : [["columns", "+ Campaign column"], ["campaign", "+ Campaign"]])] as ["tiles" | "table" | "columns" | "campaign", string][]).map(([k, label]) => (
                             <button key={k} type="button" onClick={() => setAddingMetric(addingMetric === k ? null : k)} className={`h-9 rounded-full border px-3 max-md:h-10 ${addingMetric === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
                               {label}
                             </button>
@@ -819,6 +830,13 @@ export function ReportStudio({
                             <button type="button" onClick={() => setLayout({})} className="h-9 rounded-full px-3 text-faint hover:text-fg max-md:h-10">
                               Back to the default
                             </button>
+                          )}
+                          {weekly && (
+                            // The narrative normally travels in the message; printed in the PDF only when the buyer wants it there
+                            <label className="ml-auto inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-full px-2 text-muted hover:text-fg md:min-h-9">
+                              <input type="checkbox" checked={Boolean(layout?.notes)} onChange={(e) => setLayout({ ...layout, notes: e.target.checked || undefined })} className="h-4 w-4" />
+                              Include our notes in the report
+                            </label>
                           )}
                         </div>
                         {addingMetric && addingMetric !== "campaign" && (

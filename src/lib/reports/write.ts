@@ -9,6 +9,7 @@ import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
 import { daysIn, previousPeriod, rangeLabel, todayIn } from "./period";
 import { forClient, isWhiteLabel, scrubSections, WHITE_LABEL_RULE } from "./white-label";
 import { dailyTable } from "@/lib/kpi/platform";
+import type { Takeaway } from "./weekly-core";
 
 // Writing a client report: the numbers (reportMetrics), the work behind them (workDone), the buyer's own voice (their
 // recaps in client channels), what this client likes in a report (learned from past edits), and what the buyer added
@@ -20,7 +21,8 @@ import { dailyTable } from "@/lib/kpi/platform";
  * chart's points are filled in from the ad account, never written by the AI
  */
 export type Story = { title: string; metric: MetricKey; grain: "week" | "month"; periods: number; see: string; why: string; next: string; points?: TrendPoint[] };
-export type Sections = { headline: string; summary: string; did: string[]; doing: string[]; next: string[]; highlights: string[]; stories?: Story[] };
+/** takeaways: the weekly PDF's three cards (a short claim, then the numbers behind it), written from the numbers alone */
+export type Sections = { headline: string; summary: string; did: string[]; doing: string[]; next: string[]; highlights: string[]; stories?: Story[]; takeaways?: Takeaway[] };
 export type QaFlag = { severity: "fix" | "check" | "alert"; issue: string; where: string; suggestion: string };
 export type Qa = { verdict: "clean" | "check" | "fix"; flags: QaFlag[]; checkedAt: string };
 /** pulled: what the AI looked up for this answer (shown under it); data: what came back, kept so the QA can check it */
@@ -30,7 +32,9 @@ const S = { type: "string" };
 const LIST = { type: "array", items: S };
 const obj = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
 const STORY = obj({ title: S, metric: { type: "string", enum: [...METRIC_KEYS] }, grain: { type: "string", enum: ["week", "month"] }, periods: { type: "integer" }, see: S, why: S, next: S });
-const SECTIONS = obj({ headline: S, summary: S, did: LIST, doing: LIST, next: LIST, highlights: LIST, stories: { type: "array", items: STORY } });
+const SECTIONS = obj({ headline: S, summary: S, did: LIST, doing: LIST, next: LIST, highlights: LIST, stories: { type: "array", items: STORY }, takeaways: { type: "array", items: obj({ title: S, text: S }) } });
+/** The weekly PDF's takeaway cards: written from the numbers, plain and specific (the narrative travels in the message) */
+const TAKEAWAY_RULES = `takeaways: exactly three cards for the PDF, read from the numbers alone (the work and the plan stay in the message, not here). Each: title (a bold claim of 3 to 7 words, e.g. "More purchases, lower CPA", "Cheaper traffic, slightly lower CTR", "Creative efficiency leader") and text (one or two sentences with the real numbers and what they're compared to, e.g. "Purchases increased from 7 to 12 (+71.4%), while CPA fell from $245.78 to $140.35 (-42.9%)."). Cover the KPI and its cost first, then traffic or efficiency, then the best ad (or campaign) by the KPI. Plain and specific: no hype, no exclamation marks, no adjectives the numbers don't earn, no advice. Percent changes to one decimal.`;
 const STORY_RULES = `stories: trend charts, each told as a story. Add one when the buyer asks for a trend, a progression, a graph or "over the last N weeks or months", or when this client always wants it (their preferences); otherwise keep the ones already there, or none. Each: title (short, e.g. "Cost per purchase, last 5 weeks"), metric (cost_per_result for CPL, CPA or cost per purchase; results for leads or purchases), grain (week or month), periods (how many, 2 to 12), see (what the chart shows, with its numbers), why (why it moved, from the work log and the data), next (what we're doing about it). Read the numbers first with the trend tool when you have it; the chart is drawn from exactly those. Never write a chart as text in the sections.`;
 const DRAFT_SCHEMA = obj({ message: S, sections: SECTIONS });
 
@@ -55,6 +59,7 @@ Every report follows the same arc: what we did, what we're doing now and why, an
 Accuracy above everything: every number you write must come from the numbers given, rounded the way the buyer rounds; never estimate, never invent a figure, an ad, a change or a plan. Comparisons say against what ("vs the week before", "vs August"). If results are down, say it plainly and say what we're doing about it; never spin. Only mention work that's in the work log, the sprint, or what the buyer added; group many small edits into what they amount to ("tightened budgets on the low-performing ad sets"). Never mention internal things: team members other than the client's own people, Kaizen Ads, AI, audits by name, allotments, internal Slack, other clients.
 message: the ${kind === "weekly" ? "Slack message to the client channel" : "Slack post that goes with the monthly report link"}, in Slack formatting (*bold* for short section headers, "• " for bullets, line breaks; no # headings, no emojis unless the buyer uses them). ${kind === "weekly" ? "Open with the headline numbers for the last 7 days against the week before (and where the month stands), then what we did this week, the top creative with its preview link when there is one, and what's next. Keep it as short as the buyer's own recaps." : "A short, warm note that the monthly recap is ready, the two or three numbers that matter most for the month against the month before, one line on the biggest thing we did and the biggest thing coming up; the link is added after."}
 sections: the same content, structured, for the PDF and the report page: headline (one line, the main takeaway), summary (2 to 4 sentences, the numbers in context), did (what we did, 3 to 7 bullets), doing (what we're doing now and why, 2 to 5), next (what comes next, 2 to 5), highlights (2 to 4 short numeric callouts, e.g. "14 leads at $84.21, down 56%").
+${TAKEAWAY_RULES}
 ${DIAGNOSE_RULES}`;
 }
 

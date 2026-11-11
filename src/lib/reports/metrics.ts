@@ -10,6 +10,7 @@ import { metricNumber, type MetricKey } from "./format";
 import type { Diagnosis, Opportunity } from "./diagnose";
 import { lastFullWeek, previousPeriod } from "./period";
 import { asKpiPlatform, type KpiPlatform } from "@/lib/kpi/platform";
+import { weekLabel, type GoogleUnit, type WeekPoint } from "./weekly-core";
 
 // A report's numbers, from the same daily rows the KPI board reads, with the campaigns left out of the KPI left out here
 // too. On Meta, results are what each campaign is optimized for, read from the ad account (submit application, schedule,
@@ -43,7 +44,8 @@ export type CampaignLine = { name: string; spend: number; results: number; costP
 export type CampaignEvent = { type: string; label: string; count: number };
 /** A campaign kept out of the report: excluded by hand (a client-run campaign) or outside the KPI's campaign match */
 export type LeftOut = { id: string; name: string; spend: number; why: "excluded" | "match" };
-export type TopAd = { id: string; name: string; campaign: string | null; spend: number; results: number; costPerResult: number | null; ctr: number | null; clicks: number; link: string | null; image: string | null; copy?: { body: string | null; headline: string | null; cta: string | null; url: string | null } };
+/** format: "Video", "Static", "Flexible", "Carousel"; active: it delivered on the period's last day */
+export type TopAd = { id: string; name: string; campaign: string | null; spend: number; results: number; costPerResult: number | null; ctr: number | null; clicks: number; link: string | null; image: string | null; copy?: { body: string | null; headline: string | null; cta: string | null; url: string | null }; format?: string | null; active?: boolean | null; impressions?: number; cpc?: number | null; revenue?: number; roas?: number | null; views6s?: number; hookRate?: number | null };
 
 export type ReportMetrics = {
   platform: KpiPlatform;
@@ -74,6 +76,10 @@ export type ReportMetrics = {
   google?: GoogleHealth;
   /** No target set: the industry benchmark, for reference only (the account is never judged against it) */
   benchmark?: BenchmarkTarget | null;
+  /** Weekly: the five weeks ending with this one (the chart of results and their cost) */
+  weeks?: WeekPoint[];
+  /** Google weekly: each ad group and asset group in the period (the scorecard) */
+  googleUnits?: GoogleUnit[];
 };
 
 type Target = { id: string; client_id: string; platform: string; ad_account_id: string | null; conversion: string; custom_action: string | null; campaign_match: string | null; target: number | null; monthly_budget: number | null; excluded_campaigns?: string[] | null; campaign_results?: Record<string, string> | null };
@@ -312,19 +318,23 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
   if (platform === "meta" && t.ad_account_id && !opts.lite) {
     const { data: ads } = await admin
       .from("meta_ad_daily")
-      .select("ad_id, ad_name, campaign_id, campaign_name, metrics")
+      .select("ad_id, ad_name, campaign_id, campaign_name, metrics, date")
       .eq("ad_account_id", String(t.ad_account_id).replace(/^act_/, ""))
       .gte("date", ps.main.start)
       .lte("date", ps.main.end)
       .limit(5000);
-    const per = new Map<string, TopAd & { impressions: number }>();
+    // The last day any ad delivered: an ad that spent then is still live (Active), one that stopped earlier isn't
+    const lastDelivered = ((ads ?? []) as { date: string; metrics: unknown }[]).filter((a) => Number((a.metrics as { spend?: string }).spend) > 0).reduce((n, a) => (a.date > n ? a.date : n), "");
+    const per = new Map<string, TopAd & { impressions: number; revenue: number; last: string }>();
     for (const a of ads ?? []) {
       if (!campaignIncluded(t, { id: a.campaign_id, name: a.campaign_name })) continue;
-      const m = a.metrics as { spend?: string; impressions?: string; inline_link_clicks?: string; actions?: { action_type: string; value: string }[] };
-      const e = per.get(a.ad_id) ?? { id: a.ad_id, name: a.ad_name, campaign: a.campaign_name, spend: 0, results: 0, costPerResult: null, ctr: null, clicks: 0, link: null, image: null, impressions: 0 };
+      const m = a.metrics as { spend?: string; impressions?: string; inline_link_clicks?: string; actions?: { action_type: string; value: string }[]; action_values?: { action_type: string; value: string }[] };
+      const e = per.get(a.ad_id) ?? { id: a.ad_id, name: a.ad_name, campaign: a.campaign_name, spend: 0, results: 0, costPerResult: null, ctr: null, clicks: 0, link: null, image: null, impressions: 0, revenue: 0, last: "" };
       e.spend += Number(m.spend) || 0;
       e.impressions += Number(m.impressions) || 0;
       e.clicks += Number(m.inline_link_clicks) || 0;
+      if (valueType) e.revenue += Number((m.action_values ?? []).find((x) => x.action_type === valueType)?.value) || 0;
+      if ((Number(m.spend) || 0) > 0 && a.date > e.last) e.last = a.date;
       const day: Day = { date: "", spend: 0, actions: Object.fromEntries((m.actions ?? []).map((x) => [x.action_type, Number(x.value) || 0])), values: {}, linkClicks: Number(m.inline_link_clicks) || 0 };
       if (useGoals) {
         // The ad counts its campaign's own result
@@ -336,23 +346,40 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
     }
     const ranked = [...per.values()]
       .filter((a) => a.spend > 0)
-      .map((a) => ({ ...a, spend: r2(a.spend), results: Math.round(a.results * 10) / 10, costPerResult: a.results ? r2(a.spend / a.results) : null, ctr: a.impressions ? r2((a.clicks / a.impressions) * 100) : null }))
+      .map(({ last, ...a }) => ({ ...a, spend: r2(a.spend), revenue: r2(a.revenue), roas: a.spend && a.revenue ? r2(a.revenue / a.spend) : null, results: Math.round(a.results * 10) / 10, costPerResult: a.results ? r2(a.spend / a.results) : null, ctr: a.impressions ? r2((a.clicks / a.impressions) * 100) : null, cpc: a.clicks ? r2(a.spend / a.clicks) : null, active: last === lastDelivered }))
       .sort((a, b) => b.results - a.results || (a.costPerResult ?? 1e9) - (b.costPerResult ?? 1e9) || b.clicks - a.clicks)
-      .slice(0, kind === "monthly" ? 3 : 3);
+      // A weekly's scorecard shows every ad that carried the week (eight at most); a monthly, the three best
+      .slice(0, kind === "monthly" ? 3 : 8);
     const { adPreviews } = await import("@/lib/context/meta");
     const previews = await adPreviews(ranked.map((a) => a.id)).catch(() => new Map());
-    topAds = ranked.map(({ impressions: _i, ...a }) => {
+    topAds = ranked.map((a) => {
       const v = previews.get(a.id);
-      return { ...a, link: v?.link ?? null, image: v?.image ?? null, copy: v ? { body: v.body ?? null, headline: v.headline ?? null, cta: v.cta ?? null, url: v.url ?? null } : undefined };
+      return { ...a, link: v?.link ?? null, image: v?.image ?? null, format: v?.format ?? null, copy: v ? { body: v.body ?? null, headline: v.headline ?? null, cta: v.cta ?? null, url: v.url ?? null } : undefined };
     });
   }
 
   // Top ads (TikTok): the same ranking from TikTok's ad days, with each ad's thumbnail and text
-  if (platform === "tiktok" && t.ad_account_id && !opts.lite) topAds = await tiktokTopAds(admin, t, ps.main, kpiConv.key === "tiktok_purchases" || kpiConv.key === "tiktok_roas");
+  if (platform === "tiktok" && t.ad_account_id && !opts.lite) topAds = await tiktokTopAds(admin, t, ps.main, kpiConv.key === "tiktok_purchases" || kpiConv.key === "tiktok_roas", kind === "monthly" ? 3 : 8);
 
   // Google's lines, over the main period (brand campaigns set aside for CTR and conversion rate)
   const google = platform === "google" ? googleHealth(all.filter((r) => r.date >= ps.main.start && r.date <= ps.main.end), businessModel(t.conversion, Boolean(kpiConv.roas))) : undefined;
   const benchmark = t.target == null && !opts.lite ? (((await admin.from("kpi_snapshots").select("benchmark").eq("target_id", t.id).maybeSingle()).data?.benchmark ?? null) as BenchmarkTarget | null) : null;
+
+  // A week's report: the five weeks ending with it, counted the same way (the chart of results and their cost)
+  const weeks: WeekPoint[] = [];
+  if (kind !== "monthly" && span(ps.main.start, ps.main.end) === 7)
+    for (let i = 4; i >= 0; i--) {
+      const end = shift(ps.main.end, -7 * i);
+      const start = shift(end, -6);
+      const p = period(all, days, { start, end, label: weekLabel(start, end) }, conv, type, valueType);
+      weeks.push({ label: p.label, start, end, spend: p.spend, results: p.results, costPerResult: p.costPerResult, revenue: p.revenue, roas: p.roas, clicks: p.clicks, impressions: p.impressions });
+    }
+  // Google's scorecard: each ad group (its best RSA headline) and asset group (its picture), when the API answers
+  let googleUnits: GoogleUnit[] = [];
+  if (platform === "google" && kind !== "monthly" && t.ad_account_id && !opts.lite) {
+    const { googleAdsConfigured, googleReportUnits } = await import("@/lib/context/google-ads");
+    if (googleAdsConfigured()) googleUnits = (await googleReportUnits(String(t.ad_account_id), ps.main.start, ps.main.end).catch(() => [])).filter((u) => campaignIncluded(t, { id: u.campaignId ?? null, name: u.campaign }));
+  }
 
   const dates = new Set(days.filter((d) => d.date >= ps.main.start && d.date <= ps.main.end).map((d) => d.date));
   const gaps: string[] = [];
@@ -375,6 +402,8 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
     gaps,
     ...(google ? { google } : {}),
     ...(benchmark ? { benchmark } : {}),
+    ...(weeks.length ? { weeks } : {}),
+    ...(googleUnits.length ? { googleUnits } : {}),
     ...(useGoals && goalLines.length ? { goals: goalLines } : {}),
     ...(opts.daily
       ? {
@@ -388,33 +417,38 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
 }
 
 /** TikTok's top ads in a period: the most results (conversions, or purchases on a purchase KPI), then the cheapest */
-async function tiktokTopAds(admin: SupabaseClient, t: Target, p: { start: string; end: string }, purchases: boolean): Promise<TopAd[]> {
+async function tiktokTopAds(admin: SupabaseClient, t: Target, p: { start: string; end: string }, purchases: boolean, limit = 3): Promise<TopAd[]> {
   const { data: ads } = await admin
     .from("tiktok_ad_daily")
-    .select("ad_id, ad_name, campaign_id, campaign_name, spend, impressions, clicks, conversions, purchases")
+    .select("ad_id, ad_name, campaign_id, campaign_name, spend, impressions, clicks, conversions, purchases, conversion_value, video_6s, date")
     .eq("ad_account_id", String(t.ad_account_id))
     .gte("date", p.start)
     .lte("date", p.end)
     .limit(5000);
-  const per = new Map<string, TopAd & { impressions: number }>();
+  const per = new Map<string, TopAd & { impressions: number; revenue: number; views6s: number; last: string }>();
+  let lastDelivered = "";
   for (const a of ads ?? []) {
     if (!campaignIncluded(t, { id: a.campaign_id, name: a.campaign_name })) continue;
-    const e = per.get(a.ad_id) ?? { id: a.ad_id, name: a.ad_name ?? a.ad_id, campaign: a.campaign_name, spend: 0, results: 0, costPerResult: null, ctr: null, clicks: 0, link: null, image: null, impressions: 0 };
+    const e = per.get(a.ad_id) ?? { id: a.ad_id, name: a.ad_name ?? a.ad_id, campaign: a.campaign_name, spend: 0, results: 0, costPerResult: null, ctr: null, clicks: 0, link: null, image: null, impressions: 0, revenue: 0, views6s: 0, last: "" };
     e.spend += Number(a.spend) || 0;
     e.impressions += Number(a.impressions) || 0;
     e.clicks += Number(a.clicks) || 0;
     e.results += Number(purchases ? a.purchases : a.conversions) || 0;
+    e.revenue += Number(a.conversion_value) || 0;
+    e.views6s += Number(a.video_6s) || 0;
+    if (Number(a.spend) > 0) {
+      if (a.date > e.last) e.last = a.date;
+      if (a.date > lastDelivered) lastDelivered = a.date;
+    }
     per.set(a.ad_id, e);
   }
   const ranked = [...per.values()]
     .filter((a) => a.spend > 0)
-    .map((a) => ({ ...a, spend: r2(a.spend), results: Math.round(a.results * 10) / 10, costPerResult: a.results ? r2(a.spend / a.results) : null, ctr: a.impressions ? r2((a.clicks / a.impressions) * 100) : null }))
+    .map(({ last, ...a }) => ({ ...a, spend: r2(a.spend), revenue: r2(a.revenue), roas: a.spend && a.revenue ? r2(a.revenue / a.spend) : null, results: Math.round(a.results * 10) / 10, costPerResult: a.results ? r2(a.spend / a.results) : null, ctr: a.impressions ? r2((a.clicks / a.impressions) * 100) : null, cpc: a.clicks ? r2(a.spend / a.clicks) : null, hookRate: a.impressions ? r2((a.views6s / a.impressions) * 100) : null, format: "Video", active: last === lastDelivered }))
     .sort((a, b) => b.results - a.results || (a.costPerResult ?? 1e9) - (b.costPerResult ?? 1e9) || b.clicks - a.clicks)
-    .slice(0, 3);
+    .slice(0, limit);
   const { data: meta } = ranked.length ? await admin.from("tiktok_ads").select("ad_id, ad_text, call_to_action, landing_page_url, thumbnail_url").in("ad_id", ranked.map((a) => a.id)) : { data: [] };
-  return ranked.map((x) => {
-    const { impressions, ...a } = x;
-    void impressions;
+  return ranked.map((a) => {
     const m = (meta ?? []).find((y) => y.ad_id === a.id);
     return { ...a, image: (m?.thumbnail_url as string | null) ?? null, copy: m ? { body: (m.ad_text as string | null) ?? null, headline: null, cta: (m.call_to_action as string | null) ?? null, url: (m.landing_page_url as string | null) ?? null } : undefined };
   });

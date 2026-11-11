@@ -680,6 +680,46 @@ export async function googleCopyAssets(account: string, days = 90): Promise<{ as
   };
 }
 
+/**
+ * A weekly report's Google scorecard: each ad group that spent in the period, with the headline of its best responsive
+ * search ad (the one with the most clicks), and each Performance Max asset group, with its first landscape or square
+ * image. Every query is optional: one Google refuses leaves the others (and no rows means the scorecard shows campaigns).
+ */
+export async function googleReportUnits(account: string, start: string, end: string) {
+  const id = digits(account);
+  const range = `segments.date BETWEEN '${start}' AND '${end}'`;
+  const safe = (q: string) => search(id, q).catch(() => [] as Row[]);
+  const metrics = "metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.cost_micros";
+  const [groups, ads, assetGroups, images] = await Promise.all([
+    safe(`SELECT ad_group.id, ad_group.name, campaign.id, campaign.name, ${metrics} FROM ad_group WHERE ${range} AND metrics.cost_micros > 0`),
+    safe(`SELECT ad_group.id, ad_group_ad.ad.responsive_search_ad.headlines, metrics.clicks FROM ad_group_ad WHERE ${range} AND ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD' AND metrics.impressions > 0`),
+    safe(`SELECT asset_group.id, asset_group.name, campaign.id, campaign.name, ${metrics} FROM asset_group WHERE ${range} AND metrics.cost_micros > 0`),
+    safe(`SELECT asset_group.id, asset_group_asset.field_type, asset.image_asset.full_size.url FROM asset_group_asset WHERE asset_group_asset.field_type IN ('MARKETING_IMAGE', 'SQUARE_MARKETING_IMAGE') AND asset_group_asset.status = 'ENABLED'`),
+  ]);
+  const m = (r: Row) => ({ impressions: num(r.metrics?.impressions), clicks: num(r.metrics?.clicks), results: Math.round(num(r.metrics?.conversions) * 10) / 10, revenue: Math.round(num(r.metrics?.conversionsValue) * 100) / 100, spend: Math.round(num(r.metrics?.costMicros) / 10_000) / 100 });
+  // Each ad group's headline: the first headline of its most clicked RSA
+  const best = new Map<string, { clicks: number; headline: string }>();
+  for (const r of ads) {
+    const g = String(r.adGroup?.id ?? "");
+    const hs = ((r.adGroupAd as { ad?: { responsiveSearchAd?: { headlines?: { text?: string }[] } } } | undefined)?.ad?.responsiveSearchAd?.headlines ?? []).map((h) => String(h.text ?? "").trim()).filter(Boolean);
+    const clicks = num(r.metrics?.clicks);
+    if (hs.length && (!best.has(g) || best.get(g)!.clicks < clicks)) best.set(g, { clicks, headline: hs[0] });
+  }
+  const pictures = new Map<string, string>();
+  for (const r of images) {
+    const g = String(r.assetGroup?.id ?? "");
+    const url = (r.asset as { imageAsset?: { fullSize?: { url?: string } } } | undefined)?.imageAsset?.fullSize?.url;
+    if (g && url && !pictures.has(g)) pictures.set(g, url);
+  }
+  return [
+    ...groups.map((r) => ({ id: `ag-${r.adGroup?.id ?? ""}`, kind: "ad_group" as const, name: String(r.adGroup?.name ?? ""), campaign: String(r.campaign?.name ?? ""), campaignId: String(r.campaign?.id ?? ""), headline: best.get(String(r.adGroup?.id ?? ""))?.headline ?? null, image: null, ...m(r) })),
+    ...assetGroups.map((r) => ({ id: `pg-${r.assetGroup?.id ?? ""}`, kind: "asset_group" as const, name: String(r.assetGroup?.name ?? ""), campaign: String(r.campaign?.name ?? ""), campaignId: String(r.campaign?.id ?? ""), headline: null, image: pictures.get(String(r.assetGroup?.id ?? "")) ?? null, ...m(r) })),
+  ]
+    .filter((u) => u.name && u.spend > 0)
+    .sort((a, b) => b.spend - a.spend)
+    .slice(0, 12);
+}
+
 /** Converting search terms in some campaigns (the themes behind the winners), last `days` */
 export async function googleConvertingTerms(account: string, days = 90) {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });

@@ -1,7 +1,7 @@
 import { requireStaff } from "@/lib/auth";
 import { canSeeReports } from "@/lib/roles";
 import { canReportOn } from "@/lib/reports/access";
-import { reportImages } from "@/lib/reports/pdf";
+import { prepareReport } from "@/lib/reports/pdf";
 import { loadReport } from "@/lib/reports/share";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -10,7 +10,8 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 // GET /api/reports/<id>/preview: what the studio needs to draw the report's PDF in the browser (the document's input,
-// with the click targets, and the top ads' pictures), read once; every edit after that is drawn there, at once.
+// with the click targets, the client's logo and colour, and the ads' pictures), read once; every edit after that is drawn
+// there, at once.
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const me = await requireStaff();
   // Reports are only for executives and media buyers
@@ -26,5 +27,5 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
   if (new URL(request.url).searchParams.get("whole") && r.kind === "built" && r.bundle_id) input = await (await import("@/lib/reports/builder")).builtInput(admin, r.bundle_id, true);
   else input = (await loadReport(admin, id, true))?.input;
   if (!input) return new Response("This report hasn't been written yet", { status: 404 });
-  return Response.json({ input, images: await reportImages(input) }, { headers: { "cache-control": "private, no-store" } });
+  return Response.json(await prepareReport(input), { headers: { "cache-control": "private, no-store" } });
 }

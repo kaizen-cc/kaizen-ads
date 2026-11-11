@@ -3,9 +3,10 @@ import { Document, Font, Image, Link, Page, StyleSheet, Text, View } from "@reac
 import type { ReportMetrics, TopAd } from "./metrics";
 import type { Sections, Story } from "./write";
 import { scrubAgency, scrubSections } from "./white-label";
+import { EDIT_HOST, WeeklyReport, type WeeklyBrand } from "./weekly-doc";
 import { campaignLines, columnKeys, conversionTiles, formatMetric, count, headlineTiles, kpiRows, metricLabel, metricText, money, percent, multiple, platformName, rowsFor, singular, tilesFor, type Delta, type MetricKey, type ReportLayout, type Tile } from "./format";
 
-// The client report as a PDF document: the weekly recap (one platform, a page or two), the monthly recap as a landscape
+// The client report as a PDF document: the weekly recap (weekly-doc.tsx: co-branded, a section per platform), the monthly recap as a landscape
 // slide deck (one idea per slide: the cover, the month at a glance, then for each platform where it stands against its
 // target, the numbers, each trend as its own story, the best ads, the campaigns and the plan, and a closing slide), and a
 // built report (a cover, then each platform). Helvetica, lots of
@@ -20,7 +21,9 @@ export type ReportPart = { platform: "meta" | "google" | "tiktok"; buyer: string
 /** edit: the studio's preview, with an invisible link over every metric, row and column the buyer can change (never sent) */
 /** dashboard: the client's live dashboard in their portal, linked from every part (when their portal is open) */
 /** whiteLabel: a white label client's report: generic, with no agency name, mark, red or link anywhere */
-export type ReportPdfInput = { client: string; kind: "weekly" | "monthly" | "built"; periodLabel: string; parts: ReportPart[]; edit?: boolean; dashboard?: string | null; /** The monthly recap's ask: next cycle's shot list (clients on a creative package) */ shots?: { month: string; items: string[]; url: string | null } | null; whiteLabel?: boolean };
+/** brand: the client's logo and colour (and Kaizen's logo), filled on the server before the document is drawn */
+/** clientId: whose brand to read (never drawn) */
+export type ReportPdfInput = { client: string; kind: "weekly" | "monthly" | "built"; periodLabel: string; parts: ReportPart[]; edit?: boolean; dashboard?: string | null; /** The monthly recap's ask: next cycle's shot list (clients on a creative package) */ shots?: { month: string; items: string[]; url: string | null } | null; whiteLabel?: boolean; brand?: WeeklyBrand | null; clientId?: string | null };
 
 // Words wrap whole: no "APPLICA-TION" in a tile label or a column header
 Font.registerHyphenationCallback((word) => [word]);
@@ -82,8 +85,7 @@ const linkFor = (b: Brand, url: string | null | undefined) => (url && (b.agency 
 
 const toneColor = (d: Delta | null) => (!d ? FAINT : d.tone === "good" ? GOOD : d.tone === "bad" ? BAD : MUTED);
 
-/** Where the studio's preview can click: an invisible link over the element (its address says what it is) */
-export const EDIT_HOST = "https://edit.kaizen.invalid";
+export { EDIT_HOST };
 const hotStyle = { position: "absolute" as const, top: 0, left: 0, right: 0, bottom: 0, textDecoration: "none" as const };
 function Hot({ href }: { href: string | null }) {
   return href ? <Link src={`${EDIT_HOST}/${href}`} style={hotStyle} /> : null;
@@ -235,28 +237,6 @@ function Notes({ sections, hot, b }: { sections: Sections; hot?: (what: string) 
   );
 }
 
-/** ROAS shows only when it's the KPI or the buyer put it in the report: a CPA report never sneaks it back in */
-const showsRoas = (m: ReportMetrics, layout?: ReportLayout | null) => Boolean(m.roasKpi) || [...(layout?.tiles ?? []), ...(layout?.table ?? []), ...(layout?.columns ?? [])].some((k) => String(k) === "roas");
-
-function Mtd({ m, layout }: { m: ReportMetrics; layout?: ReportLayout | null }) {
-  if (!m.mtd) return null;
-  const a = m.mtd;
-  const b = m.mtdCompare;
-  const one = singular(m.conversion);
-  const roas = showsRoas(m, layout);
-  const line = (p: NonNullable<ReportMetrics["mtd"]>) => `${money(p.spend)} spent, ${count(p.results)} ${m.conversion.toLowerCase()}${p.costPerResult != null ? ` at ${money(p.costPerResult)} per ${one}` : ""}${p.revenue > 0 && roas ? `, ${multiple(p.roas)} ROAS` : ""}`;
-  return (
-    <View style={s.section} wrap={false}>
-      <Text style={s.eyebrow}>Month to date</Text>
-      <Text style={s.mtd}>
-        <Text style={{ fontFamily: "Helvetica-Bold", color: INK }}>{a.label}: </Text>
-        {line(a)}
-        {b ? <Text style={{ color: MUTED }}>{`   vs ${b.label}: ${line(b)}`}</Text> : null}
-      </Text>
-    </View>
-  );
-}
-
 function Band({ client, title, period, b }: { client: string; title: string; period: string; b: Brand }) {
   return (
     <View style={s.band}>
@@ -350,32 +330,6 @@ function Words({ input, part }: { input: ReportPdfInput; part: ReportPart }) {
   );
 }
 
-function Weekly({ input, part, images }: { input: ReportPdfInput; part: ReportPart; images: (string | null)[] }) {
-  const m = part.metrics;
-  const b = brandOf(input);
-  return (
-    <Page size="A4" style={s.page}>
-      <Footer client={input.client} b={b} />
-      <Band client={input.client} title={`Weekly report · ${platformName(part.platform)}`} period={input.periodLabel} b={b} />
-      <Words input={input} part={part} />
-      <View style={s.section}>
-        <Text style={s.eyebrow}>Last 7 days vs the week before</Text>
-        <Tiles tiles={part.layout?.tiles?.length ? tilesFor(m, part.layout.tiles) : headlineTiles(m)} hot={hotFor(input, part, "tile")} />
-      </View>
-      <Stories stories={part.sections.stories} hot={hotFor(input, part, null)} b={b} />
-      <Mtd m={m} layout={part.layout} />
-      <TopAds ads={m.topAds.slice(0, 3)} images={images} conversion={m.conversion} b={b} />
-      <Campaigns m={m} limit={6} layout={part.layout} hot={hotFor(input, part, null)} />
-      <Notes sections={part.sections} hot={hotFor(input, part, null)} b={b} />
-      {part.buyer && b.agency ? (
-        <Text style={{ fontSize: 9, color: MUTED }}>
-          Prepared by {part.buyer}, {b.agency}
-        </Text>
-      ) : null}
-    </Page>
-  );
-}
-
 /** A built report covering several services: the whole account first, each service side by side, for every range. */
 function Overview({ input }: { input: ReportPdfInput }) {
   const ranges = [input.parts[0].metrics, ...(input.parts[0].extra ?? [])].map((m) => m.main.label);
@@ -450,6 +404,30 @@ function Ranges({ part }: { part: ReportPart }) {
   );
 }
 
+/** The client's logo beside Kaizen's on a dark cover (white chips), or only the client's for a white label client */
+function CoBrand({ input }: { input: ReportPdfInput }) {
+  const logo = input.brand?.logo;
+  const agency = !input.whiteLabel ? input.brand?.agencyLogo : null;
+  if (!logo && !agency) return null;
+  /* eslint-disable jsx-a11y/alt-text -- a PDF image, no alt prop */
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 26 }}>
+      {logo ? (
+        <View style={{ backgroundColor: input.brand?.light ? "transparent" : "#ffffff", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 }}>
+          <Image src={logo} style={{ height: 30, maxWidth: 150, objectFit: "contain" }} />
+        </View>
+      ) : null}
+      {logo && agency ? <Text style={{ fontSize: 14, color: "#7a7a82" }}>×</Text> : null}
+      {agency ? (
+        <View style={{ backgroundColor: "#ffffff", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 9 }}>
+          <Image src={agency} style={{ height: 18, objectFit: "contain" }} />
+        </View>
+      ) : null}
+    </View>
+  );
+  /* eslint-enable jsx-a11y/alt-text */
+}
+
 function Cover({ input }: { input: ReportPdfInput }) {
   const buyers = [...new Set(input.parts.map((p) => p.buyer).filter(Boolean))];
   const b = brandOf(input);
@@ -457,6 +435,7 @@ function Cover({ input }: { input: ReportPdfInput }) {
     <Page size="A4" style={[s.page, { backgroundColor: INK, color: "#ffffff", justifyContent: "space-between", paddingTop: 72, paddingBottom: 56 }]}>
       <Text style={{ fontSize: 10, fontFamily: "Helvetica-Bold", letterSpacing: 2, color: "#ffffff" }}>{(b.agency ?? "Performance report").toUpperCase()}</Text>
       <View>
+        <CoBrand input={input} />
         <View style={{ width: 40, height: 4, backgroundColor: b.accent, marginBottom: 22 }} />
         <Text style={{ fontSize: 40, fontFamily: "Helvetica-Bold", letterSpacing: -1, lineHeight: 1.1 }}>{input.client}</Text>
         <Text style={{ fontSize: 16, color: "#b4b4bb", marginTop: 12 }}>
@@ -554,6 +533,7 @@ function DeckCover({ input }: { input: ReportPdfInput }) {
         <Text style={{ fontSize: 10, color: "#7a7a82" }}>{input.parts.map((p) => platformName(p.platform)).join("  ·  ")}</Text>
       </View>
       <View>
+        <CoBrand input={input} />
         <View style={{ width: 56, height: 5, backgroundColor: b.accent, marginBottom: 26 }} />
         <Text style={{ fontSize: 54, fontFamily: "Helvetica-Bold", letterSpacing: -1.6, lineHeight: 1.05 }}>{input.client}</Text>
         <Text style={{ fontSize: 20, color: "#b4b4bb", marginTop: 14 }}>Monthly recap · {input.periodLabel}</Text>
@@ -891,7 +871,7 @@ function hotFor<T extends number | string>(input: ReportPdfInput, part: ReportPa
 export function ReportDocument({ input: given, images }: { input: ReportPdfInput; images: (string | null)[][] }) {
   // White label: every written line cleaned of the agency too (whatever the AI or the buyer wrote), and no portal links
   const input: ReportPdfInput = given.whiteLabel
-    ? { ...given, dashboard: null, shots: given.shots ? { ...given.shots, url: linkFor(NEUTRAL, given.shots.url), items: given.shots.items.map(scrubAgency) } : given.shots, parts: given.parts.map((p) => ({ ...p, buyer: null, sections: scrubSections(p.sections), extras: p.extras ? scrubAgency(p.extras) : p.extras })) }
+    ? { ...given, dashboard: null, brand: given.brand ? { ...given.brand, agencyLogo: null } : given.brand, shots: given.shots ? { ...given.shots, url: linkFor(NEUTRAL, given.shots.url), items: given.shots.items.map(scrubAgency) } : given.shots, parts: given.parts.map((p) => ({ ...p, buyer: null, sections: scrubSections(p.sections), extras: p.extras ? scrubAgency(p.extras) : p.extras })) }
     : given;
   const title = `${input.client} · ${input.kind === "weekly" ? "Weekly report" : input.kind === "built" ? "Report" : "Monthly recap"} · ${input.periodLabel}`;
   // The file's own properties too: a white label report names no agency there either
@@ -899,7 +879,7 @@ export function ReportDocument({ input: given, images }: { input: ReportPdfInput
   return (
     <Document title={title} author={brandOf(input).agency ?? input.client} creator={by} producer={by}>
       {input.kind === "weekly" ? (
-        input.parts.map((p, i) => <Weekly key={i} input={input} part={p} images={images[i] ?? []} />)
+        <WeeklyReport input={input} images={images} />
       ) : input.kind === "monthly" ? (
         <MonthlyDeck input={input} images={images} />
       ) : (

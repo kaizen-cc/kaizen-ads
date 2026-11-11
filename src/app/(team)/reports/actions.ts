@@ -64,7 +64,8 @@ export async function saveLayout(id: string, layout: ReportLayout): Promise<Resu
   const results = layout.campaigns?.results ? Object.fromEntries(Object.entries(layout.campaigns.results).slice(0, 60).map(([k, v]) => [String(k).slice(0, 300), String(v).slice(0, 200)])) : undefined;
   const tidy: ReportLayout = { tiles: clean(layout.tiles), table: clean(layout.table), columns: clean(layout.columns), campaigns: layout.campaigns ? { hide: names(layout.campaigns.hide), add: names(layout.campaigns.add), results } : undefined };
   const admin = createAdminClient();
-  await admin.from("reports").update({ layout: tidy, updated_at: new Date().toISOString() }).eq("id", id);
+  // "Include our notes in the report" is this report's alone: the next one starts without them again
+  await admin.from("reports").update({ layout: layout.notes === true ? { ...tidy, notes: true } : tidy, updated_at: new Date().toISOString() }).eq("id", id);
   const t = ok.r.kpi_targets as unknown as { id: string } | null;
   if (t) await admin.from("kpi_targets").update({ report_layout: tidy }).eq("id", t.id);
   done(id);

@@ -95,7 +95,8 @@ describe("a white label client's PDF", () => {
       const all = docStrings(input(kind, true));
       expect(all.filter((x) => /kaizen/i.test(x))).toEqual([]);
       expect(all.some((x) => x.includes("Propr Dental"))).toBe(true);
-      expect(all.join(" ")).toContain("Performance report · Propr Dental");
+      // The weekly's footer is the client's alone; the monthly and built reports keep their own line
+      expect(all.join(" ")).toContain(kind === "weekly" ? "Prepared for Propr Dental " : "Performance report · Propr Dental");
       // The neutral accent stands where the red was
       expect(all).toContain("#475569");
       expect(all.join(" ")).not.toMatch(/Prepared by Sam/);
@@ -103,7 +104,7 @@ describe("a white label client's PDF", () => {
 
     it(`${kind}: everyone else's still carries Kaizen's name and red`, () => {
       const all = docStrings(input(kind, false));
-      expect(all.join(" ")).toContain("Kaizen Marketing · Propr Dental");
+      expect(all.join(" ")).toContain(kind === "weekly" ? "Prepared for Propr Dental · Kaizen" : "Kaizen Marketing · Propr Dental");
       expect(all).toContain("#c8102e");
       expect(all).not.toContain("#475569");
     });
