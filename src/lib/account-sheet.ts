@@ -3,8 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { JWT } from "google-auth-library";
 import { setPrimarySeat } from "@/lib/buyer-seats";
 
-// The Kaizen Account Overview sheet, the source of truth for each account while the team moves over: its Meta and
-// Google tabs give every ad account's media buyer, monthly budget and KPI target, plus the team's notes (priority, the
+// The Kaizen Account Overview sheet, the source of truth for each account while the team moves over: its Meta,
+// Google and TikTok tabs give every ad account's media buyer, monthly budget and KPI target, plus the team's notes (priority, the
 // #1 problem and its solution, the latest media buying, creative and copy updates). Read at 12pm and 5pm ET: the
 // buyer, budget and target it gives replace what's in Kaizen Ads, the notes sit on the KPI for the card and the
 // agents, and the client's Meta buyer follows the sheet. Matched by ad account ID; nothing is written to the sheet.
@@ -69,15 +69,38 @@ const NOTE_FIELDS: [string, string][] = [
   ["max30", "Max KPI (Last 30)"],
 ];
 
+type SheetPlatform = "meta" | "google" | "tiktok";
+
+/** The sheet's tab names, to find the TikTok one however it's written ("TikTok", "Tiktok Ads") */
+async function tabTitles(tok: string): Promise<string[]> {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties.title`, { headers: { Authorization: `Bearer ${tok}` }, cache: "no-store" });
+  return res.ok ? ((await res.json()) as { sheets?: { properties: { title: string } }[] }).sheets?.map((s) => s.properties.title) ?? [] : [];
+}
+
+/** The ad account on a row: Meta's and Google's "Ad Account ID", TikTok's advertiser ID under whichever header it has */
+export function accountOf(r: Record<string, string>) {
+  const key = Object.keys(r).find((k) => /^ad\s*account\s*id$/i.test(k.trim())) ?? Object.keys(r).find((k) => /advertiser\s*id|account\s*id|ad\s*account/i.test(k));
+  return digits(key ? r[key] : "");
+}
+
 /** Reads the sheet and brings Kaizen Ads in line with it. */
 export async function syncAccountSheet(admin: SupabaseClient) {
   const { tracker } = await import("@/lib/progress");
   const t = await tracker(admin, "sheet", "accounts");
   try {
     const tok = await token();
-    t.on("Reading the Meta and Google tabs");
-    const [meta, google] = await Promise.all([readTab(tok, "Meta"), readTab(tok, "Google").catch(() => [] as string[][])]);
-    const rows = [...rowsOf(meta).map((r) => ({ r, platform: "meta" as const })), ...rowsOf(google).map((r) => ({ r, platform: "google" as const }))];
+    t.on("Reading the Meta, Google and TikTok tabs");
+    const tiktokTab = (await tabTitles(tok).catch(() => [] as string[])).find((x) => /tik\s*tok/i.test(x)) ?? null;
+    const [meta, google, tiktok] = await Promise.all([
+      readTab(tok, "Meta"),
+      readTab(tok, "Google").catch(() => [] as string[][]),
+      tiktokTab ? readTab(tok, tiktokTab).catch(() => [] as string[][]) : Promise.resolve([] as string[][]),
+    ]);
+    const rows: { r: Row; platform: SheetPlatform }[] = [
+      ...rowsOf(meta).map((r) => ({ r, platform: "meta" as const })),
+      ...rowsOf(google).map((r) => ({ r, platform: "google" as const })),
+      ...rowsOf(tiktok).map((r) => ({ r, platform: "tiktok" as const })),
+    ];
     t.total(rows.length);
 
     const [{ data: targets }, { data: people }] = await Promise.all([
@@ -105,9 +128,9 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       const loose = (allClients ?? []).filter((c) => nm(c.name).length >= 4 && (n.includes(nm(c.name)) || nm(c.name).includes(n)));
       return loose.length === 1 ? loose[0] : null;
     };
-    // The row's buyer onto the client's Meta or Google slot (a new Meta buyer takes the account's work and gets a handoff)
-    const assign = async (clientId: string, platform: "meta" | "google", buyer: { id: string }) => {
-      const slot = platform === "google" ? "google_buyer" : "meta_buyer";
+    // The row's buyer onto the client's Meta, Google or TikTok slot (a new Meta buyer takes the account's work and gets a handoff)
+    const assign = async (clientId: string, platform: SheetPlatform, buyer: { id: string }) => {
+      const slot = platform === "google" ? "google_buyer" : platform === "tiktok" ? "tiktok_buyer" : "meta_buyer";
       const { data: cur } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", slot);
       // Already on the seat (primary or secondary): nothing to change
       if ((cur ?? []).some((c) => c.profile_id === buyer.id)) return;
@@ -124,7 +147,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
 
     for (const { r, platform } of rows) {
       const name = r["Client Name"] ?? r["Clients"] ?? "";
-      const account = digits(r["Ad Account ID"]);
+      const account = accountOf(r);
       const buyerName = r["Media Buyer"] ?? "";
       const buyer = person(buyerName);
       if (buyerName && !buyer) out.unknownBuyer.push(`${buyerName} (${name})`);
@@ -147,7 +170,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
         }
         const { data: made } = await admin
           .from("kpi_targets")
-          .insert({ client_id: c.id, platform, ad_account_id: account, conversion: platform === "google" ? "conversions" : "purchases", target: money(r["KPI"]), monthly_budget: budgetOf(r["Budget"]), owner_id: buyer?.id ?? null })
+          .insert({ client_id: c.id, platform, ad_account_id: account, conversion: platform === "google" ? "conversions" : platform === "tiktok" ? "conversions" : "purchases", target: money(r["KPI"]), monthly_budget: budgetOf(r["Budget"]), owner_id: buyer?.id ?? null })
           .select("id, client_id, platform, ad_account_id, conversion, target, monthly_budget, owner_id, sheet, client_confirmed_at")
           .single();
         if (!made) {
