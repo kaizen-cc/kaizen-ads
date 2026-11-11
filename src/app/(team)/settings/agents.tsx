@@ -277,7 +277,7 @@ export function AgentsOverview({ agents, items }: { agents: Agent[]; items: Item
                       </span>
                       <span className="text-right text-faint">
                         {a.stats.runs ? `${a.stats.runs} runs this week` : a.lastAt ? "No runs this week" : "No runs yet"}
-                        {a.lastAt && <span className="block text-[11px]">last {ago(a.lastAt)}</span>}
+                        {a.lastAt && <span suppressHydrationWarning className="block text-[11px]">last {ago(a.lastAt)}</span>}
                       </span>
                     </div>
                   </div>
@@ -296,7 +296,7 @@ export function AgentsOverview({ agents, items }: { agents: Agent[]; items: Item
               <h2 className="font-heading text-[20px]">Shared knowledge</h2>
               <p className="mt-1 text-sm text-muted">Every agent reads these: how Kaizen works, Meta policy, formats and specs.</p>
             </div>
-            <span className="tabular text-xs text-faint">~{shared.filter((k) => k.active).reduce((t, k) => t + tokensOf(k.body), 0).toLocaleString()} tokens</span>
+            <span className="tabular text-xs text-faint">~{shared.filter((k) => k.active).reduce((t, k) => t + tokensOf(k.body), 0).toLocaleString("en-US")} tokens</span>
           </div>
           <ItemList items={shared} agentKey={null} />
         </section>
@@ -364,7 +364,7 @@ function ItemCard({ item, readOnly = false }: { item: Item; readOnly?: boolean }
           <button onClick={discard} className="h-11 rounded-full px-4 text-sm md:h-9 text-muted hover:text-fg">
             Cancel
           </button>
-          <span className="tabular ml-auto text-[11px] text-faint">~{tokensOf(body).toLocaleString()} tokens</span>
+          <span className="tabular ml-auto text-[11px] text-faint">~{tokensOf(body).toLocaleString("en-US")} tokens</span>
           {canDelete && <button
             onClick={() => {
               if (!confirm(`Delete "${item.title}"? This can't be undone.`)) return;
@@ -409,7 +409,7 @@ function ItemCard({ item, readOnly = false }: { item: Item; readOnly?: boolean }
         )}
       </div>
       <p className="line-clamp-3 whitespace-pre-line text-xs leading-relaxed text-muted">{item.body}</p>
-      <p className="tabular text-[11px] text-faint">~{tokensOf(item.body).toLocaleString()} tokens · updated {fmt(item.updatedAt)}</p>
+      <p className="tabular text-[11px] text-faint">~{tokensOf(item.body).toLocaleString("en-US")} tokens · updated {fmt(item.updatedAt)}</p>
     </li>
   );
 }
@@ -530,7 +530,7 @@ function CostCompare({ a, model, effort }: { a: Agent; model: string; effort: st
     <div className={`grid gap-3 rounded-[14px] border p-4 transition-colors ${same ? "border-line bg-bg" : diff < 0 ? "border-ok/40 bg-ok-soft/30" : "border-warn/40 bg-warn-soft/30"}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">{same ? "What this skill costs" : "If you make this change"}</p>
-        <p className="text-[11px] text-faint">{runs ? `${runs.toLocaleString()} runs this month` : "No runs yet this month"}</p>
+        <p className="text-[11px] text-faint">{runs ? `${runs.toLocaleString("en-US")} runs this month` : "No runs yet this month"}</p>
       </div>
       {runs > 0 ? (
         <div className="grid gap-3 sm:grid-cols-2">
@@ -636,7 +636,7 @@ function Setup({ a }: { a: Agent }) {
       <div className="grid gap-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <p className="text-sm font-medium">Instructions</p>
-          <p className="text-xs text-faint">How it thinks, what matters most, hard rules. ~{tokensOf(instructions).toLocaleString()} tokens</p>
+          <p className="text-xs text-faint">How it thinks, what matters most, hard rules. ~{tokensOf(instructions).toLocaleString("en-US")} tokens</p>
         </div>
         <textarea
           value={instructions}
@@ -1179,7 +1179,7 @@ function AgentDetailBody({ a, items, chat, learned = null }: { a: Agent; items: 
             <dl className="grid w-full grid-cols-2 gap-x-8 gap-y-3 border-t border-line pt-5 sm:grid-cols-5">
               {[
                 ["Brain", `${a.model[0].toUpperCase()}${a.model.slice(1)} · ${a.effort}`],
-                ["Reads", `~${tokens.toLocaleString()} tokens`],
+                ["Reads", `~${tokens.toLocaleString("en-US")} tokens`],
                 ["Runs, 7 days", a.stats.runs ? String(a.stats.runs) : "—"],
                 ["Cost, 7 days", a.cost7 >= 0.005 ? `${money(a.cost7)} · ${money(a.cost7 / 7)}/day` : "—"],
                 ["Last used", ago(a.lastAt) ?? "Never"],
@@ -1282,7 +1282,7 @@ function AgentDetailBody({ a, items, chat, learned = null }: { a: Agent; items: 
                       </span>
                       <span className="w-full pl-6 text-xs md:w-36 md:shrink-0 md:pl-0 md:text-right">
                         <span className={`block tabular ${m.runs7 ? "text-fg" : "text-faint"}`}>{m.runs7 ? `${m.runs7} this week` : "None this week"}</span>
-                        <span className="block text-[11px] text-faint">{m.lastAt ? `last ${ago(m.lastAt)}` : "not used yet"}</span>
+                        <span suppressHydrationWarning className="block text-[11px] text-faint">{m.lastAt ? `last ${ago(m.lastAt)}` : "not used yet"}</span>
                       </span>
                     </li>
                   );
@@ -1305,7 +1305,7 @@ function AgentDetailBody({ a, items, chat, learned = null }: { a: Agent; items: 
                       {r.moment ?? r.label}
                       {r.moment && r.label && <span className="text-faint"> · {r.label}</span>}
                     </span>
-                    <span className="shrink-0 text-xs text-faint">{ago(r.at)}</span>
+                    <span suppressHydrationWarning className="shrink-0 text-xs text-faint">{ago(r.at)}</span>
                   </li>
                 ))}
               </ul>
@@ -1500,7 +1500,7 @@ export function KnowledgeView({ items, spine }: { items: Item[]; spine: { body: 
               <h2 className="font-heading text-[20px]">Shared knowledge</h2>
               <p className="mt-1 text-[13px] text-muted">Every agent reads these: how Kaizen works, packages and pricing, Meta policy, formats and specs.</p>
             </div>
-            <span className="tabular text-xs text-faint">~{shared.filter((k) => k.active).reduce((t, k) => t + tokensOf(k.body), 0).toLocaleString()} tokens</span>
+            <span className="tabular text-xs text-faint">~{shared.filter((k) => k.active).reduce((t, k) => t + tokensOf(k.body), 0).toLocaleString("en-US")} tokens</span>
           </div>
           <ItemList items={shared} agentKey={null} />
         </section>
@@ -1539,7 +1539,7 @@ export function RolesOverview({ roles, agents, items, isExec = true }: { roles: 
             <dl className="grid grid-cols-3 gap-6 md:gap-10">
               {[
                 ["This week", money(week), `${money(week / 7)} a day`],
-                ["Runs", runs.toLocaleString(), "last 7 days"],
+                ["Runs", runs.toLocaleString("en-US"), "last 7 days"],
                 ["Switched on", `${live}/${agents.length}`, review ? `${review} edits to review` : "skills running"],
               ].map(([k, v, n]) => (
                 <div key={k} className="grid gap-0.5">
@@ -1639,7 +1639,7 @@ function CoreEditor({ role }: { role: Role }) {
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h3 className="font-heading text-[18px]">Core</h3>
-          <p className="mt-1 text-sm text-muted">Every {role.label} skill reads this after Kaizen strategy and before its own playbook. ~{tokensOf(core).toLocaleString()} tokens</p>
+          <p className="mt-1 text-sm text-muted">Every {role.label} skill reads this after Kaizen strategy and before its own playbook. ~{tokensOf(core).toLocaleString("en-US")} tokens</p>
         </div>
         <span className="text-xs text-faint">
           Changed {fmt(role.updatedAt)}

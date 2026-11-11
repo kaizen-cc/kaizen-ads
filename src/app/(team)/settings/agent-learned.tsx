@@ -22,7 +22,7 @@ const SCOPES: { key: LearningScope; label: string; hint: string }[] = [
   { key: "client", label: "One client", hint: "Stays with the client it came from until others back it" },
 ];
 
-const ago = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const ago = (iso: string) => new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" });
 const TARGET = (t: string) => (t === "setup" ? "Brain & instructions" : t === "core" ? "Core" : t === "item:new" ? "A new skill or knowledge item" : t === "learnings" ? "What it has learned" : t.startsWith("item:") ? "A skill or knowledge item" : t);
 
 function Card({ l, others }: { l: LearningView; others: LearningView[] }) {

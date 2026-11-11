@@ -137,9 +137,9 @@ export function ProgressBar({ progress }: { progress: Progress }) {
 export function LastRun({ run }: { run: RunState }) {
   if (!run?.startedAt) return null;
   if (run.running)
-    return <p className="text-[11px] text-muted">Running now, started {ago(run.startedAt)}{run.by ? ` by ${run.by}` : ""}.</p>;
+    return <p suppressHydrationWarning className="text-[11px] text-muted">Running now, started {ago(run.startedAt)}{run.by ? ` by ${run.by}` : ""}.</p>;
   return (
-    <p className={`text-[11px] ${run.error ? "text-bad" : "text-muted"}`}>
+    <p suppressHydrationWarning className={`text-[11px] ${run.error ? "text-bad" : "text-muted"}`}>
       Last synced by hand {ago(run.finishedAt ?? run.startedAt)}
       {run.by ? ` by ${run.by}` : ""}: {run.error ? run.error : run.summary || "done"}
     </p>

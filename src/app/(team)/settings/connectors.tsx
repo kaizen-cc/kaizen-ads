@@ -31,8 +31,9 @@ export type MineItem = {
 
 const authLabel = (a: AuthKind) => AUTH_KINDS.find((x) => x.key === a)?.label ?? a;
 const roleNames = (roles: string[] | null) => (!roles?.length ? "Everyone" : roles.map((r) => ROLES.find((x) => x.value === r)?.label ?? r).join(", "));
-const when = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-const whenTime = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+// New York time, as the rest of Settings: the server renders in UTC and the browser in its own zone
+const when = (iso: string) => new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" });
+const whenTime = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const field = "min-h-11 w-full rounded-[12px] border border-line bg-bg px-3 text-[14px] text-fg outline-none transition placeholder:text-faint focus:border-brand/50";
 const primary = "inline-flex min-h-11 shrink-0 items-center justify-center rounded-full bg-brand px-5 text-[13.5px] font-medium text-white transition hover:bg-brand-hover disabled:opacity-40";
 const quiet = "inline-flex min-h-11 shrink-0 items-center justify-center rounded-full border border-line px-4 text-[13px] text-fg transition hover:border-brand/40 disabled:opacity-40";
