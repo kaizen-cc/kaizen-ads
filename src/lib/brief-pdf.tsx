@@ -570,20 +570,21 @@ function AssetsAndExport({ b }: { b: BriefPdfInput }) {
     .filter((l) => !seen.has(l.url))
     .slice(0, 4)
     .map((l) => ({ word: l.label.replace("Meta Ad Library", "Ad Library"), url: l.url }));
-  if (!rows.length && !links.length) return null;
+  const exportLine = b.exportLine ? b.exportLine.replace(/(\d{3,4})x(\d{3,4})/g, "$1×$2") : "";
+  if (!rows.length && !links.length && !exportLine) return null;
   return (
     <View style={s.section} wrap={false}>
       <Head>Assets and export</Head>
       <View style={[s.card, { paddingVertical: 1, paddingHorizontal: 11 }]}>
         {rows.map((r, i) => (
-          <View key={i} style={[s.row, i === rows.length - 1 && !links.length ? { borderBottomWidth: 0 } : {}]} wrap={false}>
+          <View key={i} style={[s.row, i === rows.length - 1 && !links.length && !exportLine ? { borderBottomWidth: 0 } : {}]} wrap={false}>
             <Text style={[s.rowLabel, r.need ? { color: RED } : {}]}>{r.label}</Text>
             <Text style={s.rowTxt}>{curly(pdfText(r.what))}</Text>
             <View style={s.rowLink}>{r.url ? <Open url={r.url} word={r.word} /> : null}</View>
           </View>
         ))}
         {links.length ? (
-          <View style={[s.row, { borderBottomWidth: 0 }]} wrap={false}>
+          <View style={[s.row, exportLine ? {} : { borderBottomWidth: 0 }]} wrap={false}>
             <Text style={s.rowLabel}>Links</Text>
             <View style={{ flex: 1, flexDirection: "row", flexWrap: "wrap", marginLeft: -10 }}>
               {links.map((l, i) => (
@@ -592,19 +593,13 @@ function AssetsAndExport({ b }: { b: BriefPdfInput }) {
             </View>
           </View>
         ) : null}
-      </View>
-    </View>
-  );
-}
-
-/** The export in one full-width strip under the assets: specs, the safe zone and the file names, in one or two lines */
-function ExportStrip({ line }: { line: string }) {
-  if (!line) return null;
-  return (
-    <View style={s.section} wrap={false}>
-      <Head>Export</Head>
-      <View style={[s.card, { paddingVertical: 5, paddingHorizontal: 11 }]}>
-        <Text style={{ fontSize: 7.8, lineHeight: 1.32, color: BODY }}>{line.replace(/(\d{3,4})x(\d{3,4})/g, "$1×$2")}</Text>
+        {/* The export as the table's last row: it sits with the assets, never alone on a page of its own */}
+        {exportLine ? (
+          <View style={[s.row, { borderBottomWidth: 0 }]} wrap={false}>
+            <Text style={s.rowLabel}>Export</Text>
+            <Text style={[s.rowTxt, { flex: 1 }]}>{exportLine}</Text>
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -772,7 +767,6 @@ export function BriefDocument({ b }: { b: BriefPdfInput }) {
               </View>
             ) : null}
           </View>
-          <ExportStrip line={b.exportLine} />
         </View>
         {footer}
       </Page>

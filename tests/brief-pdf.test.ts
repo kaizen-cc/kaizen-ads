@@ -271,6 +271,55 @@ describe("brief pdf render", () => {
     expect(pagesOf(old.pdf)).toBeLessThanOrEqual(2);
   });
 
+  it("renders the real VIP Lounge video brief to two pages, the export with the assets (never a page of its own)", { timeout: 60_000 }, async () => {
+    const drive = { headquarters: "https://drive.google.com/drive/folders/hq123", adCreatives: "https://drive.google.com/drive/folders/ads456" };
+    const vip = fixture(
+      "video",
+      {
+        ...videoSpec,
+        beats: videoSpec.beats.slice(0, 5),
+        versions: ["“Our customers get a lounge on game night.” (net new)", "“More than tickets. A place to start your night.”"],
+        dos: [
+          "Best Tickets name in the first 3 seconds; every line as burned-in on-screen text.",
+          "Real lounge footage only, no stock and no suite footage passed off as the lounge.",
+          "Drinks shown social and moderate. Alcohol is in frame, so the buyer runs this 21+.",
+          "Approved lines word for word: “We take pride in treating every customer as family.” and “Best Seats, Best Service = Best Tickets!”",
+          "Clips cut to match the message (the client's Nov 1 feedback).",
+        ],
+        donts: [
+          "“Free”, “on us”, “complimentary” or “VIP access included” until the client confirms the terms.",
+          "Price, discounts, promo codes, “cheap”, or “premium” as the headline claim.",
+          "Team or event logos, artist photos, dates or event names: this runs as evergreen.",
+          "Other ticket sites named, or anything negative about them.",
+          "AI-generated video, images or voices (client rule).",
+        ],
+        assets: [
+          { item: "Beer Wall View.mov: Behind the Bar.mov, Serving Drink.mov (Drive: Best Tickets - Headquarters / Best Tickets Evergreen / VIP Lounge), for the hook and near-the-arena beats. https://drive.google.com/file/d/a1/view", status: "have" as const },
+          { item: "Candid Conversation Clip.mov: Sipping/Table view.mov, Beers.mov (Drive: Best Tickets - Headquarters / Best Tickets Evergreen / VIP Lounge), for the real-people and family beats. https://drive.google.com/file/d/a2/view", status: "have" as const },
+          { item: "A shot of the lounge's exterior or sign, so viewers know it's a real place by the arena.", status: "need" as const },
+          { item: "A 10s vertical phone clip of staff greeting customers in the lounge before an arena event (optional, adds a fresh face).", status: "shoot" as const },
+        ],
+        copy: [
+          "Primary: Direction: real local team plus a lounge near the arena on event days; family-feel service; send to BestTickets.com. No price, no 'free' until confirmed.",
+          "Primary: Direction: short version, 'More than tickets' framing with the family line.",
+          "Headline: More Than Tickets",
+          "Headline: Best Seats, Best Service",
+          "CTA: Shop Now",
+        ],
+      },
+      { new: 1, variations: 1 },
+      "Our customers get more than tickets: a lounge by the arena to start the night, run by the same local team.",
+    );
+    const r = await render("video-vip-lounge", vip, ["9x16", "4x5"], "Best Tickets", {
+      due: "Tue, Nov 17",
+      makers: ["Jazem (video editor)"],
+      confirm: ["Is the lounge open now, and which ticket buyers get in, on which event days?", "Is it free with food and drinks included, so we can say so in ads?", "Do the people in the April 2025 lounge clips have ad-use releases?"],
+      links: [{ label: "Landing page", url: "https://besttickets.com" }],
+      drive,
+    });
+    expect(pagesOf(r.pdf)).toBe(2);
+  });
+
   it("renders the real Best Tickets static brief to two clean pages", { timeout: 60_000 }, async () => {
     const drive = { headquarters: "https://drive.google.com/drive/folders/hq123", adCreatives: "https://drive.google.com/drive/folders/ads456" };
     const ref = { kicker: "Built on a live ad in the market", title: "Seat view", brand: "StubHub", days: 31, video: false, note: null, links: [{ label: "Meta Ad Library", url: "https://www.facebook.com/ads/library/?id=1122904563418437" }], image: null };
