@@ -3,7 +3,7 @@
 -- 'kaizen-directory', so the registry sync never marks them unavailable. Safe to run again.
 insert into public.ai_connector_registry (name, title, description, url, transport, icon_url, website_url, status, available, source, featured, vendor, first_seen_at, last_seen_at)
 values
-  ('kaizen.directory/asana', 'Asana', 'Tasks, projects and goals in Asana', 'https://mcp.asana.com/v2/mcp', 'streamable-http', 'https://www.google.com/s2/favicons?domain=asana.com&sz=128', 'https://asana.com', 'active', true, 'kaizen-directory', true, 'Asana', now(), now()),
+  ('kaizen.directory/asana', 'Asana', 'Tasks, projects and goals in Asana', 'https://mcp.asana.com/mcp', 'streamable-http', 'https://www.google.com/s2/favicons?domain=asana.com&sz=128', 'https://asana.com', 'active', true, 'kaizen-directory', true, 'Asana', now(), now()),
   ('kaizen.directory/atlassian', 'Atlassian', 'Jira and Confluence: issues, pages and projects', 'https://mcp.atlassian.com/v1/mcp', 'streamable-http', 'https://www.google.com/s2/favicons?domain=atlassian.com&sz=128', 'https://atlassian.com', 'active', true, 'kaizen-directory', true, 'Atlassian', now(), now()),
   ('kaizen.directory/box', 'Box', 'Files and folders in Box', 'https://mcp.box.com', 'streamable-http', 'https://www.google.com/s2/favicons?domain=box.com&sz=128', 'https://box.com', 'active', true, 'kaizen-directory', true, 'Box', now(), now()),
   ('kaizen.directory/brevo', 'Brevo', 'Email and SMS campaigns, contacts and lists in Brevo', 'https://mcp.brevo.com/v1/brevo/mcp', 'streamable-http', 'https://www.google.com/s2/favicons?domain=brevo.com&sz=128', 'https://brevo.com', 'active', true, 'kaizen-directory', true, 'Brevo', now(), now()),
