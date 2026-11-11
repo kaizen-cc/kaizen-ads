@@ -91,7 +91,7 @@ export function ConnectorsAdmin({
           type="button"
           role="tab"
           aria-selected={view === k}
-          onClick={() => router.push(k === "offered" ? "/settings?tab=connectors" : "/settings?tab=connectors&view=catalog", { scroll: false })}
+          onClick={() => router.push(k === "offered" ? "/settings?tab=connections&section=team" : "/settings?tab=connections&section=team&view=catalog", { scroll: false })}
           className={`min-h-11 rounded-full px-4 text-[13px] transition ${view === k ? "bg-fg text-bg" : "bg-surface text-muted hover:text-fg"}`}
         >
           {label}
@@ -105,7 +105,7 @@ export function ConnectorsAdmin({
       {tabs}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <p className="max-w-[680px] text-sm text-muted">
-          The services the team can connect in Kaizen AI, like the connectors your organization turned on in Claude. Each person signs in with their own account in Settings, Your connections,
+          The services the team can connect in Kaizen AI, like the connectors your organization turned on in Claude. Each person signs in with their own account in Connections, Your accounts,
           then switches it on in a chat. Add the service&apos;s remote MCP server URL; Check tells you how it signs in.
         </p>
         <button
@@ -174,13 +174,13 @@ function Catalog({ tabs, items, total, lastSync, syncError, ready }: { tabs: Rea
   const picked = items.find((i) => i.name === offer) ?? null;
   // Seen when they leave the catalog: the next visit's "New" and "Updated" count from then (this visit keeps showing them)
   useEffect(() => () => void markCatalogSeen().catch(() => {}), []);
-  const search = (v: string) => router.replace(`/settings?tab=connectors&view=catalog${v.trim() ? `&q=${encodeURIComponent(v.trim())}` : ""}`, { scroll: false });
+  const search = (v: string) => router.replace(`/settings?tab=connections&section=team&view=catalog${v.trim() ? `&q=${encodeURIComponent(v.trim())}` : ""}`, { scroll: false });
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       {tabs}
       <div className="grid gap-2 sm:flex sm:items-end sm:justify-between">
         <p className="max-w-[640px] text-sm text-muted">
-          Remote MCP servers from Anthropic&apos;s registry, checked every day. Offer one and it shows up in Your connections for the roles you pick; it keeps its URL and version current by itself.
+          Remote MCP servers from Anthropic&apos;s registry, checked every day. Offer one and it shows up in Your accounts for the roles you pick; it keeps its URL and version current by itself.
         </p>
         <p className="text-[12px] text-faint">{lastSync ? `Synced ${when(lastSync)}` : "Not synced yet"}{syncError ? " · last sync had a problem" : ""}</p>
       </div>

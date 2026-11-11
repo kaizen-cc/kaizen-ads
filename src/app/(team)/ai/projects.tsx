@@ -373,7 +373,7 @@ export function ProjectView({ data, meId, clients, onOpenChat, onChanged }: { da
         {missing.length ? (
           <div className="grid gap-2">
             {missing.map((k) => (
-              <Link key={k} href="/settings?tab=connections" className="flex min-h-12 items-center gap-3 rounded-[16px] border border-warn/30 bg-warn-soft/50 px-4 py-2 text-[13.5px] text-fg hover:border-warn/60">
+              <Link key={k} href="/settings?tab=connections&section=yours" className="flex min-h-12 items-center gap-3 rounded-[16px] border border-warn/30 bg-warn-soft/50 px-4 py-2 text-[13.5px] text-fg hover:border-warn/60">
                 <Icon d={P.plug} size={16} />
                 <span className="flex-1">Connect {connectorLabel(k)} to use this project fully</span>
                 <span className="text-[12.5px] font-medium text-brand-text">Settings › Connections</span>

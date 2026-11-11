@@ -47,17 +47,22 @@ const TABS = [
   ["data", "Raw data"],
   ["sync", "Sync health"],
   ["connections", "Connections"],
-  ["connectors", "Connectors"],
-  ["my-connections", "Your connections"],
   ["errors", "Errors"],
   ["deleted", "Deleted"],
 ] as const;
 // Leads see the team and the deleted log; execs see everything. The heads of Meta, Google and Creative also see
 // AI agents, with only their own line's agent in it (canTrainAgent). Everyone sees Your connections (their own
 // accounts for Kaizen AI's connectors)
-const LEAD_TABS = ["team", "connections", "deleted"];
+const LEAD_TABS = ["team", "deleted"];
 const HEAD_TABS = ["agents"];
-const EVERYONE_TABS = ["my-connections"];
+// One Connections tab for everyone: your own accounts first; execs also manage the team's connectors and leads and
+// execs see the media keys (ElevenLabs, Higgsfield, Motion)
+const EVERYONE_TABS = ["connections"];
+const CONNECTION_SECTIONS = [
+  ["yours", "Your accounts", "everyone"],
+  ["team", "Team connectors", "exec"],
+  ["keys", "Media keys", "lead"],
+] as const;
 
 const day = (offset: number) => {
   const d = new Date(`${nyParts(new Date()).date}T12:00:00Z`);
@@ -889,7 +894,12 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
   const tabs = me.isExec ? TABS : TABS.filter(([k]) => (isExecOrLead(me) && LEAD_TABS.includes(k)) || (trains && HEAD_TABS.includes(k)) || EVERYONE_TABS.includes(k));
   if (!tabs.length) redirect("/pipeline");
   const sp = await searchParams;
-  const tab = tabs.some(([k]) => k === sp.tab) ? (sp.tab as (typeof TABS)[number][0]) : tabs[0][0];
+  // The old tabs land in their section (links and bookmarks from before they were one)
+  const askedTab = sp.tab === "connectors" || sp.tab === "my-connections" ? "connections" : sp.tab;
+  const tab = tabs.some(([k]) => k === askedTab) ? (askedTab as (typeof TABS)[number][0]) : tabs[0][0];
+  const sections = CONNECTION_SECTIONS.filter(([, , who]) => who === "everyone" || (who === "exec" ? me.isExec : isExecOrLead(me)));
+  const askedSection = sp.tab === "connectors" ? "team" : sp.tab === "my-connections" ? "yours" : sp.section;
+  const section = sections.some(([k]) => k === askedSection) ? (askedSection as string) : "yours";
   const valid = (d: unknown) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
   const from = valid(sp.from) ? (sp.from as string) : day(-30);
   const to = valid(sp.to) ? (sp.to as string) : day(0);
@@ -926,9 +936,27 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       {tab === "team" && <Team />}
       {tab === "data" && <Data target={typeof sp.target === "string" ? sp.target : null} from={from} to={to} />}
       {tab === "sync" && <Sync motion={typeof sp.motion === "string" ? sp.motion : null} />}
-      {tab === "connections" && <Connections isExec={me.isExec} />}
-      {tab === "connectors" && <ConnectorsTab me={me} view={typeof sp.view === "string" ? sp.view : null} q={typeof sp.q === "string" ? sp.q : null} />}
-      {tab === "my-connections" && <MyConnectionsTab me={me} />}
+      {tab === "connections" && (
+        <div className="grid gap-6">
+          {sections.length > 1 && (
+            <nav aria-label="Connections" className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-full border border-line bg-surface p-1 no-scrollbar">
+              {sections.map(([k, name]) => (
+                <Link
+                  key={k}
+                  href={`/settings?tab=connections&section=${k}`}
+                  aria-current={section === k ? "page" : undefined}
+                  className={`inline-flex h-10 shrink-0 items-center whitespace-nowrap rounded-full px-4 text-[13.5px] transition-colors md:h-9 ${section === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+                >
+                  {name}
+                </Link>
+              ))}
+            </nav>
+          )}
+          {section === "yours" && <MyConnectionsTab me={me} />}
+          {section === "team" && <ConnectorsTab me={me} view={typeof sp.view === "string" ? sp.view : null} q={typeof sp.q === "string" ? sp.q : null} />}
+          {section === "keys" && <Connections isExec={me.isExec} />}
+        </div>
+      )}
       {tab === "errors" && <Errors all={sp.show === "all"} />}
       {tab === "deleted" && <Deleted />}
     </div>

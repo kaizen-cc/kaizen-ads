@@ -219,7 +219,7 @@ export function authorizeUrl(meta: Pick<AuthMeta, "authorization_endpoint">, p: 
 /** An MCP connector error as the person should read it, and whether reconnecting is the fix */
 export function connectorError(message: string, name: string): { text: string; reconnect: boolean } {
   const m = String(message ?? "");
-  if (/\b401\b|unauthori[sz]ed|invalid[_ ]token|expired|forbidden|\b403\b|authenticat/i.test(m)) return { text: `${name} didn't accept your sign in. Reconnect it in Settings, Your connections.`, reconnect: true };
+  if (/\b401\b|unauthori[sz]ed|invalid[_ ]token|expired|forbidden|\b403\b|authenticat/i.test(m)) return { text: `${name} didn't accept your sign in. Reconnect it in Settings, Connections.`, reconnect: true };
   if (/timed? ?out|timeout|ECONN|ENOTFOUND|unreachable|connect|5\d\d|unavailable/i.test(m)) return { text: `${name} isn't answering right now. Try again in a bit.`, reconnect: false };
   return { text: `${name} had a problem with this request. Try again, or switch it off for this chat.`, reconnect: false };
 }

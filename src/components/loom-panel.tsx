@@ -75,7 +75,7 @@ export function LoomPanel({ status, clients = [], clientId = null, canDecide = t
               ) : (
                 <span>
                   Connect Loom through Atlassian and new Looms come in automatically.{" "}
-                  <Link href="/settings?tab=connections" className="text-brand-text hover:underline">
+                  <Link href="/settings?tab=connections&section=keys" className="text-brand-text hover:underline">
                     Connections
                   </Link>
                 </span>

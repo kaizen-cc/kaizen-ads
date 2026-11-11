@@ -43,6 +43,6 @@ export function keyFrom(name: string) {
 // ─── Links ─────────────────────────────────────────────────────────────────
 
 /** Settings › Your connections (optionally opened on one connector): where Connect, Reconnect and Disconnect live */
-export const connectionsHref = (key?: string | null) => `/settings?tab=my-connections${key ? `&connector=${encodeURIComponent(key)}` : ""}`;
+export const connectionsHref = (key?: string | null) => `/settings?tab=connections&section=yours${key ? `&connector=${encodeURIComponent(key)}` : ""}`;
 /** Starts connecting (OAuth) and comes back to `ret` (a path in the app) */
 export const connectHref = (key: string, ret?: string | null) => `/api/connectors/connect?key=${encodeURIComponent(key)}${ret ? `&return=${encodeURIComponent(ret)}` : ""}`;

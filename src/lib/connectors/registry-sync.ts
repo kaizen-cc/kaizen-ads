@@ -84,7 +84,7 @@ export async function syncConnectorRegistry(admin: SupabaseClient, opts: { fetch
             kind: "ai",
             title: `${count} new connector${count === 1 ? "" : "s"} available`,
             body: "New services in the MCP registry the team could connect in Kaizen AI. Offer the ones you want in Settings, Connectors.",
-            href: "/settings?tab=connectors&view=catalog",
+            href: "/settings?tab=connections&section=team&view=catalog",
             key: `connectors-new:${now.slice(0, 10)}`,
             priority: "normal",
           })),
