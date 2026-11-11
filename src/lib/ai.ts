@@ -635,6 +635,8 @@ export type ClientContext = {
   adAccountConnected: boolean;
   /** TikTok Ads, last 30 days against the 30 before (read only), when they run it and it's connected */
   tiktok?: string;
+  /** Email and SMS from Klaviyo (read only): the last 30 days' attributed revenue, open and click rates, the last 3 campaigns */
+  email?: string;
   /** What the client said against AI content (src/lib/ai-content.ts), when they did: no AI avatars, voices or generated media */
   aiRule?: string | null;
   allotment: Allotment | null;
@@ -694,7 +696,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
   if (!c) return null;
   // The Bible's living learnings: what their ads proved since it was written, newest first
   const learned = ((bible?.learnings ?? []) as { at: string; kind: string; text: string }[]).slice(-30).reverse();
-  const [newer, siteIssues, gtm, googleGtm, business, documents, playbook, peers, patterns, reports, winners, kpis, intake, tiring, activity, motion, tiktok, aiRule] = await Promise.all([
+  const [newer, siteIssues, gtm, googleGtm, business, documents, playbook, peers, patterns, reports, winners, kpis, intake, tiring, activity, motion, tiktok, email, aiRule] = await Promise.all([
     // Slack and email that came in after the briefing was written, so suggestions and the review are current
     supabase
       .from("context_items")
@@ -768,6 +770,8 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
     import("@/lib/in-motion").then(({ loadInMotion }) => loadInMotion(supabase, clientId)).catch(() => []),
     // TikTok's numbers (read only; empty while TikTok isn't set up or they don't run it)
     import("@/lib/tiktok/store").then(({ tiktokBrief }) => tiktokBrief(supabase, clientId)).catch(() => ""),
+    // Their email and SMS (Klaviyo, read only; empty when it isn't connected or the migration isn't applied)
+    import("@/lib/klaviyo/store").then(({ klaviyoBrief }) => klaviyoBrief(supabase, clientId)).catch(() => ""),
     // Whether they take AI content at all (memory, the Bible's rules log, calls): a "no" is told to every writer
     import("@/lib/ai-content-rule").then(({ loadAiRule }) => loadAiRule(supabase, clientId)).catch(() => null),
   ]);
@@ -801,6 +805,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
     activity,
     motion,
     ...(tiktok ? { tiktok } : {}),
+    ...(email ? { email } : {}),
     aiRule: aiRule?.allowed === false ? aiRule.rule : null,
     angles: angles ?? [],
     memory: (memory ?? []) as ClientContext["memory"],
@@ -852,6 +857,13 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   else lines.push(ctx.adAccountConnected ? "Meta ad account linked, but no performance pulled yet. Don't invent metrics." : "No Meta ad account linked yet. Don't invent metrics.");
   if (on("meta") && ctx.tiktok)
     lines.push("<tiktok_ads_performance>", "TikTok is read only in Kaizen Ads: its numbers are here, but nothing can be changed or launched in TikTok from here yet (say so if asked to).", ctx.tiktok, "</tiktok_ads_performance>");
+  if (ctx.email)
+    lines.push(
+      "<email_marketing>",
+      "Their email and SMS from Klaviyo, read only: nothing can be sent, edited or scheduled in Klaviyo from Kaizen Ads (say so if asked to). Use it as context: how much of the business email carries, which offers and subject lines their list answers, and mention email where it matters to the ads.",
+      ctx.email,
+      "</email_marketing>",
+    );
   if (on("meta") && ctx.tiring)
     lines.push(
       "<tiring_ads>",

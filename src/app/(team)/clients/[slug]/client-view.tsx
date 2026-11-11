@@ -48,6 +48,9 @@ import { CampaignsPanel } from "./campaigns-panel";
 import { TikTokPanel } from "./tiktok-panel";
 import { TikTokReportToggle } from "./tiktok-report-toggle";
 import type { ClientTikTok } from "@/lib/tiktok/store";
+import type { ClientKlaviyo, KlaviyoConnectionView } from "@/lib/klaviyo/store";
+import { KlaviyoConnection } from "./klaviyo-connection";
+import { EmailPanel } from "./email-panel";
 import { DocsPanel } from "./docs-panel";
 import { KnowledgePanel } from "@/components/knowledge-panel";
 import type { KnowledgeDoc } from "@/lib/knowledge";
@@ -198,6 +201,8 @@ export type ClientViewProps = {
   campaigns?: PlatformSummary[] | null; // each platform's campaigns, last 30 days
   /** TikTok (read only): null while TikTok isn't set up, so nothing about it shows */
   tiktok?: { data: ClientTikTok | null; separate?: boolean } | null;
+  /** Klaviyo (email and SMS, read only): null until its migration is applied, so nothing about it shows */
+  klaviyo?: { conn: KlaviyoConnectionView | null; data: ClientKlaviyo | null; storeRevenue: number | null } | null;
   docs?: ClientDoc[] | null; // every file and link shared about them
   /** Knowledge files the agents read for this client only */
   knowledge?: KnowledgeDoc[];
@@ -218,7 +223,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -360,7 +365,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                     {/* The full business audit leads the page: the first thing anyone opening a client sees */}
                     {businessAudit}
                     {glance}
-                    <BusinessOverview cards={cards} audits={audits ?? {}} sprints={sprints ?? {}} />
+                    <BusinessOverview cards={cards} audits={audits ?? {}} sprints={sprints ?? {}} email={klaviyo?.conn && klaviyo.data ? { revenue: klaviyo.data.now.revenue, prev: klaviyo.data.before.revenue, campaigns: klaviyo.data.now.campaignsSent, openRate: klaviyo.data.now.openRate, currency: klaviyo.data.currency } : null} />
                     {patterns}
                     {business}
                   </div>
@@ -657,6 +662,11 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   {liveWrites && (
                     <Section title="Live changes in their ad accounts" description="Meta and Google Ads are switched on separately, client by client, by an exec. Off, every change stays a plan to do by hand.">
                       <LiveWritesPanel data={liveWrites} clientId={client.id} slug={client.slug} canEdit={can.admin && !demo} toggle={setLiveAdWrites.bind(null, client.id, client.slug)} />
+                    </Section>
+                  )}
+                  {klaviyo && (
+                    <Section title="Klaviyo" description="Their email and SMS, read only: campaigns, flows, lists and revenue, synced daily as context for the accounts. A lead or exec connects it with a read-only private API key.">
+                      <KlaviyoConnection clientId={client.id} conn={klaviyo.conn} canEdit={can.assign && !demo} />
                     </Section>
                   )}
                   <Section title="Creative billing date" description="When their creative allotment starts again: the day the Creative Package is billed in Stripe. Execs can set it by hand; every change is kept.">
@@ -1030,6 +1040,28 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                           {kpis && tiktokKpis.length > 0 ? <KpiPanel kpis={tiktokKpis} audits={audits} changes={null} /> : <p className="text-sm text-faint">No TikTok KPI yet. Link their TikTok ad account in Settings &gt; Sync health &gt; TikTok and a KPI card is made for it.</p>}
                           {tiktok?.data ? <TikTokPanel t={tiktok.data} /> : <p className="text-sm text-faint">No TikTok numbers yet: their ad account isn&apos;t linked, or the first pull hasn&apos;t run.</p>}
                         </div>
+                      ),
+                    },
+                  ],
+                },
+              ]
+            : []),
+          ...(klaviyo?.conn
+            ? [
+                {
+                  id: "email",
+                  label: "Email",
+                  tone: klaviyo.conn.status !== "active" || klaviyo.conn.error ? ("bad" as const) : null,
+                  note: klaviyo.data ? `${klaviyo.data.currency && klaviyo.data.currency !== "USD" ? `${klaviyo.data.currency} ` : "$"}${Math.round(klaviyo.data.now.revenue).toLocaleString("en-US")} · 30 days` : "Klaviyo",
+                  tabs: [
+                    {
+                      id: "performance",
+                      label: "Performance",
+                      hint: "Email and SMS from Klaviyo: revenue, campaigns, flows and lists (read only)",
+                      content: klaviyo.data ? (
+                        <EmailPanel k={klaviyo.data} storeRevenue={klaviyo.storeRevenue} />
+                      ) : (
+                        <p className="text-sm text-faint">{klaviyo.conn.error ? `Klaviyo isn't reading: ${klaviyo.conn.error}` : "Klaviyo is connected. The first 90 days are being read; the numbers show here once they're in."}</p>
                       ),
                     },
                   ],

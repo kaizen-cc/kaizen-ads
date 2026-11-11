@@ -4,6 +4,7 @@ import { BusinessManagers } from "@/components/meta-business-connections";
 import { TikTokConnection } from "@/components/tiktok-connection";
 import { tiktokConfigured } from "@/lib/tiktok/core";
 import { Connections } from "./connections";
+import { KlaviyoCard } from "./klaviyo-card";
 import { ConnectorsTab, MyConnectionsTab } from "./connectors-tab";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
@@ -954,7 +955,12 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
           )}
           {section === "yours" && <MyConnectionsTab me={me} />}
           {section === "team" && <ConnectorsTab />}
-          {section === "keys" && <Connections isExec={me.isExec} />}
+          {section === "keys" && (
+            <div className="grid gap-6">
+              <Connections isExec={me.isExec} />
+              <KlaviyoCard />
+            </div>
+          )}
         </div>
       )}
       {tab === "errors" && <Errors all={sp.show === "all"} />}

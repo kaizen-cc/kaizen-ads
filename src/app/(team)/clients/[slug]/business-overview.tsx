@@ -16,12 +16,18 @@ export type ServiceCard =
 
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 const RANK = { off: 0, close: 1, setup: 2, idle: 3, unset: 3, good: 4, excellent: 5 } as const;
-const COLOR: Record<string, string> = { meta: "#6c7ee1", google: "#5be3a5", tiktok: "#e0508c" };
+const COLOR: Record<string, string> = { meta: "#6c7ee1", google: "#5be3a5", tiktok: "#e0508c", email: "#f2b14c" };
 
-export function BusinessOverview({ cards, audits, sprints }: { cards: ServiceCard[]; audits: Record<string, AuditSummary>; sprints: Record<string, SprintSummary> }) {
+/** Their email and SMS (Klaviyo, read only): attributed revenue over the last 30 days and the 30 before */
+export type EmailSummary = { revenue: number; prev: number; campaigns: number; openRate: number | null; currency: string | null };
+
+export function BusinessOverview({ cards, audits, sprints, email = null }: { cards: ServiceCard[]; audits: Record<string, AuditSummary>; sprints: Record<string, SprintSummary>; email?: EmailSummary | null }) {
   const ads = cards.filter((c): c is Extract<ServiceCard, { kind: "ads" }> => c.kind === "ads");
   const spend = ads.reduce((n, c) => n + (c.summary?.spend ?? 0), 0);
   const prev = ads.reduce((n, c) => n + (c.summary?.prevSpend ?? 0), 0);
+  // Revenue each channel reports for itself (ads where they track purchase value, and email's attributed revenue),
+  // side by side: platforms each claim their own, so the parts can overlap and aren't a total
+  const revenue = [...ads.filter((c) => c.summary?.roas && c.summary.value > 0).map((c) => ({ id: c.id, label: c.label, value: c.summary!.value })), ...(email && email.revenue > 0 ? [{ id: "email", label: "Email", value: email.revenue }] : [])];
   return (
     <div className="grid gap-5">
       {ads.length > 0 && spend > 0 && (
@@ -51,6 +57,17 @@ export function BusinessOverview({ cards, audits, sprints }: { cards: ServiceCar
               </span>
             ))}
           </div>
+          {revenue.length > 0 && email && (
+            <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-line pt-3 text-xs text-muted">
+              <span className="text-faint">Revenue each channel reports</span>
+              {revenue.map((r) => (
+                <span key={r.id} className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full" style={{ background: COLOR[r.id] }} />
+                  {r.label} {money(r.value)}
+                </span>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
@@ -157,6 +174,28 @@ export function BusinessOverview({ cards, audits, sprints }: { cards: ServiceCar
             </div>
           );
         })}
+        {email && (
+          <OpenService id="email" className="group grid content-start gap-3 rounded-[18px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint md:p-5">
+            <span className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2 font-medium">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ background: COLOR.email }} />
+                Email
+              </span>
+              <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">Klaviyo · read only</span>
+            </span>
+            <span className="flex flex-wrap items-end gap-x-3 gap-y-1">
+              <span className="tabular font-display text-3xl leading-none">{email.currency && email.currency !== "USD" ? `${email.currency} ${Math.round(email.revenue).toLocaleString("en-US")}` : money(email.revenue)}</span>
+              <span className="pb-0.5 text-xs text-faint">
+                attributed revenue · 30 days{email.prev > 0 ? ` · ${email.revenue >= email.prev ? "+" : ""}${Math.round(((email.revenue - email.prev) / email.prev) * 100)}% vs the 30 before` : ""}
+              </span>
+            </span>
+            <span className="grid grid-cols-2 gap-2 text-xs">
+              <Stat k="Campaigns sent" v={String(email.campaigns)} />
+              <Stat k="Open rate" v={email.openRate != null ? `${(email.openRate * 100).toFixed(1)}%` : "n/a"} />
+            </span>
+            <span className="text-xs text-faint group-hover:text-fg">Open Email →</span>
+          </OpenService>
+        )}
       </div>
     </div>
   );

@@ -409,6 +409,17 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   const tiktokOn = tiktokConfigured();
   const tiktok = tiktokOn && admin ? await (await import("@/lib/tiktok/store")).clientTikTok(admin, client.id).catch(() => null) : null;
   const tiktokSeparate = tiktokOn && admin ? Boolean((await admin.from("client_report_prefs").select("tiktok_separate").eq("client_id", client.id).maybeSingle()).data?.tiktok_separate) : false;
+  // Klaviyo (email and SMS, read only): nothing shows until its migration is applied
+  const klaviyo = admin
+    ? await (async () => {
+        const k = await import("@/lib/klaviyo/store");
+        const conn = await k.klaviyoConnection(admin, client.id).catch(() => undefined);
+        if (conn === undefined) return null;
+        if (!conn) return { conn: null, data: null, storeRevenue: null };
+        const [data, biz] = await Promise.all([k.clientKlaviyo(admin, client.id).catch(() => null), import("@/lib/integrations").then(({ businessSummary }) => businessSummary(admin, client.id)).catch(() => null)]);
+        return { conn, data, storeRevenue: biz?.store && biz.last30.revenue > 0 ? biz.last30.revenue : null };
+      })()
+    : null;
   const docs = (docRows ?? []).map((d) => ({ id: d.id, kind: d.kind, name: d.name, url: d.url, path: d.path, mime: d.mime, bytes: d.bytes, title: d.title, summary: d.summary, status: d.status, note: d.note, via: d.via, at: d.created_at, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
   const billingHistory = (billingLog ?? []).map((h) => ({ at: h.at as string, oldDay: (h.old_day as number | null) ?? null, newDay: (h.new_day as number | null) ?? null, source: (h.source as string | null) ?? null, note: (h.note as string | null) ?? null, by: (h.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
 
@@ -458,6 +469,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       }
       campaigns={campaigns}
       tiktok={tiktokOn ? { data: tiktok, separate: tiktokSeparate } : null}
+      klaviyo={klaviyo}
       docs={docs}
       knowledge={knowledge}
       loom={loom}

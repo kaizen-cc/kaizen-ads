@@ -408,6 +408,40 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       },
     },
     {
+      name: "email_marketing",
+      description:
+        "A client's email and SMS from Klaviyo (read only, synced daily): the last 30 days' attributed revenue against the 30 before, open and click rates, recent campaigns (subject line, audience, recipients, open and click rate, revenue), flows by revenue (30 and 90 days) and list sizes. Use it for email performance, what subject lines and offers their list answers, and how much of the business email carries. Nothing can be sent, edited or scheduled in Klaviyo from here.",
+      input_schema: { type: "object", properties: { client: CLIENT, campaigns: { type: "integer", minimum: 1, maximum: 40, description: "How many recent campaigns (default 10)" } }, additionalProperties: false },
+      status: (input, client) => `Reading Klaviyo for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
+      run: async (input) => {
+        const c = await clientOf(ctx, input);
+        const { clientKlaviyo } = await import("@/lib/klaviyo/store");
+        const k = await clientKlaviyo(ctx.admin, c.id).catch(() => null);
+        if (!k) return { client: c.name, connected: false, note: "No Klaviyo numbers for this client: it isn't connected (a lead or exec connects it in the client's Team & setup), or the first sync hasn't run." };
+        const pct = (x: number | null) => (x == null ? null : Math.round(x * 1000) / 10);
+        const n = Math.min(40, Math.max(1, Number(input.campaigns) || 10));
+        const campaigns = k.campaigns.slice(0, n).map((x) => ({ sent: x.sendTime?.slice(0, 10) ?? null, channel: x.channel, name: x.name, subject: x.subject, preview: x.previewText, audiences: x.audiences, recipients: x.recipients, open_rate_pct: pct(x.openRate), click_rate_pct: pct(x.clickRate), orders: x.conversions, revenue: r2(x.revenue), unsubscribes: x.unsubscribes, spam_complaints: x.spamComplaints }));
+        const flows = k.flows.slice(0, 15).map((f) => ({ name: f.name, status: f.status, trigger: f.trigger, revenue_30d: r2(f.revenue30), revenue_90d: r2(f.revenue90), recipients_30d: f.recipients30, open_rate_30d_pct: pct(f.openRate30), click_rate_30d_pct: pct(f.clickRate30) }));
+        card({
+          type: "list",
+          title: `${c.name} · email, last 30 days: $${Math.round(k.now.revenue).toLocaleString("en-US")}`,
+          items: k.campaigns.slice(0, 6).map((x) => ({ title: x.subject ?? x.name, detail: `${x.channel === "sms" ? "SMS" : "Email"} · ${x.recipients.toLocaleString("en-US")} recipients · open ${pct(x.openRate) ?? "n/a"}% · click ${pct(x.clickRate) ?? "n/a"}% · $${Math.round(x.revenue).toLocaleString("en-US")}`, when: x.sendTime?.slice(0, 10) })),
+        });
+        return {
+          client: c.name,
+          account: k.account,
+          currency: k.currency ?? "USD",
+          data_through: k.through,
+          last_30_days: { revenue: r2(k.now.revenue), campaign_revenue: r2(k.now.campaignRevenue), flow_revenue: r2(k.now.flowRevenue), campaigns_sent: k.now.campaignsSent, messages: k.now.sends, open_rate_pct: pct(k.now.openRate), click_rate_pct: pct(k.now.clickRate) },
+          the_30_days_before: { revenue: r2(k.before.revenue), campaigns_sent: k.before.campaignsSent, open_rate_pct: pct(k.before.openRate), click_rate_pct: pct(k.before.clickRate) },
+          campaigns,
+          flows,
+          lists_and_segments: k.audiences.filter((a) => a.profiles != null).slice(0, 12).map((a) => ({ name: a.name, kind: a.kind, profiles: a.profiles })),
+          read_only: "Nothing can be sent, edited or scheduled in Klaviyo from Kaizen Ads.",
+        };
+      },
+    },
+    {
       name: "what_changed",
       description: "What happened on a client since a date, with exact dates: changes in the ad accounts (ours and Meta's change history), launches, creative tickets, Asana tasks, what was said in Slack and email, recorded calls, replies we owe and promises still open. Use it for 'what changed and why' and to catch pending asks.",
       input_schema: { type: "object", properties: { client: CLIENT, since: { type: "string", description: "YYYY-MM-DD (default 7 days ago)" } }, additionalProperties: false },

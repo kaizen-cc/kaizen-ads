@@ -71,6 +71,7 @@ function due(step: string | null) {
   if (step === "slack" || step === "drive" || step === "gmail") return businessHours || (hour % 3 === 0 && minute < 30);
   if (step === "meta") return hour % 2 === 0;
   if (step === "tiktok") return hour % 2 === 0; // like Meta's ads; does nothing until TikTok's app keys are in Vercel
+  if (step === "klaviyo") return hour >= 1 && hour <= 11; // hourly through the night and morning (vercel.json): each connected client's Klaviyo once a day, a few clients a run
   if (step === "kpi") return businessHours || minute >= 30; // called at :15 and :45 (vercel.json)
   if (step === "google_ideas") return true; // once a day (vercel.json): Google's Hall of Fame and live winners
   if (step === "google_market") return true; // Mondays (vercel.json): Google in the market, by industry
@@ -158,6 +159,7 @@ export async function GET(request: Request) {
     await admin.rpc("expire_sprint_packages");
     if (step === "kpi") return Response.json(await refreshAllKpis(admin));
     if (step === "tiktok") return Response.json(await (await import("@/lib/tiktok/store")).syncAllTikTok(admin));
+    if (step === "klaviyo") return Response.json(await (await import("@/lib/klaviyo/store")).syncAllKlaviyo(admin, { budgetMs: 640_000 }));
     if (step === "meta_tokens") return Response.json(await (await import("@/lib/meta-tokens")).checkAllBusinessTokens(admin));
     if (step === "connectors") return Response.json(await (await import("@/lib/connectors/registry-sync")).syncConnectorRegistry(admin));
     if (step === "google_ideas") {
