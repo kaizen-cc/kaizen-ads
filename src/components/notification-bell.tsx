@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { clearNotices, markRead, myNotifications, restoreNotices } from "@/app/(team)/notification-actions";
+import { submitHandled } from "@/app/handled/actions";
 import type { Notice } from "@/lib/notifications";
 import { toast } from "./toasts";
 
@@ -111,6 +112,24 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
     setItems((xs) => xs.map((x) => ({ ...x, read: true })));
     setUnread(0);
     await markRead();
+  };
+
+  // "It's handled" right here: the promise or owed reply is closed where it lives (the Overview, the recap and the
+  // client read the same record), and the notice leaves the bell
+  const [closing, setClosing] = useState<string | null>(null);
+  const handled = async (n: Notice, it: { kind: string; id: string }) => {
+    setClosing(n.id);
+    const r = await submitHandled({ kind: it.kind, id: it.id } as Parameters<typeof submitHandled>[0], "done", "", null).catch(() => ({ ok: false as const, error: "Couldn't close it just now. Try again." }));
+    setClosing(null);
+    if (!r.ok) {
+      toast({ tone: "bad", title: "Couldn't close it", body: r.error, ms: 6000 });
+      return;
+    }
+    setUnread((u) => Math.max(0, u - (n.read ? 0 : 1)));
+    setItems((xs) => xs.filter((x) => x.id !== n.id));
+    await clearNotices([n.id]).catch(() => null);
+    toast({ tone: "ok", title: "Handled", body: r.message || undefined, ms: 4000 });
+    router.refresh();
   };
 
   // Clearing takes them off the bell at once; Undo puts them back
@@ -271,15 +290,18 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                                 <button
                                   key={mode}
                                   type="button"
+                                  disabled={closing === n.id}
                                   onClick={() => {
                                     const it = itemOf(n.key)!;
+                                    // Done closes it right here; adding context needs the form
+                                    if (mode === "done") return void handled(n, it);
                                     setOpen(false);
                                     if (!n.read) void markRead(n.id);
                                     router.push(`/handled?k=${it.kind}&id=${it.id}&do=${mode}`);
                                   }}
                                   className={`rounded-full border px-3 text-xs transition-colors ${sheet ? "h-11" : "h-8 max-md:h-11"} ${mode === "done" ? "border-line text-fg hover:bg-surface-2" : "border-transparent text-muted hover:text-fg"}`}
                                 >
-                                  {label}
+                                  {mode === "done" && closing === n.id ? "Closing…" : label}
                                 </button>
                               ))}
                             </div>
