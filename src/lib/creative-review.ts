@@ -5,6 +5,7 @@ import { AiUnavailable, askJson, clientContext, contextBlock, CREATIVE_REVIEW_SY
 import { aspectLabel } from "@/lib/uploads/media";
 import { clientAsks } from "@/lib/client-revision";
 import { transcribe, type Line } from "@/lib/transcribe";
+import { necessaryNotes } from "@/lib/necessary-notes";
 
 // The AI's QA of a ticket's creative. The designer or editor runs it before sending the work to creative review, fixes
 // what it finds and runs it again; the Head of Creative sees the latest run. It reviews design by design (every size,
@@ -317,7 +318,8 @@ Review it and leave your notes, each placed on the creative.`,
           if (fixedIds.length) await admin.from("review_comments").update({ resolved_at: now, resolved_by: null, resolved_by_ai: true }).in("id", fixedIds);
           if (replaced.length) await admin.from("review_comments").update({ resolved_at: now, resolved_by: null, resolved_by_ai: true }).in("id", replaced);
 
-          const mine: CreativeNote[] = out.notes.map((n) => {
+          // Only necessary comments go on the creative: a real problem against the brief, the specs, the client or the platform
+          const mine: CreativeNote[] = necessaryNotes(out.notes ?? []).map((n) => {
             const pic = n.picture >= 1 && n.picture <= own.length ? own[n.picture - 1] : null;
             const box = pic && n.w > 0.005 && n.h > 0.005 ? { x: clamp(n.x), y: clamp(n.y), w: Math.min(1 - clamp(n.x), clamp(n.w)), h: Math.min(1 - clamp(n.y), clamp(n.h)) } : null;
             return { severity: n.severity, size: n.size, area: n.area, note: n.note, design: `D${d.position}`, designId: d.id, fileId: pic?.fileId ?? null, atMs: pic?.ms ?? null, box: pic?.ms != null ? null : box };
