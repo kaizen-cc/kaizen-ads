@@ -48,7 +48,7 @@ export function LoomAtlassianControls({ isExec }: { isExec: boolean }) {
             <input type="date" value={date} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setDate(e.target.value)} className="h-11 rounded-[10px] border border-line bg-surface px-3 text-[14px] text-fg focus:border-brand focus:outline-none md:h-9" />
           </label>
           <button type="button" disabled={Boolean(busy)} onClick={() => void run("pull")} className="inline-flex h-11 items-center justify-self-start rounded-full bg-fg px-4 text-xs font-medium text-bg disabled:opacity-50 md:h-9">
-            {busy === "pull" ? "Pulling…" : date ? `Pull since ${new Date(`${date}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : "Pull everything"}
+            {busy === "pull" ? "Pulling…" : date ? `Pull since ${longDay(date)}` : "Pull everything"}
           </button>
           <p className="text-[11px] leading-relaxed text-faint">Videos already in are skipped. A big pull continues on its own every 15 minutes until it reaches the end.</p>
         </div>

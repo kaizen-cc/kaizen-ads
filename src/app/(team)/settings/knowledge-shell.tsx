@@ -26,9 +26,10 @@ const TABS: { key: KnowledgeTab; label: string }[] = [
 const ago = (iso: string | null) => {
   if (!iso) return "not yet";
   const d = Math.round((Date.now() - new Date(iso).getTime()) / 86_400_000);
-  return d <= 0 ? "today" : d === 1 ? "yesterday" : d < 30 ? `${d} days ago` : new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return d <= 0 ? "today" : d === 1 ? "yesterday" : d < 30 ? `${d} days ago` : new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" });
 };
-const n = (x: number) => x.toLocaleString();
+// A fixed locale: the server renders in en-US, so a browser in another locale ("1.234") must match it
+const n = (x: number) => x.toLocaleString("en-US");
 
 export function KnowledgeShell({ hero, strategy, files, looms, buyer }: { hero: KnowledgeHero; strategy: ReactNode; files: ReactNode; looms: ReactNode; buyer: ReactNode }) {
   const raw = useParam("kn");
@@ -77,7 +78,7 @@ export function KnowledgeShell({ hero, strategy, files, looms, buyer }: { hero: 
               >
                 <span className="text-[11.5px] text-faint">{t.label}</span>
                 <span className="tabular font-display text-[28px] leading-none md:text-[32px]">{t.value}</span>
-                <span className="line-clamp-2 text-[11.5px] leading-snug text-muted">{t.sub}</span>
+                <span suppressHydrationWarning className="line-clamp-2 text-[11.5px] leading-snug text-muted">{t.sub}</span>
               </button>
             ))}
           </div>
