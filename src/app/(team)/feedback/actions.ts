@@ -4,7 +4,10 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { requireExec, requireStaff } from "@/lib/auth";
-import { FEEDBACK_BUCKET, logEvent, notifyFixed, notifyReporters, recomputeGroup, startFix, triageFeedback } from "@/lib/feedback";
+import { CHAT_LABEL, chatReportMessage, sanitizeChatReport } from "@/lib/chat-report";
+import { transcriptMarkdown } from "@/lib/chat-transcript";
+import { loadTranscript } from "@/lib/chat-transcript-server";
+import { FEEDBACK_BUCKET, approveMerge, askForChanges, logEvent, notifyFixed, notifyReporters, planOnRoadmap, recomputeGroup, startFix, triageFeedback } from "@/lib/feedback";
 import { STATUSES, TYPES, areaFromRoute, routePattern, type FeedbackStatus, type FeedbackType } from "@/lib/feedback-logic";
 import { roleLabel } from "@/lib/roles";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -137,7 +140,7 @@ export async function setFeedbackAssignee(groupId: string, assigneeId: string | 
 
 // ─── The review card: approve to build, ask for more, won't do ──────────────
 
-/** Execs: build it. Claude opens a pull request from the plan (and the note); it's reviewed before it merges. */
+/** The owner: build this Ask now. Claude opens a pull request from the plan (and the note); it waits for approval before it merges. */
 export async function approveFeedback(groupId: string, note: string): Promise<{ ok: true; url?: string } | { error: string }> {
   const me = await requireExec();
   if (!adminConfigured()) return { error: "The server isn't set up for this yet." };
@@ -204,4 +207,98 @@ export async function replyFeedback(groupId: string, reply: string): Promise<{ o
       );
   revalidatePath("/feedback");
   return { ok: true };
+}
+
+// ─── From a chat: "Report this" and "Ask for this" ──────────────────────────
+
+/**
+ * A message in a chat fell short: filed like the bubble's reports (grouped, repeats counted, the reporters kept up to
+ * date), with the whole conversation read from where the chat is stored (the browser's copy for chats that aren't),
+ * kept as JSON and Markdown in the feedback bucket. The same message reported twice answers with the first report.
+ */
+export async function reportFromChat(raw: unknown): Promise<{ ok: true; id: string } | { error: string }> {
+  const me = await requireStaff();
+  const r = sanitizeChatReport(raw);
+  if (!r) return { error: "That report was missing what it needs. Try again." };
+  const db = await createClient();
+  const key = `${r.chat}:${r.threadId ?? ""}:${r.messageId}`;
+  const { data: prior } = await db.from("app_feedback").select("id").eq("profile_id", me.id).eq("context->chat->>key", key).limit(1).maybeSingle();
+  if (prior) return { ok: true, id: prior.id as string };
+
+  let clientId: string | null = null;
+  if (r.clientSlug) {
+    const { data } = await db.from("clients").select("id").eq("slug", r.clientSlug).maybeSingle();
+    clientId = (data?.id as string | undefined) ?? null;
+  }
+
+  // The whole chat, from the server's copy where there is one; the error on the message goes in if it wasn't stored
+  let transcript: { json: string; md: string; source: string; entries: number; cut: number } | null = null;
+  if (adminConfigured()) {
+    const admin = createAdminClient();
+    const t = await loadTranscript(admin, r, { id: me.id, isExec: me.isExec });
+    if (r.error && !t.entries.some((e) => e.error?.text && r.error?.text && e.error.text.includes(r.error.text.slice(0, 60))))
+      t.entries.push({ role: "ai", at: new Date().toISOString(), text: "", error: r.error });
+    const base = `${me.id}/chat/${randomUUID()}`;
+    const [j, m] = await Promise.all([
+      admin.storage.from(FEEDBACK_BUCKET).upload(`${base}.json`, Buffer.from(JSON.stringify(t), "utf8"), { contentType: "application/json" }),
+      admin.storage.from(FEEDBACK_BUCKET).upload(`${base}.md`, Buffer.from(transcriptMarkdown(t, `Chat transcript: ${CHAT_LABEL[r.chat]}`), "utf8"), { contentType: "text/markdown" }),
+    ]);
+    if (!j.error && !m.error) transcript = { json: `${base}.json`, md: `${base}.md`, source: t.source, entries: t.entries.length, cut: t.cut };
+    else console.error("[feedback] transcript upload failed:", j.error?.message ?? m.error?.message);
+  }
+
+  const route = r.path.slice(0, 500);
+  const path = route.split("?")[0].slice(0, 300);
+  const context = {
+    path,
+    pattern: routePattern(path),
+    area: areaFromRoute(route),
+    person: me.fullName,
+    role: roleLabel(me.role),
+    serverVersion: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "dev",
+    consoleErrors: [],
+    failedRequests: [],
+    chat: { key, kind: r.chat, label: CHAT_LABEL[r.chat], mode: r.mode, threadId: r.threadId, messageId: r.messageId, turns: r.turns, error: r.error, note: r.note || null, transcript },
+  };
+  const { data, error } = await db
+    .from("app_feedback")
+    .insert({ profile_id: me.id, type: r.mode === "error" ? "bug" : "idea", message: chatReportMessage(r), page_url: r.pageUrl, route, client_id: clientId, context })
+    .select("id")
+    .single();
+  if (error || !data) return { error: "That didn't send. Try again in a moment." };
+  const id = data.id as string;
+  if (adminConfigured()) after(() => triageFeedback(createAdminClient(), id));
+  revalidatePath("/feedback");
+  return { ok: true, id };
+}
+
+// ─── The owner's approval card: Approve and merge, Ask for changes ──────────
+
+/** The owner: merge this fix (the workflow runs every check again first). */
+export async function approveFixMerge(groupId: string): Promise<{ ok: true } | { error: string }> {
+  const me = await requireExec();
+  if (!adminConfigured()) return { error: "The server isn't set up for this yet." };
+  const r = await approveMerge(createAdminClient(), groupId, me.id);
+  revalidatePath("/feedback");
+  return r;
+}
+
+/** The owner: not this fix; Claude builds it again with the note (it waits for approval again). */
+export async function askFixChanges(groupId: string, note: string): Promise<{ ok: true; url?: string } | { error: string }> {
+  const me = await requireExec();
+  const text = note.trim().slice(0, 2000);
+  if (!text) return { error: "Say what to change, so Claude knows." };
+  if (!adminConfigured()) return { error: "The server isn't set up for this yet." };
+  const r = await askForChanges(createAdminClient(), groupId, text, me.id);
+  revalidatePath("/feedback");
+  return "error" in r && r.error ? { error: r.error } : { ok: true, url: "url" in r ? r.url : undefined };
+}
+
+/** The owner: plan this Ask (a line on the roadmap under Requested by the team). */
+export async function planAsk(groupId: string): Promise<{ ok: true } | { error: string }> {
+  const me = await requireExec();
+  if (!adminConfigured()) return { error: "The server isn't set up for this yet." };
+  const r = await planOnRoadmap(createAdminClient(), groupId, me.id);
+  revalidatePath("/feedback");
+  return r;
 }

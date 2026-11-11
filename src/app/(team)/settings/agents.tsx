@@ -34,6 +34,7 @@ import { proposalOf, changeTarget } from "@/lib/agent-change";
 import type { EvalRow } from "@/lib/agent-evals";
 import type { LearningView } from "@/lib/learnings";
 import { AgentOnline } from "./agent-online";
+import { ReportThis } from "@/components/report-this";
 
 type Result = { ok: true } | { ok: false; error: string };
 export type AgentKey = import("@/lib/ai").AgentKey;
@@ -757,6 +758,7 @@ function ChatPanel({
   onApply,
   onClear,
   folder,
+  threadId,
   tall = false,
 }: {
   icon: string;
@@ -777,12 +779,18 @@ function ChatPanel({
   onClear: () => Promise<Result>;
   /** Where files shared in this chat are stored (the agent's or skill's key) */
   folder: string;
+  /** The stored chat, for "Report this": "agent:<key>" (ai_agent_chats) or "role:<key>" (ai_role_chats) */
+  threadId: string;
   tall?: boolean;
 }) {
   const [messages, setMessages] = useState(initial);
   const [text, setText] = useState("");
   const [thinking, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // The last message failed on the server: its error, so it can be reported from the chat
+  const [sendError, setSendError] = useState<string | null>(null);
+  const reportTurns = () => messages.map((m) => ({ role: m.role === "user" ? "user" : "ai", text: m.content, at: m.at }));
+  const reportState = () => ({ thread: threadId, heading, pendingEdits: messages.reduce((t, m) => t + m.changes.filter((c) => !c.applied).length, 0) });
   const router = useRouter();
   const end = useRef<HTMLDivElement>(null);
   // Phones: the conversation opens full-screen over the app, the composer pinned at the bottom
@@ -822,6 +830,7 @@ function ChatPanel({
     if ((!msg.trim() && !files.length) || thinking) return;
     const sending = files;
     setError(null);
+    setSendError(null);
     setText("");
     setFiles([]);
     setMessages((m) => [...m, { id: -Date.now(), role: "user", content: msg, changes: [], at: new Date().toISOString(), attachments: sending.map((f) => ({ kind: "file" as const, name: f.name, note: null })) }]);
@@ -839,6 +848,7 @@ function ChatPanel({
         if (uploaded.length < sending.length) setError(`${sending.length - uploaded.length} file${sending.length - uploaded.length === 1 ? "" : "s"} didn't upload.`);
       } else {
         setError(r.error);
+        setSendError(r.error);
         setText(msg);
         setFiles(sending);
         setMessages((m) => m.filter((x) => x.id > 0));
@@ -939,8 +949,14 @@ function ChatPanel({
                         ))}
                       </div>
                     )}
+                    <ReportThis chat="agent-coach" messageId={String(m.id)} threadId={threadId} text={m.content} turns={reportTurns} state={reportState} className="md:ml-10" />
                   </li>
                 ),
+              )}
+              {sendError && !thinking && (
+                <li className="grid gap-1.5 md:ml-10">
+                  <ReportThis chat="agent-coach" messageId={`error-${messages.length}-${sendError.slice(0, 40)}`} threadId={threadId} error={sendError} turns={reportTurns} state={reportState} />
+                </li>
               )}
               {thinking && (
                 <li className="flex items-center gap-3">
@@ -1094,6 +1110,7 @@ function Coach({ a, initial, items }: { a: Agent; initial: ChatMessage[]; items:
       initial={initial}
       items={items}
       folder={a.key}
+      threadId={`agent:${a.key}`}
       onSend={(msg, files) => chatWithCoach(a.key, msg, files)}
       onApply={(id, i) => applyChange(a.key, id, i)}
       onClear={() => clearChat(a.key)}
@@ -1669,6 +1686,7 @@ function TalkToAgent({ role, skills, items, chat }: { role: Role; skills: Agent[
         items={items}
         skillName={(c) => (c.skill === "core" ? "Core" : names.get(c.skill ?? "") ?? null)}
         folder={role.key}
+        threadId={`role:${role.key}`}
         onSend={(msg, files) => chatWithAgent(role.key, msg, files)}
         onApply={(id, i) => applyRoleChange(role.key, id, i)}
         onClear={() => clearRoleChat(role.key)}

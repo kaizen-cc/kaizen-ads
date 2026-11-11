@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { requestAudit } from "@/components/audit-watcher";
+import { ReportThis } from "@/components/report-this";
+import { messageKey } from "@/lib/chat-report";
+import { fromTurns } from "@/lib/chat-transcript";
 import { useFabClear } from "@/components/fab-clear";
 import type { ChatTurn } from "@/lib/handoff";
 import { ALL_PERMS, type ClientPerms } from "@/lib/chat-permissions";
@@ -31,6 +34,8 @@ const STARTERS = ["Summarize where this account stands", "What should we test ne
 const LAUNCH_STARTERS = { google: "Launch a new ad group in Google Ads", meta: "Launch ads on Meta from a launch sheet" } as const;
 const LAUNCH_DRAFT = { google: "Launch in Google Ads: ", meta: "Launch on Meta (I'm sharing the launch sheet): " } as const;
 const MAX_FILE = 50 * 1024 * 1024;
+// A limit, not a fault: this one gets no "Report this"
+const TOO_BIG = "Files over 50 MB were left out.";
 const safe = (n: string) => n.normalize("NFKD").replace(/[^\w.\-]+/g, "-").replace(/-+/g, "-").slice(-120);
 
 async function openDoc(id: string) {
@@ -40,7 +45,7 @@ async function openDoc(id: string) {
 
 const LEVEL = { quick: { label: "Quick answer", dot: "bg-ink/40" }, standard: { label: "Considered", dot: "bg-[#9aa8ff]" }, deep: { label: "Thought it through", dot: "bg-brand" } } as const;
 
-function Bubble({ t, onUndo, launchLatest = true }: { t: ChatTurn; onUndo?: (i: number) => void; launchLatest?: boolean }) {
+function Bubble({ t, onUndo, launchLatest = true, report }: { t: ChatTurn; onUndo?: (i: number) => void; launchLatest?: boolean; report?: ReactNode }) {
   const me = t.role === "user";
   return (
     <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1 ${me ? "justify-items-end" : ""}`}>
@@ -55,6 +60,7 @@ function Bubble({ t, onUndo, launchLatest = true }: { t: ChatTurn; onUndo?: (i: 
         </span>
       )}
       {t.text && <p className={`max-w-[92%] whitespace-pre-wrap rounded-[14px] [overflow-wrap:anywhere] px-3.5 py-2.5 text-[13.5px] leading-relaxed ${me ? "bg-fg text-bg" : "border border-ink/[0.06] bg-ink/[0.04] text-fg"}`}>{t.text}</p>}
+      {!me && report}
       {/* What it changed in the knowledge base, each with an undo */}
       {!me && t.done && t.done.length > 0 && (
         <ul className="grid w-full max-w-[92%] gap-1">
@@ -217,7 +223,7 @@ export function ClientChat({
   const picker = useRef<HTMLInputElement>(null);
   const addFiles = (list: File[]) => {
     const ok = list.filter((f) => f.size <= MAX_FILE);
-    if (ok.length < list.length) setError("Files over 50 MB were left out.");
+    if (ok.length < list.length) setError(TOO_BIG);
     setFiles((cur) => [...cur, ...ok].slice(0, 6));
   };
 
@@ -254,6 +260,9 @@ export function ClientChat({
       setFiles(sending);
     }
   };
+  // "Report this" / "Ask for this": the whole chat as the browser has it (the client comes from the page's address)
+  const reportTurns = () => chat.map((t) => ({ role: t.role === "user" ? "user" : "ai", text: t.text, at: t.at || null, name: t.by ?? null }));
+  const reportEntries = () => fromTurns(chat);
   const undo = async (turnAt: string, i: number) => {
     setChat(await undoClientDesk(clientId, turnAt, i));
     router.refresh();
@@ -411,7 +420,13 @@ export function ClientChat({
             />
           )}
           {(resumed || pending) && chat.map((t, i) => (
-            <Bubble key={i} t={t} onUndo={t.role === "assistant" ? (n) => void undo(t.at, n) : undefined} launchLatest={!t.launch || !chat.slice(i + 1).some((x) => x.launch?.id === t.launch?.id)} />
+            <Bubble
+              key={i}
+              t={t}
+              onUndo={t.role === "assistant" ? (n) => void undo(t.at, n) : undefined}
+              launchLatest={!t.launch || !chat.slice(i + 1).some((x) => x.launch?.id === t.launch?.id)}
+              report={t.role === "assistant" ? <ReportThis chat="client-chat" messageId={messageKey(i, t.text)} text={t.text} turns={reportTurns} entries={reportEntries} /> : null}
+            />
           ))}
           {pending && (
             <>
@@ -423,6 +438,7 @@ export function ClientChat({
             </>
           )}
           {error && <p className="text-xs text-bad">{error}</p>}
+          {error && error !== TOO_BIG && <ReportThis chat="client-chat" messageId={`error-${messageKey(chat.length, error)}`} error={error} turns={reportTurns} entries={reportEntries} />}
           <div ref={end} />
         </div>
 

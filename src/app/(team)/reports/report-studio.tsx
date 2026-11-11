@@ -21,6 +21,8 @@ import { forClient, whiteLabelFileName } from "@/lib/reports/white-label";
 import { DeliveryPicker, type DeliveryOptions } from "./delivery-picker";
 import { PeriodPicker } from "./period-picker";
 import { SendHistory, type HistoryItem } from "./send-history";
+import { ReportThis } from "@/components/report-this";
+import { messageKey } from "@/lib/chat-report";
 
 // One report, start to finish, in three steps: the report (a live preview of the document: click any line to change
 // it, or ask the AI on the side and watch it change), then the Slack message (shown as it will look in the client's
@@ -243,6 +245,8 @@ export function ReportStudio({
   const [chat, setChat] = useState<ChatTurn[]>(report.chat);
   const [ask, setAsk] = useState("");
   const [asking, setAsking] = useState(false);
+  // The AI chat's last request failed: its error, so it can be reported from the chat
+  const [chatError, setChatError] = useState<string | null>(null);
   const [rail, setRail] = useState<"ai" | "checks">("ai");
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
@@ -375,10 +379,12 @@ export function ReportStudio({
     setAsking(true);
     setAsk("");
     setNote(null);
+    setChatError(null);
     const r = await reviseWithAi(report.id, text);
     setAsking(false);
     if (!r.ok) {
       setNote({ ok: false, text: r.error });
+      if (!("openId" in r && r.openId)) setChatError(r.error);
       // The dates asked for already have a report on this account: open that one
       if ("openId" in r && r.openId && confirm(`${r.error} Open it?`)) router.push(`/reports/${r.openId}`);
       return;
@@ -960,6 +966,8 @@ ${t}` : t);
                 </PanelButton>
               </div>
             );
+            const reportTurns = () => chat.map((t) => ({ role: t.role === "user" ? "user" : "ai", text: t.text, at: t.at, name: t.by ?? null }));
+            const reportState = () => ({ reportId: report.id, kind: report.kind, platform: report.platform, period: { start: report.period.start, end: report.period.end, key: report.period.key }, status: report.status });
             const thread = (big: boolean) => (
               <div className={`grid content-start gap-2.5 overflow-y-auto pr-1 ${big ? "min-h-0 flex-1" : "max-h-[52vh] min-h-[180px]"}`}>
                 {!chat.length && (
@@ -989,8 +997,15 @@ ${t}` : t);
                         ))}
                       </div>
                     ) : null}
+                    {t.role === "assistant" && <ReportThis chat="report-studio" messageId={messageKey(i, t.text)} threadId={report.id} text={t.text} turns={reportTurns} state={reportState} clientSlug={client.slug} />}
                   </div>
                 ))}
+                {chatError && !asking && (
+                  <div className="grid gap-1.5">
+                    <p className={`text-bad ${big ? "text-sm" : "text-xs"}`}>{chatError}</p>
+                    <ReportThis chat="report-studio" messageId={`error-${messageKey(chat.length, chatError)}`} threadId={report.id} error={chatError} turns={reportTurns} state={reportState} clientSlug={client.slug} />
+                  </div>
+                )}
                 {asking && <p className="flex items-center gap-2 text-xs text-faint"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> Looking things up and changing it…</p>}
                 <div ref={big ? bigEnd : chatEnd} />
               </div>

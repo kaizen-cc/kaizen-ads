@@ -32,7 +32,7 @@ export default async function FeedbackPage() {
   const [{ data: mineRows }, { data: eventRows }] = await Promise.all([
     db
       .from("app_feedback")
-      .select("id, type, message, summary, route, created_at, screenshot_path, triaged_at, app_feedback_groups(id, title, status, reports, people, fixed_at, lane, fix_state, fix_commit_url, fix_pr_url)")
+      .select("id, type, message, summary, route, created_at, screenshot_path, triaged_at, app_feedback_groups(id, title, status, reports, people, fixed_at, lane, scope, fix_state, fix_commit_url, fix_pr_url)")
       .eq("profile_id", me.id)
       .order("created_at", { ascending: false })
       .limit(100),
@@ -68,6 +68,16 @@ export default async function FeedbackPage() {
     rawReports = r ?? [];
     staff = (people ?? []).map((p) => ({ id: p.id as string, name: p.full_name as string }));
     reportPaths = rawReports.map((x) => x.screenshot_path as string | null).filter((p): p is string => Boolean(p));
+    // The chat transcripts behind reports from a chat (read on the card, in a scrollable panel)
+    for (const x of rawReports) {
+      const t = (((x.context ?? {}) as Ctx).chat as { transcript?: { json?: string } } | undefined)?.transcript?.json;
+      if (t) reportPaths.push(t);
+    }
+    // The chat transcripts behind reports from a chat (read on the card, in a scrollable panel)
+    for (const x of rawReports) {
+      const t = (((x.context ?? {}) as Ctx).chat as { transcript?: { json?: string } } | undefined)?.transcript?.json;
+      if (t) reportPaths.push(t);
+    }
     const fps = [...new Set(rawGroups.map((x) => x.error_fingerprint as string | null).filter((x): x is string => Boolean(x)))];
     if (fps.length) {
       const { data: ev } = await db.from("error_events").select("fingerprint, message, count, fix_issue_url, resolved_at").in("fingerprint", fps);
@@ -101,6 +111,11 @@ export default async function FeedbackPage() {
         version: (ctx.version as string | undefined) ?? null,
         consoleErrors: ((ctx.consoleErrors as { message: string }[] | undefined) ?? []).map((e) => e.message),
         failedRequests: ((ctx.failedRequests as { method: string; url: string; status: number | null }[] | undefined) ?? []).map((q) => `${q.method} ${q.url} ${q.status ?? "failed"}`),
+        chat: (() => {
+          const c = ctx.chat as { label?: string; mode?: "error" | "cant"; transcript?: { json?: string; summary?: string | null; entries?: number } | null } | undefined;
+          if (!c?.mode) return null;
+          return { label: c.label ?? "a chat", mode: c.mode, summary: c.transcript?.summary ?? null, messages: c.transcript?.entries ?? 0, transcriptUrl: c.transcript?.json ? (urls.get(c.transcript.json) ?? null) : null };
+        })(),
       };
       const gid = x.group_id as string | null;
       if (gid) reports.set(gid, [...(reports.get(gid) ?? []), rep]);
@@ -135,6 +150,8 @@ export default async function FeedbackPage() {
         fixPrUrl: (x.fix_pr_url as string | null) ?? null,
         fixCommitUrl: (x.fix_commit_url as string | null) ?? null,
         events: events.get(x.id as string) ?? [],
+        // The fix is built, every check passed, and it waits for the owner (the workflow said so on this pull request)
+        ready: (events.get(x.id as string) ?? []).some((e) => e.kind === "fix_ready" && (!x.fix_pr_url || e.link === x.fix_pr_url)),
       };
     });
     // Just sent, still being read: shown on their own at the top until they land in a group
@@ -166,6 +183,7 @@ export default async function FeedbackPage() {
         fixPrUrl: null,
         fixCommitUrl: null,
         events: [],
+        ready: false,
         pending: true,
       });
     groups.sort(byPriority);
@@ -181,6 +199,7 @@ export default async function FeedbackPage() {
       people: number;
       fixed_at: string | null;
       lane: string;
+      scope: string;
       fix_state: string | null;
       fix_commit_url: string | null;
       fix_pr_url: string | null;
@@ -188,6 +207,7 @@ export default async function FeedbackPage() {
     return {
       groupId: g?.id ?? null,
       lane: g?.lane ?? null,
+      scope: g?.scope ?? null,
       fixState: g?.fix_state ?? null,
       fixLink: g?.fix_commit_url ?? null,
       events: g ? (events.get(g.id) ?? []).filter((e) => e.shared) : [],

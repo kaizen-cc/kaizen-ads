@@ -8,6 +8,8 @@ import type { BriefState, FieldDiff } from "@/lib/brief-patch";
 import { AttachButton, AttachedFiles, useBriefFiles, useFileDrop } from "@/components/brief-attach";
 import { fileMention } from "@/lib/brief-files";
 import { linkWord, splitLink } from "@/lib/asset-links";
+import { ReportThis } from "@/components/report-this";
+import { messageKey } from "@/lib/chat-report";
 
 // Under every brief before (and after) it goes to the maker: where it stands in one word (Ready, Reviewed, or Fix
 // contradictions, the only thing that holds a brief), the facts only the client knows as "Confirm with client" (a
@@ -21,7 +23,7 @@ import { linkWord, splitLink } from "@/lib/asset-links";
 export type Change = { brief: string; title?: string; angle?: string; audience?: string; sizes?: string[]; /** The references, when files were added to them */ refs?: string[] };
 /** Text typed in "Tell me what to change" and not sent yet: whether there is some, and applying it (the change, or null) */
 export type PendingRevise = { has: () => boolean; apply: () => Promise<Change | null> };
-type Turn = { role: "user" | "ai"; text: string; diff?: FieldDiff[]; correctionId?: string | null; undone?: boolean };
+type Turn = { role: "user" | "ai"; text: string; diff?: FieldDiff[]; correctionId?: string | null; undone?: boolean; /** The revise route failed: the text is its error */ error?: boolean };
 
 const TONE: Record<BriefStatus, string> = {
   has_conflicts: "border-bad/40 bg-bad-soft text-bad",
@@ -150,7 +152,7 @@ export function BriefCheck({ target, signature, brief, onChange, demo = false, p
     const r = await reviseBrief(targetRef.current, msg, history, sent, window.location.origin);
     setBusy(null);
     if (!r.ok) {
-      setTurns((t) => [...t, { role: "ai", text: r.error }]);
+      setTurns((t) => [...t, { role: "ai", text: r.error, error: true }]);
       return null;
     }
     setTurns((t) => [...t, { role: "ai", text: r.reply + (r.refused.length ? ` (Not changed, not yours to change: ${[...new Set(r.refused)].join(", ")}.)` : ""), diff: r.diff, correctionId: r.correctionId }]);
@@ -401,6 +403,17 @@ export function BriefCheck({ target, signature, brief, onChange, demo = false, p
                         ))}
                       </div>
                     </details>
+                  )}
+                  {t.role === "ai" && (
+                    <ReportThis
+                      chat="brief-revise"
+                      messageId={messageKey(i, t.text)}
+                      threadId={target.kind === "ticket" ? target.requestId : null}
+                      text={t.error ? null : t.text}
+                      error={t.error ? t.text : null}
+                      turns={() => turns.map((x) => ({ role: x.role, text: x.text }))}
+                      state={() => ({ target: targetRef.current, brief, status, contradictions: [...hard, ...soft].map((x) => x.message) })}
+                    />
                   )}
                 </div>
               ))}

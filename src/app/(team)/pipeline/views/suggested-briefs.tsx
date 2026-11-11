@@ -16,6 +16,8 @@ import { sendSuggestionToAsana, suggestionAsanaPreview } from "@/app/(team)/requ
 import { QuickBriefSheet } from "@/components/quick-brief-sheet";
 import { BriefJobStatus } from "@/components/brief-jobs";
 import { SaveIdeaStar } from "@/components/save-idea-star";
+import { ReportThis } from "@/components/report-this";
+import { messageKey } from "@/lib/chat-report";
 
 const KIND_TONE: Record<SuggestionKind, string> = {
   fatigue: "bg-warn-soft text-warn",
@@ -192,7 +194,11 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
   const [busy, act] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<number[] | null>(null);
+  // The strategist's last answer failed on the server: its error, reported from the chat
+  const [chatError, setChatError] = useState<string | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
+  const reportTurns = () => messages.map((m) => ({ role: m.role === "user" ? "user" : "ai", text: m.body, at: m.at }));
+  const reportState = () => ({ suggestion: s.id, kind: s.kind, client: s.client, signal: s.signal, draft, why });
 
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ block: "end" });
@@ -206,11 +212,15 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
     if (!body || thinking) return;
     setText("");
     setError(null);
+    setChatError(null);
     setMessages((m) => [...m, { role: "user", body, at: new Date().toISOString() }]);
     setThinking(true);
     const r = await chatSuggestion(s.id, body);
     setThinking(false);
-    if (!r.ok) return setError(r.error);
+    if (!r.ok) {
+      setChatError(r.error);
+      return setError(r.error);
+    }
     setDraft(r.draft);
     setWhy(r.why);
     setMessages((m) => [...m, { role: "ai", body: r.reply || "Updated.", at: new Date().toISOString() }]);
@@ -494,11 +504,24 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
                 ))}
               </div>
             )}
-            {messages.map((m, i) => (
-              <div key={i} className={`max-w-[90%] rounded-[12px] px-3 py-2 text-sm ${m.role === "user" ? "ml-auto bg-fg text-bg" : "bg-bg"}`}>
-                {m.body}
+            {messages.map((m, i) =>
+              m.role === "user" ? (
+                <div key={i} className="ml-auto max-w-[90%] rounded-[12px] bg-fg px-3 py-2 text-sm text-bg">
+                  {m.body}
+                </div>
+              ) : (
+                <div key={i} className="grid gap-1.5">
+                  <div className="max-w-[90%] rounded-[12px] bg-bg px-3 py-2 text-sm">{m.body}</div>
+                  <ReportThis chat="suggested-brief" messageId={messageKey(i, m.body)} threadId={s.id} text={m.body} turns={reportTurns} state={reportState} clientSlug={s.clientSlug || null} />
+                </div>
+              ),
+            )}
+            {chatError && !thinking && (
+              <div className="grid gap-1.5">
+                <p className="text-xs text-bad">{chatError}</p>
+                <ReportThis chat="suggested-brief" messageId={`error-${messageKey(messages.length, chatError)}`} threadId={s.id} error={chatError} turns={reportTurns} state={reportState} clientSlug={s.clientSlug || null} />
               </div>
-            ))}
+            )}
             {thinking && (
               <div className="flex w-fit items-center gap-2 rounded-[12px] bg-bg px-3 py-2.5 text-xs text-faint">
                 <Dots /> Rewriting the brief

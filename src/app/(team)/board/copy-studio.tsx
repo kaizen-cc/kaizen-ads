@@ -10,6 +10,8 @@ import { cachedMedia, loadMedia } from "./media-cache";
 import { AdPreview, previewMedia } from "@/components/ad-preview";
 import type { Dismissed } from "@/lib/copy";
 import type { Ticket } from "./types";
+import { ReportThis } from "@/components/report-this";
+import { messageKey } from "@/lib/chat-report";
 
 // The copy studio: copy review works here, not inside the ticket. The creative sits at the top, the five ads on the left,
 // the one being edited in the middle with live counts, and on the right either a Meta feed preview of that ad on the
@@ -150,6 +152,9 @@ function Chat({ ticket, demo, disabled, onRewriting }: { ticket: Ticket; demo: b
     setMessages(r.messages);
     if (r.rewriting) onRewriting();
   };
+  // For "Report this" / "Ask for this": the whole conversation and the ticket it's about
+  const reportTurns = () => (messages ?? []).map((m) => ({ role: m.role === "user" ? "user" : "ai", text: m.text, at: m.at, name: m.by }));
+  const reportState = () => ({ request: ticket.id, client: ticket.clientName });
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-3">
@@ -174,6 +179,7 @@ function Chat({ ticket, demo, disabled, onRewriting }: { ticket: Ticket; demo: b
                     {l.body}
                   </span>
                 ))}
+                {m.role !== "user" && !demo && <ReportThis chat="copy-studio" messageId={messageKey(i, m.text)} threadId={ticket.id} text={m.text} turns={reportTurns} state={reportState} clientSlug={ticket.clientSlug} />}
               </li>
             ))}
             {busy && (
@@ -188,6 +194,7 @@ function Chat({ ticket, demo, disabled, onRewriting }: { ticket: Ticket; demo: b
       </div>
       <div className="grid gap-1.5">
         {error && <p className="text-xs text-bad">{error}</p>}
+        {error && !demo && <ReportThis chat="copy-studio" messageId={`error-${messageKey(messages?.length ?? 0, error)}`} threadId={ticket.id} error={error} turns={reportTurns} state={reportState} clientSlug={ticket.clientSlug} />}
         <div className="flex items-end gap-2">
           <textarea data-chat
             value={text}

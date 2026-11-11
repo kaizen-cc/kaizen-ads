@@ -9,6 +9,8 @@ import type { ClientNumbers, ProposedTest } from "@/lib/lab";
 import { pushParams, useParam } from "@/lib/url-state";
 import { KnowledgePanel } from "@/components/knowledge-panel";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
+import { ReportThis } from "@/components/report-this";
+import { messageKey } from "@/lib/chat-report";
 import { addLoomLinks, addTestNote, followTest, createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, tableSpeaks, type Attachment } from "./actions";
 
 export type LabClientRow = { id: string; name: string; slug: string; industry: string | null; spend30: number };
@@ -289,6 +291,9 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
     { label: "Bring an idea", hint: "Something you want pressure-tested", act: () => document.getElementById("lab-input")?.focus() },
   ];
   const title = threads.find((t) => t.id === tid)?.title ?? (tid ? "New conversation" : null);
+  // For "Report this" / "Ask for this": the whole round table as this page has it
+  const reportTurns = () => thread.map((m) => ({ role: m.role === "user" ? "user" : "ai", text: m.body, at: m.at, name: m.role === "user" ? null : m.seat ? SEATS[m.seat].name : "The table" }));
+  const reportState = () => ({ labThread: tid, title, typing, sending });
 
   return (
     <div className="grid gap-4 lg:grid-cols-[272px_minmax(0,1fr)] lg:items-start">
@@ -389,6 +394,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
                 {m.tests.map((t, i) => (
                   <ProposalCard key={i} t={t} clients={clients} duplicate={(t.duplicateOf ? testById.get(t.duplicateOf) : null) ?? similarRunning(t, tests)} onStart={() => setStarting(t)} />
                 ))}
+                {!readOnly && <ReportThis chat="ads-lab" messageId={m.id} threadId={tid} text={m.body} turns={reportTurns} state={reportState} />}
               </div>
             ),
           )}
@@ -424,6 +430,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
           className="grid gap-2 border-t border-line p-3"
         >
           {error && <p className="px-1 text-xs text-bad">{error}</p>}
+          {error && <ReportThis chat="ads-lab" messageId={`error-${messageKey(thread.length, error)}`} threadId={tid} error={error} turns={reportTurns} state={reportState} />}
 
           {shared.length > 0 && (
             <div className="flex flex-wrap gap-1.5">

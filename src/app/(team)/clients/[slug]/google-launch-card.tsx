@@ -7,7 +7,7 @@ import { WriteOff } from "@/components/write-gate";
 import { chars, G, kwText, type AdLine, type GAdGroup, type GCampaign, type GooglePlan, type Match, type PlanEdit, type Rsa } from "@/lib/google-launch/core";
 import { placesLabel } from "@/lib/google-launch/places";
 import type { LaunchItem } from "@/lib/launch-sheet/types";
-import { aboutQuestion, Checklist, Mark, Question, StillNeeded } from "./launch-card";
+import { aboutQuestion, Checklist, LaunchReport, Mark, Question, StillNeeded } from "./launch-card";
 import { Clamp, LaunchMore } from "./launch-more";
 import {
   addMissingGoogleLaunch,
@@ -561,6 +561,7 @@ export function GoogleLaunchCard({ id, compact = false }: { id: string; compact?
       {mine && v.status === "ready" && !v.write.live && <WriteOff status={v.write} canSwitch={v.canSwitch} account={v.account} compact onLive={() => void loadGoogleLaunch(v.id).then((next) => next && setV(next))} />}
       {!mine && ["asking", "ready", "failed"].includes(v.status) && <p className="text-[11.5px] text-ink/50">{v.confirmWhy ?? "The client's Google buyer, the head of Google or an exec works a Google launch."}</p>}
       {error && <p className="text-[12px] text-bad">{error}</p>}
+      <LaunchReport chat="google-launch" v={v} error={error} />
 
       <div className="flex flex-wrap gap-2">
         {v.status === "ready" && v.write.live && v.canConfirm && (

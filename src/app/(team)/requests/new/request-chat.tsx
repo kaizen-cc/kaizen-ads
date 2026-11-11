@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { ReportThis } from "@/components/report-this";
+import { messageKey } from "@/lib/chat-report";
 import type { SuggestionDraft, TalkTurn } from "@/lib/suggestions";
 import type { QuickBrief } from "@/lib/quick-brief";
 import { linksIn } from "@/lib/saved-references";
@@ -265,6 +267,9 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack, on
   }, [canContinue]);
 
   const said = state.turns.some((t) => t.role === "user");
+  // For "Report this" / "Ask for this": the whole conversation and the brief as it stands (the important context)
+  const reportTurns = () => state.turns.map((t) => ({ role: t.role, text: t.text }));
+  const reportState = () => ({ draft: state.draft, patch: state.patch, preview: current, ready: state.ready, refs, clientId, clientName });
   return (
     <section {...drop.bind} className={`relative mx-auto flex min-h-[460px] w-full min-w-0 max-w-3xl flex-col overflow-hidden rounded-[22px] border bg-surface ${drop.dragging ? "border-brand/60" : "border-line"}`}>
       {drop.dragging && <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-bg/80 text-[14px] font-medium text-fg">Drop to add to the brief</div>}
@@ -305,7 +310,8 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack, on
         {state.turns.map((t, i) => {
           const ask = t.role === "ai" && state.asks?.[i] ? inlineAsks(t.text, state.asks[i]) : null;
           return (
-            <div key={i} className={`grid max-w-[88%] gap-2 rounded-[18px] px-4 py-2.5 text-[14.5px] leading-relaxed ${t.role === "user" ? "justify-self-end bg-fg text-bg" : "justify-self-start bg-surface-2 text-fg"}`}>
+            <Fragment key={i}>
+            <div className={`grid max-w-[88%] gap-2 rounded-[18px] px-4 py-2.5 text-[14.5px] leading-relaxed ${t.role === "user" ? "justify-self-end bg-fg text-bg" : "justify-self-start bg-surface-2 text-fg"}`}>
               <p className="whitespace-pre-wrap break-words">{t.text}</p>
               {ask && ask.conflicts.length > 0 && (
                 <ul className="grid gap-1.5">
@@ -325,6 +331,8 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack, on
               )}
               {t.role === "ai" && state.market?.[i]?.length ? <MarketRefCards refs={state.market[i]} added={refs} onAdd={(u) => addRefs([u])} /> : null}
             </div>
+            {t.role === "ai" && <ReportThis chat="talk-it-through" messageId={messageKey(i, t.text)} threadId={null} text={t.text} turns={reportTurns} state={reportState} className="justify-self-start" />}
+            </Fragment>
           );
         })}
         {busy && phase === "checking" && <div className="justify-self-start rounded-[18px] bg-surface-2 px-4 py-2.5 text-[14px] text-muted">Reading it through…</div>}
@@ -343,6 +351,7 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack, on
             )}
           </p>
         )}
+        {error && <ReportThis chat="talk-it-through" messageId={`error-${messageKey(state.turns.length, error)}`} threadId={null} error={error} turns={reportTurns} state={reportState} className="justify-self-start" />}
         <div ref={endRef} />
       </div>
 

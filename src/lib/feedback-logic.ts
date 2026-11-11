@@ -147,66 +147,133 @@ export function byPriority<T extends { priority: number; people: number; reports
 }
 
 // ─── Which path a report takes ──────────────────────────────────────────────
-// A small bug (contained, clear repro: a UI glitch, a wrong link, a crash with a stack, a copy error) is fixed by
-// Claude and ships itself once every check passes. A big issue (data, security, money, ad-account writes, sign-in and
-// permissions, the database, several areas) or a feature request waits for an exec's review.
+// A bug or an error, of any size, goes to the Claude fix pipeline right away: no one has to look at it first. Most
+// ship themselves once every check passes. A fix that would touch the safety rails (the database, sign-in and
+// permissions, anything that writes to ad accounts, billing, secrets and env, the pipeline itself, or a very large
+// change) is still built, on a pull request, but it waits for the owner's approval before it merges. A feature
+// request never starts a fix: it goes to the owner as an Ask (build now, plan it, ask for more, or won't do). So does
+// a report that reads like a note or an instruction rather than something going wrong.
 
+// The stored scope keeps its old names: small_bug ships itself; big_issue is a bug whose fix needs approval;
+// feature is an Ask.
 export type Scope = "small_bug" | "big_issue" | "feature";
 export type Lane = "auto_fix" | "review" | "build";
+export type Rail = "database" | "auth" | "ad_accounts" | "billing" | "secrets" | "pipeline" | "very_large";
 
-export const SCOPE_LABEL: Record<Scope, string> = { small_bug: "Small bug", big_issue: "Big issue", feature: "Feature request" };
+export const SCOPE_LABEL: Record<Scope, string> = { small_bug: "Bug", big_issue: "Bug · fix needs approval", feature: "Ask" };
+export const RAIL_LABEL: Record<Rail, string> = {
+  database: "the database (a migration)",
+  auth: "sign-in, RLS or permissions",
+  ad_accounts: "writes to ad accounts",
+  billing: "billing",
+  secrets: "secrets or env",
+  pipeline: "the pipeline itself (.github)",
+  very_large: "a very large change",
+};
 
-// Words that put a report out of reach of an automatic fix, whatever the AI thought
-const BIG =
-  /\b(data (?:loss|lost|gone|wrong|deleted)|lost (?:my|our|the|all)|deleted|security|leak|exposed|password|log ?in|sign ?in|logged out|permissions?|access|rls|admin|billing|invoice|stripe|payments?|charged?|refund|money|budgets?|spend|ad accounts?|meta write|campaigns? (?:paused|turned off|turned on|created|launched)|migrations?|schema|database|supabase|secrets?|api key|tokens?)\b/i;
+// Words that put a fix behind the owner's approval, whatever the AI thought (they only ever make it more careful)
+const RAILS: [Rail, RegExp][] = [
+  ["database", /\b(migrations?|schema|database|supabase|db tables?|columns? (?:missing|added|renamed))\b/i],
+  ["auth", /\b(log ?in|log ?out|logged (?:out|in)|sign ?in|sign ?up|signed out|permissions?|rls|access denied|not allowed to|password|magic link|auth(?:entication)?)\b/i],
+  ["ad_accounts", /\b(meta[- ]write|google[- ]write|launch(?:er|es|ed|ing)?|ad accounts?|budgets? (?:changed|set|moved|wrong)|campaigns? (?:paused|turned off|turned on|created|launched)|paused? (?:the |an? )?(?:ads?|campaigns?|ad sets?))\b/i],
+  ["billing", /\b(billing|invoices?|stripe|payments?|charged|refunds?)\b/i],
+  ["secrets", /\b(secrets?|api keys?|access tokens?|env(?:ironment)? var(?:iable)?s?|\.env)\b/i],
+  ["pipeline", /(\.github|github actions?|claude-fix)/i],
+];
 
-/** The path a report takes: the AI's read, with guardrails that only ever make it more careful. */
-export function classifyScope(r: { aiScope: Scope | null; type: string; severity: Severity; text: string; area: string }): { scope: Scope; reason: string } {
-  if (r.aiScope === "big_issue") return { scope: "big_issue", reason: "Too big or risky for an automatic fix" };
-  if (r.type === "idea" || r.aiScope === "feature") return { scope: "feature", reason: "Asks for something new, not a fix" };
-  const hit = r.text.match(BIG)?.[0];
-  if (hit) return { scope: "big_issue", reason: `Mentions "${hit.toLowerCase()}", which an automatic fix never touches` };
-  if (r.severity === "high") return { scope: "big_issue", reason: "High severity" };
-  if (r.area === "Launcher") return { scope: "big_issue", reason: "The launcher writes to ad accounts" };
-  return { scope: "small_bug", reason: "Small and contained" };
+/** The safety rail a fix for this would touch, or null when it may ship itself. */
+export function railFor(r: { text: string; area: string; aiRail?: Rail | "none" | null }): { rail: Rail; why: string } | null {
+  for (const [rail, re] of RAILS) {
+    const hit = r.text.match(re)?.[0];
+    if (hit) return { rail, why: `Mentions "${hit.toLowerCase()}"` };
+  }
+  if (r.area === "Launcher") return { rail: "ad_accounts", why: "The launcher writes to ad accounts" };
+  if (r.aiRail && r.aiRail !== "none") return { rail: r.aiRail, why: "The triage read it that way" };
+  return null;
 }
 
-/** Bigger always wins when reports are grouped: a group is as careful as its most careful report. */
-export const widerScope = (a: Scope, b: Scope): Scope => (a === "big_issue" || b === "big_issue" ? "big_issue" : a === "feature" || b === "feature" ? "feature" : "small_bug");
-
-export const AUTO_FIX_PER_DAY = 3;
-export const AUTO_FIX_MAX_ATTEMPTS = 2;
-export const AUTO_FIX_FAILURES_TO_PAUSE = 2; // in a day, across all fixes: something is off, so stop and let a person look
+// What says something went wrong (a bug), as opposed to a note or an instruction
+const PROBLEM =
+  /\?|\b(not|no|never|nothing|broken|breaks?|error|errors|wrong|fails?|failed|failing|bug|bugs|crash(?:es|ed)?|missing|stuck|blank|empty|slow|freez(?:e|es|ing)|disappear(?:s|ed)?|weird|incorrect|inaccurate|instead|should|why|how|cannot|can't|cant|won't|wont|doesn't|doesnt|didn't|didnt|isn't|isnt|aren't|wasn't|shows?|showing|says|cut off|overlaps?|misaligned|typo|off[- ]screen|unreadable|hidden)\b/i;
+const REQUEST_START = /^\s*(let'?s|lets|please|pls|can you|could you|make|create|launch|add|build|set up|write|send|schedule|start|go)\b/i;
 
 /**
- * Whether to hand a group to the fix pipeline now. Only small bugs, still open, with GitHub connected; at most a few a
- * day; a fix that failed its checks gets one more try, then goes to review; and if fixes keep failing, everything
- * waits for a person.
+ * A report that reads like a note or an instruction meant for somewhere else (a chat message typed into the bubble,
+ * "lets launch a campaign") rather than something going wrong. Those go to the owner as an Ask, never to a fix.
+ */
+export function looksLikeNote(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (PROBLEM.test(t)) return false;
+  const words = t.split(/\s+/).length;
+  return words <= 3 || (REQUEST_START.test(t) && words <= 30);
+}
+
+export type AiKind = "bug" | "feature" | "unclear";
+
+/** The path a report takes: the AI's read, with guardrails that only ever make it more careful. */
+export function classifyScope(r: { aiKind: AiKind | null; aiRail?: Rail | "none" | null; type: string; text: string; area: string; note?: string }): {
+  scope: Scope;
+  reason: string;
+  rail: Rail | null;
+  unclear: boolean;
+} {
+  if (r.type === "idea" || r.aiKind === "feature") return { scope: "feature", reason: "Asks for something new, not a fix", rail: null, unclear: false };
+  if (r.aiKind === "unclear" || looksLikeNote(r.note ?? r.text))
+    return { scope: "feature", reason: "Reads like a note or an instruction, not something going wrong", rail: null, unclear: true };
+  const rail = railFor({ text: r.text, area: r.area, aiRail: r.aiRail });
+  if (rail) return { scope: "big_issue", reason: `The fix may touch ${RAIL_LABEL[rail.rail]} (${rail.why}), so it waits for approval before it merges`, rail: rail.rail, unclear: false };
+  return { scope: "small_bug", reason: "A bug: fixed and shipped once every check passes", rail: null, unclear: false };
+}
+
+/** A group is as careful as its most careful report: approval beats ships-itself; a bug report turns an Ask into a fix. */
+export const widerScope = (a: Scope, b: Scope): Scope => (a === "big_issue" || b === "big_issue" ? "big_issue" : a === "small_bug" || b === "small_bug" ? "small_bug" : "feature");
+
+export const DEFAULT_FIXES_PER_DAY = 15;
+export const AUTO_FIX_MAX_ATTEMPTS = 2;
+export const AUTO_FIX_FAILURES_TO_PAUSE = 4; // in a day, across all fixes: something is off, so stop and let a person look
+
+/** How many fixes may start in a day: FEEDBACK_FIXES_PER_DAY when it's a sensible number, 15 otherwise. */
+export function dailyFixCap(raw: string | null | undefined): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= 100 ? n : DEFAULT_FIXES_PER_DAY;
+}
+
+/**
+ * Whether to hand a group to the fix pipeline now. A bug starts at once (ships itself unless it needs approval); an
+ * Ask goes to the owner unless the owner said build it. A fix already on its way is left alone; one that failed its
+ * checks gets one more try; past today's cap it waits its turn; and without GitHub, after repeated failures, or when
+ * fixes keep failing across the board, it's stuck and the owner looks.
  */
 export function autoFixDecision(g: {
   scope: Scope;
   status: string;
+  lane: string;
   fixState: string | null;
   attempts: number;
   startedToday: number;
   failedToday: number;
   github: boolean;
-}): { action: "start" | "wait" | "review" | "none"; reason: string } {
-  if (!isOpen(g.status)) return { action: "none", reason: "Closed" };
-  if (g.scope !== "small_bug") return { action: "review", reason: g.scope === "feature" ? "A feature request: an exec decides" : "Too big for an automatic fix" };
-  if (g.fixState === "working" || g.fixState === "pr_open" || g.fixState === "merged") return { action: "none", reason: "Already on its way" };
-  if (!g.github) return { action: "review", reason: "Automatic fixes aren't connected (GITHUB_TOKEN)" };
-  if (g.attempts >= AUTO_FIX_MAX_ATTEMPTS) return { action: "review", reason: `The fix failed its checks ${g.attempts} times` };
-  if (g.failedToday >= AUTO_FIX_FAILURES_TO_PAUSE) return { action: "review", reason: `Automatic fixes are paused: ${g.failedToday} failed their checks today` };
-  if (g.startedToday >= AUTO_FIX_PER_DAY) return { action: "wait", reason: `Today's ${AUTO_FIX_PER_DAY} automatic fixes are used; it goes next` };
-  return { action: "start", reason: "Small bug" };
+  cap?: number;
+}): { action: "start" | "wait" | "ask" | "stuck" | "none"; autoMerge: boolean; reason: string } {
+  const cap = g.cap ?? DEFAULT_FIXES_PER_DAY;
+  const autoMerge = g.scope === "small_bug" && g.lane !== "build";
+  if (!isOpen(g.status)) return { action: "none", autoMerge, reason: "Closed" };
+  if (g.scope === "feature" && g.lane !== "build") return { action: "ask", autoMerge: false, reason: "An Ask: the owner decides" };
+  if (g.fixState === "working" || g.fixState === "pr_open" || g.fixState === "merged") return { action: "none", autoMerge, reason: "Already on its way" };
+  if (!g.github) return { action: "stuck", autoMerge, reason: "Automatic fixes aren't connected (GITHUB_TOKEN)" };
+  if (g.attempts >= AUTO_FIX_MAX_ATTEMPTS) return { action: "stuck", autoMerge, reason: `The fix failed its checks ${g.attempts} times` };
+  if (g.failedToday >= AUTO_FIX_FAILURES_TO_PAUSE) return { action: "stuck", autoMerge, reason: `Automatic fixes are paused: ${g.failedToday} failed their checks today` };
+  if (g.startedToday >= cap) return { action: "wait", autoMerge, reason: `Today's ${cap} fixes are used; it goes next` };
+  return { action: "start", autoMerge, reason: autoMerge ? "A bug: it ships itself once every check passes" : "Built now; the fix waits for approval before it merges" };
 }
 
-export type FixState = "working" | "pr_open" | "checks_failed" | "merged" | "no_change" | "protected";
+export type FixState = "working" | "pr_open" | "checks_failed" | "ready" | "merged" | "no_change";
 
 /**
  * Where a fix stands, from GitHub: the issue, the pull request on claude/fix-<n> (if any), and the comments the
- * claude-fix workflow leaves. The workflow squash-merges a passing low-severity fix itself and closes the issue.
+ * claude-fix workflow leaves. It squash-merges a passing fix that may ship itself; one that needs approval gets
+ * "Every check passed. It needs approval" and waits; Approve and merge has it merged the same way.
  */
 export function fixOutcome(gh: {
   issueClosed: boolean;
@@ -218,20 +285,96 @@ export function fixOutcome(gh: {
   const commit = all.match(/Merged into main as ([0-9a-f]{7,40})/)?.[1] ?? null;
   if (gh.pr?.merged || commit || (gh.issueClosed && /merged automatically/i.test(all))) return { state: "merged", commit, note: null };
   if (/A check failed/i.test(all)) return { state: "checks_failed", commit: null, note: "A check failed on the fix" };
-  if (/changes the database|touches files an automatic fix never ships/i.test(all))
-    return { state: "protected", commit: null, note: "The fix touches what an automatic fix never ships (the database, sign-in, ad accounts, billing, secrets, or many files)" };
+  const ready = gh.comments.findLast((c) => /Every check passed\. It needs approval|changes the database|touches files an automatic fix never ships/i.test(c));
+  if (ready && gh.pr?.open) return { state: "ready", commit: null, note: ready.slice(0, 600) };
   if (gh.pr?.open) return { state: "pr_open", commit: null, note: null };
-  // Claude decided there was nothing of ours to change (it comments why), once the run is long over
-  if (!gh.pr && gh.minutesSinceStart > 90) return { state: "no_change", commit: null, note: gh.comments.at(-1)?.slice(0, 600) ?? "Claude found nothing to change" };
+  // Claude decided there was nothing of ours to change (it comments why; the workflow closes the issue)
+  if (!gh.pr && (gh.issueClosed || gh.minutesSinceStart > 90)) return { state: "no_change", commit: null, note: gh.comments.findLast((c) => !/^Claude changed nothing/i.test(c))?.slice(0, 600) ?? "Claude found nothing to change" };
   return { state: "working", commit: null, note: null };
 }
 
-/** The path, as the Feedback page shows it. */
-export function pathLabel(g: { status: string; lane: string; fixState: string | null; pending?: boolean }): { label: string; tone: "ok" | "warn" | "brand" | "muted" } {
+// ─── Where a group sits on the Feedback page, and what its reporters see ────
+
+export type Section = "fixing" | "approval" | "asks" | "done";
+export const SECTIONS: { key: Section; label: string; about: string }[] = [
+  { key: "fixing", label: "Fixing", about: "Bugs on their way through the pipeline. Most ship themselves once every check passes." },
+  { key: "approval", label: "Needs your approval", about: "Fixes built on a pull request that touch the safety rails, and anything the pipeline couldn't finish." },
+  { key: "asks", label: "Asks", about: "Feature requests and notes from the team. Nothing is built until you say so." },
+  { key: "done", label: "Done", about: "Live, or decided against." },
+];
+
+type GroupLike = { status: string; lane: string; scope: string; fixState: string | null; pending?: boolean };
+
+/** The Feedback page section a group belongs in. */
+export function sectionOf(g: GroupLike): Section {
+  if (g.pending) return "fixing";
+  if (!isOpen(g.status)) return "done";
+  if (g.scope === "feature" && g.lane !== "build") return "asks";
+  if (g.lane === "build" && g.fixState === "pr_open") return "approval";
+  if (g.lane === "review") return "approval";
+  return "fixing";
+}
+
+/** The short state shown on a group for the owner. */
+export function pathLabel(g: GroupLike & { ready?: boolean }): { label: string; tone: "ok" | "warn" | "brand" | "muted" } {
   if (g.pending) return { label: "Reading it", tone: "muted" };
-  if (g.status === "fixed") return { label: "Fixed", tone: "ok" };
+  if (g.status === "fixed") return { label: "Live", tone: "ok" };
   if (g.status === "wont_fix") return { label: "Won't do", tone: "muted" };
-  if (g.lane === "auto_fix") return { label: g.fixState === "queued" ? "Auto-fix queued" : "Auto-fixing", tone: "brand" };
-  if (g.lane === "build") return { label: g.fixState === "pr_open" ? "Planned · PR to review" : "Planned", tone: "brand" };
-  return { label: "Needs your review", tone: "warn" };
+  const s = sectionOf(g);
+  if (s === "asks") return { label: g.status === "planned" ? "Planned" : "Ask", tone: "brand" };
+  if (s === "approval") return g.lane === "build" ? { label: g.ready ? "Fix ready to approve" : "Checking the fix", tone: "warn" } : { label: "Needs a look", tone: "warn" };
+  if (g.fixState === "queued") return { label: "Next up", tone: "brand" };
+  if (g.fixState === "checks_failed") return { label: "Trying again", tone: "brand" };
+  if (g.fixState === "pr_open") return { label: "Checking", tone: "brand" };
+  return { label: g.lane === "build" ? "Building" : "Fixing", tone: "brand" };
+}
+
+export type ReporterStatus = "received" | "building" | "fix_ready" | "live" | "with_owner" | "wont_do";
+export const REPORTER_STATUS: Record<ReporterStatus, { label: string; note: string; tone: "ok" | "warn" | "brand" | "muted" }> = {
+  received: { label: "Received", note: "We have it and we're reading it.", tone: "muted" },
+  building: { label: "Building", note: "A fix is being built now. You'll hear when it's live.", tone: "brand" },
+  fix_ready: { label: "Fix ready", note: "The fix is built and waiting for the owner's approval.", tone: "brand" },
+  live: { label: "Live", note: "It's fixed in the latest version. Refresh if you still see the old behaviour.", tone: "ok" },
+  with_owner: { label: "With the owner", note: "It's with the owner to decide what happens next.", tone: "warn" },
+  wont_do: { label: "Won't do", note: "Decided against, with the reason on the report.", tone: "muted" },
+};
+
+/** Where a report stands, in the reporter's words. */
+export function reporterStatus(g: (GroupLike & { groupId?: string | null }) | null): ReporterStatus {
+  if (!g || g.pending || g.groupId === null) return "received";
+  if (g.status === "fixed") return "live";
+  if (g.status === "wont_fix") return "wont_do";
+  const s = sectionOf(g);
+  if (s === "asks") return "with_owner";
+  if (s === "approval") return g.lane === "build" ? "fix_ready" : "with_owner";
+  if (g.fixState) return "building";
+  return "received";
+}
+
+// ─── Plan it: a line on the roadmap ─────────────────────────────────────────
+
+export const ROADMAP_SECTION = "## Requested by the team";
+
+/**
+ * The roadmap with one more line under "Requested by the team" (the section is made at the end if it isn't there).
+ * Keeps the file's line endings; a line already there isn't added twice.
+ */
+export function addToRoadmap(md: string, line: string): string {
+  const eol = md.includes("\r\n") ? "\r\n" : "\n";
+  const bullet = `- ${line.replace(/\s+/g, " ").trim()}`;
+  const lines = md.split(/\r?\n/);
+  if (lines.some((l) => l.trim() === bullet.trim())) return md;
+  const at = lines.findIndex((l) => l.trim() === ROADMAP_SECTION);
+  if (at === -1) {
+    while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+    return [...lines, "", ROADMAP_SECTION, "", bullet, ""].join(eol);
+  }
+  let end = lines.findIndex((l, i) => i > at && /^#{1,2} /.test(l));
+  if (end === -1) end = lines.length;
+  // After the section's last non-blank line
+  let insert = end;
+  while (insert - 1 > at && lines[insert - 1].trim() === "") insert--;
+  const out = [...lines.slice(0, insert), ...(insert === at + 1 ? [""] : []), bullet, ...lines.slice(insert)];
+  if (out[out.length - 1] !== "") out.push("");
+  return out.join(eol);
 }

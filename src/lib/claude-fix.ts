@@ -74,3 +74,46 @@ export async function createFixIssue(fingerprint: string, by = "by Santi", autoM
   await admin.from("error_events").update({ fix_issue_url: issue.url }).eq("fingerprint", e.fingerprint);
   return { url: issue.url };
 }
+
+/** Add labels to an issue (the claude-fix workflow acts on some: approved-merge has it merge the fix). */
+export async function labelIssue(issue: number, labels: string[], create?: { name: string; color: string; description: string }) {
+  if (create) await github("/labels", { body: create }).catch(() => null);
+  const res = await github(`/issues/${issue}/labels`, { body: { labels } }).catch(() => null);
+  return res?.ok ? { ok: true as const } : { error: res ? `GitHub said ${res.status}` : "GitHub isn't connected (GITHUB_TOKEN)" };
+}
+
+/** Comment on an issue or a pull request. */
+export async function commentOn(number: number, body: string) {
+  const res = await github(`/issues/${number}/comments`, { body: { body } }).catch(() => null);
+  return Boolean(res?.ok);
+}
+
+/** Close an issue (as not planned) or a pull request. */
+export async function closeOn(number: number, kind: "issue" | "pull") {
+  const res = await github(kind === "pull" ? `/pulls/${number}` : `/issues/${number}`, { method: "PATCH", body: kind === "pull" ? { state: "closed" } : { state: "closed", state_reason: "not_planned" } }).catch(() => null);
+  return Boolean(res?.ok);
+}
+
+/**
+ * Change one file on main through the API, committed as kaizen-cc (the only identity Vercel deploys): read it,
+ * change it, write it back. A conflict (someone pushed in between) is tried once more.
+ */
+export async function editRepoFile(path: string, message: string, change: (text: string) => string): Promise<{ ok: true; url: string | null } | { error: string }> {
+  if (!githubConfigured()) return { error: "GitHub isn't connected (GITHUB_TOKEN)" };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await github(`/contents/${path}?ref=main`).catch(() => null);
+    if (!res?.ok) return { error: `Couldn't read ${path} (GitHub said ${res?.status ?? "nothing"})` };
+    const file = (await res.json()) as { content: string; sha: string };
+    const before = Buffer.from(file.content, "base64").toString("utf8");
+    const after = change(before);
+    if (after === before) return { ok: true, url: null };
+    const who = { name: "kaizen-cc", email: "santi@kaizenmarketing.agency" };
+    const put = await github(`/contents/${path}`, {
+      method: "PUT",
+      body: { message, content: Buffer.from(after, "utf8").toString("base64"), sha: file.sha, branch: "main", committer: who, author: who },
+    }).catch(() => null);
+    if (put?.ok) return { ok: true, url: ((await put.json()) as { commit?: { html_url?: string } }).commit?.html_url ?? null };
+    if (put?.status !== 409) return { error: `Couldn't save ${path} (GitHub said ${put?.status ?? "nothing"})` };
+  }
+  return { error: `${path} kept changing; try again` };
+}

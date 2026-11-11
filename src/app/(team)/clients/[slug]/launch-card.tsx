@@ -6,6 +6,9 @@ import { useEffect, useRef, useState } from "react";
 import { WriteOff } from "@/components/write-gate";
 import type { BudgetSpec, CheckItem, LaunchItem, LaunchPlan, LaunchQuestion, PlanAd, PlanAdset, PlanCampaign } from "@/lib/launch-sheet/types";
 import { shortUrl } from "@/lib/landing-pages-core";
+import { ReportThis } from "@/components/report-this";
+import { messageKey } from "@/lib/chat-report";
+import { launchState } from "@/lib/chat-transcript";
 import { Clamp, LaunchMore } from "./launch-more";
 import { buildLaunchPlan, confirmLaunch, continueLaunch, loadLaunch, replyToLaunch, setAsideLaunch, takeLaunchProposals, type LaunchView } from "./launch-sheet-actions";
 
@@ -380,6 +383,33 @@ function CampaignLine({ c, plan, items, qa }: { c: PlanCampaign; plan: LaunchPla
   );
 }
 
+type ReportableRun = { id: string; status: string; progress: string | null; error: string | null; summary: string | null; questions: LaunchQuestion[]; plan: unknown; warnings: string[]; items: LaunchItem[] };
+
+/** One "Report this" per launch card (never per line): a failed or partial run, a run error, or a line that errored */
+export function LaunchReport({ chat, v, error, said }: { chat: "launch" | "google-launch"; v: ReportableRun; error: string | null; said?: string | null }) {
+  const lineError = v.items.find((i) => i.error)?.error ?? null;
+  const shown = v.error || error || lineError;
+  const failed = v.status === "failed" || v.status === "partial" || Boolean(lineError);
+  return (
+    <ReportThis
+      chat={chat}
+      threadId={v.id}
+      messageId={messageKey(0, `${v.status}:${shown ?? ""}`)}
+      error={shown}
+      failed={failed}
+      turns={() => [
+        ...(v.summary ? [{ role: "ai", text: v.summary }] : []),
+        ...v.questions.filter((q) => q.answer).flatMap((q) => [
+          { role: "ai", text: q.question },
+          { role: "user", text: String(q.answer) },
+        ]),
+        ...(said ? [{ role: "ai", text: said }] : []),
+      ]}
+      state={() => launchState({ id: v.id, platform: chat === "google-launch" ? "google" : "meta", status: v.status, progress: v.progress, error: v.error ?? error, summary: v.summary, questions: v.questions, plan: v.plan, plan_warnings: v.warnings }, v.items)}
+    />
+  );
+}
+
 export function LaunchCard({ id, compact = false, reply = false }: { id: string; compact?: boolean; reply?: boolean }) {
   const router = useRouter();
   const [v, setV] = useState<LaunchView | null>(null);
@@ -594,6 +624,7 @@ export function LaunchCard({ id, compact = false, reply = false }: { id: string;
       ))}
       {["asking", "ready", "partial", "failed"].includes(v.status) && !v.canConfirm && <p className="text-[11.5px] text-ink/50">{v.confirmWhy ?? "The client's Meta buyer, the head of Meta or an exec works a Meta launch."}</p>}
       {error && <p className="text-[12px] text-bad">{error}</p>}
+      <LaunchReport chat="launch" v={v} error={error} said={said} />
 
       <div className="flex flex-wrap gap-2">
         {v.status === "ready" && v.live && v.canConfirm && (

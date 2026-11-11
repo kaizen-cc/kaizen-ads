@@ -8,6 +8,8 @@ import { audiencesOf, kindOf, quotesOf, REVIEW_BANK, reviewBankOf, splitBible, s
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { clarifyBrandBible, clearBibleChat, markBrandBibleReviewed, refreshReviewBankNow, writeClientPresentation, type BibleTurn } from "../brand-bible-actions";
 import { JobProgress } from "@/components/job-progress";
+import { ReportThis } from "@/components/report-this";
+import { messageKey } from "@/lib/chat-report";
 import type { BibleTargets } from "@/lib/ai";
 import { Layer } from "../layer";
 import type { BibleQuestion } from "@/lib/bible-questions";
@@ -587,6 +589,10 @@ function BibleChat({
     });
   };
 
+  // For "Report this" / "Ask for this": the whole review chat and the open questions it's working through
+  const reportTurns = () => turns.map((t) => ({ role: t.role === "user" ? "user" : "ai", text: t.text, at: t.at }));
+  const reportState = () => ({ clientId, slug, openQuestions: questions.map((q) => q.question) });
+
   const opener = questions.length
     ? `I have ${questions.length} open question${questions.length === 1 ? "" : "s"} on this Bible. Answer any of them here and I'll update the Bible as we go. The first: ${questions[0].question}`
     : "Nothing's open. Tell me anything to correct or add and I'll update the Bible.";
@@ -640,6 +646,7 @@ function BibleChat({
                   ))}
                 </div>
               )}
+              {t.role === "assistant" && <ReportThis chat="brand-bible" messageId={messageKey(i, t.text)} threadId={clientId} text={t.text} turns={reportTurns} state={reportState} clientSlug={slug} />}
             </div>
           ))}
           {busy && (
@@ -666,6 +673,7 @@ function BibleChat({
             </div>
           )}
           {error && <p className="px-1 text-[12px] text-bad">{error}</p>}
+          {error && <ReportThis chat="brand-bible" messageId={`error-${messageKey(turns.length, error)}`} threadId={clientId} error={error} turns={reportTurns} state={reportState} clientSlug={slug} />}
           <div className="flex items-end gap-2 rounded-[18px] border border-line bg-bg px-3 py-2 focus-within:border-faint">
             <textarea data-chat
               ref={box}

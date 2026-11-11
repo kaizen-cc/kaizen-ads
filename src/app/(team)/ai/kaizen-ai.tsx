@@ -15,6 +15,9 @@ import { MoveToProject, ProjectView, ProjectsHome, useProject } from "./projects
 
 type ProjectRef = { id: string; name: string };
 import { ConnectorsMenu, RUN_EVENT, type RunDetail } from "./connectors-ui";
+import { ReportThis, type ReportTurn } from "@/components/report-this";
+import { messageKey } from "@/lib/chat-report";
+import { fromAiMessages, type TranscriptEntry } from "@/lib/chat-transcript";
 
 // Kaizen AI: a chat like Claude's, for the team. Threads on the left (search, pinned, grouped by client, shared with
 // me), the conversation in the middle with streaming answers, tool status and cards, and a composer with files,
@@ -109,6 +112,20 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
   const model: AiModel = thread?.model ?? draft.model;
   const agentPick: ChatAgent | null = thread ? ((thread.agent_key as ChatAgent | null) ?? null) : draft.agent;
   const client: ClientOpt | null = thread?.client_id ? (clients.find((c) => c.id === thread.client_id) ?? (thread.clients ? { id: thread.client_id, name: thread.clients.name, slug: thread.clients.slug } : null)) : draft.client;
+  // "Report this" / "Ask for this" under a message that falls short: the whole chat as the browser has it
+  const report: ReportCtx = {
+    threadId: thread?.id ?? null,
+    clientSlug: client?.slug ?? null,
+    turns: () => [
+      ...messages.map((m) => ({ role: m.role === "user" ? "user" : "ai", text: m.content || m.error || "", at: m.created_at, name: m.role === "user" ? null : m.agent_key })),
+      ...(live && (live.text || live.error) ? [{ role: "ai", text: live.text || live.error || "", name: live.agent?.label ?? null }] : []),
+    ],
+    entries: () => [
+      ...fromAiMessages(messages),
+      ...(live ? fromAiMessages([{ role: "assistant", content: live.text, tools: live.tools, error: live.error, agent_key: live.agent?.label ?? null, created_at: new Date().toISOString() }]) : []),
+    ],
+    state: () => ({ threadId: thread?.id ?? null, agent_key: thread?.agent_key ?? draft.agent, model }),
+  };
 
   const refreshThreads = useCallback(() => {
     void listThreads().then(setThreads);
@@ -468,10 +485,10 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
                   onSave={(v) => void run("edit", v)}
                 />
               ) : (
-                <AssistantBlock key={m.id} m={m} canRegenerate={!readOnly && m.id === lastAssistantId && !live?.busy} onRegenerate={() => void run("regenerate", "")} />
+                <AssistantBlock key={m.id} m={m} report={report} canRegenerate={!readOnly && m.id === lastAssistantId && !live?.busy} onRegenerate={() => void run("regenerate", "")} />
               ),
             )}
-            {live && (live.thread === null || live.thread === thread?.id) ? <LiveBlock live={live} onRetry={() => void run("regenerate", "")} /> : null}
+            {live && (live.thread === null || live.thread === thread?.id) ? <LiveBlock live={live} report={report} at={messages.length} reported={messages.at(-1)?.role === "assistant" && messages.at(-1)?.error === live.error} onRetry={() => void run("regenerate", "")} /> : null}
             <div ref={bottom} />
           </div>
         </div>
@@ -1074,7 +1091,9 @@ function Avatar() {
   );
 }
 
-function AssistantBlock({ m, canRegenerate, onRegenerate }: { m: ChatMessage; canRegenerate: boolean; onRegenerate: () => void }) {
+type ReportCtx = { threadId: string | null; clientSlug: string | null; turns: () => ReportTurn[]; entries: () => TranscriptEntry[]; state: () => Record<string, unknown> };
+
+function AssistantBlock({ m, report, canRegenerate, onRegenerate }: { m: ChatMessage; report: ReportCtx; canRegenerate: boolean; onRegenerate: () => void }) {
   return (
     <div className="group flex gap-3">
       <Avatar />
@@ -1087,6 +1106,7 @@ function AssistantBlock({ m, canRegenerate, onRegenerate }: { m: ChatMessage; ca
         ))}
         {m.stopped ? <p className="text-[12.5px] text-faint">Stopped.</p> : null}
         {m.error ? <p className="rounded-[12px] bg-bad-soft/40 px-3 py-2 text-[13px] text-bad">{m.error}</p> : null}
+        <ReportThis chat="kaizen-ai" messageId={m.id} {...report} text={m.content} error={m.error} failed={(m.tools ?? []).some((t) => t.ok === false)} />
         <div className="flex gap-1 opacity-0 transition group-hover:opacity-100 max-md:opacity-100">
           {m.content ? <CopyButton text={m.content} /> : null}
           {canRegenerate ? (
@@ -1100,7 +1120,8 @@ function AssistantBlock({ m, canRegenerate, onRegenerate }: { m: ChatMessage; ca
   );
 }
 
-function LiveBlock({ live, onRetry }: { live: Live; onRetry: () => void }) {
+// reported: the saved reply already carries this error (and its own action), so the live one doesn't add a second
+function LiveBlock({ live, report, at, reported, onRetry }: { live: Live; report: ReportCtx; at: number; reported: boolean; onRetry: () => void }) {
   return (
     <div className="flex gap-3">
       <Avatar />
@@ -1132,6 +1153,7 @@ function LiveBlock({ live, onRetry }: { live: Live; onRetry: () => void }) {
             ) : null}
           </div>
         ) : null}
+        {live.error && !live.busy && !reported ? <ReportThis chat="kaizen-ai" messageId={`live-${messageKey(at, live.error)}`} {...report} text={live.text} error={live.error} /> : null}
       </div>
     </div>
   );
