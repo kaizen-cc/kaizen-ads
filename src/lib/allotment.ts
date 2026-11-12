@@ -171,6 +171,13 @@ export function allotmentLine(a: PoolCounts | null | undefined) {
 /** Any pool past its cap this cycle. */
 export const allotmentOver = (a: PoolCounts | null | undefined) => allotmentPools(a).some((p) => p.over > 0);
 
+/** The Board's allotment search: every typed word appears in the client's name, ignoring case and accents. Empty matches all. */
+export function matchesClientName(name: string, query: string) {
+  const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const hay = fold(name);
+  return fold(query).split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+}
+
 /** Theme classes for a pool's state: over in red, exactly at the cap in green (used in full, as planned). Amber is only ever "behind pace". */
 export const POOL_TONE: Record<Pool["state"], string> = { over: "text-bad", full: "text-ok", ok: "" };
 
