@@ -13,6 +13,7 @@ import { metricKeysFor, clockTime, columnKeys, metricLabel, platformName, report
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import { jointNote, type JointInfo, type JointNote } from "@/lib/reports/joint-core";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
+import { ManualResults, type ManualEntered } from "./manual-results";
 import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, setReportCampaignExcluded, skipReport } from "./actions";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
@@ -45,6 +46,8 @@ export type StudioReport = {
   metrics: ReportMetrics | null;
   extraMetrics: ReportMetrics[] | null;
   extras: string;
+  /** Results the team entered from the client's CRM for the report's period (kept across regenerates) */
+  manual: ManualEntered | null;
   /** The metrics the buyer chose (or this client's layout from the last report); null: the defaults */
   layout: ReportLayout | null;
   qa: Qa | null;
@@ -564,6 +567,10 @@ export function ReportStudio({
       )}
       {report.regen && !busy && !sent && <UndoRegenerate key={report.regen.at} id={report.id} at={report.regen.at} by={report.regen.by} />}
 
+      {step === "report" && !busy && (report.status !== "failed" || report.manual) && (
+        <ManualResults reportId={report.id} entered={report.manual} period={{ start: report.period.start, end: report.period.end, label: report.metrics?.main.label ?? report.periodLabel }} locked={sent || mineDone} />
+      )}
+
       {step === "report" && (
         <div className={`grid items-start gap-5 ${minned ? "pb-20" : "lg:grid-cols-[minmax(0,1fr)_420px]"}`}>
           <div className="grid min-w-0 gap-3">
@@ -935,7 +942,7 @@ ${t}` : t);
                     )}
                     <PdfPreview
                       source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`}
-                      baseKey={`${report.status}:${JSON.stringify(report.metrics ?? null).length}`}
+                      baseKey={`${report.status}:${JSON.stringify(report.metrics ?? null).length}:${report.manual?.at ?? ""}`}
                       patch={(input) => ({ ...input, parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout: shownLayout } : p)) })}
                       patchKey={JSON.stringify({ sections, extras, layout: shownLayout })}
                       fields={fields}

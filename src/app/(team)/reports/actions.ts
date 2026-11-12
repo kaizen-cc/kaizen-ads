@@ -14,6 +14,7 @@ import { nyParts } from "@/lib/kpi/calc";
 import { canReportOn } from "@/lib/reports/access";
 import { isPeriodKey, nextPeriod, parseDates, previousPeriod, rangeLabel, resolvePeriod, restOfAsk, shiftDay, todayIn, type PeriodKey } from "@/lib/reports/period";
 import { normalizeDelivery, type Delivery } from "@/lib/reports/delivery-core";
+import { applyManual, cleanLines, type ManualLine, type ManualResults } from "@/lib/reports/manual";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -677,4 +678,29 @@ export async function deckForReport(id: string): Promise<{ url: string; pptx: st
   const { data } = await createAdminClient().from("recap_decks").select("url, status, notes, updated_at").eq("report_id", id).maybeSingle();
   if (!data?.url || data.status !== "done") return null;
   return { url: data.url as string, pptx: `/api/reports/${id}/deck`, notes: (data.notes ?? []) as string[], at: (data.updated_at as string) ?? null };
+}
+
+/**
+ * Results the team enters for the report's period from the client's own CRM (bookings and sales that never reach Meta
+ * or Google). Saved on the report, so a regenerate keeps them, and merged into the report's numbers straight away: the
+ * tiles, the PDF and the shared link follow. The written note follows at the next regenerate or when the AI is asked.
+ * Who entered them and when are kept with them.
+ */
+export async function saveManualResults(id: string, lines: ManualLine[]): Promise<Result<{ lines: ManualLine[] }>> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.status === "posted") return { ok: false, error: "It's already gone out." };
+  if (ok.r.status === "queued" || ok.r.status === "drafting") return { ok: false, error: "It's being written right now. Add the results when it's done." };
+  const admin = createAdminClient();
+  const { data: row } = await admin.from("reports").select("period_start, period_end, metrics").eq("id", id).maybeSingle();
+  if (!row) return { ok: false, error: "Not found." };
+  const clean = cleanLines(lines);
+  const at = new Date().toISOString();
+  const entered: ManualResults | null = clean.length ? { lines: clean, start: row.period_start as string, end: row.period_end as string, by: ok.me.id, byName: ok.me.fullName, at } : null;
+  const update: Record<string, unknown> = { manual_results: entered, updated_at: at };
+  if (row.metrics) update.metrics = applyManual(row.metrics as ReportMetrics, entered);
+  const { error } = await admin.from("reports").update(update).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  done(id);
+  return { ok: true, lines: clean };
 }

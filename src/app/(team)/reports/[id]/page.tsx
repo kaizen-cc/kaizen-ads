@@ -12,6 +12,7 @@ import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { monthLabel } from "@/lib/reports/format";
 import { slackConnection, slackIdentity } from "@/lib/slack-user";
 import { ReportStudio } from "../report-studio";
+import type { ManualEntered } from "../manual-results";
 import { after } from "next/server";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { writeStatus } from "@/lib/write-status";
@@ -32,7 +33,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const db = await createClient();
   const { data: r } = await db
     .from("reports")
-    .select("id, kind, platform, status, client_id, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, extras, layout, qa, chat, error, posted_at, previous, joined_to, clients(name, slug, slack_channel_id, client_type), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)")
+    .select("id, kind, platform, status, client_id, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, manual_results, extras, layout, qa, chat, error, posted_at, previous, joined_to, clients(name, slug, slack_channel_id, client_type), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)")
     .eq("id", id)
     .maybeSingle();
   if (!r) notFound();
@@ -107,6 +108,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           metrics,
           extraMetrics: (r.extra_metrics as ReportMetrics[] | null) ?? null,
           extras: r.extras ?? "",
+          manual: (r as { manual_results?: ManualEntered | null }).manual_results?.lines?.length ? (r as { manual_results: ManualEntered }).manual_results : null,
           layout: layoutOf({ status: r.status, layout: r.layout as ReportLayout | null, kpi_targets: r.kpi_targets as unknown as { report_layout: ReportLayout | null } | null }),
           qa: (r.qa as Qa | null) ?? null,
           chat: (r.chat ?? []) as ChatTurn[],

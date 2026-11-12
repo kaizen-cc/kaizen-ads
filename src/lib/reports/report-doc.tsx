@@ -4,7 +4,8 @@ import type { ReportMetrics, TopAd } from "./metrics";
 import type { Sections, Story } from "./write";
 import { scrubAgency, scrubSections } from "./white-label";
 import { EDIT_HOST, WeeklyReport, type WeeklyBrand } from "./weekly-doc";
-import { campaignLines, columnKeys, conversionTiles, formatMetric, count, headlineTiles, kpiRows, metricLabel, metricText, money, percent, multiple, platformName, rowsFor, singular, tilesFor, type Delta, type MetricKey, type ReportLayout, type Tile } from "./format";
+import { manualCaption, platformConversion } from "./manual";
+import { campaignLines, columnKeys, conversionTiles, manualTiles, formatMetric, count, headlineTiles, kpiRows, metricLabel, metricText, money, percent, multiple, platformName, rowsFor, singular, tilesFor, type Delta, type MetricKey, type ReportLayout, type Tile } from "./format";
 
 // The client report as a PDF document: the weekly recap (weekly-doc.tsx: co-branded, a section per platform), the monthly recap as a landscape
 // slide deck (one idea per slide: the cover, the month at a glance, then for each platform where it stands against its
@@ -115,6 +116,19 @@ function Tiles({ tiles, hot }: { tiles: Tile[]; hot?: (i: number) => string | nu
           <Hot href={hot?.(i) ?? null} />
         </View>
       ))}
+    </View>
+  );
+}
+
+/** Results the team entered from the client's CRM: tiles of their own and a plain line saying where they come from */
+function Manual({ m }: { m: ReportMetrics }) {
+  const caption = manualCaption(m.manual);
+  if (!caption) return null;
+  const tiles = manualTiles(m);
+  return (
+    <View style={{ marginTop: 8 }}>
+      {tiles.length ? <Tiles tiles={tiles} /> : null}
+      <Text style={{ fontSize: 7.5, color: MUTED, marginTop: 5 }}>{caption}</Text>
     </View>
   );
 }
@@ -464,11 +478,12 @@ function MonthlyPart({ input, part, images }: { input: ReportPdfInput; part: Rep
       <View style={s.section}>
         <Text style={s.eyebrow}>{input.kind === "built" ? `${m.main.label} vs ${m.compare.label}` : "Conversions"}</Text>
         <Tiles tiles={part.layout?.tiles?.length ? tilesFor(m, part.layout.tiles) : input.kind === "built" ? headlineTiles(m) : conversionTiles(m)} hot={hotFor(input, part, "tile")} />
+        <Manual m={m} />
       </View>
       <Stories stories={part.sections.stories} hot={hotFor(input, part, null)} b={b} />
       <Ranges part={part} />
       <KpiTable m={m} layout={part.layout} hot={hotFor(input, part, "row")} />
-      {part.platform !== "google" ? <TopAds ads={m.topAds.slice(0, 3)} images={images} conversion={m.conversion} b={b} /> : null}
+      {part.platform !== "google" ? <TopAds ads={m.topAds.slice(0, 3)} images={images} conversion={platformConversion(m)} b={b} /> : null}
       <Campaigns m={m} limit={8} layout={part.layout} hot={hotFor(input, part, null)} />
       <Notes sections={part.sections} hot={hotFor(input, part, null)} b={b} />
       {part.extras?.trim() ? (
@@ -656,6 +671,7 @@ function DeckNumbers({ input, part }: { input: ReportPdfInput; part: ReportPart 
           </View>
         ))}
       </View>
+      <Manual m={m} />
       <KpiTable m={m} layout={part.layout} hot={hotFor(input, part, "row")} />
     </Slide>
   );
@@ -722,7 +738,7 @@ function DeckAds({ input, part, images }: { input: ReportPdfInput; part: ReportP
   const m = part.metrics;
   const ads = m.topAds.slice(0, 3);
   if (!ads.length) return null;
-  const one = singular(m.conversion);
+  const one = singular(platformConversion(m));
   return (
     <Slide input={input} kicker={`${platformName(part.platform)} · What worked`}>
       <Text style={d.title}>The ads that carried the month</Text>
@@ -733,7 +749,7 @@ function DeckAds({ input, part, images }: { input: ReportPdfInput; part: ReportP
             {images[i] ? <Image style={{ width: "100%", height: 200, borderRadius: 8, objectFit: "cover" }} src={images[i]!} /> : <View style={{ width: "100%", height: 200, borderRadius: 8, backgroundColor: SOFT }} />}
             <Text style={{ fontSize: 10.5, fontFamily: "Helvetica-Bold", marginTop: 10, marginBottom: 4 }}>{a.name}</Text>
             <Text style={{ fontSize: 9.5, color: MUTED, lineHeight: 1.45 }}>
-              {count(a.results)} {m.conversion.toLowerCase()} · {money(a.costPerResult)} per {one}
+              {count(a.results)} {platformConversion(m).toLowerCase()} · {money(a.costPerResult)} per {one}
             </Text>
             <Text style={{ fontSize: 9.5, color: MUTED, lineHeight: 1.45 }}>
               {money(a.spend)} spent{a.ctr != null ? ` · ${percent(a.ctr)} CTR` : ""}

@@ -314,7 +314,8 @@ export function autoTakeaways(m: ReportMetrics): Takeaway[] {
       text: `CPC ${cheaperClicks ? "improved" : "rose"}${cpcMove ? ` ${cpcMove.replace(/^[+-]/, "")}` : ""} to ${money(a.cpc)}. CTR ${ctrUp ? "rose" : "eased"}${ctrMove ? ` ${ctrMove.replace(/^[+-]/, "")}` : ""} to ${percent(a.ctr)} on ${count(a.clicks)} link clicks.`,
     });
   }
-  const rows = scorecardRows(m);
+  // With a main result from the CRM the ads' own counts are another result: no leader card made from them
+  const rows = m.manual?.base ? [] : scorecardRows(m);
   const say = sayable(rows);
   // The leader on cost: the cheapest among the rows with more than one result (one lucky sale isn't a trend)
   const efficient = m.roasKpi ? undefined : rows.filter((r) => r.results >= 2 && r.costPerResult != null).sort((a, b) => (a.costPerResult ?? 0) - (b.costPerResult ?? 0))[0];

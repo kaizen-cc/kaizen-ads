@@ -11,6 +11,7 @@ import type { Diagnosis, Opportunity } from "./diagnose";
 import { lastFullWeek, previousPeriod } from "./period";
 import { asKpiPlatform, type KpiPlatform } from "@/lib/kpi/platform";
 import { weekLabel, type GoogleUnit, type WeekPoint } from "./weekly-core";
+import { manualText, type ManualApplied } from "./manual";
 
 // A report's numbers, from the same daily rows the KPI board reads, with the campaigns left out of the KPI left out here
 // too. On Meta, results are what each campaign is optimized for, read from the ad account (submit application, schedule,
@@ -80,6 +81,8 @@ export type ReportMetrics = {
   weeks?: WeekPoint[];
   /** Google weekly: each ad group and asset group in the period (the scorecard) */
   googleUnits?: GoogleUnit[];
+  /** Results entered by the team from the client's own CRM (off the ad platform), for the report's period; account level only */
+  manual?: ManualApplied;
 };
 
 type Target = { id: string; client_id: string; platform: string; ad_account_id: string | null; conversion: string; custom_action: string | null; campaign_match: string | null; target: number | null; monthly_budget: number | null; excluded_campaigns?: string[] | null; campaign_results?: Record<string, string> | null };
@@ -474,6 +477,8 @@ export function metricsText(m: ReportMetrics) {
     ...(m.goals && m.goals.length > 1 ? ["Results by what the campaigns are optimized for (main period):", ...m.goals.map((g) => `- ${g.label}: ${g.results} at ${money(g.costPerResult)} each, ${money(g.spend)} spent`)] : m.goals?.length ? [`The campaigns are optimized for: ${m.goals[0].label}.`] : []),
     ...(m.gaps.length ? [`Days with no data in the main period: ${m.gaps.join(", ")}`] : []),
     ...(m.google ? [googleHealthText(m.google)] : []),
+    ...(m.manual?.base ? [`The headline result (${m.conversion}) and its cost per result come from the client's CRM, entered by the team, not from the ad platform; the platform's own result counts (${m.manual.base.conversion}) stay on the campaigns and ads above.`] : []),
+    ...(m.manual?.lines.length ? [manualText(m)] : []),
   ].join("\n");
 }
 

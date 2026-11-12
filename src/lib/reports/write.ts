@@ -10,6 +10,7 @@ import { daysIn, previousPeriod, rangeLabel, todayIn } from "./period";
 import { forClient, isWhiteLabel, scrubSections, WHITE_LABEL_RULE } from "./white-label";
 import { dailyTable } from "@/lib/kpi/platform";
 import type { Takeaway } from "./weekly-core";
+import { applyManual, type ManualResults } from "./manual";
 
 // Writing a client report: the numbers (reportMetrics), the work behind them (workDone), the buyer's own voice (their
 // recaps in client channels), what this client likes in a report (learned from past edits), and what the buyer added
@@ -36,6 +37,8 @@ const SECTIONS = obj({ headline: S, summary: S, did: LIST, doing: LIST, next: LI
 /** The weekly PDF's takeaway cards: written from the numbers, plain and specific (the narrative travels in the message) */
 const TAKEAWAY_RULES = `takeaways: exactly three cards for the PDF, read from the numbers alone (the work and the plan stay in the message, not here). Each: title (a bold claim of 3 to 7 words, e.g. "More purchases, lower CPA", "Cheaper traffic, slightly lower CTR", "Creative efficiency leader") and text (one or two sentences with the real numbers and what they're compared to, e.g. "Purchases increased from 7 to 12 (+71.4%), while CPA fell from $245.78 to $140.35 (-42.9%)."). Cover the KPI and its cost first, then traffic or efficiency, then the best ad (or campaign) by the KPI. Plain and specific: no hype, no exclamation marks, no adjectives the numbers don't earn, no advice. Percent changes to one decimal.`;
 const STORY_RULES = `stories: trend charts, each told as a story. Add one when the buyer asks for a trend, a progression, a graph or "over the last N weeks or months", or when this client always wants it (their preferences); otherwise keep the ones already there, or none. Each: title (short, e.g. "Cost per purchase, last 5 weeks"), metric (cost_per_result for CPL, CPA or cost per purchase; results for leads or purchases), grain (week or month), periods (how many, 2 to 12), see (what the chart shows, with its numbers), why (why it moved, from the work log and the data), next (what we're doing about it). Read the numbers first with the trend tool when you have it; the chart is drawn from exactly those. Never write a chart as text in the sections.`;
+// Results the team entered by hand from the client's CRM (bookings and sales that never reach the ad platform)
+const MANUAL_RULE = `When <results_from_the_clients_crm> is given, those counts came from the client's own CRM and were entered by the team: they are real, use them as the results they are, and say where they come from ("from your CRM"). Never credit Meta, Google or the pixel with them, never split them by campaign or ad, and never treat the platform showing fewer or zero of them as a problem. With no prior-period number for a line, give no change for it. Cost per result for the main one is ad spend divided by its count.`;
 const DRAFT_SCHEMA = obj({ message: S, sections: SECTIONS });
 
 const agentFor = (platform: string): AgentKey => (platform === "google" ? "google_reporter" : "reporter");
@@ -60,14 +63,16 @@ Accuracy above everything: every number you write must come from the numbers giv
 message: the ${kind === "weekly" ? "Slack message to the client channel" : "Slack post that goes with the monthly report link"}, in Slack formatting (*bold* for short section headers, "• " for bullets, line breaks; no # headings, no emojis unless the buyer uses them). ${kind === "weekly" ? "Open with the headline numbers for the last 7 days against the week before (and where the month stands), then what we did this week, the top creative with its preview link when there is one, and what's next. Keep it as short as the buyer's own recaps." : "A short, warm note that the monthly recap is ready, the two or three numbers that matter most for the month against the month before, one line on the biggest thing we did and the biggest thing coming up; the link is added after."}
 sections: the same content, structured, for the PDF and the report page: headline (one line, the main takeaway), summary (2 to 4 sentences, the numbers in context), did (what we did, 3 to 7 bullets), doing (what we're doing now and why, 2 to 5), next (what comes next, 2 to 5), highlights (2 to 4 short numeric callouts, e.g. "14 leads at $84.21, down 56%").
 ${TAKEAWAY_RULES}
-${DIAGNOSE_RULES}`;
+${DIAGNOSE_RULES}
+${MANUAL_RULE}`;
 }
 
 // How a report explains the numbers, and how (rarely) it raises another service
 const DIAGNOSE_RULES = `Explaining the numbers: <diagnosis> says where performance is weak and why (the creative, cost from ads wearing out or from tests that lost, or the website after the click), worked out from the data. Use it to explain what happened in plain words, then what we're doing about it. Don't recite it, don't blame the client, and keep it in the buyer's voice. When the account is healthy, say what's working.
 Raising another service: only when <opportunity> names one. Then mention it once: one line in "next" and at most one short sentence near the end of the message. Write it the way a trusted partner shares an idea, tied to their own numbers and their goal: "One idea we've been thinking about…", "If it's helpful, we could…". No prices, no urgency, no "upgrade", "package", "upsell" or "add-on", and leave an easy out ("happy to walk you through it if it's interesting"). If <opportunity> says none, don't suggest any new service, channel or product, even one that seems useful: most reports should simply report.`;
 
-const QA_SYSTEM = `You are the QA for client reports at Kaizen Marketing, a paid social agency. Before a buyer sees a draft, you check it as if the client's trust depended on it. Compare the draft (message and sections) with the source data, the work log and what the buyer added. Flag:
+const QA_SYSTEM = `You are the QA for client reports at Kaizen Marketing, a paid social agency. Before a buyer sees a draft, you check it as if the client's trust depended on it. Compare the draft (message and sections) with the source data, the work log and what the buyer added. ${MANUAL_RULE}
+Flag:
 - fix: a number that doesn't match the data or the math (percent changes, cost per result = spend / results, ROAS = revenue / spend), a wrong period or comparison, an ad, change or plan that isn't in the sources, a client-facing mention of something internal (team names other than the client's, AI, Kaizen Ads, other clients), a broken or missing preview link it refers to.
 - check: something the buyer should confirm before sending: a claim that's only loosely supported, wording that could read badly to the client, a missing section of the arc (did, doing, next), a number shown without what it's compared to.
 - alert: something alarming in the data itself the buyer should know before sending, even if the draft is right: results collapsing, spend with no results, spend far past budget, tracking that looks broken (clicks but zero results for days, a sudden zero), days with no data, a big swing that needs an explanation.
@@ -79,7 +84,7 @@ const QA_SCHEMA = obj({ verdict: { type: "string", enum: ["clean", "check", "fix
 function dataFlags(m: ReportMetrics): QaFlag[] {
   const out: QaFlag[] = [];
   if (m.gaps.length) out.push({ severity: "alert", issue: `No data for ${m.gaps.length} day${m.gaps.length === 1 ? "" : "s"} in the period (${m.gaps.slice(0, 4).join(", ")}${m.gaps.length > 4 ? "…" : ""}).`, where: "Data", suggestion: "Check the account was delivering and synced (Pull now on the KPI board) before sending." });
-  if (m.main.spend > 0 && m.main.results === 0) out.push({ severity: "alert", issue: `$${m.main.spend.toFixed(2)} spent with no ${m.conversion.toLowerCase()} recorded.`, where: "Data", suggestion: "Check tracking, and that the KPI counts the right conversion, before reporting zero." });
+  if (m.main.spend > 0 && m.main.results === 0 && !m.manual?.lines.some((l) => l.count > 0)) out.push({ severity: "alert", issue: `$${m.main.spend.toFixed(2)} spent with no ${m.conversion.toLowerCase()} recorded.`, where: "Data", suggestion: "Check tracking, and that the KPI counts the right conversion, before reporting zero." });
   if (m.compare.results > 4 && m.main.results < m.compare.results * 0.4) out.push({ severity: "alert", issue: `${m.conversion} fell from ${m.compare.results} to ${m.main.results}.`, where: "Data", suggestion: "Make sure the report explains why and what we're doing about it." });
   if (m.mtd && m.monthlyBudget && m.mtd.spend > m.monthlyBudget) out.push({ severity: "alert", issue: `Month to date spend ($${m.mtd.spend.toFixed(0)}) is already past the $${m.monthlyBudget.toFixed(0)} monthly budget.`, where: "Data", suggestion: "Confirm the budget with the client, or say how spend is being brought in line." });
   if (m.main.spend === 0) out.push({ severity: "alert", issue: "Nothing spent in the period.", where: "Data", suggestion: "If the account is paused on purpose, the report should say so." });
@@ -90,7 +95,7 @@ function dataFlags(m: ReportMetrics): QaFlag[] {
 async function context(admin: SupabaseClient, reportId: string) {
   const { data: r } = await admin
     .from("reports")
-    .select("id, kind, platform, period_start, period_end, client_id, target_id, owner_id, bundle_id, extras, metrics, extra_metrics, work, sections, message, chat, clients(name, client_type), kpi_targets(id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, excluded_campaigns, campaign_results), profiles!reports_owner_id_fkey(full_name)")
+    .select("id, kind, platform, period_start, period_end, client_id, target_id, owner_id, bundle_id, extras, metrics, extra_metrics, manual_results, work, sections, message, chat, clients(name, client_type), kpi_targets(id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, excluded_campaigns, campaign_results), profiles!reports_owner_id_fkey(full_name)")
     .eq("id", reportId)
     .single();
   if (!r) throw new Error("Report not found");
@@ -184,7 +189,8 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
     const range = c.r.kind === "monthly" ? undefined : { start: c.r.period_start as string, end: c.r.period_end as string };
     // A weekly moved to other than seven days reads like an on-demand recap (its dates against the days just before)
     const kind = (c.r.kind === "weekly" && range && daysIn(range) !== 7 ? "custom" : c.r.kind) as Kind;
-    const [metrics, voice] = await Promise.all([reportMetrics(admin, c.target, c.r.kind === "built" ? "custom" : (c.r.kind as "weekly" | "monthly" | "custom"), dayAfter(c.r.period_end), range), voiceOf(admin, c.owner, c.r.client_id)]);
+    const [fresh, voice] = await Promise.all([reportMetrics(admin, c.target, c.r.kind === "built" ? "custom" : (c.r.kind as "weekly" | "monthly" | "custom"), dayAfter(c.r.period_end), range), voiceOf(admin, c.owner, c.r.client_id)]);
+    let metrics = fresh;
     // A built report's other date ranges, each against its own comparison
     let extra: ReportMetrics[] = [];
     if (kind === "built" && c.r.bundle_id) {
@@ -199,6 +205,10 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
     metrics.diagnosis = await diagnose(admin, c.r.client_id, metrics, c.target).catch(() => undefined);
     // Never another of the agency's services for a white label client: the partner sells their own
     metrics.opportunity = metrics.diagnosis && !c.whiteLabel ? await opportunityFor(admin, c.r, metrics, metrics.diagnosis).catch(() => null) : null;
+    // Results the team entered from the client's CRM for these dates (kept across regenerates): merged into the numbers
+    // the report, its PDF, the shared link and the writing all read (only when entered for this report's dates)
+    const entered = c.r.manual_results as ManualResults | null;
+    if (entered?.lines?.length && (!entered.start || (entered.start === c.r.period_start && entered.end === c.r.period_end))) metrics = applyManual(metrics, entered);
     await admin.from("reports").update({ metrics, work, extra_metrics: extra.length ? extra : null }).eq("id", reportId);
     (c.r as unknown as { extra_metrics: ReportMetrics[] }).extra_metrics = extra;
     const out = await askJson<{ message: string; sections: Sections }>({

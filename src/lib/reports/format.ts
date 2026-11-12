@@ -235,3 +235,19 @@ export function aboutLeftOut(text: string | null | undefined, names: string[]) {
   const t = (text ?? "").toLowerCase();
   return Boolean(t) && names.some((n) => n.trim().length >= 4 && t.includes(n.trim().toLowerCase()));
 }
+
+
+/**
+ * The results the team entered from the client's CRM, as tiles of their own (the one ticked as the main result is the
+ * headline already, so it's left out here). A change shows only against a prior-period number the team entered: with
+ * none, no comparison, never a made-up arrow. Cost per result is the period's ad spend over the count.
+ */
+export function manualTiles(m: Pick<ReportMetrics, "main" | "manual">): Tile[] {
+  return (m.manual?.lines ?? [])
+    .filter((l) => !l.main)
+    .map((l) => {
+      const cost = l.count > 0 && m.main.spend > 0 ? Math.round((m.main.spend / l.count) * 100) / 100 : null;
+      const sub = [l.revenue != null ? `${money(l.revenue)} revenue` : null, cost != null ? `${money(cost)} per ${singular(l.label)}` : null].filter(Boolean).join(" · ");
+      return { label: l.label, value: count(l.count), sub: sub || null, delta: delta(l.count, l.priorCount, "up"), now: l.count, before: l.priorCount };
+    });
+}

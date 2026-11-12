@@ -3,7 +3,8 @@ import { Circle, Defs, Image, Line, LinearGradient, Link, Page, Path, Polygon, R
 import type { ReportMetrics } from "./metrics";
 import type { Sections } from "./write";
 import type { ReportLayout } from "./format";
-import { metricNumber, platformName } from "./format";
+import { manualTiles, metricNumber, platformName } from "./format";
+import { manualCaption, platformConversion } from "./manual";
 import { paletteFor, type Palette } from "./brand";
 import { barMetric, barsRead, sayable, scoreHead, chartWeeks, costLabel, niceMax, scoreColumns, scoreValue, scorecardRows, shortLabel, supportKeys, takeawaysFor, weeklyTile, weeklyTileKeys, weeklyValue, type Move, type ScoreRow, type Takeaway } from "./weekly-core";
 
@@ -195,6 +196,31 @@ function Hero({ input, pal }: { input: WeeklyInput; pal: Palette }) {
   );
 }
 
+/** Results the team entered from the client's CRM: tiles of their own (no arrow without a prior number) and where they come from */
+function ManualResults({ m, pal }: { m: ReportMetrics; pal: Palette }) {
+  const caption = manualCaption(m.manual);
+  if (!caption) return null;
+  const tiles = manualTiles(m);
+  return (
+    <View style={{ marginTop: 9 }}>
+      {tiles.length ? (
+        <View style={s.tiles}>
+          {tiles.map((t, i) => (
+            <View key={`${t.label}-${i}`} style={s.tile}>
+              <View style={{ width: 16, height: 2.5, borderRadius: 2, backgroundColor: pal.accent, marginBottom: 7 }} />
+              <Text style={s.tileLabel}>{t.label}</Text>
+              <Text style={[s.tileValue, { fontSize: 19 }]}>{t.value}</Text>
+              {t.sub ? <Text style={s.baseline}>{t.sub}</Text> : null}
+              <Text style={s.baseline}>{t.before != null ? `${t.delta ? `${t.delta.text} ` : ""}vs ${t.before} prior period` : "No prior-period number"}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      <Text style={[s.baseline, { marginTop: 6 }]}>{caption}</Text>
+    </View>
+  );
+}
+
 function Glance({ input, part, pal }: { input: WeeklyInput; part: WeeklyPart; pal: Palette }) {
   const m = part.metrics;
   const keys = weeklyTileKeys(m, part.layout);
@@ -228,12 +254,13 @@ function Glance({ input, part, pal }: { input: WeeklyInput; part: WeeklyPart; pa
                   </View>
                 )}
               </View>
-              <Text style={s.baseline}>vs {t.before} prior week</Text>
+              <Text style={s.baseline}>{t.before === "–" ? "No prior-period number" : `vs ${t.before} prior week`}</Text>
               <Hot href={input.edit ? `${part.platform}/tile/${i}` : null} />
             </View>
           );
         })}
       </View>
+      <ManualResults m={m} pal={pal} />
       <View style={s.support}>
         {support.map((k) => {
           const now = metricNumber(m.main, k);
@@ -362,7 +389,7 @@ function Thumb({ src }: { src: string | null | undefined }) {
 }
 
 function Scorecard({ input, part, rows, images }: { input: WeeklyInput; part: WeeklyPart; rows: ScoreRow[]; images: (string | null)[] }) {
-  const m = part.metrics;
+  const m = { ...part.metrics, conversion: platformConversion(part.metrics) };
   const cols = scoreColumns(m);
   const google = part.platform === "google";
   const pictures = !google || rows.some((r) => r.img != null);
@@ -411,7 +438,7 @@ function Scorecard({ input, part, rows, images }: { input: WeeklyInput; part: We
 }
 
 function Bars({ part, rows, pal }: { part: WeeklyPart; rows: ScoreRow[]; pal: Palette }) {
-  const m = part.metrics;
+  const m = { ...part.metrics, conversion: platformConversion(part.metrics) };
   const k = barMetric(m);
   const vals = rows.map((r) => metricNumber(r, k) ?? 0);
   const max = Math.max(...vals, 0);
