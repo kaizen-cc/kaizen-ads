@@ -512,20 +512,26 @@ function OverviewTab({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof 
  * underlined tab bar, the open tab in ?tab=): Overview, Campaigns, Flows, Audience and Deliverability. The campaigns'
  * channel, window and sort filters have their own params (ech, edays, esort, edir).
  */
-export function emailTabs(k: ClientKlaviyo, clientId: string) {
+export type EmailTabId = "overview" | "campaigns" | "flows" | "audience" | "deliverability";
+
+/** One Email tab's body (a client component, so the server only passes the data and which tab) */
+export function EmailTab({ k, clientId, tab }: { k: ClientKlaviyo; clientId: string; tab: EmailTabId }) {
   const money = moneyFn(k.currency);
-  const wrap = (body: React.ReactNode) => (
+  return (
     <div className="grid gap-5">
       <Intro k={k} />
-      {body}
+      {tab === "overview" ? (
+        <OverviewTab k={k} money={money} />
+      ) : tab === "campaigns" ? (
+        <CampaignsTab k={k} clientId={clientId} money={money} />
+      ) : tab === "flows" ? (
+        <FlowsTab k={k} money={money} />
+      ) : tab === "audience" ? (
+        <AudienceTab k={k} />
+      ) : (
+        <DeliverabilityTab k={k} />
+      )}
     </div>
   );
-  return [
-    { id: "overview", label: "Overview", hint: "Revenue, share of the store, revenue per recipient and deliverability over time, and the account's health", content: wrap(<OverviewTab k={k} money={money} />) },
-    { id: "campaigns", label: "Campaigns", hint: "Every campaign: sortable, email or SMS, best subject lines, each previewed on hover or tap", content: wrap(<CampaignsTab k={k} clientId={clientId} money={money} />) },
-    { id: "flows", label: "Flows", hint: "The key flows' coverage and every flow's revenue", content: wrap(<FlowsTab k={k} money={money} />) },
-    { id: "audience", label: "Audience", hint: "List joins and leaves, lists and segments by size", content: wrap(<AudienceTab k={k} />) },
-    { id: "deliverability", label: "Deliverability", hint: "Weekly bounce, spam and unsubscribe rates against healthy lines", content: wrap(<DeliverabilityTab k={k} />) },
-  ];
 }
 

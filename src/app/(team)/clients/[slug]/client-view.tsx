@@ -53,7 +53,7 @@ import { KlaviyoConnection } from "./klaviyo-connection";
 import { GoogleSyncPanel } from "@/components/platform-fields";
 import type { GoogleClientHealth } from "@/lib/google-health";
 import { klaviyoClientState } from "@/lib/klaviyo/core";
-import { emailTabs } from "./email-panel";
+import { emailTabs } from "./email-tabs";
 import { DocsPanel } from "./docs-panel";
 import { KnowledgePanel } from "@/components/knowledge-panel";
 import type { KnowledgeDoc } from "@/lib/knowledge";
