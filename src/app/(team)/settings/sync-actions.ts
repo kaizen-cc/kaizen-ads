@@ -6,8 +6,8 @@ import { requireExec } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/error-report";
 
-export type SyncJob = "kpi" | "google" | "klaviyo" | "slack" | "gmail" | "drive" | "meta" | "tiktok" | "calls" | "verticals" | "asana" | "sheet" | "docs";
-const JOBS: SyncJob[] = ["kpi", "google", "klaviyo", "slack", "gmail", "drive", "meta", "tiktok", "calls", "verticals", "asana", "sheet", "docs"];
+export type SyncJob = "kpi" | "google" | "klaviyo" | "social" | "slack" | "gmail" | "drive" | "meta" | "tiktok" | "calls" | "verticals" | "asana" | "sheet" | "docs";
+const JOBS: SyncJob[] = ["kpi", "google", "klaviyo", "social", "slack", "gmail", "drive", "meta", "tiktok", "calls", "verticals", "asana", "sheet", "docs"];
 
 /** Runs one job the way the schedule does. */
 async function runJob(job: SyncJob) {
@@ -15,6 +15,7 @@ async function runJob(job: SyncJob) {
   if (job === "kpi") return (await import("@/lib/kpi/sync")).refreshAllKpis(admin, 600_000);
   if (job === "google") return (await import("@/lib/kpi/sync")).refreshGoogleKpis(admin, 600_000);
   if (job === "klaviyo") return (await import("@/lib/klaviyo/store")).syncAllKlaviyo(admin, { budgetMs: 600_000, force: true });
+  if (job === "social") return (await import("@/lib/social/store")).syncAllSocial(admin, { budgetMs: 600_000, force: true });
   if (job === "tiktok") return (await import("@/lib/tiktok/store")).syncAllTikTok(admin, 600_000);
   if (job === "calls") return (await import("@/lib/calls")).collectCalls(admin);
   if (job === "verticals") return (await import("@/lib/verticals")).keepVerticals(admin);
@@ -111,6 +112,15 @@ export async function syncOne(source: string): Promise<{ ok: true; note: string 
       if (!r.ok) {
         const { plainKlaviyoError } = await import("@/lib/klaviyo/core");
         return { error: plainKlaviyoError(r.error)?.message ?? "The read failed" };
+      }
+      return { ok: true, note: r.window === "full" ? "Read in full" : "Recent numbers read" };
+    }
+    if (source.startsWith("social:")) {
+      const r = await (await import("@/lib/social/store")).syncSocial(admin, source.slice(7));
+      revalidatePath("/settings");
+      if (!r.ok) {
+        const { plainSocialError } = await import("@/lib/social/core");
+        return { error: plainSocialError(r.error)?.message ?? "The read failed" };
       }
       return { ok: true, note: r.window === "full" ? "Read in full" : "Recent numbers read" };
     }

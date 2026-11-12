@@ -1,5 +1,6 @@
 import type { CreativeDb } from "@/lib/creative-db";
 import { loadClientKpis } from "@/lib/kpi/client";
+import { servicesOf } from "@/lib/services";
 import { loadWatchList } from "@/lib/fatigue";
 import { loadClientMarket } from "@/lib/market";
 import { formatsFor, marketFormatOf } from "@/lib/creative-formats";
@@ -421,6 +422,16 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         return { conn, data, storeRevenue: biz?.store && biz.last30.revenue > 0 ? biz.last30.revenue : null };
       })()
     : null;
+  // Organic social (Facebook and Instagram, read only), for clients with the social media service: nothing shows until its migration is applied
+  const social =
+    admin && (servicesOf({ services: client.services, services_extra: client.services_extra, services_removed: client.services_removed }) as string[]).includes("social-media")
+      ? await (async () => {
+          const sm = await import("@/lib/social/store");
+          const link = await sm.socialLink(admin, client.id).catch(() => undefined);
+          if (link === undefined) return null;
+          return { link, data: await sm.clientSocial(admin, client.id).catch(() => null) };
+        })()
+      : null;
   // Google Ads sync: each account's state and, when it fails, why and the fix (null when they don't run Google)
   const googleSync = admin ? await (await import("@/lib/google-sync-health")).clientGoogleHealth(admin, client.id).catch(() => null) : null;
   const docs = (docRows ?? []).map((d) => ({ id: d.id, kind: d.kind, name: d.name, url: d.url, path: d.path, mime: d.mime, bytes: d.bytes, title: d.title, summary: d.summary, status: d.status, note: d.note, via: d.via, at: d.created_at, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
@@ -473,6 +484,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       campaigns={campaigns}
       tiktok={tiktokOn ? { data: tiktok, separate: tiktokSeparate } : null}
       klaviyo={klaviyo}
+      social={social}
       googleSync={googleSync}
       docs={docs}
       knowledge={knowledge}

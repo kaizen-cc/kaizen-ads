@@ -31,20 +31,20 @@ const TONE = {
 
 // ─── Tiles ────────────────────────────────────────────────────────────────
 
-type Move = { text: string; good: boolean | null } | null;
-const relMove = (a: number | null, b: number | null, higherIsGood = true): Move => {
+export type Move = { text: string; good: boolean | null } | null;
+export const relMove = (a: number | null, b: number | null, higherIsGood = true): Move => {
   if (a == null || b == null || !b) return null;
   const d = Math.round(((a - b) / b) * 100);
   return { text: `${d >= 0 ? "▲" : "▼"} ${Math.abs(d)}%`, good: d === 0 ? null : d > 0 === higherIsGood };
 };
-const ptsMove = (a: number | null, b: number | null, higherIsGood = true, dp = 1): Move => {
+export const ptsMove = (a: number | null, b: number | null, higherIsGood = true, dp = 1): Move => {
   if (a == null || b == null) return null;
   const d = (a - b) * 100;
   if (Math.abs(d) < 10 ** -dp / 2) return { text: "level", good: null };
   return { text: `${d >= 0 ? "▲" : "▼"} ${Math.abs(d).toFixed(dp)} pts`, good: d > 0 === higherIsGood };
 };
 
-function Tile({ k, v, move, sub, children }: { k: string; v: string; move?: Move; sub?: string; children?: React.ReactNode }) {
+export function Tile({ k, v, move, sub, children }: { k: string; v: string; move?: Move; sub?: string; children?: React.ReactNode }) {
   return (
     <div className="grid min-w-0 content-start gap-1.5 rounded-[14px] border border-line bg-surface p-3.5 md:p-4">
       <span className="text-[11px] uppercase tracking-[0.12em] text-faint">{k}</span>
@@ -91,7 +91,7 @@ function Tiles({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof moneyF
 
 // ─── Health ───────────────────────────────────────────────────────────────
 
-function HealthList({ health }: { health: HealthFinding[] }) {
+export function HealthList({ health }: { health: HealthFinding[] }) {
   const status = pulseStatus(health);
   return (
     <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-5">
@@ -127,7 +127,7 @@ function HealthList({ health }: { health: HealthFinding[] }) {
 
 const SORT_LABEL: Record<CampaignSort, string> = { date: "Date", recipients: "Recipients", open: "Open", click: "Click", revenue: "Revenue", rpr: "Per recipient" };
 
-function Pills<T extends string>({ value, options, onChange, label }: { value: T; options: { id: T; label: string }[]; onChange: (v: T) => void; label: string }) {
+export function Pills<T extends string>({ value, options, onChange, label }: { value: T; options: { id: T; label: string }[]; onChange: (v: T) => void; label: string }) {
   return (
     <div role="radiogroup" aria-label={label} className="flex gap-1 rounded-full border border-line bg-surface p-1">
       {options.map((o) => (

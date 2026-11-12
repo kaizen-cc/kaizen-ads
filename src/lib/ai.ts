@@ -640,6 +640,8 @@ export type ClientContext = {
   tiktok?: string;
   /** Email and SMS from Klaviyo (read only): the last 30 days' attributed revenue and share of the store, open and click rates, the last 3 campaigns, key flows, health findings, best and weakest campaigns */
   email?: string;
+  /** Organic social from Meta (read only), for clients with the social media service: followers and 30-day growth per platform, reach, engagement rate, posting rhythm, best and weakest posts, health findings */
+  social?: string;
   /** What the client said against AI content (src/lib/ai-content.ts), when they did: no AI avatars, voices or generated media */
   aiRule?: string | null;
   allotment: Allotment | null;
@@ -699,7 +701,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
   if (!c) return null;
   // The Bible's living learnings: what their ads proved since it was written, newest first
   const learned = ((bible?.learnings ?? []) as { at: string; kind: string; text: string }[]).slice(-30).reverse();
-  const [newer, siteIssues, gtm, googleGtm, business, documents, playbook, peers, patterns, reports, winners, kpis, intake, tiring, activity, motion, tiktok, email, aiRule] = await Promise.all([
+  const [newer, siteIssues, gtm, googleGtm, business, documents, playbook, peers, patterns, reports, winners, kpis, intake, tiring, activity, motion, tiktok, email, social, aiRule] = await Promise.all([
     // Slack and email that came in after the briefing was written, so suggestions and the review are current
     supabase
       .from("context_items")
@@ -775,6 +777,8 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
     import("@/lib/tiktok/store").then(({ tiktokBrief }) => tiktokBrief(supabase, clientId)).catch(() => ""),
     // Their email and SMS (Klaviyo, read only; empty when it isn't connected or the migration isn't applied)
     import("@/lib/klaviyo/store").then(({ klaviyoBrief }) => klaviyoBrief(supabase, clientId)).catch(() => ""),
+    // Their organic social (Facebook and Instagram, read only; empty without the social media service, a link or the migration)
+    import("@/lib/social/store").then(({ socialBrief }) => socialBrief(supabase, clientId)).catch(() => ""),
     // Whether they take AI content at all (memory, the Bible's rules log, calls): a "no" is told to every writer
     import("@/lib/ai-content-rule").then(({ loadAiRule }) => loadAiRule(supabase, clientId)).catch(() => null),
   ]);
@@ -809,6 +813,7 @@ export async function clientContext(supabase: SupabaseClient, clientId: string, 
     motion,
     ...(tiktok ? { tiktok } : {}),
     ...(email ? { email } : {}),
+    ...(social ? { social } : {}),
     aiRule: aiRule?.allowed === false ? aiRule.rule : null,
     angles: angles ?? [],
     memory: (memory ?? []) as ClientContext["memory"],
@@ -866,6 +871,13 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
       "Their email and SMS from Klaviyo, read only: nothing can be sent, edited or scheduled in Klaviyo from Kaizen Ads (say so if asked to). Use it as context: how much of the business email carries (its share of the store's revenue), which offers and subject lines their list answers, which key flows are missing or not live, and the health alerts with what to do. Mention email where it matters to the ads (a missing abandoned-checkout flow leaks the traffic the ads buy; a launch the list hears about first).",
       ctx.email,
       "</email_marketing>",
+    );
+  if (ctx.social)
+    lines.push(
+      "<organic_social>",
+      "Their organic Facebook and Instagram, read only: nothing can be posted, scheduled or edited from Kaizen Ads (say so if asked to). Use it as context: which formats and topics earn reach and saves, whether the account is growing and posting steadily, and the health alerts with what to do. Mention social where it matters to the ads (a post that already does well is the one to boost; a silent account wastes the traffic the ads send).",
+      ctx.social,
+      "</organic_social>",
     );
   if (on("meta") && ctx.tiring)
     lines.push(

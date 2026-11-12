@@ -4,7 +4,7 @@ import { BusinessManagers } from "@/components/meta-business-connections";
 import { TikTokConnection } from "@/components/tiktok-connection";
 import { tiktokConfigured } from "@/lib/tiktok/core";
 import { Connections } from "./connections";
-import { GoogleAdsCard, KlaviyoSyncCard, summarizeGoogle, summarizeKlaviyo, type PlatformSummary } from "./platform-cards";
+import { GoogleAdsCard, KlaviyoSyncCard, SocialSyncCard, summarizeGoogle, summarizeKlaviyo, summarizeSocial, type PlatformSummary } from "./platform-cards";
 import { ConnectorsTab, MyConnectionsTab } from "./connectors-tab";
 import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
@@ -369,7 +369,7 @@ const GROUPS: [string, string, SyncJob, string, string, string][] = [
 
 /** The sections of Sync health, by what the data is */
 const CATEGORIES = [
-  { key: "ads", label: "Ad platforms", about: "Numbers and ads from Meta and Google, email from Klaviyo, and the market from Motion" },
+  { key: "ads", label: "Ad platforms", about: "Numbers and ads from Meta and Google, email from Klaviyo, organic social from Facebook and Instagram, and the market from Motion" },
   { key: "talk", label: "Conversations", about: "What clients and the team say: Slack, email and calls" },
   { key: "files", label: "Files and docs", about: "Client folders, assets and the docs written about them" },
   { key: "ops", label: "Operations", about: "Who runs what, and the work still in Asana" },
@@ -575,7 +575,7 @@ const olderThan = (iso: string, ms: number) => Date.now() - Date.parse(iso) > ms
 const timedOut = (x: RunState): RunState =>
   x?.running && (!x.startedAt || olderThan(x.startedAt, 15 * 60_000)) ? { ...x, running: false, error: x.error ?? "It didn't finish (timed out)" } : x;
 // What a job usually takes, until it has run once with progress (then its own last time is used)
-const TYPICAL_MS: Record<string, number> = { kpi: 300_000, meta: 420_000, slack: 120_000, gmail: 240_000, drive: 120_000, calls: 180_000, verticals: 300_000, market: 600_000, google: 180_000, klaviyo: 420_000, asana: 60_000, sheet: 60_000, docs: 240_000 };
+const TYPICAL_MS: Record<string, number> = { kpi: 300_000, meta: 420_000, slack: 120_000, gmail: 240_000, drive: 120_000, calls: 180_000, verticals: 300_000, market: 600_000, google: 180_000, klaviyo: 420_000, social: 300_000, asana: 60_000, sheet: 60_000, docs: 240_000 };
 const span = (ms: number) => {
   const s = Math.max(1, Math.round(ms / 1000));
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
@@ -678,20 +678,23 @@ async function Sync({ motion }: { motion: string | null }) {
     return { prefix, name, job, about, category, cadence, list, failing, stale, offboarded, newest, run, progress: progressOf(job, run), label, state, retry: prefix === "kpi:" || prefix === "gmail:" };
   });
   // Google Ads and Klaviyo: one card each, per client, counted in the hero like any other sync
-  const [{ googleRoster }, { klaviyoRoster }, { googleAdsConfigured, googleAdsMissing }, { plainGoogleError }] = await Promise.all([
+  const [{ googleRoster }, { klaviyoRoster }, { socialRoster }, { googleAdsConfigured, googleAdsMissing }, { plainGoogleError }] = await Promise.all([
     import("@/lib/google-sync-health"),
     import("@/lib/klaviyo/store"),
+    import("@/lib/social/store"),
     import("@/lib/context/google-ads"),
     import("@/lib/google-health"),
   ]);
-  const [googleRows, klaviyoRows] = await Promise.all([googleRoster(admin).catch(() => []), klaviyoRoster(admin).catch(() => null)]);
+  const [googleRows, klaviyoRows, socialRows] = await Promise.all([googleRoster(admin).catch(() => []), klaviyoRoster(admin).catch(() => null), socialRoster(admin).catch(() => null)]);
   const googleSetup = googleAdsConfigured() ? null : plainGoogleError(`Google Ads isn't connected yet (missing ${googleAdsMissing().join("; ")})`);
   const platforms: { key: string; name: string; job: SyncJob; summary: PlatformSummary; run: RunState; progress: Progress }[] = [
     { key: "google", name: "Google Ads", job: "google", summary: summarizeGoogle(googleRows), run: runs.get("google") ?? null, progress: progressOf("google", runs.get("google") ?? null) },
     { key: "klaviyo", name: "Klaviyo", job: "klaviyo", summary: summarizeKlaviyo(klaviyoRows), run: runs.get("klaviyo") ?? null, progress: progressOf("klaviyo", runs.get("klaviyo") ?? null) },
+    { key: "social", name: "Social", job: "social", summary: summarizeSocial(socialRows), run: runs.get("social") ?? null, progress: progressOf("social", runs.get("social") ?? null) },
   ];
   const platformCard = (key: string) => {
     const p = platforms.find((x) => x.key === key)!;
+    if (key === "social") return <SocialSyncCard key={key} rows={socialRows} run={p.run} progress={p.progress} summary={p.summary} />;
     return key === "google" ? (
       <GoogleAdsCard key={key} rows={googleRows} run={p.run} progress={p.progress} summary={p.summary} setupError={googleSetup} />
     ) : (

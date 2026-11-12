@@ -47,6 +47,8 @@ function nyNow() {
  * - kpi: every 30 minutes on weekdays 8am to 6pm, every hour otherwise (campaign numbers for the KPI dashboard; no AI)
  * - klaviyo: on the KPI numbers' cadence; every connected client's recent email numbers, the full window once a day,
  *   six clients at a time
+ * - social: every 3 hours (organic social clients: Facebook Page and Instagram account numbers and recent posts, read only;
+ *   the full 90 days once a day, three clients at a time; a client still without a Page is looked for again every 6 hours)
  * - brief: 12pm and 6pm
  * - market: 8:30am (live ads from Motion for the Market tab, ready for the morning)
  * - sheet: 12pm and 5pm, the Account Overview sheet (buyer, budget and KPI target per account, and the team's notes)
@@ -73,6 +75,7 @@ function due(step: string | null) {
   if (step === "slack" || step === "drive" || step === "gmail") return businessHours || (hour % 3 === 0 && minute < 30);
   if (step === "meta") return hour % 2 === 0;
   if (step === "tiktok") return hour % 2 === 0; // like Meta's ads; does nothing until TikTok's app keys are in Vercel
+  if (step === "social") return hour % 3 === 1; // called hourly at :28 (vercel.json); insights are daily numbers, so every third hour is plenty
   if (step === "klaviyo") return businessHours || minute >= 30; // called at :18 and :48 (vercel.json): as often as the KPI numbers; every client's recent numbers each run, the full window once a day
   if (step === "kpi") return businessHours || minute >= 30; // called at :15 and :45 (vercel.json)
   if (step === "google_ideas") return true; // once a day (vercel.json): Google's Hall of Fame and live winners
@@ -162,6 +165,7 @@ export async function GET(request: Request) {
     if (step === "kpi") return Response.json(await refreshAllKpis(admin));
     if (step === "tiktok") return Response.json(await (await import("@/lib/tiktok/store")).syncAllTikTok(admin));
     if (step === "klaviyo") return Response.json(await (await import("@/lib/klaviyo/store")).syncAllKlaviyo(admin, { budgetMs: 640_000 }));
+    if (step === "social") return Response.json(await (await import("@/lib/social/store")).syncAllSocial(admin, { budgetMs: 640_000 }));
     if (step === "meta_tokens") return Response.json(await (await import("@/lib/meta-tokens")).checkAllBusinessTokens(admin));
     if (step === "connectors") return Response.json(await (await import("@/lib/connectors/registry-sync")).syncConnectorRegistry(admin));
     if (step === "google_ideas") {

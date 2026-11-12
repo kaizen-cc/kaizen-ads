@@ -6,6 +6,7 @@ import type { SprintSummary } from "@/lib/sprints";
 import { OpenService } from "./client-sections";
 import { allotmentPools, type PoolCounts } from "@/lib/allotment";
 import { pulseStatus, type HealthFinding } from "@/lib/klaviyo/insights";
+import type { SocialSummary } from "@/lib/social/summary";
 import Link from "next/link";
 
 // The whole business at a glance: every service the client buys side by side (paid ads on each platform, creative,
@@ -18,12 +19,15 @@ export type ServiceCard =
 
 const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
 const RANK = { off: 0, close: 1, setup: 2, idle: 3, unset: 3, good: 4, excellent: 5 } as const;
-const COLOR: Record<string, string> = { meta: "#6c7ee1", google: "#5be3a5", tiktok: "#e0508c", email: "#f2b14c" };
+const COLOR: Record<string, string> = { meta: "#6c7ee1", google: "#5be3a5", tiktok: "#e0508c", email: "#f2b14c", social: "#e0508c" };
 
 /** Their email and SMS (Klaviyo, read only): attributed revenue over the last 30 days and the 30 before, and its health */
 export type EmailSummary = { revenue: number; prev: number; campaigns: number; openRate: number | null; currency: string | null; share: number | null; revenuePerRecipient: number | null; findings: Pick<HealthFinding, "tone" | "title">[] };
 
-export function BusinessOverview({ cards, audits, sprints, email = null }: { cards: ServiceCard[]; audits: Record<string, AuditSummary>; sprints: Record<string, SprintSummary>; email?: EmailSummary | null }) {
+/** Their organic social (Facebook and Instagram, read only), for a client with the social media service: its numbers once read, or just whether accounts are linked */
+export type SocialCardData = { data: SocialSummary | null; linked: boolean };
+
+export function BusinessOverview({ cards, audits, sprints, email = null, social = null }: { cards: ServiceCard[]; audits: Record<string, AuditSummary>; sprints: Record<string, SprintSummary>; email?: EmailSummary | null; social?: SocialCardData | null }) {
   const ads = cards.filter((c): c is Extract<ServiceCard, { kind: "ads" }> => c.kind === "ads");
   const spend = ads.reduce((n, c) => n + (c.summary?.spend ?? 0), 0);
   const prev = ads.reduce((n, c) => n + (c.summary?.prevSpend ?? 0), 0);
@@ -192,6 +196,7 @@ export function BusinessOverview({ cards, audits, sprints, email = null }: { car
           );
         })}
         {email && <EmailCard email={email} />}
+        {social && <SocialCard social={social} />}
       </div>
     </div>
   );
@@ -238,6 +243,61 @@ function EmailCard({ email }: { email: EmailSummary }) {
         </span>
       )}
       <span className="text-xs text-faint group-hover:text-fg">Open Email →</span>
+    </OpenService>
+  );
+}
+
+const kk = (n: number) => (n >= 10_000 ? `${(n / 1000).toFixed(1)}k` : Math.round(n).toLocaleString("en-US"));
+
+/** Social (Facebook and Instagram, read only) as a service card: its health, followers with 30-day growth, three tiles, the top findings */
+function SocialCard({ social }: { social: SocialCardData }) {
+  const d = social.data;
+  if (!d)
+    return (
+      <OpenService id="social" className="group grid content-start gap-1.5 rounded-[18px] border border-dashed border-line p-4 text-left md:p-5">
+        <span className="flex items-center gap-2 font-medium">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: COLOR.social }} />
+          Social
+        </span>
+        <span className="flex min-h-11 items-center text-xs text-faint group-hover:text-fg md:min-h-0">{social.linked ? "Linked. The numbers show once the first read is in →" : "Link their Facebook Page and Instagram account to see social here →"}</span>
+      </OpenService>
+    );
+  const status = pulseStatus(d.findings);
+  const lines = d.findings.filter((f) => f.tone !== "good").slice(0, 3);
+  const shown = lines.length ? lines : d.findings.slice(0, 2);
+  const move = d.reach != null && d.prevReach ? Math.round(((d.reach - d.prevReach) / d.prevReach) * 100) : null;
+  return (
+    <OpenService id="social" className="group grid content-start gap-3 rounded-[18px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint md:p-5">
+      <span className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2 font-medium">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: COLOR.social }} />
+          Social
+        </span>
+        <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${PILL[status.tone]}`}>{status.label}</span>
+      </span>
+      <span className="flex flex-wrap items-end gap-x-3 gap-y-1">
+        <span className="tabular font-display text-3xl leading-none">{d.followers != null ? kk(d.followers) : "n/a"}</span>
+        <span className="pb-0.5 text-xs text-faint">
+          followers
+          {d.change != null ? ` · ${d.change >= 0 ? "+" : "-"}${kk(Math.abs(d.change))} in 30 days` : ""}
+        </span>
+      </span>
+      <span className="grid grid-cols-3 gap-2 text-xs">
+        <Stat k="Reach, 30 days" v={d.reach != null ? `${kk(d.reach)}${move != null ? ` (${move >= 0 ? "+" : ""}${move}%)` : ""}` : "n/a"} />
+        <Stat k="Engagement rate" v={d.rate != null ? `${(d.rate * 100).toFixed(1)}%` : "n/a"} />
+        <Stat k="Posts a week" v={String(d.postsPerWeek)} />
+      </span>
+      {shown.length > 0 && (
+        <span className="grid gap-1 border-t border-line pt-3 text-xs text-muted">
+          {shown.map((f) => (
+            <span key={f.title} className="flex items-start gap-2">
+              <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${DOT[f.tone]}`} />
+              <span className="line-clamp-1">{f.title}</span>
+            </span>
+          ))}
+        </span>
+      )}
+      <span className="text-xs text-faint group-hover:text-fg">Open Social →</span>
     </OpenService>
   );
 }

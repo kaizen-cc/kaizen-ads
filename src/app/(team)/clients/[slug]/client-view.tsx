@@ -54,6 +54,9 @@ import { GoogleSyncPanel } from "@/components/platform-fields";
 import type { GoogleClientHealth } from "@/lib/google-health";
 import { klaviyoClientState } from "@/lib/klaviyo/core";
 import { emailTabs } from "./email-tabs";
+import { socialTabs } from "./social-tabs";
+import type { ClientSocial, SocialLinkView } from "@/lib/social/store";
+import { socialSummary } from "@/lib/social/summary";
 import { DocsPanel } from "./docs-panel";
 import { KnowledgePanel } from "@/components/knowledge-panel";
 import type { KnowledgeDoc } from "@/lib/knowledge";
@@ -206,6 +209,8 @@ export type ClientViewProps = {
   tiktok?: { data: ClientTikTok | null; separate?: boolean } | null;
   /** Klaviyo (email and SMS, read only): null until its migration is applied, so nothing about it shows */
   klaviyo?: { conn: KlaviyoConnectionView | null; data: ClientKlaviyo | null; storeRevenue: number | null } | null;
+  /** Organic social (Facebook and Instagram, read only), for clients with the social media service: null until its migration is applied */
+  social?: { link: SocialLinkView | null; data: ClientSocial | null } | null;
   /** Google Ads sync: each account's state and the plain fix when it fails; null when they don't run Google */
   googleSync?: GoogleClientHealth | null;
   docs?: ClientDoc[] | null; // every file and link shared about them
@@ -230,7 +235,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -280,6 +285,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
     google: !offList.has("google-ads") && (bought.includes("google-ads") || googleKpis.length > 0 || Boolean(googleCampaigns)),
     // Only once TikTok is set up; before that it stays a plain service on the overview
     tiktok: Boolean(tiktok) && !offList.has("tiktok-ads") && (bought.includes("tiktok-ads") || tiktokKpis.length > 0 || Boolean(tiktok?.data)),
+    // Organic social: only for clients who buy social media (servicesOf already leaves out one taken off on purpose)
+    social: Boolean(social) && bought.includes("social-media"),
     creative: !offList.has("creative") && (bought.includes("creative") || client.creative_package || images + videos > 0 || Boolean(creative?.moving.length)),
   };
   const tierOf = (slug: string) => {
@@ -295,7 +302,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
     ...(has.creative
       ? [{ id: "creative" as const, kind: "creative" as const, label: "Creative", package: active ? (packageLabel ?? "Creative package") : null, pools, moving: creative?.moving.filter((r) => !["client_review", "ready_for_launch"].includes(r.stage)).length ?? 0, waiting: creative?.moving.filter((r) => r.stage === "client_review").length ?? 0, live: creative?.live.length ?? 0, asana: creative?.asana?.length ?? 0 }]
       : []),
-    ...bought.filter((b) => !["facebook-ads", "google-ads", "creative", ...(has.tiktok ? ["tiktok-ads"] : [])].includes(b)).map((b) => ({ id: b, kind: "other" as const, label: SERVICES.find((x) => x.slug === b)?.label ?? b, tier: tierOf(b) })),
+    ...bought.filter((b) => !["facebook-ads", "google-ads", "creative", ...(has.tiktok ? ["tiktok-ads"] : []), ...(has.social ? ["social-media"] : [])].includes(b)).map((b) => ({ id: b, kind: "other" as const, label: SERVICES.find((x) => x.slug === b)?.label ?? b, tier: tierOf(b) })),
   ];
   const creativeTone: "bad" | "warn" | null = allotmentOver(pools) ? "bad" : active && images + videos > 0 && imagesUsed + videosUsed === 0 ? "warn" : null;
 
@@ -374,7 +381,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                     {/* The full business audit leads the page: the first thing anyone opening a client sees */}
                     {businessAudit}
                     {glance}
-                    <BusinessOverview cards={cards} audits={audits ?? {}} sprints={sprints ?? {}} email={klaviyo?.conn && klaviyo.data ? { revenue: klaviyo.data.now.revenue, prev: klaviyo.data.before.revenue, campaigns: klaviyo.data.now.campaignsSent, openRate: klaviyo.data.now.openRate, currency: klaviyo.data.currency, share: klaviyo.data.now.share ?? (klaviyo.storeRevenue ? klaviyo.data.now.revenue / klaviyo.storeRevenue : null), revenuePerRecipient: klaviyo.data.now.revenuePerRecipient, findings: klaviyo.data.health.map((h) => ({ tone: h.tone, title: h.title })) } : null} />
+                    <BusinessOverview cards={cards} audits={audits ?? {}} sprints={sprints ?? {}} email={klaviyo?.conn && klaviyo.data ? { revenue: klaviyo.data.now.revenue, prev: klaviyo.data.before.revenue, campaigns: klaviyo.data.now.campaignsSent, openRate: klaviyo.data.now.openRate, currency: klaviyo.data.currency, share: klaviyo.data.now.share ?? (klaviyo.storeRevenue ? klaviyo.data.now.revenue / klaviyo.storeRevenue : null), revenuePerRecipient: klaviyo.data.now.revenuePerRecipient, findings: klaviyo.data.health.map((h) => ({ tone: h.tone, title: h.title })) } : null} social={has.social ? { data: social?.data ? socialSummary(social.data) : null, linked: Boolean(social?.link && social.link.state !== "missing") } : null} />
                     {patterns}
                     {business}
                   </div>
@@ -1082,6 +1089,17 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                           content: <p className="text-sm text-faint">{klaviyo.conn.error ? `Klaviyo isn't reading: ${klaviyo.conn.error}` : "Klaviyo is connected. The first 90 days are being read; the numbers show here once they're in."}</p>,
                         },
                       ],
+                },
+              ]
+            : []),
+          ...(has.social
+            ? [
+                {
+                  id: "social",
+                  label: "Social",
+                  tone: social?.link && (social.link.state === "failing" || (social.link.state === "missing" && social.link.error)) ? ("bad" as const) : social?.data && social.data.health.some((h) => h.tone === "bad") ? ("warn" as const) : null,
+                  note: social?.data?.followersNow != null ? `${social.data.followersNow.toLocaleString("en-US")} followers` : social?.link?.state === "missing" || !social?.link ? "Link accounts" : "Facebook and Instagram",
+                  tabs: socialTabs({ data: social?.data ?? null, link: social?.link ?? null, clientId: client.id, canEdit: !demo }),
                 },
               ]
             : []),
