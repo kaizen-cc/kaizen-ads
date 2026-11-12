@@ -629,11 +629,22 @@ async function Sync({ motion }: { motion: string | null }) {
   const googleBys = [...new Set((googleLiveRows ?? []).map((c) => c.live_google_writes_by as string | null).filter(Boolean) as string[])];
   const { data: googleByRows } = googleBys.length ? await admin.from("profiles").select("id, full_name").in("id", googleBys) : { data: [] as { id: string; full_name: string }[] };
   const mwBy = (mw?.profiles as unknown as { full_name: string } | null)?.full_name;
-  const [{ data }, { data: accounts }] = await Promise.all([
-    admin.from("sync_state").select("source, last_run_at, last_result").order("source"),
+  // Every sync's records, a page at a time: there are more than the 1,000 one read returns, and the ones past it
+  // (TikTok's, by name) showed as never run
+  const allSyncState = async () => {
+    type SyncRow = { source: string; last_run_at: string | null; last_result: unknown };
+    const out: SyncRow[] = [];
+    for (let from = 0; from < 20_000; from += 1000) {
+      const { data: page } = await admin.from("sync_state").select("source, last_run_at, last_result").order("source").range(from, from + 999);
+      out.push(...((page ?? []) as SyncRow[]));
+      if (!page || page.length < 1000) break;
+    }
+    return out;
+  };
+  const [everything, { data: accounts }] = await Promise.all([
+    allSyncState(),
     admin.from("kpi_targets").select("ad_account_id, clients(name)").eq("active", true).not("ad_account_id", "is", null),
   ]);
-  const everything = data ?? [];
   const runs = new Map(everything.filter((r) => r.source.startsWith("run:")).map((r) => [r.source.slice(4), timedOut(r.last_result as RunState)] as const));
   const rows = everything.filter((r) => !r.source.startsWith("run:"));
   // KPI rows are keyed by ad account; show whose it is
