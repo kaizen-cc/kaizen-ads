@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { allotmentLine, allotmentOver, allotmentPool, allotmentPools, usageCounts } from "@/lib/allotment";
+import { allotmentLine, allotmentOver, allotmentPool, allotmentPools, matchesClientName, usageCounts } from "@/lib/allotment";
 
 // The owner's rule (Nov 2026): every place shows the allotment per pool, never images and videos summed into one
 // number, never an overage clamped away. Sierra Dreams: 50 images + 10 videos, 86 images and 7 videos used.
@@ -65,5 +65,16 @@ describe("every allotment display goes through the helper", () => {
     expect(read("src/lib/creative-kpis.ts")).not.toMatch(/images_per_month \?\? 0\) \+ \(u\.videos_per_month/);
     expect(read("src/lib/today.ts")).not.toMatch(/c\.used\}\/\$\{c\.allotment\}/);
     expect(read("src/app/(team)/pipeline/views/shared.tsx")).not.toMatch(/c\.used\} of \{c\.allotment\}/);
+  });
+});
+
+describe("the allotments search on the Board", () => {
+  it("finds a client by any part of their name, ignoring case and accents", () => {
+    expect(matchesClientName("Sierra Dreams", "")).toBe(true);
+    expect(matchesClientName("Sierra Dreams", "  ")).toBe(true);
+    expect(matchesClientName("Sierra Dreams", "dream")).toBe(true);
+    expect(matchesClientName("Sierra Dreams", "SIERRA dre")).toBe(true);
+    expect(matchesClientName("Café Olé", "cafe ole")).toBe(true);
+    expect(matchesClientName("Sierra Dreams", "sierra nights")).toBe(false);
   });
 });

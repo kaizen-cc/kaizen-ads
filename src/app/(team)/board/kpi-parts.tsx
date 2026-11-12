@@ -17,7 +17,7 @@ import { BriefJobSlot, trackJob } from "@/components/brief-jobs";
 import { BriefPreviewButton, QuickBriefSheet } from "@/components/quick-brief-sheet";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 import type { QuickBrief } from "@/lib/quick-brief";
-import { allotmentPools } from "@/lib/allotment";
+import { allotmentPools, matchesClientName } from "@/lib/allotment";
 import { AllotmentPools } from "@/components/allotment-pools";
 import { checkErrorsNow, dismissAllotment, restoreAllotment } from "./kpi-actions";
 
@@ -571,8 +571,10 @@ export function AllotmentList({ rows, canDismiss }: { rows: ClientAllotment[]; c
   const [editing, setEditing] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const live = rows.filter((r) => !r.dismissed);
-  const dismissed = rows.filter((r) => r.dismissed);
+  const [query, setQuery] = useState("");
+  const found = rows.filter((r) => matchesClientName(r.name, query));
+  const live = found.filter((r) => !r.dismissed);
+  const dismissed = found.filter((r) => r.dismissed);
   const critical = live.filter((r) => ["missed", "at_risk", "behind"].includes(r.status));
   const shown = filter === "all" ? live : filter === "on_track" ? live.filter((r) => r.status === "on_track" || r.status === "ahead") : critical;
 
@@ -690,10 +692,24 @@ export function AllotmentList({ rows, canDismiss }: { rows: ClientAllotment[]; c
             <span className="tabular ml-1 opacity-60">{k === "critical" ? critical.length : k === "all" ? live.length : live.filter((r) => r.status === "on_track" || r.status === "ahead").length}</span>
           </button>
         ))}
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search clients"
+          aria-label="Search clients"
+          className="h-9 w-full rounded-full border border-line bg-surface px-3 text-[12.5px] text-fg outline-none focus:border-brand-text/60 max-md:h-11 sm:w-48"
+        />
         <span className="ml-auto hidden text-[11px] text-faint md:inline">Bar: made so far · line: where they should be by now</span>
       </div>
       <ul className="max-h-[440px] overflow-y-auto overscroll-contain">
-        {shown.length ? shown.map(row) : <li className="px-4 py-6 text-center text-[13px] text-ok">{filter === "critical" ? "Every client is on track this cycle." : "No clients here."}</li>}
+        {shown.length ? (
+          shown.map(row)
+        ) : query.trim() ? (
+          <li className="px-4 py-6 text-center text-[13px] text-muted">No clients match “{query.trim()}” here.</li>
+        ) : (
+          <li className="px-4 py-6 text-center text-[13px] text-ok">{filter === "critical" ? "Every client is on track this cycle." : "No clients here."}</li>
+        )}
       </ul>
       {dismissed.length > 0 && (
         <div className="border-t border-line">
