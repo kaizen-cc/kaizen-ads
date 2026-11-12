@@ -21,6 +21,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { ChatMessage, Change, RoleChatMessage } from "./actions";
 import { AgentDetail, AgentsNav, KnowledgeView, LinesOverview, RoleDetail, RolesOverview, type Agent, type Item, type Role } from "./agents";
 import { Expenses, rollupFrom, type CostRow } from "./expenses";
+import { cachedActivity, cachedCostRollup, cachedLastRuns, type Activity } from "@/lib/ai-agents-cache";
 import { addUsage, costOf, emptyUsage, type ModelKey, type Usage } from "@/lib/ai-costs";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { DataInspector } from "./data-inspector";
@@ -73,7 +74,6 @@ const day = (offset: number) => {
 };
 
 // The clock, read outside render (the page is dynamic; these only frame the cost rollup)
-const tomorrowIso = () => new Date(Date.now() + 86_400_000).toISOString();
 const sixDaysAgo = () => new Date(Date.now() - 6 * 86_400_000);
 
 async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, section: askedSection, range, by }: { me: Staff; open: string | null; role: string | null; line: string | null; section: string; range: string; by: string }) {
@@ -84,16 +84,17 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
   const openRole = askedRole && canTrainAgent(me, askedRole) ? askedRole : null;
   const section = me.isExec ? askedSection : "agents";
   const mineOnly = <T,>(rows: T[], roleOf: (r: T) => string | null) => (me.isExec ? rows : rows.filter((r) => canTrainAgent(me, roleOf(r))));
-  const since = daysAgoIso(7);
   // What every AI call cost, rolled up by day, skill, model, kind and person, back to the earliest period the
   // Expenses page offers; the agent cards and the model picker read the last 7 days and this month from it
   const nyDay = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
-  const [{ data: rollup }, { data: staff }] = await Promise.all([
-    supabase.rpc("ai_cost_rollup", { p_from: `${rollupFrom()}T00:00:00-05:00`, p_to: tomorrowIso() }),
+  // Shared and cached for two minutes (src/lib/ai-agents-cache.ts), so a tab click doesn't re-read a year of calls
+  const week = nyDay(sixDaysAgo());
+  const [costRows, activity, lastRuns, { data: staff }] = await Promise.all([
+    cachedCostRollup(rollupFrom(), `${nyDay(new Date(Date.now() + 86_400_000))}T00:00:00-05:00`).catch(() => [] as CostRow[]),
+    cachedActivity(`${week}T00:00:00-05:00`).catch(() => [] as Activity[]),
+    cachedLastRuns().catch(() => ({}) as Record<string, string>),
     supabase.from("profiles").select("id, full_name, role, is_active").eq("is_active", true).order("full_name"),
   ]);
-  const costRows = ((rollup ?? []) as CostRow[]).map((r) => ({ ...r, runs: Number(r.runs), failed: Number(r.failed), input: Number(r.input), output: Number(r.output), cache_w: Number(r.cache_w), cache_r: Number(r.cache_r), searches: Number(r.searches) }));
-  const week = nyDay(sixDaysAgo());
   const monthStart = `${nyDay(new Date()).slice(0, 7)}-01`;
   const rowUsage = (r: CostRow): Usage => ({ runs: r.runs, failed: r.failed, input: r.input, output: r.output, cacheW: r.cache_w, cacheR: r.cache_r, searches: r.searches });
   const cost7 = new Map<string, number>();
@@ -110,10 +111,9 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
   }
   // The chats are read by their trainers: a head reads their line's through the server (the tables are execs' only)
   const chatDb = me.isExec ? supabase : createAdminClient();
-  const [{ data: agents }, { data: knowledge }, { data: month }, { data: roleRows }, { data: spineRow }, { data: chats }, { data: roleChats }] = await Promise.all([
+  const [{ data: agents }, { data: knowledge }, { data: roleRows }, { data: spineRow }, { data: chats }, { data: roleChats }] = await Promise.all([
     supabase.from("ai_agents").select("*, profiles(full_name)").order("sort_order"),
     supabase.from("ai_knowledge").select("*").order("created_at"),
-    supabase.from("ai_runs").select("agent_key, label, model, ms, input_tokens, output_tokens, ok, error, created_at").gte("created_at", daysAgoIso(30)).order("created_at", { ascending: false }).limit(5000),
     supabase.from("ai_roles").select("*, profiles(full_name)").order("sort_order"),
     supabase.from("ai_spine").select("body, updated_at, profiles(full_name)").eq("id", 1).maybeSingle(),
     chatDb.from("ai_agent_chats").select("agent_key, changes").eq("role", "coach").gte("created_at", daysAgoIso(90)),
@@ -142,21 +142,17 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
     const open = ((c.changes ?? []) as { applied?: boolean }[]).filter((x) => !x.applied).length;
     if (open) proposals.set(c.agent_key, (proposals.get(c.agent_key) ?? 0) + open);
   }
-  const runs = (month ?? []).filter((r) => r.created_at >= since);
   // When each agent last ran, even if it was over a month ago
-  const lastEver = new Map<string, string>();
-  for (const r of month ?? []) if (!lastEver.has(r.agent_key)) lastEver.set(r.agent_key, r.created_at);
-  const quiet = (agents ?? []).filter((a) => !lastEver.has(a.key)).map((a) => a.key as string);
-  await Promise.all(
-    quiet.map(async (k) => {
-      const { data } = await supabase.from("ai_runs").select("created_at").eq("agent_key", k).order("created_at", { ascending: false }).limit(1).maybeSingle();
-      if (data) lastEver.set(k, data.created_at);
-    }),
-  );
+  const lastEver = new Map<string, string>(Object.entries(lastRuns));
+  // The open skill's latest calls (the only raw calls the page reads)
+  const openKey = open && (agents ?? []).some((a) => a.key === open) ? open : null;
+  const { data: recentRuns } = openKey
+    ? await (me.isExec ? supabase : createAdminClient()).from("ai_runs").select("agent_key, label, model, ms, input_tokens, output_tokens, ok, error, created_at").eq("agent_key", openKey).order("created_at", { ascending: false }).limit(15)
+    : { data: [] as { agent_key: string; label: string | null; model: string | null; ms: number | null; input_tokens: number | null; output_tokens: number | null; ok: boolean; error: string | null; created_at: string }[] };
   const list: Agent[] = mineOnly(agents ?? [], (a) => (a.role_key as string | null) ?? null).map((a) => {
-    const mine = runs.filter((r) => r.agent_key === a.key);
-    const mineMonth = (month ?? []).filter((r) => r.agent_key === a.key);
-    const timed = mine.filter((r) => r.ms != null && r.ok);
+    const mine = activity.filter((r) => r.agent === a.key);
+    const mineMonth = a.key === openKey ? (recentRuns ?? []) : [];
+    const msN = mine.reduce((t, r) => t + r.ms_n, 0);
     return {
       key: a.key,
       roleKey: a.role_key,
@@ -174,17 +170,18 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
       cost7: cost7.get(a.key) ?? 0,
       mtd: mtdByModel.get(a.key) ?? {},
       stats: {
-        runs: mine.length,
-        avgMs: timed.length ? Math.round(timed.reduce((t, r) => t + r.ms!, 0) / timed.length) : null,
-        inTokens: mine.reduce((t, r) => t + (r.input_tokens ?? 0), 0),
-        outTokens: mine.reduce((t, r) => t + (r.output_tokens ?? 0), 0),
-        failed: mine.filter((r) => !r.ok).length,
+        runs: mine.reduce((t, r) => t + r.runs7, 0),
+        avgMs: msN ? Math.round(mine.reduce((t, r) => t + r.ms_sum, 0) / msN) : null,
+        inTokens: mine.reduce((t, r) => t + r.in7, 0),
+        outTokens: mine.reduce((t, r) => t + r.out7, 0),
+        failed: mine.reduce((t, r) => t + r.failed7, 0),
       },
       lastAt: lastEver.get(a.key) ?? null,
       // Every moment in the app that calls it, with how often each ran this week and when it last did
       moments: (AGENT_MOMENTS[a.key] ?? []).map((m) => {
-        const hits = mineMonth.filter((r) => momentOf(a.key, r.label) === m);
-        return { title: m.title, where: m.where, trigger: m.trigger, when: m.when, runs7: hits.filter((r) => r.created_at >= since).length, lastAt: hits[0]?.created_at ?? null };
+        const hits = mine.filter((r) => momentOf(a.key, r.label) === m);
+        const lastAt = hits.reduce<string | null>((x, r) => (!x || r.last_at > x ? r.last_at : x), null);
+        return { title: m.title, where: m.where, trigger: m.trigger, when: m.when, runs7: hits.reduce((t, r) => t + r.runs7, 0), lastAt };
       }),
       recent: mineMonth.slice(0, 15).map((r) => ({
         at: r.created_at,
@@ -249,7 +246,7 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
             // Executives see the service lines first and open one (?line=email); a head lands directly in their own line
             const line = me.isExec ? parseLine(askedLine) : null;
             const inLine = line ? roles.filter((r) => lineOfRole(r.key) === line) : roles;
-            if (me.isExec && !(line && inLine.length)) return <LinesOverview roles={roles} agents={list.filter((a) => a.roleKey)} />;
+            if (me.isExec && !(line && inLine.length)) return <LinesOverview roles={roles} agents={list.filter((a) => a.roleKey)} total7={[...cost7.values()].reduce((t, c) => t + c, 0)} />;
             return <RolesOverview roles={inLine} agents={list.filter((a) => a.roleKey && inLine.some((r) => r.key === a.roleKey))} items={items} isExec={me.isExec} line={line} />;
           })()
         )}

@@ -1642,9 +1642,14 @@ export function RolesOverview({ roles, agents, items, isExec = true, line = null
  * Settings › AI agents, first level (executives): one card per service line with how many agents it has, how many are
  * online and how many parked, and what the line is. A click opens that line's agents (?tab=agents&line=email).
  */
-export function LinesOverview({ roles, agents }: { roles: Role[]; agents: Agent[] }) {
+export function LinesOverview({ roles, agents, total7 = null }: { roles: Role[]; agents: Agent[]; /** Every AI call's cost this week, including work outside the agents' skills */ total7?: number | null }) {
   const lines = summarizeLines(roles);
   const parked = roles.filter((r) => r.offline).length;
+  const costOfLine = (keys: string[]) => agents.filter((a) => keys.includes(a.roleKey ?? "")).reduce((t, a) => t + a.cost7, 0);
+  const inLines = agents.reduce((t, a) => t + a.cost7, 0);
+  const week = Math.max(total7 ?? 0, inLines);
+  const runs = agents.reduce((t, a) => t + a.stats.runs, 0);
+  const topLine = Math.max(...lines.map((l) => costOfLine(l.roles)), 0.0001);
   return (
     <div className="grid gap-6">
       <section className="relative isolate overflow-hidden rounded-[28px] border border-line bg-deep px-5 py-6 md:px-8 md:py-7">
@@ -1654,8 +1659,21 @@ export function LinesOverview({ roles, agents }: { roles: Role[]; agents: Agent[
           {roles.length} agents across {lines.length} lines
         </h2>
         <p className="mt-2 text-[13px] text-muted">
-          {agents.length} skills · {roles.length - parked} online{parked ? ` · ${parked} parked` : ""}. Pick a line to talk to its agents and tune their skills.
+          {agents.length} skills · {roles.length - parked} online{parked ? ` · ${parked} parked` : ""}. Pick a line to see each agent&apos;s cost, talk to its agents and tune their skills.
         </p>
+        <dl className="mt-5 grid grid-cols-3 gap-6 md:max-w-xl md:gap-10">
+          {[
+            ["This week", money(week), `${money(week / 7)} a day`],
+            ["Runs", runs.toLocaleString("en-US"), "last 7 days"],
+            ["Outside the lines", money(Math.max(0, week - inLines)), "chat, imports, other"],
+          ].map(([k, v, n]) => (
+            <div key={k} className="grid gap-0.5">
+              <dt className="text-[11px] text-faint">{k}</dt>
+              <dd className="tabular font-display text-[26px] leading-none md:text-[32px]">{v}</dd>
+              <dd className="text-[11px] text-faint">{n}</dd>
+            </div>
+          ))}
+        </dl>
       </section>
       <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {lines.map((l) => {
@@ -1663,6 +1681,8 @@ export function LinesOverview({ roles, agents }: { roles: Role[]; agents: Agent[
           const skills = agents.filter((a) => l.roles.includes(a.roleKey ?? ""));
           const review = mine.reduce((t, r) => t + r.proposals, 0) + skills.reduce((t, s) => t + s.proposals, 0);
           const tint = tintOf(mine[0]?.icon);
+          const cost = costOfLine(l.roles);
+          const lineRuns = skills.reduce((t, s) => t + s.stats.runs, 0);
           return (
             <li key={l.key} className="min-w-0">
               <Link
@@ -1672,8 +1692,16 @@ export function LinesOverview({ roles, agents }: { roles: Role[]; agents: Agent[
               >
                 <span aria-hidden className="absolute inset-x-6 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${tint}, transparent)` }} />
                 <div className="flex items-start justify-between gap-3">
-                  <h3 className="font-heading text-[19px] leading-tight">{l.label}</h3>
-                  <span className="flex -space-x-2">
+                  <div className="min-w-0">
+                    <h3 className="font-heading text-[19px] leading-tight">{l.label}</h3>
+                    <p className="mt-1.5 flex items-baseline gap-1.5">
+                      <span className="tabular font-display text-[24px] leading-none" style={{ color: cost >= 0.005 ? undefined : "var(--fg-faint)" }}>
+                        {cost >= 0.005 ? money(cost) : "$0"}
+                      </span>
+                      <span className="text-[10.5px] text-faint">this week{cost >= 0.005 ? ` · ${money(cost / 7)} a day` : ""}</span>
+                    </p>
+                  </div>
+                  <span className="flex shrink-0 -space-x-2">
                     {mine.map((r) => (
                       <span key={r.key} className="rounded-[14px] ring-4 ring-surface">
                         <AgentIcon icon={r.icon} size={34} />
@@ -1682,10 +1710,18 @@ export function LinesOverview({ roles, agents }: { roles: Role[]; agents: Agent[
                   </span>
                 </div>
                 <p className="text-[13px] leading-relaxed text-muted">{l.description}</p>
+                <span className="h-[3px] overflow-hidden rounded-full bg-surface-2" title={week > 0 ? `${Math.round((cost / week) * 100)}% of this week's AI cost` : undefined}>
+                  <span className="block h-full rounded-full opacity-80" style={{ width: `${cost >= 0.005 ? Math.max(2, (cost / topLine) * 100) : 0}%`, background: tint }} />
+                </span>
                 <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-line/70 pt-4 text-[11.5px] text-faint">
                   <span>
                     <span className="tabular text-fg">{l.agents}</span> {l.agents === 1 ? "agent" : "agents"}
                   </span>
+                  {lineRuns > 0 && (
+                    <span>
+                      <span className="tabular text-fg">{lineRuns.toLocaleString("en-US")}</span> runs
+                    </span>
+                  )}
                   {l.online > 0 && (
                     <span className="inline-flex items-center gap-1.5">
                       <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden />
