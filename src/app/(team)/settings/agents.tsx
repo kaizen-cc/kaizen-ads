@@ -9,6 +9,8 @@ import { pushParams, useParam } from "@/lib/url-state";
 import { createClient as createBrowserClient } from "@/lib/supabase/client";
 import type { AgentFile, Attachment } from "@/lib/agent-docs";
 import { AGENT_TINT, tintOf } from "@/lib/agent-look";
+import { lineByKey, lineOfRole, summarizeLines, type LineKey } from "@/lib/agent-lines";
+import { SHIPS_OFFLINE } from "@/lib/agent-access";
 import { EFFORT_TRADEOFFS, TRADEOFFS, costIf, costOf, type ModelKey as CostModel, type Usage } from "@/lib/ai-costs";
 import {
   addItem,
@@ -1509,7 +1511,7 @@ export function KnowledgeView({ items, spine }: { items: Item[]; spine: { body: 
   );
 }
 
-export function RolesOverview({ roles, agents, items, isExec = true }: { roles: Role[]; agents: Agent[]; items: Item[]; /** A head sees only their own line's agent */ isExec?: boolean }) {
+export function RolesOverview({ roles, agents, items, isExec = true, line = null }: { roles: Role[]; agents: Agent[]; items: Item[]; /** A head sees only their own line's agent */ isExec?: boolean; /** The service line these agents belong to (an exec opened it from the lines); null for a head, who lands inside */ line?: LineKey | null }) {
   const week = agents.reduce((t, a) => t + a.cost7, 0);
   const runs = agents.reduce((t, a) => t + a.stats.runs, 0);
   const live = agents.filter((a) => a.live).length;
@@ -1517,15 +1519,20 @@ export function RolesOverview({ roles, agents, items, isExec = true }: { roles: 
   return (
     <DirtyProvider>
       <div className="grid gap-6">
+        {line && (
+          <Link href="/settings?tab=agents" className="inline-flex min-h-11 items-center justify-self-start text-xs text-muted hover:text-fg md:min-h-0">
+            ← All lines
+          </Link>
+        )}
         {/* The team at a glance */}
         <section className="relative isolate overflow-hidden rounded-[28px] border border-line bg-deep px-5 py-6 md:px-8 md:py-7">
           <span aria-hidden className="pointer-events-none absolute -right-20 -top-28 -z-10 h-80 w-80 rounded-full bg-[#5b8def]/20 blur-[110px]" />
           <span aria-hidden className="pointer-events-none absolute -bottom-32 -left-16 -z-10 h-72 w-72 rounded-full bg-brand/20 blur-[110px]" />
           <div className="flex flex-wrap items-end justify-between gap-6">
             <div className="grid gap-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-faint">Kaizen&apos;s AI team</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-faint">{line ? lineByKey(line).label : "Kaizen's AI team"}</p>
               <h2 className="font-heading text-[28px] leading-tight md:text-[34px]">
-                {isExec ? "Six agents" : roles.length === 1 ? `The ${roles[0].label}` : `Your ${roles.length} agents`}, {agents.length} skills
+                {roles.length === 1 ? `The ${roles[0].label}` : `${isExec ? "" : "Your "}${roles.length} agents`}, {agents.length} skills
               </h2>
               {!isExec && <p className="max-w-md text-[13px] text-muted">Your line&apos;s agent: talk to it, tune its skills and review what it learns. Executives see every change and set the model and effort.</p>}
               <div className="flex -space-x-2">
@@ -1631,6 +1638,75 @@ export function RolesOverview({ roles, agents, items, isExec = true }: { roles: 
   );
 }
 
+/**
+ * Settings › AI agents, first level (executives): one card per service line with how many agents it has, how many are
+ * online and how many parked, and what the line is. A click opens that line's agents (?tab=agents&line=email).
+ */
+export function LinesOverview({ roles, agents }: { roles: Role[]; agents: Agent[] }) {
+  const lines = summarizeLines(roles);
+  const parked = roles.filter((r) => r.offline).length;
+  return (
+    <div className="grid gap-6">
+      <section className="relative isolate overflow-hidden rounded-[28px] border border-line bg-deep px-5 py-6 md:px-8 md:py-7">
+        <span aria-hidden className="pointer-events-none absolute -right-20 -top-28 -z-10 h-80 w-80 rounded-full bg-[#5b8def]/20 blur-[110px]" />
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-faint">Kaizen&apos;s AI team</p>
+        <h2 className="mt-2 font-heading text-[28px] leading-tight md:text-[34px]">
+          {roles.length} agents across {lines.length} lines
+        </h2>
+        <p className="mt-2 text-[13px] text-muted">
+          {agents.length} skills · {roles.length - parked} online{parked ? ` · ${parked} parked` : ""}. Pick a line to talk to its agents and tune their skills.
+        </p>
+      </section>
+      <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {lines.map((l) => {
+          const mine = roles.filter((r) => l.roles.includes(r.key));
+          const skills = agents.filter((a) => l.roles.includes(a.roleKey ?? ""));
+          const review = mine.reduce((t, r) => t + r.proposals, 0) + skills.reduce((t, s) => t + s.proposals, 0);
+          const tint = tintOf(mine[0]?.icon);
+          return (
+            <li key={l.key} className="min-w-0">
+              <Link
+                href={`/settings?tab=agents&line=${l.key}`}
+                className="group relative isolate flex h-full min-h-11 flex-col gap-4 overflow-hidden rounded-[24px] border border-line bg-surface p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-faint/60 md:p-6"
+                style={{ backgroundImage: `radial-gradient(120% 70% at 0% 0%, ${tint}1f, transparent 60%)` }}
+              >
+                <span aria-hidden className="absolute inset-x-6 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${tint}, transparent)` }} />
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="font-heading text-[19px] leading-tight">{l.label}</h3>
+                  <span className="flex -space-x-2">
+                    {mine.map((r) => (
+                      <span key={r.key} className="rounded-[14px] ring-4 ring-surface">
+                        <AgentIcon icon={r.icon} size={34} />
+                      </span>
+                    ))}
+                  </span>
+                </div>
+                <p className="text-[13px] leading-relaxed text-muted">{l.description}</p>
+                <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-line/70 pt-4 text-[11.5px] text-faint">
+                  <span>
+                    <span className="tabular text-fg">{l.agents}</span> {l.agents === 1 ? "agent" : "agents"}
+                  </span>
+                  {l.online > 0 && (
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden />
+                      {l.online} online
+                    </span>
+                  )}
+                  {l.parked > 0 && <span className="rounded-full border border-dashed border-warn/60 bg-warn-soft px-2 py-0.5 text-[10.5px] font-medium text-warn">{l.parked} parked</span>}
+                  {review > 0 && <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[10.5px] text-brand-text">{review} to review</span>}
+                  <span className="ml-auto transition-transform group-hover:translate-x-0.5" aria-hidden>
+                    →
+                  </span>
+                </div>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function CoreEditor({ role }: { role: Role }) {
   const [core, setCore] = useState(role.core);
   useDirty(`core:${role.key}`, core !== role.core, { label: `${role.label} core`, save: () => saveRoleCore(role.key, core), discard: () => setCore(role.core) });
@@ -1702,8 +1778,8 @@ export function RoleDetail({ role, skills, items, chat, isExec = true }: { role:
     <ExecCtx.Provider value={isExec}>
     <DirtyProvider>
       <div className="grid gap-6 pb-24">
-        <Link href="/settings?tab=agents" className="inline-flex min-h-11 items-center text-xs text-muted hover:text-fg md:min-h-0">
-          ← All agents
+        <Link href={isExec ? `/settings?tab=agents&line=${lineOfRole(role.key)}` : "/settings?tab=agents"} className="inline-flex min-h-11 items-center text-xs text-muted hover:text-fg md:min-h-0">
+          ← {isExec ? lineByKey(lineOfRole(role.key)).label : "All agents"}
         </Link>
         <header className="relative overflow-hidden rounded-[20px] border border-line bg-surface p-5 sm:p-8">
           <div className="relative flex flex-wrap items-start gap-5">
@@ -1712,7 +1788,7 @@ export function RoleDetail({ role, skills, items, chat, isExec = true }: { role:
               <p className="text-[11px] uppercase tracking-[0.16em] text-faint">Agent</p>
               <h2 className="font-heading text-[26px] leading-tight [overflow-wrap:anywhere] md:text-[30px]">{role.label}</h2>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{role.description}</p>
-              {(role.offline || role.key === "tiktok_buyer") && (
+              {(role.offline || SHIPS_OFFLINE.includes(role.key)) && (
                 <div className="mt-3">
                   <AgentOnline roleKey={role.key} offline={Boolean(role.offline)} isExec={isExec} />
                 </div>

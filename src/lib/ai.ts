@@ -1,6 +1,7 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { ROLE_SKILLS, SHIPS_OFFLINE } from "@/lib/agent-access";
 import { LIKENESS_RULE, noAiContentRule } from "@/lib/ai-content";
 import { MAX_VARIATIONS, describeAllotment, toAllotment, type Allotment, type UsageRow } from "@/lib/allotment";
 import { motionBlock } from "@/lib/in-motion";
@@ -80,12 +81,14 @@ const anthropic = () =>
 const cache = new Map<AgentKey, { at: number; config: AgentConfig }>();
 export const forgetAgent = (key?: AgentKey) => (key ? cache.delete(key) : cache.clear());
 
-/** The agents that ship offline: the TikTok Ads Buyer's skills, until an exec brings that agent online in Settings */
-export const OFFLINE_ROLE_OF: Partial<Record<AgentKey, string>> = { tiktok_auditor: "tiktok_buyer", tiktok_launcher: "tiktok_buyer", tiktok_reporter: "tiktok_buyer" };
+/** The agents that ship offline: the TikTok Ads Buyer's and the email agents' skills, until an exec brings that agent online in Settings */
+export const OFFLINE_ROLE_OF: Record<string, string> = Object.fromEntries(
+  SHIPS_OFFLINE.flatMap((role) => (ROLE_SKILLS[role] ?? []).map((skill) => [skill, role] as const)),
+);
 const offlineCache = new Map<string, { at: number; offline: boolean }>();
 
 /** Whether an agent is offline (its role's offline flag; offline when it can't be read, so nothing runs by mistake) */
-export async function agentOffline(key: AgentKey): Promise<boolean> {
+export async function agentOffline(key: AgentKey | (string & {})): Promise<boolean> {
   const role = OFFLINE_ROLE_OF[key];
   if (!role) return false;
   const hit = offlineCache.get(role);

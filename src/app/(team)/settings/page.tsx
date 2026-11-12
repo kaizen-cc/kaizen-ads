@@ -11,6 +11,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
 import { canTrainAgent, trainableRoles } from "@/lib/agent-access";
+import { lineOfRole, parseLine } from "@/lib/agent-lines";
 import { HeadChanges } from "./head-changes";
 import { loadHeadChanges } from "@/lib/agent-training";
 import { daysAgoIso, freshness } from "@/lib/dates";
@@ -18,7 +19,7 @@ import { nyParts } from "@/lib/kpi/calc";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { ChatMessage, Change, RoleChatMessage } from "./actions";
-import { AgentDetail, AgentsNav, KnowledgeView, RoleDetail, RolesOverview, type Agent, type Item, type Role } from "./agents";
+import { AgentDetail, AgentsNav, KnowledgeView, LinesOverview, RoleDetail, RolesOverview, type Agent, type Item, type Role } from "./agents";
 import { Expenses, rollupFrom, type CostRow } from "./expenses";
 import { addUsage, costOf, emptyUsage, type ModelKey, type Usage } from "@/lib/ai-costs";
 import { roleLabel, type TeamRole } from "@/lib/roles";
@@ -75,7 +76,7 @@ const day = (offset: number) => {
 const tomorrowIso = () => new Date(Date.now() + 86_400_000).toISOString();
 const sixDaysAgo = () => new Date(Date.now() - 6 * 86_400_000);
 
-async function Agents({ me, open: askedAgent, role: askedRole, section: askedSection, range, by }: { me: Staff; open: string | null; role: string | null; section: string; range: string; by: string }) {
+async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, section: askedSection, range, by }: { me: Staff; open: string | null; role: string | null; line: string | null; section: string; range: string; by: string }) {
   const supabase = await createClient();
   // A head sees only their line's agent and its skills, and none of the exec-only sections (strategy, shared
   // knowledge, the heads' changes, expenses)
@@ -244,7 +245,13 @@ async function Agents({ me, open: askedAgent, role: askedRole, section: askedSec
             by={by}
           />
         ) : (
-          <RolesOverview roles={roles} agents={list.filter((a) => a.roleKey)} items={items} isExec={me.isExec} />
+          (() => {
+            // Executives see the service lines first and open one (?line=email); a head lands directly in their own line
+            const line = me.isExec ? parseLine(askedLine) : null;
+            const inLine = line ? roles.filter((r) => lineOfRole(r.key) === line) : roles;
+            if (me.isExec && !(line && inLine.length)) return <LinesOverview roles={roles} agents={list.filter((a) => a.roleKey)} />;
+            return <RolesOverview roles={inLine} agents={list.filter((a) => a.roleKey && inLine.some((r) => r.key === a.roleKey))} items={items} isExec={me.isExec} line={line} />;
+          })()
         )}
       </div>
     );
@@ -978,6 +985,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
           me={me}
           open={typeof sp.agent === "string" ? sp.agent : null}
           role={typeof sp.role === "string" ? sp.role : null}
+          line={typeof sp.line === "string" ? sp.line : null}
           section={typeof sp.section === "string" ? sp.section : "agents"}
           range={typeof sp.range === "string" ? sp.range : "mtd"}
           by={typeof sp.by === "string" ? sp.by : "agents"}

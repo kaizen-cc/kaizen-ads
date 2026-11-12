@@ -11,6 +11,10 @@ export const ROLE_SKILLS: Record<string, readonly string[]> = {
   google_buyer: ["google_launcher", "google_reporter", "google_auditor"],
   // Offline shells until an exec brings the TikTok Ads Buyer online; the Head of Meta writes its skills
   tiktok_buyer: ["tiktok_auditor", "tiktok_launcher", "tiktok_reporter"],
+  // Offline shells until an exec brings each email agent online; only the execs train them for now
+  email_strategist: ["email_calendar", "email_audit"],
+  email_creative: ["email_copy", "email_design_brief"],
+  email_builder: ["email_campaign_build", "email_flow_build"],
   creative_director: ["creativereview", "creativecheck", "review"],
   copywriter: ["copy", "scripts"],
   strategist: ["suggest", "strategist", "gtm", "brandbible", "lab"],
@@ -18,7 +22,16 @@ export const ROLE_SKILLS: Record<string, readonly string[]> = {
   account_manager: ["briefing", "calls"],
 };
 
-/** The role agents each head trains */
+/** The role agents that ship offline (parked): no AI path calls their skills until an exec brings the role online */
+export const SHIPS_OFFLINE: readonly string[] = ["tiktok_buyer", "email_strategist", "email_creative", "email_builder"];
+
+/** The offline-shipping role a skill belongs to, or null when its agent is always on */
+export const offlineRoleOfSkill = (key: string): string | null => {
+  const role = roleOfAgent(key);
+  return role && role !== key && SHIPS_OFFLINE.includes(role) ? role : null;
+};
+
+/** The role agents each head trains (there is no email head position yet: the execs train the email agents) */
 export const HEAD_LINES: Partial<Record<TeamRole, readonly string[]>> = {
   head_of_meta: ["media_buyer", "tiktok_buyer"],
   head_of_google: ["google_buyer"],
