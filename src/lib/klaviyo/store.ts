@@ -3,8 +3,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptionKey, seal, unseal } from "@/lib/meta-token-core";
 import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
-import { audienceSize, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, placedOrderMetric } from "./api";
-import { BACKFILL_DAYS, cleanKey, dayIn, emailContextLine, emptyStats, keyLast4, keyProblem, klaviyoClientState, klaviyoCostMs, pickKlaviyoWindow, rates, redactKey, rollupDays, sumSince, type CampaignInfo, type EmailCampaignLine, type EmailWindow, type KlaviyoClientState, type KlaviyoPlainError, type KlaviyoWindow, type SeriesRow, type Stats } from "./core";
+import { audienceSize, campaignContent, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, metricDaily, placedOrderMetric, pulseMetrics } from "./api";
+import { BACKFILL_DAYS, cleanKey, dayIn, emailContextLine, emptyStats, keyLast4, keyProblem, klaviyoClientState, klaviyoCostMs, partialSyncWarning, pickKlaviyoWindow, rates, redactKey, rollupDays, sumSince, type CampaignInfo, type KlaviyoClientState, type KlaviyoPlainError, type KlaviyoWindow, type SeriesRow, type Stats } from "./core";
+import { audienceGrowth, emailHealth, keyFlowCoverage, pulseWindow, sanitizeEmailHtml, seriesChunks, sortCampaigns, type CampaignLite, type DailyRow, type DayValue, type FlowLite, type HealthFinding, type KeyFlow, type PulseWindow } from "./insights";
 import { tracker } from "@/lib/progress";
 import { runBounded } from "@/lib/bounded";
 
@@ -139,11 +140,13 @@ export async function klaviyoRoster(admin: SupabaseClient): Promise<KlaviyoRoste
   const by = new Map((conns ?? []).map((c) => [c.client_id as string, c]));
   // Only the clients Kaizen runs email for: the email marketing service, or a Klaviyo already connected
   const list = (clients ?? []).filter((c) => by.has(c.id as string) || (servicesOf(c as Parameters<typeof servicesOf>[0]) as string[]).includes("email-marketing"));
-  const memo = new Map((memos ?? []).map((m) => [String(m.source).slice("klaviyo:".length), (m.last_result ?? {}) as { window?: KlaviyoWindow; fullAt?: string | null }]));
+  const memo = new Map((memos ?? []).map((m) => [String(m.source).slice("klaviyo:".length), (m.last_result ?? {}) as SyncMemo]));
   return list.map((c) => {
     const k = by.get(c.id as string);
     const m = memo.get(c.id as string);
     const st = klaviyoClientState(k ? { status: k.status as string, lastSyncedAt: (k.last_synced_at as string | null) ?? null, error: (k.last_error as string | null) ?? null } : null);
+    // A part of the read that failed while the rest worked shows as a warning instead of passing silently
+    if (k && !st.error) st.error = partialSyncWarning(m);
     return {
       id: c.id as string,
       name: c.name as string,
@@ -168,7 +171,7 @@ const MAX_SIZES = 8;
 const NO_ORDERS = "No Placed Order metric in this account yet, so revenue can't be read (campaigns, flows and lists still are).";
 
 /** Each client's last read, for Sync health (sync_state "klaviyo:<client id>"): when, which window, the last full read, the error */
-type SyncMemo = { window?: KlaviyoWindow; fullAt?: string | null; error?: string | null; account?: string | null };
+type SyncMemo = { window?: KlaviyoWindow; fullAt?: string | null; error?: string | null; account?: string | null; seriesError?: string | null; storeError?: string | null };
 const memoSource = (clientId: string) => `klaviyo:${clientId}`;
 async function saveMemo(admin: SupabaseClient, clientId: string, memo: SyncMemo) {
   await admin.from("sync_state").upsert({ source: memoSource(clientId), last_run_at: new Date().toISOString(), last_result: memo });
@@ -195,23 +198,50 @@ const isAuth = (e: unknown) => e instanceof KlaviyoError && (e.status === 401 ||
 
 function campaignRow(clientId: string, c: CampaignInfo, s: Stats, names: Map<string, string>, now: string) {
   const r = rates(s);
-  return { client_id: clientId, campaign_id: c.id, name: c.name, channel: c.channel, status: c.status, send_time: c.sendTime, audiences: c.audienceIds.map((a) => names.get(a) ?? a), subject: c.subject, preview_text: c.previewText, recipients: s.recipients, delivered: s.delivered, opens_unique: s.opensUnique, open_rate: r4(r.openRate), clicks_unique: s.clicksUnique, click_rate: r4(r.clickRate), unsubscribes: s.unsubscribes, bounced: s.bounced, spam_complaints: s.spamComplaints, conversions: s.conversions, revenue: Math.round(s.revenue * 100) / 100, updated_at: now };
+  return { client_id: clientId, campaign_id: c.id, name: c.name, channel: c.channel, status: c.status, send_time: c.sendTime, audiences: c.audienceIds.map((a) => names.get(a) ?? a), subject: c.subject, preview_text: c.previewText, recipients: s.recipients, delivered: s.delivered, opens_unique: s.opensUnique, open_rate: r4(r.openRate), clicks_unique: s.clicksUnique, click_rate: r4(r.clickRate), unsubscribes: s.unsubscribes, bounced: s.bounced, spam_complaints: s.spamComplaints, conversions: s.conversions, revenue: Math.round(s.revenue * 100) / 100, updated_at: now, ...(c.messageId ? { message_id: c.messageId } : {}) };
 }
-const dayRow = (clientId: string, d: ReturnType<typeof rollupDays>[number], now: string) => ({ client_id: clientId, date: d.date, campaign_revenue: d.campaignRevenue, flow_revenue: d.flowRevenue, revenue: d.revenue, campaign_recipients: d.campaignRecipients, flow_recipients: d.flowRecipients, sends: d.sends, campaigns_sent: d.campaignsSent, conversions: d.conversions, updated_at: now });
+const dayRow = (clientId: string, d: ReturnType<typeof rollupDays>[number], now: string) => ({ client_id: clientId, date: d.date, campaign_revenue: d.campaignRevenue, flow_revenue: d.flowRevenue, revenue: d.revenue, campaign_recipients: d.campaignRecipients, flow_recipients: d.flowRecipients, sends: d.sends, campaigns_sent: d.campaignsSent, conversions: d.conversions, sms_revenue: d.smsRevenue, updated_at: now });
+
+/** Columns the Klaviyo pulse migration adds: left out (and the save tried again) while it isn't applied */
+const PULSE_COLUMNS = ["message_id", "store_revenue", "store_orders", "sms_revenue", "subscribed", "unsubscribed"];
+const missingColumn = (msg: string) => /column|schema cache/i.test(msg);
 
 async function save(admin: SupabaseClient, table: string, rows: Record<string, unknown>[], conflict: string) {
   for (let i = 0; i < rows.length; i += 500) {
-    const { error: e } = await admin.from(table).upsert(rows.slice(i, i + 500), { onConflict: conflict });
+    const part = rows.slice(i, i + 500);
+    let { error: e } = await admin.from(table).upsert(part, { onConflict: conflict });
+    if (e && missingColumn(e.message)) {
+      const bare = part.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => !PULSE_COLUMNS.includes(k))));
+      // Nothing but the keys left: there's nothing to save until the migration is applied
+      if (bare.every((r) => Object.keys(r).every((k) => ["client_id", "date", "updated_at"].includes(k)))) return;
+      ({ error: e } = await admin.from(table).upsert(bare, { onConflict: conflict }));
+    }
     if (e) throw new Error(`Saving ${table}: ${e.message}`);
   }
 }
 
-type ReadOut = { metricId: string | null; campaigns: number; flows: number; audiences: number; days: number };
+/** The store's own day (Placed Order), and list joins and leaves, laid onto each day's row */
+function withStore(row: Record<string, unknown>, store: Map<string, DayValue> | null, subs: Map<string, DayValue> | null, unsubs: Map<string, DayValue> | null) {
+  const date = row.date as string;
+  const s = store?.get(date);
+  return {
+    ...row,
+    ...(store ? { store_revenue: s?.value ?? 0, store_orders: s?.count ?? 0 } : {}),
+    ...(subs ? { subscribed: subs.get(date)?.count ?? 0 } : {}),
+    ...(unsubs ? { unsubscribed: unsubs.get(date)?.count ?? 0 } : {}),
+  };
+}
+
+const byDate = (xs: DayValue[]) => new Map(xs.map((d) => [d.date, d]));
+
+type ReadOut = { metricId: string | null; campaigns: number; flows: number; audiences: number; days: number; seriesError: string | null; storeError: string | null };
 
 /**
  * The full window: campaigns (email and SMS) of the last 120 days with their numbers, flows with 30 and 90 days of
- * numbers, lists and segments (the main ones with their size), and each day's totals for 90 days. Calls go one at a
- * time; the Reporting API (2 queries a minute per account) is spaced, and refusals wait and retry.
+ * numbers, lists and segments (the main ones with their size), each day's totals for 90 days, and the store's own
+ * revenue per day (Placed Order). Calls go one at a time; the Reporting API (2 queries a minute per account) is spaced,
+ * and refusals wait and retry. The daily flow series is asked for in pieces of 45 days: Klaviyo refuses a daily series
+ * longer than 60 days. A part that fails is noted (seriesError, storeError) for Sync health, never passed over silently.
  */
 async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Promise<ReadOut> {
   const clientId = conn.client_id;
@@ -220,7 +250,14 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   const from = shift(today, -(BACKFILL_DAYS - 1));
   const from30 = shift(today, -29);
   const sinceIso = new Date(Date.parse(`${shift(today, -120)}T00:00:00Z`)).toISOString();
-  const metricId = await metricOf(admin, conn, key);
+  const nowIso = new Date().toISOString().replace(/\.\d+Z$/, "+00:00");
+  // The metrics by name (one listing): Placed Order, and list joins and leaves
+  const metrics = await pulseMetrics(key).catch((e) => {
+    if (isAuth(e)) throw e;
+    return null;
+  });
+  if (metrics?.placedOrder && metrics.placedOrder !== conn.conversion_metric_id) await admin.from("klaviyo_connections").update({ conversion_metric_id: metrics.placedOrder }).eq("client_id", clientId);
+  const metricId = metrics?.placedOrder ?? (await metricOf(admin, conn, key));
   const email = await listCampaigns(key, "email", sinceIso);
   const sms = await listCampaigns(key, "sms", sinceIso).catch(() => []);
   const flows = await listFlows(key);
@@ -236,19 +273,32 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   const values = metricId ? await campaignValues(key, metricId, { key: "last_90_days" }) : [];
   let series: SeriesRow[] = [];
   let seriesOk = false;
+  let seriesError: string | null = null;
   let flowStats: Map<string, { d30: Stats; d90: Stats }> = new Map();
   if (metricId) {
     try {
-      series = await flowSeries(key, metricId, { key: "last_90_days" });
+      series = await flowSeries(key, metricId, seriesChunks(from, today, { maxDays: 45, endIso: nowIso }));
       seriesOk = true;
       flowStats = new Map(series.map((s) => [s.id, { d30: sumSince(s, from30), d90: sumSince(s, from) }]));
     } catch (e) {
       if (isAuth(e)) throw e;
-      // No daily series: the flows' 30 and 90 days from the values report instead
+      seriesError = redactKey(errText(e), key).slice(0, 240);
+      // No daily series: the flows' 30 and 90 days from the values report instead (the days wait for the next read)
       const [v30, v90] = [await flowValues(key, metricId, { key: "last_30_days" }), await flowValues(key, metricId, { key: "last_90_days" })];
       for (const f of v90) flowStats.set(f.id, { d30: v30.find((x) => x.id === f.id)?.stats ?? emptyStats(), d90: f.stats });
     }
   }
+
+  // The store's own revenue per day (Placed Order, as Klaviyo sees it) and list joins and leaves
+  let storeError: string | null = null;
+  const store = metricId
+    ? await metricDaily(key, metricId, from, today, tz).then(byDate).catch((e) => {
+        storeError = redactKey(errText(e), key).slice(0, 240);
+        return null;
+      })
+    : null;
+  const subs = metrics?.subscribed ? await metricDaily(key, metrics.subscribed, from, today, tz).then(byDate).catch(() => null) : null;
+  const unsubs = metrics?.unsubscribed ? await metricDaily(key, metrics.unsubscribed, from, today, tz).then(byDate).catch(() => null) : null;
 
   // Profile counts for the main lists and segments: the ones campaigns go to most, then the newest lists
   const used = new Map<string, number>();
@@ -270,23 +320,31 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
     return { client_id: clientId, flow_id: f.id, name: f.name, status: f.status, trigger_type: f.triggerType, revenue_30: Math.round(st.d30.revenue * 100) / 100, recipients_30: st.d30.recipients, open_rate_30: r4(a.openRate), click_rate_30: r4(a.clickRate), conversions_30: st.d30.conversions, revenue_90: Math.round(st.d90.revenue * 100) / 100, recipients_90: st.d90.recipients, open_rate_90: r4(b.openRate), click_rate_90: r4(b.clickRate), conversions_90: st.d90.conversions, updated_at: now };
   });
   const audienceRows = [...lists, ...segments].map((a) => ({ client_id: clientId, audience_id: a.id, kind: a.kind, name: a.name, profile_count: sizes.has(a.id) ? sizes.get(a.id) : (a.profileCount ?? null), updated_at: now }));
-  const days = metricId ? rollupDays({ campaigns: [...email, ...sms].map((c) => ({ sendTime: c.sendTime, stats: byCampaign.get(c.id) ?? emptyStats() })), flows: series, tz, from, to: today }) : [];
+  const days = metricId ? rollupDays({ campaigns: [...email, ...sms].map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: byCampaign.get(c.id) ?? emptyStats() })), flows: series, tz, from, to: today }) : [];
 
   await save(admin, "klaviyo_campaigns", campaignRows, "client_id,campaign_id");
   await save(admin, "klaviyo_flows", flowRows, "client_id,flow_id");
   await save(admin, "klaviyo_audiences", audienceRows, "client_id,audience_id");
-  // Without a daily flow series the days would miss flows: the old rows are left as they are
-  if (seriesOk) await save(admin, "klaviyo_daily", days.map((d) => dayRow(clientId, d, now)), "client_id,date");
+  // Without a daily flow series the days would miss flows: only the store's day (and list movement) is written then
+  if (seriesOk) await save(admin, "klaviyo_daily", days.map((d) => withStore(dayRow(clientId, d, now), store, subs, unsubs)), "client_id,date");
+  else if (store || subs || unsubs) {
+    const dates: string[] = [];
+    for (let d = from; d <= today; d = shift(d, 1)) dates.push(d);
+    await save(admin, "klaviyo_daily", dates.map((date) => withStore({ client_id: clientId, date, updated_at: now }, store, subs, unsubs)), "client_id,date");
+  }
+  // Each read's list and segment sizes, for growth over time (kept quietly until the pulse migration is applied)
+  const snap = audienceRows.filter((a) => a.profile_count != null).map((a) => ({ client_id: clientId, audience_id: a.audience_id, date: today, profile_count: a.profile_count }));
+  if (snap.length) await admin.from("klaviyo_audience_sizes").upsert(snap, { onConflict: "client_id,audience_id,date" });
   // Flows, lists and segments deleted in Klaviyo go here too
   if (flows.length) await admin.from("klaviyo_flows").delete().eq("client_id", clientId).lt("updated_at", now);
   if (lists.length && segmentsOk) await admin.from("klaviyo_audiences").delete().eq("client_id", clientId).lt("updated_at", now);
-  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: audienceRows.length, days: seriesOk ? days.length : 0 };
+  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: audienceRows.length, days: seriesOk ? days.length : 0, seriesError, storeError };
 }
 
 /**
- * The recent window, every run: today and yesterday's totals, the campaigns sent in the last 7 days with their
- * numbers, and every flow's last 30 days. Two Reporting API queries (spaced per account) and a few list calls; lists,
- * segments, the 90-day numbers and anything older wait for the daily full read.
+ * The recent window, every run: today and yesterday's totals (and the store's), the campaigns sent in the last 7 days
+ * with their numbers, and every flow's last 30 days. Two Reporting API queries (spaced per account) and a few list
+ * calls; lists, segments, the 90-day numbers and anything older wait for the daily full read.
  */
 async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Promise<ReadOut> {
   const clientId = conn.client_id;
@@ -308,18 +366,28 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
   let values: { id: string; stats: Stats }[] = [];
   let series: SeriesRow[] = [];
   let seriesOk = false;
+  let seriesError: string | null = null;
   let flow30 = new Map<string, Stats>();
   if (metricId) {
     if (recent.length) values = await orNamed(() => campaignValues(key, metricId, { start: utc(shift(today, -8)), end: nowIso }), () => campaignValues(key, metricId, { key: "last_7_days" }));
     try {
+      // 31 days: inside Klaviyo's 60-day limit for a daily series
       series = await orNamed(() => flowSeries(key, metricId, { start: utc(shift(today, -31)), end: nowIso }), () => flowSeries(key, metricId, { key: "last_30_days" }));
       seriesOk = true;
       flow30 = new Map(series.map((s) => [s.id, sumSince(s, from30)]));
     } catch (e) {
       if (isAuth(e)) throw e;
+      seriesError = redactKey(errText(e), key).slice(0, 240);
       flow30 = new Map((await flowValues(key, metricId, { key: "last_30_days" })).map((f) => [f.id, f.stats]));
     }
   }
+  let storeError: string | null = null;
+  const store = metricId
+    ? await metricDaily(key, metricId, yesterday, today, tz).then(byDate).catch((e) => {
+        storeError = redactKey(errText(e), key).slice(0, 240);
+        return null;
+      })
+    : null;
 
   const now = new Date().toISOString();
   // Audience names from the last full read (lists and segments aren't listed on a recent one)
@@ -335,12 +403,13 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
         return { client_id: clientId, flow_id: f.id, name: f.name, status: f.status, trigger_type: f.triggerType, revenue_30: Math.round(s.revenue * 100) / 100, recipients_30: s.recipients, open_rate_30: r4(r.openRate), click_rate_30: r4(r.clickRate), conversions_30: s.conversions, updated_at: now };
       })
     : flows.map((f) => ({ client_id: clientId, flow_id: f.id, name: f.name, status: f.status, trigger_type: f.triggerType, updated_at: now }));
-  const days = metricId && seriesOk ? rollupDays({ campaigns: recent.map((c) => ({ sendTime: c.sendTime, stats: byCampaign.get(c.id) ?? emptyStats() })), flows: series, tz, from: yesterday, to: today }) : [];
+  const days = metricId && seriesOk ? rollupDays({ campaigns: recent.map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: byCampaign.get(c.id) ?? emptyStats() })), flows: series, tz, from: yesterday, to: today }) : [];
 
   await save(admin, "klaviyo_campaigns", campaignRows, "client_id,campaign_id");
   await save(admin, "klaviyo_flows", flowRows, "client_id,flow_id");
-  if (days.length) await save(admin, "klaviyo_daily", days.map((d) => dayRow(clientId, d, now)), "client_id,date");
-  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: 0, days: days.length };
+  if (days.length) await save(admin, "klaviyo_daily", days.map((d) => withStore(dayRow(clientId, d, now), store, null, null)), "client_id,date");
+  else if (store) await save(admin, "klaviyo_daily", [yesterday, today].map((date) => withStore({ client_id: clientId, date, updated_at: now }, store, null, null)), "client_id,date");
+  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: 0, days: days.length, seriesError, storeError };
 }
 
 /**
@@ -371,7 +440,7 @@ export async function syncKlaviyo(admin: SupabaseClient, clientId: string, opts:
       .from("klaviyo_connections")
       .update({ last_synced_at: now, updated_at: now, status: "active", last_error: out.metricId ? null : NO_ORDERS, ...(window === "full" && out.metricId && !conn.backfilled_at ? { backfilled_at: now } : {}) })
       .eq("client_id", clientId);
-    await saveMemo(admin, clientId, { window, fullAt: window === "full" ? now : lastFullAt, error: null, account: conn.account_name });
+    await saveMemo(admin, clientId, { window, fullAt: window === "full" ? now : lastFullAt, error: null, account: conn.account_name, seriesError: out.seriesError, storeError: out.storeError });
     return { client: clientId, ok: true, window, campaigns: out.campaigns, flows: out.flows, audiences: out.audiences, days: out.days };
   } catch (e) {
     const msg = redactKey(errText(e), key);
@@ -430,40 +499,52 @@ export async function syncAllKlaviyo(admin: SupabaseClient, opts: { budgetMs?: n
   }
 }
 
-// ─── What the page and the agents read ─────────────────────────────────────
+/// ─── What the page and the agents read ─────────────────────────────────────
 
-export type KlaviyoCampaignView = EmailCampaignLine & { id: string; status: string | null; previewText: string | null; audiences: string[]; unsubscribes: number; bounced: number; spamComplaints: number };
-export type KlaviyoFlowView = { id: string; name: string; status: string | null; trigger: string | null; revenue30: number; revenue90: number; recipients30: number; recipients90: number; openRate30: number | null; clickRate30: number | null; openRate90: number | null; clickRate90: number | null };
-export type KlaviyoAudienceView = { id: string; kind: "list" | "segment"; name: string; profiles: number | null };
+export type KlaviyoCampaignView = CampaignLite & { status: string | null; previewText: string | null; audiences: string[] };
+export type KlaviyoFlowView = FlowLite;
+export type KlaviyoAudienceView = { id: string; kind: "list" | "segment"; name: string; profiles: number | null; growth: { change: number; since: string } | null; history: { date: string; profiles: number }[] };
 export type ClientKlaviyo = {
   account: string | null;
   currency: string | null;
   through: string | null;
-  now: EmailWindow;
-  before: EmailWindow;
-  daily: { date: string; revenue: number; campaignRevenue: number; flowRevenue: number }[];
+  today: string;
+  now: PulseWindow;
+  before: PulseWindow;
+  /** 90 days: campaigns and flows per day, SMS within them, and the store's own total (null before it's read) */
+  daily: { date: string; revenue: number; campaignRevenue: number; flowRevenue: number; smsRevenue: number; storeRevenue: number | null; subscribed: number | null; unsubscribed: number | null }[];
   campaigns: KlaviyoCampaignView[];
   flows: KlaviyoFlowView[];
   audiences: KlaviyoAudienceView[];
+  keyFlows: KeyFlow[];
+  health: HealthFinding[];
+  /** A part of the last read that failed (the daily series, the store's revenue), in plain words */
+  warning: string | null;
 };
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const numOrNull = (v: unknown) => (v == null ? null : Number(v));
+const moneyOf = (cur: string | null) => (x: number) => `${!cur || cur === "USD" ? "$" : `${cur} `}${Math.round(x).toLocaleString("en-US")}`;
 
 /**
- * A client's email and SMS: the last 30 days against the 30 before, recent campaigns, flows by revenue, lists and
- * segments. Reads through `db` (a person's session sees only clients they can see). null when nothing was synced.
+ * A client's email and SMS pulse: the last 30 days against the 30 before (from the daily rows, or added up from the
+ * campaigns and flows when the daily rows are missing), 90 days of revenue by day with the store's total, every
+ * campaign of the last 120 days, flows, lists and segments with growth, the key flows and the account's health.
+ * Reads through `db` (a person's session sees only clients they can see). null when nothing was synced.
  */
 export async function clientKlaviyo(db: SupabaseClient, clientId: string): Promise<ClientKlaviyo | null> {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   const from30 = shift(today, -29);
   const from60 = shift(today, -59);
-  const [{ data: days, error }, { data: camps }, { data: flows }, { data: auds }, { data: conn }] = await Promise.all([
-    db.from("klaviyo_daily").select("date, revenue, campaign_revenue, flow_revenue, sends, campaigns_sent").eq("client_id", clientId).gte("date", from60).order("date"),
-    db.from("klaviyo_campaigns").select("*").eq("client_id", clientId).not("send_time", "is", null).order("send_time", { ascending: false }).limit(60),
-    db.from("klaviyo_flows").select("*").eq("client_id", clientId).order("revenue_30", { ascending: false }).limit(40),
-    db.from("klaviyo_audiences").select("audience_id, kind, name, profile_count").eq("client_id", clientId).order("profile_count", { ascending: false, nullsFirst: false }).limit(40),
+  const from90 = shift(today, -89);
+  const [{ data: days, error }, { data: camps }, { data: flows }, { data: auds }, { data: conn }, { data: snaps }, { data: memo }] = await Promise.all([
+    db.from("klaviyo_daily").select("*").eq("client_id", clientId).gte("date", from90).order("date"),
+    db.from("klaviyo_campaigns").select("*").eq("client_id", clientId).not("send_time", "is", null).order("send_time", { ascending: false }).limit(400),
+    db.from("klaviyo_flows").select("*").eq("client_id", clientId).order("revenue_30", { ascending: false }).limit(200),
+    db.from("klaviyo_audiences").select("audience_id, kind, name, profile_count").eq("client_id", clientId).order("profile_count", { ascending: false, nullsFirst: false }).limit(80),
     db.from("klaviyo_connections").select("account_name, currency").eq("client_id", clientId).maybeSingle(),
+    db.from("klaviyo_audience_sizes").select("audience_id, date, profile_count").eq("client_id", clientId).gte("date", shift(today, -120)).order("date"),
+    db.from("sync_state").select("last_result").eq("source", memoSource(clientId)).maybeSingle(),
   ]);
   if (error || (!days?.length && !camps?.length && !flows?.length)) return null;
   const campaigns: KlaviyoCampaignView[] = (camps ?? []).map((c) => ({
@@ -476,6 +557,9 @@ export async function clientKlaviyo(db: SupabaseClient, clientId: string): Promi
     previewText: (c.preview_text as string | null) ?? null,
     audiences: (c.audiences as string[] | null) ?? [],
     recipients: num(c.recipients),
+    delivered: num(c.delivered),
+    opensUnique: num(c.opens_unique),
+    clicksUnique: num(c.clicks_unique),
     openRate: numOrNull(c.open_rate),
     clickRate: numOrNull(c.click_rate),
     revenue: num(c.revenue),
@@ -484,54 +568,131 @@ export async function clientKlaviyo(db: SupabaseClient, clientId: string): Promi
     bounced: num(c.bounced),
     spamComplaints: num(c.spam_complaints),
   }));
-  const windowOf = (start: string, end: string): EmailWindow => {
-    const ds = (days ?? []).filter((d) => d.date >= start && d.date <= end);
-    const cs = (camps ?? []).filter((c) => {
-      const d = String(c.send_time ?? "").slice(0, 10);
-      return d >= start && d <= end;
-    });
-    const delivered = cs.reduce((s, c) => s + (num(c.delivered) || num(c.recipients)), 0);
-    return {
-      revenue: ds.reduce((s, d) => s + num(d.revenue), 0),
-      campaignRevenue: ds.reduce((s, d) => s + num(d.campaign_revenue), 0),
-      flowRevenue: ds.reduce((s, d) => s + num(d.flow_revenue), 0),
-      sends: ds.reduce((s, d) => s + num(d.sends), 0),
-      campaignsSent: ds.length ? ds.reduce((s, d) => s + num(d.campaigns_sent), 0) : cs.length,
-      openRate: delivered ? cs.reduce((s, c) => s + num(c.opens_unique), 0) / delivered : null,
-      clickRate: delivered ? cs.reduce((s, c) => s + num(c.clicks_unique), 0) / delivered : null,
-    };
-  };
+  const flowViews: KlaviyoFlowView[] = (flows ?? []).map((f) => ({
+    id: f.flow_id as string,
+    name: (f.name as string | null) ?? "(untitled)",
+    status: (f.status as string | null) ?? null,
+    trigger: (f.trigger_type as string | null) ?? null,
+    revenue30: num(f.revenue_30),
+    revenue90: num(f.revenue_90),
+    recipients30: num(f.recipients_30),
+    recipients90: num(f.recipients_90),
+    openRate30: numOrNull(f.open_rate_30),
+    clickRate30: numOrNull(f.click_rate_30),
+    openRate90: numOrNull(f.open_rate_90),
+    clickRate90: numOrNull(f.click_rate_90),
+  }));
+  const dailyRows: DailyRow[] = (days ?? []).map((d) => ({
+    date: d.date as string,
+    revenue: num(d.revenue),
+    campaignRevenue: num(d.campaign_revenue),
+    flowRevenue: num(d.flow_revenue),
+    smsRevenue: num(d.sms_revenue),
+    sends: num(d.sends),
+    campaignsSent: num(d.campaigns_sent),
+    storeRevenue: d.store_revenue == null ? null : Number(d.store_revenue),
+    storeOrders: d.store_orders == null ? null : Number(d.store_orders),
+    subscribed: d.subscribed == null ? null : Number(d.subscribed),
+    unsubscribed: d.unsubscribed == null ? null : Number(d.unsubscribed),
+  }));
+  const flow30 = flowViews.reduce((s, f) => s + f.revenue30, 0);
+  const flow90 = flowViews.reduce((s, f) => s + f.revenue90, 0);
+  const rec30 = flowViews.reduce((s, f) => s + f.recipients30, 0);
+  const rec90 = flowViews.reduce((s, f) => s + f.recipients90, 0);
+  const now = pulseWindow({ days: dailyRows, campaigns, start: from30, end: today, flowTotal: flow30, flowRecipients: rec30 });
+  // The 30 days before: the flows' share of their 90 days after the last 30 (an even split of the 60 before)
+  const before = pulseWindow({ days: dailyRows, campaigns, start: from60, end: shift(from30, -1), flowTotal: Math.max(0, flow90 - flow30) / 2, flowRecipients: Math.max(0, rec90 - rec30) / 2 });
+  const keyFlows = keyFlowCoverage(flowViews);
+  const currency = (conn?.currency as string | null) ?? null;
+  const sizes = new Map<string, { date: string; profiles: number }[]>();
+  for (const s of snaps ?? []) {
+    const list = sizes.get(s.audience_id as string) ?? [];
+    list.push({ date: s.date as string, profiles: Number(s.profile_count) });
+    sizes.set(s.audience_id as string, list);
+  }
+  const m = (memo?.last_result as SyncMemo | null) ?? null;
+  const warn = partialSyncWarning(m);
   return {
     account: (conn?.account_name as string | null) ?? null,
-    currency: (conn?.currency as string | null) ?? null,
-    through: (days ?? []).map((d) => d.date as string).at(-1) ?? null,
-    now: windowOf(from30, today),
-    before: windowOf(from60, shift(from30, -1)),
-    daily: (days ?? []).filter((d) => d.date >= from30).map((d) => ({ date: d.date as string, revenue: num(d.revenue), campaignRevenue: num(d.campaign_revenue), flowRevenue: num(d.flow_revenue) })),
+    currency,
+    through: dailyRows.filter((d) => d.revenue || d.sends || d.storeRevenue).map((d) => d.date).at(-1) ?? null,
+    today,
+    now,
+    before,
+    daily: dailyRows.map((d) => ({ date: d.date, revenue: d.revenue, campaignRevenue: d.campaignRevenue, flowRevenue: d.flowRevenue, smsRevenue: d.smsRevenue, storeRevenue: d.storeRevenue, subscribed: d.subscribed, unsubscribed: d.unsubscribed })),
     campaigns,
-    flows: (flows ?? []).map((f) => ({
-      id: f.flow_id as string,
-      name: (f.name as string | null) ?? "(untitled)",
-      status: (f.status as string | null) ?? null,
-      trigger: (f.trigger_type as string | null) ?? null,
-      revenue30: num(f.revenue_30),
-      revenue90: num(f.revenue_90),
-      recipients30: num(f.recipients_30),
-      recipients90: num(f.recipients_90),
-      openRate30: numOrNull(f.open_rate_30),
-      clickRate30: numOrNull(f.click_rate_30),
-      openRate90: numOrNull(f.open_rate_90),
-      clickRate90: numOrNull(f.click_rate_90),
-    })),
-    audiences: (auds ?? []).map((a) => ({ id: a.audience_id as string, kind: a.kind as "list" | "segment", name: (a.name as string | null) ?? "(untitled)", profiles: a.profile_count == null ? null : Number(a.profile_count) })),
+    flows: flowViews,
+    audiences: (auds ?? []).map((a) => {
+      const hist = sizes.get(a.audience_id as string) ?? [];
+      return { id: a.audience_id as string, kind: a.kind as "list" | "segment", name: (a.name as string | null) ?? "(untitled)", profiles: a.profile_count == null ? null : Number(a.profile_count), growth: audienceGrowth(hist), history: hist };
+    }),
+    keyFlows,
+    health: emailHealth({ now, before, campaigns, flows: flowViews, keyFlows, today, money: moneyOf(currency) }),
+    warning: warn?.message ?? null,
   };
 }
 
-/** The compact Klaviyo line for the agents (empty when the client has no Klaviyo numbers) */
+/** The best (by revenue) and weakest (by open rate) email campaigns of the last 90 days with a real send */
+export function topAndBottom(k: ClientKlaviyo) {
+  const from = shift(k.today, -89);
+  const sent = k.campaigns.filter((c) => c.sendTime && c.sendTime.slice(0, 10) >= from && c.recipients >= 200);
+  return { top: sortCampaigns(sent, "revenue").slice(0, 3), bottom: sortCampaigns(sent.filter((c) => c.channel !== "sms" && c.openRate != null), "open", "asc").slice(0, 3) };
+}
+
+/** The Klaviyo context every agent reads (empty when the client has no Klaviyo numbers) */
 export async function klaviyoBrief(db: SupabaseClient, clientId: string): Promise<string> {
   const k = await clientKlaviyo(db, clientId).catch(() => null);
   if (!k) return "";
-  const { data: biz } = await db.from("client_business_daily").select("revenue").eq("client_id", clientId).gt("date", shift(new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }), -30));
-  const store = (biz ?? []).reduce((s, r) => s + num(r.revenue), 0);
-  return emailContextLine({ account: k.account, currency: k.currency, now: k.now, before: k.before, recent: k.campaigns, storeRevenue: store || null, through: k.through });
+  let storeRevenue = k.now.storeRevenue;
+  if (storeRevenue == null) {
+    // No Placed Order total read yet: a connected store's own revenue, when there is one
+    const { data: biz } = await db.from("client_business_daily").select("revenue").eq("client_id", clientId).gt("date", shift(k.today, -30));
+    storeRevenue = (biz ?? []).reduce((s, r) => s + num(r.revenue), 0) || null;
+  }
+  const { top, bottom } = topAndBottom(k);
+  return emailContextLine({
+    account: k.account,
+    currency: k.currency,
+    now: k.now,
+    before: k.before,
+    recent: k.campaigns,
+    storeRevenue,
+    through: k.through,
+    pulse: { share: storeRevenue ? k.now.revenue / storeRevenue : null, storeRevenue, estimated: k.now.estimated, health: k.health, keyFlows: k.keyFlows, top, bottom },
+  });
 }
+
+// ─── Previews ──────────────────────────────────────────────────────────────
+
+export type CampaignPreview = { channel: string; subject: string | null; previewText: string | null; html: string | null; body: string | null; fetchedAt: string };
+
+/**
+ * What a campaign looked like, for the hover preview: the email's HTML (made safe on the way in) or the SMS text.
+ * Read from the cache when it's there, else from Klaviyo (read only) and cached. Only a campaign this client has.
+ */
+export async function campaignPreview(admin: SupabaseClient, clientId: string, campaignId: string): Promise<{ ok: true; preview: CampaignPreview } | { ok: false; error: string }> {
+  const { data: camp } = await admin.from("klaviyo_campaigns").select("campaign_id, channel, subject, preview_text").eq("client_id", clientId).eq("campaign_id", campaignId).maybeSingle();
+  if (!camp) return { ok: false, error: "That campaign isn't one of this client's." };
+  const { data: cached } = await admin.from("klaviyo_previews").select("channel, subject, preview_text, html, body, fetched_at").eq("client_id", clientId).eq("campaign_id", campaignId).maybeSingle();
+  if (cached && (cached.html || cached.body)) return { ok: true, preview: { channel: (cached.channel as string | null) ?? "email", subject: (cached.subject as string | null) ?? null, previewText: (cached.preview_text as string | null) ?? null, html: (cached.html as string | null) ?? null, body: (cached.body as string | null) ?? null, fetchedAt: cached.fetched_at as string } };
+  const { data: row } = await admin.from("klaviyo_connections").select("*").eq("client_id", clientId).maybeSingle();
+  if (!row) return { ok: false, error: "Klaviyo isn't connected for this client." };
+  const key = keyOf(row as ConnRow);
+  if (!key) return { ok: false, error: "The Klaviyo key can't be read: replace it in Team & setup." };
+  try {
+    const c = await campaignContent(key, campaignId);
+    const channel = c.channel ?? (camp.channel as string | null) ?? "email";
+    const html = c.html ? sanitizeEmailHtml(c.html) : null;
+    const body = channel === "sms" ? c.body : c.text;
+    const fetchedAt = new Date().toISOString();
+    if (!html && !body) return { ok: false, error: "Klaviyo has no content for this campaign." };
+    const preview: CampaignPreview = { channel, subject: c.subject ?? (camp.subject as string | null) ?? null, previewText: c.previewText ?? (camp.preview_text as string | null) ?? null, html, body: body ?? null, fetchedAt };
+    // Cached for the next hover (quietly skipped until the pulse migration is applied)
+    await admin.from("klaviyo_previews").upsert({ client_id: clientId, campaign_id: campaignId, message_id: c.messageId, channel, subject: preview.subject, preview_text: preview.previewText, html, body: preview.body, fetched_at: fetchedAt }, { onConflict: "client_id,campaign_id" });
+    return { ok: true, preview };
+  } catch (e) {
+    const msg = redactKey(errText(e), key);
+    return { ok: false, error: /can't read everything|403/.test(msg) ? "This key can't read templates: replace it with a Full Access key to see previews." : msg.slice(0, 200) };
+  }
+}
+

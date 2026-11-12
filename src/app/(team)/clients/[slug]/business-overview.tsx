@@ -5,6 +5,8 @@ import type { AuditSummary } from "../../kpis/audit-panel";
 import type { SprintSummary } from "@/lib/sprints";
 import { OpenService } from "./client-sections";
 import { allotmentPools, type PoolCounts } from "@/lib/allotment";
+import { pulseStatus, type HealthFinding } from "@/lib/klaviyo/insights";
+import Link from "next/link";
 
 // The whole business at a glance: every service the client buys side by side (paid ads on each platform, creative,
 // and what's run outside Kaizen Ads), what all their advertising spent together, and a way into each service.
@@ -18,8 +20,8 @@ const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigi
 const RANK = { off: 0, close: 1, setup: 2, idle: 3, unset: 3, good: 4, excellent: 5 } as const;
 const COLOR: Record<string, string> = { meta: "#6c7ee1", google: "#5be3a5", tiktok: "#e0508c", email: "#f2b14c" };
 
-/** Their email and SMS (Klaviyo, read only): attributed revenue over the last 30 days and the 30 before */
-export type EmailSummary = { revenue: number; prev: number; campaigns: number; openRate: number | null; currency: string | null };
+/** Their email and SMS (Klaviyo, read only): attributed revenue over the last 30 days and the 30 before, and its health */
+export type EmailSummary = { revenue: number; prev: number; campaigns: number; openRate: number | null; currency: string | null; share: number | null; revenuePerRecipient: number | null; findings: Pick<HealthFinding, "tone" | "title">[] };
 
 export function BusinessOverview({ cards, audits, sprints, email = null }: { cards: ServiceCard[]; audits: Record<string, AuditSummary>; sprints: Record<string, SprintSummary>; email?: EmailSummary | null }) {
   const ads = cards.filter((c): c is Extract<ServiceCard, { kind: "ads" }> => c.kind === "ads");
@@ -164,6 +166,21 @@ export function BusinessOverview({ cards, audits, sprints, email = null }: { car
               </OpenService>
             );
           }
+          // Email with Klaviyo connected is its own card below; without it, a way to connect it
+          if (c.id === "email-marketing") {
+            if (email) return null;
+            return (
+              <div key={c.id} className="grid content-start gap-1.5 rounded-[18px] border border-dashed border-line p-4 md:p-5">
+                <span className="flex items-center justify-between gap-2 font-medium">
+                  {c.label}
+                  {c.tier && <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">{c.tier}</span>}
+                </span>
+                <Link href="?tab=team#klaviyo" className="flex min-h-11 items-center text-xs text-faint underline-offset-2 hover:text-fg hover:underline md:min-h-0">
+                  Connect Klaviyo in Team &amp; setup to see email here →
+                </Link>
+              </div>
+            );
+          }
           return (
             <div key={c.id} className="grid content-start gap-1.5 rounded-[18px] border border-dashed border-line p-4 md:p-5">
               <span className="flex items-center justify-between gap-2 font-medium">
@@ -174,30 +191,54 @@ export function BusinessOverview({ cards, audits, sprints, email = null }: { car
             </div>
           );
         })}
-        {email && (
-          <OpenService id="email" className="group grid content-start gap-3 rounded-[18px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint md:p-5">
-            <span className="flex items-center justify-between gap-2">
-              <span className="flex items-center gap-2 font-medium">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ background: COLOR.email }} />
-                Email
-              </span>
-              <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">Klaviyo · read only</span>
-            </span>
-            <span className="flex flex-wrap items-end gap-x-3 gap-y-1">
-              <span className="tabular font-display text-3xl leading-none">{email.currency && email.currency !== "USD" ? `${email.currency} ${Math.round(email.revenue).toLocaleString("en-US")}` : money(email.revenue)}</span>
-              <span className="pb-0.5 text-xs text-faint">
-                attributed revenue · 30 days{email.prev > 0 ? ` · ${email.revenue >= email.prev ? "+" : ""}${Math.round(((email.revenue - email.prev) / email.prev) * 100)}% vs the 30 before` : ""}
-              </span>
-            </span>
-            <span className="grid grid-cols-2 gap-2 text-xs">
-              <Stat k="Campaigns sent" v={String(email.campaigns)} />
-              <Stat k="Open rate" v={email.openRate != null ? `${(email.openRate * 100).toFixed(1)}%` : "n/a"} />
-            </span>
-            <span className="text-xs text-faint group-hover:text-fg">Open Email →</span>
-          </OpenService>
-        )}
+        {email && <EmailCard email={email} />}
       </div>
     </div>
+  );
+}
+
+const PILL = { good: "bg-ok-soft text-ok", warn: "bg-warn-soft text-warn", bad: "bg-bad-soft text-bad" } as const;
+const DOT = { good: "bg-ok", warn: "bg-warn", bad: "bg-bad" } as const;
+
+/** Email (Klaviyo, read only) as a service card: its health, 30-day revenue and share of the store, three tiles, the top findings */
+function EmailCard({ email }: { email: EmailSummary }) {
+  const cur = (x: number, cents = false) => `${email.currency && email.currency !== "USD" ? `${email.currency} ` : "$"}${cents ? x.toFixed(2) : Math.round(x).toLocaleString("en-US")}`;
+  const status = pulseStatus(email.findings);
+  const lines = email.findings.filter((f) => f.tone !== "good").slice(0, 3);
+  const shown = lines.length ? lines : email.findings.slice(0, 2);
+  return (
+    <OpenService id="email" className="group grid content-start gap-3 rounded-[18px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint md:p-5">
+      <span className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2 font-medium">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: COLOR.email }} />
+          Email
+        </span>
+        <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${PILL[status.tone]}`}>{status.label}</span>
+      </span>
+      <span className="flex flex-wrap items-end gap-x-3 gap-y-1">
+        <span className="tabular font-display text-3xl leading-none">{cur(email.revenue)}</span>
+        <span className="pb-0.5 text-xs text-faint">
+          revenue · 30 days{email.share != null ? ` · ${Math.round(email.share * 100)}% of the store` : ""}
+          {email.prev > 0 ? ` · ${email.revenue >= email.prev ? "+" : ""}${Math.round(((email.revenue - email.prev) / email.prev) * 100)}% vs the 30 before` : ""}
+        </span>
+      </span>
+      <span className="grid grid-cols-3 gap-2 text-xs">
+        <Stat k="Campaigns sent" v={String(email.campaigns)} />
+        <Stat k="Open rate" v={email.openRate != null ? `${(email.openRate * 100).toFixed(1)}%` : "n/a"} />
+        <Stat k="Per recipient" v={email.revenuePerRecipient != null ? cur(email.revenuePerRecipient, true) : "n/a"} />
+      </span>
+      {shown.length > 0 && (
+        <span className="grid gap-1 border-t border-line pt-3 text-xs text-muted">
+          {shown.map((f) => (
+            <span key={f.title} className="flex items-start gap-2">
+              <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${DOT[f.tone]}`} />
+              <span className="line-clamp-1">{f.title}</span>
+            </span>
+          ))}
+        </span>
+      )}
+      <span className="text-xs text-faint group-hover:text-fg">Open Email →</span>
+    </OpenService>
   );
 }
 

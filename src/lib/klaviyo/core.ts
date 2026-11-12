@@ -13,7 +13,7 @@ export const KLAVIYO_BASE = "https://a.klaviyo.com";
 
 /** The scopes Kaizen reads with today. Keys are made with Full Access so the email team can build and send from here later
  *  without new keys; nothing writes to Klaviyo until that's built and switched on. */
-export const KLAVIYO_SCOPES = ["accounts:read", "campaigns:read", "flows:read", "lists:read", "segments:read", "metrics:read"] as const;
+export const KLAVIYO_SCOPES = ["accounts:read", "campaigns:read", "flows:read", "lists:read", "segments:read", "metrics:read", "templates:read"] as const;
 
 export const BACKFILL_DAYS = 90;
 
@@ -187,7 +187,8 @@ export function nextLink(json: unknown): string | null {
   return str(obj(root.links).next) ?? str(obj(obj(root.data).links).next);
 }
 
-export type SeriesRow = { id: string; days: { date: string; stats: Stats }[] };
+/** A flow's days; `sms` is that day's revenue from its SMS messages (part of stats.revenue) */
+export type SeriesRow = { id: string; days: { date: string; stats: Stats; sms?: number }[] };
 
 /**
  * A flow-series report (interval daily): per flow, each day's counts. The days are read from date_times (or dates),
@@ -200,22 +201,25 @@ export function parseSeriesReport(json: unknown, idKey = "flow_id"): SeriesRow[]
   const attrs = obj(obj(Array.isArray(data) ? data[0] : data).attributes);
   const times = (attrs.date_times ?? attrs.dates ?? root.date_times ?? []) as unknown[];
   const days = (Array.isArray(times) ? times : []).map((t) => String(t ?? "").slice(0, 10));
-  const by = new Map<string, Map<string, Stats>>();
+  const by = new Map<string, Map<string, { stats: Stats; sms: number }>>();
   for (const r of resultsOf(json)) {
     const row = obj(r);
-    const id = str(obj(row.groupings)[idKey]) ?? str(row[idKey]);
+    const g = obj(row.groupings);
+    const id = str(g[idKey]) ?? str(row[idKey]);
     if (!id) continue;
+    const isSms = str(g.send_channel)?.toLowerCase() === "sms";
     const s = obj(row.statistics);
-    const m = by.get(id) ?? new Map<string, Stats>();
+    const m = by.get(id) ?? new Map<string, { stats: Stats; sms: number }>();
     days.forEach((date, i) => {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
       const at = (k: string) => (Array.isArray(s[k]) ? (s[k] as unknown[])[i] : undefined);
       const day = statsOf({ recipients: at("recipients"), delivered: at("delivered"), opens_unique: at("opens_unique"), clicks_unique: at("clicks_unique"), unsubscribes: at("unsubscribes"), bounced: at("bounced"), spam_complaints: at("spam_complaints"), conversions: at("conversions"), conversion_value: at("conversion_value") });
-      m.set(date, addStats(m.get(date) ?? emptyStats(), day));
+      const had = m.get(date) ?? { stats: emptyStats(), sms: 0 };
+      m.set(date, { stats: addStats(had.stats, day), sms: had.sms + (isSms ? day.revenue : 0) });
     });
     by.set(id, m);
   }
-  return [...by.entries()].map(([id, m]) => ({ id, days: [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, stats]) => ({ date, stats })) }));
+  return [...by.entries()].map(([id, m]) => ({ id, days: [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, stats: v.stats, sms: v.sms })) }));
 }
 
 /** A flow's counts added up over the days from `from` (YYYY-MM-DD, inclusive) on */
@@ -225,7 +229,7 @@ export function sumSince(row: SeriesRow, from: string): Stats {
 
 // ─── Campaigns and flows as listed ─────────────────────────────────────────
 
-export type CampaignInfo = { id: string; name: string; channel: "email" | "sms" | string; status: string | null; sendTime: string | null; audienceIds: string[]; subject: string | null; previewText: string | null; archived: boolean };
+export type CampaignInfo = { id: string; name: string; channel: "email" | "sms" | string; status: string | null; sendTime: string | null; audienceIds: string[]; subject: string | null; previewText: string | null; archived: boolean; messageId?: string | null; body?: string | null };
 
 /**
  * GET /api/campaigns with include=campaign-messages: each campaign, its audiences (list and segment ids) and its first
@@ -242,10 +246,13 @@ export function parseCampaigns(json: unknown, channel: string): CampaignInfo[] {
     const a = obj(c.attributes);
     const aud = obj(a.audiences);
     const msgIds = ((obj(obj(c.relationships)["campaign-messages"]).data as unknown[] | undefined) ?? []).map((m) => String(obj(m).id));
+    const messageId = msgIds.find((id) => messages.has(id)) ?? msgIds[0] ?? null;
     const msg = msgIds.map((id) => messages.get(id)).find(Boolean) ?? {};
     const def = obj(msg.definition);
     const content = obj(msg.content ?? def.content);
     return {
+      messageId,
+      body: str(content.body),
       id: String(c.id ?? ""),
       name: str(a.name) ?? "(untitled)",
       channel: str(msg.channel) ?? str(def.channel) ?? channel,
@@ -281,6 +288,30 @@ export function parseAudiences(json: unknown, kind: "list" | "segment"): Audienc
   }).filter((x) => x.id);
 }
 
+/** A campaign's messages (GET /api/campaigns/{id}/campaign-messages): id, channel, subject, preview text, SMS body */
+export function parseCampaignMessages(json: unknown): { id: string; channel: string | null; subject: string | null; previewText: string | null; body: string | null }[] {
+  const list = obj(json).data;
+  const rows = Array.isArray(list) ? list : list ? [list] : [];
+  return rows
+    .map((raw) => {
+      const m = obj(raw);
+      const a = obj(m.attributes);
+      const def = obj(a.definition);
+      const content = obj(a.content ?? def.content);
+      return { id: String(m.id ?? ""), channel: str(a.channel) ?? str(def.channel), subject: str(content.subject), previewText: str(content.preview_text), body: str(content.body) };
+    })
+    .filter((m) => m.id);
+}
+
+/** The metrics the pulse reads, by name: Placed Order (Shopify's first), Subscribed to List and Unsubscribed from List */
+export function metricIds(json: unknown): { placedOrder: string | null; subscribed: string | null; unsubscribed: string | null } {
+  const list = obj(json).data;
+  const rows = (Array.isArray(list) ? list : []).map(obj);
+  const named = (name: string) => rows.filter((m) => str(obj(m.attributes).name)?.toLowerCase() === name);
+  const first = (name: string) => str(named(name)[0]?.id) ?? null;
+  return { placedOrder: placedOrderId({ data: rows }), subscribed: first("subscribed to list"), unsubscribed: first("unsubscribed from list") };
+}
+
 /** The "Placed Order" metric's id among the account's metrics (Shopify's, else any integration's) */
 export function placedOrderId(json: unknown): string | null {
   const list = obj(json).data;
@@ -302,16 +333,16 @@ export function dayIn(iso: string, tz: string | null): string {
   }
 }
 
-export type DayTotal = { date: string; campaignRevenue: number; flowRevenue: number; revenue: number; campaignRecipients: number; flowRecipients: number; sends: number; campaignsSent: number; conversions: number };
+export type DayTotal = { date: string; campaignRevenue: number; flowRevenue: number; revenue: number; campaignRecipients: number; flowRecipients: number; sends: number; campaignsSent: number; conversions: number; smsRevenue: number };
 
 /**
  * Each day's email and SMS totals for the account: campaigns count on the day they were sent (in the account's time
  * zone), flows on the day Klaviyo's daily series puts them. Days outside [from, to] are left out; days in between with
  * nothing are kept at zero so a quiet day reads as quiet, not missing.
  */
-export function rollupDays(input: { campaigns: { sendTime: string | null; stats: Stats }[]; flows: SeriesRow[]; tz: string | null; from: string; to: string }): DayTotal[] {
+export function rollupDays(input: { campaigns: { sendTime: string | null; stats: Stats; channel?: string | null }[]; flows: SeriesRow[]; tz: string | null; from: string; to: string }): DayTotal[] {
   const days = new Map<string, DayTotal>();
-  const blank = (date: string): DayTotal => ({ date, campaignRevenue: 0, flowRevenue: 0, revenue: 0, campaignRecipients: 0, flowRecipients: 0, sends: 0, campaignsSent: 0, conversions: 0 });
+  const blank = (date: string): DayTotal => ({ date, campaignRevenue: 0, flowRevenue: 0, revenue: 0, campaignRecipients: 0, flowRecipients: 0, sends: 0, campaignsSent: 0, conversions: 0, smsRevenue: 0 });
   for (let d = input.from; d <= input.to; d = new Date(Date.parse(`${d}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10)) days.set(d, blank(d));
   for (const c of input.campaigns) {
     if (!c.sendTime) continue;
@@ -321,6 +352,7 @@ export function rollupDays(input: { campaigns: { sendTime: string | null; stats:
     t.campaignRecipients += c.stats.recipients;
     t.campaignsSent += 1;
     t.conversions += c.stats.conversions;
+    if (c.channel === "sms") t.smsRevenue += c.stats.revenue;
   }
   for (const f of input.flows)
     for (const d of f.days) {
@@ -329,9 +361,10 @@ export function rollupDays(input: { campaigns: { sendTime: string | null; stats:
       t.flowRevenue += d.stats.revenue;
       t.flowRecipients += d.stats.recipients;
       t.conversions += d.stats.conversions;
+      t.smsRevenue += d.sms ?? 0;
     }
   const r2 = (x: number) => Math.round(x * 100) / 100;
-  return [...days.values()].map((t) => ({ ...t, campaignRevenue: r2(t.campaignRevenue), flowRevenue: r2(t.flowRevenue), revenue: r2(t.campaignRevenue + t.flowRevenue), sends: t.campaignRecipients + t.flowRecipients, conversions: r2(t.conversions) }));
+  return [...days.values()].map((t) => ({ ...t, campaignRevenue: r2(t.campaignRevenue), flowRevenue: r2(t.flowRevenue), revenue: r2(t.campaignRevenue + t.flowRevenue), sends: t.campaignRecipients + t.flowRecipients, conversions: r2(t.conversions), smsRevenue: r2(t.smsRevenue) }));
 }
 
 // ─── What the page and the agents read ─────────────────────────────────────
@@ -346,17 +379,38 @@ const pct = (x: number | null) => (x == null ? "n/a" : `${(x * 100).toFixed(1)}%
  * The compact Klaviyo line every agent that reads a client gets: the last 30 days' attributed revenue (against the 30
  * before), open and click rates, and the last 3 campaigns with their subject and result. Empty when there's nothing.
  */
-export function emailContextLine(input: { account: string | null; currency: string | null; now: EmailWindow; before: EmailWindow | null; recent: EmailCampaignLine[]; storeRevenue?: number | null; through?: string | null }): string {
-  const { now, before, recent } = input;
+/** The health pulse the agents also read: findings, key flows, share of the store, the best and worst campaigns */
+export type EmailPulseContext = {
+  share?: number | null;
+  storeRevenue?: number | null;
+  estimated?: boolean;
+  health?: { tone: "bad" | "warn" | "good"; title: string; action: string | null }[];
+  keyFlows?: { label: string; state: "live" | "present" | "missing" }[];
+  top?: EmailCampaignLine[];
+  bottom?: EmailCampaignLine[];
+};
+
+export function emailContextLine(input: { account: string | null; currency: string | null; now: EmailWindow; before: EmailWindow | null; recent: EmailCampaignLine[]; storeRevenue?: number | null; through?: string | null; pulse?: EmailPulseContext | null }): string {
+  const { now, before, recent, pulse } = input;
   if (!now.sends && !now.revenue && !recent.length) return "";
   const cur = input.currency ?? "USD";
   const change = before && before.revenue ? ` (${now.revenue >= before.revenue ? "+" : ""}${Math.round(((now.revenue - before.revenue) / before.revenue) * 100)}% vs the 30 days before)` : "";
-  const share = input.storeRevenue ? `, ${Math.round((now.revenue / input.storeRevenue) * 100)}% of the store's revenue` : "";
+  const storeTotal = pulse?.storeRevenue ?? input.storeRevenue ?? null;
+  const shareFrac = pulse?.share ?? (storeTotal ? now.revenue / storeTotal : null);
+  const share = shareFrac != null ? `, ${Math.round(shareFrac * 100)}% of the store's revenue${storeTotal ? ` (${money(storeTotal, cur)} Placed Order)` : ""}` : "";
+  const line = (c: EmailCampaignLine) => `${c.sendTime ? c.sendTime.slice(0, 10) : "unsent"} ${c.channel === "sms" ? "SMS" : "email"} "${c.name}"${c.subject ? `, subject "${c.subject.slice(0, 90)}"` : ""}: ${c.recipients.toLocaleString("en-US")} recipients, open ${pct(c.openRate)}, click ${pct(c.clickRate)}, ${money(c.revenue, cur)} from ${Math.round(c.conversions)} orders`;
   const lines = [
     `Email and SMS (Klaviyo${input.account ? `, ${input.account}` : ""}; read only${input.through ? `, data through ${input.through}` : ""}):`,
-    `- Last 30 days: ${money(now.revenue, cur)} attributed revenue${change}${share} (campaigns ${money(now.campaignRevenue, cur)}, flows ${money(now.flowRevenue, cur)}), ${now.campaignsSent} campaigns sent, ${now.sends.toLocaleString("en-US")} messages, open rate ${pct(now.openRate)}, click rate ${pct(now.clickRate)}`,
-    ...recent.slice(0, 3).map((c) => `- ${c.sendTime ? c.sendTime.slice(0, 10) : "unsent"} ${c.channel === "sms" ? "SMS" : "email"} "${c.name}"${c.subject ? `, subject "${c.subject.slice(0, 90)}"` : ""}: ${c.recipients.toLocaleString("en-US")} recipients, open ${pct(c.openRate)}, click ${pct(c.clickRate)}, ${money(c.revenue, cur)} from ${Math.round(c.conversions)} orders`),
+    `- Last 30 days: ${money(now.revenue, cur)} attributed revenue${pulse?.estimated ? " (estimated from campaign and flow totals)" : ""}${change}${share} (campaigns ${money(now.campaignRevenue, cur)}, flows ${money(now.flowRevenue, cur)}), ${now.campaignsSent} campaigns sent, ${now.sends.toLocaleString("en-US")} messages, open rate ${pct(now.openRate)}, click rate ${pct(now.clickRate)}`,
+    ...recent.slice(0, 3).map((c) => `- ${line(c)}`),
   ];
+  if (pulse?.keyFlows?.length) lines.push(`- Key flows: ${pulse.keyFlows.map((k) => `${k.label} ${k.state === "live" ? "live" : k.state === "present" ? "built, not live" : "missing"}`).join("; ")}`);
+  const alerts = (pulse?.health ?? []).filter((h) => h.tone !== "good").slice(0, 6);
+  const strengths = (pulse?.health ?? []).filter((h) => h.tone === "good").slice(0, 3);
+  if (alerts.length) lines.push(`- Health alerts: ${alerts.map((h) => `${h.tone === "bad" ? "[red]" : "[amber]"} ${h.title}${h.action ? ` (${h.action})` : ""}`).join("; ")}`);
+  if (strengths.length) lines.push(`- Strengths: ${strengths.map((h) => h.title).join("; ")}`);
+  if (pulse?.top?.length) lines.push(`- Best campaigns (90 days, by revenue): ${pulse.top.slice(0, 3).map(line).join(" | ")}`);
+  if (pulse?.bottom?.length) lines.push(`- Weakest campaigns (90 days, by open rate): ${pulse.bottom.slice(0, 3).map(line).join(" | ")}`);
   return lines.join("\n");
 }
 
@@ -386,6 +440,18 @@ export function plainKlaviyoError(raw: string | null | undefined, status?: strin
   if (/didn't answer|fetch failed|timed? ?out|ECONNRESET|answered 5\d\d/i.test(text)) return { message: "Klaviyo didn't answer", fix: "Nothing to do: it tries again on the next run.", severity: "bad" };
   if (/^Saving klaviyo_/i.test(text)) return { message: "The numbers were read but couldn't be saved", fix: "It tries again on the next run. If it keeps failing, the Klaviyo migration may be missing.", severity: "bad" };
   return { message: text.replace(/^Klaviyo answered /i, "Klaviyo answered ").slice(0, 200), fix: "Sync it again; if it keeps failing, replace the key with a new Full Access one.", severity: "bad" };
+}
+
+/**
+ * A part of the last read that failed while the rest worked (the daily series, the store's revenue), from the sync
+ * memo: a warning on Sync health instead of silently writing nothing. null when every part read.
+ */
+export function partialSyncWarning(memo: { seriesError?: string | null; storeError?: string | null } | null | undefined): KlaviyoPlainError | null {
+  if (!memo) return null;
+  if (memo.seriesError)
+    return { message: `Revenue by day couldn't be read (${memo.seriesError.slice(0, 120)}); the 30-day totals are estimated from campaigns and flows`, fix: "It tries again on the next run. If it keeps failing, check the key has Read access to Flows.", severity: "warn" };
+  if (memo.storeError) return { message: `The store's revenue (Placed Order) couldn't be read (${memo.storeError.slice(0, 120)}), so share of revenue is missing`, fix: "It tries again on the next run. If it keeps failing, check the key has Read access to Metrics.", severity: "warn" };
+  return null;
 }
 
 export type KlaviyoClientState = "connected" | "behind" | "pending" | "failing" | "missing";

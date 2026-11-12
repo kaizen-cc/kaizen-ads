@@ -638,7 +638,7 @@ export type ClientContext = {
   adAccountConnected: boolean;
   /** TikTok Ads, last 30 days against the 30 before (read only), when they run it and it's connected */
   tiktok?: string;
-  /** Email and SMS from Klaviyo (read only): the last 30 days' attributed revenue, open and click rates, the last 3 campaigns */
+  /** Email and SMS from Klaviyo (read only): the last 30 days' attributed revenue and share of the store, open and click rates, the last 3 campaigns, key flows, health findings, best and weakest campaigns */
   email?: string;
   /** What the client said against AI content (src/lib/ai-content.ts), when they did: no AI avatars, voices or generated media */
   aiRule?: string | null;
@@ -863,7 +863,7 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   if (ctx.email)
     lines.push(
       "<email_marketing>",
-      "Their email and SMS from Klaviyo, read only: nothing can be sent, edited or scheduled in Klaviyo from Kaizen Ads (say so if asked to). Use it as context: how much of the business email carries, which offers and subject lines their list answers, and mention email where it matters to the ads.",
+      "Their email and SMS from Klaviyo, read only: nothing can be sent, edited or scheduled in Klaviyo from Kaizen Ads (say so if asked to). Use it as context: how much of the business email carries (its share of the store's revenue), which offers and subject lines their list answers, which key flows are missing or not live, and the health alerts with what to do. Mention email where it matters to the ads (a missing abandoned-checkout flow leaks the traffic the ads buy; a launch the list hears about first).",
       ctx.email,
       "</email_marketing>",
     );

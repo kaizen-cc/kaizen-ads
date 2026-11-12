@@ -410,14 +410,15 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     {
       name: "email_marketing",
       description:
-        "A client's email and SMS from Klaviyo (read only, synced daily): the last 30 days' attributed revenue against the 30 before, open and click rates, recent campaigns (subject line, audience, recipients, open and click rate, revenue), flows by revenue (30 and 90 days) and list sizes. Use it for email performance, what subject lines and offers their list answers, and how much of the business email carries. Nothing can be sent, edited or scheduled in Klaviyo from here.",
+        "A client's email and SMS from Klaviyo (read only, synced daily): the last 30 days' attributed revenue against the 30 before, open and click rates, recent campaigns (subject line, audience, recipients, open and click rate, revenue), flows by revenue (30 and 90 days) and list sizes, plus the health pulse: share of the store's revenue (Klaviyo's Placed Order), revenue per recipient, cadence, unsubscribe and spam rates, list growth, the key flows' coverage (welcome, abandoned checkout or cart, browse, post-purchase, winback), red/amber/green health findings with what to do, and the best and weakest campaigns. Use it for email performance, what subject lines and offers their list answers, and how much of the business email carries. Nothing can be sent, edited or scheduled in Klaviyo from here.",
       input_schema: { type: "object", properties: { client: CLIENT, campaigns: { type: "integer", minimum: 1, maximum: 40, description: "How many recent campaigns (default 10)" } }, additionalProperties: false },
       status: (input, client) => `Reading Klaviyo for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
-        const { clientKlaviyo } = await import("@/lib/klaviyo/store");
+        const { clientKlaviyo, topAndBottom } = await import("@/lib/klaviyo/store");
         const k = await clientKlaviyo(ctx.admin, c.id).catch(() => null);
         if (!k) return { client: c.name, connected: false, note: "No Klaviyo numbers for this client: it isn't connected (a lead or exec connects it in the client's Team & setup), or the first sync hasn't run." };
+        const best = topAndBottom(k);
         const pct = (x: number | null) => (x == null ? null : Math.round(x * 1000) / 10);
         const n = Math.min(40, Math.max(1, Number(input.campaigns) || 10));
         const campaigns = k.campaigns.slice(0, n).map((x) => ({ sent: x.sendTime?.slice(0, 10) ?? null, channel: x.channel, name: x.name, subject: x.subject, preview: x.previewText, audiences: x.audiences, recipients: x.recipients, open_rate_pct: pct(x.openRate), click_rate_pct: pct(x.clickRate), orders: x.conversions, revenue: r2(x.revenue), unsubscribes: x.unsubscribes, spam_complaints: x.spamComplaints }));
@@ -436,7 +437,20 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           the_30_days_before: { revenue: r2(k.before.revenue), campaigns_sent: k.before.campaignsSent, open_rate_pct: pct(k.before.openRate), click_rate_pct: pct(k.before.clickRate) },
           campaigns,
           flows,
-          lists_and_segments: k.audiences.filter((a) => a.profiles != null).slice(0, 12).map((a) => ({ name: a.name, kind: a.kind, profiles: a.profiles })),
+          lists_and_segments: k.audiences.filter((a) => a.profiles != null).slice(0, 12).map((a) => ({ name: a.name, kind: a.kind, profiles: a.profiles, growth_30d: a.growth?.change ?? null })),
+          share_of_store_revenue_pct: pct(k.now.share),
+          store_revenue_30d: k.now.storeRevenue == null ? null : r2(k.now.storeRevenue),
+          revenue_per_recipient: k.now.revenuePerRecipient == null ? null : r2(k.now.revenuePerRecipient),
+          sms_revenue_30d: r2(k.now.smsRevenue),
+          campaigns_per_week: k.now.cadence,
+          unsubscribe_rate_pct: pct(k.now.unsubscribeRate),
+          spam_rate_pct: pct(k.now.spamRate),
+          list_growth_30d: k.now.listGrowth,
+          revenue_estimated: k.now.estimated ? "The daily rows were missing: revenue is added up from the campaigns sent and the flows' own 30-day totals." : undefined,
+          health: k.health.map((h) => ({ tone: h.tone === "bad" ? "red" : h.tone === "warn" ? "amber" : "green", finding: h.title, detail: h.detail, what_to_do: h.action })),
+          key_flows: k.keyFlows.map((f) => ({ flow: f.label, state: f.state, matched: f.flows.map((x) => x.name) })),
+          best_campaigns_90d: best.top.map((x) => ({ sent: x.sendTime?.slice(0, 10) ?? null, subject: x.subject ?? x.name, channel: x.channel, recipients: x.recipients, open_rate_pct: pct(x.openRate), revenue: r2(x.revenue) })),
+          weakest_campaigns_90d: best.bottom.map((x) => ({ sent: x.sendTime?.slice(0, 10) ?? null, subject: x.subject ?? x.name, recipients: x.recipients, open_rate_pct: pct(x.openRate), click_rate_pct: pct(x.clickRate), revenue: r2(x.revenue) })),
           read_only: "Nothing can be sent, edited or scheduled in Klaviyo from Kaizen Ads.",
         };
       },

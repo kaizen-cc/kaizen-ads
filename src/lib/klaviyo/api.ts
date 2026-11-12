@@ -1,5 +1,6 @@
 import "server-only";
-import { KLAVIYO_BASE, KLAVIYO_REVISION, REPORT_STATS, SERIES_STATS, errorText, nextLink, parseAccount, parseAudiences, parseCampaigns, parseFlows, parseSeriesReport, parseValuesReport, placedOrderId, redactKey, reportWait, retryDecision, type AudienceInfo, type CampaignInfo, type FlowInfo, type KlaviyoAccount, type SeriesRow, type ValuesRow } from "./core";
+import { addStats, KLAVIYO_BASE,KLAVIYO_REVISION, REPORT_STATS, SERIES_STATS, errorText, nextLink, parseAccount, parseAudiences, parseCampaigns, parseFlows, parseSeriesReport, parseValuesReport, metricIds, parseCampaignMessages, placedOrderId, redactKey, reportWait, retryDecision, type AudienceInfo, type CampaignInfo, type FlowInfo, type KlaviyoAccount, type SeriesRow, type ValuesRow } from "./core";
+import { aggregateBody, parseMetricAggregate, type DayValue } from "./insights";
 
 // Klaviyo's REST API, read only: GET calls and the Reporting API's POST queries (which read, never change anything).
 // One private key per client account. Every call carries the pinned revision, waits and retries on 429 (Retry-After)
@@ -118,20 +119,82 @@ export async function flowValues(key: string, metricId: string, timeframe: { key
   return reportPages(key, "/api/flow-values-reports/", body, (j) => parseValuesReport(j, "flow"));
 }
 
-/** flow-series-report, daily: each flow's counts per day */
-export async function flowSeries(key: string, metricId: string, timeframe: { key: string } | { start: string; end: string }): Promise<SeriesRow[]> {
-  const body = { data: { type: "flow-series-report", attributes: { statistics: [...SERIES_STATS], timeframe, interval: "daily", conversion_metric_id: metricId } } };
+/**
+ * flow-series-report, daily: each flow's counts per day. Klaviyo refuses a daily interval over more than 60 days
+ * (a 400), so a longer stretch must come as several timeframes (seriesChunks); their days are merged here.
+ */
+export async function flowSeries(key: string, metricId: string, timeframe: { key: string } | { start: string; end: string } | { start: string; end: string }[]): Promise<SeriesRow[]> {
+  const frames = Array.isArray(timeframe) ? timeframe : [timeframe];
   const out = new Map<string, SeriesRow>();
-  let next: string | null = "/api/flow-series-reports/";
+  for (const tf of frames) {
+    const body = { data: { type: "flow-series-report", attributes: { statistics: [...SERIES_STATS], timeframe: tf, interval: "daily", conversion_metric_id: metricId } } };
+    let next: string | null = "/api/flow-series-reports/";
+    for (let i = 0; next && i < 5; i++) {
+      const json = await call(key, next, { method: "POST", body, report: true });
+      for (const r of parseSeriesReport(json)) {
+        const had = out.get(r.id);
+        out.set(r.id, had ? mergeSeries(had, r) : r);
+      }
+      next = nextLink(json);
+    }
+  }
+  return [...out.values()];
+}
+
+/** One flow's days from two answers, a day in both added up once per answer (pieces never overlap) */
+function mergeSeries(a: SeriesRow, b: SeriesRow): SeriesRow {
+  const by = new Map(a.days.map((d) => [d.date, d]));
+  for (const d of b.days) {
+    const had = by.get(d.date);
+    by.set(d.date, had ? { date: d.date, stats: addStats(had.stats, d.stats), sms: (had.sms ?? 0) + (d.sms ?? 0) } : d);
+  }
+  return { id: a.id, days: [...by.values()].sort((x, y) => x.date.localeCompare(y.date)) };
+}
+
+/** The account's metrics the pulse reads, by name: Placed Order (Shopify's first), and list joins and leaves */
+export async function pulseMetrics(key: string): Promise<{ placedOrder: string | null; subscribed: string | null; unsubscribed: string | null }> {
+  const all: unknown[] = [];
+  let next: string | null = "/api/metrics/";
+  for (let i = 0; next && i < 10; i++) {
+    const json = await call(key, next);
+    const d = (json as { data?: unknown[] } | null)?.data;
+    if (Array.isArray(d)) all.push(...d);
+    next = nextLink(json);
+  }
+  return metricIds({ data: all });
+}
+
+/** One metric's daily totals (sum of value and count) in [from, to], calendar days in the account's time zone */
+export async function metricDaily(key: string, metricId: string, from: string, to: string, tz: string | null): Promise<DayValue[]> {
+  const out = new Map<string, DayValue>();
+  let next: string | null = "/api/metric-aggregates/";
   for (let i = 0; next && i < 5; i++) {
-    const json = await call(key, next, { method: "POST", body, report: true });
-    for (const r of parseSeriesReport(json)) {
-      const had = out.get(r.id);
-      out.set(r.id, had ? { id: r.id, days: [...had.days, ...r.days] } : r);
+    const json = await call(key, next, { method: "POST", body: aggregateBody(metricId, from, to, tz) });
+    for (const d of parseMetricAggregate(json)) {
+      const had = out.get(d.date);
+      out.set(d.date, had ? { date: d.date, value: had.value + d.value, count: had.count + d.count } : d);
     }
     next = nextLink(json);
   }
-  return [...out.values()];
+  return [...out.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * What a campaign looked like: its first message (channel, SMS body, subject) and, for email, the template's HTML
+ * (GET /api/campaign-messages/{id}/template: the HTML as Klaviyo renders it, template tags left in). Reads only.
+ */
+export async function campaignContent(key: string, campaignId: string): Promise<{ messageId: string | null; channel: string | null; subject: string | null; previewText: string | null; body: string | null; html: string | null; text: string | null }> {
+  const msgs = await call(key, `/api/campaigns/${encodeURIComponent(campaignId)}/campaign-messages/`);
+  const first = parseCampaignMessages(msgs)[0];
+  if (!first) return { messageId: null, channel: null, subject: null, previewText: null, body: null, html: null, text: null };
+  let html: string | null = null;
+  let text: string | null = null;
+  if (first.channel !== "sms") {
+    const t = (await call(key, `/api/campaign-messages/${encodeURIComponent(first.id)}/template/`)) as { data?: { attributes?: { html?: string; text?: string } } } | null;
+    html = t?.data?.attributes?.html ?? null;
+    text = t?.data?.attributes?.text ?? null;
+  }
+  return { messageId: first.id, channel: first.channel, subject: first.subject, previewText: first.previewText, body: first.body, html, text };
 }
 
 async function reportPages(key: string, path: string, body: unknown, parse: (json: unknown) => ValuesRow[]): Promise<ValuesRow[]> {

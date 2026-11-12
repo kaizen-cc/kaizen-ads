@@ -374,7 +374,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                     {/* The full business audit leads the page: the first thing anyone opening a client sees */}
                     {businessAudit}
                     {glance}
-                    <BusinessOverview cards={cards} audits={audits ?? {}} sprints={sprints ?? {}} email={klaviyo?.conn && klaviyo.data ? { revenue: klaviyo.data.now.revenue, prev: klaviyo.data.before.revenue, campaigns: klaviyo.data.now.campaignsSent, openRate: klaviyo.data.now.openRate, currency: klaviyo.data.currency } : null} />
+                    <BusinessOverview cards={cards} audits={audits ?? {}} sprints={sprints ?? {}} email={klaviyo?.conn && klaviyo.data ? { revenue: klaviyo.data.now.revenue, prev: klaviyo.data.before.revenue, campaigns: klaviyo.data.now.campaignsSent, openRate: klaviyo.data.now.openRate, currency: klaviyo.data.currency, share: klaviyo.data.now.share ?? (klaviyo.storeRevenue ? klaviyo.data.now.revenue / klaviyo.storeRevenue : null), revenuePerRecipient: klaviyo.data.now.revenuePerRecipient, findings: klaviyo.data.health.map((h) => ({ tone: h.tone, title: h.title })) } : null} />
                     {patterns}
                     {business}
                   </div>
@@ -1076,9 +1076,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                     {
                       id: "performance",
                       label: "Performance",
-                      hint: "Email and SMS from Klaviyo: revenue, campaigns, flows and lists (read only)",
+                      hint: "Email and SMS from Klaviyo: the pulse, campaigns, flows, audience and deliverability (read only)",
                       content: klaviyo.data ? (
-                        <EmailPanel k={klaviyo.data} storeRevenue={klaviyo.storeRevenue} />
+                        <EmailPanel k={klaviyo.data} clientId={client.id} />
                       ) : (
                         <p className="text-sm text-faint">{klaviyo.conn.error ? `Klaviyo isn't reading: ${klaviyo.conn.error}` : "Klaviyo is connected. The first 90 days are being read; the numbers show here once they're in."}</p>
                       ),

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
-import { connectKlaviyo, removeKlaviyo, syncKlaviyo } from "@/lib/klaviyo/store";
+import { campaignPreview, connectKlaviyo, removeKlaviyo, syncKlaviyo, type CampaignPreview } from "@/lib/klaviyo/store";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -41,6 +41,13 @@ export async function removeKlaviyoKey(clientId: string): Promise<Result> {
   const r = await removeKlaviyo(l.admin, clientId);
   revalidatePath(`/clients/${l.slug}`);
   return r;
+}
+
+/** A campaign's preview for the Email tab: the email's HTML (made safe) or the SMS text, cached after the first read */
+export async function klaviyoCampaignPreview(clientId: string, campaignId: string): Promise<{ ok: true; preview: CampaignPreview } | { ok: false; error: string }> {
+  const l = await mine(clientId, false);
+  if ("error" in l) return { ok: false, error: l.error! };
+  return campaignPreview(l.admin, clientId, String(campaignId).slice(0, 64));
 }
 
 export async function syncKlaviyoNow(clientId: string): Promise<Result> {
