@@ -118,6 +118,11 @@ Briefs are created in Kaizen Ads for every client from now on (ticket fulfilment
 5. **Connectors in Kaizen AI by role**: the MCP connectors the creative team uses in Claude (ElevenLabs sound effects first) built into Kaizen AI and switched on by role (video editors, designers); the lead video editor is sending the list.
 6. ~~**AI and likeness rules**~~: built. altering a real person's voice or face (AI avatars from customer testimonials) needs the client's written consent and a disclaimer; clients who reject AI content (client memory) never get an AI avatar or voice suggested.
 
+## Client portal and marketing intake (added Nov 12 2026)
+
+1. **Client portal, fully developed**: the portal as the client's one home for Kaizen. Today it has creative approvals, the dashboard, the onboarding guide and the presentation chat, all off until an exec switches a client live. To finish: every service the client has in one place (paid ads, email, organic social, creative), reports and the weekly report, requests and upgrades counted against the allotment, messages with their team, files and brand assets, invoices and package, a polished mobile app feel, white-label versions, and switching the first clients live.
+2. **Marketing intake form in Kaizen Ads**: the intake built into the app and the portal instead of the outside form that reaches us through Zapier today. Multistep and mobile first, prefilled from what we already know (sales calls, emails, website), saves as they go, asks only what's missing for their services, files and links to Drive, and on submit feeds the Brand Bible, the agents and onboarding exactly as the current intake does. The team sees who hasn't finished it and the portal nudges them.
+
 ## Email team in Kaizen Ads (Klaviyo, read and write)
 
 Klaviyo is connected per client and read today (campaigns, flows, lists, daily email revenue). Keys are created with Full Access from Nov 12 2026, so the same keys cover writing later. Next, for the email team:
