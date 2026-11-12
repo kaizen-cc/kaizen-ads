@@ -106,7 +106,7 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
         </div>
       )}
 
-      {!conn && !canEdit && <p className="text-sm text-faint">Not connected. A lead or an exec connects Klaviyo with a read-only key.</p>}
+      {!conn && !canEdit && <p className="text-sm text-faint">Not connected. A lead or an exec connects Klaviyo with a Full Access private key.</p>}
 
       {open && canEdit && (
         <div className="grid gap-3 rounded-[12px] border border-line bg-bg p-4">

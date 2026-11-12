@@ -4,11 +4,10 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { saveGoogleCustomerId } from "@/app/(team)/settings/platform-actions";
 import { connectKlaviyoKey } from "@/app/(team)/clients/[slug]/klaviyo-actions";
-import { KLAVIYO_SCOPE_NAMES } from "@/lib/klaviyo/core";
 import { sentence, type GoogleClientHealth } from "@/lib/google-health";
 
 // Inline fixes for a client's ad platforms, used in Settings › Sync health and the client's Team & setup: add the
-// Google Ads customer ID (saved on their KPI board and pulled right away), or paste a Klaviyo read-only private key
+// Google Ads customer ID (saved on their KPI board and pulled right away), or paste a Klaviyo private key (Full Access)
 // (checked with Klaviyo, encrypted, then read right away; only its last 4 are ever shown again).
 
 const input = "tabular h-11 min-w-0 flex-1 rounded-[10px] border border-line bg-bg px-3 text-sm outline-none transition-colors focus:border-brand-text/60 md:h-9";
@@ -97,7 +96,7 @@ export function KlaviyoKeyField({ clientId, label = "Paste API key", open: start
         </button>
       </div>
       <p className="text-[11.5px] leading-relaxed text-faint">
-        A private key from their Klaviyo (Settings › API keys), Custom, with Read access to {KLAVIYO_SCOPE_NAMES} only. Checked with Klaviyo, encrypted, never shown again.
+        A private key from their Klaviyo (Settings › API keys › Create Private API Key), with <b>Full Access</b>, so the same key covers the email team building and sending from Kaizen Ads later. Today Kaizen Ads only reads with it. Checked with Klaviyo, encrypted, never shown again.
       </p>
       {error && <p className="text-[12px] text-bad">{error}</p>}
     </div>

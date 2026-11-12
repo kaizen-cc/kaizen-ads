@@ -117,3 +117,12 @@ Briefs are created in Kaizen Ads for every client from now on (ticket fulfilment
 4. ~~**The ticket, redesigned by stage**~~: built. today it's one long scroll with everything at once. Each stage shows what that stage needs first (Requested: the brief and assets; In production: the brief, specs and upload; Internal review: the creative and comments; Copy: the copy studio; With client: what the client said; Ready to launch: the launch card), everything else one tap away, the same layout on phones.
 5. **Connectors in Kaizen AI by role**: the MCP connectors the creative team uses in Claude (ElevenLabs sound effects first) built into Kaizen AI and switched on by role (video editors, designers); the lead video editor is sending the list.
 6. ~~**AI and likeness rules**~~: built. altering a real person's voice or face (AI avatars from customer testimonials) needs the client's written consent and a disclaimer; clients who reject AI content (client memory) never get an AI avatar or voice suggested.
+
+## Email team in Kaizen Ads (Klaviyo, read and write)
+
+Klaviyo is connected per client and read today (campaigns, flows, lists, daily email revenue). Keys are created with Full Access from Nov 12 2026, so the same keys cover writing later. Next, for the email team:
+
+1. **Email briefs and tickets** on the Board, like creative: an email brief (goal, audience segment, offer, send date), the copywriter drafting subject lines, preview text and body, review and client approval in the portal.
+2. **Design emails in Kaizen Ads**: build from the client's Klaviyo templates and Brand Bible, preview desktop and mobile, then push the template to Klaviyo.
+3. **Deploy to Klaviyo**: create the campaign (audience, schedule, A/B subject lines) as a draft for the email lead to confirm, never sent without a person's go-ahead; flows edited the same way.
+4. **Email KPIs**: open, click, revenue per recipient and flow revenue against targets on the KPI board, audits for email accounts, and email in the weekly report.

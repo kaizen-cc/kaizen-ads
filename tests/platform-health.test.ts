@@ -80,12 +80,12 @@ describe("Klaviyo: each client's state and failures", () => {
     const s = klaviyoClientState({ status: "invalid", lastSyncedAt: ago(60_000), error: "Klaviyo refused this key." }, NOW);
     expect(s.state).toBe("failing");
     expect(s.error?.message).toMatch(/revoked or deleted/);
-    expect(s.error?.fix).toMatch(/new read-only private key/);
+    expect(s.error?.fix).toMatch(/new private key with Full Access/);
   });
   it("is failing when the key lacks a scope", () => {
     const s = klaviyoClientState({ status: "active", lastSyncedAt: ago(60_000), error: "This key can't read everything Kaizen Ads needs. Make a new private key with read access to accounts:read." }, NOW);
     expect(s.state).toBe("failing");
-    expect(s.error?.fix).toMatch(/Read on Accounts, Campaigns/);
+    expect(s.error?.fix).toMatch(/Full Access/);
   });
   it("only warns when there's no Placed Order metric", () => {
     const s = klaviyoClientState({ status: "active", lastSyncedAt: ago(60_000), error: "No Placed Order metric in this account yet, so revenue can't be read." }, NOW);
