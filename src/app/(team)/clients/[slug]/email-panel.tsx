@@ -1,17 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { HoverCard } from "@/components/hover-card";
 import { pushParams, useParam } from "@/lib/url-state";
 import type { ClientKlaviyo, KlaviyoCampaignView } from "@/lib/klaviyo/store";
 import { BENCHMARKS, bestSubjects, deliverabilityByWeek, deliverabilityOutliers, filterCampaigns, pulseStatus, revenuePerRecipient, shiftDay, sortCampaigns, type CampaignFilter, type CampaignSort, type HealthFinding } from "@/lib/klaviyo/insights";
 import { CampaignPreviewCard, CampaignPreviewSheet } from "./email-preview";
+import { DeliverabilityScoreChart, RprChart, RevenueByDayChart } from "./email-charts";
 
 // The Email tab: the pulse of their email and SMS (Klaviyo, read only). Overview (the health tiles against the 30 days
 // before, 90 days of revenue by day with the store's total, the account's health in plain alerts and strengths),
 // Campaigns (sortable, filtered, each previewed on hover or tap), Flows (with the key flows' coverage), Audience and
-// Deliverability. The open sub-tab and the filters live in the address (?etab=, ech=, edays=, esort=, edir=) so back
-// returns to them. Nothing is sent, edited or scheduled in Klaviyo from here.
+// Deliverability, each a tab of the Email service in the same tab bar as Meta and Google (?tab=). The campaign filters
+// live in the address too (ech=, edays=, esort=, edir=) so back returns to them. Nothing is sent, edited or scheduled in Klaviyo from here.
 
 const FLOW = "#6c7ee1";
 const CAMPAIGN = "#5be3a5";
@@ -21,15 +22,6 @@ const pct = (x: number | null, dp = 1) => (x == null ? "n/a" : `${(x * 100).toFi
 const count = (x: number) => Math.round(x).toLocaleString("en-US");
 const shortDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" });
 const sent = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }) : "Not sent");
-
-type Tab = "overview" | "campaigns" | "flows" | "audience" | "deliverability";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "overview", label: "Overview" },
-  { id: "campaigns", label: "Campaigns" },
-  { id: "flows", label: "Flows" },
-  { id: "audience", label: "Audience" },
-  { id: "deliverability", label: "Deliverability" },
-];
 
 const TONE = {
   bad: { dot: "bg-bad", text: "text-bad", soft: "bg-bad-soft", label: "Needs attention" },
@@ -94,93 +86,6 @@ function Tiles({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof moneyF
       <Tile k="Unsubscribe rate" v={pct(now.unsubscribeRate, 2)} move={ptsMove(now.unsubscribeRate, before.unsubscribeRate, false, 2)} sub={`healthy under ${pct(BENCHMARKS.unsubscribe.warn, 1)}`} />
       <Tile k="List growth" v={now.listGrowth == null ? "n/a" : `${now.listGrowth >= 0 ? "+" : ""}${count(now.listGrowth)}`} sub={now.listGrowth == null ? "Reads on the next full sync" : `joined minus left${before.listGrowth != null ? `, ${before.listGrowth >= 0 ? "+" : ""}${count(before.listGrowth)} before` : ""}`} />
     </div>
-  );
-}
-
-// ─── The revenue chart ────────────────────────────────────────────────────
-
-function RevenueChart({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof moneyFn> }) {
-  const days = k.daily;
-  const hasStore = days.some((d) => d.storeRevenue != null && d.storeRevenue > 0);
-  const [showStore, setShowStore] = useState(true);
-  const [hover, setHover] = useState<number | null>(null);
-  const store = hasStore && showStore;
-  const peak = Math.max(1, ...days.map((d) => Math.max(d.revenue, store ? (d.storeRevenue ?? 0) : 0)));
-  const n = days.length;
-  const h = hover != null ? days[hover] : null;
-  const line = store
-    ? days
-        .map((d, i) => `${((i + 0.5) / n) * 100},${100 - ((d.storeRevenue ?? 0) / peak) * 100}`)
-        .join(" ")
-    : "";
-  const total = days.reduce((s, d) => s + d.revenue, 0);
-  if (!n) return null;
-  return (
-    <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="grid gap-0.5">
-          <h3 className="font-heading text-[16px]">Revenue by day</h3>
-          <span className="text-[12px] text-faint">
-            {n} days · {money(total)} from email and SMS
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-3 text-[11.5px] text-muted">
-          <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: CAMPAIGN }} />
-            Campaigns
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: FLOW }} />
-            Flows
-          </span>
-          {hasStore && (
-            <button type="button" onClick={() => setShowStore((s) => !s)} aria-pressed={showStore} className={`flex min-h-11 items-center gap-1.5 rounded-full px-2 md:min-h-0 ${showStore ? "text-fg" : "text-faint line-through"}`}>
-              <span className="h-0.5 w-4 rounded-full bg-fg/70" />
-              Store total
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="relative">
-        <div className="flex h-44 items-end gap-[2px] md:h-52" role="img" aria-label={`Email revenue per day over ${n} days, ${money(total)} in total${store ? ", with the store's total revenue as a line" : ""}`} onMouseLeave={() => setHover(null)}>
-          {days.map((d, i) => (
-            <button
-              type="button"
-              key={d.date}
-              onMouseEnter={() => setHover(i)}
-              onFocus={() => setHover(i)}
-              onClick={() => setHover(i)}
-              aria-label={`${shortDay(d.date)}: ${money(d.revenue)}`}
-              className={`flex h-full min-w-0 flex-1 flex-col justify-end gap-[2px] ${hover != null && hover !== i ? "opacity-60" : ""}`}
-            >
-              {d.campaignRevenue > 0 && <span className="block w-full rounded-t-[3px]" style={{ height: `${(d.campaignRevenue / peak) * 100}%`, background: CAMPAIGN }} />}
-              {d.flowRevenue > 0 && <span className={`block w-full ${d.campaignRevenue > 0 ? "" : "rounded-t-[3px]"}`} style={{ height: `${(d.flowRevenue / peak) * 100}%`, background: FLOW }} />}
-            </button>
-          ))}
-        </div>
-        {store && (
-          <svg className="pointer-events-none absolute inset-0 h-full w-full text-fg/70" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
-            <polyline points={line} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
-          </svg>
-        )}
-        {h && hover != null && (
-          <div className="pointer-events-none absolute -top-2 z-10 grid w-[200px] -translate-y-full gap-1 rounded-[12px] border border-ink/15 bg-deep-2 p-3 text-[12px] text-fg shadow-[0_18px_40px_-16px_rgba(0,0,0,0.6)]" style={{ left: `clamp(0px, calc(${((hover + 0.5) / n) * 100}% - 100px), calc(100% - 200px))` }}>
-            <span className="font-medium">{shortDay(h.date)}</span>
-            <span className="flex justify-between gap-3"><span className="text-muted">Campaigns</span><span className="tabular">{money(h.campaignRevenue)}</span></span>
-            <span className="flex justify-between gap-3"><span className="text-muted">Flows</span><span className="tabular">{money(h.flowRevenue)}</span></span>
-            {h.smsRevenue > 0 && <span className="flex justify-between gap-3"><span className="text-muted">of which SMS</span><span className="tabular">{money(h.smsRevenue)}</span></span>}
-            {h.storeRevenue != null && (
-              <span className="flex justify-between gap-3 border-t border-ink/10 pt-1"><span className="text-muted">Store total</span><span className="tabular">{money(h.storeRevenue)}{h.storeRevenue > 0 ? ` · ${Math.round((h.revenue / h.storeRevenue) * 100)}% email` : ""}</span></span>
-            )}
-          </div>
-        )}
-      </div>
-      <div className="flex justify-between text-[11px] text-faint">
-        <span>{shortDay(days[0].date)}</span>
-        <span>{shortDay(days[Math.floor(n / 2)].date)}</span>
-        <span>{shortDay(days[n - 1].date)}</span>
-      </div>
-    </section>
   );
 }
 
@@ -566,14 +471,12 @@ function DeliverabilityTab({ k }: { k: ClientKlaviyo }) {
   );
 }
 
-// ─── The tab ──────────────────────────────────────────────────────────────
+// ─── The tabs ─────────────────────────────────────────────────────────────
 
-export function EmailPanel({ k, clientId }: { k: ClientKlaviyo; clientId: string }) {
-  const param = useParam("etab") as Tab | null;
-  const tab: Tab = param && TABS.some((t) => t.id === param) ? param : "overview";
-  const money = moneyFn(k.currency);
+/** What every Email tab opens with: the account, the window, and anything the last read couldn't get */
+function Intro({ k }: { k: ClientKlaviyo }) {
   return (
-    <div className="grid gap-5">
+    <div className="grid gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-sm text-muted">
           {k.account ?? "Klaviyo"} · last 30 days against the 30 before{k.through ? `, data through ${shortDay(k.through)}` : ""}. Revenue is what Klaviyo attributes to email and SMS on Placed Order.
@@ -586,26 +489,43 @@ export function EmailPanel({ k, clientId }: { k: ClientKlaviyo; clientId: string
           {k.now.estimated ? ". The 30-day totals are added up from the campaigns sent and the flows' own numbers until it is." : "."}
         </p>
       )}
-      <nav className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 md:mx-0 md:px-0" role="tablist" aria-label="Email">
-        {TABS.map((t) => (
-          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => pushParams({ etab: t.id === "overview" ? null : t.id })} className={`flex h-11 shrink-0 items-center rounded-full px-4 text-[13.5px] transition-colors ${tab === t.id ? "bg-fg text-bg" : "bg-surface-2/70 text-muted hover:text-fg"}`}>
-            {t.label}
-          </button>
-        ))}
-      </nav>
-      <div key={tab} style={{ animation: "tab-in .25s ease-out both" }}>
-        {tab === "overview" && (
-          <div className="grid gap-5">
-            <Tiles k={k} money={money} />
-            <RevenueChart k={k} money={money} />
-            <HealthList health={k.health} />
-          </div>
-        )}
-        {tab === "campaigns" && <CampaignsTab k={k} clientId={clientId} money={money} />}
-        {tab === "flows" && <FlowsTab k={k} money={money} />}
-        {tab === "audience" && <AudienceTab k={k} />}
-        {tab === "deliverability" && <DeliverabilityTab k={k} />}
-      </div>
     </div>
   );
 }
+
+function OverviewTab({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof moneyFn> }) {
+  return (
+    <div className="grid gap-5">
+      <Tiles k={k} money={money} />
+      <RevenueByDayChart k={k} money={money} />
+      <div className="grid gap-5 lg:grid-cols-2">
+        <RprChart k={k} money={money} />
+        <DeliverabilityScoreChart k={k} />
+      </div>
+      <HealthList health={k.health} />
+    </div>
+  );
+}
+
+/**
+ * The Email service's tabs, in the shape the Meta and Google sections hand to the client page's ClientTabs (the
+ * underlined tab bar, the open tab in ?tab=): Overview, Campaigns, Flows, Audience and Deliverability. The campaigns'
+ * channel, window and sort filters have their own params (ech, edays, esort, edir).
+ */
+export function emailTabs(k: ClientKlaviyo, clientId: string) {
+  const money = moneyFn(k.currency);
+  const wrap = (body: React.ReactNode) => (
+    <div className="grid gap-5">
+      <Intro k={k} />
+      {body}
+    </div>
+  );
+  return [
+    { id: "overview", label: "Overview", hint: "Revenue, share of the store, revenue per recipient and deliverability over time, and the account's health", content: wrap(<OverviewTab k={k} money={money} />) },
+    { id: "campaigns", label: "Campaigns", hint: "Every campaign: sortable, email or SMS, best subject lines, each previewed on hover or tap", content: wrap(<CampaignsTab k={k} clientId={clientId} money={money} />) },
+    { id: "flows", label: "Flows", hint: "The key flows' coverage and every flow's revenue", content: wrap(<FlowsTab k={k} money={money} />) },
+    { id: "audience", label: "Audience", hint: "List joins and leaves, lists and segments by size", content: wrap(<AudienceTab k={k} />) },
+    { id: "deliverability", label: "Deliverability", hint: "Weekly bounce, spam and unsubscribe rates against healthy lines", content: wrap(<DeliverabilityTab k={k} />) },
+  ];
+}
+

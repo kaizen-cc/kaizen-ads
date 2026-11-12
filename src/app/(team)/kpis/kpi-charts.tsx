@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { ScrubChart } from "@/components/scrub-chart";
 import { worseBy, type Agg, type Pacing } from "@/lib/kpi/calc";
 import { kpiValue, money } from "@/lib/kpi/format";
 
@@ -304,53 +304,37 @@ export function TargetGauge({ value, target, roas }: { value: number | null | un
  */
 export function HealthChart(props: { id: string; daily: Day[]; target: number | null; roas: boolean; status: string; height?: number; compact?: boolean; unit?: string }) {
   const { daily, target, roas, compact = false, unit = "result" } = props;
-  const [hover, setHover] = useState<number | null>(null);
-  const box = useRef<HTMLDivElement>(null);
   if (!daily.length) return <HealthSvg {...props} hover={null} />;
   const byCost = Boolean(target) && !roas;
-  const point = (clientX: number) => {
-    const el = box.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const f = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
-    setHover(daily.length === 1 ? 0 : Math.round(f * (daily.length - 1)));
-  };
-  const day = hover == null ? null : daily[hover];
-  const roll = hover == null ? null : rolling(daily, hover);
-  const left = hover == null ? 0 : daily.length === 1 ? 50 : (hover / (daily.length - 1)) * 100;
-  const tone = hover != null && byCost ? dayHealth(daily, hover, target, roas) : "none";
   return (
-    <div
-      ref={box}
-      className="relative"
-      onMouseMove={(e) => point(e.clientX)}
-      onMouseLeave={() => setHover(null)}
-      onTouchStart={(e) => point(e.touches[0].clientX)}
-      onTouchMove={(e) => point(e.touches[0].clientX)}
-      onTouchEnd={() => setHover(null)}
+    <ScrubChart
+      n={daily.length}
+      compact={compact}
+      tooltip={(hover) => {
+        const day = daily[hover];
+        const roll = rolling(daily, hover);
+        const tone = byCost ? dayHealth(daily, hover, target, roas) : "none";
+        return (
+          <>
+            <span className="text-faint">{dateLabel(day.d)}</span>
+            {byCost ? (
+              <span className="tabular font-medium" style={{ color: tone === "none" ? undefined : HEX[tone] }}>
+                {roll.cpr == null ? `No ${unit}s` : `${money(roll.cpr)} per ${unit}`}
+                <span className="font-normal text-faint"> · 3-day</span>
+              </span>
+            ) : (
+              <span className="tabular font-medium">
+                {day.results} {day.results === 1 ? unit : `${unit}s`}
+              </span>
+            )}
+            <span className="tabular text-faint">
+              {money(day.spend)} spent{day.results ? ` · ${day.results} ${day.results === 1 ? unit : `${unit}s`}` : ""}
+            </span>
+          </>
+        );
+      }}
     >
-      <HealthSvg {...props} hover={hover} />
-      {day && roll && (
-        <div
-          className={`pointer-events-none absolute z-20 grid w-max gap-0.5 whitespace-nowrap rounded-[10px] border border-line bg-surface/95 px-2.5 py-1.5 shadow-[0_12px_30px_-12px_rgba(0,0,0,0.6)] backdrop-blur ${compact ? "top-0 text-[10.5px]" : "top-1 text-xs"}`}
-          style={{ left: `${left}%`, transform: `translate(${left > 70 ? "-100%" : left < 30 ? "0" : "-50%"}, ${compact ? "calc(-100% - 6px)" : "0"})` }}
-        >
-          <span className="text-faint">{dateLabel(day.d)}</span>
-          {byCost ? (
-            <span className="tabular font-medium" style={{ color: tone === "none" ? undefined : HEX[tone] }}>
-              {roll.cpr == null ? `No ${unit}s` : `${money(roll.cpr)} per ${unit}`}
-              <span className="font-normal text-faint"> · 3-day</span>
-            </span>
-          ) : (
-            <span className="tabular font-medium">
-              {day.results} {day.results === 1 ? unit : `${unit}s`}
-            </span>
-          )}
-          <span className="tabular text-faint">
-            {money(day.spend)} spent{day.results ? ` · ${day.results} ${day.results === 1 ? unit : `${unit}s`}` : ""}
-          </span>
-        </div>
-      )}
-    </div>
+      {(hover) => <HealthSvg {...props} hover={hover} />}
+    </ScrubChart>
   );
 }

@@ -512,7 +512,7 @@ export type ClientKlaviyo = {
   now: PulseWindow;
   before: PulseWindow;
   /** 90 days: campaigns and flows per day, SMS within them, and the store's own total (null before it's read) */
-  daily: { date: string; revenue: number; campaignRevenue: number; flowRevenue: number; smsRevenue: number; storeRevenue: number | null; subscribed: number | null; unsubscribed: number | null }[];
+  daily: { date: string; revenue: number; campaignRevenue: number; flowRevenue: number; smsRevenue: number; storeRevenue: number | null; recipients: number; subscribed: number | null; unsubscribed: number | null }[];
   campaigns: KlaviyoCampaignView[];
   flows: KlaviyoFlowView[];
   audiences: KlaviyoAudienceView[];
@@ -589,6 +589,7 @@ export async function clientKlaviyo(db: SupabaseClient, clientId: string): Promi
     flowRevenue: num(d.flow_revenue),
     smsRevenue: num(d.sms_revenue),
     sends: num(d.sends),
+    recipients: num(d.campaign_recipients) + num(d.flow_recipients),
     campaignsSent: num(d.campaigns_sent),
     storeRevenue: d.store_revenue == null ? null : Number(d.store_revenue),
     storeOrders: d.store_orders == null ? null : Number(d.store_orders),
@@ -619,7 +620,7 @@ export async function clientKlaviyo(db: SupabaseClient, clientId: string): Promi
     today,
     now,
     before,
-    daily: dailyRows.map((d) => ({ date: d.date, revenue: d.revenue, campaignRevenue: d.campaignRevenue, flowRevenue: d.flowRevenue, smsRevenue: d.smsRevenue, storeRevenue: d.storeRevenue, subscribed: d.subscribed, unsubscribed: d.unsubscribed })),
+    daily: dailyRows.map((d) => ({ date: d.date, revenue: d.revenue, campaignRevenue: d.campaignRevenue, flowRevenue: d.flowRevenue, smsRevenue: d.smsRevenue, storeRevenue: d.storeRevenue, recipients: d.recipients ?? 0, subscribed: d.subscribed, unsubscribed: d.unsubscribed })),
     campaigns,
     flows: flowViews,
     audiences: (auds ?? []).map((a) => {

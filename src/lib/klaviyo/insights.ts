@@ -82,7 +82,7 @@ export function shareOfRevenue(email: number, store: number | null | undefined):
 
 // ─── The windows ───────────────────────────────────────────────────────────
 
-export type DailyRow = { date: string; revenue: number; campaignRevenue: number; flowRevenue: number; smsRevenue: number; sends: number; campaignsSent: number; storeRevenue: number | null; storeOrders: number | null; subscribed: number | null; unsubscribed: number | null };
+export type DailyRow = { date: string; revenue: number; campaignRevenue: number; flowRevenue: number; smsRevenue: number; sends: number; campaignsSent: number; recipients?: number; storeRevenue: number | null; storeOrders: number | null; subscribed: number | null; unsubscribed: number | null };
 export type CampaignLite = { id: string; name: string; channel: string; sendTime: string | null; subject: string | null; recipients: number; delivered: number; opensUnique: number; clicksUnique: number; unsubscribes: number; bounced: number; spamComplaints: number; revenue: number; conversions: number; openRate: number | null; clickRate: number | null };
 export type FlowLite = { id: string; name: string; status: string | null; trigger: string | null; revenue30: number; revenue90: number; recipients30: number; recipients90: number; openRate30: number | null; clickRate30: number | null; openRate90: number | null; clickRate90: number | null };
 

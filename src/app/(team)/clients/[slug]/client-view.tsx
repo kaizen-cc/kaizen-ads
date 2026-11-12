@@ -53,7 +53,7 @@ import { KlaviyoConnection } from "./klaviyo-connection";
 import { GoogleSyncPanel } from "@/components/platform-fields";
 import type { GoogleClientHealth } from "@/lib/google-health";
 import { klaviyoClientState } from "@/lib/klaviyo/core";
-import { EmailPanel } from "./email-panel";
+import { emailTabs } from "./email-panel";
 import { DocsPanel } from "./docs-panel";
 import { KnowledgePanel } from "@/components/knowledge-panel";
 import type { KnowledgeDoc } from "@/lib/knowledge";
@@ -1072,18 +1072,16 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   label: "Email",
                   tone: klaviyo.conn.status !== "active" || klaviyo.conn.error ? ("bad" as const) : null,
                   note: klaviyo.data ? `${klaviyo.data.currency && klaviyo.data.currency !== "USD" ? `${klaviyo.data.currency} ` : "$"}${Math.round(klaviyo.data.now.revenue).toLocaleString("en-US")} · 30 days` : "Klaviyo",
-                  tabs: [
-                    {
-                      id: "performance",
-                      label: "Performance",
-                      hint: "Email and SMS from Klaviyo: the pulse, campaigns, flows, audience and deliverability (read only)",
-                      content: klaviyo.data ? (
-                        <EmailPanel k={klaviyo.data} clientId={client.id} />
-                      ) : (
-                        <p className="text-sm text-faint">{klaviyo.conn.error ? `Klaviyo isn't reading: ${klaviyo.conn.error}` : "Klaviyo is connected. The first 90 days are being read; the numbers show here once they're in."}</p>
-                      ),
-                    },
-                  ],
+                  tabs: klaviyo.data
+                    ? emailTabs(klaviyo.data, client.id)
+                    : [
+                        {
+                          id: "overview",
+                          label: "Overview",
+                          hint: "Email and SMS from Klaviyo (read only)",
+                          content: <p className="text-sm text-faint">{klaviyo.conn.error ? `Klaviyo isn't reading: ${klaviyo.conn.error}` : "Klaviyo is connected. The first 90 days are being read; the numbers show here once they're in."}</p>,
+                        },
+                      ],
                 },
               ]
             : []),
