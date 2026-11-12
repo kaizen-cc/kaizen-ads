@@ -29,12 +29,22 @@ export type ObjRef = {
 
 const digits = (s: string) => String(s ?? "").replace(/\D/g, "");
 
-/** The exact object in Meta Ads Manager: the campaign, ad set or ad selected in its own tab. */
-export function metaDeepLink(account: string, level: "campaign" | "adset" | "ad" | "account", id?: string | null) {
+/**
+ * The exact object in Meta Ads Manager, in its own tab. Its campaign and ad set are selected too when they're known,
+ * so Ads Manager narrows to them and the one ad (or ad set) is right there: selecting an ad alone only ticks it among
+ * every ad in the account, and the buyer has to scroll to find it.
+ */
+export function metaDeepLink(account: string, level: "campaign" | "adset" | "ad" | "account", id?: string | null, parents: { campaignId?: string | null; adsetId?: string | null } = {}) {
   const act = digits(account);
   if (level === "account" || !id) return `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${act}`;
   const tab = level === "campaign" ? "campaigns" : level === "adset" ? "adsets" : "ads";
-  return `https://adsmanager.facebook.com/adsmanager/manage/${tab}?act=${act}&selected_${level}_ids=${digits(id)}`;
+  const q = new URLSearchParams({ act });
+  const campaign = level === "campaign" ? id : parents.campaignId;
+  const adset = level === "adset" ? id : level === "ad" ? parents.adsetId : null;
+  if (campaign && digits(campaign)) q.set("selected_campaign_ids", digits(campaign));
+  if (adset && digits(adset)) q.set("selected_adset_ids", digits(adset));
+  if (level === "ad") q.set("selected_ad_ids", digits(id));
+  return `https://adsmanager.facebook.com/adsmanager/manage/${tab}?${q.toString()}`;
 }
 
 /**
@@ -45,7 +55,8 @@ export function googleDeepLink(customer: string, level: "campaign" | "ad_group" 
   const page = level === "campaign" || level === "account" ? "campaigns" : level === "ad_group" ? "adgroups" : level === "ad" ? "ads" : "keywords";
   const q = new URLSearchParams({ __e: digits(customer) });
   if (ids.campaignId && level !== "account") q.set("campaignId", digits(ids.campaignId));
-  if (ids.adGroupId && (level === "ad" || level === "keyword")) q.set("adGroupId", digits(ids.adGroupId));
+  // An ad group opens as itself (its campaign and the group picked), its ads and keywords inside it
+  if (ids.adGroupId && level !== "campaign" && level !== "account") q.set("adGroupId", digits(ids.adGroupId));
   return `https://ads.google.com/aw/${page}?${q.toString()}`;
 }
 
@@ -68,7 +79,8 @@ export type AuditObject = {
 /** Straight to the object in Ads Manager or Google Ads. */
 export function objectLink(o: AuditObject) {
   if (o.platform === "tiktok") return tiktokManagerLink(o.account);
-  if (o.platform === "meta") return metaDeepLink(o.account, o.type === "campaign" || o.type === "adset" || o.type === "ad" ? o.type : "account", o.id);
+  // A Meta ad's ad set rides in adGroupId (the group it sits in), its campaign in campaignId
+  if (o.platform === "meta") return metaDeepLink(o.account, o.type === "campaign" || o.type === "adset" || o.type === "ad" ? o.type : "account", o.id, { campaignId: o.campaignId, adsetId: o.type === "ad" ? o.adGroupId : null });
   const level = o.type === "campaign" || o.type === "ad_group" || o.type === "keyword" ? o.type : "account";
   return googleDeepLink(o.account, level, { campaignId: o.campaignId ?? (o.type === "campaign" ? o.id : null), adGroupId: o.adGroupId ?? (o.type === "ad_group" ? o.id : null) });
 }

@@ -12,7 +12,7 @@ describe("deep links", () => {
   it("opens the Google Ads page for the account, narrowed to the campaign and ad group", () => {
     expect(googleDeepLink("123-456-7890", "campaign", { campaignId: "11" })).toBe("https://ads.google.com/aw/campaigns?__e=1234567890&campaignId=11");
     expect(googleDeepLink("1234567890", "keyword", { campaignId: "11", adGroupId: "22" })).toBe("https://ads.google.com/aw/keywords?__e=1234567890&campaignId=11&adGroupId=22");
-    expect(googleDeepLink("1234567890", "ad_group", { campaignId: "11", adGroupId: "22" })).toBe("https://ads.google.com/aw/adgroups?__e=1234567890&campaignId=11");
+    expect(googleDeepLink("1234567890", "ad_group", { campaignId: "11", adGroupId: "22" })).toBe("https://ads.google.com/aw/adgroups?__e=1234567890&campaignId=11&adGroupId=22");
   });
 
   it("links a copied ad to the new copy, not the original", () => {
@@ -80,5 +80,13 @@ describe("describing a change", () => {
     expect(lineOf({ kind: "google_keyword_status", name: "roofing", campaign: "Search", from: "ENABLED", to: "PAUSED" } as never)).toEqual(['Keyword "roofing" · Search', "on", "paused"]);
     expect(lineOf({ kind: "assign_buyer", slot: "meta_buyer", from: null, to: "Sam" } as never)).toEqual(["Meta buyer", "nobody", "Sam"]);
     expect(lineOf({ kind: "meta_budget", level: "adset", name: "A", from: 40, to: 60 } as never)).toEqual(['Daily budget · ad set "A"', "$40.00", "$60.00"]);
+  });
+});
+
+describe("an ad's Ads Manager link selects its campaign and ad set too", () => {
+  it("narrows Ads Manager to the one ad instead of ticking it among every ad", () => {
+    expect(metaDeepLink("act_123", "ad", "9", { campaignId: "7", adsetId: "8" })).toBe("https://adsmanager.facebook.com/adsmanager/manage/ads?act=123&selected_campaign_ids=7&selected_adset_ids=8&selected_ad_ids=9");
+    expect(metaDeepLink("123", "adset", "8", { campaignId: "7" })).toBe("https://adsmanager.facebook.com/adsmanager/manage/adsets?act=123&selected_campaign_ids=7&selected_adset_ids=8");
+    expect(metaDeepLink("123", "ad", "9")).toBe("https://adsmanager.facebook.com/adsmanager/manage/ads?act=123&selected_ad_ids=9");
   });
 });

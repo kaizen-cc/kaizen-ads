@@ -34,11 +34,11 @@ describe("Open in Ads Manager on moves written before they listed objects", () =
 
   it("links straight to the object in Ads Manager", () => {
     const [o] = namedIn(index, "Pause UGC Hook v2");
-    expect(objectLink(o)).toBe("https://adsmanager.facebook.com/adsmanager/manage/ads?act=123&selected_ad_ids=901");
+    expect(objectLink(o)).toBe("https://adsmanager.facebook.com/adsmanager/manage/ads?act=123&selected_campaign_ids=701&selected_adset_ids=801&selected_ad_ids=901");
     const [c] = namedIn(index, "Prospecting | Purchase budget to $300/day");
     expect(objectLink(c)).toBe("https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=123&selected_campaign_ids=701");
     const [s] = namedIn(index, "Raise Broad");
-    expect(objectLink(s)).toBe("https://adsmanager.facebook.com/adsmanager/manage/adsets?act=123&selected_adset_ids=801");
+    expect(objectLink(s)).toBe("https://adsmanager.facebook.com/adsmanager/manage/adsets?act=123&selected_campaign_ids=701&selected_adset_ids=801");
   });
 
   it("fills only moves without objects, and says which", () => {

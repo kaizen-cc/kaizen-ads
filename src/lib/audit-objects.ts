@@ -37,18 +37,19 @@ type MetaRow = { ad_id: string; ad_name: string | null; adset_id: string | null;
 export function metaIndex(account: string, rows: MetaRow[], setup?: { campaigns: { id: string; name: string }[]; adsets: { id: string; name: string; campaignId: string }[] } | null): ObjectIndex {
   const act = String(account).replace(/\D/g, "");
   const m = new Map<string, Entry>();
-  const add = (type: AuditObject["type"], id: string | null, name: string | null, spend: number, campaignId: string | null = null) => {
+  // An ad keeps its ad set (in adGroupId) and campaign, so its Ads Manager link selects all three
+  const add = (type: AuditObject["type"], id: string | null, name: string | null, spend: number, campaignId: string | null = null, adsetId: string | null = null) => {
     if (!id || !name) return;
     const k = `${type}:${id}`;
     const e = m.get(k);
     if (e) e.weight += spend;
-    else m.set(k, { platform: "meta", type, id: String(id), name, key: nameKey(name), account: act, campaignId, weight: spend + 0.001 });
+    else m.set(k, { platform: "meta", type, id: String(id), name, key: nameKey(name), account: act, campaignId, adGroupId: adsetId, weight: spend + 0.001 });
   };
   for (const r of rows) {
     const spend = Number(r.metrics?.spend) || 0;
     add("campaign", r.campaign_id, r.campaign_name, spend);
     add("adset", r.adset_id, r.adset_name, spend, r.campaign_id);
-    add("ad", r.ad_id, r.ad_name, spend, r.campaign_id);
+    add("ad", r.ad_id, r.ad_name, spend, r.campaign_id, r.adset_id);
   }
   for (const c of setup?.campaigns ?? []) add("campaign", c.id, c.name, 0);
   for (const a of setup?.adsets ?? []) add("adset", a.id, a.name, 0, a.campaignId);
