@@ -51,7 +51,7 @@ export async function loadReport(admin: SupabaseClient, id: string, edit = false
   const short = r.kind === "monthly" ? monthLabel(r.period_start) : shortRange(r.period_start, r.period_end);
   // A white label client's: generic, no agency anywhere (and no link to the agency's portal)
   const whiteLabel = isWhiteLabel(r.clients?.client_type);
-  const fileName = whiteLabel ? whiteLabelFileName(client, r.kind, short, platformName(part.platform)) : `${client} - ${platformName(part.platform).replace(" Ads", "")} ${r.kind} - ${short}.pdf`;
+  const fileName = whiteLabel ? whiteLabelFileName(client, r.kind, short, platformName(part.platform)) : `${client} - ${platformName(part.platform).replace(" Ads", "")} ${(r.kind as string) === "built" ? "report" : r.kind} - ${short}.pdf`;
   const dashboard = r.clients?.portal_live && !whiteLabel ? `${siteUrl()}/c/${r.clients.slug}/dashboard` : null;
   // A weekly Meta report carries the TikTok part that rides with it (one document, a section each), as it's sent
   const parts = [part];

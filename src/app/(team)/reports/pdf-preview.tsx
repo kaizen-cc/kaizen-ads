@@ -13,6 +13,8 @@ export type PdfField = { id: string; label: string; value: string; removable?: b
 type Box = { left: number; top: number; width: number; height: number; url: string };
 type Page = { key: string; canvas: HTMLCanvasElement; ratio: number; links: Box[] };
 type Base = { input: ReportPdfInput; images: (string | null)[][] };
+/** Draws the PDF as the client gets it (the buyer's changes in, no click targets): for the studio's download */
+export type PdfMaker = () => Promise<Blob>;
 
 const EDIT_HOST = "https://edit.kaizen.invalid/";
 const RENDER_MAX = 1400; // pixels per page at most (the page's width on screen times the screen's density)
@@ -38,6 +40,7 @@ export function PdfPreview({
   onAdd,
   onMove,
   hotMenu,
+  onMaker,
 }: {
   /** Where the report's document input and pictures come from (read again when baseKey changes) */
   source: string;
@@ -55,6 +58,8 @@ export function PdfPreview({
   onMove?: (id: string, by: -1 | 1) => void;
   /** The menu for a metric, row, column or campaign clicked on the page ("meta/tile/2"); close() shuts it */
   hotMenu?: (target: string, close: () => void) => React.ReactNode;
+  /** Handed the PDF maker once the report is loaded (null until then), so a download is the PDF on screen */
+  onMaker?: (make: PdfMaker | null) => void;
 }) {
   const [base, setBase] = useState<Base | null>(null);
   const [pages, setPages] = useState<Page[] | null>(null);
@@ -85,6 +90,22 @@ export function PdfPreview({
       live = false;
     };
   }, [source, baseKey]);
+
+  // The download: the same document with the buyer's changes, without the preview's click targets
+  const makerRef = useRef(onMaker);
+  useEffect(() => {
+    makerRef.current = onMaker;
+  });
+  useEffect(() => {
+    if (!base) {
+      makerRef.current?.(null);
+      return;
+    }
+    makerRef.current?.(async () => {
+      const [{ pdf }, { ReportDocument }] = await Promise.all([import("@react-pdf/renderer"), import("@/lib/reports/report-doc")]);
+      return pdf(<ReportDocument input={{ ...patchRef.current(base.input), edit: false }} images={base.images} />).toBlob();
+    });
+  }, [base]);
 
   // Drawn here, in the browser, on every change: no trip to the server
   useEffect(() => {

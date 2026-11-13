@@ -1,6 +1,7 @@
 import { createElement, isValidElement, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import { ReportDocument, type ReportPdfInput } from "@/lib/reports/report-doc";
+import { KAIZEN_RED } from "@/lib/reports/weekly-doc";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { Sections } from "@/lib/reports/write";
 import { buildReportEmail } from "@/lib/reports/delivery-core";
@@ -95,18 +96,26 @@ describe("a white label client's PDF", () => {
       const all = docStrings(input(kind, true));
       expect(all.filter((x) => /kaizen/i.test(x))).toEqual([]);
       expect(all.some((x) => x.includes("Propr Dental"))).toBe(true);
-      // The weekly's footer is the client's alone; the monthly and built reports keep their own line
-      expect(all.join(" ")).toContain(kind === "weekly" ? "Prepared for Propr Dental " : "Performance report · Propr Dental");
-      // The neutral accent stands where the red was
+      // The footer is the client's alone
+      expect(all.join(" ")).toContain("Prepared for Propr Dental ");
+      // The client's colours (a neutral slate when they have none) stand where Kaizen's red was
       expect(all).toContain("#475569");
+      expect(all).not.toContain(KAIZEN_RED);
       expect(all.join(" ")).not.toMatch(/Prepared by Sam/);
     });
 
     it(`${kind}: everyone else's still carries Kaizen's name and red`, () => {
       const all = docStrings(input(kind, false));
-      expect(all.join(" ")).toContain(kind === "weekly" ? "Prepared for Propr Dental · Kaizen" : "Kaizen Marketing · Propr Dental");
-      expect(all).toContain("#c8102e");
+      expect(all.join(" ")).toContain("Prepared for Propr Dental · Kaizen");
+      expect(all).toContain(KAIZEN_RED);
       expect(all).not.toContain("#475569");
+    });
+
+    it(`${kind}: never prints what we did, are doing or do next (that goes in the message)`, () => {
+      for (const wl of [true, false]) {
+        const all = docStrings(input(kind, wl)).join(" ");
+        for (const s of ["What we did", "What we're doing", "What's next", "What we see", "Paused the weakest ad set", "Testing a new offer", "Launch the holiday campaign", "Down every week", "call tracking"]) expect(all, `${wl}: ${s}`).not.toContain(s);
+      }
     });
   }
 

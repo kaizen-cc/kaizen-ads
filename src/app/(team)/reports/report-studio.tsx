@@ -6,7 +6,8 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { SlackConnect } from "@/components/slack-connect";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
-import { PdfPreview, type PdfField } from "./pdf-preview";
+import { PdfPreview, type PdfField, type PdfMaker } from "./pdf-preview";
+import { MessageNotes } from "./message-notes";
 import { takeawaysFor, weeklyTileKeys, type Takeaway } from "@/lib/reports/weekly-core";
 import { RecapDeckButton } from "./recap-deck-button";
 import { metricKeysFor, clockTime, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tableKeys, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
@@ -245,6 +246,9 @@ export function ReportStudio({
   const [sections, setSectionsState] = useState<Sections | null>(report.sections);
   const [extras, setExtrasState] = useState(report.extras);
   const [message, setMessage] = useState(built ? (bundle?.message ?? "") : report.message);
+  // The PDF on screen, ready to download (handed over by the preview once it has the report)
+  const pdfMaker = useRef<PdfMaker | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const [qa, setQa] = useState<Qa | null>(report.qa);
   const [chat, setChat] = useState<ChatTurn[]>(report.chat);
   const [ask, setAsk] = useState("");
@@ -450,6 +454,36 @@ export function ReportStudio({
 
   const from = joint ? { name: "Kaizen", image: null, app: true } : { name: slack.name || slack.me, image: slack.image, app: false };
   const fileName = client.whiteLabel ? whiteLabelFileName(client.name, built ? "built" : report.kind, report.periodLabel, built ? null : platformName(report.platform)) : `${client.name} - ${built ? "Report" : `${platformName(report.platform).replace(" Ads", "")} report`} - ${report.periodLabel}.pdf`;
+  // The PDF as it is on screen, under the name it goes out with; the server's copy when the preview isn't drawn yet
+  const downloadPdf = async () => {
+    setDownloading(true);
+    const save = (href: string) => {
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    };
+    try {
+      if (!pdfMaker.current) throw new Error("not drawn yet");
+      const url = URL.createObjectURL(await pdfMaker.current());
+      save(url);
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch {
+      save(`/api/reports/${report.id}/pdf?download=1${joint ? "&whole=1" : ""}`);
+    } finally {
+      setDownloading(false);
+    }
+  };
+  const downloadButton = (
+    <button type="button" disabled={downloading} onClick={() => void downloadPdf()} className="inline-flex h-11 items-center justify-center gap-2 rounded-brand border border-line bg-surface-2 px-4 text-sm font-medium text-fg transition-colors hover:border-faint disabled:opacity-60 max-md:h-12">
+      <svg viewBox="0 0 16 16" aria-hidden className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" />
+      </svg>
+      {downloading ? "Preparing the PDF…" : "Download PDF"}
+    </button>
+  );
   const waitingParts = bundle?.parts.filter((p) => p.status !== "submitted" && p.status !== "posted") ?? [];
   const STEPS = [
     { key: "report", label: built && joint ? "Your part" : "Report" },
@@ -838,13 +872,6 @@ export function ReportStudio({
                               Back to the default
                             </button>
                           )}
-                          {weekly && (
-                            // The narrative normally travels in the message; printed in the PDF only when the buyer wants it there
-                            <label className="ml-auto inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-full px-2 text-muted hover:text-fg md:min-h-9">
-                              <input type="checkbox" checked={Boolean(layout?.notes)} onChange={(e) => setLayout({ ...layout, notes: e.target.checked || undefined })} className="h-4 w-4" />
-                              Include our notes in the report
-                            </label>
-                          )}
                         </div>
                         {addingMetric && addingMetric !== "campaign" && (
                           <div className="flex flex-wrap gap-1.5">
@@ -931,7 +958,7 @@ ${t}` : t);
                             }}
                             className="flex flex-wrap gap-2"
                           >
-                            <textarea autoFocus value={adding.text} onChange={(e) => setAdding({ ...adding, text: e.target.value })} rows={2} placeholder="Write it as it should read in the report" className="min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none [field-sizing:content] focus:border-brand-text/60" />
+                            <textarea autoFocus value={adding.text} onChange={(e) => setAdding({ ...adding, text: e.target.value })} rows={2} placeholder={adding.key === "extras" ? "Write it as it should read in the message" : "Write it as it should read in the message (not printed in the report)"} className="min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none [field-sizing:content] focus:border-brand-text/60" />
                             <div className="flex items-end gap-1.5">
                               <button type="button" onClick={() => setAdding(null)} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg">Cancel</button>
                               <button type="submit" disabled={!adding.text.trim()} className="h-10 rounded-full bg-fg px-4 text-[13px] text-bg disabled:opacity-40">Add</button>
@@ -940,6 +967,8 @@ ${t}` : t);
                         )}
                       </div>
                     )}
+                    {/* The narrative goes in the message, never on the page: read and changed here */}
+                    <MessageNotes fields={fields.filter((f) => !/^takeaway-|^story-\d+-title$/.test(f.id))} editable={editable} onSave={(id, v) => save(id, v)} onRemove={(id) => save(id, null)} />
                     <PdfPreview
                       source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`}
                       baseKey={`${report.status}:${JSON.stringify(report.metrics ?? null).length}:${report.manual?.at ?? ""}`}
@@ -952,6 +981,9 @@ ${t}` : t);
                       onAdd={addBelow}
                       onMove={move}
                       hotMenu={hotMenu}
+                      onMaker={(make) => {
+                        pdfMaker.current = make;
+                      }}
                     />
                   </div>
                 );
@@ -1155,6 +1187,7 @@ ${t}` : t);
                   </button>
                 )}
                 {qa?.verdict === "fix" && !mineDone && <p className="text-[11.5px] text-bad">The QA found something to fix: worth a look in Checks first.</p>}
+                {downloadButton}
               </div>
             );
 

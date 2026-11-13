@@ -203,9 +203,16 @@ export async function approveMessage(admin: SupabaseClient, bundleId: string, by
   return { sent: true, waitingOn: [] as string[] };
 }
 
-/** The whole report as one PDF (a cover, the whole account when there's more than one service, then each). */
+/** The whole report as one PDF (the whole account when there's more than one service, then a section each). */
 export async function builtPdf(admin: SupabaseClient, bundleId: string, edit = false) {
   return renderReportPdf(await builtInput(admin, bundleId, edit));
+}
+
+/** The whole report's file name, as it goes out (a white label client's names no agency) */
+export async function builtFileName(admin: SupabaseClient, bundleId: string) {
+  const { client, ranges, whiteLabel } = await loadParts(admin, bundleId);
+  const label = rangesLabel(ranges);
+  return whiteLabel ? whiteLabelFileName(client.name, "built", label) : pdfFileName(client.name, "Report", label);
 }
 
 /** The whole report's document input (every part), for the PDF and the studio's preview */

@@ -46,6 +46,22 @@ export function scrubAgency(text: string): string {
   );
 }
 
+/**
+ * A campaign, ad set or ad name with the agency taken out ("PMax | Colossal Shrimp Offer | Kaizen" → "PMax | Colossal
+ * Shrimp Offer"): the segment that's only the agency goes, any other mention is dropped from its segment.
+ */
+export function scrubName(name: string): string {
+  if (!/kaizen|\bkzn\b/i.test(name)) return name;
+  const out = name
+    .split("|")
+    .map((x) => x.trim())
+    .filter((x) => x && !/^(kaizen( marketing| ads)?|kzn)$/i.test(x))
+    .map((x) => x.replace(/\bkaizen( marketing| ads)?\b/gi, "").replace(/\bkzn\b/gi, "").replace(/kaizen/gi, "").replace(/\s{2,}/g, " ").trim())
+    .filter(Boolean)
+    .join(" | ");
+  return out || "Campaign";
+}
+
 /** Scrubbed only when the client is white label; anyone else's text as it was */
 export const forClient = (text: string, whiteLabel: boolean | null | undefined) => (whiteLabel ? scrubAgency(text) : text);
 

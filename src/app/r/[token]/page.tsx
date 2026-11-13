@@ -101,11 +101,6 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
   const one = singular(m.conversion);
   const ads = part.platform !== "google" ? m.topAds.slice(0, 3) : [];
   const roas = m.campaigns.some((c) => c.roas != null);
-  const notes = [
-    { title: "What we did", items: s.did },
-    { title: "What we're doing", items: s.doing },
-    { title: "What's next", items: s.next },
-  ].filter((g) => g.items?.length);
 
   return (
     <section id={part.platform} className="mx-auto max-w-5xl scroll-mt-6 px-4 pb-16 sm:px-8 sm:pb-24 print:break-before-page">
@@ -258,29 +253,7 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
         </Block>
       )}
 
-      {notes.length > 0 && (
-        <div className="mt-14 grid gap-8 md:grid-cols-3 md:gap-10">
-          {notes.map((g) => (
-            <div key={g.title} className="break-inside-avoid">
-              <h3 className="font-heading text-lg tracking-tight">{g.title}</h3>
-              <ul className="mt-4 space-y-3">
-                {g.items.map((x, i) => (
-                  <li key={i} className="flex gap-3 text-[15px] leading-relaxed text-fg/85">
-                    <span className="mt-[0.6em] h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
-                    <span className="min-w-0 [overflow-wrap:anywhere]">{x}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {part.extras?.trim() && (
-        <Block title="Also this month">
-          <p className="max-w-3xl border-l-2 border-brand pl-4 text-[15px] leading-relaxed whitespace-pre-line text-muted">{part.extras.trim()}</p>
-        </Block>
-      )}
+      {/* What we did, are doing and do next travel in the message that carries the link, never on the page */}
     </section>
   );
 }

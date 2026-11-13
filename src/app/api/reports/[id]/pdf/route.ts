@@ -22,18 +22,22 @@ export async function GET(request: Request, ctx: RouteContext<"/api/reports/[id]
   const { data: r } = await db.from("reports").select("owner_id, bundle_id, kind, kpi_targets(id, client_id, platform, owner_id)").eq("id", id).maybeSingle();
   const t = r?.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
   if (!r || (r.owner_id !== me.id && !(t && (await canReportOn(db, me, t))))) return new Response("Not found", { status: 404 });
+  const params = new URL(request.url).searchParams;
   // ?edit=1: the studio's preview, with an invisible link over each metric the buyer can change
-  const edit = new URL(request.url).searchParams.get("edit") === "1";
+  const edit = params.get("edit") === "1";
+  // ?download=1: saved under its name (the studio's Download PDF), else opened in the browser
+  const inline = params.get("download") !== "1";
   // ?whole=1 on a built report: the whole thing as it goes to the client (every service, one PDF)
-  if (new URL(request.url).searchParams.get("whole") && r.kind === "built" && r.bundle_id) {
-    const { builtPdf } = await import("@/lib/reports/builder");
-    const pdf = await builtPdf(createAdminClient(), r.bundle_id, edit);
-    return new Response(pdf as BodyInit, { headers: { "content-type": "application/pdf", "content-disposition": pdfDisposition("Report.pdf", true), "cache-control": "private, no-store" } });
+  if (params.get("whole") && r.kind === "built" && r.bundle_id) {
+    const { builtFileName, builtPdf } = await import("@/lib/reports/builder");
+    const admin = createAdminClient();
+    const [pdf, name] = await Promise.all([builtPdf(admin, r.bundle_id, edit), builtFileName(admin, r.bundle_id)]);
+    return new Response(pdf as BodyInit, { headers: { "content-type": "application/pdf", "content-disposition": pdfDisposition(name, inline), "cache-control": "private, no-store" } });
   }
   const report = await loadReport(createAdminClient(), id, edit);
   if (!report) return new Response("This report hasn't been written yet", { status: 404 });
   const pdf = await renderReportPdf(report.input);
   return new Response(pdf as BodyInit, {
-    headers: { "content-type": "application/pdf", "content-disposition": pdfDisposition(report.fileName, true), "cache-control": "private, no-store" },
+    headers: { "content-type": "application/pdf", "content-disposition": pdfDisposition(report.fileName, inline), "cache-control": "private, no-store" },
   });
 }
