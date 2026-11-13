@@ -16,7 +16,7 @@ import { jointNote, type JointInfo, type JointNote } from "@/lib/reports/joint-c
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { ManualResults, type ManualEntered } from "./manual-results";
 import { reportFileName, type DriveSave } from "@/lib/reports/drive-save-core";
-import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, saveToDrive, sendMyPartNow, sendReport, setReportCampaignExcluded, skipReport } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, saveToDrive, sendMyPartNow, sendReport, setReportCampaignExcluded } from "./actions";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
@@ -24,6 +24,8 @@ import { buildReportEmail, channelsLabel, type Delivery } from "@/lib/reports/de
 import { forClient } from "@/lib/reports/white-label";
 import { DeliveryPicker, type DeliveryOptions } from "./delivery-picker";
 import { PeriodPicker } from "./period-picker";
+import { SkipButton, SkipHistory, SkippedBanner } from "./skip-report";
+import type { LogEntry } from "@/lib/reports/skip-log";
 import { SendHistory, type HistoryItem } from "./send-history";
 import { ReportThis } from "@/components/report-this";
 import { messageKey } from "@/lib/chat-report";
@@ -50,6 +52,8 @@ export type StudioReport = {
   extras: string;
   /** Results the team entered from the client's CRM for the report's period (kept across regenerates) */
   manual: ManualEntered | null;
+  /** What happened to it: skipped (and why), brought back; and whether a skipped one can still come back */
+  skip?: { log: LogEntry[]; canBringBack: boolean };
   /** Where it was last saved in the client's Drive (and when), if it was */
   driveSave?: DriveSave | null;
   /** The metrics the buyer chose (or this client's layout from the last report); null: the defaults */
@@ -242,6 +246,7 @@ export function ReportStudio({
   const joint = built && (bundle?.parts.length ?? 0) > 1;
   const busy = report.status === "queued" || report.status === "drafting";
   const sent = report.status === "posted" || bundle?.status === "sent";
+  const skipped = report.status === "skipped";
   const mineDone = report.status === "submitted";
   // A TikTok part riding on the Meta report is reviewed here but never sent on its own; a Meta report says it includes TikTok
   const jn = jointNote(report.joint);
@@ -375,7 +380,7 @@ export function ReportStudio({
     };
   }, [syncing, nowBasis, report.id]);
 
-  const editable = !sent && !busy && !(built && mineDone) && report.status !== "submitted";
+  const editable = !sent && !busy && !skipped && !(built && mineDone) && report.status !== "submitted";
   const setSections = (s: Sections) => {
     setSectionsState(s);
     start(async () => {
@@ -545,6 +550,17 @@ export function ReportStudio({
     { key: "done", label: "Sent" },
   ];
 
+  // Skipped: who, when and why, with the way back; nothing to edit or send until it's brought back
+  if (skipped)
+    return (
+      <div className="grid gap-4">
+        <SkippedBanner id={report.id} log={report.skip?.log ?? []} canBringBack={report.skip?.canBringBack ?? true} />
+        <a href={`/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-xs text-faint hover:text-fg md:min-h-0">
+          Preview the PDF as it stood ↗
+        </a>
+      </div>
+    );
+
   return (
     <div className="grid gap-5">
       {/* Where it is: the steps, and a built report's parts */}
@@ -588,6 +604,8 @@ export function ReportStudio({
           {!busy && <RegenerateButton kind="one" variant="header" id={report.id} label={`${client.name}'s report`} sent={sent} approved={report.status === "submitted"} />}
         </div>
       </div>
+
+      {(report.skip?.log.length ?? 0) > 0 && <SkipHistory log={report.skip!.log} />}
 
       {/* Meta + TikTok in one report: where this part goes, or what this report carries */}
       {jn && step !== "done" && <JointBanner note={jn} />}
@@ -1049,11 +1067,7 @@ ${t}` : t);
                 {joint ? "Preview the whole report (PDF) ↗" : "Preview the PDF ↗"}
               </a>
               {report.kind === "monthly" && <RecapDeckButton reportId={report.id} />}
-              {!sent && !built && report.kind !== "monthly" && (
-                <button type="button" onClick={() => start(async () => void (await skipReport(report.id), router.push("/reports")))} className="hover:text-fg">
-                  Skip this one
-                </button>
-              )}
+              {!sent && !busy && <SkipButton id={report.id} title={`${client.name} · ${report.periodLabel}`} variant="link" onDone="list" />}
             </div>
             {act && sections && !busy && report.platform !== "tiktok" && <NextStepsAct reportId={report.id} platform={report.platform} steps={[...sections.next, ...(sections.stories ?? []).map((st) => st.next)]} write={act.write} canSwitch={act.canSwitch} />}
           </div>

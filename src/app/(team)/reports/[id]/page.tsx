@@ -1,3 +1,4 @@
+import { canBringBack, parseLog } from "@/lib/reports/skip-log";
 import type { Metadata } from "next";
 import type { ReportLayout } from "@/lib/reports/format";
 import { layoutOf } from "@/lib/reports/share";
@@ -72,12 +73,14 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
     r.kind === "weekly" && !joinedTo ? db.from("reports").select("id, platform, status").eq("joined_to", r.id) : Promise.resolve({ data: [] as { id: string; platform: string; status: string }[] }),
   ]);
   const joint = joinedTo || riders?.length ? { goesWith: goesWith ? { id: goesWith.id as string, owner: name(goesWith.profiles), status: goesWith.status as string } : null, riders: (riders ?? []) as { id: string; platform: string; status: string }[] } : null;
-  const [delivery, history, { data: keyRow }, { data: driveRow }] = await Promise.all([
+  const [delivery, history, { data: keyRow }, { data: driveRow }, { data: logRow }] = await Promise.all([
     admin && r.kind !== "monthly" && !sentNow ? clientDelivery(admin, r.client_id as string).catch(() => null) : Promise.resolve(null),
     admin ? readHistory(admin, { reportId: r.id, bundleId: r.bundle_id, limit: 40 }, today) : Promise.resolve([]),
     db.from("reports").select("period_key").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)),
     // Where it was saved in the client's Drive (a column that may not exist yet: read apart so the page never fails on it)
     db.from("reports").select("drive_save").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)),
+    // Its history: skipped, brought back (also a column that may not exist yet)
+    db.from("reports").select("log").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)),
   ]);
   // Every page drawn for the report's dates? (a page for other dates is redrawn before it can go out)
   const stale = !["queued", "drafting", "failed"].includes(r.status) && metrics && r.kind !== "monthly" ? periodMismatch({ start: r.period_start, end: r.period_end }, metrics, r.sections as Sections | null) : [];
@@ -111,6 +114,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           metrics,
           extraMetrics: (r.extra_metrics as ReportMetrics[] | null) ?? null,
           extras: r.extras ?? "",
+          skip: { log: parseLog((logRow as { log?: unknown } | null)?.log), canBringBack: canBringBack(r.kind, r.period_end, today) },
           driveSave: (driveRow as { drive_save?: DriveSave | null } | null)?.drive_save ?? null,
           manual: (r as { manual_results?: ManualEntered | null }).manual_results?.lines?.length ? (r as { manual_results: ManualEntered }).manual_results : null,
           layout: layoutOf({ status: r.status, layout: r.layout as ReportLayout | null, kpi_targets: r.kpi_targets as unknown as { report_layout: ReportLayout | null } | null }),

@@ -10,13 +10,14 @@ import { SlackConnect } from "@/components/slack-connect";
 import { reportableTargets } from "@/lib/reports/access";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { ReportBuilder, type BuilderClient, type QuickPick } from "./report-builder";
-import { BundleCard, Empty, Group, ReportCard, type CardBundle, type CardReport, type Tag } from "./report-cards";
+import { BundleCard, Empty, Group, ReportCard, SkippedGroup, type CardBundle, type CardReport, type SkippedItem, type Tag } from "./report-cards";
 import { RegenerateButton, RegenWatcher } from "./regenerate-button";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 import { teamPlatform } from "@/lib/roles";
 import { buyerRole, orderSeats, primaryOf, type SeatRow } from "@/lib/buyer-seats";
 import { readHistory } from "@/lib/reports/history";
 import { SendHistory } from "./send-history";
+import { canBringBack, latestSkip, skipLine } from "@/lib/reports/skip-log";
 
 export const metadata: Metadata = { title: "Reports" };
 export const maxDuration = 300;
@@ -102,7 +103,8 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const builderIds = [...new Set(reach.map((b) => b.created_by).filter((x): x is string => Boolean(x)))];
   const { data: builders } = builderIds.length && admin ? await admin.from("profiles").select("id, full_name").in("id", builderIds) : { data: [] as { id: string; full_name: string | null }[] };
   const builderName = new Map((builders ?? []).map((p) => [p.id as string, (p.full_name as string | null) ?? null]));
-  const builtRows = reach.filter((b) => b.status !== "sent");
+  // A built report with every part skipped has left the queue (it shows under Skipped)
+  const builtRows = reach.filter((b) => b.status !== "sent" && b.reports.some((p) => p.status !== "skipped"));
   // The send history: every report that went to the clients this person reports on (everything for an exec), never
   // trimmed by age; a client at a time on the page
   const history = (admin ? await readHistory(admin, { clientIds: me.isExec ? null : clientIds, limit: 400 }, today) : []).filter((s) => !line || !s.platform || s.platform === line);
@@ -159,6 +161,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       createdBy: b.created_by === me.id ? "you" : b.created_by ? (builderName.get(b.created_by) ?? null) : null,
       parts: parts.map((p) => ({ id: p.id, platform: p.platform, status: p.status, owner: p.profiles?.full_name ?? null, mine: isMine(b.client_id, p), viewedAt: p.viewed_at })),
       href: mine ? `/reports/${mine.id}` : "/reports",
+      skipId: mine && !["queued", "drafting"].includes(mine.status) ? mine.id : null,
       yourTurn: parts.some((p) => isMine(b.client_id, p) && ["draft", "drafting", "queued"].includes(p.status)),
       removable: b.created_by === me.id || me.isExec,
       // Their own parts (approved ones too: it goes back to review); an exec or lead also the ones still in review
@@ -216,6 +219,28 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
     { n: drafts.filter((r) => (r.qa?.flags ?? []).some((f) => f.severity === "fix")).length, label: "with something to fix", tone: "text-bad" },
     ...(lead ? [{ n: readyReports.filter((r) => r.owner_id !== me.id && !r.viewed_at && r.status === "draft").length, label: "not opened by their buyer", tone: "text-warn" }] : []),
     { n: sentReports.filter((r) => r.posted_at && r.posted_at >= daysAgo(7)).length + sentBuilt.filter((b) => (b.sent_at ?? b.created_at) >= daysAgo(7)).length, label: "sent this week", tone: "text-ok" },
+  ];
+
+  // Skipped for the current period (the latest week and month, and anything built): who skipped them, when and why. The
+  // log is read apart: the column may not exist yet, and then they show without the detail
+  const skippedRows = rows.filter((r) => r.status === "skipped" && (r.kind === "custom" || r.period_start === (r.kind === "weekly" ? lastWeek : lastMonth))).filter(fits);
+  const skippedBuilt = reach.filter((b) => b.status !== "sent" && b.reports.length > 0 && b.reports.every((p) => p.status === "skipped")).filter(fitsBundle);
+  const logIds = [...skippedRows.map((r) => r.id), ...skippedBuilt.flatMap((b) => b.reports.map((p) => p.id))];
+  const logOf = new Map<string, unknown>();
+  if (logIds.length) {
+    const { data: logged, error: logError } = await (admin ?? db).from("reports").select("id, log").in("id", logIds);
+    if (!logError) for (const l of (logged ?? []) as { id: string; log: unknown }[]) logOf.set(l.id, l.log);
+  }
+  const skipped: SkippedItem[] = [
+    ...skippedRows.map((r) => {
+      const e = latestSkip(logOf.get(r.id));
+      return { id: r.id, client: r.clients.name, platform: r.platform, tag: tagOf(r), line: e ? skipLine(e) : "Skipped", note: e?.note ?? null, canBringBack: canBringBack(r.kind, r.period_end, today), href: `/reports/${r.id}` };
+    }),
+    ...skippedBuilt.map((b) => {
+      const e = b.reports.map((p) => latestSkip(logOf.get(p.id))).find(Boolean) ?? null;
+      const first = b.reports.find((p) => isMine(b.client_id, p)) ?? b.reports[0];
+      return { id: first.id, client: b.clients.name, platform: null, tag: { kind: "built" as const, label: "Built by hand", dates: (b.ranges ?? []).map((x) => x.label).join(" + ") }, line: e ? skipLine(e) : "Skipped", note: e?.note ?? null, canBringBack: canBringBack("built", b.created_at.slice(0, 10), today), href: `/reports/${first.id}` };
+    }),
   ];
 
   const TABS = [
@@ -336,6 +361,8 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
                 )}
               </>
             ))}
+
+          {view === "ready" && <SkippedGroup items={skipped} />}
 
           {view === "sent" && history.length > 0 && (
             <section className="grid gap-3">

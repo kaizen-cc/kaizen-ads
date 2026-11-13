@@ -4,6 +4,7 @@ import { tintFor } from "@/lib/colors";
 import type { Qa } from "@/lib/reports/write";
 import { RegenerateButton } from "./regenerate-button";
 import { RemoveGenerated } from "./remove-generated";
+import { BringBack, SkipButton } from "./skip-report";
 
 // The Reports page's line items: one card per report (or per joint report built by hand), with the client, what kind
 // of report it is (the Monday weekly, the monthly recap, one built by hand) and its dates, whose it is and where it
@@ -110,6 +111,7 @@ export function ReportCard({ r, showOwner, removable = false }: { r: CardReport;
       </Link>
       {(removable || !["queued", "drafting"].includes(r.status)) && (
         <span className={CORNER}>
+          {["draft", "failed", "submitted"].includes(r.status) && <SkipButton id={r.id} title={`${r.client} · ${r.tag.label}`} variant="icon" />}
           {!["queued", "drafting"].includes(r.status) && <RegenerateButton kind="one" variant="icon" id={r.id} label={`${r.client} · ${r.tag.label}`} sent={sent} approved={r.status === "submitted"} />}
           {removable && <RemoveGenerated kind="report" id={r.id} sent={sent} />}
         </span>
@@ -129,6 +131,8 @@ export type CardBundle = {
   createdBy: string | null;
   parts: { id: string; platform: string; status: string; owner: string | null; mine: boolean; viewedAt: string | null }[];
   href: string;
+  /** A part this person can skip the report through (skipping a built report skips every part that hasn't gone out) */
+  skipId: string | null;
   yourTurn: boolean;
   removable: boolean;
   /** The parts this person can regenerate (their own, approved or not; any still in review for an exec or lead) */
@@ -167,8 +171,9 @@ export function BundleCard({ b, showOwner }: { b: CardBundle; showOwner: boolean
         </span>
         <span className={`text-xs ${state.tone}`}>{state.label} →</span>
       </Link>
-      {(b.removable || sent || b.regenIds.length > 0) && (
+      {(b.removable || sent || b.regenIds.length > 0 || (!sent && b.skipId)) && (
         <span className={CORNER}>
+          {!sent && b.skipId && <SkipButton id={b.skipId} title={`${b.client} · ${b.tag.dates || b.tag.label}`} variant="icon" />}
           {(sent || b.regenIds.length > 0) && (
             <RegenerateButton
               kind="many"
@@ -218,5 +223,53 @@ export function Empty({ title, body }: { title: string; body: string }) {
       <p className="font-heading text-lg">{title}</p>
       <p className="max-w-md text-sm text-muted">{body}</p>
     </div>
+  );
+}
+
+export type SkippedItem = {
+  /** The report to bring back (any part of a built report) */
+  id: string;
+  client: string;
+  platform: string | null;
+  tag: Tag;
+  /** "Skipped by Dana · Nov 13 · Sent it the old way" */
+  line: string;
+  note: string | null;
+  canBringBack: boolean;
+  href: string;
+};
+
+/** Skipped reports for the current period: collapsed, with who skipped them, when and why, and a way back. */
+export function SkippedGroup({ items }: { items: SkippedItem[] }) {
+  if (!items.length) return null;
+  return (
+    <details className="group grid gap-3">
+      <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-baseline justify-between gap-2 md:min-h-0">
+        <h3 className="flex items-baseline gap-2 font-heading text-[19px] text-muted">
+          <span aria-hidden className="text-sm transition-transform group-open:rotate-90">›</span>
+          Skipped <span className="tabular text-sm text-faint">{items.length}</span>
+        </h3>
+        <span className="text-xs text-faint">Waiting for the next report · kept in the client&apos;s history</span>
+      </summary>
+      <ul className="mt-3 grid gap-2.5 lg:grid-cols-2">
+        {items.map((x) => (
+          <li key={x.id} className="grid gap-2 rounded-[18px] border border-line bg-surface p-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <Avatar name={x.client} />
+              <Link href={x.href} className="grid min-w-0 flex-1 gap-1">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate font-heading text-[16px] leading-tight">{x.client}</span>
+                  {x.platform && <Platform platform={x.platform} />}
+                </span>
+                <TagChip tag={x.tag} />
+              </Link>
+              {x.canBringBack && <BringBack id={x.id} />}
+            </div>
+            <p className="text-xs text-muted">{x.line}</p>
+            {x.note && <p className="text-xs text-faint">&ldquo;{x.note}&rdquo;</p>}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

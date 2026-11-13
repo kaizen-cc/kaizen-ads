@@ -16,6 +16,7 @@ import { isPeriodKey, nextPeriod, parseDates, previousPeriod, rangeLabel, resolv
 import { normalizeDelivery, type Delivery } from "@/lib/reports/delivery-core";
 import { applyManual, cleanLines, type ManualLine, type ManualResults } from "@/lib/reports/manual";
 import type { DriveSave } from "@/lib/reports/drive-save-core";
+import { appendLog, canBringBack, isSkipReason, latestSkip, skipEntry, unskipEntry, type LogEntry } from "@/lib/reports/skip-log";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -320,6 +321,7 @@ export async function sendReport(id: string, delivery?: Delivery, note?: string)
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   if (ok.r.status === "posted") return { ok: false, error: "It's already gone out. Resend it from the history." };
+  if (ok.r.status === "skipped") return { ok: false, error: "It's skipped. Bring it back first." };
   const admin = createAdminClient();
   try {
     if (ok.r.kind !== "monthly") {
@@ -357,10 +359,69 @@ export async function sendMyPartNow(id: string): Promise<Result<{ note: string }
 }
 
 /** Not this week (the account was paused, the client asked for no report…). */
-export async function skipReport(id: string): Promise<Result> {
+/**
+ * Writes a report's new status and appends to its log. The log column may not exist yet (the migration is applied
+ * separately): then the status is still saved, just without the history.
+ */
+async function setSkipState(admin: ReturnType<typeof createAdminClient>, id: string, status: string, entry: LogEntry) {
+  const now = new Date().toISOString();
+  const { data, error } = await admin.from("reports").select("log").eq("id", id).maybeSingle();
+  if (!error) {
+    const { error: e2 } = await admin.from("reports").update({ status, updated_at: now, log: appendLog((data as { log?: unknown } | null)?.log, entry) }).eq("id", id);
+    if (!e2) return;
+  }
+  await admin.from("reports").update({ status, updated_at: now }).eq("id", id);
+}
+
+/** The reports a skip or bring-back acts on: the report, or every part of a built report (one report, several services) */
+async function skipTargets(id: string) {
   const ok = await mine(id);
-  if (!ok) return { ok: false, error: "Not found." };
-  await createAdminClient().from("reports").update({ status: "skipped", updated_at: new Date().toISOString() }).eq("id", id);
+  if (!ok) return null;
+  const admin = createAdminClient();
+  const { data: r } = await admin.from("reports").select("id, kind, status, bundle_id, period_end, sections, report_bundles(status)").eq("id", id).single();
+  if (!r) return null;
+  const sent = r.status === "posted" || (r.report_bundles as unknown as { status: string } | null)?.status === "sent";
+  type Part = { id: string; kind: string; status: string; period_end: string; sections: unknown };
+  const { data: parts } = r.kind === "built" && r.bundle_id ? await admin.from("reports").select("id, kind, status, period_end, sections").eq("bundle_id", r.bundle_id) : { data: null };
+  const rows = ((parts as Part[] | null) ?? [r as Part]).slice(0, 12);
+  // Who skipped each (the log column may not exist yet: then every skipped part counts)
+  const { data: logs, error } = await admin.from("reports").select("id, log").in("id", rows.map((x) => x.id));
+  const skippedBy = (partId: string) => (error ? true : Boolean(latestSkip(((logs ?? []) as { id: string; log: unknown }[]).find((l) => l.id === partId)?.log)));
+  return { me: ok.me, admin, sent, rows, skippedBy };
+}
+
+/**
+ * Skip a report: it leaves the queue and waits for the next period's report. Nothing is deleted; it stays in the
+ * client's history, and the reason is logged on it. A report built by hand skips every part that hasn't gone out.
+ */
+export async function skipReport(id: string, reason: string, note?: string): Promise<Result> {
+  if (!isSkipReason(reason)) return { ok: false, error: "Pick why you're skipping it." };
+  const t = await skipTargets(id);
+  if (!t) return { ok: false, error: "Not found." };
+  if (t.sent) return { ok: false, error: "It's already gone to the client." };
+  const open = t.rows.filter((x) => !["posted", "skipped"].includes(x.status));
+  if (!open.length) return { ok: true };
+  if (open.some((x) => ["queued", "drafting"].includes(x.status))) return { ok: false, error: "It's still being written. Try again in a moment." };
+  const entry = skipEntry({ reason, note, by: t.me.id, byName: t.me.fullName });
+  for (const x of open) await setSkipState(t.admin, x.id, "skipped", entry);
+  done(id);
+  return { ok: true };
+}
+
+/** Bring a skipped report back, while its next period isn't over: it's a draft again (or written again if it never was), logged. */
+export async function unskipReport(id: string): Promise<Result> {
+  const t = await skipTargets(id);
+  if (!t) return { ok: false, error: "Not found." };
+  if (t.sent) return { ok: false, error: "It's already gone to the client." };
+  const today = nyParts(new Date()).date;
+  // Only parts someone skipped (a part set aside by rebuilding stays out)
+  const back = t.rows.filter((x) => x.status === "skipped" && (t.rows.length === 1 || t.skippedBy(x.id)));
+  if (!back.length) return { ok: true };
+  if (back.some((x) => !canBringBack(x.kind, x.period_end, today))) return { ok: false, error: "A newer report has taken its place, so this one can't be brought back." };
+  if (back.some((x) => !x.sections && x.kind === "built")) return { ok: false, error: "It was never written. Build it again from Build a report." };
+  const entry = unskipEntry({ by: t.me.id, byName: t.me.fullName });
+  for (const x of back) await setSkipState(t.admin, x.id, x.sections ? "draft" : "queued", entry);
+  if (back.some((x) => !x.sections)) after(() => draftQueued(t.admin, 200_000));
   done(id);
   return { ok: true };
 }
