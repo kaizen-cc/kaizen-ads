@@ -1493,7 +1493,7 @@ export function ReportStudio({
               ))}
             </div>}
             {format === "email" ? (
-              <EmailFrame reportId={report.id} to={(recipients.length ? recipients : monthly ? (delivery?.contacts ?? []).slice(0, 6) : []).map((r) => r.email)} first={recipients[0]?.name?.split(" ")[0] ?? null} note={monthly || built ? "" : emailNote} file={fileName} />
+              <EmailFrame reportId={report.id} to={(recipients.length ? recipients : monthly ? (delivery?.contacts ?? []) : []).map((r) => ({ email: r.email, name: r.name ?? null }))} note={monthly || built ? "" : emailNote} file={fileName} />
             ) : format === "pdf" ? (
               sections ? (
                 <PdfPreview

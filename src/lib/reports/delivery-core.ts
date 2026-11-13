@@ -13,7 +13,7 @@ export type Delivery = { channels: Channel[]; recipients: Recipient[] };
 const EMAIL = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[a-z]{2,}$/i;
 export const isEmail = (s: unknown): s is string => typeof s === "string" && s.length <= 254 && EMAIL.test(s.trim());
 
-/** The choice as given, cleaned: known channels only, real addresses only (lowercased, once each, at most 10) */
+/** The choice as given, cleaned: known channels only, real addresses only (lowercased, once each, at most 50) */
 export function normalizeDelivery(input: unknown, fallback: Delivery = { channels: ["slack"], recipients: [] }): Delivery {
   const d = (input ?? {}) as { channels?: unknown; recipients?: unknown };
   const channels = Array.isArray(d.channels) ? [...new Set(d.channels.filter((c): c is Channel => c === "slack" || c === "email"))] : fallback.channels;
@@ -26,7 +26,7 @@ export function normalizeDelivery(input: unknown, fallback: Delivery = { channel
     seen.add(email);
     const name = typeof raw?.name === "string" && raw.name.trim() ? raw.name.trim().slice(0, 120) : null;
     recipients.push({ email, name });
-    if (recipients.length >= 10) break;
+    if (recipients.length >= 50) break;
   }
   return { channels: channels.length ? channels : fallback.channels, recipients };
 }
@@ -127,7 +127,7 @@ function writeReportEmail(p: ReportEmailInput): ReportEmail {
   const lines = joint ? p.parts.flatMap((x) => summaryLines(x.sections).slice(0, 1).map((l) => `${platformName(x.platform)}: ${l}`)) : summaryLines(p.parts[0]?.sections);
   const bullets = p.parts.flatMap((x) => keyNumbers(x.metrics, joint ? platformName(x.platform).replace(" Ads", "") : undefined));
   const firstName = p.from.name.split(" ")[0] || (wl ? "Your account team" : "The Kaizen team");
-  const hello = p.first ? `Hi ${p.first},` : "Hi there,";
+  const hello = p.first ? `Hi ${p.first},` : "Hi team,";
   const intro = `Here's your ${KIND_WORD[p.kind] ?? "report"} for ${p.periodLabel}. The full report is attached as a PDF.`;
   // White label: signed by the buyer alone, and no link to the agency's portal
   const sign = wl ? firstName : `${firstName}, Kaizen Marketing`;

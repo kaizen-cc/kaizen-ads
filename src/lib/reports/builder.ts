@@ -273,6 +273,7 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
 
       bundleId,
       reportId: joint ? null : parts[0].id,
+      owners: parts.map((p) => p.owner_id),
     });
     if (!out.ok) throw new Error(out.error ?? "It didn't go out.");
     const now = new Date().toISOString();

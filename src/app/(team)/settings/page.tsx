@@ -34,6 +34,7 @@ import type { InsightsStatus } from "@/lib/buying-insights";
 import { listKnowledge } from "@/lib/knowledge";
 import { AGENT_MOMENTS, momentOf } from "@/lib/agent-moments";
 import Team from "../team/page";
+import { ReportCc } from "./report-cc";
 import { ErrorButtons } from "./error-buttons";
 import { DeletedTicketRow, type DeletedTicket } from "./deleted-ticket";
 import { STAGES } from "@/lib/stages";
@@ -992,7 +993,12 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
           by={typeof sp.by === "string" ? sp.by : "agents"}
         />
       )}
-      {tab === "team" && <Team />}
+      {tab === "team" && (
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6">
+          {me.isExec && <ReportCc />}
+          <Team />
+        </div>
+      )}
       {tab === "data" && <Data target={typeof sp.target === "string" ? sp.target : null} from={from} to={to} />}
       {tab === "sync" && <Sync motion={typeof sp.motion === "string" ? sp.motion : null} />}
       {tab === "connections" && (

@@ -7,6 +7,8 @@ import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { siteUrl } from "@/lib/site";
 import type { ReportMetrics } from "./metrics";
 import { buildReportEmail, channelsLabel, normalizeDelivery, type Channel, type Delivery, type Recipient } from "./delivery-core";
+import { defaultRecipients, firstNameFor, recipientsToUse, reportCtaUrl } from "./cc-core";
+import { reportCc } from "./cc";
 import { forClient, isWhiteLabel, WHITE_LABEL_FROM } from "./white-label";
 
 // Sending a report to the client, by Slack, email or both, and keeping what went: every send (and every resend) is a
@@ -20,25 +22,29 @@ export const emailReady = () => Boolean(process.env.RESEND_API_KEY);
 /** The client's contacts (primary first) and how they last got their reports, for the send step */
 export async function clientDelivery(admin: SupabaseClient, clientId: string) {
   const [{ data: links }, prefs, { data: client }] = await Promise.all([
-    admin.from("contact_clients").select("is_primary, contacts(email, full_name, is_active)").eq("client_id", clientId),
+    admin.from("contact_clients").select("is_primary, created_at, contacts(email, full_name, is_active)").eq("client_id", clientId),
     admin
       .from("client_report_prefs")
-      .select("channels, recipients")
+      .select("channels, recipients, delivery_updated_at")
       .eq("client_id", clientId)
       .maybeSingle()
       .then((r) => (r.error ? { data: null } : r)),
     admin.from("clients").select("slack_channel_id").eq("id", clientId).maybeSingle(),
   ]);
-  const contacts: (Recipient & { primary: boolean })[] = ((links ?? []) as unknown as { is_primary: boolean; contacts: { email: string; full_name: string | null; is_active: boolean } | null }[])
+  const contacts: (Recipient & { primary: boolean; addedAt: string | null })[] = ((links ?? []) as unknown as { is_primary: boolean; created_at: string | null; contacts: { email: string; full_name: string | null; is_active: boolean } | null }[])
     .filter((l) => l.contacts?.email && l.contacts.is_active !== false)
-    .map((l) => ({ email: l.contacts!.email.toLowerCase(), name: l.contacts!.full_name, primary: Boolean(l.is_primary) }))
+    .map((l) => ({ email: l.contacts!.email.toLowerCase(), name: l.contacts!.full_name, primary: Boolean(l.is_primary), addedAt: l.created_at ?? null }))
     .sort((a, b) => Number(b.primary) - Number(a.primary));
-  const row = prefs.data as { channels?: string[] | null; recipients?: Recipient[] | null } | null;
+  const row = prefs.data as { channels?: string[] | null; recipients?: Recipient[] | null; delivery_updated_at?: string | null } | null;
   const saved = row && (row.recipients?.length || (row.channels?.length && !(row.channels.length === 1 && row.channels[0] === "slack"))) ? normalizeDelivery(row) : null;
   const slackChannel = Boolean(client?.slack_channel_id);
-  // No choice saved yet: Slack when they have a channel, else email to their primary contact
-  const fallback: Delivery = slackChannel ? { channels: ["slack"], recipients: contacts.filter((c) => c.primary).slice(0, 1) } : { channels: contacts.length ? ["email"] : ["slack"], recipients: contacts.filter((c) => c.primary).slice(0, 1) };
-  return { contacts, saved, initial: saved ?? fallback, slackChannel, emailReady: emailReady() };
+  // Every contact the client has is in by default; a choice remembered earlier stands, with the contacts gained since added
+  const everyone = defaultRecipients(contacts).map((c) => ({ email: c.email, name: c.name }));
+  const remembered = saved?.recipients.length ? recipientsToUse(contacts, saved.recipients, row?.delivery_updated_at) : everyone;
+  // No choice saved yet: Slack when they have a channel, else email to every contact
+  const fallback: Delivery = slackChannel ? { channels: ["slack"], recipients: everyone } : { channels: contacts.length ? ["email"] : ["slack"], recipients: everyone };
+  const initial: Delivery = saved ? { channels: saved.channels, recipients: remembered } : fallback;
+  return { contacts, saved, initial, slackChannel, emailReady: emailReady() };
 }
 
 /** Remembers how this client gets their reports (the channels and who the email goes to), for the next one */
@@ -70,6 +76,8 @@ export type SendArgs = {
   appFallback?: string | null;
   reportId?: string | null;
   bundleId?: string | null;
+  /** The profiles that own the report's parts: copied on the email with the client's buyers on those platforms */
+  owners?: (string | null | undefined)[];
   resendOf?: string | null;
   note?: string | null;
 };
@@ -78,13 +86,13 @@ export type SendOutcome = {
   sendId: string | null;
   went: Channel[];
   slack: { channel: string; ts?: string; as?: string } | { error: string } | null;
-  email: { to: string[]; failed: { email: string; error: string }[]; subject: string } | null;
+  email: { to: string[]; cc?: string[]; failed: { email: string; error: string }[]; subject: string } | null;
   error?: string;
   needsConnect?: boolean;
 };
 
-// A white label client's report never links the agency's portal
-const dashboardOf = (c: SendArgs["client"]) => (c.portal_live && c.slug && !isWhiteLabel(c.client_type) ? `${siteUrl()}/c/${c.slug}/dashboard` : null);
+// The client's live dashboard, linked only when their portal is open to them; never for a white label client (the agency's)
+const dashboardOf = (c: SendArgs["client"]) => reportCtaUrl(c, siteUrl());
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
 /** Sends a report where the buyer chose, then keeps the send (and the PDF as it went) in the history */
@@ -119,25 +127,25 @@ export async function deliver(admin: SupabaseClient, sent: SendArgs): Promise<Se
   }
 
   if (d.channels.includes("email")) {
-    const mail = (first: string | null) => buildReportEmail({ client: a.client.name, kind: a.kind, periodLabel: a.period.label, parts: a.parts, from: { name: a.by.fullName, email: a.by.email }, first, dashboard: dashboardOf(a.client), note: a.note, whiteLabel: wl });
-    const sent: string[] = [];
+    // One email to every contact picked (To), the team in Cc, the PDF always attached
+    const to = d.recipients.map((r) => r.email);
+    const e = buildReportEmail({ client: a.client.name, kind: a.kind, periodLabel: a.period.label, parts: a.parts, from: { name: a.by.fullName, email: a.by.email }, first: firstNameFor(d.recipients), dashboard: dashboardOf(a.client), note: a.note, whiteLabel: wl });
     const failed: { email: string; error: string }[] = [];
-    let logged: { subject: string; text: string; html: string } | null = null;
-    if (!emailReady()) for (const r of d.recipients) failed.push({ email: r.email, error: "Email isn't set up (RESEND_API_KEY missing)." });
-    else
-      for (const r of d.recipients) {
-        const e = mail(r.name?.split(" ")[0] ?? null);
-        const html = emailHtml({ preheader: e.preheader, kicker: e.kicker, title: e.title, highlight: e.highlight, hello: e.hello, lines: e.lines, bullets: e.bullets, cta: e.cta ?? undefined, note: e.note, ...(wl ? { whiteLabel: true } : {}) });
-        const res = await sendEmail({ to: r.email, subject: e.subject, html, text: e.text, replyTo: e.replyTo ?? undefined, attachments: [{ filename: a.pdf.filename, content: b64(a.pdf.bytes) }], ...(wl ? { fromName: WHITE_LABEL_FROM } : {}) });
-        if (res.ok) {
-          sent.push(r.email);
-          logged ??= { subject: e.subject, text: e.text, html };
-        } else failed.push({ email: r.email, error: res.error });
-      }
+    let sent: string[] = [];
+    let cc: string[] = [];
     if (!d.recipients.length) failed.push({ email: "", error: "No one to send it to." });
-    email = { to: sent, failed, subject: mail(null).subject };
+    else if (!emailReady()) for (const r of d.recipients) failed.push({ email: r.email, error: "Email isn't set up (RESEND_API_KEY missing)." });
+    else {
+      cc = await reportCc(admin, { clientId: a.client.id, platforms: a.parts.map((p) => p.platform), owners: a.owners ?? [], to }).catch(() => []);
+      const html = emailHtml({ preheader: e.preheader, kicker: e.kicker, title: e.title, highlight: e.highlight, hello: e.hello, lines: e.lines, bullets: e.bullets, cta: e.cta ?? undefined, note: e.note, ...(wl ? { whiteLabel: true } : {}) });
+      const res = await sendEmail({ to, cc, subject: e.subject, html, text: e.text, replyTo: e.replyTo ?? undefined, attachments: [{ filename: a.pdf.filename, content: b64(a.pdf.bytes) }], ...(wl ? { fromName: WHITE_LABEL_FROM } : {}) });
+      if (res.ok) {
+        sent = to;
+        await logClientEmail(admin, { clientId: a.client.id, kind: "report", subject: e.subject, text: e.text, html, to, by: a.by.id, manual: true }).catch(() => null);
+      } else for (const r of d.recipients) failed.push({ email: r.email, error: res.error });
+    }
+    email = { to: sent, cc, failed, subject: e.subject };
     if (sent.length) went.push("email");
-    if (logged) await logClientEmail(admin, { clientId: a.client.id, kind: "report", ...logged, to: sent, by: a.by.id, manual: true }).catch(() => null);
   }
 
   const status = went.length === 0 ? "failed" : went.length < d.channels.length || (email?.failed.length ?? 0) > 0 ? "partial" : "sent";
@@ -187,7 +195,7 @@ export async function recordSend(admin: SupabaseClient, a: SendArgs, r: { went: 
 /** One line on where a send went, for the buyer */
 export function sentNote(o: SendOutcome, clientName: string) {
   const where = channelsLabel(o.went);
-  const to = o.email?.to.length ? ` to ${o.email.to.join(", ")}` : "";
+  const to = o.email?.to.length ? ` to ${o.email.to.join(", ")}${o.email.cc?.length ? ` (copying ${o.email.cc.join(", ")})` : ""}` : "";
   const base = o.went.length ? `Sent to ${clientName} by ${where.toLowerCase()}${o.went.includes("email") ? to : ""}.` : "It didn't go out.";
   return o.error ? `${base} ${o.error}` : base;
 }
@@ -222,10 +230,11 @@ export async function resendReport(admin: SupabaseClient, sendId: string, by: { 
   if (!bytes) throw new Error("The PDF that went couldn't be found.");
   // The numbers for the email's key lines: the sent report itself (sent reports can't be edited)
   const { data: rows } = s.report_id
-    ? await admin.from("reports").select("platform, metrics, sections").eq("id", s.report_id)
+    ? await admin.from("reports").select("platform, metrics, sections, owner_id").eq("id", s.report_id)
     : s.bundle_id
-      ? await admin.from("reports").select("platform, metrics, sections").eq("bundle_id", s.bundle_id).in("status", ["submitted", "posted"])
+      ? await admin.from("reports").select("platform, metrics, sections, owner_id").eq("bundle_id", s.bundle_id).in("status", ["submitted", "posted"])
       : { data: [] };
+  const owners = ((rows ?? []) as { owner_id?: string | null }[]).map((r) => r.owner_id);
   const parts: SendPart[] = ((rows ?? []) as { platform: string; metrics: ReportMetrics | null; sections: SendPart["sections"] }[])
     .map((r) => ({ platform: r.platform === "google" ? ("google" as const) : r.platform === "tiktok" ? ("tiktok" as const) : ("meta" as const), metrics: r.metrics, sections: r.sections }))
     .sort((a, b) => ["meta", "tiktok", "google"].indexOf(a.platform) - ["meta", "tiktok", "google"].indexOf(b.platform));
@@ -244,6 +253,7 @@ export async function resendReport(admin: SupabaseClient, sendId: string, by: { 
     slackAs: joint ? "app" : "user",
     reportId: s.report_id,
     bundleId: s.bundle_id,
+    owners,
     resendOf: s.id,
     note,
   });

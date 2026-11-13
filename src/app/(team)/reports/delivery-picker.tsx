@@ -53,7 +53,7 @@ export function DeliveryPicker({ value, onChange, options, disabled = false, cha
     const known = new Map(options.contacts.map((c) => [c.email, c.name]));
     const next = [...value.recipients];
     for (const e of parts) if (!next.some((r) => r.email === e)) next.push({ email: e, name: known.get(e) ?? null });
-    onChange({ ...value, recipients: next.slice(0, 10) });
+    onChange({ ...value, recipients: next.slice(0, 50) });
     setTyping("");
     setBad(false);
   };

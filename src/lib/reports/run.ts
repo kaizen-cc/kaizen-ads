@@ -18,6 +18,8 @@ import { reportListeners } from "./access";
 import { periodMismatch } from "./period";
 import { normalizeDelivery, pdfFileName, type Delivery } from "./delivery-core";
 import { clientDelivery, deliver, recordSend } from "./send";
+import { greetingFor, reportCtaUrl } from "./cc-core";
+import { reportCc } from "./cc";
 import { forClient, isWhiteLabel, WHITE_LABEL_FROM, whiteLabelFileName } from "./white-label";
 
 // The reporting cadence. Mondays: a weekly report is queued for every live account that spent in the last week, and
@@ -130,10 +132,10 @@ export async function draftQueued(admin: SupabaseClient, budgetMs = 600_000, opt
   return done;
 }
 
-type Loaded = { id: string; kind: "weekly" | "monthly" | "custom"; platform: "meta" | "google" | "tiktok"; period_start: string; period_end: string; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extras: string | null; client_id: string; bundle_id: string | null; owner: string | null; client: { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean; client_type?: string | null } };
+type Loaded = { id: string; kind: "weekly" | "monthly" | "custom"; platform: "meta" | "google" | "tiktok"; period_start: string; period_end: string; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extras: string | null; client_id: string; bundle_id: string | null; owner: string | null; owner_id: string | null; client: { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean; client_type?: string | null } };
 
 async function load(admin: SupabaseClient, id: string): Promise<Loaded> {
-  const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, message, sections, metrics, extras, client_id, bundle_id, clients(name, slack_channel_id, slug, portal_live, client_type), profiles!reports_owner_id_fkey(full_name)").eq("id", id).single();
+  const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, message, sections, metrics, extras, client_id, bundle_id, owner_id, clients(name, slack_channel_id, slug, portal_live, client_type), profiles!reports_owner_id_fkey(full_name)").eq("id", id).single();
   if (!r) throw new Error("Report not found");
   return { ...(r as unknown as Loaded), owner: (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null, client: r.clients as unknown as Loaded["client"] };
 }
@@ -222,6 +224,7 @@ export async function sendWeekly(admin: SupabaseClient, id: string, by: { id: st
     delivery,
     slackAs: "user",
     reportId: id,
+    owners: [r, ...joined].map((x) => x.owner_id),
     note,
   });
   if (!out.ok) return out;
@@ -247,7 +250,7 @@ async function sender(admin: SupabaseClient, id: string) {
 async function recapRecipients(admin: SupabaseClient, clientId: string) {
   const { saved, contacts } = await clientDelivery(admin, clientId);
   const picked = saved?.channels.includes("email") && saved.recipients.length ? saved.recipients : contacts;
-  return picked.slice(0, 6).map((c) => ({ email: c.email, full_name: c.name ?? null }));
+  return picked.map((c) => ({ email: c.email, full_name: c.name ?? null }));
 }
 
 /**
@@ -282,7 +285,7 @@ async function recapDelivery(admin: SupabaseClient, bundleId: string): Promise<D
 async function recapTo(admin: SupabaseClient, clientId: string, chosen: Delivery | null) {
   if (!chosen) return recapRecipients(admin, clientId);
   if (!chosen.channels.includes("email")) return [];
-  return chosen.recipients.slice(0, 10).map((c) => ({ email: c.email, full_name: c.name ?? null }));
+  return chosen.recipients.map((c) => ({ email: c.email, full_name: c.name ?? null }));
 }
 
 /**
@@ -374,15 +377,27 @@ async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: stri
   }
   const sentTo: string[] = [];
   let logged: { subject: string; text: string; html: string } | null = null;
-  for (const c of await recapTo(admin, b.client_id as string, chosen)) {
+  // One email to every contact (To) with the team in Cc, the PDF always attached; a button only to a live dashboard
+  const lateTo = await recapTo(admin, b.client_id as string, chosen);
+  if (lateTo.length) {
+    const toList = lateTo.map((c) => c.email);
     const headline = r.sections?.headline ?? `The ${service} part of your ${month} recap is ready.`;
-    const parts = wl
-      ? { kicker: r.client.name, title: `${service} is in your ${month} recap`, hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`, lines: [forClient(headline, true), "The full report is attached as a PDF."], whiteLabel: true }
-      : { kicker: r.client.name, title: `${service} is in your ${month} recap`, hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`, lines: [headline], cta: { label: "See the recap →", url: link! } };
+    const dash = reportCtaUrl(r.client, SITE());
+    const parts = {
+      kicker: r.client.name,
+      title: `${service} is in your ${month} recap`,
+      hello: greetingFor(lateTo.map((c) => ({ email: c.email, name: c.full_name }))),
+      lines: [wl ? forClient(headline, true) : headline, "The full report is attached as a PDF."],
+      ...(dash ? { cta: { label: "See every number on your dashboard", url: dash } } : {}),
+      ...(wl ? { whiteLabel: true } : {}),
+    };
     const mail = { subject: wl ? `Your ${month} recap: ${service} is in` : `Your ${month} recap from Kaizen: ${service} is in`, text: emailText(parts), html: emailHtml(parts) };
-    const res = await sendEmail({ to: c.email, ...mail, ...(wl ? { fromName: WHITE_LABEL_FROM, attachments: [{ filename, content: Buffer.from(bytes).toString("base64") }] } : {}) });
-    if (res.ok) sentTo.push(c.email);
-    if (res.ok && sentTo.length === 1) logged = mail;
+    const cc = await reportCc(admin, { clientId: b.client_id as string, platforms: [r.platform, ...riders.map((x) => x.platform)], owners: [r.owner_id, ...riders.map((x) => x.owner_id)], to: toList }).catch(() => [] as string[]);
+    const res = await sendEmail({ to: toList, cc, ...mail, attachments: [{ filename, content: Buffer.from(bytes).toString("base64") }], ...(wl ? { fromName: WHITE_LABEL_FROM } : {}) });
+    if (res.ok) {
+      sentTo.push(...toList);
+      logged = mail;
+    }
   }
   if (logged) await logClientEmail(admin, { clientId: b.client_id as string, kind: "recap", ...logged, to: sentTo, by: by.id });
   delivered.email = sentTo;
@@ -460,36 +475,31 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     const headline = parts.map((p) => p.sections?.headline).filter(Boolean).join(" · ");
     const sentTo: string[] = [];
     let logged: { subject: string; text: string; html: string } | null = null;
-    for (const c of to.slice(0, 6)) {
-      const dash = dashboardUrl(parts[0]);
+    // One email to every contact (To) with the team in Cc, the PDF always attached; a button only to a live dashboard
+    if (to.length) {
+      const toList = to.map((c) => c.email);
+      const dash = reportCtaUrl(parts[0].client, SITE());
       const shotsNote = shots ? `For ${shots.month}, we need a few photos and clips from you so your ads stay fresh: ${shots.items.slice(0, 4).join("; ")}${shots.items.length > 4 ? "…" : ""}.${shots.url ? ` Send them here: ${shots.url}` : ""}` : "";
-      const mail = wl
-        ? {
-            preheader: forClient(headline, true),
-            kicker: client.name,
-            title: `Your ${month} recap is ready`,
-            highlight: month,
-            hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`,
-            lines: ["Here's the short version:"],
-            bullets: parts.map((x) => forClient(`${platformName(x.platform)}: ${x.sections?.headline ?? ""}`, true)).filter((x) => !x.endsWith(":")),
-            note: forClient(["The full recap is attached as a PDF.", shotsNote].filter(Boolean).join(" "), true),
-            whiteLabel: true,
-          }
-        : {
-            preheader: headline,
-            kicker: client.name,
-            title: `Your ${month} recap is ready`,
-            highlight: month,
-            hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`,
-            lines: ["Here's the short version:"],
-            bullets: parts.map((x) => `${platformName(x.platform)}: ${x.sections?.headline ?? ""}`).filter((x) => !x.endsWith(": ")),
-            cta: { label: "Read the recap →", url: link! },
-            note: [dash ? `For every number, any dates: ${dash}` : "You can download it as a PDF from the page.", shotsNote].filter(Boolean).join(" "),
-          };
+      const bullets = parts.map((x) => `${platformName(x.platform)}: ${x.sections?.headline ?? ""}`).filter((x) => !x.endsWith(": "));
+      const mail = {
+        preheader: wl ? forClient(headline, true) : headline,
+        kicker: client.name,
+        title: `Your ${month} recap is ready`,
+        highlight: month,
+        hello: greetingFor(to.map((c) => ({ email: c.email, name: c.full_name }))),
+        lines: ["Here's the short version:"],
+        bullets: wl ? bullets.map((x) => forClient(x, true)) : bullets,
+        ...(dash ? { cta: { label: "See every number on your dashboard", url: dash } } : {}),
+        note: wl ? forClient(["The full recap is attached as a PDF.", shotsNote].filter(Boolean).join(" "), true) : ["The full recap is attached as a PDF.", shotsNote].filter(Boolean).join(" "),
+        ...(wl ? { whiteLabel: true } : {}),
+      };
       const out = { subject: wl ? `Your ${month} recap` : `Your ${month} recap from Kaizen`, text: emailText(mail), html: emailHtml(mail) };
-      const res = await sendEmail({ to: c.email, ...out, ...(wl ? { fromName: WHITE_LABEL_FROM, attachments: [{ filename, content: Buffer.from(bytes).toString("base64") }] } : {}) });
-      if (res.ok) sentTo.push(c.email);
-      if (res.ok && sentTo.length === 1) logged = out;
+      const cc = await reportCc(admin, { clientId: b.client_id as string, platforms: parts.map((x) => x.platform), owners: parts.map((x) => x.owner_id), to: toList }).catch(() => [] as string[]);
+      const res = await sendEmail({ to: toList, cc, ...out, attachments: [{ filename, content: Buffer.from(bytes).toString("base64") }], ...(wl ? { fromName: WHITE_LABEL_FROM } : {}) });
+      if (res.ok) {
+        sentTo.push(...toList);
+        logged = out;
+      }
     }
     if (logged) await logClientEmail(admin, { clientId: b.client_id as string, kind: "recap", ...logged, to: sentTo, by: by.id });
     delivered.email = sentTo;

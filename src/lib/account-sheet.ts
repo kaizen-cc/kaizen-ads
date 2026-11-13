@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { JWT } from "google-auth-library";
 import { setPrimarySeat } from "@/lib/buyer-seats";
+import { contactsFromTab } from "@/lib/sheet-contacts";
 
 // The Kaizen Account Overview sheet, the source of truth for each account while the team moves over: its Meta,
 // Google and TikTok tabs give every ad account's media buyer, monthly budget and KPI target, plus the team's notes (priority, the
@@ -226,6 +227,10 @@ export async function syncAccountSheet(admin: SupabaseClient) {
     // client, is reported, never overwritten.
     const ids = await clientIds(admin, rows.map(({ r }) => r), targets ?? [], clientNamed);
     Object.assign(out, ids);
+    // The client's points of contact and any other emails on every tab, added to its contacts (only added, never changed)
+    t.on("Adding the contacts the sheet lists");
+    const contacts = await syncSheetContacts(admin, [meta, google, tiktok], targets ?? [], clientNamed, new Set((allClients ?? []).map((c) => c.id as string))).catch((e) => ({ added: [] as string[], named: 0, error: e instanceof Error ? e.message : String(e) }));
+    Object.assign(out, { contactsAdded: contacts.added, contactNamesFilled: contacts.named, ...("error" in contacts ? { contactsError: contacts.error } : {}) });
     // Buyers the sheet names who aren't on the team: execs hear it once a day, not on every run
     const missing = [...new Set(out.unknownBuyer.map((x) => x.replace(/\s*\(.*$/, "")))];
     if (missing.length) {
@@ -262,6 +267,47 @@ export async function syncAccountSheet(admin: SupabaseClient) {
     await t.finish({ error });
     throw e;
   }
+}
+
+/**
+ * The contacts the sheet lists (the POC columns and any other emails, on every tab) onto each client's contacts: a new
+ * address is added and linked to the client (the first one on a client with none is its primary); an existing contact
+ * only gets a name when theirs is empty. Nothing is ever removed or overwritten, so a contact someone edited in Kaizen
+ * Ads holds.
+ */
+export async function syncSheetContacts(admin: SupabaseClient, tabs: string[][][], targets: { client_id: string; ad_account_id: string | null }[], named: (name: string) => { id: string } | null, liveClients: Set<string>) {
+  const added: string[] = [];
+  let namesFilled = 0;
+  const linkedCount = new Map<string, number>();
+  for (const values of tabs) {
+    for (const r of contactsFromTab(values)) {
+      const account = accountOf(r.row);
+      const byAccount = account ? targets.find((x) => digits(x.ad_account_id ?? "") === account)?.client_id : null;
+      const clientId = byAccount && liveClients.has(byAccount) ? byAccount : (named(r.name)?.id ?? null);
+      if (!clientId) continue;
+      for (const c of r.contacts) {
+        const { data: have } = await admin.from("contacts").select("id, full_name").eq("email", c.email).maybeSingle();
+        let id = have?.id as string | undefined;
+        if (!id) {
+          await admin.from("contacts").upsert({ email: c.email, full_name: c.name }, { onConflict: "email", ignoreDuplicates: true });
+          id = ((await admin.from("contacts").select("id").eq("email", c.email).maybeSingle()).data?.id as string | undefined) ?? undefined;
+        } else if (!have?.full_name?.trim() && c.name) {
+          await admin.from("contacts").update({ full_name: c.name }).eq("id", id);
+          namesFilled++;
+        }
+        if (!id) continue;
+        const { data: linked } = await admin.from("contact_clients").select("contact_id").eq("client_id", clientId).eq("contact_id", id).maybeSingle();
+        if (linked) continue;
+        if (!linkedCount.has(clientId)) linkedCount.set(clientId, (await admin.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", clientId)).count ?? 0);
+        const n = linkedCount.get(clientId)!;
+        const { error } = await admin.from("contact_clients").insert({ contact_id: id, client_id: clientId, is_primary: n === 0 });
+        if (error) continue;
+        linkedCount.set(clientId, n + 1);
+        added.push(`${r.name}: ${c.email}`);
+      }
+    }
+  }
+  return { added, named: namesFilled };
 }
 
 // The Onboarding tab: each new client's setup checklist, kept by the account managers
