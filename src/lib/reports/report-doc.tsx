@@ -22,7 +22,7 @@ export type ReportPart = { platform: "meta" | "google" | "tiktok"; buyer: string
 /** whiteLabel: a white label client's report: their brand alone, with no agency name, mark, red or link anywhere */
 /** brand: the client's logo and colour (and Kaizen's logo), filled on the server before the document is drawn */
 /** clientId: whose brand to read (never drawn) */
-export type ReportPdfInput = { client: string; kind: "weekly" | "monthly" | "built"; periodLabel: string; parts: ReportPart[]; edit?: boolean; dashboard?: string | null; /** The monthly recap's ask: next cycle's shot list (clients on a creative package) */ shots?: { month: string; items: string[]; url: string | null } | null; whiteLabel?: boolean; brand?: WeeklyBrand | null; clientId?: string | null };
+export type ReportPdfInput = { client: string; kind: "weekly" | "monthly" | "built"; periodLabel: string; parts: ReportPart[]; /** The buyer's write-up as a last section: only the copy saved to Drive (never the client's PDF, the preview or the shared link) */ withNotes?: boolean; edit?: boolean; dashboard?: string | null; /** The monthly recap's ask: next cycle's shot list (clients on a creative package) */ shots?: { month: string; items: string[]; url: string | null } | null; whiteLabel?: boolean; brand?: WeeklyBrand | null; clientId?: string | null };
 
 // Words wrap whole: no "APPLICA-TION" in a tile label or a column header
 Font.registerHyphenationCallback((word) => [word]);

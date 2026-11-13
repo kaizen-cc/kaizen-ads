@@ -13,6 +13,7 @@ import { monthLabel } from "@/lib/reports/format";
 import { slackConnection, slackIdentity } from "@/lib/slack-user";
 import { ReportStudio } from "../report-studio";
 import type { ManualEntered } from "../manual-results";
+import type { DriveSave } from "@/lib/reports/drive-save-core";
 import { after } from "next/server";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { writeStatus } from "@/lib/write-status";
@@ -71,10 +72,12 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
     r.kind === "weekly" && !joinedTo ? db.from("reports").select("id, platform, status").eq("joined_to", r.id) : Promise.resolve({ data: [] as { id: string; platform: string; status: string }[] }),
   ]);
   const joint = joinedTo || riders?.length ? { goesWith: goesWith ? { id: goesWith.id as string, owner: name(goesWith.profiles), status: goesWith.status as string } : null, riders: (riders ?? []) as { id: string; platform: string; status: string }[] } : null;
-  const [delivery, history, { data: keyRow }] = await Promise.all([
+  const [delivery, history, { data: keyRow }, { data: driveRow }] = await Promise.all([
     admin && r.kind !== "monthly" && !sentNow ? clientDelivery(admin, r.client_id as string).catch(() => null) : Promise.resolve(null),
     admin ? readHistory(admin, { reportId: r.id, bundleId: r.bundle_id, limit: 40 }, today) : Promise.resolve([]),
     db.from("reports").select("period_key").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)),
+    // Where it was saved in the client's Drive (a column that may not exist yet: read apart so the page never fails on it)
+    db.from("reports").select("drive_save").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)),
   ]);
   // Every page drawn for the report's dates? (a page for other dates is redrawn before it can go out)
   const stale = !["queued", "drafting", "failed"].includes(r.status) && metrics && r.kind !== "monthly" ? periodMismatch({ start: r.period_start, end: r.period_end }, metrics, r.sections as Sections | null) : [];
@@ -108,6 +111,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           metrics,
           extraMetrics: (r.extra_metrics as ReportMetrics[] | null) ?? null,
           extras: r.extras ?? "",
+          driveSave: (driveRow as { drive_save?: DriveSave | null } | null)?.drive_save ?? null,
           manual: (r as { manual_results?: ManualEntered | null }).manual_results?.lines?.length ? (r as { manual_results: ManualEntered }).manual_results : null,
           layout: layoutOf({ status: r.status, layout: r.layout as ReportLayout | null, kpi_targets: r.kpi_targets as unknown as { report_layout: ReportLayout | null } | null }),
           qa: (r.qa as Qa | null) ?? null,

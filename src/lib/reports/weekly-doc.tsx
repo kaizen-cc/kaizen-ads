@@ -29,6 +29,8 @@ export type WeeklyInput = {
   kind?: "weekly" | "monthly" | "built";
   periodLabel: string;
   parts: WeeklyPart[];
+  /** The buyer's write-up as a last section ("Our notes"): only the copy saved to Drive carries it, never the client's PDF */
+  withNotes?: boolean;
   edit?: boolean;
   dashboard?: string | null;
   whiteLabel?: boolean;
@@ -771,6 +773,59 @@ function Shots({ input, look }: { input: WeeklyInput; look: Look }) {
   );
 }
 
+/** The words of one part's write-up that go in "Our notes": its headline and summary, and what we did, are doing and will do */
+export function notesOf(sections: Sections) {
+  const list = (xs: string[] | undefined) => (Array.isArray(xs) ? xs.map((x) => String(x ?? "").trim()).filter(Boolean) : []);
+  const groups = [
+    { title: "What we did", items: list(sections.did) },
+    { title: "What we're doing", items: list(sections.doing) },
+    { title: "What's next", items: list(sections.next) },
+  ].filter((g) => g.items.length);
+  const headline = String(sections.headline ?? "").trim();
+  const summary = String(sections.summary ?? "").trim();
+  return { headline, summary, groups, empty: !headline && !summary && !groups.length };
+}
+
+/**
+ * Our notes: the buyer's write-up, a last page (the copy kept in Drive only: the client's PDF never carries it). A section
+ * per service on a joint report. Plain words only, no agency name, so it reads the same for a white label client.
+ */
+function Notes({ input, look }: { input: WeeklyInput; look: Look }) {
+  if (!input.withNotes) return null;
+  const parts = input.parts.map((p) => ({ p, n: notesOf(p.sections) })).filter((x) => !x.n.empty);
+  if (!parts.length) return null;
+  const joint = input.parts.length > 1;
+  return (
+    <View break>
+      {parts.map(({ p, n }, i) => (
+        <View key={`${p.platform}-${i}`} style={{ marginBottom: 18 }}>
+          <View style={s.head}>
+            <Text style={s.h2}>Our notes</Text>
+            {joint ? <Text style={s.sub}>{platformName(p.platform)}</Text> : <Text style={s.sub}>{input.periodLabel}</Text>}
+          </View>
+          {n.headline || n.summary ? (
+            <View style={[s.panel, { borderLeftWidth: 3, borderLeftColor: look.primary, marginBottom: 8 }]}>
+              {n.headline ? <Text style={{ fontSize: 11, fontFamily: "Helvetica-Bold", lineHeight: 1.3, marginBottom: n.summary ? 5 : 0 }}>{n.headline}</Text> : null}
+              {n.summary ? <Text style={{ fontSize: 8.4, lineHeight: 1.5, color: "#33475b" }}>{n.summary}</Text> : null}
+            </View>
+          ) : null}
+          {n.groups.map((g) => (
+            <View key={g.title} style={[s.panel, { marginBottom: 8 }]} wrap={false}>
+              <Text style={[s.h3, { marginBottom: 6 }]}>{g.title}</Text>
+              {g.items.map((x, j) => (
+                <View key={j} style={{ flexDirection: "row", marginBottom: 3 }}>
+                  <Text style={{ width: 9, color: look.primary, fontFamily: "Helvetica-Bold", fontSize: 8 }}>•</Text>
+                  <Text style={{ flex: 1, fontSize: 8, lineHeight: 1.45, color: "#33475b" }}>{x}</Text>
+                </View>
+              ))}
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 /** The data note in the footer: where the numbers come from and how they're counted */
 function dataNote(parts: WeeklyPart[]) {
   const src = [...new Set(parts.map((p) => platformName(p.platform)))].join(", ");
@@ -818,6 +873,7 @@ export function WeeklyReport({ input, images }: { input: WeeklyInput; images: (s
         );
       })}
       <Shots input={input} look={look} />
+      <Notes input={input} look={look} />
       {input.dashboard && !input.whiteLabel ? (
         <Link src={input.dashboard} style={{ fontSize: 8, color: look.primary, fontFamily: "Helvetica-Bold", textDecoration: "none", marginTop: 2 }}>
           See every number, any dates, on your live dashboard

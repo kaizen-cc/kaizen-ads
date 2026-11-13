@@ -84,6 +84,15 @@ export function parseMonthFolder(raw: string): { month: number; style: MonthStyl
     t = `${t.slice(0, w.index)}{NAME}${t.slice(w.index + word.length)}`;
   }
   t = t.replace(/(?<!\d)20\d{2}(?!\d)/, "{YEAR}");
+  // "November 01 2026": the 01 is the day, written the same in every folder, not the month's number
+  let day: string | null = null;
+  if (month) {
+    const d = /(?<=\{NAME\}\s*)(0?1)(?=\s*\{YEAR\})/.exec(t);
+    if (d) {
+      day = d[1];
+      t = `${t.slice(0, d.index)}{DAY}${t.slice(d.index + d[1].length)}`;
+    }
+  }
   let pad: boolean | null = null;
   const n = /(?<!\d)(\d{1,2})(?!\d)/.exec(t);
   if (n) {
@@ -94,7 +103,8 @@ export function parseMonthFolder(raw: string): { month: number; style: MonthStyl
     t = `${t.slice(0, n.index)}{NUM}${t.slice(n.index + n[1].length)}`;
   }
   if (!month) return null;
-  if (/[\p{L}\p{N}]/u.test(t.replace(/\{(?:NAME|NUM|YEAR)\}/g, ""))) return null;
+  if (/[\p{L}\p{N}]/u.test(t.replace(/\{(?:NAME|NUM|YEAR|DAY)\}/g, ""))) return null;
+  if (day) t = t.replace("{DAY}", day);
   return { month, style: { template: t, pad, abbr, case: kase } };
 }
 
@@ -396,4 +406,40 @@ export function classifyDriveError(message: string): { kind: DriveErrorKind; tex
   if (m.includes("not connected")) return { kind: "no_access", text: "Drive isn't connected (GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_DRIVE_USER)", retry: false };
   if (m.includes("too large")) return { kind: "too_large", text: message, retry: false };
   return { kind: "other", text: message.slice(0, 300), retry: true };
+}
+
+// ─── Reports ──────────────────────────────────────────────────────────────────────────────────────────────────────
+//
+// <client folder> / 30 - Reports / 2026 / November 01 2026 / OceanBox - Meta report - Nov 6 - Nov 12.pdf
+// The month is the one we're in when the report is saved (New York time), not the report's period.
+
+/** Made in the client's Drive folder when there's no reports folder yet */
+export const REPORTS_FOLDER = "30 - Reports";
+/** Month folders of the reports folders: "November 01 2026" */
+export const REPORT_MONTH_STYLE: MonthStyle = { template: "{NAME} 01 {YEAR}", pad: true, abbr: false, case: "title" };
+
+/** "30 - Reports", "Reports": the client's reports folder (not an old copy) */
+export const isReportsFolder = (name: string) => /reports/i.test(name) && !NOT_IN_USE.test(name);
+
+/** The reports folder's year and month levels for when a report is saved: found, else made like their siblings */
+export function reportSteps(at: string | Date): FolderStep[] {
+  const ym = yearMonth(at);
+  return [
+    { key: ym.year, match: (n) => parseYearFolder(n) === Number(ym.year), name: (sib) => yearFolderName(ym.year, sib.map((s) => s.name)) },
+    {
+      key: String(ym.num).padStart(2, "0"),
+      match: (n) => parseMonthFolder(n)?.month === ym.num,
+      name: (sib) => monthFolderName(ym.num, ym.year, monthStyleOf(sib.map((s) => s.name)) ?? REPORT_MONTH_STYLE),
+    },
+  ];
+}
+
+/**
+ * The folder a report is saved in, each level found or made once: the client's reports folder, the year, the month.
+ * Nothing is ever deleted or moved.
+ */
+export async function ensureReportFolder(drive: FolderDrive, clientFolder: string, at: string | Date): Promise<string> {
+  let parent = (await findOrCreateFolder(drive, clientFolder, { key: REPORTS_FOLDER, match: isReportsFolder, name: () => REPORTS_FOLDER })).id;
+  for (const step of reportSteps(at)) parent = (await findOrCreateFolder(drive, parent, step)).id;
+  return parent;
 }

@@ -127,6 +127,22 @@ export const drive = {
     const { data } = await call<{ id: string; mimeType: string; trashed?: boolean; parents?: string[]; webViewLink?: string; name: string }>("GET", `${API}/${id}`, { params: { fields: "id, name, mimeType, trashed, parents, webViewLink", ...ALL } });
     return data;
   },
+  /** A file by exact name in a folder (the oldest one), so saving again makes a new version, not a copy */
+  async findFile(parent: string, name: string) {
+    const esc = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const { data } = await call<{ files?: { id: string; name: string }[] }>("GET", API, {
+      params: {
+        q: `'${parent.replace(/'/g, "")}' in parents and name = '${esc}' and mimeType != '${FOLDER}' and trashed = false`,
+        fields: "files(id, name)",
+        pageSize: "10",
+        orderBy: "createdTime",
+        corpora: "allDrives",
+        includeItemsFromAllDrives: "true",
+        ...ALL,
+      },
+    });
+    return data.files?.[0] ?? null;
+  },
   /** Resumable (any size): a new file, or with fileId a new revision of that file (kept forever, renamed if the concept changed) */
   async upload(p: { parent?: string; fileId?: string; name: string; mime: string; bytes: Blob }) {
     const url = p.fileId ? `${UPLOAD}/${p.fileId}` : UPLOAD;

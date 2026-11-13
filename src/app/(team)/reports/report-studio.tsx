@@ -15,12 +15,13 @@ import type { ReportMetrics } from "@/lib/reports/metrics";
 import { jointNote, type JointInfo, type JointNote } from "@/lib/reports/joint-core";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { ManualResults, type ManualEntered } from "./manual-results";
-import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, sendMyPartNow, sendReport, setReportCampaignExcluded, skipReport } from "./actions";
+import { reportFileName, type DriveSave } from "@/lib/reports/drive-save-core";
+import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, saveToDrive, sendMyPartNow, sendReport, setReportCampaignExcluded, skipReport } from "./actions";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
 import { buildReportEmail, channelsLabel, type Delivery } from "@/lib/reports/delivery-core";
-import { forClient, whiteLabelFileName } from "@/lib/reports/white-label";
+import { forClient } from "@/lib/reports/white-label";
 import { DeliveryPicker, type DeliveryOptions } from "./delivery-picker";
 import { PeriodPicker } from "./period-picker";
 import { SendHistory, type HistoryItem } from "./send-history";
@@ -49,6 +50,8 @@ export type StudioReport = {
   extras: string;
   /** Results the team entered from the client's CRM for the report's period (kept across regenerates) */
   manual: ManualEntered | null;
+  /** Where it was last saved in the client's Drive (and when), if it was */
+  driveSave?: DriveSave | null;
   /** The metrics the buyer chose (or this client's layout from the last report); null: the defaults */
   layout: ReportLayout | null;
   qa: Qa | null;
@@ -249,6 +252,10 @@ export function ReportStudio({
   // The PDF on screen, ready to download (handed over by the preview once it has the report)
   const pdfMaker = useRef<PdfMaker | null>(null);
   const [downloading, setDownloading] = useState(false);
+  // Saved to the client's Drive (with the write-up as a last section): where, and when
+  const [driveSave, setDriveSave] = useState<DriveSave | null>(report.driveSave ?? null);
+  const [savingDrive, setSavingDrive] = useState(false);
+  const [driveError, setDriveError] = useState<{ text: string; href?: string } | null>(null);
   const [qa, setQa] = useState<Qa | null>(report.qa);
   const [chat, setChat] = useState<ChatTurn[]>(report.chat);
   const [ask, setAsk] = useState("");
@@ -453,7 +460,7 @@ export function ReportStudio({
   const stale = report.period.stale.length > 0 && !sent && !busy;
 
   const from = joint ? { name: "Kaizen", image: null, app: true } : { name: slack.name || slack.me, image: slack.image, app: false };
-  const fileName = client.whiteLabel ? whiteLabelFileName(client.name, built ? "built" : report.kind, report.periodLabel, built ? null : platformName(report.platform)) : `${client.name} - ${built ? "Report" : `${platformName(report.platform).replace(" Ads", "")} report`} - ${report.periodLabel}.pdf`;
+  const fileName = reportFileName({ client: client.name, whiteLabel: Boolean(client.whiteLabel), built, kind: report.kind, platform: report.platform, periodLabel: report.periodLabel });
   // The PDF as it is on screen, under the name it goes out with; the server's copy when the preview isn't drawn yet
   const downloadPdf = async () => {
     setDownloading(true);
@@ -483,6 +490,53 @@ export function ReportStudio({
       </svg>
       {downloading ? "Preparing the PDF…" : "Download PDF"}
     </button>
+  );
+  // Save to Drive: the PDF with our notes as a last section, in the client's Drive (the client's own PDF never has them)
+  const saveDrive = async () => {
+    setSavingDrive(true);
+    setDriveError(null);
+    try {
+      const r = await saveToDrive(report.id);
+      if (r.ok) setDriveSave(r.save);
+      else setDriveError({ text: r.error, href: r.fixHref });
+    } catch {
+      setDriveError({ text: "It couldn't be saved to Drive. Try again in a moment." });
+    } finally {
+      setSavingDrive(false);
+    }
+  };
+  const driveButton = (
+    <div className="grid gap-1.5">
+      <button type="button" disabled={savingDrive} onClick={() => void saveDrive()} className="inline-flex h-11 items-center justify-center gap-2 rounded-brand border border-line bg-surface-2 px-4 text-sm font-medium text-fg transition-colors hover:border-faint disabled:opacity-60 max-md:h-12">
+        <svg viewBox="0 0 16 16" aria-hidden className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2.5 11.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1M8 10V2.5M4.8 5.4 8 2.2l3.2 3.2" />
+        </svg>
+        {savingDrive ? "Saving to Drive…" : driveSave ? "Save again" : "Save to Drive"}
+      </button>
+      {driveSave && !driveError && (
+        <p className="text-[11.5px] text-muted">
+          Saved to Drive ·{" "}
+          {driveSave.url ? (
+            <a href={driveSave.url} target="_blank" rel="noreferrer" className="text-fg underline-offset-4 hover:underline">
+              Open
+            </a>
+          ) : (
+            "Open"
+          )}{" "}
+          · {new Date(driveSave.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}
+        </p>
+      )}
+      {driveError && (
+        <p className="text-[11.5px] text-bad">
+          {driveError.text}{" "}
+          {driveError.href && (
+            <Link href={driveError.href} className="underline underline-offset-4">
+              Open the client page
+            </Link>
+          )}
+        </p>
+      )}
+    </div>
   );
   const waitingParts = bundle?.parts.filter((p) => p.status !== "submitted" && p.status !== "posted") ?? [];
   const STEPS = [
@@ -1188,6 +1242,7 @@ ${t}` : t);
                 )}
                 {qa?.verdict === "fix" && !mineDone && <p className="text-[11.5px] text-bad">The QA found something to fix: worth a look in Checks first.</p>}
                 {downloadButton}
+                {driveButton}
               </div>
             );
 

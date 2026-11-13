@@ -15,6 +15,7 @@ import { canReportOn } from "@/lib/reports/access";
 import { isPeriodKey, nextPeriod, parseDates, previousPeriod, rangeLabel, resolvePeriod, restOfAsk, shiftDay, todayIn, type PeriodKey } from "@/lib/reports/period";
 import { normalizeDelivery, type Delivery } from "@/lib/reports/delivery-core";
 import { applyManual, cleanLines, type ManualLine, type ManualResults } from "@/lib/reports/manual";
+import type { DriveSave } from "@/lib/reports/drive-save-core";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -703,4 +704,19 @@ export async function saveManualResults(id: string, lines: ManualLine[]): Promis
   if (error) return { ok: false, error: error.message };
   done(id);
   return { ok: true, lines: clean };
+}
+
+/**
+ * Save to Drive: the report as a PDF with the buyer's write-up as a last section ("Our notes"), in the client's Drive
+ * (<client folder> / 30 - Reports / year / the month we're in). Saved again, it's a new version of the same file.
+ * Anyone who may work on the report may save it, whatever its status (a report that's gone out is kept in Drive too).
+ */
+export async function saveToDrive(id: string): Promise<Result<{ save: DriveSave; newVersion: boolean; recorded: boolean }> & { fixHref?: string }> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  const { saveReportToDrive } = await import("@/lib/reports/drive-save");
+  const r = await saveReportToDrive(createAdminClient(), id, { id: ok.me.id, fullName: ok.me.fullName });
+  if (!r.ok) return r;
+  done(id);
+  return r;
 }
