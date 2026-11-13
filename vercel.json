@@ -95,7 +95,7 @@
     },
     {
       "path": "/api/cron/context?step=reports",
-      "schedule": "*/15 * * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/cron/context?step=docs",
