@@ -82,3 +82,27 @@ export function lastUsed(sends: readonly PastSend[], now: { reportId: string; bu
   const out: SendOption[] = prev ? (["slack", "email"] as const).filter((c) => prev.channels.includes(c)) : [];
   return previousDrive ? [...out, "drive"] : out;
 }
+
+/**
+ * The one way it goes out, picked to start with: how this buyer last sent one for this client (when it's offered here),
+ * else Slack (or email when the client has no Slack channel to post in).
+ */
+export function defaultSendOption(offers: readonly SendOption[], last: readonly SendOption[], hasChannel = true): SendOption {
+  const lastOne = last.find((o) => offers.includes(o));
+  if (lastOne) return lastOne;
+  return hasChannel ? "slack" : "email";
+}
+
+/** The channels a pick goes by: Slack or email alone, never both; Drive isn't a channel */
+export function channelsFor(option: SendOption): ("slack" | "email")[] {
+  return option === "drive" ? [] : [option];
+}
+
+export type PreviewFormat = "slack" | "email" | "pdf";
+export const PREVIEW_FORMATS: PreviewFormat[] = ["slack", "email", "pdf"];
+
+/** The format the message step opens on: the one in the address, else how this buyer last sent (Slack or email), else Slack */
+export function previewFormat(asked: string | null | undefined, last: readonly SendOption[]): PreviewFormat {
+  if (PREVIEW_FORMATS.includes(asked as PreviewFormat)) return asked as PreviewFormat;
+  return last.find((o) => o === "slack" || o === "email") ?? "slack";
+}

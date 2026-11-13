@@ -802,3 +802,12 @@ export async function saveToDrive(id: string): Promise<Result<{ save: DriveSave;
   done(id);
   return r;
 }
+
+/** The email as it will go (who it's from, the subject, its HTML), for the studio's Message step */
+export async function previewReportEmail(id: string, first: string | null, note?: string): Promise<Result<{ preview: import("@/lib/reports/email-preview").EmailPreview }>> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  const { reportEmailPreview } = await import("@/lib/reports/email-preview");
+  const preview = await reportEmailPreview(createAdminClient(), id, { fullName: ok.me.fullName ?? "Kaizen", email: ok.me.email }, first, note?.slice(0, 600) || null);
+  return preview ? { ok: true, preview } : { ok: false, error: "The email couldn't be drawn." };
+}

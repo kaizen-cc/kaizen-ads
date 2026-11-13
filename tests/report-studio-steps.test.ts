@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { furthestStep, initialStep, isWholeMonth, lastUsed, resolveStep, sendOptions, stepsFor, type PastSend } from "@/lib/reports/studio-steps";
+import { channelsFor, defaultSendOption, furthestStep, initialStep, previewFormat, isWholeMonth, lastUsed, resolveStep, sendOptions, stepsFor, type PastSend } from "@/lib/reports/studio-steps";
 
 const base = { kind: "weekly", rider: false, built: false, isBuilder: false, sent: false, mineDone: false, messageApproved: false };
 
@@ -94,6 +94,30 @@ describe("Last used", () => {
   it("counts a send for several services (a recap, Meta + TikTok) for each", () => {
     expect(lastUsed([send({ platform: null, reportId: null, bundleId: "b-old", channels: ["email"] })], now)).toEqual(["email"]);
     expect(lastUsed([send({ platform: null, reportId: null, bundleId: "b-now", channels: ["email"] })], { ...now, bundleId: "b-now" })).toEqual([]);
+  });
+
+  it("starts on the one way this buyer last used, else Slack", () => {
+    const monthly = ["slack", "email", "drive"] as const;
+    expect(defaultSendOption(["slack", "email"], ["email"])).toBe("email");
+    expect(defaultSendOption(["slack", "email"], [])).toBe("slack");
+    expect(defaultSendOption(monthly, ["drive"])).toBe("drive");
+    expect(defaultSendOption(["slack", "email"], ["drive"])).toBe("slack");
+    expect(defaultSendOption(["slack", "email"], ["slack", "email"])).toBe("slack");
+    expect(defaultSendOption(["slack", "email"], [], false)).toBe("email");
+  });
+
+  it("goes by one channel, and Drive by none", () => {
+    expect(channelsFor("slack")).toEqual(["slack"]);
+    expect(channelsFor("email")).toEqual(["email"]);
+    expect(channelsFor("drive")).toEqual([]);
+  });
+
+  it("opens the message preview on the format last used, the address winning", () => {
+    expect(previewFormat(null, [])).toBe("slack");
+    expect(previewFormat(null, ["email"])).toBe("email");
+    expect(previewFormat(null, ["drive"])).toBe("slack");
+    expect(previewFormat("pdf", ["email"])).toBe("pdf");
+    expect(previewFormat("nonsense", ["email"])).toBe("email");
   });
 
   it("adds Drive when the previous month's report was saved there", () => {
