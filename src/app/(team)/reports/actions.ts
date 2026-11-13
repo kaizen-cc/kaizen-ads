@@ -8,7 +8,7 @@ import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { draftQueued, sendWeekly, submitMonthly, tiktokJoinsFor } from "@/lib/reports/run";
-import { draftReport, qaReport, reviseReport, type ChatTurn, type Qa, type Sections } from "@/lib/reports/write";
+import { draftReport, qaReport, recountReport, reviseReport, type ChatTurn, type Qa, type Sections } from "@/lib/reports/write";
 import { periodsFor } from "@/lib/reports/metrics";
 import { nyParts } from "@/lib/kpi/calc";
 import { canReportOn } from "@/lib/reports/access";
@@ -53,6 +53,15 @@ export async function saveReport(id: string, patch: { message?: string; extras?:
   return { ok: true };
 }
 
+/** A layout as it's kept: known metrics only, campaign names trimmed and capped (the campaigns left out of the report are `campaigns.hide`) */
+function tidyLayout(layout: ReportLayout): ReportLayout {
+  const keys = new Set<string>(METRIC_KEYS);
+  const clean = (l?: string[]) => (l ? [...new Set(l.filter((k) => keys.has(k)))].slice(0, 12) as MetricKey[] : undefined);
+  const names = (l?: string[]) => (l ? [...new Set(l.map((x) => String(x).trim().slice(0, 300)).filter(Boolean))].slice(0, 60) : undefined);
+  const results = layout.campaigns?.results ? Object.fromEntries(Object.entries(layout.campaigns.results).slice(0, 60).map(([k, v]) => [String(k).slice(0, 300), String(v).slice(0, 200)])) : undefined;
+  return { tiles: clean(layout.tiles), table: clean(layout.table), columns: clean(layout.columns), campaigns: layout.campaigns ? { hide: names(layout.campaigns.hide), add: names(layout.campaigns.add), results } : undefined };
+}
+
 /**
  * The metrics the buyer chose (tiles, key metrics rows, campaign columns and lines): kept on the report, and on its KPI
  * as this client's layout, so the next report starts the way the buyer left this one.
@@ -61,11 +70,7 @@ export async function saveLayout(id: string, layout: ReportLayout): Promise<Resu
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   if (ok.r.status === "posted") return { ok: false, error: "It's already gone out." };
-  const keys = new Set<string>(METRIC_KEYS);
-  const clean = (l?: string[]) => (l ? [...new Set(l.filter((k) => keys.has(k)))].slice(0, 12) as MetricKey[] : undefined);
-  const names = (l?: string[]) => (l ? [...new Set(l.map((x) => String(x).slice(0, 300)))].slice(0, 60) : undefined);
-  const results = layout.campaigns?.results ? Object.fromEntries(Object.entries(layout.campaigns.results).slice(0, 60).map(([k, v]) => [String(k).slice(0, 300), String(v).slice(0, 200)])) : undefined;
-  const tidy: ReportLayout = { tiles: clean(layout.tiles), table: clean(layout.table), columns: clean(layout.columns), campaigns: layout.campaigns ? { hide: names(layout.campaigns.hide), add: names(layout.campaigns.add), results } : undefined };
+  const tidy = tidyLayout(layout);
   const admin = createAdminClient();
   // "Include our notes in the report" is this report's alone: the next one starts without them again
   await admin.from("reports").update({ layout: layout.notes === true ? { ...tidy, notes: true } : tidy, updated_at: new Date().toISOString() }).eq("id", id);
@@ -73,6 +78,53 @@ export async function saveLayout(id: string, layout: ReportLayout): Promise<Resu
   if (t) await admin.from("kpi_targets").update({ report_layout: tidy }).eq("id", t.id);
   done(id);
   return { ok: true };
+}
+
+/**
+ * Leaves a campaign out of THIS report (a campaign that isn't ours: the client's own, another agency's), or brings it
+ * back. Everything is worked out again from the campaigns that remain, read from the ad account without it: the glance
+ * tiles, spend, impressions and clicks, CTR, CPC, CPM, results and their cost, ROAS, the campaign table and its total,
+ * the comparison, the five weeks, the creative scorecard and top ads (an ad leaves with its campaign) and the numbers the
+ * takeaways and the AI read. The message and notes are then brought up to date with the new numbers (the buyer's own
+ * edits stay), and the QA checks them again. The choice is kept on the report and as this client's layout, so their next
+ * report starts without the campaign too. Nothing is deleted anywhere: the campaign is listed under "Left out" to bring back.
+ */
+export async function setCampaignLeftOut(id: string, campaign: { name: string }, leaveOut: boolean): Promise<Result<{ chat: ChatTurn[]; message: string; sections: Sections; qa: Qa | null; layout: ReportLayout; updated: boolean }>> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.status === "posted") return { ok: false, error: "It's already gone out." };
+  if (ok.r.status === "drafting" || ok.r.status === "queued") return { ok: false, error: "It's being written right now. Try again once it's done." };
+  const name = String(campaign.name ?? "").trim().slice(0, 300);
+  if (!name) return { ok: false, error: "Which campaign?" };
+  const admin = createAdminClient();
+  const { data: r } = await admin.from("reports").select("layout, chat, kpi_targets(id, report_layout)").eq("id", id).single();
+  const t = (r?.kpi_targets ?? null) as unknown as { id: string; report_layout: ReportLayout | null } | null;
+  const cur = ((r?.layout ?? t?.report_layout ?? {}) as ReportLayout) ?? {};
+  const hide = new Set(cur.campaigns?.hide ?? []);
+  if (leaveOut) hide.add(name);
+  else hide.delete(name);
+  const tidy = tidyLayout({ ...cur, campaigns: { ...(cur.campaigns ?? {}), hide: [...hide], add: (cur.campaigns?.add ?? []).filter((x) => x !== name) } });
+  const layout: ReportLayout = cur.notes === true ? { ...tidy, notes: true } : tidy;
+  await admin.from("reports").update({ layout, updated_at: new Date().toISOString() }).eq("id", id);
+  if (t) await admin.from("kpi_targets").update({ report_layout: tidy }).eq("id", t.id);
+  try {
+    await recountReport(admin, id);
+  } catch (e) {
+    return { ok: false, error: `Kept, but the numbers couldn't be worked out again just now (${e instanceof Error ? e.message : "try again"}).` };
+  }
+  // The written parts follow the numbers; if the AI can't just now, the numbers are right and the message is flagged by its QA
+  const ask = leaveOut
+    ? `The campaign "${name}" was left out of this report: it isn't ours to report on. Its numbers are out of every figure now (spend, results, cost per result, clicks, CTR, CPC, ROAS, the campaign table). Bring every number and sentence in the message and the sections up to date with the numbers given now, change nothing else, and don't mention that campaign.`
+    : `The campaign "${name}" is back in this report, and its numbers are in every figure again. Bring every number and sentence in the message and the sections up to date with the numbers given now, and change nothing else.`;
+  let revised: Awaited<ReturnType<typeof reviseReport>> | null = null;
+  try {
+    revised = await reviseReport(admin, id, ask, ok.me.fullName, { echo: false });
+  } catch {
+    await qaReport(admin, id).catch(() => null);
+  }
+  const { data: now } = await admin.from("reports").select("chat, message, sections, qa").eq("id", id).single();
+  done(id);
+  return { ok: true, layout, updated: Boolean(revised), chat: (revised?.chat ?? (now?.chat as ChatTurn[] | null) ?? []) as ChatTurn[], message: (revised?.message ?? (now?.message as string | null) ?? "") as string, sections: (revised?.sections ?? now?.sections) as Sections, qa: (revised?.qa ?? (now?.qa as Qa | null) ?? null) as Qa | null };
 }
 
 /**

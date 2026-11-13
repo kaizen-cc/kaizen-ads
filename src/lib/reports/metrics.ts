@@ -40,11 +40,17 @@ export type Period = {
 };
 
 /** result: what this campaign is optimized for ("Purchase", "Post engagement"), counted the way the KPI board counts it */
-export type CampaignLine = { name: string; spend: number; results: number; costPerResult: number | null; roas: number | null; ctr: number | null; id?: string; result?: string | null; impressions?: number; clicks?: number; cpc?: number | null; cpm?: number | null; revenue?: number; events?: CampaignEvent[] };
+export type CampaignLine = { name: string; spend: number; results: number; costPerResult: number | null; roas: number | null; ctr: number | null; id?: string; result?: string | null; impressions?: number; clicks?: number; cpc?: number | null; cpm?: number | null; revenue?: number; events?: CampaignEvent[]; counted?: number; prev?: CampaignBefore };
+/**
+ * What the campaign contributed to the report's totals: `counted` is its share of the headline results (0 for a reach or
+ * engagement campaign the report doesn't count as a result), `prev` its numbers in the comparison period. They let the
+ * totals be worked out again when the campaign is left out, without reading the ad account.
+ */
+export type CampaignBefore = { spend: number; impressions: number; clicks: number; results: number; revenue: number };
 /** One thing a campaign counted in the period (Meta's action type, its name, how many), for picking its result by hand */
 export type CampaignEvent = { type: string; label: string; count: number };
-/** A campaign kept out of the report: excluded by hand (a client-run campaign) or outside the KPI's campaign match */
-export type LeftOut = { id: string; name: string; spend: number; why: "excluded" | "match" };
+/** A campaign kept out of the report: excluded from the KPI by hand (a client-run campaign), outside the KPI's campaign match, or left out of this report alone ("report") */
+export type LeftOut = { id: string; name: string; spend: number; why: "excluded" | "match" | "report" };
 /** format: "Video", "Static", "Flexible", "Carousel"; active: it delivered on the period's last day */
 export type TopAd = { id: string; name: string; campaign: string | null; spend: number; results: number; costPerResult: number | null; ctr: number | null; clicks: number; link: string | null; image: string | null; copy?: { body: string | null; headline: string | null; cta: string | null; url: string | null }; format?: string | null; active?: boolean | null; impressions?: number; cpc?: number | null; revenue?: number; roas?: number | null; views6s?: number; hookRate?: number | null };
 
@@ -237,9 +243,14 @@ export async function withCampaignEvents(admin: SupabaseClient, m: ReportMetrics
 }
 
 /** Every number a report shows, for one KPI target, as of `today` (New York). */
-export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }, opts: { lite?: boolean; daily?: boolean } = {}): Promise<ReportMetrics> {
-  const platform = asKpiPlatform(t.platform);
-  const every = (await accountRows(admin, t.ad_account_id ?? "", platform)) as Row[];
+export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }, opts: { lite?: boolean; daily?: boolean; /** Campaigns left out of this report alone (by name): every number is worked out again from the rest */ leave?: string[] } = {}): Promise<ReportMetrics> {
+  const platform = asKpiPlatform(base.platform);
+  const every = (await accountRows(admin, base.ad_account_id ?? "", platform)) as Row[];
+  // Campaigns the buyer left out of this report: counted out of the account's rows, so the totals, the comparison, the
+  // five weeks, the top ads and the campaign lines are all worked out again from the campaigns that remain
+  const leave = new Set((opts.leave ?? []).map(String).filter(Boolean));
+  const leaveIds = leave.size ? new Set(every.filter((r) => leave.has(String(r.campaign_name ?? "")) || leave.has(String(r.campaign_id))).map((r) => String(r.campaign_id))) : new Set<string>();
+  const t: Target = leaveIds.size ? { ...base, excluded_campaigns: [...new Set([...(base.excluded_campaigns ?? []).map(String), ...leaveIds])] } : base;
   const all = inScope(every, t);
   const ps = periodsFor(kind, today, range);
   // The campaigns that spent in the period but aren't the KPI's (run by the client, or outside its campaign match): kept
@@ -248,7 +259,7 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
   for (const r of every) {
     if (r.date < ps.main.start || r.date > ps.main.end || campaignIncluded(t, { id: r.campaign_id, name: r.campaign_name })) continue;
     const id = String(r.campaign_id);
-    const e = outside.get(id) ?? { id, name: r.campaign_name ?? id, spend: 0, why: (t.excluded_campaigns ?? []).includes(id) ? "excluded" : "match" };
+    const e = outside.get(id) ?? { id, name: r.campaign_name ?? id, spend: 0, why: (base.excluded_campaigns ?? []).map(String).includes(id) ? "excluded" : leaveIds.has(id) ? "report" : "match" };
     e.spend = r2(e.spend + (Number(r.spend) || 0));
     outside.set(id, e);
   }
@@ -304,17 +315,27 @@ export async function reportMetrics(admin: SupabaseClient, t: Target, kind: "wee
   // Campaigns in the main period, biggest spend first: every one with spend, so the buyer can add any to the report.
   // Each counts what it's optimized for (an engagement campaign its engagements), as on the KPI board.
   const byCampaign = new Map<string, Row[]>();
-  for (const r of all) if (r.date >= ps.main.start && r.date <= ps.main.end) byCampaign.set(r.campaign_name ?? r.campaign_id, [...(byCampaign.get(r.campaign_name ?? r.campaign_id) ?? []), r]);
+  const priorBy = new Map<string, Row[]>();
+  for (const r of all) {
+    const k = r.campaign_name ?? r.campaign_id;
+    if (r.date >= ps.main.start && r.date <= ps.main.end) byCampaign.set(k, [...(byCampaign.get(k) ?? []), r]);
+    else if (r.date >= ps.compare.start && r.date <= ps.compare.end) priorBy.set(k, [...(priorBy.get(k) ?? []), r]);
+  }
   const campaigns: CampaignLine[] = [...byCampaign.entries()]
     .map(([name, rows]) => {
       const id = String(rows[0].campaign_id);
       const mine = own?.get(id);
-      const p = mine?.length ? period(rows, toDays(rows, null, null, new Map([[id, mine]]), platform), ps.main, conversionFor("campaign_goal"), "campaign_goal", valueType) : period(rows, toDays(rows, null, null, useGoals ? (goals ?? new Map()) : undefined, platform), ps.main, conv, type, valueType);
-      return { name, id, result: labels.get(id) || null, spend: p.spend, results: p.results, costPerResult: p.costPerResult, roas: p.roas, ctr: p.ctr, impressions: p.impressions, clicks: p.clicks, cpc: p.cpc, cpm: p.cpm, revenue: p.revenue, events: eventsOf(rows) };
+      // What the report's totals count for this campaign (the headline result), and what it counted in the comparison
+      // period: kept on the line so the totals can be worked out again without it
+      const counting = (rs: Row[], range: { start: string; end: string; label: string }) => period(rs, toDays(rs, null, null, useGoals ? (goals ?? new Map()) : undefined, platform), range, conv, type, valueType);
+      const counted = counting(rows, ps.main);
+      const p = mine?.length ? period(rows, toDays(rows, null, null, new Map([[id, mine]]), platform), ps.main, conversionFor("campaign_goal"), "campaign_goal", valueType) : counted;
+      const before = counting(priorBy.get(name) ?? [], ps.compare);
+      return { name, id, result: labels.get(id) || null, spend: p.spend, results: p.results, costPerResult: p.costPerResult, roas: p.roas, ctr: p.ctr, impressions: p.impressions, clicks: p.clicks, cpc: p.cpc, cpm: p.cpm, revenue: p.revenue, events: eventsOf(rows), counted: counted.results, prev: { spend: before.spend, impressions: before.impressions, clicks: before.clicks, results: before.results, revenue: before.revenue } };
     })
     .filter((c) => c.spend > 0)
     .sort((a, b) => b.spend - a.spend)
-    .slice(0, 40);
+    .slice(0, 80);
 
   // Top ads (Meta): the most results in the period, then the cheapest; with a preview link and image
   let topAds: TopAd[] = [];
@@ -492,7 +513,7 @@ const day = (s: string) => new Date(`${s}T12:00:00Z`);
  * A metric week by week (the weeks ending on `end`) or month by month (the months up to and including `end`'s), counted
  * the way the report counts it (each campaign's own result, campaigns left out of the KPI left out), for a trend chart.
  */
-export async function trendSeries(admin: SupabaseClient, t: Target, metric: MetricKey, grain: "week" | "month", periods: number, end: string): Promise<TrendPoint[]> {
+export async function trendSeries(admin: SupabaseClient, t: Target, metric: MetricKey, grain: "week" | "month", periods: number, end: string, leave: string[] = []): Promise<TrendPoint[]> {
   const n = Math.max(2, Math.min(12, Math.round(periods)));
   const ranges: { start: string; end: string; label: string }[] = [];
   const short = (s: string) => day(s).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
@@ -513,7 +534,7 @@ export async function trendSeries(admin: SupabaseClient, t: Target, metric: Metr
   const after = (d: string) => ymd(new Date(day(d).getTime() + 86_400_000));
   const out: TrendPoint[] = [];
   for (const r of ranges) {
-    const m = await reportMetrics(admin, t, "custom", after(r.end), { start: r.start, end: r.end }, { lite: true });
+    const m = await reportMetrics(admin, t, "custom", after(r.end), { start: r.start, end: r.end }, { lite: true, leave });
     out.push({ label: r.label, start: r.start, end: r.end, value: metricNumber(m.main, metric) });
   }
   return out;

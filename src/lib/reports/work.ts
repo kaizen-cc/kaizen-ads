@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { changeKey } from "@/lib/account-changes";
 import { aboutLeftOut } from "./format";
+import { withoutMentions } from "./slack-text";
 
 // Everything done on an account in a report's period, from every place it shows up: changes in the ad account (its
 // change history, and changes applied from Kaizen Ads), the sprint's moves, audits, creative made and in production,
@@ -104,5 +105,5 @@ export async function voiceOf(admin: SupabaseClient, buyerName: string | null, c
   const long = (data ?? []).filter((m) => (m.body ?? "").length > 350);
   const picked = [...long.filter((m) => m.client_id === clientId).slice(0, 2), ...long.filter((m) => m.client_id !== clientId).slice(0, 2)].slice(0, 3);
   if (!picked.length) return "";
-  return `<how_${first.toLowerCase()}_writes_to_clients>\n${picked.map((m) => `<example date="${day(m.occurred_at)}">\n${(m.body ?? "").slice(0, 2500)}\n</example>`).join("\n")}\n</how_${first.toLowerCase()}_writes_to_clients>`;
+  return `<how_${first.toLowerCase()}_writes_to_clients>\n${picked.map((m) => `<example date="${day(m.occurred_at)}">\n${withoutMentions((m.body ?? "").slice(0, 2500))}\n</example>`).join("\n")}\n</how_${first.toLowerCase()}_writes_to_clients>`;
 }

@@ -50,11 +50,36 @@ const KIND_WORD: Record<string, string> = { weekly: "weekly report", monthly: "m
 /** The email's subject: "<Client> weekly report · <period>" */
 export const reportSubject = (client: string, kind: string, period: string) => `${client} ${KIND_WORD[kind] ?? "report"} · ${period}`;
 
+// Words that end in a period without ending the sentence ("vs. last week", "e.g. a lead form", "approx. $40")
+const ABBREVIATION = /^(?:vs|e\.g|i\.e|approx|avg|mr|mrs|ms|dr|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\.$/i;
+
+/**
+ * A text split into its sentences. A sentence ends at ".", "!" or "?" followed by a space and the next sentence (or by the
+ * end of the text), never at a period inside a number or a name: "$4,583.98", "1.81 to 1.38", "$30.56", "v2.1", "3.5x" stay
+ * whole, and so does "vs. last week". (The period inside a number is never followed by a space; matching it as an ending
+ * is what broke a summary into "…$4,583", "56 the week before." and "16." as separate paragraphs.)
+ */
+export function sentencesOf(input: string | null | undefined): string[] {
+  const text = String(input ?? "").replace(/\s+/g, " ").trim();
+  const out: string[] = [];
+  let start = 0;
+  for (const m of text.matchAll(/[.!?]+["')\]]*(?=\s+\S|\s*$)/g)) {
+    const end = (m.index ?? 0) + m[0].length;
+    const chunk = text.slice(start, end);
+    const last = chunk.split(" ").at(-1) ?? "";
+    // "vs." and its kind, or a lowercase word starting the next sentence, are not the end of one
+    if (ABBREVIATION.test(last) || /^\s+[a-z]/.test(text.slice(end, end + 2))) continue;
+    out.push(chunk.trim());
+    start = end;
+  }
+  const rest = text.slice(start).trim();
+  if (rest) out.push(rest);
+  return out.filter(Boolean);
+}
+
 /** The two or three lines the email opens with: the report's own summary (or its headline), never more than three sentences */
 export function summaryLines(s: { headline?: string | null; summary?: string | null } | null | undefined): string[] {
-  const text = (s?.summary ?? "").replace(/\s+/g, " ").trim();
-  const sentences = text.match(/[^.!?]+[.!?]+(?=\s|$)|[^.!?]+$/g)?.map((x) => x.trim()).filter(Boolean) ?? [];
-  const lines = sentences.slice(0, 3);
+  const lines = sentencesOf(s?.summary).slice(0, 3);
   if (!lines.length && s?.headline?.trim()) lines.push(s.headline.trim());
   return lines;
 }

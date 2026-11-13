@@ -16,6 +16,7 @@ import { asKpiPlatform } from "@/lib/kpi/platform";
 import { siteUrl } from "@/lib/site";
 import { draftReport, type Sections } from "./write";
 import { forClient, isWhiteLabel, WHITE_LABEL_RULE, whiteLabelFileName } from "./white-label";
+import { openWithHere } from "./slack-text";
 
 // The report builder. Someone builds a report for a client: one or more date ranges (the last 7 days AND the month,
 // say) and one or more services. Each service is a part, written by the AI for that service's buyer, who reviews and
@@ -144,18 +145,18 @@ export async function composeMessage(admin: SupabaseClient, bundleId: string) {
   const { parts, client, ranges, whiteLabel } = await loadParts(admin, bundleId);
   const ready = parts.filter((p) => p.message?.trim());
   if (!ready.length) return "";
-  if (parts.length === 1) return forClient(ready[0].message!.trim(), whiteLabel);
+  if (parts.length === 1) return openWithHere(forClient(ready[0].message!.trim(), whiteLabel));
   const out = await askJson<{ message: string }>({
     agent: "reporter",
     label: "joint report message",
     bare: true,
     maxTokens: 6000,
-    system: `${whiteLabel ? `You combine the buyers' report messages for one client into a single Slack post that goes to the client's channel, with one PDF covering everything. ${WHITE_LABEL_RULE}` : "You combine the buyers' report messages for one client into a single Slack post that goes to the client's channel from Kaizen Marketing, with one PDF covering everything."} Open with one or two lines on the whole account across the services. Then one short part per service under its bold name (*Meta Ads*, *TikTok Ads*, *Google Ads*), keeping each buyer's key numbers, what we did and what's next in their own words, shortened. Every number exactly as given; nothing new. Slack formatting: *bold* for headers, "• " for bullets, no # headings, no emojis unless the buyers used them. End with one line saying the full report is attached. Never mention anything internal (AI, Kaizen Ads, team members other than the client's own people).`,
+    system: `${whiteLabel ? `You combine the buyers' report messages for one client into a single Slack post that goes to the client's channel, with one PDF covering everything. ${WHITE_LABEL_RULE}` : "You combine the buyers' report messages for one client into a single Slack post that goes to the client's channel from Kaizen Marketing, with one PDF covering everything."} Open with <!here> (Slack's @here, written exactly like that), never a person's mention, then one or two lines on the whole account across the services. Then one short part per service under its bold name (*Meta Ads*, *TikTok Ads*, *Google Ads*), keeping each buyer's key numbers, what we did and what's next in their own words, shortened. Every number exactly as given; nothing new. Slack formatting: *bold* for headers, "• " for bullets, no # headings, no emojis unless the buyers used them. End with one line saying the full report is attached. Never mention anything internal (AI, Kaizen Ads, team members other than the client's own people).`,
     schema: { type: "object", properties: { message: { type: "string" } }, required: ["message"], additionalProperties: false },
     prompt: `Client: ${client.name}\nPeriod: ${rangesLabel(ranges)}\n\n${ready.map((p) => `<message service="${platformName(p.platform)}" from="${p.profiles?.full_name ?? "the buyer"}">\n${p.message}\n</message>`).join("\n\n")}`,
   });
   // The backstop: a white label client's message never names the agency, whatever the AI wrote
-  return forClient(out.message.trim(), whiteLabel);
+  return openWithHere(forClient(out.message.trim(), whiteLabel));
 }
 
 /** A buyer approves their part. When the builder already approved the message and every part is in, it goes out. */

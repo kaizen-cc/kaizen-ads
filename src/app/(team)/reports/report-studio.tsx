@@ -9,6 +9,8 @@ import { Layer } from "../clients/[slug]/layer";
 import { PdfPreview, type PdfField, type PdfMaker } from "./pdf-preview";
 import { EmailFrame } from "./email-frame";
 import { scoreColumns, supportKeys, takeawaysFor, weeklyTileKeys, type Takeaway } from "@/lib/reports/weekly-core";
+import { leaveOutCampaigns } from "@/lib/reports/campaign-scope";
+import { mentionLabel, openWithHere } from "@/lib/reports/slack-text";
 import { RecapDeckButton } from "./recap-deck-button";
 import { metricKeysFor, clockTime, metricLabel, platformName, reportBasis, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
@@ -16,7 +18,7 @@ import { jointMessage, jointNote, type JointInfo, type JointNote } from "@/lib/r
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { ManualResults, type ManualEntered } from "./manual-results";
 import { reportFileName, type DriveSave } from "@/lib/reports/drive-save-core";
-import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveManualResults, saveReport, saveToDrive, sendMyPartNow, sendReport, setReportCampaignExcluded } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveManualResults, saveReport, saveToDrive, sendMyPartNow, sendReport, setCampaignLeftOut, setReportCampaignExcluded } from "./actions";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
@@ -94,7 +96,8 @@ const shortName = (p: string) => platformName(p as "meta" | "google" | "tiktok")
 function Mrkdwn({ text }: { text: string }) {
   const inline = (line: string, k: number) => {
     const out: React.ReactNode[] = [];
-    const re = /\*([^*\n]+)\*|_([^_\n]+)_|<(https?:[^|>]+)\|([^>]+)>|(https?:\/\/[^\s]+)/g;
+    // A mention is drawn as Slack does: "@here" (or "@someone" for a person), never the raw <!here> or <@U…> code
+    const re = /\*([^*\n]+)\*|_([^_\n]+)_|<(https?:[^|>]+)\|([^>]+)>|(https?:\/\/[^\s]+)|(<!(?:here|channel|everyone)(?:\|[^>]*)?>|<@[UW][A-Z0-9]+(?:\|[^>]*)?>)/g;
     let at = 0;
     let m: RegExpExecArray | null;
     let n = 0;
@@ -104,6 +107,7 @@ function Mrkdwn({ text }: { text: string }) {
       else if (m[2]) out.push(<i key={`${k}-${n++}`}>{m[2]}</i>);
       else if (m[3]) out.push(<span key={`${k}-${n++}`} className="text-[#1d9bd1]">{m[4]}</span>);
       else if (m[5]) out.push(<span key={`${k}-${n++}`} className="text-[#1d9bd1]">{m[5]}</span>);
+      else if (m[6]) out.push(<span key={`${k}-${n++}`} className="rounded-[3px] bg-[#1d9bd1]/20 px-0.5 text-[#1d9bd1]">{mentionLabel(m[6])}</span>);
       at = m.index + m[0].length;
     }
     out.push(line.slice(at));
@@ -441,6 +445,33 @@ export function ReportStudio({
     if (r.lesson) setNote({ ok: true, text: `Remembered for this client: ${r.lesson}` });
   };
 
+  // A campaign left out of THIS report (or brought back): every number is worked out again from the other campaigns (the
+  // preview follows at once; the server reads the ad account without it), and the message is brought up to date with them
+  const leaveOut = async (name: string, on: boolean) => {
+    if (asking) return;
+    const was = layout;
+    const hide = layout?.campaigns?.hide ?? [];
+    if (on) setLayoutState({ ...layout, campaigns: { ...(layout?.campaigns ?? {}), hide: [...new Set([...hide, name])] } });
+    setAsking(true);
+    setNote({ ok: true, text: on ? `Leaving ${name} out: working every number out again…` : `Bringing ${name} back: working every number out again…` });
+    const r = await setCampaignLeftOut(report.id, { name }, on);
+    setAsking(false);
+    if (!r.ok) {
+      setLayoutState(was);
+      return setNote({ ok: false, text: r.error });
+    }
+    setLayoutState(r.layout);
+    setChat(r.chat);
+    setSectionsState(r.sections);
+    if (!built) {
+      setMessage(r.message);
+      setBasis(r.sections ? reportBasis(r.sections, extras) : basis);
+    }
+    if (r.qa) setQa(r.qa);
+    setNote({ ok: true, text: on ? `${name} is left out of this report. Every number is worked out again without it${r.updated ? ", and the message is up to date" : "; check the message matches"}.` : `${name} is back in this report.` });
+    router.refresh();
+  };
+
   // Approved by mistake, or one more change: back to editing (nothing has gone out)
   const reopen = () =>
     start(async () => {
@@ -575,10 +606,11 @@ export function ReportStudio({
 
   // The message the buyer sends: theirs, then the TikTok part's under its own name (one post), and a recap's link line
   const riderParts = riders.map((x) => ({ platform: x.platform, message: riderMsgs[x.id] ?? "" }));
-  const slackText = forClient(
+  // Always opens with @here (never a person's mention), as it will be posted
+  const slackText = openWithHere(forClient(
     `${riders.length ? jointMessage(message, riderParts) : message}${monthly ? (client.whiteLabel ? `\n\n*Your ${report.periodLabel} recap is attached.*` : `\n\n*Your ${report.periodLabel} recap:* <https://recap|the link to the recap>`) : ""}`,
     client.whiteLabel,
-  );
+  ));
   const saveRiderMessages = () => Promise.all(riders.map((x) => (riderMsgs[x.id] !== (x.message ?? "") ? saveReport(x.id, { message: riderMsgs[x.id] ?? "" }) : null)));
 
   // Step 3: it goes out (or is approved to go out with the rest), then Drive when picked
@@ -636,7 +668,10 @@ export function ReportStudio({
   const weekly = report.kind !== "monthly" && report.kind !== "built";
   const doc = (() => {
     if (!sections) return null;
-    const cards: Takeaway[] = weekly && report.metrics ? takeawaysFor(report.metrics, sections.takeaways) : [];
+    const goneNames = new Set(gone.map((g) => g.name));
+    // The campaigns left out of this report (and the ones just excluded from the KPI) are out of every number on the page
+    const m = report.metrics ? leaveOutCampaigns(report.metrics, [...(layout?.campaigns?.hide ?? []), ...goneNames]) : report.metrics;
+    const cards: Takeaway[] = weekly && m ? takeawaysFor(m, sections.takeaways) : [];
     const fields: PdfField[] = [
       { id: "headline", label: "Headline", value: sections.headline },
       { id: "summary", label: "Summary", value: sections.summary },
@@ -695,20 +730,15 @@ export function ReportStudio({
       [list[i], list[j]] = [list[j], list[i]];
       setSections({ ...sections, [k]: list });
     };
-    // The metrics on the page now, as the PDF draws them
-    const goneNames = new Set(gone.map((g) => g.name));
-    const m = report.metrics && goneNames.size ? { ...report.metrics, campaigns: report.metrics.campaigns.filter((c) => !goneNames.has(c.name)) } : report.metrics;
+    // The metrics on the page now, as the PDF draws them (m, above)
     // Every report is drawn in one design: four tiles by the client's KPI, the support line under them (its metrics are
     // the "key metric" rows) and the scorecard's columns. What's clicked on the page is what's changed.
     const tiles = m ? weeklyTileKeys(m, layout) : [];
     const table = m ? supportKeys(m, tiles, layout) : [];
     const columns = m ? scoreColumns(m, layout) : [];
     const hasTable = true;
-    const limit = report.kind === "weekly" ? 6 : 8;
     const hide = layout?.campaigns?.hide ?? [];
     const add = layout?.campaigns?.add ?? [];
-    const shownCampaigns = m ? m.campaigns.filter((c) => !hide.includes(c.name)).slice(0, limit).map((c) => c.name) : [];
-    const offPage = m ? m.campaigns.filter((c) => !shownCampaigns.includes(c.name) && !add.includes(c.name)) : [];
     const list = { tiles, table, columns };
     // Excluded here: off the page right away (the numbers follow on regenerate)
     const shownLayout: ReportLayout | null = goneNames.size ? { ...layout, campaigns: { ...(layout?.campaigns ?? {}), hide: [...new Set([...hide, ...goneNames])] } } : layout;
@@ -840,13 +870,15 @@ export function ReportStudio({
           )}
           <button
             type="button"
+            disabled={asking}
             onClick={() => {
-              setLayout({ ...layout, campaigns: { hide: [...new Set([...hide, name])], add: add.filter((x) => x !== name) } });
               close();
+              void leaveOut(name, true);
             }}
-            className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40"
+            className="min-h-10 rounded-[10px] px-3 py-2 text-left text-[13px] leading-snug text-bad hover:bg-bad-soft/40 disabled:opacity-50"
           >
-            Take it out of the report
+            Leave out of this report
+            <span className="block text-[11.5px] text-faint">Every number is worked out again without it. Bring it back from &ldquo;Left out&rdquo;.</span>
           </button>
           {excluding === name ? (
             <div className="grid gap-2 rounded-[12px] border border-warn/40 bg-warn-soft px-3 py-2.5">
@@ -878,7 +910,35 @@ export function ReportStudio({
         </>
       );
     };
-    // The editing tools: metrics on the page, campaigns left out, lines for the message, and the CRM results
+    // Left out (N): the campaigns this report doesn't count (left out of this report alone, or out of the KPI), each one tap from coming back
+    const leftNow = (m?.leftOut ?? []).filter((c) => !restored.includes(c.name) && !goneNames.has(c.name));
+    const leftOutList =
+      editable && leftNow.length ? (
+        <div className="grid gap-2 rounded-[14px] border border-line bg-surface px-4 py-3" aria-label="Left out of this report">
+          <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">Left out ({leftNow.length})</p>
+          <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]">
+            {leftNow.map((c) => (
+              <span key={c.id} className="inline-flex min-h-10 max-w-full items-center gap-2 rounded-full bg-surface-2 py-1 pl-3 pr-1 md:min-h-9">
+                <span className="min-w-0 truncate text-muted" title={c.why === "match" ? "Outside the KPI's campaign match" : c.why === "excluded" ? "Excluded from the KPI" : "Left out of this report"}>
+                  {c.name} <span className="tabular text-faint">· ${Math.round(c.spend).toLocaleString("en-US")}</span>
+                </span>
+                {c.why === "report" ? (
+                  <button type="button" disabled={asking || pending} onClick={() => void leaveOut(c.name, false)} className="h-8 shrink-0 rounded-full px-3 text-[12px] text-brand-text hover:bg-surface disabled:opacity-50 md:h-7">
+                    Bring back
+                  </button>
+                ) : c.why === "excluded" ? (
+                  <button type="button" disabled={pending} onClick={() => excludeCampaign({ id: c.id, name: c.name }, false)} className="h-8 shrink-0 rounded-full px-3 text-[12px] text-brand-text hover:bg-surface disabled:opacity-50 md:h-7">
+                    Count it again
+                  </button>
+                ) : (
+                  <span className="pr-2 text-[11.5px] text-faint">outside the match</span>
+                )}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null;
+    // The editing tools: metrics on the page, lines for the message, and the CRM results
     const tools =
       editable && m ? (
         <div className="grid gap-2">
@@ -887,13 +947,13 @@ export function ReportStudio({
             <button type="button" disabled={asking} onClick={() => void tweak("Add a trend chart of the cost per result by week for the last 5 weeks, with what we see, why and what's next")} className="h-9 rounded-full border border-line px-3 text-muted hover:text-fg disabled:opacity-40 max-md:h-10">
               + Trend chart
             </button>
-            {([["tiles", "+ Tile"], ...(hasTable ? [["table", "+ Key metric row"]] : []), ["columns", "+ Scorecard column"], ...(weekly ? [] : [["campaign", "+ Campaign"]])] as ["tiles" | "table" | "columns" | "campaign", string][]).map(([k, label]) => (
+            {([["tiles", "+ Tile"], ...(hasTable ? [["table", "+ Key metric row"]] : []), ["columns", "+ Scorecard column"]] as ["tiles" | "table" | "columns", string][]).map(([k, label]) => (
               <button key={k} type="button" onClick={() => setAddingMetric(addingMetric === k ? null : k)} className={`h-9 rounded-full border px-3 max-md:h-10 ${addingMetric === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
                 {label}
               </button>
             ))}
             {layout && (
-              <button type="button" onClick={() => setLayout({})} className="h-9 rounded-full px-3 text-faint hover:text-fg max-md:h-10">
+              <button type="button" onClick={() => setLayout(hide.length ? { campaigns: { hide } } : {})} className="h-9 rounded-full px-3 text-faint hover:text-fg max-md:h-10">
                 Back to the default
               </button>
             )}
@@ -915,53 +975,6 @@ export function ReportStudio({
               ))}
             </div>
           )}
-          {addingMetric === "campaign" &&
-            (offPage.length ? (
-              <div className="grid max-h-56 gap-1 overflow-y-auto">
-                {offPage.map((c) => (
-                  <button
-                    key={c.name}
-                    type="button"
-                    onClick={() => {
-                      setLayout({ ...layout, campaigns: { hide: hide.filter((x) => x !== c.name), add: [...add, c.name] } });
-                      setAddingMetric(null);
-                    }}
-                    className="flex min-h-10 items-center justify-between gap-3 rounded-[10px] px-3 text-left text-[13px] hover:bg-surface-2"
-                  >
-                    <span className="min-w-0 truncate">{c.name}</span>
-                    <span className="tabular shrink-0 text-[12px] text-faint">
-                      ${Math.round(c.spend).toLocaleString("en-US")} · {c.results} {c.result?.toLowerCase() ?? "results"}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="text-[12.5px] text-faint">Every campaign that spent in the period is already in the report.</p>
-            ))}
-          {(() => {
-            // Campaigns this report's numbers leave out, with the ones excluded by hand one tap from counting again
-            const out = (report.metrics?.leftOut ?? []).filter((c) => !restored.includes(c.name) && !goneNames.has(c.name));
-            if (!out.length) return null;
-            return (
-              <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
-                <span className="mr-1 text-faint">Not in this report:</span>
-                {out.map((c) => (
-                  <span key={c.id} className="inline-flex min-h-9 max-w-full items-center gap-2 rounded-full bg-surface-2 py-1 pl-3 pr-1 max-md:min-h-10">
-                    <span className="min-w-0 truncate text-muted" title={c.why === "match" ? "Outside the KPI's campaign match" : "Excluded from the KPI"}>
-                      {c.name} <span className="tabular text-faint">· ${Math.round(c.spend).toLocaleString("en-US")}</span>
-                    </span>
-                    {c.why === "excluded" ? (
-                      <button type="button" disabled={pending} onClick={() => excludeCampaign({ id: c.id, name: c.name }, false)} className="h-7 shrink-0 rounded-full px-2.5 text-[12px] text-brand-text hover:bg-surface disabled:opacity-50 max-md:h-8">
-                        Count it again
-                      </button>
-                    ) : (
-                      <span className="pr-2 text-[11.5px] text-faint">outside the match</span>
-                    )}
-                  </span>
-                ))}
-              </div>
-            );
-          })()}
           <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
             <span className="mr-1 text-faint">Add:</span>
             {[...LISTS, ["extras", extras.trim() ? "To the note" : "A note (CRM sales, other channels)"] as const].map(([k, label]) => (
@@ -995,7 +1008,7 @@ export function ReportStudio({
           )}
         </div>
       ) : null;
-    return { fields, save, addBelow, move, shownLayout, hotMenu, tools };
+    return { fields, save, addBelow, move, shownLayout, hotMenu, tools, leftOutList };
   })();
 
   // ─── The AI panel: ask for a change (the document and the message update), or the QA's checks ─────────────────
@@ -1488,9 +1501,10 @@ export function ReportStudio({
             {editable && doc && (
               <p className="text-xs text-faint">
                 {monthly ? "This is the PDF saved to the client's Drive, with your write-up on the last page. " : "This is the PDF the client gets. "}
-                Click a metric to pick another, or any text to change it; saved as you go.
+                Click a metric to pick another, or any text to change it; saved as you go. Click a campaign to leave it out of this report.
               </p>
             )}
+            {doc?.leftOutList}
             {monthly && !sent && (driveError || (driveSave && !savingDrive)) && <div className="grid gap-1">{driveStatus}</div>}
             {act && sections && !busy && report.platform !== "tiktok" && <NextStepsAct reportId={report.id} platform={report.platform} steps={[...sections.next, ...(sections.stories ?? []).map((st) => st.next)]} write={act.write} canSwitch={act.canSwitch} />}
           </div>

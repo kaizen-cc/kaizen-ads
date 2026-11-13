@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, askJsonWithTools, type AgentKey } from "@/lib/ai";
 import { reportTools, toolsLine, type Pulled } from "./tools";
 import { metricsText, reportMetrics, trendSeries, type ReportMetrics, type TrendPoint } from "./metrics";
-import { METRIC_KEYS, leftOutText, reportBasis, type MetricKey } from "./format";
+import { METRIC_KEYS, leftOutText, reportBasis, type MetricKey, type ReportLayout } from "./format";
 import { voiceOf, workDone } from "./work";
 import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
 import { daysIn, previousPeriod, rangeLabel, todayIn } from "./period";
@@ -11,6 +11,8 @@ import { forClient, isWhiteLabel, scrubSections, WHITE_LABEL_RULE } from "./whit
 import { dailyTable } from "@/lib/kpi/platform";
 import type { Takeaway } from "./weekly-core";
 import { applyManual, type ManualResults } from "./manual";
+import { leftOutNames as leftOutNamesOf } from "./campaign-scope";
+import { openWithHere } from "./slack-text";
 
 // Writing a client report: the numbers (reportMetrics), the work behind them (workDone), the buyer's own voice (their
 // recaps in client channels), what this client likes in a report (learned from past edits), and what the buyer added
@@ -60,7 +62,7 @@ This report may cover more than one date range (for example the last 7 days and 
   return `You draft a ${kind === "weekly" ? "weekly" : "monthly"} ${where} report for a client of Kaizen Marketing, a paid social agency, as the media buyer who runs the account. The buyer reads it, may edit it, and sends it as themselves, so it must sound exactly like them: match the voice, warmth, length, formatting and habits in their examples (greeting, how they introduce numbers, headers, bullets, sign-off). If there are no examples, write warm, plain and confident.
 Every report follows the same arc: what we did, what we're doing now and why, and what comes next. Its job is to show the client the work behind the numbers, not just the numbers.
 Accuracy above everything: every number you write must come from the numbers given, rounded the way the buyer rounds; never estimate, never invent a figure, an ad, a change or a plan. Comparisons say against what ("vs the week before", "vs August"). If results are down, say it plainly and say what we're doing about it; never spin. Only mention work that's in the work log, the sprint, or what the buyer added; group many small edits into what they amount to ("tightened budgets on the low-performing ad sets"). Never mention internal things: team members other than the client's own people, Kaizen Ads, AI, audits by name, allotments, internal Slack, other clients.
-message: the ${kind === "weekly" ? "Slack message to the client channel" : "Slack post that goes with the monthly report link"}, in Slack formatting (*bold* for short section headers, "• " for bullets, line breaks; no # headings, no emojis unless the buyer uses them). ${kind === "weekly" ? "Open with the headline numbers for the last 7 days against the week before (and where the month stands), then what we did this week, the top creative with its preview link when there is one, and what's next. Keep it as short as the buyer's own recaps." : "A short, warm note that the monthly recap is ready, the two or three numbers that matter most for the month against the month before, one line on the biggest thing we did and the biggest thing coming up; the link is added after."}
+message: the ${kind === "weekly" ? "Slack message to the client channel" : "Slack post that goes with the monthly report link"}, in Slack formatting (*bold* for short section headers, "• " for bullets, line breaks; no # headings, no emojis unless the buyer uses them). Always open with <!here> (Slack's @here, written exactly like that) and then the greeting: never a person's mention (no <@U…> code, no name with @), even when the buyer's own recaps open with one. ${kind === "weekly" ? "Open with the headline numbers for the last 7 days against the week before (and where the month stands), then what we did this week, the top creative with its preview link when there is one, and what's next. Keep it as short as the buyer's own recaps." : "A short, warm note that the monthly recap is ready, the two or three numbers that matter most for the month against the month before, one line on the biggest thing we did and the biggest thing coming up; the link is added after."}
 sections: the same content, structured, for the PDF and the report page: headline (one line, the main takeaway), summary (2 to 4 sentences, the numbers in context), did (what we did, 3 to 7 bullets), doing (what we're doing now and why, 2 to 5), next (what comes next, 2 to 5), highlights (2 to 4 short numeric callouts, e.g. "14 leads at $84.21, down 56%").
 ${TAKEAWAY_RULES}
 ${DIAGNOSE_RULES}
@@ -95,7 +97,7 @@ function dataFlags(m: ReportMetrics): QaFlag[] {
 async function context(admin: SupabaseClient, reportId: string) {
   const { data: r } = await admin
     .from("reports")
-    .select("id, kind, platform, period_start, period_end, client_id, target_id, owner_id, bundle_id, extras, metrics, extra_metrics, manual_results, work, sections, message, chat, clients(name, client_type), kpi_targets(id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, excluded_campaigns, campaign_results), profiles!reports_owner_id_fkey(full_name)")
+    .select("id, kind, platform, period_start, period_end, client_id, target_id, owner_id, bundle_id, extras, layout, metrics, extra_metrics, manual_results, work, sections, message, chat, clients(name, client_type), kpi_targets(id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, target, monthly_budget, excluded_campaigns, campaign_results, report_layout), profiles!reports_owner_id_fkey(full_name)")
     .eq("id", reportId)
     .single();
   if (!r) throw new Error("Report not found");
@@ -105,7 +107,52 @@ async function context(admin: SupabaseClient, reportId: string) {
   const owner = (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null;
   const { data: prefs } = await admin.from("client_report_prefs").select("notes").eq("client_id", r.client_id).maybeSingle();
   const { data: last } = await admin.from("reports").select("period_start, sections").eq("target_id", r.target_id).eq("kind", r.kind).lt("period_start", r.period_start).in("status", ["posted", "submitted"]).order("period_start", { ascending: false }).limit(1).maybeSingle();
-  return { r, client, whiteLabel, target, owner, prefs: ((prefs?.notes ?? []) as string[]).slice(-20), last, leftOut: await leftOutNames(admin, target) };
+  // The campaigns left out of this report alone: the report's own layout, else the one the client's reports start from
+  const layout = ((r as unknown as { layout?: ReportLayout | null }).layout ?? (r.kpi_targets as unknown as { report_layout?: ReportLayout | null } | null)?.report_layout ?? null) as ReportLayout | null;
+  return { r, client, whiteLabel, target, owner, prefs: ((prefs?.notes ?? []) as string[]).slice(-20), last, leftOut: await leftOutNames(admin, target), leave: leftOutNamesOf(layout?.campaigns?.hide) };
+}
+
+const dayAfter = (d: string) => new Date(Date.parse(`${d}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * The report's numbers from the ad account, for its own dates, with the campaigns left out of it counted out of every
+ * one (and of every other date range of a built report): the totals, the comparison, the five weeks, the top ads.
+ */
+async function metricsFor(admin: SupabaseClient, c: Awaited<ReturnType<typeof context>>) {
+  const range = c.r.kind === "monthly" ? undefined : { start: c.r.period_start as string, end: c.r.period_end as string };
+  const opts = { leave: c.leave };
+  const metrics = await reportMetrics(admin, c.target, c.r.kind === "built" ? "custom" : (c.r.kind as "weekly" | "monthly" | "custom"), dayAfter(c.r.period_end), range, opts);
+  // A built report's other date ranges, each against its own comparison
+  let extra: ReportMetrics[] = [];
+  if (c.r.kind === "built" && c.r.bundle_id) {
+    const { data: b } = await admin.from("report_bundles").select("ranges").eq("id", c.r.bundle_id).maybeSingle();
+    const more = ((b?.ranges ?? []) as { start: string; end: string }[]).slice(1);
+    extra = await Promise.all(more.map((x) => reportMetrics(admin, c.target, "custom", dayAfter(x.end), { start: x.start, end: x.end }, opts)));
+  }
+  return { metrics, extra };
+}
+
+/** Results the team entered from the client's CRM for these dates (kept across regenerates), merged into the numbers (only when entered for this report's dates) */
+function withEntered(metrics: ReportMetrics, r: { period_start: string; period_end: string; manual_results?: unknown }): ReportMetrics {
+  const entered = r.manual_results as ManualResults | null;
+  return entered?.lines?.length && (!entered.start || (entered.start === r.period_start && entered.end === r.period_end)) ? applyManual(metrics, entered) : metrics;
+}
+
+/**
+ * Works a report's numbers out again after a campaign was left out of it (or brought back): read from the ad account's
+ * rows without the campaigns left out, the way drafting does, so every number on every page follows (the totals, the
+ * comparison, the five weeks, the campaign table and its total, the top ads, what the AI is told). Nothing the buyer wrote
+ * is touched: the message and sections stay, to be brought up to date with the numbers (see reviseReport).
+ */
+export async function recountReport(admin: SupabaseClient, reportId: string) {
+  const c = await context(admin, reportId);
+  const was = c.r.metrics as ReportMetrics | null;
+  const { metrics: fresh, extra } = await metricsFor(admin, c);
+  fresh.diagnosis = await diagnose(admin, c.r.client_id, fresh, c.target).catch(() => was?.diagnosis);
+  fresh.opportunity = was?.opportunity ?? null;
+  const metrics = withEntered(fresh, c.r as unknown as { period_start: string; period_end: string; manual_results?: unknown });
+  await admin.from("reports").update({ metrics, extra_metrics: extra.length ? extra : null, updated_at: new Date().toISOString() }).eq("id", reportId);
+  return metrics;
 }
 
 /**
@@ -184,20 +231,12 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
   await admin.from("reports").update({ status: "drafting", error: null, updated_at: new Date().toISOString() }).eq("id", reportId);
   try {
     const c = await context(admin, reportId);
-    const dayAfter = (d: string) => new Date(Date.parse(`${d}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
     // The report's own dates, for every number on every page (a weekly too: its period can be changed in the studio)
     const range = c.r.kind === "monthly" ? undefined : { start: c.r.period_start as string, end: c.r.period_end as string };
     // A weekly moved to other than seven days reads like an on-demand recap (its dates against the days just before)
     const kind = (c.r.kind === "weekly" && range && daysIn(range) !== 7 ? "custom" : c.r.kind) as Kind;
-    const [fresh, voice] = await Promise.all([reportMetrics(admin, c.target, c.r.kind === "built" ? "custom" : (c.r.kind as "weekly" | "monthly" | "custom"), dayAfter(c.r.period_end), range), voiceOf(admin, c.owner, c.r.client_id)]);
+    const [{ metrics: fresh, extra }, voice] = await Promise.all([metricsFor(admin, c), voiceOf(admin, c.owner, c.r.client_id)]);
     let metrics = fresh;
-    // A built report's other date ranges, each against its own comparison
-    let extra: ReportMetrics[] = [];
-    if (kind === "built" && c.r.bundle_id) {
-      const { data: b } = await admin.from("report_bundles").select("ranges").eq("id", c.r.bundle_id).maybeSingle();
-      const more = ((b?.ranges ?? []) as { start: string; end: string }[]).slice(1);
-      extra = await Promise.all(more.map((x) => reportMetrics(admin, c.target, "custom", dayAfter(x.end), { start: x.start, end: x.end })));
-    }
     // The campaigns this report leaves out stay out of the work log too (changes made in them, moves about them)
     const skip = [...new Set([...c.leftOut, ...[metrics, ...extra].flatMap((m) => (m.leftOut ?? []).map((x) => x.name))])];
     const work = await workDone(admin, c.target, [metrics.main.start, ...extra.map((m) => m.main.start)].sort()[0], metrics.main.end, skip);
@@ -207,8 +246,7 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
     metrics.opportunity = metrics.diagnosis && !c.whiteLabel ? await opportunityFor(admin, c.r, metrics, metrics.diagnosis).catch(() => null) : null;
     // Results the team entered from the client's CRM for these dates (kept across regenerates): merged into the numbers
     // the report, its PDF, the shared link and the writing all read (only when entered for this report's dates)
-    const entered = c.r.manual_results as ManualResults | null;
-    if (entered?.lines?.length && (!entered.start || (entered.start === c.r.period_start && entered.end === c.r.period_end))) metrics = applyManual(metrics, entered);
+    metrics = withEntered(metrics, c.r as unknown as { period_start: string; period_end: string; manual_results?: unknown });
     await admin.from("reports").update({ metrics, work, extra_metrics: extra.length ? extra : null }).eq("id", reportId);
     (c.r as unknown as { extra_metrics: ReportMetrics[] }).extra_metrics = extra;
     const out = await askJson<{ message: string; sections: Sections }>({
@@ -220,12 +258,14 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
       maxTokens: 12000,
       prompt: `${sourcesBlock(c, metrics, work.text, voice)}\n\n${await trendsFor(admin, c, metrics)}${STORY_RULES}\n\nWrite the ${kind === "custom" || kind === "built" ? `recap for ${[metrics.main.label, ...extra.map((m) => m.main.label)].join(" and ")}` : `${kind} report`}.`,
     });
-    out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end);
+    out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end, c.leave);
     // The backstop: a white label client's report never names the agency, whatever the AI wrote
     if (c.whiteLabel) {
       out.message = forClient(out.message, true);
       out.sections = scrubSections(out.sections);
     }
+    // And it always opens with @here, never with a person's mention
+    out.message = openWithHere(out.message);
     await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), updated_at: new Date().toISOString() }).eq("id", reportId);
     // The QA runs before the buyer hears about it, so the note they get says whether there's anything to fix
     await qaReport(admin, reportId).catch(() => null);
@@ -236,10 +276,10 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
 }
 
 /** Each story's points, from the ad account (the same count as the report), so the chart is never the AI's own numbers */
-async function fillStories(admin: SupabaseClient, target: Parameters<typeof reportMetrics>[1], sections: Sections, end: string): Promise<Sections> {
+async function fillStories(admin: SupabaseClient, target: Parameters<typeof reportMetrics>[1], sections: Sections, end: string, leave: string[] = []): Promise<Sections> {
   if (!sections.stories?.length) return { ...sections, stories: [] };
   const stories = await Promise.all(
-    sections.stories.slice(0, 4).map(async (st) => ({ ...st, periods: Math.max(2, Math.min(12, Math.round(st.periods || 5))), points: await trendSeries(admin, target, st.metric, st.grain, st.periods || 5, end).catch(() => []) })),
+    sections.stories.slice(0, 4).map(async (st) => ({ ...st, periods: Math.max(2, Math.min(12, Math.round(st.periods || 5))), points: await trendSeries(admin, target, st.metric, st.grain, st.periods || 5, end, leave).catch(() => []) })),
   );
   return { ...sections, stories };
 }
@@ -247,7 +287,7 @@ async function fillStories(admin: SupabaseClient, target: Parameters<typeof repo
 /** For a draft, when this client wants trends: the numbers to write them from (there's no tool while drafting) */
 async function trendsFor(admin: SupabaseClient, c: Awaited<ReturnType<typeof context>>, metrics: ReportMetrics) {
   if (!c.prefs.some((p) => /trend|graph|chart|progress|over (the )?(last|past)|week over week|month over month/i.test(p))) return "";
-  const [weeks, months] = await Promise.all([trendSeries(admin, c.target, "cost_per_result", "week", 5, metrics.main.end).catch(() => []), trendSeries(admin, c.target, "cost_per_result", "month", 6, metrics.main.end).catch(() => [])]);
+  const [weeks, months] = await Promise.all([trendSeries(admin, c.target, "cost_per_result", "week", 5, metrics.main.end, c.leave).catch(() => []), trendSeries(admin, c.target, "cost_per_result", "month", 6, metrics.main.end, c.leave).catch(() => [])]);
   return `<trends metric="cost per result">\nBy week: ${weeks.map((p) => `${p.label} ${p.value ?? "-"}`).join(", ")}\nBy month: ${months.map((p) => `${p.label} ${p.value ?? "-"}`).join(", ")}\n</trends>\n\n`;
 }
 
@@ -274,7 +314,7 @@ export async function refreshMessage(admin: SupabaseClient, reportId: string) {
     prompt: `<the_report_now>\n${JSON.stringify(r.sections)}${r.extras?.trim() ? `\nAlso: ${r.extras.trim()}` : ""}\n</the_report_now>\n\n<the_message_as_it_was>\n${r.message}\n</the_message_as_it_was>\n\nReturn the message, up to date.`,
   });
   const basis = reportBasis(r.sections, r.extras);
-  out.message = forClient(out.message, whiteLabel);
+  out.message = openWithHere(forClient(out.message, whiteLabel));
   await admin.from("reports").update({ message: out.message, message_basis: basis, updated_at: new Date().toISOString() }).eq("id", reportId);
   return { message: out.message, basis };
 }
@@ -320,11 +360,12 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
     ...(opts.echo === false ? [] : [{ role: "user" as const, text: ask.trim(), at: now, by }]),
     { role: "assistant" as const, text: out.reply, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
   ].slice(-40);
-  out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end);
+  out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end, c.leave);
   if (c.whiteLabel) {
     out.message = forClient(out.message, true);
     out.sections = scrubSections(out.sections);
   }
+  out.message = openWithHere(out.message);
   await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), chat: next, updated_at: now }).eq("id", reportId);
 
   if (out.lesson.trim()) await rememberPref(admin, c.r.client_id, out.lesson.trim());

@@ -6,6 +6,7 @@ import type { ReportLayout } from "./format";
 import { count, manualTiles, metricNumber, money, multiple, platformName } from "./format";
 import { manualCaption, platformConversion } from "./manual";
 import { hue, paletteFor, parseHex, saturation } from "./brand";
+import { campaignTable, type CampaignColumnKey } from "./campaign-table";
 import { barMetric, barsRead, sayable, scoreHead, chartWeeks, costLabel, niceMax, scoreColumns, scoreValue, scorecardRows, shortLabel, supportKeys, takeawaysFor, weeklyTile, weeklyTileKeys, weeklyValue, type Move, type ScoreRow, type Takeaway } from "./weekly-core";
 
 // Every client report (weekly, monthly, built), after the hand-made report the team loved: a co-branded header (the
@@ -466,12 +467,12 @@ function Scorecard({ input, part, rows, images }: { input: WeeklyInput; part: We
   const cols = scoreColumns(m, part.layout);
   const google = part.platform === "google";
   const pictures = !google || rows.some((r) => r.img != null);
-  const unit = google ? (rows[0]?.kind === "campaign" ? "Campaign" : "Campaign / ad group") : "Ad / creative";
+  const unit = google ? "Ad group / asset group" : "Ad / creative";
   const lead = m.roasKpi ? "roas" : "results";
   return (
     <View style={[s.panel, { flex: 2.65 }]}>
       <View style={s.head}>
-        <Text style={s.h3}>{google ? "Campaign scorecard" : "Creative scorecard"}</Text>
+        <Text style={s.h3}>{google ? "Ad group scorecard" : "Creative scorecard"}</Text>
         <Text style={s.sub}>Best first, by {m.roasKpi ? "ROAS" : m.conversion.toLowerCase()}</Text>
       </View>
       <View style={s.th}>
@@ -503,7 +504,6 @@ function Scorecard({ input, part, rows, images }: { input: WeeklyInput; part: We
               {scoreValue(r, k)}
             </Text>
           ))}
-          <Hot href={input.edit && r.kind === "campaign" ? `${part.platform}/camp/${encodeURIComponent(r.name)}` : null} />
         </View>
       ))}
     </View>
@@ -596,10 +596,74 @@ function TopAds({ part, rows, images, look }: { part: WeeklyPart; rows: ScoreRow
   );
 }
 
+/** The widest a column's values run (7pt, about 3.9pt a character), before its heading's longest word is considered */
+const CAMP_W: Record<CampaignColumnKey, number> = { spend: 41, impressions: 35, clicks: 24, ctr: 24, cpc: 24, cpm: 26, results: 24, cost_per_result: 26, revenue: 40, add_to_cart: 22, initiate_checkout: 24, roas: 26 };
+const campWidth = (k: CampaignColumnKey, head: string) => Math.max(CAMP_W[k], Math.ceil(Math.max(...head.split(/\s+/).map((w) => w.length)) * 3.4)) + 4;
+
+/**
+ * Every campaign that spent in the period, from the ad account, with a total (so the client sees where all of the money
+ * went). The same look as the creative scorecard: a rounded panel, small-caps headings, a row to a campaign that never
+ * splits across a page; a long list carries on to the next page with its heading row again.
+ */
+function CampaignPerformance({ input, part }: { input: WeeklyInput; part: WeeklyPart }) {
+  const m = part.metrics;
+  const t = campaignTable(m);
+  if (!t) return null;
+  const lead: CampaignColumnKey = m.roasKpi && t.columns.some((c) => c.key === "roas") ? "roas" : "results";
+  const head = (
+    <View style={[s.th, { paddingHorizontal: 4 }]} fixed>
+      <Text style={[s.thText, { flex: 1 }]}>Campaign</Text>
+      {t.columns.map((c) => (
+        <View key={c.key} style={{ width: campWidth(c.key, c.head) }}>
+          <Text style={[s.thText, { paddingLeft: 4, textAlign: "right", lineHeight: 1.25 }]}>{c.head}</Text>
+        </View>
+      ))}
+    </View>
+  );
+  const row = (r: (typeof t.rows)[number]) => (
+    <View key={r.key} style={[s.tr, { paddingHorizontal: 4 }]} wrap={false}>
+      <Text style={[s.adName, { flex: 1, paddingRight: 6, fontSize: 7.2 }]}>{r.name}</Text>
+      {t.columns.map((c) => (
+        <Text key={c.key} style={[s.td, { fontSize: 7, width: campWidth(c.key, c.head), paddingLeft: 4 }, c.key === lead ? { fontFamily: "Helvetica-Bold" } : {}]}>
+          {r.cells[c.key].text}
+        </Text>
+      ))}
+      <Hot href={input.edit ? `${part.platform}/camp/${encodeURIComponent(r.name)}` : null} />
+    </View>
+  );
+  return (
+    <View style={s.section}>
+      <View style={s.head} minPresenceAhead={150}>
+        <Text style={s.h2}>Campaign performance</Text>
+        <Text style={s.sub}>
+          {shortRange(m.main.start, m.main.end)} · {t.rows.length} {t.rows.length === 1 ? "campaign" : "campaigns"} that ran, from the ad account
+        </Text>
+      </View>
+      <View style={[s.panel, { paddingHorizontal: 9, paddingVertical: 9 }]}>
+        {head}
+        {t.rows.slice(0, -1).map(row)}
+        {/* The last campaign stays with the total: a page never ends on the list and starts on the total alone */}
+        <View wrap={false}>
+          {t.rows.slice(-1).map(row)}
+          <View style={[s.tr, { paddingHorizontal: 4, marginTop: 2, backgroundColor: "#f3f6f9", borderRadius: 5, borderBottomWidth: 0 }]}>
+            <Text style={[s.adName, { flex: 1, fontSize: 7.2 }]}>Total</Text>
+            {t.columns.map((c) => (
+              <Text key={c.key} style={[s.td, { fontSize: 7, fontFamily: "Helvetica-Bold", width: campWidth(c.key, c.head), paddingLeft: 4 }]}>
+                {t.total[c.key].text}
+              </Text>
+            ))}
+          </View>
+        </View>
+        {t.partial ? <Text style={s.note}>The 80 campaigns that spent the most.</Text> : null}
+      </View>
+    </View>
+  );
+}
+
 function Creative({ input, part, images, look }: { input: WeeklyInput; part: WeeklyPart; images: (string | null)[]; look: Look }) {
   const m = part.metrics;
-  const hide = new Set(part.layout?.campaigns?.hide ?? []);
-  const rows = scorecardRows(m).filter((r) => r.kind !== "campaign" || !hide.has(r.name));
+  // Google's campaigns are listed in full in the campaign table: this section is its ad groups and asset groups
+  const rows = scorecardRows(m).filter((r) => r.kind !== "campaign");
   if (!rows.length) return null;
   const google = part.platform === "google";
   const bars = rows.some((r) => (metricNumber(r, barMetric(m)) ?? 0) > 0);
@@ -607,9 +671,9 @@ function Creative({ input, part, images, look }: { input: WeeklyInput; part: Wee
     <View style={s.section}>
       <View wrap={false}>
         <View style={s.head}>
-          <Text style={s.h2}>{google ? "Campaign performance" : "Creative performance"}</Text>
+          <Text style={s.h2}>Creative performance</Text>
           <Text style={s.sub}>
-            {shortRange(m.main.start, m.main.end)} · {google ? (rows[0].kind === "campaign" ? "campaign level" : "campaign and ad group level") : "ad level"}
+            {shortRange(m.main.start, m.main.end)} · {google ? "ad group and asset group level" : "ad level"}
           </Text>
         </View>
         <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-start" }}>
@@ -904,6 +968,7 @@ export function WeeklyReport({ input, images }: { input: WeeklyInput; images: (s
             {joint && i === 0 ? <Account input={input} look={look} /> : null}
             <Glance input={input} part={part} cad={cad} />
             <Trend part={part} look={look} />
+            <CampaignPerformance input={input} part={part} />
             <Creative input={input} part={part} images={images[i] ?? []} look={look} />
             <Takeaways input={input} part={part} items={items} look={look} />
             <OtherRanges part={part} />

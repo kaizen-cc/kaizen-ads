@@ -10,6 +10,7 @@ import { buildReportEmail, channelsLabel, normalizeDelivery, type Channel, type 
 import { defaultRecipients, firstNameFor, recipientsToUse, reportCtaUrl } from "./cc-core";
 import { reportCc } from "./cc";
 import { forClient, isWhiteLabel, WHITE_LABEL_FROM } from "./white-label";
+import { openWithHere } from "./slack-text";
 
 // Sending a report to the client, by Slack, email or both, and keeping what went: every send (and every resend) is a
 // row in report_sends with who sent it, when, where, to whom, the period and a frozen copy of the PDF, so a sent report
@@ -99,7 +100,9 @@ const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 export async function deliver(admin: SupabaseClient, sent: SendArgs): Promise<SendOutcome> {
   // A white label client: the message as it goes (and as it's kept) never names the agency or links its site
   const wl = isWhiteLabel(sent.client.client_type);
-  const a: SendArgs = wl ? { ...sent, message: forClient(sent.message, true), note: sent.note ? forClient(sent.note, true) : sent.note, appFallback: sent.appFallback != null ? forClient(sent.appFallback, true) : sent.appFallback } : sent;
+  // The message always opens with @here, never with a person's mention (whoever the buyer's draft opened with)
+  const opened: SendArgs = { ...sent, message: openWithHere(sent.message) };
+  const a: SendArgs = wl ? { ...opened, message: forClient(opened.message, true), note: sent.note ? forClient(sent.note, true) : sent.note, appFallback: sent.appFallback != null ? forClient(sent.appFallback, true) : sent.appFallback } : opened;
   const d = normalizeDelivery(a.delivery);
   const went: Channel[] = [];
   let slack: SendOutcome["slack"] = null;

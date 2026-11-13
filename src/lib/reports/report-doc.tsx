@@ -4,6 +4,7 @@ import type { Sections } from "./write";
 import { scrubAgency, scrubName, scrubSections } from "./white-label";
 import { EDIT_HOST, WeeklyReport, type WeeklyBrand } from "./weekly-doc";
 import type { ReportLayout } from "./format";
+import { leaveOutCampaigns, picturesKept } from "./campaign-scope";
 
 // The client report as a PDF document. Every kind (the weekly, the monthly recap, a report from the report builder) is
 // drawn in one design (weekly-doc.tsx), after the hand-made report the team loved: Kaizen's header and red leading, the
@@ -48,8 +49,28 @@ function scrubMetrics(m: ReportMetrics): ReportMetrics {
   };
 }
 
+/**
+ * The campaigns the buyer left out of this report are out of every number on the page, however the metrics were drawn:
+ * the totals are worked out again from the campaigns that remain (a report drafted before the campaign was left out is
+ * brought up to date here, and one drafted after it already has them out, so this changes nothing).
+ */
+function scoped(parts: ReportPart[], images: (string | null)[][]) {
+  const pictures = images.slice();
+  const out = parts.map((p, i) => {
+    const hide = p.layout?.campaigns?.hide;
+    if (!hide?.length) return p;
+    // The pictures follow their ads (they are kept in the order of the ads)
+    const keep = picturesKept(p.metrics, hide);
+    if (pictures[i]) pictures[i] = pictures[i].filter((_, j) => keep[j] !== false);
+    return { ...p, metrics: leaveOutCampaigns(p.metrics, hide), extra: p.extra?.map((x) => leaveOutCampaigns(x, hide)) ?? p.extra };
+  });
+  return { parts: out, images: pictures };
+}
+
 /** The whole document. images: each part's ad pictures as data URIs (null where none could be fetched) */
-export function ReportDocument({ input: given, images }: { input: ReportPdfInput; images: (string | null)[][] }) {
+export function ReportDocument({ input: asked, images: drawn }: { input: ReportPdfInput; images: (string | null)[][] }) {
+  const { parts, images } = scoped(asked.parts, drawn);
+  const given: ReportPdfInput = { ...asked, parts };
   // White label: every written line and name cleaned of the agency too (whatever the AI, the buyer or the ad account
   // says), and no portal links
   const input: ReportPdfInput = given.whiteLabel

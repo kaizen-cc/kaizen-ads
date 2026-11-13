@@ -207,7 +207,9 @@ describe("the report document", () => {
     const google = pages.findIndex((p) => has(p, "Performance Intelligence / Google Ads") && has(p, "Weekly Paid Search Report"));
     expect(meta).toBe(0);
     expect(google).toBeGreaterThan(meta);
-    expect(has(all, "Campaign scorecard")).toBe(true);
+    // Google lists every campaign in the campaign table (its ad groups are the creative section), never twice
+    expect(has(all, "Campaign performance")).toBe(true);
+    expect(has(all, "Campaign scorecard")).toBe(false);
   });
   it("draws the monthly recap in the same design, in monthly words", async () => {
     const { all } = await textOf({ client: "OceanBox", kind: "monthly", periodLabel: "October 2026", parts: [part("meta", oceanboxMeta)], brand: kaizen, shots: { month: "December", items: ["A team photo"], url: null } });

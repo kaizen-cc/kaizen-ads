@@ -21,6 +21,7 @@ import { clientDelivery, deliver, recordSend } from "./send";
 import { greetingFor, reportCtaUrl } from "./cc-core";
 import { reportCc } from "./cc";
 import { forClient, isWhiteLabel, WHITE_LABEL_FROM, whiteLabelFileName } from "./white-label";
+import { openWithHere } from "./slack-text";
 
 // The reporting cadence. Mondays: a weekly report is queued for every live account that spent in the last week, and
 // drafted a few at a time. The 1st: the monthly recap, one part per buyer on the client (Meta, Google), held until
@@ -364,7 +365,7 @@ async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: stri
   const month = monthOf(b.period_start);
   const service = riders.length ? "Meta + TikTok" : platformName(r.platform);
   const bytes = await reportPdf(admin, [r, ...riders]);
-  const intro = riders.length ? jointMessage(r.message, riders) : (r.message?.trim() ?? "");
+  const intro = openWithHere(riders.length ? jointMessage(r.message, riders) : (r.message?.trim() ?? ""));
   const text = wl ? forClient(`${intro}\n\n*Your ${month} recap, now with ${service}, is attached.*`, true) : `${intro}\n\n*Your ${month} recap, now with ${service}:* ${link}`.trim();
   const filename = wl ? whiteLabelFileName(r.client.name, "monthly", month, service) : `${r.client.name} - ${service} ${month}.pdf`;
   const pdf = { filename, title: `${r.client.name} · ${service} · ${month}`, bytes };
@@ -455,7 +456,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     const month = monthOf(b.period_start);
     const bytes = await reportPdf(admin, parts);
     // Each buyer's message; a TikTok part riding on the Meta one reads under its own name right after it
-    const intro = recapIntro(parts.map((p) => ({ id: p.id, platform: p.platform, message: p.message, joinedTo: rows.find((x) => x.id === p.id)?.joined_to ?? null })));
+    const intro = openWithHere(recapIntro(parts.map((p) => ({ id: p.id, platform: p.platform, message: p.message, joinedTo: rows.find((x) => x.id === p.id)?.joined_to ?? null }))));
     const chosen = await recapDelivery(admin, bundleId);
     const shots = await shotsAsk(admin, parts[0]);
     const ask = shots ? `\n\n*For ${shots.month}, we need ${shots.items.length === 1 ? "one shot" : `${shots.items.length} shots`} from you* so the next round of ads stays fresh${shots.url ? `: <${shots.url}|send them on your shot list>` : ` (${shots.items.slice(0, 3).join("; ")}${shots.items.length > 3 ? "…" : ""})`}` : "";
