@@ -39,8 +39,8 @@ Use the Drive photos from the October shoot.`;
 const oldSource: StructureSource = { title: "Patio Fridays", angle: "Weekend plans, sorted", audience: "Locals 25 to 45 who go out on Fridays", brief: oldBrief, formats: { image: { new: 1, variations: 4 } }, landing: "https://example.com/patio" };
 
 // The video sample is the lead video editor's own Best Tickets brief, line for line, so the PDF compares like for like
-const MUST = ["Cover most of Dan's voice with real B-roll. Dan on camera only in beats 1, 3 and 5.", "Logo on screen in the first 3 seconds.", "Burn in captions on every spoken line.", "Keep text and faces out of the top 270 px and bottom 670 px.", "Licensed music only, low under Dan.", "A sixth must that gets cut"];
-const NEVER = ["Don't use: “two great offices,” “easy to get a hold of,” the call / sales rep part, or the VIP lounge.", "No price, deals, urgency or specific events.", "No dates, scoreboards, posters or artist close-ups.", "No screen recordings of the website.", "No AI-made people, voices or venues.", "A sixth never that gets cut"];
+const MUST = ["Cover most of Dan's voice with real B-roll. Dan on camera only in beats 1, 3 and 5.", "Logo on screen in the first 3 seconds.", "Burn in captions on every spoken line.", "Keep text and faces out of the top 270 px and bottom 670 px.", "Licensed music only, low under Dan.", "A sixth must the PDF still shows"];
+const NEVER = ["Don't use: “two great offices,” “easy to get a hold of,” the call / sales rep part, or the VIP lounge.", "No price, deals, urgency or specific events.", "No dates, scoreboards, posters or artist close-ups.", "No screen recordings of the website.", "No AI-made people, voices or venues.", "A sixth never the PDF still shows"];
 const ASSETS = [
   { item: "Dan interview, full interview video https://drive.google.com/file/d/owner1/view", status: "have" as const },
   { item: "Staff + seat views, B-roll folder https://drive.google.com/drive/folders/broll", status: "have" as const },
@@ -109,13 +109,13 @@ const carouselSource = fixture("carousel", carouselSpec, { new: 1, variations: 1
 const imageSource = fixture("image", imageSpec, { new: 1, variations: 2 }, "Golden hour on the patio makes the Friday plan feel already made.");
 
 describe("brief pdf model", () => {
-  it("reads a brief in today's sections as it is, with no AI to run, capped to two pages", () => {
+  it("reads a brief in today's sections as it is, with no AI to run, every line it holds", () => {
     const v = plainStructure(videoSource);
     expect(needsStructure(v, videoSource)).toBe(false);
     expect(v.beats).toHaveLength(6);
     expect(v.beats[0]).toMatchObject({ time: "0:00-0:05", name: "Hook", source: "Dan 0:00-0:04" });
     expect(v.versions).toEqual(videoSpec.versions);
-    expect([v.must.length, v.never.length, v.assets.length, v.copy.primary.length, v.copy.headlines.length]).toEqual([5, 5, 4, 2, 2]);
+    expect([v.must.length, v.never.length, v.assets.length, v.copy.primary.length, v.copy.headlines.length]).toEqual([6, 6, 4, 2, 2]);
     expect(v.oneLine).toMatch(/^Dan's answer, “Convenience,” is the detail/);
     expect(v.stage).toBe("Evergreen TOF");
     const c = plainStructure(carouselSource);
@@ -271,7 +271,7 @@ describe("brief pdf render", () => {
     expect(pagesOf(old.pdf)).toBeLessThanOrEqual(2);
   });
 
-  it("renders the real VIP Lounge video brief to two pages, the export with the assets (never a page of its own)", { timeout: 60_000 }, async () => {
+  it("renders the real VIP Lounge video brief with the export in the assets (never a page of its own)", { timeout: 60_000 }, async () => {
     const drive = { headquarters: "https://drive.google.com/drive/folders/hq123", adCreatives: "https://drive.google.com/drive/folders/ads456" };
     const vip = fixture(
       "video",
@@ -317,7 +317,9 @@ describe("brief pdf render", () => {
       links: [{ label: "Landing page", url: "https://besttickets.com" }],
       drive,
     });
-    expect(pagesOf(r.pdf)).toBe(2);
+    // Its releases question is a blocker now, shown under its own heading: what to confirm and the assets stack rather
+    // than sit side by side when the row wouldn't fit, so it may run to a third page, never a near-blank one
+    expect(pagesOf(r.pdf)).toBeLessThanOrEqual(3);
   });
 
   it("renders the real Best Tickets static brief to two clean pages", { timeout: 60_000 }, async () => {

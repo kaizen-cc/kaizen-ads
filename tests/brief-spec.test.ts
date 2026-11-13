@@ -12,6 +12,7 @@ import {
   copyOf,
   emptySpec,
   exportLineFor,
+  fileNamesFor,
   frameOf,
   hookOf,
   pacing,
@@ -112,16 +113,33 @@ describe("the brief's one structure", () => {
     expect(checkPayoff({ overview: "", spec: sp }).promise).toMatch(/hack/i);
   });
 
-  it("holds a writer's brief to two pages: 5 Must, 5 Never, 6 beats, 5 assets, 2 primary texts", () => {
+  it("never drops what the writer wrote: past the two-page guide is the lint's to flag, not a silent cut", () => {
     const c = cleanSpec({
       dos: Array.from({ length: 8 }, (_, i) => `Must ${i}`),
       donts: Array.from({ length: 8 }, (_, i) => `Never ${i}`),
       beats: Array.from({ length: 9 }, (_, i) => `0:0${i}-0:0${i + 1} | Beat ${i} | On screen: x`),
       assets: Array.from({ length: 9 }, (_, i) => ({ item: `Folder ${i}`, status: "have" as const })),
       copy: ["Primary: a", "Primary: b", "Primary: c", "Headline: h1", "Headline: h2", "Headline: h3", "CTA: Shop"],
+      confirm: Array.from({ length: 7 }, (_, i) => ({ question: `Question ${i}?`, answer: "", source: "" })),
     });
-    expect([c.dos.length, c.donts.length, c.beats.length, c.assets.length]).toEqual([5, 5, 6, 5]);
-    expect(copyOf(c.copy)).toEqual({ primary: ["a", "b"], headlines: ["h1", "h2"], cta: "Shop" });
+    expect([c.dos.length, c.donts.length, c.beats.length, c.assets.length, c.confirm.length]).toEqual([8, 8, 9, 9, 7]);
+    expect(copyOf(c.copy)).toEqual({ primary: ["a", "b", "c"], headlines: ["h1", "h2", "h3"], cta: "Shop" });
+    // A safety bound far past the guide
+    expect(cleanSpec({ dos: Array.from({ length: 40 }, (_, i) => `Must ${i}`) }).dos).toHaveLength(12);
+    // The lint flags what's past the guide
+    const ids = lintBrief({ text: composeBrief("The idea.", { ...video, assets: c.assets, dos: c.dos }), sizes: ["9x16"], formats: ["video"] }).map((x) => x.id);
+    expect(ids).toEqual(expect.arrayContaining(["must-many", "assets-many"]));
+  });
+
+  it("names the files for every version, a carousel's slides one by one", () => {
+    const rows = fileNamesFor(["video"], ["4x5", "9x16"], "CrowdSync", "Sold Out Night", { versions: 3 });
+    expect(rows.map((r) => r.version)).toEqual(["V1", "V2", "V3"]);
+    expect(rows[2].names).toEqual(["CrowdSync_Sold_Out_Night_V3_4x5", "CrowdSync_Sold_Out_Night_V3_9x16"]);
+    const car = fileNamesFor(["carousel"], ["4x5"], "Acme", "Seat Hack", { versions: 2, slides: 5 });
+    expect(car[1].names).toHaveLength(5);
+    expect(car[1].names[2]).toBe("Acme_Seat_Hack_V2_Slide03_4x5");
+    const line = exportLineFor(["image"], ["4x5"], "Acme", "Seat Hack", { versions: 4 });
+    for (const v of ["V1", "V2", "V3", "V4"]) expect(line).toContain(`Acme_Seat_Hack_${v}_4x5`);
   });
 
   it("reads beats written loosely, and paces them", () => {
@@ -217,14 +235,18 @@ describe("the opening and what to confirm", () => {
     expect(openingOf("Show the patio.\n\nHooks to try:\n- One").rest).toBe("Hooks to try:\n- One");
   });
 
-  it("never tells the maker to hold the work", async () => {
-    const { withoutHold, cleanSpec } = await import("@/lib/brief-spec");
-    expect(withoutHold("Are statics OK in November? On Nov 9 the client set evergreen to video only. Hold this ticket until the client says yes; if not, it waits for December.")).toBe("Are statics OK in November? On Nov 9 the client set evergreen to video only. Check before making it.");
-    expect(withoutHold("Don't start until the client confirms the seat.")).toBe("Check before making it.");
-    expect(withoutHold("Which seat, at which venue, and why?")).toBe("Which seat, at which venue, and why?");
-    expect(withoutHold("Can we hold the shoot at the arena?")).toBe("Can we hold the shoot at the arena?");
-    expect(cleanSpec({ confirm: [{ question: "Is the offer live? Wait for the client before you design.", answer: "", source: "" }] }).confirm[0].question).toBe("Is the offer live? Check before making it.");
+  it("keeps every question word for word, and knows which ones say they hold the work", async () => {
+    const { holdsWork, cleanSpec } = await import("@/lib/brief-spec");
+    // The question used to be swapped for "Check before making it.", a line the brief never held
+    const q = "Don't start until the client confirms the seat.";
+    expect(cleanSpec({ confirm: [{ question: q, answer: "", source: "" }] }).confirm[0].question).toBe(q);
+    expect(holdsWork(q)).toBe(true);
+    expect(holdsWork("Which seat, at which venue, and why?")).toBe(false);
+    expect(holdsWork("Can we hold the shoot at the arena?")).toBe(false);
     expect(SPEC_RULE).toMatch(/never write "hold this ticket"/);
+    expect(SPEC_RULE).toMatch(/- Blocker: <question>/);
     expect(SPEC_RULE).toMatch(/never copy direction/);
+    expect(SPEC_RULE).toMatch(/competitor swap test/);
+    expect(SPEC_RULE).not.toMatch(/—/);
   });
 });

@@ -7,8 +7,9 @@ import { can } from "@/lib/chat-permissions";
 import { answerFact, factCategory } from "@/lib/brief-facts";
 import { canOverride, type GateKey, type ReviewStamp } from "@/lib/brief-gate";
 import { LINT_SCHEMA, type LintIssue } from "@/lib/brief-lint";
-import { COPY_FIELDS, FIELD_LABEL, PATCH_SCHEMA, applyBriefPatch, briefOf, diffStates, stateOf, type BriefChange, type BriefState, type FieldDiff, type PatchField } from "@/lib/brief-patch";
+import { COPY_FIELDS, FIELD_LABEL, PATCH_SCHEMA, applyBriefPatch, askedChanges, briefOf, changeLog, diffStates, stateOf, type AskItem, type BriefChange, type BriefState, type ChangeLogItem, type FieldDiff, type PatchField } from "@/lib/brief-patch";
 import { SPEC_RULE, composeBrief } from "@/lib/brief-spec";
+import { NARRATIVE_RULE, SWAP_RULE } from "@/lib/brief-craft";
 import { briefFileUrl, ownPath, type BriefFile } from "@/lib/brief-files";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -77,9 +78,9 @@ function editable(me: Staff, formats: string[]): { fields: PatchField[] | null }
   return { ok: false, error: can(me, "brief", { formats }).reason ?? "Briefs are for the creative team, the media buyers and the executives." };
 }
 
-const toInput = (b: Loaded) => ({ clientId: b.clientId, title: b.title, brief: b.brief, sizes: b.sizes, formats: b.formats, refs: b.refs, due: b.due, priority: b.priority });
+const toInput = (b: Loaded) => ({ clientId: b.clientId, title: b.title, brief: b.brief, sizes: b.sizes, formats: b.formats, refs: b.refs, due: b.due, priority: b.priority, angle: b.angle, audience: b.audience });
 
-export type CheckResult = { ok: true; check: import("@/lib/brief-check").BriefCheck; ai: LintIssue[] | null; canOverride: boolean; canEdit: boolean; copyOnly: boolean; /** Whose brief it is (files added in the revise chat go under it) */ clientId: string } | Fail;
+export type CheckResult = { ok: true; check: import("@/lib/brief-check").BriefCheck; ai: LintIssue[] | null; writer: Writer; canOverride: boolean; canEdit: boolean; copyOnly: boolean; /** Whose brief it is (files added in the revise chat go under it) */ clientId: string } | Fail;
 
 /** The ready check; withAi adds the AI's consistency pass (contradictions the code rules can't see, claims against the Bible) */
 export async function checkBrief(t: BriefTarget, withAi = false): Promise<CheckResult> {
@@ -104,7 +105,11 @@ export async function checkBrief(t: BriefTarget, withAi = false): Promise<CheckR
         schema: LINT_SCHEMA,
         system: `${AGENCY_SYSTEM}
 
-You check one creative brief for contradictions inside it before it goes to the editor or designer, the way an editor reading it would trip on them. Look only for real conflicts between two things the brief (or its sizes and formats) says, or between the brief and the client's context: sizes against file names and placements (Kaizen makes 4:5 and 9:16 only), logo or branding rules against the hook or end card, "evergreen" or "no event-specific content" against event footage or dates, claims or proof against what the Brand Bible and client memory cleared, durations against the platform (Reels and Stories), the format against what's asked (a static asked for motion), AI avatars, AI voices or AI-generated footage against a client's ai_content_rule (hard), a real person's altered face or voice without a consent line and a disclaimer (soft). hard: the maker can't follow both; soft: worth a look. message: one plain sentence naming both sides. fix: an instruction to resolve it, as you'd type it to the person editing the brief. No style notes, nothing about wording you'd prefer, nothing already fine. [] when there's nothing. No em dashes.`,
+You check one creative brief for contradictions inside it before it goes to the editor or designer, the way an editor reading it would trip on them. Look only for real conflicts between two things the brief (or its sizes and formats) says, or between the brief and the client's context: sizes against file names and placements (Kaizen makes 4:5 and 9:16 only), logo or branding rules against the hook or end card, "evergreen" or "no event-specific content" against event footage or dates, claims or proof against what the Brand Bible and client memory cleared, durations against the platform (Reels and Stories), the format against what's asked (a static asked for motion), AI avatars, AI voices or AI-generated footage against a client's ai_content_rule (hard), a real person's altered face or voice without a consent line and a disclaimer (soft). hard: the maker can't follow both; soft: worth a look. message: one plain sentence naming both sides. fix: an instruction to resolve it, as you'd type it to the person editing the brief. No style notes, nothing about wording you'd prefer, nothing already fine. [] when there's nothing. No em dashes.
+Then read the story the way the lead strategist would (always soft, never hard: a flag, never a hold), against these:
+${SWAP_RULE}
+${NARRATIVE_RULE}
+Flag only what really fails: a hook answered later than ~3 seconds, a version whose hook doesn't fit the body it runs on, the strongest visual spent early when it isn't the hook, a frame or audience that doesn't fit the segment the client's performance data shows converting best (say which segment and where the data says it), a claim the offer hangs on that isn't flagged as a blocker, a concept that fails the competitor swap test (name what client-specific proof from the context would fix it).`,
         prompt: `${ctx ? contextBlock(ctx) : ""}
 
 <brief formats="${b.formats.join(", ")}" sizes="${b.sizes.map((s) => s.replace("x", ":")).join(", ")}">
@@ -117,24 +122,51 @@ ${b.brief}
 
 Already found by the code checks (don't repeat these): ${[...check.hard, ...check.soft].map((x) => x.message).join(" | ") || "none"}`,
       });
-      ai = (out.issues ?? []).slice(0, 6).map((x, i) => ({ id: `ai-${i}`, severity: x.severity === "hard" ? "hard" : "soft", message: x.message.slice(0, 300), fixes: x.fix.trim() ? [{ kind: "ai" as const, instruction: x.fix.slice(0, 400), label: "Fix it" }] : [] }));
+      ai = (out.issues ?? []).slice(0, 8).map((x, i) => ({ id: `ai-${i}`, severity: x.severity === "hard" ? "hard" : "soft", message: x.message.slice(0, 300), fixes: x.fix.trim() ? [{ kind: "ai" as const, instruction: x.fix.slice(0, 400), label: "Fix it" }] : [] }));
     } catch (e) {
       if (!(e instanceof AiUnavailable)) console.error("[brief check] ai", e instanceof Error ? e.message : e);
       ai = null;
     }
   }
-  return { ok: true, check, ai, canOverride: canOverride(me), canEdit: !("ok" in ed), copyOnly: !("ok" in ed) && ed.fields !== null, clientId: b.clientId };
+  // What the writer's own QA pass couldn't fix, and the lessons it was written with (a draft the AI wrote)
+  let writer: Writer = null;
+  if (b.suggestionId) {
+    const { data: s } = await admin.from("creative_suggestions").select("draft").eq("id", b.suggestionId).maybeSingle();
+    const d = (s?.draft ?? null) as { flags?: unknown; learnings?: unknown } | null;
+    const flags = Array.isArray(d?.flags) ? d.flags.filter((x): x is string => typeof x === "string").slice(0, 8) : [];
+    const learnings = Array.isArray(d?.learnings) ? (d.learnings as { id?: unknown; lesson?: unknown }[]).filter((x) => typeof x?.lesson === "string").map((x) => ({ id: String(x.id ?? ""), lesson: String(x.lesson) })).slice(0, 8) : [];
+    if (flags.length || learnings.length) writer = { flags, learnings };
+  }
+  return { ok: true, check, ai, writer, canOverride: canOverride(me), canEdit: !("ok" in ed), copyOnly: !("ok" in ed) && ed.fields !== null, clientId: b.clientId };
 }
+
+/** What the writer's QA pass left flagged, and the team's lessons it applied from the start */
+type Writer = { flags: string[]; learnings: { id: string; lesson: string }[] } | null;
 
 export type ReviseTurn = { role: "user" | "ai"; text: string };
 export type ReviseResult =
-  | { ok: true; reply: string; state: BriefState; brief: string; diff: FieldDiff[]; correctionId: string | null; refused: string[]; /** The brief's references with the files added to this message */ refs: string[] | null }
+  | {
+      ok: true;
+      reply: string;
+      state: BriefState;
+      brief: string;
+      diff: FieldDiff[];
+      correctionId: string | null;
+      refused: string[];
+      /** The brief's references with the files added to this message */
+      refs: string[] | null;
+      /** Every change the message asked for: done (where) or not done (why), held to what the patch really changed */
+      log: ChangeLogItem[];
+      /** Fields the AI touched that no ask pointed to: left exactly as they were */
+      unasked: string[];
+    }
   | Fail;
 
 const REVISE_SYSTEM = `${AGENCY_SYSTEM}
 
-You edit a creative brief that's already written, from a correction someone on the creative team (or their lead) types under it. They know the craft; you have the client's context (Brand Bible, client memory, KPIs, what's working, assets on Drive). Answer with a structured patch, never a rewrite:
-- Change only what the message asks for, and whatever must change with it to stay consistent (a size rule and the file names, a branding rule and the hook). Leave every other line exactly as it is.
+You edit a creative brief that's already written, from a correction someone on the creative team (or their lead) types under it. They know the craft; you have the client's context (Brand Bible, client memory, KPIs, what's working, assets on Drive). Answer with a structured patch, never a rewrite, and account for every ask:
+- checklist first: read the message and list every distinct change it asks for, one item each, in their words (a message with five corrections is five items; nothing they asked for is left off). For each: done true when you made it, with where (the field and item, e.g. "Beats, beat 2" or "Assets, a new Need line"); done false when you can't, with why in one plain sentence (e.g. the fact isn't in the context, it isn't yours to change). changes: the positions (from 0) in your changes list that carry it out, including whatever had to change with it to stay consistent.
+- Change only what the checklist asks for, and whatever must change with it to stay consistent (a size rule and the file names, a branding rule and the hook), and point that change to the item it serves: a change no item points to is not applied. Leave every other line exactly as it is, word for word: never drop or shorten a line, a source, a link, an asset or a question that wasn't part of the ask. Use "replace" or "add" on one item; "set" a list only when they asked to replace the whole list.
 - Fields: title, angle, audience, overview (the idea and its payoff in one sentence, never copy direction, and a "Fallback:" line in one short sentence when one is needed), stage, insight (Why it works), insightSource, who (Who it's for), length, audio, yourCall, script, and the older keyMessage, hook, kpi, success (text: op "set", or "remove" to clear), and the lists beats (a video's beats, each "<time> | <name> | On screen: ... | Says: "..." (Source: ...)" or "| Text: "..."), slides (a carousel's, each "<job> | Headline: ... | Shows: ..."), frame (a single image's, each "Headline: ...", "Subline: ...", "Shows: ...", "Reads first: ...", "CTA: ..."), versions (only what changes per version, V1 first, without "V1:"), dos (Must), donts (Never), assets, copy (each "Primary: ...", "Headline: ..." or "CTA: ..."), confirm, sizes, and the older proof, constraints (op "add" a new item, "replace" the item at index, "remove" the item at index, "set" to make the list just this one item). index: the item's position from 0 as listed, -1 when not used. assets: value is the item, status have, need, shoot or missing. confirm: value is the question, answer and source fill in an answer. sizes: "4x5" or "9x16" only (Kaizen makes nothing else). Unused fields of a change: "" (status "" when not assets). Keep every list at 5 items or fewer (beats 4 to 6).
 - When they need data to make the change (a KPI, what's worked, which assets are on Drive, a cleared claim), take it from the context and say where it came from. Never invent a price, an offer, a stat, a claim, a date or the fact a concept reveals: if they give you such a fact, record it in confirm with their answer and source "the team"; if it's still unknown, keep (or add) it in confirm with answer "".
 - The brief fixes the message, the payoff, the hook lines, the musts and the nevers; the how (edit style, cut points, transitions, which clips within the folders, music within the rules) is the maker's, in yourCall. A video's beats say what happens and what's said, never how to cut it; a script only when they ask for one.
@@ -143,6 +175,7 @@ You edit a creative brief that's already written, from a correction someone on t
 - Files they add with the message (pictures, frames from a video, PDFs, audio by name) are references for this brief: use what you can see in them and say what to take from each.
 - Real people's faces and voices: when the brief (or the change) alters or generates a real person's likeness or voice (an AI avatar of a customer, a cloned or pitch-shifted voice, a face swap, a testimonial rebuilt with AI), make sure confirm has "Get the client's written consent for <who>'s likeness/voice" and dos (Must) has "Disclaimer: <the on-screen line>". When the client context has an ai_content_rule, never add an AI avatar, an AI voice or AI-generated footage or images: say in reply that the client said no to AI content and offer the real-footage version.
 - reply: one or two short sentences: what you changed, or why you couldn't (and what you need). No em dashes. Roles, never people's names.
+- The lessons the team taught on earlier briefs (learned_from_the_team) hold here too: never undo one of them while making this change.
 
 ${SPEC_RULE}`;
 
@@ -164,7 +197,7 @@ export async function reviseBrief(t: BriefTarget, instruction: string, history: 
   try {
     const [ctx, { loadAssets, assetsBlock }, { briefFileMedia }] = await Promise.all([clientContext(admin, b.clientId), import("@/lib/client-assets"), import("@/lib/brief-file-media")]);
     const [assets, media] = await Promise.all([loadAssets(admin, b.clientId).catch(() => null), briefFileMedia(admin, b.clientId, files.slice(0, 6)).catch(() => null)]);
-    const out = await askJson<{ reply: string; changes: BriefChange[] }>({
+    const out = await askJson<{ reply: string; checklist: AskItem[]; changes: BriefChange[] }>({
       agent: "strategist",
       label: "brief revise",
       clientId: b.clientId,
@@ -223,8 +256,13 @@ ${media?.text ? `\n${media.text}\n` : ""}${history.length ? `\n<conversation_so_
 
 Their correction: ${say}`,
     });
-    const patched = applyBriefPatch(before, out.changes ?? [], ed.fields);
+    // Only what an ask points to is applied (patch, don't rewrite), and every ask goes on the change log, held to what
+    // the patch really changed: done with where, or not done with why
+    const all = out.changes ?? [];
+    const asked = askedChanges(out.checklist, all);
+    const patched = applyBriefPatch(before, asked.keep, ed.fields);
     const { applied, refused } = patched;
+    const log = changeLog(out.checklist, all, applied, refused);
     // Each asset it names on Drive with its link (src/lib/asset-links.ts)
     const { linkAssetItems } = await import("@/lib/asset-links");
     const state: BriefState = assets?.catalog.length ? { ...patched.state, spec: { ...patched.state.spec, assets: linkAssetItems(patched.state.spec.assets, assets.catalog) } } : patched.state;
@@ -239,7 +277,7 @@ Their correction: ${say}`,
       const { briefHash } = await import("@/lib/brief-check");
       const { data: row } = await admin
         .from("brief_corrections")
-        .insert({ client_id: b.clientId, request_id: b.requestId, suggestion_id: b.suggestionId, profile_id: me.id, kind: "correction", instruction: say, reply: out.reply?.slice(0, 1000) ?? null, before, after: state, changes: applied, brief_hash: briefHash(brief, state.sizes), format: b.formats.join(",") || null })
+        .insert({ client_id: b.clientId, request_id: b.requestId, suggestion_id: b.suggestionId, profile_id: me.id, kind: "correction", instruction: say, reply: out.reply?.slice(0, 1000) ?? null, before, after: state, changes: applied, checklist: log, brief_hash: briefHash(brief, state.sizes), format: b.formats.join(",") || null })
         .select("id")
         .single();
       correctionId = (row?.id as string | undefined) ?? null;
@@ -249,13 +287,25 @@ Their correction: ${say}`,
       if (correctionId) {
         const id = correctionId;
         const what = diff.map((d) => `${d.label}: "${d.before.slice(0, 160)}" became "${d.after.slice(0, 160)}"`).join("; ");
+        const asks = log.filter((x) => x.done).map((x) => x.ask);
         after(async () => {
           const { recordLearning } = await import("@/lib/learnings");
-          await recordLearning(createAdminClient(), { table: "brief_corrections", id, clientId: b.clientId, agent: "strategist", text: `A reviewer on the creative team corrected a ${b.formats.join("/") || "creative"} brief before it went out: "${say}". Changed: ${what}` });
+          await recordLearning(createAdminClient(), { table: "brief_corrections", id, clientId: b.clientId, agent: "strategist", text: `A reviewer on the creative team corrected a ${b.formats.join("/") || "creative"} brief before it went out: "${say}".${asks.length ? ` What they asked for: ${asks.join(" | ")}.` : ""} Changed: ${what}` });
         });
       }
     }
-    return { ok: true, reply: (out.reply ?? "").replace(/\s*\u2014\s*/g, ", ").slice(0, 600) || (applied.length ? "Done." : refs ? "Added them as references." : "Nothing to change."), state, brief, diff, correctionId, refused: refused.map((c) => FIELD_LABEL[c.field] ?? String(c.field)), refs };
+    return {
+      ok: true,
+      reply: (out.reply ?? "").replace(/\s*\u2014\s*/g, ", ").slice(0, 600) || (applied.length ? "Done." : refs ? "Added them as references." : "Nothing to change."),
+      state,
+      brief,
+      diff,
+      correctionId,
+      refused: refused.map((c) => FIELD_LABEL[c.field] ?? String(c.field)),
+      refs,
+      log,
+      unasked: [...new Set(asked.unasked.map((c) => FIELD_LABEL[c.field] ?? String(c.field)))],
+    };
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "Couldn't change it. Try again." };
   }
@@ -360,7 +410,7 @@ export async function askClientFact(t: BriefTarget, question: string): Promise<{
   return { ok: true };
 }
 
-export type LogEntry = { id: string; kind: string; by: string; at: string; instruction: string | null; reply: string | null; undone: boolean; diff: FieldDiff[]; reason: string | null };
+export type LogEntry = { id: string; kind: string; by: string; at: string; instruction: string | null; reply: string | null; undone: boolean; diff: FieldDiff[]; reason: string | null; /** A correction's change log */ checklist: ChangeLogItem[] };
 
 /** What's been done to this brief: corrections (with what changed), answers, overrides and reviews, newest first */
 export async function briefLog(t: BriefTarget): Promise<LogEntry[]> {
@@ -368,7 +418,7 @@ export async function briefLog(t: BriefTarget): Promise<LogEntry[]> {
   const b = await load(t);
   if ("ok" in b) return [];
   const db = await createClient();
-  let q = db.from("brief_corrections").select("id, kind, instruction, reply, reason, before, after, undone_at, created_at, profiles(full_name)").eq("client_id", b.clientId).order("created_at", { ascending: false }).limit(30);
+  let q = db.from("brief_corrections").select("id, kind, instruction, reply, reason, before, after, checklist, undone_at, created_at, profiles(full_name)").eq("client_id", b.clientId).order("created_at", { ascending: false }).limit(30);
   if (b.requestId) q = q.eq("request_id", b.requestId);
   else if (b.suggestionId) q = q.eq("suggestion_id", b.suggestionId);
   else return [];
@@ -383,5 +433,6 @@ export async function briefLog(t: BriefTarget): Promise<LogEntry[]> {
     undone: Boolean(r.undone_at),
     diff: r.before && r.after ? diffStates(r.before as BriefState, r.after as BriefState) : [],
     reason: (r.reason as string | null) ?? null,
+    checklist: Array.isArray(r.checklist) ? (r.checklist as ChangeLogItem[]) : [],
   }));
 }

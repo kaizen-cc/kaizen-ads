@@ -4,7 +4,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { toAllotment, type UsageRow } from "@/lib/allotment";
 import { primaryOf, type SeatRow } from "@/lib/buyer-seats";
 import { clientDriveOf } from "@/lib/brief-cards";
-import { MAKER_ROLE, dayLabel, dueFor, fitStructure, headerLine, picked, slidesFor, structureKey, versionsStrip, type BriefStructure, type PdfCounts, type PdfFormat } from "@/lib/brief-pdf-model";
+import { MAKER_ROLE, dayLabel, dueFor, fitStructure, headerLine, picked, slidesFor, structureKey, versionCount, versionsStrip, type BriefStructure, type PdfCounts, type PdfFormat } from "@/lib/brief-pdf-model";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -91,15 +91,15 @@ export async function POST(request: Request) {
   const due = !dues.length ? null : dues.length === 1 || dues.every((x) => dayLabel(x.d) === dayLabel(dues[0].d)) ? dayLabel(dues[0].d) : dues.map((x) => `${x.f === "video" ? "Video" : x.f === "carousel" ? "Carousel" : "Image"} ${dayLabel(x.d)}`).join(" · ");
   const sizes = (b.sizes ?? []).map((z) => String(z).replace("x", ":")).filter((z) => /^\d{1,2}:\d{1,2}$/.test(z));
 
-  // The client's standing rules (Brand Bible rules in force) folded in only where the brief leaves room: Must and Never
-  // stay five each, the brief's own first
+  // The client's standing rules (Brand Bible rules in force) folded in only where the brief leaves room (up to five
+  // each). The brief's own lines always come through, every one of them, first
   const ruleDos = (rules ?? []).filter((r) => r.polarity === "do").map((r) => String(r.rule));
   const ruleDonts = (rules ?? []).filter((r) => r.polarity === "dont").map((r) => String(r.rule));
-  const merge = (a: string[], extra: string[]) => [...new Set([...a, ...extra.filter((x) => x.length <= 140 && !a.some((y) => y.toLowerCase() === x.toLowerCase()))])].slice(0, 5);
+  const merge = (a: string[], extra: string[]) => [...a, ...[...new Set(extra.filter((x) => x.length <= 140 && !a.some((y) => y.toLowerCase() === x.toLowerCase())))].slice(0, Math.max(0, 5 - a.length))];
 
   // The brief's insight, what's the maker's call, the facts still to confirm with the client, and the review stamp
   // when someone reviewed this exact brief (text and sizes)
-  const { parseBrief, exportLineFor } = await import("@/lib/brief-spec");
+  const { parseBrief, exportLineFor, fileNamesFor } = await import("@/lib/brief-spec");
   const { openFacts, withDetectedFacts } = await import("@/lib/brief-facts");
   const spec = withDetectedFacts(parseBrief(source.brief).spec, source.title);
   let reviewed: string | null = null;
@@ -112,8 +112,11 @@ export async function POST(request: Request) {
 
   const { briefPdf } = await import("@/lib/brief-pdf");
   const cards = slidesFor(formats);
+  const counts = { versions: versionCount(formats), slides: cards };
   const pdf = await briefPdf({
+    // Every open question word for word (the PDF shows the ones that block the work as blockers)
     confirm: openFacts(spec).map((f) => f.question),
+    files: fileNamesFor(fs, sizes, client.name as string, source.title, counts),
     reviewed,
     client: client.name as string,
     title: source.title,
@@ -126,7 +129,7 @@ export async function POST(request: Request) {
     measure: formats.video && structure.length ? { label: "Length", value: structure.length } : cards ? { label: "Slides", value: String(cards) } : null,
     references: refs.refs,
     structure: { ...structure, must: merge(structure.must, ruleDos), never: merge(structure.never, ruleDonts) },
-    exportLine: spec.exportLine || exportLineFor(fs, sizes, client.name as string, source.title),
+    exportLine: spec.exportLine || exportLineFor(fs, sizes, client.name as string, source.title, counts),
     links: [...(landing ? [{ label: "Landing page", url: landing }] : []), ...refs.links],
     formats: fs,
     by: me.fullName,

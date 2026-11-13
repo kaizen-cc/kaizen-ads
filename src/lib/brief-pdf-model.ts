@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { draws, slidesOf, type Allotment } from "@/lib/allotment";
-import { ASSET_WORD, LIMITS, beatRows, copyOf, frameOf, hookOf, openingOf, parseBrief, slideRows, withCopyDirection, type Beat, type CopySet, type Frame, type SlideRow } from "@/lib/brief-spec";
+import { ASSET_WORD, LIMITS, beatRows, copyOf, fileNamesFor, frameOf, hookOf, openingOf, parseBrief, slideRows, withCopyDirection, type Beat, type CopySet, type Frame, type SlideRow } from "@/lib/brief-spec";
 
 export { beatSpan, pacing } from "@/lib/brief-spec";
 
@@ -54,7 +54,8 @@ export type BriefStructure = {
 
 export type StructureSource = { title: string; angle: string; audience: string; brief: string; formats: Partial<Record<PdfFormat, PdfCounts>>; landing?: string | null };
 
-const STRUCTURE_VERSION = "v3";
+// v4: nothing the brief holds is capped any more (every asset, Must, Never, copy line and question reaches the PDF)
+const STRUCTURE_VERSION = "v4";
 
 /** What the structure depends on: the same brief always gives the same key, any edit a new one */
 export function structureKey(d: StructureSource) {
@@ -150,11 +151,11 @@ export function specsChecklist(formats: Partial<Record<PdfFormat, PdfCounts>>, s
   if (sizes.some((z) => z.replace(":", "x") === "9x16")) out.push("9:16 safe zone: keep text, logo and faces out of the top 270 px and the bottom 670 px (Stories and Reels buttons)");
   if (sizes.some((z) => z.replace(":", "x") === "4x5")) out.push("4:5: nothing that matters within 60 px of the edges; text readable on a phone at arm's length");
   if (fs.includes("carousel")) out.push("Carousel: each slide works on its own, the first one stops the scroll, the last one asks for the click");
-  const stem = `${client}_${title}`.replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "Client_Concept";
-  // File names in the sizes this request makes, never one it doesn't (a "9:16 only" brief gets no 4x5 name)
-  const keys = sizes.map((z) => z.replace(":", "x")).filter((z) => z === "4x5" || z === "9x16");
-  const names = (keys.length ? keys : ["4x5", "9x16"]).map((k) => `${stem}_V1_${k}`);
-  out.push(`File names: ${names.join(", ")}${names.length > 1 ? " (sizes of one version share a name, so they upload as one design)" : ""}`);
+  // File names for every version, in the sizes this request makes, never one it doesn't (a "9:16 only" brief gets no
+  // 4x5 name); a carousel's slides one by one
+  const rows = fileNamesFor(fs, sizes, client, title, { versions: versionCount(formats), slides: slidesFor(formats) });
+  const sized = rows.some((r) => r.names.length > 1);
+  out.push(`File names: ${rows.map((r) => r.names.join(", ")).join("; ")}${sized ? " (sizes of one version share a name, so they upload as one design)" : ""}`);
   return out;
 }
 
@@ -218,8 +219,9 @@ export function plainStructure(d: StructureSource): BriefStructure {
   const structured = p.structured;
   // An older brief's Constraints join Must, but not its sizes and safe zones (the export line says those once)
   const constraints = sp.constraints.filter((x) => !/(?<![\d.])\d{1,2}\s?[:x×]\s?\d{1,2}(?!\d)|safe zone|\bpx\b|\bsizes?\b|file names?/i.test(x));
-  const must = (structured ? [...sp.dos, ...constraints] : looseMust).map((x) => cut(x)).slice(0, LIMITS.must);
-  const never = (structured ? sp.donts : looseNever).map((x) => cut(x)).slice(0, LIMITS.never);
+  // Every line the brief holds (two pages is the writer's guide, flagged by the lint; the PDF never drops one)
+  const must = (structured ? [...sp.dos, ...constraints] : looseMust).map((x) => cut(x));
+  const never = (structured ? sp.donts : looseNever).map((x) => cut(x));
 
   const pick = (re: RegExp) => all.map((l) => re.exec(l)?.[1]?.trim()).filter((x): x is string => Boolean(x));
   // Copy direction a writer put in the opening fills what the Copy section leaves empty
@@ -241,7 +243,7 @@ export function plainStructure(d: StructureSource): BriefStructure {
     who: cut(sp.who || d.audience),
     length: cut(sp.length),
     audio: cut(sp.audio),
-    beats: d.formats.video ? beatRows(sp).slice(0, LIMITS.beats) : [],
+    beats: d.formats.video ? beatRows(sp) : [],
     slides: cards ? slideRows(sp).slice(0, cards) : [],
     frame: d.formats.image ? (hasFrame ? frame : versions[0] ? { headline: versions[0], subline: "", shows: "", readsFirst: "", cta: "" } : null) : null,
     versions,
@@ -249,7 +251,7 @@ export function plainStructure(d: StructureSource): BriefStructure {
     never,
     yourCall: cut(sp.yourCall),
     copy,
-    assets: sp.assets.length ? sp.assets.map(asset).slice(0, LIMITS.assets) : [...(sections.get("assets") ?? []), ...(sections.get("what to use") ?? [])].map(clean).slice(0, LIMITS.assets),
+    assets: sp.assets.length ? sp.assets.map(asset) : [...(sections.get("assets") ?? []), ...(sections.get("what to use") ?? [])].map(clean),
     ai: false,
   };
 }
@@ -265,8 +267,8 @@ export function needsStructure(s: BriefStructure, d: StructureSource) {
 
 /**
  * The AI's answer fitted to the brief: what the brief's own sections say always wins (it's what was reviewed); the AI
- * only fills what they leave empty. Trimmed, capped (5 Must, 5 Never, 4 to 6 beats, 5 assets), the rows the request
- * asks for (never more).
+ * only fills what they leave empty. What the brief holds is kept whole; only what the AI adds is capped (5 Must, 5 Never,
+ * 4 to 6 beats, 5 assets), the rows the request asks for (never more).
  */
 export function fitStructure(raw: Partial<BriefStructure> | null | undefined, d: StructureSource, ai: boolean): BriefStructure {
   const plain = plainStructure(d);

@@ -9,6 +9,7 @@
 // claims and the rest) adds to these on the server. Pure: tested in tests/brief-lint.test.ts.
 
 import { aiMediaIn, hasConsentLine, hasDisclaimerLine, likenessIn } from "./ai-content";
+import { narrativeIssues } from "./brief-narrative";
 import { checkPayoff } from "./brief-payoff";
 import { LIMITS, frameOf, parseBrief, slideRows } from "./brief-spec";
 
@@ -28,6 +29,11 @@ export type LintInput = {
   client?: string | null;
   /** What the client said against AI content (src/lib/ai-content.ts aiContentRule), when they did */
   noAiRule?: string | null;
+  /** The request's angle and audience (an idea that only restates them is generic), and the counts it asks for */
+  angle?: string | null;
+  audience?: string | null;
+  versionsAsked?: number | null;
+  slidesAsked?: number | null;
 };
 
 const KAIZEN_SIZES = ["4x5", "9x16"];
@@ -191,7 +197,12 @@ export function lintBrief(i: LintInput): LintIssue[] {
       issues.push({ id: "carousel-no-slides", severity: "soft", message: "The carousel has no slide flow: one line per slide, with its headline, what it shows and its job.", fixes: [{ kind: "ai", instruction: "Add the carousel's Slides, one numbered line per slide read top to bottom as a flow: its job (Hook, Proof, Payoff, CTA), the headline on the slide and what it shows. Change nothing else.", label: "Write the slides" }] });
     if (i.formats.includes("image") && !frameOf(sp.frame).headline && !sp.versions.length)
       issues.push({ id: "frame-no-headline", severity: "soft", message: "The single image has no headline: say the words on the frame.", fixes: [{ kind: "ai", instruction: "Add the single image's Frame: the headline (the words on the image), the subline, what's in the frame, what reads first and the CTA if it's on the image. Change nothing else.", label: "Write the frame" }] });
+    if (sp.assets.length > LIMITS.assets) issues.push({ id: "assets-many", severity: "soft", message: `${sp.assets.length} asset lines. Every one is in the PDF; group them into 3 to 5 if they belong together.`, fixes: [{ kind: "ai", instruction: "Group the Assets into 3 to 5 lines where they belong together, keeping every file, folder, need and link. Change nothing else.", label: "Group the assets" }] });
   }
+
+  // The story: the hook answered in time, versions that match the body, the strongest visual placed where it works,
+  // claims sourced or flagged, and a concept that's this client's (a flag with a fix, never a hold)
+  if (parsed.structured && current) issues.push(...narrativeIssues({ text: i.text, title: i.title, formats: i.formats, angle: i.angle, audience: i.audience, client: i.client, versionsAsked: i.versionsAsked, slidesAsked: i.slidesAsked }));
 
   return issues;
 }

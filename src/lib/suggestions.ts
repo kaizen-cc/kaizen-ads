@@ -20,6 +20,8 @@ import { pickedMarket } from "@/lib/market-fit";
 import { promiseSince } from "@/lib/promise-window";
 import { SPEC_RULE, structureBrief } from "@/lib/brief-spec";
 import { withDetectedFacts } from "@/lib/brief-facts";
+import { NARRATIVE_RULE, SWAP_RULE } from "@/lib/brief-craft";
+import { narrativeIssues } from "@/lib/brief-narrative";
 export { KIND_LABEL, type SuggestionKind } from "@/lib/suggestion-kinds";
 
 /** format/new/variations (and a carousel's slides): what this one concept makes. One concept per brief: a request with several is split into one brief each */
@@ -46,6 +48,10 @@ export type SuggestionDraft = {
   avatar?: string;
   /** A new avatar under test (not in the Bible): only when someone on the team asked to test one */
   avatarTest?: boolean;
+  /** What the writer's own QA pass found and couldn't fix before anyone saw it (narrative, differentiation): flags, never a hold */
+  flags?: string[];
+  /** The lessons from earlier corrections this brief was written with (src/lib/learnings.ts), so the team sees they carried over */
+  learnings?: { id: string; lesson: string }[];
 };
 
 export type Signal = { kind: SuggestionKind; weight: number; line: string; facts: string[] };
@@ -272,8 +278,11 @@ export const BRIEF_STANDARD = `THE BRIEF STANDARD (the request review checks eve
 - Every promise paid off: a hook or title that promises a reveal, tip, hack, trick, secret or "what most people miss" has the actual thing stated in "Why it works" with its source and how it shows on screen (in the beats, the slides or the frame). If the context doesn't hold it, the hook changes to one whose payoff we know, or the question goes under Confirm with client with a "Fallback:" line in the opening that works without it.
 - Assets that fit: every "Have" asset is a file or folder named exactly as assets_on_drive lists it and clearly fits this angle (by its name, folder and date); one that doesn't clearly fit becomes a "Need" line saying what to look for.
 - Real people's faces and voices: a real person's likeness or voice altered or generated (an AI avatar of a customer, a cloned or pitch-shifted voice, a face swap, a testimonial rebuilt with AI) has "Get the client's written consent for <who>'s likeness/voice" under Confirm with client and a "Disclaimer:" line under Must.
-- The client's AI content rule: when the client context has an ai_content_rule, nothing in the brief uses an AI avatar, an AI or cloned voice, AI narration or AI-generated video, footage or images; real footage, photos, people and voiceover instead.`;
+- The client's AI content rule: when the client context has an ai_content_rule, nothing in the brief uses an AI avatar, an AI or cloned voice, AI narration or AI-generated video, footage or images; real footage, photos, people and voiceover instead.
+- It's this client's and the story works: it passes the competitor swap test (DIFFERENTIATION) and every point of THE STORY HAS TO WORK for its format. Lessons the team taught you on earlier briefs (learned_from_the_team) apply from the first draft, never only after someone points them out again.`;
 
+// Kept the size it was (tests/brief-schema-size.test.ts): what the reviewer couldn't fix comes back in fixes, each
+// line starting "Flag: "
 const REPAIR_SCHEMA = {
   type: "object",
   properties: {
@@ -289,7 +298,10 @@ const REPAIR_SYSTEM = `${AGENCY_SYSTEM}
 You are the agency's request reviewer. A strategist has just written a creative request; before anyone on the team sees it, check it against the standard below and the client context, and return it corrected.
 ${BRIEF_STANDARD}
 Fix only real problems, in place: write the missing on-image lines and variation headlines from the brief's own direction and the client's voice, take out or reword anything against client memory, resolve contradictions. An unpaid promise is a real problem: when the hook promises a hack, tip, secret or reveal and the brief never says what it is, state it from the context (with its source) or, when the context doesn't hold it, change the hook to one whose payoff is known, or keep it under Confirm with client with a "Fallback:" line; never invent the payoff. An asset listed as Have that doesn't clearly fit the angle becomes a Need line saying what to look for. An altered or generated real person's face or voice without its consent line and disclaimer gets both; for a client with an ai_content_rule, any AI avatar, AI voice or AI-generated footage or image is replaced with the real thing. Keep everything that's right exactly as it is: the idea, the concepts, the counts, the formats, the evidence. Never add facts, prices, offers or claims, and don't restyle what's fine.
-fixes: one short line per change you made (empty when it already met the standard). draft: the full request, corrected.`;
+${SWAP_RULE}
+${NARRATIVE_RULE}
+Judge the story yourself, the way the lead strategist would on first read, and fix what you find in place (patch, don't rewrite what works): a hook answered later than ~3 seconds, a version whose hook doesn't fit the body it runs on (or that needs its own body and doesn't say so with "| Also changes:"), the strongest visual spent in the first seconds when it isn't the hook, a frame or who-it's-for that doesn't match the segment or audience the client's performance data shows converting best, a claim the offer hangs on that isn't under Confirm with client as "- Blocker: ...", and a concept that fails the competitor swap test (rewrite it once with the client's own proof, with its source). The code checks' findings come with the request: fix each one.
+fixes: one short line per change you made (empty when it already met the standard), then one line starting "Flag: " per problem you could not fix from the context (e.g. no client-specific proof to use, a segment the data doesn't show); flags are shown with the brief, never a hold. draft: the full request, corrected.`;
 
 /**
  * Every brief the strategist writes goes through this: written to the review's standard, then reviewed and repaired
@@ -297,9 +309,29 @@ fixes: one short line per change you made (empty when it already met the standar
  * changed after.
  */
 async function writeBrief(admin: SupabaseClient, clientId: string, opts: Parameters<typeof askJson<Out>>[0]): Promise<Out> {
-  const out = await askJson<Out>({ ...opts, clientId, system: `${opts.system}\n\n${BRIEF_STANDARD}` });
+  // The lessons the team taught on earlier briefs (this client's, and the brief-writing craft for every client), read
+  // here so the brief can say which ones it was written with
+  const { learningsFor } = await import("@/lib/learnings");
+  const learned = await learningsFor(admin, ["strategist"], clientId, opts.prompt.slice(-4000)).catch(() => ({ block: "", used: [] }));
+  const out = await askJson<Out>({ ...opts, clientId, system: `${opts.system}\n\n${BRIEF_STANDARD}`, prompt: learned.block ? `${opts.prompt}\n\n${learned.block}` : opts.prompt });
   if (!out.suggest || !out.draft?.brief) return out;
-  return { ...out, draft: await withAssetLinks(admin, clientId, await selfReview(admin, clientId, out.draft)) };
+  const draft = await withAssetLinks(admin, clientId, await selfReview(admin, clientId, out.draft));
+  return { ...out, draft: { ...draft, ...(learned.used.length ? { learnings: learned.used.map((l) => ({ id: l.id, lesson: l.lesson.slice(0, 300) })) } : {}) } };
+}
+
+/** The brief's code checks (src/lib/brief-narrative.ts): the story and the differentiation, for one written draft */
+function draftChecks(d: SuggestionDraft) {
+  const versions = (d.formats ?? []).reduce((n, f) => n + (f.new ?? 0) + (f.variations ?? 0), 0);
+  const slides = d.formats?.find((f) => f.format === "carousel")?.cards ?? null;
+  return narrativeIssues({ text: d.brief ?? "", title: d.title, formats: (d.formats ?? []).map((f) => f.format), angle: d.angle, audience: d.audience, versionsAsked: versions || null, slidesAsked: slides });
+}
+
+/**
+ * What the reviewer couldn't fix, kept on the draft. The code checks' own findings aren't stored: the brief check runs
+ * them live on the brief as it stands (src/lib/brief-lint.ts), so a flag never outlives its fix.
+ */
+function flagsFor(reviewer: string[] = []) {
+  return [...new Set(reviewer.map((x) => x.replace(/\s*—\s*/g, ", ").replace(/\s+/g, " ").trim()).filter(Boolean))].slice(0, 8);
 }
 
 /**
@@ -316,8 +348,14 @@ export async function withAssetLinks(admin: SupabaseClient, clientId: string, d:
   }
 }
 
-/** The reviewer's pass on one written brief: corrected in place, or as it was when there's nothing to fix. */
+/**
+ * The reviewer's pass on one written brief, before anyone sees it: the code checks (the story, versions against the
+ * body, claims, the competitor swap) go in with it to be fixed, the reviewer judges what code can't (hook timing, the
+ * strongest visual, segment fit, the swap test), and the brief comes back corrected in place, or as it was when there's
+ * nothing to fix. Whatever's still wrong after it is kept on the draft as flags, never a hold.
+ */
 async function selfReview(admin: SupabaseClient, clientId: string, draft: SuggestionDraft): Promise<SuggestionDraft> {
+  const found = draftChecks(draft);
   try {
     const ctx = await clientContext(admin, clientId);
     if (!ctx) return draft;
@@ -328,9 +366,13 @@ async function selfReview(admin: SupabaseClient, clientId: string, draft: Sugges
       system: REPAIR_SYSTEM,
       schema: REPAIR_SCHEMA,
       maxTokens: 12000,
-      prompt: `${contextBlock(ctx)}\n\n<request>\n${JSON.stringify(draft, null, 1)}\n</request>\n\nCheck it against the standard and the client context, and return it corrected.`,
+      prompt: `${contextBlock(ctx)}\n\n<request>\n${JSON.stringify(draft, null, 1)}\n</request>\n\n<code_checks note="found in this brief by code; fix each one in place">\n${found.map((x) => `- ${x.message} Fix: ${x.fixes[0]?.instruction ?? ""}`).join("\n") || "none"}\n</code_checks>\n\nCheck it against the standard and the client context, and return it corrected.`,
     });
-    if (r.fixes.length && r.draft?.brief) return r.draft;
+    const FLAG = /^\s*flag\s*:\s*/i;
+    const made = (r.fixes ?? []).filter((x) => !FLAG.test(x));
+    const fixed = made.length && r.draft?.brief ? r.draft : draft;
+    const flags = flagsFor((r.fixes ?? []).filter((x) => FLAG.test(x)).map((x) => x.replace(FLAG, "")));
+    return flags.length ? { ...fixed, flags } : fixed;
   } catch (e) {
     // The review is a second pass: if it can't run, the strategist's brief still goes out (the submit review catches it)
     console.error("brief self-review", clientId, e instanceof Error ? e.message : e);

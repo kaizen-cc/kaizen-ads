@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { answerBriefFact, askClientFact, briefLog, checkBrief, markBriefReviewed, overrideBriefGate, reviseBrief, undoBriefCorrection, type BriefTarget, type CheckResult, type LogEntry, type ReviseTurn } from "@/app/(team)/brief-review-actions";
 import { GATE_LABEL, STATUS_LABEL, headsLine, stampLine, type BriefStatus, type GateKey } from "@/lib/brief-gate";
 import { applyTextFix, type LintFix, type LintIssue } from "@/lib/brief-lint";
-import type { BriefState, FieldDiff } from "@/lib/brief-patch";
+import type { BriefState, ChangeLogItem, FieldDiff } from "@/lib/brief-patch";
 import { AttachButton, AttachedFiles, useBriefFiles, useFileDrop } from "@/components/brief-attach";
 import { fileMention } from "@/lib/brief-files";
 import { linkWord, splitLink } from "@/lib/asset-links";
@@ -23,7 +23,75 @@ import { messageKey } from "@/lib/chat-report";
 export type Change = { brief: string; title?: string; angle?: string; audience?: string; sizes?: string[]; /** The references, when files were added to them */ refs?: string[] };
 /** Text typed in "Tell me what to change" and not sent yet: whether there is some, and applying it (the change, or null) */
 export type PendingRevise = { has: () => boolean; apply: () => Promise<Change | null> };
-type Turn = { role: "user" | "ai"; text: string; diff?: FieldDiff[]; correctionId?: string | null; undone?: boolean; /** The revise route failed: the text is its error */ error?: boolean };
+type Turn = {
+  role: "user" | "ai";
+  text: string;
+  diff?: FieldDiff[];
+  correctionId?: string | null;
+  undone?: boolean;
+  /** The revise route failed: the text is its error */
+  error?: boolean;
+  /** Every change the message asked for: done (where) or not done (why) */
+  log?: ChangeLogItem[];
+  /** Fields the AI touched without being asked: left as they were */
+  unasked?: string[];
+};
+
+/**
+ * "What changed in this version": every ask of the correction, done (and where) or not done (and why), then each field
+ * that changed, before and after, so the person checks only what changed. Undo puts it all back.
+ */
+function WhatChanged({ log, diff, unasked, undone, open, onUndo, busy }: { log: ChangeLogItem[]; diff: FieldDiff[]; unasked: string[]; undone?: boolean; open: boolean; onUndo?: (() => void) | null; busy: boolean }) {
+  if (!log.length && !diff.length) return null;
+  const done = log.filter((x) => x.done).length;
+  const missed = log.length - done;
+  return (
+    <details open={open} className={`max-w-[92%] rounded-[14px] border px-3.5 py-2 text-[13px] ${missed ? "border-warn/50" : "border-line"} ${undone ? "opacity-60" : ""}`}>
+      <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-2 text-muted md:min-h-9">
+        <span className="min-w-0">
+          <span className="font-medium text-fg">What changed in this version</span>
+          {log.length > 0 && (
+            <span className={missed ? "text-warn" : "text-ok"}>
+              {" "}
+              · {done} of {log.length} done{missed ? `, ${missed} not done` : ""}
+            </span>
+          )}
+          {undone ? " · undone" : ""}
+        </span>
+        {onUndo && !undone && (
+          <button type="button" onClick={(e) => (e.preventDefault(), onUndo())} disabled={busy} className="min-h-11 shrink-0 rounded-full border border-line px-3 text-[12.5px] text-fg hover:border-faint disabled:opacity-60 md:min-h-9">
+            {busy ? "Undoing…" : "Undo"}
+          </button>
+        )}
+      </summary>
+      <div className="grid gap-3 pb-1 pt-2">
+        {log.length > 0 && (
+          <ul className="grid gap-1.5">
+            {log.map((x, i) => (
+              <li key={i} className="flex gap-2.5 leading-snug">
+                <span aria-hidden className={`mt-px w-4 shrink-0 font-semibold ${x.done ? "text-ok" : "text-warn"}`}>
+                  {x.done ? "✓" : "!"}
+                </span>
+                <span className="min-w-0">
+                  <span className="text-fg">{x.ask}</span>
+                  <span className={`block text-[12px] ${x.done ? "text-faint" : "text-warn"}`}>{x.done ? (x.where ? `Done · ${x.where}` : "Done") : `Not done · ${x.why}`}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {unasked.length > 0 && <p className="text-[12px] text-faint">Left exactly as it was (not asked for): {unasked.join(", ")}.</p>}
+        {diff.map((d) => (
+          <div key={d.field} className="grid gap-0.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">{d.label}</span>
+            {d.before && <span className="whitespace-pre-wrap text-faint line-through decoration-faint/60">{d.before}</span>}
+            {d.after && <span className="whitespace-pre-wrap text-fg">{d.after}</span>}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
 
 const TONE: Record<BriefStatus, string> = {
   has_conflicts: "border-bad/40 bg-bad-soft text-bad",
@@ -155,7 +223,7 @@ export function BriefCheck({ target, signature, brief, onChange, demo = false, p
       setTurns((t) => [...t, { role: "ai", text: r.error, error: true }]);
       return null;
     }
-    setTurns((t) => [...t, { role: "ai", text: r.reply + (r.refused.length ? ` (Not changed, not yours to change: ${[...new Set(r.refused)].join(", ")}.)` : ""), diff: r.diff, correctionId: r.correctionId }]);
+    setTurns((t) => [...t, { role: "ai", text: r.reply + (r.refused.length ? ` (Not changed, not yours to change: ${[...new Set(r.refused)].join(", ")}.)` : ""), diff: r.diff, correctionId: r.correctionId, log: r.log, unasked: r.unasked }]);
     const next = r.diff.length || r.refs ? { ...fromState(r.state, r.brief), ...(r.refs ? { refs: r.refs } : {}) } : null;
     if (next) change(next);
     requestAnimationFrame(() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" }));
@@ -314,6 +382,47 @@ export function BriefCheck({ target, signature, brief, onChange, demo = false, p
         </div>
       )}
 
+      {/* What the writer's own QA pass couldn't fix, and the lessons from earlier corrections it was written with */}
+      {ok?.writer && (ok.writer.flags.length > 0 || ok.writer.learnings.length > 0) && (
+        <div className="grid gap-2">
+          {ok.writer.flags.filter((f) => !soft.some((x) => x.message === f)).length > 0 && (
+            <div className="grid gap-1.5 rounded-[14px] border border-warn/40 bg-warn-soft/40 px-3.5 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-warn">Flagged when it was written</p>
+              <ul className="grid gap-1 text-[14px] leading-snug">
+                {ok.writer.flags
+                  .filter((f) => !soft.some((x) => x.message === f))
+                  .map((f) => (
+                    <li key={f} className="flex gap-2.5">
+                      <span aria-hidden className="w-3 shrink-0 font-semibold text-warn">
+                        !
+                      </span>
+                      <span className="min-w-0">{f}</span>
+                    </li>
+                  ))}
+              </ul>
+              {ok.canEdit && !ok.copyOnly && <p className="text-[12px] text-muted">The writer couldn&apos;t fix these from what we know. A heads-up, never a hold: fix one below if you know the answer.</p>}
+            </div>
+          )}
+          {ok.writer.learnings.length > 0 && (
+            <details className="rounded-[14px] border border-line px-3.5 py-2 text-[13px]">
+              <summary className="flex min-h-11 cursor-pointer items-center text-muted md:min-h-9">
+                Written with {ok.writer.learnings.length} lesson{ok.writer.learnings.length === 1 ? "" : "s"} from earlier corrections
+              </summary>
+              <ul className="grid gap-1.5 pb-1 pt-1">
+                {ok.writer.learnings.map((l) => (
+                  <li key={l.id || l.lesson} className="flex gap-2.5 leading-snug">
+                    <span aria-hidden className="w-3 shrink-0 font-semibold text-ok">
+                      ✓
+                    </span>
+                    <span className="min-w-0 text-fg/90">{l.lesson}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+
       {/* Contradictions */}
       {(hard.length > 0 || soft.length > 0) && (
         <div className="grid gap-2">
@@ -372,37 +481,29 @@ export function BriefCheck({ target, signature, brief, onChange, demo = false, p
                   .slice(0, 5)
                   .reverse()
                   .map((l) => (
-                    <div key={l.id} className="grid gap-1 rounded-[14px] bg-bg/60 px-3.5 py-2.5 text-[13px]">
+                    <div key={l.id} className="grid gap-1.5 rounded-[14px] bg-bg/60 px-3.5 py-2.5 text-[13px]">
                       <p className="text-faint">
                         {l.by} · {new Date(l.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                         {l.undone ? " · undone" : ""}
                       </p>
                       <p className="text-fg/90">{l.instruction}</p>
+                      <WhatChanged log={l.checklist} diff={l.diff} unasked={[]} undone={l.undone} open={false} busy={false} />
                     </div>
                   ))}
               {turns.map((t, i) => (
                 <div key={i} className={`grid gap-1.5 ${t.role === "user" ? "justify-items-end" : ""}`}>
                   <p className={`max-w-[92%] rounded-[16px] px-3.5 py-2.5 text-[14px] leading-snug ${t.role === "user" ? "bg-fg text-bg" : "bg-bg/70 text-fg"}`}>{t.text}</p>
-                  {t.diff && t.diff.length > 0 && (
-                    <details className={`max-w-[92%] rounded-[14px] border border-line px-3.5 py-2 text-[13px] ${t.undone ? "opacity-60" : ""}`}>
-                      <summary className="flex min-h-9 cursor-pointer items-center justify-between gap-2 text-muted">
-                        <span>Changed {t.diff.map((d) => d.label).join(", ")}{t.undone ? " · undone" : ""}</span>
-                        {t.correctionId && !t.undone && (
-                          <button type="button" onClick={(e) => (e.preventDefault(), undo(i, t.correctionId!))} disabled={Boolean(busy)} className="min-h-9 rounded-full border border-line px-3 text-[12.5px] text-fg hover:border-faint disabled:opacity-60">
-                            {busy === `undo-${i}` ? "Undoing…" : "Undo"}
-                          </button>
-                        )}
-                      </summary>
-                      <div className="grid gap-2 pb-1 pt-2">
-                        {t.diff.map((d) => (
-                          <div key={d.field} className="grid gap-0.5">
-                            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">{d.label}</span>
-                            {d.before && <span className="whitespace-pre-wrap text-faint line-through decoration-faint/60">{d.before}</span>}
-                            {d.after && <span className="whitespace-pre-wrap text-fg">{d.after}</span>}
-                          </div>
-                        ))}
-                      </div>
-                    </details>
+                  {t.role === "ai" && (
+                    <WhatChanged
+                      log={t.log ?? []}
+                      diff={t.diff ?? []}
+                      unasked={t.unasked ?? []}
+                      undone={t.undone}
+                      // The latest correction opens on its change log: only what changed needs checking
+                      open={i === turns.length - 1}
+                      onUndo={t.correctionId ? () => undo(i, t.correctionId!) : null}
+                      busy={busy === `undo-${i}`}
+                    />
                   )}
                   {t.role === "ai" && (
                     <ReportThis

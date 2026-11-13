@@ -94,6 +94,27 @@ export function widenScope(evidence: ClientPlace[], proposed: LearningScope, kin
   return stay;
 }
 
+/**
+ * How far a brief correction reaches the moment it's classified. A correction about the craft of writing a brief (a
+ * hook answered late, versions that don't match the body, an unflagged claim, a generic concept) is a lesson for the
+ * brief writer on every client from the start, so the next brief doesn't need the same fix; anything about one
+ * client's brand, offer or deal stays with that client, and every other kind of pushback waits for widenScope's
+ * evidence. Only a confident, reusable lesson the classifier itself proposed for everyone.
+ */
+export function immediateScope(source: string, kind: LearningKind, proposed: LearningScope, confidence: number): LearningScope {
+  if (source !== "brief_corrections" || kind !== "lesson") return "client";
+  return proposed === "everyone" && confidence >= 0.7 ? "everyone" : "client";
+}
+
+/** The block a call reads its learnings in (the tag carries the client and agents, so a test can rebuild it) */
+export function learnedBlock(top: Learning[], agents: string[], clientId: string | null) {
+  return `<learned_from_the_team client="${clientId ?? ""}" agents="${agents.join(",")}">
+What Kaizen's team taught you by pushing back on earlier work. Each holds only under its condition: apply it when the condition fits this task, otherwise ignore it. They never override the client's own rules or Kaizen's strategy.
+${top.map((l) => `- [${scopeLabel(l)}${l.evidence > 1 ? `, seen ${l.evidence}×` : ""}] ${l.condition ? `When ${l.condition.replace(/^when\s+/i, "")}: ` : ""}${l.lesson}`).join("\n")}
+</learned_from_the_team>
+`;
+}
+
 /** The label a scope reads as, for the prompt and Settings */
 export function scopeLabel(l: Pick<Learning, "scope" | "kind">) {
   if (l.kind === "exception") return "this client, one-off";

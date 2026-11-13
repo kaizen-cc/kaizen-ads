@@ -174,11 +174,64 @@ export function diffStates(a: BriefState, b: BriefState): FieldDiff[] {
   return fields.map((f) => ({ field: f, label: FIELD_LABEL[f], before: show(a, f), after: show(b, f) })).filter((d) => d.before !== d.after);
 }
 
+// ─── Accountable revisions: the checklist and the change log ─────────────────────────────────
+
+/** One change the correction asked for, as the AI listed it: done or not, where, why not, and the changes that did it */
+export type AskItem = { ask: string; done: boolean; where: string; why: string; changes: number[] };
+/** The change log a correction keeps: every ask, done (with where) or not done (with why), checked against the patch */
+export type ChangeLogItem = { ask: string; done: boolean; where: string; why: string };
+
+const validIdx = (xs: unknown, n: number) => (Array.isArray(xs) ? [...new Set(xs.filter((i): i is number => Number.isInteger(i) && i >= 0 && i < n))] : []);
+
+/**
+ * Patch, don't rewrite: only the changes an ask points to are applied (a change that keeps the brief consistent belongs
+ * to the ask it serves). A change no ask points to is left out, so nothing the person didn't ask about moves. An answer
+ * with no checklist at all (an older answer) keeps every change.
+ */
+export function askedChanges(items: AskItem[] | null | undefined, changes: BriefChange[]): { keep: BriefChange[]; unasked: BriefChange[] } {
+  const list = (items ?? []).filter((x) => x && typeof x.ask === "string" && x.ask.trim());
+  if (!list.length) return { keep: changes, unasked: [] };
+  const pointed = new Set(list.flatMap((x) => validIdx(x.changes, changes.length)));
+  return { keep: changes.filter((_, i) => pointed.has(i)), unasked: changes.filter((_, i) => !pointed.has(i)) };
+}
+
+const placeOf = (c: BriefChange) => `${FIELD_LABEL[c.field] ?? c.field}${c.index >= 0 && c.op !== "add" && c.op !== "set" ? ` (item ${c.index + 1})` : c.op === "add" ? " (added)" : ""}`;
+
+/**
+ * The change log, held to what really happened: an ask marked done counts as done only when one of its changes was
+ * applied (otherwise it's "not done", with why); an ask the AI couldn't do keeps its reason. With no checklist, each
+ * applied change is its own line. Nothing is ever silently skipped: every ask is on the log.
+ */
+export function changeLog(items: AskItem[] | null | undefined, changes: BriefChange[], applied: BriefChange[], refused: BriefChange[]): ChangeLogItem[] {
+  const list = (items ?? []).filter((x) => x && typeof x.ask === "string" && x.ask.trim());
+  const one = (s: unknown, n = 300) => (typeof s === "string" ? s.replace(/\s*—\s*/g, ", ").replace(/\s+/g, " ").trim().slice(0, n) : "");
+  if (!list.length) return applied.map((c) => ({ ask: `Change ${FIELD_LABEL[c.field] ?? c.field}`, done: true, where: placeOf(c), why: "" }));
+  return list.map((x) => {
+    const idx = validIdx(x.changes, changes.length);
+    const did = idx.filter((i) => applied.includes(changes[i]));
+    const not = idx.filter((i) => refused.includes(changes[i]));
+    const ask = one(x.ask, 400);
+    if (did.length && x.done !== false) return { ask, done: true, where: one(x.where) || [...new Set(did.map((i) => placeOf(changes[i])))].join(", "), why: "" };
+    if (x.done && !did.length)
+      return { ask, done: false, where: "", why: not.length ? `The change couldn't be made (${[...new Set(not.map((i) => FIELD_LABEL[changes[i].field] ?? changes[i].field))].join(", ")}: not yours to change, or that item isn't there).` : "Marked done, but nothing in the brief changed for it." };
+    return { ask, done: false, where: "", why: one(x.why) || "Not done." };
+  });
+}
+
 /** The JSON shape the revise chat answers in */
 export const PATCH_SCHEMA = {
   type: "object",
   properties: {
     reply: { type: "string" },
+    checklist: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { ask: { type: "string" }, done: { type: "boolean" }, where: { type: "string" }, why: { type: "string" }, changes: { type: "array", items: { type: "integer" } } },
+        required: ["ask", "done", "where", "why", "changes"],
+        additionalProperties: false,
+      },
+    },
     changes: {
       type: "array",
       items: {
@@ -197,7 +250,7 @@ export const PATCH_SCHEMA = {
       },
     },
   },
-  required: ["reply", "changes"],
+  required: ["reply", "checklist", "changes"],
   additionalProperties: false,
 } as const;
 

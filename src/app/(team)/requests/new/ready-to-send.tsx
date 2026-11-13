@@ -288,7 +288,7 @@ export function ReadyToSend({
             />
           ) : draft.brief.trim() ? (
             <button id="rts-brief" type="button" onClick={() => setEditBrief(true)} className="cursor-text rounded-[16px] text-left outline-none focus-visible:ring-2 focus-visible:ring-brand/50" aria-label="Edit the brief">
-              <BriefText text={draft.brief} exportLine={exportLineFor(formats, draft.sizes, clientName, draft.title)} drive={drive} />
+              <BriefText text={draft.brief} exportLine={exportLineFor(formats, draft.sizes, clientName, draft.title, { versions: formats.reduce((n, f) => n + (draft.formats[f]?.new ?? 0) + (draft.formats[f]?.variations ?? 0), 0), slides: draft.formats.carousel?.cards })} drive={drive} />
             </button>
           ) : null}
           {/* Before it goes to the maker: client-only facts, assets, contradictions, the revise chat and the review stamp */}

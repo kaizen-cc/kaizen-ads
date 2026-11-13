@@ -23,6 +23,9 @@ export type BriefInput = {
   /** A ticket's due date; a draft's is its turnaround from today */
   due?: string | null;
   priority?: string | null;
+  /** The request's angle and audience: the narrative pass flags an idea that only restates them */
+  angle?: string | null;
+  audience?: string | null;
 };
 
 /** The brief as it is (text and sizes): a review or an override holds only for exactly this */
@@ -143,7 +146,7 @@ export async function checkBriefNow(admin: SupabaseClient, i: BriefInput): Promi
     stampAndOverride(admin, i.clientId, hash),
     loadAiRule(admin, i.clientId),
   ]);
-  const lint = lintBrief({ text: i.brief, title: i.title, sizes: i.sizes, formats: i.formats, client: (client?.name as string | null) ?? null, noAiRule: ai.rule });
+  const lint = lintBrief({ text: i.brief, title: i.title, sizes: i.sizes, formats: i.formats, client: (client?.name as string | null) ?? null, noAiRule: ai.rule, angle: i.angle, audience: i.audience });
   const assets = assetGate({ assets: spec.assets, links, formats: i.formats, drive, due, today: new Date(), chaser });
   const g = summarizeGate({ openFacts: openFacts(spec), lint, assets, override: so.override, stamp: so.stamp });
   return { ...g, spec, structured: parsed.structured, hash, due: due ? due.toISOString() : null };

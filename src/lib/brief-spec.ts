@@ -10,6 +10,7 @@
 // read, and render with their sections. Pure: safe in the browser and on the server, tested in tests/brief-spec.test.ts
 // and tests/brief-review.test.ts.
 
+import { NARRATIVE_RULE, SWAP_RULE } from "./brief-craft";
 import { PAYOFF_RULE } from "./brief-payoff";
 import { briefFileStem } from "./creative-drive-paths";
 
@@ -125,8 +126,13 @@ export const SPEC_HEADINGS = [
 ] as const;
 type Heading = (typeof SPEC_HEADINGS)[number];
 
-/** The caps every writer's brief is held to (two pages: every list five or fewer) */
+/** The caps every writer's brief is held to (two pages: every list five or fewer). A guide the lint flags, never a cut */
 export const LIMITS = { must: 5, never: 5, beats: 6, slides: 10, assets: 5, primary: 2, headlines: 2, confirm: 5, versions: 10 } as const;
+/**
+ * The most a list keeps when a writer's brief is tidied: a safety bound, far past the two-page guide, so nothing the
+ * writer (or a correction) put in the brief is dropped on the way to the PDF. Past LIMITS is flagged, never cut.
+ */
+export const KEEP_MAX = 12;
 
 const one = (s: string) => s.replace(/\s*\u2014\s*/g, ", ").replace(/\s+/g, " ").trim();
 const list = (xs: string[]) => xs.map(one).filter(Boolean);
@@ -235,7 +241,7 @@ export function frameLines(f: Frame) {
   return [f.headline && `Headline: ${one(f.headline)}`, f.subline && `Subline: ${one(f.subline)}`, f.shows && `Shows: ${one(f.shows)}`, f.readsFirst && `Reads first: ${one(f.readsFirst)}`, f.cta && `CTA: ${one(f.cta)}`].filter((x): x is string => Boolean(x));
 }
 
-/** The copy's lines read back, capped (primary text up to 2, headlines up to 2, one CTA) */
+/** The copy's lines read back: every line the brief holds (two of each is the guide the lint holds it to), one CTA */
 export function copyOf(lines: string[]): CopySet {
   const c: CopySet = { primary: [], headlines: [], cta: "" };
   for (const raw of lines) {
@@ -248,7 +254,7 @@ export function copyOf(lines: string[]): CopySet {
     else if (k === "cta" || k === "call to action") c.cta = c.cta || v;
     else c.primary.push(v);
   }
-  return { primary: c.primary.slice(0, LIMITS.primary), headlines: c.headlines.slice(0, LIMITS.headlines), cta: c.cta };
+  return { primary: c.primary.slice(0, KEEP_MAX), headlines: c.headlines.slice(0, KEEP_MAX), cta: c.cta };
 }
 
 export function copyLines(c: CopySet) {
@@ -295,20 +301,52 @@ const PX: Record<string, string> = { "4x5": "1080x1350 (4:5)", "9x16": "1080x192
  * The one export line, from the request: the specs, the 9:16 safe zone and the file names. Kaizen makes 4:5 and 9:16
  * only; a carousel's slides are 1080x1350; a video is MP4 H.264 with captions burned in.
  */
-export function exportLineFor(formats: BuildFormat[], sizes: string[], client: string, title: string) {
+export function exportLineFor(formats: BuildFormat[], sizes: string[], client: string, title: string, counts?: { versions?: number; slides?: number }) {
   const keys = sizes.map((z) => z.replace(":", "x")).filter((z) => z === "4x5" || z === "9x16");
   const use = keys.length ? keys : ["4x5", "9x16"];
-  const stem = briefFileStem(client, title);
   const parts: string[] = [];
   if (formats.includes("video")) parts.push(`Video: MP4 H.264, ${use.map((k) => PX[k]).join(" and ")}, captions burned in`);
   if (formats.includes("image")) parts.push(`Image: ${use.map((k) => PX[k]).join(" and ")}`);
   if (formats.includes("carousel")) parts.push("Carousel slides: 1080x1350 (4:5)");
   if (!parts.length) parts.push(use.map((k) => PX[k]).join(" and "));
   if (use.includes("9x16") && !(formats.length === 1 && formats[0] === "carousel")) parts.push("9:16 safe zone: nothing in the top 270 px or bottom 670 px");
-  const names = (formats.length === 1 && formats[0] === "carousel" ? ["4x5"] : use).map((k) => `${stem}_V1_${k}`);
-  parts.push(`Files: ${names.join(", ")}${formats.includes("carousel") ? " (slides add _Slide01)" : ""}`);
+  // Every version's names, V1 to the last (a carousel's slides as a range here; the PDF lists each one)
+  const rows = fileNamesFor(formats, sizes, client, title, counts);
+  const short = rows.map((r) => (r.names.length > 3 ? `${r.names[0]} to ${r.names[r.names.length - 1]}` : r.names.join(", ")));
+  parts.push(`Files: ${short.join("; ")}`);
   return parts.join(" · ");
 }
+
+export type FileNameRow = { version: string; names: string[] };
+
+/**
+ * The file names for every version (V1, V2, V3...), in the sizes the request makes (Kaizen's 4:5 and 9:16, both when
+ * none is set), the same names the Drive filing uses (src/lib/creative-drive-paths.ts driveFileName): a carousel's
+ * slides one by one ("_V2_Slide03_4x5"), sizes of one version sharing its name so they upload as one design.
+ */
+export function fileNamesFor(formats: BuildFormat[], sizes: string[], client: string, title: string, counts?: { versions?: number; slides?: number }): FileNameRow[] {
+  const keys = sizes.map((z) => z.replace(":", "x")).filter((z) => z === "4x5" || z === "9x16");
+  const use = keys.length ? keys : ["4x5", "9x16"];
+  const stem = briefFileStem(client, title);
+  const n = Math.max(1, Math.min(20, Math.floor(counts?.versions ?? 1)));
+  const onlyCarousel = formats.length === 1 && formats[0] === "carousel";
+  const slides = formats.includes("carousel") ? Math.max(2, Math.min(10, Math.floor(counts?.slides ?? 0) || 5)) : 0;
+  return Array.from({ length: n }, (_, i) => {
+    const v = `V${i + 1}`;
+    const names: string[] = [];
+    if (!onlyCarousel) for (const k of use) names.push(`${stem}_${v}_${k}`);
+    // Carousel slides are 4:5
+    for (let s = 1; s <= slides; s++) names.push(`${stem}_${v}_Slide${String(s).padStart(2, "0")}_4x5`);
+    return { version: v, names };
+  });
+}
+
+/** "Files: ..." (and an older "File names: ...") taken off an export line, for a sheet that lists the names itself */
+export const withoutFileNames = (line: string) =>
+  line
+    .split(/\s+·\s+/)
+    .filter((p) => !/^\s*(?:files?|file names?)\s*:/i.test(p))
+    .join(" · ");
 
 // ─── Text ────────────────────────────────────────────────────────
 
@@ -447,7 +485,8 @@ export function withCopyDirection(own: CopySet, direction: string[]): CopySet {
   return { primary: own.primary.length ? own.primary : d.primary, headlines: own.headlines.length ? own.headlines : d.headlines, cta: own.cta || d.cta };
 }
 
-// "Confirm with client" never holds the work: a line telling the maker to hold, wait or not start says what to check
+// Hold, wait or block language in a "Confirm with client" line: the line is kept word for word (never rewritten), and
+// shown as a blocker, under a heading that says so (src/lib/brief-derive.ts)
 const HOLD = [
   /\b(?:hold|holds|holding|park|pause|freeze)\s+(?:this|the)\s+(?:ticket|brief|work|request|job|design|edit)\b/i,
   /\buntil the client (?:says|confirms|answers|replies|approves|signs off|agrees|gets back)\b/i,
@@ -458,17 +497,12 @@ const HOLD = [
   /\bon hold\b/i,
 ];
 
-/** A confirm line without hold, wait or block language ("Hold this ticket until the client says yes" is "Check before making it.") */
-export function withoutHold(line: string) {
-  const ss = sentences(line);
-  if (!ss.some((x) => HOLD.some((re) => re.test(x)))) return one(line);
-  const out: string[] = [];
-  for (const x of ss) {
-    const keep = HOLD.some((re) => re.test(x)) ? "Check before making it." : x;
-    if (!out.includes(keep)) out.push(keep);
-  }
-  return out.join(" ");
-}
+/**
+ * Whether a confirm line says it holds the work ("Hold this ticket until the client says yes", "blocks the work"). The
+ * line itself is never rewritten: it used to be replaced with a fixed "Check before making it.", which put text in the
+ * PDF that the brief never held and hid the question the maker needed.
+ */
+export const holdsWork = (line: string) => HOLD.some((re) => re.test(line));
 
 /** The spec as the brief's text, its sections in order, empty ones left out */
 export function renderSpec(sp: BriefSpec): string {
@@ -651,9 +685,11 @@ export function parseBrief(text: string): { overview: string; spec: BriefSpec; s
 /** A writer's spec made safe to keep: trimmed, capped (two pages), no em dashes, "Your call" always said */
 export function cleanSpec(raw: Partial<BriefSpec> | null | undefined): BriefSpec {
   const t = (s: unknown, max = 600) => (typeof s === "string" ? one(s).slice(0, max) : "");
-  const xs = (v: unknown, n = 8, max = 300) => (Array.isArray(v) ? v.map((x) => t(x, max)).filter(Boolean).slice(0, n) : []);
+  // Every item the writer gave is kept (up to the safety bound): past the two-page guide is the lint's to flag, never
+  // a silent cut the maker can't see
+  const xs = (v: unknown, n = KEEP_MAX, max = 300) => (Array.isArray(v) ? v.map((x) => t(x, max)).filter(Boolean).slice(0, n) : []);
   const statuses = ["have", "need", "shoot", "missing"];
-  const beats = xs(raw?.beats, LIMITS.beats, 500).map((x) => beatLine(beatOf(x))).filter(Boolean);
+  const beats = xs(raw?.beats, KEEP_MAX, 500).map((x) => beatLine(beatOf(x))).filter(Boolean);
   const slides = xs(raw?.slides, LIMITS.slides, 300).map((x) => slideLine(slideOf(x))).filter(Boolean);
   return {
     insight: t(raw?.insight, 700),
@@ -662,29 +698,29 @@ export function cleanSpec(raw: Partial<BriefSpec> | null | undefined): BriefSpec
     stage: t(raw?.stage, 60),
     keyMessage: t(raw?.keyMessage, 300),
     hook: t(raw?.hook, 300),
-    proof: xs(raw?.proof, 6),
+    proof: xs(raw?.proof),
     length: t(raw?.length, 40),
     beats,
     audio: t(raw?.audio, 240),
     slides,
     frame: frameLines(frameOf(xs(raw?.frame, 8, 300))),
     versions: xs(raw?.versions, LIMITS.versions, 240).map(versionText).filter(Boolean),
-    constraints: xs(raw?.constraints, 10),
-    dos: xs(raw?.dos, LIMITS.must, 200),
-    donts: xs(raw?.donts, LIMITS.never, 200),
+    constraints: xs(raw?.constraints),
+    dos: xs(raw?.dos, KEEP_MAX, 200),
+    donts: xs(raw?.donts, KEEP_MAX, 200),
     assets: (Array.isArray(raw?.assets) ? raw.assets : [])
       .map((a) => ({ item: t(a?.item, 460), status: (statuses.includes(a?.status as string) ? a.status : "need") as AssetStatus }))
       .filter((a) => a.item)
-      .slice(0, LIMITS.assets),
-    copy: copyLines(copyOf(xs(raw?.copy, 10, 600))),
+      .slice(0, KEEP_MAX),
+    copy: copyLines(copyOf(xs(raw?.copy, KEEP_MAX, 600))),
     kpi: t(raw?.kpi, 200),
     success: t(raw?.success, 300),
     yourCall: t(raw?.yourCall, 400) || YOUR_CALL_DEFAULT,
     script: typeof raw?.script === "string" ? raw.script.replace(/\s*\u2014\s*/g, ", ").trim().slice(0, 4000) : "",
     confirm: (Array.isArray(raw?.confirm) ? raw.confirm : [])
-      .map((c) => ({ question: withoutHold(t(c?.question, 300)), answer: t(c?.answer, 600), source: t(c?.source, 120) }))
+      .map((c) => ({ question: t(c?.question, 400), answer: t(c?.answer, 600), source: t(c?.source, 120) }))
       .filter((c) => c.question)
-      .slice(0, LIMITS.confirm),
+      .slice(0, KEEP_MAX),
     exportLine: t(raw?.exportLine, 400),
   };
 }
@@ -732,13 +768,15 @@ Beats: (video, 4 to 6) one line each: "- <time> | <name> | On screen: <what we s
 Audio: (video) music and voiceover direction in one line.
 Slides: (carousel) one numbered line per slide, read top to bottom as a flow: "1. <job: Hook, Proof, Payoff or CTA> | Headline: <the words on the slide> | Shows: <what it shows>".
 Frame: (single image) "- Headline: <the words>", "- Subline: <the words>", "- Shows: <what's in the frame>", "- Reads first: <the order the eye takes, e.g. headline, then the product, then the button>", "- CTA: <the button text>" (only when it's on the image).
-Versions: one line per version with only what changes (the hook or the headline): "- V1: <the line> (net new)", "- V2: <the line>". V1 is net new; every other version changes that one variable and nothing else.
+Versions: one line per version with only what changes (the hook or the headline): "- V1: <the line> (net new)", "- V2: <the line>". V1 is net new; every other version changes that one variable and nothing else. When a version also changes more than its line (its body, footage, beats, photo or slides), say exactly what on its line: "- V3: <the line> | Also changes: <what, e.g. the testimonial clip in beat 3>". Every version's line must fit the body it runs on: a hook that promises something the body never shows is wrong.
 Must: (up to 5) what has to be there: the logo moment, captions, the cleared claims only, the client's Brand Bible rules that matter here folded in. A real person's face or voice altered or generated (an AI avatar of a customer, a cloned or pitch-shifted voice, a face swap) gets a "Disclaimer: <the on-screen line>" item here and "Get the client's written consent for <who>'s likeness/voice" under Confirm with client.
 Never: (up to 5, specific) the exact lines, assets and claims not to use ("Don't use: 'two great offices', the VIP lounge"), and the client's don'ts that matter here, folded in, never appended as a long list.
 Your call: one line handing the maker edit style, cut points, transitions, which clips or photos within the folders, and music within the rules. Never direct those yourself.
 Assets: (3 to 5 groups) each starting with its status: "- Have: <the file or folder exactly as assets_on_drive names it> (Drive: <folder>), <what to take from it, in a few words>", "- Need: <asset>", "- Client to shoot: <asset>", "- Missing: <a link that doesn't open>". Prefer a specific file over a whole folder when the file list shows it. List a file only when what we know about it (its name, folder, date) clearly fits this angle; when nothing on Drive clearly fits, write "- Need: <what to look for or get>" instead of pointing at a clip that may be unrelated. Don't write Drive links yourself: the app adds each file's link from its name. Never write a placeholder like MISSING or TBD in place of a link.
 Copy: "- Primary: <text>" (up to 2), "- Headline: <text>" (up to 2), "- CTA: <the button>". The concept's copy direction lives here, never in the opening.
 Script: only when the request explicitly asked for a script or voiceover text. Beats are not a script.
-Confirm with client: (only when something is open) every fact the concept depends on that only the client knows (which seat or spot, the tip, the stat, the offer's terms, a date) and that the context doesn't answer, as the question to ask them, short and specific ("- Which seat, at which venue, and why?"). When the context does answer it, use it and write "- <question> Answer: <answer> (Source: <where>)". NEVER invent such a fact. It never holds the work: never write "hold this ticket", "wait for the client", "until the client says yes" or "don't start"; the maker goes ahead, and a line says what to check before making it. When the concept hangs on the answer, add a line after the idea that starts "Fallback:" with a version that works without it, in one short sentence (under 25 words).
+Confirm with client: (only when something is open) every fact the concept depends on that only the client knows (which seat or spot, the tip, the stat, the offer's terms, a date) and that the context doesn't answer, as the question to ask them, short and specific ("- Which seat, at which venue, and why?"). When the context does answer it, use it and write "- <question> Answer: <answer> (Source: <where>)". NEVER invent such a fact. It never holds the brief or the ticket: never write "hold this ticket", "wait for the client", "until the client says yes" or "don't start"; the maker goes ahead. A fact or claim the ad can't run without (a stat, an offer's terms, a claim in the hook or a version, clearance or releases for a clip or a person) starts "- Blocker: <question>" so the sheet shows it as a blocker to confirm before it runs; everything else is a plain "- <question>". When the concept hangs on the answer, add a line after the idea that starts "Fallback:" with a version that works without it, in one short sentence (under 25 words).
 Never write specs, sizes, safe zones or file names (the app adds the export line), a "next step", delivery instructions, or a summary that repeats the sections. Every line must agree with every other: no logo rule against a hook that shows the logo, no "evergreen" rule against event footage.
-${PAYOFF_RULE}`;
+${PAYOFF_RULE}
+${SWAP_RULE}
+${NARRATIVE_RULE}`;

@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, type AgentKey } from "@/lib/ai";
-import { pickWinner, rankLearnings, scopeLabel, widenScope, type ClientPlace, type Learning, type LearningKind, type LearningScope } from "@/lib/learning-rank";
+import { immediateScope, learnedBlock, pickWinner, rankLearnings, widenScope, type ClientPlace, type Learning, type LearningKind, type LearningScope } from "@/lib/learning-rank";
 
 // What the agents learn from the team pushing back (a disagreement with a creative review note, a rebuttal of an audit
 // finding, a copy flag rebutted or approved past), kept from piling up and making them worse: each becomes one
@@ -124,13 +124,18 @@ Return:
 - condition: when it holds, as specifically as the pushback supports ("when the client confirmed the claim in writing", "for top-of-funnel video", "only for this ad set", "for subscription offers"). "" only if it truly holds always.
 - kind: "exception" when it's a one-off (this ad, this campaign, a special arrangement, a client's own approval of one thing); "lesson" when it's a reusable way of judging.
 - scope: the widest it could ever reasonably apply to if other clients showed the same: "client" (only this client's brand or deal), "vertical" (their sub-vertical), "model" (their kind of business), "everyone" (any client). Be conservative: most pushback is about the client.
-- confidence: 0 to 1, how clearly the pushback supports the lesson.`,
+- confidence: 0 to 1, how clearly the pushback supports the lesson.
+A correction to a creative brief (source brief_corrections) about the craft of a brief (the hook answered late, versions that don't match the body, the strongest visual spent early, a claim not flagged as a blocker, a generic concept that fails the competitor swap test, context dropped in a revision) is a "lesson" with scope "everyone": the brief writer should apply it on every client from the first draft. One about this client's brand, offer, footage or a fact only they know is scope "client".`,
     prompt: `<agent>${row.agent_key}</agent>
 <client>${c?.name ?? "unknown"}${c?.industry_detail ? ` · ${c.industry_detail}` : ""}${v?.name ? ` · sub-vertical: ${v.name}` : ""}${row.model ? ` · kind of business: ${row.model}` : ""}</client>
 <pushback source="${row.source_table}">
 ${row.lesson}
 </pushback>`,
   });
+  const confidence = Math.max(0, Math.min(1, Number(out.confidence) || 0.5));
+  // A brief-craft correction reaches the brief writer on every client at once (it keeps its client, for where it came
+  // from); everything else stays with its client until the evidence widens it
+  const reach = immediateScope(row.source_table, out.kind, out.scope, confidence);
   await admin
     .from("agent_learnings")
     .update({
@@ -138,7 +143,8 @@ ${row.lesson}
       condition: out.condition.trim().slice(0, 300) || null,
       kind: out.kind,
       proposed_scope: out.kind === "exception" ? "client" : out.scope,
-      confidence: Math.max(0, Math.min(1, Number(out.confidence) || 0.5)),
+      confidence,
+      ...(reach !== "client" && row.scope === "client" ? { scope: reach } : {}),
       classified_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
@@ -153,23 +159,27 @@ ${row.lesson}
  * rebuttal and override blocks. The tag carries the client and agents, so a test can rebuild it with newer learnings.
  */
 export async function learningsBlock(admin: SupabaseClient, agents: AgentKey[], clientId: string | null, task?: string | null) {
+  return (await learningsFor(admin, agents, clientId, task)).block;
+}
+
+/**
+ * The same block, with the learnings it holds: a brief keeps which lessons it was written with (src/lib/suggestions.ts),
+ * so the team sees a correction carried over instead of having to make it again.
+ */
+export async function learningsFor(admin: SupabaseClient, agents: AgentKey[], clientId: string | null, task?: string | null): Promise<{ block: string; used: Learning[] }> {
   try {
     let q = admin.from("agent_learnings").select(COLS).in("agent_key", agents).eq("status", "active").order("last_seen", { ascending: false }).limit(400);
     q = clientId ? q.or(`client_id.eq.${clientId},scope.neq.client`) : q.neq("scope", "client");
     const { data } = await q;
     const list = ((data ?? []) as unknown as Row[]).map(toLearning);
-    if (!list.length) return "";
+    if (!list.length) return { block: "", used: [] };
     const place = clientId ? await placeOf(admin, clientId) : { model: null, also: null, verticalId: null };
     const top = rankLearnings(list, { clientId, model: place.model, also: place.also, verticalId: place.verticalId, task: task?.slice(0, 6000) ?? null });
-    if (!top.length) return "";
-    return `<learned_from_the_team client="${clientId ?? ""}" agents="${agents.join(",")}">
-What Kaizen's team taught you by pushing back on earlier work. Each holds only under its condition: apply it when the condition fits this task, otherwise ignore it. They never override the client's own rules or Kaizen's strategy.
-${top.map((l) => `- [${scopeLabel(l)}${l.evidence > 1 ? `, seen ${l.evidence}×` : ""}] ${l.condition ? `When ${l.condition.replace(/^when\s+/i, "")}: ` : ""}${l.lesson}`).join("\n")}
-</learned_from_the_team>
-`;
+    if (!top.length) return { block: "", used: [] };
+    return { block: learnedBlock(top, agents, clientId), used: top };
   } catch (e) {
     console.error("[learnings] block", e instanceof Error ? e.message : e);
-    return "";
+    return { block: "", used: [] };
   }
 }
 
@@ -341,7 +351,7 @@ export async function loadLearnings(admin: SupabaseClient, agentKey: string): Pr
   ]);
   const ticket = new Map([...(dis ?? []), ...(ovr ?? [])].map((x) => [x.id as string, (x.requests as unknown as { number: number } | null)?.number ?? null]));
   const slug = new Map((reb ?? []).map((x) => [x.id as string, (x.clients as unknown as { slug: string } | null)?.slug ?? null]));
-  const NAMES: Record<string, string> = { creative_review_disagreements: "Disagreed with a review note", copy_rule_overrides: "Copy flag rebutted or approved past", audit_rebuttals: "Audit finding pushed back on" };
+  const NAMES: Record<string, string> = { creative_review_disagreements: "Disagreed with a review note", copy_rule_overrides: "Copy flag rebutted or approved past", audit_rebuttals: "Audit finding pushed back on", brief_corrections: "A brief corrected" };
   return rows.map((r) => ({
     id: r.id,
     scope: r.scope,

@@ -62,7 +62,7 @@ describe("the brief on screen", () => {
     expect(i).toContain("Reads first");
   });
 
-  it("shows the real static brief like the PDF: one sentence, the versions as the build, nothing that holds the work", () => {
+  it("shows the real static brief like the PDF: one sentence, the versions as the build, every question word for word", () => {
     const out = html(STATIC_BEST_TICKETS);
     // The idea is one sentence; the copy direction moved to the Copy section
     expect(out).toContain("A real phone photo from a real seat, with one big line naming the seat most people skip and a small line saying why.</p>");
@@ -75,10 +75,18 @@ describe("the brief on screen", () => {
     expect(out).toContain("The layout");
     expect(out).not.toContain("The versions (4)");
     expect(out).not.toContain(">The frame<");
-    // The short fallback up top, the rest under Confirm with client; never "hold this ticket"
+    // The short fallback up top, the rest under Confirm with client
     expect(out).toContain("If not:</b> V3 and V4 test the approved line");
-    expect(out).not.toMatch(/hold this ticket|until the client says yes|it waits for December/i);
-    expect(out).toContain("Check before making it.");
+    // A question that says it holds the work is shown as the brief holds it, under a blocker heading (never rewritten
+    // into a line the brief doesn't hold, and never under "doesn't hold the work")
+    expect(out).not.toContain("Check before making it.");
+    const blockers = out.indexOf("Blocker · confirm before it runs");
+    const open = out.indexOf("Confirm with client · doesn&#x27;t hold the work");
+    const held = out.indexOf("Hold this ticket until the client says yes; if not, it waits for December.");
+    expect(blockers).toBeGreaterThan(0);
+    expect(held).toBeGreaterThan(blockers);
+    expect(held).toBeLessThan(open);
+    expect(out.indexOf("Which seat, at which venue, and why?")).toBeGreaterThan(open);
   });
 
   it("still reads an older brief and free text", () => {

@@ -3,7 +3,8 @@
 import { linkWord } from "@/lib/asset-links";
 import { assetRow, curly, dashTime, driveRows, imageVersions, layoutItems, quoteLine, sourceLabel, type ClientDrive } from "@/lib/brief-cards";
 import { ICON_STROKE, ICON_VIEWBOX, ICONS, iconFor, type BriefIcon, type IconTone } from "@/lib/brief-icons";
-import { ASSET_WORD, beatRows, copyOf, frameOf, openingOf, pacing, parseBrief, slideRows, withCopyDirection, withoutHold, type BriefSpec } from "@/lib/brief-spec";
+import { CONFIRM_HEAD, confirmItems, imageVersionNote, versionChange, versionLines } from "@/lib/brief-derive";
+import { ASSET_WORD, beatRows, copyOf, frameOf, openingOf, pacing, parseBrief, slideRows, withCopyDirection, type BriefSpec } from "@/lib/brief-spec";
 
 // The brief on screen in the lead video editor's look, the same as the PDF: his section labels (a short red rule), the
 // idea, why it works and who it's for, the build as rounded cards (a video's beats with their number, time, name and
@@ -328,12 +329,13 @@ function FrameView({ sp }: { sp: BriefSpec }) {
 /** A single image in N versions: the versions are the build, one card each, then the layout they share */
 function ImageVersionsView({ sp }: { sp: BriefSpec }) {
   const f = frameOf(sp.frame);
-  const vs = imageVersions(sp.versions.filter(Boolean), f.shows);
+  const lines = versionLines(sp.versions.filter(Boolean));
+  const vs = imageVersions(lines.map((l) => l.line), f.shows).map((v, i) => (lines[i]?.also ? { ...v, shows: [v.shows, `Also changes: ${lines[i].also}`].filter(Boolean).join(". ") } : v));
   const layout = layoutItems(f, sp.dos);
   const cards: CardData[] = vs.map((v) => ({ num: v.num, time: "", name: v.kind, icon: v.icon, calloutLabel: "Headline", callout: v.headline ? quoteLine(v.headline) : "", see: v.shows, quoteLabel: "", quote: "" }));
   return (
     <>
-      <Section title={`The images in ${vs.length} versions`} note="only the headline or the photo changes; V1 is net new">
+      <Section title={`The images in ${vs.length} versions`} note={imageVersionNote(vs)}>
         <ol className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4">
           {cards.map((c) => (
             <Card key={c.num} c={c} big />
@@ -401,8 +403,15 @@ export function BriefSheet({ text, exportLine, drive }: { text: string; exportLi
   const copy = withCopyDirection(copyOf(sp.copy), direction);
   // A single image in two or more versions: the versions are the build
   const imageGrid = sp.frame.length > 0 && versions.length > 1 && !beatRows(sp).length && !slideRows(sp).length;
-  // What to confirm never holds the work ("Hold this ticket until..." reads "Check before making it.")
-  const confirm = sp.confirm.map((c) => ({ ...c, question: withoutHold(c.question) })).filter((c) => c.question);
+  // What to confirm, word for word: the questions the ad can't run without under a blocker heading, the rest under
+  // "doesn't hold the work" (src/lib/brief-derive.ts)
+  const claims = [idea, ...versions, ...beatRows(sp).flatMap((b) => [b.text, b.says]), ...slideRows(sp).map((x) => x.headline), frameOf(sp.frame).headline, ...copy.primary, ...copy.headlines].join(". ");
+  const kinds = confirmItems(
+    sp.confirm.map((c) => c.question),
+    claims,
+  );
+  const confirm = sp.confirm.map((c, i) => ({ ...c, question: kinds[i]?.text ?? c.question, blocker: kinds[i]?.blocker ?? false })).filter((c) => c.question);
+  const vc = versionChange(versions, beatRows(sp).length ? "video" : slideRows(sp).length ? "carousel" : "image");
   const assets = sp.assets.filter((a) => a.item.trim());
   const exp = sp.exportLine || exportLine || "";
   const driveLinks = driveRows(drive);
@@ -456,12 +465,19 @@ export function BriefSheet({ text, exportLine, drive }: { text: string; exportLi
       {imageGrid ? <ImageVersionsView sp={sp} /> : <FrameView sp={sp} />}
 
       {versions.length > 0 && !imageGrid && (
-        <Section title={`The versions (${versions.length})`} note={versions.length > 1 ? "only this line changes; V1 is net new" : null}>
+        <Section title={`The versions (${versions.length})`} note={vc.note}>
           <ol className={GRID}>
-            {versions.map((v, i) => (
+            {vc.rows.map((v, i) => (
               <li key={i} className="flex gap-3 rounded-[12px] border border-line bg-[var(--brief-card)] px-4 py-3">
                 <span className="tabular w-7 shrink-0 font-heading text-[17px] leading-snug text-brand-text">V{i + 1}</span>
-                <span className="min-w-0 font-semibold leading-snug text-fg">{v}</span>
+                <span className="grid min-w-0 gap-1">
+                  <span className="font-semibold leading-snug text-fg">{v.line}</span>
+                  {v.also && (
+                    <span className="text-[13px] leading-snug text-fg/80">
+                      <b className="font-semibold text-brand-text">Also changes:</b> {v.also}
+                    </span>
+                  )}
+                </span>
               </li>
             ))}
           </ol>
@@ -559,11 +575,38 @@ export function BriefSheet({ text, exportLine, drive }: { text: string; exportLi
         </Section>
       )}
 
-      {(confirm.length > 0 || fallbackMore) && (
-        <div className="grid gap-2 rounded-[12px] bg-brand-soft px-4 py-3">
-          <span className={`${SMALL} text-brand-text`}>Confirm with client · doesn&apos;t hold the work</span>
+      {confirm.some((c) => c.blocker) && (
+        <div className="grid gap-2 rounded-[12px] border border-brand/60 px-4 py-3">
+          <span className={`${SMALL} text-brand-text`}>{CONFIRM_HEAD.blockers}</span>
           <ul className="grid gap-1.5">
-            {confirm.map((c, i) => (
+            {confirm
+              .filter((c) => c.blocker)
+              .map((c, i) => (
+                <li key={i} className="flex gap-3 text-[14px] leading-relaxed">
+                  <span aria-hidden className="w-3 shrink-0 font-semibold text-brand-text">
+                    !
+                  </span>
+                  <span className="min-w-0">
+                    <span className="text-fg">{c.question}</span>
+                    {c.answer && (
+                      <span className="text-fg/75">
+                        {" "}
+                        <b className="font-medium text-ok">Answer:</b> {c.answer}
+                        {c.source ? <span className="text-faint"> ({c.source})</span> : null}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
+
+      {(confirm.some((c) => !c.blocker) || fallbackMore) && (
+        <div className="grid gap-2 rounded-[12px] bg-brand-soft px-4 py-3">
+          <span className={`${SMALL} text-brand-text`}>{CONFIRM_HEAD.open}</span>
+          <ul className="grid gap-1.5">
+            {confirm.filter((c) => !c.blocker).map((c, i) => (
               <li key={i} className="flex gap-3 text-[14px] leading-relaxed">
                 <span aria-hidden className="w-3 shrink-0 font-semibold text-brand-text">
                   ?

@@ -43,7 +43,8 @@ describe("brief schemas stay small", () => {
   });
 
   it("keeps the revise patch and the consistency pass flat", () => {
-    expect(measure(PATCH_SCHEMA)).toEqual({ nodes: 11, enums: 0, depth: 1 });
+    // The change log's checklist (ask, done, where, why and the changes that did it) keeps it one level deep
+    expect(measure(PATCH_SCHEMA)).toEqual({ nodes: 19, enums: 0, depth: 1 });
     expect(measure(LINT_SCHEMA)).toEqual({ nodes: 6, enums: 0, depth: 1 });
   });
 });
