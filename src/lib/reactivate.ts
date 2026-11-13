@@ -62,7 +62,9 @@ export async function backInCycle(admin: SupabaseClient, clientId: string, byId?
   // Reports still due: this week's (Monday to Wednesday) and last month's recap (through the 5th)
   const ny = nyParts(new Date());
   const weekday = DAY[new Date(`${ny.date}T12:00:00Z`).getUTCDay()];
-  if (["Mon", "Tue", "Wed"].includes(weekday)) out.weekly = await queueReports(admin, "weekly", ny.date, clientId);
+  // Not in the month's first week: its Monday brings last month's full recap instead of a weekly (no saying it twice)
+  const mondayDay = ny.day - ["Mon", "Tue", "Wed"].indexOf(weekday);
+  if (["Mon", "Tue", "Wed"].includes(weekday) && mondayDay > 7) out.weekly = await queueReports(admin, "weekly", ny.date, clientId);
   if (ny.day <= 5) out.monthly = await queueReports(admin, "monthly", ny.date, clientId);
 
   // Sprint check-ins pick up now rather than at their old time
