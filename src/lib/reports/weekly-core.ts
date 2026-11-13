@@ -158,7 +158,8 @@ const r2 = (x: number) => Math.round(x * 100) / 100;
 export function cleanAdName(name: string) {
   return (
     name
-      .replace(/^\s*ID:\s*\d+\s*\|\s*/i, "")
+      // Meta's own prefixes: "ID: 1784… | " and "Post id: 1223…| " (the bar sometimes typed as l or I)
+      .replace(/^\s*(post\s*)?id:\s*\d+\s*[|lI]?\s*/i, "")
       .replace(/\s*-\s*Copy(\s*\d+)?\s*$/i, " (copy)")
       .replace(/\s{2,}/g, " ")
       .trim() || name
@@ -241,7 +242,7 @@ export const barMetric = (m: Pick<ReportMetrics, "roasKpi">): MetricKey => (m.ro
 
 /** A name for a sentence: "Lobster | Dec 10" → "Lobster", "VID | Salmon Lover Box | Jan 9" → "Salmon Lover Box" */
 export function shortName(s: string) {
-  const noise = /^(vid|video|static|img|image|ugc|carousel|gif|copy|v\d+|id:.*|\d+|[a-z]{3,9}\.? \d{1,2}(,? \d{4})?|\(copy\))$/i;
+  const noise = /^(vid|video|static|img|image|single image|single video|ugc|carousel|gif|copy|v\d+|(post\s*)?id:.*|ad \d+|h \+ sc|\d+|[a-z]{3,9}\.? \d{1,2}(,? \d{4})?|\(copy\))$/i;
   return (
     s
       .split("|")

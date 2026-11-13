@@ -92,7 +92,7 @@ const s = StyleSheet.create({
   dot: { width: 7, height: 7, borderRadius: 3.5 },
   note: { fontSize: 6.8, color: "#728393", marginTop: 6, lineHeight: 1.4 },
   th: { flexDirection: "row", alignItems: "center", backgroundColor: "#f3f6f9", borderRadius: 5, paddingVertical: 6, paddingHorizontal: 5, marginBottom: 1 },
-  thText: { fontSize: 5.6, color: "#6f7f92", fontFamily: "Helvetica-Bold", textTransform: "uppercase", letterSpacing: 0.4 },
+  thText: { fontSize: 5.2, color: "#6f7f92", fontFamily: "Helvetica-Bold", textTransform: "uppercase", letterSpacing: 0.25 },
   tr: { flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingHorizontal: 5, borderBottomWidth: 1, borderBottomColor: "#edf1f4" },
   td: { fontSize: 7.6, textAlign: "right" },
   thumb: { width: 26, height: 26, borderRadius: 4, objectFit: "cover" },
@@ -447,8 +447,11 @@ function Thumb({ src }: { src: string | null | undefined }) {
   return src ? <Image src={src} style={s.thumb} /> : <View style={s.thumbBlank} />;
 }
 
-/** Column widths: each wide enough for its heading in small caps */
+/** Column widths: each wide enough for its values and for the longest word of its heading in small caps (5.6pt bold,
+ * spaced: about 3.4pt a letter), so "APPLICATIONS" or "COST PER APPLICATION" never runs into the next column */
 const COL_W: Record<string, number> = { results: 37, cost_per_result: 39, cpc: 29, ctr: 32, spend: 41, clicks: 27, roas: 29, revenue: 42, hook_rate: 34 };
+const GUTTER = 5;
+const colWidth = (k: string, head: string) => Math.max((COL_W[k] ?? 34) - 4, Math.ceil(Math.max(...head.split(/\s+/).map((w) => w.length)) * 3.4)) + GUTTER;
 
 function Scorecard({ input, part, rows, images }: { input: WeeklyInput; part: WeeklyPart; rows: ScoreRow[]; images: (string | null)[] }) {
   const m = { ...part.metrics, conversion: platformConversion(part.metrics) };
@@ -466,14 +469,14 @@ function Scorecard({ input, part, rows, images }: { input: WeeklyInput; part: We
       <View style={s.th}>
         <Text style={[s.thText, { flex: 1 }]}>{unit}</Text>
         {cols.map((k) => (
-          <Text key={k} style={[s.thText, { width: COL_W[k] ?? 34, textAlign: "right" }]}>
+          <Text key={k} style={[s.thText, { width: colWidth(k, scoreHead(m, k)), paddingLeft: GUTTER, textAlign: "right", lineHeight: 1.25 }]}>
             {scoreHead(m, k)}
           </Text>
         ))}
       </View>
       {rows.map((r, i) => (
         <View key={r.id} style={[s.tr, i === rows.length - 1 ? { borderBottomWidth: 0 } : {}]} wrap={false}>
-          <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, paddingRight: 4 }}>
+          <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 7, paddingRight: 6 }}>
             {pictures ? <Thumb src={r.img != null ? images[r.img] : null} /> : null}
             <View style={{ flex: 1 }}>
               {r.link && (!input.whiteLabel || !/kaizen/i.test(r.link)) ? (
@@ -487,7 +490,7 @@ function Scorecard({ input, part, rows, images }: { input: WeeklyInput; part: We
             </View>
           </View>
           {cols.map((k) => (
-            <Text key={k} style={[s.td, { width: COL_W[k] ?? 34 }, k === lead ? { fontFamily: "Helvetica-Bold" } : {}]}>
+            <Text key={k} style={[s.td, { width: colWidth(k, scoreHead(m, k)), paddingLeft: GUTTER }, k === lead ? { fontFamily: "Helvetica-Bold" } : {}]}>
               {scoreValue(r, k)}
             </Text>
           ))}
@@ -553,25 +556,25 @@ function TopAds({ part, rows, images, look }: { part: WeeklyPart; rows: ScoreRow
               <View>
                 {/* eslint-disable-next-line jsx-a11y/alt-text -- a PDF image, no alt prop */}
                 {src ? <Image src={src} style={s.adPic} /> : <View style={s.adPicBlank}><Text style={{ fontSize: 7, color: FAINT }}>No preview</Text></View>}
-                <View style={{ position: "absolute", top: 7, left: 7, backgroundColor: i === 0 ? look.primary : "#ffffff", borderRadius: 4, paddingVertical: 2.5, paddingHorizontal: 5 }}>
-                  <Text style={{ fontSize: 6.5, fontFamily: "Helvetica-Bold", color: i === 0 ? "#ffffff" : INK }}>#{i + 1}</Text>
+                <View style={{ position: "absolute", top: 7, left: 7, backgroundColor: i === 0 ? look.primary : INK, borderRadius: 4, paddingVertical: 2.5, paddingHorizontal: 5 }}>
+                  <Text style={{ fontSize: 6.5, fontFamily: "Helvetica-Bold", color: "#ffffff" }}>#{i + 1}</Text>
                 </View>
               </View>
               <View style={s.adBody}>
                 <Text style={[s.adName, { fontSize: 8 }]}>{r.name}</Text>
                 {r.detail ? <Text style={s.adMeta}>{r.detail}</Text> : null}
-                <View style={{ flexDirection: "row", gap: 10, marginTop: 7 }}>
-                  <View>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                  <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 10.5, fontFamily: "Helvetica-Bold", color: look.barsText }}>{m.roasKpi ? multiple(r.roas) : count(r.results)}</Text>
-                    <Text style={{ fontSize: 5.8, color: MUTED, marginTop: 1, textTransform: "uppercase", letterSpacing: 0.4 }}>{m.roasKpi ? "ROAS" : m.conversion}</Text>
+                    <Text style={{ fontSize: 5.2, color: MUTED, marginTop: 1.5, textTransform: "uppercase", letterSpacing: 0.2, lineHeight: 1.25 }}>{m.roasKpi ? "ROAS" : m.conversion}</Text>
                   </View>
-                  <View>
+                  <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 10.5, fontFamily: "Helvetica-Bold" }}>{m.roasKpi ? money(r.revenue) : money(r.costPerResult)}</Text>
-                    <Text style={{ fontSize: 5.8, color: MUTED, marginTop: 1, textTransform: "uppercase", letterSpacing: 0.4 }}>{m.roasKpi ? "Revenue" : cost}</Text>
+                    <Text style={{ fontSize: 5.2, color: MUTED, marginTop: 1.5, textTransform: "uppercase", letterSpacing: 0.2, lineHeight: 1.25 }}>{m.roasKpi ? "Revenue" : cost}</Text>
                   </View>
-                  <View>
+                  <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 10.5, fontFamily: "Helvetica-Bold" }}>{money(r.spend)}</Text>
-                    <Text style={{ fontSize: 5.8, color: MUTED, marginTop: 1, textTransform: "uppercase", letterSpacing: 0.4 }}>Spend</Text>
+                    <Text style={{ fontSize: 5.2, color: MUTED, marginTop: 1.5, textTransform: "uppercase", letterSpacing: 0.2, lineHeight: 1.25 }}>Spend</Text>
                   </View>
                 </View>
               </View>
