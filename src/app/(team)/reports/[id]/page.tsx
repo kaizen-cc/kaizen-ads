@@ -22,6 +22,7 @@ import { lastFullWeek, periodMismatch, rangeLabel, todayIn } from "@/lib/reports
 import { clientDelivery } from "@/lib/reports/send";
 import { readHistory } from "@/lib/reports/history";
 import { isWhiteLabel } from "@/lib/reports/white-label";
+import { lastUsed, sendOptions } from "@/lib/reports/studio-steps";
 
 export const metadata: Metadata = { title: "Report" };
 // Revising and checking a report, putting a joint message together and posting it with its PDF can take a minute
@@ -52,7 +53,8 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
     slackConnection(me.id),
     slackIdentity(me.id).catch(() => null),
     r.bundle_id ? db.from("report_bundles").select("id, kind, status, ranges, created_by, message, message_approved_at, profiles!report_bundles_created_by_fkey(full_name)").eq("id", r.bundle_id).maybeSingle() : Promise.resolve({ data: null }),
-    r.bundle_id ? db.from("reports").select("id, platform, status, owner_id, profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", r.bundle_id).neq("status", "skipped") : Promise.resolve({ data: [] }),
+    // A TikTok part riding on the Meta part isn't a part of its own: it goes with the Meta one
+    r.bundle_id ? db.from("reports").select("id, platform, status, owner_id, profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", r.bundle_id).neq("status", "skipped").is("joined_to", null) : Promise.resolve({ data: [] }),
     // Whether the report's next steps can be applied in the ad account (live changes for the client), read up front
     target && adminConfigured() && (r.platform === "meta" || r.platform === "google") ? writeStatus(createAdminClient(), { clientId: target.client_id, account }, r.platform).catch(() => null) : Promise.resolve(null),
   ]);
@@ -65,23 +67,40 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const periodLabel = r.kind === "built" && ranges.length ? [own, ...ranges.slice(1).map((x) => x.label)].join(" + ") : r.kind === "monthly" ? monthLabel(r.period_start) : own;
   const name = (p: unknown) => (p as { full_name: string } | null)?.full_name ?? null;
   const admin = adminConfigured() ? createAdminClient() : null;
-  const sentNow = r.status === "posted" || bundle?.status === "sent";
-  // Meta and TikTok in one weekly report: the Meta report this TikTok part goes out with, or the TikTok part riding on this one
+  // A built report goes out whole; a recap part approved after the others went still follows on its own
+  const sentNow = r.status === "posted" || (r.kind === "built" && bundle?.status === "sent");
+  // Meta and TikTok in one report (weekly or monthly): the Meta report this TikTok part goes out with, or the TikTok part
+  // riding on this one (with its message, which goes out under the Meta one)
   const joinedTo = (r as { joined_to?: string | null }).joined_to ?? null;
+  type Rider = { id: string; platform: string; status: string; message: string | null };
   const [{ data: goesWith }, { data: riders }] = await Promise.all([
     joinedTo ? db.from("reports").select("id, status, profiles!reports_owner_id_fkey(full_name)").eq("id", joinedTo).maybeSingle() : Promise.resolve({ data: null }),
-    r.kind === "weekly" && !joinedTo ? db.from("reports").select("id, platform, status").eq("joined_to", r.id) : Promise.resolve({ data: [] as { id: string; platform: string; status: string }[] }),
+    (r.kind === "weekly" || r.kind === "monthly") && !joinedTo ? db.from("reports").select("id, platform, status, message").eq("joined_to", r.id) : Promise.resolve({ data: [] as Rider[] }),
   ]);
-  const joint = joinedTo || riders?.length ? { goesWith: goesWith ? { id: goesWith.id as string, owner: name(goesWith.profiles), status: goesWith.status as string } : null, riders: (riders ?? []) as { id: string; platform: string; status: string }[] } : null;
-  const [delivery, history, { data: keyRow }, { data: driveRow }, { data: logRow }] = await Promise.all([
-    admin && r.kind !== "monthly" && !sentNow ? clientDelivery(admin, r.client_id as string).catch(() => null) : Promise.resolve(null),
+  const joint = joinedTo || riders?.length ? { goesWith: goesWith ? { id: goesWith.id as string, owner: name(goesWith.profiles), status: goesWith.status as string } : null, riders: (riders ?? []) as Rider[] } : null;
+  // "Last used": how this buyer sent their previous report for this client and platform, and whether last month's went to Drive
+  const offers = sendOptions({ kind: r.kind, start: r.period_start, end: r.period_end });
+  const targetId = target?.id ?? null;
+  const [delivery, history, { data: keyRow }, { data: driveRow }, { data: logRow }, { data: pastSends }, { data: prevDrive }] = await Promise.all([
+    admin && !sentNow ? clientDelivery(admin, r.client_id as string).catch(() => null) : Promise.resolve(null),
     admin ? readHistory(admin, { reportId: r.id, bundleId: r.bundle_id, limit: 40 }, today) : Promise.resolve([]),
     db.from("reports").select("period_key").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)),
     // Where it was saved in the client's Drive (a column that may not exist yet: read apart so the page never fails on it)
     db.from("reports").select("drive_save").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)),
     // Its history: skipped, brought back (also a column that may not exist yet)
     db.from("reports").select("log").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)),
+    admin && !sentNow
+      ? admin.from("report_sends").select("report_id, bundle_id, platform, sent_by, channels, status").eq("client_id", r.client_id).eq("sent_by", me.id).order("sent_at", { ascending: false }).limit(20).then((x) => (x.error ? { data: null } : x))
+      : Promise.resolve({ data: null }),
+    admin && !sentNow && offers.includes("drive") && targetId
+      ? admin.from("reports").select("drive_save").eq("target_id", targetId).eq("kind", r.kind).lt("period_start", r.period_start).not("drive_save", "is", null).order("period_start", { ascending: false }).limit(1).maybeSingle().then((x) => (x.error ? { data: null } : x))
+      : Promise.resolve({ data: null }),
   ]);
+  const used = lastUsed(
+    ((pastSends ?? []) as { report_id: string | null; bundle_id: string | null; platform: string | null; sent_by: string | null; channels: string[] | null; status: string | null }[]).map((s) => ({ reportId: s.report_id, bundleId: s.bundle_id, platform: s.platform, sentBy: s.sent_by, channels: s.channels ?? [], status: s.status })),
+    { reportId: r.id, bundleId: r.bundle_id, platform: r.platform, me: me.id },
+    Boolean((prevDrive as { drive_save?: unknown } | null)?.drive_save),
+  );
   // Every page drawn for the report's dates? (a page for other dates is redrawn before it can go out)
   const stale = !["queued", "drafting", "failed"].includes(r.status) && metrics && r.kind !== "monthly" ? periodMismatch({ start: r.period_start, end: r.period_end }, metrics, r.sections as Sections | null) : [];
   // A weekly still on an older week than the one that just ended: offered last week in one tap
@@ -126,6 +145,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           period: { start: r.period_start, end: r.period_end, key: (keyRow?.period_key as string | null) ?? null, today, stale, behind, locked },
         }}
         delivery={delivery}
+        lastUsed={used}
         history={history}
         client={{ name: client.name, slug: client.slug, hasChannel: Boolean(client.slack_channel_id), whiteLabel: isWhiteLabel(client.client_type) }}
 

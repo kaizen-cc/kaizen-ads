@@ -6,16 +6,16 @@ import type { PdfField } from "./pdf-preview";
 // never printed in the report, it travels in the message that carries it. Shown here to read and change, each line
 // saved when it loses focus; the message follows.
 
-export function MessageNotes({ fields, editable, onSave, onRemove }: { fields: PdfField[]; editable: boolean; onSave: (id: string, value: string) => void; onRemove: (id: string) => void }) {
+export function MessageNotes({ fields, editable, onSave, onRemove, open = false }: { fields: PdfField[]; editable: boolean; onSave: (id: string, value: string) => void; onRemove: (id: string) => void; open?: boolean }) {
   const shown = fields.filter((f) => f.value?.trim());
   if (!shown.length) return null;
   const groups = [...new Set(shown.map((f) => f.label))].map((label) => ({ label, items: shown.filter((f) => f.label === label) }));
   return (
-    <details className="group rounded-[14px] border border-line bg-surface">
+    <details open={open} className="group rounded-[14px] border border-line bg-surface">
       <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-[13px] [&::-webkit-details-marker]:hidden">
         <span>
-          <span className="font-medium text-fg">For the message</span>
-          <span className="text-faint"> · what we did, are doing and do next. Not printed in the report.</span>
+          <span className="font-medium text-fg">The write-up</span>
+          <span className="text-faint"> · the headline, what we did, are doing and do next. It travels in the message, not printed in the report.</span>
         </span>
         <span className="shrink-0 text-faint transition-transform group-open:rotate-180" aria-hidden>
           ▾

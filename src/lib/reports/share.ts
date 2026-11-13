@@ -53,9 +53,9 @@ export async function loadReport(admin: SupabaseClient, id: string, edit = false
   const whiteLabel = isWhiteLabel(r.clients?.client_type);
   const fileName = whiteLabel ? whiteLabelFileName(client, r.kind, short, platformName(part.platform)) : `${client} - ${platformName(part.platform).replace(" Ads", "")} ${(r.kind as string) === "built" ? "report" : r.kind} - ${short}.pdf`;
   const dashboard = r.clients?.portal_live && !whiteLabel ? `${siteUrl()}/c/${r.clients.slug}/dashboard` : null;
-  // A weekly Meta report carries the TikTok part that rides with it (one document, a section each), as it's sent
+  // A Meta report (weekly or monthly) carries the TikTok part that rides with it (one document, a section each), as it's sent
   const parts = [part];
-  if (r.kind === "weekly") {
+  if (r.kind === "weekly" || r.kind === "monthly") {
     const { data: riders } = await admin.from("reports").select(REPORT_FIELDS).eq("joined_to", id).neq("status", "skipped");
     for (const x of (riders ?? []) as unknown as Row[]) {
       const p = toPart(x);
@@ -64,7 +64,7 @@ export async function loadReport(admin: SupabaseClient, id: string, edit = false
     parts.sort((a, b) => order(a) - order(b));
   }
   const joint = parts.length > 1;
-  const name = joint ? whiteLabel ? whiteLabelFileName(client, r.kind, short, "Meta + TikTok") : `${client} - Meta + TikTok weekly - ${short}.pdf` : fileName;
+  const name = joint ? whiteLabel ? whiteLabelFileName(client, r.kind, short, "Meta + TikTok") : `${client} - Meta + TikTok ${r.kind} - ${short}.pdf` : fileName;
   // An on-demand recap goes out as a weekly does (its dates against the days before), so it's drawn as one here too
   const kind = (r.kind as string) === "custom" ? ("weekly" as const) : r.kind;
   return { input: { client, clientId: r.client_id, kind, periodLabel, parts, edit, dashboard, whiteLabel }, fileName: name };

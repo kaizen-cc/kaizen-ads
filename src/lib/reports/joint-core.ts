@@ -1,4 +1,4 @@
-// Meta and TikTok in one weekly report: for a client running both, the TikTok part rides with the Meta report (the
+// Meta and TikTok in one report, weekly and monthly: for a client running both, the TikTok part rides with the Meta report (the
 // Meta buyer prepares it and sends it once: one PDF with both, one Slack message, one email). On by default; a client's
 // report prefs can send them separately (client_report_prefs.tiktok_separate). Pure, so it's tested.
 
@@ -15,8 +15,13 @@ export function tiktokJoins(targets: readonly QueueTarget[], separate: ReadonlyS
   return out;
 }
 
-/** A weekly report's place in a Meta + TikTok report: the Meta report a TikTok part goes with, or the TikTok parts riding on a Meta report */
-export type JointInfo = { goesWith: { id: string; owner: string | null; status: string } | null; riders: { id: string; platform: string; status: string }[] };
+/** The order reports are queued in: Meta (and Google) first, so a TikTok part has its Meta report to join */
+export function metaFirst<T extends { platform: string }>(targets: readonly T[]): T[] {
+  return [...targets].sort((a, b) => Number(a.platform === "tiktok") - Number(b.platform === "tiktok"));
+}
+
+/** A report's place in a Meta + TikTok report: the Meta report a TikTok part goes with, or the TikTok parts riding on a Meta report */
+export type JointInfo = { goesWith: { id: string; owner: string | null; status: string } | null; riders: { id: string; platform: string; status: string; message?: string | null }[] };
 export type JointNote = { tone: "info" | "warn" | "ok"; title: string; detail: string; link: { href: string; label: string } | null };
 
 const ready = (status: string) => !["queued", "drafting", "failed"].includes(status);
@@ -54,6 +59,29 @@ export function jointNote(j: JointInfo | null | undefined): JointNote | null {
     link: { href: `/reports/${tiktok.id}`, label: "Open the TikTok part →" },
   };
 }
+
+/**
+ * A monthly recap's Slack intro: every part's message, a TikTok part riding on the Meta one under its own name right
+ * after it (as the weekly does), so a Meta + TikTok client reads one part, not two.
+ */
+export function recapIntro(parts: { id: string; platform: string; message: string | null | undefined; joinedTo?: string | null }[]): string {
+  const hosts = parts.filter((p) => !p.joinedTo || !parts.some((h) => h.id === p.joinedTo));
+  return hosts
+    .map((h) => {
+      const riders = parts.filter((r) => r.joinedTo === h.id);
+      return riders.length ? jointMessage(h.message, riders) : (h.message ?? "").trim();
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** The parts of a monthly recap still waiting on their buyer: a TikTok part riding on the Meta one goes with it and never waits on its own */
+export function waitingParts<T extends { status: string; joined_to?: string | null }>(parts: readonly T[]): T[] {
+  return parts.filter((p) => !p.joined_to && !["submitted", "posted", "skipped"].includes(p.status));
+}
+
+/** A riding part is ready to go out with its report once it's written (its numbers and its words) */
+export const riderReady = (r: { sections: unknown; metrics: unknown }) => Boolean(r.sections && r.metrics);
 
 /** The one Slack message for a joint report: the Meta buyer's message, then the TikTok part's under its own name */
 export function jointMessage(main: string | null | undefined, parts: { platform: string; message: string | null | undefined }[]): string {

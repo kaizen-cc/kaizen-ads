@@ -7,13 +7,13 @@ import { revalidatePath } from "next/cache";
 import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { draftQueued, sendWeekly, submitMonthly } from "@/lib/reports/run";
+import { draftQueued, sendWeekly, submitMonthly, tiktokJoinsFor } from "@/lib/reports/run";
 import { draftReport, qaReport, reviseReport, type ChatTurn, type Qa, type Sections } from "@/lib/reports/write";
 import { periodsFor } from "@/lib/reports/metrics";
 import { nyParts } from "@/lib/kpi/calc";
 import { canReportOn } from "@/lib/reports/access";
 import { isPeriodKey, nextPeriod, parseDates, previousPeriod, rangeLabel, resolvePeriod, restOfAsk, shiftDay, todayIn, type PeriodKey } from "@/lib/reports/period";
-import { normalizeDelivery, type Delivery } from "@/lib/reports/delivery-core";
+import { channelsPhrase, normalizeDelivery, type Delivery } from "@/lib/reports/delivery-core";
 import { applyManual, cleanLines, type ManualLine, type ManualResults } from "@/lib/reports/manual";
 import type { DriveSave } from "@/lib/reports/drive-save-core";
 import { appendLog, canBringBack, isSkipReason, latestSkip, skipEntry, unskipEntry, type LogEntry } from "@/lib/reports/skip-log";
@@ -335,24 +335,33 @@ export async function sendReport(id: string, delivery?: Delivery, note?: string)
       revalidatePath("/reports");
       return { ok: true, note: sentNote(out, "the client") };
     }
-    const out = await submitMonthly(admin, id, ok.me);
+    // The recap goes where the buyer chose (kept on the recap for when the last part is in); no choice: Slack and email
+    const d = delivery ? normalizeDelivery(delivery) : null;
+    if (d?.channels.includes("email") && !d.recipients.length) return { ok: false, error: "Add at least one email address to send it to." };
+    const out = await submitMonthly(admin, id, ok.me, d);
+    if (d) await (await import("@/lib/reports/send")).rememberDelivery(admin, ok.r.client_id as string, d, ok.me.id).catch(() => null);
     done(id);
-    return { ok: true, note: out.sent ? "It went to the client in Slack and by email." : `Submitted. It goes to the client as soon as ${out.waitingOn.join(" and ")} submit${out.waitingOn.length === 1 ? "s" : ""}.` };
+    const how = channelsPhrase(d?.channels ?? ["slack", "email"]);
+    return { ok: true, note: out.sent ? `It went to the client ${how}.` : `Approved. It goes to the client ${how} as soon as ${out.waitingOn.join(" and ")} approve${out.waitingOn.length === 1 ? "s" : ""}.` };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't send it." };
   }
 }
 
 /** Monthly: send my part to the client now instead of waiting on the other buyer (theirs follows on its own) */
-export async function sendMyPartNow(id: string): Promise<Result<{ note: string }>> {
+export async function sendMyPartNow(id: string, delivery?: Delivery): Promise<Result<{ note: string }>> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   if (ok.r.kind !== "monthly") return { ok: false, error: "Only a monthly recap has parts to wait on." };
+  const d = delivery ? normalizeDelivery(delivery) : null;
+  if (d?.channels.includes("email") && !d.recipients.length) return { ok: false, error: "Add at least one email address to send it to." };
   try {
     const { sendPartNow } = await import("@/lib/reports/run");
-    await sendPartNow(createAdminClient(), id, ok.me);
+    const admin = createAdminClient();
+    await sendPartNow(admin, id, ok.me, d);
+    if (d) await (await import("@/lib/reports/send")).rememberDelivery(admin, ok.r.client_id as string, d, ok.me.id).catch(() => null);
     done(id);
-    return { ok: true, note: "Sent to the client in Slack and by email. The other part goes out on its own when its buyer approves it." };
+    return { ok: true, note: "Sent to the client. The other part goes out on its own when its buyer approves it." };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't send it." };
   }
@@ -383,7 +392,9 @@ async function skipTargets(id: string) {
   const sent = r.status === "posted" || (r.report_bundles as unknown as { status: string } | null)?.status === "sent";
   type Part = { id: string; kind: string; status: string; period_end: string; sections: unknown };
   const { data: parts } = r.kind === "built" && r.bundle_id ? await admin.from("reports").select("id, kind, status, period_end, sections").eq("bundle_id", r.bundle_id) : { data: null };
-  const rows = ((parts as Part[] | null) ?? [r as Part]).slice(0, 12);
+  // A Meta report with the TikTok part riding on it is one report: skipped and brought back together
+  const { data: riders } = r.kind !== "built" ? await admin.from("reports").select("id, kind, status, period_end, sections").eq("joined_to", id) : { data: null };
+  const rows = ((parts as Part[] | null) ?? [r as Part, ...((riders as Part[] | null) ?? [])]).slice(0, 12);
   // Who skipped each (the log column may not exist yet: then every skipped part counts)
   const { data: logs, error } = await admin.from("reports").select("id, log").in("id", rows.map((x) => x.id));
   const skippedBy = (partId: string) => (error ? true : Boolean(latestSkip(((logs ?? []) as { id: string; log: unknown }[]).find((l) => l.id === partId)?.log)));
@@ -478,9 +489,17 @@ export async function draftNow(targetId: string, kind: "weekly" | "monthly"): Pr
     const { data: b } = await admin.from("report_bundles").upsert({ client_id: t.client_id, kind: "monthly", period_start: p.start, period_end: p.end }, { onConflict: "client_id,kind,period_start" }).select("id").single();
     bundle = b?.id ?? null;
   }
+  // A TikTok account rides on its client's Meta report (weekly and monthly), as the scheduled ones do
+  let join: { joined_to: string; owner_id: string | null } | null = null;
+  if (t.platform === "tiktok") {
+    const { data: metas } = await admin.from("kpi_targets").select("id, client_id, platform, owner_id").eq("client_id", t.client_id).eq("platform", "meta").eq("active", true).not("ad_account_id", "is", null);
+    const j = (await tiktokJoinsFor(admin, [t, ...((metas ?? []) as typeof t[])])).get(t.id);
+    const { data: host } = j ? await admin.from("reports").select("id").eq("target_id", j.metaTargetId).eq("kind", kind).eq("period_start", p.start).neq("status", "skipped").maybeSingle() : { data: null };
+    if (j && host) join = { joined_to: host.id as string, owner_id: j.owner };
+  }
   const { data: row } = await admin
     .from("reports")
-    .upsert({ client_id: t.client_id, target_id: t.id, bundle_id: bundle, platform: t.platform, kind, period_start: p.start, period_end: p.end, owner_id: t.owner_id, status: "drafting", hidden_at: null }, { onConflict: "target_id,kind,period_start" })
+    .upsert({ client_id: t.client_id, target_id: t.id, bundle_id: bundle, platform: t.platform, kind, period_start: p.start, period_end: p.end, owner_id: t.owner_id, status: "drafting", hidden_at: null, ...(join ?? {}) }, { onConflict: "target_id,kind,period_start" })
     .select("id")
     .single();
   if (!row) return { ok: false, error: "Couldn't start it." };
@@ -551,6 +570,8 @@ export async function reopenReport(id: string): Promise<Result> {
   if (r.status === "posted" || (r.report_bundles as unknown as { status: string } | null)?.status === "sent") return { ok: false, error: "It's already gone to the client." };
   if (r.status !== "submitted") return { ok: true };
   await admin.from("reports").update({ status: "draft", submitted_at: null, updated_at: new Date().toISOString() }).eq("id", id);
+  // The TikTok part riding on it was approved with it: it goes back to review with it
+  await admin.from("reports").update({ status: "draft", submitted_at: null, updated_at: new Date().toISOString() }).eq("joined_to", id).eq("status", "submitted");
   // A message already approved would send the moment the last part is in: it waits for a fresh approval instead
   if (r.bundle_id) await admin.from("report_bundles").update({ message_approved_at: null, message_approved_by: null }).eq("id", r.bundle_id).neq("status", "sent");
   done(id);

@@ -12,7 +12,7 @@ import { takeawaysFor, weeklyTileKeys, type Takeaway } from "@/lib/reports/weekl
 import { RecapDeckButton } from "./recap-deck-button";
 import { metricKeysFor, clockTime, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tableKeys, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
-import { jointNote, type JointInfo, type JointNote } from "@/lib/reports/joint-core";
+import { jointMessage, jointNote, type JointInfo, type JointNote } from "@/lib/reports/joint-core";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { ManualResults, type ManualEntered } from "./manual-results";
 import { reportFileName, type DriveSave } from "@/lib/reports/drive-save-core";
@@ -20,7 +20,7 @@ import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAg
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
-import { buildReportEmail, channelsLabel, type Delivery } from "@/lib/reports/delivery-core";
+import { buildReportEmail, channelsLabel, channelsPhrase, type Channel, type Delivery } from "@/lib/reports/delivery-core";
 import { forClient } from "@/lib/reports/white-label";
 import { DeliveryPicker, type DeliveryOptions } from "./delivery-picker";
 import { PeriodPicker } from "./period-picker";
@@ -29,17 +29,19 @@ import type { LogEntry } from "@/lib/reports/skip-log";
 import { SendHistory, type HistoryItem } from "./send-history";
 import { ReportThis } from "@/components/report-this";
 import { messageKey } from "@/lib/chat-report";
+import { furthestStep, initialStep, resolveStep, sendOptions, stepsFor, type SendOption, type StudioStep } from "@/lib/reports/studio-steps";
 
-// One report, start to finish, in three steps: the report (a live preview of the document: click any line to change
-// it, or ask the AI on the side and watch it change), then the Slack message (shown as it will look in the client's
-// channel, with whoever it's from), then sent. A built report's parts are approved by each buyer; the person who built
-// it approves the message, and a joint report goes out once, from the Kaizen app, with one PDF for everything.
+// One report, start to finish, in three steps and then sent: review the report (the PDF the client gets, with the AI
+// beside it), the message that carries it (Slack, with the write-up), then how it goes out (Slack, email, and Drive for
+// a month's report). Each step is in the address (?step=), so back returns to the one before. A built report's parts are
+// approved by each buyer; the person who built it writes the message and sends it. A TikTok part riding on the Meta
+// report is reviewed on its own page and goes out inside the Meta one: one review, one message, one send.
 
 export type StudioReport = {
   id: string;
   kind: "weekly" | "monthly" | "custom" | "built";
   platform: "meta" | "google" | "tiktok";
-  /** Meta + TikTok in one weekly report: the Meta report this TikTok part goes with, or the TikTok part riding on this one */
+  /** Meta + TikTok in one report (weekly or monthly): the Meta report this TikTok part goes with, or the TikTok part riding on this one */
   joint?: JointInfo | null;
   status: string;
   periodLabel: string;
@@ -85,6 +87,8 @@ const PART_STATUS: Record<string, string> = { queued: "Queued", drafting: "Writi
 const SUGGEST = ["Make it shorter", "Explain why results moved", "More on what's next", "Warmer tone"];
 // Starters that reach past the numbers: the ad account, Motion, calls, Slack and earlier reports
 const LOOKUPS = ["Follow last week's report format", "Compare with the week before", "Which ads did best, and why?", "What did the client say on the last call?", "Anything in Slack this week to mention?"];
+const STEP_LABEL: Record<StudioStep, string> = { report: "Report", message: "Message", send: "Send", done: "Sent" };
+const shortName = (p: string) => platformName(p as "meta" | "google" | "tiktok").replace(" Ads", "");
 
 /** Slack's formatting as it shows in the channel: *bold*, _italic_, links and bullets. */
 function Mrkdwn({ text }: { text: string }) {
@@ -152,56 +156,53 @@ function SlackPreview({ from, text, file }: { from: { name: string; image: strin
 /** The email as the client will get it: the subject, who it's to, the short note, the key numbers and the PDF */
 function EmailPreview({ mail, to, file }: { mail: ReturnType<typeof buildReportEmail>; to: string[]; file: string }) {
   return (
-    <div className="grid gap-2">
-      <p className="text-[13px] text-muted">The email, from the agency&rsquo;s address with replies to you. It&rsquo;s written from the report, so it always matches it.</p>
-      <div className="overflow-hidden rounded-[14px] border border-line bg-surface">
-        <div className="grid gap-1 border-b border-line px-4 py-3 text-[13px]">
-          <p className="truncate">
-            <span className="text-faint">To </span>
-            {to.length ? to.join(", ") : <span className="text-warn">nobody picked yet</span>}
+    <div className="overflow-hidden rounded-[14px] border border-line bg-surface">
+      <div className="grid gap-1 border-b border-line px-4 py-3 text-[13px]">
+        <p className="truncate">
+          <span className="text-faint">To </span>
+          {to.length ? to.join(", ") : <span className="text-warn">nobody picked yet</span>}
+        </p>
+        <p className="font-medium leading-snug">{mail.subject}</p>
+      </div>
+      <div className="grid gap-3 px-4 py-4 text-[14px] leading-relaxed">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-text">{mail.kicker}</p>
+        <p className="font-heading text-[19px] leading-tight">{mail.title}</p>
+        <p>{mail.hello}</p>
+        {mail.lines.map((l, i) => (
+          <p key={i} className="text-muted">
+            {l}
           </p>
-          <p className="font-medium leading-snug">{mail.subject}</p>
-        </div>
-        <div className="grid gap-3 px-4 py-4 text-[14px] leading-relaxed">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-text">{mail.kicker}</p>
-          <p className="font-heading text-[19px] leading-tight">{mail.title}</p>
-          <p>{mail.hello}</p>
-          {mail.lines.map((l, i) => (
-            <p key={i} className="text-muted">
-              {l}
-            </p>
-          ))}
-          {mail.bullets.length > 0 && (
-            <ul className="grid gap-1">
-              {mail.bullets.map((b, i) => (
-                <li key={i} className="flex gap-2">
-                  <span className="text-brand-text">•</span>
-                  <span>{b}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {mail.cta && <span className="w-fit rounded-[6px] bg-brand px-4 py-2.5 text-[13px] font-medium text-white">{mail.cta.label}</span>}
-          <p className="text-[12.5px] text-faint">{mail.note}</p>
-          <div className="flex max-w-[360px] items-center gap-3 rounded-[10px] border border-line bg-surface-2 px-3 py-2.5">
-            <span className="grid h-10 w-9 shrink-0 place-items-center rounded-[4px] bg-[#e01e5a] text-[10px] font-bold text-white">PDF</span>
-            <span className="min-w-0 truncate text-[13px] font-medium">{file}</span>
-          </div>
+        ))}
+        {mail.bullets.length > 0 && (
+          <ul className="grid gap-1">
+            {mail.bullets.map((b, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="text-brand-text">•</span>
+                <span>{b}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {mail.cta && <span className="w-fit rounded-[6px] bg-brand px-4 py-2.5 text-[13px] font-medium text-white">{mail.cta.label}</span>}
+        <p className="text-[12.5px] text-faint">{mail.note}</p>
+        <div className="flex max-w-[360px] items-center gap-3 rounded-[10px] border border-line bg-surface-2 px-3 py-2.5">
+          <span className="grid h-10 w-9 shrink-0 place-items-center rounded-[4px] bg-[#e01e5a] text-[10px] font-bold text-white">PDF</span>
+          <span className="min-w-0 truncate text-[13px] font-medium">{file}</span>
         </div>
       </div>
     </div>
   );
 }
 
-function PanelButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+function PanelButton({ label, onClick, className = "", children }: { label: string; onClick: () => void; className?: string; children: React.ReactNode }) {
   return (
-    <button type="button" aria-label={label} title={label} onClick={onClick} className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line text-[15px] text-muted transition-colors hover:border-faint hover:text-fg md:h-9 md:w-9">
+    <button type="button" aria-label={label} title={label} onClick={onClick} className={`grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line text-[15px] text-muted transition-colors hover:border-faint hover:text-fg md:h-9 md:w-9 ${className}`}>
       {children}
     </button>
   );
 }
 
-/** Meta + TikTok in one weekly report, said plainly: "Goes out with the Meta report, sent by …" or "Includes TikTok" */
+/** Meta + TikTok in one report, said plainly: "Goes out with the Meta report, sent by …" or "Includes TikTok" */
 function JointBanner({ note, compact = false }: { note: JointNote; compact?: boolean }) {
   const tone = note.tone === "warn" ? "border-warn/40 bg-warn-soft/40" : note.tone === "ok" ? "border-ok/30 bg-ok-soft/40" : "border-line bg-surface";
   return (
@@ -220,6 +221,46 @@ function JointBanner({ note, compact = false }: { note: JointNote; compact?: boo
   );
 }
 
+const ICONS: Record<SendOption, React.ReactNode> = {
+  slack: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M5.04 15.17a2.53 2.53 0 1 1-2.52-2.52h2.52zm1.27 0a2.53 2.53 0 0 1 5.05 0v6.31a2.53 2.53 0 1 1-5.05 0zM8.83 5.04a2.53 2.53 0 1 1 2.53-2.52v2.52zm0 1.27a2.53 2.53 0 0 1 0 5.05H2.52a2.53 2.53 0 0 1 0-5.05zM18.96 8.83a2.53 2.53 0 1 1 2.52 2.53h-2.52zm-1.27 0a2.53 2.53 0 0 1-5.05 0V2.52a2.53 2.53 0 0 1 5.05 0zM15.17 18.96a2.53 2.53 0 1 1-2.53 2.52v-2.52zm0-1.27a2.53 2.53 0 0 1 0-5.05h6.31a2.53 2.53 0 0 1 0 5.05z" />
+    </svg>
+  ),
+  email: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3 7 9 6 9-6" />
+    </svg>
+  ),
+  drive: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden>
+      <path d="M8.5 3.5h7l6 10.5-3.5 6h-12L2.5 14z" />
+      <path d="M8.5 3.5 15 14.5H2.5M15.5 3.5 9 14.5l-3 5.5M21.5 14H9" />
+    </svg>
+  ),
+};
+
+/** One way it goes out, as a large card: picked or not, with a "Last used" tag when this buyer used it last time */
+function OptionCard({ option, title, detail, on, last, disabled, onToggle, children }: { option: SendOption; title: string; detail: React.ReactNode; on: boolean; last: boolean; disabled?: boolean; onToggle: () => void; children?: React.ReactNode }) {
+  return (
+    <div className={`grid content-start gap-3 rounded-[18px] border p-4 transition-all ${on ? "border-brand/60 bg-brand/[0.06] shadow-[0_18px_40px_-28px_rgba(200,16,46,0.9)]" : "border-line bg-surface"} ${disabled ? "opacity-60" : ""}`}>
+      <button type="button" role="checkbox" aria-checked={on} disabled={disabled} onClick={onToggle} className="grid min-h-[92px] grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3 text-left disabled:cursor-not-allowed">
+        <span className={`grid h-11 w-11 place-items-center rounded-[14px] ${on ? "bg-brand text-white" : "bg-surface-2 text-muted"}`}>{ICONS[option]}</span>
+        <span className="grid min-w-0 gap-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-[15px] font-medium text-fg">{title}</span>
+            {last && <span className="rounded-full border border-line bg-surface-2 px-2 py-0.5 text-[10.5px] font-medium text-muted">Last used</span>}
+          </span>
+          <span className="text-[12.5px] leading-snug text-muted">{detail}</span>
+        </span>
+        <span className={`mt-1 grid h-6 w-6 place-items-center rounded-full text-[12px] ${on ? "bg-brand text-white" : "border border-line"}`}>{on ? "✓" : ""}</span>
+      </button>
+      {children}
+    </div>
+  );
+}
+
 export function ReportStudio({
   report,
   client,
@@ -228,6 +269,7 @@ export function ReportStudio({
   act = null,
   delivery = null,
   history = [],
+  lastUsed = [],
 }: {
   report: StudioReport;
   /** whiteLabel: the client's reports go out generic (no Kaizen anywhere), shown that way here */
@@ -240,20 +282,29 @@ export function ReportStudio({
   delivery?: DeliveryOptions | null;
   /** Every time this report went to the client */
   history?: HistoryItem[];
+  /** How this buyer sent their last report for this client and platform (and Drive, when last month's was saved there) */
+  lastUsed?: SendOption[];
 }) {
   const router = useRouter();
   const built = report.kind === "built";
+  const monthly = report.kind === "monthly";
   const joint = built && (bundle?.parts.length ?? 0) > 1;
   const busy = report.status === "queued" || report.status === "drafting";
-  const sent = report.status === "posted" || bundle?.status === "sent";
+  // A built report goes out whole; a recap part can still follow on its own after the others went (sent alone)
+  const sent = report.status === "posted" || (built && bundle?.status === "sent");
   const skipped = report.status === "skipped";
   const mineDone = report.status === "submitted";
+  const isBuilder = Boolean(bundle?.isBuilder);
   // A TikTok part riding on the Meta report is reviewed here but never sent on its own; a Meta report says it includes TikTok
   const jn = jointNote(report.joint);
   const rider = Boolean(report.joint?.goesWith);
+  const riders = (report.joint?.riders ?? []).filter((x) => x.status !== "skipped");
+  const ridersWriting = riders.some((x) => ["queued", "drafting", "failed"].includes(x.status));
   const [sections, setSectionsState] = useState<Sections | null>(report.sections);
   const [extras, setExtrasState] = useState(report.extras);
   const [message, setMessage] = useState(built ? (bundle?.message ?? "") : report.message);
+  // The TikTok part's own message, which goes out under the Meta one (one post): changed here, saved on its part
+  const [riderMsgs, setRiderMsgs] = useState<Record<string, string>>(() => Object.fromEntries(riders.map((x) => [x.id, x.message ?? ""])));
   // The PDF on screen, ready to download (handed over by the preview once it has the report)
   const pdfMaker = useRef<PdfMaker | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -271,6 +322,8 @@ export function ReportStudio({
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
   const [editMsg, setEditMsg] = useState(false);
+  // The quiet extras (preview the PDF, the recap deck, skip): a small menu, kept mounted so its sheets survive it closing
+  const [more, setMore] = useState(false);
   // The message follows the report: edited by hand since it was written, it's brought up to date on the message step
   const [basis, setBasis] = useState(report.messageBasis);
   const [failedBasis, setFailedBasis] = useState<string | null>(null);
@@ -314,17 +367,22 @@ export function ReportStudio({
       else setNote({ ok: true, text: `Saved as ${client.name}'s layout: their next report starts this way.` });
     });
   };
-  const initial: "report" | "message" | "done" = sent ? "done" : built && mineDone && bundle?.isBuilder ? "message" : "report";
-  // The step is in the address (?step=), so back from the Slack message returns to the report. Once it's sent, it's
-  // sent: every entry shows that.
+
+  // The steps, in the address (?step=), so back returns to the one before. Once it's sent, it's sent: every entry shows that.
+  const shape = { kind: report.kind, rider, built, isBuilder, mineDone, messageApproved: Boolean(bundle?.messageApproved) };
   const [sentHere, setSentHere] = useState(false);
   const asked = useParam("step");
-  const step: "report" | "message" | "done" = sent || sentHere ? "done" : asked === "report" || asked === "message" ? asked : initial;
-  const setStep = (to: "report" | "message" | "done") => (to === "done" ? setSentHere(true) : pushParams({ step: to === initial ? null : to }));
+  const steps = stepsFor(shape);
+  const initial = initialStep({ ...shape, sent: false });
+  const furthest = furthestStep({ ...shape, sent: false });
+  const step: StudioStep = sent || sentHere ? "done" : resolveStep(asked, { ...shape, sent: false });
+  const setStep = (to: StudioStep) => (to === "done" ? setSentHere(true) : pushParams({ step: to === initial ? null : to }));
+  // The editing tools (metrics, lines, CRM results), out of the way until asked for; in the address so back closes them
+  const toolsOpen = useParam("tools") === "1";
   const chatEnd = useRef<HTMLDivElement>(null);
   const bigEnd = useRef<HTMLDivElement>(null);
-  // The side panel: normal, maximized (a big panel over the page, the report still in view) or minimized (a bar at the
-  // bottom, the report full width). In the address (?chat=max|min), so back returns to how it was.
+  // The AI panel: beside the report on wide screens, normal, maximized (a big panel; a bottom sheet on phones) or minimized
+  // (a bar at the bottom, the report full width). In the address (?chat=max|min), so back returns to how it was.
   const view = useParam("chat");
   const maxed = view === "max";
   const minned = view === "min";
@@ -338,10 +396,10 @@ export function ReportStudio({
     if (!built) setMessage(report.message);
   }
   useEffect(() => {
-    if (!busy && !(bundle && bundle.parts.some((p) => p.status === "drafting" || p.status === "queued"))) return;
+    if (!busy && !ridersWriting && !(bundle && bundle.parts.some((p) => p.status === "drafting" || p.status === "queued"))) return;
     const t = setInterval(() => router.refresh(), 4000);
     return () => clearInterval(t);
-  }, [busy, bundle, router]);
+  }, [busy, ridersWriting, bundle, router]);
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ block: "nearest" });
     bigEnd.current?.scrollIntoView({ block: "nearest" });
@@ -352,9 +410,9 @@ export function ReportStudio({
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
   }, [maxed]);
-  // The message step of a built report: the combined (or single) message, written from the approved parts
+  // A built report's message: the combined (or single) message, written from the approved parts
   useEffect(() => {
-    if (step !== "message" || !built || !bundle || message) return;
+    if ((step !== "message" && step !== "send") || !built || !bundle || message) return;
     let live = true;
     void builtMessage(bundle.id).then((r) => live && r.ok && setMessage(r.message));
     return () => {
@@ -372,7 +430,7 @@ export function ReportStudio({
       else {
         setMessage(r.message);
         setBasis(r.basis);
-        setNote({ ok: true, text: "The Slack message now matches the changes you made to the report." });
+        setNote({ ok: true, text: "The message now matches the changes you made to the report." });
       }
     });
     return () => {
@@ -413,56 +471,70 @@ export function ReportStudio({
     // New dates: the whole report is being redrawn (every page), so the page follows it
     if (r.redrawing) return router.refresh();
     setSectionsState(r.sections);
-    if (!built) setMessage(r.message);
+    if (!built) {
+      setMessage(r.message);
+      setBasis(r.sections ? reportBasis(r.sections, extras) : basis);
+    }
     if (r.qa) setQa(r.qa);
     if (r.lesson) setNote({ ok: true, text: `Remembered for this client: ${r.lesson}` });
   };
 
-  const approve = () =>
+  // Approved by mistake, or one more change: back to editing (nothing has gone out)
+  const reopen = () =>
     start(async () => {
-      setNote(null);
-      if (built) {
-        const r = await approveMyPart(report.id);
-        if (!r.ok) return setNote({ ok: false, text: r.error });
-        if (bundle?.isBuilder) setStep("message");
-        else setNote({ ok: true, text: `Approved. ${bundle?.builder ?? "Whoever built it"} sends it with the rest, as one report.` });
-        router.refresh();
-        return;
-      }
-      if (report.kind === "monthly") {
-        const r = await sendReport(report.id);
-        setNote(r.ok ? { ok: true, text: r.note } : { ok: false, text: r.error });
-        router.refresh();
-        return;
-      }
-      setStep("message");
+      const r = await reopenReport(report.id);
+      if (!r.ok) return setNote({ ok: false, text: r.error });
+      setStep("report");
+      router.refresh();
     });
 
-  // Where it goes: Slack, email or both (the client's last choice to start with)
-  const [route, setRoute] = useState<Delivery>(delivery?.initial ?? { channels: ["slack"], recipients: [] });
+  // Step 1 done: on to the message. A built report's part is approved first (the builder then writes the message).
+  const toMessage = () => {
+    if (!built || mineDone) return setStep("message");
+    start(async () => {
+      setNote(null);
+      const r = await approveMyPart(report.id);
+      if (!r.ok) return setNote({ ok: false, text: r.error });
+      if (isBuilder) setStep("message");
+      else setNote({ ok: true, text: `Approved. ${bundle?.builder ?? "Whoever built it"} sends it with the rest, as one report.` });
+      router.refresh();
+    });
+  };
+
+  // How it goes out: Slack, email or both (the client's last choice to start with), and Drive for a month's report
+  const offers = sendOptions({ kind: report.kind, start: report.period.start, end: report.period.end });
+  const [route, setRoute] = useState<Delivery>(delivery?.initial ?? { channels: client.hasChannel ? ["slack"] : ["email"], recipients: [] });
+  const [toDrive, setToDrive] = useState(offers.includes("drive") && lastUsed.includes("drive") && !report.driveSave);
   const [emailNote, setEmailNote] = useState("");
   const viaSlack = route.channels.includes("slack");
   const viaEmail = route.channels.includes("email");
+  const flip = (c: Channel) => setRoute({ ...route, channels: route.channels.includes(c) ? route.channels.filter((x) => x !== c) : [...route.channels, c] });
   const [sentNote, setSentNote] = useState<string | null>(null);
-  const send = () =>
-    start(async () => {
-      setNote(null);
-      if (built && bundle) {
-        const r = await approveBuiltMessage(bundle.id, message, route);
-        if (!r.ok) return setNote({ ok: false, text: r.error });
-        if (r.sent) setStep("done");
-        else setNote({ ok: true, text: `Approved. It goes out the moment ${r.waitingOn.join(" and ")} approve${r.waitingOn.length === 1 ? "s" : ""} their part: one report, by ${channelsLabel(route.channels).toLowerCase()}.` });
-        router.refresh();
-        return;
-      }
-      await saveReport(report.id, { message });
-      const r = await sendReport(report.id, route, emailNote);
-      if (!r.ok) return setNote({ ok: false, text: r.error });
-      setSentNote(r.note);
-      setStep("done");
-      router.refresh();
-    });
+  // A monthly recap's other parts still with their buyers (it goes out once they're all approved)
+  const othersOpen = monthly ? (bundle?.parts.filter((p) => p.id !== report.id && !["submitted", "posted", "skipped"].includes(p.status)) ?? []) : [];
+  const othersLabel = othersOpen.map((p) => `${p.owner ?? "the other buyer"} (${shortName(p.platform)})`).join(" and ");
+  const waitingParts = bundle?.parts.filter((p) => p.status !== "submitted" && p.status !== "posted") ?? [];
   const stale = report.period.stale.length > 0 && !sent && !busy;
+  // Sending happens now, or (an approved recap part, a built report's approved message) it's already queued to go
+  const canSend = !sent && !rider && !(monthly && mineDone) && !(built && bundle?.messageApproved);
+  const sendNow = canSend && route.channels.length > 0;
+  const sendProblem = !sendNow
+    ? null
+    : stale
+      ? "Redraw every page for the report's dates first."
+      : riders.length && ridersWriting
+        ? "The TikTok part is still being written. It goes out inside this report, so send once it's ready."
+        : viaSlack && !client.hasChannel
+          ? "No Slack channel is linked for this client. Add it on the client page, or send by email."
+          : viaSlack && !monthly && !message.trim()
+            ? "Write the message first."
+            : viaSlack && !monthly && !joint && !slack.connected
+              ? "Connect your Slack so it goes out as you."
+              : viaEmail && !route.recipients.length
+                ? "Pick at least one person to email."
+                : viaEmail && delivery?.emailReady === false
+                  ? "Email isn't set up yet (RESEND_API_KEY). Send in Slack for now."
+                  : null;
 
   const from = joint ? { name: "Kaizen", image: null, app: true } : { name: slack.name || slack.me, image: slack.image, app: false };
   const fileName = reportFileName({ client: client.name, whiteLabel: Boolean(client.whiteLabel), built, kind: report.kind, platform: report.platform, periodLabel: report.periodLabel });
@@ -488,38 +560,26 @@ export function ReportStudio({
       setDownloading(false);
     }
   };
-  const downloadButton = (
-    <button type="button" disabled={downloading} onClick={() => void downloadPdf()} className="inline-flex h-11 items-center justify-center gap-2 rounded-brand border border-line bg-surface-2 px-4 text-sm font-medium text-fg transition-colors hover:border-faint disabled:opacity-60 max-md:h-12">
-      <svg viewBox="0 0 16 16" aria-hidden className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" />
-      </svg>
-      {downloading ? "Preparing the PDF…" : "Download PDF"}
-    </button>
-  );
   // Save to Drive: the PDF with our notes as a last section, in the client's Drive (the client's own PDF never has them)
   const saveDrive = async () => {
     setSavingDrive(true);
     setDriveError(null);
     try {
       const r = await saveToDrive(report.id);
-      if (r.ok) setDriveSave(r.save);
-      else setDriveError({ text: r.error, href: r.fixHref });
+      if (r.ok) {
+        setDriveSave(r.save);
+        setToDrive(false);
+      } else setDriveError({ text: r.error, href: r.fixHref });
     } catch {
       setDriveError({ text: "It couldn't be saved to Drive. Try again in a moment." });
     } finally {
       setSavingDrive(false);
     }
   };
-  const driveButton = (
-    <div className="grid gap-1.5">
-      <button type="button" disabled={savingDrive} onClick={() => void saveDrive()} className="inline-flex h-11 items-center justify-center gap-2 rounded-brand border border-line bg-surface-2 px-4 text-sm font-medium text-fg transition-colors hover:border-faint disabled:opacity-60 max-md:h-12">
-        <svg viewBox="0 0 16 16" aria-hidden className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M2.5 11.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1M8 10V2.5M4.8 5.4 8 2.2l3.2 3.2" />
-        </svg>
-        {savingDrive ? "Saving to Drive…" : driveSave ? "Save again" : "Save to Drive"}
-      </button>
+  const driveStatus = (
+    <>
       {driveSave && !driveError && (
-        <p className="text-[11.5px] text-muted">
+        <p className="text-[12px] text-muted">
           Saved to Drive ·{" "}
           {driveSave.url ? (
             <a href={driveSave.url} target="_blank" rel="noreferrer" className="text-fg underline-offset-4 hover:underline">
@@ -532,7 +592,7 @@ export function ReportStudio({
         </p>
       )}
       {driveError && (
-        <p className="text-[11.5px] text-bad">
+        <p className="text-[12px] text-bad">
           {driveError.text}{" "}
           {driveError.href && (
             <Link href={driveError.href} className="underline underline-offset-4">
@@ -541,14 +601,56 @@ export function ReportStudio({
           )}
         </p>
       )}
-    </div>
+    </>
   );
-  const waitingParts = bundle?.parts.filter((p) => p.status !== "submitted" && p.status !== "posted") ?? [];
-  const STEPS = [
-    { key: "report", label: built && joint ? "Your part" : "Report" },
-    ...(report.kind === "monthly" || rider || (built && !bundle?.isBuilder) ? [] : [{ key: "message", label: "Send" }]),
-    { key: "done", label: "Sent" },
-  ];
+
+  // The message the buyer sends: theirs, then the TikTok part's under its own name (one post), and a recap's link line
+  const riderParts = riders.map((x) => ({ platform: x.platform, message: riderMsgs[x.id] ?? "" }));
+  const slackText = forClient(
+    `${riders.length ? jointMessage(message, riderParts) : message}${monthly ? (client.whiteLabel ? `\n\n*Your ${report.periodLabel} recap is attached.*` : `\n\n*Your ${report.periodLabel} recap:* <https://recap|the link to the recap>`) : ""}`,
+    client.whiteLabel,
+  );
+  const saveRiderMessages = () => Promise.all(riders.map((x) => (riderMsgs[x.id] !== (x.message ?? "") ? saveReport(x.id, { message: riderMsgs[x.id] ?? "" }) : null)));
+
+  // Step 3: it goes out (or is approved to go out with the rest), then Drive when picked
+  const deliverNow = async (): Promise<boolean> => {
+    if (built && bundle) {
+      const r = await approveBuiltMessage(bundle.id, message, route);
+      if (!r.ok) return (setNote({ ok: false, text: r.error }), false);
+      if (r.sent) setStep("done");
+      else setNote({ ok: true, text: `Approved. It goes out the moment ${r.waitingOn.join(" and ")} approve${r.waitingOn.length === 1 ? "s" : ""} their part: one report, ${channelsPhrase(route.channels)}.` });
+      router.refresh();
+      return true;
+    }
+    await saveReport(report.id, { message });
+    await saveRiderMessages();
+    const r = await sendReport(report.id, route, monthly ? undefined : emailNote);
+    if (!r.ok) return (setNote({ ok: false, text: r.error }), false);
+    setSentNote(r.note);
+    if (monthly) setNote({ ok: true, text: r.note });
+    else setStep("done");
+    router.refresh();
+    return true;
+  };
+  const go = () =>
+    start(async () => {
+      setNote(null);
+      if (sendNow && !(await deliverNow())) return;
+      if (toDrive) await saveDrive();
+    });
+  const partNow = () => {
+    if (!confirm("Send your part to the client now, without waiting on the other buyer? Their part goes out on its own when they approve it.")) return;
+    start(async () => {
+      setNote(null);
+      await saveReport(report.id, { message });
+      await saveRiderMessages();
+      const r = await sendMyPartNow(report.id, route);
+      setNote(r.ok ? { ok: true, text: r.note } : { ok: false, text: r.error });
+      if (r.ok) setSentNote(r.note);
+      if (r.ok && toDrive) await saveDrive();
+      router.refresh();
+    });
+  };
 
   // Skipped: who, when and why, with the way back; nothing to edit or send until it's brought back
   if (skipped)
@@ -561,60 +663,677 @@ export function ReportStudio({
       </div>
     );
 
-  return (
-    <div className="grid gap-5">
-      {/* Where it is: the steps, and a built report's parts */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <ol className="flex items-center gap-1.5 text-sm">
-          {STEPS.map((s, i) => {
-            const at = STEPS.findIndex((x) => x.key === step);
-            const on = s.key === step;
-            return (
-              <li key={s.key} className="flex items-center gap-1.5">
+  // ─── The document: every line the buyer writes, the metrics on the page, and the tools that change them ─────────
+  const LISTS = [["did", "What we did"], ["doing", "What we're doing"], ["next", "What's next"]] as const;
+  const weekly = report.kind !== "monthly" && report.kind !== "built";
+  const doc = (() => {
+    if (!sections) return null;
+    const cards: Takeaway[] = weekly && report.metrics ? takeawaysFor(report.metrics, sections.takeaways) : [];
+    const fields: PdfField[] = [
+      { id: "headline", label: "Headline", value: sections.headline },
+      { id: "summary", label: "Summary", value: sections.summary },
+      ...LISTS.flatMap(([k, label]) => (sections[k] ?? []).map((v, i, all) => ({ id: `${k}.${i}`, label, value: v, removable: true, list: { at: i, count: all.length } }))),
+      { id: "extras", label: "Also (sales from their CRM, other channels…)", value: extras, removable: true },
+      // The weekly's three takeaway cards (worked out from the numbers until the buyer or the AI words them)
+      ...cards.flatMap((t, i) => [
+        { id: `takeaway-${i}-title`, label: "Takeaway", value: t.title },
+        { id: `takeaway-${i}-text`, label: "Takeaway, the numbers", value: t.text },
+      ]),
+      // Each trend chart's words (the chart itself is drawn from the ad account)
+      ...(sections.stories ?? []).flatMap((st, i) => [
+        { id: `story-${i}-title`, label: "Chart title", value: st.title },
+        { id: `story-${i}-see`, label: "What we see", value: st.see },
+        { id: `story-${i}-why`, label: "Why", value: st.why },
+        { id: `story-${i}-next`, label: "What's next", value: st.next },
+      ]),
+    ];
+    const save = (id: string, v: string | null) => {
+      if (id === "extras") return setExtras(v ?? "");
+      if (id === "headline" || id === "summary") return setSections({ ...sections, [id]: v ?? "" });
+      const card = id.match(/^takeaway-(\d+)-(title|text)$/);
+      if (card) return setSections({ ...sections, takeaways: cards.map((t, i) => (i === Number(card[1]) ? { ...t, [card[2]]: v ?? "" } : t)) });
+      const story = id.match(/^story-(\d+)-(title|see|why|next)$/);
+      if (story) return setSections({ ...sections, stories: (sections.stories ?? []).map((st, i) => (i === Number(story[1]) ? { ...st, [story[2]]: v ?? "" } : st)) });
+      const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
+      setSections({ ...sections, [k]: v ? (sections[k] ?? []).map((y, j) => (j === Number(n) ? v : y)) : (sections[k] ?? []).filter((_, j) => j !== Number(n)) });
+    };
+    // A new point just below one in the same list (that one's words too, when changed in the same box)
+    const addBelow = (id: string, v: string, current?: string) => {
+      const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
+      const list = (sections[k] ?? []).map((y, j) => (j === Number(n) && current ? current : y));
+      if (v) list.splice(Number(n) + 1, 0, v);
+      setSections({ ...sections, [k]: list });
+    };
+    // A point one place up or down in its list
+    const move = (id: string, by: -1 | 1) => {
+      const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
+      const list = [...(sections[k] ?? [])];
+      const i = Number(n);
+      const j = i + by;
+      if (j < 0 || j >= list.length) return;
+      [list[i], list[j]] = [list[j], list[i]];
+      setSections({ ...sections, [k]: list });
+    };
+    // The metrics on the page now, as the PDF draws them
+    const goneNames = new Set(gone.map((g) => g.name));
+    const m = report.metrics && goneNames.size ? { ...report.metrics, campaigns: report.metrics.campaigns.filter((c) => !goneNames.has(c.name)) } : report.metrics;
+    const monthlyTiles = report.kind === "monthly";
+    // The weekly leads with its own four (by the client's KPI); the tile clicked is the tile changed
+    const tiles = m ? (weekly ? weeklyTileKeys(m, layout) : tileKeys(m, layout, monthlyTiles)) : [];
+    const table = m ? tableKeys(m, layout) : TABLE_DEFAULT;
+    const columns = m ? columnKeys(m, layout) : [];
+    const hasTable = report.kind !== "weekly";
+    const limit = report.kind === "weekly" ? 6 : 8;
+    const hide = layout?.campaigns?.hide ?? [];
+    const add = layout?.campaigns?.add ?? [];
+    const shownCampaigns = m ? m.campaigns.filter((c) => !hide.includes(c.name)).slice(0, limit).map((c) => c.name) : [];
+    const offPage = m ? m.campaigns.filter((c) => !shownCampaigns.includes(c.name) && !add.includes(c.name)) : [];
+    const list = { tiles, table, columns };
+    // Excluded here: off the page right away (the numbers follow on regenerate)
+    const shownLayout: ReportLayout | null = goneNames.size ? { ...layout, campaigns: { ...(layout?.campaigns ?? {}), hide: [...new Set([...hide, ...goneNames])] } } : layout;
+    const swap = (where: "tiles" | "table" | "columns", i: number, k: MetricKey | null) => {
+      const now = [...list[where]];
+      if (k) now[i] = k;
+      else now.splice(i, 1);
+      setLayout({ ...layout, [where]: now });
+    };
+    const picker = (where: "tiles" | "table" | "columns", current: MetricKey | null, choose: (k: MetricKey) => void) =>
+      m && (
+        <div className="grid gap-1">
+          {metricKeysFor(report.platform).filter((k) => k === current || !list[where].includes(k)).map((k) => (
+            <button key={k} type="button" onClick={() => choose(k)} className={`flex h-10 items-center justify-between rounded-[10px] px-3 text-left text-[13.5px] hover:bg-surface-2 ${k === current ? "bg-surface-2 text-fg" : "text-muted"}`}>
+              {metricLabel(m, k)}
+              {k === current && <span className="text-[11px] text-faint">Now</span>}
+            </button>
+          ))}
+        </div>
+      );
+    const hotMenu = (target: string, close: () => void) => {
+      const [platform, kind, ...rest] = target.split("/");
+      if (!m) return null;
+      if (platform !== report.platform) {
+        const other = riders.find((x) => x.platform === platform);
+        return other ? (
+          <a href={`/reports/${other.id}`} className="flex min-h-10 items-center rounded-[10px] px-3 text-[13px] text-fg hover:bg-surface-2">
+            The {shortName(platform)} part is changed on its own page. Open it →
+          </a>
+        ) : (
+          <p className="text-[13px] text-muted">This part is the other buyer&rsquo;s: they change it from their report.</p>
+        );
+      }
+      const title = (t: string) => <p className="px-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">{t}</p>;
+      if (kind === "tile" || kind === "row" || kind === "col") {
+        const where = kind === "tile" ? "tiles" : kind === "row" ? "table" : "columns";
+        const i = Number(rest[0]);
+        const current = list[where][i] ?? null;
+        return (
+          <>
+            {title(kind === "tile" ? "Show in this tile" : kind === "row" ? "Show in this row" : "Show in this column")}
+            {picker(where, current, (k) => {
+              swap(where, i, k);
+              close();
+            })}
+            {list[where].length > 1 && (
+              <button type="button" onClick={() => (swap(where, i, null), close())} className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40">
+                Remove this {kind === "tile" ? "tile" : kind === "row" ? "row" : "column"}
+              </button>
+            )}
+          </>
+        );
+      }
+      // A trend chart: taken out, or redrawn by the AI with a different metric or range
+      if (kind === "story") {
+        const i = Number(rest[0]);
+        const st = sections.stories?.[i];
+        return (
+          <>
+            {title("Trend chart")}
+            <p className="px-1 text-[13.5px] leading-snug">{st?.title}</p>
+            <p className="px-1 text-[12px] text-muted">Its numbers come from the ad account. To chart something else, ask the AI (e.g. &ldquo;make it the last 8 weeks&rdquo;).</p>
+            <button
+              type="button"
+              onClick={() => {
+                setSections({ ...sections, stories: (sections.stories ?? []).filter((_, j) => j !== i) });
+                close();
+              }}
+              className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40"
+            >
+              Remove this chart
+            </button>
+          </>
+        );
+      }
+      // A campaign line
+      const name = decodeURIComponent(rest.join("/") || kind);
+      const c = m.campaigns.find((x) => x.name === name);
+      return (
+        <>
+          {title("Campaign")}
+          <p className="px-1 text-[13.5px] leading-snug">{name}</p>
+          {c?.result && <p className="px-1 text-[12px] text-muted">{layout?.campaigns?.results?.[name] ? "Counting" : "Optimized for"} {c.result.toLowerCase()}{layout?.campaigns?.results?.[name] ? " (picked for this report)" : ": its results count that, as on the KPI board"}.</p>}
+          {title("Its result")}
+          {c?.events ? (
+            <div className="grid max-h-56 gap-1 overflow-y-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  const results = { ...(layout?.campaigns?.results ?? {}) };
+                  delete results[name];
+                  setLayout({ ...layout, campaigns: { hide, add, results } });
+                  close();
+                }}
+                className={`flex h-10 items-center justify-between rounded-[10px] px-3 text-left text-[13px] hover:bg-surface-2 ${!layout?.campaigns?.results?.[name] ? "bg-surface-2 text-fg" : "text-muted"}`}
+              >
+                What it&rsquo;s optimized for
+                {!layout?.campaigns?.results?.[name] && <span className="text-[11px] text-faint">Now</span>}
+              </button>
+              {c.events.map((e) => (
+                <button
+                  key={e.type}
+                  type="button"
+                  onClick={() => {
+                    setLayout({ ...layout, campaigns: { hide, add, results: { ...(layout?.campaigns?.results ?? {}), [name]: e.type } } });
+                    close();
+                  }}
+                  className={`flex min-h-10 items-center justify-between gap-3 rounded-[10px] px-3 text-left text-[13px] hover:bg-surface-2 ${layout?.campaigns?.results?.[name] === e.type ? "bg-surface-2 text-fg" : "text-muted"}`}
+                >
+                  <span className="min-w-0 truncate">{e.label}</span>
+                  <span className="tabular shrink-0 text-[12px] text-faint">{e.count.toLocaleString("en-US")}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() =>
+                start(async () => {
+                  const r = await loadCampaignEvents(report.id);
+                  if (!r.ok) setNote({ ok: false, text: r.error });
+                  router.refresh();
+                })
+              }
+              className="h-10 rounded-[10px] px-3 text-left text-[13px] text-brand-text hover:bg-surface-2"
+            >
+              {pending ? "Reading its conversions…" : "Pick its result (read what it counted)"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setLayout({ ...layout, campaigns: { hide: [...new Set([...hide, name])], add: add.filter((x) => x !== name) } });
+              close();
+            }}
+            className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40"
+          >
+            Take it out of the report
+          </button>
+          {excluding === name ? (
+            <div className="grid gap-2 rounded-[12px] border border-warn/40 bg-warn-soft px-3 py-2.5">
+              <p className="text-[12.5px] leading-snug text-fg">
+                Leave &ldquo;{name}&rdquo; out everywhere? It stops counting in {client.name}&rsquo;s KPI, audits and every report, like a campaign the client runs themselves. You can undo it.
+              </p>
+              <div className="flex flex-wrap gap-1.5">
                 <button
                   type="button"
-                  disabled={i > at || sent}
-                  onClick={() => setStep(s.key as typeof step)}
-                  className={`flex h-9 items-center gap-2 rounded-full px-3.5 transition-colors ${on ? "bg-fg text-bg" : i < at ? "text-fg hover:bg-surface-2" : "text-faint"}`}
+                  onClick={() => {
+                    excludeCampaign({ id: c?.id ?? null, name }, true);
+                    close();
+                  }}
+                  className="h-10 rounded-full bg-fg px-4 text-[13px] font-medium text-bg md:h-9"
+                >
+                  Exclude it
+                </button>
+                <button type="button" onClick={() => setExcluding(null)} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg md:h-9">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setExcluding(name)} className="min-h-10 rounded-[10px] px-3 py-2 text-left text-[13px] leading-snug text-muted hover:bg-surface-2 hover:text-fg">
+              Exclude this campaign from reports and audits
+              <span className="block text-[11.5px] text-faint">For a campaign the client runs themselves</span>
+            </button>
+          )}
+        </>
+      );
+    };
+    // The editing tools: metrics on the page, campaigns left out, lines for the message, and the CRM results
+    const tools =
+      editable && m ? (
+        <div className="grid gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]">
+            <span className="mr-1 text-faint">Metrics:</span>
+            <button type="button" disabled={asking} onClick={() => void tweak("Add a trend chart of the cost per result by week for the last 5 weeks, with what we see, why and what's next")} className="h-9 rounded-full border border-line px-3 text-muted hover:text-fg disabled:opacity-40 max-md:h-10">
+              + Trend chart
+            </button>
+            {([["tiles", "+ Tile"], ...(hasTable ? [["table", "+ Key metric row"]] : []), ...(weekly ? [] : [["columns", "+ Campaign column"], ["campaign", "+ Campaign"]])] as ["tiles" | "table" | "columns" | "campaign", string][]).map(([k, label]) => (
+              <button key={k} type="button" onClick={() => setAddingMetric(addingMetric === k ? null : k)} className={`h-9 rounded-full border px-3 max-md:h-10 ${addingMetric === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
+                {label}
+              </button>
+            ))}
+            {layout && (
+              <button type="button" onClick={() => setLayout({})} className="h-9 rounded-full px-3 text-faint hover:text-fg max-md:h-10">
+                Back to the default
+              </button>
+            )}
+          </div>
+          {addingMetric && addingMetric !== "campaign" && (
+            <div className="flex flex-wrap gap-1.5">
+              {metricKeysFor(report.platform).filter((k) => !list[addingMetric].includes(k)).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => {
+                    setLayout({ ...layout, [addingMetric]: [...list[addingMetric], k].slice(0, addingMetric === "tiles" ? 6 : 10) });
+                    setAddingMetric(null);
+                  }}
+                  className="h-9 rounded-full bg-surface-2 px-3 text-[12.5px] hover:text-fg max-md:h-10"
+                >
+                  {metricLabel(m, k)}
+                </button>
+              ))}
+            </div>
+          )}
+          {addingMetric === "campaign" &&
+            (offPage.length ? (
+              <div className="grid max-h-56 gap-1 overflow-y-auto">
+                {offPage.map((c) => (
+                  <button
+                    key={c.name}
+                    type="button"
+                    onClick={() => {
+                      setLayout({ ...layout, campaigns: { hide: hide.filter((x) => x !== c.name), add: [...add, c.name] } });
+                      setAddingMetric(null);
+                    }}
+                    className="flex min-h-10 items-center justify-between gap-3 rounded-[10px] px-3 text-left text-[13px] hover:bg-surface-2"
+                  >
+                    <span className="min-w-0 truncate">{c.name}</span>
+                    <span className="tabular shrink-0 text-[12px] text-faint">
+                      ${Math.round(c.spend).toLocaleString("en-US")} · {c.results} {c.result?.toLowerCase() ?? "results"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12.5px] text-faint">Every campaign that spent in the period is already in the report.</p>
+            ))}
+          {(() => {
+            // Campaigns this report's numbers leave out, with the ones excluded by hand one tap from counting again
+            const out = (report.metrics?.leftOut ?? []).filter((c) => !restored.includes(c.name) && !goneNames.has(c.name));
+            if (!out.length) return null;
+            return (
+              <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
+                <span className="mr-1 text-faint">Not in this report:</span>
+                {out.map((c) => (
+                  <span key={c.id} className="inline-flex min-h-9 max-w-full items-center gap-2 rounded-full bg-surface-2 py-1 pl-3 pr-1 max-md:min-h-10">
+                    <span className="min-w-0 truncate text-muted" title={c.why === "match" ? "Outside the KPI's campaign match" : "Excluded from the KPI"}>
+                      {c.name} <span className="tabular text-faint">· ${Math.round(c.spend).toLocaleString("en-US")}</span>
+                    </span>
+                    {c.why === "excluded" ? (
+                      <button type="button" disabled={pending} onClick={() => excludeCampaign({ id: c.id, name: c.name }, false)} className="h-7 shrink-0 rounded-full px-2.5 text-[12px] text-brand-text hover:bg-surface disabled:opacity-50 max-md:h-8">
+                        Count it again
+                      </button>
+                    ) : (
+                      <span className="pr-2 text-[11.5px] text-faint">outside the match</span>
+                    )}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
+            <span className="mr-1 text-faint">Add:</span>
+            {[...LISTS, ["extras", extras.trim() ? "To the note" : "A note (CRM sales, other channels)"] as const].map(([k, label]) => (
+              <button key={k} type="button" onClick={() => setAdding({ key: k, text: "" })} className={`h-9 rounded-full border px-3 max-md:h-10 ${adding?.key === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
+                + {label}
+              </button>
+            ))}
+          </div>
+          {adding && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const t = adding.text.trim();
+                if (!t) return;
+                if (adding.key === "extras") setExtras(extras.trim() ? `${extras.trim()}\n${t}` : t);
+                else setSections({ ...sections, [adding.key]: [...(sections[adding.key] ?? []), t] });
+                setAdding(null);
+              }}
+              className="flex flex-wrap gap-2"
+            >
+              <textarea autoFocus value={adding.text} onChange={(e) => setAdding({ ...adding, text: e.target.value })} rows={2} placeholder={adding.key === "extras" ? "Write it as it should read in the message" : "Write it as it should read in the message (not printed in the report)"} className="min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none [field-sizing:content] focus:border-brand-text/60" />
+              <div className="flex items-end gap-1.5">
+                <button type="button" onClick={() => setAdding(null)} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg">
+                  Cancel
+                </button>
+                <button type="submit" disabled={!adding.text.trim()} className="h-10 rounded-full bg-fg px-4 text-[13px] text-bg disabled:opacity-40">
+                  Add
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      ) : null;
+    return { fields, save, addBelow, move, shownLayout, hotMenu, tools };
+  })();
+  // The write-up that travels in the message (never printed in the report)
+  const writeUp = doc ? doc.fields.filter((f) => !/^takeaway-|^story-\d+-title$/.test(f.id)) : [];
+
+  // ─── The AI panel: ask for a change (the document and the message update), or the QA's checks ─────────────────
+  const reportTurns = () => chat.map((t) => ({ role: t.role === "user" ? "user" : "ai", text: t.text, at: t.at, name: t.by ?? null }));
+  const reportState = () => ({ reportId: report.id, kind: report.kind, platform: report.platform, period: { start: report.period.start, end: report.period.end, key: report.period.key }, status: report.status });
+  const flagCount = qa?.flags.length ?? 0;
+  const tabs = (
+    <div className="flex items-center gap-1.5">
+      <div className="flex flex-1 gap-1 rounded-full bg-surface-2 p-1 text-sm">
+        {(["ai", "checks"] as const).map((k) => (
+          <button key={k} type="button" onClick={() => setRail(k)} className={`h-10 flex-1 rounded-full px-3 transition-colors md:h-9 ${rail === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+            {k === "ai" ? "Ask the AI" : `Checks${flagCount ? ` · ${flagCount}` : ""}`}
+          </button>
+        ))}
+      </div>
+      <PanelButton label={minned ? "Restore the panel" : "Minimize"} onClick={() => (minned ? closeParams("chat") : pushParams({ chat: "min" }))} className="max-lg:hidden">
+        {minned ? "▴" : "–"}
+      </PanelButton>
+      <PanelButton label={maxed ? "Close" : "Maximize"} onClick={() => (maxed ? closeParams("chat") : pushParams({ chat: "max" }))}>
+        {maxed ? <span className="max-md:hidden">⤡</span> : "⤢"}
+        {maxed && <span className="md:hidden">×</span>}
+      </PanelButton>
+    </div>
+  );
+  const thread = (big: boolean) => (
+    <div className={`grid content-start gap-2.5 overflow-y-auto pr-1 ${big ? "min-h-0 flex-1" : "max-h-[52vh] min-h-[180px]"}`}>
+      {!chat.length && (
+        <div className={`grid gap-2.5 leading-relaxed text-faint ${big ? "text-sm" : "text-xs"}`}>
+          <p>{step === "message" ? "Say what to change in the message or the report and watch both update." : "Say what to change and watch the report update."} It can look things up as it goes: live numbers from the ad account, Motion, the client&apos;s calls, Slack, email and Drive, and earlier reports.</p>
+          {editable && (
+            <div className="flex flex-wrap gap-1.5">
+              {LOOKUPS.map((x) => (
+                <button key={x} type="button" onClick={() => tweak(x)} disabled={asking} className="rounded-full border border-brand/30 bg-brand/[0.06] px-2.5 py-1 text-[11.5px] text-fg hover:border-brand/60 disabled:opacity-40 max-md:min-h-9">
+                  {x}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {chat.map((t, i) => (
+        <div key={i} className={`grid max-w-[88%] gap-1.5 ${t.role === "user" ? "justify-self-end" : ""}`}>
+          <p className={`whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 leading-relaxed ${big ? "text-[15px]" : "text-[13.5px]"} ${t.role === "user" ? "bg-fg text-bg" : "bg-surface-2 text-fg"}`}>{t.text}</p>
+          {/* Where it looked, so the buyer knows where a number came from */}
+          {t.pulled?.length ? (
+            <div className="flex flex-wrap gap-1">
+              {t.pulled.map((x, k) => (
+                <span key={k} className="rounded-full border border-line px-2 py-0.5 text-[10.5px] text-faint">
+                  ↳ {x}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {t.role === "assistant" && <ReportThis chat="report-studio" messageId={messageKey(i, t.text)} threadId={report.id} text={t.text} turns={reportTurns} state={reportState} clientSlug={client.slug} />}
+        </div>
+      ))}
+      {chatError && !asking && (
+        <div className="grid gap-1.5">
+          <p className={`text-bad ${big ? "text-sm" : "text-xs"}`}>{chatError}</p>
+          <ReportThis chat="report-studio" messageId={`error-${messageKey(chat.length, chatError)}`} threadId={report.id} error={chatError} turns={reportTurns} state={reportState} clientSlug={client.slug} />
+        </div>
+      )}
+      {asking && (
+        <p className="flex items-center gap-2 text-xs text-faint">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> Looking things up and changing it…
+        </p>
+      )}
+      <div ref={big ? bigEnd : chatEnd} />
+    </div>
+  );
+  const composer = (big: boolean) =>
+    editable && (
+      <div className="grid gap-2.5">
+        <div className="flex flex-wrap gap-1.5">
+          {SUGGEST.map((x) => (
+            <button key={x} type="button" onClick={() => tweak(x)} disabled={asking} className="rounded-full border border-line px-2.5 py-1 text-[11.5px] text-muted hover:text-fg disabled:opacity-40 max-md:min-h-9">
+              {x}
+            </button>
+          ))}
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void tweak(ask);
+          }}
+          className="grid gap-2 rounded-[14px] border border-line bg-bg p-2 focus-within:border-brand-text/60"
+        >
+          {/* Room to write: Enter sends, Shift+Enter starts a new line */}
+          <textarea
+            value={ask}
+            onChange={(e) => setAsk(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void tweak(ask);
+              }
+            }}
+            rows={big ? 4 : 3}
+            placeholder={step === "message" ? "e.g. make the message warmer, or mention Tuesday's call" : "e.g. pull last month's top 3 ads from Motion, or add what they said on Tuesday's call"}
+            className={`w-full resize-none bg-transparent px-1.5 py-1 leading-relaxed outline-none ${big ? "text-[15px]" : "text-sm"} [field-sizing:content] ${big ? "max-h-[30vh] min-h-[104px]" : "max-h-[22vh] min-h-[72px]"}`}
+          />
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-faint max-md:hidden">Enter to send · Shift+Enter for a new line</span>
+            <button type="submit" disabled={!ask.trim() || asking} className="ml-auto h-9 shrink-0 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-40 max-md:h-11">
+              Change
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  const checks = (
+    <div className="grid content-start gap-2 overflow-y-auto">
+      {!qa ? (
+        <p className="text-xs text-faint">Not checked yet.</p>
+      ) : qa.flags.length === 0 ? (
+        <p className="text-sm text-ok">The QA found nothing to fix: every number matches the data.</p>
+      ) : (
+        qa.flags.map((f, i) => (
+          <div key={i} className={`grid gap-1 rounded-[10px] border px-3 py-2 text-[12.5px] ${f.severity === "fix" ? "border-bad/40 bg-bad-soft/40" : f.severity === "alert" ? "border-warn/40 bg-warn-soft/40" : "border-line"}`}>
+            <span className={`text-[10px] font-semibold uppercase tracking-[0.1em] ${f.severity === "fix" ? "text-bad" : f.severity === "alert" ? "text-warn" : "text-muted"}`}>{f.severity === "fix" ? "Fix" : f.severity === "alert" ? "Heads up" : "Check"}</span>
+            <span>{f.issue}</span>
+            <span className="text-muted">{f.suggestion}</span>
+          </div>
+        ))
+      )}
+      {editable && (
+        <button
+          type="button"
+          onClick={() =>
+            start(async () => {
+              const r = await checkAgain(report.id);
+              if (r.ok) setQa(r.qa);
+            })
+          }
+          className="h-10 justify-self-start rounded-full border border-line px-3 text-xs text-muted hover:text-fg md:h-9"
+        >
+          {pending ? "Checking…" : "Check again"}
+        </button>
+      )}
+    </div>
+  );
+  const qaWarning = qa?.verdict === "fix" && !mineDone && !sent ? (
+    <button type="button" onClick={() => setRail("checks")} className="text-left text-[12px] text-bad underline-offset-4 hover:underline">
+      The QA found something to fix: worth a look in Checks first.
+    </button>
+  ) : null;
+
+  // The one thing to do on each step, as a big button (the AI panel's foot on desktop, the bottom bar on phones)
+  const primaryClass = "inline-flex h-12 w-full items-center justify-center gap-2 rounded-brand bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover disabled:opacity-50";
+  const reviewPrimary = rider ? (
+    report.joint?.goesWith ? (
+      <a href={`/reports/${report.joint.goesWith.id}?step=message`} className={primaryClass}>
+        Continue on the Meta report →
+      </a>
+    ) : null
+  ) : sent || busy || !sections ? null : mineDone && (monthly || built) ? (
+    built && !isBuilder ? (
+      <p className="text-center text-[13px] text-muted">{bundle?.builder ?? "Whoever built it"} sends it as one report.</p>
+    ) : (
+      <button type="button" onClick={() => setStep(built ? "message" : "send")} className={primaryClass}>
+        {built ? "On to the message →" : "On to sending →"}
+      </button>
+    )
+  ) : (
+    <button type="button" disabled={pending || stale} title={stale ? "Redraw every page for the report's dates first" : undefined} onClick={toMessage} className={primaryClass}>
+      {pending ? "One moment…" : built && !isBuilder ? "Approve my part" : "Looks good, continue to the message"}
+    </button>
+  );
+  const messagePrimary = (
+    <button type="button" disabled={syncing || (built && !message)} onClick={() => setStep("send")} className={primaryClass}>
+      Continue to send →
+    </button>
+  );
+  const approvedNote =
+    mineDone && (monthly || built) && !sent ? (
+      <p className="text-[12.5px] leading-snug text-muted">
+        <span className="text-ok">✓ Your part is approved.</span> Locked while it waits to go out.{" "}
+        <button type="button" disabled={pending} onClick={reopen} className="text-fg underline underline-offset-4 disabled:opacity-50">
+          Back to editing
+        </button>
+      </p>
+    ) : null;
+
+  // The side panel and, on phones, the bottom bar with the AI and the step's one button
+  const sidePanel = (foot: React.ReactNode) => {
+    const panelFoot = (
+      <div className="grid gap-2 border-t border-line pt-3">
+        {approvedNote}
+        {foot}
+        {qaWarning}
+      </div>
+    );
+    return (
+      <>
+        {minned ? (
+          <Layer>
+            <div className="fixed bottom-5 right-6 z-40 w-[460px] max-lg:hidden">
+              <div className="grid gap-3 rounded-[18px] border border-line bg-surface/95 p-3 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+                {tabs}
+                {panelFoot}
+              </div>
+            </div>
+          </Layer>
+        ) : (
+          <aside className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 max-lg:hidden lg:sticky lg:top-20">
+            {tabs}
+            {maxed ? <p className="text-xs text-faint">Open in the big panel.</p> : rail === "ai" ? <div className="grid gap-3">{thread(false)}{composer(false)}</div> : checks}
+            {panelFoot}
+          </aside>
+        )}
+        {/* Phones and tablets: the AI one tap away, and the step's button always in reach */}
+        <Layer>
+          <div className="fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 px-4 md:bottom-5 lg:hidden">
+            <div className="mx-auto grid max-w-xl gap-2 rounded-[20px] border border-line bg-surface/95 p-2 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.6)] backdrop-blur-xl">
+              {(approvedNote || (rider && jn)) && <div className="px-2 pt-1">{approvedNote ?? <p className="text-[12.5px] text-muted">{jn?.title}</p>}</div>}
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => pushParams({ chat: "max" })} className="inline-flex h-12 shrink-0 items-center gap-2 rounded-[14px] border border-line px-3.5 text-[13.5px] text-fg">
+                  <span className="h-1.5 w-1.5 rounded-full bg-brand" aria-hidden />
+                  Ask the AI{flagCount ? <span className="tabular text-faint">· {flagCount}</span> : null}
+                </button>
+                <div className="grid min-w-0 flex-1">{foot}</div>
+              </div>
+            </div>
+          </div>
+        </Layer>
+        {/* Maximized: a big panel over the right of the page on wide screens, a bottom sheet on phones */}
+        {maxed && (
+          <Layer>
+            <div className="fixed inset-0 z-50 flex items-end justify-end md:items-stretch">
+              <button type="button" aria-label="Close the panel" onClick={() => closeParams("chat")} className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" />
+              <div className="relative flex h-[88dvh] w-full flex-col gap-4 rounded-t-[24px] border-t border-line bg-surface p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-[0_0_80px_-20px_rgba(0,0,0,0.7)] md:h-full md:w-[min(760px,92vw)] md:rounded-none md:border-l md:border-t-0 md:p-6 md:pt-[calc(1.5rem+env(safe-area-inset-top))]">
+                <span aria-hidden className="mx-auto -mt-1 h-1 w-10 shrink-0 rounded-full bg-line md:hidden" />
+                {tabs}
+                {rail === "ai" ? (
+                  <>
+                    {thread(true)}
+                    {composer(true)}
+                  </>
+                ) : (
+                  <div className="min-h-0 flex-1 overflow-y-auto">{checks}</div>
+                )}
+                {panelFoot}
+              </div>
+            </div>
+          </Layer>
+        )}
+      </>
+    );
+  };
+
+  // ─── Step 3: how it goes out ─────────────────────────────────────────────────────────────────────────────────
+  const optionDetail: Record<SendOption, React.ReactNode> = {
+    slack: !client.hasChannel ? "No Slack channel is linked for this client yet." : joint ? "One message from the Kaizen app in their channel, with the PDF." : monthly ? "Posted in their channel with the recap and its PDF." : "Posted in their channel as you, with the PDF.",
+    email: monthly ? (client.whiteLabel ? "The recap email with the PDF attached." : "The recap email with the link to the recap.") : "From the agency's address, replies come to you. PDF attached.",
+    drive: driveSave ? "Saved. Pick it to save a new version." : "The PDF with your write-up, in the client's reports folder.",
+  };
+  // Slack and email can be picked until it's on its way (an approved recap part still picks them for Send my part now)
+  const routeOpen = !sent && !rider && !(built && bundle?.messageApproved);
+  const channelsLocked = !routeOpen || pending;
+  const sendLabel = (() => {
+    if (sendNow) {
+      const base = built && waitingParts.length ? "Approve the message" : monthly && othersOpen.length ? "Approve my part" : `Send ${channelsPhrase(route.channels)}`;
+      return toDrive ? `${base} and save to Drive` : base;
+    }
+    if (toDrive) return driveSave ? "Save to Drive again" : "Save to Google Drive";
+    return null;
+  })();
+
+  return (
+    <div className={`grid gap-5 ${step === "report" || step === "message" ? "max-lg:pb-36" : ""}`}>
+      {/* Where it is: the steps, and a built or monthly report's parts */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <ol className="-mx-1 flex max-w-full items-center gap-1 overflow-x-auto px-1 text-sm [scrollbar-width:none]" aria-label="Steps">
+          {steps.map((s, i) => {
+            const at = steps.indexOf(step);
+            const on = s === step;
+            const reachable = !sent && s !== "done" && i <= steps.indexOf(furthest);
+            return (
+              <li key={s} className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  disabled={!reachable || on}
+                  aria-current={on ? "step" : undefined}
+                  onClick={() => setStep(s)}
+                  className={`flex h-10 items-center gap-2 rounded-full px-3 transition-colors md:h-9 md:px-3.5 ${on ? "bg-fg text-bg" : i < at ? "text-fg hover:bg-surface-2" : reachable ? "text-muted hover:bg-surface-2 hover:text-fg" : "text-faint"}`}
                 >
                   <span className={`grid h-5 w-5 place-items-center rounded-full text-[11px] font-semibold ${on ? "bg-bg text-fg" : i < at ? "bg-ok text-white" : "border border-line"}`}>{i < at ? "✓" : i + 1}</span>
-                  {s.label}
+                  {s === "report" && built && joint ? "Your part" : STEP_LABEL[s]}
                 </button>
-                {i < STEPS.length - 1 && <span className="h-px w-4 bg-line" />}
+                {i < steps.length - 1 && <span className="h-px w-3 bg-line md:w-4" />}
               </li>
             );
           })}
         </ol>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {bundle && bundle.parts.length > 1 && (
-            <div className="flex flex-wrap gap-1.5">
-              {bundle.parts.map((p) => (
-                <a
-                  key={p.id}
-                  href={`/reports/${p.id}`}
-                  className={`flex h-11 items-center gap-2 rounded-full border px-3.5 text-xs md:h-8 md:px-3 ${p.isMe ? "border-fg/40" : "border-line"} ${p.status === "submitted" || p.status === "posted" ? "text-ok" : "text-muted"}`}
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full ${p.status === "submitted" || p.status === "posted" ? "bg-ok" : p.status === "drafting" ? "animate-pulse bg-faint" : "bg-warn"}`} />
-                  {platformName(p.platform as "meta" | "google" | "tiktok").replace(" Ads", "")} · {p.isMe ? "you" : (p.owner ?? "buyer")} · {PART_STATUS[p.status] ?? p.status}
-                </a>
-              ))}
-            </div>
-          )}
-          {/* Regenerate: the freshest numbers and the latest report logic, from scratch (a sent one stays as it went) */}
-          {!busy && <RegenerateButton kind="one" variant="header" id={report.id} label={`${client.name}'s report`} sent={sent} approved={report.status === "submitted"} />}
-        </div>
+        {bundle && bundle.parts.length > 1 && (
+          <div className="flex flex-wrap gap-1.5">
+            {bundle.parts.map((p) => (
+              <a
+                key={p.id}
+                href={`/reports/${p.id}`}
+                className={`flex h-11 items-center gap-2 rounded-full border px-3.5 text-xs md:h-8 md:px-3 ${p.id === report.id ? "border-fg/40" : "border-line"} ${p.status === "submitted" || p.status === "posted" ? "text-ok" : "text-muted"}`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${p.status === "submitted" || p.status === "posted" ? "bg-ok" : p.status === "drafting" ? "animate-pulse bg-faint" : "bg-warn"}`} />
+                {shortName(p.platform)}
+                {p.platform === report.platform && riders.length ? " + TikTok" : ""} · {p.isMe ? "you" : (p.owner ?? "buyer")} · {PART_STATUS[p.status] ?? p.status}
+              </a>
+            ))}
+          </div>
+        )}
       </div>
 
       {(report.skip?.log.length ?? 0) > 0 && <SkipHistory log={report.skip!.log} />}
 
       {/* Meta + TikTok in one report: where this part goes, or what this report carries */}
-      {jn && step !== "done" && <JointBanner note={jn} />}
+      {jn && step === "report" && <JointBanner note={jn} />}
 
-      {/* The report's dates: one dropdown, every page follows them */}
-      {report.kind !== "monthly" && !sent && (
-        <PeriodPicker reportId={report.id} start={report.period.start} end={report.period.end} periodKey={report.period.key} today={report.period.today} locked={busy ? "It's being written right now." : report.period.locked} />
-      )}
-      {report.period.behind && !busy && !sent && (
+      {report.period.behind && !busy && !sent && step === "report" && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3">
           <p className="min-w-0 flex-1 basis-64 text-[13px] leading-snug text-fg">
             This report covers {report.periodLabel}. Last week was <b>{report.period.behind}</b>.
@@ -639,7 +1358,7 @@ export function ReportStudio({
           </button>
         </div>
       )}
-      {stale && (
+      {stale && step !== "done" && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border border-bad/40 bg-bad-soft/40 px-4 py-3">
           <p className="min-w-0 flex-1 basis-64 text-[13px] leading-snug text-fg">
             Not every page is for {report.periodLabel} yet ({report.period.stale.join(", ")}). Redraw it with fresh numbers before it goes out.
@@ -650,7 +1369,7 @@ export function ReportStudio({
         </div>
       )}
       {note && <p className={`rounded-[12px] px-4 py-3 text-sm ${note.ok ? "bg-ok-soft text-ok" : "bg-bad-soft text-bad"}`}>{note.text}</p>}
-      {gone.length > 0 && !busy && (
+      {gone.length > 0 && !busy && step === "report" && (
         <div className="grid gap-2">
           {gone.map((g) => (
             <div key={g.name} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border border-line bg-surface px-4 py-3">
@@ -671,16 +1390,81 @@ export function ReportStudio({
           ))}
         </div>
       )}
-      {report.regen && !busy && !sent && <UndoRegenerate key={report.regen.at} id={report.id} at={report.regen.at} by={report.regen.by} />}
+      {report.regen && !busy && !sent && step === "report" && <UndoRegenerate key={report.regen.at} id={report.id} at={report.regen.at} by={report.regen.by} />}
 
-      {step === "report" && !busy && (report.status !== "failed" || report.manual) && (
-        <ManualResults reportId={report.id} entered={report.manual} period={{ start: report.period.start, end: report.period.end, label: report.metrics?.main.label ?? report.periodLabel }} locked={sent || mineDone} />
-      )}
-
+      {/* ─── Step 1: the report, the hero, with the AI beside it ─── */}
       {step === "report" && (
-        <div className={`grid items-start gap-5 ${minned ? "pb-20" : "lg:grid-cols-[minmax(0,1fr)_420px]"}`}>
+        <div className={`grid items-start gap-5 ${minned ? "lg:pb-20" : "lg:grid-cols-[minmax(0,1fr)_400px]"}`}>
           <div className="grid min-w-0 gap-3">
-            {busy || !sections ? (
+            {/* A quiet toolbar: the dates, and the tools for changing the report, out of the way until wanted */}
+            <div className="flex flex-wrap items-center gap-2">
+              {report.kind !== "monthly" && !sent && (
+                <div className="min-w-0 flex-1 basis-60">
+                  <PeriodPicker reportId={report.id} start={report.period.start} end={report.period.end} periodKey={report.period.key} today={report.period.today} locked={busy ? "It's being written right now." : report.period.locked} />
+                </div>
+              )}
+              <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                {doc && !busy && (editable || report.manual) && (
+                  <button
+                    type="button"
+                    aria-pressed={toolsOpen}
+                    onClick={() => (toolsOpen ? closeParams("tools") : pushParams({ tools: "1" }))}
+                    className={`inline-flex h-11 items-center gap-2 rounded-full border px-4 text-sm transition-colors md:h-9 ${toolsOpen ? "border-fg bg-fg text-bg" : "border-line text-muted hover:border-faint hover:text-fg"}`}
+                  >
+                    <svg viewBox="0 0 16 16" aria-hidden className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M10.5 2.5 13.5 5.5 6 13H3v-3z" />
+                    </svg>
+                    Edit
+                  </button>
+                )}
+                {!busy && <RegenerateButton kind="one" variant="header" id={report.id} label={`${client.name}'s report`} sent={sent} approved={report.status === "submitted"} />}
+                <button type="button" disabled={downloading || busy || !sections} onClick={() => void downloadPdf()} aria-label="Download PDF" title="Download PDF" className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-line px-3.5 text-sm text-muted transition-colors hover:border-faint hover:text-fg disabled:opacity-50 md:h-9">
+                  <svg viewBox="0 0 16 16" aria-hidden className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" />
+                  </svg>
+                  <span className="max-sm:hidden">{downloading ? "Preparing…" : "PDF"}</span>
+                </button>
+                <div className="relative">
+                  <button type="button" aria-label="More" aria-expanded={more} onClick={() => setMore((x) => !x)} className={`grid h-11 w-11 place-items-center rounded-full border text-base transition-colors md:h-9 md:w-9 ${more ? "border-fg text-fg" : "border-line text-muted hover:border-faint hover:text-fg"}`}>
+                    ⋯
+                  </button>
+                  {/* Kept mounted (hidden when closed), so the skip sheet it opens stays open */}
+                  <div className={`absolute right-0 top-full z-30 mt-2 w-[min(340px,calc(100vw-2rem))] gap-1 rounded-[16px] border border-line bg-surface p-2 text-sm shadow-[0_24px_60px_-24px_rgba(0,0,0,0.7)] ${more ? "grid" : "hidden"}`}>
+                    <a href={`/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="flex min-h-11 items-center rounded-[10px] px-3 text-muted hover:bg-surface-2 hover:text-fg">
+                      {joint ? "Open the whole report (PDF) ↗" : "Open the PDF in a new tab ↗"}
+                    </a>
+                    {!sent && !busy && (
+                      <div className="flex min-h-11 items-center rounded-[10px] px-3 text-muted hover:bg-surface-2">
+                        <SkipButton id={report.id} title={`${client.name} · ${report.periodLabel}`} variant="link" onDone="list" />
+                      </div>
+                    )}
+                    {monthly && (
+                      <div className="pt-1">
+                        <RecapDeckButton reportId={report.id} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* The tools, when asked for: metrics, campaigns, lines, and the client's CRM results */}
+            {toolsOpen && doc && !busy && (
+              <section className="grid gap-3 rounded-[16px] border border-line bg-surface p-3.5" aria-label="Edit the report">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[13px] font-medium">Edit the report</p>
+                  <button type="button" onClick={() => closeParams("tools")} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg md:h-8">
+                    Done
+                  </button>
+                </div>
+                {doc.tools}
+                {(report.status !== "failed" || report.manual) && (
+                  <ManualResults reportId={report.id} entered={report.manual} period={{ start: report.period.start, end: report.period.end, label: report.metrics?.main.label ?? report.periodLabel }} locked={sent || mineDone} />
+                )}
+              </section>
+            )}
+
+            {busy || !doc ? (
               <div className="grid place-items-center gap-3 rounded-[14px] border border-line bg-surface px-6 py-20 text-center">
                 {report.status === "failed" ? (
                   <>
@@ -701,707 +1485,193 @@ export function ReportStudio({
                 )}
               </div>
             ) : (
-              (() => {
-                // Every line the buyer writes, to click and change on the PDF itself
-                const LISTS = [["did", "What we did"], ["doing", "What we're doing"], ["next", "What's next"]] as const;
-                const weekly = report.kind !== "monthly" && report.kind !== "built";
-                const cards: Takeaway[] = weekly && report.metrics ? takeawaysFor(report.metrics, sections.takeaways) : [];
-                const fields: PdfField[] = [
-                  { id: "headline", label: "Headline", value: sections.headline },
-                  { id: "summary", label: "Summary", value: sections.summary },
-                  ...LISTS.flatMap(([k, label]) => (sections[k] ?? []).map((v, i, all) => ({ id: `${k}.${i}`, label, value: v, removable: true, list: { at: i, count: all.length } }))),
-                  { id: "extras", label: "Also (sales from their CRM, other channels…)", value: extras, removable: true },
-                  // The weekly's three takeaway cards (worked out from the numbers until the buyer or the AI words them)
-                  ...cards.flatMap((t, i) => [
-                    { id: `takeaway-${i}-title`, label: "Takeaway", value: t.title },
-                    { id: `takeaway-${i}-text`, label: "Takeaway, the numbers", value: t.text },
-                  ]),
-                  // Each trend chart's words (the chart itself is drawn from the ad account)
-                  ...(sections.stories ?? []).flatMap((st, i) => [
-                    { id: `story-${i}-title`, label: "Chart title", value: st.title },
-                    { id: `story-${i}-see`, label: "What we see", value: st.see },
-                    { id: `story-${i}-why`, label: "Why", value: st.why },
-                    { id: `story-${i}-next`, label: "What's next", value: st.next },
-                  ]),
-                ];
-                const save = (id: string, v: string | null) => {
-                  if (id === "extras") return setExtras(v ?? "");
-                  if (id === "headline" || id === "summary") return setSections({ ...sections, [id]: v ?? "" });
-                  const card = id.match(/^takeaway-(\d+)-(title|text)$/);
-                  if (card) return setSections({ ...sections, takeaways: cards.map((t, i) => (i === Number(card[1]) ? { ...t, [card[2]]: v ?? "" } : t)) });
-                  const story = id.match(/^story-(\d+)-(title|see|why|next)$/);
-                  if (story) return setSections({ ...sections, stories: (sections.stories ?? []).map((st, i) => (i === Number(story[1]) ? { ...st, [story[2]]: v ?? "" } : st)) });
-                  const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
-                  setSections({ ...sections, [k]: v ? (sections[k] ?? []).map((y, j) => (j === Number(n) ? v : y)) : (sections[k] ?? []).filter((_, j) => j !== Number(n)) });
-                };
-                // A new point just below one in the same list (that one's words too, when changed in the same box)
-                const addBelow = (id: string, v: string, current?: string) => {
-                  const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
-                  const list = (sections[k] ?? []).map((y, j) => (j === Number(n) && current ? current : y));
-                  if (v) list.splice(Number(n) + 1, 0, v);
-                  setSections({ ...sections, [k]: list });
-                };
-                // A point one place up or down in its list
-                const move = (id: string, by: -1 | 1) => {
-                  const [k, n] = id.split(".") as ["did" | "doing" | "next", string];
-                  const list = [...(sections[k] ?? [])];
-                  const i = Number(n);
-                  const j = i + by;
-                  if (j < 0 || j >= list.length) return;
-                  [list[i], list[j]] = [list[j], list[i]];
-                  setSections({ ...sections, [k]: list });
-                };
-                // The metrics on the page now, as the PDF draws them
-                const goneNames = new Set(gone.map((g) => g.name));
-                const m = report.metrics && goneNames.size ? { ...report.metrics, campaigns: report.metrics.campaigns.filter((c) => !goneNames.has(c.name)) } : report.metrics;
-                const monthlyTiles = report.kind === "monthly";
-                // The weekly leads with its own four (by the client's KPI); the tile clicked is the tile changed
-                const tiles = m ? (weekly ? weeklyTileKeys(m, layout) : tileKeys(m, layout, monthlyTiles)) : [];
-                const table = m ? tableKeys(m, layout) : TABLE_DEFAULT;
-                const columns = m ? columnKeys(m, layout) : [];
-                const hasTable = report.kind !== "weekly";
-                const limit = report.kind === "weekly" ? 6 : 8;
-                const hide = layout?.campaigns?.hide ?? [];
-                const add = layout?.campaigns?.add ?? [];
-                const shownCampaigns = m ? m.campaigns.filter((c) => !hide.includes(c.name)).slice(0, limit).map((c) => c.name) : [];
-                const offPage = m ? m.campaigns.filter((c) => !shownCampaigns.includes(c.name) && !add.includes(c.name)) : [];
-                const list = { tiles, table, columns };
-                // Excluded here: off the page right away (the numbers follow on regenerate)
-                const shownLayout: ReportLayout | null = goneNames.size ? { ...layout, campaigns: { ...(layout?.campaigns ?? {}), hide: [...new Set([...hide, ...goneNames])] } } : layout;
-                const swap = (where: "tiles" | "table" | "columns", i: number, k: MetricKey | null) => {
-                  const now = [...list[where]];
-                  if (k) now[i] = k;
-                  else now.splice(i, 1);
-                  setLayout({ ...layout, [where]: now });
-                };
-                const picker = (where: "tiles" | "table" | "columns", current: MetricKey | null, choose: (k: MetricKey) => void) =>
-                  m && (
-                    <div className="grid gap-1">
-                      {metricKeysFor(report.platform).filter((k) => k === current || !list[where].includes(k)).map((k) => (
-                        <button key={k} type="button" onClick={() => choose(k)} className={`flex h-10 items-center justify-between rounded-[10px] px-3 text-left text-[13.5px] hover:bg-surface-2 ${k === current ? "bg-surface-2 text-fg" : "text-muted"}`}>
-                          {metricLabel(m, k)}
-                          {k === current && <span className="text-[11px] text-faint">Now</span>}
-                        </button>
-                      ))}
-                    </div>
-                  );
-                const hotMenu = (target: string, close: () => void) => {
-                  const [platform, kind, ...rest] = target.split("/");
-                  if (!m) return null;
-                  if (platform !== report.platform) return <p className="text-[13px] text-muted">This part is the other buyer&rsquo;s: they change it from their report.</p>;
-                  const title = (t: string) => <p className="px-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">{t}</p>;
-                  if (kind === "tile" || kind === "row" || kind === "col") {
-                    const where = kind === "tile" ? "tiles" : kind === "row" ? "table" : "columns";
-                    const i = Number(rest[0]);
-                    const current = list[where][i] ?? null;
-                    return (
-                      <>
-                        {title(kind === "tile" ? "Show in this tile" : kind === "row" ? "Show in this row" : "Show in this column")}
-                        {picker(where, current, (k) => {
-                          swap(where, i, k);
-                          close();
-                        })}
-                        {list[where].length > 1 && (
-                          <button type="button" onClick={() => (swap(where, i, null), close())} className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40">
-                            Remove this {kind === "tile" ? "tile" : kind === "row" ? "row" : "column"}
-                          </button>
-                        )}
-                      </>
-                    );
-                  }
-                  // A trend chart: taken out, or redrawn by the AI with a different metric or range
-                  if (kind === "story") {
-                    const i = Number(rest[0]);
-                    const st = sections.stories?.[i];
-                    return (
-                      <>
-                        {title("Trend chart")}
-                        <p className="px-1 text-[13.5px] leading-snug">{st?.title}</p>
-                        <p className="px-1 text-[12px] text-muted">Its numbers come from the ad account. To chart something else, ask the AI (e.g. &ldquo;make it the last 8 weeks&rdquo;).</p>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSections({ ...sections, stories: (sections.stories ?? []).filter((_, j) => j !== i) });
-                            close();
-                          }}
-                          className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40"
-                        >
-                          Remove this chart
-                        </button>
-                      </>
-                    );
-                  }
-                  // A campaign line
-                  const name = decodeURIComponent(rest.join("/") || kind);
-                  const c = m.campaigns.find((x) => x.name === name);
-                  return (
-                    <>
-                      {title("Campaign")}
-                      <p className="px-1 text-[13.5px] leading-snug">{name}</p>
-                      {c?.result && <p className="px-1 text-[12px] text-muted">{layout?.campaigns?.results?.[name] ? "Counting" : "Optimized for"} {c.result.toLowerCase()}{layout?.campaigns?.results?.[name] ? " (picked for this report)" : ": its results count that, as on the KPI board"}.</p>}
-                      {title("Its result")}
-                      {c?.events ? (
-                        <div className="grid max-h-56 gap-1 overflow-y-auto">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const results = { ...(layout?.campaigns?.results ?? {}) };
-                              delete results[name];
-                              setLayout({ ...layout, campaigns: { hide, add, results } });
-                              close();
-                            }}
-                            className={`flex h-10 items-center justify-between rounded-[10px] px-3 text-left text-[13px] hover:bg-surface-2 ${!layout?.campaigns?.results?.[name] ? "bg-surface-2 text-fg" : "text-muted"}`}
-                          >
-                            What it&rsquo;s optimized for
-                            {!layout?.campaigns?.results?.[name] && <span className="text-[11px] text-faint">Now</span>}
-                          </button>
-                          {c.events.map((e) => (
-                            <button
-                              key={e.type}
-                              type="button"
-                              onClick={() => {
-                                setLayout({ ...layout, campaigns: { hide, add, results: { ...(layout?.campaigns?.results ?? {}), [name]: e.type } } });
-                                close();
-                              }}
-                              className={`flex min-h-10 items-center justify-between gap-3 rounded-[10px] px-3 text-left text-[13px] hover:bg-surface-2 ${layout?.campaigns?.results?.[name] === e.type ? "bg-surface-2 text-fg" : "text-muted"}`}
-                            >
-                              <span className="min-w-0 truncate">{e.label}</span>
-                              <span className="tabular shrink-0 text-[12px] text-faint">{e.count.toLocaleString("en-US")}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            start(async () => {
-                              const r = await loadCampaignEvents(report.id);
-                              if (!r.ok) setNote({ ok: false, text: r.error });
-                              router.refresh();
-                            })
-                          }
-                          className="h-10 rounded-[10px] px-3 text-left text-[13px] text-brand-text hover:bg-surface-2"
-                        >
-                          {pending ? "Reading its conversions…" : "Pick its result (read what it counted)"}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setLayout({ ...layout, campaigns: { hide: [...new Set([...hide, name])], add: add.filter((x) => x !== name) } });
-                          close();
-                        }}
-                        className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40"
-                      >
-                        Take it out of the report
-                      </button>
-                      {excluding === name ? (
-                        <div className="grid gap-2 rounded-[12px] border border-warn/40 bg-warn-soft px-3 py-2.5">
-                          <p className="text-[12.5px] leading-snug text-fg">
-                            Leave &ldquo;{name}&rdquo; out everywhere? It stops counting in {client.name}&rsquo;s KPI, audits and every report, like a campaign the client runs themselves. You can undo it.
-                          </p>
-                          <div className="flex flex-wrap gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                excludeCampaign({ id: c?.id ?? null, name }, true);
-                                close();
-                              }}
-                              className="h-10 rounded-full bg-fg px-4 text-[13px] font-medium text-bg md:h-9"
-                            >
-                              Exclude it
-                            </button>
-                            <button type="button" onClick={() => setExcluding(null)} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg md:h-9">
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <button type="button" onClick={() => setExcluding(name)} className="min-h-10 rounded-[10px] px-3 py-2 text-left text-[13px] leading-snug text-muted hover:bg-surface-2 hover:text-fg">
-                          Exclude this campaign from reports and audits
-                          <span className="block text-[11.5px] text-faint">For a campaign the client runs themselves</span>
-                        </button>
-                      )}
-                    </>
-                  );
-                };
-                return (
-                  <div className="grid gap-3">
-                    {editable && m && (
-                      <div className="grid gap-2 rounded-[14px] border border-line bg-surface p-3">
-                        <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]">
-                          <span className="mr-1 text-faint">Metrics:</span>
-                          <button type="button" disabled={asking} onClick={() => void tweak("Add a trend chart of the cost per result by week for the last 5 weeks, with what we see, why and what's next")} className="h-9 rounded-full border border-line px-3 text-muted hover:text-fg disabled:opacity-40 max-md:h-10">
-                            + Trend chart
-                          </button>
-                          {([["tiles", "+ Tile"], ...(hasTable ? [["table", "+ Key metric row"]] : []), ...(weekly ? [] : [["columns", "+ Campaign column"], ["campaign", "+ Campaign"]])] as ["tiles" | "table" | "columns" | "campaign", string][]).map(([k, label]) => (
-                            <button key={k} type="button" onClick={() => setAddingMetric(addingMetric === k ? null : k)} className={`h-9 rounded-full border px-3 max-md:h-10 ${addingMetric === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
-                              {label}
-                            </button>
-                          ))}
-                          {layout && (
-                            <button type="button" onClick={() => setLayout({})} className="h-9 rounded-full px-3 text-faint hover:text-fg max-md:h-10">
-                              Back to the default
-                            </button>
-                          )}
-                        </div>
-                        {addingMetric && addingMetric !== "campaign" && (
-                          <div className="flex flex-wrap gap-1.5">
-                            {metricKeysFor(report.platform).filter((k) => !list[addingMetric].includes(k)).map((k) => (
-                              <button
-                                key={k}
-                                type="button"
-                                onClick={() => {
-                                  setLayout({ ...layout, [addingMetric]: [...list[addingMetric], k].slice(0, addingMetric === "tiles" ? 6 : 10) });
-                                  setAddingMetric(null);
-                                }}
-                                className="h-9 rounded-full bg-surface-2 px-3 text-[12.5px] hover:text-fg max-md:h-10"
-                              >
-                                {metricLabel(m, k)}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {addingMetric === "campaign" &&
-                          (offPage.length ? (
-                            <div className="grid max-h-56 gap-1 overflow-y-auto">
-                              {offPage.map((c) => (
-                                <button
-                                  key={c.name}
-                                  type="button"
-                                  onClick={() => {
-                                    setLayout({ ...layout, campaigns: { hide: hide.filter((x) => x !== c.name), add: [...add, c.name] } });
-                                    setAddingMetric(null);
-                                  }}
-                                  className="flex min-h-10 items-center justify-between gap-3 rounded-[10px] px-3 text-left text-[13px] hover:bg-surface-2"
-                                >
-                                  <span className="min-w-0 truncate">{c.name}</span>
-                                  <span className="tabular shrink-0 text-[12px] text-faint">
-                                    ${Math.round(c.spend).toLocaleString("en-US")} · {c.results} {c.result?.toLowerCase() ?? "results"}
-                                  </span>
-                                </button>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-[12.5px] text-faint">Every campaign that spent in the period is already in the report.</p>
-                          ))}
-                        {(() => {
-                          // Campaigns this report's numbers leave out, with the ones excluded by hand one tap from counting again
-                          const out = (report.metrics?.leftOut ?? []).filter((c) => !restored.includes(c.name) && !goneNames.has(c.name));
-                          if (!out.length) return null;
-                          return (
-                            <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
-                              <span className="mr-1 text-faint">Not in this report:</span>
-                              {out.map((c) => (
-                                <span key={c.id} className="inline-flex min-h-9 max-w-full items-center gap-2 rounded-full bg-surface-2 py-1 pl-3 pr-1 max-md:min-h-10">
-                                  <span className="min-w-0 truncate text-muted" title={c.why === "match" ? "Outside the KPI's campaign match" : "Excluded from the KPI"}>
-                                    {c.name} <span className="tabular text-faint">· ${Math.round(c.spend).toLocaleString("en-US")}</span>
-                                  </span>
-                                  {c.why === "excluded" ? (
-                                    <button type="button" disabled={pending} onClick={() => excludeCampaign({ id: c.id, name: c.name }, false)} className="h-7 shrink-0 rounded-full px-2.5 text-[12px] text-brand-text hover:bg-surface disabled:opacity-50 max-md:h-8">
-                                      Count it again
-                                    </button>
-                                  ) : (
-                                    <span className="pr-2 text-[11.5px] text-faint">outside the match</span>
-                                  )}
-                                </span>
-                              ))}
-                            </div>
-                          );
-                        })()}
-                        <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
-                          <span className="mr-1 text-faint">Add:</span>
-                          {[...LISTS, ["extras", extras.trim() ? "To the note" : "A note (CRM sales, other channels)"] as const].map(([k, label]) => (
-                            <button key={k} type="button" onClick={() => setAdding({ key: k, text: "" })} className={`h-9 rounded-full border px-3 max-md:h-10 ${adding?.key === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
-                              + {label}
-                            </button>
-                          ))}
-                        </div>
-                        {adding && (
-                          <form
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              const t = adding.text.trim();
-                              if (!t) return;
-                              if (adding.key === "extras") setExtras(extras.trim() ? `${extras.trim()}
-${t}` : t);
-                              else setSections({ ...sections, [adding.key]: [...(sections[adding.key] ?? []), t] });
-                              setAdding(null);
-                            }}
-                            className="flex flex-wrap gap-2"
-                          >
-                            <textarea autoFocus value={adding.text} onChange={(e) => setAdding({ ...adding, text: e.target.value })} rows={2} placeholder={adding.key === "extras" ? "Write it as it should read in the message" : "Write it as it should read in the message (not printed in the report)"} className="min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none [field-sizing:content] focus:border-brand-text/60" />
-                            <div className="flex items-end gap-1.5">
-                              <button type="button" onClick={() => setAdding(null)} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg">Cancel</button>
-                              <button type="submit" disabled={!adding.text.trim()} className="h-10 rounded-full bg-fg px-4 text-[13px] text-bg disabled:opacity-40">Add</button>
-                            </div>
-                          </form>
-                        )}
-                      </div>
-                    )}
-                    {/* The narrative goes in the message, never on the page: read and changed here */}
-                    <MessageNotes fields={fields.filter((f) => !/^takeaway-|^story-\d+-title$/.test(f.id))} editable={editable} onSave={(id, v) => save(id, v)} onRemove={(id) => save(id, null)} />
-                    <PdfPreview
-                      source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`}
-                      baseKey={`${report.status}:${JSON.stringify(report.metrics ?? null).length}:${report.manual?.at ?? ""}`}
-                      patch={(input) => ({ ...input, parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout: shownLayout } : p)) })}
-                      patchKey={JSON.stringify({ sections, extras, layout: shownLayout })}
-                      fields={fields}
-                      editable={editable}
-                      onSave={(id, v) => save(id, v)}
-                      onRemove={(id) => save(id, null)}
-                      onAdd={addBelow}
-                      onMove={move}
-                      hotMenu={hotMenu}
-                      onMaker={(make) => {
-                        pdfMaker.current = make;
-                      }}
-                    />
-                  </div>
-                );
-              })()
+              <PdfPreview
+                source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`}
+                baseKey={`${report.status}:${JSON.stringify(report.metrics ?? null).length}:${report.manual?.at ?? ""}`}
+                patch={(input) => ({ ...input, parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout: doc.shownLayout } : p)) })}
+                patchKey={JSON.stringify({ sections, extras, layout: doc.shownLayout })}
+                fields={doc.fields}
+                editable={editable}
+                onSave={(id, v) => doc.save(id, v)}
+                onRemove={(id) => doc.save(id, null)}
+                onAdd={doc.addBelow}
+                onMove={doc.move}
+                hotMenu={doc.hotMenu}
+                onMaker={(make) => {
+                  pdfMaker.current = make;
+                }}
+              />
             )}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
-              {editable && <span>This is the PDF the client gets. Click any line you wrote to change it, add one below it or move it; the pages update once it saves.</span>}
-              <a href={`/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center md:min-h-0 hover:text-fg">
-                {joint ? "Preview the whole report (PDF) ↗" : "Preview the PDF ↗"}
-              </a>
-              {report.kind === "monthly" && <RecapDeckButton reportId={report.id} />}
-              {!sent && !busy && <SkipButton id={report.id} title={`${client.name} · ${report.periodLabel}`} variant="link" onDone="list" />}
-            </div>
+            {editable && doc && <p className="text-xs text-faint">This is the PDF the client gets. Click any line or number to change it; the pages update once it saves.</p>}
             {act && sections && !busy && report.platform !== "tiktok" && <NextStepsAct reportId={report.id} platform={report.platform} steps={[...sections.next, ...(sections.stories ?? []).map((st) => st.next)]} write={act.write} canSwitch={act.canSwitch} />}
           </div>
-
-          {/* The side: ask the AI for a change (the document updates), or the QA's checks */}
-          {(() => {
-            const tabs = (
-              <div className="flex items-center gap-1.5">
-                <div className="flex flex-1 gap-1 rounded-full bg-surface-2 p-1 text-sm">
-                  {(["ai", "checks"] as const).map((k) => (
-                    <button key={k} type="button" onClick={() => setRail(k)} className={`h-9 flex-1 rounded-full px-3 transition-colors ${rail === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
-                      {k === "ai" ? "Ask the AI" : `Checks${qa?.flags.length ? ` · ${qa.flags.length}` : ""}`}
-                    </button>
-                  ))}
-                </div>
-                <PanelButton label={minned ? "Restore the panel" : "Minimize"} onClick={() => (minned ? closeParams("chat") : pushParams({ chat: "min" }))}>
-                  {minned ? "▴" : "–"}
-                </PanelButton>
-                <PanelButton label={maxed ? "Restore the panel" : "Maximize"} onClick={() => (maxed ? closeParams("chat") : pushParams({ chat: "max" }))}>
-                  {maxed ? "⤡" : "⤢"}
-                </PanelButton>
-              </div>
-            );
-            const reportTurns = () => chat.map((t) => ({ role: t.role === "user" ? "user" : "ai", text: t.text, at: t.at, name: t.by ?? null }));
-            const reportState = () => ({ reportId: report.id, kind: report.kind, platform: report.platform, period: { start: report.period.start, end: report.period.end, key: report.period.key }, status: report.status });
-            const thread = (big: boolean) => (
-              <div className={`grid content-start gap-2.5 overflow-y-auto pr-1 ${big ? "min-h-0 flex-1" : "max-h-[52vh] min-h-[180px]"}`}>
-                {!chat.length && (
-                  <div className={`grid gap-2.5 leading-relaxed text-faint ${big ? "text-sm" : "text-xs"}`}>
-                    <p>Say what to change and watch the report update. It can look things up as it goes: live numbers from the ad account, Motion, the client&apos;s calls, Slack, email and Drive, and earlier reports.</p>
-                    {editable && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {LOOKUPS.map((x) => (
-                          <button key={x} type="button" onClick={() => tweak(x)} disabled={asking} className="rounded-full border border-brand/30 bg-brand/[0.06] px-2.5 py-1 text-[11.5px] text-fg hover:border-brand/60 disabled:opacity-40 max-md:min-h-9">
-                            {x}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {chat.map((t, i) => (
-                  <div key={i} className={`grid max-w-[88%] gap-1.5 ${t.role === "user" ? "justify-self-end" : ""}`}>
-                    <p className={`whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 leading-relaxed ${big ? "text-[15px]" : "text-[13.5px]"} ${t.role === "user" ? "bg-fg text-bg" : "bg-surface-2 text-fg"}`}>{t.text}</p>
-                    {/* Where it looked, so the buyer knows where a number came from */}
-                    {t.pulled?.length ? (
-                      <div className="flex flex-wrap gap-1">
-                        {t.pulled.map((x, k) => (
-                          <span key={k} className="rounded-full border border-line px-2 py-0.5 text-[10.5px] text-faint">
-                            ↳ {x}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                    {t.role === "assistant" && <ReportThis chat="report-studio" messageId={messageKey(i, t.text)} threadId={report.id} text={t.text} turns={reportTurns} state={reportState} clientSlug={client.slug} />}
-                  </div>
-                ))}
-                {chatError && !asking && (
-                  <div className="grid gap-1.5">
-                    <p className={`text-bad ${big ? "text-sm" : "text-xs"}`}>{chatError}</p>
-                    <ReportThis chat="report-studio" messageId={`error-${messageKey(chat.length, chatError)}`} threadId={report.id} error={chatError} turns={reportTurns} state={reportState} clientSlug={client.slug} />
-                  </div>
-                )}
-                {asking && <p className="flex items-center gap-2 text-xs text-faint"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> Looking things up and changing it…</p>}
-                <div ref={big ? bigEnd : chatEnd} />
-              </div>
-            );
-            const composer = (big: boolean) =>
-              editable && (
-                <div className="grid gap-2.5">
-                  <div className="flex flex-wrap gap-1.5">
-                    {SUGGEST.map((x) => (
-                      <button key={x} type="button" onClick={() => tweak(x)} disabled={asking} className="rounded-full border border-line px-2.5 py-1 text-[11.5px] text-muted hover:text-fg disabled:opacity-40 max-md:min-h-9">
-                        {x}
-                      </button>
-                    ))}
-                  </div>
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      void tweak(ask);
-                    }}
-                    className="grid gap-2 rounded-[14px] border border-line bg-bg p-2 focus-within:border-brand-text/60"
-                  >
-                    {/* Room to write: Enter sends, Shift+Enter starts a new line */}
-                    <textarea
-                      value={ask}
-                      onChange={(e) => setAsk(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          void tweak(ask);
-                        }
-                      }}
-                      rows={big ? 4 : 3}
-                      placeholder="e.g. pull last month's top 3 ads from Motion, or add what they said on Tuesday's call"
-                      className={`w-full resize-none bg-transparent px-1.5 py-1 leading-relaxed outline-none ${big ? "text-[15px]" : "text-sm"} [field-sizing:content] ${big ? "max-h-[30vh] min-h-[104px]" : "max-h-[22vh] min-h-[72px]"}`}
-                    />
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] text-faint max-md:hidden">Enter to send · Shift+Enter for a new line</span>
-                      <button type="submit" disabled={!ask.trim() || asking} className="ml-auto h-9 shrink-0 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-40 max-md:h-11">
-                        Change
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              );
-            const checks = (
-              <div className="grid content-start gap-2 overflow-y-auto">
-                {!qa ? (
-                  <p className="text-xs text-faint">Not checked yet.</p>
-                ) : qa.flags.length === 0 ? (
-                  <p className="text-sm text-ok">The QA found nothing to fix: every number matches the data.</p>
-                ) : (
-                  qa.flags.map((f, i) => (
-                    <div key={i} className={`grid gap-1 rounded-[10px] border px-3 py-2 text-[12.5px] ${f.severity === "fix" ? "border-bad/40 bg-bad-soft/40" : f.severity === "alert" ? "border-warn/40 bg-warn-soft/40" : "border-line"}`}>
-                      <span className={`text-[10px] font-semibold uppercase tracking-[0.1em] ${f.severity === "fix" ? "text-bad" : f.severity === "alert" ? "text-warn" : "text-muted"}`}>{f.severity === "fix" ? "Fix" : f.severity === "alert" ? "Heads up" : "Check"}</span>
-                      <span>{f.issue}</span>
-                      <span className="text-muted">{f.suggestion}</span>
-                    </div>
-                  ))
-                )}
-                {editable && (
-                  <button type="button" onClick={() => start(async () => { const r = await checkAgain(report.id); if (r.ok) setQa(r.qa); })} className="h-9 justify-self-start rounded-full border border-line px-3 text-xs text-muted hover:text-fg">
-                    {pending ? "Checking…" : "Check again"}
-                  </button>
-                )}
-              </div>
-            );
-            const approveBlock = rider ? (
-              !sent && jn && <JointBanner note={jn} compact />
-            ) : !sent && sections && !busy && (
-              <div className="grid gap-2 border-t border-line pt-3">
-                {mineDone ? (
-                  <p className="text-sm text-ok">
-                    ✓ Your part is approved.{" "}
-                    {bundle?.isBuilder ? (
-                      <button type="button" onClick={() => setStep("message")} className="underline">
-                        On to the message →
-                      </button>
-                    ) : built ? (
-                      `${bundle?.builder ?? "Whoever built it"} sends it as one report.`
-                    ) : (
-                      `It goes to the client when ${bundle?.parts.filter((p) => !p.isMe && !["submitted", "posted", "skipped"].includes(p.status)).map((p) => `${p.owner ?? "the other buyer"} (${p.platform === "google" ? "Google" : p.platform === "tiktok" ? "TikTok" : "Meta"})`).join(" and ") || "the other part"} is approved too.`
-                    )}{" "}
-                    <button
-                      type="button"
-                      disabled={pending}
-                      onClick={() =>
-                        start(async () => {
-                          const r = await reopenReport(report.id);
-                          if (!r.ok) setNote({ ok: false, text: r.error });
-                          else {
-                            setStep("report");
-                            router.refresh();
-                          }
-                        })
-                      }
-                      className="text-muted underline hover:text-fg"
-                    >
-                      Back to editing
-                    </button>
-                    {/* Don't wait on the other buyer: this part goes now, theirs follows on its own */}
-                    {!built && report.kind === "monthly" && bundle?.parts.some((p) => !p.isMe && !["submitted", "posted", "skipped"].includes(p.status)) && (
-                      <button
-                        type="button"
-                        disabled={pending}
-                        onClick={() => {
-                          if (!confirm("Send your part to the client now, without waiting on the other buyer? Their part goes out on its own when they approve it.")) return;
-                          start(async () => {
-                            const r = await sendMyPartNow(report.id);
-                            setNote(r.ok ? { ok: true, text: r.note } : { ok: false, text: r.error });
-                            router.refresh();
-                          });
-                        }}
-                        className="mt-2 block h-10 rounded-full border border-line px-4 text-[13px] text-fg hover:border-faint disabled:opacity-50"
-                      >
-                        Send my part now →
-                      </button>
-                    )}
-                  </p>
-                ) : (
-                  <button type="button" disabled={pending || stale} title={stale ? "Redraw every page for the report's dates first" : undefined} onClick={approve} className="h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-50 max-md:h-12">
-                    {pending ? "One moment…" : report.kind === "monthly" ? "Approve and submit my part" : built ? (bundle?.isBuilder ? "Approve report →" : "Approve my part") : "Approve report →"}
-                  </button>
-                )}
-                {qa?.verdict === "fix" && !mineDone && <p className="text-[11.5px] text-bad">The QA found something to fix: worth a look in Checks first.</p>}
-                {downloadButton}
-                {driveButton}
-              </div>
-            );
-
-            // Minimized: a bar along the bottom, so the report has the whole width
-            if (minned)
-              return (
-                <Layer>
-                  <div className="fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 px-4 md:bottom-5 md:left-auto md:right-6 md:w-[460px] md:px-0">
-                    <div className="grid gap-3 rounded-[18px] border border-line bg-surface/95 p-3 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.6)] backdrop-blur-xl">
-                      {tabs}
-                      {approveBlock}
-                    </div>
-                  </div>
-                </Layer>
-              );
-            return (
-              <>
-                <aside className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 lg:sticky lg:top-20">
-                  {tabs}
-                  {maxed ? <p className="text-xs text-faint">Open in the big panel.</p> : rail === "ai" ? <div className="grid gap-3">{thread(false)}{composer(false)}</div> : checks}
-                  {approveBlock}
-                </aside>
-                {/* Maximized: a big panel over the right of the page; the report stays in view on wide screens */}
-                {maxed && (
-                  <Layer>
-                    <div className="fixed inset-0 z-50 flex justify-end">
-                      <button type="button" aria-label="Restore the panel" onClick={() => closeParams("chat")} className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" />
-                      <div className="relative flex h-full w-full flex-col gap-4 border-l border-line bg-surface p-4 pt-[calc(1rem+env(safe-area-inset-top))] shadow-[0_0_80px_-20px_rgba(0,0,0,0.7)] md:w-[min(760px,92vw)] md:p-6">
-                        {tabs}
-                        {rail === "ai" ? (
-                          <>
-                            {thread(true)}
-                            {composer(true)}
-                          </>
-                        ) : (
-                          <div className="min-h-0 flex-1 overflow-y-auto">{checks}</div>
-                        )}
-                        {approveBlock}
-                      </div>
-                    </div>
-                  </Layer>
-                )}
-              </>
-            );
-          })()}
+          {sidePanel(reviewPrimary)}
         </div>
       )}
 
+      {/* ─── Step 2: the message, the hero, with the AI beside it ─── */}
       {step === "message" && (
-        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="grid min-w-0 gap-3">
+        <div className={`grid items-start gap-5 ${minned ? "lg:pb-20" : "lg:grid-cols-[minmax(0,1fr)_400px]"}`}>
+          <div className="grid min-w-0 gap-4">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div className="grid gap-0.5">
+                <h2 className="font-heading text-[22px] leading-tight">The message</h2>
+                <p className="text-[13px] text-muted">{monthly ? "What posts in their channel with the recap. The other parts join it in one post." : joint ? "One post for every service, from the Kaizen app, with the PDF." : "What posts in their channel with the PDF. Change anything before it goes."}</p>
+              </div>
+              {(!built || message) && !syncing && (
+                <button type="button" disabled={!editable && !(built && isBuilder)} onClick={() => setEditMsg((x) => !x)} className={`h-11 rounded-full px-4 text-[13px] disabled:opacity-40 md:h-10 ${editMsg ? "bg-fg text-bg" : "border border-brand/60 text-brand-text hover:bg-brand/10"}`}>
+                  {editMsg ? "✓ Done editing" : "✎ Edit the message"}
+                </button>
+              )}
+            </div>
             {!message && built ? (
               <p className="rounded-[12px] border border-line bg-surface px-4 py-10 text-center text-sm text-muted">{joint ? "Putting each buyer's message together into one…" : "Writing the message…"}</p>
             ) : syncing ? (
               <p className="flex items-center justify-center gap-2 rounded-[12px] border border-line bg-surface px-4 py-10 text-center text-sm text-muted">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" /> Updating the message to match your changes to the report…
               </p>
+            ) : editMsg ? (
+              <div className="grid gap-3">
+                <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={14} autoFocus aria-label="The message" className="w-full rounded-[14px] border border-brand/50 bg-surface px-4 py-3 font-mono text-[13px] leading-relaxed outline-none [field-sizing:content] focus:border-brand-text/60" />
+                {riders.map((x) => (
+                  <label key={x.id} className="grid gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">{platformName(x.platform as "tiktok")}, under yours in the same post</span>
+                    <textarea
+                      value={riderMsgs[x.id] ?? ""}
+                      onChange={(e) => setRiderMsgs({ ...riderMsgs, [x.id]: e.target.value })}
+                      onBlur={(e) => e.target.value !== (x.message ?? "") && start(async () => void (await saveReport(x.id, { message: e.target.value })))}
+                      rows={6}
+                      className="w-full rounded-[14px] border border-line bg-surface px-4 py-3 font-mono text-[13px] leading-relaxed outline-none [field-sizing:content] focus:border-brand-text/60"
+                    />
+                  </label>
+                ))}
+                <p className="text-[11.5px] text-faint">*bold* · _italic_ · • bullets, as Slack shows them</p>
+              </div>
             ) : (
-              <>
-                {viaSlack && (
-                  <>
-                    {/* What posts in Slack, and that it can be changed here before it goes */}
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-[13px] text-muted">This is exactly what posts in the client&rsquo;s Slack channel, with the PDF. Change anything before you send.</p>
-                      <button type="button" onClick={() => setEditMsg((x) => !x)} className={`h-10 rounded-full px-4 text-[13px] ${editMsg ? "bg-fg text-bg" : "border border-brand/60 text-brand-text hover:bg-brand/10"}`}>
-                        {editMsg ? "✓ Done editing" : "✎ Edit the message"}
-                      </button>
-                    </div>
-                    {editMsg ? (
-                      <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={16} autoFocus className="w-full rounded-[12px] border border-brand/50 bg-surface px-4 py-3 font-mono text-[13px] leading-relaxed outline-none focus:border-brand-text/60" />
-                    ) : (
-                      <button type="button" onClick={() => setEditMsg(true)} className="block w-full cursor-text rounded-[12px] text-left ring-brand/40 transition-shadow hover:ring-2" aria-label="Edit the message">
-                        <SlackPreview from={from} text={forClient(message, client.whiteLabel)} file={fileName} />
-                      </button>
-                    )}
-                  </>
-                )}
-                {viaEmail && <EmailPreview mail={buildReportEmail({ client: client.name, kind: report.kind, periodLabel: report.periodLabel, parts: [{ platform: report.platform, metrics: report.metrics, sections }], from: { name: slack.me, email: null }, first: route.recipients[0]?.name?.split(" ")[0] ?? null, note: emailNote, whiteLabel: client.whiteLabel })} to=
-{route.recipients.map((r) => r.email)} file={fileName} />}
-              </>
+              <button type="button" disabled={!editable && !(built && isBuilder)} onClick={() => setEditMsg(true)} className="block w-full cursor-text rounded-[12px] text-left ring-brand/40 transition-shadow hover:ring-2 disabled:cursor-default disabled:hover:ring-0" aria-label="Edit the message">
+                <SlackPreview from={from} text={slackText} file={fileName} />
+              </button>
             )}
+            {writeUp.length > 0 && !built && <MessageNotes open fields={writeUp} editable={editable} onSave={(id, v) => doc?.save(id, v)} onRemove={(id) => doc?.save(id, null)} />}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
+              <button type="button" onClick={() => setStep("report")} className="inline-flex min-h-11 items-center text-muted hover:text-fg md:min-h-0">
+                ← Back to the report
+              </button>
               {built && joint && !bundle?.messageApproved && (
-                <button type="button" onClick={() => start(async () => { const r = await builtMessage(bundle!.id, true); if (r.ok) setMessage(r.message); })} className="hover:text-fg">
+                <button
+                  type="button"
+                  onClick={() =>
+                    start(async () => {
+                      const r = await builtMessage(bundle!.id, true);
+                      if (r.ok) setMessage(r.message);
+                    })
+                  }
+                  className="inline-flex min-h-11 items-center hover:text-fg md:min-h-0"
+                >
                   Put it together again from the parts
                 </button>
               )}
-              {viaSlack && <span>*bold* · _italic_ · • bullets, as Slack shows them</span>}
-              {/* Approved by mistake, or one more change: back to the report (nothing has gone out) */}
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() =>
-                  start(async () => {
-                    const r = await reopenReport(report.id);
-                    if (!r.ok) return setNote({ ok: false, text: r.error });
-                    setStep("report");
-                    router.refresh();
-                  })
-                }
-                className="ml-auto text-muted hover:text-fg"
-              >
-                ← Back to editing the report
-              </button>
             </div>
           </div>
-          <aside className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 lg:sticky lg:top-20">
-            <p className="text-sm font-medium">{joint ? "One report, from Kaizen" : "From you"}</p>
-            <p className="text-xs leading-relaxed text-muted">
-              {joint
-                ? "Every service in one PDF (the whole account first, then each service): in Slack one message from the Kaizen app, by email one email from the agency."
-                : "In Slack, posted in their channel as you. By email, from the agency's address with replies to you. The PDF goes with both."}
+          {sidePanel(messagePrimary)}
+        </div>
+      )}
+
+      {/* ─── Step 3: how it goes out ─── */}
+      {step === "send" && (
+        <div className="mx-auto grid w-full max-w-3xl gap-5">
+          <div className="grid gap-1">
+            <h2 className="font-heading text-[24px] leading-tight">How it goes out</h2>
+            <p className="text-[13px] text-muted">
+              {client.name} · {report.periodLabel}. Pick one or more.
             </p>
-            <DeliveryPicker value={route} onChange={setRoute} options={delivery ?? { contacts: [], initial: route, slackChannel: client.hasChannel, emailReady: true }} disabled={pending || Boolean(bundle?.messageApproved && !sent)} />
-            {viaEmail && (
-              <label className="grid gap-1.5">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">A line for the email (optional)</span>
-                <textarea value={emailNote} onChange={(e) => setEmailNote(e.target.value)} rows={2} maxLength={600} placeholder="e.g. Happy to walk through it on Thursday's call." className="resize-none rounded-[12px] border border-line bg-bg px-3 py-2 text-sm outline-none [field-sizing:content] focus:border-brand-text/60" />
-              </label>
-            )}
-            {viaSlack && !joint && !slack.connected && (
-              <div className="grid gap-2 rounded-[10px] border border-warn/40 bg-warn-soft/40 px-3 py-3">
-                <p className="text-xs text-warn">Connect your Slack so it goes out as you, with your name and photo.</p>
-                <SlackConnect connected={false} />
-              </div>
-            )}
-            {jn && !rider && <JointBanner note={jn} compact />}
-            {built && waitingParts.length > 0 && (
-              <p className="rounded-[10px] bg-surface-2 px-3 py-2 text-xs text-muted">
-                Waiting on {waitingParts.map((p) => `${p.owner ?? "the other buyer"} (${platformName(p.platform as "meta" | "google" | "tiktok").replace(" Ads", "")})`).join(" and ")}. Approve the message now and it goes out the moment they approve theirs.
+          </div>
+
+          {/* A recap part or a built report waiting on the other buyers: what happens, and what can be done today */}
+          {monthly && othersOpen.length > 0 && !sent && (
+            <div className="grid gap-1 rounded-[16px] border border-line bg-surface-2/60 px-4 py-3">
+              <p className="text-sm font-medium">{mineDone ? "Approved. It goes out with the rest." : "The recap goes out once every buyer approves"}</p>
+              <p className="text-[12.5px] leading-relaxed text-muted">
+                Waiting on {othersLabel}. {mineDone ? "Or send yours now: their part follows on its own when they approve it." : "Approve yours now and it goes the moment they approve theirs, or send yours on its own."}
               </p>
+            </div>
+          )}
+          {built && waitingParts.length > 0 && !bundle?.messageApproved && (
+            <p className="rounded-[14px] bg-surface-2 px-4 py-3 text-[12.5px] text-muted">
+              Waiting on {waitingParts.map((p) => `${p.owner ?? "the other buyer"} (${shortName(p.platform)})`).join(" and ")}. Approve the message now and it goes out the moment they approve theirs.
+            </p>
+          )}
+          {built && bundle?.messageApproved && !sent && <p className="rounded-[14px] bg-ok-soft px-4 py-3 text-sm text-ok">✓ Approved. It goes out as soon as every part is in.</p>}
+          {jn && !rider && <JointBanner note={jn} compact />}
+
+          <div className={`grid gap-3 ${offers.length === 3 ? "md:grid-cols-3" : "sm:grid-cols-2"}`}>
+            <OptionCard option="slack" title="Send in Slack" detail={optionDetail.slack} on={viaSlack && routeOpen} last={lastUsed.includes("slack")} disabled={channelsLocked || (!client.hasChannel && !viaSlack)} onToggle={() => flip("slack")} />
+            <OptionCard option="email" title="Send by email" detail={optionDetail.email} on={viaEmail && routeOpen} last={lastUsed.includes("email")} disabled={channelsLocked} onToggle={() => flip("email")} />
+            {offers.includes("drive") && (
+              <OptionCard option="drive" title="Save to Google Drive" detail={optionDetail.drive} on={toDrive} last={lastUsed.includes("drive")} disabled={savingDrive} onToggle={() => setToDrive((x) => !x)}>
+                {(driveSave || driveError) && <div className="pl-14">{driveStatus}</div>}
+              </OptionCard>
             )}
-            {bundle?.messageApproved && !sent ? (
-              <p className="text-sm text-ok">✓ Approved. It goes out as soon as every part is in.</p>
-            ) : (
-              <button
-                type="button"
-                disabled={pending || stale || (viaSlack && (!message.trim() || !client.hasChannel || (!joint && !slack.connected))) || (viaEmail && (!route.recipients.length || delivery?.emailReady === false))}
-                onClick={send}
-                className="h-11 rounded-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover disabled:opacity-40 max-md:h-12"
-              >
-                {pending ? "Sending…" : built && waitingParts.length ? "Approve the message" : `Approve and send by ${channelsLabel(route.channels).toLowerCase()}`}
+          </div>
+
+          {/* Email: who it goes to, a line from the buyer, and the email as they'll get it */}
+          {viaEmail && routeOpen && (
+            <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Email to</p>
+              <DeliveryPicker channels={false} value={route} onChange={setRoute} options={delivery ?? { contacts: [], initial: route, slackChannel: client.hasChannel, emailReady: true }} disabled={channelsLocked} />
+              {!monthly && !built && (
+                <label className="grid gap-1.5">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">A line for the email (optional)</span>
+                  <textarea value={emailNote} onChange={(e) => setEmailNote(e.target.value)} rows={2} maxLength={600} placeholder="e.g. Happy to walk through it on Thursday's call." className="resize-none rounded-[12px] border border-line bg-bg px-3 py-2 text-sm outline-none [field-sizing:content] focus:border-brand-text/60" />
+                </label>
+              )}
+              {!monthly && (
+                <details className="group">
+                  <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1.5 text-[13px] text-muted hover:text-fg md:min-h-9 [&::-webkit-details-marker]:hidden">
+                    <span aria-hidden className="transition-transform group-open:rotate-90">›</span>
+                    See the email
+                  </summary>
+                  <div className="mt-2">
+                    <EmailPreview
+                      mail={buildReportEmail({ client: client.name, kind: report.kind, periodLabel: report.periodLabel, parts: [{ platform: report.platform, metrics: report.metrics, sections }], from: { name: slack.me, email: null }, first: route.recipients[0]?.name?.split(" ")[0] ?? null, note: emailNote, whiteLabel: client.whiteLabel })}
+                      to={route.recipients.map((r) => r.email)}
+                      file={fileName}
+                    />
+                  </div>
+                </details>
+              )}
+            </section>
+          )}
+          {viaSlack && canSend && !joint && !monthly && !slack.connected && (
+            <div className="grid gap-2 rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3">
+              <p className="text-xs text-warn">Connect your Slack so it goes out as you, with your name and photo.</p>
+              <SlackConnect connected={false} />
+            </div>
+          )}
+
+          {/* The one button, and what's in the way of it */}
+          <div className="grid gap-2">
+            {sendProblem && <p className="text-[12.5px] text-warn">{sendProblem}</p>}
+            {qaWarning}
+            {sendLabel ? (
+              <button type="button" disabled={pending || savingDrive || Boolean(sendProblem)} onClick={go} className={`${primaryClass} md:h-[52px] md:text-[15px]`}>
+                {pending || savingDrive ? (sendNow ? "Sending…" : "Saving to Drive…") : sendLabel}
+              </button>
+            ) : canSend ? (
+              <p className="text-[12.5px] text-muted">Pick Slack, email or both.</p>
+            ) : null}
+            {monthly && othersOpen.length > 0 && !sent && (
+              <button type="button" disabled={pending || route.channels.length === 0 || stale || ridersWriting || (viaEmail && !route.recipients.length) || (viaSlack && !client.hasChannel)} onClick={partNow} className="inline-flex h-12 w-full items-center justify-center rounded-brand border border-line px-4 text-sm text-fg transition-colors hover:border-faint disabled:opacity-50">
+                Send my part now, {channelsPhrase(route.channels)}
               </button>
             )}
-          </aside>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <button type="button" onClick={() => setStep("message")} className="inline-flex min-h-11 items-center text-muted hover:text-fg">
+                ← Back to the message
+              </button>
+              {approvedNote}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1412,6 +1682,7 @@ ${t}` : t);
             <span className="grid h-12 w-12 place-items-center rounded-full bg-ok-soft text-xl text-ok">✓</span>
             <p className="font-heading text-xl">Sent to {client.name}</p>
             <p className="max-w-md text-sm text-muted">{sentNote ?? (history[0] ? `${report.periodLabel}, by ${channelsLabel(history[0].channels).toLowerCase()}${history[0].to.length ? ` to ${history[0].to.join(", ")}` : ""}.` : `${report.periodLabel}, with the PDF.`)}</p>
+            {(savingDrive || driveSave || driveError) && <div className="grid place-items-center">{savingDrive ? <p className="text-[12px] text-muted">Saving to Drive…</p> : driveStatus}</div>}
             <a href={history[0] ? `/api/reports/sends/${history[0].id}/pdf` : `/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm text-muted underline-offset-4 hover:text-fg hover:underline">
               Open the PDF that went ↗
             </a>

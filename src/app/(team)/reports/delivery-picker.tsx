@@ -35,7 +35,8 @@ const CHANNELS: { key: Channel; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
-export function DeliveryPicker({ value, onChange, options, disabled = false }: { value: Delivery; onChange: (d: Delivery) => void; options: DeliveryOptions; disabled?: boolean }) {
+/** `channels: false`: only who the email goes to (the studio's send step picks Slack and email on its own cards) */
+export function DeliveryPicker({ value, onChange, options, disabled = false, channels: showChannels = true }: { value: Delivery; onChange: (d: Delivery) => void; options: DeliveryOptions; disabled?: boolean; channels?: boolean }) {
   const [typing, setTyping] = useState("");
   const [bad, setBad] = useState(false);
   const toggle = (c: Channel) => {
@@ -61,7 +62,7 @@ export function DeliveryPicker({ value, onChange, options, disabled = false }: {
 
   return (
     <div className="grid gap-3">
-      <div className="grid gap-1.5">
+      <div className={`grid gap-1.5 ${showChannels ? "" : "hidden"}`}>
         <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Send by</span>
         <div className="grid grid-cols-2 gap-1.5" role="group" aria-label="Send by">
           {CHANNELS.map((c) => {
@@ -88,7 +89,7 @@ export function DeliveryPicker({ value, onChange, options, disabled = false }: {
 
       {email && (
         <div className="grid gap-1.5">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Email to</span>
+          <span className={`text-[11px] font-semibold uppercase tracking-[0.14em] text-faint ${showChannels ? "" : "hidden"}`}>Email to</span>
           {options.contacts.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {options.contacts.map((c) => {

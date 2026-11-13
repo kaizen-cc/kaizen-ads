@@ -8,7 +8,7 @@ import { emailHtml, emailText } from "@/lib/email-layout";
 import { logClientEmail } from "@/lib/client-emails";
 import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { renderReportPdf } from "./pdf";
-import { jointMessage, tiktokJoins } from "./joint-core";
+import { jointMessage, metaFirst, recapIntro, riderReady, tiktokJoins, waitingParts, type QueueTarget } from "./joint-core";
 import { tiktokConfigured } from "@/lib/tiktok/core";
 import { periodsFor, type ReportMetrics } from "./metrics";
 import { platformName } from "./format";
@@ -16,7 +16,7 @@ import { draftReport, type Sections } from "./write";
 import { freshen } from "./regenerate";
 import { reportListeners } from "./access";
 import { periodMismatch } from "./period";
-import { pdfFileName, type Delivery } from "./delivery-core";
+import { normalizeDelivery, pdfFileName, type Delivery } from "./delivery-core";
 import { clientDelivery, deliver, recordSend } from "./send";
 import { forClient, isWhiteLabel, WHITE_LABEL_FROM, whiteLabelFileName } from "./white-label";
 
@@ -46,10 +46,16 @@ export async function queueReports(admin: SupabaseClient, kind: "weekly" | "mont
   let created = 0;
   if (kind === "weekly") return created + (await queueWeekly(admin, targets, p));
   if (kind === "monthly") {
+    // As the weekly: a client's TikTok part rides on its Meta part (one Meta + TikTok part the Meta buyer approves and
+    // sends once), unless the client's report prefs send them separately
+    const joins = await tiktokJoinsFor(admin, targets);
     for (const clientId of new Set(targets.map((t) => t.client_id))) {
       const { data: bundle } = await admin.from("report_bundles").upsert({ client_id: clientId, kind: "monthly", period_start: p.start, period_end: p.end }, { onConflict: "client_id,kind,period_start", ignoreDuplicates: false }).select("id").single();
-      for (const t of targets.filter((x) => x.client_id === clientId)) {
-        const { data } = await admin.from("reports").upsert({ client_id: clientId, target_id: t.id, bundle_id: bundle?.id ?? null, platform: t.platform, kind, period_start: p.start, period_end: p.end, owner_id: t.owner_id }, { onConflict: "target_id,kind,period_start", ignoreDuplicates: true }).select("id");
+      for (const t of metaFirst(targets.filter((x) => x.client_id === clientId))) {
+        const join = joins.get(t.id);
+        const joinedTo = join ? await reportOf(admin, join.metaTargetId, "monthly", p.start) : null;
+        const row = { client_id: clientId, target_id: t.id, bundle_id: bundle?.id ?? null, platform: t.platform, kind, period_start: p.start, period_end: p.end, owner_id: joinedTo ? join!.owner : t.owner_id, ...(joinedTo ? { joined_to: joinedTo } : {}) };
+        const { data } = await admin.from("reports").upsert(row, { onConflict: "target_id,kind,period_start", ignoreDuplicates: true }).select("id");
         created += data?.length ?? 0;
       }
     }
@@ -61,24 +67,30 @@ export async function queueReports(admin: SupabaseClient, kind: "weekly" | "mont
   return created;
 }
 
+/** Which TikTok accounts ride on their client's Meta report (every client running both, unless its prefs say apart) */
+export async function tiktokJoinsFor(admin: SupabaseClient, targets: QueueTarget[]) {
+  const clients = [...new Set(targets.filter((t) => t.platform === "tiktok").map((t) => t.client_id))];
+  const { data: prefs } = clients.length ? await admin.from("client_report_prefs").select("client_id, tiktok_separate").in("client_id", clients) : { data: [] };
+  const separate = new Set(((prefs ?? []) as { client_id: string; tiktok_separate?: boolean | null }[]).filter((x) => x.tiktok_separate).map((x) => x.client_id));
+  return tiktokJoins(targets, separate);
+}
+
+/** The report already queued for an account and period (a TikTok part joins its Meta report by this) */
+async function reportOf(admin: SupabaseClient, targetId: string, kind: "weekly" | "monthly", start: string) {
+  const { data } = await admin.from("reports").select("id").eq("target_id", targetId).eq("kind", kind).eq("period_start", start).maybeSingle();
+  return (data?.id as string | undefined) ?? null;
+}
+
 /**
  * The weekly reports: one per account; a client's TikTok part joins its Meta report (one report the Meta buyer sends
  * once) unless the client's report prefs send them separately.
  */
 async function queueWeekly(admin: SupabaseClient, targets: TargetRow[], p: { start: string; end: string }) {
-  const clients = [...new Set(targets.filter((t) => t.platform === "tiktok").map((t) => t.client_id))];
-  const { data: prefs } = clients.length ? await admin.from("client_report_prefs").select("client_id, tiktok_separate").in("client_id", clients) : { data: [] };
-  const separate = new Set(((prefs ?? []) as { client_id: string; tiktok_separate?: boolean | null }[]).filter((x) => x.tiktok_separate).map((x) => x.client_id));
-  const joins = tiktokJoins(targets, separate);
+  const joins = await tiktokJoinsFor(admin, targets);
   let created = 0;
-  // The Meta (and Google) reports first, so a TikTok part has its Meta report to join
-  for (const t of [...targets].sort((a, b) => Number(a.platform === "tiktok") - Number(b.platform === "tiktok"))) {
+  for (const t of metaFirst(targets)) {
     const join = joins.get(t.id);
-    let joinedTo: string | null = null;
-    if (join) {
-      const { data: meta } = await admin.from("reports").select("id").eq("target_id", join.metaTargetId).eq("kind", "weekly").eq("period_start", p.start).maybeSingle();
-      joinedTo = (meta?.id as string | undefined) ?? null;
-    }
+    const joinedTo = join ? await reportOf(admin, join.metaTargetId, "weekly", p.start) : null;
     const row = { client_id: t.client_id, target_id: t.id, platform: t.platform, kind: "weekly", period_start: p.start, period_end: p.end, owner_id: joinedTo ? join!.owner : t.owner_id, ...(joinedTo ? { joined_to: joinedTo } : {}) };
     const { data } = await admin.from("reports").upsert(row, { onConflict: "target_id,kind,period_start", ignoreDuplicates: true }).select("id");
     created += data?.length ?? 0;
@@ -239,21 +251,57 @@ async function recapRecipients(admin: SupabaseClient, clientId: string) {
 }
 
 /**
+ * A monthly part approved, with the TikTok part riding on it (Meta + TikTok is one part): both submitted together, once
+ * the TikTok part is written. Returns the riders, to go out with it.
+ */
+async function submitWithRiders(admin: SupabaseClient, id: string) {
+  const { data } = await admin.from("reports").select("id, status, sections, metrics").eq("joined_to", id).neq("status", "skipped");
+  const riders = (data ?? []) as { id: string; status: string; sections: unknown; metrics: unknown }[];
+  if (riders.some((x) => !riderReady(x))) throw new Error("The TikTok part of this report is still being written. Approve it once it's ready (it goes out with this one).");
+  const now = new Date().toISOString();
+  await admin.from("reports").update({ status: "submitted", submitted_at: now, updated_at: now }).in("id", [id, ...riders.map((x) => x.id)]).neq("status", "posted");
+  return riders.map((x) => x.id);
+}
+
+/** How the buyer chose to send the recap (Slack, email or both, and to whom), kept on the recap for when it goes out */
+async function keepRecapDelivery(admin: SupabaseClient, bundleId: string, delivery?: Delivery | null) {
+  if (!delivery) return;
+  // The column may not exist yet: then the recap goes out the usual way (Slack and email to the client's contacts)
+  await admin.from("report_bundles").update({ delivery }).eq("id", bundleId).then(() => null, () => null);
+}
+
+/** The recap's chosen delivery, if a buyer chose one (null: Slack and email, as recaps always went) */
+async function recapDelivery(admin: SupabaseClient, bundleId: string): Promise<Delivery | null> {
+  const { data, error } = await admin.from("report_bundles").select("delivery").eq("id", bundleId).maybeSingle();
+  if (error || !data?.delivery) return null;
+  const d = data.delivery as { channels?: unknown };
+  return Array.isArray(d.channels) && d.channels.length ? normalizeDelivery(data.delivery) : null;
+}
+
+/** Who the recap's email goes to: the people the buyer picked, else this client's usual ones (none when email is off) */
+async function recapTo(admin: SupabaseClient, clientId: string, chosen: Delivery | null) {
+  if (!chosen) return recapRecipients(admin, clientId);
+  if (!chosen.channels.includes("email")) return [];
+  return chosen.recipients.slice(0, 10).map((c) => ({ email: c.email, full_name: c.name ?? null }));
+}
+
+/**
  * A buyer submits their part of the monthly recap. It waits for every other part on the client (the other platform's
  * buyer); when the last one is in, the recap goes to the client. Returns what happened, for the buyer to see.
  */
-export async function submitMonthly(admin: SupabaseClient, id: string, by: { id: string }) {
+export async function submitMonthly(admin: SupabaseClient, id: string, by: { id: string }, delivery?: Delivery | null) {
   const r = await load(admin, id);
   if (!r.bundle_id) throw new Error("This report isn't part of a monthly recap.");
-  await admin.from("reports").update({ status: "submitted", submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", id);
+  const riders = await submitWithRiders(admin, id);
+  await keepRecapDelivery(admin, r.bundle_id, delivery);
   // The rest of the recap already went out (another buyer sent theirs on its own): this part follows by itself
   const { data: bundle } = await admin.from("report_bundles").select("status").eq("id", r.bundle_id).single();
   if (bundle?.status === "sent") {
-    await deliverLatePart(admin, id, by);
+    await deliverLatePart(admin, id, by, riders);
     return { sent: true, waitingOn: [] as string[] };
   }
-  const { data: parts } = await admin.from("reports").select("id, platform, status, profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", r.bundle_id).neq("status", "skipped");
-  const waiting = (parts ?? []).filter((p) => p.status !== "submitted" && p.status !== "posted");
+  const { data: parts } = await admin.from("reports").select("id, platform, status, joined_to, profiles!reports_owner_id_fkey(full_name)").eq("bundle_id", r.bundle_id).neq("status", "skipped");
+  const waiting = waitingParts((parts ?? []) as { id: string; platform: string; status: string; joined_to: string | null; profiles: unknown }[]);
   if (waiting.length)
     return {
       sent: false,
@@ -267,11 +315,13 @@ export async function submitMonthly(admin: SupabaseClient, id: string, by: { id:
  * A buyer doesn't wait on the other one: the recap goes to the client now with the parts that are approved (theirs).
  * The other part follows on its own when its buyer approves it, on the same recap link. They hear it.
  */
-export async function sendPartNow(admin: SupabaseClient, id: string, by: { id: string; fullName: string }) {
+export async function sendPartNow(admin: SupabaseClient, id: string, by: { id: string; fullName: string }, delivery?: Delivery | null) {
   const r = await load(admin, id);
   if (!r.bundle_id) throw new Error("This report isn't part of a monthly recap.");
-  await admin.from("reports").update({ status: "submitted", submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", id).neq("status", "submitted");
-  const { data: waiting } = await admin.from("reports").select("id, platform, owner_id").eq("bundle_id", r.bundle_id).not("status", "in", "(submitted,posted,skipped)");
+  await submitWithRiders(admin, id);
+  await keepRecapDelivery(admin, r.bundle_id, delivery);
+  // A TikTok part riding on the Meta part goes with it: it never waits on its own
+  const { data: waiting } = await admin.from("reports").select("id, platform, owner_id").eq("bundle_id", r.bundle_id).is("joined_to", null).not("status", "in", "(submitted,posted,skipped)");
   await deliverBundle(admin, r.bundle_id, by);
   const name = (p: string) => (p === "google" ? "Google" : p === "tiktok" ? "TikTok" : "Meta");
   // Each waiting part's owner, with the client's secondary buyers on that platform copied in (only executives and
@@ -299,28 +349,32 @@ export async function sendPartNow(admin: SupabaseClient, id: string, by: { id: s
 }
 
 /** A part approved after the rest of the recap went out: its own Slack post and email, on the same recap link */
-async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: string }) {
+async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: string }, riderIds: string[] = []) {
   const r = await load(admin, id);
   const { data: b } = await admin.from("report_bundles").select("token, client_id, period_start").eq("id", r.bundle_id!).single();
   if (!b) return;
+  // The TikTok part riding on this one goes with it: one PDF, one post
+  const riders = await Promise.all(riderIds.map((x) => load(admin, x)));
   const wl = whiteLabelOf(r);
   // A white label client gets no link to the agency's recap page: the PDF is the recap
   const link = wl ? null : `${SITE()}/r/${b.token}`;
   const month = monthOf(b.period_start);
-  const service = platformName(r.platform);
-  const bytes = await reportPdf(admin, [r]);
-  const text = wl ? forClient(`${r.message?.trim() ?? ""}\n\n*Your ${month} recap, now with ${service}, is attached.*`, true) : `${r.message?.trim() ?? ""}\n\n*Your ${month} recap, now with ${service}:* ${link}`.trim();
+  const service = riders.length ? "Meta + TikTok" : platformName(r.platform);
+  const bytes = await reportPdf(admin, [r, ...riders]);
+  const intro = riders.length ? jointMessage(r.message, riders) : (r.message?.trim() ?? "");
+  const text = wl ? forClient(`${intro}\n\n*Your ${month} recap, now with ${service}, is attached.*`, true) : `${intro}\n\n*Your ${month} recap, now with ${service}:* ${link}`.trim();
   const filename = wl ? whiteLabelFileName(r.client.name, "monthly", month, service) : `${r.client.name} - ${service} ${month}.pdf`;
   const pdf = { filename, title: `${r.client.name} · ${service} · ${month}`, bytes };
   const delivered: Record<string, unknown> = {};
-  if (r.client.slack_channel_id) {
+  const chosen = await recapDelivery(admin, r.bundle_id!);
+  if (r.client.slack_channel_id && (!chosen || chosen.channels.includes("slack"))) {
     const out = await postAsUser(by.id, { channel: r.client.slack_channel_id, text, pdf });
     const fallback = !out.ok ? await appPost(r.client.slack_channel_id, text, wl ? pdf : null) : null;
     delivered.slack = out.ok ? { channel: out.channel, ts: out.ts } : fallback?.ok ? { channel: r.client.slack_channel_id, ts: fallback.ts, as: "app" } : { error: out.error };
   }
   const sentTo: string[] = [];
   let logged: { subject: string; text: string; html: string } | null = null;
-  for (const c of await recapRecipients(admin, b.client_id as string)) {
+  for (const c of await recapTo(admin, b.client_id as string, chosen)) {
     const headline = r.sections?.headline ?? `The ${service} part of your ${month} recap is ready.`;
     const parts = wl
       ? { kicker: r.client.name, title: `${service} is in your ${month} recap`, hello: `Hi ${c.full_name?.split(" ")[0] ?? "there"},`, lines: [forClient(headline, true), "The full report is attached as a PDF."], whiteLabel: true }
@@ -332,8 +386,8 @@ async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: stri
   }
   if (logged) await logClientEmail(admin, { clientId: b.client_id as string, kind: "recap", ...logged, to: sentTo, by: by.id });
   delivered.email = sentTo;
-  await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id }).eq("id", id);
-  await keepRecapSend(admin, { clientId: b.client_id as string, name: r.client.name, bundleId: r.bundle_id!, reportId: id, platform: r.platform, start: r.period_start, end: r.period_end, month, text, bytes, filename, delivered, by: by.id, parts: [r], whiteLabel: wl });
+  await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id }).in("id", [id, ...riders.map((x) => x.id)]);
+  await keepRecapSend(admin, { clientId: b.client_id as string, name: r.client.name, bundleId: r.bundle_id!, reportId: id, platform: riders.length ? null : r.platform, start: r.period_start, end: r.period_end, month, text, bytes, filename, delivered, by: by.id, parts: [r, ...riders], whiteLabel: wl });
 }
 
 /** The app's own post when the buyer can't post: a white label client's carries the PDF (it has no recap link) */
@@ -374,29 +428,35 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
   const { data: b } = await admin.from("report_bundles").update({ status: "sending" }).eq("id", bundleId).eq("status", "collecting").select("id, token, client_id, period_start").maybeSingle();
   if (!b) return; // already sent (or being sent)
   try {
-    const { data: ids } = await admin.from("reports").select("id").eq("bundle_id", bundleId).in("status", ["submitted", "posted"]);
-    const parts = await Promise.all((ids ?? []).map((x) => load(admin, x.id)));
+    const { data: ids } = await admin.from("reports").select("id, joined_to").eq("bundle_id", bundleId).in("status", ["submitted", "posted"]);
+    const rows = (ids ?? []) as { id: string; joined_to?: string | null }[];
+    // Meta, then the TikTok part riding on it, then Google: the order the recap reads in
+    const order = (p: Loaded) => (p.platform === "meta" ? 0 : p.platform === "tiktok" ? 1 : 2);
+    const parts = (await Promise.all(rows.map((x) => load(admin, x.id)))).sort((a, c) => order(a) - order(c));
     const client = parts[0].client;
     const wl = whiteLabelOf(parts[0]);
     // A white label client gets no link to the agency's recap page or portal: the PDF is the recap
     const link = wl ? null : `${SITE()}/r/${b.token}`;
     const month = monthOf(b.period_start);
     const bytes = await reportPdf(admin, parts);
-    const intro = parts.map((p) => p.message?.trim()).filter(Boolean).join("\n\n");
+    // Each buyer's message; a TikTok part riding on the Meta one reads under its own name right after it
+    const intro = recapIntro(parts.map((p) => ({ id: p.id, platform: p.platform, message: p.message, joinedTo: rows.find((x) => x.id === p.id)?.joined_to ?? null })));
+    const chosen = await recapDelivery(admin, bundleId);
     const shots = await shotsAsk(admin, parts[0]);
     const ask = shots ? `\n\n*For ${shots.month}, we need ${shots.items.length === 1 ? "one shot" : `${shots.items.length} shots`} from you* so the next round of ads stays fresh${shots.url ? `: <${shots.url}|send them on your shot list>` : ` (${shots.items.slice(0, 3).join("; ")}${shots.items.length > 3 ? "…" : ""})`}` : "";
     const text = wl ? forClient(`${intro}\n\n*Your ${month} recap is attached.*${ask}`, true) : `${intro}\n\n*Your ${month} recap:* ${link}${dashboardLine(parts[0])}${ask}`;
     const filename = wl ? whiteLabelFileName(client.name, "monthly", month) : `${client.name} - ${month} recap.pdf`;
     const pdf = { filename, title: `${client.name} · ${month} recap`, bytes };
     const delivered: Record<string, unknown> = {};
-    if (client.slack_channel_id) {
+    // Where the buyer chose to send it (Slack, email or both); a recap with no choice goes out both ways, as it always has
+    if (client.slack_channel_id && (!chosen || chosen.channels.includes("slack"))) {
       const out = await postAsUser(by.id, { channel: client.slack_channel_id, text, pdf });
       // The buyer who completed it hasn't connected Slack: the recap still goes out, from the Kaizen app (with the link; a white label client's with the PDF)
       const fallback = !out.ok ? await appPost(client.slack_channel_id, text, wl ? pdf : null) : null;
       delivered.slack = out.ok ? { channel: out.channel, ts: out.ts } : fallback?.ok ? { channel: client.slack_channel_id, ts: fallback.ts, as: "app" } : { error: out.error };
     }
-    // Email to the people picked for this client's reports, else their contacts (primary first)
-    const to = await recapRecipients(admin, b.client_id as string);
+    // Email to the people the buyer picked, else the ones picked for this client's reports, else their contacts (primary first)
+    const to = await recapTo(admin, b.client_id as string, chosen);
     const headline = parts.map((p) => p.sections?.headline).filter(Boolean).join(" · ");
     const sentTo: string[] = [];
     let logged: { subject: string; text: string; html: string } | null = null;
@@ -445,7 +505,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
 
 /** Reminders: weekly reports not posted by Monday afternoon; monthly parts not submitted as the 5th nears (Slack-free: in the app and by email via notifications). */
 export async function remindReports(admin: SupabaseClient, today = nyParts(new Date()).date) {
-  const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, status, clients(name)").in("status", ["draft", "failed"]).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
+  const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, status, clients(name)").in("status", ["draft", "failed"]).is("joined_to", null).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
   const day = Number(today.slice(8, 10));
   let n = 0;
   // The report's owner, with the client's secondary buyers on that platform copied in

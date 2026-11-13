@@ -42,6 +42,9 @@ export function deliveryProblem(d: Delivery, can: { slackChannel: boolean; slack
 
 export const channelsLabel = (cs: Channel[]) => (cs.includes("slack") && cs.includes("email") ? "Slack and email" : cs.includes("email") ? "Email" : cs.includes("slack") ? "Slack" : "Nowhere");
 
+/** The same, as it reads in a sentence: "in Slack", "by email", "in Slack and by email" */
+export const channelsPhrase = (cs: Channel[]) => (cs.includes("slack") && cs.includes("email") ? "in Slack and by email" : cs.includes("email") ? "by email" : "in Slack");
+
 const KIND_WORD: Record<string, string> = { weekly: "weekly report", monthly: "monthly recap", custom: "report", built: "report" };
 
 /** The email's subject: "<Client> weekly report · <period>" */
