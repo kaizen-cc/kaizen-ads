@@ -44,10 +44,17 @@ const groupOf = (h: string) => h.match(/\d+/)?.[0] ?? "";
 export function contactsOfRow(head: readonly string[], row: readonly string[]): SheetContact[] {
   const cell = (i: number) => String(row[i] ?? "").trim();
   const heads = head.map((h) => String(h ?? "").trim());
+  // "POC First Name" + "POC Last Name" (the All Clients tab) read as one name; a single "POC Name" column as it is
   const nameCols = new Map<string, string>();
+  const parts = new Map<string, { first?: string; last?: string }>();
   heads.forEach((h, i) => {
-    if (isPocHeader(h) && isNameHeader(h) && cell(i)) nameCols.set(groupOf(h), cell(i));
+    if (!isPocHeader(h) || !isNameHeader(h) || !cell(i)) return;
+    const g = groupOf(h);
+    if (/first/i.test(h)) parts.set(g, { ...parts.get(g), first: cell(i) });
+    else if (/last|sur/i.test(h)) parts.set(g, { ...parts.get(g), last: cell(i) });
+    else nameCols.set(g, cell(i));
   });
+  for (const [g, p] of parts) if (!nameCols.has(g)) nameCols.set(g, [p.first, p.last && nameFrom(p.last) ? p.last : null].filter(Boolean).join(" "));
   const out = new Map<string, SheetContact>();
   const add = (email: string, name: string | null) => {
     const have = out.get(email);
@@ -71,15 +78,18 @@ export function contactsOfRow(head: readonly string[], row: readonly string[]): 
 const CLIENT_NAME = ["Client Name", "Clients", "Client", "Business Name"];
 
 /** A tab's rows with a client name: its contacts, and the row as header → text (for the ad account on it) */
-export function contactsFromTab(values: string[][]): { name: string; row: Record<string, string>; contacts: SheetContact[] }[] {
+export function contactsFromTab(values: string[][]): { name: string; id: number | null; row: Record<string, string>; contacts: SheetContact[] }[] {
   const [head = [], ...rest] = values;
-  const out: { name: string; row: Record<string, string>; contacts: SheetContact[] }[] = [];
+  const out: { name: string; id: number | null; row: Record<string, string>; contacts: SheetContact[] }[] = [];
   for (const r of rest) {
     const row = Object.fromEntries(head.map((h, i) => [String(h ?? "").trim(), String(r[i] ?? "").trim()]));
     const name = CLIENT_NAME.map((k) => row[k]).find(Boolean) ?? "";
     if (!name || /^tier \d/i.test(name)) continue;
     const contacts = contactsOfRow(head, r);
-    if (contacts.length) out.push({ name, row, contacts });
+    // The client's ID (the All Clients tab's "ID" column: the number assigned at enrollment)
+    const idText = row["ID"] ?? row["Client ID"] ?? "";
+    const id = /^\d+$/.test(idText) ? Number(idText) : null;
+    if (contacts.length) out.push({ name, id, row, contacts });
   }
   return out;
 }

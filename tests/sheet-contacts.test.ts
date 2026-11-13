@@ -83,3 +83,19 @@ describe("a tab's rows", () => {
     expect(contactsFromTab(google)[0].contacts).toEqual([{ email: "g@acme.com", name: null }]);
   });
 });
+
+describe("the All Clients tab", () => {
+  it("reads POC First/Last Name, POC Email and Any other emails, with the client's ID", async () => {
+    const { contactsFromTab } = await import("@/lib/sheet-contacts");
+    const head = ["Client Name", "ID", "Status", "Type of Client", "Website", "Marketing Budget", "POC First Name", "POC Last Name", "POC Email", "Any other emails"];
+    const rows = contactsFromTab([
+      head,
+      ["Sobelini", "396", "Paused", "Traditional", "https://sobelini.com/", "$25", "Heather", "Craig", "hcraig1@me.com", "Bralph@sobelini.com"],
+      ["House of GRO", "386", "Paused", "Whitelabel", "", "", "Izzy and Maria", "-", "admin@therecreativeagency.com", "antonia@therecreativeagency.com"],
+      ["Venus MIF Test", "55", "Paused", "Traditional", "", "", "Venus", "Bautista", "santi@kaizenmarketing.agency", ""],
+    ]);
+    expect(rows.map((r) => [r.name, r.id])).toEqual([["Sobelini", 396], ["House of GRO", 386]]);
+    expect(rows[0].contacts).toEqual([{ email: "hcraig1@me.com", name: "Heather Craig" }, { email: "bralph@sobelini.com", name: null }]);
+    expect(rows[1].contacts[0]).toEqual({ email: "admin@therecreativeagency.com", name: "Izzy and Maria" });
+  });
+});

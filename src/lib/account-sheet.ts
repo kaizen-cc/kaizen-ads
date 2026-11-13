@@ -229,7 +229,11 @@ export async function syncAccountSheet(admin: SupabaseClient) {
     Object.assign(out, ids);
     // The client's points of contact and any other emails on every tab, added to its contacts (only added, never changed)
     t.on("Adding the contacts the sheet lists");
-    const contacts = await syncSheetContacts(admin, [meta, google, tiktok], targets ?? [], clientNamed, new Set((allClients ?? []).map((c) => c.id as string))).catch((e) => ({ added: [] as string[], named: 0, error: e instanceof Error ? e.message : String(e) }));
+    // The All Clients tab holds each client's POC (first name, last name, email) and "Any other emails"
+    const allTab = await readTab(tok, "All Clients").catch(() => [] as string[][]);
+    const { data: withIds } = await admin.from("clients").select("id, kaizen_id").not("kaizen_id", "is", null).is("archived_at", null);
+    const byKaizenId = new Map((withIds ?? []).map((c) => [Number(c.kaizen_id), c.id as string]));
+    const contacts = await syncSheetContacts(admin, [allTab, meta, google, tiktok], targets ?? [], clientNamed, new Set((allClients ?? []).map((c) => c.id as string)), byKaizenId).catch((e) => ({ added: [] as string[], named: 0, error: e instanceof Error ? e.message : String(e) }));
     Object.assign(out, { contactsAdded: contacts.added, contactNamesFilled: contacts.named, ...("error" in contacts ? { contactsError: contacts.error } : {}) });
     // Buyers the sheet names who aren't on the team: execs hear it once a day, not on every run
     const missing = [...new Set(out.unknownBuyer.map((x) => x.replace(/\s*\(.*$/, "")))];
@@ -275,7 +279,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
  * only gets a name when theirs is empty. Nothing is ever removed or overwritten, so a contact someone edited in Kaizen
  * Ads holds.
  */
-export async function syncSheetContacts(admin: SupabaseClient, tabs: string[][][], targets: { client_id: string; ad_account_id: string | null }[], named: (name: string) => { id: string } | null, liveClients: Set<string>) {
+export async function syncSheetContacts(admin: SupabaseClient, tabs: string[][][], targets: { client_id: string; ad_account_id: string | null }[], named: (name: string) => { id: string } | null, liveClients: Set<string>, byKaizenId = new Map<number, string>()) {
   const added: string[] = [];
   let namesFilled = 0;
   const linkedCount = new Map<string, number>();
@@ -283,7 +287,9 @@ export async function syncSheetContacts(admin: SupabaseClient, tabs: string[][][
     for (const r of contactsFromTab(values)) {
       const account = accountOf(r.row);
       const byAccount = account ? targets.find((x) => digits(x.ad_account_id ?? "") === account)?.client_id : null;
-      const clientId = byAccount && liveClients.has(byAccount) ? byAccount : (named(r.name)?.id ?? null);
+      // The client by its ID first (the All Clients tab), then its ad account, then its name
+      const byId = r.id != null ? byKaizenId.get(r.id) : undefined;
+      const clientId = byId && liveClients.has(byId) ? byId : byAccount && liveClients.has(byAccount) ? byAccount : (named(r.name)?.id ?? null);
       if (!clientId) continue;
       for (const c of r.contacts) {
         const { data: have } = await admin.from("contacts").select("id, full_name").eq("email", c.email).maybeSingle();
