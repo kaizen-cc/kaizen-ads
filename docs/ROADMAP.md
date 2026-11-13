@@ -123,6 +123,15 @@ Briefs are created in Kaizen Ads for every client from now on (ticket fulfilment
 1. **Client portal, fully developed**: the portal as the client's one home for Kaizen. Today it has creative approvals, the dashboard, the onboarding guide and the presentation chat, all off until an exec switches a client live. To finish: every service the client has in one place (paid ads, email, organic social, creative), reports and the weekly report, requests and upgrades counted against the allotment, messages with their team, files and brand assets, invoices and package, a polished mobile app feel, white-label versions, and switching the first clients live.
 2. **Marketing intake form in Kaizen Ads**: the intake built into the app and the portal instead of the outside form that reaches us through Zapier today. Multistep and mobile first, prefilled from what we already know (sales calls, emails, website), saves as they go, asks only what's missing for their services, files and links to Drive, and on submit feeds the Brand Bible, the agents and onboarding exactly as the current intake does. The team sees who hasn't finished it and the portal nudges them.
 
+## Monthly reports as one team send (later; the ops are still moving over)
+
+The monthly report is gathered from every team (paid ads, email, organic social, creative) and goes to the client as one email, kicked off by customer success once ALL of that client's reports are done. Built so far (Nov 13 2026): every report kind in the buyer's design, Download PDF, and Save to Drive (with the write-up, in the client's 30 - Reports / year / month folder). Next, when the new ops are in place:
+
+1. **A monthly round per client**: each service's report for the month listed with its owner and status (drafting, ready, approved), and who is still missing.
+2. **Customer success sends once**: when every part is approved, CS reviews one combined email (each team's summary and its PDF, or one combined PDF), edits it and sends it to the client's contacts; nothing goes out automatically, and white label clients' sends never name Kaizen.
+3. **Chasing**: a gentle nudge to the owners still drafting as the send date nears, and the round shows on CS's Home.
+4. **Saved for the record**: the sent PDFs filed to the client's Drive month folder and on the client's Reports history.
+
 ## Email team in Kaizen Ads (Klaviyo, read and write)
 
 Klaviyo is connected per client and read today (campaigns, flows, lists, daily email revenue). Keys are created with Full Access from Nov 12 2026, so the same keys cover writing later. Next, for the email team:
