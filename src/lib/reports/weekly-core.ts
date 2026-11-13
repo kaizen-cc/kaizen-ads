@@ -62,7 +62,9 @@ export function weeklyTileKeys(m: Pick<ReportMetrics, "roasKpi" | "conversion" |
 }
 
 /** The smaller line under the tiles: spend (with its change), link clicks, impressions (and 6-second views on TikTok) */
-export function supportKeys(m: Pick<ReportMetrics, "platform">, tiles: MetricKey[]): MetricKey[] {
+export function supportKeys(m: Pick<ReportMetrics, "platform">, tiles: MetricKey[], layout?: ReportLayout | null): MetricKey[] {
+  // The buyer's own choice (clicking one in the studio) always wins
+  if (layout?.table?.length) return layout.table;
   const all: MetricKey[] = ["spend", "clicks", "impressions", ...(m.platform === "tiktok" ? (["views_6s"] as MetricKey[]) : [])];
   return all.filter((k) => !tiles.includes(k));
 }
@@ -224,7 +226,8 @@ export function scorecardRows(m: ReportMetrics, limit = 8): ScoreRow[] {
 }
 
 /** The scorecard's number columns, by platform and KPI (the reference's: results, cost, CPC, CTR, spend, clicks) */
-export function scoreColumns(m: Pick<ReportMetrics, "platform" | "roasKpi">): MetricKey[] {
+export function scoreColumns(m: Pick<ReportMetrics, "platform" | "roasKpi">, layout?: ReportLayout | null): MetricKey[] {
+  if (layout?.columns?.length) return layout.columns;
   if (m.roasKpi) return ["roas", "revenue", "results", "cost_per_result", "ctr", "spend"];
   if (m.platform === "tiktok") return ["results", "cost_per_result", "cpc", "ctr", "hook_rate", "spend"];
   return ["results", "cost_per_result", "cpc", "ctr", "spend", "clicks"];

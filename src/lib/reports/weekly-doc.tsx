@@ -265,17 +265,22 @@ function Tile({ label, value, mv, before, size, prior, hot }: { label: string; v
 }
 
 /** Results the team entered from the client's CRM: tiles of their own (no arrow without a prior number) and where they come from */
-function ManualResults({ m, cad }: { m: ReportMetrics; cad: Cadence }) {
+function ManualResults({ m, cad, hot }: { m: ReportMetrics; cad: Cadence; /** The studio's preview: the address of a result's label ("meta/text/manual-<id>"), by its place in the tiles */ hot?: (id: string) => string | null }) {
   const caption = manualCaption(m.manual);
   if (!caption) return null;
   const tiles = manualTiles(m);
+  // The tiles are the lines that aren't the headline result, in the same order
+  const ids = (m.manual?.lines ?? []).filter((l) => !l.main).map((l) => l.id);
   return (
     <View style={{ marginTop: 8 }}>
       {tiles.length ? (
         <View style={s.tiles}>
           {tiles.map((t, i) => (
             <View key={`${t.label}-${i}`} style={s.tile}>
-              <Text style={s.tileLabel}>{t.label}</Text>
+              <View>
+                <Text style={s.tileLabel}>{t.label}</Text>
+                <Hot href={hot && ids[i] ? hot(ids[i]) : null} />
+              </View>
               <Text style={[s.tileValue, { fontSize: 18 }]}>{t.value}</Text>
               {t.sub ? <Text style={s.baseline}>{t.sub}</Text> : null}
               <Text style={[s.baseline, { marginTop: 3 }]}>{t.before != null ? `${t.delta ? `${t.delta.text} ` : ""}vs ${t.before} prior ${cad.prior}` : "No prior number"}</Text>
@@ -292,7 +297,7 @@ function Glance({ input, part, cad }: { input: WeeklyInput; part: WeeklyPart; ca
   const m = part.metrics;
   const keys = weeklyTileKeys(m, part.layout);
   const tiles = keys.map((k) => weeklyTile(m, k, m.main, m.compare));
-  const support = supportKeys(m, keys);
+  const support = supportKeys(m, keys, part.layout);
   // More tiles than four (the buyer added some): smaller numbers so each still fits its tile
   const size = tiles.length <= 4 ? 21 : tiles.length === 5 ? 16.5 : 13.5;
   return (
@@ -306,16 +311,19 @@ function Glance({ input, part, cad }: { input: WeeklyInput; part: WeeklyPart; ca
           <Tile key={`${t.key}-${i}`} label={t.label} value={t.value} mv={t.move} before={t.before} size={size} prior={cad.prior} hot={input.edit ? `${part.platform}/tile/${i}` : null} />
         ))}
       </View>
-      <ManualResults m={m} cad={cad} />
+      <ManualResults m={m} cad={cad} hot={input.edit ? (id) => `${part.platform}/text/manual-${id}` : undefined} />
       <View style={s.support}>
-        {support.map((k) => {
+        {support.map((k, i) => {
           const now = metricNumber(m.main, k);
           const mv = k === "spend" && now != null ? weeklyTile(m, k, m.main, m.compare).move : null;
           return (
-            <Text key={k} style={s.supportText}>
-              {k === "spend" ? "Ad spend" : shortLabel(m, k)} <Text style={{ fontFamily: "Helvetica-Bold", color: INK }}>{weeklyValue(k, now)}</Text>
-              {mv ? ` (${mv.up ? "+" : "-"}${mv.pct} ${cad.abbr})` : ""}
-            </Text>
+            <View key={`${k}-${i}`}>
+              <Text style={s.supportText}>
+                {k === "spend" ? "Ad spend" : shortLabel(m, k)} <Text style={{ fontFamily: "Helvetica-Bold", color: INK }}>{weeklyValue(k, now)}</Text>
+                {mv ? ` (${mv.up ? "+" : "-"}${mv.pct} ${cad.abbr})` : ""}
+              </Text>
+              <Hot href={input.edit ? `${part.platform}/row/${i}` : null} />
+            </View>
           );
         })}
       </View>
@@ -455,7 +463,7 @@ const colWidth = (k: string, head: string) => Math.max((COL_W[k] ?? 34) - 4, Mat
 
 function Scorecard({ input, part, rows, images }: { input: WeeklyInput; part: WeeklyPart; rows: ScoreRow[]; images: (string | null)[] }) {
   const m = { ...part.metrics, conversion: platformConversion(part.metrics) };
-  const cols = scoreColumns(m);
+  const cols = scoreColumns(m, part.layout);
   const google = part.platform === "google";
   const pictures = !google || rows.some((r) => r.img != null);
   const unit = google ? (rows[0]?.kind === "campaign" ? "Campaign" : "Campaign / ad group") : "Ad / creative";
@@ -468,10 +476,11 @@ function Scorecard({ input, part, rows, images }: { input: WeeklyInput; part: We
       </View>
       <View style={s.th}>
         <Text style={[s.thText, { flex: 1 }]}>{unit}</Text>
-        {cols.map((k) => (
-          <Text key={k} style={[s.thText, { width: colWidth(k, scoreHead(m, k)), paddingLeft: GUTTER, textAlign: "right", lineHeight: 1.25 }]}>
-            {scoreHead(m, k)}
-          </Text>
+        {cols.map((k, i) => (
+          <View key={k} style={{ width: colWidth(k, scoreHead(m, k)) }}>
+            <Text style={[s.thText, { paddingLeft: GUTTER, textAlign: "right", lineHeight: 1.25 }]}>{scoreHead(m, k)}</Text>
+            <Hot href={input.edit ? `${part.platform}/col/${i}` : null} />
+          </View>
         ))}
       </View>
       {rows.map((r, i) => (
@@ -800,31 +809,58 @@ function Notes({ input, look }: { input: WeeklyInput; look: Look }) {
   const joint = input.parts.length > 1;
   return (
     <View break>
-      {parts.map(({ p, n }, i) => (
-        <View key={`${p.platform}-${i}`} style={{ marginBottom: 18 }}>
-          <View style={s.head}>
-            <Text style={s.h2}>Our notes</Text>
-            {joint ? <Text style={s.sub}>{platformName(p.platform)}</Text> : <Text style={s.sub}>{input.periodLabel}</Text>}
-          </View>
-          {n.headline || n.summary ? (
-            <View style={[s.panel, { borderLeftWidth: 3, borderLeftColor: look.primary, marginBottom: 8 }]}>
-              {n.headline ? <Text style={{ fontSize: 11, fontFamily: "Helvetica-Bold", lineHeight: 1.3, marginBottom: n.summary ? 5 : 0 }}>{n.headline}</Text> : null}
-              {n.summary ? <Text style={{ fontSize: 8.4, lineHeight: 1.5, color: "#33475b" }}>{n.summary}</Text> : null}
+      {parts.map(({ p, n }, i) => {
+        // In the studio's preview every line is a click target; a point's place is its place in the buyer's own list
+        // (blank ones are not printed, but still count), so the box that opens is the one for that line
+        const hot = (x: string) => (input.edit ? `${p.platform}/text/${x}` : null);
+        const places = { "What we did": "did", "What we're doing": "doing", "What's next": "next" } as const;
+        return (
+          <View key={`${p.platform}-${i}`} style={{ marginBottom: 18 }}>
+            <View style={s.head}>
+              <Text style={s.h2}>Our notes</Text>
+              {joint ? <Text style={s.sub}>{platformName(p.platform)}</Text> : <Text style={s.sub}>{input.periodLabel}</Text>}
             </View>
-          ) : null}
-          {n.groups.map((g) => (
-            <View key={g.title} style={[s.panel, { marginBottom: 8 }]} wrap={false}>
-              <Text style={[s.h3, { marginBottom: 6 }]}>{g.title}</Text>
-              {g.items.map((x, j) => (
-                <View key={j} style={{ flexDirection: "row", marginBottom: 3 }}>
-                  <Text style={{ width: 9, color: look.primary, fontFamily: "Helvetica-Bold", fontSize: 8 }}>•</Text>
-                  <Text style={{ flex: 1, fontSize: 8, lineHeight: 1.45, color: "#33475b" }}>{x}</Text>
+            {n.headline || n.summary ? (
+              <View style={[s.panel, { borderLeftWidth: 3, borderLeftColor: look.primary, marginBottom: 8 }]}>
+                {n.headline ? (
+                  <View style={{ marginBottom: n.summary ? 5 : 0 }}>
+                    <Text style={{ fontSize: 11, fontFamily: "Helvetica-Bold", lineHeight: 1.3 }}>{n.headline}</Text>
+                    <Hot href={hot("headline")} />
+                  </View>
+                ) : null}
+                {n.summary ? (
+                  <View>
+                    <Text style={{ fontSize: 8.4, lineHeight: 1.5, color: "#33475b" }}>{n.summary}</Text>
+                    <Hot href={hot("summary")} />
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+            {n.groups.map((g) => {
+              const key = places[g.title as keyof typeof places];
+              const all = (Array.isArray(p.sections[key]) ? p.sections[key] : []).map((x) => String(x ?? "").trim());
+              // each printed point, with its place in the full list
+              let seen = -1;
+              const at = g.items.map((text) => {
+                seen = all.indexOf(text, seen + 1);
+                return seen;
+              });
+              return (
+                <View key={g.title} style={[s.panel, { marginBottom: 8 }]} wrap={false}>
+                  <Text style={[s.h3, { marginBottom: 6 }]}>{g.title}</Text>
+                  {g.items.map((x, j) => (
+                    <View key={j} style={{ flexDirection: "row", marginBottom: 3 }}>
+                      <Text style={{ width: 9, color: look.primary, fontFamily: "Helvetica-Bold", fontSize: 8 }}>•</Text>
+                      <Text style={{ flex: 1, fontSize: 8, lineHeight: 1.45, color: "#33475b" }}>{x}</Text>
+                      <Hot href={at[j] >= 0 ? hot(`${key}/${at[j]}`) : null} />
+                    </View>
+                  ))}
                 </View>
-              ))}
-            </View>
-          ))}
-        </View>
-      ))}
+              );
+            })}
+          </View>
+        );
+      })}
     </View>
   );
 }

@@ -4,10 +4,18 @@ import { channelsFor, defaultSendOption, furthestStep, initialStep, previewForma
 const base = { kind: "weekly", rider: false, built: false, isBuilder: false, sent: false, mineDone: false, messageApproved: false };
 
 describe("the studio's steps", () => {
-  it("a weekly or monthly report has Report, Message, Send, Sent", () => {
+  it("a weekly or built report has Report, Message, Send, Sent", () => {
     expect(stepsFor(base)).toEqual(["report", "message", "send", "done"]);
-    expect(stepsFor({ ...base, kind: "monthly" })).toEqual(["report", "message", "send", "done"]);
     expect(stepsFor({ ...base, kind: "built", built: true, isBuilder: true })).toEqual(["report", "message", "send", "done"]);
+  });
+
+  it("a monthly recap is the report (its write-up under it, saved to Drive there) and then Saved: no Message or Send", () => {
+    const m = { ...base, kind: "monthly" };
+    expect(stepsFor(m)).toEqual(["report", "done"]);
+    expect(resolveStep("message", m)).toBe("report");
+    expect(resolveStep("send", m)).toBe("report");
+    expect(furthestStep(m)).toBe("report");
+    expect(resolveStep("report", { ...m, sent: true })).toBe("done");
   });
 
   it("a TikTok part riding on the Meta report, and another buyer's part of a built one, only review", () => {
@@ -43,11 +51,11 @@ describe("the studio's steps", () => {
     expect(resolveStep("send", { ...b, mineDone: true })).toBe("send");
   });
 
-  it("an approved monthly part waiting on the others opens on Send, and can go back to the report", () => {
+  it("an approved monthly part stays on its report, the one place it's saved from", () => {
     const m = { ...base, kind: "monthly", mineDone: true };
-    expect(initialStep(m)).toBe("send");
-    expect(resolveStep(null, m)).toBe("send");
-    expect(resolveStep("report", m)).toBe("report");
+    expect(initialStep(m)).toBe("report");
+    expect(resolveStep(null, m)).toBe("report");
+    expect(resolveStep("send", m)).toBe("report");
   });
 });
 

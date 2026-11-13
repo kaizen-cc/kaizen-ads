@@ -9,10 +9,12 @@ type Shape = { kind: string; rider: boolean; built: boolean; isBuilder: boolean 
 
 /**
  * The steps this report has. A TikTok part riding on the Meta report, and a buyer's part of a report someone else built,
- * are reviewed and approved here but sent by someone else: just the report, then sent.
+ * are reviewed and approved here but sent by someone else: just the report, then sent. A monthly recap is the report
+ * with its write-up under it, saved to the client's Drive from that same step (no message, nothing sent): the report,
+ * then saved.
  */
 export function stepsFor(r: Shape): StudioStep[] {
-  if (r.rider || (r.built && !r.isBuilder)) return ["report", "done"];
+  if (r.rider || (r.built && !r.isBuilder) || r.kind === "monthly") return ["report", "done"];
   return ["report", "message", "send", "done"];
 }
 
@@ -21,9 +23,7 @@ type State = Shape & { sent: boolean; mineDone: boolean; messageApproved: boolea
 /** Where the studio opens: sent ones on Sent; an approved part waiting on the others on Send; else the report */
 export function initialStep(r: State): StudioStep {
   if (r.sent) return "done";
-  const steps = stepsFor(r);
   if (r.built && r.isBuilder && r.mineDone) return r.messageApproved ? "send" : "message";
-  if (r.kind === "monthly" && r.mineDone && steps.includes("send")) return "send";
   return "report";
 }
 

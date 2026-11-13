@@ -8,15 +8,15 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
 import { PdfPreview, type PdfField, type PdfMaker } from "./pdf-preview";
 import { EmailFrame } from "./email-frame";
-import { takeawaysFor, weeklyTileKeys, type Takeaway } from "@/lib/reports/weekly-core";
+import { scoreColumns, supportKeys, takeawaysFor, weeklyTileKeys, type Takeaway } from "@/lib/reports/weekly-core";
 import { RecapDeckButton } from "./recap-deck-button";
-import { metricKeysFor, clockTime, columnKeys, metricLabel, platformName, reportBasis, TABLE_DEFAULT, tableKeys, tileKeys, type MetricKey, type ReportLayout } from "@/lib/reports/format";
+import { metricKeysFor, clockTime, metricLabel, platformName, reportBasis, type MetricKey, type ReportLayout } from "@/lib/reports/format";
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import { jointMessage, jointNote, type JointInfo, type JointNote } from "@/lib/reports/joint-core";
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { ManualResults, type ManualEntered } from "./manual-results";
 import { reportFileName, type DriveSave } from "@/lib/reports/drive-save-core";
-import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveReport, saveToDrive, sendMyPartNow, sendReport, setReportCampaignExcluded } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveManualResults, saveReport, saveToDrive, sendMyPartNow, sendReport, setReportCampaignExcluded } from "./actions";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
@@ -536,6 +536,8 @@ export function ReportStudio({
         setDriveSave(r.save);
         // Saved: back to the one way it goes to the client, ready to send separately
         setChoice(defaultSendOption(offers.filter((o) => o !== "drive"), lastUsed, client.hasChannel));
+        // A month's report goes no further than Drive: saved is done, so the page moves on to Saved
+        if (monthly) router.refresh();
       } else setDriveError({ text: r.error, href: r.fixHref });
     } catch {
       setDriveError({ text: "It couldn't be saved to Drive. Try again in a moment." });
@@ -645,6 +647,8 @@ export function ReportStudio({
         { id: `takeaway-${i}-title`, label: "Takeaway", value: t.title },
         { id: `takeaway-${i}-text`, label: "Takeaway, the numbers", value: t.text },
       ]),
+      // The results the team entered from the client's CRM: the label of each tile on the page (its numbers are theirs, entered below)
+      ...(report.metrics?.manual?.lines ?? []).filter((l) => !l.main).map((l) => ({ id: `manual-${l.id}`, label: "CRM result", value: l.label })),
       // Each trend chart's words (the chart itself is drawn from the ad account)
       ...(sections.stories ?? []).flatMap((st, i) => [
         { id: `story-${i}-title`, label: "Chart title", value: st.title },
@@ -655,6 +659,17 @@ export function ReportStudio({
     ];
     const save = (id: string, v: string | null) => {
       if (id === "extras") return setExtras(v ?? "");
+      // A CRM result's label: saved with the rest of what was entered, and the page follows it
+      if (id.startsWith("manual-")) {
+        const lines = report.manual?.lines ?? [];
+        const label = (v ?? "").trim().slice(0, 60);
+        if (!label || !lines.some((l) => `manual-${l.id}` === id)) return;
+        return start(async () => {
+          const r = await saveManualResults(report.id, lines.map((l) => (`manual-${l.id}` === id ? { ...l, label } : l)));
+          if (!r.ok) return setNote({ ok: false, text: r.error });
+          router.refresh();
+        });
+      }
       if (id === "headline" || id === "summary") return setSections({ ...sections, [id]: v ?? "" });
       const card = id.match(/^takeaway-(\d+)-(title|text)$/);
       if (card) return setSections({ ...sections, takeaways: cards.map((t, i) => (i === Number(card[1]) ? { ...t, [card[2]]: v ?? "" } : t)) });
@@ -683,12 +698,12 @@ export function ReportStudio({
     // The metrics on the page now, as the PDF draws them
     const goneNames = new Set(gone.map((g) => g.name));
     const m = report.metrics && goneNames.size ? { ...report.metrics, campaigns: report.metrics.campaigns.filter((c) => !goneNames.has(c.name)) } : report.metrics;
-    const monthlyTiles = report.kind === "monthly";
-    // The weekly leads with its own four (by the client's KPI); the tile clicked is the tile changed
-    const tiles = m ? (weekly ? weeklyTileKeys(m, layout) : tileKeys(m, layout, monthlyTiles)) : [];
-    const table = m ? tableKeys(m, layout) : TABLE_DEFAULT;
-    const columns = m ? columnKeys(m, layout) : [];
-    const hasTable = report.kind !== "weekly";
+    // Every report is drawn in one design: four tiles by the client's KPI, the support line under them (its metrics are
+    // the "key metric" rows) and the scorecard's columns. What's clicked on the page is what's changed.
+    const tiles = m ? weeklyTileKeys(m, layout) : [];
+    const table = m ? supportKeys(m, tiles, layout) : [];
+    const columns = m ? scoreColumns(m, layout) : [];
+    const hasTable = true;
     const limit = report.kind === "weekly" ? 6 : 8;
     const hide = layout?.campaigns?.hide ?? [];
     const add = layout?.campaigns?.add ?? [];
@@ -872,7 +887,7 @@ export function ReportStudio({
             <button type="button" disabled={asking} onClick={() => void tweak("Add a trend chart of the cost per result by week for the last 5 weeks, with what we see, why and what's next")} className="h-9 rounded-full border border-line px-3 text-muted hover:text-fg disabled:opacity-40 max-md:h-10">
               + Trend chart
             </button>
-            {([["tiles", "+ Tile"], ...(hasTable ? [["table", "+ Key metric row"]] : []), ...(weekly ? [] : [["columns", "+ Campaign column"], ["campaign", "+ Campaign"]])] as ["tiles" | "table" | "columns" | "campaign", string][]).map(([k, label]) => (
+            {([["tiles", "+ Tile"], ...(hasTable ? [["table", "+ Key metric row"]] : []), ["columns", "+ Scorecard column"], ...(weekly ? [] : [["campaign", "+ Campaign"]])] as ["tiles" | "table" | "columns" | "campaign", string][]).map(([k, label]) => (
               <button key={k} type="button" onClick={() => setAddingMetric(addingMetric === k ? null : k)} className={`h-9 rounded-full border px-3 max-md:h-10 ${addingMetric === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
                 {label}
               </button>
@@ -890,7 +905,7 @@ export function ReportStudio({
                   key={k}
                   type="button"
                   onClick={() => {
-                    setLayout({ ...layout, [addingMetric]: [...list[addingMetric], k].slice(0, addingMetric === "tiles" ? 6 : 10) });
+                    setLayout({ ...layout, [addingMetric]: [...list[addingMetric], k].slice(0, addingMetric === "tiles" ? 6 : addingMetric === "columns" ? 7 : 10) });
                     setAddingMetric(null);
                   }}
                   className="h-9 rounded-full bg-surface-2 px-3 text-[12.5px] hover:text-fg max-md:h-10"
@@ -967,7 +982,7 @@ export function ReportStudio({
               }}
               className="flex flex-wrap gap-2"
             >
-              <textarea autoFocus value={adding.text} onChange={(e) => setAdding({ ...adding, text: e.target.value })} rows={2} placeholder={adding.key === "extras" ? "Write it as it should read in the message" : "Write it as it should read in the message (not printed in the report)"} className="min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none [field-sizing:content] focus:border-brand-text/60" />
+              <textarea autoFocus value={adding.text} onChange={(e) => setAdding({ ...adding, text: e.target.value })} rows={2} placeholder={adding.key === "extras" ? "Write it as it should read in the message" : monthly ? "Write it as it should read in our notes" : "Write it as it should read in the message (not printed in the report)"} className="min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none [field-sizing:content] focus:border-brand-text/60" />
               <div className="flex items-end gap-1.5">
                 <button type="button" onClick={() => setAdding(null)} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg">
                   Cancel
@@ -1132,11 +1147,16 @@ export function ReportStudio({
   const primaryClass = "inline-flex h-12 w-full items-center justify-center gap-2 rounded-brand bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover disabled:opacity-50";
   const reviewPrimary = rider ? (
     report.joint?.goesWith ? (
-      <a href={`/reports/${report.joint.goesWith.id}?step=message`} className={primaryClass}>
+      <a href={`/reports/${report.joint.goesWith.id}${monthly ? "" : "?step=message"}`} className={primaryClass}>
         Continue on the Meta report →
       </a>
     ) : null
-  ) : sent || busy || !sections ? null : mineDone && (monthly || built) ? (
+  ) : sent || busy || !sections ? null : monthly ? (
+    // A month's report is saved to the client's Drive right here, with the write-up under it
+    <button type="button" disabled={pending || savingDrive || stale} title={stale ? "Redraw every page for the report's dates first" : undefined} onClick={() => void saveDrive()} className={primaryClass}>
+      {savingDrive ? "Saving to Drive…" : driveSave ? "Save to Drive again" : "Save to Drive"}
+    </button>
+  ) : mineDone && built ? (
     built && !isBuilder ? (
       <p className="text-center text-[13px] text-muted">{bundle?.builder ?? "Whoever built it"} sends it as one report.</p>
     ) : (
@@ -1265,7 +1285,7 @@ export function ReportStudio({
                   className={`flex h-10 items-center gap-2 rounded-full px-3 transition-colors md:h-9 md:px-3.5 ${on ? "bg-fg text-bg" : i < at ? "text-fg hover:bg-surface-2" : reachable ? "text-muted hover:bg-surface-2 hover:text-fg" : "text-faint"}`}
                 >
                   <span className={`grid h-5 w-5 place-items-center rounded-full text-[11px] font-semibold ${on ? "bg-bg text-fg" : i < at ? "bg-ok text-white" : "border border-line"}`}>{i < at ? "✓" : i + 1}</span>
-                  {s === "report" && built && joint ? "Your part" : STEP_LABEL[s]}
+                  {s === "report" && built && joint ? "Your part" : s === "done" && monthly ? "Saved" : STEP_LABEL[s]}
                 </button>
                 {i < steps.length - 1 && <span className="h-px w-3 bg-line md:w-4" />}
               </li>
@@ -1449,8 +1469,10 @@ export function ReportStudio({
               <PdfPreview
                 source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`}
                 baseKey={`${report.status}:${JSON.stringify(report.metrics ?? null).length}:${report.manual?.at ?? ""}`}
-                patch={(input) => ({ ...input, parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout: doc.shownLayout } : p)) })}
-                patchKey={JSON.stringify({ sections, extras, layout: doc.shownLayout })}
+                // A month's report is the document saved to Drive: the write-up ("Our notes") under it, all of it editable
+                patch={(input) => ({ ...input, ...(monthly ? { withNotes: true } : {}), parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout: doc.shownLayout } : p)) })}
+                patchKey={JSON.stringify({ sections, extras, layout: doc.shownLayout, notes: monthly })}
+                ownPlatform={report.platform}
                 fields={doc.fields}
                 editable={editable}
                 onSave={(id, v) => doc.save(id, v)}
@@ -1463,7 +1485,13 @@ export function ReportStudio({
                 }}
               />
             )}
-            {editable && doc && <p className="text-xs text-faint">This is the PDF the client gets. Click any line or number to change it; the pages update once it saves.</p>}
+            {editable && doc && (
+              <p className="text-xs text-faint">
+                {monthly ? "This is the PDF saved to the client's Drive, with your write-up on the last page. " : "This is the PDF the client gets. "}
+                Click a metric to pick another, or any text to change it; saved as you go.
+              </p>
+            )}
+            {monthly && !sent && (driveError || (driveSave && !savingDrive)) && <div className="grid gap-1">{driveStatus}</div>}
             {act && sections && !busy && report.platform !== "tiktok" && <NextStepsAct reportId={report.id} platform={report.platform} steps={[...sections.next, ...(sections.stories ?? []).map((st) => st.next)]} write={act.write} canSwitch={act.canSwitch} />}
           </div>
           {sidePanel(reviewPrimary)}
@@ -1655,8 +1683,12 @@ export function ReportStudio({
           <div className="relative isolate grid place-items-center gap-3 overflow-hidden rounded-[20px] border border-line bg-surface px-6 py-12 text-center">
             <span aria-hidden className="pointer-events-none absolute -top-24 left-1/2 -z-10 h-48 w-80 -translate-x-1/2 rounded-full bg-[rgba(52,195,143,0.18)] blur-[70px]" />
             <span className="grid h-12 w-12 place-items-center rounded-full bg-ok-soft text-xl text-ok">✓</span>
-            <p className="font-heading text-xl">Sent to {client.name}</p>
-            <p className="max-w-md text-sm text-muted">{sentNote ?? (history[0] ? `${report.periodLabel}, by ${channelsLabel(history[0].channels).toLowerCase()}${history[0].to.length ? ` to ${history[0].to.join(", ")}` : ""}.` : `${report.periodLabel}, with the PDF.`)}</p>
+            <p className="font-heading text-xl">{monthly ? `Saved to ${client.name}'s Drive` : `Sent to ${client.name}`}</p>
+            <p className="max-w-md text-sm text-muted">
+              {monthly
+                ? `${report.periodLabel}, with the write-up on the last page. Customer success sends the month to the client, with every team's report, once they're all in.`
+                : (sentNote ?? (history[0] ? `${report.periodLabel}, by ${channelsLabel(history[0].channels).toLowerCase()}${history[0].to.length ? ` to ${history[0].to.join(", ")}` : ""}.` : `${report.periodLabel}, with the PDF.`))}
+            </p>
             {(savingDrive || driveSave || driveError) && <div className="grid place-items-center">{savingDrive ? <p className="text-[12px] text-muted">Saving to Drive…</p> : driveStatus}</div>}
             {offers.includes("drive") && !savingDrive && (
               <button type="button" onClick={() => void saveDrive()} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-line px-4 text-sm text-fg transition-colors hover:border-faint">
@@ -1665,10 +1697,11 @@ export function ReportStudio({
               </button>
             )}
             <a href={history[0] ? `/api/reports/sends/${history[0].id}/pdf` : `/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm text-muted underline-offset-4 hover:text-fg hover:underline">
-              Open the PDF that went ↗
+              {monthly ? "Open the PDF ↗" : "Open the PDF that went ↗"}
             </a>
           </div>
-          {/* Every time it went, to review, send again or carry on next week */}
+          {/* Every time it went, to review, send again or carry on next week (a month's report only goes to Drive) */}
+          {(!monthly || history.length > 0) && (
           <section className="grid gap-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h3 className="font-heading text-[19px]">Sent</h3>
@@ -1678,10 +1711,11 @@ export function ReportStudio({
             </div>
             <SendHistory items={history} showClient={false} empty={<p className="rounded-[14px] border border-line bg-surface px-4 py-6 text-center text-sm text-muted">It went out before sends were kept here. Open the PDF above to review it.</p>} />
           </section>
+          )}
           {report.metrics && sections && (
             <section className="grid gap-3">
               <h3 className="font-heading text-[19px]">The report</h3>
-              <PdfPreview source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`} baseKey={`sent:${report.id}`} patch={(input) => input} patchKey="sent" fields={[]} editable={false} onSave={() => {}} onRemove={() => {}} />
+              <PdfPreview source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`} baseKey={`sent:${report.id}`} patch={(input) => (monthly ? { ...input, withNotes: true } : input)} patchKey={monthly ? "sent:notes" : "sent"} fields={[]} editable={false} onSave={() => {}} onRemove={() => {}} />
             </section>
           )}
         </div>

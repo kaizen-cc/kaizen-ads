@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { ReportDocument, type ReportPart, type ReportPdfInput } from "@/lib/reports/report-doc";
-import { autoTakeaways, barsRead, cleanAdName, costLabel, kpiType, move, niceMax, scorecardRows, shortName, supportKeys, takeawaysFor, weeklyTile, weeklyTileKeys } from "@/lib/reports/weekly-core";
+import { autoTakeaways, barsRead, cleanAdName, costLabel, kpiType, move, niceMax, scoreColumns, scorecardRows, shortName, supportKeys, takeawaysFor, weeklyTile, weeklyTileKeys } from "@/lib/reports/weekly-core";
 import { colorFromPixels, colorsFromBible, contrast, isLightLogo, paletteFor, pickBrandColor } from "@/lib/reports/brand";
 import { cadenceOf, eyebrowOf, KAIZEN_RED, lookFor } from "@/lib/reports/weekly-doc";
 import { logoCandidates } from "@/lib/reports/brand-server";
@@ -255,5 +255,33 @@ describe("the report document", () => {
     expect(has(all, "6s rate")).toBe(true);
     expect(all.match(/Performance Overview/g)).toHaveLength(2);
     expect(all.match(/Across the account/g)).toHaveLength(1);
+  });
+});
+
+describe("the studio's preview: what can be clicked and changed", () => {
+  const brand = { logo: null, color: "#0f1433", agencyLogo: null };
+  const sections = { ...emptySections, headline: "A strong month", summary: "Purchases up.", did: ["Refreshed ads", "", "Cut a weak ad set"], doing: [], next: ["Test a new offer"] };
+
+  it("a buyer's metric choices win on the support line and the scorecard's columns", () => {
+    expect(supportKeys(oceanboxMeta, weeklyTileKeys(oceanboxMeta), { table: ["spend", "ctr"] })).toEqual(["spend", "ctr"]);
+    expect(scoreColumns(oceanboxMeta, { columns: ["results", "spend"] })).toEqual(["results", "spend"]);
+    expect(scoreColumns(oceanboxMeta, {})).toEqual(scoreColumns(oceanboxMeta));
+  });
+
+  it("the preview carries a click target for a tile, a key metric, a scorecard column and each write-up line; the client's PDF carries none", async () => {
+    const make = (edit: boolean) => createElement(ReportDocument, { input: { client: "OceanBox", kind: "monthly", periodLabel: "October 2026", parts: [part("meta", oceanboxMeta, { sections })], brand, withNotes: true, edit }, images: [[]] }) as Parameters<typeof renderToBuffer>[0];
+    const links = async (edit: boolean) => {
+      const pdf = new Uint8Array(await renderToBuffer(make(edit)));
+      const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      const fonts = `${path.resolve(__dirname, "../node_modules/pdfjs-dist/standard_fonts").replace(/\\/g, "/")}/`;
+      const doc = await pdfjs.getDocument({ data: pdf, standardFontDataUrl: fonts }).promise;
+      const urls: string[] = [];
+      for (let i = 1; i <= doc.numPages; i++) for (const a of (await (await doc.getPage(i)).getAnnotations()) as { url?: string }[]) if (a.url) urls.push(a.url.replace("https://edit.kaizen.invalid/", ""));
+      return urls;
+    };
+    const on = await links(true);
+    for (const t of ["meta/tile/0", "meta/row/0", "meta/col/0", "meta/text/headline", "meta/text/summary", "meta/text/did/0", "meta/text/did/2", "meta/text/next/0"]) expect(on, t).toContain(t);
+    expect(on).not.toContain("meta/text/did/1");
+    expect((await links(false)).filter((u) => u.includes("meta/"))).toEqual([]);
   });
 });

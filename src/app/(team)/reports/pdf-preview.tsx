@@ -40,8 +40,11 @@ export function PdfPreview({
   onAdd,
   onMove,
   hotMenu,
+  ownPlatform,
   onMaker,
 }: {
+  /** The service whose words the fields are: another part's text on a joint report opens the menu, never a field */
+  ownPlatform?: string;
   /** Where the report's document input and pictures come from (read again when baseKey changes) */
   source: string;
   baseKey: string;
@@ -187,8 +190,10 @@ export function PdfPreview({
             if (!editable) return null;
             const target = l.url.slice(EDIT_HOST.length);
             // The buyer's own words ("meta/text/headline", "meta/text/did/2") open a text box
-            const text = target.match(/^[a-z]+\/text\/(.+)$/);
-            const id = text ? text[1].replace("/", ".") : null;
+            // (another service's part of a joint report isn't edited here: it opens the menu that says where to)
+            const found = target.match(/^([a-z]+)\/text\/(.+)$/);
+            const text = found && (!ownPlatform || found[1] === ownPlatform) ? found : null;
+            const id = text ? text[2].replace("/", ".") : null;
             if (text && !fields.some((f) => f.id === id)) return null;
             const active = text ? edit?.id === id && edit?.page === i : hot?.target === target && hot?.page === i;
             return (
