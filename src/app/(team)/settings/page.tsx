@@ -75,6 +75,7 @@ const day = (offset: number) => {
 
 // The clock, read outside render (the page is dynamic; these only frame the cost rollup)
 const sixDaysAgo = () => new Date(Date.now() - 6 * 86_400_000);
+const tomorrow = () => new Date(Date.now() + 86_400_000);
 
 async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, section: askedSection, range, by }: { me: Staff; open: string | null; role: string | null; line: string | null; section: string; range: string; by: string }) {
   const supabase = await createClient();
@@ -90,7 +91,7 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
   // Shared and cached for two minutes (src/lib/ai-agents-cache.ts), so a tab click doesn't re-read a year of calls
   const week = nyDay(sixDaysAgo());
   const [costRows, activity, lastRuns, { data: staff }] = await Promise.all([
-    cachedCostRollup(rollupFrom(), `${nyDay(new Date(Date.now() + 86_400_000))}T00:00:00-05:00`).catch(() => [] as CostRow[]),
+    cachedCostRollup(rollupFrom(), `${nyDay(tomorrow())}T00:00:00-05:00`).catch(() => [] as CostRow[]),
     cachedActivity(`${week}T00:00:00-05:00`).catch(() => [] as Activity[]),
     cachedLastRuns().catch(() => ({}) as Record<string, string>),
     supabase.from("profiles").select("id, full_name, role, is_active").eq("is_active", true).order("full_name"),
