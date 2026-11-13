@@ -278,6 +278,8 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
     const now = new Date().toISOString();
     await admin.from("report_bundles").update({ status: "sent", sent_at: now, delivered: { ...(out.slack && "channel" in out.slack ? { slack: out.slack } : {}), ...(out.email?.to.length ? { email: out.email.to } : {}) } }).eq("id", bundleId);
     await admin.from("reports").update({ status: "posted", posted_at: now, posted_by: by }).eq("bundle_id", bundleId).eq("status", "submitted");
+    // The automatic weekly or monthly on the same accounts and dates was covered by this one: set aside, logged
+    await coverScheduled(admin, bundleId, by, (me?.full_name as string | null) ?? null).catch(() => {});
     // The builder and each part's owner, with the client's secondary buyers on those platforms copied in
     const co = (await Promise.all(parts.map((p) => withCoBuyers(admin, b.client_id as string, p.platform, [p.owner_id])))).flat();
     const told = await reportListeners(admin, [b.created_by, ...parts.map((p) => p.owner_id), ...co]);
@@ -291,4 +293,36 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
     await admin.from("report_bundles").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 400) }).eq("id", bundleId);
     throw e;
   }
+}
+
+/**
+ * A report sent from the builder covers the automatic one for the same account and overlapping dates (a buyer who
+ * builds their own week instead of the Monday draft): that draft is set aside as skipped, with a log entry saying
+ * why, so it stops asking to be reviewed. Nothing is deleted; it can be brought back.
+ */
+export async function coverScheduled(admin: SupabaseClient, bundleId: string, by: string | null, byName: string | null) {
+  const { data: parts } = await admin.from("reports").select("target_id, period_start, period_end").eq("bundle_id", bundleId).eq("status", "posted");
+  const { skipEntry, appendLog } = await import("./skip-log");
+  for (const p of parts ?? []) {
+    const { data: open } = await admin
+      .from("reports")
+      .select("id, kind, period_start, period_end, log")
+      .eq("target_id", p.target_id)
+      .in("kind", ["weekly", "monthly"])
+      .not("status", "in", "(posted,skipped)")
+      .lte("period_start", p.period_end)
+      .gte("period_end", p.period_start);
+    for (const r of (open ?? []).filter((x) => coveredBy(x, p))) {
+      const entry = skipEntry({ reason: "Sent as a built report", note: null, by, byName });
+      await admin.from("reports").update({ status: "skipped", log: appendLog((r as { log?: unknown }).log, entry), updated_at: new Date().toISOString() }).eq("id", r.id);
+    }
+  }
+}
+
+const dayN = (d: string) => Math.round(Date.parse(`${d}T12:00:00Z`) / 86_400_000);
+/** A weekly is covered when most of its week (4 days or more) is in the sent report; a monthly only when all of it is */
+export function coveredBy(r: { kind: string; period_start: string; period_end: string }, sent: { period_start: string; period_end: string }) {
+  const overlap = Math.min(dayN(r.period_end), dayN(sent.period_end)) - Math.max(dayN(r.period_start), dayN(sent.period_start)) + 1;
+  if (r.kind === "monthly") return sent.period_start <= r.period_start && sent.period_end >= r.period_end;
+  return overlap >= 4;
 }
