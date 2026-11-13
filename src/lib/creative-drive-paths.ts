@@ -439,7 +439,25 @@ export function reportSteps(at: string | Date): FolderStep[] {
  * Nothing is ever deleted or moved.
  */
 export async function ensureReportFolder(drive: FolderDrive, clientFolder: string, at: string | Date): Promise<string> {
-  let parent = (await findOrCreateFolder(drive, clientFolder, { key: REPORTS_FOLDER, match: isReportsFolder, name: () => REPORTS_FOLDER })).id;
-  for (const step of reportSteps(at)) parent = (await findOrCreateFolder(drive, parent, step)).id;
-  return parent;
+  const reports = (await findOrCreateFolder(drive, clientFolder, { key: REPORTS_FOLDER, match: isReportsFolder, name: () => REPORTS_FOLDER })).id;
+  const ym = yearMonth(at);
+  const [yearStep, monthStep] = reportSteps(at);
+  const inReports = await drive.listFolders(reports);
+  // 1. This month's folder right in the reports folder ("November 01 2026" beside the other months): save there
+  const flat = inReports.find((f) => isMonthOfYear(f.name, ym.num, ym.year));
+  if (flat) return flat.id;
+  // 2. A year folder: this month's folder inside it, found or made
+  const year = inReports.find((f) => yearStep.match(f.name));
+  if (year) return (await findOrCreateFolder(drive, year.id, monthStep)).id;
+  // 3. No year folder, but the months sit right in the reports folder: this month's is made there, named like them
+  const monthsHere = inReports.filter((f) => parseMonthFolder(f.name) && /(?<!\d)20\d{2}(?!\d)/.test(f.name));
+  if (monthsHere.length) return (await findOrCreateFolder(drive, reports, { key: monthStep.key, match: (n: string) => isMonthOfYear(n, ym.num, ym.year), name: (sib) => monthFolderName(ym.num, ym.year, monthStyleOf(sib.map((x) => x.name)) ?? REPORT_MONTH_STYLE) })).id;
+  // 4. Nothing yet: year, then month
+  const made = (await findOrCreateFolder(drive, reports, yearStep)).id;
+  return (await findOrCreateFolder(drive, made, monthStep)).id;
+}
+
+/** "November 01 2026" is November of 2026 (the year has to be in the name, so last year's November isn't taken) */
+export function isMonthOfYear(name: string, month: number, year: string) {
+  return parseMonthFolder(name)?.month === month && new RegExp(`(?<!\d)${year}(?!\d)`).test(name);
 }

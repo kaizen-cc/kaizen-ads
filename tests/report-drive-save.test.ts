@@ -64,6 +64,28 @@ describe("where a report is saved", () => {
     await ensureReportFolder(drive, "client", "2026-11-13T15:00:00Z");
     expect(created).toEqual(["November 01 2026"]);
   });
+  it("uses this month's folder right in the reports folder first (no year folder in between)", async () => {
+    const { drive, created } = fake({ client: ["30 - Reports"], "client/30 - Reports": MONTHS });
+    expect(await ensureReportFolder(drive, "client", "2026-11-13T15:00:00Z")).toBe("client/30 - Reports/November 01 2026");
+    expect(created).toEqual([]);
+  });
+  it("prefers the month in the reports folder over a year folder made beside it", async () => {
+    const { drive, created } = fake({ client: ["30 - Reports"], "client/30 - Reports": [...MONTHS, "2026"], "client/30 - Reports/2026": ["November 01 2026"] });
+    expect(await ensureReportFolder(drive, "client", "2026-11-13T15:00:00Z")).toBe("client/30 - Reports/November 01 2026");
+    expect(created).toEqual([]);
+  });
+  it("makes the missing month right in the reports folder when the months live there", async () => {
+    const { drive, created } = fake({ client: ["30 - Reports"], "client/30 - Reports": MONTHS.slice(0, 10) });
+    await ensureReportFolder(drive, "client", "2026-11-13T15:00:00Z");
+    expect(created).toEqual(["November 01 2026"]);
+    expect((await drive.listFolders("client/30 - Reports")).map((f) => f.name)).toContain("November 01 2026");
+  });
+  it("doesn't take last year's November", async () => {
+    const { drive, created } = fake({ client: ["30 - Reports"], "client/30 - Reports": ["November 01 2025", "2026"], "client/30 - Reports/2026": [] });
+    await ensureReportFolder(drive, "client", "2026-11-13T15:00:00Z");
+    expect(created).toEqual(["November 01 2026"]);
+    expect((await drive.listFolders("client/30 - Reports/2026")).map((f) => f.name)).toEqual(["November 01 2026"]);
+  });
   it("makes 30 - Reports, the year and the month when there are none", async () => {
     const { drive, created } = fake({ client: ["Brand"] });
     await ensureReportFolder(drive, "client", "2026-11-13T15:00:00Z");
