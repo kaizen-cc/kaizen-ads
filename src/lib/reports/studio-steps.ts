@@ -53,13 +53,17 @@ export function isWholeMonth(start: string, end: string): boolean {
   return Number(end.slice(8, 10)) === last;
 }
 
+/** A month's report: the monthly recap, or a built report covering a whole calendar month */
+export const isMonthReport = (r: { kind: string; start: string; end: string }) => r.kind === "monthly" || (r.kind === "built" && isWholeMonth(r.start, r.end));
+
 /**
- * How it can go out: Slack and email always; saved to the client's Drive only for a month's report (the monthly recap,
- * or a built report covering a whole calendar month), never a weekly.
+ * How it can go out. A week's report (or any other range): Slack or email. A month's report: saved to the client's
+ * Drive only, with the write-up in it (customer success sends the month to the client as one email, with every team's).
  */
 export function sendOptions(r: { kind: string; start: string; end: string }): SendOption[] {
-  const drive = r.kind === "monthly" || (r.kind === "built" && isWholeMonth(r.start, r.end));
-  return drive ? ["slack", "email", "drive"] : ["slack", "email"];
+  if (r.kind === "monthly") return ["drive"];
+  // A built report of a whole month is the buyer's own: it can go to the client, or to Drive
+  return isMonthReport(r) ? ["slack", "email", "drive"] : ["slack", "email"];
 }
 
 export type PastSend = { reportId: string | null; bundleId: string | null; platform: string | null; sentBy: string | null; channels: string[]; status?: string | null };
@@ -90,6 +94,7 @@ export function lastUsed(sends: readonly PastSend[], now: { reportId: string; bu
 export function defaultSendOption(offers: readonly SendOption[], last: readonly SendOption[], hasChannel = true): SendOption {
   const lastOne = last.find((o) => offers.includes(o));
   if (lastOne) return lastOne;
+  if (!offers.includes("slack") && !offers.includes("email")) return offers[0] ?? "drive";
   return hasChannel ? "slack" : "email";
 }
 
@@ -101,8 +106,14 @@ export function channelsFor(option: SendOption): ("slack" | "email")[] {
 export type PreviewFormat = "slack" | "email" | "pdf";
 export const PREVIEW_FORMATS: PreviewFormat[] = ["slack", "email", "pdf"];
 
-/** The format the message step opens on: the one in the address, else how this buyer last sent (Slack or email), else Slack */
-export function previewFormat(asked: string | null | undefined, last: readonly SendOption[]): PreviewFormat {
-  if (PREVIEW_FORMATS.includes(asked as PreviewFormat)) return asked as PreviewFormat;
-  return last.find((o) => o === "slack" || o === "email") ?? "slack";
+/** What the message step can preview: a week's report as Slack or email; a month's as the PDF saved to Drive */
+export function previewFormatsFor(r: { kind: string; start: string; end: string }): PreviewFormat[] {
+  if (r.kind === "monthly") return ["pdf"];
+  return isMonthReport(r) ? ["slack", "email", "pdf"] : ["slack", "email"];
+}
+
+/** The format the message step opens on: the one in the address (if offered), else how this buyer last sent, else the first */
+export function previewFormat(asked: string | null | undefined, last: readonly SendOption[], offered: readonly PreviewFormat[] = PREVIEW_FORMATS): PreviewFormat {
+  if (offered.includes(asked as PreviewFormat)) return asked as PreviewFormat;
+  return last.find((o): o is "slack" | "email" => (o === "slack" || o === "email") && offered.includes(o)) ?? offered[0];
 }

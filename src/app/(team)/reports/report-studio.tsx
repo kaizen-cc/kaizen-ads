@@ -29,7 +29,7 @@ import type { LogEntry } from "@/lib/reports/skip-log";
 import { SendHistory, type HistoryItem } from "./send-history";
 import { ReportThis } from "@/components/report-this";
 import { messageKey } from "@/lib/chat-report";
-import { channelsFor, defaultSendOption, furthestStep, initialStep, PREVIEW_FORMATS, previewFormat, resolveStep, sendOptions, stepsFor, type PreviewFormat, type SendOption, type StudioStep } from "@/lib/reports/studio-steps";
+import { channelsFor, defaultSendOption, furthestStep, initialStep, previewFormat, previewFormatsFor, resolveStep, sendOptions, stepsFor, type PreviewFormat, type SendOption, type StudioStep } from "@/lib/reports/studio-steps";
 
 // One report, start to finish, in three steps and then sent: review the report (the PDF the client gets, with the AI
 // beside it), the message that carries it (Slack, with the write-up), then how it goes out (Slack, email, and Drive for
@@ -332,7 +332,8 @@ export function ReportStudio({
   const [sentHere, setSentHere] = useState(false);
   const asked = useParam("step");
   // The message step's format (Slack, email, PDF), in the address too: back returns to the one before
-  const format: PreviewFormat = previewFormat(useParam("fmt"), lastUsed);
+  const formats = previewFormatsFor({ kind: report.kind, start: report.period.start, end: report.period.end });
+  const format: PreviewFormat = previewFormat(useParam("fmt"), lastUsed, formats);
   const steps = stepsFor(shape);
   const initial = initialStep({ ...shape, sent: false });
   const furthest = furthestStep({ ...shape, sent: false });
@@ -1484,13 +1485,13 @@ export function ReportStudio({
                 </button>
               )}
             </div>
-            <div role="tablist" aria-label="Preview as" className="grid grid-cols-3 gap-1 rounded-full border border-line bg-surface p-1">
-              {PREVIEW_FORMATS.map((f) => (
+            {formats.length > 1 && <div role="tablist" aria-label="Preview as" className={`grid gap-1 rounded-full border border-line bg-surface p-1 ${formats.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+              {formats.map((f) => (
                 <button key={f} type="button" role="tab" aria-selected={format === f} onClick={() => pushParams({ fmt: f })} className={`min-h-11 rounded-full px-3 text-[13px] transition-colors md:min-h-10 ${format === f ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
                   {f === "slack" ? "Slack message" : f === "email" ? "Email" : "PDF report"}
                 </button>
               ))}
-            </div>
+            </div>}
             {format === "email" ? (
               <EmailFrame reportId={report.id} to={(recipients.length ? recipients : monthly ? (delivery?.contacts ?? []).slice(0, 6) : []).map((r) => r.email)} first={recipients[0]?.name?.split(" ")[0] ?? null} note={monthly || built ? "" : emailNote} file={fileName} />
             ) : format === "pdf" ? (
@@ -1498,8 +1499,8 @@ export function ReportStudio({
                 <PdfPreview
                   source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`}
                   baseKey={`${report.status}:${JSON.stringify(report.metrics ?? null).length}:${report.manual?.at ?? ""}`}
-                  patch={(input) => ({ ...input, parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout: doc?.shownLayout ?? p.layout } : p)) })}
-                  patchKey={JSON.stringify({ sections, extras, layout: doc?.shownLayout })}
+                  patch={(input) => ({ ...input, withNotes: true, parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout: doc?.shownLayout ?? p.layout } : p)) })}
+                  patchKey={JSON.stringify({ sections, extras, layout: doc?.shownLayout, notes: true })}
                   fields={[]}
                   editable={false}
                   onSave={() => {}}
@@ -1567,12 +1568,17 @@ export function ReportStudio({
           <div className="grid gap-1">
             <h2 className="font-heading text-[24px] leading-tight">How it goes out</h2>
             <p className="text-[13px] text-muted">
-              {client.name} · {report.periodLabel}. Pick one way to send it.
+              {client.name} · {report.periodLabel}. {monthly ? "Saved to their Drive." : "Pick one way to send it."}
             </p>
           </div>
 
-          {/* A recap part or a built report waiting on the other buyers: what happens, and what can be done today */}
-          {monthly && othersOpen.length > 0 && !sent && (
+          {/* A month's recap is saved to the client's Drive; customer success sends the month to the client */}
+          {monthly && !sent && (
+            <p className="rounded-[14px] bg-surface-2 px-4 py-3 text-[12.5px] leading-relaxed text-muted">
+              The monthly recap is saved to the client&apos;s Drive with your write-up. Customer success sends the month to the client, with every team&apos;s report, once they&apos;re all in.
+            </p>
+          )}
+          {false && monthly && othersOpen.length > 0 && !sent && (
             <div className="grid gap-1 rounded-[16px] border border-line bg-surface-2/60 px-4 py-3">
               <p className="text-sm font-medium">{mineDone ? "Approved. It goes out with the rest." : "The recap goes out once every buyer approves"}</p>
               <p className="text-[12.5px] leading-relaxed text-muted">
@@ -1629,7 +1635,7 @@ export function ReportStudio({
             ) : canSend ? (
               <p className="text-[12.5px] text-muted">Pick how it goes out.</p>
             ) : null}
-            {monthly && othersOpen.length > 0 && !sent && (
+            {false && monthly && othersOpen.length > 0 && !sent && (
               <button type="button" disabled={pending || route.channels.length === 0 || stale || ridersWriting || (viaEmail && !route.recipients.length) || (viaSlack && !client.hasChannel)} onClick={partNow} className="inline-flex h-12 w-full items-center justify-center rounded-brand border border-line px-4 text-sm text-fg transition-colors hover:border-faint disabled:opacity-50">
                 Send my part now, {channelsPhrase(route.channels)}
               </button>

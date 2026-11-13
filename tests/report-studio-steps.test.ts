@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { channelsFor, defaultSendOption, furthestStep, initialStep, previewFormat, isWholeMonth, lastUsed, resolveStep, sendOptions, stepsFor, type PastSend } from "@/lib/reports/studio-steps";
+import { channelsFor, defaultSendOption, furthestStep, initialStep, previewFormat, isWholeMonth, lastUsed, resolveStep, sendOptions, stepsFor, type PastSend, previewFormatsFor } from "@/lib/reports/studio-steps";
 
 const base = { kind: "weekly", rider: false, built: false, isBuilder: false, sent: false, mineDone: false, messageApproved: false };
 
@@ -57,8 +57,16 @@ describe("how it can go out", () => {
     expect(sendOptions({ kind: "custom", start: "2026-10-01", end: "2026-10-31" })).toEqual(["slack", "email"]);
   });
 
-  it("offers Drive for the monthly recap", () => {
-    expect(sendOptions({ kind: "monthly", start: "2026-10-01", end: "2026-10-31" })).toEqual(["slack", "email", "drive"]);
+  it("a monthly recap is only saved to Drive (customer success sends the month), previewed as its PDF", () => {
+    expect(sendOptions({ kind: "monthly", start: "2026-10-01", end: "2026-10-31" })).toEqual(["drive"]);
+    expect(previewFormatsFor({ kind: "monthly", start: "2026-10-01", end: "2026-10-31" })).toEqual(["pdf"]);
+    expect(defaultSendOption(["drive"], ["slack"], true)).toBe("drive");
+    expect(previewFormat("slack", ["slack"], ["pdf"])).toBe("pdf");
+  });
+  it("a weekly is Slack or email, previewed as Slack or email, never Drive or the PDF", () => {
+    expect(sendOptions({ kind: "weekly", start: "2026-11-02", end: "2026-11-08" })).toEqual(["slack", "email"]);
+    expect(previewFormatsFor({ kind: "weekly", start: "2026-11-02", end: "2026-11-08" })).toEqual(["slack", "email"]);
+    expect(previewFormat("pdf", ["email"], ["slack", "email"])).toBe("email");
   });
 
   it("offers Drive for a built report only when it covers a whole calendar month", () => {

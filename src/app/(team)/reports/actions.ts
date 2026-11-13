@@ -797,8 +797,15 @@ export async function saveToDrive(id: string): Promise<Result<{ save: DriveSave;
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   const { saveReportToDrive } = await import("@/lib/reports/drive-save");
-  const r = await saveReportToDrive(createAdminClient(), id, { id: ok.me.id, fullName: ok.me.fullName });
+  const admin = createAdminClient();
+  const r = await saveReportToDrive(admin, id, { id: ok.me.id, fullName: ok.me.fullName });
   if (!r.ok) return r;
+  // A month's report goes no further than the client's Drive (customer success sends the month to the client): saved
+  // is done, for it and the TikTok part riding on it, so it leaves the queue and nothing chases it
+  if (ok.r.kind === "monthly") {
+    const now = new Date().toISOString();
+    await admin.from("reports").update({ status: "posted", posted_at: now, posted_by: ok.me.id, updated_at: now }).or(`id.eq.${id},joined_to.eq.${id}`).not("status", "in", "(posted,skipped)");
+  }
   done(id);
   return r;
 }
