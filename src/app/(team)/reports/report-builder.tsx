@@ -8,7 +8,7 @@ import { buildReportAction } from "./actions";
 import { TagChip, type Tag } from "./report-cards";
 import { isPeriodKey, resolvePeriod, shiftDay } from "@/lib/reports/period";
 
-// The report builder: the client, the date ranges (as many as the report needs: the last 7 days AND the month), and
+// The report builder: the client, one date range (compared with the period before it), and
 // the services. Another buyer's service is drafted for them and they're asked to approve it; the whole thing goes to
 // the client as one report. On the right, the report as it takes shape: what it covers, who's in it, where it goes.
 
@@ -106,7 +106,7 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
   const apply = (p: QuickPick & { client: BuilderClient }) => {
     pushParams({ client: p.client.slug });
     setQ("");
-    setRanges(p.ranges);
+    setRanges(p.ranges.slice(0, 1));
     setTicked({ id: p.client.id, list: p.services.filter((s) => p.client.services.some((x) => x.platform === s)) });
     setError(null);
   };
@@ -278,10 +278,10 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
                     key={r.key}
                     type="button"
                     aria-pressed={on}
-                    onClick={() => toggle(ranges, setRanges, r.key)}
+                    onClick={() => setRanges(on ? [] : [r.key])}
                     className={`relative grid min-h-[72px] content-start gap-0.5 rounded-[14px] border px-3.5 py-3 text-left transition ${on ? "border-brand/70 bg-brand/[0.12] shadow-[0_10px_30px_-18px_rgba(200,16,46,0.9)]" : "border-ink/[0.08] bg-ink/[0.03] hover:border-ink/20"}`}
                   >
-                    {on && <span className="absolute right-2.5 top-2.5 grid h-5 min-w-5 place-items-center rounded-full bg-brand px-1 text-[10px] font-semibold text-white">{ranges.length > 1 ? ranges.indexOf(r.key) + 1 : "✓"}</span>}
+                    {on && <span className="absolute right-2.5 top-2.5 grid h-5 min-w-5 place-items-center rounded-full bg-brand px-1 text-[10px] font-semibold text-white">✓</span>}
                     <span className="text-sm font-medium">{r.label}</span>
                     <span className="text-[11.5px] text-ink/45">{d ? `${fmt(d[0])} – ${fmt(d[1])}` : r.hint}</span>
                   </button>
@@ -295,7 +295,7 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
                 <input type="date" value={custom.end} max={yesterday} onChange={(e) => setCustom({ ...custom, end: e.target.value })} className="h-11 rounded-[12px] border border-ink/10 bg-ink/[0.04] px-3 [color-scheme:dark]" />
               </div>
             )}
-            <p className="text-xs text-ink/40">{ranges.length > 1 ? "Number 1 leads the report; the others each get their own section, each against the period before it." : ranges.length ? "Pick another to cover both: the last 7 days and the month, say." : "Pick one or more."}</p>
+            <p className="text-xs text-ink/40">{ranges.length ? "Compared against the period before it." : "Pick one."}</p>
           </Step>
           )}
 

@@ -63,7 +63,9 @@ async function ownerFor(admin: SupabaseClient, t: { client_id: string; platform:
 
 /** Builds a report: the parts are created and written in the background. Returns the bundle and the builder's own part. */
 export async function buildReport(admin: SupabaseClient, db: SupabaseClient, me: Staff, clientId: string, ranges: BuiltRange[], platforms: string[]) {
-  if (!ranges.length) throw new Error("Pick at least one date range.");
+  if (!ranges.length) throw new Error("Pick a date range.");
+  // One range per report (several made reports hard to read): only the first is used
+  ranges = ranges.slice(0, 1);
   if (!platforms.length) throw new Error("Pick at least one service.");
   const { data: found } = await admin.from("kpi_targets").select("id, client_id, platform, owner_id").eq("client_id", clientId).eq("active", true).not("ad_account_id", "is", null).in("platform", platforms);
   const targets = found ?? [];
