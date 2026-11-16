@@ -70,7 +70,10 @@ export function parseAccount(json: unknown): KlaviyoAccount | null {
 export function errorText(status: number, json: unknown): string {
   const first = obj((obj(json).errors as unknown[] | undefined)?.[0]);
   const detail = str(first.detail) ?? str(first.title);
-  if (status === 401 || status === 400) return detail && !/api key/i.test(detail) ? `Klaviyo refused the key: ${detail}` : "Klaviyo refused this key. Check it was copied whole and hasn't been deleted.";
+  // Only a 401 (or a 400 about the key itself) means the key was refused; any other 400 is a question Klaviyo couldn't
+  // answer for this account, and the key is fine
+  if (status === 401 || (status === 400 && (!detail || /api key/i.test(detail)))) return "Klaviyo refused this key. Check it was copied whole and hasn't been deleted.";
+  if (status === 400) return `Klaviyo couldn't answer: ${detail}`;
   if (status === 403) return `This key can't read everything Kaizen Ads needs. Make a new private key with read access to ${KLAVIYO_SCOPES.join(", ")}.`;
   if (status === 429) return "Klaviyo is rate limiting this account right now. It's tried again on the next sync.";
   return `Klaviyo answered ${status}${detail ? `: ${detail}` : ""}`;
@@ -312,6 +315,18 @@ export function metricIds(json: unknown): { placedOrder: string | null; subscrib
   return { placedOrder: placedOrderId({ data: rows }), subscribed: first("subscribed to list"), unsubscribed: first("unsubscribed from list") };
 }
 
+/** Every metric on the account (to pick the one that counts as the sale), names sorted, the likely ones first */
+export type KlaviyoMetric = { id: string; name: string; integration: string | null };
+export function metricList(json: unknown): KlaviyoMetric[] {
+  const list = obj(json).data;
+  const rows = (Array.isArray(list) ? list : []).map(obj);
+  const out = rows
+    .map((m) => ({ id: str(m.id) ?? "", name: str(obj(m.attributes).name) ?? "", integration: str(obj(obj(m.attributes).integration).name) ?? null }))
+    .filter((m) => m.id && m.name);
+  const sale = (m: KlaviyoMetric) => /placed order|ordered|bought|purchase|ticket|order|checkout|booking|reservation|donat/i.test(m.name);
+  return out.sort((a, b) => Number(sale(b)) - Number(sale(a)) || a.name.localeCompare(b.name));
+}
+
 /** The "Placed Order" metric's id among the account's metrics (Shopify's, else any integration's) */
 export function placedOrderId(json: unknown): string | null {
   const list = obj(json).data;
@@ -427,6 +442,8 @@ export type KlaviyoPlainError = { message: string; fix: string; severity: "bad" 
  */
 export function plainKlaviyoError(raw: string | null | undefined, status?: string | null): KlaviyoPlainError | null {
   const text = String(raw ?? "").trim();
+  if (/does not support querying for values/i.test(text))
+    return { message: "Klaviyo won't report revenue on this account's order metric", fix: "Pick the metric that counts as the sale (Bought Ticket, Placed Order, another integration's) on the Klaviyo card. Campaigns, flows and lists still sync.", severity: "warn" };
   if (status === "invalid" || /refused (this |the )?key|Klaviyo refused/i.test(text))
     return { message: "Klaviyo refused the key: it was revoked or deleted", fix: "Create a new private key with Full Access in their Klaviyo and paste it here.", severity: "bad" };
   if (!text) return null;

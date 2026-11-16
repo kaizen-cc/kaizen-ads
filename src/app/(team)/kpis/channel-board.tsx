@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ActionForm } from "@/components/action-form";
 import { ChannelSpark } from "@/components/channel-spark";
+import { KlaviyoMetricPicker } from "@/components/klaviyo-metric-picker";
 import { ChannelStatusPill, ConnectCta, Gauge, SupportChips, TONE, mainCaption, mainText, needsConnecting, num, paceLine, signed, targetText } from "@/components/channel-parts";
 import { BAND_TONE, ScoreBadge, ScoreChecks, WeighingDown, checkText } from "@/components/email-score-parts";
 import { field, label as labelCls } from "@/components/ui";
@@ -619,6 +620,7 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
                     {r.problem.message}. {r.problem.fix}
                   </p>
                 )}
+                {r.line === "email" && r.data !== "missing" && <KlaviyoMetricPicker clientId={r.clientId} current={r.conversionMetric ?? null} canPick={r.canConnect} />}
                 {r.team.length > 0 && <p className="text-xs text-faint">On it: {r.team.map((t) => `${t.name} (${t.seat})`).join(", ")}</p>}
               </section>
             </div>

@@ -29,12 +29,25 @@ export type EmailScoreResult = EmailScore & {
 
 const money = (x: number, currency: string | null) => `${!currency || currency === "USD" ? "$" : `${currency} `}${x.toFixed(2)}`;
 
-/** A check's value or bar as text: percent, money per recipient, or the 0 to 100 deliverability score */
-export function checkText(unit: "pct" | "money" | "score", x: number | null, currency: string | null = "USD"): string {
+const pct = (x: number, d: number) => `${(x * 100).toFixed(d)}%`;
+
+/**
+ * A check's value or bar as text: percent, money per recipient, or the 0 to 100 deliverability score. Small rates get
+ * the decimals they need (a 0.02% spam rate never reads 0.0%), and with `bar` a value just under it shows enough decimals
+ * not to read as the bar itself (34.96% against 35% reads 34.96%, never 35%).
+ */
+export function checkText(unit: "pct" | "money" | "score", x: number | null, currency: string | null = "USD", bar?: number | null): string {
   if (x == null) return "n/a";
-  if (unit === "pct") return `${(x * 100).toFixed(x < 0.1 ? 1 : 0)}%`;
-  if (unit === "money") return money(x, currency);
-  return String(Math.round(x));
+  if (unit === "pct") {
+    let d = x === 0 ? 0 : x < 0.0001 ? 3 : x < 0.01 ? 2 : x < 0.1 ? 1 : 0;
+    while (bar != null && x !== bar && d < 4 && pct(x, d) === pct(bar, Math.max(d, bar < 0.1 ? 1 : 0))) d++;
+    return pct(x, d);
+  }
+  if (unit === "money") {
+    const t = money(x, currency);
+    return bar != null && x < bar && t === money(bar, currency) ? `${!currency || currency === "USD" ? "$" : `${currency} `}${x.toFixed(3)}` : t;
+  }
+  return bar != null && x < bar && Math.round(x) >= bar ? String(Math.floor(x * 10) / 10) : String(Math.round(x));
 }
 
 /** Points a check costs the score, a whole number of at least 1 once it is under its bar */
@@ -75,6 +88,8 @@ export function aggregateEmailScore(d: { days: ScoreDay[]; campaigns: ScoreCampa
     spam: em.reduce((n, c) => n + c.spam, 0),
     unsubscribes: em.reduce((n, c) => n + c.unsubscribes, 0),
     opens: em.reduce((n, c) => n + c.opens, 0),
+    // Clicks from each campaign's click rate (the counts aren't stored), on the same base as the rate
+    clicks: em.reduce((n, c) => n + (c.clickRate ?? 0) * base(c), 0),
   });
   const inputs: EmailInputs = {
     attributed: storeDays.length && storeRevenue > 0 ? revenue / storeRevenue : null,

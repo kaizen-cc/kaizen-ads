@@ -59,29 +59,48 @@ export function emailScore(i: EmailInputs): EmailScore {
   return { score, band: emailBand(score), checks, weighingDown, unmeasured: checks.filter((c) => c.value === null).map((c) => c.key) };
 }
 
+/** A deliverability grade, as Klaviyo shows it beside each of its five metrics */
+export type DeliverabilityGrade = "excellent" | "good" | "fair" | "poor";
+const GRADE_POINTS: Record<DeliverabilityGrade, number> = { excellent: 20, good: 16, fair: 8, poor: 0 };
+
 /**
- * Kaizen's own deliverability score (0 to 100): Klaviyo shows one in its dashboard but doesn't offer it through its
- * API, so it's built from the same signals, over the last 30 days of sends. Full marks at or under the healthy line,
- * nothing at or past the danger line, straight in between:
- *   bounce rate (bounced / recipients)      30 pts   healthy 0.5%   danger 3%
- *   spam complaints (spam / delivered)      30 pts   healthy 0.05%  danger 0.3%
- *   unsubscribe rate (unsubs / delivered)   20 pts   healthy 0.3%   danger 1.5%
- *   open rate (unique opens / delivered)    20 pts   healthy 35%    danger 10%
- * Null when nothing was sent.
+ * Each metric's lines, matched to Klaviyo's deliverability score: "good" is Klaviyo's recommended line (open above 33%,
+ * click above 1.2%, bounce under 1%, unsubscribe under 0.3%, spam under 0.01%); excellent is well past it, fair a little
+ * short, poor well short. higher: a bigger rate is better.
  */
-export function deliverabilityScore(s: { recipients: number; delivered: number; bounced: number; spam: number; unsubscribes: number; opens: number }): { score: number; parts: { label: string; rate: number; points: number; of: number }[] } | null {
+export const DELIVERABILITY_LINES: readonly { key: "open" | "click" | "bounce" | "unsubscribe" | "spam"; label: string; higher: boolean; excellent: number; good: number; fair: number }[] = [
+  { key: "open", label: "Open rate", higher: true, excellent: 0.4, good: 0.33, fair: 0.25 },
+  { key: "click", label: "Click rate", higher: true, excellent: 0.02, good: 0.012, fair: 0.008 },
+  { key: "bounce", label: "Bounce rate", higher: false, excellent: 0.005, good: 0.01, fair: 0.02 },
+  { key: "unsubscribe", label: "Unsubscribe rate", higher: false, excellent: 0.002, good: 0.003, fair: 0.005 },
+  { key: "spam", label: "Spam complaint rate", higher: false, excellent: 0.00005, good: 0.0001, fair: 0.0005 },
+];
+
+export function deliverabilityGrade(line: (typeof DELIVERABILITY_LINES)[number], rate: number): DeliverabilityGrade {
+  const at = (bar: number) => (line.higher ? rate >= bar : rate <= bar);
+  return at(line.excellent) ? "excellent" : at(line.good) ? "good" : at(line.fair) ? "fair" : "poor";
+}
+
+/**
+ * The deliverability score (0 to 100), built the way Klaviyo builds its own (which its API doesn't share): its five
+ * metrics over the last 30 days of email sends, each graded against Klaviyo's recommended line and worth 20 points
+ * (excellent 20, good 16, fair 8, poor 0). An account with an excellent open rate and bounce rate, a good click rate and
+ * unsubscribe rate and a fair spam rate scores 80, as Klaviyo shows. Null when nothing was sent.
+ */
+export function deliverabilityScore(s: { recipients: number; delivered: number; bounced: number; spam: number; unsubscribes: number; opens: number; clicks?: number | null }): { score: number; parts: { label: string; rate: number; points: number; of: number; grade: DeliverabilityGrade }[] } | null {
   if (!(s.recipients > 0) || !(s.delivered > 0)) return null;
-  const down = (rate: number, healthy: number, danger: number) => clamp01((danger - rate) / (danger - healthy));
-  const up = (rate: number, healthy: number, danger: number) => clamp01((rate - danger) / (healthy - danger));
-  const bounce = s.bounced / s.recipients;
-  const spam = s.spam / s.delivered;
-  const unsub = s.unsubscribes / s.delivered;
-  const open = s.opens / s.delivered;
-  const parts = [
-    { label: "Bounce rate", rate: bounce, points: 30 * down(bounce, 0.005, 0.03), of: 30 },
-    { label: "Spam complaints", rate: spam, points: 30 * down(spam, 0.0005, 0.003), of: 30 },
-    { label: "Unsubscribe rate", rate: unsub, points: 20 * down(unsub, 0.003, 0.015), of: 20 },
-    { label: "Open rate", rate: open, points: 20 * up(open, 0.35, 0.1), of: 20 },
-  ];
-  return { score: Math.round(parts.reduce((n, p) => n + p.points, 0)), parts };
+  const rates: Record<(typeof DELIVERABILITY_LINES)[number]["key"], number | null> = {
+    open: s.opens / s.delivered,
+    click: s.clicks == null ? null : s.clicks / s.delivered,
+    bounce: s.bounced / s.recipients,
+    unsubscribe: s.unsubscribes / s.delivered,
+    spam: s.spam / s.delivered,
+  };
+  const parts = DELIVERABILITY_LINES.filter((l) => rates[l.key] != null).map((l) => {
+    const rate = rates[l.key]!;
+    const grade = deliverabilityGrade(l, rate);
+    return { label: l.label, rate, points: GRADE_POINTS[grade], of: 20, grade };
+  });
+  const of = parts.reduce((n, p) => n + p.of, 0);
+  return { score: Math.round((parts.reduce((n, p) => n + p.points, 0) / of) * 100), parts };
 }

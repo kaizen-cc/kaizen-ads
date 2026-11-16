@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
-import { campaignPreview, connectKlaviyo, removeKlaviyo, syncKlaviyo, type CampaignPreview } from "@/lib/klaviyo/store";
+import { campaignPreview, connectKlaviyo, klaviyoMetricChoices, removeKlaviyo, setKlaviyoMetric, syncKlaviyo, type CampaignPreview } from "@/lib/klaviyo/store";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -66,4 +66,27 @@ export async function syncKlaviyoNow(clientId: string): Promise<Result> {
   revalidatePath(`/clients/${l.slug}`);
   revalidatePath("/settings");
   return r.ok ? { ok: true } : { ok: false, error: (r.error ?? "The sync failed.").slice(0, 240) };
+}
+
+
+/** The account's metrics, to pick the one that counts as the sale (anyone on the client can look) */
+export async function klaviyoMetrics(clientId: string) {
+  const l = await mine(clientId, false);
+  if ("error" in l) return { ok: false as const, error: l.error! };
+  return klaviyoMetricChoices(l.admin, clientId);
+}
+
+/**
+ * Count this metric as the sale (Toast's Placed Order, Eventbrite's Bought Ticket...): a lead or an exec, like the key.
+ * The 90 days are read again with it, after the answer.
+ */
+export async function chooseKlaviyoMetric(clientId: string, metricId: string, name: string): Promise<Result> {
+  const l = await mine(clientId, true);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const r = await setKlaviyoMetric(l.admin, clientId, { id: String(metricId).slice(0, 64), name: String(name) }, l.me.id);
+  if (!r.ok) return r;
+  const admin = l.admin;
+  after(() => syncKlaviyo(admin, clientId, { window: "full" }).then(() => undefined));
+  revalidatePath(`/clients/${l.slug}`);
+  return { ok: true };
 }

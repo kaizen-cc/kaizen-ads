@@ -38,12 +38,18 @@ describe("emailScore", () => {
 });
 
 describe("deliverabilityScore", () => {
+  it("matches Klaviyo's 80 for OceanBox (open and bounce excellent, click and unsubscribe good, spam fair)", () => {
+    // Klaviyo, last 30 days: open 60.4%, click 1.47%, bounce 0.16%, unsubscribe 0.29%, spam 0.02%
+    const s = deliverabilityScore({ recipients: 10_000, delivered: 9_984, bounced: 16, opens: 6_030, clicks: 147, unsubscribes: 29, spam: 2 })!;
+    expect(s.parts.map((p) => p.grade)).toEqual(["excellent", "good", "excellent", "good", "fair"]);
+    expect(s.score).toBe(80);
+  });
   it("is 100 for a clean list and null with nothing sent", () => {
-    expect(deliverabilityScore({ recipients: 1000, delivered: 998, bounced: 2, spam: 0, unsubscribes: 1, opens: 400 })?.score).toBe(100);
+    expect(deliverabilityScore({ recipients: 1000, delivered: 998, bounced: 2, spam: 0, unsubscribes: 1, opens: 500, clicks: 30 })?.score).toBe(100);
     expect(deliverabilityScore({ recipients: 0, delivered: 0, bounced: 0, spam: 0, unsubscribes: 0, opens: 0 })).toBeNull();
   });
   it("drops with bounces and spam complaints", () => {
-    const s = deliverabilityScore({ recipients: 1000, delivered: 970, bounced: 30, spam: 3, unsubscribes: 15, opens: 200 })!;
+    const s = deliverabilityScore({ recipients: 1000, delivered: 970, bounced: 30, spam: 3, unsubscribes: 15, opens: 200, clicks: 5 })!;
     expect(s.score).toBeLessThan(65);
   });
 });

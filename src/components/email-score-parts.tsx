@@ -39,7 +39,7 @@ export function WeighingDown({ score, limit = 3, currency = "USD" }: { score: Pi
         {list.map((c) => (
           <li key={c.key} className="flex items-baseline justify-between gap-3 text-[12.5px]">
             <span className="min-w-0 truncate text-fg">
-              {c.label} <span className="tabular text-faint">{checkText(c.unit, c.value, currency)} vs {checkText(c.unit, c.bar, currency)}</span>
+              {c.label} <span className="tabular text-faint">{checkText(c.unit, c.value, currency, c.bar)} vs {checkText(c.unit, c.bar, currency)}</span>
             </span>
             <span className="tabular shrink-0 text-bad">-{pointsLost(c)} pts</span>
           </li>
@@ -63,7 +63,7 @@ export function ScoreChecks({ score, currency = "USD" }: { score: Pick<EmailScor
             </span>
             <span className="min-w-0 truncate text-fg">{c.label}</span>
             <span className="tabular text-right">
-              <span className={tone}>{checkText(c.unit, c.value, currency)}</span>
+              <span className={tone}>{checkText(c.unit, c.value, currency, c.bar)}</span>
               <span className="text-faint"> / bar {checkText(c.unit, c.bar, currency)}</span>
             </span>
           </li>

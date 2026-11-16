@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptionKey, seal, unseal } from "@/lib/meta-token-core";
 import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
-import { audienceSize, campaignContent, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, metricDaily, placedOrderMetric, pulseMetrics } from "./api";
+import { audienceSize, campaignContent, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, metricDaily, placedOrderMetric, pulseMetrics, listMetrics } from "./api";
 import { BACKFILL_DAYS, cleanKey, dayIn, emailContextLine, emptyStats, keyLast4, keyProblem, klaviyoClientState, klaviyoCostMs, partialSyncWarning, pickKlaviyoWindow, rates, redactKey, rollupDays, sumSince, type CampaignInfo, type KlaviyoClientState, type KlaviyoPlainError, type KlaviyoWindow, type SeriesRow, type Stats } from "./core";
 import { audienceGrowth, emailHealth, keyFlowCoverage, pulseWindow, sanitizeEmailHtml, seriesChunks, sortCampaigns, type CampaignLite, type DailyRow, type DayValue, type FlowLite, type HealthFinding, type KeyFlow, type PulseWindow } from "./insights";
 import { tracker } from "@/lib/progress";
@@ -18,7 +18,7 @@ const shift = (day: string, n: number) => new Date(Date.parse(`${day}T12:00:00Z`
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const r4 = (x: number | null) => (x == null ? null : Math.round(x * 10000) / 10000);
 
-type ConnRow = { client_id: string; account_id: string; account_name: string | null; timezone: string | null; currency: string | null; key_iv: string; key_tag: string; key_ciphertext: string; key_last4: string | null; conversion_metric_id: string | null; status: string; last_synced_at: string | null; backfilled_at: string | null; last_error: string | null; connected_at: string; connected_by: string | null };
+type ConnRow = { client_id: string; account_id: string; account_name: string | null; timezone: string | null; currency: string | null; key_iv: string; key_tag: string; key_ciphertext: string; key_last4: string | null; conversion_metric_id: string | null; conversion_metric_manual?: boolean | null; status: string; last_synced_at: string | null; backfilled_at: string | null; last_error: string | null; connected_at: string; connected_by: string | null };
 
 /** Whether the Klaviyo tables exist (the migration applied) */
 export async function klaviyoReady(admin: SupabaseClient) {
@@ -91,7 +91,7 @@ export async function connectKlaviyo(admin: SupabaseClient, clientId: string, ra
 }
 
 async function clearNumbers(admin: SupabaseClient, clientId: string) {
-  await Promise.all(["klaviyo_campaigns", "klaviyo_flows", "klaviyo_audiences", "klaviyo_daily"].map((t) => admin.from(t).delete().eq("client_id", clientId)));
+  await Promise.all(["klaviyo_campaigns", "klaviyo_flows", "klaviyo_audiences", "klaviyo_daily", "klaviyo_flow_daily"].map((t) => admin.from(t).delete().eq("client_id", clientId)));
 }
 
 /** Remove: the key is deleted; the email history already read stays with the client (client knowledge is never deleted) */
@@ -102,16 +102,17 @@ export async function removeKlaviyo(admin: SupabaseClient, clientId: string) {
   return { ok: true as const };
 }
 
-export type KlaviyoConnectionView = { account: string | null; accountId: string; timezone: string | null; currency: string | null; last4: string | null; status: string; lastSyncedAt: string | null; backfilled: boolean; error: string | null; connectedAt: string; by: string | null };
+export type KlaviyoConnectionView = { account: string | null; accountId: string; conversionMetric?: string | null; timezone: string | null; currency: string | null; last4: string | null; status: string; lastSyncedAt: string | null; backfilled: boolean; error: string | null; connectedAt: string; by: string | null };
 
 /** The client's connection as Team & setup shows it: null when not connected; undefined when Klaviyo isn't set up */
 export async function klaviyoConnection(admin: SupabaseClient, clientId: string): Promise<KlaviyoConnectionView | null | undefined> {
-  const { data, error } = await admin.from("klaviyo_connections").select("account_id, account_name, timezone, currency, key_last4, status, last_synced_at, backfilled_at, last_error, connected_at, profiles:connected_by(full_name)").eq("client_id", clientId).maybeSingle();
+  const { data, error } = await admin.from("klaviyo_connections").select("account_id, account_name, timezone, currency, key_last4, status, last_synced_at, backfilled_at, last_error, connected_at, conversion_metric_name, profiles:connected_by(full_name)").eq("client_id", clientId).maybeSingle();
   if (error) return undefined;
   if (!data) return null;
   return {
     account: (data.account_name as string | null) ?? null,
     accountId: data.account_id as string,
+    conversionMetric: (data.conversion_metric_name as string | null) ?? null,
     timezone: (data.timezone as string | null) ?? null,
     currency: (data.currency as string | null) ?? null,
     last4: (data.key_last4 as string | null) ?? null,
@@ -173,6 +174,9 @@ const NO_ORDERS = "No Placed Order metric in this account yet, so revenue can't 
 /** Each client's last read, for Sync health (sync_state "klaviyo:<client id>"): when, which window, the last full read, the error */
 type SyncMemo = { window?: KlaviyoWindow; fullAt?: string | null; error?: string | null; account?: string | null; seriesError?: string | null; storeError?: string | null };
 const memoSource = (clientId: string) => `klaviyo:${clientId}`;
+
+/** Klaviyo refusing to report on the conversion metric (some integrations' orders can't be): not a key problem */
+const unsupportedMetric = (e: unknown) => /does not support querying for values/i.test(e instanceof Error ? e.message : String(e));
 
 /**
  * A full read's progress, for the Email board's card while the first 90 days come in: how far along (0 to 100) and the
@@ -247,6 +251,25 @@ function withStore(row: Record<string, unknown>, store: Map<string, DayValue> | 
 
 const byDate = (xs: DayValue[]) => new Map(xs.map((d) => [d.date, d]));
 
+/**
+ * Each flow's numbers per day (klaviyo_flow_daily), so a report reads a flow for its own week or month instead of
+ * Klaviyo's last 30 days. Days from `from` on, for the flows that sent or earned in them; quiet days inside are kept at
+ * zero so a later read that revises a day down replaces it. Skipped quietly until its migration is applied.
+ */
+async function saveFlowDays(admin: SupabaseClient, clientId: string, series: SeriesRow[], from: string, now: string) {
+  const rows = series
+    .filter((f) => f.days.some((d) => d.date >= from && (d.stats.recipients || d.stats.revenue)))
+    .flatMap((f) =>
+      f.days
+        .filter((d) => d.date >= from)
+        .map((d) => ({ client_id: clientId, flow_id: f.id, date: d.date, recipients: d.stats.recipients, delivered: d.stats.delivered, opens_unique: d.stats.opensUnique, clicks_unique: d.stats.clicksUnique, conversions: d.stats.conversions, revenue: Math.round(d.stats.revenue * 100) / 100, updated_at: now })),
+    );
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await admin.from("klaviyo_flow_daily").upsert(rows.slice(i, i + 500), { onConflict: "client_id,flow_id,date" });
+    if (error) return;
+  }
+}
+
 type ReadOut = { metricId: string | null; campaigns: number; flows: number; audiences: number; days: number; seriesError: string | null; storeError: string | null };
 
 /**
@@ -271,8 +294,10 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
     if (isAuth(e)) throw e;
     return null;
   });
-  if (metrics?.placedOrder && metrics.placedOrder !== conn.conversion_metric_id) await admin.from("klaviyo_connections").update({ conversion_metric_id: metrics.placedOrder }).eq("client_id", clientId);
-  const metricId = metrics?.placedOrder ?? (await metricOf(admin, conn, key));
+  // The metric that counts as the sale: one picked on the Klaviyo card holds; otherwise Placed Order, found by itself
+  const picked = conn.conversion_metric_manual && conn.conversion_metric_id ? conn.conversion_metric_id : null;
+  if (!picked && metrics?.placedOrder && metrics.placedOrder !== conn.conversion_metric_id) await admin.from("klaviyo_connections").update({ conversion_metric_id: metrics.placedOrder, conversion_metric_name: "Placed Order" }).eq("client_id", clientId);
+  const metricId = picked ?? metrics?.placedOrder ?? (await metricOf(admin, conn, key));
   await step(12, "Reading the campaigns");
   const email = await listCampaigns(key, "email", sinceIso);
   const sms = await listCampaigns(key, "sms", sinceIso).catch(() => []);
@@ -288,13 +313,23 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
 
   // The numbers (Placed Order is the conversion): skipped, not failed, when the account has no Placed Order metric
   await step(36, "Reading each campaign's results");
-  const values = metricId ? await campaignValues(key, metricId, { key: "last_90_days" }) : [];
+  // A metric Klaviyo won't report on (some integrations' orders): campaigns and flows still come in, without revenue
+  let reportable = Boolean(metricId);
+  let metricNote: string | null = null;
+  const values = metricId
+    ? await campaignValues(key, metricId, { key: "last_90_days" }).catch((e) => {
+        if (!unsupportedMetric(e)) throw e;
+        reportable = false;
+        metricNote = redactKey(errText(e), key).slice(0, 240);
+        return [];
+      })
+    : [];
   await step(50, "Reading the flows' results, day by day");
   let series: SeriesRow[] = [];
   let seriesOk = false;
   let seriesError: string | null = null;
   let flowStats: Map<string, { d30: Stats; d90: Stats }> = new Map();
-  if (metricId) {
+  if (metricId && reportable) {
     try {
       series = await flowSeries(key, metricId, seriesChunks(from, today, { maxDays: 45, endIso: nowIso }));
       seriesOk = true;
@@ -347,6 +382,7 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   await save(admin, "klaviyo_flows", flowRows, "client_id,flow_id");
   await save(admin, "klaviyo_audiences", audienceRows, "client_id,audience_id");
   // Without a daily flow series the days would miss flows: only the store's day (and list movement) is written then
+  if (seriesOk) await saveFlowDays(admin, clientId, series, from, now);
   if (seriesOk) await save(admin, "klaviyo_daily", days.map((d) => withStore(dayRow(clientId, d, now), store, subs, unsubs)), "client_id,date");
   else if (store || subs || unsubs) {
     const dates: string[] = [];
@@ -359,7 +395,7 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   // Flows, lists and segments deleted in Klaviyo go here too
   if (flows.length) await admin.from("klaviyo_flows").delete().eq("client_id", clientId).lt("updated_at", now);
   if (lists.length && segmentsOk) await admin.from("klaviyo_audiences").delete().eq("client_id", clientId).lt("updated_at", now);
-  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: audienceRows.length, days: seriesOk ? days.length : 0, seriesError, storeError };
+  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: audienceRows.length, days: seriesOk ? days.length : 0, seriesError: seriesError ?? metricNote, storeError };
 }
 
 /**
@@ -389,17 +425,24 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
   let seriesOk = false;
   let seriesError: string | null = null;
   let flow30 = new Map<string, Stats>();
+  let metricNote: string | null = null;
   if (metricId) {
-    if (recent.length) values = await orNamed(() => campaignValues(key, metricId, { start: utc(shift(today, -8)), end: nowIso }), () => campaignValues(key, metricId, { key: "last_7_days" }));
     try {
-      // 31 days: inside Klaviyo's 60-day limit for a daily series
-      series = await orNamed(() => flowSeries(key, metricId, { start: utc(shift(today, -31)), end: nowIso }), () => flowSeries(key, metricId, { key: "last_30_days" }));
-      seriesOk = true;
-      flow30 = new Map(series.map((s) => [s.id, sumSince(s, from30)]));
+      if (recent.length) values = await orNamed(() => campaignValues(key, metricId, { start: utc(shift(today, -8)), end: nowIso }), () => campaignValues(key, metricId, { key: "last_7_days" }));
+      try {
+        // 31 days: inside Klaviyo's 60-day limit for a daily series
+        series = await orNamed(() => flowSeries(key, metricId, { start: utc(shift(today, -31)), end: nowIso }), () => flowSeries(key, metricId, { key: "last_30_days" }));
+        seriesOk = true;
+        flow30 = new Map(series.map((s) => [s.id, sumSince(s, from30)]));
+      } catch (e) {
+        if (isAuth(e)) throw e;
+        seriesError = redactKey(errText(e), key).slice(0, 240);
+        flow30 = new Map((await flowValues(key, metricId, { key: "last_30_days" })).map((f) => [f.id, f.stats]));
+      }
     } catch (e) {
-      if (isAuth(e)) throw e;
-      seriesError = redactKey(errText(e), key).slice(0, 240);
-      flow30 = new Map((await flowValues(key, metricId, { key: "last_30_days" })).map((f) => [f.id, f.stats]));
+      // A metric Klaviyo won't report on: campaigns and flows still come in, without revenue
+      if (!unsupportedMetric(e)) throw e;
+      metricNote = redactKey(errText(e), key).slice(0, 240);
     }
   }
   let storeError: string | null = null;
@@ -428,9 +471,11 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
 
   await save(admin, "klaviyo_campaigns", campaignRows, "client_id,campaign_id");
   await save(admin, "klaviyo_flows", flowRows, "client_id,flow_id");
+  // The first day of the 31 can be cut short by the account's time zone: the flows' days are kept from 30 days back
+  if (seriesOk) await saveFlowDays(admin, clientId, series, from30, now);
   if (days.length) await save(admin, "klaviyo_daily", days.map((d) => withStore(dayRow(clientId, d, now), store, null, null)), "client_id,date");
   else if (store) await save(admin, "klaviyo_daily", [yesterday, today].map((date) => withStore({ client_id: clientId, date, updated_at: now }, store, null, null)), "client_id,date");
-  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: 0, days: days.length, seriesError, storeError };
+  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: 0, days: days.length, seriesError: seriesError ?? metricNote, storeError };
 }
 
 /**
@@ -720,3 +765,32 @@ export async function campaignPreview(admin: SupabaseClient, clientId: string, c
   }
 }
 
+
+
+/**
+ * The account's metrics, to pick the one that counts as the sale (Klaviyo's own Conversion metric: Placed Order from
+ * Toast, Bought Ticket from Eventbrite...), with the one in use now. Several can share a name, so each carries its
+ * integration.
+ */
+export async function klaviyoMetricChoices(admin: SupabaseClient, clientId: string): Promise<{ ok: true; current: string | null; manual: boolean; metrics: { id: string; name: string; integration: string | null }[] } | { ok: false; error: string }> {
+  const { data: row } = await admin.from("klaviyo_connections").select("*").eq("client_id", clientId).maybeSingle();
+  if (!row) return { ok: false, error: "Klaviyo isn't connected for this client." };
+  const conn = row as ConnRow;
+  const key = keyOf(conn);
+  if (!key) return { ok: false, error: "The saved key can't be read. Replace the key." };
+  try {
+    return { ok: true, current: conn.conversion_metric_id, manual: Boolean(conn.conversion_metric_manual), metrics: await listMetrics(key) };
+  } catch (e) {
+    return { ok: false, error: redactKey(errText(e), key).slice(0, 240) };
+  }
+}
+
+/** Use this metric as the sale for the account (kept over the automatic Placed Order pick), then read 90 days again */
+export async function setKlaviyoMetric(admin: SupabaseClient, clientId: string, metric: { id: string; name: string }, by: string) {
+  const now = new Date().toISOString();
+  const { error } = await admin
+    .from("klaviyo_connections")
+    .update({ conversion_metric_id: metric.id, conversion_metric_name: metric.name.slice(0, 120), conversion_metric_manual: true, conversion_metric_set_by: by, conversion_metric_set_at: now, status: "active", last_error: null, updated_at: now })
+    .eq("client_id", clientId);
+  return error ? { ok: false as const, error: error.message } : { ok: true as const };
+}

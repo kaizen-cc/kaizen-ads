@@ -128,7 +128,7 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
       db.from("klaviyo_campaigns").select("client_id, campaign_id, channel, send_time, recipients, delivered, opens_unique, clicks_unique").in("client_id", ids).gte("send_time", `${sinceCamp}T00:00:00Z`).order("client_id").order("campaign_id").range(a, b),
     ),
     // The connection holds an encrypted key and is never readable from a session: only its state is read, with the server's rights
-    admin ? admin.from("klaviyo_connections").select("client_id, account_name, currency, status, last_synced_at, last_error").in("client_id", ids).then((r) => r.data ?? []) : Promise.resolve([] as Record<string, unknown>[]),
+    admin ? admin.from("klaviyo_connections").select("client_id, account_name, currency, status, last_synced_at, last_error, conversion_metric_name").in("client_id", ids).then((r) => r.data ?? []) : Promise.resolve([] as Record<string, unknown>[]),
     admin ? admin.from("sync_state").select("source, last_result").in("source", ids.map((i) => `klaviyo:${i}`)).then((r) => r.data ?? []) : Promise.resolve([] as Record<string, unknown>[]),
     // The account score (the main email KPI), read through the same session as the rest
     loadEmailScores(db, ids).catch(() => new Map<string, EmailScoreResult>()),
@@ -186,6 +186,7 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
       warning: partial && st.state !== "missing" ? partial.message : null,
       lastSyncedAt: (conn?.last_synced_at as string | null) ?? null,
       account: (conn?.account_name as string | null) ?? null,
+      conversionMetric: (conn?.conversion_metric_name as string | null) ?? null,
       currency: (conn?.currency as string | null) ?? null,
       status,
       ratio: j.ratio,

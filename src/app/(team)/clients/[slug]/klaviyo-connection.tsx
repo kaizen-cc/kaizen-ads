@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { KlaviyoMetricPicker } from "@/components/klaviyo-metric-picker";
 import { useState, useTransition } from "react";
 import type { KlaviyoConnectionView } from "@/lib/klaviyo/store";
 import { KLAVIYO_SCOPE_NAMES, plainKlaviyoError } from "@/lib/klaviyo/core";
@@ -63,6 +64,7 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
                 : "Connected. The first read (90 days back) runs in the next few minutes."}
             </p>
           )}
+          <KlaviyoMetricPicker clientId={clientId} current={conn.conversionMetric ?? null} canPick={canEdit} />
           <div className="flex flex-wrap gap-x-4 gap-y-1 pt-0.5">
             <button
               type="button"

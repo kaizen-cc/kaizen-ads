@@ -1,5 +1,5 @@
 import "server-only";
-import { addStats, KLAVIYO_BASE,KLAVIYO_REVISION, REPORT_STATS, SERIES_STATS, errorText, nextLink, parseAccount, parseAudiences, parseCampaigns, parseFlows, parseSeriesReport, parseValuesReport, metricIds, parseCampaignMessages, placedOrderId, redactKey, reportWait, retryDecision, type AudienceInfo, type CampaignInfo, type FlowInfo, type KlaviyoAccount, type SeriesRow, type ValuesRow } from "./core";
+import { addStats, KLAVIYO_BASE,KLAVIYO_REVISION, REPORT_STATS, SERIES_STATS, errorText, nextLink, parseAccount, parseAudiences, parseCampaigns, parseFlows, parseSeriesReport, parseValuesReport, metricIds, metricList, parseCampaignMessages, placedOrderId, redactKey, reportWait, retryDecision, type AudienceInfo, type CampaignInfo, type FlowInfo, type KlaviyoAccount, type KlaviyoMetric, type SeriesRow, type ValuesRow } from "./core";
 import { aggregateBody, parseMetricAggregate, type DayValue } from "./insights";
 
 // Klaviyo's REST API, read only: GET calls and the Reporting API's POST queries (which read, never change anything).
@@ -152,7 +152,7 @@ function mergeSeries(a: SeriesRow, b: SeriesRow): SeriesRow {
 }
 
 /** The account's metrics the pulse reads, by name: Placed Order (Shopify's first), and list joins and leaves */
-export async function pulseMetrics(key: string): Promise<{ placedOrder: string | null; subscribed: string | null; unsubscribed: string | null }> {
+async function allMetrics(key: string): Promise<unknown[]> {
   const all: unknown[] = [];
   let next: string | null = "/api/metrics/";
   for (let i = 0; next && i < 10; i++) {
@@ -161,7 +161,16 @@ export async function pulseMetrics(key: string): Promise<{ placedOrder: string |
     if (Array.isArray(d)) all.push(...d);
     next = nextLink(json);
   }
-  return metricIds({ data: all });
+  return all;
+}
+
+export async function pulseMetrics(key: string): Promise<{ placedOrder: string | null; subscribed: string | null; unsubscribed: string | null }> {
+  return metricIds({ data: await allMetrics(key) });
+}
+
+/** Every metric on the account, for picking the one that counts as the sale */
+export async function listMetrics(key: string): Promise<KlaviyoMetric[]> {
+  return metricList({ data: await allMetrics(key) });
 }
 
 /** One metric's daily totals (sum of value and count) in [from, to], calendar days in the account's time zone */

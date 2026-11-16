@@ -45,6 +45,8 @@ export type ChannelRow = {
   warning: string | null;
   lastSyncedAt: string | null;
   account: string | null;
+  /** Email: the Klaviyo metric that counts as the sale (Placed Order, Bought Ticket...), when it was named */
+  conversionMetric?: string | null;
   currency: string | null;
   target: number | null;
   targetNote: string | null;

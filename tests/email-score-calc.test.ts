@@ -54,3 +54,14 @@ describe("aggregateEmailScore", () => {
     expect(s.deliverability?.score).toBeGreaterThan(65);
   });
 });
+
+import { checkText as ct } from "@/lib/email-score-calc";
+
+describe("checkText near the bar", () => {
+  it("never shows a miss as the bar itself", () => {
+    expect(ct("pct", 0.3496, "USD", 0.35)).toBe("34.96%");
+    expect(ct("pct", 0.62, "USD", 0.3)).toBe("62%");
+    expect(ct("pct", 0.0002)).toBe("0.02%");
+    expect(ct("pct", 0.0147, "USD", 0.01)).toBe("1.5%");
+  });
+});
