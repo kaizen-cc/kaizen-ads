@@ -119,7 +119,7 @@ export function plainError(e: unknown): string {
   if (e instanceof AtlassianMcpError) {
     if (e.kind === "config") return NOT_CONFIGURED;
     if (e.kind === "auth") return AUTH;
-    if (e.kind === "no_loom") return NO_LOOM;
+    if (e.kind === "no_loom") return `${NO_LOOM} Tools it offered: ${e.message}`.slice(0, 900);
     if (e.kind === "http" && e.status && e.status >= 500) return `Atlassian's MCP server is having trouble (HTTP ${e.status}). It will try again on the next run.`;
     return `Atlassian's MCP server didn't answer as expected: ${e.message}`.slice(0, 400);
   }
@@ -139,7 +139,8 @@ async function open(known: { cloudId: string | null }): Promise<Session> {
   const content = findTool(tools, "getLoomObjectsContent", /loom.*(object|video).*content|get.*loom.*content/i);
   if (!list) {
     await mcp.close();
-    throw new AtlassianMcpError("no_loom", "No Loom tools.");
+    // What Atlassian did offer (tool names only, nothing secret), so Settings shows whether Loom is there under another name
+    throw new AtlassianMcpError("no_loom", tools.map((t) => t.name).sort().join(", ").slice(0, 600) || "none");
   }
   // A helper tool that takes no arguments we know: asked, and nothing when it fails
   const ask = async (t: McpTool | null) => {
