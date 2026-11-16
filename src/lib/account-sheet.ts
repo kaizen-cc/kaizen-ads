@@ -91,7 +91,8 @@ export async function syncAccountSheet(admin: SupabaseClient) {
   try {
     const tok = await token();
     t.on("Reading the Meta, Google and TikTok tabs");
-    const tiktokTab = (await tabTitles(tok).catch(() => [] as string[])).find((x) => /tik\s*tok/i.test(x)) ?? null;
+    const titles = await tabTitles(tok).catch(() => [] as string[]);
+    const tiktokTab = titles.find((x) => /tik\s*tok/i.test(x)) ?? null;
     const [meta, google, tiktok] = await Promise.all([
       readTab(tok, "Meta"),
       readTab(tok, "Google").catch(() => [] as string[][]),
@@ -222,6 +223,12 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       const { writeHandoff } = await import("@/lib/handoff");
       for (const id of handoffs) await writeHandoff(admin, id);
     }
+    // The Email and Organic Social tabs: who's on each client for those lines (Strategist, Designer, Builder; Strategist,
+    // Graphic Designer, Video Editor), onto their seats the same way the buyers are
+    t.on("Reading the Email and Organic Social tabs");
+    const { syncChannelTabs } = await import("@/lib/account-sheet-channels");
+    const channels = await syncChannelTabs(admin, tok, titles).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+    Object.assign(out, { channels });
     // Each client's Client ID (the number we assign at enrollment, asked for on the intake form), where we don't have it:
     // the row's client by its ad account, else its name. An ID already on another client, or a different one on this
     // client, is reported, never overwritten.
