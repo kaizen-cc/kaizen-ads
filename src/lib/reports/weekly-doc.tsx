@@ -548,7 +548,9 @@ function Bars({ part, rows, look }: { part: WeeklyPart; rows: ScoreRow[]; look: 
 function TopAds({ part, rows, images, look }: { part: WeeklyPart; rows: ScoreRow[]; images: (string | null)[]; look: Look }) {
   if (part.platform === "google") return null;
   const top = rows.slice(0, 3);
-  if (!top.some((r) => r.img != null && images[r.img])) return null;
+  // Always there when ads ran: a picture Meta won't give (an expired link, a video with no thumbnail) leaves a quiet card
+  // with the ad's format instead of taking the whole section off the report
+  if (!top.length) return null;
   const m = { ...part.metrics, conversion: platformConversion(part.metrics) };
   const cost = costLabel(m);
   return (
@@ -564,7 +566,7 @@ function TopAds({ part, rows, images, look }: { part: WeeklyPart; rows: ScoreRow
             <View key={r.id} style={s.adCard}>
               <View>
                 {/* eslint-disable-next-line jsx-a11y/alt-text -- a PDF image, no alt prop */}
-                {src ? <Image src={src} style={s.adPic} /> : <View style={s.adPicBlank}><Text style={{ fontSize: 7, color: FAINT }}>No preview</Text></View>}
+                {src ? <Image src={src} style={s.adPic} /> : <View style={s.adPicBlank}><Text style={{ fontSize: 8, fontFamily: "Helvetica-Bold", color: MUTED, textTransform: "uppercase", letterSpacing: 0.6 }}>{(r.detail ?? "").split(" · ")[0] || "Ad"}</Text><Text style={{ fontSize: 6.5, color: FAINT, marginTop: 3 }}>Preview not available</Text></View>}
                 <View style={{ position: "absolute", top: 7, left: 7, backgroundColor: i === 0 ? look.primary : INK, borderRadius: 4, paddingVertical: 2.5, paddingHorizontal: 5 }}>
                   <Text style={{ fontSize: 6.5, fontFamily: "Helvetica-Bold", color: "#ffffff" }}>#{i + 1}</Text>
                 </View>
