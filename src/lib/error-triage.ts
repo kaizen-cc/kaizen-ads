@@ -15,6 +15,13 @@ const NETWORK =
 const STALE =
   /chunkloaderror|loading chunk [\w-]+ failed|loading css chunk|failed to fetch dynamically imported module|importing a module script failed|failed to find server action|server action .* was not found|older or newer deployment/i;
 
+/**
+ * Next.js's own control signals, not errors: redirect() and notFound() are thrown on purpose (a server action whose
+ * session check sends someone to /login rejects with NEXT_REDIRECT in the browser), and Next.js handles them.
+ */
+export const isNavigationSignal = (message: string | undefined | null, digest?: unknown) =>
+  /^NEXT_(REDIRECT|NOT_FOUND|HTTP_ERROR_FALLBACK)\b/.test(typeof digest === "string" ? digest : String(message ?? "").trim());
+
 export const isNetworkError = (message: string | undefined | null) => NETWORK.test(String(message ?? "").trim());
 
 export function classifyError(message: string, stack?: string | null): AutoHandled | null {
