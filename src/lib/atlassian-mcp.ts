@@ -342,8 +342,15 @@ export function nextPageCursor(data: unknown[]): string | null {
       if (c && more !== false) return c;
     }
   }
+  // Offset paging wrapped a level or more down (executeRead's envelope around { items, hasNextPage, nextOffset })
+  let offset: string | null = null;
+  for (const d of data)
+    walkObjects(d, (o) => {
+      if (offset === null && o.hasNextPage !== false && (typeof o.nextOffset === "number" || (typeof o.nextOffset === "string" && o.nextOffset !== ""))) offset = String(o.nextOffset);
+    });
+  if (offset !== null) return offset;
   for (const d of data) if (typeof d === "string") {
-    const m = d.match(/(?:next[ _-]?cursor|nextPageToken)["'\s:=]+([A-Za-z0-9+/=_-]{6,})/i);
+    const m = d.match(/(?:next[ _-]?offset)["'\s:=]+(\d+)/i) ?? d.match(/(?:next[ _-]?cursor|nextPageToken)["'\s:=]+([A-Za-z0-9+/=_-]{6,})/i);
     if (m) return m[1];
   }
   return null;
