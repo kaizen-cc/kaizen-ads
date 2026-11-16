@@ -39,3 +39,11 @@ describe("names", () => {
     expect(isBlankName("Mel")).toBe(false);
   });
 });
+
+import { matchKey } from "@/lib/account-sheet-channels-core";
+describe("matching", () => {
+  it("ignores accents and broken formulas", () => {
+    expect(matchKey("Café Diario")).toBe(matchKey("Cafe Diario"));
+    expect(isBlankName("#REF!")).toBe(true);
+  });
+});

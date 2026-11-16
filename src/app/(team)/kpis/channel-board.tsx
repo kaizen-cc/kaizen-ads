@@ -135,12 +135,13 @@ export function ChannelBoard({ line, rows: given, month, switcher, initialWho, l
             </span>
           </p>
         </div>
-        {/* The same switch and Add KPI as the ads board, so moving between tabs only changes the board under it */}
+        {/* The same switch and Add KPI as the ads board, so moving between tabs only changes the board under it; each tab is
+            prefetched as soon as the board shows, so switching opens a page that is already loaded */}
         {switcher && (
           <div className="flex w-full items-center gap-2 md:w-auto">
             <nav aria-label="KPI board" className="flex flex-1 rounded-full border border-line bg-surface p-1 md:inline-flex md:flex-none">
               {switcher.map((s) => (
-                <Link key={s.id} href={s.href} aria-current={s.active ? "page" : undefined} className={`inline-flex h-10 flex-1 items-center justify-center gap-1 rounded-full px-3 text-sm transition-colors md:h-8 md:flex-none md:px-4 ${s.active ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+                <Link key={s.id} href={s.href} prefetch aria-current={s.active ? "page" : undefined} className={`inline-flex h-10 flex-1 items-center justify-center gap-1 rounded-full px-3 text-sm transition-colors md:h-8 md:flex-none md:px-4 ${s.active ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
                   {s.label}
                   {s.count != null && <span className="tabular opacity-60">{s.count}</span>}
                 </Link>

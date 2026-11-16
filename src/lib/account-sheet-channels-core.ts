@@ -1,3 +1,11 @@
+/** A name for matching: accents off ("Café" is "Cafe"), letters and digits only */
+export const matchKey = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
 // Reading the Email and Organic Social tabs of the Account Overview sheet (pure, so it's tested): the header row, the
 // rows under it, and which columns name which seat.
 
@@ -13,7 +21,7 @@ export function sheetRows(values: string[][]): Record<string, string>[] {
 }
 
 /** A cell that names nobody */
-export const isBlankName = (s: string) => !s.trim() || /^(n\/?a|#n\/a|tbd|none|-+|—)$/i.test(s.trim());
+export const isBlankName = (s: string) => !s.trim() || /^(n\/?a|#n\/a|tbd|none|-+|—)$/i.test(s.trim()) || /^#[A-Z/0-9!?]+$/.test(s.trim());
 
 /** "Ana / Luis", "Ana & Luis", "Ana, Luis" as people */
 export const splitNames = (s: string) =>

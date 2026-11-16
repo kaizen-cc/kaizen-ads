@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readTab } from "@/lib/account-sheet";
 import { setPrimarySeat } from "@/lib/buyer-seats";
-import { channelSeatsOf, isBlankName, sheetRows, splitNames, type ChannelTab } from "@/lib/account-sheet-channels-core";
+import { channelSeatsOf, isBlankName, matchKey, sheetRows, splitNames, type ChannelTab } from "@/lib/account-sheet-channels-core";
 
 // The Email and Organic Social tabs of the Account Overview sheet: who's on each client for that line. The sheet is
 // where the teams keep it, so it's the source of truth, the same way the Meta and Google tabs set the media buyers: the
@@ -39,7 +39,7 @@ export async function syncChannelTabs(admin: SupabaseClient, tok: string, titles
     const all = people ?? [];
     return all.find((p) => p.full_name.toLowerCase() === n) ?? all.find((p) => p.full_name.toLowerCase().split(" ")[0] === n.split(" ")[0]) ?? null;
   };
-  const nm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const nm = matchKey;
   const clientNamed = (name: string) => {
     const n = nm(name);
     if (n.length < 3) return null;

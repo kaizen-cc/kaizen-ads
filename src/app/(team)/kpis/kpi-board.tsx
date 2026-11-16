@@ -2052,7 +2052,7 @@ export function KpiBoard({
             ))}
             {channels &&
               (["email", "social"] as const).map((c) => (
-                <Link key={c} href={`/kpis?p=${c}`} className="inline-flex h-10 flex-1 items-center justify-center gap-1 rounded-full px-3 text-sm text-muted transition-colors hover:text-fg md:h-8 md:flex-none md:px-4">
+                <Link key={c} href={`/kpis?p=${c}`} prefetch className="inline-flex h-10 flex-1 items-center justify-center gap-1 rounded-full px-3 text-sm text-muted transition-colors hover:text-fg md:h-8 md:flex-none md:px-4">
                   {c === "email" ? "Email" : "Social"}
                   {channelCounts && <span className="tabular opacity-60">{channelCounts[c]}</span>}
                 </Link>
