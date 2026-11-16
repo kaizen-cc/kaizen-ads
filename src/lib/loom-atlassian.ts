@@ -148,8 +148,10 @@ async function viaExecute(mcp: AtlassianMcp, tools: McpTool[], operation: string
   for (const d of data)
     walkObjects(d, (o) => {
       if (schema || o.name !== operation) return;
-      const s = (o.inputSchema ?? o.input_schema ?? o.inputs ?? o.input ?? o.parameters ?? o.schema) as Record<string, unknown> | undefined;
-      if (s && typeof s === "object") schema = ("properties" in s ? s : { type: "object", properties: s }) as McpTool["inputSchema"];
+      const s = (o.inputSchema ?? o.input_schema ?? o.inputs ?? o.input ?? o.parameters ?? o.schema) as Record<string, unknown> | Record<string, unknown>[] | undefined;
+      // discover lists inputs as [{ name, type, required, description }]
+      if (Array.isArray(s)) schema = { type: "object", properties: Object.fromEntries(s.filter((x) => typeof x?.name === "string").map((x) => [x.name as string, Object.fromEntries(Object.entries(x).filter(([k]) => k !== "name" && k !== "required"))])) } as McpTool["inputSchema"];
+      else if (s && typeof s === "object") schema = ("properties" in s ? s : { type: "object", properties: s }) as McpTool["inputSchema"];
     });
   // The text form: the operation named, its inputs as JSON somewhere in the text
   if (!schema) {
@@ -162,7 +164,7 @@ async function viaExecute(mcp: AtlassianMcp, tools: McpTool[], operation: string
   return { name: operation, inputSchema: schema };
 }
 
-type Session = { mcp: AtlassianMcp; tools: McpTool[]; list: McpTool; content: McpTool | null; cloudId: string | null; account: string | null };
+type Session = { mcp: AtlassianMcp; tools: McpTool[]; list: McpTool; content: McpTool | null; cloudId: string | null; account: string | null; v2List?: boolean };
 
 async function open(known: { cloudId: string | null }): Promise<Session> {
   if (!atlassianConfigured()) throw new AtlassianMcpError("config", "Not configured.");
@@ -205,7 +207,7 @@ async function open(known: { cloudId: string | null }): Promise<Session> {
   }
   const who = userLabelIn(await ask(findTool(tools, "atlassianUserInfo", /user.?info|current.?user/i)));
   const label = who ?? (atlassianAuthMode() === "service" ? "a service account" : (process.env.ATLASSIAN_EMAIL ?? null));
-  return { mcp, tools, list, content, cloudId: cloudId ?? null, account: [label, site].filter(Boolean).join(" · ") || null };
+  return { mcp, tools, list, content, cloudId: cloudId ?? null, account: [label, site].filter(Boolean).join(" · ") || null, v2List: !tools.some((t) => t.name === list.name) };
 }
 
 // ─── Pulling new videos ─────────────────────────────────────────────────────
@@ -244,7 +246,11 @@ export async function syncLoomFromAtlassian(admin: Admin, opts: { from?: string 
     let done = false;
     const seenCursors = new Set<string>();
     while (!done && Date.now() < until && pages < 200) {
-      const args = argsFor(session.list, { cloudId: session.cloudId, createdAfter: since, cursor: walk.page, limit: PAGE, videos: true, wideScope: true });
+      // MCP v2's listLoomObjects (run through executeRead): its inputs are known, so they're written out; everything the
+      // account can see in the workspace (scope ALL), newest by creation date, offset paging
+      const args = session.v2List
+        ? { cloudId: session.cloudId, scope: "ALL", ...(since ? { createdAtRange: { from: since } } : {}), limit: PAGE, ...(walk.page ? { offset: Number(walk.page) } : {}) }
+        : argsFor(session.list, { cloudId: session.cloudId, createdAfter: since, cursor: walk.page, limit: PAGE, videos: true, wideScope: true });
       const data = toolData(await session.mcp.callTool(session.list.name, args));
       pages++;
       const videos = loomVideosIn(data);

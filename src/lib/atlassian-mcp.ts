@@ -329,6 +329,8 @@ export function nextPageCursor(data: unknown[]): string | null {
   for (const d of data) {
     if (!d || typeof d !== "object") continue;
     const o = d as Record<string, unknown>;
+    // Offset paging (Loom's listLoomObjects on MCP v2: { items, hasNextPage, nextOffset })
+    if (o.hasNextPage !== false && (typeof o.nextOffset === "number" || typeof o.nextOffset === "string") && String(o.nextOffset) !== "") return String(o.nextOffset);
     for (const k of ["nextCursor", "next_cursor", "nextPageToken", "next_page_token", "cursor", "next"]) {
       const v = str(o[k]);
       if (v && !/^https?:/i.test(v)) return v;
