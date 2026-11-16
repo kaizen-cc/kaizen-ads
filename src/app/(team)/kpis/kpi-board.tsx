@@ -28,6 +28,7 @@ import { kpiCreative, type KpiCreative } from "./creative-actions";
 import { AdsThisWeek } from "./ads-table";
 import { QuickActions } from "./quick-actions";
 import { PlanStep } from "./plan-step";
+import { ConnectAccount, needsConnect, type FreeAccounts } from "./connect-account";
 import { Layer } from "../clients/[slug]/layer";
 import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
 import { SUCCESS, TARGET_FROM, successLine, type BenchmarkTarget, type Success, type TargetFrom } from "@/lib/kpi/success";
@@ -40,6 +41,8 @@ export type KpiRow = {
   clientId: string;
   /** What this person may do on this client from the card's chat (src/lib/chat-permissions.ts) */
   perms: ClientPerms;
+  /** May this person connect the card's ad account here (Meta and TikTok: execs; Google: execs, leads and its buyer) */
+  canConnect?: boolean;
   client: string;
   /** The Client ID we assign at enrollment */
   kaizenId: number | null;
@@ -599,7 +602,7 @@ type Tab = "overview" | "numbers" | "actions" | "policy" | "creative" | "notes" 
 
 const TABS: Tab[] = ["overview", "numbers", "actions", "policy", "creative", "notes", "settings"];
 
-function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers: Person[]; tab: Tab; setTab: (t: Tab) => void; onClose: () => void; onStep: (dir: 1 | -1) => void }) {
+function Detail({ r, free, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; free: FreeAccounts; buyers: Person[]; tab: Tab; setTab: (t: Tab) => void; onClose: () => void; onStep: (dir: 1 | -1) => void }) {
   const router = useRouter();
   // A sheet over the board: Escape closes it, the arrows step through the accounts, the page behind stays put
   useEffect(() => {
@@ -756,13 +759,18 @@ function Detail({ r, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; buyers
           </div>
           <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 px-4 pb-4 sm:px-6">
             {r.status === "setup" ? (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <StatusPill status="setup" />
                 <span className="text-xs text-faint">{r.error ?? "Waiting for data"}</span>
                 {r.target == null && (
                   <button type="button" onClick={() => setTab("settings")} className="inline-flex h-11 items-center rounded-full border border-dashed border-faint/60 px-4 text-xs text-muted hover:text-fg md:h-7 md:px-3">
                     No KPI set · Set the KPI
                   </button>
+                )}
+                {needsConnect(r) && (
+                  <div className="mt-3 w-full basis-full">
+                    <ConnectAccount r={{ ...r, canConnect: Boolean(r.canConnect) }} free={free} />
+                  </div>
                 )}
               </div>
             ) : r.status === "unset" ? (
@@ -1421,7 +1429,37 @@ function CreativeTab({ r }: { r: KpiRow }) {
   );
 }
 
-function Card({ r, active, onOpen, onMove, onSetKpi }: { r: KpiRow; active: boolean; onOpen: () => void; onMove: (index: number) => void; onSetKpi: () => void }) {
+function Card({ r, active, onOpen, onMove, onSetKpi, free }: { r: KpiRow; active: boolean; onOpen: () => void; onMove: (index: number) => void; onSetKpi: () => void; free: FreeAccounts }) {
+  // No ad account, or one the platform won't show us: the card is where it gets connected (not one big button, so the form can live inside)
+  if (needsConnect(r)) {
+    const color = healthHex(healthOf(r.status));
+    return (
+      <li id={`kpi-${r.id}`} className="scroll-mt-24">
+        <div
+          className={`relative isolate grid h-full content-start gap-3 overflow-hidden rounded-[20px] border bg-surface p-4 ${active ? "border-fg/40" : "border-line"}`}
+          style={{ backgroundImage: `radial-gradient(120% 90% at 0% 0%, ${color}26, transparent 55%)` }}
+        >
+          <span aria-hidden className="absolute inset-x-0 top-0 h-[3px]" style={{ background: color }} />
+          <button type="button" onClick={onOpen} aria-haspopup="dialog" className="grid min-h-11 min-w-0 gap-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg/40">
+            <span className="truncate font-heading text-[16px] leading-snug">
+              {r.client}
+              {r.label && <span className="text-muted"> · {r.label}</span>}
+            </span>
+            <span className="truncate text-xs text-faint">
+              {r.kaizenId != null && <span className="tabular">ID {r.kaizenId} · </span>}
+              {r.conversionLabel}
+              {buyersLine(r)}
+            </span>
+            <span className="flex items-center gap-2">
+              <StatusPill status="setup" />
+              <span className="ml-auto text-[11px] text-faint">Open →</span>
+            </span>
+          </button>
+          <ConnectAccount r={{ ...r, canConnect: Boolean(r.canConnect) }} free={free} />
+        </div>
+      </li>
+    );
+  }
   const d14 = r.windows.d14;
   const gap = gapText(r);
   const color = healthHex(healthOf(r.status));
@@ -1876,6 +1914,7 @@ export function KpiBoard({
   initialOwner,
   lastSync,
   unlinked = [],
+  tiktokFree = [],
   disregarded = [],
   googleConnected = false,
   tiktokOn = false,
@@ -1890,6 +1929,8 @@ export function KpiBoard({
   initialOwner: string;
   lastSync: string | null;
   unlinked?: { id: string; name: string; bm?: { id: string; name: string } }[];
+  /** TikTok ad accounts the connection reaches that no client has yet (execs), for connecting from a card */
+  tiktokFree?: { id: string; name: string }[];
   /** Unlinked ad accounts an exec disregarded (past clients'): listed apart, each can be brought back */
   disregarded?: { id: string; name: string }[];
   /** Google Ads is set up (it reads through the manager account); its KPIs fill in on the next sync */
@@ -2133,13 +2174,14 @@ export function KpiBoard({
               onOpen={() => setOpen(r.id)}
               onMove={(i) => go({ open: r.id, tab: "actions", move: String(i), target: null, client: null, platform: null })}
               onSetKpi={() => go({ open: r.id, tab: "settings", move: null, target: null, client: null, platform: null })}
+              free={{ meta: unlinked, tiktok: tiktokFree }}
             />
           ))}
         </ul>
       ) : (
         <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">Nothing here.</p>
       )}
-      {openRow && <Detail key={openRow.id} r={openRow} buyers={buyers} tab={tab} setTab={setTab} onClose={close} onStep={step} />}
+      {openRow && <Detail key={openRow.id} r={openRow} free={{ meta: unlinked, tiktok: tiktokFree }} buyers={buyers} tab={tab} setTab={setTab} onClose={close} onStep={step} />}
 
       {unset > 0 && status === "all" && (
         <p className="text-center text-xs text-faint">

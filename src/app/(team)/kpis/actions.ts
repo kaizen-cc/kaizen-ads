@@ -9,6 +9,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { notLive } from "@/lib/live-guard";
 import { asKpiPlatform, defaultConversion } from "@/lib/kpi/platform";
+import { parseGoogleCustomerId, parseMetaAccountId } from "@/lib/kpi/connect";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -96,13 +97,15 @@ export async function pullClientKpis(clientId: string): Promise<ActionResult> {
   return { ok: true };
 }
 
-/** Execs: link an ad account Meta shares with us to a client (the database only lets execs edit clients). */
-export async function linkAdAccount(accountId: string, form: FormData): Promise<ActionResult> {
-  const me = await requireStaff();
-  if (!me.isExec) return { ok: false, error: "Only an exec can link ad accounts." };
-  const clientId = str(form, "client_id");
-  if (!clientId) return { ok: false, error: "Pick a client." };
+/**
+ * Links a Meta ad account to a client: the same writes whether it comes from the Unlinked card or a client's own card
+ * (clients.meta_ad_account_id and the KPI row, which the client page and Sync health read), then the first pull.
+ */
+async function linkMetaAccount(me: { id: string }, accountId: string, clientId: string): Promise<ActionResult> {
   const supabase = await createClient();
+  // One account, one client: a typed ID may already belong to someone
+  const { data: taken } = await supabase.from("clients").select("name").eq("meta_ad_account_id", accountId).neq("id", clientId).limit(1);
+  if (taken?.length) return { ok: false, error: `That ad account is already linked to ${taken[0].name}.` };
   // Seen only through a partner's Business Manager (ZenChange and the like): the client runs through it, unless one is picked
   let bm: string | null = null;
   if (adminConfigured()) {
@@ -127,6 +130,47 @@ export async function linkAdAccount(accountId: string, form: FormData): Promise<
     await refreshClientKpis(admin, clientId, true).catch(() => null);
   }
   revalidatePath("/kpis");
+  revalidatePath("/clients");
+  return { ok: true };
+}
+
+/** Execs: link an ad account Meta shares with us to a client (the database only lets execs edit clients). */
+export async function linkAdAccount(accountId: string, form: FormData): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!me.isExec) return { ok: false, error: "Only an exec can link ad accounts." };
+  const clientId = str(form, "client_id");
+  if (!clientId) return { ok: false, error: "Pick a client." };
+  return linkMetaAccount(me, accountId, clientId);
+}
+
+/** A client's own Meta card: the ad account picked from the shared list or typed (act_123), the same exec-only rule. */
+export async function connectMetaAccount(clientId: string, form: FormData): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!me.isExec) return { ok: false, error: "Only an exec can link ad accounts. Ask one, or use the client page." };
+  const account = parseMetaAccountId(str(form, "picked") ?? str(form, "typed"));
+  if (!account) return { ok: false, error: "Pick an ad account, or type its ID (act_ and the numbers)." };
+  return linkMetaAccount(me, account, clientId);
+}
+
+/**
+ * A client's Google card: the customer ID (123-456-7890 or digits) goes on the card's KPI row, where the client page and
+ * Sync health read it, then Google is pulled for the client. Execs, leads and the client's buyer (the database decides).
+ */
+export async function connectGoogleAccount(targetId: string, form: FormData): Promise<ActionResult> {
+  const me = await requireStaff();
+  const id = parseGoogleCustomerId(str(form, "customer_id"));
+  if (!id) return { ok: false, error: "A Google Ads customer ID has 10 digits (123-456-7890)." };
+  const supabase = await createClient();
+  const { data: t } = await supabase.from("kpi_targets").select("client_id").eq("id", targetId).eq("platform", "google").maybeSingle();
+  if (!t) return { ok: false, error: "You don't work on this client." };
+  const { data: taken } = await supabase.from("kpi_targets").select("id").eq("platform", "google").eq("ad_account_id", id).eq("client_id", t.client_id).neq("id", targetId).eq("active", true).limit(1);
+  if (taken?.length) return { ok: false, error: "This client already has a card for that account." };
+  const { data: saved, error } = await supabase.from("kpi_targets").update({ ad_account_id: id, updated_by: me.id, updated_at: new Date().toISOString() }).eq("id", targetId).select("id");
+  if (error) return { ok: false, error: error.message };
+  if (!saved?.length) return { ok: false, error: "Only an exec, a lead or the client's Google buyer can connect this." };
+  if (adminConfigured()) await refreshClientKpis(createAdminClient(), t.client_id as string, true).catch(() => null);
+  revalidatePath("/kpis");
+  revalidatePath("/clients");
   return { ok: true };
 }
 

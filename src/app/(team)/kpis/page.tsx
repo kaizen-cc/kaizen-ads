@@ -104,6 +104,8 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
         id: t.id,
         clientId: t.client_id,
         perms: clientPerms(me, seatsOf(t.client_id as string)),
+        // Meta and TikTok link through exec-only tables; Google's ID sits on the KPI row, so execs, leads and its buyer can set it
+        canConnect: t.platform === "google" ? me.isExec || me.isLead || seatsOf(t.client_id as string).includes("google") : me.isExec,
         client: c?.name ?? "Unknown",
         kaizenId: c?.kaizen_id ?? null,
         slug: c?.slug ?? "",
@@ -168,6 +170,10 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   const unlinked = allUnlinked.filter((a) => !ignored.has(a.id)).slice(0, 50);
   const disregarded = allUnlinked.filter((a) => ignored.has(a.id)).map((a) => ({ id: a.id, name: a.name }));
 
+  // TikTok advertisers the grant reaches that no client has yet (execs link them, as in Settings > Sync health)
+  const { data: freeAdvs } = me.isExec && tiktokOn && adminConfigured() ? await createAdminClient().from("tiktok_advertisers").select("advertiser_id, name").is("client_id", null).order("name") : { data: null };
+  const tiktokFree = (freeAdvs ?? []).map((a) => ({ id: a.advertiser_id as string, name: (a.name as string | null) ?? (a.advertiser_id as string) }));
+
   const lastSync = (snaps ?? []).map((s) => s.computed_at as string).sort().at(-1) ?? null;
   // A buyer opens on their own accounts: the ones they own and the ones they're a secondary buyer on
   const mine = rows.some((r) => r.ownerId === me.id || r.coBuyers?.some((b) => b.id === me.id));
@@ -191,6 +197,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       focus={focus ? { id: focus.id, platform: focus.platform } : null}
       lastSync={lastSync}
       unlinked={unlinked}
+      tiktokFree={tiktokFree}
       disregarded={disregarded}
       googleConnected={googleAdsConfigured()}
       tiktokOn={tiktokOn}
