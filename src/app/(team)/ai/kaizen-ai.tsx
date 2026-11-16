@@ -6,7 +6,7 @@ import { captureFrames, extractAudio } from "@/lib/uploads/video-prep";
 import { pushParams, replaceParams, closeParams, useParam } from "@/lib/url-state";
 import { QUICK_ACTIONS, type QuickAction } from "@/lib/kaizen-ai/agents";
 import { AGENT_LABEL, CHAT_AGENTS, kindOf, type AiModel, type Attachment, type AttachmentKind, type Card, type ChatAgent, type ChatEvent, type ChatMessage, type Thread, type ToolRun } from "@/lib/kaizen-ai/types";
-import type { TeamRole } from "@/lib/roles";
+import { lineOfTeam, type TeamRole } from "@/lib/roles";
 import { deleteImportedThread, deleteTemplate, listTemplates, listThreads, loadThread, saveTemplate, shareThread, teammates, updateThread, uploadSlots, usedTemplate, type Template, skipClaudeImport } from "./actions";
 import { ClaudeImportSheet, useClaudeImport, type ImportJob } from "./claude-import";
 import { CardView, ChatMarkdown, CopyButton, ToolChips } from "./cards";
@@ -468,7 +468,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
             ) : !thread && !messages.length && !live && lastMine && !fresh ? (
               <PickUp title={lastMine.title} client={lastMine.clients?.name ?? null} at={lastMine.last_message_at} now={now} onPickUp={() => pushParams({ t: lastMine.id })} onFresh={() => setFresh(true)} />
             ) : !thread && !messages.length && !live ? (
-              <Empty first={me.first} on={on} groups={groups} quickIds={quickIds} templates={templates} client={client} homeAgent={homeAgent.label} onUse={applyPrompt} onImport={() => pushParams({ import: "1" })} />
+              <Empty first={me.first} line={lineOfTeam(me.role)} on={on} groups={groups} quickIds={quickIds} templates={templates} client={client} homeAgent={homeAgent.label} onUse={applyPrompt} onImport={() => pushParams({ import: "1" })} />
             ) : null}
             {thread?.source ? <ImportedBanner thread={thread} earlier={extra.earlier} notes={extra.notes} mine={!readOnly} onDelete={() => void removeImported(thread.id)} /> : null}
             {loading && !messages.length ? <p className="py-10 text-center text-[13px] text-faint">Opening the thread…</p> : null}
@@ -1161,7 +1161,7 @@ function LiveBlock({ live, report, at, reported, onRetry }: { live: Live; report
 
 // ─── The empty state: quick actions for the person's role ───────────────────
 
-function Empty({ first, on, groups, quickIds, templates, client, homeAgent, onUse, onImport }: { first: string; on: boolean; groups: QuickAction["group"][]; quickIds: string[]; templates: Template[]; client: ClientOpt | null; homeAgent: string; onUse: (p: string, id?: string) => void; onImport: () => void }) {
+function Empty({ first, line, on, groups, quickIds, templates, client, homeAgent, onUse, onImport }: { first: string; line: "email" | "social" | null; on: boolean; groups: QuickAction["group"][]; quickIds: string[]; templates: Template[]; client: ClientOpt | null; homeAgent: string; onUse: (p: string, id?: string) => void; onImport: () => void }) {
   // Only what this person may do (a Google change, copy, a review): the rest isn't offered
   const actions = groups.flatMap((g) => QUICK_ACTIONS.filter((a) => a.group === g && quickIds.includes(a.id)));
   const name = (s: string) => s.replace(/\{client\}/g, client?.name ?? "a client");
@@ -1177,7 +1177,11 @@ function Empty({ first, on, groups, quickIds, templates, client, homeAgent, onUs
           {first ? `, ${first}` : ""}
         </h1>
         <p className="max-w-[520px] text-[14.5px] text-muted">
-          Ask anything about your clients, accounts and creative. It reads the client&rsquo;s context, pulls live numbers, writes copy and briefs, and plans changes for you to confirm. Answering as your {homeAgent} unless the ask is about something else.
+          {line === "email"
+            ? "Ask anything about your email clients. It reads the Brand Bible and what the team knows, pulls their Klaviyo numbers (campaigns, flows, list growth, subject lines) and searches calls and conversations."
+            : line === "social"
+              ? "Ask anything about your social clients. It reads the Brand Bible and what the team knows, pulls their Facebook and Instagram numbers (followers, reach, engagement, top posts) and searches calls and conversations."
+              : `Ask anything about your clients, accounts and creative. It reads the client’s context, pulls live numbers, writes copy and briefs, and plans changes for you to confirm. Answering as your ${homeAgent} unless the ask is about something else.`}
         </p>
         {!on ? <p className="rounded-full bg-warn-soft/60 px-3 py-1 text-[12.5px] text-fg">AI isn&rsquo;t connected yet.</p> : null}
       </div>

@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { SLOTS, canHold, type SlotRole } from "@/lib/roles";
+import { mayAssignSeat } from "@/lib/seat-permissions";
+import { servicesOf } from "@/lib/services";
 import { isBuyerRole, setPrimarySeat } from "@/lib/buyer-seats";
 import { after } from "next/server";
 import { handOff, writeHandoff } from "@/lib/handoff";
@@ -17,11 +19,15 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
  */
 export async function setAssignment(clientId: string, slot: SlotRole, profileId: string | null): Promise<ActionResult> {
   const me = await requireStaff();
-  if (!isExecOrLead(me)) return { ok: false, error: "Only executives and leaders can assign people." };
   const def = SLOTS.find((s) => s.value === slot);
   if (!def) return { ok: false, error: "Unknown slot." };
 
   const supabase = await createClient();
+  if (!isExecOrLead(me)) {
+    // A channel head: only their own seats, on a client that buys the service (read through their own session)
+    const { data: c } = await supabase.from("clients").select("services, services_extra, services_removed").eq("id", clientId).maybeSingle();
+    if (!c || !mayAssignSeat(me, slot, servicesOf(c))) return { ok: false, error: "You can assign your own team's seats on clients with that service. Ask an executive or leader for any other." };
+  }
   // Whoever is picked must be allowed the seat (the social creative seat needs "also works on organic social", and so on)
   if (profileId) {
     const { data: who } = await supabase.from("profiles").select("role, also_buys, also_social, also_designs_email, is_active").eq("id", profileId).maybeSingle();

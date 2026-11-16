@@ -39,6 +39,8 @@ export type ClientCard = {
   services: ServiceSlug[];
   live: { meta: Freshness["tone"] | null; slack: Freshness["tone"] | null; drive: Freshness["tone"] | null };
   assigned: Record<SlotRole, Option | null>;
+  /** The seats the signed-in person may assign on this client (empty for most people) */
+  editableSeats?: SlotRole[];
 };
 
 const DOT = { ok: "bg-ok shadow-[0_0_0_3px_var(--ok-soft)]", warn: "bg-warn", off: "bg-faint/50" } as const;
@@ -128,7 +130,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
       <div key={slot} className="grid grid-cols-[96px_minmax(0,1fr)] items-center gap-2 max-md:py-0.5">
         <dt className={`text-xs ${empty ? "text-warn" : "text-faint"}`}>{s.label}</dt>
         <dd className="min-w-0">
-          <AssignSelect clientId={c.id} slot={slot} label={s.label} current={c.assigned[slot]} options={slotOptions[slot]} canEdit={canEdit} />
+          <AssignSelect clientId={c.id} slot={slot} label={s.label} current={c.assigned[slot]} options={slotOptions[slot]} canEdit={canEdit || Boolean(c.editableSeats?.includes(slot))} />
         </dd>
       </div>
     );

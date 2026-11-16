@@ -184,7 +184,7 @@ export type ClientViewProps = {
   liveWrites?: LiveWritesData | null;
   creativeDb?: CreativeDb | null;
   /** buyerTools: the media-buying tabs (Google policy and ideas to apply); the creative team doesn't get them */
-  can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean; buyerTools?: boolean };
+  can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean; seats?: string[]; buyerTools?: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
   /** The email or organic social team's line of work: the page then leaves out everything paid ads (their panels, KPIs, creative, launches, audits) */
   line?: "email" | "social" | null;
@@ -714,7 +714,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         <>
                           <div className="flex min-w-0 items-center gap-2">
                             <div className="min-w-0 flex-1">
-                              <AssignSelect clientId={client.id} slot={slot.value} label={slot.label} current={seat?.current ?? null} options={seat?.options ?? []} canEdit={can.assign} size="md" />
+                              <AssignSelect clientId={client.id} slot={slot.value} label={slot.label} current={seat?.current ?? null} options={seat?.options ?? []} canEdit={can.assign || Boolean(can.seats?.includes(slot.value))} size="md" />
                             </div>
                             {buyerSeat && more.length > 0 && seat?.current && <span className="shrink-0 pr-1 text-xs text-faint">Primary</span>}
                           </div>

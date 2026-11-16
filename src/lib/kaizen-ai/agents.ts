@@ -49,7 +49,7 @@ export const agentLabel = (k: string | null | undefined) => (isChatAgent(k) ? AG
 // ─── Quick actions ──────────────────────────────────────────────────────────
 
 /** needs: what the action does that only some roles may (src/lib/chat-permissions.ts); without it, anyone can ask */
-export type QuickAction = { id: string; title: string; prompt: string; group: "buyer" | "google" | "creative" | "copy" | "everyone"; needsClient?: boolean; needs?: "copy" | "google_change" | "video" | "review" };
+export type QuickAction = { id: string; title: string; prompt: string; group: "buyer" | "google" | "creative" | "copy" | "email" | "social" | "everyone"; needsClient?: boolean; needs?: "copy" | "google_change" | "video" | "review" };
 
 /** Built-in quick actions; {client} is filled with the pinned client's name (or asked for) */
 export const QUICK_ACTIONS: QuickAction[] = [
@@ -63,6 +63,17 @@ export const QUICK_ACTIONS: QuickAction[] = [
   { id: "vo-script", group: "creative", title: "VO script for ElevenLabs", needs: "video", prompt: "Write a voiceover script for {client} ready to paste into ElevenLabs: natural spoken lines, pauses marked with <break time=\"0.5s\" />, emphasis written into the words, about 30 seconds, plus the voice direction (tone, pace, age, accent).\n\nWhat it's for: " },
   { id: "ai-prompts", group: "creative", title: "AI image and video prompts", prompt: "Write AI generation prompts for {client}: three image prompts and three short video prompts (subject, setting, camera, light, style, aspect 4:5 or 9:16), plus an AI avatar script if it fits, all on brand.\n\nThe idea: " },
   { id: "copy-from-brief", group: "copy", title: "Write copy from a brief", needs: "copy", prompt: "Write the Meta ad copy for {client} from this brief, in their tone: three angles, each with primary text, a headline (40 characters max) and a description, plus the call to action.\n\nBrief: " },
+  // The email and organic social teams: their own line's questions (they never see ad numbers)
+  { id: "email-month", group: "email", title: "How did {client}'s email do?", needsClient: true, prompt: "How did {client}'s email do over the last 30 days compared with the 30 before? Campaign and flow revenue, open and click rates, list growth, and what to do next, most important first." },
+  { id: "email-subjects", group: "email", title: "Best and worst subject lines", needsClient: true, prompt: "Which subject lines and offers worked best and worst for {client} in the last 90 days, and what should we test next?" },
+  { id: "email-flows", group: "email", title: "Are the key flows covered?", needsClient: true, prompt: "Are the welcome, abandoned cart or checkout, browse, post-purchase and winback flows live for {client}? Which gaps cost the most, and how are the live ones performing?" },
+  { id: "email-list", group: "email", title: "Is the list healthy?", needsClient: true, prompt: "How is {client}'s list growing, and are the unsubscribe and spam rates healthy? Flag anything to fix." },
+  { id: "email-plan", group: "email", title: "Plan next month's campaigns", needsClient: true, prompt: "Using {client}'s Brand Bible and what has worked in the numbers, outline next month's email campaigns with a subject line idea and the offer for each." },
+  { id: "social-month", group: "social", title: "How is {client}'s social doing?", needsClient: true, prompt: "How did {client}'s organic social do over the last 30 days? Followers, reach, engagement rate and how it compares with the 30 before, and what to do next." },
+  { id: "social-top", group: "social", title: "Top and weakest posts", needsClient: true, prompt: "Which posts performed best and worst for {client} in the last 90 days, and what do the best ones have in common?" },
+  { id: "social-formats", group: "social", title: "Which formats work?", needsClient: true, prompt: "Which post formats (reels, carousels, images) get {client} the best reach and engagement? What should we post more of?" },
+  { id: "social-rhythm", group: "social", title: "Is the posting rhythm right?", needsClient: true, prompt: "How often is {client} posting, how long was the longest gap, and what cadence would you recommend?" },
+  { id: "social-plan", group: "social", title: "Plan next week's posts", needsClient: true, prompt: "Using {client}'s Brand Bible and what has worked, outline next week's organic posts with an angle and a format for each." },
   { id: "rewrite", group: "everyone", title: "Rewrite or clean up my message", prompt: "Clean this up: fix the grammar, make it clear and friendly, keep my meaning and roughly my length. Give me just the rewritten version.\n\n" },
 ];
 
@@ -94,6 +105,14 @@ export function groupsFor(role: TeamRole): QuickAction["group"][] {
       return ["creative", "everyone"];
     case "copywriter":
       return ["copy", "creative", "everyone"];
+    case "head_of_email":
+    case "email_strategist":
+    case "email_designer":
+    case "email_builder":
+      return ["email", "everyone"];
+    case "head_of_social":
+    case "social_media_manager":
+      return ["social", "everyone"];
     default:
       return ["buyer", "creative", "copy", "everyone"];
   }

@@ -4,14 +4,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { MODEL_IDS, aiBusy, askJson, aiEnabled, anthropicClient, cachedBlock, getAgent, knowledgeFor, usageFor, withAgent } from "@/lib/ai";
 import { LIKENESS_RULE, noAiContentRule } from "@/lib/ai-content";
-import { isChannelOnly, roleLabel } from "@/lib/roles";
+import { isChannelOnly, lineOfTeam, roleLabel } from "@/lib/roles";
 import { buyingPlatform, permsPrompt, roleWidePerms } from "@/lib/chat-permissions";
 import { permsOn } from "@/lib/chat-permissions-server";
 import { agentLabel, isChatAgent, pickAgent } from "./agents";
 import { attachmentBlocks } from "./files";
 import { projectContext, threadProjectId, visibleProject } from "./projects-server";
 import { connectorTurn } from "./connectors";
-import { channelBrief, chatTools, clientBrief } from "./tools";
+import { channelBrief, channelMaySeeClient, chatTools, clientBrief } from "./tools";
 import { AGENT_LABEL, type AiModel, type Attachment, type Card, type ChatAgent, type ChatEvent, type ToolRun } from "./types";
 
 // One turn of Kaizen AI: the person's message (with files) goes to the agent it's about, with the agent's core, skills
@@ -249,6 +249,8 @@ export async function runTurn(input: TurnInput): Promise<void> {
   if (thread.client_id) {
     const { data } = await db.from("clients").select("id, name, slug").eq("id", thread.client_id).maybeSingle();
     client = (data as C | null) ?? null;
+    // The email and social teams read with the server's rights below, so their access is checked here too
+    if (client && !(await channelMaySeeClient({ me, admin }, client.id))) client = null;
     if (client) emit({ t: "client", id: client.id, name: client.name, slug: client.slug, confirmed: thread.client_confirmed });
   }
   if (Object.keys(patch).length) await admin.from("ai_threads").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", thread.id);
@@ -331,7 +333,10 @@ export async function runTurn(input: TurnInput): Promise<void> {
   const aiRuleLine = aiRule && !aiRule.allowed && aiRule.rule ? `<ai_content_rule>\n${noAiContentRule(aiRule.rule)}\n</ai_content_rule>` : "";
   for (const [id, files] of convo.updated) await admin.from("ai_messages").update({ attachments: files }).eq("id", id);
   const today = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/New_York" });
-  const system: Anthropic.TextBlockParam[] = [cachedBlock(withAgent(`${SYSTEM}\n\nYou're answering as Kaizen's ${agentLabel(agent)}: use that role's judgement, skills and playbook below.`, cfg))];
+  // The email and social teams work one channel: say so, and that ad numbers aren't theirs
+  const line = lineOfTeam(me.role);
+  const lineNote = line ? `\n\nThe person you're talking to is on Kaizen's ${line === "email" ? "email" : "organic social"} team. Stay on ${line === "email" ? "email (Klaviyo)" : "organic social (Facebook and Instagram)"}: use the ${line === "email" ? "email_marketing" : "organic_social"} tool for numbers and the Brand Bible for voice and strategy. You have no paid ad data for them; if asked about ads, say that belongs to the ads team and point them there.` : "";
+  const system: Anthropic.TextBlockParam[] = [cachedBlock(withAgent(`${SYSTEM}${lineNote}\n\nYou're answering as Kaizen's ${agentLabel(agent)}: use that role's judgement, skills and playbook below.`, cfg))];
   // The copy context rides in the client's cached block (the cache takes four marks)
   if (brief) system.push(cachedBlock(`<client name="${client!.name.replace(/"/g, "'")}" note="this thread is pinned to them${thread.client_confirmed ? "" : " (detected from the message; not yet confirmed)"}; newest first">\n${brief}\n</client>${copyCtx ? `\n\n${copyCtx}\nWrite any copy for this client from the copy_context above: model new lines on the proven ones (new words, same hooks and structure), never reuse a tired line as it is, never break a rule or anything to avoid, keep to the platform's limits, then show it with write_ad_copy.` : ""}`));
   // The project's instructions and knowledge, and for imported threads the person's private notes and the summary of

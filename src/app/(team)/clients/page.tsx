@@ -2,6 +2,7 @@ import { hasEveryClient, isExecOrLead, requireStaff } from "@/lib/auth";
 import { freshness, nyToday } from "@/lib/dates";
 import { SLOTS, canHold, isChannelOnly, lineOfTeam, seatNeeded, type SlotRole } from "@/lib/roles";
 import { primaryOf } from "@/lib/buyer-seats";
+import { mayAssignSeat } from "@/lib/seat-permissions";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { Option } from "./assign-select";
@@ -133,6 +134,8 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
         drive: tone(r.drive_folder_id, syncedAt.get(`drive:${r.drive_folder_id}`)),
       },
       assigned: Object.fromEntries(SLOTS.map((s) => [s.value, current(r, s.value)])) as Record<SlotRole, Option | null>,
+      // The seats this person may fill on this client (a channel head: their own team's)
+      editableSeats: SLOTS.filter((s) => mayAssignSeat(me, s.value, servicesFor(r))).map((s) => s.value),
     } satisfies ClientCard;
   });
 

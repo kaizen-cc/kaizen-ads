@@ -8,6 +8,9 @@ import { extensionTools } from "./extensions";
 import { clampFormats, formatList, formatsFor, formatsRule } from "@/lib/creative-formats";
 import { can, roleWidePerms, type Who } from "@/lib/chat-permissions";
 import { isChannelOnly, lineOfTeam } from "@/lib/roles";
+import { channelMaySee } from "./channel-access";
+import { servicesOf } from "@/lib/services";
+import { subjectPatterns, weeklyListChange } from "./email-insights";
 import type { Attachment, BriefCard, Card, CopyCard, CopyField, MetricsCard, MetricsRow } from "./types";
 
 // What Kaizen AI can look up and do. Every tool runs on the server with the person's own permissions: a client is only
@@ -41,6 +44,21 @@ const CLIENT = { type: "string", description: "The client's name (or slug). Leav
 type ClientRow = { id: string; name: string; slug: string };
 const names = new Map<string, string>();
 
+/**
+ * The email and social teams only: whether this person may see the client, checked again here because the tools below
+ * read with the server's rights. The head of a line sees the clients with their service, everyone else the clients they
+ * hold a seat on (the same rule as private.can_see_client). Anyone else is not limited here (their own session decides).
+ */
+export async function channelMaySeeClient(ctx: Pick<ToolCtx, "me" | "admin">, clientId: string): Promise<boolean> {
+  if (!isChannelOnly(ctx.me.role)) return true;
+  const [{ data: c }, { data: seats }] = await Promise.all([
+    ctx.admin.from("clients").select("archived_at, services, services_extra, services_removed").eq("id", clientId).maybeSingle(),
+    ctx.admin.from("client_assignments").select("profile_id").eq("client_id", clientId),
+  ]);
+  if (!c) return false;
+  return channelMaySee({ id: ctx.me.id, role: ctx.me.role }, { archived: Boolean(c.archived_at), services: servicesOf(c), seatHolders: (seats ?? []).map((a) => String(a.profile_id)) });
+}
+
 /** The client the tool is about, if the person can see it (their own session decides) */
 async function clientOf(ctx: ToolCtx, input: Record<string, unknown>): Promise<ClientRow> {
   const asked = String(input.client ?? "").trim();
@@ -51,13 +69,14 @@ async function clientOf(ctx: ToolCtx, input: Record<string, unknown>): Promise<C
     const exact = (data ?? []).find((c) => c.name.toLowerCase() === asked.toLowerCase() || c.slug === asked.toLowerCase());
     const hit = exact ?? (data ?? [])[0];
     if (!hit) throw new Error(`No client called "${asked}" that you can see. Use list_clients to find the right name.`);
+    if (!(await channelMaySeeClient(ctx, hit.id))) throw new Error(`No client called "${asked}" that you can see. Use list_clients to find the right name.`);
     names.set(hit.id, hit.name);
     return hit as ClientRow;
   }
   if (!ctx.clientId) throw new Error("Which client? Name the client (or pin one to the thread).");
   q = q.eq("id", ctx.clientId);
   const { data } = await q.maybeSingle();
-  if (!data) throw new Error("You can't see this client.");
+  if (!data || !(await channelMaySeeClient(ctx, data.id))) throw new Error("You can't see this client.");
   names.set(data.id, data.name);
   return data as ClientRow;
 }
@@ -258,7 +277,7 @@ const csvCell = (v: unknown) => {
 // ─── The tools ───────────────────────────────────────────────────────────────
 
 /** The tools the email and organic social teams get (the email one only for the email team) */
-const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "email_marketing", "search_client", "recent_calls", "read_call"]);
+const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "email_marketing", "organic_social", "search_client", "recent_calls", "read_call"]);
 
 export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   const card = (c: Card) => {
@@ -437,7 +456,16 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       name: "email_marketing",
       description:
         "A client's email and SMS from Klaviyo (read only, synced daily): the last 30 days' attributed revenue against the 30 before, open and click rates, recent campaigns (subject line, audience, recipients, open and click rate, revenue), flows by revenue (30 and 90 days) and list sizes, plus the health pulse: share of the store's revenue (Klaviyo's Placed Order), revenue per recipient, cadence, unsubscribe and spam rates, list growth, the key flows' coverage (welcome, abandoned checkout or cart, browse, post-purchase, winback), red/amber/green health findings with what to do, and the best and weakest campaigns. Use it for email performance, what subject lines and offers their list answers, and how much of the business email carries. Nothing can be sent, edited or scheduled in Klaviyo from here.",
-      input_schema: { type: "object", properties: { client: CLIENT, campaigns: { type: "integer", minimum: 1, maximum: 40, description: "How many recent campaigns (default 10)" } }, additionalProperties: false },
+      input_schema: {
+        type: "object",
+        properties: {
+          client: CLIENT,
+          campaigns: { type: "integer", minimum: 1, maximum: 40, description: "How many recent campaigns (default 10)" },
+          since: { type: "string", description: "YYYY-MM-DD: only campaigns sent on or after this day (default: the most recent)" },
+          channel: { type: "string", enum: ["email", "sms"], description: "Only email or only SMS campaigns (default both)" },
+        },
+        additionalProperties: false,
+      },
       status: (input, client) => `Reading Klaviyo for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
@@ -447,7 +475,9 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
         const best = topAndBottom(k);
         const pct = (x: number | null) => (x == null ? null : Math.round(x * 1000) / 10);
         const n = Math.min(40, Math.max(1, Number(input.campaigns) || 10));
-        const campaigns = k.campaigns.slice(0, n).map((x) => ({ sent: x.sendTime?.slice(0, 10) ?? null, channel: x.channel, name: x.name, subject: x.subject, preview: x.previewText, audiences: x.audiences, recipients: x.recipients, open_rate_pct: pct(x.openRate), click_rate_pct: pct(x.clickRate), orders: x.conversions, revenue: r2(x.revenue), unsubscribes: x.unsubscribes, spam_complaints: x.spamComplaints }));
+        const since = DAY.test(String(input.since ?? "")) ? String(input.since) : null;
+        const chosen = k.campaigns.filter((x) => (!since || (x.sendTime ?? "") >= since) && (!input.channel || x.channel === input.channel));
+        const campaigns = chosen.slice(0, n).map((x) => ({ sent: x.sendTime?.slice(0, 10) ?? null, channel: x.channel, name: x.name, subject: x.subject, preview: x.previewText, audiences: x.audiences, recipients: x.recipients, open_rate_pct: pct(x.openRate), click_rate_pct: pct(x.clickRate), orders: x.conversions, revenue: r2(x.revenue), unsubscribes: x.unsubscribes, spam_complaints: x.spamComplaints }));
         const flows = k.flows.slice(0, 15).map((f) => ({ name: f.name, status: f.status, trigger: f.trigger, revenue_30d: r2(f.revenue30), revenue_90d: r2(f.revenue90), recipients_30d: f.recipients30, open_rate_30d_pct: pct(f.openRate30), click_rate_30d_pct: pct(f.clickRate30) }));
         card({
           type: "list",
@@ -462,6 +492,8 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           last_30_days: { revenue: r2(k.now.revenue), campaign_revenue: r2(k.now.campaignRevenue), flow_revenue: r2(k.now.flowRevenue), campaigns_sent: k.now.campaignsSent, messages: k.now.sends, open_rate_pct: pct(k.now.openRate), click_rate_pct: pct(k.now.clickRate) },
           the_30_days_before: { revenue: r2(k.before.revenue), campaigns_sent: k.before.campaignsSent, open_rate_pct: pct(k.before.openRate), click_rate_pct: pct(k.before.clickRate) },
           campaigns,
+          subject_line_patterns_90d: subjectPatterns(k.campaigns.filter((x) => x.sendTime && x.sendTime.slice(0, 10) >= shift(k.today, -89))),
+          list_change_by_week: weeklyListChange(k.daily).slice(-13),
           flows,
           lists_and_segments: k.audiences.filter((a) => a.profiles != null).slice(0, 12).map((a) => ({ name: a.name, kind: a.kind, profiles: a.profiles, growth_30d: a.growth?.change ?? null })),
           share_of_store_revenue_pct: pct(k.now.share),
@@ -479,6 +511,50 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           weakest_campaigns_90d: best.bottom.map((x) => ({ sent: x.sendTime?.slice(0, 10) ?? null, subject: x.subject ?? x.name, recipients: x.recipients, open_rate_pct: pct(x.openRate), click_rate_pct: pct(x.clickRate), revenue: r2(x.revenue) })),
           read_only: "Nothing can be sent, edited or scheduled in Klaviyo from Kaizen Ads.",
         };
+      },
+    },
+    {
+      name: "organic_social",
+      description:
+        "A client's organic social from Facebook and Instagram (read only, synced daily; no ads): followers and growth, reach, views, engagement rate against the period before, posts with their counts (likes, comments, shares, saves, reach), the top and weakest posts, the format mix (reels, carousels, images), posting rhythm and red/amber/green health findings with what to do. Use it for how organic social is doing, what to post more of, what worked, whether the cadence is right. When the client's Page or Instagram isn't linked yet it says so and what to do (share the Page and Instagram with Kaizen's Business Manager, or pick the Page on the client's Social tab). Nothing can be posted, edited or scheduled from here.",
+      input_schema: {
+        type: "object",
+        properties: {
+          client: CLIENT,
+          days: { type: "integer", minimum: 7, maximum: 90, description: "The period in days, through today (default 30). The comparison period before it is given when it fits in 90 days." },
+          top_posts: { type: "integer", minimum: 1, maximum: 10, description: "How many top and weakest posts (default 3)" },
+        },
+        additionalProperties: false,
+      },
+      status: (input, client) => `Reading Facebook and Instagram for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
+      run: async (input) => {
+        const c = await clientOf(ctx, input);
+        // The server's rights read it, so the person's access to this client was checked above (channel roles again in clientOf)
+        const { clientSocial, socialLink } = await import("@/lib/social/store");
+        const { organicSocialReport, socialMissingNote } = await import("./social-report");
+        const d = await clientSocial(ctx.admin, c.id).catch(() => null);
+        if (!d) {
+          const [link, { data: svc }] = await Promise.all([
+            socialLink(ctx.admin, c.id).catch(() => undefined),
+            ctx.admin.from("clients").select("services, services_extra, services_removed").eq("id", c.id).maybeSingle(),
+          ]);
+          const buys = svc ? servicesOf(svc).includes("social-media") : true;
+          return { client: c.name, linked: Boolean(link?.pageId || link?.igId), connected: false, note: socialMissingNote(link?.state ?? null, link?.error ?? null, buys) };
+        }
+        const days = Math.min(90, Math.max(7, Number(input.days) || 30));
+        const top = Math.min(10, Math.max(1, Number(input.top_posts) || 3));
+        const r = organicSocialReport(d, { days, top });
+        card({
+          type: "list",
+          title: `${c.name} · organic social, last ${r.period.days} days`,
+          items: [
+            { title: "Followers", detail: `${r.followers.now != null ? r.followers.now.toLocaleString("en-US") : "n/a"}${r.followers.change != null ? ` (${r.followers.change >= 0 ? "+" : ""}${r.followers.change.toLocaleString("en-US")})` : ""}` },
+            { title: "Reach", detail: `${r.reach.total != null ? r.reach.total.toLocaleString("en-US") : "n/a"}${r.reach.change_pct != null ? ` (${r.reach.change_pct >= 0 ? "+" : ""}${r.reach.change_pct}% vs before)` : ""}` },
+            { title: "Engagement rate", detail: r.engagement_rate_pct != null ? `${r.engagement_rate_pct}%` : "n/a" },
+            { title: "Posts", detail: `${r.posts_in_period} (${r.posts_per_week} a week)` },
+          ],
+        });
+        return { client: c.name, connected: true, ...r, read_only: "Nothing can be posted, edited or scheduled from Kaizen Ads." };
       },
     },
     {
@@ -847,7 +923,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   });
 
   // Search everything on file, recorded calls: the report chat's own lookups, reused for the pinned client
-  if (ctx.clientId) {
+  if (ctx.clientId && (await channelMaySeeClient(ctx, ctx.clientId))) {
     const { reportTools } = await import("@/lib/reports/tools");
     const pulled: { label: string; data: string }[] = [];
     const reused = await reportTools(ctx.admin, { client_id: ctx.clientId, platform: "meta", kpi_targets: null }, pulled).catch(() => [] as AiTool[]);
@@ -868,7 +944,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
 export function toolsFor<T extends { name: string; input_schema?: unknown }>(me: Who, tools: T[]): T[] {
   // The email and social teams: client lookup, shared context, calls and their own channel. Every other tool reads ad
   // data with the server's rights, so none of them are offered
-  if (isChannelOnly(me.role)) return tools.filter((t) => CHANNEL_TOOLS.has(t.name) && !(t.name === "email_marketing" && lineOfTeam(me.role) !== "email"));
+  if (isChannelOnly(me.role)) return tools.filter((t) => CHANNEL_TOOLS.has(t.name) && !(t.name === "email_marketing" && lineOfTeam(me.role) !== "email") && !(t.name === "organic_social" && lineOfTeam(me.role) !== "social"));
   const p = roleWidePerms(me);
   const changeOn = (["meta", "google"] as const).filter((x) => p.change[x]);
   const drop = new Set<string>();
