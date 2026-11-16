@@ -8,7 +8,7 @@ export default async function Team() {
   const me = await requireStaff();
   const supabase = await createClient();
   const [{ data: profiles }, { data: assignments }] = await Promise.all([
-    supabase.from("profiles").select("id, email, full_name, role, is_active, joined_at, invited_at, last_active_at, last_sign_in_at").order("full_name"),
+    supabase.from("profiles").select("id, email, full_name, role, is_active, joined_at, invited_at, last_active_at, last_sign_in_at, also_social, also_designs_email").order("full_name"),
     supabase.from("client_assignments").select("profile_id, client_id, clients!inner(archived_at)").is("clients.archived_at", null),
   ]);
 
@@ -27,6 +27,8 @@ export default async function Team() {
     fullName: p.full_name,
     role: p.role as TeamRole,
     isActive: p.is_active,
+    alsoSocial: Boolean(p.also_social),
+    alsoDesignsEmail: Boolean(p.also_designs_email),
     joined: Boolean(p.joined_at),
     invitedAt: p.invited_at,
     clientCount: clientsPer.get(p.id)?.size ?? 0,

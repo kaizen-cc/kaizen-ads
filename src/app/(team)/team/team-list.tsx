@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
-import { ROLES, TIERS, roleLabel, tierOf, type TeamRole, type Tier } from "@/lib/roles";
-import { invitePerson, sendInvite, setActive, setRole } from "./actions";
+import { ROLES, TIERS, canAlsoDesignEmail, canAlsoSocial, roleLabel, tierOf, type TeamRole, type Tier } from "@/lib/roles";
+import { invitePerson, sendInvite, setActive, setRole, setSwitch } from "./actions";
 
 export type Person = {
   id: string;
@@ -12,6 +12,10 @@ export type Person = {
   fullName: string;
   role: TeamRole;
   isActive: boolean;
+  /** A creative who also works on organic social */
+  alsoSocial?: boolean;
+  /** An email builder who also designs email */
+  alsoDesignsEmail?: boolean;
   joined: boolean;
   invitedAt?: string | null;
   clientCount: number;
@@ -67,6 +71,19 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
           {p.email}
           {p.clientCount > 0 && <span className="text-faint"> · {p.clientCount} clients</span>}
         </p>
+        {/* The per-person switches, only for the positions they apply to (execs change them) */}
+        {(canAlsoSocial(p.role) || canAlsoDesignEmail(p.role)) && (
+          <label className={`mt-1 flex min-h-11 items-center gap-2.5 text-xs text-muted sm:min-h-0 ${canEdit ? "cursor-pointer" : ""}`}>
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-brand sm:h-4 sm:w-4"
+              defaultChecked={canAlsoSocial(p.role) ? p.alsoSocial : p.alsoDesignsEmail}
+              disabled={!canEdit || pending}
+              onChange={(e) => run(() => setSwitch(p.id, canAlsoSocial(p.role) ? "also_social" : "also_designs_email", e.target.checked))}
+            />
+            {canAlsoSocial(p.role) ? "Also works on organic social" : "Also designs email"}
+          </label>
+        )}
         {p.usage && p.joined && (
           <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-faint">
             <span className="inline-flex items-center gap-1.5">

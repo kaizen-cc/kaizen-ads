@@ -7,6 +7,7 @@ import { shownStatus } from "@/lib/kpi/calc";
 import { extensionTools } from "./extensions";
 import { clampFormats, formatList, formatsFor, formatsRule } from "@/lib/creative-formats";
 import { can, roleWidePerms, type Who } from "@/lib/chat-permissions";
+import { isChannelOnly, lineOfTeam } from "@/lib/roles";
 import type { Attachment, BriefCard, Card, CopyCard, CopyField, MetricsCard, MetricsRow } from "./types";
 
 // What Kaizen AI can look up and do. Every tool runs on the server with the person's own permissions: a client is only
@@ -76,6 +77,28 @@ export async function clientBrief(admin: SupabaseClient, clientId: string) {
   const text = b.text.slice(0, 160_000);
   briefCache.set(clientId, { at: Date.now(), text });
   return text;
+}
+
+/**
+ * What the email and organic social teams may read about a client: the shared context only (the Brand Bible and what to
+ * remember). The full brief carries ad performance, KPIs and strategy, which these positions don't see, and it's read with
+ * the server's rights, so it's left out for them rather than trusted to RLS.
+ */
+export async function channelBrief(admin: SupabaseClient, clientId: string) {
+  const [{ data: c }, { data: bible }, { data: memory }] = await Promise.all([
+    admin.from("clients").select("name, industry_detail, website").eq("id", clientId).maybeSingle(),
+    admin.from("client_brand_bibles").select("read_this_first, markdown, status").eq("client_id", clientId).maybeSingle(),
+    admin.from("client_memory").select("kind, body, dated").eq("client_id", clientId).eq("status", "active").limit(80),
+  ]);
+  const notes = (memory ?? []).map((m) => `- ${m.kind}${m.dated ? ` (as of ${m.dated})` : ""}: ${m.body}`).join("\n");
+  const head = [c?.name, c?.industry_detail, c?.website].filter(Boolean).join(" · ");
+  return [
+    `<client>${head}</client>`,
+    bible?.markdown ? `<brand_bible>\n${String(bible.read_this_first ?? "").slice(0, 4000)}\n\n${String(bible.markdown).slice(0, 60_000)}\n</brand_bible>` : "<brand_bible>None yet.</brand_bible>",
+    notes ? `<memory>\n${notes}\n</memory>` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 // ─── Meta numbers from the synced daily rows ────────────────────────────────
@@ -234,6 +257,9 @@ const csvCell = (v: unknown) => {
 
 // ─── The tools ───────────────────────────────────────────────────────────────
 
+/** The tools the email and organic social teams get (the email one only for the email team) */
+const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "email_marketing", "search_client", "recent_calls", "read_call"]);
+
 export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   const card = (c: Card) => {
     ctx.cards.push(c);
@@ -262,7 +288,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       status: (input, client) => `Reading everything on ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
-        return clientBrief(ctx.admin, c.id);
+        return isChannelOnly(ctx.me.role) ? channelBrief(ctx.admin, c.id) : clientBrief(ctx.admin, c.id);
       },
     },
     {
@@ -840,6 +866,9 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
  * their formats), copy only for those who write it. Every tool that's kept checks the client again on the server.
  */
 export function toolsFor<T extends { name: string; input_schema?: unknown }>(me: Who, tools: T[]): T[] {
+  // The email and social teams: client lookup, shared context, calls and their own channel. Every other tool reads ad
+  // data with the server's rights, so none of them are offered
+  if (isChannelOnly(me.role)) return tools.filter((t) => CHANNEL_TOOLS.has(t.name) && !(t.name === "email_marketing" && lineOfTeam(me.role) !== "email"));
   const p = roleWidePerms(me);
   const changeOn = (["meta", "google"] as const).filter((x) => p.change[x]);
   const drop = new Set<string>();

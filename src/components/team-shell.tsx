@@ -10,6 +10,7 @@ import { NotificationBell } from "./notification-bell";
 import { BriefJobsIndicator, BriefJobsRoot } from "./brief-jobs";
 import { MediaJobsIndicator, MediaJobsRoot } from "./media-jobs";
 import { PersonAvatar } from "@/components/person-avatar";
+import { channelNavOk } from "@/lib/roles";
 
 type Tier = "exec" | "lead" | "member";
 // buyer: media-buying tools the creative team doesn't use (hidden for them); reports: only executives and media buyers;
@@ -67,13 +68,14 @@ function Icon({ d }: { d: string }) {
   );
 }
 
-export function TeamShell({ name, roles, tier, creative = null, reports = false, theme = null, children }: { name: string; roles: string; tier: Tier; creative?: CreativeSide; reports?: boolean; theme?: Theme | null; children: React.ReactNode }) {
+export function TeamShell({ name, roles, tier, creative = null, reports = false, channel = false, theme = null, children }: { name: string; roles: string; tier: Tier; creative?: CreativeSide; reports?: boolean; channel?: boolean; theme?: Theme | null; children: React.ReactNode }) {
   const path = usePathname();
   const view = useSearchParams().get("view");
   // The creative team doesn't get the media-buying tools; the Head of Creative gets their team's KPIs instead. Reports
   // are only for executives and media buyers
   const can = (i: Item) => (!i.tiers || i.tiers.includes(tier)) && !(i.buyer && creative) && (!i.reports || reports) && (!i.creativeLead || creative === "lead");
-  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter(can) }));
+  // The email and social teams get only Overview, Clients, KPIs, Reports and Kaizen AI (Feedback and Settings sit apart)
+  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i) && (!channel || channelNavOk(i.href))) })).filter((g) => g.items.length);
   const settings = can(SETTINGS) ? SETTINGS : null;
   // The tab bar on phones: home (the Overview), the board, clients and KPIs (the creative team: their own
   // KPIs, or Ideas); everything else is in the menu

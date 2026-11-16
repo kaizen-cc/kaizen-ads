@@ -9,7 +9,7 @@ import type { ClientCall } from "./calls-panel";
 import { notFound } from "next/navigation";
 import type { Digest } from "@/lib/ai";
 import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
-import { SLOTS, canHold, canSeeReports, isCreativeRole } from "@/lib/roles";
+import { SLOTS, canHold, canSeeReports, isCreativeRole, lineOfTeam } from "@/lib/roles";
 import { ReportLogoPanel } from "./report-logo-panel";
 import { orderSeats, primaryOf, type SeatRow } from "@/lib/buyer-seats";
 import { freshness, nyToday } from "@/lib/dates";
@@ -70,6 +70,10 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     ),
   );
   if (!client) notFound();
+  // The email and organic social teams get their channel and the shared client context, never paid ads: nothing about
+  // ads is even loaded for them (several of those reads use the server's rights, which RLS wouldn't limit)
+  const line = lineOfTeam(me.role);
+  const channel = line !== null;
 
   const t = <V,>(label: string, work: PromiseLike<V> | (() => PromiseLike<V>)) => timed(S, label, Promise.resolve(typeof work === "function" ? work() : work));
   const admin = adminConfigured() ? createAdminClient() : null;
@@ -80,6 +84,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
 
   // The Meta and the Google go-to-market strategies, the same shape
   const gtmOf = async (table: "client_gtm_strategies" | "client_google_gtm") => {
+    if (channel) return null;
     const { data: gtmRow } = await supabase
       .from(table)
       .select(`status, missing, version, markdown, read_this_first, open_items, quality, error, started_at, generated_at, reviewed_at, profiles!${table}_reviewed_by_fkey(full_name)`)
@@ -104,7 +109,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   };
 
   // The KPIs, and what hangs off them: audits, each account's changes, the sprints
-  const kpiChain = async () => {
+  const kpiChainAll = async () => {
     const kpis = await t("kpis", loadClientKpis(supabase, client.id));
     const withAccount = kpis.filter((k) => k.accountId);
     const [auditBy, changeBy, sprintList] = await Promise.all([
@@ -114,6 +119,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     ]);
     return { kpis, auditBy, changeBy, sprintList };
   };
+  const kpiChain = (): ReturnType<typeof kpiChainAll> => (channel ? Promise.resolve({ kpis: [], auditBy: new Map(), changeBy: new Map(), sprintList: [] } as unknown as Awaited<ReturnType<typeof kpiChainAll>>) : kpiChainAll());
   // Every call that discussed this client, with what was promised (and the Asana tasks that cover it)
   const callChain = async () => {
     const { data: callRows } = await supabase
@@ -190,7 +196,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       supabase.from("contact_clients").select("is_primary, contacts(id, email, full_name, auth_user_id)").eq("client_id", client.id),
       supabase.from("angles").select("id, name, kind, description, status").eq("client_id", client.id).order("status").order("name"),
       supabase.from("client_allotment_usage").select("*").eq("client_id", client.id).maybeSingle(),
-      supabase.from("profiles").select("id, full_name, role, also_buys").eq("is_active", true).order("full_name"),
+      supabase.from("profiles").select("id, full_name, role, also_buys, also_social, also_designs_email").eq("is_active", true).order("full_name"),
       supabase.from("client_memory").select("id, kind, body, source, share_reason, created_at, dated, profiles(full_name)").eq("client_id", client.id).eq("status", "active").order("created_at", { ascending: false }),
       supabase.from("client_briefings").select("digest, generated_at, sources").eq("client_id", client.id).maybeSingle(),
       // Execs only (RLS): which of this client's Slack channels the bot couldn't get into on the last run
@@ -210,8 +216,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       gtmOf("client_gtm_strategies"),
       gtmOf("client_google_gtm"),
       // Google ideas taken to this client from Ideas › Google, and keyword lists saved for them
-      import("@/lib/google-deploy").then(({ loadDeploys }) => loadDeploys(supabase, [client.id])).catch(() => []),
-      import("@/lib/keyword-research").then(({ loadLists }) => loadLists(supabase, client.id)).catch(() => []),
+      channel ? [] : import("@/lib/google-deploy").then(({ loadDeploys }) => loadDeploys(supabase, [client.id])).catch(() => []),
+      channel ? [] : import("@/lib/keyword-research").then(({ loadLists }) => loadLists(supabase, client.id)).catch(() => []),
     ])),
     // When each connection last synced (sync bookmarks are server-side: timestamps only, with the server's rights)
     t("connections", Promise.all([
@@ -219,14 +225,14 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       supabase.from("meta_snapshots").select("fetched_at").eq("client_id", client.id).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
     ])),
     t("creative, fatigue, intake, market", Promise.all([
-      loadClientCreative(supabase, client.id),
-      loadWatchList(supabase, { clientId: client.id }),
+      channel ? Promise.resolve(null) : loadClientCreative(supabase, client.id),
+      channel ? Promise.resolve(null) : loadWatchList(supabase, { clientId: client.id }),
       supabase.from("client_intakes").select("received_at, status, summary, answers, error").eq("client_id", client.id).order("received_at", { ascending: false }).limit(1).maybeSingle(),
-      loadClientMarket(supabase, client.id, { limit: 200 }),
+      channel ? Promise.resolve([] as Awaited<ReturnType<typeof loadClientMarket>>) : loadClientMarket(supabase, client.id, { limit: 200 }),
     ])),
     kpiChain(),
     t("calls", callChain),
-    t("chat", loadClientChat(supabase, client.id, me.id)),
+    t("chat", channel ? Promise.resolve([] as Awaited<ReturnType<typeof loadClientChat>>) : loadClientChat(supabase, client.id, me.id)),
     // What's on their Drive to make creative from, the latest shot list, and their marketing moments
     t("assets & moments", Promise.all([
       count("image"),
@@ -237,7 +243,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       supabase.from("client_moments").select("id, name, on_date, lead_days, angle, offer_idea, status, suggestion_id, result").eq("client_id", client.id).gte("on_date", daysBack(200)).order("on_date").limit(40),
     ])),
     // Which of these accounts this person can draft a report for
-    t("reportable", reportableTargets(supabase, me)),
+    t("reportable", channel ? Promise.resolve([] as Awaited<ReturnType<typeof reportableTargets>>) : reportableTargets(supabase, me)),
     // The readiness check: for two weeks after a client goes live again (or from the notification's link)
     live && isExecOrLead(me) && (asked || lately(client.reactivated_at)) ? t("readiness", clientReadiness(supabase, client.id)) : Promise.resolve(null),
     // What they buy, and each service's tier
@@ -248,7 +254,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     // Where this client's new ads go, as their buyers taught the launcher
     t("launch rules", supabase.from("launch_rules").select("id, rule, from_adset, to_adset, via, active, created_at, profiles(full_name)").eq("client_id", client.id).order("created_at", { ascending: false }).limit(30)),
     // Each platform's campaigns over the last 30 days (campaign tables are read with the server's rights)
-    admin ? t("campaigns", loadCampaigns(admin, client.id).catch(() => [])) : Promise.resolve([]),
+    admin && !channel ? t("campaigns", loadCampaigns(admin, client.id).catch(() => [])) : Promise.resolve([]),
     // Every file and link shared about them, the knowledge the agents read for them, and every report made for them
     t("docs & reports", Promise.all([
       supabase
@@ -267,10 +273,10 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       // Their Loom videos: what's in the queue, waiting or couldn't be read
       admin ? import("@/lib/loom-intake").then(({ loomStatus }) => loomStatus(admin, client.id)).catch(() => null) : Promise.resolve(null),
     ])),
-    t("playbook", loadLedger(supabase, client.id)),
-    t("live writes", liveWritesChain),
+    t("playbook", channel ? Promise.resolve([] as Awaited<ReturnType<typeof loadLedger>>) : loadLedger(supabase, client.id)),
+    channel ? Promise.resolve(null) : t("live writes", liveWritesChain),
     t("billing history", supabase.from("client_billing_day_log").select("at, old_day, new_day, source, note, profiles:changed_by(full_name)").eq("client_id", client.id).order("at", { ascending: false }).limit(12)),
-    client.creative_package && admin ? t("package gaps", import("@/lib/package-gaps").then(({ packageGaps }) => packageGaps(admin, client.id)).catch(() => null)) : Promise.resolve(null),
+    client.creative_package && admin && !channel ? t("package gaps", import("@/lib/package-gaps").then(({ packageGaps }) => packageGaps(admin, client.id)).catch(() => null)) : Promise.resolve(null),
     // Whether the Plan & tasks tab shows (its content streams in): a plan, tasks or Slack messages, or a new-flow client
     inNewFlow(client)
       ? Promise.resolve(true)
@@ -408,11 +414,11 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     })
     .sort((a, b) => b.start.localeCompare(a.start));
   // TikTok (read only), once Kaizen's TikTok app is set up: dormant and invisible until then
-  const tiktokOn = tiktokConfigured();
+  const tiktokOn = tiktokConfigured() && !channel;
   const tiktok = tiktokOn && admin ? await (await import("@/lib/tiktok/store")).clientTikTok(admin, client.id).catch(() => null) : null;
   const tiktokSeparate = tiktokOn && admin ? Boolean((await admin.from("client_report_prefs").select("tiktok_separate").eq("client_id", client.id).maybeSingle()).data?.tiktok_separate) : false;
   // Klaviyo (email and SMS, read only): nothing shows until its migration is applied
-  const klaviyo = admin
+  const klaviyo = admin && line !== "social"
     ? await (async () => {
         const k = await import("@/lib/klaviyo/store");
         const conn = await k.klaviyoConnection(admin, client.id).catch(() => undefined);
@@ -423,8 +429,10 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       })()
     : null;
   // Organic social (Facebook and Instagram, read only), for clients with the social media service: nothing shows until its migration is applied
+  const heldSocialCreative = (assignments ?? []).some((a) => a.role === "social_creative" && a.profile_id === me.id);
+  const showSocial = line === "social" || (line === null && (!isCreativeRole(me.role) || heldSocialCreative));
   const social =
-    admin && (servicesOf({ services: client.services, services_extra: client.services_extra, services_removed: client.services_removed }) as string[]).includes("social-media")
+    admin && showSocial && (servicesOf({ services: client.services, services_extra: client.services_extra, services_removed: client.services_removed }) as string[]).includes("social-media")
       ? await (async () => {
           const sm = await import("@/lib/social/store");
           const link = await sm.socialLink(admin, client.id).catch(() => undefined);
@@ -433,7 +441,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         })()
       : null;
   // Google Ads sync: each account's state and, when it fails, why and the fix (null when they don't run Google)
-  const googleSync = admin ? await (await import("@/lib/google-sync-health")).clientGoogleHealth(admin, client.id).catch(() => null) : null;
+  const googleSync = admin && !channel ? await (await import("@/lib/google-sync-health")).clientGoogleHealth(admin, client.id).catch(() => null) : null;
   const docs = (docRows ?? []).map((d) => ({ id: d.id, kind: d.kind, name: d.name, url: d.url, path: d.path, mime: d.mime, bytes: d.bytes, title: d.title, summary: d.summary, status: d.status, note: d.note, via: d.via, at: d.created_at, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
   const billingHistory = (billingLog ?? []).map((h) => ({ at: h.at as string, oldDay: (h.old_day as number | null) ?? null, newDay: (h.new_day as number | null) ?? null, source: (h.source as string | null) ?? null, note: (h.note as string | null) ?? null, by: (h.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
 
@@ -443,7 +451,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   return (
     <ClientView
       execution={
-        hasPlan && adminConfigured() ? (
+        hasPlan && adminConfigured() && !channel ? (
           <Streamed>
             <ExecutionStream client={{ ...base, slack_channel_id: (client.slack_channel_id as string | null) ?? null }} me={me} />
           </Streamed>
@@ -460,9 +468,11 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         </Streamed>
       }
       patterns={
-        <Streamed>
-          <PatternsStream clientId={client.id} />
-        </Streamed>
+        channel ? null : (
+          <Streamed>
+            <PatternsStream clientId={client.id} />
+          </Streamed>
+        )
       }
       setup={
         client.status === "onboarding" ? (
@@ -472,14 +482,18 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         ) : null
       }
       emails={
-        <Streamed>
-          <EmailsStream client={base} />
-        </Streamed>
+        channel ? null : (
+          <Streamed>
+            <EmailsStream client={base} />
+          </Streamed>
+        )
       }
       notices={
-        <Streamed h="h-48">
-          <ClientNoticesStream client={base} canEdit={me.isExec} />
-        </Streamed>
+        channel ? null : (
+          <Streamed h="h-48">
+            <ClientNoticesStream client={base} canEdit={me.isExec} />
+          </Streamed>
+        )
       }
       campaigns={campaigns}
       tiktok={tiktokOn ? { data: tiktok, separate: tiktokSeparate } : null}
@@ -489,11 +503,12 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       docs={docs}
       knowledge={knowledge}
       loom={loom}
-      playbook={{ items: ledger, learnings: brandBible?.learnings ?? [] }}
-      // Client reports are the executives' and media buyers' only
-      reports={canSeeReports(me) ? reportHistory : null}
+      line={line}
+      playbook={channel ? null : { items: ledger, learnings: brandBible?.learnings ?? [] }}
+      // Client reports are the executives' and media buyers' only (the email and social teams get theirs on the Reports page, later)
+      reports={canSeeReports(me) && !channel ? reportHistory : null}
       reportLogo={
-        canSeeReports(me) && admin ? (
+        canSeeReports(me) && !channel && admin ? (
           <Streamed h="h-40">
             <ReportLogoPanel clientId={client.id} slug={client.slug} name={client.name} whiteLabel={client.client_type === "whitelabel"} />
           </Streamed>
@@ -518,7 +533,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       assets={assetGlance}
       shotList={shotList}
       moments={(momentRows ?? []) as MomentRow[]}
-      chat={{ initial: chatTurns, targets, perms }}
+      chat={channel ? null : { initial: chatTurns, targets, perms }}
       fatigue={fatigue}
       market={market}
       intake={intake}
@@ -549,7 +564,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       billingHistory={billingHistory}
       cycle={{ billingDay: (client.billing_day as number | null) ?? null, source: (client.billing_day_source as string | null) ?? null, start: (usage?.period_start as string | null) ?? null, end: (usage?.period_end as string | null) ?? null, gap: gaps?.get(client.id) ?? null }}
       creativeDb={(client.creative_db as CreativeDb | null) ?? null}
-      can={{ admin: me.isExec, contacts: seesAllClients(me), allot: me.isExec || me.isLead, assign: isExecOrLead(me), buyerTools: !isCreativeRole(me.role) }}
+      can={{ admin: me.isExec, contacts: seesAllClients(me), allot: me.isExec || me.isLead, assign: isExecOrLead(me), buyerTools: !isCreativeRole(me.role) && !channel }}
     />
   );
 }

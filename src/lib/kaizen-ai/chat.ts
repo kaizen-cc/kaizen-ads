@@ -4,14 +4,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { MODEL_IDS, aiBusy, askJson, aiEnabled, anthropicClient, cachedBlock, getAgent, knowledgeFor, usageFor, withAgent } from "@/lib/ai";
 import { LIKENESS_RULE, noAiContentRule } from "@/lib/ai-content";
-import { roleLabel } from "@/lib/roles";
+import { isChannelOnly, roleLabel } from "@/lib/roles";
 import { buyingPlatform, permsPrompt, roleWidePerms } from "@/lib/chat-permissions";
 import { permsOn } from "@/lib/chat-permissions-server";
 import { agentLabel, isChatAgent, pickAgent } from "./agents";
 import { attachmentBlocks } from "./files";
 import { projectContext, threadProjectId, visibleProject } from "./projects-server";
 import { connectorTurn } from "./connectors";
-import { chatTools, clientBrief } from "./tools";
+import { channelBrief, chatTools, clientBrief } from "./tools";
 import { AGENT_LABEL, type AiModel, type Attachment, type Card, type ChatAgent, type ChatEvent, type ToolRun } from "./types";
 
 // One turn of Kaizen AI: the person's message (with files) goes to the agent it's about, with the agent's core, skills
@@ -315,9 +315,11 @@ export async function runTurn(input: TurnInput): Promise<void> {
   const { wantsCopy, wantsGoogle } = await import("@/lib/copy-library-core");
   // Google copy when the message is about Google or the Google buyer answers; else Meta (both platforms' proven lines come either way)
   const copyPlatform = agent === "google_auditor" || wantsGoogle(userText) ? "google" : "meta";
-  const copyAsked = agent === "copy" || wantsCopy(userText);
+  // The email and social teams get no ad copy context (it's built from ad performance)
+  const channelOnly = isChannelOnly(me.role);
+  const copyAsked = !channelOnly && (agent === "copy" || wantsCopy(userText));
   const [brief, knowledge, convo, copyCtx, aiRule, project] = await Promise.all([
-    client ? clientBrief(admin, client.id).catch((e) => `(The client's context couldn't be read: ${e instanceof Error ? e.message : "unknown"})`) : Promise.resolve(""),
+    client ? (channelOnly ? channelBrief(admin, client.id) : clientBrief(admin, client.id)).catch((e) => `(The client's context couldn't be read: ${e instanceof Error ? e.message : "unknown"})`) : Promise.resolve(""),
     knowledgeFor(agent, label, userText.slice(0, 6000), client?.id ?? null).catch(() => ""),
     history(admin, recent),
     client && copyAsked ? import("@/lib/copy-library").then(({ copyContext }) => copyContext(admin, client!.id, 14_000, copyPlatform)).catch(() => "") : Promise.resolve(""),

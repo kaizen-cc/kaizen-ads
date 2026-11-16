@@ -44,11 +44,13 @@ const buyers = [opt("4", "Dipesh"), opt("5", "Mark"), opt("b2", "Priscila"), opt
 const designers = [opt("3", "Jesus"), opt("6", "Nelson"), opt("d2", "Hillary"), opt("d3", "Eunhye")];
 const editors = [opt("3", "Jesus"), opt("7", "Jazem"), opt("e2", "Mira"), opt("e3", "Daniel")];
 type SampleClient = { id: string; name: string; slug: string; whiteLabel: boolean; contacts: number; assigned: ClientCard["assigned"] };
+// The email and social seats, empty in these samples
+const noChannelSeats = { social_manager: null, social_creative: null, email_strategist: null, email_designer: null, email_builder: null };
 const rows: SampleClient[] = [
-  { id: "c1", name: "Crust Pizza Co.", slug: "crust-pizza-co", whiteLabel: false, contacts: 5, assigned: { google_buyer: null, tiktok_buyer: null, meta_buyer: buyers[1], graphic_designer: designers[1], video_editor: editors[1] } },
-  { id: "c2", name: "Sierra Dreams", slug: "sierra-dreams", whiteLabel: false, contacts: 2, assigned: { google_buyer: null, tiktok_buyer: null, meta_buyer: buyers[0], graphic_designer: designers[1], video_editor: editors[1] } },
-  { id: "c3", name: "Propr Dental", slug: "propr-dental", whiteLabel: true, contacts: 1, assigned: { google_buyer: null, tiktok_buyer: null, meta_buyer: buyers[2], graphic_designer: null, video_editor: null } },
-  { id: "c4", name: "Atomic Wings", slug: "atomic-wings", whiteLabel: false, contacts: 0, assigned: { google_buyer: null, tiktok_buyer: null, meta_buyer: null, graphic_designer: null, video_editor: null } },
+  { id: "c1", name: "Crust Pizza Co.", slug: "crust-pizza-co", whiteLabel: false, contacts: 5, assigned: { ...noChannelSeats, google_buyer: null, tiktok_buyer: null, meta_buyer: buyers[1], graphic_designer: designers[1], video_editor: editors[1] } },
+  { id: "c2", name: "Sierra Dreams", slug: "sierra-dreams", whiteLabel: false, contacts: 2, assigned: { ...noChannelSeats, google_buyer: null, tiktok_buyer: null, meta_buyer: buyers[0], graphic_designer: designers[1], video_editor: editors[1] } },
+  { id: "c3", name: "Propr Dental", slug: "propr-dental", whiteLabel: true, contacts: 1, assigned: { ...noChannelSeats, google_buyer: null, tiktok_buyer: null, meta_buyer: buyers[2], graphic_designer: null, video_editor: null } },
+  { id: "c4", name: "Atomic Wings", slug: "atomic-wings", whiteLabel: false, contacts: 0, assigned: { ...noChannelSeats, google_buyer: null, tiktok_buyer: null, meta_buyer: null, graphic_designer: null, video_editor: null } },
 ];
 
 const phases: Record<PhaseKey, PhaseStat> = {
@@ -351,6 +353,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
         <ClientsBrowser
           cards={rows.map((r, i): ClientCard => ({
             ...r,
+            channel: null,
             kaizenId: 1040 + i,
             links: i === 2 ? ["internal_slack_channel_id"] : [],
             status: i === 3 ? "paused" : "active",
@@ -369,7 +372,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
               { meta: null, slack: null, drive: null },
             ][i] as ClientCard["live"],
           }))}
-          slotOptions={{ meta_buyer: buyers, google_buyer: [], tiktok_buyer: buyers, graphic_designer: designers, video_editor: editors }}
+          slotOptions={{ social_manager: [], social_creative: [], email_strategist: [], email_designer: [], email_builder: [], meta_buyer: buyers, google_buyer: [], tiktok_buyer: buyers, graphic_designer: designers, video_editor: editors }}
           canEdit
         />
       </div>

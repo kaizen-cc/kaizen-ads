@@ -4,7 +4,8 @@ import { requireStaff, type Staff } from "@/lib/auth";
 import { greetingFor, todayLabel } from "@/lib/dates";
 import { loadHome, loadKpiPulse, type KpiPulse } from "@/lib/home";
 import { loadProduction } from "@/lib/production";
-import { roleLabel } from "@/lib/roles";
+import { lineOfTeam, roleLabel } from "@/lib/roles";
+import { ChannelHome } from "./views/channel-home";
 import { servicesOf } from "@/lib/services";
 import { type Stage } from "@/lib/stages";
 import { createClient } from "@/lib/supabase/server";
@@ -59,6 +60,10 @@ export default async function Home() {
   const [me, db] = await Promise.all([requireStaff(), createClient()]);
   const now = new Date();
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
+  // The email and organic social teams: their clients and a note that their KPIs and reports are coming. Nothing here
+  // reads the ad tables (the recap and Next for me are built from them)
+  const channel = lineOfTeam(me.role);
+  if (channel) return <ChannelHome me={me} line={channel} today={base.today} greeting={base.greeting} firstName={base.firstName} />;
   const hiddenQuery = () => db.from("hidden_items").select("key, how, label, href, hidden_at").eq("profile_id", me.id).order("hidden_at", { ascending: false }).limit(200);
   const assignedQuery = () => db.from("client_assignments").select("client_id").eq("profile_id", me.id);
 

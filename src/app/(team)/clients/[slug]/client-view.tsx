@@ -3,7 +3,7 @@ import type { CreativeDb } from "@/lib/creative-db";
 import { ActionButton, ActionForm } from "@/components/action-form";
 import { Section, field, label } from "@/components/ui";
 import type { Digest } from "@/lib/ai";
-import { SLOTS, seatNeeded } from "@/lib/roles";
+import { SLOTS, seatNeeded, seatOffered, slotService } from "@/lib/roles";
 import { AssignSelect, SecondaryBuyers, type Option } from "../assign-select";
 import type { Freshness } from "@/lib/dates";
 import { BriefingPanel } from "./briefing-panel";
@@ -186,6 +186,8 @@ export type ClientViewProps = {
   /** buyerTools: the media-buying tabs (Google policy and ideas to apply); the creative team doesn't get them */
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean; buyerTools?: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
+  /** The email or organic social team's line of work: the page then leaves out everything paid ads (their panels, KPIs, creative, launches, audits) */
+  line?: "email" | "social" | null;
   connections: { meta: Freshness | null; slackClient: Freshness | null; slackInternal: Freshness | null; drive: Freshness | null };
   creative?: ClientCreative | null; // tickets in motion and launched, live and paused ads
   kpis?: ClientKpi[] | null; // performance vs target; null in the design preview
@@ -235,12 +237,14 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, line = null, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
   // Archived or paused: read-only. Nothing is pulled or generated until they're live again
   const live = isLive(client);
+  // The email and social teams: their channel and the shared client context, never paid ads
+  const channel = line !== null;
 
   // The glance: what's in motion, and what needs someone (each a link to where it's handled)
   const tab = (t: string) => `/clients/${client.slug}?tab=${t}`;
@@ -250,9 +254,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
     ...(kpis ?? []).filter((k) => k.status === "off").map((k): Alert => ({ tone: "bad", text: `${k.platform === "google" ? "Google" : k.platform === "tiktok" ? "TikTok" : "Meta"} · ${k.label ?? k.conversionLabel} is off target${k.deviation != null ? ` (${Math.round(Math.abs(k.deviation) * 100)}% off)` : ""}`, href: `/kpis?target=${k.id}` })),
     ...(openPromises.length ? [{ tone: "bad" as const, text: `${openPromises.length} promise${openPromises.length === 1 ? "" : "s"} from calls not started`, href: tab("knowledge") }] : []),
     ...(tired ? [{ tone: "warn" as const, text: `${tired} ad${tired === 1 ? "" : "s"} worn out and ready for a refresh`, href: `/clients/${client.slug}?service=meta&tab=ads` }] : []),
-    ...(active && images + videos > 0 && imagesUsed + videosUsed === 0 ? [{ tone: "warn" as const, text: "Nothing made against this month's creative allotment yet", href: `/clients/${client.slug}?service=creative` }] : []),
-    ...(assets?.stale && active ? [{ tone: "info" as const, text: "No new footage on Drive in 45 days: time for a shot list", href: `/clients/${client.slug}?service=creative&tab=package` }] : []),
-    ...(!(kpis ?? []).length ? [{ tone: "warn" as const, text: "No KPI target set", href: "/kpis" }] : []),
+    ...(!channel && active && images + videos > 0 && imagesUsed + videosUsed === 0 ? [{ tone: "warn" as const, text: "Nothing made against this month's creative allotment yet", href: `/clients/${client.slug}?service=creative` }] : []),
+    ...(!channel && assets?.stale && active ? [{ tone: "info" as const, text: "No new footage on Drive in 45 days: time for a shot list", href: `/clients/${client.slug}?service=creative&tab=package` }] : []),
+    ...(!channel && !(kpis ?? []).length ? [{ tone: "warn" as const, text: "No KPI target set", href: "/kpis" }] : []),
     ...(!contacts.length ? [{ tone: "warn" as const, text: "No client contact: nobody can approve ads", href: tab("team") }] : []),
     ...(!client.slack_channel_id ? [{ tone: "info" as const, text: "Connect their Slack channel: it's their portal chat too", href: tab("team") }] : []),
   ];
@@ -281,13 +285,13 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const googleCampaigns = (campaigns ?? []).find((c) => c.platform === "google") ?? null;
   const has = {
     // Taken off on purpose stays off, even with an account or a package still set up
-    meta: !offList.has("facebook-ads") && (bought.includes("facebook-ads") || Boolean(client.meta_ad_account_id) || metaKpis.length > 0),
-    google: !offList.has("google-ads") && (bought.includes("google-ads") || googleKpis.length > 0 || Boolean(googleCampaigns)),
+    meta: !channel && !offList.has("facebook-ads") && (bought.includes("facebook-ads") || Boolean(client.meta_ad_account_id) || metaKpis.length > 0),
+    google: !channel && !offList.has("google-ads") && (bought.includes("google-ads") || googleKpis.length > 0 || Boolean(googleCampaigns)),
     // Only once TikTok is set up; before that it stays a plain service on the overview
-    tiktok: Boolean(tiktok) && !offList.has("tiktok-ads") && (bought.includes("tiktok-ads") || tiktokKpis.length > 0 || Boolean(tiktok?.data)),
+    tiktok: !channel && Boolean(tiktok) && !offList.has("tiktok-ads") && (bought.includes("tiktok-ads") || tiktokKpis.length > 0 || Boolean(tiktok?.data)),
     // Organic social: only for clients who buy social media (servicesOf already leaves out one taken off on purpose)
     social: Boolean(social) && bought.includes("social-media"),
-    creative: !offList.has("creative") && (bought.includes("creative") || client.creative_package || images + videos > 0 || Boolean(creative?.moving.length)),
+    creative: !channel && !offList.has("creative") && (bought.includes("creative") || client.creative_package || images + videos > 0 || Boolean(creative?.moving.length)),
   };
   const tierOf = (slug: string) => {
     const id = services?.chosen[slug];
@@ -342,7 +346,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
           )
         )}
         <div className="flex flex-wrap items-center gap-2">
-          {active ? (
+          {channel ? null : active ? (
             <span className={`${chip} bg-brand-soft text-brand-text`}>{packageLabel ? `${packageLabel} creative package` : "Creative package"}</span>
           ) : (
             <span className={`${chip} gap-1.5 border border-dashed border-line text-faint`}>
@@ -484,7 +488,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         {digest.direction}
                       </p>
                     )}
-                    {digest.performance && (
+                    {!channel && digest.performance && (
                       <p className="rounded-[8px] border-l-2 border-ok bg-ok-soft/30 px-4 py-3 leading-relaxed text-muted">
                         <span className="mb-1 block text-xs font-medium text-fg">Ad performance · Meta</span>
                         {digest.performance}
@@ -632,7 +636,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             </ActionForm>
           </Section>
                 </Fold>
-                {!demo && !has.meta && (
+                {!demo && !channel && !has.meta && (
                   <Fold id="gtm">
                     <GtmPanel clientId={client.id} slug={client.slug} gtm={gtm} canReview={can.assign} readOnly={!live} />
                   </Fold>
@@ -690,13 +694,15 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       <KlaviyoConnection clientId={client.id} conn={klaviyo.conn} canEdit={can.assign && !demo} />
                     </Section>
                   )}
-                  <Section title="Creative billing date" description="When their creative allotment starts again: the day the Creative Package is billed in Stripe. Execs can set it by hand; every change is kept.">
+                  {!channel && (
+<Section title="Creative billing date" description="When their creative allotment starts again: the day the Creative Package is billed in Stripe. Execs can set it by hand; every change is kept.">
                     <BillingDayPanel day={cycle?.billingDay ?? null} source={cycle?.source ?? null} start={cycle?.start ?? null} end={cycle?.end ?? null} history={billingHistory} canEdit={can.admin && !demo} save={saveBillingDay.bind(null, client.id, client.slug)} />
                   </Section>
+)}
                   <Section title="Kaizen team" description="The copywriter reviews all copy and customer success handles every client.">
             <dl className="grid gap-1">
               {/* The same seats as the client cards: a video-only package needs no designer, an images-only one no editor */}
-              {SLOTS.filter((slot) => (slot.value === "tiktok_buyer" ? bought.includes("tiktok-ads") || has.tiktok : seatNeeded(slot.value, { images, videos })) || team[slot.value]?.current).map((slot) => (
+              {SLOTS.filter((slot) => (slotService(slot.value) ? seatOffered(slot.value, bought) : slot.value === "tiktok_buyer" ? bought.includes("tiktok-ads") || has.tiktok : seatNeeded(slot.value, { images, videos })) || team[slot.value]?.current).map((slot) => (
                 <div key={slot.value} className="grid grid-cols-[100px_minmax(0,1fr)] items-center gap-3">
                   <dt className="self-start pt-3 text-sm text-muted md:pt-2.5">{slot.label}</dt>
                   <dd className="min-w-0">
@@ -775,7 +781,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   )}
                 </div>
                 <div className="grid min-w-0 gap-6">
-                  <Section title="Client portal" description="Where the client swipes through their ads to approve or ask for changes.">
+                  {!channel && (
+<Section title="Client portal" description="Where the client swipes through their ads to approve or ask for changes.">
             <div className={`${row} flex-wrap`}>
               <span className="grid min-w-[12rem] flex-1 gap-0.5">
                 <span className="flex items-center gap-2">
@@ -805,6 +812,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             </div>
             {contacts.length === 0 && <p className="rounded-[8px] bg-warn-soft/50 px-3 py-2 text-xs text-warn">Needs a contact: add who approves ads before going live.</p>}
           </Section>
+)}
                   {notices && (
                     <Section title="Client notifications" description="Their Slack post and email when creative is ready for them, reminders at 24 and 48 business hours, then customer success. Off until an exec switches it on.">
                       {notices}
@@ -915,7 +923,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 )}
                 {(
                   [
-                    ["Meta ad account", connections.meta, true],
+                    ...(channel ? [] : [["Meta ad account", connections.meta, true] as const]),
                     ["Client Slack", connections.slackClient, false],
                     ["Internal Slack", connections.slackInternal, false],
                     ["Drive folder", connections.drive, false],
@@ -928,9 +936,11 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 ))}
               </dl>
             )}
-            <div className="mt-5 border-t border-line pt-5">
-              <AdCreativeDrive clientId={client.id} slug={client.slug} exec={can.admin} demo={demo} />
-            </div>
+            {!channel && (
+              <div className="mt-5 border-t border-line pt-5">
+                <AdCreativeDrive clientId={client.id} slug={client.slug} exec={can.admin} demo={demo} />
+              </div>
+            )}
           </Section>
                 </div>
               </div>),

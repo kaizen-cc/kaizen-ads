@@ -22,6 +22,8 @@ export type ClientCard = {
   /** The Client ID we assign at enrollment (asked for on the intake form) */
   kaizenId: number | null;
   slug: string;
+  /** The viewer's line of work when they're on the email or organic social team: the card then leaves out the ad parts */
+  channel: "email" | "social" | null;
   status: string;
   whiteLabel: boolean;
   packageLabel: string | null;
@@ -71,8 +73,8 @@ function Light({ label, tone }: { label: string; tone: Freshness["tone"] | null 
   );
 }
 
-export const SVC_DOT: Partial<Record<ServiceSlug, string>> = { "facebook-ads": "bg-[#5b8def]", "google-ads": "bg-[#f2b14c]", creative: "bg-brand", "tiktok-ads": "bg-[#36c5f0]" };
-const MANAGED: ServiceSlug[] = ["facebook-ads", "google-ads", "creative"];
+export const SVC_DOT: Partial<Record<ServiceSlug, string>> = { "facebook-ads": "bg-[#5b8def]", "google-ads": "bg-[#f2b14c]", creative: "bg-brand", "tiktok-ads": "bg-[#36c5f0]", "email-marketing": "bg-ok", "social-media": "bg-warn" };
+const MANAGED: ServiceSlug[] = ["facebook-ads", "google-ads", "creative", "email-marketing", "social-media"];
 
 /** A press on something of its own (a button, a link, a dropdown) isn't a press on the card */
 const ownControl = (t: EventTarget | null) => Boolean((t as HTMLElement | null)?.closest("a, button, select, input, textarea, label, [role=dialog], [data-no-open]"));
@@ -145,6 +147,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
   const caps = { images: c.images.cap, videos: c.videos.cap };
   // Only the allotments that apply: a video-only package shows no images line
   const meters = [c.images.cap || c.images.used ? <Meter key="i" label="Images" used={c.images.used} cap={c.images.cap} /> : null, c.videos.cap || c.videos.used ? <Meter key="v" label="Videos" used={c.videos.used} cap={c.videos.cap} /> : null].filter(Boolean);
+  const adSide = !c.channel;
   const flight = (
     <Link href={`/board?client=${c.slug}`} title="Open on the board" className={`rounded-full px-2 py-0.5 text-[11px] tabular transition-colors ${c.inFlight ? "bg-brand-soft text-brand-text hover:bg-brand/25" : "text-faint hover:text-fg"}`}>
       {c.inFlight ? `${c.inFlight} in flight` : "Nothing in flight"}
@@ -201,8 +204,8 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
               <span key={x} className="inline-flex items-center gap-1.5 rounded-full border border-line py-1 pl-2.5 pr-2.5 text-[11.5px]">
                 <span className={`h-1.5 w-1.5 rounded-full ${SVC_DOT[x] ?? "bg-muted"}`} />
                 {svc.short}
-                {x === "creative" && c.packageLabel && <span className="text-faint">· {c.packageLabel}</span>}
-                {x === "creative" && c.pkg === "sprint" && c.until && <span className="text-warn">· sprint to {untilLabel(c.until)}</span>}
+                {adSide && x === "creative" && c.packageLabel && <span className="text-faint">· {c.packageLabel}</span>}
+                {adSide && x === "creative" && c.pkg === "sprint" && c.until && <span className="text-warn">· sprint to {untilLabel(c.until)}</span>}
                 {open && canEdit && (
                   <button type="button" onClick={() => remove(x)} aria-label={`Take ${svc.label} off`} title={`Take ${svc.label} off`} className="-mr-1 grid h-6 max-md:h-11 w-6 max-md:w-11 place-items-center rounded-full text-faint hover:bg-bad-soft hover:text-bad md:h-4 md:w-4">
                     ×
@@ -220,12 +223,32 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
       {open && (
         <div className="relative grid cursor-default gap-4" data-no-open>
           {/* Each service with the people it needs */}
-          {(has("facebook-ads") || has("google-ads") || has("creative") || others.length > 0) && (
+          {(has("facebook-ads") || has("google-ads") || has("creative") || has("email-marketing") || has("social-media") || others.length > 0) && (
             <dl className="grid gap-2">
-              {has("facebook-ads") && block("Meta Ads", SVC_DOT["facebook-ads"]!, seat("meta_buyer"), <Light label="synced" tone={c.live.meta} />)}
-              {has("google-ads") && block("Google Ads", SVC_DOT["google-ads"]!, seat("google_buyer"))}
-              {has("tiktok-ads") && block("TikTok Ads", SVC_DOT["tiktok-ads"]!, seat("tiktok_buyer"))}
-              {has("creative") &&
+              {adSide && has("facebook-ads") && block("Meta Ads", SVC_DOT["facebook-ads"]!, seat("meta_buyer"), <Light label="synced" tone={c.live.meta} />)}
+              {adSide && has("google-ads") && block("Google Ads", SVC_DOT["google-ads"]!, seat("google_buyer"))}
+              {adSide && has("tiktok-ads") && block("TikTok Ads", SVC_DOT["tiktok-ads"]!, seat("tiktok_buyer"))}
+              {/* Email and organic social: the seats appear only on clients that buy the service */}
+              {has("email-marketing") &&
+                block(
+                  "Email",
+                  SVC_DOT["email-marketing"]!,
+                  <>
+                    {seat("email_strategist")}
+                    {seat("email_designer")}
+                    {seat("email_builder")}
+                  </>,
+                )}
+              {has("social-media") &&
+                block(
+                  "Social media",
+                  SVC_DOT["social-media"]!,
+                  <>
+                    {seat("social_manager")}
+                    {(slotOptions.social_creative.length > 0 || c.assigned.social_creative) && seat("social_creative")}
+                  </>,
+                )}
+              {adSide && has("creative") &&
                 block(
                   `Creative${c.packageLabel ? ` · ${c.packageLabel}` : ""}`,
                   SVC_DOT.creative!,
@@ -243,7 +266,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
 
           <div className="-mt-1 flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="flex flex-wrap items-center gap-3">
-              {!has("creative") && c.inFlight > 0 && flight}
+              {adSide && !has("creative") && c.inFlight > 0 && flight}
               <Light label="Slack" tone={c.live.slack} />
               <Light label="Drive" tone={c.live.drive} />
               {c.contacts ? (

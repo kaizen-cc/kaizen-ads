@@ -18,9 +18,15 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 export async function setAssignment(clientId: string, slot: SlotRole, profileId: string | null): Promise<ActionResult> {
   const me = await requireStaff();
   if (!isExecOrLead(me)) return { ok: false, error: "Only executives and leaders can assign people." };
-  if (!SLOTS.some((s) => s.value === slot)) return { ok: false, error: "Unknown slot." };
+  const def = SLOTS.find((s) => s.value === slot);
+  if (!def) return { ok: false, error: "Unknown slot." };
 
   const supabase = await createClient();
+  // Whoever is picked must be allowed the seat (the social creative seat needs "also works on organic social", and so on)
+  if (profileId) {
+    const { data: who } = await supabase.from("profiles").select("role, also_buys, also_social, also_designs_email, is_active").eq("id", profileId).maybeSingle();
+    if (!who?.is_active || !canHold(def, { role: who.role as string, also_buys: who.also_buys as boolean | null, also_social: who.also_social as boolean | null, also_designs_email: who.also_designs_email as boolean | null })) return { ok: false, error: `They can't be a ${def.label.toLowerCase()}.` };
+  }
   const res = await setPrimarySeat(supabase, clientId, slot, profileId);
   if (!res.ok) return res;
   // A new Meta buyer: the account's work (KPI, open tickets, sprint) moves to them, and their handoff is written
@@ -47,9 +53,9 @@ export async function addSecondaryBuyer(clientId: string, slot: SlotRole, profil
   const supabase = await createClient();
   const { data: seat } = await supabase.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", slot);
   if ((seat ?? []).some((s) => s.profile_id === profileId)) return { ok: true };
-  const { data: who } = await supabase.from("profiles").select("role, also_buys, is_active").eq("id", profileId).maybeSingle();
+  const { data: who } = await supabase.from("profiles").select("role, also_buys, also_social, also_designs_email, is_active").eq("id", profileId).maybeSingle();
   const def = SLOTS.find((s) => s.value === slot)!;
-  if (!who?.is_active || !canHold(def, { role: who.role as string, also_buys: who.also_buys as boolean | null })) return { ok: false, error: `They can't be a ${def.label.toLowerCase()}.` };
+  if (!who?.is_active || !canHold(def, { role: who.role as string, also_buys: who.also_buys as boolean | null, also_social: who.also_social as boolean | null, also_designs_email: who.also_designs_email as boolean | null })) return { ok: false, error: `They can't be a ${def.label.toLowerCase()}.` };
   const { error } = await supabase.from("client_assignments").insert({ client_id: clientId, role: slot, profile_id: profileId, is_primary: !(seat ?? []).length });
   if (error) return { ok: false, error: error.message };
   refresh();

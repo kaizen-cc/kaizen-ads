@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireExec } from "@/lib/auth";
-import { ROLES, type TeamRole } from "@/lib/roles";
+import { ROLES, canAlsoDesignEmail, canAlsoSocial, type TeamRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
 import { sendEmail } from "@/lib/email";
 
@@ -18,6 +18,24 @@ export async function setRole(profileId: string, role: string): Promise<ActionRe
   const supabase = await createClient();
   const { error } = await supabase.from("profiles").update({ role }).eq("id", profileId);
   revalidatePath("/team");
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/**
+ * Execs: set a per-person switch. also_social: a creative who also works on organic social (offered as a social creative
+ * on clients with Social Media). also_designs_email: an email builder who also designs email (offered as an email designer).
+ */
+export async function setSwitch(profileId: string, which: "also_social" | "also_designs_email", on: boolean): Promise<ActionResult> {
+  await requireExec();
+  if (which !== "also_social" && which !== "also_designs_email") return { ok: false, error: "Unknown switch." };
+  const supabase = await createClient();
+  const { data: p } = await supabase.from("profiles").select("role").eq("id", profileId).maybeSingle();
+  if (!p) return { ok: false, error: "Not found." };
+  if (which === "also_social" && !canAlsoSocial(p.role as string)) return { ok: false, error: "That switch is for the creative team." };
+  if (which === "also_designs_email" && !canAlsoDesignEmail(p.role as string)) return { ok: false, error: "That switch is for email builders." };
+  const { error } = await supabase.from("profiles").update({ [which]: on }).eq("id", profileId);
+  revalidatePath("/team");
+  revalidatePath("/clients", "layout");
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 

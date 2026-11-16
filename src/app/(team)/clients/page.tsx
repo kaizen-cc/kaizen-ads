@@ -1,6 +1,6 @@
 import { hasEveryClient, isExecOrLead, requireStaff } from "@/lib/auth";
 import { freshness, nyToday } from "@/lib/dates";
-import { SLOTS, canHold, seatNeeded, type SlotRole } from "@/lib/roles";
+import { SLOTS, canHold, isChannelOnly, lineOfTeam, seatNeeded, type SlotRole } from "@/lib/roles";
 import { primaryOf } from "@/lib/buyer-seats";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -45,7 +45,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     .order("name");
   const [{ data }, { data: staff }, { data: usage }, { data: open }, { data: snaps }, { data: archived }, { data: kpiRows }] = await Promise.all([
     req,
-    supabase.from("profiles").select("id, full_name, role, also_buys").eq("is_active", true).order("full_name"),
+    supabase.from("profiles").select("id, full_name, role, also_buys, also_social, also_designs_email").eq("is_active", true).order("full_name"),
     supabase.from("client_allotment_usage").select("*"),
     supabase.from("requests").select("client_id").neq("stage", "launched"),
     supabase.from("meta_snapshots").select("client_id, fetched_at").order("fetched_at", { ascending: false }).limit(500),
@@ -65,7 +65,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     return SERVICES.filter((s) => bought.has(s.slug)).map((s) => s.slug);
   };
   // The people each service needs: a slot only shows (and only counts as missing) when the client has that service
-  const SLOT_SERVICE: Record<string, ServiceSlug> = { meta_buyer: "facebook-ads", google_buyer: "google-ads", graphic_designer: "creative", video_editor: "creative" };
+  const SLOT_SERVICE: Record<string, ServiceSlug> = { meta_buyer: "facebook-ads", google_buyer: "google-ads", graphic_designer: "creative", video_editor: "creative", social_manager: "social-media", email_strategist: "email-marketing", email_designer: "email-marketing", email_builder: "email-marketing" };
   // The archive log: every archive and restore, who did it, why, and what was set aside
   const { data: log } = archived?.length || isExecOrLead(me)
     ? await supabase.from("client_archive_events").select("client_id, action, reason, source, set_aside, at, profiles(full_name), clients(name, slug)").order("at", { ascending: false }).limit(300)
@@ -86,6 +86,8 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const newest = (...xs: (string | null | undefined)[]) => xs.filter(Boolean).sort().pop() ?? null;
 
   const canEdit = isExecOrLead(me);
+  // The email and social teams see their own clients (the database already limits them) and no ad columns on the cards
+  const channel = isChannelOnly(me.role);
   const optionsFor = (slot: (typeof SLOTS)[number]): Option[] => (staff ?? []).filter((p) => canHold(slot, p)).map((p) => ({ id: p.id, name: p.full_name }));
   const slotOptions = Object.fromEntries(SLOTS.map((s) => [s.value, optionsFor(s)])) as Record<SlotRole, Option[]>;
   const current = (r: Row, slot: string): Option | null => {
@@ -111,21 +113,22 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
       missing: missing(r),
       links: (["slack_channel_id", "internal_slack_channel_id", "drive_folder_id"] as const).filter((k) => !r[k]),
       services: servicesFor(r),
-      pkg: pkgOf(r),
-      until: r.creative_package_until,
+      pkg: channel ? "none" : pkgOf(r),
+      until: channel ? null : r.creative_package_until,
       id: r.id,
       name: r.name,
       kaizenId: r.kaizen_id ?? null,
       slug: r.slug,
+      channel: lineOfTeam(me.role),
       status: r.status,
       whiteLabel: r.client_type === "whitelabel",
-      packageLabel: r.creative_packages?.label ?? null,
+      packageLabel: channel ? null : (r.creative_packages?.label ?? null),
       images: { used: u?.images_used ?? 0, cap: u?.images_per_month ?? 0 },
       videos: { used: u?.videos_used ?? 0, cap: u?.videos_per_month ?? 0 },
-      inFlight: inFlight.get(r.id) ?? 0,
+      inFlight: channel ? 0 : (inFlight.get(r.id) ?? 0),
       contacts: r.contact_clients.length,
       live: {
-        meta: tone(r.meta_ad_account_id, metaAt.get(r.id)),
+        meta: channel ? null : tone(r.meta_ad_account_id, metaAt.get(r.id)),
         slack: tone(r.slack_channel_id || r.internal_slack_channel_id, newest(syncedAt.get(`slack:${r.slack_channel_id}`), syncedAt.get(`slack:${r.internal_slack_channel_id}`))),
         drive: tone(r.drive_folder_id, syncedAt.get(`drive:${r.drive_folder_id}`)),
       },
