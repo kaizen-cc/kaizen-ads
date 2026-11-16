@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ActionForm } from "@/components/action-form";
 import { ChannelSpark } from "@/components/channel-spark";
 import { ChannelStatusPill, ConnectCta, Gauge, SupportChips, TONE, mainCaption, mainText, needsConnecting, num, paceLine, signed, targetText } from "@/components/channel-parts";
@@ -13,7 +13,7 @@ import { moneyShort, pctText, STATUS_LABEL, type ChannelStatus, type Month } fro
 import type { ChannelRow } from "@/lib/channel-kpis/types";
 import { Layer } from "../clients/[slug]/layer";
 import { BoardBreakdown } from "./board-breakdown";
-import { setChannelTarget } from "./channel-actions";
+import { klaviyoReadProgress, setChannelTarget, type ReadState } from "./channel-actions";
 
 // The Email and Social KPI boards: every client of the line against this month's target, worst first. One board for both
 // lines (the main number and the supporting numbers differ). Where you are (filters, the open client) lives in the
@@ -53,6 +53,33 @@ export function ChannelBoard({ line, rows: given, month, switcher, initialWho, l
     return () => window.removeEventListener("klaviyo-connected", on);
   }, []);
   const rows = justConnected.size ? given.map((r) => (justConnected.has(r.clientId) && (r.data === "missing" || r.data === "failing") ? { ...r, data: "pending" as ChannelRow["data"], problem: null } : r)) : given;
+  // The cards still reading Klaviyo show how far along the first read is (polled every few seconds, only while some are
+  // reading); one that finishes brings the board up to date once, so its numbers appear
+  const router = useRouter();
+  const readingKey = rows.filter((r) => r.line === "email" && r.data === "pending").map((r) => r.clientId).join(",");
+  const [progress, setProgress] = useState<Record<string, ReadState>>({});
+  const refreshedFor = useRef(new Set<string>());
+  useEffect(() => {
+    if (!readingKey) return;
+    const ids = readingKey.split(",");
+    let stopped = false;
+    const tick = async () => {
+      const got = await klaviyoReadProgress(ids).catch(() => ({}) as Record<string, ReadState>);
+      if (stopped) return;
+      setProgress((p) => ({ ...p, ...got }));
+      const finished = ids.filter((id) => got[id]?.done && !got[id]?.error && !refreshedFor.current.has(id));
+      if (finished.length) {
+        for (const id of finished) refreshedFor.current.add(id);
+        router.refresh();
+      }
+    };
+    void tick();
+    const t = setInterval(tick, 3000);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [readingKey, router]);
   const [q, setQ] = useState(() => sp.get("q") ?? "");
   // History API, so nothing reloads and the browser's back walks the board's states
   const go = (patch: Record<string, string | null>, how: "push" | "replace" = "push") => {
@@ -230,7 +257,7 @@ export function ChannelBoard({ line, rows: given, month, switcher, initialWho, l
           {shown.length ? (
             <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {shown.map((r) => (
-                <Card key={r.clientId} r={r} active={open === r.clientId} onOpen={() => go({ open: r.clientId })} />
+                <Card key={r.clientId} r={r} reading={progress[r.clientId] ?? null} active={open === r.clientId} onOpen={() => go({ open: r.clientId })} />
               ))}
             </ul>
           ) : (
@@ -279,7 +306,7 @@ function SplitBar({ a, b }: { a: number; b: number }) {
   );
 }
 
-function Card({ r, active, onOpen }: { r: ChannelRow; active: boolean; onOpen: () => void }) {
+function Card({ r, reading, active, onOpen }: { r: ChannelRow; reading: ReadState | null; active: boolean; onOpen: () => void }) {
   const tone = TONE[r.status];
   const connect = needsConnecting(r);
   const pace = paceLine(r);
@@ -307,7 +334,19 @@ function Card({ r, active, onOpen }: { r: ChannelRow; active: boolean; onOpen: (
 
         {/* Every card keeps the same shell (header, a body that fills the card, the footer at the bottom), so a card
             waiting on a connection sits as evenly in the grid as one with numbers */}
-        {connect ? (
+        {connect && r.line === "email" && r.data === "pending" ? (
+          // Reading: a live bar (how far along, and the step), so it doesn't look like every other card waiting
+          <div className="flex flex-1 flex-col justify-center gap-2.5 rounded-[14px] border border-brand/30 bg-brand/5 px-4 py-5">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-sm text-fg">Reading Klaviyo</span>
+              <span className="tabular text-sm font-medium text-brand-text">{reading ? `${reading.pct}%` : "Starting"}</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-line" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={reading?.pct ?? 0} aria-label={`${r.name}: reading Klaviyo`}>
+              <span className="block h-full rounded-full bg-brand transition-[width] duration-700 ease-out" style={{ width: `${Math.max(4, reading?.pct ?? 0)}%` }} />
+            </div>
+            <span className="truncate text-xs text-faint">{reading?.error ? `Couldn't finish: ${reading.error}` : (reading?.step ?? "The first 90 days, a few minutes")}</span>
+          </div>
+        ) : connect ? (
           <div className="flex flex-1 flex-col items-start justify-center gap-1 rounded-[14px] border border-dashed border-line px-4 py-5">
             <span className="text-sm text-fg">{r.data === "missing" ? (r.line === "email" ? "Klaviyo isn't connected" : "Social isn't linked") : r.data === "failing" ? "Not reading right now" : r.data === "pending" ? "First read in progress" : "No numbers yet"}</span>
             <span className="text-xs text-faint">{r.data === "pending" ? "Numbers show once the first read lands" : "Open to connect it"}</span>

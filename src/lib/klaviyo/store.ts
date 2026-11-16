@@ -173,6 +173,19 @@ const NO_ORDERS = "No Placed Order metric in this account yet, so revenue can't 
 /** Each client's last read, for Sync health (sync_state "klaviyo:<client id>"): when, which window, the last full read, the error */
 type SyncMemo = { window?: KlaviyoWindow; fullAt?: string | null; error?: string | null; account?: string | null; seriesError?: string | null; storeError?: string | null };
 const memoSource = (clientId: string) => `klaviyo:${clientId}`;
+
+/**
+ * A full read's progress, for the Email board's card while the first 90 days come in: how far along (0 to 100) and the
+ * step it's on, kept apart from the memo (sync_state "klaviyo-read:<client>"). Writes never hold up the read.
+ */
+export const readProgressSource = (clientId: string) => `klaviyo-read:${clientId}`;
+export type ReadProgress = { pct: number; step: string; at: string; done?: boolean; error?: string | null };
+function readProgress(admin: SupabaseClient, clientId: string) {
+  return (pct: number, step: string, extra: Partial<ReadProgress> = {}) =>
+    Promise.resolve(admin.from("sync_state").upsert({ source: readProgressSource(clientId), last_run_at: new Date().toISOString(), last_result: { pct, step, at: new Date().toISOString(), ...extra } }))
+      .then(() => undefined)
+      .catch(() => undefined);
+}
 async function saveMemo(admin: SupabaseClient, clientId: string, memo: SyncMemo) {
   await admin.from("sync_state").upsert({ source: memoSource(clientId), last_run_at: new Date().toISOString(), last_result: memo });
 }
@@ -245,6 +258,8 @@ type ReadOut = { metricId: string | null; campaigns: number; flows: number; audi
  */
 async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Promise<ReadOut> {
   const clientId = conn.client_id;
+  const step = readProgress(admin, clientId);
+  await step(3, "Finding the store's metrics");
   const tz = conn.timezone;
   const today = dayIn(new Date().toISOString(), tz);
   const from = shift(today, -(BACKFILL_DAYS - 1));
@@ -258,8 +273,10 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   });
   if (metrics?.placedOrder && metrics.placedOrder !== conn.conversion_metric_id) await admin.from("klaviyo_connections").update({ conversion_metric_id: metrics.placedOrder }).eq("client_id", clientId);
   const metricId = metrics?.placedOrder ?? (await metricOf(admin, conn, key));
+  await step(12, "Reading the campaigns");
   const email = await listCampaigns(key, "email", sinceIso);
   const sms = await listCampaigns(key, "sms", sinceIso).catch(() => []);
+  await step(24, "Reading the flows and lists");
   const flows = await listFlows(key);
   const lists = await listAudiences(key, "list");
   let segmentsOk = true;
@@ -270,7 +287,9 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   const names = new Map([...lists, ...segments].map((a) => [a.id, a.name]));
 
   // The numbers (Placed Order is the conversion): skipped, not failed, when the account has no Placed Order metric
+  await step(36, "Reading each campaign's results");
   const values = metricId ? await campaignValues(key, metricId, { key: "last_90_days" }) : [];
+  await step(50, "Reading the flows' results, day by day");
   let series: SeriesRow[] = [];
   let seriesOk = false;
   let seriesError: string | null = null;
@@ -290,6 +309,7 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   }
 
   // The store's own revenue per day (Placed Order, as Klaviyo sees it) and list joins and leaves
+  await step(72, "Reading the store's revenue");
   let storeError: string | null = null;
   const store = metricId
     ? await metricDaily(key, metricId, from, today, tz).then(byDate).catch((e) => {
@@ -305,6 +325,7 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   for (const c of [...email, ...sms]) for (const a of c.audienceIds) used.set(a, (used.get(a) ?? 0) + 1);
   const main = [...lists, ...segments].sort((a, b) => (used.get(b.id) ?? 0) - (used.get(a.id) ?? 0) || (a.kind === b.kind ? (b.updated ?? "").localeCompare(a.updated ?? "") : a.kind === "list" ? -1 : 1)).slice(0, MAX_SIZES);
   const sizes = new Map<string, number | null>();
+  await step(88, "Counting the lists and segments");
   for (const [i, a] of main.entries()) {
     if (i) await sleep(SIZE_GAP_MS);
     sizes.set(a.id, await audienceSize(key, a.kind, a.id).catch(() => null));
@@ -441,12 +462,14 @@ export async function syncKlaviyo(admin: SupabaseClient, clientId: string, opts:
       .update({ last_synced_at: now, updated_at: now, status: "active", last_error: out.metricId ? null : NO_ORDERS, ...(window === "full" && out.metricId && !conn.backfilled_at ? { backfilled_at: now } : {}) })
       .eq("client_id", clientId);
     await saveMemo(admin, clientId, { window, fullAt: window === "full" ? now : lastFullAt, error: null, account: conn.account_name, seriesError: out.seriesError, storeError: out.storeError });
+    if (window === "full") await readProgress(admin, clientId)(100, "Done", { done: true });
     return { client: clientId, ok: true, window, campaigns: out.campaigns, flows: out.flows, audiences: out.audiences, days: out.days };
   } catch (e) {
     const msg = redactKey(errText(e), key);
     const refused = e instanceof KlaviyoError && (e.status === 401 || (e.status === 400 && /refused/i.test(msg)));
     await admin.from("klaviyo_connections").update({ last_error: msg, updated_at: new Date().toISOString(), ...(refused ? { status: "invalid" } : {}) }).eq("client_id", clientId);
     await saveMemo(admin, clientId, { window, fullAt: lastFullAt, error: msg, account: conn.account_name });
+    if (window === "full") await readProgress(admin, clientId)(0, "Couldn't finish", { done: true, error: msg.slice(0, 200) });
     return { client: clientId, ok: false, window, error: msg };
   }
 }

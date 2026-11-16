@@ -45,3 +45,26 @@ export async function setChannelTarget(clientId: string, line: Line, form: FormD
   revalidatePath(`/clients/${client.slug as string}`);
   return { ok: true };
 }
+
+export type ReadState = { pct: number; step: string; done: boolean; error: string | null };
+
+/**
+ * How far each client's first Klaviyo read has got (the Email board polls it for the cards still reading). Only the
+ * clients this person can see are answered; nothing here reads the account's numbers.
+ */
+export async function klaviyoReadProgress(clientIds: string[]): Promise<Record<string, ReadState>> {
+  await requireStaff();
+  if (!adminConfigured() || !clientIds.length) return {};
+  const ids = [...new Set(clientIds)].slice(0, 60);
+  // Only clients the person can see (their own session, so RLS decides)
+  const { data: seen } = await (await createClient()).from("clients").select("id").in("id", ids);
+  const ok = (seen ?? []).map((c) => c.id as string);
+  if (!ok.length) return {};
+  const { data } = await createAdminClient().from("sync_state").select("source, last_result").in("source", ok.map((id) => `klaviyo-read:${id}`));
+  const out: Record<string, ReadState> = {};
+  for (const row of data ?? []) {
+    const p = (row.last_result ?? {}) as { pct?: number; step?: string; done?: boolean; error?: string | null };
+    out[String(row.source).slice("klaviyo-read:".length)] = { pct: Math.max(0, Math.min(100, Number(p.pct) || 0)), step: p.step ?? "Starting", done: Boolean(p.done), error: p.error ?? null };
+  }
+  return out;
+}
