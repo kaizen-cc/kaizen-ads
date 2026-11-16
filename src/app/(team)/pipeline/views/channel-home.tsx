@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { EmailOpsOverview } from "@/app/(team)/kpis/email-ops-overview";
 import { ChannelSpark } from "@/components/channel-spark";
 import { ChannelStatusPill, ConnectCta, Gauge, SupportChips, TONE, mainCaption, mainText, needsConnecting, paceLine, targetText } from "@/components/channel-parts";
 import { BAND_TONE, ScoreBadge, WeighingDown } from "@/components/email-score-parts";
@@ -111,6 +112,9 @@ export async function ChannelHome({ me, line, today, greeting, firstName }: { me
               </ul>
             </section>
           )}
+
+          {/* Email: what the audits and sprints say, and the campaign ideas waiting on someone, across these clients */}
+          {line === "email" && <EmailOpsOverview clients={ranked.map((r) => ({ id: r.clientId, name: r.name, slug: r.slug }))} />}
 
           {connecting.length > 0 && (
             <section id="connecting" className="grid scroll-mt-24 gap-3">

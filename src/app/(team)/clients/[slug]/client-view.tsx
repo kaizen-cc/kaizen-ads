@@ -211,6 +211,8 @@ export type ClientViewProps = {
   tiktok?: { data: ClientTikTok | null; separate?: boolean } | null;
   /** Klaviyo (email and SMS, read only): null until its migration is applied, so nothing about it shows */
   klaviyo?: { conn: KlaviyoConnectionView | null; data: ClientKlaviyo | null; storeRevenue: number | null } | null;
+  /** The email audit, sprint and campaign ideas (server-rendered), shown as the Email service's Audit and ideas tab */
+  emailOps?: React.ReactNode;
   /** Organic social (Facebook and Instagram, read only), for clients with the social media service: null until its migration is applied */
   social?: { link: SocialLinkView | null; data: ClientSocial | null } | null;
   /** Google Ads sync: each account's state and the plain fix when it fails; null when they don't run Google */
@@ -237,7 +239,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, line = null, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, line = null, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, emailOps = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -314,7 +316,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
 
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
-      {chat && !demo && <ClientChat clientId={client.id} client={client.name} initial={chat.initial} targets={chat.targets} live={live} perms={chat.perms} />}
+      {chat && !demo && <ClientChat clientId={client.id} client={client.name} initial={chat.initial} targets={chat.targets} live={live} perms={chat.perms} desk={line === "email" ? "email" : null} />}
       {/* Header */}
       <header className="grid gap-3">
         <Link href="/clients" className="inline-flex min-h-11 w-fit items-center text-xs text-muted hover:text-fg md:min-h-0">
@@ -1090,7 +1092,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   tone: klaviyo.conn.status !== "active" || klaviyo.conn.error ? ("bad" as const) : null,
                   note: klaviyo.data ? `${klaviyo.data.currency && klaviyo.data.currency !== "USD" ? `${klaviyo.data.currency} ` : "$"}${Math.round(klaviyo.data.now.revenue).toLocaleString("en-US")} · 30 days` : "Klaviyo",
                   tabs: klaviyo.data
-                    ? emailTabs(klaviyo.data, client.id)
+                    ? [...emailTabs(klaviyo.data, client.id), ...(emailOps ? [{ id: "ops", label: "Audit and ideas", hint: "The email audit, the sprint that follows it and campaign ideas", content: emailOps }] : [])]
                     : [
                         {
                           id: "overview",

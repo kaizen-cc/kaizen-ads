@@ -29,6 +29,7 @@ import { loadClientChat } from "@/lib/client-chat";
 import { clientPerms } from "@/lib/chat-permissions";
 import { permsOn } from "@/lib/chat-permissions-server";
 import type { AuditTarget } from "./client-chat";
+import { EmailOpsPanel } from "./email-ops-panel";
 import { clientReadiness } from "@/lib/readiness";
 import { loadCampaigns } from "@/lib/client-campaigns";
 import { tiktokConfigured } from "@/lib/tiktok/core";
@@ -233,7 +234,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     ])),
     kpiChain(),
     t("calls", callChain),
-    t("chat", channel ? Promise.resolve([] as Awaited<ReturnType<typeof loadClientChat>>) : loadClientChat(supabase, client.id, me.id)),
+    t("chat", channel && line !== "email" ? Promise.resolve([] as Awaited<ReturnType<typeof loadClientChat>>) : loadClientChat(supabase, client.id, me.id)),
     // What's on their Drive to make creative from, the latest shot list, and their marketing moments
     t("assets & moments", Promise.all([
       count("image"),
@@ -501,6 +502,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       campaigns={campaigns}
       tiktok={tiktokOn ? { data: tiktok, separate: tiktokSeparate } : null}
       klaviyo={klaviyo}
+      emailOps={klaviyo?.conn && klaviyo.data && line !== "social" ? <EmailOpsPanel clientId={client.id} /> : null}
       social={social}
       googleSync={googleSync}
       docs={docs}
@@ -536,7 +538,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       assets={assetGlance}
       shotList={shotList}
       moments={(momentRows ?? []) as MomentRow[]}
-      chat={channel ? null : { initial: chatTurns, targets, perms }}
+      // The email team gets the client chat too (the email desk: Klaviyo, the score, the audits); the social team does not yet
+      chat={channel && line !== "email" ? null : { initial: chatTurns, targets, perms }}
       fatigue={fatigue}
       market={market}
       intake={intake}

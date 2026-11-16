@@ -31,6 +31,8 @@ export type ChatScope = { platform: "meta" | "google"; targetId?: string | null 
 
 const CHANGE_STARTER = "Pause the ads that spent with no results this week";
 const STARTERS = ["Summarize where this account stands", "What should we test next, and why?", "What has the client told us lately?", CHANGE_STARTER, "Launch a new ad group in Google Ads"];
+// The email desk's starters: the questions the email team asks of a client's Klaviyo account
+const EMAIL_STARTERS = ["Summarize where this email account stands", "What is weighing the score down?", "Which subject lines work for this list?", "What should we send next, and why?", "What has the client told us lately?"];
 const LAUNCH_STARTERS = { google: "Launch a new ad group in Google Ads", meta: "Launch ads on Meta from a launch sheet" } as const;
 const LAUNCH_DRAFT = { google: "Launch in Google Ads: ", meta: "Launch on Meta (I'm sharing the launch sheet): " } as const;
 const MAX_FILE = 50 * 1024 * 1024;
@@ -112,6 +114,7 @@ export function ClientChat({
   variant = "floating",
   scope = null,
   perms = ALL_PERMS,
+  desk = null,
 }: {
   clientId: string;
   client: string;
@@ -122,11 +125,13 @@ export function ClientChat({
   scope?: ChatScope | null;
   /** What this person may do on this client (src/lib/chat-permissions.ts): the chat only offers what's theirs */
   perms?: ClientPerms;
+  /** "email": the email team's desk (starters about the Klaviyo account; answers from the email agents) */
+  desk?: "email" | null;
 }) {
   const router = useRouter();
   // Starters: only the ones this person may act on (a change, a launch on their own platform)
   const mayChange = perms.change.meta || perms.change.google;
-  const starters = (scope && perms.launch[scope.platform] ? [LAUNCH_STARTERS[scope.platform], ...STARTERS.filter((x) => x !== LAUNCH_STARTERS.google)] : STARTERS).filter(
+  const starters = desk === "email" ? EMAIL_STARTERS : (scope && perms.launch[scope.platform] ? [LAUNCH_STARTERS[scope.platform], ...STARTERS.filter((x) => x !== LAUNCH_STARTERS.google)] : STARTERS).filter(
     (s) => (s !== CHANGE_STARTER || mayChange) && (s !== LAUNCH_STARTERS.google || perms.launch.google) && (s !== LAUNCH_STARTERS.meta || perms.launch.meta),
   );
   const canLaunchHere = Boolean(scope && perms.launch[scope.platform]);
@@ -245,7 +250,7 @@ export function ClientChat({
       const { error: e } = await supabase.storage.from("client-docs").upload(path, f, { contentType: f.type || "application/octet-stream" });
       if (!e) uploaded.push({ path, name: f.name, mime: f.type, bytes: f.size });
     }
-    const r = await askClientAi(clientId, text, deep, uploaded, scope);
+    const r = await askClientAi(clientId, text, deep, uploaded, scope, desk);
     clearTimeout(t);
     setSlow(false);
     setPending(null);
@@ -358,7 +363,9 @@ export function ClientChat({
 
         {/* The account audit, the same one as on the KPI board */}
         <div className="relative mx-4 mb-3 grid gap-2 rounded-[14px] md:mx-5 border border-ink/[0.07] bg-ink/[0.03] p-3">
-          {targets.length === 0 ? (
+          {desk === "email" ? (
+            <p className="text-xs text-ink/50">Email audits, the sprint that follows them and campaign ideas are on this client&apos;s Email tab, under Audit and ideas.</p>
+          ) : targets.length === 0 ? (
             <p className="text-xs text-ink/50">An audit needs a KPI with an ad account. Set one on the KPI board.</p>
           ) : (
             targets.map((t) => (

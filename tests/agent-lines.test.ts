@@ -51,7 +51,7 @@ describe("summarizeLines", () => {
 
 describe("the email agents", () => {
   it("have their skills, owned by the right role", () => {
-    expect(ROLE_SKILLS.email_strategist).toEqual(["email_calendar", "email_audit"]);
+    expect(ROLE_SKILLS.email_strategist).toEqual(["email_calendar", "email_audit", "email_desk"]);
     expect(roleOfAgent("email_flow_build")).toBe("email_builder");
   });
   it("are execs only to train for now", () => {

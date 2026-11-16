@@ -58,6 +58,9 @@ function nyNow() {
  *   24 and 48 business hours, customer success's queue, and auto-approval for clients who opted in
  * - docs: every 30 minutes, new and edited Google Docs and Slides across the Workspace, read for the client they're about
  * - asana: every 5 minutes, mirroring open tasks on Asana's Creative board while the team moves over
+ * - email_ops: every hour 6am to 9pm: email accounts in the red audit themselves (and the strategist is told), each email sprint
+ *   whose next check is due re-measures the score, and on weekdays 7am to 10am each client's campaign suggestions are
+ *   refreshed weekly (src/lib/email-ops)
  * - sprints: every hour, checking each optimization sprint whose next check is due (daily, or the follow-up date it set)
  * - verticals: every hour (the taxonomy weekly, new clients placed, benchmarks researched a few at a time)
  * - gtm: every hour (a Meta go-to-market strategy for newly onboarded clients once the intake form, call notes and website are in)
@@ -86,6 +89,7 @@ function due(step: string | null) {
   if (step === "gtm") return true;
   if (step === "verticals") return true;
   if (step === "creative_plan") return hour >= 6 && hour <= 22; // hourly (vercel.json): shot lists each cycle, files ticked off, marketing moments
+  if (step === "email_ops") return hour >= 6 && hour <= 21; // hourly (vercel.json): red email accounts audited, email sprints checked, suggestions weekly
   if (step === "sprints") return true; // hourly; each sprint's own next check decides
   if (step === "asana") return true; // every 5 minutes (vercel.json), so the mirror keeps up with Asana
   if (step === "sheet") return [12, 17].includes(hour);
@@ -289,6 +293,15 @@ export async function GET(request: Request) {
     if (step === "asana") {
       const { asanaConfigured, syncAsana } = await import("@/lib/asana");
       return Response.json(asanaConfigured() ? await syncAsana(admin) : { skipped: "ASANA_TOKEN not set" });
+    }
+    if (step === "email_ops") {
+      const { weekday, hour } = nyNow();
+      // Each part is its own try, so one failing does not stop the others
+      const part = async <T,>(work: () => Promise<T>) => work().catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      const audits = await part(async () => (await import("@/lib/email-ops/auto-audits")).autoEmailAudits(admin, 420_000));
+      const sprints = await part(async () => (await import("@/lib/email-ops/sprint")).checkDueEmailSprints(admin));
+      const suggestions = !["Sat", "Sun"].includes(weekday) && hour >= 7 && hour <= 10 ? await part(async () => (await import("@/lib/email-ops/suggestions")).refreshSuggestions(admin, 240_000)) : { skipped: "weekday mornings only" };
+      return Response.json({ audits, sprints, suggestions });
     }
     if (step === "sprints") return Response.json(await (await import("@/lib/sprints")).checkDueSprints(admin));
     if (step === "launches") {

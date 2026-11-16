@@ -11,7 +11,7 @@ export const LINES: readonly Line[] = [
   { key: "meta", label: "Meta Ads", description: "Media buying on Meta: audits, launches, fatigue checks and client reports." },
   { key: "google", label: "Google Ads", description: "Media buying on Google: account audits, launches and client reports." },
   { key: "tiktok", label: "TikTok Ads", description: "Media buying on TikTok: audits, launches and reports, parked until its skills are written." },
-  { key: "email", label: "Email Marketing", description: "Email strategy, design and copy, and building in Klaviyo. Parked until the core and skills are written." },
+  { key: "email", label: "Email Marketing", description: "Email strategy, design and copy, and building in Klaviyo: account audits, sprints, campaign suggestions and the client chat. Each has a starter core; the playbook is being written." },
   { key: "creative", label: "Creative", description: "Design and video: reviewing creative against the brand and the brief." },
   { key: "copy", label: "Copy", description: "Ad copy and video scripts, in each client's voice." },
 ];

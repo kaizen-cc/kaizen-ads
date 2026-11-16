@@ -11,8 +11,8 @@ export const ROLE_SKILLS: Record<string, readonly string[]> = {
   google_buyer: ["google_launcher", "google_reporter", "google_auditor"],
   // Offline shells until an exec brings the TikTok Ads Buyer online; the Head of Meta writes its skills
   tiktok_buyer: ["tiktok_auditor", "tiktok_launcher", "tiktok_reporter"],
-  // Offline shells until an exec brings each email agent online; only the execs train them for now
-  email_strategist: ["email_calendar", "email_audit"],
+  // The email agents are online with a starter core (their playbook is written from Kaizen calls and Loom history, approved by the Head of Email); only the execs train them for now
+  email_strategist: ["email_calendar", "email_audit", "email_desk"],
   email_creative: ["email_copy", "email_design_brief"],
   email_builder: ["email_campaign_build", "email_flow_build"],
   creative_director: ["creativereview", "creativecheck", "review"],
@@ -31,11 +31,12 @@ export const offlineRoleOfSkill = (key: string): string | null => {
   return role && role !== key && SHIPS_OFFLINE.includes(role) ? role : null;
 };
 
-/** The role agents each head trains (there is no email head position yet: the execs train the email agents) */
+/** The role agents each head trains (the Head of Email approves the email playbook, so trains the email agents) */
 export const HEAD_LINES: Partial<Record<TeamRole, readonly string[]>> = {
   head_of_meta: ["media_buyer", "tiktok_buyer"],
   head_of_google: ["google_buyer"],
   head_of_creative: ["creative_director"],
+  head_of_email: ["email_strategist", "email_creative", "email_builder"],
 };
 
 /** The role agent a skill belongs to (a role key is its own); null for a skill outside the six or shared knowledge */

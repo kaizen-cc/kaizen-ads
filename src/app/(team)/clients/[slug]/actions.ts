@@ -6,6 +6,7 @@ import { backInCycle } from "@/lib/reactivate";
 import { clientReadiness, type Readiness } from "@/lib/readiness";
 import { SERVICES } from "@/lib/services";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { lineOfTeam } from "@/lib/roles";
 import { detectIndustries, INDUSTRIES } from "@/lib/industry";
 import { refreshBriefing } from "@/lib/context/briefing";
 import { metaConfigured, syncClientMeta } from "@/lib/context/meta";
@@ -483,14 +484,20 @@ export async function askClientAi(
   files: { path: string; name: string; mime: string; bytes: number }[] = [],
   /** Opened from a KPI card: that card's platform and account, for launches and changes that don't name one */
   scope: { platform: "meta" | "google"; targetId?: string | null } | null = null,
+  /** The email team's desk (answers from the Klaviyo data and the email score) */
+  desk: "email" | null = null,
 ): Promise<{ ok: true; chat: ChatTurn[] } | { ok: false; error: string }> {
   const me = await requireStaff();
   if (!question.trim() && !files.length) return { ok: false, error: "Ask something first." };
+  // The email team only ever gets the email desk (never the ad account desk, which reads with the server's rights); the social team has no chat yet
+  const line = lineOfTeam(me.role);
+  if (line === "social") return { ok: false, error: "The chat isn't open to the social team yet." };
+  if (line === "email") desk = "email";
   const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!c) return { ok: false, error: "Client not found." };
   try {
     const safeScope = scope && (scope.platform === "google" || scope.platform === "meta") ? { platform: scope.platform, targetId: typeof scope.targetId === "string" ? scope.targetId : null } : null;
-    const chat = await askAboutClient(createAdminClient(), clientId, me.id, question, goDeep, files, safeScope);
+    const chat = await askAboutClient(createAdminClient(), clientId, me.id, question, goDeep, files, safeScope, desk === "email" ? "email" : null);
     revalidatePath("/clients/[slug]", "page");
     return { ok: true, chat };
   } catch (e) {
