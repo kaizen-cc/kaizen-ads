@@ -177,7 +177,18 @@ export class AtlassianMcp {
     return all;
   }
 
+  /** Operations not offered as tools of their own (Atlassian's MCP v2 lists them through discover), run through executeRead */
+  private viaExecute = new Map<string, string>();
+  routeViaExecute(operation: string, executeTool: string) {
+    this.viaExecute.set(operation, executeTool);
+  }
+
   async callTool(name: string, args: Record<string, unknown>): Promise<McpToolResult> {
+    const exec = this.viaExecute.get(name);
+    if (exec) {
+      const { cloudId, ...inputs } = args;
+      return this.callTool(exec, { ...(cloudId ? { cloudId } : {}), name, inputs });
+    }
     const r = await this.request<McpToolResult>("tools/call", { name, arguments: args });
     if (r?.isError) {
       const text = (r.content ?? []).map((c) => c.text ?? "").join(" ").trim();

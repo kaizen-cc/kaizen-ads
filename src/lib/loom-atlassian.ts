@@ -13,6 +13,7 @@ import {
   nextPageCursor,
   sitesIn,
   toolData,
+  walkObjects,
   transcriptIn,
   userLabelIn,
   type McpTool,
@@ -128,6 +129,39 @@ export function plainError(e: unknown): string {
 
 // ─── The session: tools, cloud id, who it reads as ──────────────────────────
 
+/**
+ * An operation Atlassian's MCP v2 doesn't offer as a tool of its own (listLoomObjects): its inputs are asked of discover
+ * and it's run through executeRead. Null when either isn't offered or discover doesn't know it (what discover said is
+ * logged, to adapt to).
+ */
+async function viaExecute(mcp: AtlassianMcp, tools: McpTool[], operation: string, query: string): Promise<McpTool | null> {
+  const discover = findTool(tools, "discover");
+  const exec = findTool(tools, "executeRead");
+  if (!discover || !exec) return null;
+  let data: unknown[] = [];
+  try {
+    data = toolData(await mcp.callTool(discover.name, { query }));
+  } catch {
+    return null;
+  }
+  let schema: McpTool["inputSchema"] | null = null;
+  for (const d of data)
+    walkObjects(d, (o) => {
+      if (schema || o.name !== operation) return;
+      const s = (o.inputSchema ?? o.input_schema ?? o.inputs ?? o.input ?? o.parameters ?? o.schema) as Record<string, unknown> | undefined;
+      if (s && typeof s === "object") schema = ("properties" in s ? s : { type: "object", properties: s }) as McpTool["inputSchema"];
+    });
+  // The text form: the operation named, its inputs as JSON somewhere in the text
+  if (!schema) {
+    const text = data.filter((d): d is string => typeof d === "string").join("\n");
+    if (text.includes(operation)) schema = { type: "object", properties: {} };
+    console.info(`[loom-atlassian] discover ${operation}`, JSON.stringify(data).slice(0, 6000));
+  }
+  if (!schema) return null;
+  mcp.routeViaExecute(operation, exec.name);
+  return { name: operation, inputSchema: schema };
+}
+
 type Session = { mcp: AtlassianMcp; tools: McpTool[]; list: McpTool; content: McpTool | null; cloudId: string | null; account: string | null };
 
 async function open(known: { cloudId: string | null }): Promise<Session> {
@@ -135,8 +169,8 @@ async function open(known: { cloudId: string | null }): Promise<Session> {
   const mcp = new AtlassianMcp();
   await mcp.connect();
   const tools = await mcp.listTools();
-  const list = findTool(tools, "listLoomObjects", /loom.*(list|search).*object|list.*loom/i);
-  const content = findTool(tools, "getLoomObjectsContent", /loom.*(object|video).*content|get.*loom.*content/i);
+  const list = findTool(tools, "listLoomObjects", /loom.*(list|search).*object|list.*loom/i) ?? (await viaExecute(mcp, tools, "listLoomObjects", "list loom videos"));
+  const content = findTool(tools, "getLoomObjectsContent", /loom.*(object|video).*content|get.*loom.*content/i) ?? (await viaExecute(mcp, tools, "getLoomObjectsContent", "read loom video transcript"));
   if (!list) {
     await mcp.close();
     // What Atlassian did offer (tool names only, nothing secret), so Settings shows whether Loom is there under another name;
