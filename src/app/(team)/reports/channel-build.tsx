@@ -5,7 +5,7 @@ import { ChannelClientRow } from "./channel-client-row";
 import { Empty } from "./report-cards";
 
 // The Build a report view for Email and Social: the same place as the ads builder, listing this person's clients on the
-// line. Connected ones can draft a report now (and take an optional weekly); the others say what to connect.
+// line. Connected ones can draft a report now (the weekly and monthly also come on their own); the others say what to connect.
 
 type Rep = { id: string; client_id: string; kind: string; status: string; period_start: string; period_end: string };
 
@@ -36,7 +36,7 @@ export async function ChannelBuild({ line, clients, rows }: { line: ChannelLine;
       <div className="grid gap-1">
         <h3 className="font-heading text-[19px]">{lineName(line)} report, any client</h3>
         <p className="text-sm text-muted">
-          {connected} of {clients.length} connected. Draft last month or last week now; a weekly is optional, per client. The ones not connected say what to connect.
+          {connected} of {clients.length} connected. Like the ads reports, a weekly is drafted every Monday and the monthly on the month&apos;s first Monday; draft last month or last week now. The ones not connected say what to connect.
         </p>
       </div>
       <ul className="grid gap-2.5">

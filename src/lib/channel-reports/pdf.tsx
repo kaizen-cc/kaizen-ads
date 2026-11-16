@@ -34,12 +34,18 @@ export async function channelImages(input: ChannelPdfInput): Promise<ChannelImag
 }
 
 /** The client's logo and colour, and Kaizen's logo, on the input (a white label client's never gets Kaizen's) */
-async function withBrand(input: ChannelPdfInput): Promise<ChannelPdfInput> {
+export async function withBrand(input: ChannelPdfInput): Promise<ChannelPdfInput> {
   if (input.brand !== undefined) return input;
   const { agencyLogo, reportBrand } = await import("@/lib/reports/brand-server");
   const { adminConfigured, createAdminClient } = await import("@/lib/supabase/admin");
   const client = input.clientId && adminConfigured() ? await reportBrand(createAdminClient(), input.clientId).catch(() => null) : null;
   return { ...input, brand: { logo: client?.logo ?? null, light: client?.light ?? false, color: client?.color ?? null, agencyLogo: input.whiteLabel ? null : await agencyLogo() } };
+}
+
+/** What the studio needs to draw the PDF in the browser: the input with its brand, and the pictures (read once) */
+export async function prepareChannel(input: ChannelPdfInput): Promise<{ input: ChannelPdfInput; images: ChannelImages }> {
+  const [branded, images] = await Promise.all([withBrand(input), channelImages(input)]);
+  return { input: branded, images };
 }
 
 export async function renderChannelPdf(input: ChannelPdfInput): Promise<Uint8Array> {

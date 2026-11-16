@@ -54,6 +54,20 @@ export async function saveReportToDrive(admin: SupabaseClient, reportId: string,
   const periodLabel = r.kind === "built" && ranges.length ? [own, ...ranges.slice(1).map((x) => x.label)].join(" + ") : r.kind === "monthly" ? monthLabel(r.period_start as string) : own;
   const name = safeFileName(reportFileName({ client: client.name, whiteLabel: isWhiteLabel(client.client_type), built: r.kind === "built", kind: r.kind as string, platform: r.platform as string, periodLabel }));
 
+  // An email or social report: its own document, with the write-up as its last page, saved the same way
+  if (r.platform === "klaviyo" || r.platform === "social") {
+    const { loadChannelReport } = await import("@/lib/channel-reports/share");
+    const { renderChannelPdf } = await import("@/lib/channel-reports/pdf");
+    const loaded = await loadChannelReport(admin, reportId);
+    if (!loaded) return { ok: false, error: "This report hasn't been written yet." };
+    let drawn: Uint8Array;
+    try {
+      drawn = await renderChannelPdf({ ...loaded.input, withNotes: true });
+    } catch (e) {
+      return { ok: false, error: `The PDF couldn't be drawn: ${e instanceof Error ? e.message.slice(0, 200) : "unknown error"}` };
+    }
+    return upload(admin, reportId, { clientFolder, name, fixHref, by, now }, drawn);
+  }
   let input;
   if (joint) {
     const { builtInput } = await import("./builder");
@@ -70,6 +84,12 @@ export async function saveReportToDrive(admin: SupabaseClient, reportId: string,
     return { ok: false, error: `The PDF couldn't be drawn: ${e instanceof Error ? e.message.slice(0, 200) : "unknown error"}` };
   }
 
+  return upload(admin, reportId, { clientFolder, name, fixHref, by, now }, pdf);
+}
+
+/** The PDF into the client's reports folder (a new version of the same file when it's there), recorded on the report */
+async function upload(admin: SupabaseClient, reportId: string, at: { clientFolder: string; name: string; fixHref: string; by: { id: string; fullName: string }; now: Date }, pdf: Uint8Array): Promise<SaveResult> {
+  const { clientFolder, name, fixHref, by, now } = at;
   let file: { id: string; webViewLink?: string };
   let newVersion = false;
   try {

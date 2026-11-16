@@ -59,7 +59,9 @@ export async function reportEmailPreview(admin: SupabaseClient, id: string, by: 
   const cc = await reportCc(admin, { clientId: r.client_id, platforms: rows.map((x) => x.platform), owners: rows.map((x) => x.owner_id), to: to.map((x) => x.email) }).catch(() => [] as string[]);
   const dashboard = reportCtaUrl(r.clients, portalUrl());
 
-  if (r.kind === "monthly") {
+  // An email or social report: its own service and key numbers in the email, as its send builds it
+  const channel = r.platform === "klaviyo" || r.platform === "social";
+  if (r.kind === "monthly" && !channel) {
     const month = monthOf(r.period_start);
     const service = rows.length > 1 ? "Meta + TikTok" : platformName(r.platform as "meta");
     const headline = r.sections?.headline ?? `The ${service} part of your ${month} recap is ready.`;
@@ -74,7 +76,8 @@ export async function reportEmailPreview(admin: SupabaseClient, id: string, by: 
     client: c.name,
     kind: r.kind,
     periodLabel: rangeLabel(r.period_start, r.period_end),
-    parts: rows.map((x) => ({ platform: asPlatform(x.platform), metrics: x.metrics, sections: x.sections })),
+    parts: rows.map((x) => ({ platform: channel ? (x.platform as "meta") : asPlatform(x.platform), metrics: channel ? null : x.metrics, sections: x.sections })),
+    ...(channel ? { serviceLabel: r.platform === "klaviyo" ? "Email" : "Social", keyLines: r.metrics ? (await import("@/lib/channel-reports/core")).keyLines(r.metrics as never) : null } : {}),
     from: { name: by.fullName, email: by.email },
     first: to.length === 1 ? (to[0].name?.trim().split(/\s+/)[0] ?? null) : null,
     dashboard,

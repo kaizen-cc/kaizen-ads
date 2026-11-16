@@ -17,10 +17,23 @@ import { channelsPhrase, normalizeDelivery, type Delivery } from "@/lib/reports/
 import type { ManualLine } from "@/lib/reports/manual";
 import { saveManual } from "@/lib/reports/manual-save";
 import type { DriveSave } from "@/lib/reports/drive-save-core";
+import type { ChannelLayout } from "@/lib/channel-reports/layout";
 import type { UploadedFile } from "@/lib/reports/upload-csv";
 import { appendLog, canBringBack, isSkipReason, latestSkip, skipEntry, unskipEntry, type LogEntry } from "@/lib/reports/skip-log";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
+
+// An email or social report goes through these same actions: where its work differs (its numbers, its writer, its
+// document), the action hands it to the channel report code; everything else (who may, saving, skipping, regenerating,
+// the dates, sending, the history, Drive) is shared.
+const isChannel = (platform: unknown) => platform === "klaviyo" || platform === "social";
+
+/** The writer for this report's platform: the AI changes the report and the message, the QA checks them again */
+async function reviseAny(admin: ReturnType<typeof createAdminClient>, id: string, ask: string, by: string, opts: { echo?: boolean; byId?: string | null } = {}) {
+  const { data } = await admin.from("reports").select("platform").eq("id", id).maybeSingle();
+  if (isChannel(data?.platform)) return (await import("@/lib/channel-reports/write")).reviseChannelReport(admin, id, ask, by, opts);
+  return reviseReport(admin, id, ask, by, opts);
+}
 
 /** The report, if this person may work on it: the account's buyer, the leads of its line, or an exec. */
 async function mine(id: string) {
@@ -73,14 +86,22 @@ function tidyLayout(layout: ReportLayout): ReportLayout {
  * The metrics the buyer chose (tiles, key metrics rows, campaign columns and lines): kept on the report, and on its KPI
  * as this client's layout, so the next report starts the way the buyer left this one.
  */
-export async function saveLayout(id: string, layout: ReportLayout): Promise<Result> {
+export async function saveLayout(id: string, layout: ReportLayout | ChannelLayout): Promise<Result> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   if (ok.r.status === "posted") return { ok: false, error: "It's already gone out." };
-  const tidy = tidyLayout(layout);
   const admin = createAdminClient();
+  // An email or social report: its own tiles and table columns, kept on the report (the client's next one on the line
+  // starts from it when it's drafted)
+  if (isChannel(ok.r.platform)) {
+    const { tidyChannelLayout } = await import("@/lib/channel-reports/layout");
+    await admin.from("reports").update({ layout: tidyChannelLayout(ok.r.platform as "klaviyo" | "social", layout as ChannelLayout), updated_at: new Date().toISOString() }).eq("id", id);
+    done(id);
+    return { ok: true };
+  }
+  const tidy = tidyLayout(layout as ReportLayout);
   // "Include our notes in the report" is this report's alone: the next one starts without them again
-  await admin.from("reports").update({ layout: layout.notes === true ? { ...tidy, notes: true } : tidy, updated_at: new Date().toISOString() }).eq("id", id);
+  await admin.from("reports").update({ layout: (layout as ReportLayout).notes === true ? { ...tidy, notes: true } : tidy, updated_at: new Date().toISOString() }).eq("id", id);
   const t = ok.r.kpi_targets as unknown as { id: string } | null;
   if (t) await admin.from("kpi_targets").update({ report_layout: tidy }).eq("id", t.id);
   done(id);
@@ -269,7 +290,7 @@ export async function reviseWithAi(id: string, ask: string): Promise<Result<{ ch
     const reply = `${same ? "The report already covers" : "Moving the whole report to"} ${label} (against ${before}) and redrawing every page with fresh numbers: the tiles, tables, campaigns, top ads and charts.${rest ? " Then I'll make the rest of your change." : ""}`;
     const next: ChatTurn[] = [...chat, { role: "user" as const, text: ask.trim(), at, by: ok.me.fullName }, { role: "assistant" as const, text: reply, at }].slice(-40);
     await admin.from("reports").update({ chat: next }).eq("id", id);
-    const moved = await movePeriod(id, ok.me, p, today, rest ? (a) => reviseReport(a, id, `The report has just been redrawn for ${label}. Now, from the buyer's message, everything except the dates: ${ask.trim().slice(0, 2000)}`, ok.me.fullName, { echo: false, byId: ok.me.id }).catch(() => null) : undefined);
+    const moved = await movePeriod(id, ok.me, p, today, rest ? (a) => reviseAny(a, id, `The report has just been redrawn for ${label}. Now, from the buyer's message, everything except the dates: ${ask.trim().slice(0, 2000)}`, ok.me.fullName, { echo: false, byId: ok.me.id }).catch(() => null) : undefined);
     if (!moved.ok) {
       await admin.from("reports").update({ chat }).eq("id", id);
       return { ok: false, error: moved.error, ...(moved.openId ? { openId: moved.openId } : {}) };
@@ -277,7 +298,7 @@ export async function reviseWithAi(id: string, ask: string): Promise<Result<{ ch
     return { ok: true, chat: next, message: (cur?.message as string) ?? "", sections: cur?.sections as Sections, qa: (cur?.qa as Qa | null) ?? null, lesson: null, redrawing: true };
   }
   try {
-    const out = await reviseReport(createAdminClient(), id, ask, ok.me.fullName, { byId: ok.me.id });
+    const out = await reviseAny(createAdminClient(), id, ask, ok.me.fullName, { byId: ok.me.id });
     done(id);
     return { ok: true, ...out };
   } catch (e) {
@@ -294,8 +315,8 @@ export async function updateTextToNumbers(id: string): Promise<Result<{ message:
   if (!ok) return { ok: false, error: "Not found." };
   if (ok.r.status !== "draft" && ok.r.status !== "submitted") return { ok: false, error: "It's already gone out, or being written." };
   const admin = createAdminClient();
-  const { updateText } = await import("@/lib/reports/refresh");
-  const note = await updateText(admin, id, { id: ok.me.id, name: ok.me.fullName });
+  const by = { id: ok.me.id, name: ok.me.fullName };
+  const note = isChannel(ok.r.platform) ? await (await import("@/lib/channel-reports/refresh")).updateChannelText(admin, id, by) : await (await import("@/lib/reports/refresh")).updateText(admin, id, by);
   const { data: now } = await admin.from("reports").select("message, sections, qa").eq("id", id).single();
   done(id);
   if (note?.text === "needs_look") return { ok: false, error: "The text couldn't be updated just now. Ask the AI in the chat to update the figures, or edit them by hand." };
@@ -307,8 +328,8 @@ export async function keepTextAsIs(id: string): Promise<Result> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   if (ok.r.status !== "draft" && ok.r.status !== "submitted") return { ok: false, error: "It's already gone out, or being written." };
-  const { keepText } = await import("@/lib/reports/refresh");
-  await keepText(createAdminClient(), id);
+  if (isChannel(ok.r.platform)) await (await import("@/lib/channel-reports/refresh")).keepChannelText(createAdminClient(), id);
+  else await (await import("@/lib/reports/refresh")).keepText(createAdminClient(), id);
   done(id);
   return { ok: true };
 }
@@ -318,7 +339,7 @@ export async function checkAgain(id: string): Promise<Result<{ qa: Qa }>> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   try {
-    const qa = await qaReport(createAdminClient(), id);
+    const qa = isChannel(ok.r.platform) ? await (await import("@/lib/channel-reports/write")).qaChannelReport(createAdminClient(), id) : await qaReport(createAdminClient(), id);
     done(id);
     return { ok: true, qa };
   } catch (e) {
@@ -423,10 +444,13 @@ export async function sendReport(id: string, delivery?: Delivery, note?: string)
   if (ok.r.status === "skipped") return { ok: false, error: "It's skipped. Bring it back first." };
   const admin = createAdminClient();
   try {
-    if (ok.r.kind !== "monthly") {
+    if (ok.r.kind !== "monthly" || isChannel(ok.r.platform)) {
       const d = normalizeDelivery(delivery ?? null);
       if (d.channels.includes("email") && !d.recipients.length) return { ok: false, error: "Add at least one email address to send it to." };
-      const out = await sendWeekly(admin, id, { id: ok.me.id, fullName: ok.me.fullName, email: ok.me.email }, d, note?.slice(0, 600) ?? null);
+      if (ok.r.status === "drafting" || ok.r.status === "queued") return { ok: false, error: "It's still being written." };
+      const by = { id: ok.me.id, fullName: ok.me.fullName, email: ok.me.email };
+      // An email or social report goes out the same way (Slack as the sender, email with the PDF), with its own PDF and live page
+      const out = isChannel(ok.r.platform) ? await (await import("@/lib/channel-reports/send")).sendChannelReport(admin, id, by, d, note?.slice(0, 600) ?? null) : await sendWeekly(admin, id, by, d, note?.slice(0, 600) ?? null);
       if (!out.ok) return { ok: false, error: out.error ?? "It didn't go out.", ...(out.needsConnect ? { needsConnect: true } : {}) } as { ok: false; error: string };
       const { rememberDelivery, sentNote } = await import("@/lib/reports/send");
       await rememberDelivery(admin, ok.r.client_id as string, d, ok.me.id).catch(() => null);
@@ -650,8 +674,7 @@ export async function refreshSlackMessage(id: string): Promise<Result<{ message:
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   try {
-    const { refreshMessage } = await import("@/lib/reports/write");
-    const out = await refreshMessage(createAdminClient(), id);
+    const out = isChannel(ok.r.platform) ? await (await import("@/lib/channel-reports/write")).refreshChannelMessage(createAdminClient(), id) : await (await import("@/lib/reports/write")).refreshMessage(createAdminClient(), id);
     done(id);
     return { ok: true, ...out };
   } catch (e) {
@@ -952,12 +975,26 @@ export async function uploadReportCsv(id: string, file: { name: string; text: st
   if (!ok) return { ok: false, error: "Not found." };
   if (ok.r.status === "posted") return { ok: false, error: "It's already gone out." };
   if (ok.r.status === "drafting" || ok.r.status === "queued") return { ok: false, error: "It's being written right now. Attach the file again when it's done." };
-  const platform = ok.r.platform === "google" ? "google" : ok.r.platform === "meta" ? "meta" : null;
-  if (!platform) return { ok: false, error: "Files can be added to Meta and Google reports." };
   const name = String(file?.name ?? "export.csv").replace(/[\\/]/g, " ").trim().slice(0, 160) || "export.csv";
   const text = String(file?.text ?? "");
   if (!text.trim()) return { ok: false, error: "That file is empty." };
-  if (text.length > UPLOAD_MAX) return { ok: false, error: "That file is too big. Export it at campaign or ad level with fewer columns." };
+  if (text.length > UPLOAD_MAX) return { ok: false, error: "That file is too big. Export it with fewer columns or rows." };
+  // An email or social report: the export (from Klaviyo, Meta Business Suite...) is read by the AI with the ask and kept
+  // in the chat like a lookup, so the report and its QA can use what it shows
+  if (isChannel(ok.r.platform)) {
+    try {
+      const { reviseChannelReport } = await import("@/lib/channel-reports/write");
+      const rows = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim());
+      const out = await reviseChannelReport(createAdminClient(), id, ask.trim() || `I attached ${name}. Read it, compare it with the report's numbers, and use what it adds.`, ok.me.fullName, { byId: ok.me.id, file: { name, text: rows.slice(0, 600).join("\n") } });
+      done(id);
+      // The page reads the report again, so the rewritten text and checks show
+      return { ok: true, chat: out.chat, summary: `${(rows.length - 1).toLocaleString("en-US")} rows`, redrawing: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : "Couldn't read it just now." };
+    }
+  }
+  const platform = ok.r.platform === "google" ? "google" : ok.r.platform === "meta" ? "meta" : null;
+  if (!platform) return { ok: false, error: "Files can be added to Meta and Google reports." };
   const { parseAdsCsv, uploadSummary, covers, UPLOAD_KEYS } = await import("@/lib/reports/upload-csv");
   let parsed = parseAdsCsv(text);
   let mappedByAi = false;

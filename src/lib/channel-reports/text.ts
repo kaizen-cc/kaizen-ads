@@ -1,7 +1,7 @@
 import { checkText, pointsLost } from "@/lib/email-score-calc";
 import { emailSupport, int, money, pct, signed, socialName, socialSupport, targetSub, type EmailMetrics, type SocialMetrics } from "./core";
 import { grade, RATE_BARS, type MessageRow, type Pair } from "./email-detail";
-import { periodWords, whatHappenedBullets } from "./email-message";
+import { periodWords, socialHappenedBullets, whatHappenedBullets } from "./email-message";
 
 // A channel report's numbers as the text the writer and the QA read: every figure the report may quote, with its dates and
 // what it is compared with, in one place so what the AI says and what the PDF draws can never differ.
@@ -111,6 +111,8 @@ export function socialText(m: SocialMetrics): string {
     line("Profile visits", int(now.profileViews), int(before.profileViews)),
     line("Accounts engaged", int(now.engaged), int(before.engaged)),
     line("Posts published", int(now.posts), int(before.posts)),
+    `The message's What happened bullets, exactly (period ${periodWords(m.main)}):`,
+    ...socialHappenedBullets(m).map((x) => `- ${x}`),
   ];
   if (m.target) out.push(`- Target (${m.target.label}): ${targetSub(m.target) ?? "set, no progress yet"}`);
   for (const p of m.platforms) out.push(`${socialName(p.platform)}${p.name ? ` (${p.name})` : ""}: ${int(p.now.followers)} followers (${signed(p.now.followerChange)}), reach ${int(p.now.reach)} (before ${int(p.before.reach)}), views ${int(p.now.views)}, interactions ${int(p.now.interactions)}, ${p.now.rate != null ? `engagement ${pct(p.now.rate)}` : "no engagement rate"}, ${int(p.now.posts)} posts`);

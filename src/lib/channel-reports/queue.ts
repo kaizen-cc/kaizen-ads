@@ -75,7 +75,7 @@ export async function draftChannelQueued(admin: SupabaseClient, budgetMs = 240_0
   return done;
 }
 
-/** A nudge to the owner of a channel report nobody has sent: a monthly by the 5th, a weekly the day after it was drafted */
+/** A nudge to the owner of a channel report nobody has sent, on the ads reports' schedule (Monday afternoon, Tuesday morning): a monthly by the 5th */
 export async function remindChannelReports(admin: SupabaseClient, today: string) {
   const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, clients(name)").in("platform", ["klaviyo", "social"]).in("status", ["draft", "failed"]).not("owner_id", "is", null).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
   const rows = (data ?? []) as unknown as { id: string; kind: string; owner_id: string; client_id: string; clients: { name: string } }[];
@@ -91,7 +91,8 @@ export async function remindChannelReports(admin: SupabaseClient, today: string)
         profile_id: r.owner_id,
         kind: "report",
         title: monthly ? `${r.clients.name}: the monthly report is due by the 5th` : `${r.clients.name}: this week's report hasn't gone out`,
-        body: "It's drafted and checked: read it over and send it.",
+        // A month's report is saved to the client's Drive with its write-up (like the ads monthly); a week's goes to the client
+        body: monthly ? "It's drafted and checked: read it over and save it to the client's Drive." : "It's drafted and checked: read it over and send it.",
         href: `/reports/${r.id}`,
         client_id: r.client_id,
         key: `report-remind:${r.id}:${today}`,

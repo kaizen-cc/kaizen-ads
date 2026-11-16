@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReportPdfInput } from "@/lib/reports/report-doc";
+import type { ChannelImages, ChannelPdfInput } from "@/lib/channel-reports/channel-doc";
 
 // The report's preview is the PDF itself: the same document the client gets, drawn in the browser from what the buyer
 // has on screen, so every change shows at once (saving happens alongside). What can change carries an invisible link
@@ -12,7 +13,8 @@ import type { ReportPdfInput } from "@/lib/reports/report-doc";
 export type PdfField = { id: string; label: string; value: string; removable?: boolean; list?: { at: number; count: number } };
 type Box = { left: number; top: number; width: number; height: number; url: string };
 type Page = { key: string; canvas: HTMLCanvasElement; ratio: number; links: Box[] };
-type Base = { input: ReportPdfInput; images: (string | null)[][] };
+// An email or social report draws its own document (channel-doc.tsx); everything else about the preview is the same
+type Base = { kind?: undefined; input: ReportPdfInput; images: (string | null)[][] } | { kind: "channel"; input: ChannelPdfInput; images: ChannelImages };
 /** Draws the PDF as the client gets it (the buyer's changes in, no click targets): for the studio's download */
 export type PdfMaker = () => Promise<Blob>;
 
@@ -42,7 +44,10 @@ export function PdfPreview({
   hotMenu,
   ownPlatform,
   onMaker,
+  patchChannel,
 }: {
+  /** An email or social report: its changes on screen, applied to its document before it's drawn */
+  patchChannel?: (input: ChannelPdfInput) => ChannelPdfInput;
   /** The service whose words the fields are: another part's text on a joint report opens the menu, never a field */
   ownPlatform?: string;
   /** Where the report's document input and pictures come from (read again when baseKey changes) */
@@ -72,8 +77,25 @@ export function PdfPreview({
   const [edit, setEdit] = useState<{ id: string; page: number; x: number; y: number } | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const patchRef = useRef(patch);
+  const channelRef = useRef(patchChannel);
   useEffect(() => {
     patchRef.current = patch;
+    channelRef.current = patchChannel;
+  });
+  // The document for what came back, with the changes on screen (edit: the click targets, off for a download)
+  const documentFor = async (b: Base, edit: boolean) => {
+    if (b.kind === "channel") {
+      const { ChannelDocument } = await import("@/lib/channel-reports/channel-doc");
+      const input = channelRef.current ? channelRef.current(b.input) : b.input;
+      return <ChannelDocument input={{ ...input, edit: edit && input.edit }} images={b.images} />;
+    }
+    const { ReportDocument } = await import("@/lib/reports/report-doc");
+    const input = patchRef.current(b.input);
+    return <ReportDocument input={edit ? input : { ...input, edit: false }} images={b.images} />;
+  };
+  const documentRef = useRef(documentFor);
+  useEffect(() => {
+    documentRef.current = documentFor;
   });
 
   // The document and its pictures, from the server (once, and when the report itself changes there)
@@ -105,8 +127,8 @@ export function PdfPreview({
       return;
     }
     makerRef.current?.(async () => {
-      const [{ pdf }, { ReportDocument }] = await Promise.all([import("@react-pdf/renderer"), import("@/lib/reports/report-doc")]);
-      return pdf(<ReportDocument input={{ ...patchRef.current(base.input), edit: false }} images={base.images} />).toBlob();
+      const { pdf } = await import("@react-pdf/renderer");
+      return pdf(await documentRef.current(base, false)).toBlob();
     });
   }, [base]);
 
@@ -117,9 +139,9 @@ export function PdfPreview({
     const t = setTimeout(async () => {
       setDrawing(true);
       try {
-        const [{ pdf }, { ReportDocument }, pdfjs] = await Promise.all([import("@react-pdf/renderer"), import("@/lib/reports/report-doc"), import("pdfjs-dist")]);
+        const [{ pdf }, pdfjs] = await Promise.all([import("@react-pdf/renderer"), import("pdfjs-dist")]);
         pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
-        const blob = await pdf(<ReportDocument input={patchRef.current(base.input)} images={base.images} />).toBlob();
+        const blob = await pdf(await documentRef.current(base, true)).toBlob();
         const task = pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) });
         const doc = await task.promise;
         const width = Math.min(RENDER_MAX, Math.round((wrap.current?.clientWidth || 800) * (window.devicePixelRatio || 1)));

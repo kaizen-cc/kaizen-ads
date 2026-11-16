@@ -280,6 +280,12 @@ export async function sendPdf(admin: SupabaseClient, s: { pdf_path: string | nul
   if (s.bundle_id && s.kind === "built") return (await import("./builder")).builtPdf(admin, s.bundle_id);
   if (s.bundle_id && s.kind === "monthly" && !s.report_id) return (await import("./run")).bundlePdf(admin, s.bundle_id);
   if (s.report_id) {
+    // An email or social report sent before copies were kept: drawn again from its own document
+    const { data: kind } = await admin.from("reports").select("platform").eq("id", s.report_id).maybeSingle();
+    if (kind?.platform === "klaviyo" || kind?.platform === "social") {
+      const loaded = await (await import("@/lib/channel-reports/share")).loadChannelReport(admin, s.report_id);
+      return loaded ? (await import("@/lib/channel-reports/pdf")).renderChannelPdf(loaded.input) : null;
+    }
     const { loadReport } = await import("./share");
     const r = await loadReport(admin, s.report_id);
     if (r) return (await import("./pdf")).renderReportPdf(r.input);

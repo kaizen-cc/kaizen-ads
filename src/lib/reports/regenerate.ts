@@ -95,7 +95,7 @@ export type PeriodChange = { ok: true; ids: string[]; same: boolean } | { ok: fa
  * instead of making a second one.
  */
 export async function setPeriod(admin: SupabaseClient, id: string, p: { key: string; label: string; start: string; end: string }, by: string): Promise<PeriodChange> {
-  const { data: r } = await admin.from("reports").select("id, kind, status, target_id, bundle_id, period_start, period_end").eq("id", id).maybeSingle();
+  const { data: r } = await admin.from("reports").select("id, kind, status, target_id, bundle_id, client_id, platform, period_start, period_end").eq("id", id).maybeSingle();
   if (!r) return { ok: false, error: "Not found." };
   if (r.status === "posted") return { ok: false, error: "This one already went to the client with its dates. Duplicate it from the history for other dates." };
   if (r.kind === "monthly") return { ok: false, error: "A monthly recap covers its month. Build a report for other dates." };
@@ -118,7 +118,9 @@ export async function setPeriod(admin: SupabaseClient, id: string, p: { key: str
       if (e2) return { ok: false, error: e2.message };
     }
   } else if (!same) {
-    const { data: twin } = await admin.from("reports").select("id, status").eq("target_id", r.target_id).eq("kind", r.kind).eq("period_start", p.start).neq("id", id).maybeSingle();
+    // The same account's report on those dates (an email or social report has no account: the same client and line)
+    const twins = admin.from("reports").select("id, status");
+    const { data: twin } = await (r.target_id ? twins.eq("target_id", r.target_id) : twins.eq("client_id", r.client_id).eq("platform", r.platform).is("target_id", null)).eq("kind", r.kind).eq("period_start", p.start).neq("id", id).maybeSingle();
     if (twin)
       return twin.status === "posted"
         ? { ok: false, error: "A report for these dates already went to the client. It's open to review and resend in the history.", openId: twin.id as string }

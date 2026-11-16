@@ -18,6 +18,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
   if (!canSeeReports(me)) return new Response("Not found", { status: 404 });
   const { id } = await ctx.params;
   if (!adminConfigured() || !/^[0-9a-f-]{36}$/i.test(id)) return new Response("Not found", { status: 404 });
+  // An email or social report: the same studio preview, drawn from its own document (the client and the line decide who may open it)
+  const { data: kind } = await createAdminClient().from("reports").select("owner_id, client_id, platform").eq("id", id).maybeSingle();
+  if (kind && (kind.platform === "klaviyo" || kind.platform === "social")) {
+    const { canAccessReport } = await import("@/lib/reports/access");
+    if (!(await canAccessReport(await createClient(), me, kind))) return new Response("Not found", { status: 404 });
+    const { loadChannelReport } = await import("@/lib/channel-reports/share");
+    const { prepareChannel } = await import("@/lib/channel-reports/pdf");
+    const loaded = await loadChannelReport(createAdminClient(), id, true);
+    if (!loaded) return new Response("This report hasn't been written yet", { status: 404 });
+    return Response.json({ kind: "channel", ...(await prepareChannel(loaded.input)) }, { headers: { "cache-control": "private, no-store" } });
+  }
   const db = await createClient();
   const { data: r } = await db.from("reports").select("owner_id, bundle_id, kind, kpi_targets(id, client_id, platform, owner_id)").eq("id", id).maybeSingle();
   const t = r?.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;

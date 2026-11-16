@@ -1,9 +1,11 @@
-import type { ChannelKind, DataFlag, EmailMetrics } from "./core";
+import { int, pct, signed, type ChannelKind, type DataFlag, type EmailMetrics, type SocialMetrics } from "./core";
 
 // The email report's message, the way the email team writes it today: a title line, "Hi Team,", one line, then What
 // happened (a short paragraph and four set bullets), Highlights, What we learned and Coming up. The parts that are pure
 // arithmetic (the title, the four bullets) are made here so they are always right; the checks below catch a draft that
-// lost the structure or slipped into internal words. Pure, so it is tested.
+// lost the structure or slipped into internal words. The organic social report's message follows the same structure
+// (its own title, four bullets and Highlights on the posts), so both lines read the same in the client's channel.
+// Pure, so it is tested.
 
 const monthDay = (d: string, year = false) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", ...(year ? { year: "numeric" } : {}), timeZone: "UTC" });
 
@@ -13,9 +15,22 @@ export function periodWords(r: { start: string; end: string }, withYear = false)
   return `${monthDay(r.start, cross)} to ${monthDay(r.end, withYear || cross)}`;
 }
 
-/** "Candy Cloud Weekly Report | November 9 to November 15, 2026" */
-export function reportTitle(client: string, kind: ChannelKind, r: { start: string; end: string }): string {
-  return `${client.trim()} ${kind === "monthly" ? "Monthly" : "Weekly"} Report | ${periodWords(r, true)}`;
+/** "Candy Cloud Weekly Report | November 9 to November 15, 2026" (a social report: "Candy Cloud Weekly Social Media Report | ...") */
+export function reportTitle(client: string, kind: ChannelKind, r: { start: string; end: string }, service?: string | null): string {
+  return `${client.trim()} ${kind === "monthly" ? "Monthly" : "Weekly"} ${service ? `${service} ` : ""}Report | ${periodWords(r, true)}`;
+}
+
+/** The title for a report on either line: email keeps the team's own, social names itself */
+export const channelTitle = (client: string, kind: ChannelKind, m: { platform: string; main: { start: string; end: string } }) => reportTitle(client, kind, m.main, m.platform === "social" ? "Social Media" : null);
+
+/** The four bullets under What happened on a social report: followers, reach, views and engagement, always in this order */
+export function socialHappenedBullets(m: SocialMetrics): string[] {
+  return [
+    `Followers: ${int(m.now.followers)}${m.now.followerChange != null ? ` (${signed(m.now.followerChange)})` : ""}`,
+    `Reach: ${int(m.now.reach)}`,
+    `Views: ${int(m.now.views)}`,
+    m.insightsRead && m.now.rate != null ? `Engagement rate: ${pct(m.now.rate)}` : `Posts published: ${int(m.now.posts)}`,
+  ];
 }
 
 /** Money as the team writes it in a message: whole units ("$13,179"), cents only under ten ("$4.50") */
@@ -57,13 +72,13 @@ const INTERNAL = [
   { re: /\bCTR\b|\bCVR\b|\bAOV\b/, say: "the words in full (click rate, order rate, average order)" },
 ];
 
-/** Plain checks on an email report's message: the team's structure, the title, client words, no em dashes */
-export function emailMessageFlags(message: string | null | undefined, m: EmailMetrics, client: string, kind: ChannelKind): DataFlag[] {
+/** Plain checks on an email or social report's message: the team's structure, the title, client words, no em dashes */
+export function emailMessageFlags(message: string | null | undefined, m: EmailMetrics | SocialMetrics, client: string, kind: ChannelKind): DataFlag[] {
   const out: DataFlag[] = [];
   const text = String(message ?? "");
   if (!text.trim()) return out;
   const add = (severity: DataFlag["severity"], issue: string, suggestion: string, where = "Message") => out.push({ severity, issue, where, suggestion });
-  const title = reportTitle(client, kind, m.main);
+  const title = channelTitle(client, kind, m);
   if (!text.includes(title)) add("fix", "The message doesn't open with the report's title line.", `Start with: ${title}`);
   if (!/\bHi Team,/.test(text)) add("check", 'The greeting "Hi Team," is missing.', 'Put "Hi Team," on the line after the title.');
   let at = -1;
@@ -73,7 +88,7 @@ export function emailMessageFlags(message: string | null | undefined, m: EmailMe
     else if (i < at) add("check", `"${h}" is out of order.`, `Keep the order: ${MESSAGE_HEADERS.join(", ")}.`);
     else at = i;
   }
-  for (const w of INTERNAL) {
+  for (const w of m.platform === "klaviyo" ? INTERNAL : []) {
     const hit = w.re.exec(text);
     if (hit) add("fix", `"${hit[0]}" is the team's word, not the client's.`, `Say ${w.say}.`, `"…${text.slice(Math.max(0, hit.index - 20), hit.index + 20).replace(/\s+/g, " ")}…"`);
   }

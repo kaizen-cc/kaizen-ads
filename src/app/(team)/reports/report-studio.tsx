@@ -34,18 +34,25 @@ import type { LogEntry } from "@/lib/reports/skip-log";
 import { SendHistory, type HistoryItem } from "./send-history";
 import { ReportThis } from "@/components/report-this";
 import { messageKey } from "@/lib/chat-report";
+import { channelNoteText, takeawaysFor as channelTakeaways, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
+import type { ChannelPdfInput } from "@/lib/channel-reports/channel-doc";
+import { columnKeys, columnLabel, columnOptions, MAX_TILES, swapChannelTile, tileKeys, tileLabel, tileOptions, type ChannelLayout } from "@/lib/channel-reports/layout";
 import { channelsFor, defaultSendOption, furthestStep, initialStep, previewFormat, previewFormatsFor, resolveStep, sendOptions, stepsFor, type PreviewFormat, type SendOption, type StudioStep } from "@/lib/reports/studio-steps";
 
 // One report, start to finish, in three steps and then sent: review the report (the PDF the client gets, with the AI
 // beside it), the message that carries it (Slack, with the write-up), then how it goes out (Slack, email, and Drive for
 // a month's report). Each step is in the address (?step=), so back returns to the one before. A built report's parts are
 // approved by each buyer; the person who built it writes the message and sends it. A TikTok part riding on the Meta
-// report is reviewed on its own page and goes out inside the Meta one: one review, one message, one send.
+// report is reviewed on its own page and goes out inside the Meta one: one review, one message, one send. An email or
+// social report is one more platform here: the same steps, chat, checks, edits, sending and Drive save, drawn from its
+// own document (channel-doc.tsx) with its own tiles and table columns.
 
 export type StudioReport = {
   id: string;
   kind: "weekly" | "monthly" | "custom" | "built";
-  platform: "meta" | "google" | "tiktok";
+  platform: "meta" | "google" | "tiktok" | "klaviyo" | "social";
+  /** An email or social report: its own numbers (no ad account), the tiles and columns picked, and its live page once sent */
+  channel?: { metrics: EmailMetrics | SocialMetrics; layout: ChannelLayout | null; shareUrl: string | null } | null;
   /** Meta + TikTok in one report (weekly or monthly): the Meta report this TikTok part goes with, or the TikTok part riding on this one */
   joint?: JointInfo | null;
   status: string;
@@ -92,6 +99,11 @@ const PART_STATUS: Record<string, string> = { queued: "Queued", drafting: "Writi
 const SUGGEST = ["Make it shorter", "Explain why results moved", "More on what's next", "Warmer tone"];
 // Starters that reach past the numbers: the ad account, Motion, calls, Slack and earlier reports
 const LOOKUPS = ["Follow last week's report format", "Compare with the week before", "Which ads did best, and why?", "What did the client say on the last call?", "Anything in Slack this week to mention?"];
+// The same starters for an email or social report: its own data, then calls, Slack and earlier reports
+const CHANNEL_LOOKUPS: Record<"klaviyo" | "social", string[]> = {
+  klaviyo: ["Follow last week's report format", "Compare with the period before", "Which campaigns did best, and why?", "What's scheduled in Klaviyo next?", "What did the client say on the last call?"],
+  social: ["Follow last week's report format", "Compare with the period before", "Which posts did best, and why?", "What did the client say on the last call?", "Anything in Slack this week to mention?"],
+};
 const STEP_LABEL: Record<StudioStep, string> = { report: "Report", message: "Message", send: "Send", done: "Sent" };
 const shortName = (p: string) => platformName(p as "meta" | "google" | "tiktok").replace(" Ads", "");
 
@@ -269,8 +281,11 @@ export function ReportStudio({
   lastUsed?: SendOption[];
 }) {
   const router = useRouter();
+  // An email or social report (no ad account): the same studio, with its own numbers, tiles and columns
+  const ch = report.channel ?? null;
+  const refreshNote = (report.metrics ?? ch?.metrics)?.refreshNote ?? null;
   // The text catching up with refreshed numbers runs after the page opened: look again every few seconds until it's done
-  const textCatchingUp = report.metrics?.refreshNote?.text === "pending";
+  const textCatchingUp = refreshNote?.text === "pending";
   useEffect(() => {
     if (!textCatchingUp) return;
     const t = setInterval(() => router.refresh(), 6000);
@@ -317,10 +332,12 @@ export function ReportStudio({
   // The message follows the report: edited by hand since it was written, it's brought up to date on the message step
   const [basis, setBasis] = useState(report.messageBasis);
   const [failedBasis, setFailedBasis] = useState<string | null>(null);
-  const [adding, setAdding] = useState<{ key: "did" | "doing" | "next" | "extras"; text: string } | null>(null);
+  const [adding, setAdding] = useState<{ key: "did" | "doing" | "next" | "highlights" | "extras"; text: string } | null>(null);
   // The metrics the buyer chose: saved on the report and as this client's layout for the next one
   const [layout, setLayoutState] = useState<ReportLayout | null>(report.layout);
   const [addingMetric, setAddingMetric] = useState<"tiles" | "table" | "columns" | "campaign" | null>(null);
+  // An email or social report's tiles and table columns: saved on the report, and its client's next report starts this way
+  const [chLayout, setChLayoutState] = useState<ChannelLayout | null>(ch?.layout ?? null);
   // Campaigns excluded from the KPI here (a client-run campaign): gone from the page at once, with an undo, and out of
   // the numbers once the report is regenerated. `excluding`: the one waiting on its confirm. `restored`: counted again.
   const [excluding, setExcluding] = useState<string | null>(null);
@@ -349,6 +366,14 @@ export function ReportStudio({
       setGone([]);
       router.refresh();
     });
+  const setChLayout = (next: ChannelLayout) => {
+    setChLayoutState(next);
+    start(async () => {
+      const r = await saveLayout(report.id, next);
+      if (!r.ok) setNote({ ok: false, text: r.error });
+      else setNote({ ok: true, text: `Saved as ${client.name}'s layout: their next report starts this way.` });
+    });
+  };
   const setLayout = (next: ReportLayout) => {
     setLayoutState(next);
     start(async () => {
@@ -496,13 +521,18 @@ export function ReportStudio({
 
   // An export from Ads Manager (or Google Ads) for an account Kaizen Ads can't read: read here for a first look (what's
   // in it), then sent; the report is redrawn from it on the server and the page follows
-  const canAttach = report.platform === "meta" || report.platform === "google";
+  // An email or social report takes an export too (from Klaviyo, Meta Business Suite...): the AI reads it with the ask
+  const canAttach = report.platform === "meta" || report.platform === "google" || Boolean(ch);
   const [attached, setAttached] = useState<{ name: string; text: string; summary: string; error?: string } | null>(null);
   const attach = async (f: File) => {
     if (f.size > 4_000_000) return setAttached({ name: f.name, text: "", summary: "", error: "Too big: export at campaign or ad level with fewer columns." });
     const bytes = new Uint8Array(await f.arrayBuffer());
     // Google's "Excel CSV" is UTF-16; everything else UTF-8
     const text = bytes[0] === 0xff && bytes[1] === 0xfe ? new TextDecoder("utf-16le").decode(bytes) : bytes[0] === 0xfe && bytes[1] === 0xff ? new TextDecoder("utf-16be").decode(bytes) : new TextDecoder("utf-8").decode(bytes);
+    if (ch) {
+      const rows = text.split(/\r?\n/).filter((l) => l.trim()).length - 1;
+      return setAttached({ name: f.name, text, summary: rows > 0 ? `${rows.toLocaleString("en-US")} rows: the AI reads them with what you ask` : "", error: rows > 0 ? undefined : "That file is empty." });
+    }
     const parsed = parseAdsCsv(text);
     const wrong = parsed.rows.length && !parsed.needsMapping && parsed.platform !== report.platform ? `This looks like a ${parsed.platform === "google" ? "Google Ads" : "Meta"} export.` : undefined;
     setAttached({ name: f.name, text, summary: parsed.needsMapping || !parsed.rows.length ? "Some headers are new: they'll be matched when it's sent" : uploadSummary(parsed), error: wrong });
@@ -756,11 +786,157 @@ export function ReportStudio({
       </div>
     );
 
+  // ─── An email or social report's document: its lines, takeaways, tiles and table columns ─────────────────────
+  const CH_LISTS = [["did", "What we did"], ["doing", "What we're doing"], ["next", "What's next"], ["highlights", "Highlights"]] as const;
+  type ChList = (typeof CH_LISTS)[number][0];
+  const channelDoc = (sections: Sections) => {
+    const m = ch!.metrics;
+    const cards = channelTakeaways(m, sections.takeaways);
+    const fields: PdfField[] = [
+      { id: "headline", label: "Headline", value: sections.headline },
+      { id: "summary", label: "Summary", value: sections.summary },
+      ...CH_LISTS.flatMap(([k, label]) => (sections[k] ?? []).map((v, i, all) => ({ id: `${k}.${i}`, label, value: v, removable: true, list: { at: i, count: all.length } }))),
+      { id: "extras", label: "Also (what the client's own numbers show, other channels…)", value: extras, removable: true },
+      ...cards.flatMap((t, i) => [
+        { id: `takeaway-${i}-title`, label: "Takeaway", value: t.title },
+        { id: `takeaway-${i}-text`, label: "Takeaway, the numbers", value: t.text },
+      ]),
+    ];
+    const save = (id: string, v: string | null) => {
+      if (id === "extras") return setExtras(v ?? "");
+      if (id === "headline" || id === "summary") return setSections({ ...sections, [id]: v ?? "" });
+      const card = id.match(/^takeaway-(\d+)-(title|text)$/);
+      if (card) return setSections({ ...sections, takeaways: cards.map((t, i) => (i === Number(card[1]) ? { ...t, [card[2]]: v ?? "" } : t)) });
+      const [k, n] = id.split(".") as [ChList, string];
+      setSections({ ...sections, [k]: v ? (sections[k] ?? []).map((y, j) => (j === Number(n) ? v : y)) : (sections[k] ?? []).filter((_, j) => j !== Number(n)) });
+    };
+    const addBelow = (id: string, v: string, current?: string) => {
+      const [k, n] = id.split(".") as [ChList, string];
+      const list = (sections[k] ?? []).map((y, j) => (j === Number(n) && current ? current : y));
+      if (v) list.splice(Number(n) + 1, 0, v);
+      setSections({ ...sections, [k]: list });
+    };
+    const move = (id: string, by: -1 | 1) => {
+      const [k, n] = id.split(".") as [ChList, string];
+      const list = [...(sections[k] ?? [])];
+      const i = Number(n);
+      const j = i + by;
+      if (j < 0 || j >= list.length) return;
+      [list[i], list[j]] = [list[j], list[i]];
+      setSections({ ...sections, [k]: list });
+    };
+    // What's on the page now: the tiles at the top and the table columns, each one click away
+    const tiles = tileKeys(m, chLayout);
+    const cols = columnKeys(m.platform, chLayout);
+    const nameOf = (where: "tiles" | "columns", k: string) => (where === "tiles" ? tileLabel(m, k) : columnLabel(k));
+    const choose = (where: "tiles" | "columns", i: number, k: string) =>
+      setChLayout(where === "tiles" ? { ...chLayout, tiles: swapChannelTile(tiles, i, k) } : { ...chLayout, columns: cols.includes(k) ? cols : cols.map((x, j) => (j === i ? k : x)) });
+    const drop = (where: "tiles" | "columns", i: number) => setChLayout(where === "tiles" ? { ...chLayout, tiles: tiles.filter((_, j) => j !== i) } : { ...chLayout, columns: cols.filter((_, j) => j !== i) });
+    const hotMenu = (target: string, close: () => void) => {
+      const [, kind, at] = target.split("/");
+      const where = kind === "tile" ? "tiles" : kind === "col" ? "columns" : null;
+      if (!where) return null;
+      const i = Number(at);
+      const now = where === "tiles" ? tiles : cols;
+      const current = now[i] ?? null;
+      const options = where === "tiles" ? tileOptions(m) : columnOptions(m.platform);
+      return (
+        <>
+          <p className="px-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-faint">{where === "tiles" ? "Show in this tile" : "Show in this column"}</p>
+          <div className="grid gap-1">
+            {options.filter((k) => k === current || (where === "tiles" ? true : !now.includes(k))).map((k) => (
+              <button key={k} type="button" onClick={() => (choose(where, i, k), close())} className={`flex h-10 items-center justify-between rounded-[10px] px-3 text-left text-[13.5px] hover:bg-surface-2 ${k === current ? "bg-surface-2 text-fg" : "text-muted"}`}>
+                {nameOf(where, k)}
+                {k === current ? <span className="text-[11px] text-faint">Now</span> : now.includes(k) ? <span className="text-[11px] text-faint">Swaps places</span> : null}
+              </button>
+            ))}
+          </div>
+          {now.length > 1 && (
+            <button type="button" onClick={() => (drop(where, i), close())} className="h-10 rounded-[10px] px-3 text-left text-[13px] text-bad hover:bg-bad-soft/40">
+              Remove this {where === "tiles" ? "tile" : "column"}
+            </button>
+          )}
+        </>
+      );
+    };
+    const adding_ = addingMetric === "tiles" || addingMetric === "columns" ? addingMetric : null;
+    const tools = editable ? (
+      <div className="grid gap-2">
+        <div className="flex flex-wrap items-center gap-1.5 text-[12.5px]">
+          <span className="mr-1 text-faint">Metrics:</span>
+          {([["tiles", "+ Tile"], ["columns", "+ Table column"]] as const).map(([k, label]) => (
+            <button key={k} type="button" onClick={() => setAddingMetric(addingMetric === k ? null : k)} className={`h-9 rounded-full border px-3 max-md:h-10 ${addingMetric === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
+              {label}
+            </button>
+          ))}
+          {Boolean(chLayout?.tiles?.length || chLayout?.columns?.length) && (
+            <button type="button" onClick={() => setChLayout({})} className="h-9 rounded-full px-3 text-faint hover:text-fg max-md:h-10">
+              Back to the default
+            </button>
+          )}
+        </div>
+        {adding_ && (
+          <div className="flex flex-wrap gap-1.5">
+            {(adding_ === "tiles" ? tileOptions(m).filter((k) => !tiles.includes(k)) : columnOptions(m.platform).filter((k) => !cols.includes(k))).map((k) => (
+              <button
+                key={k}
+                type="button"
+                disabled={adding_ === "tiles" && tiles.length >= MAX_TILES}
+                onClick={() => {
+                  setChLayout(adding_ === "tiles" ? { ...chLayout, tiles: [...tiles, k].slice(0, MAX_TILES) } : { ...chLayout, columns: [...cols, k] });
+                  setAddingMetric(null);
+                }}
+                className="h-9 rounded-full bg-surface-2 px-3 text-[12.5px] hover:text-fg disabled:opacity-40 max-md:h-10"
+              >
+                {nameOf(adding_, k)}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-2 text-[12.5px]">
+          <span className="mr-1 text-faint">Add:</span>
+          {[...CH_LISTS, ["extras", extras.trim() ? "To the note" : "A note (the client's own numbers, other channels)"] as const].map(([k, label]) => (
+            <button key={k} type="button" onClick={() => setAdding({ key: k, text: "" })} className={`h-9 rounded-full border px-3 max-md:h-10 ${adding?.key === k ? "border-fg text-fg" : "border-line text-muted hover:text-fg"}`}>
+              + {label}
+            </button>
+          ))}
+        </div>
+        {adding && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const t = adding.text.trim();
+              if (!t) return;
+              if (adding.key === "extras") setExtras(extras.trim() ? `${extras.trim()}\n${t}` : t);
+              else setSections({ ...sections, [adding.key]: [...(sections[adding.key] ?? []), t] });
+              setAdding(null);
+            }}
+            className="flex flex-wrap gap-2"
+          >
+            <textarea autoFocus value={adding.text} onChange={(e) => setAdding({ ...adding, text: e.target.value })} rows={2} placeholder={monthly ? "Write it as it should read in our notes" : "Write it as it should read in the message (not printed in the report)"} className="min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none [field-sizing:content] focus:border-brand-text/60" />
+            <div className="flex items-end gap-1.5">
+              <button type="button" onClick={() => setAdding(null)} className="h-10 rounded-full px-3 text-[13px] text-muted hover:text-fg">
+                Cancel
+              </button>
+              <button type="submit" disabled={!adding.text.trim()} className="h-10 rounded-full bg-fg px-4 text-[13px] text-bg disabled:opacity-40">
+                Add
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    ) : null;
+    return { fields, save, addBelow, move, shownLayout: layout, hotMenu, tools, leftOutList: null as React.ReactNode };
+  };
+  // The changes on screen, on an email or social report's document (the write-up on a month's, as saved to Drive)
+  const channelPatch = (notes: boolean) => (input: ChannelPdfInput): ChannelPdfInput => ({ ...input, sections: sections ?? input.sections, extras, layout: chLayout, ...(notes ? { withNotes: true } : {}) });
+
   // ─── The document: every line the buyer writes, the metrics on the page, and the tools that change them ─────────
   const LISTS = [["did", "What we did"], ["doing", "What we're doing"], ["next", "What's next"]] as const;
   const weekly = report.kind !== "monthly" && report.kind !== "built";
   const doc = (() => {
     if (!sections) return null;
+    if (ch) return channelDoc(sections);
     const goneNames = new Set(gone.map((g) => g.name));
     // The campaigns left out of this report (and the ones just excluded from the KPI) are out of every number on the page
     const m = report.metrics ? leaveOutCampaigns(report.metrics, [...(layout?.campaigns?.hide ?? []), ...goneNames]) : report.metrics;
@@ -1132,10 +1308,13 @@ export function ReportStudio({
     <div className={`grid content-start gap-2.5 overflow-y-auto pr-1 ${big ? "min-h-0 flex-1" : "max-h-[52vh] min-h-[180px]"}`}>
       {!chat.length && (
         <div className={`grid gap-2.5 leading-relaxed text-faint ${big ? "text-sm" : "text-xs"}`}>
-          <p>{step === "message" ? "Say what to change in the message or the report and watch both update." : "Say what to change and watch the report update."} It can look things up as it goes: live numbers from the ad account, Motion, the client&apos;s calls, Slack, email and Drive, and earlier reports.</p>
+          <p>
+            {step === "message" ? "Say what to change in the message or the report and watch both update." : "Say what to change and watch the report update."} It can look things up as it goes:{" "}
+            {ch ? (ch.metrics.platform === "klaviyo" ? "Klaviyo (campaigns, automated emails, the list, what's scheduled), these numbers for other dates" : "Facebook and Instagram (posts, reach, followers), these numbers for other dates") : "live numbers from the ad account, Motion"}, the client&apos;s calls, Slack, email and Drive, and earlier reports.
+          </p>
           {editable && (
             <div className="flex flex-wrap gap-1.5">
-              {LOOKUPS.map((x) => (
+              {(ch ? CHANNEL_LOOKUPS[ch.metrics.platform] : LOOKUPS).map((x) => (
                 <button key={x} type="button" onClick={() => tweak(x)} disabled={asking} className="rounded-full border border-brand/30 bg-brand/[0.06] px-2.5 py-1 text-[11.5px] text-fg hover:border-brand/60 disabled:opacity-40 max-md:min-h-9">
                   {x}
                 </button>
@@ -1217,16 +1396,16 @@ export function ReportStudio({
               }
             }}
             rows={big ? 4 : 3}
-            placeholder={attached ? "Anything else to change once it's redrawn? (optional)" : step === "message" ? "e.g. make the message warmer, or mention Tuesday's call" : "e.g. pull last month's top 3 ads from Motion, or add what they said on Tuesday's call"}
+            placeholder={attached ? (ch ? "What should the AI do with it? (optional)" : "Anything else to change once it's redrawn? (optional)") : step === "message" ? "e.g. make the message warmer, or mention Tuesday's call" : ch ? (ch.metrics.platform === "klaviyo" ? "e.g. compare the campaigns with last month, or add what they said on Tuesday's call" : "e.g. say why the top post worked, or add what they said on Tuesday's call") : "e.g. pull last month's top 3 ads from Motion, or add what they said on Tuesday's call"}
             className={`w-full resize-none bg-transparent px-1.5 py-1 leading-relaxed outline-none ${big ? "text-[15px]" : "text-sm"} [field-sizing:content] ${big ? "max-h-[30vh] min-h-[104px]" : "max-h-[22vh] min-h-[72px]"}`}
           />
           <div className="flex items-center justify-between gap-2">
             {canAttach && (
-              <label title="Attach an Ads Manager export (.csv)" className={`grid h-11 w-11 shrink-0 cursor-pointer place-items-center rounded-full border border-line text-muted transition-colors hover:text-fg focus-within:border-brand-text/60 md:h-9 md:w-9 ${asking ? "pointer-events-none opacity-40" : ""}`}>
+              <label title={ch ? "Attach an export (.csv)" : "Attach an Ads Manager export (.csv)"} className={`grid h-11 w-11 shrink-0 cursor-pointer place-items-center rounded-full border border-line text-muted transition-colors hover:text-fg focus-within:border-brand-text/60 md:h-9 md:w-9 ${asking ? "pointer-events-none opacity-40" : ""}`}>
                 <input
                   type="file"
                   accept=".csv,text/csv"
-                  aria-label="Attach an Ads Manager export (.csv)"
+                  aria-label={ch ? "Attach an export (.csv)" : "Attach an Ads Manager export (.csv)"}
                   className="sr-only"
                   disabled={asking}
                   onChange={(e) => {
@@ -1489,10 +1668,10 @@ export function ReportStudio({
           </button>
         </div>
       )}
-      {!sent && step !== "done" && report.metrics?.refreshNote && (
-        <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border px-4 py-3 ${report.metrics.refreshNote.text === "needs_look" ? "border-warn/40 bg-warn-soft/40" : "border-line bg-surface"}`}>
-          <p className="min-w-0 flex-1 basis-64 text-[13px] leading-snug text-muted">{noteText(report.platform, report.metrics.refreshNote)}</p>
-          {report.metrics.refreshNote.text === "needs_look" && (
+      {!sent && step !== "done" && refreshNote && (
+        <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border px-4 py-3 ${refreshNote.text === "needs_look" ? "border-warn/40 bg-warn-soft/40" : "border-line bg-surface"}`}>
+          <p className="min-w-0 flex-1 basis-64 text-[13px] leading-snug text-muted">{ch ? channelNoteText(ch.metrics.platform, refreshNote) : noteText(report.platform, refreshNote)}</p>
+          {refreshNote.text === "needs_look" && (
             <div className="flex shrink-0 flex-wrap gap-1.5">
               <button type="button" disabled={fixing || pending} onClick={() => void followNumbers()} className="h-11 shrink-0 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 md:h-9">
                 {fixing ? "Updating…" : "Update the text"}
@@ -1574,7 +1753,7 @@ export function ReportStudio({
                         <SkipButton id={report.id} title={`${client.name} · ${report.periodLabel}`} variant="link" onDone="list" />
                       </div>
                     )}
-                    {monthly && (
+                    {monthly && !ch && (
                       <div className="pt-1">
                         <RecapDeckButton reportId={report.id} />
                       </div>
@@ -1594,7 +1773,7 @@ export function ReportStudio({
                   </button>
                 </div>
                 {doc.tools}
-                {(report.status !== "failed" || report.manual) && (
+                {!ch && (report.status !== "failed" || report.manual) && (
                   <ManualResults reportId={report.id} entered={report.manual} period={{ start: report.period.start, end: report.period.end, label: report.metrics?.main.label ?? report.periodLabel }} locked={sent || mineDone} />
                 )}
               </section>
@@ -1626,7 +1805,8 @@ export function ReportStudio({
                 baseKey={`${report.status}:${JSON.stringify(report.metrics ?? null).length}:${report.manual?.at ?? ""}`}
                 // A month's report is the document saved to Drive: the write-up ("Our notes") under it, all of it editable
                 patch={(input) => ({ ...input, ...(monthly ? { withNotes: true } : {}), parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout: doc.shownLayout } : p)) })}
-                patchKey={JSON.stringify({ sections, extras, layout: doc.shownLayout, notes: monthly })}
+                patchKey={JSON.stringify({ sections, extras, layout: doc.shownLayout, chLayout, notes: monthly })}
+                patchChannel={channelPatch(monthly)}
                 ownPlatform={report.platform}
                 fields={doc.fields}
                 editable={editable}
@@ -1643,12 +1823,12 @@ export function ReportStudio({
             {editable && doc && (
               <p className="text-xs text-faint">
                 {monthly ? "This is the PDF saved to the client's Drive, with your write-up on the last page. " : "This is the PDF the client gets. "}
-                Click a metric to pick another, or any text to change it; saved as you go. Click a campaign to leave it out of this report.
+                {ch ? "Click a tile or a table column to pick another, or any text to change it; saved as you go." : "Click a metric to pick another, or any text to change it; saved as you go. Click a campaign to leave it out of this report."}
               </p>
             )}
             {doc?.leftOutList}
             {monthly && !sent && (driveError || (driveSave && !savingDrive)) && <div className="grid gap-1">{driveStatus}</div>}
-            {act && sections && !busy && report.platform !== "tiktok" && <NextStepsAct reportId={report.id} platform={report.platform} steps={[...sections.next, ...(sections.stories ?? []).map((st) => st.next)]} write={act.write} canSwitch={act.canSwitch} />}
+            {act && sections && !busy && (report.platform === "meta" || report.platform === "google") && <NextStepsAct reportId={report.id} platform={report.platform} steps={[...sections.next, ...(sections.stories ?? []).map((st) => st.next)]} write={act.write} canSwitch={act.canSwitch} />}
           </div>
           {sidePanel(reviewPrimary)}
         </div>
@@ -1684,7 +1864,8 @@ export function ReportStudio({
                   source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`}
                   baseKey={`${report.status}:${JSON.stringify(report.metrics ?? null).length}:${report.manual?.at ?? ""}`}
                   patch={(input) => ({ ...input, withNotes: true, parts: input.parts.map((p) => (p.platform === report.platform ? { ...p, sections: sections ?? p.sections, extras, layout: doc?.shownLayout ?? p.layout } : p)) })}
-                  patchKey={JSON.stringify({ sections, extras, layout: doc?.shownLayout, notes: true })}
+                  patchKey={JSON.stringify({ sections, extras, layout: doc?.shownLayout, chLayout, notes: true })}
+                  patchChannel={channelPatch(true)}
                   fields={[]}
                   editable={false}
                   onSave={() => {}}
@@ -1857,6 +2038,11 @@ export function ReportStudio({
                 Edit and send an update
               </button>
             )}
+            {ch?.shareUrl && !monthly && (
+              <a href={ch.shareUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm text-muted underline-offset-4 hover:text-fg hover:underline">
+                Open the live page ↗
+              </a>
+            )}
             <a href={history[0] ? `/api/reports/sends/${history[0].id}/pdf` : `/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm text-muted underline-offset-4 hover:text-fg hover:underline">
               {monthly ? "Open the PDF ↗" : "Open the PDF that went ↗"}
             </a>
@@ -1873,10 +2059,10 @@ export function ReportStudio({
             <SendHistory items={history} showClient={false} empty={<p className="rounded-[14px] border border-line bg-surface px-4 py-6 text-center text-sm text-muted">It went out before sends were kept here. Open the PDF above to review it.</p>} />
           </section>
           )}
-          {report.metrics && sections && (
+          {(report.metrics || ch) && sections && (
             <section className="grid gap-3">
               <h3 className="font-heading text-[19px]">The report</h3>
-              <PdfPreview source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`} baseKey={`sent:${report.id}`} patch={(input) => (monthly ? { ...input, withNotes: true } : input)} patchKey={monthly ? "sent:notes" : "sent"} fields={[]} editable={false} onSave={() => {}} onRemove={() => {}} />
+              <PdfPreview source={`/api/reports/${report.id}/preview${joint ? "?whole=1" : ""}`} baseKey={`sent:${report.id}`} patch={(input) => (monthly ? { ...input, withNotes: true } : input)} patchChannel={(input) => (monthly ? { ...input, withNotes: true } : input)} patchKey={monthly ? "sent:notes" : "sent"} fields={[]} editable={false} onSave={() => {}} onRemove={() => {}} />
             </section>
           )}
         </div>

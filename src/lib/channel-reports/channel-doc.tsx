@@ -1,11 +1,12 @@
 import { Fragment } from "react";
 import { Circle, Defs, Document, G, Image, Line, LinearGradient, Link, Page, Rect, Stop, Svg, Text, View } from "@react-pdf/renderer";
-import { docKit, KAIZEN_RED, lookFor, type Look, type WeeklyBrand } from "@/lib/reports/weekly-doc";
+import { docKit, KAIZEN_RED, lookFor, notesOf, type Look, type WeeklyBrand } from "@/lib/reports/weekly-doc";
 import { scrubAgency, scrubSections } from "@/lib/reports/white-label";
 import type { Sections } from "@/lib/reports/write";
 import type { Move } from "@/lib/reports/weekly-core";
 import { BENCHMARKS } from "@/lib/klaviyo/insights";
-import { channelName, fitFont, int, metricsSupport, metricsTiles, money, moveOf, pct, postRateText, shortMoney, signed, socialName, takeawaysFor, type EmailMetrics, type SocialMetrics, type TrendPoint } from "./core";
+import { channelName, fitFont, int, metricsSupport, money, moveOf, pct, postRateText, shortMoney, signed, socialName, takeawaysFor, type EmailMetrics, type SocialMetrics, type TrendPoint } from "./core";
+import { columnKeys, tileViews, type ChannelLayout, type TileView } from "./layout";
 import { wholeMoney } from "./email-message";
 import { grade, RATE_BARS, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
 
@@ -17,9 +18,14 @@ import { grade, RATE_BARS, type Grade, type MessageRow, type Pair, type PerfBloc
 // Boxes have fixed heights and values are sized to fit them, so nothing can overlap whatever the numbers are. The
 // narrative travels in the message, never in the document. A white label client's carries only the client's brand.
 
-export type ChannelPdfInput = { client: string; clientId?: string | null; metrics: EmailMetrics | SocialMetrics; sections: Sections; whiteLabel?: boolean; brand?: WeeklyBrand | null; dashboard?: string | null };
+/**
+ * layout: the tiles and table columns picked for this report (null: the defaults). edit: the studio's preview, with an
+ * invisible link over every tile, column and line the owner can change (never sent). withNotes: the write-up as a last
+ * page, only on the copy saved to the client's Drive. extras: what the owner added by hand (in the notes only).
+ */
+export type ChannelPdfInput = { client: string; clientId?: string | null; metrics: EmailMetrics | SocialMetrics; sections: Sections; whiteLabel?: boolean; brand?: WeeklyBrand | null; dashboard?: string | null; layout?: ChannelLayout | null; edit?: boolean; withNotes?: boolean; extras?: string | null };
 
-const { s, Logo, Arrow, toneOf, INK, MUTED, FAINT, LINE, INNER, HERO_H, GOOD, BAD } = docKit;
+const { s, Logo, Arrow, Hot, toneOf, INK, MUTED, FAINT, LINE, INNER, HERO_H, GOOD, BAD } = docKit;
 const AGENCY = "Kaizen Marketing";
 const GAP = 8;
 const AMBER = { fg: "#a1650f", bg: "#fdf1dc" };
@@ -166,21 +172,16 @@ function Head({ title, sub }: { title: string; sub?: string }) {
 
 // ─── At a glance ───────────────────────────────────────────────────────────
 
-/** Social, and an older email report without the detail: four boxes and the rates under them */
-function Glance({ m }: { m: EmailMetrics | SocialMetrics }) {
-  const tiles = metricsTiles(m);
-  const w = (INNER - 2 - 3) / tiles.length;
+/** Where the preview can click on this report (null on the PDF the client gets) */
+type HotOf = (what: string) => string | null;
+const hotOf = (input: ChannelPdfInput): HotOf => (what) => (input.edit ? `${input.metrics.platform}/${what}` : null);
+
+/** Social, and an older email report without the detail: the tiles picked and the rates under them */
+function Glance({ m, layout, hot }: { m: EmailMetrics | SocialMetrics; layout?: ChannelLayout | null; hot: HotOf }) {
   return (
     <View style={s.section} wrap={false}>
       <Head title="Performance at a glance" sub={`${m.kind === "monthly" ? "Month-over-month" : "Week-over-week"} movement · green = favorable, red = unfavorable`} />
-      <StatRow>
-        {tiles.map((t, i) => (
-          <Fragment key={t.label}>
-            {i ? <Rule /> : null}
-            <Stat title={t.label} value={t.value} mv={t.move} before={t.before} prior={priorWord(m)} sub={t.sub} width={w} height={86} />
-          </Fragment>
-        ))}
-      </StatRow>
+      <Tiles m={m} tiles={tileViews(m, layout)} hot={hot} height={86} />
       <View style={[s.support, { marginTop: 8 }]}>
         {metricsSupport(m).map((x) => (
           <Text key={x.label} style={[s.supportText, { lineHeight: 1.3 }]}>
@@ -196,60 +197,86 @@ const BAND_HEX = { good: "#087a5e", watch: "#b7791f", bad: "#c23e4c" } as const;
 const BAND_WORD = { good: "Healthy", watch: "Watch", bad: "At risk" } as const;
 const scoreHex = (n: number) => (n >= 80 ? BAND_HEX.good : n >= 60 ? BAND_HEX.watch : BAND_HEX.bad);
 
-/** Email: revenue from email and SMS, orders, the campaigns and automated emails split, and the email score */
-function EmailGlance({ m }: { m: EmailMetrics }) {
-  const d = m.detail!;
-  const c = m.currency;
-  const prior = priorWord(m);
-  const w = (INNER - 2 - 3) / 4;
+/** The split of revenue between campaigns and automated emails, as a bar */
+function SplitBox({ m, w, h }: { m: EmailMetrics; w: number; h: number }) {
   const total = m.now.campaignRevenue + m.now.flowRevenue;
   const camp = total > 0 ? m.now.campaignRevenue / total : 0;
-  const aov = d.orders.now ? m.now.revenue / d.orders.now : null;
+  return (
+    <View style={{ width: w, height: h, paddingHorizontal: 10, paddingVertical: 9 }}>
+      <Text style={label}>Campaigns vs automated</Text>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", height: 26, marginTop: 4 }}>
+        <Text style={{ fontSize: 17, fontFamily: "Helvetica-Bold", color: CAMPAIGN_HEX, lineHeight: 1 }}>{total > 0 ? `${Math.round(camp * 100)}%` : "–"}</Text>
+        <Text style={{ fontSize: 17, fontFamily: "Helvetica-Bold", color: "#4f7cff", lineHeight: 1 }}>{total > 0 ? `${100 - Math.round(camp * 100)}%` : "–"}</Text>
+      </View>
+      <View style={{ flexDirection: "row", height: 6, borderRadius: 3, overflow: "hidden", backgroundColor: "#edf1f4", marginTop: 4 }}>
+        {total > 0 ? (
+          <>
+            <View style={{ width: `${camp * 100}%`, backgroundColor: CAMPAIGN_HEX }} />
+            <View style={{ flex: 1, backgroundColor: "#4f7cff" }} />
+          </>
+        ) : null}
+      </View>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 5 }}>
+        <Text style={{ fontSize: 6.2, color: MUTED }}>Campaigns</Text>
+        <Text style={{ fontSize: 6.2, color: MUTED }}>Automated</Text>
+      </View>
+    </View>
+  );
+}
+
+/** Kaizen's account score with its band */
+function ScoreBox({ m, w, h }: { m: EmailMetrics; w: number; h: number }) {
   const sc = m.score && m.score.unmeasured.length < m.score.checks.length ? m.score : null;
+  return (
+    <View style={{ width: w, height: h, paddingHorizontal: 10, paddingVertical: 9 }}>
+      <Text style={label}>Email score</Text>
+      {sc ? (
+        <>
+          <View style={{ flexDirection: "row", alignItems: "flex-end", height: 26, marginTop: 4 }}>
+            <Text style={{ fontSize: 22, fontFamily: "Helvetica-Bold", color: BAND_HEX[sc.band], lineHeight: 1 }}>{sc.score}</Text>
+            <Text style={{ fontSize: 7, color: FAINT, marginLeft: 3, marginBottom: 2 }}>of 100</Text>
+          </View>
+          <Text style={{ fontSize: 7, fontFamily: "Helvetica-Bold", color: BAND_HEX[sc.band], marginTop: 3 }}>{BAND_WORD[sc.band]}</Text>
+          <Text style={{ fontSize: 6.2, color: MUTED, marginTop: 2, maxLines: 2 }}>Kaizen&apos;s account score, last 30 days</Text>
+        </>
+      ) : (
+        <Text style={{ fontSize: 7, color: FAINT, marginTop: 10 }}>Not scored yet</Text>
+      )}
+    </View>
+  );
+}
+
+/** The tiles picked for the report, in one card: each a number with its move (or the split, or the score), each one click in the preview */
+function Tiles({ m, tiles, hot, height }: { m: EmailMetrics | SocialMetrics; tiles: TileView[]; hot: HotOf; height: number }) {
+  const w = (INNER - 2 - (tiles.length - 1)) / Math.max(1, tiles.length);
+  const prior = priorWord(m);
+  return (
+    <StatRow height={height}>
+      {tiles.map((t, i) => (
+        <Fragment key={t.key}>
+          {i ? <Rule /> : null}
+          <View style={{ width: w, height }}>
+            {t.kind === "split" && m.platform === "klaviyo" ? (
+              <SplitBox m={m} w={w} h={height} />
+            ) : t.kind === "score" && m.platform === "klaviyo" ? (
+              <ScoreBox m={m} w={w} h={height} />
+            ) : (
+              <Stat title={t.label} value={t.value} mv={t.move} before={t.before} prior={prior} sub={t.sub} width={w} height={height} badge={t.badge ?? null} max={tiles.length > 4 ? 16 : 20} />
+            )}
+            <Hot href={hot(`tile/${i}`)} />
+          </View>
+        </Fragment>
+      ))}
+    </StatRow>
+  );
+}
+
+/** Email: the tiles picked (revenue from email and SMS, orders, the split and the email score unless changed) */
+function EmailGlance({ m, layout, hot }: { m: EmailMetrics; layout?: ChannelLayout | null; hot: HotOf }) {
   return (
     <View style={s.section} wrap={false}>
       <Head title="Performance at a glance" sub={`${m.kind === "monthly" ? "Month-over-month" : "Week-over-week"} movement · green = favorable, red = unfavorable`} />
-      <StatRow height={84}>
-        <Stat title="Revenue from email & SMS" value={money(m.now.revenue, c)} mv={moveOf(m.now.revenue, m.before.revenue)} before={money(m.before.revenue, c)} prior={prior} sub={m.now.estimated ? "Added up from campaigns and automated emails" : "Attributed by Klaviyo"} width={w} height={84} />
-        <Rule />
-        <Stat title="Orders" value={int(d.orders.now)} mv={moveOf(d.orders.now, d.orders.before)} before={int(d.orders.before)} prior={prior} sub={aov != null ? `Average order ${money(aov, c)}` : null} width={w} height={84} />
-        <Rule />
-        <View style={{ width: w, height: 84, paddingHorizontal: 10, paddingVertical: 9 }}>
-          <Text style={label}>Campaigns vs automated</Text>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", height: 26, marginTop: 4 }}>
-            <Text style={{ fontSize: 17, fontFamily: "Helvetica-Bold", color: CAMPAIGN_HEX, lineHeight: 1 }}>{total > 0 ? `${Math.round(camp * 100)}%` : "–"}</Text>
-            <Text style={{ fontSize: 17, fontFamily: "Helvetica-Bold", color: "#4f7cff", lineHeight: 1 }}>{total > 0 ? `${100 - Math.round(camp * 100)}%` : "–"}</Text>
-          </View>
-          <View style={{ flexDirection: "row", height: 6, borderRadius: 3, overflow: "hidden", backgroundColor: "#edf1f4", marginTop: 4 }}>
-            {total > 0 ? (
-              <>
-                <View style={{ width: `${camp * 100}%`, backgroundColor: CAMPAIGN_HEX }} />
-                <View style={{ flex: 1, backgroundColor: "#4f7cff" }} />
-              </>
-            ) : null}
-          </View>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 5 }}>
-            <Text style={{ fontSize: 6.2, color: MUTED }}>Campaigns</Text>
-            <Text style={{ fontSize: 6.2, color: MUTED }}>Automated</Text>
-          </View>
-        </View>
-        <Rule />
-        <View style={{ width: w, height: 84, paddingHorizontal: 10, paddingVertical: 9 }}>
-          <Text style={label}>Email score</Text>
-          {sc ? (
-            <>
-              <View style={{ flexDirection: "row", alignItems: "flex-end", height: 26, marginTop: 4 }}>
-                <Text style={{ fontSize: 22, fontFamily: "Helvetica-Bold", color: BAND_HEX[sc.band], lineHeight: 1 }}>{sc.score}</Text>
-                <Text style={{ fontSize: 7, color: FAINT, marginLeft: 3, marginBottom: 2 }}>of 100</Text>
-              </View>
-              <Text style={{ fontSize: 7, fontFamily: "Helvetica-Bold", color: BAND_HEX[sc.band], marginTop: 3 }}>{BAND_WORD[sc.band]}</Text>
-              <Text style={{ fontSize: 6.2, color: MUTED, marginTop: 2, maxLines: 2 }}>Kaizen&apos;s account score, last 30 days</Text>
-            </>
-          ) : (
-            <Text style={{ fontSize: 7, color: FAINT, marginTop: 10 }}>Not scored yet</Text>
-          )}
-        </View>
-      </StatRow>
+      <Tiles m={m} tiles={tileViews(m, layout)} hot={hot} height={84} />
     </View>
   );
 }
@@ -427,7 +454,10 @@ function cell(r: MessageRow, key: string, currency: string | null): string {
   }
 }
 
-function Table({ cols, rows, currency, foot }: { cols: Col[]; rows: (MessageRow & { muted?: boolean })[]; currency: string | null; foot?: string | null }) {
+/** The columns picked for the email tables (the name always first): each header one click in the preview */
+const pickedCols = (cols: Col[], keys: string[]) => cols.filter((c) => c.key === "name" || keys.includes(c.key));
+
+function Table({ cols, rows, currency, foot, keys, hot }: { cols: Col[]; rows: (MessageRow & { muted?: boolean })[]; currency: string | null; foot?: string | null; keys?: string[]; hot?: HotOf }) {
   // A long list keeps each name to one line so it stays on the two pages
   const lines = rows.length > 8 ? 1 : 2;
   const th = { fontSize: 5.4, color: "#6f7f92", fontFamily: "Helvetica-Bold" as const, textTransform: "uppercase" as const, letterSpacing: 0.25 };
@@ -436,9 +466,10 @@ function Table({ cols, rows, currency, foot }: { cols: Col[]; rows: (MessageRow 
     <View style={[s.panel, { paddingVertical: 8, marginTop: GAP }]}>
       <View style={s.th} fixed>
         {cols.map((c) => (
-          <Text key={c.key} style={[th, box(c), { textAlign: c.align ?? "right" }]}>
-            {c.head}
-          </Text>
+          <View key={c.key} style={box(c)}>
+            <Text style={[th, { textAlign: c.align ?? "right" }]}>{c.head}</Text>
+            {hot && keys && c.key !== "name" ? <Hot href={hot(`col/${keys.indexOf(c.key)}`)} /> : null}
+          </View>
         ))}
       </View>
       {rows.map((r, i) => (
@@ -463,7 +494,7 @@ function Table({ cols, rows, currency, foot }: { cols: Col[]; rows: (MessageRow 
 
 const MAX_CAMPAIGNS = 14;
 
-function CampaignPerformance({ m }: { m: EmailMetrics }) {
+function CampaignPerformance({ m, keys, hot }: { m: EmailMetrics; keys: string[]; hot: HotOf }) {
   const d = m.detail!;
   const prior = priorWord(m);
   const n = d.campaigns.length;
@@ -489,12 +520,12 @@ function CampaignPerformance({ m }: { m: EmailMetrics }) {
         <Head title="Campaign performance" sub={`${n} ${n === 1 ? "campaign" : "campaigns"} sent · graded against Kaizen's bars: open ${pct(RATE_BARS.campaign.open, 0)}, click ${pct(RATE_BARS.campaign.click, 0)}`} />
         <PerfCells p={d.campaign} bars={RATE_BARS.campaign} prior={prior} kind="campaign" />
       </View>
-      <Table cols={CAMPAIGN_COLS} rows={shown} currency={m.currency} foot={foot} />
+      <Table cols={pickedCols(CAMPAIGN_COLS, keys)} rows={shown} currency={m.currency} foot={foot} keys={keys} hot={hot} />
     </View>
   );
 }
 
-function FlowPerformance({ m }: { m: EmailMetrics }) {
+function FlowPerformance({ m, keys, hot }: { m: EmailMetrics; keys: string[]; hot: HotOf }) {
   const d = m.detail!;
   if (!d.flow) return <LegacyFlows m={m} />;
   const prior = priorWord(m);
@@ -506,7 +537,7 @@ function FlowPerformance({ m }: { m: EmailMetrics }) {
         <Head title="Automated email performance" sub={`${sent} ${sent === 1 ? "flow" : "flows"} sent · graded against Kaizen's bars: open ${pct(RATE_BARS.flow.open, 0)}, click ${pct(RATE_BARS.flow.click, 1)}`} />
         <PerfCells p={d.flow} bars={RATE_BARS.flow} prior={prior} kind="flow" />
       </View>
-      {rows.length ? <Table cols={FLOW_COLS} rows={rows} currency={m.currency} foot={d.flowsOther ? "Best by revenue; the rest are added up in the last row." : null} /> : null}
+      {rows.length ? <Table cols={pickedCols(FLOW_COLS, keys)} rows={rows} currency={m.currency} foot={d.flowsOther ? "Best by revenue; the rest are added up in the last row." : null} keys={keys} hot={hot} /> : null}
     </View>
   );
 }
@@ -732,7 +763,17 @@ function Trend({ m, look }: { m: SocialMetrics; look: Look }) {
   );
 }
 
-function Platforms({ m }: { m: SocialMetrics }) {
+type PlatformRow = SocialMetrics["platforms"][number];
+const SOCIAL_COL: Record<string, { head: string; width: number; cell: (p: PlatformRow, m: SocialMetrics) => string; color?: (p: PlatformRow) => string }> = {
+  followers: { head: "Followers", width: 58, cell: (p) => int(p.now.followers) },
+  change: { head: "Change", width: 50, cell: (p) => signed(p.now.followerChange), color: (p) => ((p.now.followerChange ?? 0) < 0 ? "#c23e4c" : "#087a5e") },
+  reach: { head: "Reach", width: 54, cell: (p) => int(p.now.reach) },
+  views: { head: "Views", width: 54, cell: (p) => int(p.now.views) },
+  rate: { head: "Engage", width: 50, cell: (p, m) => (m.insightsRead ? pct(p.now.rate) : "–") },
+  posts: { head: "Posts", width: 36, cell: (p) => int(p.now.posts) },
+};
+
+function Platforms({ m, keys, hot }: { m: SocialMetrics; keys: string[]; hot: HotOf }) {
   if (!m.platforms.length) return null;
   return (
     <View style={s.section} wrap={false}>
@@ -740,12 +781,12 @@ function Platforms({ m }: { m: SocialMetrics }) {
       <View style={s.panel}>
         <View style={s.th}>
           <Text style={[...th, { flex: 1 }]}>Platform</Text>
-          <Text style={[...th, { width: 58, textAlign: "right" }]}>Followers</Text>
-          <Text style={[...th, { width: 50, textAlign: "right" }]}>Change</Text>
-          <Text style={[...th, { width: 54, textAlign: "right" }]}>Reach</Text>
-          <Text style={[...th, { width: 54, textAlign: "right" }]}>Views</Text>
-          <Text style={[...th, { width: 50, textAlign: "right" }]}>Engage</Text>
-          <Text style={[...th, { width: 36, textAlign: "right" }]}>Posts</Text>
+          {keys.map((k, i) => (
+            <View key={k} style={{ width: SOCIAL_COL[k].width }}>
+              <Text style={[...th, { textAlign: "right" }]}>{SOCIAL_COL[k].head}</Text>
+              <Hot href={hot(`col/${i}`)} />
+            </View>
+          ))}
         </View>
         {m.platforms.map((p) => (
           <View key={p.platform} style={s.tr}>
@@ -753,12 +794,14 @@ function Platforms({ m }: { m: SocialMetrics }) {
               {socialName(p.platform)}
               {p.name ? `  ${p.name}` : ""}
             </Text>
-            <Text style={[s.td, { width: 58 }]}>{int(p.now.followers)}</Text>
-            <Text style={[s.td, { width: 50, color: (p.now.followerChange ?? 0) < 0 ? "#c23e4c" : "#087a5e" }]}>{signed(p.now.followerChange)}</Text>
-            <Text style={[s.td, { width: 54 }]}>{int(p.now.reach)}</Text>
-            <Text style={[s.td, { width: 54 }]}>{int(p.now.views)}</Text>
-            <Text style={[s.td, { width: 50 }]}>{m.insightsRead ? pct(p.now.rate) : "–"}</Text>
-            <Text style={[s.td, { width: 36 }]}>{int(p.now.posts)}</Text>
+            {keys.map((k) => {
+              const col = SOCIAL_COL[k];
+              return (
+                <Text key={k} style={[s.td, { width: col.width }, col.color ? { color: col.color(p) } : {}]}>
+                  {col.cell(p, m)}
+                </Text>
+              );
+            })}
           </View>
         ))}
       </View>
@@ -805,7 +848,7 @@ function TopPosts({ m, images, look }: { m: SocialMetrics; images: ChannelImages
 
 // ─── Both ──────────────────────────────────────────────────────────────────
 
-function Takeaways({ m, sections, look }: { m: EmailMetrics | SocialMetrics; sections: Sections; look: Look }) {
+function Takeaways({ m, sections, look, hot }: { m: EmailMetrics | SocialMetrics; sections: Sections; look: Look; hot: HotOf }) {
   const items = takeawaysFor(m, sections.takeaways);
   if (!items.length) return null;
   return (
@@ -815,11 +858,83 @@ function Takeaways({ m, sections, look }: { m: EmailMetrics | SocialMetrics; sec
         {items.map((t, i) => (
           <View key={i} style={s.insight}>
             <View style={{ width: 14, height: 2.5, borderRadius: 2, backgroundColor: look.primary, marginBottom: 8 }} />
-            <Text style={s.insightTitle}>{t.title}</Text>
-            <Text style={s.insightText}>{t.text}</Text>
+            <View>
+              <Text style={s.insightTitle}>{t.title}</Text>
+              <Hot href={hot(`text/takeaway-${i}-title`)} />
+            </View>
+            <View>
+              <Text style={s.insightText}>{t.text}</Text>
+              <Hot href={hot(`text/takeaway-${i}-text`)} />
+            </View>
           </View>
         ))}
       </View>
+    </View>
+  );
+}
+
+/**
+ * Our notes: the write-up as a last page, only on the copy saved to the client's Drive (the client's PDF never carries
+ * it), the same as the ads reports: the headline and summary, what we did, are doing and will do, the highlights, and
+ * anything the owner added. Every line is a click target in the preview.
+ */
+function Notes({ input, look, hot }: { input: ChannelPdfInput; look: Look; hot: HotOf }) {
+  if (!input.withNotes) return null;
+  const n = notesOf(input.sections);
+  const list = (xs: string[] | undefined) => (Array.isArray(xs) ? xs.map((x) => String(x ?? "").trim()) : []);
+  const highlights = list(input.sections.highlights).filter(Boolean);
+  const groups = [...n.groups, ...(highlights.length ? [{ title: "Highlights", items: highlights }] : [])];
+  const extras = String(input.extras ?? "").trim();
+  if (n.empty && !highlights.length && !extras) return null;
+  const places: Record<string, "did" | "doing" | "next" | "highlights"> = { "What we did": "did", "What we're doing": "doing", "What's next": "next", Highlights: "highlights" };
+  return (
+    <View break>
+      <View style={s.head}>
+        <Text style={s.h2}>Our notes</Text>
+        <Text style={s.sub}>{input.metrics.main.label}</Text>
+      </View>
+      {n.headline || n.summary ? (
+        <View style={[s.panel, { borderLeftWidth: 3, borderLeftColor: look.primary, marginBottom: 8 }]}>
+          {n.headline ? (
+            <View style={{ marginBottom: n.summary ? 5 : 0 }}>
+              <Text style={{ fontSize: 11, fontFamily: "Helvetica-Bold", lineHeight: 1.3 }}>{n.headline}</Text>
+              <Hot href={hot("text/headline")} />
+            </View>
+          ) : null}
+          {n.summary ? (
+            <View>
+              <Text style={{ fontSize: 8.4, lineHeight: 1.5, color: "#33475b" }}>{n.summary}</Text>
+              <Hot href={hot("text/summary")} />
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+      {groups.map((g) => {
+        const key = places[g.title];
+        const all = list(input.sections[key]);
+        // each printed point with its place in the owner's full list (blank ones aren't printed but still count)
+        let seen = -1;
+        const at = g.items.map((text) => (seen = all.indexOf(text, seen + 1)));
+        return (
+          <View key={g.title} style={[s.panel, { marginBottom: 8 }]} wrap={false}>
+            <Text style={[s.h3, { marginBottom: 6 }]}>{g.title}</Text>
+            {g.items.map((x, j) => (
+              <View key={j} style={{ flexDirection: "row", marginBottom: 3 }}>
+                <Text style={{ width: 9, color: look.primary, fontFamily: "Helvetica-Bold", fontSize: 8 }}>•</Text>
+                <Text style={{ flex: 1, fontSize: 8, lineHeight: 1.45, color: "#33475b" }}>{x}</Text>
+                <Hot href={at[j] >= 0 ? hot(`text/${key}/${at[j]}`) : null} />
+              </View>
+            ))}
+          </View>
+        );
+      })}
+      {extras ? (
+        <View style={[s.panel, { marginBottom: 8 }]} wrap={false}>
+          <Text style={[s.h3, { marginBottom: 6 }]}>Also</Text>
+          <Text style={{ fontSize: 8, lineHeight: 1.45, color: "#33475b" }}>{extras}</Text>
+          <Hot href={hot("text/extras")} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -842,25 +957,26 @@ function Footer({ input }: { input: ChannelPdfInput }) {
 /** A white label client's words cleaned of the agency, whatever the AI or the owner wrote */
 function cleaned(input: ChannelPdfInput): ChannelPdfInput {
   if (!input.whiteLabel) return input;
-  return { ...input, dashboard: null, brand: input.brand ? { ...input.brand, agencyLogo: null } : input.brand, sections: scrubSections(input.sections) };
+  return { ...input, dashboard: null, brand: input.brand ? { ...input.brand, agencyLogo: null } : input.brand, sections: scrubSections(input.sections), extras: input.extras ? scrubAgency(input.extras) : input.extras };
 }
 
-function EmailBody({ m, images, look }: { m: EmailMetrics; images: ChannelImages; look: Look }) {
+function EmailBody({ m, images, look, layout, hot }: { m: EmailMetrics; images: ChannelImages; look: Look; layout?: ChannelLayout | null; hot: HotOf }) {
   if (!m.detail)
     return (
       <>
-        <Glance m={m} />
+        <Glance m={m} layout={layout} hot={hot} />
         <LegacyCampaigns m={m} images={images} />
         <LegacyFlows m={m} />
         <LegacyListHealth m={m} />
       </>
     );
+  const keys = columnKeys("klaviyo", layout);
   return (
     <>
-      <EmailGlance m={m} />
+      <EmailGlance m={m} layout={layout} hot={hot} />
       <ConversionSummary m={m} look={look} />
-      <CampaignPerformance m={m} />
-      <FlowPerformance m={m} />
+      <CampaignPerformance m={m} keys={keys} hot={hot} />
+      <FlowPerformance m={m} keys={keys} hot={hot} />
       <ListAndDelivery m={m} />
     </>
   );
@@ -870,6 +986,7 @@ export function ChannelDocument({ input: asked, images }: { input: ChannelPdfInp
   const input = cleaned(asked);
   const look = lookFor(input);
   const m = input.metrics;
+  const hot = hotOf(input);
   const by = input.whiteLabel ? input.client : AGENCY;
   const title = `${input.client} · ${m.kind === "monthly" ? "Monthly" : "Weekly"} ${channelName(m.platform).toLowerCase()} report · ${m.main.label}`;
   return (
@@ -879,22 +996,23 @@ export function ChannelDocument({ input: asked, images }: { input: ChannelPdfInp
         <Masthead input={input} look={look} />
         <Hero input={input} look={look} />
         {m.platform === "klaviyo" ? (
-          <EmailBody m={m} images={images} look={look} />
+          <EmailBody m={m} images={images} look={look} layout={input.layout} hot={hot} />
         ) : (
           <>
-            <Glance m={m} />
+            <Glance m={m} layout={input.layout} hot={hot} />
             <Trend m={m} look={look} />
-            <Platforms m={m} />
+            <Platforms m={m} keys={columnKeys("social", input.layout)} hot={hot} />
             <TopPosts m={m} images={images} look={look} />
           </>
         )}
         {/* The detailed email report ends on the numbers: what the team learned travels in the message */}
-        {m.platform === "klaviyo" && m.detail ? null : <Takeaways m={m} sections={input.sections} look={look} />}
+        {m.platform === "klaviyo" && m.detail ? null : <Takeaways m={m} sections={input.sections} look={look} hot={hot} />}
         {input.dashboard && !input.whiteLabel ? (
           <Link src={input.dashboard} style={{ fontSize: 8, color: look.primary, fontFamily: "Helvetica-Bold", textDecoration: "none", marginTop: 2 }}>
             See every number, any dates, on your live dashboard
           </Link>
         ) : null}
+        <Notes input={input} look={look} hot={hot} />
       </Page>
     </Document>
   );

@@ -5,7 +5,7 @@ import { layoutOf } from "@/lib/reports/share";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
-import { canReportOn } from "@/lib/reports/access";
+import { canAccessReport, canReportOn } from "@/lib/reports/access";
 import { canUndo, type Previous } from "@/lib/reports/regenerate";
 import { createClient } from "@/lib/supabase/server";
 import type { ReportMetrics } from "@/lib/reports/metrics";
@@ -13,7 +13,9 @@ import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { monthLabel } from "@/lib/reports/format";
 import { slackConnection, slackIdentity } from "@/lib/slack-user";
 import { ReportStudio } from "../report-studio";
-import { ChannelReportPage } from "../channel-report-page";
+import type { ChannelLayout } from "@/lib/channel-reports/layout";
+import type { EmailMetrics, SocialMetrics } from "@/lib/channel-reports/core";
+import { portalUrl } from "@/lib/site";
 import type { ManualEntered } from "../manual-results";
 import type { DriveSave } from "@/lib/reports/drive-save-core";
 import { after } from "next/server";
@@ -35,24 +37,24 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const me = await requireStaff();
   // Nobody works on reports without their own Slack connected: the Reports page asks for it first
   if (!(await slackConnection(me.id)).connected) redirect("/reports");
-  // An email or social report has its own studio (no ad account behind it)
-  if (adminConfigured()) {
-    const { data: kind } = await createAdminClient().from("reports").select("platform").eq("id", id).maybeSingle();
-    if (kind?.platform === "klaviyo" || kind?.platform === "social") return <ChannelReportPage id={id} me={me} />;
-  }
-  const db = await createClient();
+  // An email or social report is one more platform in the same studio: no ad account behind it, so it's read by the server
+  // and opened by the client and the line (the email team, the social team, execs); everything else is the same
+  const { data: kind } = adminConfigured() ? await createAdminClient().from("reports").select("platform").eq("id", id).maybeSingle() : { data: null };
+  const isChannel = kind?.platform === "klaviyo" || kind?.platform === "social";
+  const db = isChannel ? createAdminClient() : await createClient();
   const reportFields = "id, kind, platform, status, client_id, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, manual_results, extras, layout, qa, chat, error, posted_at, previous, joined_to, clients(name, slug, slack_channel_id, client_type), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)";
   const readReport = () => db.from("reports").select(reportFields).eq("id", id).maybeSingle();
   const { data: first } = await readReport();
   if (!first) notFound();
   // Only the account's buyer, the leads of its line and execs see a report (a link alone doesn't open it)
   const target = first.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
-  if (!(first.owner_id === me.id || (target && (await canReportOn(db, me, target))))) notFound();
+  if (isChannel ? !(await canAccessReport(await createClient(), me, first as unknown as { owner_id: string | null; client_id: string; platform: string })) : !(first.owner_id === me.id || (target && (await canReportOn(db, me, target))))) notFound();
   // Not yet sent: its numbers are worked out again from the synced data (and its text follows them when they moved), so the
   // studio never shows numbers the account has since revised. A sent report is a record and is left alone.
   let current = first;
   if (adminConfigured() && (first.status === "draft" || first.status === "submitted") && first.metrics) {
-    await refreshForStudio(createAdminClient(), id, { id: me.id, name: me.fullName }).catch(() => null);
+    if (isChannel) await (await import("@/lib/channel-reports/refresh")).refreshChannelForStudio(createAdminClient(), id, { id: me.id, name: me.fullName }).catch(() => null);
+    else await refreshForStudio(createAdminClient(), id, { id: me.id, name: me.fullName }).catch(() => null);
     current = (await readReport()).data ?? first;
   }
   const r = current;
@@ -72,7 +74,8 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
     target && adminConfigured() && (r.platform === "meta" || r.platform === "google") ? writeStatus(createAdminClient(), { clientId: target.client_id, account }, r.platform).catch(() => null) : Promise.resolve(null),
   ]);
   const client = r.clients as unknown as { name: string; slug: string; slack_channel_id: string | null; client_type?: string | null };
-  const metrics = (r.metrics as ReportMetrics | null) ?? null;
+  const metrics = isChannel ? null : ((r.metrics as ReportMetrics | null) ?? null);
+  const chMetrics = isChannel ? ((r.metrics as EmailMetrics | SocialMetrics | null) ?? null) : null;
   const ranges = (bundle?.ranges ?? []) as { key?: string; label: string }[];
   const today = todayIn();
   // The report's own dates are the one source of truth (the numbers follow them), so the header never shows stale ones
@@ -94,7 +97,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   // "Last used": how this buyer sent their previous report for this client and platform, and whether last month's went to Drive
   const offers = sendOptions({ kind: r.kind, start: r.period_start, end: r.period_end });
   const targetId = target?.id ?? null;
-  const [delivery, history, { data: keyRow }, { data: driveRow }, { data: logRow }, { data: pastSends }, { data: prevDrive }] = await Promise.all([
+  const [delivery, history, { data: keyRow }, { data: driveRow }, { data: logRow }, { data: pastSends }, { data: prevDrive }, { data: tokenRow }] = await Promise.all([
     admin && !sentNow ? clientDelivery(admin, r.client_id as string).catch(() => null) : Promise.resolve(null),
     admin ? readHistory(admin, { reportId: r.id, bundleId: r.bundle_id, limit: 40 }, today) : Promise.resolve([]),
     db.from("reports").select("period_key").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)),
@@ -105,9 +108,12 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
     admin && !sentNow
       ? admin.from("report_sends").select("report_id, bundle_id, platform, sent_by, channels, status").eq("client_id", r.client_id).eq("sent_by", me.id).order("sent_at", { ascending: false }).limit(20).then((x) => (x.error ? { data: null } : x))
       : Promise.resolve({ data: null }),
-    admin && !sentNow && offers.includes("drive") && targetId
-      ? admin.from("reports").select("drive_save").eq("target_id", targetId).eq("kind", r.kind).lt("period_start", r.period_start).not("drive_save", "is", null).order("period_start", { ascending: false }).limit(1).maybeSingle().then((x) => (x.error ? { data: null } : x))
+    admin && !sentNow && offers.includes("drive") && (targetId || isChannel)
+      ? (targetId ? admin.from("reports").select("drive_save").eq("target_id", targetId) : admin.from("reports").select("drive_save").eq("client_id", r.client_id).eq("platform", r.platform).is("target_id", null))
+          .eq("kind", r.kind).lt("period_start", r.period_start).not("drive_save", "is", null).order("period_start", { ascending: false }).limit(1).maybeSingle().then((x) => (x.error ? { data: null } : x))
       : Promise.resolve({ data: null }),
+    // An email or social report's live page, once it went (a white label client's has none)
+    isChannel ? db.from("reports").select("share_token").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)) : Promise.resolve({ data: null }),
   ]);
   const used = lastUsed(
     ((pastSends ?? []) as { report_id: string | null; bundle_id: string | null; platform: string | null; sent_by: string | null; channels: string[] | null; status: string | null }[]).map((s) => ({ reportId: s.report_id, bundleId: s.bundle_id, platform: s.platform, sentBy: s.sent_by, channels: s.channels ?? [], status: s.status })),
@@ -115,7 +121,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
     Boolean((prevDrive as { drive_save?: unknown } | null)?.drive_save),
   );
   // Every page drawn for the report's dates? (a page for other dates is redrawn before it can go out)
-  const stale = !["queued", "drafting", "failed"].includes(r.status) && metrics && r.kind !== "monthly" ? periodMismatch({ start: r.period_start, end: r.period_end }, metrics, r.sections as Sections | null) : [];
+  const stale = !["queued", "drafting", "failed"].includes(r.status) && (metrics || chMetrics) && r.kind !== "monthly" ? periodMismatch({ start: r.period_start, end: r.period_end }, metrics ?? chMetrics, metrics ? (r.sections as Sections | null) : null) : [];
   // A weekly still on an older week than the one that just ended: offered last week in one tap
   const week = lastFullWeek(today);
   const behind = r.kind === "weekly" && !sentNow && r.period_end < week.end ? rangeLabel(week, today) : null;
@@ -129,14 +135,15 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
         </Link>
         <h1 className="font-heading text-[28px] leading-tight [overflow-wrap:anywhere]">{client.name}</h1>
         <p className="text-sm text-muted">
-          {r.kind === "built" && (parts?.length ?? 0) > 1 ? "Joint report" : r.platform === "google" ? "Google Ads" : r.platform === "tiktok" ? (joinedTo ? "TikTok Ads · goes with the Meta report" : "TikTok Ads") : joint?.riders.some((x) => x.status !== "skipped") ? "Meta Ads + TikTok" : "Meta Ads"} · {periodLabel}
+          {isChannel ? (r.platform === "klaviyo" ? "Email Marketing" : "Organic Social") : r.kind === "built" && (parts?.length ?? 0) > 1 ? "Joint report" : r.platform === "google" ? "Google Ads" : r.platform === "tiktok" ? (joinedTo ? "TikTok Ads · goes with the Meta report" : "TikTok Ads") : joint?.riders.some((x) => x.status !== "skipped") ? "Meta Ads + TikTok" : "Meta Ads"} · {periodLabel}
         </p>
       </header>
       <ReportStudio
         report={{
           id: r.id,
           kind: r.kind as "weekly" | "monthly" | "custom" | "built",
-          platform: r.platform as "meta" | "google" | "tiktok",
+          platform: r.platform as "meta" | "google" | "tiktok" | "klaviyo" | "social",
+          channel: chMetrics ? { metrics: chMetrics, layout: (r.layout as ChannelLayout | null) ?? null, shareUrl: !isWhiteLabel(client.client_type) && (tokenRow as { share_token?: string | null } | null)?.share_token ? `${portalUrl()}/r/${(tokenRow as { share_token: string }).share_token}` : null } : null,
           joint,
           status: r.status,
           periodLabel,
@@ -149,7 +156,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           skip: { log: parseLog((logRow as { log?: unknown } | null)?.log), canBringBack: canBringBack(r.kind, r.period_end, today) },
           driveSave: (driveRow as { drive_save?: DriveSave | null } | null)?.drive_save ?? null,
           manual: (r as { manual_results?: ManualEntered | null }).manual_results?.lines?.length ? (r as { manual_results: ManualEntered }).manual_results : null,
-          layout: layoutOf({ status: r.status, layout: r.layout as ReportLayout | null, kpi_targets: r.kpi_targets as unknown as { report_layout: ReportLayout | null } | null }),
+          layout: isChannel ? null : layoutOf({ status: r.status, layout: r.layout as ReportLayout | null, kpi_targets: r.kpi_targets as unknown as { report_layout: ReportLayout | null } | null }),
           qa: (r.qa as Qa | null) ?? null,
           chat: (r.chat ?? []) as ChatTurn[],
           error: r.error,

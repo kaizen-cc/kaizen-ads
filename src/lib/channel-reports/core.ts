@@ -164,7 +164,12 @@ export type EmailMetrics = {
   detail?: EmailDetail | null;
   /** Dated campaigns after the period: scheduled in Klaviyo or planned by the team */
   upcoming?: Upcoming[];
+  /** Numbers the owner stated in the chat, over the synced ones (stated.ts) */
+  stated?: StatedMark;
 };
+
+/** Which numbers on a report were stated by its owner, and where they read them */
+export type StatedMark = { source: string; keys: string[] };
 
 export type EmailInput = {
   kind: ChannelKind;
@@ -356,6 +361,7 @@ export type SocialMetrics = {
   /** Whether Meta gave reach and interactions at all (when it didn't, the engagement rate is left out, never shown as 0) */
   insightsRead: boolean;
   refreshNote?: RefreshNote;
+  stated?: StatedMark;
 };
 
 export type SocialInput = {

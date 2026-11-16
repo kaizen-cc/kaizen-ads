@@ -1,17 +1,18 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { askJson, askJsonWithTools, clientContext, contextBlock, type AiTool } from "@/lib/ai";
+import { askJson, askJsonWithTools, clientContext, contextBlock } from "@/lib/ai";
 import type { ChatTurn, Qa, QaFlag, Sections } from "@/lib/reports/write";
 import { reportBasis } from "@/lib/reports/format";
 import { forClient, isWhiteLabel, scrubSections, WHITE_LABEL_RULE } from "@/lib/reports/white-label";
 import { openWithHere, withoutMentions } from "@/lib/reports/slack-text";
 import { previousPeriod, rangeLabel, todayIn } from "@/lib/reports/period";
-import { reportTools } from "@/lib/reports/tools";
 import { voiceOf } from "@/lib/reports/work";
 import { channelName, dataFlags, lineOfPlatform, platformOfLine, type ChannelKind, type ChannelLine, type ChannelPlatform, type EmailMetrics, type SocialMetrics } from "./core";
 import { loadChannelMetrics } from "./data";
 import { channelMetricsText } from "./text";
-import { emailMessageFlags, reportTitle, withTitle } from "./email-message";
+import { channelTitle, emailMessageFlags, withTitle } from "./email-message";
+import { applyStated, type Stated } from "./stated";
+import { channelReportTools, channelToolsLine } from "./tools";
 
 // Writing a channel client report (email or organic social): the numbers (data.ts), the work behind them, the owner's own
 // voice, what this client likes in a report, and the client's Brand Bible and context. The same arc as the ads reports:
@@ -55,6 +56,17 @@ const EMAIL_MESSAGE = (kind: ChannelKind) => `message: the email team's ${kind} 
 7. *Coming up*: one bullet per dated item, "Month D: what", only from the Coming up list in <numbers>, the work log or what was said; leave ideas out unless confirmed there. If nothing is dated, one bullet with what the work log says is next; never invent a date or a campaign.
 No sign-off, no emojis, no em dashes, no internal words (flows, Klaviyo report names, scores, AI, Kaizen Ads, team names).`;
 
+/** The organic social message: the email team's structure, so both lines read the same in the client's channel */
+const SOCIAL_MESSAGE = (kind: ChannelKind) => `message: the social team's ${kind} report message, plain text with Slack formatting (*bold* headers, "• " bullets), in exactly this structure and order, nothing before or after:
+1. The title line (the app sets it exactly; write it as given in <report_title>).
+2. A blank line, then "Hi Team," on its own line.
+3. One line: "Here's how organic social performed for the ${kind === "monthly" ? "month of" : "week of"} <period words>." (name Instagram and Facebook only if both were posted to).
+4. *What happened*: a short paragraph (2 or 3 sentences: how much we published and in which formats, and where most of the reach and engagement came from, in plain words), then exactly the four bullets given in <numbers> under "What happened bullets", word for word.
+5. *Highlights*: one bullet per top post of the period (platform and format, a few words of what it was, its interactions and reach, and a plain comparison with the others), then one bullet on follower growth against the period before.
+6. *What we learned*: one short paragraph with a single insight grounded in the numbers (which format, topic or hook worked and what it means for the calendar). Never advice the numbers don't support.
+7. *Coming up*: one bullet per planned item from the work log or what was said ("Month D: what" when it's dated); never invent a date, a post or a campaign.
+No sign-off, no emojis, no em dashes, no internal words (AI, Kaizen Ads, team names, insights jargon).`;
+
 function writerSystem(kind: ChannelKind, platform: ChannelPlatform, whiteLabel = false): string {
   const line = lineOfPlatform(platform);
   const base = `You draft a ${kind} ${channelName(platform).toLowerCase()} report for a client of Kaizen Marketing, a marketing agency, as the ${ROLE[line]} who runs this channel for the client. The ${ROLE[line]} reads it, may edit it, and sends it as themselves, so it must sound exactly like them: match the voice, warmth, length, formatting and habits in their examples (greeting, how they introduce numbers, headers, bullets, sign-off). If there are no examples, write warm, plain and confident. This is not a paid ads report: ignore any guidance meant for ad accounts, budgets, ROAS or cost per result.
@@ -63,8 +75,8 @@ Accuracy above everything: every number you write must come from the numbers giv
 ${lineRules(platform)}
 ${platform === "klaviyo" ? `${EMAIL_MESSAGE(kind)}
 sections: the same content, structured, for the report page (the PDF draws the numbers itself): headline (one line, the main takeaway), summary (the What happened paragraph), did (what we did, 2 to 6 bullets from the work log), doing (2 to 4), next (the Coming up items), highlights (the Highlights bullets).
-${TAKEAWAY_RULES}` : `message: the ${kind === "weekly" ? "Slack message to the client channel" : "Slack post that goes with the monthly report"}, in Slack formatting (*bold* for short section headers, "• " for bullets, line breaks; no # headings, no emojis unless the ${ROLE[line]} uses them). Always open with <!here> (Slack's @here, written exactly like that) and then the greeting: never a person's mention (no <@U…> code, no name with @). ${kind === "weekly" ? "Open with the headline numbers for the week against the week before, then what we did, then what's next. Keep it as short as the examples." : "A short, warm note that the monthly report is ready, the two or three numbers that matter most for the month against the month before, one line on the biggest thing we did and the biggest thing coming up; the link is added after."}
-sections: the same content, structured, for the PDF and the report page: headline (one line, the main takeaway), summary (2 to 4 sentences, the numbers in context), did (what we did, 3 to 7 bullets), doing (what we're doing now and why, 2 to 5), next (what comes next, 2 to 5), highlights (2 to 4 short numeric callouts).
+${TAKEAWAY_RULES}` : `${SOCIAL_MESSAGE(kind)}
+sections: the same content, structured, for the PDF and the report page: headline (one line, the main takeaway), summary (the What happened paragraph), did (what we did, 3 to 7 bullets from the work log), doing (what we're doing now and why, 2 to 5), next (the Coming up items), highlights (the Highlights bullets).
 ${TAKEAWAY_RULES}`}`;
   return whiteLabel ? `${base}\n${WHITE_LABEL_RULE}` : base;
 }
@@ -72,17 +84,17 @@ ${TAKEAWAY_RULES}`}`;
 const QA_SYSTEM = (platform: ChannelPlatform) => `You are the QA for client reports at Kaizen Marketing, a marketing agency. Before the ${ROLE[lineOfPlatform(platform)]} sees a draft of this ${channelName(platform).toLowerCase()} report, you check it as if the client's trust depended on it. Compare the draft (message and sections) with the source data, the work log and what the ${ROLE[lineOfPlatform(platform)]} added.
 Flag:
 - fix: a number that doesn't match the data or the math (percent changes, rates), a wrong period or comparison,${platform === "klaviyo" ? " a Coming up item (date or campaign) that isn't in the Coming up list, the work log or what was said, an idea listed as if it were confirmed," : ""} a campaign, post, change or plan that isn't in the sources, revenue described as the store's total instead of attributed email revenue (email), an engagement rate quoted when the data says it isn't available (social), a client-facing mention of something internal (team names other than the client's, AI, Kaizen Ads, other clients), an em dash, an email health score or check value that doesn't match the numbers.
-- check: something the ${ROLE[lineOfPlatform(platform)]} should confirm before sending: a claim that's only loosely supported, wording that could read badly to the client, ${platform === "klaviyo" ? "a message that leaves the email team's structure (title, Hi Team, What happened with its four bullets, Highlights, What we learned, Coming up), a client-facing internal word (flows, recipients, RPR)" : "a missing part of the arc (did, doing, next)"}, a number shown without what it's compared to, a target mentioned without its progress.
+- check: something the ${ROLE[lineOfPlatform(platform)]} should confirm before sending: a claim that's only loosely supported, wording that could read badly to the client, ${platform === "klaviyo" ? "a message that leaves the email team's structure (title, Hi Team, What happened with its four bullets, Highlights, What we learned, Coming up), a client-facing internal word (flows, recipients, RPR)" : "a message that leaves the team's structure (title, Hi Team, What happened with its four bullets, Highlights, What we learned, Coming up), a Coming up item that isn't in the work log or what was said"}, a number shown without what it's compared to, a target mentioned without its progress.
 - alert: something alarming in the data itself the ${ROLE[lineOfPlatform(platform)]} should know before sending, even if the draft is right: revenue or reach collapsing, nothing sent or posted, followers lost, a red deliverability flag, days with no data.
 issue: what's wrong in one sentence. where: the line or section it's in (quote a few words). suggestion: the exact fix or what to check. Only real issues; no style nitpicks.
 verdict: clean (nothing to fix or check), check (only checks or alerts), or fix (anything to fix).`;
 
 // ─── What the report reads ─────────────────────────────────────────────────
 
-type ReportRow = { id: string; kind: ChannelKind; platform: ChannelPlatform; period_start: string; period_end: string; client_id: string; owner_id: string | null; extras: string | null; metrics: Metrics | null; sections: Sections | null; message: string | null; chat: ChatTurn[] | null; work: { text?: string } | null };
+type ReportRow = { id: string; kind: ChannelKind; platform: ChannelPlatform; period_start: string; period_end: string; client_id: string; owner_id: string | null; extras: string | null; metrics: Metrics | null; sections: Sections | null; message: string | null; chat: ChatTurn[] | null; work: { text?: string } | null; layout: unknown; manual_results: { stated?: Stated } | null };
 
 async function context(admin: SupabaseClient, reportId: string) {
-  const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, client_id, owner_id, extras, metrics, sections, message, chat, work, clients(name, client_type), profiles!reports_owner_id_fkey(full_name)").eq("id", reportId).single();
+  const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, client_id, owner_id, extras, metrics, sections, message, chat, work, layout, manual_results, clients(name, client_type), profiles!reports_owner_id_fkey(full_name)").eq("id", reportId).single();
   if (!r) throw new Error("Report not found");
   const row = r as unknown as ReportRow & { clients: { name: string; client_type?: string | null }; profiles: { full_name: string } | null };
   const { data: prefs } = await admin.from("client_report_prefs").select("notes").eq("client_id", row.client_id).maybeSingle();
@@ -134,7 +146,7 @@ function sourcesBlock(c: Ctx, m: Metrics, work: string, voice: string, client = 
   const lastNext = (c.last?.sections as Sections | null)?.next ?? [];
   return [
     `<client>${c.client}</client>`,
-    m.platform === "klaviyo" ? `<report_title>${reportTitle(c.client, c.r.kind, m.main)}</report_title>` : "",
+    `<report_title>${channelTitle(c.client, c.r.kind, m)}</report_title>`,
     `<${ROLE[lineOfPlatform(c.r.platform)].replace(" ", "_")}>${c.owner ?? `the ${ROLE[lineOfPlatform(c.r.platform)]}`}</${ROLE[lineOfPlatform(c.r.platform)].replace(" ", "_")}>`,
     `<numbers>\n${channelMetricsText(m)}\n</numbers>`,
     `<work_log period="${c.r.period_start} to ${c.r.period_end}">\n${work}\n</work_log>`,
@@ -168,8 +180,10 @@ function pulledBlock(chat: ChatTurn[] | null) {
 export async function freshChannelNumbers(admin: SupabaseClient, reportId: string) {
   const c = await context(admin, reportId);
   const was = c.r.metrics;
-  const fresh = await loadChannelMetrics(admin, c.r.platform, c.r.client_id, c.r.kind, { start: c.r.period_start, end: c.r.period_end }, { images: false });
-  if (!fresh) return null;
+  const loaded = await loadChannelMetrics(admin, c.r.platform, c.r.client_id, c.r.kind, { start: c.r.period_start, end: c.r.period_end }, { images: false });
+  if (!loaded) return null;
+  // The owner's own figures (set in the chat) stay over the synced ones
+  const fresh = applyStated(loaded, c.r.manual_results?.stated);
   // The email pictures were found when it was written: kept, so a refresh never costs a call
   if (fresh.platform === "klaviyo" && was?.platform === "klaviyo") for (const k of fresh.campaigns) k.image = was.campaigns.find((x) => x.id === k.id)?.image ?? null;
   return { was, metrics: fresh as Metrics, c };
@@ -190,7 +204,7 @@ export async function qaChannelReport(admin: SupabaseClient, reportId: string): 
     maxTokens: 8000,
     prompt: `${sourcesBlock(c, m, c.r.work?.text ?? "", "")}\n\n<draft_message>\n${c.r.message ?? ""}\n</draft_message>\n\n<draft_sections>\n${JSON.stringify(c.r.sections ?? {})}\n</draft_sections>`,
   });
-  const flags: QaFlag[] = [...dataFlags(m), ...(m.platform === "klaviyo" ? emailMessageFlags(c.r.message, m, c.client, c.r.kind) : []), ...out.flags];
+  const flags: QaFlag[] = [...dataFlags(m), ...emailMessageFlags(c.r.message, m, c.client, c.r.kind), ...out.flags];
   const verdict: Qa["verdict"] = flags.some((f) => f.severity === "fix") ? "fix" : flags.length ? "check" : "clean";
   const qa: Qa = { verdict, flags, checkedAt: new Date().toISOString() };
   await admin.from("reports").update({ qa, updated_at: new Date().toISOString() }).eq("id", reportId);
@@ -203,8 +217,14 @@ export async function draftChannelReport(admin: SupabaseClient, reportId: string
   try {
     const c = await context(admin, reportId);
     const line = lineOfPlatform(c.r.platform);
-    const metrics = await loadChannelMetrics(admin, c.r.platform, c.r.client_id, c.r.kind, { start: c.r.period_start, end: c.r.period_end });
-    if (!metrics) throw new Error(`There are no ${line === "email" ? "Klaviyo" : "social"} numbers for this client yet: connect it first.`);
+    const loaded = await loadChannelMetrics(admin, c.r.platform, c.r.client_id, c.r.kind, { start: c.r.period_start, end: c.r.period_end });
+    if (!loaded) throw new Error(`There are no ${line === "email" ? "Klaviyo" : "social"} numbers for this client yet: connect it first.`);
+    const metrics = applyStated(loaded, c.r.manual_results?.stated);
+    // The tiles and columns picked on the client's last report on this line carry over (as an ads report's layout does)
+    if (!c.r.layout) {
+      const { data: prev } = await admin.from("reports").select("layout").eq("client_id", c.r.client_id).eq("platform", c.r.platform).is("target_id", null).neq("id", reportId).not("layout", "is", null).order("period_start", { ascending: false }).limit(1).maybeSingle();
+      if (prev?.layout) await admin.from("reports").update({ layout: prev.layout }).eq("id", reportId);
+    }
     const [work, voice, client] = await Promise.all([channelWork(admin, c.r.client_id, line, c.r.period_start, c.r.period_end), voiceOf(admin, c.owner, c.r.client_id), clientBlock(admin, c.r.client_id)]);
     await admin.from("reports").update({ metrics, work, extra_metrics: null }).eq("id", reportId);
     c.r.metrics = metrics;
@@ -224,7 +244,7 @@ export async function draftChannelReport(admin: SupabaseClient, reportId: string
       out.message = forClient(out.message, true);
       out.sections = scrubSections(out.sections);
     }
-    if (metrics.platform === "klaviyo") out.message = withTitle(out.message, reportTitle(c.client, c.r.kind, metrics.main));
+    out.message = withTitle(out.message, channelTitle(c.client, c.r.kind, metrics));
     out.message = openWithHere(out.message);
     await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), updated_at: new Date().toISOString() }).eq("id", reportId);
     // The QA runs before the owner hears about it, so the note they get says whether there's anything to fix
@@ -240,51 +260,16 @@ reply: one or two plain sentences on what you changed. lesson: when the request 
 const REVISE_SCHEMA = obj({ reply: S, message: S, sections: SECTIONS, lesson: S });
 const PERIOD_RULE = `The report's dates are set by the app, never by you: don't write numbers for other dates into the report as if they were its period. Numbers you look up for other dates are only for comparisons, and always say their dates.`;
 
-/** The lookups the chat has for a channel report: the client's context and calls, the earlier reports on the line, and any other dates of the same numbers */
-async function channelTools(admin: SupabaseClient, c: Ctx, pulled: { label: string; data: string }[], who: { id: string | null; name: string | null }): Promise<AiTool[]> {
-  const base = await reportTools(admin, { client_id: c.r.client_id, platform: c.r.platform, kpi_targets: null }, pulled, who);
-  // Only the ones that make no sense for an ad account are left out (its trend, the numbers the buyer sets by hand, Meta, Google, Motion)
-  const keep = new Set(["client_overview", "search_client", "recent_calls", "read_call"]);
-  const note = (label: string, data: unknown) => {
-    pulled.push({ label, data: (typeof data === "string" ? data : JSON.stringify(data)).slice(0, 12_000) });
-    return data;
-  };
-  const DAY = /^\d{4}-\d{2}-\d{2}$/;
-  return [
-    ...base.filter((t) => keep.has(t.name)),
-    {
-      name: "earlier_reports",
-      description: "This client's earlier reports on this line that were sent (newest first): the period, the Slack message and the sections. Use it when asked to follow the last report's format or compare with what was reported before.",
-      input_schema: { type: "object", properties: { count: { type: "integer", minimum: 1, maximum: 6 } }, additionalProperties: false },
-      run: async (input) => {
-        const { data } = await admin.from("reports").select("kind, period_start, period_end, message, sections").eq("client_id", c.r.client_id).eq("platform", c.r.platform).in("status", ["posted", "submitted"]).order("period_end", { ascending: false }).limit(Math.min(6, Number(input.count) || 2));
-        return note(`Earlier reports (${data?.length ?? 0})`, data ?? []);
-      },
-    },
-    {
-      name: "numbers_for_dates",
-      description: `The same numbers this report uses, worked out for other dates (against the same number of days just before): for a comparison, a longer view or something the owner asks about. Always say the dates you looked up.`,
-      input_schema: { type: "object", properties: { start: { type: "string", description: "YYYY-MM-DD" }, end: { type: "string", description: "YYYY-MM-DD, not after yesterday" } }, required: ["start", "end"], additionalProperties: false },
-      run: async (input) => {
-        const start = String(input.start ?? "");
-        const end = String(input.end ?? "");
-        if (!DAY.test(start) || !DAY.test(end) || start > end) throw new Error("Give a start and an end day (YYYY-MM-DD), the start first.");
-        const m = await loadChannelMetrics(admin, c.r.platform, c.r.client_id, "weekly", { start, end }, { images: false });
-        if (!m) throw new Error("There are no numbers for the client to look up.");
-        return note(`${channelName(c.r.platform)} numbers, ${start} to ${end}`, channelMetricsText(m));
-      },
-    },
-  ];
-}
-
 /** The owner asks for a change; the report is rewritten, the QA runs again, and a lasting preference is remembered */
-export async function reviseChannelReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { echo?: boolean; byId?: string | null } = {}) {
+export async function reviseChannelReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { echo?: boolean; byId?: string | null; /** An export the owner attached in the chat: read with the ask, kept as data pulled */ file?: { name: string; text: string } } = {}) {
   const c = await context(admin, reportId);
   const m = c.r.metrics;
   if (!m) throw new Error("It hasn't been written yet.");
   const chat = c.r.chat ?? [];
   const pulled: { label: string; data: string }[] = [];
-  const tools = await channelTools(admin, c, pulled, { id: opts.byId ?? null, name: by });
+  const tools = await channelReportTools(admin, c.r, pulled, { id: opts.byId ?? null, name: by });
+  // An attached export is real data for this report: the AI reads it, and it's kept with the turn like a lookup
+  if (opts.file) pulled.push({ label: `File: ${opts.file.name}`, data: opts.file.text.slice(0, 12_000) });
   const today = todayIn();
   const period = { start: c.r.period_start, end: c.r.period_end };
   const prev = previousPeriod(period);
@@ -292,7 +277,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
     agent: "reporter",
     label: "revise channel report",
     clientId: c.r.client_id,
-    system: `${writerSystem(c.r.kind, c.r.platform, c.whiteLabel)}\n\n${REVISE_SYSTEM}\n${PERIOD_RULE}\n\nYou can look things up before you answer: everything on file for the client (the Brand Bible, calls, Slack, email, Drive), this client's earlier reports on this line, and these numbers for any other dates. Numbers you pull are real data: use them exactly and say the dates.`,
+    system: `${writerSystem(c.r.kind, c.r.platform, c.whiteLabel)}\n\n${REVISE_SYSTEM}\n${PERIOD_RULE}\n\n${channelToolsLine(c.r.platform)}`,
     schema: REVISE_SCHEMA,
     tools,
     maxRounds: 6,
@@ -300,7 +285,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
     prompt: `<today timezone="America/New_York">${today}</today>\n<report_period>${rangeLabel(period, today)} (${period.start} to ${period.end}), compared with ${rangeLabel(prev, today)}. The PDF is drawn by the app for exactly these dates.</report_period>\n\n${sourcesBlock(c, m, c.r.work?.text ?? "", "")}\n\n<current_message>\n${c.r.message ?? ""}\n</current_message>\n<current_sections>\n${JSON.stringify(c.r.sections ?? {})}\n</current_sections>\n\n<conversation>\n${chat
       .slice(-10)
       .map((t) => `${t.role === "user" ? "Owner" : "You"}: ${t.text}`)
-      .join("\n")}\n</conversation>\n\nThe owner asks: ${ask.trim().slice(0, 2000)}`,
+      .join("\n")}\n</conversation>${opts.file ? `\n\n<attached_file name="${opts.file.name.replace(/"/g, "'")}">\n${opts.file.text.slice(0, 40_000)}\n</attached_file>` : ""}\n\nThe owner asks: ${ask.trim().slice(0, 2000)}`,
   });
   const now = new Date().toISOString();
   const data = pulled.map((x) => `[${x.label}]\n${x.data}`).join("\n\n").slice(0, 20_000);
@@ -315,7 +300,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
     out.message = forClient(out.message, true);
     out.sections = scrubSections(out.sections);
   }
-  if (m.platform === "klaviyo") out.message = withTitle(out.message, reportTitle(c.client, c.r.kind, m.main));
+  out.message = withTitle(out.message, channelTitle(c.client, c.r.kind, m));
   out.message = openWithHere(out.message);
   await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), chat: next, updated_at: now }).eq("id", reportId);
   if (out.lesson.trim()) await (await import("@/lib/reports/write")).rememberPref(admin, c.r.client_id, out.lesson.trim());
