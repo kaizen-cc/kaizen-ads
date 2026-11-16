@@ -16,6 +16,7 @@ import { isPeriodKey, nextPeriod, parseDates, previousPeriod, rangeLabel, resolv
 import { channelsPhrase, normalizeDelivery, type Delivery } from "@/lib/reports/delivery-core";
 import { applyManual, cleanLines, type ManualLine, type ManualResults } from "@/lib/reports/manual";
 import type { DriveSave } from "@/lib/reports/drive-save-core";
+import type { UploadedFile } from "@/lib/reports/upload-csv";
 import { appendLog, canBringBack, isSkipReason, latestSkip, skipEntry, unskipEntry, type LogEntry } from "@/lib/reports/skip-log";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
@@ -890,4 +891,96 @@ export async function previewReportEmail(id: string, to: { email: string; name?:
   const { reportEmailPreview } = await import("@/lib/reports/email-preview");
   const preview = await reportEmailPreview(createAdminClient(), id, { fullName: ok.me.fullName ?? "Kaizen", email: ok.me.email }, normalizeDelivery({ channels: ["email"], recipients: to }).recipients, note?.slice(0, 600) || null);
   return preview ? { ok: true, preview } : { ok: false, error: "The email couldn't be drawn." };
+}
+
+const UPLOAD_MAX = 4_000_000;
+
+/**
+ * A CSV the buyer exported from Meta Ads Manager (or Google Ads), attached in the report's chat: for an account Kaizen
+ * Ads can't read (Meta answering that the owner never granted ads_read), the report is built from the file. It's read
+ * the same way every time (src/lib/reports/upload-csv.ts); headers it doesn't know are matched once by the AI. Every
+ * upload is kept on the report (never removed); the newest one covering the report's dates is the one used. The report
+ * is then redrawn from it (tiles, campaigns, top ads, the PDF and the message), like a regenerate; anything else asked
+ * with the file is done once it's redrawn.
+ */
+export async function uploadReportCsv(id: string, file: { name: string; text: string }, ask = ""): Promise<Result<{ chat: ChatTurn[]; summary: string; redrawing: boolean }>> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.status === "posted") return { ok: false, error: "It's already gone out." };
+  if (ok.r.status === "drafting" || ok.r.status === "queued") return { ok: false, error: "It's being written right now. Attach the file again when it's done." };
+  const platform = ok.r.platform === "google" ? "google" : ok.r.platform === "meta" ? "meta" : null;
+  if (!platform) return { ok: false, error: "Files can be added to Meta and Google reports." };
+  const name = String(file?.name ?? "export.csv").replace(/[\\/]/g, " ").trim().slice(0, 160) || "export.csv";
+  const text = String(file?.text ?? "");
+  if (!text.trim()) return { ok: false, error: "That file is empty." };
+  if (text.length > UPLOAD_MAX) return { ok: false, error: "That file is too big. Export it at campaign or ad level with fewer columns." };
+  const { parseAdsCsv, uploadSummary, covers, UPLOAD_KEYS } = await import("@/lib/reports/upload-csv");
+  let parsed = parseAdsCsv(text);
+  let mappedByAi = false;
+  // Headers it doesn't know (a renamed column, another language): matched once by the AI, then read the same way
+  if (parsed.needsMapping || !parsed.rows.length) {
+    const lines = text.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim()).slice(0, 8).join("\n").slice(0, 6000);
+    const { askJson } = await import("@/lib/ai");
+    const out = await askJson<{ mapping: { header: string; key: string }[] }>({
+      agent: platform === "google" ? "google_reporter" : "reporter",
+      label: "report upload headers",
+      clientId: ok.r.client_id,
+      system: `You match the column headers of an ad platform export (Meta Ads Manager or Google Ads, maybe renamed or in another language) to fixed keys, so the file can be read. Use each key once at most. Use "none" for anything that isn't one of the keys. Keys: campaign (campaign name), campaignId, adset (ad set or ad group name), ad (ad name), adId, day (one row per day), start (reporting starts), end (reporting ends), spend (amount spent, cost), impressions, reach, linkClicks, uniqueLinkClicks, clicks (all clicks), ctr (link CTR), cpc (cost per link click), results, resultIndicator, resultType, costPerResult, purchases, purchaseValue, websitePurchases, websitePurchaseValue, leads, fbLeads (on-platform form leads), websiteLeads, addsToCart, websiteAddsToCart, landingPageViews, schedules, applications, registrations, thruplays, videoPlays3s, conversions (Google), conversionValue (Google), currency. header: copy the header exactly as written in the file.`,
+      schema: { type: "object", properties: { mapping: { type: "array", items: { type: "object", properties: { header: { type: "string" }, key: { type: "string", enum: [...UPLOAD_KEYS, "none"] } }, required: ["header", "key"], additionalProperties: false } } }, required: ["mapping"], additionalProperties: false },
+      maxTokens: 3000,
+      prompt: `<file_start>\n${lines}\n</file_start>\n\nMatch the header row's columns to the keys.`,
+    }).catch(() => null);
+    if (out?.mapping?.length) {
+      const mapping = Object.fromEntries(out.mapping.filter((m) => m.key !== "none").map((m) => [m.header, m.key]));
+      const again = parseAdsCsv(text, mapping);
+      if (again.rows.length && !again.needsMapping) {
+        parsed = again;
+        mappedByAi = true;
+      }
+    }
+  }
+  if (!parsed.rows.length || parsed.needsMapping) return { ok: false, error: "Couldn't find the numbers in that file. Export it from Ads Manager as a CSV with Amount spent and a campaign, ad set or ad name." };
+  if (parsed.platform !== platform) return { ok: false, error: `That looks like a ${parsed.platform === "google" ? "Google Ads" : "Meta"} export, and this is the ${platform === "google" ? "Google" : "Meta"} report.` };
+
+  const admin = createAdminClient();
+  const { data: row, error: readError } = await admin.from("reports").select("kind, period_start, period_end, chat, uploaded_data").eq("id", id).maybeSingle();
+  if (readError || !row) return { ok: false, error: readError ? "Uploads aren't switched on yet (the database needs its update)." : "Not found." };
+  const period = { start: row.period_start as string, end: row.period_end as string };
+  const today = todayIn();
+  // No dates in the file: read as the report's own dates (said so in the reply)
+  const datesAssumed = !parsed.start || !parsed.end;
+  if (datesAssumed) parsed = { ...parsed, start: period.start, end: period.end, rows: parsed.rows.map((x) => ({ ...x, start: x.start ?? period.start, end: x.end ?? period.end })) };
+  const at = new Date().toISOString();
+  const { needsMapping: _n, skipped: _s, ...kept } = parsed;
+  void _n;
+  void _s;
+  const upload: UploadedFile = { ...kept, id: `u${Date.now().toString(36)}`, name, datesAssumed, mappedByAi, by: ok.me.id, byName: ok.me.fullName, at };
+  const summary = uploadSummary(parsed);
+  const used = covers(upload, period);
+  // The period the report compares with (a monthly: the month before; else the same number of days just before)
+  const before = row.kind === "monthly" ? periodsFor("monthly", shiftDay(period.end, 1)).compare : previousPeriod(period);
+  const prior = rangeLabel(before, today);
+  const compareNote = upload.daily && covers(upload, before) ? `The comparison with ${prior} comes from the file too.` : `For ${prior} it uses what Kaizen Ads synced earlier, and shows no change if there's nothing.`;
+  const reply = used
+    ? `Read ${summary} from ${name}${mappedByAi ? " (some headers matched by the AI)" : ""}${datesAssumed ? `. The file has no dates, so I read it as the report's dates, ${rangeLabel(period, today)}` : ""}. Redrawing every page from it now: the tiles, campaigns${upload.level === "ad" ? ", top ads" : ""}, the PDF and the message. ${compareNote}${ask.trim() ? " Then I'll make the rest of your change." : ""}`
+    : `Read ${summary} from ${name}, but the report covers ${rangeLabel(period, today)}, so it isn't used. Export ${upload.daily ? "a Day breakdown that spans those dates" : "the totals for exactly those dates"} and attach it here. The file is kept on the report.`;
+  const chat = (row.chat ?? []) as ChatTurn[];
+  const next: ChatTurn[] = [...chat, { role: "user" as const, text: ask.trim() ? `Attached ${name}. ${ask.trim().slice(0, 2000)}` : `Attached ${name}`, at, by: ok.me.fullName }, { role: "assistant" as const, text: reply, at, pulled: [`${name} · ${summary}`] }].slice(-40);
+  // Every upload is kept, oldest first: never replaced or removed
+  const uploads = [...(Array.isArray(row.uploaded_data) ? (row.uploaded_data as UploadedFile[]) : []), upload];
+  const { error } = await admin.from("reports").update({ uploaded_data: uploads, chat: next, updated_at: at }).eq("id", id);
+  if (error) return { ok: false, error: /uploaded_data/.test(error.message) ? "Uploads aren't switched on yet (the database needs its update)." : error.message };
+  if (!used) {
+    done(id);
+    return { ok: true, chat: next, summary, redrawing: false };
+  }
+  const { markForRegenerate, regenerateNow } = await import("@/lib/reports/regenerate");
+  const marked = await markForRegenerate(admin, [id], ok.me.fullName, "drafting");
+  if (marked.length)
+    after(async () => {
+      await regenerateNow(admin, id);
+      if (ask.trim()) await reviseReport(admin, id, `The report has just been redrawn from the Ads Manager export the buyer attached. Now, from the buyer's message: ${ask.trim().slice(0, 2000)}`, ok.me.fullName, { echo: false }).catch(() => null);
+    });
+  done(id);
+  return { ok: true, chat: next, summary, redrawing: marked.length > 0 };
 }

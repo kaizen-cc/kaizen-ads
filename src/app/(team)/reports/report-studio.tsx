@@ -18,7 +18,8 @@ import { jointMessage, jointNote, type JointInfo, type JointNote } from "@/lib/r
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { ManualResults, type ManualEntered } from "./manual-results";
 import { reportFileName, type DriveSave } from "@/lib/reports/drive-save-core";
-import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, editSentReport, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveManualResults, saveReport, saveToDrive, sendMyPartNow, sendReport, setCampaignLeftOut, setReportCampaignExcluded } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, editSentReport, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveManualResults, saveReport, saveToDrive, sendMyPartNow, sendReport, setCampaignLeftOut, setReportCampaignExcluded, uploadReportCsv } from "./actions";
+import { parseAdsCsv, uploadSummary } from "@/lib/reports/upload-csv";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
@@ -154,6 +155,23 @@ function SlackPreview({ from, text, file }: { from: { name: string; image: strin
         </div>
       </div>
     </div>
+  );
+}
+
+function ClipIcon() {
+  return (
+    <svg aria-hidden width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21.4 11.1l-8.5 8.5a5.5 5.5 0 01-7.8-7.8l8.5-8.5a3.7 3.7 0 015.2 5.2l-8.5 8.5a1.8 1.8 0 01-2.6-2.6l7.8-7.8" />
+    </svg>
+  );
+}
+
+function FileIcon() {
+  return (
+    <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" />
+      <path d="M14 3v5h5M9 13h6M9 17h6" />
+    </svg>
   );
 }
 
@@ -443,6 +461,39 @@ export function ReportStudio({
     }
     if (r.qa) setQa(r.qa);
     if (r.lesson) setNote({ ok: true, text: `Remembered for this client: ${r.lesson}` });
+  };
+
+  // An export from Ads Manager (or Google Ads) for an account Kaizen Ads can't read: read here for a first look (what's
+  // in it), then sent; the report is redrawn from it on the server and the page follows
+  const canAttach = report.platform === "meta" || report.platform === "google";
+  const [attached, setAttached] = useState<{ name: string; text: string; summary: string; error?: string } | null>(null);
+  const attach = async (f: File) => {
+    if (f.size > 4_000_000) return setAttached({ name: f.name, text: "", summary: "", error: "Too big: export at campaign or ad level with fewer columns." });
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    // Google's "Excel CSV" is UTF-16; everything else UTF-8
+    const text = bytes[0] === 0xff && bytes[1] === 0xfe ? new TextDecoder("utf-16le").decode(bytes) : bytes[0] === 0xfe && bytes[1] === 0xff ? new TextDecoder("utf-16be").decode(bytes) : new TextDecoder("utf-8").decode(bytes);
+    const parsed = parseAdsCsv(text);
+    const wrong = parsed.rows.length && !parsed.needsMapping && parsed.platform !== report.platform ? `This looks like a ${parsed.platform === "google" ? "Google Ads" : "Meta"} export.` : undefined;
+    setAttached({ name: f.name, text, summary: parsed.needsMapping || !parsed.rows.length ? "Some headers are new: they'll be matched when it's sent" : uploadSummary(parsed), error: wrong });
+  };
+  const send = async (text: string) => {
+    if (!attached || attached.error) return tweak(text);
+    if (asking) return;
+    const file = attached;
+    setAsking(true);
+    setAsk("");
+    setNote(null);
+    setChatError(null);
+    const r = await uploadReportCsv(report.id, { name: file.name, text: file.text }, text);
+    setAsking(false);
+    if (!r.ok) {
+      setAsk(text);
+      setNote({ ok: false, text: r.error });
+      return setChatError(r.error);
+    }
+    setAttached(null);
+    setChat(r.chat);
+    if (r.redrawing) router.refresh();
   };
 
   // A campaign left out of THIS report (or brought back): every number is worked out again from the other campaigns (the
@@ -1105,10 +1156,25 @@ export function ReportStudio({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            void tweak(ask);
+            void send(ask);
           }}
           className="grid gap-2 rounded-[14px] border border-line bg-bg p-2 focus-within:border-brand-text/60"
         >
+          {/* An Ads Manager export, read here first so the buyer sees what's in it before it's used */}
+          {attached && (
+            <div className={`flex items-center gap-2.5 rounded-[12px] border px-2.5 py-2 ${attached.error ? "border-bad/40 bg-bad-soft/40" : "border-line bg-surface-2"}`}>
+              <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-surface text-muted">
+                <FileIcon />
+              </span>
+              <span className="grid min-w-0 flex-1 leading-tight">
+                <span className="truncate text-[13px] text-fg">{attached.name}</span>
+                <span className={`truncate text-[11.5px] ${attached.error ? "text-bad" : "text-faint"}`}>{attached.error ?? attached.summary}</span>
+              </span>
+              <button type="button" aria-label="Remove the file" onClick={() => setAttached(null)} disabled={asking} className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted hover:text-fg disabled:opacity-40 md:h-8 md:w-8">
+                ×
+              </button>
+            </div>
+          )}
           {/* Room to write: Enter sends, Shift+Enter starts a new line */}
           <textarea
             value={ask}
@@ -1116,17 +1182,34 @@ export function ReportStudio({
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                void tweak(ask);
+                void send(ask);
               }
             }}
             rows={big ? 4 : 3}
-            placeholder={step === "message" ? "e.g. make the message warmer, or mention Tuesday's call" : "e.g. pull last month's top 3 ads from Motion, or add what they said on Tuesday's call"}
+            placeholder={attached ? "Anything else to change once it's redrawn? (optional)" : step === "message" ? "e.g. make the message warmer, or mention Tuesday's call" : "e.g. pull last month's top 3 ads from Motion, or add what they said on Tuesday's call"}
             className={`w-full resize-none bg-transparent px-1.5 py-1 leading-relaxed outline-none ${big ? "text-[15px]" : "text-sm"} [field-sizing:content] ${big ? "max-h-[30vh] min-h-[104px]" : "max-h-[22vh] min-h-[72px]"}`}
           />
           <div className="flex items-center justify-between gap-2">
+            {canAttach && (
+              <label title="Attach an Ads Manager export (.csv)" className={`grid h-11 w-11 shrink-0 cursor-pointer place-items-center rounded-full border border-line text-muted transition-colors hover:text-fg focus-within:border-brand-text/60 md:h-9 md:w-9 ${asking ? "pointer-events-none opacity-40" : ""}`}>
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  aria-label="Attach an Ads Manager export (.csv)"
+                  className="sr-only"
+                  disabled={asking}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) void attach(f);
+                  }}
+                />
+                <ClipIcon />
+              </label>
+            )}
             <span className="text-[11px] text-faint max-md:hidden">Enter to send · Shift+Enter for a new line</span>
-            <button type="submit" disabled={!ask.trim() || asking} className="ml-auto h-9 shrink-0 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-40 max-md:h-11">
-              Change
+            <button type="submit" disabled={(!ask.trim() && !(attached && !attached.error)) || asking} className="ml-auto h-9 shrink-0 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-40 max-md:h-11">
+              {attached && !attached.error ? "Use file" : "Change"}
             </button>
           </div>
         </form>

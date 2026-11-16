@@ -62,7 +62,10 @@ export async function reportTools(admin: SupabaseClient, r: { client_id: string;
       run: async (input) => {
         const { trendSeries } = await import("./metrics");
         const end = r.period_end ?? new Date().toISOString().slice(0, 10);
-        const series = await trendSeries(admin, r.kpi_targets as never, input.metric as never, input.grain === "month" ? "month" : "week", Number(input.periods) || 5, end);
+        // An export the team uploaded on this report stands in for the days it covers, as in the report itself
+        const id = (r as { id?: string }).id;
+        const uploads = id ? await import("./write").then(({ uploadsOf }) => uploadsOf(admin, id)).catch(() => []) : [];
+        const series = await trendSeries(admin, r.kpi_targets as never, input.metric as never, input.grain === "month" ? "month" : "week", Number(input.periods) || 5, end, [], uploads);
         return note(`${String(input.metric).replace(/_/g, " ")} by ${input.grain} (${series.length})`, series);
       },
     },

@@ -12,6 +12,7 @@ import { lastFullWeek, previousPeriod } from "./period";
 import { asKpiPlatform, type KpiPlatform } from "@/lib/kpi/platform";
 import { weekLabel, type GoogleUnit, type WeekPoint } from "./weekly-core";
 import { manualText, type ManualApplied } from "./manual";
+import { covers, fileRows, mergeRows, pickUpload, type FileRow, type UploadedFile } from "./upload-csv";
 
 // A report's numbers, from the same daily rows the KPI board reads, with the campaigns left out of the KPI left out here
 // too. On Meta, results are what each campaign is optimized for, read from the ad account (submit application, schedule,
@@ -89,6 +90,12 @@ export type ReportMetrics = {
   googleUnits?: GoogleUnit[];
   /** Results entered by the team from the client's own CRM (off the ad platform), for the report's period; account level only */
   manual?: ManualApplied;
+  /**
+   * The main period's numbers came from a file the team exported from Ads Manager (or Google Ads) and uploaded, because
+   * the account couldn't be read directly. compare: where the comparison came from (the same file, the synced data, or
+   * nowhere: no arrows then).
+   */
+  upload?: { name: string; at: string; byName: string | null; level: UploadedFile["level"]; daily: boolean; start: string; end: string; datesAssumed: boolean; compare: "file" | "synced" | "none" };
 };
 
 type Target = { id: string; client_id: string; platform: string; ad_account_id: string | null; conversion: string; custom_action: string | null; campaign_match: string | null; target: number | null; monthly_budget: number | null; excluded_campaigns?: string[] | null; campaign_results?: Record<string, string> | null };
@@ -243,16 +250,26 @@ export async function withCampaignEvents(admin: SupabaseClient, m: ReportMetrics
 }
 
 /** Every number a report shows, for one KPI target, as of `today` (New York). */
-export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }, opts: { lite?: boolean; daily?: boolean; /** Campaigns left out of this report alone (by name): every number is worked out again from the rest */ leave?: string[] } = {}): Promise<ReportMetrics> {
+export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "weekly" | "monthly" | "custom", today = nyParts(new Date()).date, range?: { start: string; end: string }, opts: { lite?: boolean; daily?: boolean; /** Campaigns left out of this report alone (by name): every number is worked out again from the rest */ leave?: string[]; /** Files the team uploaded on the report (reports.uploaded_data) */ uploads?: UploadedFile[] | null } = {}): Promise<ReportMetrics> {
   const platform = asKpiPlatform(base.platform);
-  const every = (await accountRows(admin, base.ad_account_id ?? "", platform)) as Row[];
+  const ps = periodsFor(kind, today, range);
+  const synced = (await accountRows(admin, base.ad_account_id ?? "", platform)) as Row[];
+  // An export the team uploaded that covers the report's dates (the newest one): its days stand in for the synced ones,
+  // read as the same daily campaign rows, so the KPI's conversion, each campaign's own result and the campaigns left out
+  // all count the way they do for synced data. The comparison comes from the file when it spans the period before too
+  // (a Day breakdown), else from the synced data alone (never half of each); with neither, it's empty and shows no change.
+  const file = platform === "meta" || platform === "google" ? pickUpload(opts.uploads, platform, ps.main) : null;
+  const fromFile = file ? fileRows(file, synced) : null;
+  const every = file && fromFile ? mergeRows(synced, file, fromFile.rows as unknown as Row[]) : synced;
+  const compareFromFile = Boolean(file?.daily && covers(file, ps.compare));
+  const everyBefore = !file || compareFromFile ? every : synced;
   // Campaigns the buyer left out of this report: counted out of the account's rows, so the totals, the comparison, the
   // five weeks, the top ads and the campaign lines are all worked out again from the campaigns that remain
   const leave = new Set((opts.leave ?? []).map(String).filter(Boolean));
-  const leaveIds = leave.size ? new Set(every.filter((r) => leave.has(String(r.campaign_name ?? "")) || leave.has(String(r.campaign_id))).map((r) => String(r.campaign_id))) : new Set<string>();
+  const leaveIds = leave.size ? new Set([...every, ...(everyBefore === every ? [] : everyBefore)].filter((r) => leave.has(String(r.campaign_name ?? "")) || leave.has(String(r.campaign_id))).map((r) => String(r.campaign_id))) : new Set<string>();
   const t: Target = leaveIds.size ? { ...base, excluded_campaigns: [...new Set([...(base.excluded_campaigns ?? []).map(String), ...leaveIds])] } : base;
   const all = inScope(every, t);
-  const ps = periodsFor(kind, today, range);
+  const allBefore = everyBefore === every ? all : inScope(everyBefore, t);
   // The campaigns that spent in the period but aren't the KPI's (run by the client, or outside its campaign match): kept
   // out of every number, and named to the AI only so it never talks about them
   const outside = new Map<string, LeftOut>();
@@ -275,6 +292,11 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
     const account = String(t.ad_account_id).replace(/^act_/, "");
     const [read, { data: named }] = await Promise.all([goalsFor(admin, account, platform, t.campaign_results), admin.from("campaign_goals").select("campaign_id, label").eq("ad_account_id", account)]);
     labels = new Map((named ?? []).map((g) => [String(g.campaign_id), String(g.label ?? "")]));
+    // An uploaded file's campaigns: the result the file says each counted, when the account doesn't know it
+    if (fromFile) {
+      for (const [id, types] of fromFile.goals) if (!read.has(id)) read.set(id, types);
+      for (const [id, label] of fromFile.labels) if (!labels.get(id)) labels.set(id, label);
+    }
     own = read;
     const spent = new Set(all.filter((r) => r.date >= ps.main.start && r.date <= ps.main.end && Number(r.spend) > 0).map((r) => String(r.campaign_id)));
     const isResult = (types: string[]) => types.some((x) => !NOT_A_RESULT.test(x));
@@ -292,9 +314,12 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
   const useGoals = Boolean(goals) || (t.conversion === "custom" && !t.custom_action);
   const conv = useGoals ? conversionFor("campaign_goal") : kpiConv;
   const days = toDays(all, null, null, useGoals ? (goals ?? new Map()) : undefined, platform);
+  const daysBefore = allBefore === all ? days : toDays(allBefore, null, null, useGoals ? (goals ?? new Map()) : undefined, platform);
   const type = useGoals ? "campaign_goal" : pickType(days, conv, t.custom_action);
   const valueType = revenueType(days, platform);
   const main = period(all, days, ps.main, conv, type, valueType);
+  // Totals for the range sit on its first day: every day of it has data
+  if (file && !file.daily) main.days = span(ps.main.start, ps.main.end);
 
   // Each goal's results in the main period, and the one most of the spend goes to (what the report talks about)
   const byGoal = new Map<string, Row[]>();
@@ -324,7 +349,10 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
   for (const r of all) {
     const k = r.campaign_name ?? r.campaign_id;
     if (r.date >= ps.main.start && r.date <= ps.main.end) byCampaign.set(k, [...(byCampaign.get(k) ?? []), r]);
-    else if (r.date >= ps.compare.start && r.date <= ps.compare.end) priorBy.set(k, [...(priorBy.get(k) ?? []), r]);
+  }
+  for (const r of allBefore) {
+    const k = r.campaign_name ?? r.campaign_id;
+    if (r.date >= ps.compare.start && r.date <= ps.compare.end) priorBy.set(k, [...(priorBy.get(k) ?? []), r]);
   }
   const campaigns: CampaignLine[] = [...byCampaign.entries()]
     .map(([name, rows]) => {
@@ -344,7 +372,17 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
 
   // Top ads (Meta): the most results in the period, then the cheapest; with a preview link and image
   let topAds: TopAd[] = [];
-  if (platform === "meta" && t.ad_account_id && !opts.lite) {
+  // From the uploaded file when it's ad level (an ad's numbers from Ads Manager); a campaign-level file has none to show
+  if (file && fromFile && platform === "meta" && !opts.lite) {
+    const fileAds = (fromFile.rows as FileRow[]).filter((r) => r.ad_id && r.date >= ps.main.start && r.date <= ps.main.end);
+    const ranked = fileTopAds(fileAds, t, { useGoals, goals, conv, type, valueType }, kind === "monthly" ? 3 : 8);
+    const real = ranked.map((a) => a.id).filter((id) => /^\d+$/.test(id));
+    const previews = real.length ? await import("@/lib/context/meta").then(({ adPreviews }) => adPreviews(real)).catch(() => new Map()) : new Map();
+    topAds = ranked.map((a) => {
+      const v = previews.get(a.id);
+      return v ? { ...a, link: v.link ?? null, image: v.image ?? null, format: v.format ?? null, copy: { body: v.body ?? null, headline: v.headline ?? null, cta: v.cta ?? null, url: v.url ?? null } } : a;
+    });
+  } else if (platform === "meta" && t.ad_account_id && !opts.lite) {
     const { data: ads } = await admin
       .from("meta_ad_daily")
       .select("ad_id, ad_name, campaign_id, campaign_name, metrics, date")
@@ -412,7 +450,9 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
 
   const dates = new Set(days.filter((d) => d.date >= ps.main.start && d.date <= ps.main.end).map((d) => d.date));
   const gaps: string[] = [];
-  for (let d = ps.main.start; d <= ps.main.end; d = shift(d, 1)) if (!dates.has(d)) gaps.push(d);
+  for (let d = ps.main.start; d <= ps.main.end; d = shift(d, 1)) if (!dates.has(d) && !(file && !file.daily)) gaps.push(d);
+  const compare = period(allBefore, daysBefore, ps.compare, conv, type, valueType);
+  const through = [...days].map((d) => d.date).sort().at(-1) ?? null;
   return {
     platform,
     kind,
@@ -421,19 +461,20 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
     target: t.target == null ? null : Number(t.target),
     monthlyBudget: t.monthly_budget == null || Number(t.monthly_budget) < 20 ? null : Number(t.monthly_budget),
     main,
-    compare: period(all, days, ps.compare, conv, type, valueType),
+    compare,
     mtd: ps.mtd ? period(all, days, ps.mtd, conv, type, valueType) : null,
     mtdCompare: ps.mtdCompare ? period(all, days, ps.mtdCompare, conv, type, valueType) : null,
     campaigns,
     ...(leftOut.length ? { leftOut } : {}),
     topAds,
-    dataThrough: [...days].map((d) => d.date).sort().at(-1) ?? null,
+    dataThrough: file?.end && (!through || file.end > through) ? file.end : through,
     gaps,
     ...(google ? { google } : {}),
     ...(benchmark ? { benchmark } : {}),
     ...(weeks.length ? { weeks } : {}),
     ...(googleUnits.length ? { googleUnits } : {}),
     ...(useGoals && goalLines.length ? { goals: goalLines } : {}),
+    ...(file ? { upload: { name: file.name, at: file.at, byName: file.byName, level: file.level, daily: file.daily, start: file.start!, end: file.end!, datesAssumed: Boolean(file.datesAssumed), compare: compare.days ? (compareFromFile ? ("file" as const) : ("synced" as const)) : ("none" as const) } } : {}),
     ...(opts.daily
       ? {
           daily: [...new Set(all.filter((r) => r.date >= ps.main.start && r.date <= ps.main.end).map((r) => r.date))].sort().map((d) => {
@@ -443,6 +484,38 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
         }
       : {}),
   };
+}
+
+/**
+ * The top ads from an uploaded ad-level file: the most results, then the cheapest, counted as the report counts them (the
+ * KPI's conversion, or each campaign's own result). No preview or picture unless the file carries the ad's real id.
+ */
+export function fileTopAds(rows: FileRow[], t: Pick<Target, "campaign_match" | "excluded_campaigns">, how: { useGoals: boolean; goals?: Map<string, string[]>; conv: ReturnType<typeof conversionFor>; type: string | null; valueType: string | null }, limit = 8): TopAd[] {
+  const per = new Map<string, TopAd & { impressions: number; revenue: number; last: string }>();
+  let lastDelivered = "";
+  for (const r of rows) {
+    if (!r.ad_id || !campaignIncluded(t, { id: r.campaign_id, name: r.campaign_name })) continue;
+    const e = per.get(r.ad_id) ?? { id: r.ad_id, name: r.ad_name || r.ad_id, campaign: r.campaign_name, spend: 0, results: 0, costPerResult: null, ctr: null, clicks: 0, link: null, image: null, impressions: 0, revenue: 0, last: "" };
+    e.spend += Number(r.spend) || 0;
+    e.impressions += Number(r.impressions) || 0;
+    e.clicks += Number(r.link_clicks) || 0;
+    if (how.valueType) e.revenue += Number(r.action_values[how.valueType]) || 0;
+    const day: Day = { date: r.date, spend: 0, actions: r.actions, values: {}, linkClicks: Number(r.link_clicks) || 0, uniqueLinkClicks: Number(r.unique_link_clicks) || 0 };
+    if (how.useGoals) {
+      const hit = (how.goals?.get(String(r.campaign_id)) ?? []).find((x) => day.actions[x] != null);
+      e.results += hit ? day.actions[hit] : 0;
+    } else e.results += resultsOf(day, how.conv, how.type);
+    if ((Number(r.spend) || 0) > 0) {
+      if (r.date > e.last) e.last = r.date;
+      if (r.date > lastDelivered) lastDelivered = r.date;
+    }
+    per.set(r.ad_id, e);
+  }
+  return [...per.values()]
+    .filter((a) => a.spend > 0)
+    .map(({ last, ...a }) => ({ ...a, spend: r2(a.spend), revenue: r2(a.revenue), roas: a.spend && a.revenue ? r2(a.revenue / a.spend) : null, results: Math.round(a.results * 10) / 10, costPerResult: a.results ? r2(a.spend / a.results) : null, ctr: a.impressions ? r2((a.clicks / a.impressions) * 100) : null, cpc: a.clicks ? r2(a.spend / a.clicks) : null, active: last === lastDelivered }))
+    .sort((a, b) => b.results - a.results || (a.costPerResult ?? 1e9) - (b.costPerResult ?? 1e9) || b.clicks - a.clicks)
+    .slice(0, limit);
 }
 
 /** TikTok's top ads in a period: the most results (conversions, or purchases on a purchase KPI), then the cheapest */
@@ -503,9 +576,19 @@ export function metricsText(m: ReportMetrics) {
     ...(m.goals && m.goals.length > 1 ? ["Results by what the campaigns are optimized for (main period):", ...m.goals.map((g) => `- ${g.label}: ${g.results} at ${money(g.costPerResult)} each, ${money(g.spend)} spent`)] : m.goals?.length ? [`The campaigns are optimized for: ${m.goals[0].label}.`] : []),
     ...(m.gaps.length ? [`Days with no data in the main period: ${m.gaps.join(", ")}`] : []),
     ...(m.google ? [googleHealthText(m.google)] : []),
+    ...(m.upload ? [uploadText(m)] : []),
     ...(m.manual?.base ? [`The headline result (${m.conversion}) and its cost per result come from the client's CRM, entered by the team, not from the ad platform; the platform's own result counts (${m.manual.base.conversion}) stay on the campaigns and ads above.`] : []),
     ...(m.manual?.lines.length ? [manualText(m)] : []),
   ].join("\n");
+}
+
+/** What the writer and the QA are told when the numbers came from an uploaded export */
+export function uploadText(m: Pick<ReportMetrics, "upload" | "compare" | "main" | "platform">): string {
+  const u = m.upload;
+  if (!u) return "";
+  const tool = m.platform === "google" ? "Google Ads" : "Meta Ads Manager";
+  const compare = u.compare === "file" ? `The comparison (${m.compare.label}) comes from the same file.` : u.compare === "synced" ? `The comparison (${m.compare.label}) comes from the data Kaizen Ads synced earlier.` : `There are no numbers for ${m.compare.label}, so give no change against it (never say anything went up or down).`;
+  return `The numbers for ${m.main.label} come from an export of ${tool} the team uploaded (${u.name}, ${u.level === "adset" ? "ad set" : u.level} level, ${u.daily ? "by day" : "totals for the dates"}${u.datesAssumed ? ", read as the report's dates" : ""}), because Kaizen Ads couldn't read the ad account directly. They are the account's real numbers: use them as they are, never say data is missing or that the account couldn't be read, and don't mention the upload to the client. ${compare}`;
 }
 
 /** One point of a trend: a week or a month, and the metric's value in it */
@@ -518,7 +601,7 @@ const day = (s: string) => new Date(`${s}T12:00:00Z`);
  * A metric week by week (the weeks ending on `end`) or month by month (the months up to and including `end`'s), counted
  * the way the report counts it (each campaign's own result, campaigns left out of the KPI left out), for a trend chart.
  */
-export async function trendSeries(admin: SupabaseClient, t: Target, metric: MetricKey, grain: "week" | "month", periods: number, end: string, leave: string[] = []): Promise<TrendPoint[]> {
+export async function trendSeries(admin: SupabaseClient, t: Target, metric: MetricKey, grain: "week" | "month", periods: number, end: string, leave: string[] = [], uploads: UploadedFile[] | null = null): Promise<TrendPoint[]> {
   const n = Math.max(2, Math.min(12, Math.round(periods)));
   const ranges: { start: string; end: string; label: string }[] = [];
   const short = (s: string) => day(s).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
@@ -539,7 +622,7 @@ export async function trendSeries(admin: SupabaseClient, t: Target, metric: Metr
   const after = (d: string) => ymd(new Date(day(d).getTime() + 86_400_000));
   const out: TrendPoint[] = [];
   for (const r of ranges) {
-    const m = await reportMetrics(admin, t, "custom", after(r.end), { start: r.start, end: r.end }, { lite: true, leave });
+    const m = await reportMetrics(admin, t, "custom", after(r.end), { start: r.start, end: r.end }, { lite: true, leave, uploads });
     out.push({ label: r.label, start: r.start, end: r.end, value: metricNumber(m.main, metric) });
   }
   return out;

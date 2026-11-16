@@ -219,6 +219,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Rewrites a report from the buyer's note", where: "Reports · a report", trigger: "click", when: "When the buyer asks for changes", labels: ["revise report"] },
     { title: "Brings the Slack message up to date when the buyer edited the report after it was written", where: "Reports · a report", trigger: "auto", when: "On the message step, when the report changed since", labels: ["refresh report message"] },
     { title: "Writes the message that goes with a joint report", where: "Reports · Build a report", trigger: "click", when: "When a report covers more than one service", labels: ["joint report message"] },
+    { title: "Matches the columns of an Ads Manager export it doesn't recognize, so the report can be built from the file", where: "Reports · a report · Ask the AI", trigger: "click", when: "When the buyer attaches an export with renamed or unfamiliar headers", labels: ["report upload headers"] },
     { title: "Reads the team's monthly recap template once and says where each piece of the recap goes (kept per template)", where: "Reports · a monthly recap · Fill our PowerPoint template", trigger: "click", when: "The first time a template without {{placeholders}} is filled, or on Map the template again", labels: ["recap deck map "] },
   ],
   google_reporter: [
@@ -226,6 +227,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Writes the weekly and monthly client report for a Google Ads account, the same way as the Meta one", where: "Reports · KPIs", trigger: "auto", when: "Mondays and the 1st, and when someone builds a report", labels: ["weekly report", "monthly report", "custom report", "built report"] },
     { title: "Rewrites a report from the buyer's note", where: "Reports · a report", trigger: "click", when: "When the buyer asks for changes", labels: ["revise report"] },
     { title: "Brings the Slack message up to date when the buyer edited the report after it was written", where: "Reports · a report", trigger: "auto", when: "On the message step, when the report changed since", labels: ["refresh report message"] },
+    { title: "Matches the columns of a Google Ads export it doesn't recognize, so the report can be built from the file", where: "Reports · a report · Ask the AI", trigger: "click", when: "When the buyer attaches an export with renamed or unfamiliar headers", labels: ["report upload headers"] },
   ],
   report_qa: [
     { title: "Checks every report before it goes out: numbers match the data, nothing invented, Kaizen's writing rules", where: "Reports", trigger: "auto", when: "Right after each report is written", labels: ["report QA"] },

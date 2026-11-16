@@ -13,6 +13,7 @@ import type { Takeaway } from "./weekly-core";
 import { applyManual, type ManualResults } from "./manual";
 import { leftOutNames as leftOutNamesOf } from "./campaign-scope";
 import { openWithHere } from "./slack-text";
+import type { UploadedFile } from "./upload-csv";
 
 // Writing a client report: the numbers (reportMetrics), the work behind them (workDone), the buyer's own voice (their
 // recaps in client channels), what this client likes in a report (learned from past edits), and what the buyer added
@@ -109,7 +110,17 @@ async function context(admin: SupabaseClient, reportId: string) {
   const { data: last } = await admin.from("reports").select("period_start, sections").eq("target_id", r.target_id).eq("kind", r.kind).lt("period_start", r.period_start).in("status", ["posted", "submitted"]).order("period_start", { ascending: false }).limit(1).maybeSingle();
   // The campaigns left out of this report alone: the report's own layout, else the one the client's reports start from
   const layout = ((r as unknown as { layout?: ReportLayout | null }).layout ?? (r.kpi_targets as unknown as { report_layout?: ReportLayout | null } | null)?.report_layout ?? null) as ReportLayout | null;
-  return { r, client, whiteLabel, target, owner, prefs: ((prefs?.notes ?? []) as string[]).slice(-20), last, leftOut: await leftOutNames(admin, target), leave: leftOutNamesOf(layout?.campaigns?.hide) };
+  return { r, client, whiteLabel, target, owner, prefs: ((prefs?.notes ?? []) as string[]).slice(-20), last, leftOut: await leftOutNames(admin, target), leave: leftOutNamesOf(layout?.campaigns?.hide), uploads: await uploadsOf(admin, reportId) };
+}
+
+/**
+ * The exports the team uploaded on a report (Ads Manager or Google Ads), every one ever uploaded. Read on its own, so a
+ * report still drafts from the synced data if the column isn't there yet.
+ */
+export async function uploadsOf(admin: SupabaseClient, reportId: string): Promise<UploadedFile[]> {
+  const { data, error } = await admin.from("reports").select("uploaded_data").eq("id", reportId).maybeSingle();
+  if (error || !Array.isArray(data?.uploaded_data)) return [];
+  return data.uploaded_data as UploadedFile[];
 }
 
 const dayAfter = (d: string) => new Date(Date.parse(`${d}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
@@ -120,7 +131,7 @@ const dayAfter = (d: string) => new Date(Date.parse(`${d}T12:00:00Z`) + 86_400_0
  */
 async function metricsFor(admin: SupabaseClient, c: Awaited<ReturnType<typeof context>>) {
   const range = c.r.kind === "monthly" ? undefined : { start: c.r.period_start as string, end: c.r.period_end as string };
-  const opts = { leave: c.leave };
+  const opts = { leave: c.leave, uploads: c.uploads };
   const metrics = await reportMetrics(admin, c.target, c.r.kind === "built" ? "custom" : (c.r.kind as "weekly" | "monthly" | "custom"), dayAfter(c.r.period_end), range, opts);
   // A built report's other date ranges, each against its own comparison
   let extra: ReportMetrics[] = [];
@@ -258,7 +269,7 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
       maxTokens: 12000,
       prompt: `${sourcesBlock(c, metrics, work.text, voice)}\n\n${await trendsFor(admin, c, metrics)}${STORY_RULES}\n\nWrite the ${kind === "custom" || kind === "built" ? `recap for ${[metrics.main.label, ...extra.map((m) => m.main.label)].join(" and ")}` : `${kind} report`}.`,
     });
-    out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end, c.leave);
+    out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end, c.leave, c.uploads);
     // The backstop: a white label client's report never names the agency, whatever the AI wrote
     if (c.whiteLabel) {
       out.message = forClient(out.message, true);
@@ -276,10 +287,10 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
 }
 
 /** Each story's points, from the ad account (the same count as the report), so the chart is never the AI's own numbers */
-async function fillStories(admin: SupabaseClient, target: Parameters<typeof reportMetrics>[1], sections: Sections, end: string, leave: string[] = []): Promise<Sections> {
+async function fillStories(admin: SupabaseClient, target: Parameters<typeof reportMetrics>[1], sections: Sections, end: string, leave: string[] = [], uploads: UploadedFile[] = []): Promise<Sections> {
   if (!sections.stories?.length) return { ...sections, stories: [] };
   const stories = await Promise.all(
-    sections.stories.slice(0, 4).map(async (st) => ({ ...st, periods: Math.max(2, Math.min(12, Math.round(st.periods || 5))), points: await trendSeries(admin, target, st.metric, st.grain, st.periods || 5, end, leave).catch(() => []) })),
+    sections.stories.slice(0, 4).map(async (st) => ({ ...st, periods: Math.max(2, Math.min(12, Math.round(st.periods || 5))), points: await trendSeries(admin, target, st.metric, st.grain, st.periods || 5, end, leave, uploads).catch(() => []) })),
   );
   return { ...sections, stories };
 }
@@ -287,7 +298,7 @@ async function fillStories(admin: SupabaseClient, target: Parameters<typeof repo
 /** For a draft, when this client wants trends: the numbers to write them from (there's no tool while drafting) */
 async function trendsFor(admin: SupabaseClient, c: Awaited<ReturnType<typeof context>>, metrics: ReportMetrics) {
   if (!c.prefs.some((p) => /trend|graph|chart|progress|over (the )?(last|past)|week over week|month over month/i.test(p))) return "";
-  const [weeks, months] = await Promise.all([trendSeries(admin, c.target, "cost_per_result", "week", 5, metrics.main.end, c.leave).catch(() => []), trendSeries(admin, c.target, "cost_per_result", "month", 6, metrics.main.end, c.leave).catch(() => [])]);
+  const [weeks, months] = await Promise.all([trendSeries(admin, c.target, "cost_per_result", "week", 5, metrics.main.end, c.leave, c.uploads).catch(() => []), trendSeries(admin, c.target, "cost_per_result", "month", 6, metrics.main.end, c.leave, c.uploads).catch(() => [])]);
   return `<trends metric="cost per result">\nBy week: ${weeks.map((p) => `${p.label} ${p.value ?? "-"}`).join(", ")}\nBy month: ${months.map((p) => `${p.label} ${p.value ?? "-"}`).join(", ")}\n</trends>\n\n`;
 }
 
@@ -360,7 +371,7 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
     ...(opts.echo === false ? [] : [{ role: "user" as const, text: ask.trim(), at: now, by }]),
     { role: "assistant" as const, text: out.reply, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
   ].slice(-40);
-  out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end, c.leave);
+  out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end, c.leave, c.uploads);
   if (c.whiteLabel) {
     out.message = forClient(out.message, true);
     out.sections = scrubSections(out.sections);

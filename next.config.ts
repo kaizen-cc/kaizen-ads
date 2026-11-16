@@ -9,6 +9,9 @@ const nextConfig: NextConfig = {
   // Saving anything (server actions call revalidatePath) refreshes it right away.
   experimental: {
     staleTimes: { dynamic: 30 },
+    // An Ads Manager export attached in a report's chat (src/app/(team)/reports/actions.ts uploadReportCsv, up to 4 MB
+    // of text) goes up in one action
+    serverActions: { bodySizeLimit: "4.5mb" },
   },
   turbopack: {
     rules: {
