@@ -17,45 +17,104 @@ type NewCall = { source: "gemini" | "fireflies"; external_id: string; title: str
 
 // ─── Collect ────────────────────────────────────────────────────────────────
 
-/** "Notes by Gemini" docs in everyone's Drive, created since the last run. */
-async function collectGemini(since: Date, deadline: number): Promise<NewCall[]> {
-  if (!googleConfigured()) return [];
+/**
+ * "Notes by Gemini" docs in everyone's Drive created after `since` (and before `until`, when given), every page of them.
+ * complete is false when the time ran out first, so a history walk doesn't move past docs it hasn't read.
+ */
+async function collectGeminiRange(since: Date, deadline: number, until?: Date): Promise<{ calls: NewCall[]; complete: boolean }> {
+  if (!googleConfigured()) return { calls: [], complete: true };
   const out: NewCall[] = [];
+  let complete = true;
   for (const mailbox of await gmailMailboxes()) {
-    if (Date.now() > deadline) break;
+    if (Date.now() > deadline) {
+      complete = false;
+      break;
+    }
     try {
       const token = await googleDriveToken(mailbox);
-      const q = `name contains 'Notes by Gemini' and mimeType = 'application/vnd.google-apps.document' and 'me' in owners and createdTime > '${since.toISOString()}' and trashed = false`;
-      const res = await fetch(`https://www.googleapis.com/drive/v3/files?${new URLSearchParams({ q, fields: "files(id,name,createdTime,webViewLink)", pageSize: "50" })}`, {
-        headers: { authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      if (!res.ok) continue;
-      const { files = [] } = (await res.json()) as { files?: { id: string; name: string; createdTime: string; webViewLink?: string }[] };
-      for (const f of files) {
-        const text = await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}/export?mimeType=text/plain`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" })
-          .then((r) => (r.ok ? r.text() : ""))
-          .catch(() => "");
-        if (!text.trim()) continue;
-        // "Weekly sync with Nectr - 2026/10/14 10:00 EDT - Notes by Gemini"
-        const title = f.name.replace(/\s*-\s*Notes by Gemini\s*$/i, "").replace(/\s*-\s*\d{4}\/\d{2}\/\d{2}.*$/, "").trim() || f.name;
-        // Attendees: the "Invited" line Gemini writes, plus any emails in the doc
-        const invited = text.match(/Invited\s*\n?([^\n]+)/i)?.[1] ?? "";
-        const emails = [...new Set((text.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) ?? []).map((e) => e.toLowerCase()))];
-        out.push({
-          source: "gemini",
-          external_id: f.id,
-          title,
-          occurred_at: f.createdTime,
-          attendees: [...emails, ...invited.split(/,\s*/).map((n) => n.trim()).filter(Boolean)].slice(0, 40),
-          host: mailbox,
-          url: f.webViewLink ?? null,
-          notes: text.slice(0, 60_000),
+      const q = `name contains 'Notes by Gemini' and mimeType = 'application/vnd.google-apps.document' and 'me' in owners and createdTime > '${since.toISOString()}'${until ? ` and createdTime <= '${until.toISOString()}'` : ""} and trashed = false`;
+      let pageToken: string | undefined;
+      do {
+        if (Date.now() > deadline) {
+          complete = false;
+          break;
+        }
+        const res = await fetch(`https://www.googleapis.com/drive/v3/files?${new URLSearchParams({ q, fields: "nextPageToken,files(id,name,createdTime,webViewLink)", pageSize: "100", ...(pageToken ? { pageToken } : {}) })}`, {
+          headers: { authorization: `Bearer ${token}` },
+          cache: "no-store",
         });
-      }
+        if (!res.ok) break;
+        const page = (await res.json()) as { nextPageToken?: string; files?: { id: string; name: string; createdTime: string; webViewLink?: string }[] };
+        pageToken = page.nextPageToken;
+        out.push(...(await geminiCalls(page.files ?? [], token, mailbox)));
+      } while (pageToken);
     } catch {
       // One mailbox failing (no Drive, delegation lag) doesn't stop the others
     }
+  }
+  return { calls: out, complete };
+}
+
+/** "Notes by Gemini" docs in everyone's Drive, created since the last run. */
+async function collectGemini(since: Date, deadline: number): Promise<NewCall[]> {
+  return (await collectGeminiRange(since, deadline)).calls;
+}
+
+/** History walk start: Gemini notes older than this are read a month at a time, back to GEMINI_HISTORY_FROM */
+const GEMINI_HISTORY_FROM = new Date("2023-01-01T00:00:00Z");
+
+/**
+ * Every Gemini meeting note ever saved, walked back a month at a time from where the live pull began (the live pull
+ * only ever looked at the last run). Where it got to is kept in sync_state ("calls_gemini_history"), like Fireflies'.
+ */
+async function backfillGemini(admin: SupabaseClient, deadline: number): Promise<NewCall[]> {
+  if (!googleConfigured()) return [];
+  const { data: state } = await admin.from("sync_state").select("cursor_at, last_result").eq("source", "calls_gemini_history").maybeSingle();
+  if ((state?.last_result as { done?: boolean } | null)?.done) return [];
+  // The first walk starts at the oldest Gemini note already in (the live pull has everything after it)
+  const { data: oldest } = state?.cursor_at ? { data: null } : await admin.from("client_calls").select("occurred_at").eq("source", "gemini").order("occurred_at", { ascending: true }).limit(1).maybeSingle();
+  let before: Date = state?.cursor_at ? new Date(state.cursor_at) : oldest?.occurred_at ? new Date(oldest.occurred_at) : new Date();
+  const out: NewCall[] = [];
+  let done = false;
+  while (Date.now() < deadline) {
+    const from = new Date(before);
+    from.setUTCMonth(from.getUTCMonth() - 1);
+    const { calls, complete } = await collectGeminiRange(from, deadline, before);
+    out.push(...calls);
+    if (!complete) break;
+    before = from;
+    if (before <= GEMINI_HISTORY_FROM) {
+      done = true;
+      break;
+    }
+  }
+  await admin.from("sync_state").upsert({ source: "calls_gemini_history", cursor_at: before.toISOString(), last_run_at: new Date().toISOString(), last_result: { done, pulled: out.length, total: ((state?.last_result as { total?: number } | null)?.total ?? 0) + out.length } });
+  return out;
+}
+
+/** Gemini note docs as calls (their text read from Drive) */
+async function geminiCalls(files: { id: string; name: string; createdTime: string; webViewLink?: string }[], token: string, mailbox: string): Promise<NewCall[]> {
+  const out: NewCall[] = [];
+  for (const f of files) {
+    const text = await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}/export?mimeType=text/plain`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" })
+      .then((r) => (r.ok ? r.text() : ""))
+      .catch(() => "");
+    if (!text.trim()) continue;
+    // "Weekly sync with Nectr - 2026/10/14 10:00 EDT - Notes by Gemini"
+    const title = f.name.replace(/\s*-\s*Notes by Gemini\s*$/i, "").replace(/\s*-\s*\d{4}\/\d{2}\/\d{2}.*$/, "").trim() || f.name;
+    // Attendees: the "Invited" line Gemini writes, plus any emails in the doc
+    const invited = text.match(/Invited\s*\n?([^\n]+)/i)?.[1] ?? "";
+    const emails = [...new Set((text.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) ?? []).map((e) => e.toLowerCase()))];
+    out.push({
+      source: "gemini",
+      external_id: f.id,
+      title,
+      occurred_at: f.createdTime,
+      attendees: [...emails, ...invited.split(/,\s*/).map((n) => n.trim()).filter(Boolean)].slice(0, 40),
+      host: mailbox,
+      url: f.webViewLink ?? null,
+      notes: text.slice(0, 60_000),
+    });
   }
   return out;
 }
@@ -312,6 +371,9 @@ async function collectCallsRun(admin: SupabaseClient, budgetMs: number, t: Track
   t.on("Fireflies history");
   const history = await backfillFireflies(admin, Math.min(deadline, Date.now() + 120_000)).catch((e) => (errors.push(`Fireflies history: ${e instanceof Error ? e.message : e}`), [] as NewCall[]));
   found.push(...history);
+  // Gemini's history the same way (the live pull only ever looked back to its last run)
+  t.on("Gemini history");
+  found.push(...(await backfillGemini(admin, Math.min(deadline, Date.now() + 90_000)).catch((e) => (errors.push(`Gemini history: ${e instanceof Error ? e.message : e}`), [] as NewCall[]))));
   t.tick("Gemini notes in Drive");
   found.push(...(await collectGemini(since, deadline).catch((e) => (errors.push(`Gemini: ${e instanceof Error ? e.message : e}`), []))));
   t.tick("Fireflies");
