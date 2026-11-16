@@ -306,6 +306,44 @@ function SplitBar({ a, b }: { a: number; b: number }) {
   );
 }
 
+/**
+ * Who is on the account: the strategist (in charge) first, then the designer and builder (graphic designer and video
+ * editor on social). A name the Account Overview sheet gives who isn't in the app yet is dimmed, with why on hover.
+ */
+function Crew({ r }: { r: ChannelRow }) {
+  const lead = r.team.filter((t) => t.seat === "Strategist");
+  const rest = r.team.filter((t) => t.seat !== "Strategist");
+  const who = (t: ChannelRow["team"][number]) => (
+    <span key={`${t.seat}-${t.name}`} className={t.pending ? "opacity-60" : undefined} title={t.pending ? `${t.name} is named in the Account Overview sheet but isn't in the app yet: invite them and the next sheet sync seats them` : undefined}>
+      {t.name}
+    </span>
+  );
+  return (
+    <>
+      <p className="mt-0.5 truncate text-xs text-faint">
+        {r.kaizenId != null && <span className="tabular">ID {r.kaizenId} · </span>}
+        {lead.length ? (
+          <>
+            <span className="text-muted">Strategist</span> {lead.map((t, i) => [i ? " + " : "", who(t)])}
+          </>
+        ) : (
+          "No strategist yet"
+        )}
+      </p>
+      {rest.length > 0 && (
+        <p className="truncate text-xs text-faint">
+          {rest.map((t, i) => (
+            <span key={`${t.seat}-${t.name}`}>
+              {i ? " · " : ""}
+              <span className="text-muted">{t.seat}</span> {who(t)}
+            </span>
+          ))}
+        </p>
+      )}
+    </>
+  );
+}
+
 function Card({ r, reading, active, onOpen }: { r: ChannelRow; reading: ReadState | null; active: boolean; onOpen: () => void }) {
   const tone = TONE[r.status];
   const connect = needsConnecting(r);
@@ -324,10 +362,7 @@ function Card({ r, reading, active, onOpen }: { r: ChannelRow; reading: ReadStat
         <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="truncate font-heading text-[16px] leading-snug">{r.name}</p>
-            <p className="mt-0.5 truncate text-xs text-faint">
-              {r.kaizenId != null && <span className="tabular">ID {r.kaizenId} · </span>}
-              {r.team.length ? r.team.map((t) => t.name).join(" + ") : "No one seated"}
-            </p>
+            <Crew r={r} />
           </div>
           <ChannelStatusPill status={r.status} line={r.line} />
         </div>

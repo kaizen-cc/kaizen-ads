@@ -9,6 +9,15 @@ import { channelSeatsOf, isBlankName, sheetRows, splitNames, type ChannelTab } f
 // person a column names becomes that client's seat (Strategist, Designer, Builder on Email; Strategist, Graphic Designer,
 // Video Editor on Organic Social). A blank cell never takes anyone off; a name that isn't on the team is reported.
 
+/** A seat as the boards name it (the second name is a second person on the seat: the Video Editor beside the designer) */
+const SEAT_NAME: Record<string, [string, string]> = {
+  email_strategist: ["Strategist", "Strategist"],
+  email_designer: ["Designer", "Designer"],
+  email_builder: ["Builder", "Builder"],
+  social_manager: ["Strategist", "Strategist"],
+  social_creative: ["Graphic designer", "Video editor"],
+};
+
 export type ChannelSheetResult = { seats: number; rows: number; unknownPeople: string[]; noClient: string[]; tabs: string[] };
 
 export async function syncChannelTabs(admin: SupabaseClient, tok: string, titles: string[]): Promise<ChannelSheetResult> {
@@ -54,6 +63,10 @@ export async function syncChannelTabs(admin: SupabaseClient, tok: string, titles
         out.noClient.push(`${name} (${title})`);
         continue;
       }
+      // The names as the sheet has them, for the boards (who's on it even before they're in the app)
+      const named = channelSeatsOf(line, r).map((s) => ({ seat: SEAT_NAME[s.role][s.primary ? 0 : 1], names: splitNames(s.value).filter((x) => !isBlankName(x)) }));
+      const { data: cur } = await admin.from("clients").select("channel_sheet").eq("id", client.id).maybeSingle();
+      await admin.from("clients").update({ channel_sheet: { ...((cur?.channel_sheet ?? {}) as Record<string, unknown>), [line]: named } }).eq("id", client.id);
       for (const seat of channelSeatsOf(line, r)) {
         const names = splitNames(seat.value).filter((x) => !isBlankName(x));
         for (const [i, who] of names.entries()) {

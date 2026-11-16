@@ -227,3 +227,24 @@ describe("who needs a look first", () => {
     expect(orderForBoard(rows).map((r) => r.name)).toEqual(["C", "D", "F", "G", "A", "B", "E"]);
   });
 });
+
+import { crewOf, crewSeat } from "@/lib/channel-kpis/calc";
+
+describe("crewOf", () => {
+  it("orders the seats strategist first and fills from the sheet when nobody is seated", () => {
+    const crew = crewOf("email", [{ seat: "Designer", name: "Eunhye" }], [
+      { seat: "Strategist", names: ["Mel"] },
+      { seat: "Designer", names: ["Eunhye"] },
+      { seat: "Builder", names: ["Andres"] },
+    ]);
+    expect(crew).toEqual([
+      { seat: "Strategist", name: "Mel", pending: true },
+      { seat: "Designer", name: "Eunhye", pending: false },
+      { seat: "Builder", name: "Andres", pending: true },
+    ]);
+  });
+  it("names the social creative's second person the video editor", () => {
+    expect(crewSeat("social_creative", false)).toBe("Video editor");
+    expect(crewSeat("social_manager", true)).toBe("Strategist");
+  });
+});

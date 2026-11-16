@@ -70,7 +70,8 @@ export type ChannelRow = {
   /** How many days the chart's x axis spans */
   span: number;
   quietDays: number | null;
-  team: { name: string; seat: string }[];
+  /** Seat by seat, strategist first; pending: named in the Account Overview sheet but not in the app yet */
+  team: { name: string; seat: string; pending?: boolean }[];
   email: EmailSupport | null;
   social: SocialSupport | null;
   /** Email: the account score (the main KPI; status is its band). Null for social, or when nothing is read yet */

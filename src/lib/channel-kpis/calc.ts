@@ -252,3 +252,29 @@ export function daysSince(iso: string | null | undefined, today: string): number
   if (!iso) return null;
   return Math.max(0, daysBetween(iso.slice(0, 10), today));
 }
+
+/** The seats a line's card names, in order: who is in charge first */
+export const CREW_ORDER: Record<Line, readonly string[]> = { email: ["Strategist", "Designer", "Builder"], social: ["Strategist", "Graphic designer", "Video editor"] };
+
+/** A seated person's seat, as the card names it (the social creative's second person is the video editor) */
+export function crewSeat(role: string, primary: boolean): string {
+  if (role === "email_strategist" || role === "social_manager") return "Strategist";
+  if (role === "email_designer") return "Designer";
+  if (role === "email_builder") return "Builder";
+  if (role === "social_creative") return primary ? "Graphic designer" : "Video editor";
+  return role;
+}
+
+/**
+ * Who is on a client for a line, seat by seat: the people seated in the app, else the names the Account Overview sheet
+ * gives (pending: not in the app yet, so not seated). A seat with neither is left out.
+ */
+export function crewOf(line: Line, seated: { seat: string; name: string }[], sheet: { seat: string; names: string[] }[] | null | undefined): { seat: string; name: string; pending: boolean }[] {
+  const out: { seat: string; name: string; pending: boolean }[] = [];
+  for (const seat of CREW_ORDER[line]) {
+    const here = seated.filter((s) => s.seat === seat);
+    if (here.length) for (const s of here) out.push({ seat, name: s.name, pending: false });
+    else for (const name of (sheet ?? []).find((s) => s.seat === seat)?.names ?? []) out.push({ seat, name, pending: true });
+  }
+  return out;
+}

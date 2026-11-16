@@ -23,6 +23,8 @@ import {
   shiftDay,
   socialBasis,
   canSetTarget,
+  crewOf,
+  crewSeat,
   LINE_SEAT_ROLES,
   type ChannelStatus,
   type Line,
@@ -43,7 +45,6 @@ type Me = { id: string; role: string; isExec: boolean; isLead: boolean };
 /** The score band as the status the boards and Overview already colour by: green, yellow, red */
 const BAND_STATUS: Record<EmailBand, ChannelStatus> = { good: "good", watch: "close", bad: "off" };
 
-const SEAT_LABEL: Record<string, string> = { email_strategist: "Strategist", email_designer: "Designer", email_builder: "Builder", social_manager: "Social manager", social_creative: "Creative" };
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const etDay = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/New_York" }) : "");
@@ -67,17 +68,17 @@ async function readAll<T>(page: (from: number, to: number) => PromiseLike<{ data
  */
 export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me): Promise<ChannelBoard> {
   const month = monthOf(etToday());
-  const { data: all } = await db.from("clients").select("id, name, slug, status, kaizen_id, services, services_extra, services_removed").is("archived_at", null).in("status", [...LIVE]).order("name");
+  const { data: all } = await db.from("clients").select("id, name, slug, status, kaizen_id, services, services_extra, services_removed, channel_sheet").is("archived_at", null).in("status", [...LIVE]).order("name");
   const clients = (all ?? []).filter((c) => (servicesOf(c as Parameters<typeof servicesOf>[0]) as string[]).includes(SERVICE[line]));
   const ids = clients.map((c) => c.id as string);
   if (!ids.length) return { line, month, rows: [], targetsReady: true };
 
   const [targetsRes, seatsRes] = await Promise.all([
     db.from("channel_targets").select("client_id, target, notes, updated_at, updated_by, profiles:updated_by(full_name)").eq("line", line).in("client_id", ids),
-    db.from("client_assignments").select("client_id, role, profile_id, profiles(full_name)").in("client_id", ids).in("role", LINE_SEAT_ROLES[line]),
+    db.from("client_assignments").select("client_id, role, profile_id, is_primary, profiles(full_name)").in("client_id", ids).in("role", LINE_SEAT_ROLES[line]),
   ]);
   const targets = new Map((targetsRes.data ?? []).map((t) => [t.client_id as string, t]));
-  type Seat = { client_id: string; role: string; profile_id: string; profiles: { full_name: string } | null };
+  type Seat = { client_id: string; role: string; profile_id: string; is_primary: boolean | null; profiles: { full_name: string } | null };
   const seats = (seatsRes.data ?? []) as unknown as Seat[];
   const seatsOf = (id: string) => seats.filter((s) => s.client_id === id);
 
@@ -97,7 +98,12 @@ export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me): 
       canEdit: canSetTarget(me, line, mine.filter((s) => s.profile_id === me.id).map((s) => s.role)),
       canConnect: me.isExec || me.isLead,
       mine: mine.some((s) => s.profile_id === me.id),
-      team: mine.map((s) => ({ name: s.profiles?.full_name ?? "Someone", seat: SEAT_LABEL[s.role] ?? s.role })),
+      // Seat by seat, strategist first: who's seated, else who the sheet names (not in the app yet)
+      team: crewOf(
+        line,
+        mine.map((s) => ({ seat: crewSeat(s.role, s.is_primary !== false), name: s.profiles?.full_name ?? "Someone" })),
+        ((c.channel_sheet ?? {}) as Record<string, { seat: string; names: string[] }[]>)[line],
+      ),
     };
   };
 
@@ -106,7 +112,7 @@ export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me): 
 }
 
 type Base = Pick<ChannelRow, "line" | "clientId" | "name" | "slug" | "kaizenId" | "target" | "targetNote" | "targetBy" | "targetAt" | "canEdit" | "canConnect" | "mine" | "team">;
-type ClientRef = { id: unknown; name: unknown; slug?: unknown; kaizen_id?: unknown };
+type ClientRef = { id: unknown; name: unknown; slug?: unknown; kaizen_id?: unknown; channel_sheet?: unknown };
 type BaseOf = (c: ClientRef) => Base;
 
 // ─── Email ─────────────────────────────────────────────────────────────────
