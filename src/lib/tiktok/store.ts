@@ -14,7 +14,8 @@ import { AD_ATTRS, CAMPAIGN_ATTRS, REPORT_METRICS, adDayRow, addUp, campaignDayR
 // rates). Read only. Everything here returns early, touching nothing, while TikTok isn't set up (tiktokConfigured).
 
 export const BACKFILL_DAYS = 90;
-export const REVISE_DAYS = 7;
+// TikTok books a conversion on the click's day up to 7 days later (7-day click), so the last 8 days keep changing
+export const REVISE_DAYS = 8;
 const DEFAULT_CONVERSION = "tiktok_conversions";
 
 const today = () => nyParts(new Date()).date;

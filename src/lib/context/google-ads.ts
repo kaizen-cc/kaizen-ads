@@ -235,12 +235,19 @@ function shareOf(r: Row): Record<string, number> {
 }
 const num = (v: unknown) => Number(v) || 0;
 
-/** New and revised days for one Google Ads account (the last 3 days are re-read: conversions keep coming in). */
+/**
+ * How many days back every Google sync reads again. Google books a conversion on the day of the click, often days
+ * later (conversion lag), so recent days keep growing: re-reading only 3 left a week's report short of what Google
+ * shows (62 here against 67 in Google). Two weeks covers a weekly report and the week it's compared with.
+ */
+export const GOOGLE_REVISE_DAYS = 14;
+
+/** New and revised days for one Google Ads account (the last GOOGLE_REVISE_DAYS are re-read: conversions keep coming in). */
 export async function syncGoogleCampaigns(admin: SupabaseClient, account: string) {
   const id = digits(account);
   const { data: last } = await admin.from("google_campaign_daily").select("date").eq("ad_account_id", id).order("date", { ascending: false }).limit(1).maybeSingle();
   const now = new Date();
-  const since = last ? new Date(new Date(`${last.date}T12:00:00Z`).getTime() - 3 * 86_400_000) : new Date(now.getTime() - BACKFILL_DAYS * 86_400_000);
+  const since = last ? new Date(new Date(`${last.date}T12:00:00Z`).getTime() - GOOGLE_REVISE_DAYS * 86_400_000) : new Date(now.getTime() - BACKFILL_DAYS * 86_400_000);
   const range = `segments.date BETWEEN '${ymd(since)}' AND '${now.toLocaleDateString("en-CA", { timeZone: "America/New_York" })}'`;
   const [base, byAction] = await Promise.all([
     search(id, `SELECT segments.date, campaign.id, campaign.name, campaign.advertising_channel_type, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.search_impression_share, metrics.search_budget_lost_impression_share, metrics.search_rank_lost_impression_share FROM campaign WHERE ${range}`),
