@@ -280,8 +280,13 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
     const isResult = (types: string[]) => types.some((x) => !NOT_A_RESULT.test(x));
     // Campaigns run for reach or engagement don't count as results, when others in the period run for a real one
     const anyReal = [...read.entries()].some(([id, types]) => spent.has(id) && isResult(types));
-    if (read.size && anyReal) goals = new Map([...read.entries()].map(([id, types]) => [id, isResult(types) ? types : []]));
-    else if (read.size) goals = read;
+    // Each campaign's own result counts only when the KPI is "each campaign's goal". A KPI on one event (purchases,
+    // leads…) counts that event alone, as the KPI board does: a purchases client's Instant Form leads are never purchases
+    // (they stay on their campaign's line in the campaign table, under their own result)
+    if (t.conversion === "campaign_goal") {
+      if (read.size && anyReal) goals = new Map([...read.entries()].map(([id, types]) => [id, isResult(types) ? types : []]));
+      else if (read.size) goals = read;
+    }
   }
   // A KPI set to a custom event that was never picked can't count anything: each campaign's own result instead
   const useGoals = Boolean(goals) || (t.conversion === "custom" && !t.custom_action);
