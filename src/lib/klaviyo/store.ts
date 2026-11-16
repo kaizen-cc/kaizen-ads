@@ -7,6 +7,7 @@ import { audienceSize, campaignContent, campaignValues, flowSeries, flowValues, 
 import { BACKFILL_DAYS, cleanKey, dayIn, emailContextLine, emptyStats, keyLast4, keyProblem, klaviyoClientState, klaviyoCostMs, partialSyncWarning, pickKlaviyoWindow, rates, redactKey, rollupDays, sumSince, type CampaignInfo, type KlaviyoClientState, type KlaviyoPlainError, type KlaviyoWindow, type SeriesRow, type Stats } from "./core";
 import { audienceGrowth, emailHealth, keyFlowCoverage, pulseWindow, sanitizeEmailHtml, seriesChunks, sortCampaigns, type CampaignLite, type DailyRow, type DayValue, type FlowLite, type HealthFinding, type KeyFlow, type PulseWindow } from "./insights";
 import { tracker } from "@/lib/progress";
+import { conversionMetricsOf, MAX_CONVERSION_METRICS, type ConversionMetric } from "@/lib/email-metrics";
 import { runBounded } from "@/lib/bounded";
 
 // Klaviyo in Kaizen Ads: each client's connection (a read-only private API key, encrypted at rest), the daily sync
@@ -18,7 +19,7 @@ const shift = (day: string, n: number) => new Date(Date.parse(`${day}T12:00:00Z`
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const r4 = (x: number | null) => (x == null ? null : Math.round(x * 10000) / 10000);
 
-type ConnRow = { client_id: string; account_id: string; account_name: string | null; timezone: string | null; currency: string | null; key_iv: string; key_tag: string; key_ciphertext: string; key_last4: string | null; conversion_metric_id: string | null; conversion_metric_manual?: boolean | null; status: string; last_synced_at: string | null; backfilled_at: string | null; last_error: string | null; connected_at: string; connected_by: string | null };
+type ConnRow = { client_id: string; account_id: string; account_name: string | null; timezone: string | null; currency: string | null; key_iv: string; key_tag: string; key_ciphertext: string; key_last4: string | null; conversion_metric_id: string | null; conversion_metric_name?: string | null; conversion_metric_manual?: boolean | null; conversion_metrics?: unknown; status: string; last_synced_at: string | null; backfilled_at: string | null; last_error: string | null; connected_at: string; connected_by: string | null };
 
 /** Whether the Klaviyo tables exist (the migration applied) */
 export async function klaviyoReady(admin: SupabaseClient) {
@@ -102,17 +103,20 @@ export async function removeKlaviyo(admin: SupabaseClient, clientId: string) {
   return { ok: true as const };
 }
 
-export type KlaviyoConnectionView = { account: string | null; accountId: string; conversionMetric?: string | null; timezone: string | null; currency: string | null; last4: string | null; status: string; lastSyncedAt: string | null; backfilled: boolean; error: string | null; connectedAt: string; by: string | null };
+export type KlaviyoConnectionView = { account: string | null; accountId: string; conversionMetric?: string | null; /** The ranked metrics that count as the sale, primary first */ conversionMetrics?: ConversionMetric[]; timezone: string | null; currency: string | null; last4: string | null; status: string; lastSyncedAt: string | null; backfilled: boolean; error: string | null; connectedAt: string; by: string | null };
 
 /** The client's connection as Team & setup shows it: null when not connected; undefined when Klaviyo isn't set up */
 export async function klaviyoConnection(admin: SupabaseClient, clientId: string): Promise<KlaviyoConnectionView | null | undefined> {
   const { data, error } = await admin.from("klaviyo_connections").select("account_id, account_name, timezone, currency, key_last4, status, last_synced_at, backfilled_at, last_error, connected_at, conversion_metric_name, profiles:connected_by(full_name)").eq("client_id", clientId).maybeSingle();
   if (error) return undefined;
   if (!data) return null;
+  // The ranked list is read on its own, so a database without its migration still shows the connection
+  const ranked = await admin.from("klaviyo_connections").select("conversion_metric_id, conversion_metric_name, conversion_metrics").eq("client_id", clientId).maybeSingle();
   return {
     account: (data.account_name as string | null) ?? null,
     accountId: data.account_id as string,
     conversionMetric: (data.conversion_metric_name as string | null) ?? null,
+    conversionMetrics: ranked.data ? conversionMetricsOf(ranked.data.conversion_metrics, { id: (ranked.data.conversion_metric_id as string | null) ?? null, name: (ranked.data.conversion_metric_name as string | null) ?? null }) : [],
     timezone: (data.timezone as string | null) ?? null,
     currency: (data.currency as string | null) ?? null,
     last4: (data.key_last4 as string | null) ?? null,
@@ -270,6 +274,99 @@ async function saveFlowDays(admin: SupabaseClient, clientId: string, series: Ser
   }
 }
 
+// ─── The lower ranked conversion metrics ───────────────────────────────────
+
+/** The metrics ranked under the primary that this read also reads (none unless a lead or an exec picked more than one) */
+function extraMetrics(conn: ConnRow, primary: string | null): ConversionMetric[] {
+  if (!primary) return [];
+  return conversionMetricsOf(conn.conversion_metrics, { id: conn.conversion_metric_id, name: conn.conversion_metric_name ?? null })
+    .filter((m) => m.id !== primary)
+    .slice(0, MAX_CONVERSION_METRICS - 1);
+}
+
+/** One metric's numbers from a read: per campaign, per flow (30 days, and 90 on a full read), per day, and the store's own */
+type MetricRead = { id: string; values: Map<string, Stats>; series: SeriesRow[] | null; flows: Map<string, { d30: Stats; d90?: Stats }>; store: Map<string, DayValue> | null; error: string | null };
+
+/**
+ * A lower ranked metric, read with the same calls the primary is (the Reporting API's spacing and backoff hold per
+ * account, so each extra metric adds two or three spaced queries). A part that fails is noted and the rest is kept;
+ * only a refused key stops the read.
+ */
+async function readMetric(key: string, id: string, w: { full: boolean; from: string; today: string; tz: string | null; nowIso: string; campaigns: boolean }): Promise<MetricRead> {
+  const out: MetricRead = { id, values: new Map(), series: null, flows: new Map(), store: null, error: null };
+  const note = (e: unknown) => {
+    if (isAuth(e)) throw e;
+    out.error ??= redactKey(errText(e), key).slice(0, 240);
+  };
+  const utc = (day: string) => `${day}T00:00:00+00:00`;
+  const from30 = shift(w.today, -29);
+  try {
+    if (w.campaigns) {
+      const v = w.full ? await campaignValues(key, id, { key: "last_90_days" }) : await orNamed(() => campaignValues(key, id, { start: utc(shift(w.today, -8)), end: w.nowIso }), () => campaignValues(key, id, { key: "last_7_days" }));
+      out.values = new Map(v.map((x) => [x.id, x.stats]));
+    }
+  } catch (e) {
+    note(e);
+  }
+  try {
+    const series = w.full ? await flowSeries(key, id, seriesChunks(w.from, w.today, { maxDays: 45, endIso: w.nowIso })) : await orNamed(() => flowSeries(key, id, { start: utc(shift(w.today, -31)), end: w.nowIso }), () => flowSeries(key, id, { key: "last_30_days" }));
+    out.series = series;
+    out.flows = new Map(series.map((f) => [f.id, w.full ? { d30: sumSince(f, from30), d90: sumSince(f, w.from) } : { d30: sumSince(f, from30) }]));
+  } catch (e) {
+    note(e);
+  }
+  out.store = await metricDaily(key, id, w.full ? w.from : shift(w.today, -1), w.today, w.tz)
+    .then(byDate)
+    .catch((e) => {
+      note(e);
+      return null;
+    });
+  return out;
+}
+
+/** A metric's rows for the per-metric tables; days only when its daily flow series came in (else only the store's) */
+function metricTableRows(clientId: string, m: MetricRead, ctx: { campaigns: { id: string; sendTime: string | null; channel: string | null }[]; tz: string | null; from: string; to: string; now: string }) {
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const campaigns = ctx.campaigns.flatMap((c) => {
+    const st = m.values.get(c.id);
+    return st ? [{ client_id: clientId, campaign_id: c.id, metric_id: m.id, conversions: r2(st.conversions), revenue: r2(st.revenue), updated_at: ctx.now }] : [];
+  });
+  const flows = [...m.flows.entries()].map(([flowId, st]) => ({ client_id: clientId, flow_id: flowId, metric_id: m.id, conversions_30: r2(st.d30.conversions), revenue_30: r2(st.d30.revenue), ...(st.d90 ? { conversions_90: r2(st.d90.conversions), revenue_90: r2(st.d90.revenue) } : {}), updated_at: ctx.now }));
+  const storeOf = (date: string) => (m.store ? { store_revenue: r2(m.store.get(date)?.value ?? 0), store_orders: m.store.get(date)?.count ?? 0 } : {});
+  const days: Record<string, unknown>[] = [];
+  if (m.series) {
+    for (const d of rollupDays({ campaigns: ctx.campaigns.map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: m.values.get(c.id) ?? emptyStats() })), flows: m.series, tz: ctx.tz, from: ctx.from, to: ctx.to }))
+      days.push({ client_id: clientId, metric_id: m.id, date: d.date, campaign_revenue: d.campaignRevenue, flow_revenue: d.flowRevenue, revenue: d.revenue, conversions: d.conversions, ...storeOf(d.date), updated_at: ctx.now });
+  } else if (m.store) {
+    for (let d = ctx.from; d <= ctx.to; d = shift(d, 1)) days.push({ client_id: clientId, metric_id: m.id, date: d, ...storeOf(d), updated_at: ctx.now });
+  }
+  return { campaigns, flows, days };
+}
+
+/** The per-metric tables: written quietly, so a database without their migration keeps syncing the primary as before */
+async function saveMetrics(admin: SupabaseClient, clientId: string, reads: MetricRead[], ctx: Parameters<typeof metricTableRows>[2]) {
+  for (const m of reads) {
+    const rows = metricTableRows(clientId, m, ctx);
+    const parts: [string, Record<string, unknown>[], string][] = [
+      ["klaviyo_campaign_metrics", rows.campaigns, "client_id,campaign_id,metric_id"],
+      ["klaviyo_flow_metrics", rows.flows, "client_id,flow_id,metric_id"],
+      ["klaviyo_metric_daily", rows.days, "client_id,metric_id,date"],
+    ];
+    for (const [table, list, conflict] of parts) {
+      for (let i = 0; i < list.length; i += 500) {
+        const { error } = await admin.from(table).upsert(list.slice(i, i + 500), { onConflict: conflict });
+        if (error) return;
+      }
+    }
+  }
+}
+
+/** A ranked metric's read that failed in part, named, for Sync health */
+const extraNote = (extras: ConversionMetric[], reads: MetricRead[]) => {
+  const bad = reads.find((m) => m.error);
+  return bad ? `${extras.find((m) => m.id === bad.id)?.name ?? "A ranked metric"}: ${bad.error}`.slice(0, 240) : null;
+};
+
 type ReadOut = { metricId: string | null; campaigns: number; flows: number; audiences: number; days: number; seriesError: string | null; storeError: string | null };
 
 /**
@@ -355,6 +452,14 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   const subs = metrics?.subscribed ? await metricDaily(key, metrics.subscribed, from, today, tz).then(byDate).catch(() => null) : null;
   const unsubs = metrics?.unsubscribed ? await metricDaily(key, metrics.unsubscribed, from, today, tz).then(byDate).catch(() => null) : null;
 
+  // The other metrics a lead ranked under the primary (reservations under online orders...), one after the other
+  const extras = reportable ? extraMetrics(conn, metricId) : [];
+  const extraReads: MetricRead[] = [];
+  for (const [i, m] of extras.entries()) {
+    await step(76 + i * 3, `Reading ${m.name}`);
+    extraReads.push(await readMetric(key, m.id, { full: true, from, today, tz, nowIso, campaigns: true }));
+  }
+
   // Profile counts for the main lists and segments: the ones campaigns go to most, then the newest lists
   const used = new Map<string, number>();
   for (const c of [...email, ...sms]) for (const a of c.audienceIds) used.set(a, (used.get(a) ?? 0) + 1);
@@ -389,13 +494,16 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
     for (let d = from; d <= today; d = shift(d, 1)) dates.push(d);
     await save(admin, "klaviyo_daily", dates.map((date) => withStore({ client_id: clientId, date, updated_at: now }, store, subs, unsubs)), "client_id,date");
   }
+  // Every ranked metric's own numbers side by side (the primary's too), only when more than one is picked
+  if (extraReads.length && metricId)
+    await saveMetrics(admin, clientId, [{ id: metricId, values: byCampaign, series: seriesOk ? series : null, flows: flowStats, store, error: null }, ...extraReads], { campaigns: [...email, ...sms], tz, from, to: today, now });
   // Each read's list and segment sizes, for growth over time (kept quietly until the pulse migration is applied)
   const snap = audienceRows.filter((a) => a.profile_count != null).map((a) => ({ client_id: clientId, audience_id: a.audience_id, date: today, profile_count: a.profile_count }));
   if (snap.length) await admin.from("klaviyo_audience_sizes").upsert(snap, { onConflict: "client_id,audience_id,date" });
   // Flows, lists and segments deleted in Klaviyo go here too
   if (flows.length) await admin.from("klaviyo_flows").delete().eq("client_id", clientId).lt("updated_at", now);
   if (lists.length && segmentsOk) await admin.from("klaviyo_audiences").delete().eq("client_id", clientId).lt("updated_at", now);
-  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: audienceRows.length, days: seriesOk ? days.length : 0, seriesError: seriesError ?? metricNote, storeError };
+  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: audienceRows.length, days: seriesOk ? days.length : 0, seriesError: seriesError ?? metricNote ?? extraNote(extras, extraReads), storeError };
 }
 
 /**
@@ -452,6 +560,10 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
         return null;
       })
     : null;
+  // The ranked metrics under the primary: the same recent window, each with its own spaced queries
+  const extras = metricId && !metricNote ? extraMetrics(conn, metricId) : [];
+  const extraReads: MetricRead[] = [];
+  for (const m of extras) extraReads.push(await readMetric(key, m.id, { full: false, from: yesterday, today, tz, nowIso, campaigns: recent.length > 0 }));
 
   const now = new Date().toISOString();
   // Audience names from the last full read (lists and segments aren't listed on a recent one)
@@ -475,7 +587,9 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
   if (seriesOk) await saveFlowDays(admin, clientId, series, from30, now);
   if (days.length) await save(admin, "klaviyo_daily", days.map((d) => withStore(dayRow(clientId, d, now), store, null, null)), "client_id,date");
   else if (store) await save(admin, "klaviyo_daily", [yesterday, today].map((date) => withStore({ client_id: clientId, date, updated_at: now }, store, null, null)), "client_id,date");
-  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: 0, days: days.length, seriesError: seriesError ?? metricNote, storeError };
+  if (extraReads.length && metricId)
+    await saveMetrics(admin, clientId, [{ id: metricId, values: byCampaign, series: seriesOk ? series : null, flows: new Map([...flow30.entries()].map(([k, v]) => [k, { d30: v }])), store, error: null }, ...extraReads], { campaigns: recent, tz, from: yesterday, to: today, now });
+  return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: 0, days: days.length, seriesError: seriesError ?? metricNote ?? extraNote(extras, extraReads), storeError };
 }
 
 /**
@@ -529,10 +643,13 @@ export async function syncKlaviyo(admin: SupabaseClient, clientId: string, opts:
 export async function syncAllKlaviyo(admin: SupabaseClient, opts: { budgetMs?: number; force?: boolean; concurrency?: number } = {}) {
   if (!(await klaviyoReady(admin))) return { skipped: "Klaviyo migration not applied" };
   const deadline = Date.now() + (opts.budgetMs ?? 600_000);
-  const [{ data }, { data: memos }] = await Promise.all([
+  const [{ data }, { data: memos }, { data: ranked }] = await Promise.all([
     admin.from("klaviyo_connections").select("client_id, last_synced_at, clients!inner(name, status, archived_at)").eq("status", "active"),
     admin.from("sync_state").select("source, last_run_at, last_result").like("source", "klaviyo:%"),
+    // Read apart, so the run goes on before the ranked metrics migration is applied
+    admin.from("klaviyo_connections").select("client_id, conversion_metric_id, conversion_metrics").eq("status", "active"),
   ]);
+  const extraCount = new Map((ranked ?? []).map((c) => [c.client_id as string, Math.max(0, conversionMetricsOf(c.conversion_metrics, { id: (c.conversion_metric_id as string | null) ?? null, name: null }).length - 1)]));
   type Row = { client_id: string; last_synced_at: string | null; clients: { name: string; status: string; archived_at: string | null } | null };
   const memo = new Map((memos ?? []).map((x) => [String(x.source).slice("klaviyo:".length), x as { last_run_at: string | null; last_result: SyncMemo | null }]));
   const recently = new Date(Date.now() - 10 * 60_000).toISOString();
@@ -541,14 +658,14 @@ export async function syncAllKlaviyo(admin: SupabaseClient, opts: { budgetMs?: n
     .map((r) => {
       const m = memo.get(r.client_id);
       const lastRun = m?.last_run_at ?? null;
-      return { id: r.client_id, name: r.clients!.name, lastRun, window: pickKlaviyoWindow({ lastFullAt: m ? (m.last_result?.fullAt ?? null) : r.last_synced_at }) };
+      return { id: r.client_id, name: r.clients!.name, lastRun, extra: extraCount.get(r.client_id) ?? 0, window: pickKlaviyoWindow({ lastFullAt: m ? (m.last_result?.fullAt ?? null) : r.last_synced_at }) };
     })
     .filter((p) => opts.force || !p.lastRun || p.lastRun < recently)
     .sort((a, b) => (a.lastRun ?? "").localeCompare(b.lastRun ?? ""));
   const t = await tracker(admin, "klaviyo", "accounts");
   t.total(plan.length);
   try {
-    const r = await runBounded(plan, { limit: opts.concurrency ?? 6, deadline, cost: (p) => klaviyoCostMs(p.window) }, async (p) => {
+    const r = await runBounded(plan, { limit: opts.concurrency ?? 6, deadline, cost: (p) => klaviyoCostMs(p.window, p.extra) }, async (p) => {
       t.on(p.name);
       const out = await syncKlaviyo(admin, p.id, { window: p.window });
       t.tick(p.name, out.ok);
@@ -793,4 +910,24 @@ export async function setKlaviyoMetric(admin: SupabaseClient, clientId: string, 
     .update({ conversion_metric_id: metric.id, conversion_metric_name: metric.name.slice(0, 120), conversion_metric_manual: true, conversion_metric_set_by: by, conversion_metric_set_at: now, status: "active", last_error: null, updated_at: now })
     .eq("client_id", clientId);
   return error ? { ok: false as const, error: error.message } : { ok: true as const };
+}
+
+/**
+ * Use these metrics as the sale, ranked (primary first, four at most). The primary also goes in conversion_metric_id and
+ * conversion_metric_name, which everything older reads; it's kept over the automatic Placed Order pick. Says whether the
+ * numbers need reading again (a new primary or a metric not read before): a reorder or a removal below the primary only
+ * changes the weights.
+ */
+export async function setKlaviyoMetrics(admin: SupabaseClient, clientId: string, metrics: ConversionMetric[], by: string): Promise<{ ok: true; reread: boolean } | { ok: false; error: string }> {
+  const list = conversionMetricsOf(metrics, { id: null, name: null });
+  if (!list.length) return { ok: false, error: "Pick at least one metric." };
+  const { data: was } = await admin.from("klaviyo_connections").select("conversion_metric_id, conversion_metric_name, conversion_metrics").eq("client_id", clientId).maybeSingle();
+  const before = was ? conversionMetricsOf(was.conversion_metrics, { id: (was.conversion_metric_id as string | null) ?? null, name: (was.conversion_metric_name as string | null) ?? null }).map((m) => m.id) : [];
+  const now = new Date().toISOString();
+  const { error } = await admin
+    .from("klaviyo_connections")
+    .update({ conversion_metrics: list, conversion_metric_id: list[0].id, conversion_metric_name: list[0].name.slice(0, 120), conversion_metric_manual: true, conversion_metric_set_by: by, conversion_metric_set_at: now, status: "active", last_error: null, updated_at: now })
+    .eq("client_id", clientId);
+  if (error) return { ok: false, error: /conversion_metrics/.test(error.message) ? "Ranking several metrics needs the latest database update. Pick one for now." : error.message };
+  return { ok: true, reread: before[0] !== list[0].id || list.some((m) => !before.includes(m.id)) };
 }

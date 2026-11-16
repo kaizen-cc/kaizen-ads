@@ -1,4 +1,5 @@
 import { deliverabilityScore, emailScore, type EmailInputs, type EmailScore } from "./email-score";
+import { blendByRank, effectiveWeights } from "./email-metrics";
 
 // The pure half of the email score loader: raw Klaviyo rows in, the seven inputs out. No database, so it is tested alone.
 
@@ -18,8 +19,16 @@ export type EmailScoreTotals = {
   flowRecipients: number;
 };
 
+/** The days of a conversion metric below the primary (secondary, tertiary...): its attributed revenue and the store's own */
+export type MetricDay = { revenue: number; storeRevenue: number | null };
+
+/** One ranked metric's money numbers over the window, and its share of the money checks (0 when it had no data) */
+export type MetricMoney = { revenue: number; storeRevenue: number | null; attributed: number | null; rpr: number | null; weight: number };
+
 export type Deliverability = NonNullable<ReturnType<typeof deliverabilityScore>>;
 export type EmailScoreResult = EmailScore & {
+  /** The money checks per ranked metric, primary first (one entry when only the primary is picked) */
+  byMetric?: MetricMoney[];
   inputs: EmailInputs;
   /** Kaizen's deliverability parts (null when no email campaign went out in the window) */
   deliverability: Deliverability | null;
@@ -73,7 +82,7 @@ function weighted(rows: { w: number; rate: number | null }[]): number | null {
  * carry no bounce or spam counts. Campaign rates are weighted by delivered (recipients when that is missing); flow
  * rates by their 30-day recipients, over live flows only.
  */
-export function aggregateEmailScore(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[] }): { inputs: EmailInputs; deliverability: Deliverability | null; totals: EmailScoreTotals } {
+export function aggregateEmailScore(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[]; extra?: MetricDay[][] }): { inputs: EmailInputs; deliverability: Deliverability | null; totals: EmailScoreTotals; byMetric: MetricMoney[] } {
   const revenue = d.days.reduce((n, x) => n + x.revenue, 0);
   const storeDays = d.days.filter((x) => x.storeRevenue != null);
   const storeRevenue = storeDays.reduce((n, x) => n + (x.storeRevenue ?? 0), 0);
@@ -91,9 +100,27 @@ export function aggregateEmailScore(d: { days: ScoreDay[]; campaigns: ScoreCampa
     // Clicks from each campaign's click rate (the counts aren't stored), on the same base as the rate
     clicks: em.reduce((n, c) => n + (c.clickRate ?? 0) * base(c), 0),
   });
+  // The money checks per ranked metric. The primary reads as it always has; a lower one counts only once it carries
+  // money in the window (a reservations metric with no value would otherwise drag revenue per recipient to zero)
+  const money = [
+    { revenue, storeRevenue: storeDays.length ? storeRevenue : null, attributed: storeDays.length && storeRevenue > 0 ? revenue / storeRevenue : null, rpr: recipients > 0 ? revenue / recipients : null },
+    ...(d.extra ?? []).map((days) => {
+      const rev = days.reduce((n, x) => n + x.revenue, 0);
+      const sd = days.filter((x) => x.storeRevenue != null);
+      const store = sd.reduce((n, x) => n + (x.storeRevenue ?? 0), 0);
+      const valued = rev > 0 || store > 0;
+      return { revenue: rev, storeRevenue: sd.length ? store : null, attributed: sd.length && store > 0 ? rev / store : null, rpr: valued && recipients > 0 ? rev / recipients : null };
+    }),
+  ];
+  const attributed = blendByRank(money.map((m) => m.attributed));
+  const rpr = blendByRank(money.map((m) => m.rpr));
+  // Each metric's share as the blend used it: the attributed check's when it had any, else revenue per recipient's
+  const wa = effectiveWeights(money.map((m) => m.attributed != null));
+  const wr = effectiveWeights(money.map((m) => m.rpr != null));
+  const byMetric: MetricMoney[] = money.map((m, i) => ({ ...m, weight: wa.some((x) => x > 0) ? wa[i] : wr[i] }));
   const inputs: EmailInputs = {
-    attributed: storeDays.length && storeRevenue > 0 ? revenue / storeRevenue : null,
-    rpr: recipients > 0 ? revenue / recipients : null,
+    attributed,
+    rpr,
     deliverability: deliverability ? deliverability.score : null,
     campaignOpen: weighted(em.map((c) => ({ w: base(c), rate: c.openRate }))),
     campaignClick: weighted(em.map((c) => ({ w: base(c), rate: c.clickRate }))),
@@ -103,12 +130,13 @@ export function aggregateEmailScore(d: { days: ScoreDay[]; campaigns: ScoreCampa
   return {
     inputs,
     deliverability,
+    byMetric,
     totals: { revenue, storeRevenue, storeRead: storeDays.length > 0, recipients, campaignsSent: em.length, campaignDelivered: em.reduce((n, c) => n + base(c), 0), flowsLive: live.length, flowRecipients: live.reduce((n, f) => n + f.recipients30, 0) },
   };
 }
 
 /** Rows in, the full result out */
-export function scoreFromRows(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[] }, window: { from: string; to: string }): EmailScoreResult {
+export function scoreFromRows(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[]; extra?: MetricDay[][] }, window: { from: string; to: string }): EmailScoreResult {
   const a = aggregateEmailScore(d);
   return { ...emailScore(a.inputs), ...a, window };
 }

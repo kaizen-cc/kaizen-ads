@@ -517,7 +517,7 @@ function ScoreSection({ k }: { k: ClientKlaviyo }) {
   );
 }
 
-function OverviewTab({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof moneyFn> }) {
+function OverviewTab({ k, clientId, money }: { k: ClientKlaviyo; clientId: string; money: ReturnType<typeof moneyFn> }) {
   const campaigns = useMemo(() => campaignRows(k.campaigns), [k.campaigns]);
   const flows = useMemo(() => flowRows(k.flows), [k.flows]);
   return (
@@ -530,7 +530,7 @@ function OverviewTab({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof 
         <DeliverabilityScoreChart k={k} />
       </div>
       <HealthList health={k.health} />
-      <EmailBreakdown campaigns={campaigns} flows={flows} currency={k.currency} />
+      <EmailBreakdown campaigns={campaigns} flows={flows} currency={k.currency} clientId={clientId} />
     </div>
   );
 }
@@ -549,7 +549,7 @@ export function EmailTab({ k, clientId, tab }: { k: ClientKlaviyo; clientId: str
     <div className="grid gap-5">
       <Intro k={k} />
       {tab === "overview" ? (
-        <OverviewTab k={k} money={money} />
+        <OverviewTab k={k} clientId={clientId} money={money} />
       ) : tab === "campaigns" ? (
         <CampaignsTab k={k} clientId={clientId} money={money} />
       ) : tab === "flows" ? (

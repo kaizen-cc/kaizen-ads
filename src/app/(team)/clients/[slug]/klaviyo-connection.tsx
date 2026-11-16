@@ -64,7 +64,7 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
                 : "Connected. The first read (90 days back) runs in the next few minutes."}
             </p>
           )}
-          <KlaviyoMetricPicker clientId={clientId} current={conn.conversionMetric ?? null} canPick={canEdit} />
+          <KlaviyoMetricPicker clientId={clientId} current={conn.conversionMetrics ?? []} fallback={conn.conversionMetric ?? null} canPick={canEdit} />
           <div className="flex flex-wrap gap-x-4 gap-y-1 pt-0.5">
             <button
               type="button"

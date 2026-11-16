@@ -1,12 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { CampaignPreviewCard, CampaignPreviewSheet } from "@/app/(team)/clients/[slug]/email-preview";
+import { HoverCard } from "@/components/hover-card";
 import { pushParams, useParam } from "@/lib/url-state";
-import { BARS, CAMPAIGN_TABS, FLOW_SORTS, PAGE, campaignsFor, flowRpr, rateTone, sortFlows, type BCampaign, type BFlow, type CampaignTab, type FlowSortKey, type FlowWindow, type RateTone } from "@/lib/email-breakdown";
+import { BARS, CAMPAIGN_TABS, FLOW_SORTS, PAGE, campaignsFor, flowRpr, klaviyoFlowUrl, rateTone, sortFlows, type BCampaign, type BFlow, type CampaignTab, type FlowSortKey, type FlowWindow, type RateTone } from "@/lib/email-breakdown";
 
 // Under the score: how each campaign and each live flow is performing, so the team sees where the score is being lost.
 // One component for the KPI board's sheet and the client's Email panel. Where you are (campaign tab, flow sort and
-// window) lives in the address, so back returns to it. Read only.
+// window) lives in the address, so back returns to it. Read only. With the client's id, a campaign row previews the
+// email or SMS as sent (the client page's own preview: hover on a computer, tap on a phone, full size in ?epreview=),
+// and a flow's name opens it in Klaviyo.
 
 const TONE: Record<RateTone, string> = { ok: "text-ok", warn: "text-warn", bad: "text-bad" };
 const moneyOf = (cur: string | null) => (x: number, cents = false) => `${!cur || cur === "USD" ? "$" : `${cur} `}${cents ? x.toFixed(2) : Math.round(x).toLocaleString("en-US")}`;
@@ -34,7 +38,7 @@ function TabBar<T extends string>({ value, options, onChange, label }: { value: 
 
 const CAMPAIGN_COLS = "md:grid-cols-[56px_minmax(0,1fr)_52px_84px_64px_64px_84px_72px]";
 
-function Campaigns({ rows, money }: { rows: BCampaign[]; money: ReturnType<typeof moneyOf> }) {
+function Campaigns({ rows, money, clientId }: { rows: BCampaign[]; money: ReturnType<typeof moneyOf>; clientId?: string }) {
   const raw = useParam("ebt");
   const tab: CampaignTab = CAMPAIGN_TABS.some((t) => t.id === raw) ? (raw as CampaignTab) : "last10";
   const [more, setMore] = useState(0);
@@ -69,8 +73,8 @@ function Campaigns({ rows, money }: { rows: BCampaign[]; money: ReturnType<typeo
           <ul>
             {shown.map((c) => {
               const email = c.channel === "email";
-              return (
-                <li key={c.id} className={`grid gap-2 border-t border-line/60 px-3 py-3 first:border-t-0 md:items-center md:gap-3 ${CAMPAIGN_COLS}`}>
+              const cells = (
+                <>
                   <span className="tabular text-[12px] text-faint">{day(c.sendTime)}</span>
                   <span className="truncate text-[13.5px] font-medium">{c.name}</span>
                   <span className="text-[11.5px] text-faint">{email ? "Email" : "SMS"}</span>
@@ -89,6 +93,20 @@ function Campaigns({ rows, money }: { rows: BCampaign[]; money: ReturnType<typeo
                   </span>
                   <span className="tabular hidden text-right text-[12px] md:block">{c.rpr == null ? "n/a" : money(c.rpr, true)}</span>
                   <span className="tabular text-[11px] text-faint md:hidden">{c.rpr == null ? "" : `${money(c.rpr, true)} per recipient`}</span>
+                </>
+              );
+              const cls = `grid w-full gap-2 px-3 py-3 text-left md:items-center md:gap-3 ${CAMPAIGN_COLS}`;
+              return (
+                <li key={c.id} className="border-t border-line/60 first:border-t-0">
+                  {clientId ? (
+                    <HoverCard width={380} className="block" content={<CampaignPreviewCard clientId={clientId} campaign={{ id: c.id, name: c.name, channel: c.channel, subject: c.subject ?? null, previewText: c.previewText ?? null }} />}>
+                      <button type="button" onClick={() => pushParams({ epreview: c.id })} aria-label={`Preview ${c.name}`} className={`${cls} rounded-[12px] transition-colors hover:bg-surface-2/60`}>
+                        {cells}
+                      </button>
+                    </HoverCard>
+                  ) : (
+                    <div className={cls}>{cells}</div>
+                  )}
                 </li>
               );
             })}
@@ -102,6 +120,7 @@ function Campaigns({ rows, money }: { rows: BCampaign[]; money: ReturnType<typeo
           </button>
         )}
       </div>
+      {clientId && <CampaignPreviewSheet clientId={clientId} campaigns={rows.map((c) => ({ id: c.id, name: c.name, channel: c.channel, subject: c.subject ?? null, previewText: c.previewText ?? null, sendTime: c.sendTime }))} />}
     </section>
   );
 }
@@ -178,7 +197,10 @@ function Flows({ flows, money }: { flows: BFlow[]; money: ReturnType<typeof mone
               const rpr = flowRpr(f, w);
               return (
                 <li key={f.id} className={`grid gap-2 border-t border-line/60 px-3 py-3 first:border-t-0 md:items-center md:gap-3 ${FLOW_COLS}`}>
-                  <span className="truncate text-[13.5px] font-medium">{f.name}</span>
+                  <a href={klaviyoFlowUrl(f.id)} target="_blank" rel="noreferrer" title="Open this flow in Klaviyo" className="group/flow flex min-h-11 min-w-0 items-center gap-1.5 text-[13.5px] font-medium underline-offset-4 hover:underline md:min-h-0">
+                    <span className="truncate">{f.name}</span>
+                    <span aria-hidden className="shrink-0 text-[11px] text-faint transition-colors group-hover/flow:text-fg">↗</span>
+                  </a>
                   <span className="grid grid-cols-5 gap-2 text-[12px] md:contents">
                     {[
                       ["Recipients", <span key="r" className="tabular">{rec.toLocaleString("en-US")}</span>],
@@ -206,11 +228,11 @@ function Flows({ flows, money }: { flows: BFlow[]; money: ReturnType<typeof mone
 }
 
 /** Campaigns and live flows under an account's score */
-export function EmailBreakdown({ campaigns, flows, currency }: { campaigns: BCampaign[]; flows: BFlow[]; currency: string | null }) {
+export function EmailBreakdown({ campaigns, flows, currency, clientId }: { campaigns: BCampaign[]; flows: BFlow[]; currency: string | null; /** Turns on the campaign preview */ clientId?: string }) {
   const money = moneyOf(currency);
   return (
     <div className="grid gap-6">
-      <Campaigns rows={campaigns} money={money} />
+      <Campaigns rows={campaigns} money={money} clientId={clientId} />
       <Flows flows={flows} money={money} />
     </div>
   );

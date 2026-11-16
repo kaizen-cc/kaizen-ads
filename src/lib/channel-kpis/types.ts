@@ -1,3 +1,4 @@
+import type { ConversionMetric, MonthRevenue, RevenueTarget } from "@/lib/email-metrics";
 import type { EmailScoreResult } from "@/lib/email-score-calc";
 import type { ChannelStatus, Line, Month } from "./calc";
 
@@ -32,6 +33,20 @@ export type SocialSupport = {
   lastPostAt: string | null;
 };
 
+/** One ranked conversion metric's numbers this month, for the sheet's side by side (primary first) */
+export type MetricNumbers = ConversionMetric & {
+  /** Share of the score's money checks this metric carried (0 to 1; 0 with no data in the last 30 days) */
+  weight: number;
+  /** This month so far: attributed revenue, conversions, and the store's own total for the metric */
+  revenue: number | null;
+  conversions: number | null;
+  storeRevenue: number | null;
+  storeOrders: number | null;
+  /** Last 30 days, as the score read them */
+  attributed: number | null;
+  rpr: number | null;
+};
+
 export type ChannelRow = {
   line: Line;
   clientId: string;
@@ -47,6 +62,16 @@ export type ChannelRow = {
   account: string | null;
   /** Email: the Klaviyo metric that counts as the sale (Placed Order, Bought Ticket...), when it was named */
   conversionMetric?: string | null;
+  /** Email: the ranked metrics that count as the sale, primary first (empty when only the automatic one is used) */
+  conversionMetrics?: ConversionMetric[];
+  /** Email: each ranked metric's numbers side by side (only when more than one is picked) */
+  metricNumbers?: MetricNumbers[];
+  /** Email: the month's revenue target (last month + 10%, or a higher one set by hand); `target` holds what it paces against */
+  revenueTarget?: RevenueTarget | null;
+  /** Email: the month's attributed revenue (primary metric) day by day, for the scrubbable chart */
+  revenue?: MonthRevenue | null;
+  /** The target as typed on the board (email: only counts when above the automatic floor) */
+  targetManual?: number | null;
   currency: string | null;
   target: number | null;
   targetNote: string | null;

@@ -4,7 +4,7 @@ import { isLiveFlow, scoreFromRows, type EmailScoreResult } from "./email-score-
 // The pure side of the account breakdown (campaigns and flows under the score): row shapes, the colour of a rate against
 // its bar, the campaign tabs and the flow sort. Shared by the KPI board and the client's Email panel.
 
-export type BCampaign = { id: string; name: string; channel: "email" | "sms"; sendTime: string | null; recipients: number; openRate: number | null; clickRate: number | null; revenue: number; rpr: number | null };
+export type BCampaign = { id: string; name: string; channel: "email" | "sms"; sendTime: string | null; recipients: number; openRate: number | null; clickRate: number | null; revenue: number; rpr: number | null; /** For the hover preview */ subject?: string | null; previewText?: string | null };
 export type BFlow = { id: string; name: string; status: string | null; recipients30: number; openRate30: number | null; clickRate30: number | null; revenue30: number; recipients90: number; openRate90: number | null; clickRate90: number | null; revenue90: number };
 
 export type CampaignTab = "last10" | "all" | "email" | "sms";
@@ -16,14 +16,14 @@ export const CAMPAIGN_TABS: { id: CampaignTab; label: string }[] = [
 ];
 export const PAGE = 25;
 
-type CampaignInput = { id: string; name: string; channel: string; sendTime: string | null; recipients: number; openRate: number | null; clickRate: number | null; revenue: number };
+type CampaignInput = { id: string; name: string; channel: string; sendTime: string | null; recipients: number; openRate: number | null; clickRate: number | null; revenue: number; subject?: string | null; previewText?: string | null };
 type FlowInput = { id: string; name: string; status: string | null; recipients30: number; openRate30: number | null; clickRate30: number | null; revenue30: number; recipients90: number; openRate90: number | null; clickRate90: number | null; revenue90: number };
 
 /** Sent campaigns, newest first, with revenue per recipient (drafts and never-sent rows have no send time or recipients) */
 export function campaignRows(list: CampaignInput[]): BCampaign[] {
   return list
     .filter((c) => c.sendTime && c.recipients > 0)
-    .map((c) => ({ id: c.id, name: c.name, channel: (c.channel.toLowerCase() === "sms" ? "sms" : "email") as "email" | "sms", sendTime: c.sendTime, recipients: c.recipients, openRate: c.openRate, clickRate: c.clickRate, revenue: c.revenue, rpr: c.revenue / c.recipients }))
+    .map((c) => ({ id: c.id, name: c.name, channel: (c.channel.toLowerCase() === "sms" ? "sms" : "email") as "email" | "sms", sendTime: c.sendTime, recipients: c.recipients, openRate: c.openRate, clickRate: c.clickRate, revenue: c.revenue, rpr: c.revenue / c.recipients, subject: c.subject ?? null, previewText: c.previewText ?? null }))
     .sort((a, b) => (b.sendTime ?? "").localeCompare(a.sendTime ?? ""));
 }
 
@@ -41,6 +41,9 @@ export function campaignsFor(rows: BCampaign[], tab: CampaignTab): BCampaign[] {
 
 const BAR = Object.fromEntries(EMAIL_CHECKS.map((c) => [c.key, c.bar])) as Record<string, number>;
 export const BARS = { campaignOpen: BAR.campaignOpen, campaignClick: BAR.campaignClick, flowOpen: BAR.flowOpen, flowClick: BAR.flowClick };
+
+/** A flow's editor in Klaviyo (opens in the account the person is signed in to) */
+export const klaviyoFlowUrl = (flowId: string) => `https://www.klaviyo.com/flow/${encodeURIComponent(flowId)}/edit`;
 
 export type RateTone = "ok" | "warn" | "bad";
 /** At or over the bar is green, within a fifth under it yellow, further under red. No rate, no colour. */

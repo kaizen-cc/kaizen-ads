@@ -501,5 +501,8 @@ export function pickKlaviyoWindow(input: { lastFullAt: string | null; now?: numb
   return (input.now ?? Date.now()) - at >= (input.everyMs ?? FULL_EVERY_MS) ? "full" : "recent";
 }
 
-/** About how long a client's read takes (the Reporting API allows 2 queries a minute per account), for the run's budget */
-export const klaviyoCostMs = (w: KlaviyoWindow) => (w === "full" ? 210_000 : 110_000);
+/**
+ * About how long a client's read takes (the Reporting API allows 2 queries a minute per account), for the run's budget.
+ * Each ranked metric under the primary adds its own spaced queries: about three on a full read, two on a recent one.
+ */
+export const klaviyoCostMs = (w: KlaviyoWindow, extraMetrics = 0) => (w === "full" ? 210_000 + extraMetrics * 95_000 : 110_000 + extraMetrics * 65_000);

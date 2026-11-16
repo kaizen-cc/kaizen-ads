@@ -26,5 +26,5 @@ export function BoardBreakdown({ clientId, currency }: { clientId: string; curre
       </div>
     );
   if (!state.data) return <p className="text-sm text-bad">{state.error}</p>;
-  return <EmailBreakdown campaigns={state.data.campaigns} flows={state.data.flows} currency={currency} />;
+  return <EmailBreakdown campaigns={state.data.campaigns} flows={state.data.flows} currency={currency} clientId={clientId} />;
 }

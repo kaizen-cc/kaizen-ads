@@ -4,6 +4,7 @@ import { LIVE } from "@/lib/live";
 import type { EmailBand } from "@/lib/email-score";
 import type { EmailScoreResult } from "@/lib/email-score-calc";
 import { loadEmailScores } from "@/lib/email-score-load";
+import { conversionMetricsOf, monthRevenue, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
 import { socialClientState, plainSocialError } from "@/lib/social/core";
 import { klaviyoClientState, partialSyncWarning } from "@/lib/klaviyo/core";
 import { servicesOf } from "@/lib/services";
@@ -31,14 +32,14 @@ import {
   type Month,
   type Risk,
 } from "./calc";
-import type { ChannelBoard, ChannelRow, DataState, EmailSupport, SocialSupport } from "./types";
+import type { ChannelBoard, ChannelRow, DataState, EmailSupport, MetricNumbers, SocialSupport } from "./types";
 
 // What the Email and Social KPI boards and the email and social Overview read. Everything here reads through the
 // signed-in person's session (RLS: the clients they can see), except the Klaviyo connection and the sync notes, which
 // are never readable from a browser session and are read with the server's rights for those clients only.
 // Nothing reads a paid-ads table.
 
-export type { ChannelBoard, ChannelRow, DataState, EmailSupport, SocialSupport } from "./types";
+export type { ChannelBoard, ChannelRow, DataState, EmailSupport, MetricNumbers, SocialSupport } from "./types";
 
 type Me = { id: string; role: string; isExec: boolean; isLead: boolean };
 
@@ -92,6 +93,7 @@ export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me): 
       slug: c.slug as string,
       kaizenId: (c.kaizen_id as number | null) ?? null,
       target: t?.target == null ? null : Number(t.target),
+      targetManual: t?.target == null ? null : Number(t.target),
       targetNote: (t?.notes as string | null) ?? null,
       targetBy: ((t?.profiles as unknown as { full_name: string } | null)?.full_name ?? null) as string | null,
       targetAt: (t?.updated_at as string | null) ?? null,
@@ -111,7 +113,7 @@ export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me): 
   return { line, month, rows: line === "email" ? worstScoreFirst(rows) : orderForBoard(rows), targetsReady: !targetsRes.error };
 }
 
-type Base = Pick<ChannelRow, "line" | "clientId" | "name" | "slug" | "kaizenId" | "target" | "targetNote" | "targetBy" | "targetAt" | "canEdit" | "canConnect" | "mine" | "team">;
+type Base = Pick<ChannelRow, "line" | "clientId" | "name" | "slug" | "kaizenId" | "target" | "targetManual" | "targetNote" | "targetBy" | "targetAt" | "canEdit" | "canConnect" | "mine" | "team">;
 type ClientRef = { id: unknown; name: unknown; slug?: unknown; kaizen_id?: unknown; channel_sheet?: unknown };
 type BaseOf = (c: ClientRef) => Base;
 
@@ -120,9 +122,19 @@ type BaseOf = (c: ClientRef) => Base;
 async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[], month: Month, base: BaseOf): Promise<ChannelRow[]> {
   const admin = adminConfigured() ? createAdminClient() : null;
   const sinceCamp = shiftDay(month.today, -60);
-  const [days, camps, conns, memos, scores] = await Promise.all([
+  // The ranked metrics that count as the sale, read apart from the connection's state so a database without their
+  // migration still loads the board (one metric, as before)
+  const ranked: Map<string, ConversionMetric[]> = admin
+    ? await admin
+        .from("klaviyo_connections")
+        .select("client_id, conversion_metric_id, conversion_metric_name, conversion_metrics")
+        .in("client_id", ids)
+        .then((r) => new Map((r.error ? [] : (r.data ?? [])).map((c) => [c.client_id as string, conversionMetricsOf(c.conversion_metrics, { id: (c.conversion_metric_id as string | null) ?? null, name: (c.conversion_metric_name as string | null) ?? null })])))
+    : new Map();
+  const extraIds = [...new Set([...ranked.values()].flatMap((l) => (l.length > 1 ? l.map((m) => m.id) : [])))];
+  const [days, camps, conns, memos, scores, metricDays] = await Promise.all([
     readAll<Record<string, unknown>>((a, b) =>
-      db.from("klaviyo_daily").select("client_id, date, revenue, campaign_revenue, flow_revenue, conversions, store_orders, subscribed, unsubscribed").in("client_id", ids).gte("date", month.prevStart).lte("date", month.today).order("client_id").order("date").range(a, b),
+      db.from("klaviyo_daily").select("client_id, date, revenue, campaign_revenue, flow_revenue, conversions, store_revenue, store_orders, subscribed, unsubscribed").in("client_id", ids).gte("date", month.prevStart).lte("date", month.today).order("client_id").order("date").range(a, b),
     ),
     readAll<Record<string, unknown>>((a, b) =>
       db.from("klaviyo_campaigns").select("client_id, campaign_id, channel, send_time, recipients, delivered, opens_unique, clicks_unique").in("client_id", ids).gte("send_time", `${sinceCamp}T00:00:00Z`).order("client_id").order("campaign_id").range(a, b),
@@ -131,7 +143,11 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
     admin ? admin.from("klaviyo_connections").select("client_id, account_name, currency, status, last_synced_at, last_error, conversion_metric_name").in("client_id", ids).then((r) => r.data ?? []) : Promise.resolve([] as Record<string, unknown>[]),
     admin ? admin.from("sync_state").select("source, last_result").in("source", ids.map((i) => `klaviyo:${i}`)).then((r) => r.data ?? []) : Promise.resolve([] as Record<string, unknown>[]),
     // The account score (the main email KPI), read through the same session as the rest
-    loadEmailScores(db, ids).catch(() => new Map<string, EmailScoreResult>()),
+    loadEmailScores(db, ids, new Map([...ranked.entries()].map(([k, l]) => [k, l.map((m) => m.id)]))).catch(() => new Map<string, EmailScoreResult>()),
+    // Each ranked metric's own days this month, for the side by side (none until a lead ranks more than one)
+    extraIds.length
+      ? readAll<Record<string, unknown>>((a, b) => db.from("klaviyo_metric_daily").select("client_id, metric_id, date, revenue, conversions, store_revenue, store_orders").in("client_id", ids).in("metric_id", extraIds).gte("date", month.start).lte("date", month.today).order("client_id").order("metric_id").order("date").range(a, b)).catch(() => [] as Record<string, unknown>[])
+      : Promise.resolve([] as Record<string, unknown>[]),
   ]);
   const connBy = new Map(conns.map((c) => [c.client_id as string, c]));
   const memoBy = new Map(memos.map((m) => [String(m.source).slice("klaviyo:".length), (m.last_result ?? null) as { seriesError?: string | null; storeError?: string | null } | null]));
@@ -154,8 +170,13 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
     const sum = (xs: Record<string, unknown>[], k: string) => xs.reduce((s, x) => s + num(x[k]), 0);
     const mtd = sum(thisMonth, "revenue");
     const readable = st.state !== "missing" && st.state !== "failing" && st.state !== "pending";
-    // The main KPI is the score; the month's pace against a target stays as a supporting number
-    const j = judgeEmail({ readable, target: b.target, mtd, month });
+    // The month's revenue target: last month + 10% by itself, a higher one typed on the board wins
+    const prevTotal = lastMonth.length ? sum(lastMonth, "revenue") : null;
+    const rt = revenueTarget(prevTotal, b.targetManual ?? null);
+    // The main KPI is the score; the month's pace against the target is the progression goal beside it
+    const j = judgeEmail({ readable, target: rt.target, mtd, month });
+    const rev = readable ? monthRevenue({ days: thisMonth.map((d) => ({ date: d.date as string, value: num(d.revenue) })), prevDays: lastMonth.map((d) => ({ date: d.date as string, value: num(d.revenue) })), month, target: rt.target }) : null;
+    const list = ranked.get(id) ?? [];
     const found = readable ? (scores.get(id) ?? null) : null;
     const score = found && found.unmeasured.length < found.checks.length ? found : null;
     const status: ChannelStatus = score ? BAND_STATUS[score.band] : "setup";
@@ -179,8 +200,32 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
     };
     // Nothing sent in the 60 days read counts as 60: only a connected client can be "quiet"
     const quietDays = readable ? (daysSince(lastSendAt, month.today) ?? 60) : null;
+    // Each ranked metric side by side: the primary from the main rows, the others from their own
+    const metricNumbers: MetricNumbers[] | undefined =
+      readable && list.length > 1
+        ? list.map((m, i) => {
+            const own = i === 0 ? thisMonth : metricDays.filter((d) => d.client_id === id && d.metric_id === m.id);
+            const money = score?.byMetric?.[i];
+            const stores = own.filter((d) => d.store_revenue != null || d.store_orders != null);
+            return {
+              ...m,
+              weight: money?.weight ?? 0,
+              revenue: own.length ? sum(own, "revenue") : null,
+              conversions: own.length ? sum(own, "conversions") : null,
+              storeRevenue: stores.length ? sum(stores, "store_revenue") : null,
+              storeOrders: stores.length ? sum(stores, "store_orders") : null,
+              attributed: money?.attributed ?? null,
+              rpr: money?.rpr ?? null,
+            };
+          })
+        : undefined;
     return {
       ...b,
+      target: rt.target,
+      revenueTarget: rt,
+      revenue: rev,
+      conversionMetrics: list,
+      metricNumbers,
       data: st.state as DataState,
       problem: st.error ? { message: st.error.message, fix: st.error.fix } : null,
       warning: partial && st.state !== "missing" ? partial.message : null,
@@ -192,7 +237,7 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
       ratio: j.ratio,
       value: readable ? mtd : null,
       projected: readable ? j.projected : null,
-      prev: lastMonth.length ? sum(lastMonth, "revenue") : null,
+      prev: prevTotal,
       basis: "month" as const,
       series: readable ? cumulative(thisMonth.map((d) => ({ date: d.date as string, value: num(d.revenue) })), month.start, month.today) : [],
       span: month.daysInMonth,

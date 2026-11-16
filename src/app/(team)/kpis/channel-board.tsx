@@ -13,6 +13,8 @@ import { freshness } from "@/lib/dates";
 import { moneyShort, pctText, STATUS_LABEL, type ChannelStatus, type Month } from "@/lib/channel-kpis/calc";
 import type { ChannelRow } from "@/lib/channel-kpis/types";
 import { Layer } from "../clients/[slug]/layer";
+import { EmailRevenueChart, RevenuePace } from "@/components/email-revenue-chart";
+import { RANK_LABEL } from "@/lib/email-metrics";
 import { BoardBreakdown } from "./board-breakdown";
 import { klaviyoReadProgress, setChannelTarget, type ReadState } from "./channel-actions";
 
@@ -390,16 +392,33 @@ function Card({ r, reading, active, onOpen }: { r: ChannelRow; reading: ReadStat
           </div>
         ) : (
           <div className="flex flex-1 flex-col gap-1.5">
-            {r.score ? (
+            {r.line === "email" ? (
+              // Email, top to bottom: the score and the key numbers, the month's revenue to scrub, what weighs the score down
               <>
-                <div className="flex items-baseline gap-2">
-                  <ScoreBadge r={r.score} />
-                  <span className="truncate text-xs text-faint">{mainCaption(r)}</span>
-                </div>
+                {r.score ? (
+                  <div className="flex items-baseline gap-2">
+                    <ScoreBadge r={r.score} />
+                    <span className="truncate text-xs text-faint">{mainCaption(r)}</span>
+                  </div>
+                ) : (
+                  <span className="text-xs text-faint">No score yet</span>
+                )}
                 <Gauge r={r} />
-                <div className="min-h-[3.25rem]">
-                  <WeighingDown score={r.score} limit={2} currency={r.currency} />
-                </div>
+                <SupportChips r={r} />
+                {r.revenue && (
+                  <div className="grid gap-1.5 pt-1">
+                    <span className="truncate text-[10.5px] text-faint">{r.conversionMetrics?.[0]?.name ?? r.conversionMetric ?? "Placed Order"} revenue this month</span>
+                    <div className="kpi-chart">
+                      <EmailRevenueChart id={r.clientId} m={r.revenue} currency={r.currency} compact height={44} />
+                    </div>
+                    <RevenuePace m={r.revenue} currency={r.currency} compact />
+                  </div>
+                )}
+                {r.score && (
+                  <div className="mt-auto min-h-[3.25rem] border-t border-line pt-2.5">
+                    <WeighingDown score={r.score} limit={2} currency={r.currency} />
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -412,15 +431,65 @@ function Card({ r, reading, active, onOpen }: { r: ChannelRow; reading: ReadStat
                 <ChannelSpark values={r.series} span={r.span} goal={goal} tone={tone.text} label={`${r.name} trend`} />
               </>
             )}
-            <div className="mt-auto pt-1">
-              <SupportChips r={r} />
-            </div>
+            {r.line !== "email" && (
+              <div className="mt-auto pt-1">
+                <SupportChips r={r} />
+              </div>
+            )}
           </div>
         )}
         {r.warning && !connect && <span className="line-clamp-2 text-[11px] text-warn">Part of the read failed, so this may be low</span>}
         <span className="self-end text-[11px] text-faint opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">Open →</span>
       </button>
     </li>
+  );
+}
+
+/** "Last month $X · target +10% = $Y", or the manual target that beats it */
+function targetLine(r: ChannelRow): string {
+  const t = r.revenueTarget;
+  if (!t || t.target == null) return "";
+  if (t.source === "manual") return `Target ${moneyShort(t.target, r.currency)} (set by hand, above +10%)`;
+  return `Last month ${moneyShort(t.lastMonth, r.currency)} · target +10% = ${moneyShort(t.target, r.currency)}`;
+}
+
+/** Each ranked metric that counts as the sale, side by side: this month's numbers and its weight in the score */
+function MetricsSideBySide({ r }: { r: ChannelRow }) {
+  const list = r.metricNumbers ?? [];
+  const pct = (x: number | null) => (x == null ? "n/a" : `${(x * 100).toFixed(x < 0.1 ? 1 : 0)}%`);
+  return (
+    <section className="grid gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
+      <div className="grid gap-0.5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">What counts as the sale</p>
+        <p className="text-sm text-muted">This month for each ranked metric. The score&apos;s money checks blend them by rank; the chart and the target follow the primary.</p>
+      </div>
+      <div className={`grid gap-2.5 sm:grid-cols-2 ${list.length > 2 ? "lg:grid-cols-4" : ""}`}>
+        {list.map((m, i) => (
+          <div key={m.id} className={`grid min-w-0 content-start gap-1.5 rounded-[14px] border p-3 ${i === 0 ? "border-fg/25 bg-surface-2/40" : "border-line"}`}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[10.5px] uppercase tracking-[0.12em] text-faint">{RANK_LABEL[i]}</span>
+              <span className="tabular text-[11px] text-faint">{Math.round(m.weight * 100)}% of money checks</span>
+            </div>
+            <p className="truncate text-sm font-medium text-fg" title={m.integration ? `${m.name} · ${m.integration}` : m.name}>
+              {m.name}
+              {m.integration && <span className="font-normal text-faint"> · {m.integration}</span>}
+            </p>
+            <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-[12px]">
+              <dt className="text-faint">Attributed</dt>
+              <dd className="tabular text-right text-fg">{moneyShort(m.revenue, r.currency)}</dd>
+              <dt className="text-faint">Conversions</dt>
+              <dd className="tabular text-right text-fg">{num(m.conversions)}</dd>
+              <dt className="text-faint">Store total</dt>
+              <dd className="tabular text-right text-fg">{m.storeRevenue ? moneyShort(m.storeRevenue, r.currency) : num(m.storeOrders)}</dd>
+              <dt className="text-faint">Share, 30 days</dt>
+              <dd className="tabular text-right text-fg">{pct(m.attributed)}</dd>
+              <dt className="text-faint">Per recipient</dt>
+              <dd className="tabular text-right text-fg">{m.rpr == null ? "n/a" : `${moneyShort(0, r.currency).replace("0", "")}${m.rpr.toFixed(2)}`}</dd>
+            </dl>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -443,6 +512,8 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable]")) return;
+      // A campaign preview open over the sheet takes the keys (Escape closes it, not the sheet)
+      if (new URLSearchParams(window.location.search).has("epreview")) return;
       if (e.key === "Escape") onClose();
       else if (e.key === "ArrowRight" || e.key === "ArrowDown") onStep(1);
       else if (e.key === "ArrowLeft" || e.key === "ArrowUp") onStep(-1);
@@ -460,7 +531,8 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
   const s = r.social;
   const vsLast = r.line === "email" ? (r.projected != null && r.prev ? r.projected / r.prev - 1 : null) : r.value != null && r.prev ? r.value / r.prev - 1 : null;
   const synced = freshness(r.lastSyncedAt);
-  const targetDefault = r.target == null ? "" : r.line === "email" ? String(Math.round(r.target)) : String(Math.round(r.target * 10000) / 100);
+  // Email edits the manual target only (the floor is worked out by itself)
+  const targetDefault = r.line === "email" ? (r.targetManual == null ? "" : String(Math.round(r.targetManual))) : r.target == null ? "" : String(Math.round(r.target * 10000) / 100);
 
   return (
     <Layer>
@@ -516,7 +588,37 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
             <div className="grid gap-5">
               {connect && <ConnectCta r={r} />}
 
-              {!connect && r.score && (
+              {!connect && r.line === "email" && e && (
+                <dl className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
+                  <Stat k="Campaign revenue" v={moneyShort(e.campaignRevenue, r.currency)} hint={`${e.campaignsSent} ${e.campaignsSent === 1 ? "campaign" : "campaigns"} sent`} />
+                  <Stat k="Flow revenue" v={moneyShort(e.flowRevenue, r.currency)} hint={r.value ? `${Math.round((e.flowRevenue / r.value) * 100)}% of the total` : undefined} />
+                  <Stat k="vs last month" v={vsLast == null ? "n/a" : `${vsLast >= 0 ? "+" : "-"}${Math.abs(Math.round(vsLast * 100))}%`} hint={r.prev != null ? `Last month ${moneyShort(r.prev, r.currency)}, this month at pace` : undefined} />
+                  <Stat k="Open rate" v={pctText(e.openRate)} hint="Email campaigns this month" />
+                  <Stat k="Click rate" v={pctText(e.clickRate)} hint="Email campaigns this month" />
+                  <Stat k="List growth" v={signed(e.listNet)} hint="Subscribed less unsubscribed" />
+                  <Stat k="Orders attributed" v={num(e.orders)} hint="Placed by email and SMS" />
+                  <Stat k="Store orders" v={num(e.storeOrders)} hint="All orders Klaviyo sees" />
+                  <Stat k="Last campaign" v={when(e.lastSendAt)} hint={r.quietDays != null && r.quietDays >= 14 ? `${r.quietDays} days ago` : undefined} />
+                </dl>
+              )}
+
+              {!connect && r.line === "email" && r.metricNumbers && r.metricNumbers.length > 1 && <MetricsSideBySide r={r} />}
+
+              {!connect && r.line === "email" && r.revenue && (
+                <section className="relative isolate grid content-start gap-3 overflow-hidden rounded-[20px] border border-line bg-surface p-4 md:p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+                    <div className="grid gap-0.5">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">{r.conversionMetrics?.[0]?.name ?? r.conversionMetric ?? "Placed Order"} revenue this month</p>
+                      <p className="text-sm text-muted">Running total against the target&apos;s even pace (dashed), last month in grey. Slide across to read any day.</p>
+                    </div>
+                    {r.revenueTarget?.target != null && <p className="tabular text-xs text-faint">{targetLine(r)}</p>}
+                  </div>
+                  <EmailRevenueChart id={`${r.clientId}-sheet`} m={r.revenue} currency={r.currency} />
+                  <RevenuePace m={r.revenue} currency={r.currency} />
+                </section>
+              )}
+
+              {!connect && r.line === "email" && r.score && (
                 <section className="grid gap-4 rounded-[20px] border border-line bg-surface p-4 md:grid-cols-2 md:p-5">
                   <div className="grid content-start gap-2">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">The seven checks</p>
@@ -535,28 +637,14 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
                 </section>
               )}
 
-              {!connect && (
+              {!connect && r.line === "social" && (
                 <div className="relative isolate grid content-start gap-3 overflow-hidden rounded-[20px] border border-line bg-surface p-4 md:p-5">
                   <div className="grid gap-0.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">{r.line === "email" ? "Attributed revenue this month" : "Last 30 days"}</p>
-                    <p className="text-sm text-muted">{r.line === "email" ? "Revenue so far, with the dashed line to the monthly target when one is set" : "Engagement rate over the 7 days up to each day, with the target as the dashed line"}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Last 30 days</p>
+                    <p className="text-sm text-muted">Engagement rate over the 7 days up to each day, with the target as the dashed line</p>
                   </div>
                   <ChannelSpark values={r.series} span={r.span} goal={goal} tone={tone.text} tall label={`${r.name} trend`} />
                 </div>
-              )}
-
-              {!connect && r.line === "email" && e && (
-                <dl className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
-                  <Stat k="Campaign revenue" v={moneyShort(e.campaignRevenue, r.currency)} hint={`${e.campaignsSent} ${e.campaignsSent === 1 ? "campaign" : "campaigns"} sent`} />
-                  <Stat k="Flow revenue" v={moneyShort(e.flowRevenue, r.currency)} hint={r.value ? `${Math.round((e.flowRevenue / r.value) * 100)}% of the total` : undefined} />
-                  <Stat k="vs last month" v={vsLast == null ? "n/a" : `${vsLast >= 0 ? "+" : "-"}${Math.abs(Math.round(vsLast * 100))}%`} hint={r.prev != null ? `Last month ${moneyShort(r.prev, r.currency)}, this month at pace` : undefined} />
-                  <Stat k="Open rate" v={pctText(e.openRate)} hint="Email campaigns this month" />
-                  <Stat k="Click rate" v={pctText(e.clickRate)} hint="Email campaigns this month" />
-                  <Stat k="List growth" v={signed(e.listNet)} hint="Subscribed less unsubscribed" />
-                  <Stat k="Orders attributed" v={num(e.orders)} hint="Placed by email and SMS" />
-                  <Stat k="Store orders" v={num(e.storeOrders)} hint="All orders Klaviyo sees" />
-                  <Stat k="Last campaign" v={when(e.lastSendAt)} hint={r.quietDays != null && r.quietDays >= 14 ? `${r.quietDays} days ago` : undefined} />
-                </dl>
               )}
               {!connect && r.line === "social" && s && (
                 <dl className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
@@ -587,16 +675,31 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
               {/* The target */}
               <section className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 md:p-5">
                 <div>
-                  <h2 className="font-heading text-lg">{r.line === "email" ? "Monthly revenue target (optional)" : "Engagement target"}</h2>
-                  <p className="mt-0.5 text-xs text-faint">
-                    {r.target == null ? (r.line === "email" ? "Optional. The account score doesn't use it; it paces the month's revenue." : "Set it and every number on this client gets its color.") : r.targetBy ? `Set by ${r.targetBy}${r.targetAt ? ` on ${when(r.targetAt)}` : ""}.` : "Saved."} The reports use it too.
-                  </p>
+                  <h2 className="font-heading text-lg">{r.line === "email" ? "Monthly revenue target" : "Engagement target"}</h2>
+                  {r.line === "email" ? (
+                    <div className="mt-1 grid gap-1 text-xs text-faint">
+                      {r.revenueTarget?.floor != null ? (
+                        <p className="tabular text-sm text-fg">
+                          Last month {moneyShort(r.revenueTarget.lastMonth, r.currency)} · target +10% = {moneyShort(r.revenueTarget.floor, r.currency)}
+                        </p>
+                      ) : (
+                        <p>No revenue read for last month, so there is no automatic target yet.</p>
+                      )}
+                      <p>
+                        Every month aims at least 10% over the last, worked out by itself. A target set here counts only when it&apos;s higher.
+                        {r.revenueTarget?.source === "manual" && ` Now pacing against ${moneyShort(r.revenueTarget.manual, r.currency)}${r.targetBy ? `, set by ${r.targetBy}` : ""}.`}
+                        {r.revenueTarget?.source === "floor" && r.revenueTarget.manual != null && ` The ${moneyShort(r.revenueTarget.manual, r.currency)} set here is under the floor, so the floor holds.`} The score stays the account&apos;s health; this is the growth goal.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-0.5 text-xs text-faint">{r.target == null ? "Set it and every number on this client gets its color." : r.targetBy ? `Set by ${r.targetBy}${r.targetAt ? ` on ${when(r.targetAt)}` : ""}.` : "Saved."} The reports use it too.</p>
+                  )}
                 </div>
                 {r.canEdit ? (
                   <ActionForm action={setChannelTarget.bind(null, r.clientId, r.line)} submitLabel="Save target" autosave className="grid gap-3">
                     <label className={labelCls}>
-                      {r.line === "email" ? `Revenue target for ${new Date(`${month.start}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" })}, per month` : "Engagement rate target (%)"}
-                      <input name="target" defaultValue={targetDefault} inputMode="decimal" className={`${field} tabular`} placeholder={r.line === "email" ? "12000" : "3.5"} autoComplete="off" />
+                      {r.line === "email" ? `A higher target for ${new Date(`${month.start}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" })} (optional)` : "Engagement rate target (%)"}
+                      <input name="target" defaultValue={targetDefault} inputMode="decimal" className={`${field} tabular`} placeholder={r.line === "email" ? (r.revenueTarget?.floor != null ? String(Math.ceil(r.revenueTarget.floor * 1.1)) : "12000") : "3.5"} autoComplete="off" />
                     </label>
                     <label className={labelCls}>
                       Where it came from (optional)
@@ -621,7 +724,7 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
                     {r.problem.message}. {r.problem.fix}
                   </p>
                 )}
-                {r.line === "email" && r.data !== "missing" && <KlaviyoMetricPicker clientId={r.clientId} current={r.conversionMetric ?? null} canPick={r.canConnect} />}
+                {r.line === "email" && r.data !== "missing" && <KlaviyoMetricPicker clientId={r.clientId} current={r.conversionMetrics ?? []} fallback={r.conversionMetric ?? null} canPick={r.canConnect} />}
                 {r.team.length > 0 && <p className="text-xs text-faint">On it: {r.team.map((t) => `${t.name} (${t.seat})`).join(", ")}</p>}
               </section>
             </div>
