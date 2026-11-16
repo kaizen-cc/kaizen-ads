@@ -6,11 +6,13 @@ import { useSearchParams } from "next/navigation";
 import { ActionForm } from "@/components/action-form";
 import { ChannelSpark } from "@/components/channel-spark";
 import { ChannelStatusPill, ConnectCta, Gauge, SupportChips, TONE, mainCaption, mainText, needsConnecting, num, paceLine, signed, targetText } from "@/components/channel-parts";
+import { BAND_TONE, ScoreBadge, ScoreChecks, WeighingDown, checkText } from "@/components/email-score-parts";
 import { field, label as labelCls } from "@/components/ui";
 import { freshness } from "@/lib/dates";
 import { moneyShort, pctText, STATUS_LABEL, type ChannelStatus, type Month } from "@/lib/channel-kpis/calc";
 import type { ChannelRow } from "@/lib/channel-kpis/types";
 import { Layer } from "../clients/[slug]/layer";
+import { BoardBreakdown } from "./board-breakdown";
 import { setChannelTarget } from "./channel-actions";
 
 // The Email and Social KPI boards: every client of the line against this month's target, worst first. One board for both
@@ -20,6 +22,19 @@ import { setChannelTarget } from "./channel-actions";
 export type BoardSwitch = { id: string; label: string; href: string; active: boolean };
 
 const TILES: ChannelStatus[] = ["excellent", "good", "close", "off"];
+// Email boards read the score's bands in the same status slots: green is "good", yellow "close", red "off"
+const EMAIL_TILES: { status: ChannelStatus; band: "good" | "watch" | "bad"; hint: string }[] = [
+  { status: "good", band: "good", hint: "Score 80 and up" },
+  { status: "close", band: "watch", hint: "Score 60 to 79" },
+  { status: "off", band: "bad", hint: "Score under 60" },
+];
+type Sort = "score" | "name" | "revenue";
+const SORTS: { id: Sort; label: string }[] = [
+  { id: "score", label: "Worst score first" },
+  { id: "name", label: "Name" },
+  { id: "revenue", label: "Revenue" },
+];
+
 const TILE_HINT: Record<string, string> = { excellent: "20%+ better than target", good: "At or better than target", close: "Up to 15% off target", off: "More than 15% off target" };
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }) : "none yet");
@@ -43,7 +58,11 @@ export function ChannelBoard({ line, rows, month, switcher, initialWho, lastSync
   const hasMine = rows.some((r) => r.mine);
   const base = rows.filter((r) => who === "all" || r.mine);
   const term = q.trim().toLowerCase();
-  const shown = base.filter((r) => (status === "all" || r.status === status) && (term.length < 2 || `${r.name} ${r.kaizenId ?? ""}`.toLowerCase().includes(term)));
+  const sortRaw = sp.get("sort");
+  const sort: Sort = SORTS.some((x) => x.id === sortRaw) ? (sortRaw as Sort) : "score";
+  const filtered = base.filter((r) => (status === "all" || r.status === status) && (term.length < 2 || `${r.name} ${r.kaizenId ?? ""}`.toLowerCase().includes(term)));
+  // Email's rows arrive worst score first; the switch re-orders them here (social keeps its own order)
+  const shown = line === "email" && sort !== "score" ? [...filtered].sort((a, b) => (sort === "name" ? a.name.localeCompare(b.name) : (b.value ?? -1) - (a.value ?? -1))) : filtered;
   const count = (s: ChannelStatus) => base.filter((r) => r.status === s).length;
   const unset = count("unset");
   const connecting = base.filter(needsConnecting).length;
@@ -63,6 +82,8 @@ export function ChannelBoard({ line, rows, month, switcher, initialWho, lastSync
   const reach = base.reduce((t, r) => t + (r.social?.reach ?? 0), 0);
   const inter = base.reduce((t, r) => t + (r.social?.interactions ?? 0), 0);
   const posts = base.reduce((t, r) => t + (r.social?.posts ?? 0), 0);
+  const scored = base.filter((r) => r.score);
+  const avgScore = scored.length ? Math.round(scored.reduce((t, r) => t + (r.score?.score ?? 0), 0) / scored.length) : null;
 
   return (
     <div className="grid gap-7">
@@ -70,7 +91,7 @@ export function ChannelBoard({ line, rows, month, switcher, initialWho, lastSync
         <div>
           <h1 className="font-heading text-[32px] leading-tight">KPIs</h1>
           <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-sm text-muted">
-            {line === "email" ? "How each client's Klaviyo revenue is pacing toward its monthly target." : "How each client's engagement rate is holding against its target."}
+            {line === "email" ? "Each client's email account score, 0 to 100, with what is weighing it down." : "How each client's engagement rate is holding against its target."}
             <span suppressHydrationWarning className="inline-flex items-center gap-1.5 text-xs text-faint">
               <span className={`h-1.5 w-1.5 rounded-full ${synced.tone === "ok" ? "bg-ok" : synced.tone === "warn" ? "bg-warn" : "bg-faint/60"}`} />
               {lastSync ? `${synced.label} · refreshed hourly` : "Not synced yet"}
@@ -100,23 +121,32 @@ export function ChannelBoard({ line, rows, month, switcher, initialWho, lastSync
         <>
           {/* Where things stand */}
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.6fr)]">
-            {TILES.map((t) => {
+            {(email ? EMAIL_TILES.map((t) => t.status) : TILES).map((t) => {
               const on = status === t;
               const n = count(t);
+              const band = EMAIL_TILES.find((x) => x.status === t);
               return (
                 <button key={t} onClick={() => go({ status: on ? null : t })} className={`group relative grid min-w-0 content-start gap-1 overflow-hidden rounded-[14px] border bg-surface p-3.5 text-left transition-colors md:p-4 ${on ? "border-fg/40" : "border-line hover:border-faint/60"}`}>
                   <span aria-hidden className={`absolute inset-x-0 top-0 h-0.5 ${TONE[t].bar}`} />
-                  <span className="text-xs text-muted">{STATUS_LABEL[t]}</span>
+                  <span className="text-xs text-muted">{email && band ? BAND_TONE[band.band].label : STATUS_LABEL[t]}</span>
                   <span className={`tabular font-heading text-[30px] leading-none ${n ? TONE[t].text : "text-faint"}`}>{n}</span>
-                  <span className="text-[11px] text-faint">{TILE_HINT[t]}</span>
+                  <span className="text-[11px] text-faint">{email && band ? band.hint : TILE_HINT[t]}</span>
                 </button>
               );
             })}
+            {email && (
+              <div className="relative grid min-w-0 content-start gap-1 overflow-hidden rounded-[14px] border border-line bg-surface p-3.5 md:p-4">
+                <span aria-hidden className={`absolute inset-x-0 top-0 h-0.5 ${avgScore == null ? "bg-faint" : BAND_TONE[avgScore >= 80 ? "good" : avgScore >= 60 ? "watch" : "bad"].bar}`} />
+                <span className="text-xs text-muted">Average score</span>
+                <span className={`tabular font-heading text-[30px] leading-none ${avgScore == null ? "text-faint" : BAND_TONE[avgScore >= 80 ? "good" : avgScore >= 60 ? "watch" : "bad"].text}`}>{avgScore ?? "n/a"}</span>
+                <span className="text-[11px] text-faint">{scored.length} scored {scored.length === 1 ? "account" : "accounts"}</span>
+              </div>
+            )}
             <div className="col-span-2 grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-4 xl:col-span-1">
               {email ? (
                 <>
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                    <span className="text-xs text-muted">Attributed revenue this month</span>
+                    <span className="text-xs text-muted">Attributed revenue this month, all accounts</span>
                     {targetSum > 0 && (
                       <span className="tabular text-xs text-faint">
                         lands at <span className="text-fg">{moneyShort(targeted.reduce((t, r) => t + (r.projected ?? 0), 0))}</span> of {moneyShort(targetSum)}
@@ -160,9 +190,21 @@ export function ChannelBoard({ line, rows, month, switcher, initialWho, lastSync
               className="h-11 w-full max-w-full rounded-full border border-line bg-surface px-4 text-sm outline-none transition-colors hover:border-faint/60 focus:border-brand-text/70 md:h-10 md:w-64"
             />
           </div>
+          {email && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-faint">
+              Order
+              <div role="radiogroup" aria-label="Order accounts" className="flex gap-1 rounded-full border border-line bg-surface p-1">
+                {SORTS.map((o) => (
+                  <button key={o.id} type="button" role="radio" aria-checked={sort === o.id} onClick={() => go({ sort: o.id === "score" ? null : o.id })} className={`min-h-11 rounded-full px-3 text-[12.5px] transition-colors md:min-h-8 ${sort === o.id ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {status !== "all" && (
             <p className="-mt-3 text-xs text-faint">
-              Showing {shown.length} <span className={TONE[status].text}>{STATUS_LABEL[status].toLowerCase()}</span>
+              Showing {shown.length} <span className={TONE[status].text}>{(email && EMAIL_TILES.find((x) => x.status === status) ? BAND_TONE[EMAIL_TILES.find((x) => x.status === status)!.band].label : STATUS_LABEL[status]).toLowerCase()}</span>
               <button onClick={() => go({ status: null })} className="ml-2 py-2 text-muted underline-offset-4 hover:text-fg hover:underline md:py-0">
                 Show all
               </button>
@@ -179,9 +221,9 @@ export function ChannelBoard({ line, rows, month, switcher, initialWho, lastSync
             <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">Nothing here.</p>
           )}
 
-          {status === "all" && (unset > 0 || connecting > 0) && (
+          {status === "all" && ((!email && unset > 0) || connecting > 0) && (
             <p className="text-center text-xs text-faint">
-              {unset > 0 && (
+              {!email && unset > 0 && (
                 <>
                   <button type="button" onClick={() => go({ status: "unset" })} className="py-2 text-muted underline-offset-4 hover:text-fg hover:underline md:py-0">
                     {unset} with no target set
@@ -189,7 +231,7 @@ export function ChannelBoard({ line, rows, month, switcher, initialWho, lastSync
                   · their numbers show without colors until one is set
                 </>
               )}
-              {unset > 0 && connecting > 0 && " · "}
+              {!email && unset > 0 && connecting > 0 && " · "}
               {connecting > 0 && (
                 <button type="button" onClick={() => go({ status: "setup" })} className="py-2 text-muted underline-offset-4 hover:text-fg hover:underline md:py-0">
                   {connecting} {connecting === 1 ? "needs" : "need"} connecting
@@ -244,7 +286,7 @@ function Card({ r, active, onOpen }: { r: ChannelRow; active: boolean; onOpen: (
               {r.team.length ? r.team.map((t) => t.name).join(" + ") : "No one seated"}
             </p>
           </div>
-          <ChannelStatusPill status={r.status} />
+          <ChannelStatusPill status={r.status} line={r.line} />
         </div>
 
         {connect ? (
@@ -254,13 +296,28 @@ function Card({ r, active, onOpen }: { r: ChannelRow; active: boolean; onOpen: (
           </div>
         ) : (
           <div className="grid gap-1.5">
-            <div className="flex items-baseline gap-2">
-              <span className={`tabular font-display text-[30px] leading-none tracking-tight ${tone.text}`}>{mainText(r)}</span>
-              {r.target != null ? <span className="tabular truncate text-xs text-faint">/ {targetText(r)}</span> : <span className="truncate text-xs text-faint">{mainCaption(r)}</span>}
-            </div>
-            <Gauge r={r} />
-            {r.target == null ? <span className="text-[11.5px] text-muted">No target yet · open to set it</span> : pace && <span className="truncate text-[11.5px] text-muted">{pace}</span>}
-            <ChannelSpark values={r.series} span={r.span} goal={goal} tone={tone.text} label={`${r.name} trend`} />
+            {r.score ? (
+              <>
+                <div className="flex items-baseline gap-2">
+                  <ScoreBadge r={r.score} />
+                  <span className="truncate text-xs text-faint">{mainCaption(r)}</span>
+                </div>
+                <Gauge r={r} />
+                <div className="min-h-[3.25rem]">
+                  <WeighingDown score={r.score} limit={2} currency={r.currency} />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-baseline gap-2">
+                  <span className={`tabular font-display text-[30px] leading-none tracking-tight ${tone.text}`}>{mainText(r)}</span>
+                  {r.target != null ? <span className="tabular truncate text-xs text-faint">/ {targetText(r)}</span> : <span className="truncate text-xs text-faint">{mainCaption(r)}</span>}
+                </div>
+                <Gauge r={r} />
+                {r.target == null ? <span className="text-[11.5px] text-muted">No target yet · open to set it</span> : pace && <span className="truncate text-[11.5px] text-muted">{pace}</span>}
+                <ChannelSpark values={r.series} span={r.span} goal={goal} tone={tone.text} label={`${r.name} trend`} />
+              </>
+            )}
             <SupportChips r={r} />
           </div>
         )}
@@ -334,16 +391,16 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
             <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 px-4 pb-4 sm:px-6">
               {connect ? (
                 <div className="flex items-center gap-2">
-                  <ChannelStatusPill status={r.status} />
+                  <ChannelStatusPill status={r.status} line={r.line} />
                 </div>
               ) : (
                 <div className="grid gap-1.5">
                   <div className="flex flex-wrap items-baseline gap-x-2">
-                    <span className={`tabular font-display text-[34px] leading-none tracking-tight ${tone.text}`}>{mainText(r)}</span>
-                    <span className="tabular text-sm text-faint">{r.target != null ? `/ ${targetText(r)} · ` : ""}{mainCaption(r)}</span>
+                    {r.score ? <ScoreBadge r={r.score} size="lg" /> : <span className={`tabular font-display text-[34px] leading-none tracking-tight ${tone.text}`}>{mainText(r)}</span>}
+                    <span className="tabular text-sm text-faint">{r.line === "email" ? "" : r.target != null ? `/ ${targetText(r)} · ` : ""}{mainCaption(r)}</span>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <ChannelStatusPill status={r.status} />
+                    <ChannelStatusPill status={r.status} line={r.line} />
                     {pace && <span className="text-xs text-muted">{pace}</span>}
                   </div>
                 </div>
@@ -363,11 +420,30 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
             <div className="grid gap-5">
               {connect && <ConnectCta r={r} />}
 
+              {!connect && r.score && (
+                <section className="grid gap-4 rounded-[20px] border border-line bg-surface p-4 md:grid-cols-2 md:p-5">
+                  <div className="grid content-start gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">The seven checks</p>
+                    <ScoreChecks score={r.score} currency={r.currency} />
+                    <p className="text-[11px] text-faint">Last 30 days, to {when(r.score.window.to)}. Flows are Klaviyo&apos;s 30-day numbers.</p>
+                  </div>
+                  <div className="grid content-start gap-3">
+                    <WeighingDown score={r.score} limit={4} currency={r.currency} />
+                    {r.score.deliverability && (
+                      <p className="text-[11.5px] leading-relaxed text-muted">
+                        Deliverability {r.score.deliverability.score}: {r.score.deliverability.parts.map((p) => `${p.label.toLowerCase()} ${checkText("pct", p.rate)}`).join(", ")}.
+                      </p>
+                    )}
+                    {r.score.unmeasured.length > 0 && <p className="text-[11.5px] text-faint">Nothing to measure yet for {r.score.checks.filter((c) => c.value == null).map((c) => c.label.toLowerCase()).join(", ")}; the score is out of what is measured.</p>}
+                  </div>
+                </section>
+              )}
+
               {!connect && (
                 <div className="relative isolate grid content-start gap-3 overflow-hidden rounded-[20px] border border-line bg-surface p-4 md:p-5">
                   <div className="grid gap-0.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">{r.line === "email" ? "This month" : "Last 30 days"}</p>
-                    <p className="text-sm text-muted">{r.line === "email" ? "Revenue so far, with the dashed line to the target at month end" : "Engagement rate over the 7 days up to each day, with the target as the dashed line"}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">{r.line === "email" ? "Attributed revenue this month" : "Last 30 days"}</p>
+                    <p className="text-sm text-muted">{r.line === "email" ? "Revenue so far, with the dashed line to the monthly target when one is set" : "Engagement rate over the 7 days up to each day, with the target as the dashed line"}</p>
                   </div>
                   <ChannelSpark values={r.series} span={r.span} goal={goal} tone={tone.text} tall label={`${r.name} trend`} />
                 </div>
@@ -410,12 +486,14 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
                 </dl>
               )}
 
+              {!connect && r.line === "email" && r.score && <BoardBreakdown clientId={r.clientId} currency={r.currency} />}
+
               {/* The target */}
               <section className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 md:p-5">
                 <div>
-                  <h2 className="font-heading text-lg">{r.line === "email" ? "Monthly revenue target" : "Engagement target"}</h2>
+                  <h2 className="font-heading text-lg">{r.line === "email" ? "Monthly revenue target (optional)" : "Engagement target"}</h2>
                   <p className="mt-0.5 text-xs text-faint">
-                    {r.target == null ? "Set it and every number on this client gets its color." : r.targetBy ? `Set by ${r.targetBy}${r.targetAt ? ` on ${when(r.targetAt)}` : ""}.` : "Saved."} The reports use it too.
+                    {r.target == null ? (r.line === "email" ? "Optional. The account score doesn't use it; it paces the month's revenue." : "Set it and every number on this client gets its color.") : r.targetBy ? `Set by ${r.targetBy}${r.targetAt ? ` on ${when(r.targetAt)}` : ""}.` : "Saved."} The reports use it too.
                   </p>
                 </div>
                 {r.canEdit ? (

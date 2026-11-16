@@ -1,6 +1,9 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
+import type { EmailBand } from "@/lib/email-score";
+import type { EmailScoreResult } from "@/lib/email-score-calc";
+import { loadEmailScores } from "@/lib/email-score-load";
 import { socialClientState, plainSocialError } from "@/lib/social/core";
 import { klaviyoClientState, partialSyncWarning } from "@/lib/klaviyo/core";
 import { servicesOf } from "@/lib/services";
@@ -21,6 +24,7 @@ import {
   socialBasis,
   canSetTarget,
   LINE_SEAT_ROLES,
+  type ChannelStatus,
   type Line,
   type Month,
   type Risk,
@@ -35,6 +39,9 @@ import type { ChannelBoard, ChannelRow, DataState, EmailSupport, SocialSupport }
 export type { ChannelBoard, ChannelRow, DataState, EmailSupport, SocialSupport } from "./types";
 
 type Me = { id: string; role: string; isExec: boolean; isLead: boolean };
+
+/** The score band as the status the boards and Overview already colour by: green, yellow, red */
+const BAND_STATUS: Record<EmailBand, ChannelStatus> = { good: "good", watch: "close", bad: "off" };
 
 const SEAT_LABEL: Record<string, string> = { email_strategist: "Strategist", email_designer: "Designer", email_builder: "Builder", social_manager: "Social manager", social_creative: "Creative" };
 
@@ -88,16 +95,17 @@ export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me): 
       targetBy: ((t?.profiles as unknown as { full_name: string } | null)?.full_name ?? null) as string | null,
       targetAt: (t?.updated_at as string | null) ?? null,
       canEdit: canSetTarget(me, line, mine.filter((s) => s.profile_id === me.id).map((s) => s.role)),
+      canConnect: me.isExec || me.isLead,
       mine: mine.some((s) => s.profile_id === me.id),
       team: mine.map((s) => ({ name: s.profiles?.full_name ?? "Someone", seat: SEAT_LABEL[s.role] ?? s.role })),
     };
   };
 
   const rows = line === "email" ? await emailRows(db, clients, ids, month, base) : await socialRows(db, clients, ids, month, base);
-  return { line, month, rows: orderForBoard(rows), targetsReady: !targetsRes.error };
+  return { line, month, rows: line === "email" ? worstScoreFirst(rows) : orderForBoard(rows), targetsReady: !targetsRes.error };
 }
 
-type Base = Pick<ChannelRow, "line" | "clientId" | "name" | "slug" | "kaizenId" | "target" | "targetNote" | "targetBy" | "targetAt" | "canEdit" | "mine" | "team">;
+type Base = Pick<ChannelRow, "line" | "clientId" | "name" | "slug" | "kaizenId" | "target" | "targetNote" | "targetBy" | "targetAt" | "canEdit" | "canConnect" | "mine" | "team">;
 type ClientRef = { id: unknown; name: unknown; slug?: unknown; kaizen_id?: unknown };
 type BaseOf = (c: ClientRef) => Base;
 
@@ -106,7 +114,7 @@ type BaseOf = (c: ClientRef) => Base;
 async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[], month: Month, base: BaseOf): Promise<ChannelRow[]> {
   const admin = adminConfigured() ? createAdminClient() : null;
   const sinceCamp = shiftDay(month.today, -60);
-  const [days, camps, conns, memos] = await Promise.all([
+  const [days, camps, conns, memos, scores] = await Promise.all([
     readAll<Record<string, unknown>>((a, b) =>
       db.from("klaviyo_daily").select("client_id, date, revenue, campaign_revenue, flow_revenue, conversions, store_orders, subscribed, unsubscribed").in("client_id", ids).gte("date", month.prevStart).lte("date", month.today).order("client_id").order("date").range(a, b),
     ),
@@ -116,6 +124,8 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
     // The connection holds an encrypted key and is never readable from a session: only its state is read, with the server's rights
     admin ? admin.from("klaviyo_connections").select("client_id, account_name, currency, status, last_synced_at, last_error").in("client_id", ids).then((r) => r.data ?? []) : Promise.resolve([] as Record<string, unknown>[]),
     admin ? admin.from("sync_state").select("source, last_result").in("source", ids.map((i) => `klaviyo:${i}`)).then((r) => r.data ?? []) : Promise.resolve([] as Record<string, unknown>[]),
+    // The account score (the main email KPI), read through the same session as the rest
+    loadEmailScores(db, ids).catch(() => new Map<string, EmailScoreResult>()),
   ]);
   const connBy = new Map(conns.map((c) => [c.client_id as string, c]));
   const memoBy = new Map(memos.map((m) => [String(m.source).slice("klaviyo:".length), (m.last_result ?? null) as { seriesError?: string | null; storeError?: string | null } | null]));
@@ -138,7 +148,11 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
     const sum = (xs: Record<string, unknown>[], k: string) => xs.reduce((s, x) => s + num(x[k]), 0);
     const mtd = sum(thisMonth, "revenue");
     const readable = st.state !== "missing" && st.state !== "failing" && st.state !== "pending";
+    // The main KPI is the score; the month's pace against a target stays as a supporting number
     const j = judgeEmail({ readable, target: b.target, mtd, month });
+    const found = readable ? (scores.get(id) ?? null) : null;
+    const score = found && found.unmeasured.length < found.checks.length ? found : null;
+    const status: ChannelStatus = score ? BAND_STATUS[score.band] : "setup";
     const cs = (campsBy.get(id) ?? []).filter((x) => num(x.recipients) > 0);
     const inMonth = cs.filter((x) => etDay(x.send_time as string) >= month.start);
     const em = inMonth.filter((x) => x.channel !== "sms");
@@ -167,7 +181,7 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
       lastSyncedAt: (conn?.last_synced_at as string | null) ?? null,
       account: (conn?.account_name as string | null) ?? null,
       currency: (conn?.currency as string | null) ?? null,
-      status: j.status,
+      status,
       ratio: j.ratio,
       value: readable ? mtd : null,
       projected: readable ? j.projected : null,
@@ -178,6 +192,7 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
       quietDays,
       email,
       social: null,
+      score,
     };
   });
 }
@@ -270,6 +285,7 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
       quietDays: readable ? (daysSince(lastPostAt, month.today) ?? 45) : null,
       email: null,
       social,
+      score: null,
     };
   });
 }
@@ -298,7 +314,17 @@ function groupBy<T>(xs: T[], key: (x: T) => string): Map<string, T[]> {
   return m;
 }
 
+/** Email boards read worst score first; accounts with no score yet (not connected) after the scored ones */
+function worstScoreFirst(rows: ChannelRow[]): ChannelRow[] {
+  return [...rows].sort((a, b) => (a.score?.score ?? 1000) - (b.score?.score ?? 1000) || a.name.localeCompare(b.name));
+}
+
 /** A row's retention risk, with the owed replies on its client folded in */
 export function riskForRow(r: ChannelRow, owed: { n: number; escalated: number } | undefined): Risk {
-  return riskOf(r.line, { status: r.status, data: r.data, quietDays: r.quietDays, owed: owed?.n ?? 0, escalated: owed?.escalated ?? 0 });
+  const risk = riskOf(r.line, { status: r.status, data: r.data, quietDays: r.quietDays, owed: owed?.n ?? 0, escalated: owed?.escalated ?? 0 });
+  if (r.line !== "email") return risk;
+  // Email has no target to be off: the reason is the score's colour, with its biggest drag named
+  const top = r.score?.weighingDown[0];
+  const colour = (word: string) => [`Score ${r.score?.score ?? ""} (${word})`, ...(top ? [`${top.label} is the biggest drag`] : [])];
+  return { score: risk.score, reasons: risk.reasons.filter((x) => x !== "No target set").flatMap((x) => (x === "Off target" ? colour("red") : x === "Close to target" ? colour("yellow") : [x])) };
 }

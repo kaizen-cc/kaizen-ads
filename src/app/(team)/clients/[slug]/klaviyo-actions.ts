@@ -32,6 +32,9 @@ export async function connectKlaviyoKey(clientId: string, key: string): Promise<
   revalidatePath(`/clients/${l.slug}`);
   // Connected from Settings › Sync health too: its Klaviyo card shows it
   revalidatePath("/settings");
+  // Connected from the Email board or the Overview: they refresh too
+  revalidatePath("/kpis");
+  revalidatePath("/pipeline");
   return { ok: true, account: r.account };
 }
 

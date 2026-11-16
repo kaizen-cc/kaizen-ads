@@ -1,9 +1,10 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadEmailScore } from "@/lib/email-score-load";
 import { keyFlowCoverage, shiftDay, type CampaignLite, type DailyRow as EmailDay, type FlowLite } from "@/lib/klaviyo/insights";
 import type { DailyRow as SocialDay } from "@/lib/social/insights";
 import type { Platform, PostFormat, SocialPost } from "@/lib/social/core";
-import { campaignsIn, channelPeriods, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type SocialMetrics, type TargetRow, type Window } from "./core";
+import { scoreSnapshot, campaignsIn, channelPeriods, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type SocialMetrics, type TargetRow, type Window } from "./core";
 
 // What a channel report reads: the numbers the client page already shows (klaviyo_* and social_* tables, filled by the
 // syncs), gathered for the report's own dates and worked out by core.ts. Read with the admin client, after the caller has
@@ -143,6 +144,9 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     images,
   });
   m.target = targetLine("email", await readTarget(admin, clientId, "email"), { kind, main, revenue: m.now.revenue });
+  // The account score, as of now (its own 30 days), so the report can say what is lifting it and what is weighing it down
+  const sc = await loadEmailScore(admin, clientId).catch(() => null);
+  if (sc) m.score = scoreSnapshot(sc);
   return m;
 }
 

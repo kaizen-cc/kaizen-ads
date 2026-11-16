@@ -1,4 +1,5 @@
 import type { Move } from "@/lib/reports/weekly-core";
+import type { EmailScoreResult } from "@/lib/email-score-calc";
 import { lastFullWeek, previousPeriod, rangeLabel, shiftDay, type Range } from "@/lib/reports/period";
 import { BENCHMARKS, deliverabilityOutliers, pulseWindow, type CampaignLite, type DailyRow as EmailDay, type FlowLite, type KeyFlow, type PulseWindow } from "@/lib/klaviyo/insights";
 import { postRate, withRates, windowOf, type DailyRow as SocialDay, type PostView, type Window as SocialWindow } from "@/lib/social/insights";
@@ -130,6 +131,10 @@ export type EmailFlow = { id: string; name: string; status: string | null; trigg
 export type DeliverabilityFlag = { tone: "bad" | "warn"; text: string };
 export type TrendPoint = { label: string; start: string; end: string; value: number; extra?: number };
 
+/** The email account score as the report keeps it: read when the numbers were gathered, over the 30 days to that day (not the report's own dates) */
+export type EmailScoreSnapshot = Pick<EmailScoreResult, "score" | "band" | "checks" | "weighingDown" | "unmeasured" | "window">;
+export const scoreSnapshot = (r: EmailScoreResult): EmailScoreSnapshot => ({ score: r.score, band: r.band, checks: r.checks, weighingDown: r.weighingDown, unmeasured: r.unmeasured, window: r.window });
+
 export type EmailMetrics = {
   platform: "klaviyo";
   version: 1;
@@ -153,6 +158,8 @@ export type EmailMetrics = {
   gaps: string[];
   through: string | null;
   refreshNote?: RefreshNote;
+  /** The account score (older stored reports have none) */
+  score?: EmailScoreSnapshot | null;
 };
 
 export type EmailInput = {
@@ -525,6 +532,7 @@ export function emailSupport(m: EmailMetrics): { label: string; value: string }[
     return mv ? ` (${mv.up ? "+" : "-"}${mv.pct})` : "";
   };
   return [
+    ...(m.score ? [{ label: "Email health score", value: `${m.score.score} of 100` }] : []),
     { label: "Open rate", value: `${pct(now.openRate)}${chg(now.openRate, before.openRate)}` },
     { label: "Click rate", value: `${pct(now.clickRate, 2)}${chg(now.clickRate, before.clickRate)}` },
     { label: "Unsubscribes", value: pct(now.unsubscribeRate, 2) },

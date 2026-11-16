@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { BAND_TONE, ScoreBadge, ScoreChecks, WeighingDown } from "@/components/email-score-parts";
 import { int, metricsSupport, metricsTiles, money, pct, signed, socialName, takeawaysFor, postRateText, type ChannelTile, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
 import type { Sections } from "@/lib/reports/write";
 import { AdImage } from "./ad-image";
@@ -91,8 +92,22 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
 }
 
 function EmailBody({ m }: { m: EmailMetrics }) {
+  const sc = m.score && m.score.unmeasured.length < m.score.checks.length ? m.score : null;
   return (
     <>
+      {sc && (
+        <Block title="Email health score">
+          <div className="grid gap-5 rounded-xl border border-line bg-surface p-5 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="grid content-start gap-2">
+              <ScoreBadge r={sc} size="lg" />
+              <span className={`text-sm font-medium ${BAND_TONE[sc.band].text}`}>{BAND_TONE[sc.band].word}</span>
+              <p className="text-[12px] text-faint">Seven checks, last 30 days. Green from 80, yellow from 60.</p>
+            </div>
+            <ScoreChecks score={sc} currency={m.currency} />
+            <WeighingDown score={sc} limit={3} currency={m.currency} />
+          </div>
+        </Block>
+      )}
       {m.campaigns.length > 0 && (
         <Block title={`Campaigns · ${m.campaignsTotal} sent`}>
           <div className="grid gap-3">

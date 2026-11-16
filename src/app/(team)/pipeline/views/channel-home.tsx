@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ChannelSpark } from "@/components/channel-spark";
 import { ChannelStatusPill, ConnectCta, Gauge, SupportChips, TONE, mainCaption, mainText, needsConnecting, paceLine, targetText } from "@/components/channel-parts";
+import { BAND_TONE, ScoreBadge, WeighingDown } from "@/components/email-score-parts";
 import { loadChannelBoard, riskForRow, type ChannelRow } from "@/lib/channel-kpis/load";
 import { moneyShort, orderByRisk, pctText, type Line, type Risk } from "@/lib/channel-kpis/calc";
 import { roleLabel, type TeamRole } from "@/lib/roles";
@@ -48,15 +49,17 @@ export async function ChannelHome({ me, line, today, greeting, firstName }: { me
   const close = live.filter((r) => r.status === "close").length;
   const good = live.filter((r) => r.status === "good" || r.status === "excellent").length;
 
+  const scored = live.filter((r) => r.score);
+  const avg = scored.length ? Math.round(scored.reduce((t, r) => t + (r.score?.score ?? 0), 0) / scored.length) : null;
   const mtd = live.reduce((t, r) => t + (r.line === "email" ? (r.value ?? 0) : 0), 0);
   const reach = live.reduce((t, r) => t + (r.social?.reach ?? 0), 0);
   const inter = live.reduce((t, r) => t + (r.social?.interactions ?? 0), 0);
   const stats = [
     line === "email"
-      ? { label: "Revenue this month", value: moneyShort(mtd), hint: "Klaviyo attributed, all your clients" }
+      ? { label: "Average score", value: avg ?? "n/a", hint: `${moneyShort(mtd)} attributed revenue this month`, tone: avg == null ? undefined : avg >= 80 ? ("ok" as const) : avg >= 60 ? ("warn" as const) : ("bad" as const) }
       : { label: "Engagement this month", value: pctText(reach > 0 ? inter / reach : null), hint: "Interactions over reach, all your clients" },
-    { label: "Off or close", value: off + close, hint: off ? `${off} off target` : close ? `${close} close` : "None slipping", tone: off ? ("bad" as const) : close ? ("warn" as const) : ("ok" as const) },
-    { label: "On target", value: good, hint: "At or better than target", tone: good ? ("ok" as const) : undefined },
+    { label: line === "email" ? "Red or yellow" : "Off or close", value: off + close, hint: line === "email" ? (off ? `${off} red${close ? `, ${close} yellow` : ""}` : close ? `${close} yellow` : "None slipping") : off ? `${off} off target` : close ? `${close} close` : "None slipping", tone: off ? ("bad" as const) : close ? ("warn" as const) : ("ok" as const) },
+    { label: line === "email" ? "Green" : "On target", value: good, hint: line === "email" ? "Score 80 and up" : "At or better than target", tone: good ? ("ok" as const) : undefined },
     { label: "Need connecting", value: connecting.length, hint: connecting.length ? (line === "email" ? "Klaviyo key missing or failing" : "Page or Instagram not linked") : "All reading", tone: connecting.length ? ("warn" as const) : ("ok" as const) },
   ];
 
@@ -119,7 +122,7 @@ export async function ChannelHome({ me, line, today, greeting, firstName }: { me
                       <Link href={`/clients/${r.slug}?service=${r.line}`} className="min-w-0 truncate font-heading text-[16px] hover:text-brand-text">
                         {r.name}
                       </Link>
-                      <ChannelStatusPill status={r.status} />
+                      <ChannelStatusPill status={r.status} line={r.line} />
                     </div>
                     <ConnectCta r={r} compact />
                   </li>
@@ -160,22 +163,35 @@ function Card({ r }: { r: Ranked }) {
           </Link>
           <p className={`mt-0.5 truncate text-xs ${r.risk.reasons.length ? "text-muted" : "text-faint"}`}>{r.risk.reasons.length ? r.risk.reasons.join(" · ") : r.team.length ? r.team.map((t) => t.name).join(" + ") : "On track"}</p>
         </div>
-        <ChannelStatusPill status={r.status} />
+        <ChannelStatusPill status={r.status} line={r.line} />
       </div>
       <div className="grid gap-1.5">
-        <div className="flex items-baseline gap-2">
-          <span className={`tabular font-display text-[28px] leading-none tracking-tight ${tone.text}`}>{mainText(r)}</span>
-          {r.target != null ? <span className="tabular truncate text-xs text-faint">/ {targetText(r)}</span> : <span className="truncate text-xs text-faint">{mainCaption(r)}</span>}
-        </div>
-        <Gauge r={r} />
-        {r.target == null ? (
-          <Link href={`/kpis?open=${r.clientId}`} className="w-fit py-1 text-[11.5px] text-muted underline-offset-4 hover:text-fg hover:underline">
-            No target yet. Set the target
-          </Link>
+        {r.score ? (
+          <>
+            <div className="flex items-baseline gap-2">
+              <ScoreBadge r={r.score} />
+              <span className="truncate text-xs text-faint">{BAND_TONE[r.score.band].label.toLowerCase()} · {mainCaption(r)}</span>
+            </div>
+            <Gauge r={r} />
+            <WeighingDown score={r.score} limit={2} currency={r.currency} />
+          </>
         ) : (
-          pace && <span className="truncate text-[11.5px] text-muted">{pace}</span>
+          <>
+            <div className="flex items-baseline gap-2">
+              <span className={`tabular font-display text-[28px] leading-none tracking-tight ${tone.text}`}>{mainText(r)}</span>
+              {r.target != null ? <span className="tabular truncate text-xs text-faint">/ {targetText(r)}</span> : <span className="truncate text-xs text-faint">{mainCaption(r)}</span>}
+            </div>
+            <Gauge r={r} />
+            {r.target == null ? (
+              <Link href={`/kpis?open=${r.clientId}`} className="w-fit py-1 text-[11.5px] text-muted underline-offset-4 hover:text-fg hover:underline">
+                No target yet. Set the target
+              </Link>
+            ) : (
+              pace && <span className="truncate text-[11.5px] text-muted">{pace}</span>
+            )}
+            <ChannelSpark values={r.series} span={r.span} goal={goal} tone={tone.text} label={`${r.name} trend`} />
+          </>
         )}
-        <ChannelSpark values={r.series} span={r.span} goal={goal} tone={tone.text} label={`${r.name} trend`} />
         <SupportChips r={r} />
       </div>
       <div className="flex flex-wrap gap-2">

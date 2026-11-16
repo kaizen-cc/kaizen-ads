@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { BAND_TONE } from "@/components/email-score-parts";
+import { KlaviyoKeyInline } from "@/components/klaviyo-key-inline";
 import { STATUS_LABEL, gapWords, moneyShort, pctText, type ChannelStatus } from "@/lib/channel-kpis/calc";
 import type { ChannelRow } from "@/lib/channel-kpis/types";
 
@@ -16,13 +18,17 @@ export const TONE: Record<ChannelStatus, { text: string; pill: string; bar: stri
   early: { text: "text-fg", pill: "bg-surface-2 text-muted", bar: "bg-faint", css: "var(--fg-faint)" },
 };
 
-export function ChannelStatusPill({ status }: { status: ChannelStatus }) {
-  return <span className={`inline-flex h-6 items-center whitespace-nowrap rounded-full px-2.5 text-[11px] font-medium ${TONE[status].pill}`}>{STATUS_LABEL[status]}</span>;
+/** Email statuses are the score's band (green, yellow, red), so they read as that and not as a target */
+export const EMAIL_STATUS_LABEL: Partial<Record<ChannelStatus, string>> = { good: BAND_TONE.good.word, close: BAND_TONE.watch.word, off: BAND_TONE.bad.word };
+
+export function ChannelStatusPill({ status, line }: { status: ChannelStatus; line?: "email" | "social" }) {
+  const label = (line === "email" && EMAIL_STATUS_LABEL[status]) || STATUS_LABEL[status];
+  return <span className={`inline-flex h-6 items-center whitespace-nowrap rounded-full px-2.5 text-[11px] font-medium ${TONE[status].pill}`}>{label}</span>;
 }
 
 /** The main number as text: email revenue this month, social engagement rate */
 export function mainText(r: ChannelRow): string {
-  return r.line === "email" ? moneyShort(r.value, r.currency) : pctText(r.value);
+  return r.line === "email" ? (r.score ? String(r.score.score) : "n/a") : pctText(r.value);
 }
 
 export function targetText(r: ChannelRow): string | null {
@@ -32,18 +38,18 @@ export function targetText(r: ChannelRow): string | null {
 
 /** What the main number is a number of, in a few words */
 export function mainCaption(r: ChannelRow): string {
-  if (r.line === "email") return "attributed revenue this month";
+  if (r.line === "email") return "account score";
   return r.basis === "month" ? "engagement this month" : "engagement, last 30 days";
 }
 
 /** One line on where it's heading: the pace for email, the gap for social */
 export function paceLine(r: ChannelRow): string | null {
   if (r.status === "setup") return null;
+  // Email: the pace against the optional monthly revenue target, as a supporting line under the score
   if (r.line === "email") {
     if (r.projected == null) return null;
-    if (r.target == null) return `On pace for ${moneyShort(r.projected, r.currency)} this month`;
-    if (r.status === "early") return `Early in the month: ${moneyShort(r.projected, r.currency)} at this pace`;
-    return `${moneyShort(r.projected, r.currency)} at this pace · ${gapWords(r.ratio)?.toLowerCase() ?? ""}`.replace(/ · $/, "");
+    if (r.target == null) return `Revenue on pace for ${moneyShort(r.projected, r.currency)} this month`;
+    return `Revenue ${moneyShort(r.projected, r.currency)} at this pace · ${gapWords(r.ratio)?.toLowerCase() ?? ""}`.replace(/ · $/, "");
   }
   if (r.target == null) return null;
   return gapWords(r.ratio);
@@ -57,7 +63,7 @@ export function connectStep(r: Pick<ChannelRow, "line" | "slug" | "data" | "prob
   const failing = r.data === "failing";
   if (r.data === "missing")
     return email
-      ? { title: "Klaviyo isn't connected", body: "Paste the client's read-only private API key on their Klaviyo card and the numbers start filling in.", href: `/clients/${r.slug}?tab=team`, label: "Open the Klaviyo card" }
+      ? { title: "Klaviyo isn't connected", body: "Paste the client's read-only private API key and the numbers start filling in. A lead or an exec can do it right here; everyone else on their Klaviyo card.", href: `/clients/${r.slug}?tab=team`, label: "Open the Klaviyo card" }
       : { title: "Social isn't linked", body: "Share their Facebook Page and Instagram account to Kaizen's Business Manager, or pick the Page on the client's Social tab.", href: `/clients/${r.slug}?service=social`, label: "Open their Social tab" };
   if (failing) return { title: email ? "Klaviyo isn't reading" : "Social isn't reading", body: [r.problem?.message, r.problem?.fix].filter(Boolean).join(". ") || "The last read failed.", href: email ? `/clients/${r.slug}?tab=team` : `/clients/${r.slug}?service=social`, label: email ? "Fix the Klaviyo key" : "Fix the link" };
   if (r.data === "pending") return { title: "First read in progress", body: "Connected. The first 90 days are being read; numbers show here once they're in.", href: `/clients/${r.slug}${email ? "?service=email" : "?service=social"}`, label: "Open the client" };
@@ -69,16 +75,22 @@ export function connectStep(r: Pick<ChannelRow, "line" | "slug" | "data" | "prob
 export const needsConnecting = (r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status">) => connectStep(r) != null;
 
 /** A linked call to action, the same look everywhere */
-export function ConnectCta({ r, compact = false }: { r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status">; compact?: boolean }) {
+export function ConnectCta({ r, compact = false }: { r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status" | "clientId" | "canConnect">; compact?: boolean }) {
   const c = connectStep(r);
   if (!c) return null;
+  // A lead or an exec pastes (or replaces) the Klaviyo key right here, through the client card's own action; everyone else gets the link
+  const inline = r.line === "email" && r.canConnect && (r.data === "missing" || r.data === "failing");
   return (
     <div className={`grid gap-2 rounded-[12px] border border-dashed border-line bg-surface-2/60 ${compact ? "p-3" : "p-4"}`}>
       <p className="text-sm font-medium">{c.title}</p>
       <p className="text-xs leading-relaxed text-muted">{c.body}</p>
-      <Link href={c.href} className="inline-flex min-h-11 w-fit items-center rounded-full bg-fg px-4 text-xs font-medium text-bg md:min-h-9">
-        {c.label}
-      </Link>
+      {inline ? (
+        <KlaviyoKeyInline clientId={r.clientId} replace={r.data === "failing"} />
+      ) : (
+        <Link href={c.href} className="inline-flex min-h-11 w-fit items-center rounded-full bg-fg px-4 text-xs font-medium text-bg md:min-h-9">
+          {c.label}
+        </Link>
+      )}
     </div>
   );
 }
@@ -88,6 +100,16 @@ export const signed = (x: number | null | undefined) => (x == null ? "n/a" : `${
 
 /** A thin gauge: how far the main number is toward its target (email: the month's pace marks where it should be) */
 export function Gauge({ r }: { r: ChannelRow }) {
+  // Email: the score out of 100, with a tick at the green line (80)
+  if (r.line === "email") {
+    if (!r.score) return null;
+    return (
+      <div className="relative h-1.5 rounded-full bg-surface-2" role="img" aria-label={`Score ${r.score.score} out of 100`}>
+        <div className={`h-full rounded-full ${TONE[r.status].bar}`} style={{ width: `${r.score.score}%` }} />
+        <span aria-hidden className="absolute -top-1 h-3.5 w-px bg-fg/40" style={{ left: "80%" }} title="Green from 80" />
+      </div>
+    );
+  }
   if (r.target == null || r.value == null) return null;
   const fill = Math.min(1, r.value / r.target);
   const mark = r.projected != null ? Math.min(1, r.projected / r.target) : null;
@@ -104,9 +126,9 @@ export function SupportChips({ r }: { r: ChannelRow }) {
   const items =
     r.line === "email" && r.email
       ? [
+          ["Revenue", moneyShort(r.value, r.currency)],
           ["Open", pctText(r.email.openRate)],
           ["Click", pctText(r.email.clickRate)],
-          ["List", signed(r.email.listNet)],
         ]
       : r.social
         ? [

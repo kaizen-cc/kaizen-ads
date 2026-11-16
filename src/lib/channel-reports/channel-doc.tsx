@@ -2,6 +2,7 @@ import { Circle, Defs, Document, G, Image, Line, LinearGradient, Link, Page, Rec
 import { docKit, KAIZEN_RED, lookFor, type Look, type WeeklyBrand } from "@/lib/reports/weekly-doc";
 import { scrubAgency, scrubSections } from "@/lib/reports/white-label";
 import type { Sections } from "@/lib/reports/write";
+import { checkText, pointsLost } from "@/lib/email-score-calc";
 import { channelName, int, metricsSupport, metricsTiles, money, pct, postRateText, signed, socialName, takeawaysFor, type EmailMetrics, type SocialMetrics, type TrendPoint } from "./core";
 
 // A channel client report as a PDF, in the same design as the ads report (weekly-doc.tsx): the client's logo beside
@@ -205,6 +206,50 @@ function Campaigns({ m, images }: { m: EmailMetrics; images: ChannelImages }) {
   );
 }
 
+const BAND_HEX = { good: "#087a5e", watch: "#b7791f", bad: "#c23e4c" } as const;
+const BAND_WORD = { good: "Healthy", watch: "Watch", bad: "At risk" } as const;
+
+/** The email health score: the number in its colour, the seven checks against their bars, and what is holding it back */
+function ScorePanel({ m }: { m: EmailMetrics }) {
+  const sc = m.score;
+  if (!sc || sc.unmeasured.length >= sc.checks.length) return null;
+  const hex = BAND_HEX[sc.band];
+  return (
+    <View style={s.section} wrap={false}>
+      <View style={s.head}>
+        <Text style={s.h2}>Email health score</Text>
+        <Text style={s.sub}>Seven checks of the account, last 30 days to {day(sc.window.to)} · green from 80, yellow from 60</Text>
+      </View>
+      <View style={[s.panel, { flexDirection: "row", gap: 18 }]}>
+        <View style={{ width: 92 }}>
+          <Text style={{ fontSize: 38, fontFamily: "Helvetica-Bold", color: hex }}>{sc.score}</Text>
+          <Text style={{ fontSize: 8, color: FAINT }}>out of 100</Text>
+          <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: hex, marginTop: 4 }}>{BAND_WORD[sc.band]}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          {sc.checks.map((k) => (
+            <View key={k.key} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 2 }}>
+              <Text style={{ fontSize: 8.5, color: INK }}>
+                {k.value == null ? "-" : k.met ? "Met" : "Short"}  {k.label}
+              </Text>
+              <Text style={{ fontSize: 8.5, color: k.value == null ? FAINT : k.met ? BAND_HEX.good : BAND_HEX.bad }}>
+                {checkText(k.unit, k.value, m.currency)} <Text style={{ color: FAINT }}>(bar {checkText(k.unit, k.bar, m.currency)})</Text>
+              </Text>
+            </View>
+          ))}
+          {sc.weighingDown.length ? (
+            <Text style={{ fontSize: 8.5, color: MUTED, marginTop: 6 }}>
+              Holding it back: {sc.weighingDown.slice(0, 3).map((k) => `${k.label.toLowerCase()} (about ${pointsLost(k)} points)`).join(", ")}.
+            </Text>
+          ) : (
+            <Text style={{ fontSize: 8.5, color: MUTED, marginTop: 6 }}>Every check is at or over its bar.</Text>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function Flows({ m }: { m: EmailMetrics }) {
   if (!m.flows.length) return null;
   const max = Math.max(...m.flows.map((f) => f.revenue), 1);
@@ -394,6 +439,7 @@ export function ChannelDocument({ input: asked, images }: { input: ChannelPdfInp
         <Trend m={m} look={look} />
         {m.platform === "klaviyo" ? (
           <>
+            <ScorePanel m={m} />
             <Campaigns m={m} images={images} />
             <Flows m={m} />
             <ListHealth m={m} />

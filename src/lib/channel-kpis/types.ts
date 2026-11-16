@@ -1,3 +1,4 @@
+import type { EmailScoreResult } from "@/lib/email-score-calc";
 import type { ChannelStatus, Line, Month } from "./calc";
 
 // The shapes the Email and Social boards and the Overview pass around (types only, so a browser file can import them).
@@ -50,6 +51,8 @@ export type ChannelRow = {
   targetBy: string | null;
   targetAt: string | null;
   canEdit: boolean;
+  /** A lead or an exec: may paste or replace the client's Klaviyo key (the client page's rule) */
+  canConnect: boolean;
   /** The signed-in person holds a seat on this client in this line */
   mine: boolean;
   status: ChannelStatus;
@@ -70,6 +73,8 @@ export type ChannelRow = {
   team: { name: string; seat: string }[];
   email: EmailSupport | null;
   social: SocialSupport | null;
+  /** Email: the account score (the main KPI; status is its band). Null for social, or when nothing is read yet */
+  score: EmailScoreResult | null;
 };
 
 export type ChannelBoard = { line: Line; month: Month; rows: ChannelRow[]; targetsReady: boolean };

@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo } from "react";
+import { EmailBreakdown } from "@/components/email-breakdown";
+import { BandPill, ScoreBadge, ScoreChecks, WeighingDown } from "@/components/email-score-parts";
 import { HoverCard } from "@/components/hover-card";
+import { campaignRows, flowRows, scoreFromKlaviyo } from "@/lib/email-breakdown";
 import { pushParams, useParam } from "@/lib/url-state";
 import type { ClientKlaviyo, KlaviyoCampaignView } from "@/lib/klaviyo/store";
 import { BENCHMARKS, bestSubjects, deliverabilityByWeek, deliverabilityOutliers, filterCampaigns, pulseStatus, revenuePerRecipient, shiftDay, sortCampaigns, type CampaignFilter, type CampaignSort, type HealthFinding } from "@/lib/klaviyo/insights";
@@ -493,9 +496,33 @@ function Intro({ k }: { k: ClientKlaviyo }) {
   );
 }
 
+/** The account score at the top of the Overview: the seven checks and what is weighing it down */
+function ScoreSection({ k }: { k: ClientKlaviyo }) {
+  const score = useMemo(() => scoreFromKlaviyo(k), [k]);
+  if (score.unmeasured.length >= score.checks.length) return null;
+  return (
+    <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-4 md:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_minmax(0,1fr)] md:p-5">
+      <div className="grid content-start gap-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Email account score</h3>
+        <ScoreBadge r={score} size="lg" />
+        <BandPill band={score.band} />
+        <p className="text-[11px] text-faint">Last 30 days. Green from 80, yellow from 60.</p>
+      </div>
+      <ScoreChecks score={score} currency={k.currency} />
+      <div className="grid content-start gap-3">
+        <WeighingDown score={score} limit={4} currency={k.currency} />
+        {score.unmeasured.length > 0 && <p className="text-[11.5px] text-faint">Nothing to measure yet for {score.checks.filter((c) => c.value == null).map((c) => c.label.toLowerCase()).join(", ")}.</p>}
+      </div>
+    </section>
+  );
+}
+
 function OverviewTab({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof moneyFn> }) {
+  const campaigns = useMemo(() => campaignRows(k.campaigns), [k.campaigns]);
+  const flows = useMemo(() => flowRows(k.flows), [k.flows]);
   return (
     <div className="grid gap-5">
+      <ScoreSection k={k} />
       <Tiles k={k} money={money} />
       <RevenueByDayChart k={k} money={money} />
       <div className="grid gap-5 lg:grid-cols-2">
@@ -503,6 +530,7 @@ function OverviewTab({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof 
         <DeliverabilityScoreChart k={k} />
       </div>
       <HealthList health={k.health} />
+      <EmailBreakdown campaigns={campaigns} flows={flows} currency={k.currency} />
     </div>
   );
 }
