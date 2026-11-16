@@ -12,18 +12,22 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { ReportBuilder, type BuilderClient, type QuickPick } from "./report-builder";
 import { BundleCard, Empty, Group, ReportCard, SkippedGroup, type CardBundle, type CardReport, type SkippedItem, type Tag } from "./report-cards";
 import { RegenerateButton, RegenWatcher } from "./regenerate-button";
-import { GoogleAdsMark, MetaMark } from "@/components/source-logo";
-import { teamPlatform } from "@/lib/roles";
+import { EmailMark, GoogleAdsMark, MetaMark, SocialMark, TikTokMark } from "@/components/source-logo";
+import { isChannelOnly, teamPlatform } from "@/lib/roles";
 import { buyerRole, orderSeats, primaryOf, type SeatRow } from "@/lib/buyer-seats";
 import { readHistory } from "@/lib/reports/history";
 import { SendHistory } from "./send-history";
 import { canBringBack, latestSkip, skipLine } from "@/lib/reports/skip-log";
-import { linesFor } from "@/lib/channel-reports/access-core";
-import { ChannelReports } from "./channel-page";
-import { LineSwitch } from "./line-switch";
+import { isHeadOf, linesFor, SEATS_OF } from "@/lib/channel-reports/access-core";
+import { channelClients, type ChannelClient } from "@/lib/channel-reports/clients";
+import { lineOfPlatform, platformOfLine, type ChannelLine } from "@/lib/channel-reports/core";
+import { ChannelBuild } from "./channel-build";
 
 export const metadata: Metadata = { title: "Reports" };
 export const maxDuration = 300;
+
+type Plat = "meta" | "google" | "tiktok" | "klaviyo" | "social";
+const isChan = (p: string) => p === "klaviyo" || p === "social";
 
 type Row = { id: string; kind: "weekly" | "monthly" | "custom"; platform: string; status: string; qa: Qa | null; posted_at: string | null; viewed_at: string | null; owner_id: string | null; client_id: string; period_start: string; period_end: string; bundle_id: string | null; clients: { name: string; slug: string }; profiles: { full_name: string } | null };
 
@@ -39,60 +43,77 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const asked = sp.view === "sent" ? "sent" : sp.view === "build" ? "build" : sp.view === "ready" ? "ready" : null;
   // The Monday drafts, one platform at a time (execs switch; everyone else is on their own line) and one buyer at a time
   const pick = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
-  // The email and social teams (and execs, on the Email and Social lines) have their own reports
-  const channelLines = linesFor(me);
-  const lineAsked = sp.line === "email" || sp.line === "social" ? sp.line : null;
-  const channelLine = me.isExec ? lineAsked : (channelLines[0] ?? null);
-  if (channelLine && channelLines.includes(channelLine)) {
-    const slackNow = await slackConnection(me.id);
-    if (!slackNow.connected) return <ConnectSlack />;
-    return <ChannelReports me={me} line={channelLine} view={typeof sp.view === "string" ? sp.view : null} slack={slackNow} />;
-  }
   const db = await createClient();
   const today = nyParts(new Date()).date;
   const month = periodsFor("monthly", today).main;
-  const lead = isExecOrLead(me);
+  const lead = isExecOrLead(me) || isHeadOf(me, "email") || isHeadOf(me, "social");
+  const admin = adminConfigured() ? createAdminClient() : null;
+  // The email and social teams see only their own line's reports and never the ads accounts (an exec sees all five platforms)
+  const lines = linesFor(me);
+  const channelOnly = !me.isExec && isChannelOnly(me.role);
   // The accounts this person reports on (their own; their line's for a lead; all for an exec): what they see and can draft
-  const accounts = await reportableTargets(db, me);
+  const accounts = channelOnly ? [] : await reportableTargets(db, me);
+  const SELECT = "id, kind, platform, status, qa, posted_at, viewed_at, owner_id, client_id, period_start, period_end, bundle_id, clients(name, slug), profiles!reports_owner_id_fkey(full_name)";
   let q = db
     .from("reports")
-    .select("id, kind, platform, status, qa, posted_at, viewed_at, owner_id, client_id, period_start, period_end, bundle_id, clients(name, slug), profiles!reports_owner_id_fkey(full_name)")
+    .select(SELECT)
     .in("kind", ["weekly", "monthly", "custom"])
     .in("platform", ["meta", "google", "tiktok"])
     .is("hidden_at", null)
     .gte("created_at", daysAgo(60))
     .order("created_at");
   if (!me.isExec) q = q.in("target_id", accounts.length ? accounts.map((a) => a.id) : ["00000000-0000-0000-0000-000000000000"]);
-  const [{ data }, slack] = await Promise.all([q, slackConnection(me.id)]);
+  const [adsRes, slack, chanLists] = await Promise.all([
+    channelOnly ? Promise.resolve({ data: [] }) : q,
+    slackConnection(me.id),
+    // Which clients this person reports on for each line, by the rule the database applies (the head's by service, others by seat)
+    Promise.all(lines.map(async (l) => [l, admin ? await channelClients(admin, me, l) : []] as const)),
+  ]);
   if (!slack.connected) return <ConnectSlack />;
-  const rows = (data ?? []) as unknown as Row[];
+  const chanBy = new Map<ChannelLine, ChannelClient[]>(chanLists);
+  const chanIds = [...new Set(chanLists.flatMap(([, c]) => c.map((x) => x.id)))];
+  // Email and social reports live in the same table (no ad account behind them): read by the server, kept to the person's clients
+  const { data: chanData } =
+    admin && chanIds.length
+      ? await admin.from("reports").select(SELECT).in("kind", ["weekly", "monthly"]).in("platform", lines.map(platformOfLine)).in("client_id", chanIds).is("hidden_at", null).gte("created_at", daysAgo(120)).order("created_at")
+      : { data: [] };
+  const adsRows = (adsRes.data ?? []) as unknown as Row[];
+  const chanRows = ((chanData ?? []) as unknown as Row[]).filter((r) => chanBy.get(lineOfPlatform(r.platform as "klaviyo" | "social"))?.some((c) => c.id === r.client_id));
+  const rows = [...adsRows, ...chanRows];
   // Drafted Monday (and on the 1st), they stay up until they're sent: last week's unsent draft doesn't drop off
   const waiting = (r: Row) => !DONE.includes(r.status);
   // Each Monday's drafts replace the last ones: only the latest week (and the latest month's recap) shows
-  const latest = (kind: string) => rows.filter((r) => r.kind === kind).map((r) => r.period_start).sort().at(-1) ?? null;
+  const latest = (kind: string) => adsRows.filter((r) => r.kind === kind).map((r) => r.period_start).sort().at(-1) ?? null;
   const [lastWeek, lastMonth] = [latest("weekly"), latest("monthly")];
-  const allWeekly = rows.filter((r) => r.kind === "weekly" && r.period_start === lastWeek && waiting(r));
-  const allMonthly = rows.filter((r) => r.kind === "monthly" && r.period_start === lastMonth && waiting(r));
-  const onDemand = rows.filter((r) => r.kind === "custom" && waiting(r));
+  const allWeekly = adsRows.filter((r) => r.kind === "weekly" && r.period_start === lastWeek && waiting(r));
+  const allMonthly = adsRows.filter((r) => r.kind === "monthly" && r.period_start === lastMonth && waiting(r));
+  const onDemand = adsRows.filter((r) => r.kind === "custom" && waiting(r));
+  // Email and social go out on their own (no recap bundle): each platform's latest month and week, shown like single weeklies
+  const latestChan = (r: Row) => chanRows.filter((x) => x.platform === r.platform && x.kind === r.kind).map((x) => x.period_start).sort().at(-1) ?? null;
+  const chanMonthly = chanRows.filter((r) => r.kind === "monthly" && r.period_start === latestChan(r) && waiting(r));
+  const chanWeekly = chanRows.filter((r) => r.kind === "weekly" && r.period_start === latestChan(r) && waiting(r));
   const sentReports = rows.filter((r) => r.status === "posted" && r.posted_at && r.posted_at >= daysAgo(30));
 
   // The builder: the clients this person reports on, each with every service that has an ad account (and its buyer)
   const clientIds = [...new Set(accounts.map((a) => a.client_id))];
   // Each team searches and builds for its own line only: execs see both
   const line = me.isExec ? null : teamPlatform(me.role);
-  const admin = adminConfigured() ? createAdminClient() : null;
-  const [{ data: allTargets }, { data: slots }, { data: built }] = admin && clientIds.length
+  // Seats: the buyer seats of the ad clients, and the email and social seats of those clients (the person filter reads them)
+  const seatClientIds = [...new Set([...clientIds, ...chanIds])];
+  const { data: slots } = admin && seatClientIds.length ? await admin.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("client_id", seatClientIds).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer", ...SEATS_OF.email, ...SEATS_OF.social]) : { data: [] };
+  const [{ data: allTargets }, { data: built }] = admin && clientIds.length
     ? await Promise.all([
         admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line ? [line] : ["meta", "google"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
-        admin.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("client_id", clientIds).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
         admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, sent_at, clients(name), reports(id, platform, status, owner_id, viewed_at, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).gte("created_at", daysAgo(60)).order("created_at", { ascending: false }).limit(150),
       ])
-    : [{ data: [] }, { data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }];
   // The buyer seats, primary first. A secondary buyer's accounts are theirs to report on like the owner's: their
   // reports count as theirs, and a buyer's chip holds the accounts they're a secondary on too
   type Slot = SeatRow & { client_id: string; profiles: { full_name: string } | null };
   const seatRows = orderSeats((slots ?? []) as unknown as Slot[]);
-  const coSeats = (clientId: string, platform: string) => seatRows.filter((s) => s.client_id === clientId && s.role === buyerRole(platform) && s.is_primary === false);
+  // Ads: the secondary buyers. Email and social: everyone seated on that line's client (any of its seats)
+  const coSeats = (clientId: string, platform: string) =>
+    isChan(platform) ? seatRows.filter((s) => s.client_id === clientId && SEATS_OF[lineOfPlatform(platform as "klaviyo" | "social")].includes(s.role)) : seatRows.filter((s) => s.client_id === clientId && s.role === buyerRole(platform) && s.is_primary === false);
   const isMine = (clientId: string, p: { owner_id: string | null; platform: string }) => p.owner_id === me.id || coSeats(clientId, p.platform).some((s) => s.profile_id === me.id);
   const byClient = new Map<string, BuilderClient>();
   for (const t of (allTargets ?? []) as unknown as { client_id: string; platform: "meta" | "google" | "tiktok"; owner_id: string | null; clients: { name: string; slug: string; slack_channel_id: string | null }; profiles: { full_name: string } | null }[]) {
@@ -120,7 +141,10 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const builtRows = reach.filter((b) => b.status !== "sent" && b.reports.some((p) => p.status !== "skipped"));
   // The send history: every report that went to the clients this person reports on (everything for an exec), never
   // trimmed by age; a client at a time on the page
-  const history = (admin ? await readHistory(admin, { clientIds: me.isExec ? null : clientIds, limit: 400 }, today) : []).filter((s) => s.platform !== "klaviyo" && s.platform !== "social").filter((s) => !line || !s.platform || s.platform === line);
+  const history = (admin ? await readHistory(admin, { clientIds: me.isExec ? null : seatClientIds, limit: 400 }, today) : [])
+    // Email and social only for the lines this person is on; joint (built) ones only for the ads side
+    .filter((s) => (s.platform == null ? !channelOnly : isChan(s.platform) ? lines.includes(lineOfPlatform(s.platform as "klaviyo" | "social")) : !channelOnly))
+    .filter((s) => !line || !s.platform || isChan(s.platform) || s.platform === line);
   const sentBuilt = reach.filter((b) => b.status === "sent" && (b.sent_at ?? b.created_at) >= daysAgo(30));
   const yesterday = new Date(Date.parse(`${today}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 
@@ -155,7 +179,11 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   // What each line item is: the Monday weekly, the monthly recap, or one built by hand, with its dates
   const short = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
   const tagOf = (r: Row): Tag =>
-    r.kind === "weekly"
+    isChan(r.platform)
+      ? r.kind === "monthly"
+        ? { kind: "monthly", label: "Monthly report", dates: new Date(`${r.period_start}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" }) }
+        : { kind: "weekly", label: "Weekly report", dates: `${short(r.period_start)} – ${short(r.period_end)}` }
+      : r.kind === "weekly"
       ? { kind: "weekly", label: "Monday weekly", dates: `${short(r.period_start)} – ${short(r.period_end)}` }
       : r.kind === "monthly"
         ? { kind: "monthly", label: "Monthly recap", dates: new Date(`${r.period_start}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" }) }
@@ -183,12 +211,13 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   };
 
   // Ready and Sent: one platform at a time for execs (everyone else is on their own line), then one buyer at a time
-  const plat = (x: { platform: string }) => (x.platform === "google" ? "google" : x.platform === "tiktok" ? "tiktok" : "meta");
-  const readyReports = [...allMonthly, ...allWeekly, ...onDemand];
+  const plat = (x: { platform: string }): Plat => (x.platform === "google" ? "google" : x.platform === "tiktok" ? "tiktok" : x.platform === "klaviyo" ? "klaviyo" : x.platform === "social" ? "social" : "meta");
+  const readyReports = [...allMonthly, ...allWeekly, ...onDemand, ...chanMonthly, ...chanWeekly];
   const pool = [...readyReports, ...sentReports];
   const bundlePlats = (b: (typeof reach)[number]) => b.reports.map(plat);
-  const platforms = (["meta", "google", "tiktok"] as const).filter((x) => pool.some((r) => plat(r) === x) || reach.some((b) => bundlePlats(b).includes(x)));
-  const wp = platforms.length > 1 ? (platforms.find((x) => x === pick("wp")) ?? platforms[0]) : (platforms[0] ?? "meta");
+  // Ads platforms with something on the page, then the lines this person is on (always, so a client can be built for)
+  const platforms = (["meta", "google", "tiktok", "klaviyo", "social"] as const).filter((x) => (x === "klaviyo" ? lines.includes("email") : x === "social" ? lines.includes("social") : pool.some((r) => plat(r) === x) || reach.some((b) => bundlePlats(b).includes(x))));
+  const wp: Plat = platforms.length > 1 ? (platforms.find((x) => x === pick("wp")) ?? platforms[0]) : (platforms[0] ?? "meta");
   const people = (list: Row[], bundles: typeof reach) =>
     [
       ...new Map([
@@ -209,8 +238,13 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const builtShown = builtRows.filter(fitsBundle).sort(byName);
   const customShown = onDemand.filter(fits).sort(byName);
   const sentShown = sentReports.filter(fits).sort((a, b) => (b.posted_at ?? "").localeCompare(a.posted_at ?? ""));
+  const chanMonthlyShown = chanMonthly.filter(fits).sort(byName);
+  const chanWeeklyShown = chanWeekly.filter(fits).sort(byName);
   const sentBuiltShown = sentBuilt.filter(fitsBundle).sort((a, b) => (b.sent_at ?? b.created_at).localeCompare(a.sent_at ?? a.created_at));
   const readyCount = readyReports.length + builtRows.length;
+  // Sent history by platform pill: joint (built) ones sit with the ads platforms
+  const inLine = (s: { platform: string | null }, x: Plat) => (s.platform ? s.platform === x : !isChan(x));
+  const historyShown = history.filter((s) => inLine(s, wp));
   // Regenerate all shown: every draft in a section, with the platform and person picked (an exec or lead: anyone's
   // they report on; a buyer: their own). Approved, sent and still-writing ones are left as they are
   const regenable = (x: { status: string; owner_id: string | null; platform: string }, clientId: string) => ["draft", "failed"].includes(x.status) && (lead || isMine(clientId, x));
@@ -236,7 +270,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
 
   // Skipped for the current period (the latest week and month, and anything built): who skipped them, when and why. The
   // log is read apart: the column may not exist yet, and then they show without the detail
-  const skippedRows = rows.filter((r) => r.status === "skipped" && (r.kind === "custom" || r.period_start === (r.kind === "weekly" ? lastWeek : lastMonth))).filter(fits);
+  const skippedRows = rows.filter((r) => r.status === "skipped" && (r.kind === "custom" || r.period_start === (isChan(r.platform) ? latestChan(r) : r.kind === "weekly" ? lastWeek : lastMonth))).filter(fits);
   const skippedBuilt = reach.filter((b) => b.status !== "sent" && b.reports.length > 0 && b.reports.every((p) => p.status === "skipped")).filter(fitsBundle);
   const logIds = [...skippedRows.map((r) => r.id), ...skippedBuilt.flatMap((b) => b.reports.map((p) => p.id))];
   const logOf = new Map<string, unknown>();
@@ -256,6 +290,16 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
     }),
   ];
 
+  // The platform pills: names, and what each counts (what's waiting; in Sent, what went out)
+  const PILL: Record<Plat, string> = { meta: "Meta", google: "Google Ads", tiktok: "TikTok", klaviyo: "Email", social: "Social" };
+  const countOf = (x: Plat) =>
+    view === "sent" && history.length
+      ? history.filter((s) => inLine(s, x)).length
+      : (view === "sent" ? sentReports : readyReports).filter((r) => plat(r) === x).length + (view === "sent" ? sentBuilt : builtRows).filter((b) => bundlePlats(b).includes(x)).length;
+  // One person at a time (never over the send history, which has its own client filter, nor in Build)
+  const peopleList = view === "build" ? [] : people(view === "ready" ? readyReports : sentReports, view === "ready" ? builtRows : sentBuilt);
+  const showPeople = view !== "build" && !(view === "sent" && history.length) && peopleList.length > 1;
+
   const TABS = [
     { key: "build", title: "Build a report", sub: "Any client, any dates", n: null },
     { key: "ready", title: "Ready to send", sub: "Drafted and waiting on review", n: readyCount },
@@ -268,12 +312,10 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="grid gap-1">
           <h1 className="font-heading text-[32px] leading-tight max-md:text-[28px]">Reports</h1>
-          <p className="max-w-2xl text-sm text-muted">Drafted every Monday in your voice and checked by the QA (on the month&apos;s first Monday, the full monthly recap instead). Read it, tweak it or ask the AI to, then send it as you.</p>
+          <p className="max-w-2xl text-sm text-muted">Drafted in your voice and checked by the QA: ads every Monday (on the month&apos;s first Monday, the full monthly recap instead), email and social once a month. Read it, tweak it or ask the AI to, then send it as you.</p>
         </div>
         <SlackConnect connected={slack.connected} next="/reports" />
       </header>
-
-      {me.isExec && <LineSwitch current="ads" />}
 
       {/* The three parts of reporting */}
       <nav className="grid grid-cols-3 gap-1.5 rounded-[22px] border border-line bg-surface p-1.5" aria-label="Reports">
@@ -295,7 +337,44 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
         ))}
       </nav>
 
-      {view === "build" && <ReportBuilder clients={builderClients} quick={quick} yesterday={yesterday} waiting={waitingFor} />}
+      {/* One row for every platform this person reports on: the ads ones, then Email and Social (they scroll sideways on a phone) */}
+      {(platforms.length > 1 || showPeople) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {platforms.length > 1 && (
+            <span className="no-scrollbar max-w-full overflow-x-auto rounded-full">
+              <span className="inline-flex whitespace-nowrap rounded-full border border-line bg-surface p-1">
+                {platforms.map((x) => (
+                  <Link key={x} href={href({ wp: x, wb: null })} scroll={false} className={`inline-flex h-11 shrink-0 items-center gap-2 rounded-full px-4 text-sm transition-colors md:h-9 ${wp === x ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+                    {x === "meta" ? <MetaMark size={15} /> : x === "google" ? <GoogleAdsMark size={12} /> : x === "tiktok" ? <TikTokMark size={13} /> : x === "klaviyo" ? <EmailMark size={14} /> : <SocialMark size={14} />}
+                    {PILL[x]}
+                    <span className="tabular opacity-60">{countOf(x)}</span>
+                  </Link>
+                ))}
+              </span>
+            </span>
+          )}
+          {showPeople && (
+            <span className="no-scrollbar flex max-w-full items-center gap-1 overflow-x-auto">
+              <Link href={href({ wb: null })} scroll={false} className={`inline-flex h-11 shrink-0 items-center rounded-full px-3.5 text-sm transition-colors md:h-9 ${!wb ? "bg-surface-2 text-fg ring-1 ring-line" : "text-muted hover:text-fg"}`}>
+                Everyone
+              </Link>
+              {peopleList.map(([id, name]) => (
+                <Link key={id} href={href({ wb: id })} scroll={false} className={`inline-flex h-11 shrink-0 items-center gap-2 rounded-full px-3.5 text-sm transition-colors md:h-9 ${wb === id ? "bg-surface-2 text-fg ring-1 ring-line" : "text-muted hover:text-fg"}`}>
+                  <span className="grid h-5 w-5 place-items-center rounded-full bg-ink/10 text-[9px] font-semibold">{name.slice(0, 1)}</span>
+                  {name}
+                </Link>
+              ))}
+            </span>
+          )}
+        </div>
+      )}
+
+      {view === "build" &&
+        (wp === "klaviyo" || wp === "social" ? (
+          <ChannelBuild line={lineOfPlatform(wp)} clients={chanBy.get(lineOfPlatform(wp)) ?? []} rows={chanRows.filter((r) => r.platform === wp)} />
+        ) : (
+          <ReportBuilder clients={builderClients} quick={quick} yesterday={yesterday} waiting={waitingFor} />
+        ))}
 
       {view !== "build" && (
         <div className="grid gap-6">
@@ -310,39 +389,12 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
             </div>
           )}
 
-          {/* Meta or Google (execs; everyone else is on their own line), then one buyer at a time */}
-          {!(view === "sent" && history.length) && (platforms.length > 1 || people(view === "ready" ? readyReports : sentReports, view === "ready" ? builtRows : sentBuilt).length > 1) && (
-            <div className="flex flex-wrap items-center gap-2">
-              {platforms.length > 1 && (
-                <span className="inline-flex rounded-full border border-line bg-surface p-1">
-                  {platforms.map((x) => (
-                    <Link key={x} href={href({ wp: x, wb: null })} scroll={false} className={`inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm transition-colors md:h-9 ${wp === x ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
-                      {x === "meta" ? <MetaMark size={15} /> : x === "google" ? <GoogleAdsMark size={12} /> : null}
-                      {x === "meta" ? "Meta" : x === "tiktok" ? "TikTok" : "Google Ads"}
-                      <span className="tabular opacity-60">{(view === "ready" ? [...readyReports] : sentReports).filter((r) => plat(r) === x).length + (view === "ready" ? builtRows : sentBuilt).filter((b) => bundlePlats(b).includes(x)).length}</span>
-                    </Link>
-                  ))}
-                </span>
-              )}
-              {people(view === "ready" ? readyReports : sentReports, view === "ready" ? builtRows : sentBuilt).length > 1 && (
-                <span className="no-scrollbar flex max-w-full items-center gap-1 overflow-x-auto">
-                  <Link href={href({ wb: null })} scroll={false} className={`inline-flex h-10 shrink-0 items-center rounded-full px-3.5 text-sm transition-colors md:h-9 ${!wb ? "bg-surface-2 text-fg ring-1 ring-line" : "text-muted hover:text-fg"}`}>
-                    Everyone
-                  </Link>
-                  {people(view === "ready" ? readyReports : sentReports, view === "ready" ? builtRows : sentBuilt).map(([id, name]) => (
-                    <Link key={id} href={href({ wb: id })} scroll={false} className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-full px-3.5 text-sm transition-colors md:h-9 ${wb === id ? "bg-surface-2 text-fg ring-1 ring-line" : "text-muted hover:text-fg"}`}>
-                      <span className="grid h-5 w-5 place-items-center rounded-full bg-ink/10 text-[9px] font-semibold">{name.slice(0, 1)}</span>
-                      {name}
-                    </Link>
-                  ))}
-                </span>
-              )}
-            </div>
-          )}
-
           {view === "ready" &&
-            (monthlyShown.length + weeklyShown.length + builtShown.length + customShown.length === 0 ? (
-              <Empty title="All caught up" body="Nothing waiting to send here. The Monday drafts land each Monday morning and replace last week's; to send one now, build it." />
+            (monthlyShown.length + weeklyShown.length + builtShown.length + customShown.length + chanMonthlyShown.length + chanWeeklyShown.length === 0 ? (
+              <Empty
+                title="All caught up"
+                body={isChan(wp) ? `Nothing waiting to send here. ${PILL[wp]} reports are drafted on the first business days of the month; to draft one now, build it.` : "Nothing waiting to send here. The Monday drafts land each Monday morning and replace last week's; to send one now, build it."}
+              />
             ) : (
               <>
                 {monthlyShown.length > 0 && (
@@ -355,6 +407,20 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
                 {weeklyShown.length > 0 && (
                   <Group title="Monday weekly" count={weeklyShown.length} note={`${weeklyShown.filter((r) => r.status === "draft").length} ready to review · next Monday's replace them`} action={regenAll(weeklyShown.filter((r) => regenable(r, r.client_id)).map((r) => r.id), "Monday weeklies")}>
                     {weeklyShown.map((r) => (
+                      <ReportCard key={r.id} r={card(r)} showOwner={lead} />
+                    ))}
+                  </Group>
+                )}
+                {chanMonthlyShown.length > 0 && (
+                  <Group title="Monthly report" count={chanMonthlyShown.length} note="The month just over · goes out on its own" action={regenAll(chanMonthlyShown.filter((r) => regenable(r, r.client_id)).map((r) => r.id), `${PILL[wp]} monthly reports`)}>
+                    {chanMonthlyShown.map((r) => (
+                      <ReportCard key={r.id} r={card(r)} showOwner={lead} />
+                    ))}
+                  </Group>
+                )}
+                {chanWeeklyShown.length > 0 && (
+                  <Group title="Weekly report" count={chanWeeklyShown.length} note="For clients that ask for a weekly" action={regenAll(chanWeeklyShown.filter((r) => regenable(r, r.client_id)).map((r) => r.id), `${PILL[wp]} weekly reports`)}>
+                    {chanWeeklyShown.map((r) => (
                       <ReportCard key={r.id} r={card(r)} showOwner={lead} />
                     ))}
                   </Group>
@@ -379,19 +445,19 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
 
           {view === "ready" && <SkippedGroup items={skipped} />}
 
-          {view === "sent" && history.length > 0 && (
+          {view === "sent" && historyShown.length > 0 && (
             <section className="grid gap-3">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h3 className="flex items-baseline gap-2 font-heading text-[19px]">
-                  Sent <span className="tabular text-sm text-faint">{history.length}</span>
+                  Sent <span className="tabular text-sm text-faint">{historyShown.length}</span>
                 </h3>
                 <span className="text-xs text-faint">Who sent it, when, where and to whom · the PDF as it went</span>
               </div>
-              <SendHistory items={history} filterable />
+              <SendHistory items={historyShown} filterable />
             </section>
           )}
           {view === "sent" &&
-            !history.length &&
+            !historyShown.length &&
             (sentShown.length + sentBuiltShown.length === 0 ? (
               <Empty title="Nothing sent yet" body="Reports that go out land here for 30 days. Every one stays in the client's history." />
             ) : (

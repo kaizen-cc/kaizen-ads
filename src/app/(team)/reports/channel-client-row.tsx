@@ -6,7 +6,7 @@ import { useState, useTransition } from "react";
 import { toast } from "@/components/toasts";
 import { draftChannelAction, setChannelWeekly } from "./channel-actions";
 
-// One client on the Clients tab: connected ones can draft a report now and choose whether they also get a Monday weekly
+// One client in the Build a report view: connected ones can draft a report now and choose whether they also get a Monday weekly
 // (the monthly is always drafted); the others say what to connect, and take you to the client's page to do it.
 
 type Props = { clientId: string; name: string; slug: string; line: "email" | "social"; state: "connected" | "missing" | "pending" | "failing"; what: string | null; weekly: boolean; latest: { id: string; label: string; status: string } | null };

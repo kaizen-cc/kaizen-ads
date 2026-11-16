@@ -76,3 +76,23 @@ export function GoogleAdsMark({ size = 12 }: { size?: number }) {
     </svg>
   );
 }
+
+/** Email's mark: a filled envelope in amber, readable in light and dark */
+export function EmailMark({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+      <rect x="2" y="5" width="20" height="14" rx="3.2" fill="#f5a524" />
+      <path d="m4.5 8.4 6.1 4.5a2.2 2.2 0 0 0 2.8 0l6.1-4.5" fill="none" stroke="#ffffff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Organic social's mark: a violet speech bubble with a heart */
+export function SocialMark({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+      <path d="M12 2.5c5.2 0 9.5 3.7 9.5 8.4s-4.3 8.4-9.5 8.4c-.9 0-1.8-.1-2.6-.3L5 21.5l1-3.9C4 16.1 2.5 13.7 2.5 10.9 2.5 6.2 6.8 2.5 12 2.5Z" fill="#8b6cf0" />
+      <path d="M12 14.4s-3.600-2.100-3.600-4.600a2 2 0 0 1 3.600-1.200 2 2 0 0 1 3.600 1.200c0 2.500-3.600 4.600-3.600 4.600Z" fill="#ffffff" />
+    </svg>
+  );
+}

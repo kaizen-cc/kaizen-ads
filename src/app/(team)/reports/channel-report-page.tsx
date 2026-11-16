@@ -56,7 +56,7 @@ export async function ChannelReportPage({ id, me }: { id: string; me: Staff }) {
   return (
     <div className="mx-auto grid max-w-6xl gap-5">
       <header className="grid gap-1">
-        <Link href={`/reports${me.isExec ? `?line=${r.platform === "klaviyo" ? "email" : "social"}` : ""}`} className="inline-flex min-h-11 w-fit items-center text-xs text-muted hover:text-fg md:min-h-0">
+        <Link href={`/reports?wp=${r.platform}`} className="inline-flex min-h-11 w-fit items-center text-xs text-muted hover:text-fg md:min-h-0">
           ← Reports
         </Link>
         <h1 className="font-heading text-[28px] leading-tight [overflow-wrap:anywhere]">{client.name}</h1>

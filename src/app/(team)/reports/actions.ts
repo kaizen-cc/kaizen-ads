@@ -353,14 +353,26 @@ export async function regenerate(id: string): Promise<Result> {
 export async function regenerateMany(ids: string[], approvedToo = false): Promise<Result<{ ids: string[] }>> {
   const me = await requireStaff();
   const db = await createClient();
-  const { data } = await db.from("reports").select("id, status, owner_id, kpi_targets(id, client_id, platform, owner_id)").in("id", [...new Set(ids)].slice(0, 200));
+  const want = [...new Set(ids)].slice(0, 200);
+  const sel = "id, status, owner_id, client_id, platform, kpi_targets(id, client_id, platform, owner_id)";
+  const { data: seen } = await db.from("reports").select(sel).in("id", want);
+  // Email and social reports a channel role may not read through the database yet: read by the server, then the same rule in code
+  const found = new Set((seen ?? []).map((r) => r.id as string));
+  const missing = want.filter((id) => !found.has(id));
+  const { data: extra } = missing.length ? await createAdminClient().from("reports").select(sel).in("id", missing) : { data: [] };
   const allowed: string[] = [];
-  for (const r of data ?? []) {
+  for (const r of [...(seen ?? []), ...(extra ?? [])]) {
     const t = r.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
+    // An email or social report: the same access rule as opening it
+    if (r.platform === "klaviyo" || r.platform === "social") {
+      if (!(await canAccessReport(db, me, r as unknown as { owner_id: string | null; client_id: string; platform: string }))) continue;
+      if (r.status === "draft" || r.status === "failed" || (approvedToo && r.owner_id === me.id && r.status === "submitted")) allowed.push(r.id as string);
+      continue;
+    }
     // A buyer's own: the reports they own, and (a secondary buyer) the ones on the account they hold the seat on
     const own = r.owner_id === me.id || (!isExecOrLead(me) && t != null && (await canReportOn(db, me, t)));
     if (!own && !(isExecOrLead(me) && t && (await canReportOn(db, me, t)))) continue;
-    if (r.status === "draft" || r.status === "failed" || (approvedToo && own && r.status === "submitted")) allowed.push(r.id);
+    if (r.status === "draft" || r.status === "failed" || (approvedToo && own && r.status === "submitted")) allowed.push(r.id as string);
   }
   if (!allowed.length) return { ok: false, error: "Nothing here to regenerate (sent and approved reports are kept)." };
   const admin = createAdminClient();
