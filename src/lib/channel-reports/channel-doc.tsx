@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { Circle, Defs, Document, G, Image, Line, LinearGradient, Link, Page, Rect, Stop, Svg, Text, View } from "@react-pdf/renderer";
+import { Circle, Defs, Document, Font, G, Image, Line, LinearGradient, Link, Page, Rect, Stop, Svg, Text, View } from "@react-pdf/renderer";
 import { docKit, KAIZEN_RED, lookFor, notesOf, type Look, type WeeklyBrand } from "@/lib/reports/weekly-doc";
 import { scrubAgency, scrubSections } from "@/lib/reports/white-label";
 import type { Sections } from "@/lib/reports/write";
@@ -9,12 +9,14 @@ import { channelName, fitFont, int, metricsSupport, money, moveOf, pct, postRate
 import { columnKeys, tileViews, type ChannelLayout, type TileView } from "./layout";
 import { wholeMoney } from "./email-message";
 import { grade, RATE_BARS, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
+import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
 
 // A channel client report as a PDF, in the same design as the ads report (weekly-doc.tsx): the client's logo beside
 // Kaizen's, the hero band with the period, the period at a glance, and three takeaways. Email reads like the overview the
 // email team used to pull from Klaviyo, kept to two pages: revenue and orders, each day's campaigns against automated
 // emails, campaign and flow performance against Kaizen's bars with every campaign and the best flows, deliverability and
-// subscriber growth, each against the period before. Social: each platform and the best posts with their pictures.
+// subscriber growth, each against the period before; a multi-location client's report ends with its orders by
+// restaurant on pages of their own. Social: each platform and the best posts with their pictures.
 // Boxes have fixed heights and values are sized to fit them, so nothing can overlap whatever the numbers are. The
 // narrative travels in the message, never in the document. A white label client's carries only the client's brand.
 
@@ -24,6 +26,9 @@ import { grade, RATE_BARS, type Grade, type MessageRow, type Pair, type PerfBloc
  * page, only on the copy saved to the client's Drive. extras: what the owner added by hand (in the notes only).
  */
 export type ChannelPdfInput = { client: string; clientId?: string | null; metrics: EmailMetrics | SocialMetrics; sections: Sections; whiteLabel?: boolean; brand?: WeeklyBrand | null; dashboard?: string | null; layout?: ChannelLayout | null; edit?: boolean; withNotes?: boolean; extras?: string | null };
+
+// Whole words only: a campaign name in a narrow column wraps between words, never "Piz-za" (as the ads report does)
+Font.registerHyphenationCallback((word) => [word]);
 
 const { s, Logo, Arrow, Hot, toneOf, INK, MUTED, FAINT, LINE, INNER, HERO_H, GOOD, BAD } = docKit;
 const AGENCY = "Kaizen Marketing";
@@ -277,6 +282,7 @@ function EmailGlance({ m, layout, hot }: { m: EmailMetrics; layout?: ChannelLayo
     <View style={s.section} wrap={false}>
       <Head title="Performance at a glance" sub={`${m.kind === "monthly" ? "Month-over-month" : "Week-over-week"} movement · green = favorable, red = unfavorable`} />
       <Tiles m={m} tiles={tileViews(m, layout)} hot={hot} height={84} />
+      <MetricSides m={m} />
     </View>
   );
 }
@@ -954,6 +960,185 @@ function Footer({ input }: { input: ChannelPdfInput }) {
   );
 }
 
+// ─── Each conversion metric side by side ───────────────────────────────────
+
+/** Several metrics counting as the sale (Toast orders, a custom POS's...): each one's revenue, conversions and store total, primary first */
+function MetricSides({ m }: { m: EmailMetrics }) {
+  const list = m.byMetric ?? [];
+  if (list.length < 2) return null;
+  const c = m.currency;
+  const prior = priorWord(m);
+  const th = { fontSize: 5.4, color: "#6f7f92", fontFamily: "Helvetica-Bold" as const, textTransform: "uppercase" as const, letterSpacing: 0.25, textAlign: "right" as const };
+  const cellMove = (now: number | null, before: number | null, f: (x: number | null) => string) => (
+    <View style={{ width: 118, alignItems: "flex-end" }}>
+      <Text style={{ fontSize: 8, fontFamily: "Helvetica-Bold", color: INK }}>{f(now)}</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+        <Chip mv={moveOf(now, before)} />
+        <Text style={{ fontSize: 5.8, color: MUTED }}>{before == null ? "No prior number" : `vs ${f(before)}`}</Text>
+      </View>
+    </View>
+  );
+  const cash = (v: number | null) => (v == null ? "–" : wholeMoney(v, c));
+  return (
+    <View style={[s.panel, { paddingVertical: 8, marginTop: GAP }]} wrap={false}>
+      <View style={s.th}>
+        <Text style={[th, { flex: 1, textAlign: "left" }]}>Counts as the sale</Text>
+        <Text style={[th, { width: 118 }]}>Attributed revenue</Text>
+        <Text style={[th, { width: 118 }]}>Conversions</Text>
+        <Text style={[th, { width: 90 }]}>Store total</Text>
+      </View>
+      {list.map((x, i) => (
+        <View key={x.id} style={[s.tr, { paddingVertical: 5, borderBottomWidth: i === list.length - 1 ? 0 : 1 }]}>
+          <View style={{ flex: 1, paddingRight: 8 }}>
+            <Text style={{ fontSize: 7.4, fontFamily: "Helvetica-Bold", color: INK, maxLines: 1, textOverflow: "ellipsis" }}>{x.name}</Text>
+            <Text style={{ fontSize: 5.8, color: FAINT, marginTop: 1.5 }}>{i === 0 ? "Primary · the revenue above" : `Ranked ${i + 1}`}</Text>
+          </View>
+          {cellMove(x.revenue.now, x.revenue.before, cash)}
+          {cellMove(x.conversions.now, x.conversions.before, int)}
+          <Text style={{ width: 90, fontSize: 7.4, textAlign: "right", color: MUTED }}>{cash(x.store.now)}</Text>
+        </View>
+      ))}
+      <Text style={[s.note, { marginTop: 4, paddingHorizontal: 5 }]}>Each metric is attributed by Klaviyo on its own, against the {prior} before; the store total counts every order of that metric, from email or not.</Text>
+    </View>
+  );
+}
+
+// ─── Location breakdown (multi-location clients) ───────────────────────────
+
+const LOC_NAME_W = 112;
+const LOC_TOTAL_W = 52;
+
+/** Part 1: revenue by location (rows, best first) and campaign (columns, the best six in send order, the rest together) */
+function LocationTable({ x, currency }: { x: LocationMetricBreakdown; currency: string | null }) {
+  const n = Math.max(1, x.columns.length);
+  const colW = Math.min(64, (INNER - 16 - 10 - LOC_NAME_W - LOC_TOTAL_W) / n);
+  const th = { fontSize: 5.2, color: "#6f7f92", fontFamily: "Helvetica-Bold" as const };
+  const totals = x.columns.map((_, i) => x.rows.reduce((t, r) => t + (r.cells[i] ?? 0), 0));
+  const size = x.rows.length > 22 ? 6.3 : 6.8;
+  const num = { fontSize: size, textAlign: "right" as const };
+  return (
+    <View style={[s.panel, { paddingVertical: 8, paddingHorizontal: 8 }]} wrap={x.rows.length > 28}>
+      <View style={[s.th, { alignItems: "flex-end", paddingVertical: 5 }]} fixed>
+        <Text style={[th, { width: LOC_NAME_W, textTransform: "uppercase", letterSpacing: 0.25 }]}>Location</Text>
+        {x.columns.map((col) => (
+          <View key={col.id} style={{ width: colW, paddingLeft: 4 }}>
+            <Text style={[th, { textAlign: "right", lineHeight: 1.2, maxLines: 3, textOverflow: "ellipsis", fontFamily: col.id === "other" ? "Helvetica-Oblique" : "Helvetica-Bold" }]}>{col.name}</Text>
+            {col.sendDay ? <Text style={{ fontSize: 5, color: FAINT, textAlign: "right", marginTop: 1 }}>{day(col.sendDay)}</Text> : null}
+          </View>
+        ))}
+        <Text style={[th, { width: LOC_TOTAL_W, textAlign: "right", textTransform: "uppercase", letterSpacing: 0.25 }]}>Total</Text>
+      </View>
+      {x.rows.map((r, i) => (
+        <View key={r.location} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 3.1, paddingHorizontal: 5, backgroundColor: i % 2 ? "#f9fafc" : "#ffffff" }} wrap={false}>
+          <Text style={{ width: LOC_NAME_W, fontSize: size, color: INK, maxLines: 1, textOverflow: "ellipsis", paddingRight: 6 }}>{r.location}</Text>
+          {r.cells.map((v, j) => (
+            <Text key={x.columns[j].id} style={[num, { width: colW, color: v ? INK : FAINT }]}>
+              {v ? wholeMoney(v, currency) : "–"}
+            </Text>
+          ))}
+          <Text style={[num, { width: LOC_TOTAL_W, fontFamily: "Helvetica-Bold", color: INK }]}>{wholeMoney(r.total, currency)}</Text>
+        </View>
+      ))}
+      <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 5, paddingHorizontal: 5, borderTopWidth: 1, borderTopColor: LINE, marginTop: 1 }} wrap={false}>
+        <Text style={{ width: LOC_NAME_W, fontSize: 6.4, fontFamily: "Helvetica-Bold", color: INK, letterSpacing: 0.4 }}>TOTAL</Text>
+        {totals.map((t, j) => (
+          <Text key={x.columns[j].id} style={[num, { width: colW, fontFamily: "Helvetica-Bold", color: INK }]}>
+            {wholeMoney(t, currency)}
+          </Text>
+        ))}
+        <Text style={[num, { width: LOC_TOTAL_W, fontFamily: "Helvetica-Bold", color: INK }]}>{wholeMoney(x.revenue, currency)}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** Part 2: every location by revenue, in two columns so a 40-restaurant client still fits, with the total and one line */
+function LocationRanks({ x, currency }: { x: LocationMetricBreakdown; currency: string | null }) {
+  const half = Math.ceil(x.ranked.length / 2);
+  const cols = x.ranked.length > 8 ? [x.ranked.slice(0, half), x.ranked.slice(half)] : [x.ranked];
+  const w = cols.length === 2 ? (INNER - 18 - GAP) / 2 : INNER - 18;
+  const th = { fontSize: 5.2, color: "#6f7f92", fontFamily: "Helvetica-Bold" as const, textTransform: "uppercase" as const, letterSpacing: 0.25 };
+  const top = x.ranked[0]?.revenue ?? 0;
+  return (
+    <View style={[s.panel, { paddingVertical: 8, paddingHorizontal: 8 }]} wrap={false}>
+      <View style={{ flexDirection: "row", gap: GAP }}>
+        {cols.map((list, ci) => (
+          <View key={ci} style={{ width: w }}>
+            <View style={[s.th, { paddingVertical: 5 }]}>
+              <Text style={[th, { width: 16 }]}>#</Text>
+              <Text style={[th, { flex: 1 }]}>Location</Text>
+              <Text style={[th, { width: 40, textAlign: "right" }]}>Conv.</Text>
+              <Text style={[th, { width: 54, textAlign: "right" }]}>Revenue</Text>
+            </View>
+            {list.map((r) => (
+              <View key={r.location} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 3, paddingHorizontal: 5, borderBottomWidth: 1, borderBottomColor: "#f0f3f6" }} wrap={false}>
+                <Text style={{ width: 16, fontSize: 6.4, color: r.rank <= 3 ? INK : FAINT, fontFamily: r.rank <= 3 ? "Helvetica-Bold" : "Helvetica" }}>{r.rank}</Text>
+                <View style={{ flex: 1, paddingRight: 6 }}>
+                  <Text style={{ fontSize: 6.8, color: INK, maxLines: 1, textOverflow: "ellipsis" }}>{r.location}</Text>
+                  <View style={{ height: 1.6, marginTop: 2.6, borderRadius: 1, backgroundColor: "#edf1f4" }}>
+                    <View style={{ height: 1.6, borderRadius: 1, width: `${top > 0 ? Math.max(2, (r.revenue / top) * 100) : 0}%`, backgroundColor: CAMPAIGN_HEX }} />
+                  </View>
+                </View>
+                <Text style={{ width: 40, fontSize: 6.8, textAlign: "right", color: MUTED }}>{int(r.conversions)}</Text>
+                <Text style={{ width: 54, fontSize: 6.8, textAlign: "right", fontFamily: "Helvetica-Bold", color: INK }}>{wholeMoney(r.revenue, currency)}</Text>
+              </View>
+            ))}
+          </View>
+        ))}
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 5, paddingHorizontal: 5, marginTop: 4, backgroundColor: "#f3f6f9", borderRadius: 5 }}>
+        <Text style={{ flex: 1, fontSize: 6.4, fontFamily: "Helvetica-Bold", color: INK, letterSpacing: 0.4 }}>TOTAL · {x.ranked.length} LOCATIONS</Text>
+        <Text style={{ width: 90, fontSize: 6.8, textAlign: "right", color: MUTED }}>{int(x.conversions)} conversions</Text>
+        <Text style={{ width: 64, fontSize: 6.8, textAlign: "right", fontFamily: "Helvetica-Bold", color: INK }}>{wholeMoney(x.revenue, currency)}</Text>
+      </View>
+      <Text style={[s.note, { paddingHorizontal: 5 }]}>{x.summary}</Text>
+    </View>
+  );
+}
+
+/**
+ * The report's last section for a multi-location client: the overall summary (each metric's conversions and revenue,
+ * and the metrics summed), then per metric Part 1 (revenue by location and campaign) and Part 2 (locations ranked).
+ * Starts on its own page; a table that doesn't fit what's left of a page moves whole to the next one.
+ */
+function LocationSection({ m }: { m: EmailMetrics }) {
+  const b = m.locations;
+  if (!b) return null;
+  const c = m.currency;
+  const boxes = [...b.metrics.map((x) => ({ key: x.metricId, title: x.name, value: wholeMoney(x.revenue, c), sub: `${int(x.conversions)} conversions · ${x.ranked.length} locations` })), ...(b.metrics.length > 1 ? [{ key: "combined", title: "Combined", value: wholeMoney(b.combined.revenue, c), sub: `${int(b.combined.conversions)} conversions` }] : [])];
+  const w = (INNER - 2 - (boxes.length - 1)) / boxes.length;
+  return (
+    <View break>
+      <View style={s.section} wrap={false}>
+        <Head title="Location breakdown" sub={`Campaigns sent ${m.main.label} · revenue and conversions attributed by Klaviyo, by the restaurant the order came from`} />
+        <StatRow height={58}>
+          {boxes.map((x, i) => (
+            <Fragment key={x.key}>
+              {i ? <Rule /> : null}
+              <Stat title={x.title} value={x.value} sub={x.sub} prior={priorWord(m)} width={w} height={58} max={17} color={x.key === "combined" ? CAMPAIGN_HEX : undefined} />
+            </Fragment>
+          ))}
+        </StatRow>
+        {b.metrics.length > 1 ? <Text style={s.note}>{b.note}</Text> : null}
+      </View>
+      {b.metrics.map((x) => (
+        <View key={x.metricId}>
+          <View style={s.section}>
+            <View wrap={false}>
+              <Head title={`${x.name} · revenue by location and campaign`} sub={x.columns.some((col) => col.id === "other") ? "The six best campaigns by revenue, in send order; the rest together" : "Each campaign sent, in send order"} />
+            </View>
+            <LocationTable x={x} currency={c} />
+          </View>
+          <View style={s.section} wrap={false}>
+            <Head title={`${x.name} · locations ranked`} sub="Attributed conversions and revenue by location" />
+            <LocationRanks x={x} currency={c} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 /** A white label client's words cleaned of the agency, whatever the AI or the owner wrote */
 function cleaned(input: ChannelPdfInput): ChannelPdfInput {
   if (!input.whiteLabel) return input;
@@ -968,6 +1153,7 @@ function EmailBody({ m, images, look, layout, hot }: { m: EmailMetrics; images: 
         <LegacyCampaigns m={m} images={images} />
         <LegacyFlows m={m} />
         <LegacyListHealth m={m} />
+        <LocationSection m={m} />
       </>
     );
   const keys = columnKeys("klaviyo", layout);
@@ -978,6 +1164,7 @@ function EmailBody({ m, images, look, layout, hot }: { m: EmailMetrics; images: 
       <CampaignPerformance m={m} keys={keys} hot={hot} />
       <FlowPerformance m={m} keys={keys} hot={hot} />
       <ListAndDelivery m={m} />
+      <LocationSection m={m} />
     </>
   );
 }

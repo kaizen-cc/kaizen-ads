@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ActionForm } from "@/components/action-form";
 import { ChannelSpark } from "@/components/channel-spark";
+import { KlaviyoLocations } from "@/components/klaviyo-locations";
+import { BoardLocations } from "./board-locations";
 import { KlaviyoMetricPicker } from "@/components/klaviyo-metric-picker";
 import { ChannelStatusPill, ConnectCta, Gauge, SupportChips, TONE, mainCaption, mainText, needsConnecting, num, paceLine, signed, targetText } from "@/components/channel-parts";
 import { BAND_TONE, ScoreBadge, ScoreChecks, WeighingDown, checkText } from "@/components/email-score-parts";
@@ -671,6 +673,7 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
               )}
 
               {!connect && r.line === "email" && r.score && <BoardBreakdown clientId={r.clientId} currency={r.currency} />}
+              {!connect && r.line === "email" && r.data !== "missing" && <BoardLocations clientId={r.clientId} />}
 
               {/* The target */}
               <section className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 md:p-5">
@@ -725,6 +728,7 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
                   </p>
                 )}
                 {r.line === "email" && r.data !== "missing" && <KlaviyoMetricPicker clientId={r.clientId} current={r.conversionMetrics ?? []} fallback={r.conversionMetric ?? null} canPick={r.canConnect} />}
+                {r.line === "email" && r.data !== "missing" && <KlaviyoLocations clientId={r.clientId} />}
                 {r.team.length > 0 && <p className="text-xs text-faint">On it: {r.team.map((t) => `${t.name} (${t.seat})`).join(", ")}</p>}
               </section>
             </div>

@@ -2,6 +2,7 @@ import { checkText, pointsLost } from "@/lib/email-score-calc";
 import { emailSupport, int, money, pct, signed, socialName, socialSupport, targetSub, type EmailMetrics, type SocialMetrics } from "./core";
 import { grade, RATE_BARS, type MessageRow, type Pair } from "./email-detail";
 import { periodWords, socialHappenedBullets, whatHappenedBullets } from "./email-message";
+import { locationText } from "@/lib/klaviyo/locations";
 
 // A channel report's numbers as the text the writer and the QA read: every figure the report may quote, with its dates and
 // what it is compared with, in one place so what the AI says and what the PDF draws can never differ.
@@ -35,8 +36,14 @@ export function emailText(m: EmailMetrics): string {
     out.push(sc.weighingDown.length ? `Weighing the score down, biggest first: ${sc.weighingDown.slice(0, 3).map((k) => k.label).join("; ")}.` : "Every check is at or over its bar.");
   }
   if (m.target) out.push(`- Target (${m.target.label}): ${targetSub(m.target, c) ?? "set, no progress yet"}${m.target.actual != null ? `; actual ${m.target.unit === "money" ? money(m.target.actual, c) : m.target.unit === "percent" ? pct(m.target.actual) : int(m.target.actual)}` : ""}`);
+  if (m.byMetric?.length) {
+    out.push(`Each metric that counts as the sale, side by side (primary first; the revenue above is the primary's):`);
+    for (const x of m.byMetric) out.push(line(`${x.name}: attributed revenue`, money(x.revenue.now, c), money(x.revenue.before, c), `; conversions ${int(x.conversions.now)} (before: ${int(x.conversions.before)})${x.store.now != null ? `; the store's own total ${money(x.store.now, c)}` : ""}`));
+  }
+  const locations = m.locations ? locationText(m.locations, c) : null;
   if (m.detail) {
     out.push(detailText(m));
+    if (locations) out.push(locations);
     return out.join("\n");
   }
   out.push(`Campaigns sent in the period: ${m.campaignsTotal} (the best ${m.campaigns.length} by revenue)`);
@@ -50,6 +57,7 @@ export function emailText(m: EmailMetrics): string {
   out.push(`Revenue by week (ending ${m.main.end}): ${m.trend.map((t) => `${t.label} ${money(t.value, c)}`).join(", ")}`);
   if (m.gaps.length) out.push(`Days with no data: ${m.gaps.join(", ")}`);
   out.push(`Supporting: ${emailSupport(m).map((s) => `${s.label} ${s.value}`).join("; ")}`);
+  if (locations) out.push(locations);
   return out.join("\n");
 }
 

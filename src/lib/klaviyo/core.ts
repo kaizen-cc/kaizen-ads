@@ -13,7 +13,7 @@ export const KLAVIYO_BASE = "https://a.klaviyo.com";
 
 /** The scopes Kaizen reads with today. Keys are made with Full Access so the email team can build and send from here later
  *  without new keys; nothing writes to Klaviyo until that's built and switched on. */
-export const KLAVIYO_SCOPES = ["accounts:read", "campaigns:read", "flows:read", "lists:read", "segments:read", "metrics:read", "templates:read"] as const;
+export const KLAVIYO_SCOPES = ["accounts:read", "campaigns:read", "flows:read", "lists:read", "segments:read", "metrics:read", "events:read", "templates:read"] as const;
 
 export const BACKFILL_DAYS = 90;
 
@@ -463,11 +463,12 @@ export function plainKlaviyoError(raw: string | null | undefined, status?: strin
  * A part of the last read that failed while the rest worked (the daily series, the store's revenue), from the sync
  * memo: a warning on Sync health instead of silently writing nothing. null when every part read.
  */
-export function partialSyncWarning(memo: { seriesError?: string | null; storeError?: string | null } | null | undefined): KlaviyoPlainError | null {
+export function partialSyncWarning(memo: { seriesError?: string | null; storeError?: string | null; locationError?: string | null } | null | undefined): KlaviyoPlainError | null {
   if (!memo) return null;
   if (memo.seriesError)
     return { message: `Revenue by day couldn't be read (${memo.seriesError.slice(0, 120)}); the 30-day totals are estimated from campaigns and flows`, fix: "It tries again on the next run. If it keeps failing, check the key has Read access to Flows.", severity: "warn" };
   if (memo.storeError) return { message: `The store's revenue (Placed Order) couldn't be read (${memo.storeError.slice(0, 120)}), so share of revenue is missing`, fix: "It tries again on the next run. If it keeps failing, check the key has Read access to Metrics.", severity: "warn" };
+  if (memo.locationError) return { message: `The orders by location couldn't all be read (${memo.locationError.slice(0, 140)})`, fix: "It tries again on the next daily read. If it keeps failing, check the key has Read access to Events and the location property picked on the Klaviyo card.", severity: "warn" };
   return null;
 }
 

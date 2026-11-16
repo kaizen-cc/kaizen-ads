@@ -55,7 +55,7 @@ export default async function MonthlyRecap({ params }: PageProps<"/r/[token]">) 
     // An email or social report sent on its own has its own page
     const channel = await channelOf(token);
     if (!channel) notFound();
-    return <ChannelRecap r={{ client: channel.client, whiteLabel: channel.whiteLabel, label: channel.label, title: channel.title, token, metrics: channel.input.metrics, sections: channel.input.sections }} />;
+    return <ChannelRecap r={{ client: channel.client, whiteLabel: channel.whiteLabel, label: channel.label, title: channel.title, token, metrics: channel.input.metrics, sections: channel.input.sections, layout: channel.input.layout ?? null }} />;
   }
   const ready = bundle.ready && bundle.input.parts.length > 0;
   const parts = bundle.input.parts;

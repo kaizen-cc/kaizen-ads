@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { BAND_TONE, ScoreBadge, ScoreChecks, WeighingDown } from "@/components/email-score-parts";
-import { int, metricsSupport, metricsTiles, money, pct, signed, socialName, takeawaysFor, postRateText, type ChannelTile, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
+import { int, metricsSupport, money, pct, signed, socialName, takeawaysFor, postRateText, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
+import { tileViews, type ChannelLayout, type TileView } from "@/lib/channel-reports/layout";
 import type { Sections } from "@/lib/reports/write";
 import { AdImage } from "./ad-image";
 
@@ -10,13 +11,14 @@ import { AdImage } from "./ad-image";
 const LIGHT = { colorScheme: "light", "--brand": "#c8102e", "--brand-hover": "#a60d26", "--brand-text": "#c8102e", "--brand-soft": "rgba(200, 16, 46, 0.07)", "--bg": "#fbfbfa", "--surface": "#ffffff", "--surface-2": "#f3f3f2", "--border": "#e8e8e6", "--fg": "#0b0b0c", "--fg-muted": "#5f5f66", "--fg-faint": "#9a9aa1", "--ok": "#16794c", "--bad": "#c8102e" } as CSSProperties;
 const NEUTRAL = { ...LIGHT, "--brand": "#475569", "--brand-hover": "#334155", "--brand-text": "#475569", "--brand-soft": "rgba(71, 85, 105, 0.07)" } as CSSProperties;
 
-type Shared = { client: string; whiteLabel: boolean; label: string; title: string; token: string; metrics: EmailMetrics | SocialMetrics; sections: Sections };
+type Shared = { client: string; whiteLabel: boolean; label: string; title: string; token: string; metrics: EmailMetrics | SocialMetrics; sections: Sections; /** The tiles picked in the studio, as on the PDF (null: the defaults) */ layout?: ChannelLayout | null };
 
-const tone = (t: ChannelTile["move"]) => (!t ? "text-faint" : t.tone === "good" ? "text-ok" : t.tone === "bad" ? "text-bad" : "text-muted");
+const tone = (t: TileView["move"]) => (!t ? "text-faint" : t.tone === "good" ? "text-ok" : t.tone === "bad" ? "text-bad" : "text-muted");
 
 export function ChannelRecap({ r }: { r: Shared }) {
   const m = r.metrics;
-  const tiles = metricsTiles(m);
+  // The tiles chosen in the studio, the same ones the PDF draws
+  const tiles = tileViews(m, r.layout);
   const takeaways = takeawaysFor(m, r.sections.takeaways);
   return (
     <div style={r.whiteLabel ? NEUTRAL : LIGHT} className="min-h-screen overflow-x-clip bg-bg pb-[env(safe-area-inset-bottom)] text-fg">
@@ -40,13 +42,17 @@ export function ChannelRecap({ r }: { r: Shared }) {
       </section>
 
       <main className="mx-auto grid max-w-5xl gap-14 px-4 pb-20 sm:px-8">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className={`grid grid-cols-2 gap-3 ${tiles.length > 4 ? "lg:grid-cols-3" : "lg:grid-cols-4"}`}>
           {tiles.map((t) => (
-            <div key={t.label} className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 sm:p-5">
+            <div key={t.key} className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 sm:p-5">
               <p className="text-[11px] tracking-[0.08em] text-muted uppercase">{t.label}</p>
               <p className="mt-2 font-heading text-[22px] tracking-tight tabular-nums [overflow-wrap:anywhere] sm:text-3xl">{t.value}</p>
               {t.sub && <p className="mt-1 text-[13px] text-muted">{t.sub}</p>}
-              <p className={`mt-3 text-[13px] font-medium ${tone(t.move)}`}>{t.move ? `${t.move.up ? "+" : "-"}${t.move.pct} vs ${m.compare.label}` : "No comparison"}</p>
+              {t.kind === "split" ? (
+                <p className="mt-3 text-[13px] text-muted">Campaigns / automated emails</p>
+              ) : t.kind === "stat" ? (
+                <p className={`mt-3 text-[13px] font-medium ${tone(t.move)}`}>{t.move ? `${t.move.up ? "+" : "-"}${t.move.pct} vs ${m.compare.label}` : "No comparison"}</p>
+              ) : null}
             </div>
           ))}
         </div>
@@ -93,8 +99,25 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
 
 function EmailBody({ m }: { m: EmailMetrics }) {
   const sc = m.score && m.score.unmeasured.length < m.score.checks.length ? m.score : null;
+  const sides = m.byMetric && m.byMetric.length > 1 ? m.byMetric : null;
   return (
     <>
+      {sides && (
+        <Block title="By what counts as a sale">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {sides.map((x, i) => (
+              <div key={x.id} className="rounded-xl border border-line bg-surface p-5">
+                <p className="text-[11px] tracking-[0.08em] text-faint uppercase">{i === 0 ? "Primary" : `Ranked ${i + 1}`}</p>
+                <p className="mt-1 font-heading text-base [overflow-wrap:anywhere]">{x.name}</p>
+                <p className="mt-2 font-heading text-2xl tabular-nums">{money(x.revenue.now, m.currency)}</p>
+                <p className="mt-1 text-[13px] text-muted tabular-nums">
+                  {int(x.conversions.now)} conversions{x.revenue.before != null ? ` · ${money(x.revenue.before, m.currency)} the period before` : ""}
+                </p>
+              </div>
+            ))}
+          </div>
+        </Block>
+      )}
       {sc && (
         <Block title="Email health score">
           <div className="grid gap-5 rounded-xl border border-line bg-surface p-5 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_minmax(0,1fr)]">
@@ -154,6 +177,35 @@ function EmailBody({ m }: { m: EmailMetrics }) {
           </div>
         </div>
       </Block>
+      {m.locations && (
+        <Block title="By location">
+          <div className="grid gap-4">
+            {m.locations.metrics.length > 1 && <p className="text-[13px] text-muted">{m.locations.note}</p>}
+            {m.locations.metrics.map((x) => (
+              <div key={x.metricId} className="rounded-xl border border-line bg-surface p-5">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="font-heading text-base">{x.name}</p>
+                  <p className="text-[13px] text-muted tabular-nums">
+                    {money(x.revenue, m.currency)} · {int(x.conversions)} conversions
+                  </p>
+                </div>
+                <ol className="mt-3 grid gap-x-8 sm:grid-cols-2">
+                  {x.ranked.map((l) => (
+                    <li key={l.location} className="flex items-baseline justify-between gap-3 border-b border-line py-1.5 text-[13px]">
+                      <span className="min-w-0 truncate">
+                        <span className="mr-2 text-faint tabular-nums">{l.rank}</span>
+                        {l.location}
+                      </span>
+                      <span className="shrink-0 font-medium tabular-nums">{money(l.revenue, m.currency)}</span>
+                    </li>
+                  ))}
+                </ol>
+                <p className="mt-3 text-xs text-faint">{x.summary}</p>
+              </div>
+            ))}
+          </div>
+        </Block>
+      )}
     </>
   );
 }

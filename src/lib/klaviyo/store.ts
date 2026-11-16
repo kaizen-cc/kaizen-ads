@@ -176,7 +176,7 @@ const MAX_SIZES = 8;
 const NO_ORDERS = "No Placed Order metric in this account yet, so revenue can't be read (campaigns, flows and lists still are).";
 
 /** Each client's last read, for Sync health (sync_state "klaviyo:<client id>"): when, which window, the last full read, the error */
-type SyncMemo = { window?: KlaviyoWindow; fullAt?: string | null; error?: string | null; account?: string | null; seriesError?: string | null; storeError?: string | null };
+type SyncMemo = { window?: KlaviyoWindow; fullAt?: string | null; error?: string | null; account?: string | null; seriesError?: string | null; storeError?: string | null; locationError?: string | null };
 const memoSource = (clientId: string) => `klaviyo:${clientId}`;
 
 /** Klaviyo refusing to report on the conversion metric (some integrations' orders can't be): not a key problem */
@@ -615,12 +615,14 @@ export async function syncKlaviyo(admin: SupabaseClient, clientId: string, opts:
   }
   try {
     const out = window === "full" ? await readFull(admin, conn, key) : await readRecent(admin, conn, key);
+    // Once a day: a multi-location client's orders by restaurant, or the weekly check that suggests the flag (never fails the read)
+    const locationError = window === "full" ? await import("./location-store").then((l) => l.locationStep(admin, clientId, key)).catch((e) => `Locations: ${redactKey(errText(e), key).slice(0, 200)}`) : (memo?.locationError ?? null);
     const now = new Date().toISOString();
     await admin
       .from("klaviyo_connections")
       .update({ last_synced_at: now, updated_at: now, status: "active", last_error: out.metricId ? null : NO_ORDERS, ...(window === "full" && out.metricId && !conn.backfilled_at ? { backfilled_at: now } : {}) })
       .eq("client_id", clientId);
-    await saveMemo(admin, clientId, { window, fullAt: window === "full" ? now : lastFullAt, error: null, account: conn.account_name, seriesError: out.seriesError, storeError: out.storeError });
+    await saveMemo(admin, clientId, { window, fullAt: window === "full" ? now : lastFullAt, error: null, account: conn.account_name, seriesError: out.seriesError, storeError: out.storeError, locationError });
     if (window === "full") await readProgress(admin, clientId)(100, "Done", { done: true });
     return { client: clientId, ok: true, window, campaigns: out.campaigns, flows: out.flows, audiences: out.audiences, days: out.days };
   } catch (e) {

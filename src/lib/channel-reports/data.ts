@@ -5,7 +5,9 @@ import { keyFlowCoverage, shiftDay, type CampaignLite, type DailyRow as EmailDay
 import type { DailyRow as SocialDay } from "@/lib/social/insights";
 import type { Platform, PostFormat, SocialPost } from "@/lib/social/core";
 import { upcomingItems, type FlowDay, type Upcoming } from "./email-detail";
-import { scoreSnapshot, campaignsIn, channelPeriods, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type SocialMetrics, type TargetRow, type Window } from "./core";
+import { scoreSnapshot, campaignsIn, channelPeriods, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type MetricSide, type SocialMetrics, type TargetRow, type Window } from "./core";
+import { conversionMetricsOf, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
+import { locationBreakdown, type LocationBreakdown } from "@/lib/klaviyo/locations";
 
 // What a channel report reads: the numbers the client page already shows (klaviyo_* and social_* tables, filled by the
 // syncs), gathered for the report's own dates and worked out by core.ts. Read with the admin client, after the caller has
@@ -177,11 +179,89 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     sizes: hist,
     upcoming,
   });
-  m.target = targetLine("email", await readTarget(admin, clientId, "email"), { kind, main, revenue: m.now.revenue });
+  // The target the board paces against: last month + 10% by itself, a higher one typed on the board wins
+  m.target = targetLine("email", await emailTarget(admin, clientId, main), { kind, main, revenue: m.now.revenue });
+  // Several metrics counting as the sale: each one's numbers side by side, primary first
+  const ranked = await rankedMetrics(admin, clientId);
+  if (ranked.length > 1) m.byMetric = await metricSides(admin, clientId, ranked, main, compare).catch(() => null);
+  // A multi-location client's orders by restaurant, for the campaigns sent in the period (the report's last section)
+  const loc = await locationsFor(admin, clientId, main, campaigns, conn?.currency as string | null).catch(() => undefined);
+  if (loc) {
+    m.locations = loc.breakdown;
+    m.locationAttributed = loc.attributed;
+  }
   // The account score, as of now (its own 30 days), so the report can say what is lifting it and what is weighing it down
   const sc = await loadEmailScore(admin, clientId).catch(() => null);
   if (sc) m.score = scoreSnapshot(sc);
   return m;
+}
+
+/** The month a report counts against: the month its period ends in, and the calendar month before it */
+function targetMonth(main: Window) {
+  const start = `${main.end.slice(0, 8)}01`;
+  const prevEnd = shiftDay(start, -1);
+  return { start, prevStart: `${prevEnd.slice(0, 8)}01`, prevEnd };
+}
+
+/**
+ * The email revenue target as the Email board paces it (src/lib/email-metrics.ts): last month's attributed revenue + 10%,
+ * worked out by itself, unless the target typed on the board is higher. Null with neither.
+ */
+async function emailTarget(admin: SupabaseClient, clientId: string, main: Window): Promise<TargetRow | null> {
+  const manual = await readTarget(admin, clientId, "email");
+  const t = targetMonth(main);
+  const { data, error } = await admin.from("klaviyo_daily").select("revenue").eq("client_id", clientId).gte("date", t.prevStart).lte("date", t.prevEnd).limit(40);
+  const last = !error && data?.length ? data.reduce((s, d) => s + num(d.revenue), 0) : null;
+  // A manual target on another metric (an older row) stays as it was
+  if (manual && !/revenue|sales/i.test(manual.metric)) return manual;
+  const rt = revenueTarget(last, manual?.target ?? null);
+  return rt.target == null ? null : { metric: "revenue", target: rt.target, source: rt.source };
+}
+
+/** The ranked conversion metrics on the connection, primary first ([] before that migration) */
+async function rankedMetrics(admin: SupabaseClient, clientId: string): Promise<ConversionMetric[]> {
+  const { data, error } = await admin.from("klaviyo_connections").select("conversion_metric_id, conversion_metric_name, conversion_metrics").eq("client_id", clientId).maybeSingle();
+  if (error || !data) return [];
+  return conversionMetricsOf(data.conversion_metrics, { id: (data.conversion_metric_id as string | null) ?? null, name: (data.conversion_metric_name as string | null) ?? null });
+}
+
+/** Each ranked metric's attributed revenue, conversions and store total over the period and the one before (klaviyo_metric_daily) */
+async function metricSides(admin: SupabaseClient, clientId: string, metrics: ConversionMetric[], main: Window, compare: Window): Promise<MetricSide[] | null> {
+  const from = [main.start, compare.start].sort()[0];
+  const { data, error } = await admin.from("klaviyo_metric_daily").select("metric_id, date, revenue, conversions, store_revenue").eq("client_id", clientId).in("metric_id", metrics.map((m) => m.id)).gte("date", from).lte("date", main.end).limit(2000);
+  if (error || !data?.length) return null;
+  const sumOf = (id: string, w: Window, k: "revenue" | "conversions" | "store_revenue") => {
+    const rows = data.filter((d) => d.metric_id === id && (d.date as string) >= w.start && (d.date as string) <= w.end);
+    if (!rows.length || (k === "store_revenue" && rows.every((d) => d.store_revenue == null))) return null;
+    return Math.round(rows.reduce((s, d) => s + num(d[k]), 0) * 100) / 100;
+  };
+  const pairOf = (id: string, k: "revenue" | "conversions" | "store_revenue") => ({ now: sumOf(id, main, k), before: sumOf(id, compare, k) });
+  return metrics.map((m) => ({ id: m.id, name: m.name, revenue: pairOf(m.id, "revenue"), conversions: pairOf(m.id, "conversions"), store: pairOf(m.id, "store_revenue") }));
+}
+
+/**
+ * A flagged client's location breakdown for the campaigns sent in the period, with what Klaviyo attributes to the same
+ * campaigns per metric (for the QA's check). Undefined for a client that isn't multi-location.
+ */
+async function locationsFor(admin: SupabaseClient, clientId: string, main: Window, campaigns: CampaignLite[], currency: string | null): Promise<{ breakdown: LocationBreakdown | null; attributed: Record<string, number> } | undefined> {
+  const { locationConfig, readLocationRows } = await import("@/lib/klaviyo/location-store");
+  const cfg = await locationConfig(admin, clientId);
+  if (!cfg) return undefined;
+  const sent = campaignsIn(campaigns, main.start, main.end);
+  const rows = await readLocationRows(admin, clientId, cfg.metrics.map((m) => m.id), sent.map((c) => c.id), main.start);
+  const breakdown = rows ? locationBreakdown({ metrics: cfg.metrics, rows, campaigns: sent.map((c) => ({ id: c.id, name: c.name, sendDay: new Date(c.sendTime ?? "").toLocaleDateString("en-CA", { timeZone: "America/New_York" }) })), maxColumns: 6, currency }) : null;
+  // The primary's campaign revenue is on the campaigns; the others' in klaviyo_campaign_metrics
+  const attributed: Record<string, number> = {};
+  const primary = cfg.metrics[0];
+  const ids = sent.map((c) => c.id);
+  const { data: per } = ids.length ? await admin.from("klaviyo_campaign_metrics").select("metric_id, campaign_id, revenue").eq("client_id", clientId).in("campaign_id", ids).in("metric_id", cfg.metrics.map((m) => m.id)) : { data: [] };
+  for (const m of cfg.metrics) {
+    const rowsFor = (per ?? []).filter((r) => r.metric_id === m.id);
+    if (rowsFor.length) attributed[m.id] = rowsFor.reduce((s, r) => s + num(r.revenue), 0);
+  }
+  const ranked = await rankedMetrics(admin, clientId);
+  if (primary && ranked[0]?.id === primary.id && attributed[primary.id] == null) attributed[primary.id] = sent.reduce((s, c) => s + c.revenue, 0);
+  return { breakdown, attributed };
 }
 
 // ─── Social ────────────────────────────────────────────────────────────────

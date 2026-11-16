@@ -5,7 +5,8 @@ import { BENCHMARKS, deliverabilityOutliers, pulseWindow, type CampaignLite, typ
 import { postRate, withRates, windowOf, type DailyRow as SocialDay, type PostView, type Window as SocialWindow } from "@/lib/social/insights";
 import type { Platform as SocialPlatformKey, PostFormat, SocialPost } from "@/lib/social/core";
 import type { RefreshNote } from "@/lib/reports/refresh-core";
-import { emailDetail, type EmailDetail, type FlowDay, type Upcoming } from "./email-detail";
+import { emailDetail, type EmailDetail, type FlowDay, type Pair, type Upcoming } from "./email-detail";
+import { locationChecks, type LocationBreakdown } from "@/lib/klaviyo/locations";
 
 // Email (Klaviyo) and organic social reports as plain functions, free of server code and the database so they are tested:
 // which reports exist (platform, line, cadence), the report's dates (the month just over against the month before, or the
@@ -93,7 +94,7 @@ const daysIn = (r: Range) => Math.round((Date.parse(`${r.end}T12:00:00Z`) - Date
 export type TargetLine = { metric: string; label: string; unit: "money" | "percent" | "count"; target: number; actual: number | null; /** actual over target, a fraction */ progress: number | null; basis: string };
 
 /** What the team set for a client's line (public.channel_targets): a metric name and a number */
-export type TargetRow = { metric: string; target: number };
+export type TargetRow = { metric: string; target: number; /** Where the number came from: last month + 10% by itself, or typed on the board */ source?: "floor" | "manual" | null };
 
 type Dim = { start: string; end: string };
 /** 7-day buckets ending on the report's last day, oldest first: the trend the PDF draws */
@@ -166,7 +167,16 @@ export type EmailMetrics = {
   upcoming?: Upcoming[];
   /** Numbers the owner stated in the chat, over the synced ones (stated.ts) */
   stated?: StatedMark;
+  /** Each ranked conversion metric side by side, primary first (only when more than one is ranked) */
+  byMetric?: MetricSide[] | null;
+  /** A multi-location client's orders by restaurant for the campaigns sent (undefined: not multi-location; null: flagged, nothing read) */
+  locations?: LocationBreakdown | null;
+  /** What Klaviyo attributes to the same campaigns per metric, for the QA's check that the locations add up */
+  locationAttributed?: Record<string, number>;
 };
+
+/** One ranked conversion metric's numbers for the period and the one before: attributed revenue and conversions, and the store's own total */
+export type MetricSide = { id: string; name: string; revenue: Pair; conversions: Pair; store: Pair };
 
 /** Which numbers on a report were stated by its owner, and where they read them */
 export type StatedMark = { source: string; keys: string[] };
@@ -487,7 +497,10 @@ export function targetLine(line: ChannelLine, row: TargetRow | null, m: { kind: 
   const name = row.metric.toLowerCase().replace(/[^a-z]/g, "");
   const share = m.kind === "monthly" ? 1 : Math.min(1, daysIn(m.main) / 30.4);
   const make = (label: string, unit: TargetLine["unit"], target: number, actual: number | null, b: string): TargetLine => ({ metric: row.metric, label, unit, target: round(target, 4), actual, progress: actual != null && target > 0 ? actual / target : null, basis: b });
-  if (line === "email" && /revenue|sales/.test(name)) return make("Attributed revenue", "money", row.target * share, m.revenue ?? null, m.kind === "monthly" ? "monthly target" : "weekly share of the monthly target");
+  if (line === "email" && /revenue|sales/.test(name)) {
+    const what = row.source === "floor" ? "monthly target (last month +10%)" : "monthly target";
+    return make("Attributed revenue", "money", row.target * share, m.revenue ?? null, m.kind === "monthly" ? what : `weekly share of the ${what}`);
+  }
   if (line === "social" && /engagement|rate/.test(name)) {
     // Stored as a percent (3) or a fraction (0.03): both read as the same rate
     const frac = row.target > 1 ? row.target / 100 : row.target;
@@ -656,6 +669,8 @@ export function dataFlags(m: EmailMetrics | SocialMetrics): DataFlag[] {
     const missing = m.keyFlows.filter((k) => k.state === "missing").map((k) => k.label);
     if (missing.length) add("check", `Key flows missing: ${missing.join(", ")}.`, "Mention them in what's next only if the team has planned them.");
     if (m.target && m.target.progress != null && m.target.progress < 0.7) add("check", `Revenue is at ${Math.round(m.target.progress * 100)}% of its target.`, "Say where it stands against the target and the plan to close it.");
+    if (m.locations === null && now.campaignsSent > 0) add("alert", "This client is broken down by location, but no orders with a location were read for the campaigns in the period.", "Check the location property on the client's Klaviyo card and Sync health before sending; the report's location section is left out.");
+    for (const t of locationChecks(m.locations ?? null, m.locationAttributed ?? {}, m.currency)) add("check", t, "Check the location property picked on the Klaviyo card, or say in the report that some orders carry no location.");
   } else {
     const { now, before } = m;
     if (now.posts === 0) add("alert", "Nothing was published in the period.", "If posting paused, the report should say so and when it resumes.");
@@ -685,6 +700,7 @@ export function quotedLines(m: EmailMetrics | SocialMetrics): Line[] {
       { key: "click", label: "Click rate", kind: "ratio", value: finite(m.now.clickRate) },
       { key: "net", label: "Net new subscribers", kind: "count", value: finite(m.list.net) },
       { key: "prevRevenue", label: "Revenue in the period before", kind: "money", value: finite(m.before.revenue) },
+      ...(m.locations ? [{ key: "locations", label: "Revenue by location (every metric summed)", kind: "money" as const, value: finite(m.locations.combined.revenue) }] : []),
     ];
   }
   return [

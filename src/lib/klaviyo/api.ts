@@ -1,6 +1,7 @@
 import "server-only";
 import { addStats, KLAVIYO_BASE,KLAVIYO_REVISION, REPORT_STATS, SERIES_STATS, errorText, nextLink, parseAccount, parseAudiences, parseCampaigns, parseFlows, parseSeriesReport, parseValuesReport, metricIds, metricList, parseCampaignMessages, placedOrderId, redactKey, reportWait, retryDecision, type AudienceInfo, type CampaignInfo, type FlowInfo, type KlaviyoAccount, type KlaviyoMetric, type SeriesRow, type ValuesRow } from "./core";
 import { aggregateBody, parseMetricAggregate, type DayValue } from "./insights";
+import { BY_MESSAGE } from "./locations";
 
 // Klaviyo's REST API, read only: GET calls and the Reporting API's POST queries (which read, never change anything).
 // One private key per client account. Every call carries the pinned revision, waits and retries on 429 (Retry-After)
@@ -215,4 +216,41 @@ async function reportPages(key: string, path: string, body: unknown, parse: (jso
     next = nextLink(json);
   }
   return out;
+}
+
+// ─── Locations (multi-location clients) ────────────────────────────────────
+
+/**
+ * A metric's events between two instants with the message each one is attributed to (include=attributions), one page
+ * at a time: pass the first call's options, then the `next` link it gives back. The Events API's own limits (350 a
+ * second, 3,500 a minute) are far above this; 429s still wait and retry in call().
+ */
+export async function metricEventsPage(key: string, at: string | { metricId: string; fromIso: string; toIso: string; size?: number; attributions?: boolean }): Promise<{ json: unknown; next: string | null }> {
+  let path: string;
+  if (typeof at === "string") path = at;
+  else {
+    const q = new URLSearchParams({ filter: `equals(metric_id,'${at.metricId}'),greater-or-equal(datetime,${at.fromIso}),less-than(datetime,${at.toIso})`, "fields[event]": "datetime,event_properties", "page[size]": String(at.size ?? 200), sort: "datetime" });
+    if (at.attributions !== false) q.set("include", "attributions");
+    path = `/api/events/?${q}`;
+  }
+  const json = await call(key, path);
+  return { json, next: nextLink(json) };
+}
+
+/**
+ * One metric's attributed conversions grouped by message and a custom event property, daily, in the account's time
+ * zone. Klaviyo documents a fixed list for `by` that names no custom property, so this may be refused (a 4xx, thrown
+ * as KlaviyoError) or answered without the location (each page is checked by the caller), and the Events API is read instead.
+ */
+export async function locationAggregate(key: string, metricId: string, prop: string, from: string, to: string, tz: string | null): Promise<unknown[]> {
+  const body = aggregateBody(metricId, from, to, tz) as { data: { type: string; attributes: Record<string, unknown> } };
+  body.data.attributes.by = [BY_MESSAGE, prop];
+  const pages: unknown[] = [];
+  let next: string | null = "/api/metric-aggregates/";
+  for (let i = 0; next && i < 20; i++) {
+    const json = await call(key, next, { method: "POST", body });
+    pages.push(json);
+    next = nextLink(json);
+  }
+  return pages;
 }
