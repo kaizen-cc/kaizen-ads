@@ -18,7 +18,7 @@ import { jointMessage, jointNote, type JointInfo, type JointNote } from "@/lib/r
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { ManualResults, type ManualEntered } from "./manual-results";
 import { reportFileName, type DriveSave } from "@/lib/reports/drive-save-core";
-import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveManualResults, saveReport, saveToDrive, sendMyPartNow, sendReport, setCampaignLeftOut, setReportCampaignExcluded } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, editSentReport, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveManualResults, saveReport, saveToDrive, sendMyPartNow, sendReport, setCampaignLeftOut, setReportCampaignExcluded } from "./actions";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
@@ -478,6 +478,17 @@ export function ReportStudio({
       const r = await reopenReport(report.id);
       if (!r.ok) return setNote({ ok: false, text: r.error });
       setStep("report");
+      router.refresh();
+    });
+
+  // Already sent, one more change: back to review to edit and send the new version as an update
+  const editAgain = () =>
+    start(async () => {
+      const r = await editSentReport(report.id);
+      if (!r.ok) return setNote({ ok: false, text: r.error });
+      setSentHere(false);
+      setNote({ ok: true, text: "Open to edit. Make the changes, then send the update: the last send stays in the history." });
+      pushParams({ step: null });
       router.refresh();
     });
 
@@ -1710,6 +1721,11 @@ export function ReportStudio({
               <button type="button" onClick={() => void saveDrive()} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-line px-4 text-sm text-fg transition-colors hover:border-faint">
                 {ICONS.drive}
                 {driveSave ? "Save a new version to Drive" : "Save to Google Drive"}
+              </button>
+            )}
+            {!monthly && !built && !rider && (
+              <button type="button" disabled={busy} onClick={editAgain} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-fg px-4 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50">
+                Edit and send an update
               </button>
             )}
             <a href={history[0] ? `/api/reports/sends/${history[0].id}/pdf` : `/api/reports/${report.id}/pdf${joint ? "?whole=1" : ""}`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm text-muted underline-offset-4 hover:text-fg hover:underline">

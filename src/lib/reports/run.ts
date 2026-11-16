@@ -11,7 +11,8 @@ import { renderReportPdf } from "./pdf";
 import { jointMessage, metaFirst, recapIntro, riderReady, tiktokJoins, waitingParts, type QueueTarget } from "./joint-core";
 import { tiktokConfigured } from "@/lib/tiktok/core";
 import { periodsFor, type ReportMetrics } from "./metrics";
-import { platformName } from "./format";
+import { platformName, type ReportLayout } from "./format";
+import { layoutOf } from "./share";
 import { draftReport, type Sections } from "./write";
 import { freshen } from "./regenerate";
 import { reportListeners } from "./access";
@@ -133,10 +134,10 @@ export async function draftQueued(admin: SupabaseClient, budgetMs = 600_000, opt
   return done;
 }
 
-type Loaded = { id: string; kind: "weekly" | "monthly" | "custom"; platform: "meta" | "google" | "tiktok"; period_start: string; period_end: string; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extras: string | null; client_id: string; bundle_id: string | null; owner: string | null; owner_id: string | null; client: { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean; client_type?: string | null } };
+type Loaded = { id: string; kind: "weekly" | "monthly" | "custom"; platform: "meta" | "google" | "tiktok"; period_start: string; period_end: string; message: string | null; sections: Sections | null; metrics: ReportMetrics | null; extras: string | null; status: string; layout: ReportLayout | null; extra_metrics: ReportMetrics[] | null; kpi_targets: { report_layout: ReportLayout | null } | null; client_id: string; bundle_id: string | null; owner: string | null; owner_id: string | null; client: { name: string; slack_channel_id: string | null; slug?: string; portal_live?: boolean; client_type?: string | null } };
 
 async function load(admin: SupabaseClient, id: string): Promise<Loaded> {
-  const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, message, sections, metrics, extras, client_id, bundle_id, owner_id, clients(name, slack_channel_id, slug, portal_live, client_type), profiles!reports_owner_id_fkey(full_name)").eq("id", id).single();
+  const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, status, message, sections, metrics, extra_metrics, extras, layout, kpi_targets(report_layout), client_id, bundle_id, owner_id, clients(name, slack_channel_id, slug, portal_live, client_type), profiles!reports_owner_id_fkey(full_name)").eq("id", id).single();
   if (!r) throw new Error("Report not found");
   return { ...(r as unknown as Loaded), owner: (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null, client: r.clients as unknown as Loaded["client"] };
 }
@@ -167,7 +168,8 @@ export async function reportPdf(admin: SupabaseClient, reports: Loaded[]) {
     // An on-demand recap reads like a weekly one (its period, against the days before it)
     kind: first.kind === "monthly" ? "monthly" : "weekly",
     periodLabel: first.kind === "monthly" ? monthOf(first.period_start) : label(first.period_start, first.period_end),
-    parts: reports.filter((r) => r.metrics && r.sections).map((r) => ({ platform: r.platform, buyer: r.owner, metrics: r.metrics!, sections: r.sections!, extras: r.extras })),
+    // The buyer's tiles, key metrics and columns as the studio shows them (without them the PDF that went fell back to the default tiles)
+    parts: reports.filter((r) => r.metrics && r.sections).map((r) => ({ platform: r.platform, buyer: r.owner, metrics: r.metrics!, sections: r.sections!, extras: r.extras, extra: r.extra_metrics ?? null, layout: layoutOf(r) })),
   });
 }
 

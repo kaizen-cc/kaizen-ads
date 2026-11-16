@@ -630,6 +630,27 @@ export async function reopenReport(id: string): Promise<Result> {
   return { ok: true };
 }
 
+/**
+ * A weekly report that already went, opened to change and send again as an update: back to review with everything as it
+ * was sent, so the buyer can edit the tiles, numbers and message and send the new version (Slack or email). What went
+ * before stays in the history; the PDF that goes next is drawn from the report as it is then.
+ */
+export async function editSentReport(id: string): Promise<Result> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.status !== "posted") return { ok: true };
+  if (ok.r.kind === "monthly") return { ok: false, error: "A month's report is saved to Drive again from its page instead." };
+  const admin = createAdminClient();
+  const { data: r } = await admin.from("reports").select("joined_to").eq("id", id).single();
+  if ((r as { joined_to?: string | null } | null)?.joined_to) return { ok: false, error: "This TikTok part goes out with the client's Meta report: open that one to send an update." };
+  const now = new Date().toISOString();
+  await admin.from("reports").update({ status: "draft", submitted_at: null, updated_at: now }).eq("id", id);
+  // The TikTok part that went with it comes back with it, to go out together again
+  await admin.from("reports").update({ status: "draft", submitted_at: null, updated_at: now }).eq("joined_to", id).eq("status", "posted");
+  done(id);
+  return { ok: true };
+}
+
 /** The bundle, if this person built it or works on one of its parts. */
 async function myBundle(bundleId: string) {
   const me = await requireStaff();
