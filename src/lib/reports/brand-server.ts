@@ -206,12 +206,18 @@ export async function reportBrand(admin: SupabaseClient, clientId: string, opts:
   const [{ data: client }, { data: bible }] = await Promise.all([admin.from("clients").select("website").eq("id", clientId).maybeSingle(), admin.from("client_brand_bibles").select("markdown").eq("client_id", clientId).maybeSingle()]);
   const markdown = String((bible as { markdown?: string } | null)?.markdown ?? "");
   let found: { logo: string; light: boolean; color: string | null; source: string } | null = null;
-  if (!kept.uploaded) found = (await fromBible(markdown)) ?? (await fromWebsite((client as { website?: string | null } | null)?.website)) ?? (await fromDrive(admin, clientId));
+  // The search has 20 seconds: a slow website (six pictures at up to 7 seconds each) once kept a report's preview past
+  // its minute, and as nothing was kept it started over on every view. Out of time: no logo now, and it looks again tomorrow.
+  let late = false;
+  if (!kept.uploaded) {
+    const search = (async () => (await fromBible(markdown)) ?? (await fromWebsite((client as { website?: string | null } | null)?.website)) ?? (await fromDrive(admin, clientId)))();
+    found = await Promise.race([search, new Promise<null>((done) => setTimeout(() => ((late = true), done(null)), 20_000))]);
+  }
   const logo = kept.uploaded ? (kept.logo ?? null) : (found?.logo ?? null);
   const light = kept.uploaded ? Boolean(kept.light) : Boolean(found?.light);
   const bibleColor = pickBrandColor(colorsFromBible(markdown));
   const color = kept.colorSet ? (kept.color ?? null) : (bibleColor ?? (kept.uploaded ? (kept.color ?? null) : (found?.color ?? null)));
-  const next: Kept = { ...kept, logo, light, color, source: kept.uploaded ? (kept.source ?? "upload") : (found?.source ?? null), colorSource: kept.colorSet ? "set" : bibleColor ? "Brand Bible" : color ? "logo" : null, checkedAt: new Date().toISOString() };
+  const next: Kept = { ...kept, logo, light, color, source: kept.uploaded ? (kept.source ?? "upload") : (found?.source ?? null), colorSource: kept.colorSet ? "set" : bibleColor ? "Brand Bible" : color ? "logo" : null, checkedAt: new Date(Date.now() - (late ? (KEEP_DAYS - 1) * 86_400_000 : 0)).toISOString() };
   await keep(admin, clientId, next);
   return { logo, light, color, source: next.source ?? null };
 }

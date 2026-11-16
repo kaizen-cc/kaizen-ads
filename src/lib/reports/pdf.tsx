@@ -36,10 +36,18 @@ const picturedAds = (p: ReportPdfInput["parts"][number]) => (p.platform === "goo
  * weekly, each ad group and asset group's picture in googleUnits order). Meta's image links are signed and expire within
  * days, so fresh ones are asked for; the saved link is the fallback
  */
+/** A promise's answer, or the fallback once ms have passed */
+function within<T>(ms: number, p: Promise<T>, fallback: T): Promise<T> {
+  return Promise.race([p, new Promise<T>((done) => setTimeout(() => done(fallback), ms))]);
+}
+
 export async function reportImages(input: ReportPdfInput): Promise<(string | null)[][]> {
   const ids = input.parts.flatMap((p) => (p.platform === "meta" ? picturedAds(p).map((a) => a.id) : []));
   const { adPreviews, metaConfigured } = await import("@/lib/context/meta");
-  const fresh = ids.length && metaConfigured() ? await adPreviews(ids).catch(() => new Map<string, { images: string[] }>()) : new Map<string, { images: string[] }>();
+  // Everything here has a time limit: the preview and the PDF must be ready inside the function's minute (an ad whose
+  // picture is still loading is drawn without it)
+  const none = new Map<string, { images: string[] }>();
+  const fresh = ids.length && metaConfigured() ? await within(15_000, adPreviews(ids).catch(() => none), none) : none;
   // A thumbnail in the scorecard, and the top three large in the top ads strip
   const size = 320;
   const imageOf = async (a: { id: string; image: string | null }) => {
@@ -53,8 +61,8 @@ export async function reportImages(input: ReportPdfInput): Promise<(string | nul
   };
   return Promise.all(
     input.parts.map((p) => {
-      if (p.platform === "google") return Promise.all((p.metrics.googleUnits ?? []).map((u) => (u.image ? adImage(u.image, true, size) : Promise.resolve(null))));
-      return Promise.all(picturedAds(p).map(imageOf));
+      if (p.platform === "google") return Promise.all((p.metrics.googleUnits ?? []).map((u) => (u.image ? within(20_000, adImage(u.image, true, size), null) : Promise.resolve(null))));
+      return Promise.all(picturedAds(p).map((a) => within(20_000, imageOf(a), null)));
     }),
   );
 }
