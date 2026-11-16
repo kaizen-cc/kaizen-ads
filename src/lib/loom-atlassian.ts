@@ -247,9 +247,9 @@ export async function syncLoomFromAtlassian(admin: Admin, opts: { from?: string 
     const seenCursors = new Set<string>();
     while (!done && Date.now() < until && pages < 200) {
       // MCP v2's listLoomObjects (run through executeRead): its inputs are known, so they're written out; everything the
-      // account can see in the workspace (scope ALL), newest by creation date, offset paging
+      // account can see in the workspace (scope ALL), newest by creation date, offset paging, 25 a page (its most)
       const args = session.v2List
-        ? { cloudId: session.cloudId, scope: "ALL", ...(since ? { createdAtRange: { from: since } } : {}), limit: PAGE, ...(walk.page ? { offset: Number(walk.page) } : {}) }
+        ? { cloudId: session.cloudId, scope: "ALL", ...(since ? { createdAtRange: { from: since } } : {}), limit: Math.min(PAGE, 25), ...(walk.page ? { offset: Number(walk.page) } : {}) }
         : argsFor(session.list, { cloudId: session.cloudId, createdAfter: since, cursor: walk.page, limit: PAGE, videos: true, wideScope: true });
       const data = toolData(await session.mcp.callTool(session.list.name, args));
       pages++;
