@@ -265,7 +265,7 @@ describe("the studio's preview: what can be clicked and changed", () => {
   const sections = { ...emptySections, headline: "A strong month", summary: "Purchases up.", did: ["Refreshed ads", "", "Cut a weak ad set"], doing: [], next: ["Test a new offer"] };
 
   it("a buyer's metric choices win on the support line and the scorecard's columns", () => {
-    expect(supportKeys(oceanboxMeta, weeklyTileKeys(oceanboxMeta), { table: ["spend", "ctr"] })).toEqual(["spend", "ctr"]);
+    expect(supportKeys(oceanboxMeta, weeklyTileKeys(oceanboxMeta), { table: ["spend", "cpm", "ctr"] })).toEqual(["spend", "cpm"]);
     expect(scoreColumns(oceanboxMeta, { columns: ["results", "spend"] })).toEqual(["results", "spend"]);
     expect(scoreColumns(oceanboxMeta, {})).toEqual(scoreColumns(oceanboxMeta));
   });
@@ -285,5 +285,20 @@ describe("the studio's preview: what can be clicked and changed", () => {
     for (const t of ["meta/tile/0", "meta/row/0", "meta/col/0", "meta/text/headline", "meta/text/summary", "meta/text/did/0", "meta/text/did/2", "meta/text/next/0"]) expect(on, t).toContain(t);
     expect(on).not.toContain("meta/text/did/1");
     expect((await links(false)).filter((u) => u.includes("meta/"))).toEqual([]);
+  });
+});
+
+describe("swapTile", () => {
+  it("moves the replaced metric down to the support line, in place of the one now in a tile", async () => {
+    const { swapTile } = await import("@/lib/reports/weekly-core");
+    const r = swapTile(["results", "cost_per_result", "cpc", "ctr"], ["spend", "clicks", "impressions", "revenue", "roas"], 2, "revenue");
+    expect(r.tiles).toEqual(["results", "cost_per_result", "revenue", "ctr"]);
+    expect(r.table).toEqual(["spend", "clicks", "impressions", "cpc", "roas"]);
+    const r2 = swapTile(r.tiles, r.table, 3, "roas");
+    expect(r2.table).toEqual(["spend", "clicks", "impressions", "cpc", "ctr"]);
+  });
+  it("adds the replaced metric at the end when the new one wasn't on the line", async () => {
+    const { swapTile } = await import("@/lib/reports/weekly-core");
+    expect(swapTile(["results", "cost_per_result", "cpc", "ctr"], ["spend", "clicks"], 3, "cpm").table).toEqual(["spend", "clicks", "ctr"]);
   });
 });

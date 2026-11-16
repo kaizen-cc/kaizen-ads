@@ -63,10 +63,24 @@ export function weeklyTileKeys(m: Pick<ReportMetrics, "roasKpi" | "conversion" |
 
 /** The smaller line under the tiles: spend (with its change), link clicks, impressions (and 6-second views on TikTok) */
 export function supportKeys(m: Pick<ReportMetrics, "platform">, tiles: MetricKey[], layout?: ReportLayout | null): MetricKey[] {
-  // The buyer's own choice (clicking one in the studio) always wins
-  if (layout?.table?.length) return layout.table;
+  // The buyer's own choice (clicking one in the studio) always wins, less anything already in a tile (never shown twice)
+  if (layout?.table?.length) return layout.table.filter((k) => !tiles.includes(k));
   const all: MetricKey[] = ["spend", "clicks", "impressions", ...(m.platform === "tiktok" ? (["views_6s"] as MetricKey[]) : [])];
   return all.filter((k) => !tiles.includes(k));
+}
+
+/**
+ * A tile swapped for another metric: the metric it showed moves down to the line under the tiles (taking the new one's
+ * place there when the new one came from that line, else added at its end), so nothing is shown twice and nothing is lost.
+ */
+export function swapTile(tiles: MetricKey[], table: MetricKey[], i: number, k: MetricKey): { tiles: MetricKey[]; table: MetricKey[] } {
+  const old = tiles[i];
+  const nextTiles = [...tiles];
+  nextTiles[i] = k;
+  if (!old || old === k) return { tiles: nextTiles, table: table.filter((x) => !nextTiles.includes(x)) };
+  let nextTable = table.includes(k) ? table.map((x) => (x === k ? old : x)) : [...table, old];
+  nextTable = nextTable.filter((x, j) => !nextTiles.includes(x) && nextTable.indexOf(x) === j);
+  return { tiles: nextTiles, table: nextTable };
 }
 
 export type Tone = "good" | "bad" | "flat";

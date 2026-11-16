@@ -8,7 +8,7 @@ import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
 import { PdfPreview, type PdfField, type PdfMaker } from "./pdf-preview";
 import { EmailFrame } from "./email-frame";
-import { scoreColumns, supportKeys, takeawaysFor, weeklyTileKeys, type Takeaway } from "@/lib/reports/weekly-core";
+import { scoreColumns, supportKeys, swapTile, takeawaysFor, weeklyTileKeys, type Takeaway } from "@/lib/reports/weekly-core";
 import { leaveOutCampaigns } from "@/lib/reports/campaign-scope";
 import { mentionLabel, openWithHere } from "@/lib/reports/slack-text";
 import { RecapDeckButton } from "./recap-deck-button";
@@ -743,6 +743,8 @@ export function ReportStudio({
     // Excluded here: off the page right away (the numbers follow on regenerate)
     const shownLayout: ReportLayout | null = goneNames.size ? { ...layout, campaigns: { ...(layout?.campaigns ?? {}), hide: [...new Set([...hide, ...goneNames])] } } : layout;
     const swap = (where: "tiles" | "table" | "columns", i: number, k: MetricKey | null) => {
+      // A tile swapped: the metric it showed drops to the line under the tiles (in place of the new one when it was there)
+      if (where === "tiles" && k) return setLayout({ ...layout, ...swapTile(list.tiles, list.table, i, k) });
       const now = [...list[where]];
       if (k) now[i] = k;
       else now.splice(i, 1);
