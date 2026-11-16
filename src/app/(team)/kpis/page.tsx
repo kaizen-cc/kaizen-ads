@@ -14,6 +14,7 @@ import { changeKey, loadChanges } from "@/lib/account-changes";
 import { loadSprints } from "@/lib/sprints";
 import { successOf, type BenchmarkTarget } from "@/lib/kpi/success";
 import type { GoogleHealth } from "@/lib/google-flags";
+import { boardCounts } from "@/lib/kpi/board-counts";
 import { asKpiPlatform } from "@/lib/kpi/platform";
 import { tiktokConfigured } from "@/lib/tiktok/core";
 
@@ -203,6 +204,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       tiktokOn={tiktokOn}
       only={team}
       channels={me.isExec || me.isLead}
+      channelCounts={me.isExec || me.isLead ? await boardCounts(supabase).then((c) => ({ email: c.email, social: c.social })).catch(() => null) : null}
     />
   );
 }

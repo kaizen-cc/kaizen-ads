@@ -19,7 +19,7 @@ import { setChannelTarget } from "./channel-actions";
 // lines (the main number and the supporting numbers differ). Where you are (filters, the open client) lives in the
 // address, so back and forward walk through it.
 
-export type BoardSwitch = { id: string; label: string; href: string; active: boolean };
+export type BoardSwitch = { id: string; label: string; count?: number | null; href: string; active: boolean };
 
 const TILES: ChannelStatus[] = ["excellent", "good", "close", "off"];
 // Email boards read the score's bands in the same status slots: green is "good", yellow "close", red "off"
@@ -98,14 +98,21 @@ export function ChannelBoard({ line, rows, month, switcher, initialWho, lastSync
             </span>
           </p>
         </div>
+        {/* The same switch and Add KPI as the ads board, so moving between tabs only changes the board under it */}
         {switcher && (
-          <nav aria-label="KPI board" className="flex w-full rounded-full border border-line bg-surface p-1 md:inline-flex md:w-auto">
-            {switcher.map((s) => (
-              <Link key={s.id} href={s.href} aria-current={s.active ? "page" : undefined} className={`inline-flex h-10 flex-1 items-center justify-center rounded-full px-3 text-sm transition-colors md:h-8 md:flex-none md:px-4 ${s.active ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
-                {s.label}
-              </Link>
-            ))}
-          </nav>
+          <div className="flex w-full items-center gap-2 md:w-auto">
+            <nav aria-label="KPI board" className="flex flex-1 rounded-full border border-line bg-surface p-1 md:inline-flex md:flex-none">
+              {switcher.map((s) => (
+                <Link key={s.id} href={s.href} aria-current={s.active ? "page" : undefined} className={`inline-flex h-10 flex-1 items-center justify-center gap-1 rounded-full px-3 text-sm transition-colors md:h-8 md:flex-none md:px-4 ${s.active ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+                  {s.label}
+                  {s.count != null && <span className="tabular opacity-60">{s.count}</span>}
+                </Link>
+              ))}
+            </nav>
+            <Link href="/kpis?p=meta&add=new" className="inline-flex h-12 shrink-0 items-center rounded-[8px] bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover md:h-10">
+              Add KPI
+            </Link>
+          </div>
         )}
       </header>
 
@@ -274,7 +281,7 @@ function Card({ r, active, onOpen }: { r: ChannelRow; active: boolean; onOpen: (
         type="button"
         onClick={onOpen}
         aria-haspopup="dialog"
-        className={`group relative isolate grid h-full w-full content-start gap-3 overflow-hidden rounded-[20px] border bg-surface p-4 text-left transition-all duration-200 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg/40 ${active ? "border-fg/40" : "border-line hover:border-faint/60"}`}
+        className={`group relative isolate flex h-full w-full flex-col gap-3 overflow-hidden rounded-[20px] border bg-surface p-4 text-left transition-all duration-200 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg/40 ${active ? "border-fg/40" : "border-line hover:border-faint/60"}`}
         style={{ backgroundImage: `radial-gradient(120% 90% at 0% 0%, color-mix(in srgb, ${tone.css} 15%, transparent), transparent 55%)` }}
       >
         <span aria-hidden className={`absolute inset-x-0 top-0 h-[3px] ${tone.bar}`} />
@@ -289,13 +296,15 @@ function Card({ r, active, onOpen }: { r: ChannelRow; active: boolean; onOpen: (
           <ChannelStatusPill status={r.status} line={r.line} />
         </div>
 
+        {/* Every card keeps the same shell (header, a body that fills the card, the footer at the bottom), so a card
+            waiting on a connection sits as evenly in the grid as one with numbers */}
         {connect ? (
-          <div className="grid gap-1">
-            <span className="text-sm text-muted">{r.data === "missing" ? (r.line === "email" ? "Klaviyo isn't connected" : "Social isn't linked") : r.data === "failing" ? "Not reading right now" : r.data === "pending" ? "First read in progress" : "No numbers yet"}</span>
-            <span className="text-xs text-faint">Open for the next step</span>
+          <div className="flex flex-1 flex-col items-start justify-center gap-1 rounded-[14px] border border-dashed border-line px-4 py-5">
+            <span className="text-sm text-fg">{r.data === "missing" ? (r.line === "email" ? "Klaviyo isn't connected" : "Social isn't linked") : r.data === "failing" ? "Not reading right now" : r.data === "pending" ? "First read in progress" : "No numbers yet"}</span>
+            <span className="text-xs text-faint">{r.data === "pending" ? "Numbers show once the first read lands" : "Open to connect it"}</span>
           </div>
         ) : (
-          <div className="grid gap-1.5">
+          <div className="flex flex-1 flex-col gap-1.5">
             {r.score ? (
               <>
                 <div className="flex items-baseline gap-2">
@@ -318,11 +327,13 @@ function Card({ r, active, onOpen }: { r: ChannelRow; active: boolean; onOpen: (
                 <ChannelSpark values={r.series} span={r.span} goal={goal} tone={tone.text} label={`${r.name} trend`} />
               </>
             )}
-            <SupportChips r={r} />
+            <div className="mt-auto pt-1">
+              <SupportChips r={r} />
+            </div>
           </div>
         )}
         {r.warning && !connect && <span className="line-clamp-2 text-[11px] text-warn">Part of the read failed, so this may be low</span>}
-        <span className="ml-auto text-[11px] text-faint opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">Open →</span>
+        <span className="self-end text-[11px] text-faint opacity-0 transition-opacity group-hover:opacity-100 max-md:opacity-100">Open →</span>
       </button>
     </li>
   );

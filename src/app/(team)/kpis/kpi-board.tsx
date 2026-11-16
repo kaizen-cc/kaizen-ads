@@ -1921,6 +1921,7 @@ export function KpiBoard({
   focus = null,
   only = null,
   channels = false,
+  channelCounts = null,
 }: {
   rows: KpiRow[];
   buyers: Person[];
@@ -1943,6 +1944,8 @@ export function KpiBoard({
   only?: "meta" | "google" | null;
   /** Execs and leads: Email and Social sit beside the ad platforms in the switch (their own boards, one page change away) */
   channels?: boolean;
+  /** How many clients the Email and Social boards show, beside their tabs like the ad platforms' counts */
+  channelCounts?: { email: number; social: number } | null;
 }) {
   // Where you are on the board lives in the address (platform, buyer, filters, the open account and its tab): back and
   // forward walk through it, and a link lands on the same view. Changes go through the History API, so nothing reloads
@@ -1982,7 +1985,8 @@ export function KpiBoard({
   // ?add=<client id> (from the client page) opens the form with that client picked
   const askedAdd = sp.get("add");
   const [adding, setAdding] = useState(Boolean(askedAdd));
-  const [preset, setPreset] = useState<string | null>(askedAdd);
+  // ?add=new (Add KPI on the Email or Social board) opens it with no client picked
+  const [preset, setPreset] = useState<string | null>(askedAdd && askedAdd !== "new" ? askedAdd : null);
   // The focused card scrolls into view once it's on screen
   useEffect(() => {
     if (!focus) return;
@@ -2048,8 +2052,9 @@ export function KpiBoard({
             ))}
             {channels &&
               (["email", "social"] as const).map((c) => (
-                <Link key={c} href={`/kpis?p=${c}`} className="inline-flex h-10 flex-1 items-center justify-center rounded-full px-3 text-sm text-muted transition-colors hover:text-fg md:h-8 md:flex-none md:px-4">
+                <Link key={c} href={`/kpis?p=${c}`} className="inline-flex h-10 flex-1 items-center justify-center gap-1 rounded-full px-3 text-sm text-muted transition-colors hover:text-fg md:h-8 md:flex-none md:px-4">
                   {c === "email" ? "Email" : "Social"}
+                  {channelCounts && <span className="tabular opacity-60">{channelCounts[c]}</span>}
                 </Link>
               ))}
           </div>

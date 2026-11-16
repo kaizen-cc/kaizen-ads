@@ -1,6 +1,8 @@
 import { type Staff } from "@/lib/auth";
 import { HEAD_OF, type Line } from "@/lib/channel-kpis/calc";
 import { loadChannelBoard } from "@/lib/channel-kpis/load";
+import { boardCounts } from "@/lib/kpi/board-counts";
+import { platformLabel } from "@/lib/kpi/platform";
 import { teamPlatform } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
 import { ChannelBoard, type BoardSwitch } from "./channel-board";
@@ -12,13 +14,15 @@ import { ChannelBoard, type BoardSwitch } from "./channel-board";
  */
 export async function ChannelKpis({ me, line, switcher }: { me: Staff; line: Line; switcher: boolean }) {
   const db = await createClient();
-  const board = await loadChannelBoard(db, line, me);
-  const ads = teamPlatform(me.role) ? ([teamPlatform(me.role)] as ("meta" | "google")[]) : (["meta", "google"] as const);
+  const [board, counts] = await Promise.all([loadChannelBoard(db, line, me), switcher ? boardCounts(db).catch(() => null) : Promise.resolve(null)]);
+  // The same switch as the ads board (labels, counts, TikTok once it has cards): only the active tab differs
+  const team = teamPlatform(me.role);
+  const ads = (team === "google" ? ["google"] : team === "meta" ? ["meta", "tiktok"] : ["meta", "google", "tiktok"]).filter((p) => p !== "tiktok" || (counts?.tiktok ?? 0) > 0) as ("meta" | "google" | "tiktok")[];
   const tabs: BoardSwitch[] | null = switcher
     ? [
-        ...ads.map((p) => ({ id: p, label: p === "meta" ? "Meta" : "Google", href: `/kpis?p=${p}`, active: false })),
-        { id: "email", label: "Email", href: "/kpis?p=email", active: line === "email" },
-        { id: "social", label: "Social", href: "/kpis?p=social", active: line === "social" },
+        ...ads.map((p) => ({ id: p, label: platformLabel(p), count: counts?.[p] ?? null, href: `/kpis?p=${p}`, active: false })),
+        { id: "email", label: "Email", count: counts?.email ?? null, href: "/kpis?p=email", active: line === "email" },
+        { id: "social", label: "Social", count: counts?.social ?? null, href: "/kpis?p=social", active: line === "social" },
       ]
     : null;
   // Someone seated on clients opens on those; heads, leads and execs open on everyone
