@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { slack, type SlackMessage } from "@/lib/context/slack";
-import { siteUrl } from "@/lib/site";
+import { siteUrl, portalUrl } from "@/lib/site";
 
 // The client's Slack channel, inside their portal. Messages are copied from Slack into portal_chat_messages (read on
 // demand while someone has the chat open, and pushed by Slack's events when those are switched on), so the portal
@@ -597,7 +597,7 @@ export async function chatDigest(admin: Admin) {
       if (!p?.is_active || !p.email) continue;
       const n = await unreadCount(admin, clientId, p.id);
       if (!n) continue;
-      const parts = { title: `${n} new ${n === 1 ? "message" : "messages"} from your Kaizen team`, hello: p.full_name ? `Hi ${p.full_name.split(" ")[0]},` : undefined, lines: ["Your team wrote to you in your Kaizen portal."], cta: { label: "Open your chat →", url: `${siteUrl()}/c/${c.slug}/chat` } };
+      const parts = { title: `${n} new ${n === 1 ? "message" : "messages"} from your Kaizen team`, hello: p.full_name ? `Hi ${p.full_name.split(" ")[0]},` : undefined, lines: ["Your team wrote to you in your Kaizen portal."], cta: { label: "Open your chat →", url: `${portalUrl()}/c/${c.slug}/chat` } };
       const r = await sendEmail({ to: p.email, subject: parts.title, html: emailHtml(parts), text: emailText(parts) }).catch(() => null);
       if (r?.ok) sent++;
     }

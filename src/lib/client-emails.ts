@@ -5,7 +5,7 @@ import { emailHtml, emailText, type EmailParts } from "@/lib/email-layout";
 import { guideSteps } from "@/lib/onboarding-guide-types";
 import { INTAKE_FORM_URL, type Deck } from "@/lib/presentation-types";
 import { servicesOf } from "@/lib/services";
-import { siteUrl } from "@/lib/site";
+import { portalUrl } from "@/lib/site";
 
 // Every email a client gets from us at a stage of onboarding, written in one place: sent on its own by the flow (the
 // welcome, the presentation, you're live), or pushed again by the team from the client page as a reminder. Each one
@@ -53,14 +53,14 @@ export function welcomeEmail(p: { brand: string; slug: string; steps: { title: s
       ? [NUDGE, `A few quick steps and we can start building your ads (about ${n * 3} minutes, and each one walks you through it):`]
       : ["We're excited to get started. Your Kaizen portal is where everything with us happens: getting set up, seeing how we see your brand, and approving every ad before it runs.", `First, ${n} quick step${n === 1 ? "" : "s"} so we can start building (about ${n * 3} minutes, and each one walks you through it):`],
     steps: p.steps,
-    cta: { label: p.reminder ? "Finish setup →" : "Start setup →", url: `${siteUrl()}/c/${p.slug}/start` },
+    cta: { label: p.reminder ? "Finish setup →" : "Start setup →", url: `${portalUrl()}/c/${p.slug}/start` },
     note: "The button opens your Kaizen portal. If it asks, enter this email and we'll send you a one-tap sign-in.",
   };
   return { subject: p.reminder ? `Reminder: ${p.brand}, a few quick steps to get set up` : `Welcome to Kaizen, ${p.brand}: let's get you set up`, text: emailText(parts), html: emailHtml(parts) };
 }
 
 /** Where their intake is: in their portal once it's open to them (tailored to them, no Client ID to type), else the Google Form */
-export const intakeLink = (c: { slug: string; portal_live?: boolean | null }) => (c.portal_live ? `${siteUrl()}/c/${c.slug}/intake` : INTAKE_FORM_URL);
+export const intakeLink = (c: { slug: string; portal_live?: boolean | null }) => (c.portal_live ? `${portalUrl()}/c/${c.slug}/intake` : INTAKE_FORM_URL);
 
 export function intakeEmail(p: { brand: string; clientId: number | null; first: string | null; reminder?: boolean; url?: string }) {
   const portal = Boolean(p.url && p.url !== INTAKE_FORM_URL);
@@ -80,7 +80,7 @@ export function intakeEmail(p: { brand: string; clientId: number | null; first: 
 
 /** "Are we getting this right?": how we see them, to approve or correct. As a reminder: it's waiting on their approval */
 export function presentationEmail(p: { brand: string; slug: string; headline: string; withoutIntake: boolean; clientId: number | null; first: string | null; reminder?: boolean; intakeUrl?: string }) {
-  const link = `${siteUrl()}/c/${p.slug}/plan`;
+  const link = `${portalUrl()}/c/${p.slug}/plan`;
   // Their intake: in the portal (no Client ID needed), or the Google Form with it
   const intake = p.intakeUrl && p.intakeUrl !== INTAKE_FORM_URL ? p.intakeUrl : `${INTAKE_FORM_URL}${p.clientId != null ? ` (your Client ID: ${p.clientId})` : ""}`;
   if (p.reminder) {
@@ -128,7 +128,7 @@ export function liveEmail(p: { brand: string; slug: string; posts: number; geo: 
     hello: hello(p.first),
     lines: ["Your first campaign is running:"],
     bullets: [`${p.posts} of your best posts, now ads on Facebook and Instagram`, `Reaching people in ${p.geo}`, "Building your audience and site traffic from today", "The warm-up for the conversion campaigns that follow as your new creative lands"],
-    cta: { label: "See it on your dashboard →", url: `${siteUrl()}/c/${p.slug}/dashboard` },
+    cta: { label: "See it on your dashboard →", url: `${portalUrl()}/c/${p.slug}/dashboard` },
     note: "We'll keep you posted on how it's going.",
   };
   return { subject: `${p.brand}: your first campaign is live`, text: emailText(parts), html: emailHtml(parts) };

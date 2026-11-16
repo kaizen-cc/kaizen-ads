@@ -5,7 +5,7 @@ import { clientRecipients, logClientEmail } from "@/lib/client-emails";
 import { sendEmail } from "@/lib/email";
 import { emailHtml, emailText } from "@/lib/email-layout";
 import { isWhiteLabel } from "@/lib/reports/white-label";
-import { siteUrl } from "@/lib/site";
+import { portalUrl as portalBase } from "@/lib/site";
 import { postAsApp } from "@/lib/slack-user";
 import {
   AUTO_APPROVED_BY,
@@ -65,7 +65,7 @@ async function pendingPieces(admin: Admin, requestIds: string[]) {
   return out;
 }
 
-const portalUrl = (slug: string) => `${siteUrl()}/c/${slug}`;
+const portalUrl = (slug: string) => `${portalBase()}/c/${slug}`;
 
 /** One message to the client: their Slack channel and their portal contacts' inboxes. Says where it went. */
 async function tellClient(admin: Admin, c: ClientRow, kind: "ready" | "remind_24" | "remind_48" | "auto_approved", count: number) {

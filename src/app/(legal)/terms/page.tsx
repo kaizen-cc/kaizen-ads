@@ -14,7 +14,7 @@ export default function Terms() {
       <h1 className="font-heading text-[32px] leading-tight tracking-tight text-fg md:text-[40px]">Terms of service</h1>
       <p className="text-[13px] text-faint">Last updated {UPDATED}</p>
       <p>
-        Kaizen Ads (ads.kaizenmarketing.agency) is provided by Kaizen Marketing (&ldquo;Kaizen&rdquo;, &ldquo;we&rdquo;) to its team and to the clients it works with. By using Kaizen Ads you agree to these terms. Your agreement with Kaizen Marketing for our services also applies, and wins where the two differ.
+        Kaizen Ads (app.kaizenmarketing.agency, with the client portal at portal.kaizenmarketing.agency) is provided by Kaizen Marketing (&ldquo;Kaizen&rdquo;, &ldquo;we&rdquo;) to its team and to the clients it works with. By using Kaizen Ads you agree to these terms. Your agreement with Kaizen Marketing for our services also applies, and wins where the two differ.
       </p>
 
       <H>Who can use it</H>

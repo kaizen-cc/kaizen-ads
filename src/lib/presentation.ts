@@ -4,7 +4,7 @@ import { AiPaused, askJson } from "@/lib/ai";
 import { describeIntake, type IntakeSummary } from "@/lib/intake-format";
 import { sendEmail } from "@/lib/email";
 
-import { siteUrl } from "@/lib/site";
+import { portalUrl } from "@/lib/site";
 
 // The client presentation: the Brand Bible, short and beautiful, for the client ("Here's how we see you: are we
 // getting this right?"). Written once a new client's Bible is in (from their intake form, or 4 business days in
@@ -181,7 +181,7 @@ export async function sendPresentation(admin: SupabaseClient, clientId: string, 
   if (!contacts.length && !slackOn) return { ok: false as const, error: `${c.name} has no contact and no Slack channel to send it to. Add a contact on the client page first.` };
   // Their portal has to be open for them to get in
   if (!c.portal_live) await admin.from("clients").update({ portal_live: true, portal_live_at: new Date().toISOString(), portal_live_by: by }).eq("id", clientId);
-  const link = `${siteUrl()}/c/${c.slug}/plan`;
+  const link = `${portalUrl()}/c/${c.slug}/plan`;
   const deck = p.deck as Deck;
   const sent: string[] = [];
   const { intakeLink, logClientEmail, presentationEmail } = await import("@/lib/client-emails");

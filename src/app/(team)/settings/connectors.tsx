@@ -40,7 +40,7 @@ const field = "min-h-11 w-full rounded-[12px] border border-line bg-bg px-3 text
 const primary = "inline-flex min-h-11 shrink-0 items-center justify-center rounded-full bg-brand px-5 text-[13.5px] font-medium text-white transition hover:bg-brand-hover disabled:opacity-40";
 const quiet = "inline-flex min-h-11 shrink-0 items-center justify-center rounded-full border border-line px-4 text-[13px] text-fg transition hover:border-brand/40 disabled:opacity-40";
 const ghost = "inline-flex min-h-11 shrink-0 items-center justify-center rounded-full px-4 text-[13px] text-muted transition hover:bg-ink/[0.05] hover:text-fg disabled:opacity-40";
-const REDIRECT = `${(process.env.NEXT_PUBLIC_SITE_URL || "https://ads.kaizenmarketing.agency").replace(/\/$/, "")}/api/connectors/callback`;
+const REDIRECT = `${(process.env.NEXT_PUBLIC_INTEGRATIONS_URL || "https://ads.kaizenmarketing.agency").replace(/\/$/, "")}/api/connectors/callback`;
 
 function Pill({ tone, children }: { tone: "ok" | "warn" | "off"; children: React.ReactNode }) {
   return (

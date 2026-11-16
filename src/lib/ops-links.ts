@@ -1,10 +1,11 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { siteUrl } from "@/lib/site";
 
 // One-click actions in emails (mark fixed, stop alerting, have Claude fix it). The link itself
 // is the permission: signed, tied to one error and one action, and expiring after 14 days.
 export type OpsAction = "resolve" | "mute" | "fix";
-const SITE = "https://ads.kaizenmarketing.agency";
+const SITE = siteUrl();
 const DAYS = 14;
 
 const key = () => {

@@ -1,5 +1,6 @@
 import { createFixIssue } from "@/lib/claude-fix";
 import { readOpsToken, type OpsAction } from "@/lib/ops-links";
+import { siteUrl } from "@/lib/site";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 // Buttons in error emails land here. Opening the link only shows a confirm button (mail scanners
@@ -38,7 +39,7 @@ export async function GET(req: Request) {
   const t = readOpsToken(token);
   if (!t || !adminConfigured()) return page("This link has expired", "<p>Open Settings › Errors in Kaizen Ads instead.</p>", 400);
   const e = await load(t.fingerprint);
-  if (!e) return page("That error is gone", link("https://ads.kaizenmarketing.agency/settings?tab=errors", "Open Settings › Errors"), 404);
+  if (!e) return page("That error is gone", link(`${siteUrl()}/settings?tab=errors`, "Open Settings › Errors"), 404);
   if (t.action === "fix" && e.fix_issue_url) return page("Claude is already on it", link(e.fix_issue_url, "See the fix in GitHub"));
   const l = LABEL[t.action];
   return page(

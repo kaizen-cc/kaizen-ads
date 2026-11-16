@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fromWithName } from "@/lib/email";
 import { emailHtml } from "@/lib/email-layout";
-import { siteUrl } from "@/lib/site";
+import { portalUrl } from "@/lib/site";
 import { platformName } from "./format";
 import type { ReportMetrics } from "./metrics";
 import { buildReportEmail } from "./delivery-core";
@@ -57,7 +57,7 @@ export async function reportEmailPreview(admin: SupabaseClient, id: string, by: 
   const fromAddress = wl ? null : (sender.match(/<([^>]+)>/)?.[1] ?? null);
   const first = greetingFor(to);
   const cc = await reportCc(admin, { clientId: r.client_id, platforms: rows.map((x) => x.platform), owners: rows.map((x) => x.owner_id), to: to.map((x) => x.email) }).catch(() => [] as string[]);
-  const dashboard = reportCtaUrl(r.clients, siteUrl());
+  const dashboard = reportCtaUrl(r.clients, portalUrl());
 
   if (r.kind === "monthly") {
     const month = monthOf(r.period_start);

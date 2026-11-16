@@ -14,7 +14,7 @@ export default function Privacy() {
       <h1 className="font-heading text-[32px] leading-tight tracking-tight text-fg md:text-[40px]">Privacy policy</h1>
       <p className="text-[13px] text-faint">Last updated {UPDATED}</p>
       <p>
-        This policy explains how Kaizen Marketing (&ldquo;Kaizen&rdquo;, &ldquo;we&rdquo;) collects, uses and protects information in Kaizen Ads (ads.kaizenmarketing.agency), the platform we use to run our clients&rsquo; advertising. Kaizen Ads is used by the Kaizen team and by the clients we invite.
+        This policy explains how Kaizen Marketing (&ldquo;Kaizen&rdquo;, &ldquo;we&rdquo;) collects, uses and protects information in Kaizen Ads (app.kaizenmarketing.agency, with the client portal at portal.kaizenmarketing.agency), the platform we use to run our clients&rsquo; advertising. Kaizen Ads is used by the Kaizen team and by the clients we invite.
       </p>
 
       <H>Information we collect</H>

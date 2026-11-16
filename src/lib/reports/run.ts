@@ -1,4 +1,5 @@
 import "server-only";
+import { portalUrl } from "@/lib/site";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { nyParts } from "@/lib/kpi/calc";
 import { ccFrom, loadBuyerSeats, unique } from "@/lib/buyer-seats";
@@ -28,7 +29,6 @@ import { openWithHere } from "./slack-text";
 // drafted a few at a time. The 1st: the monthly recap, one part per buyer on the client (Meta, Google), held until
 // every part is submitted, then sent to the client in Slack and by email with the live link and the PDF.
 
-const SITE = () => process.env.NEXT_PUBLIC_SITE_URL || "https://ads.kaizenmarketing.agency";
 
 type TargetRow = { id: string; client_id: string; platform: string; owner_id: string | null; clients: { status: string; archived_at: string | null } };
 
@@ -179,14 +179,14 @@ async function shotsAsk(admin: SupabaseClient, r: Loaded) {
   const cur = await currentShotList(admin, r.client_id).catch(() => null);
   const open = (cur?.list.shots ?? []).filter((s) => !s.delivered);
   if (!cur || !open.length) return null;
-  return { month: cur.list.month, items: open.map((s) => s.what), url: r.client.portal_live && r.client.slug && !whiteLabelOf(r) ? `${SITE()}/c/${r.client.slug}/shots` : null };
+  return { month: cur.list.month, items: open.map((s) => s.what), url: r.client.portal_live && r.client.slug && !whiteLabelOf(r) ? `${portalUrl()}/c/${r.client.slug}/shots` : null };
 }
 
 /** A white label client: generic reports, no agency name, brand or link anywhere (the PDF, its name, Slack, email) */
 const whiteLabelOf = (r: { client: { client_type?: string | null } }) => isWhiteLabel(r.client.client_type);
 
 /** The client's live dashboard, linked under each report (when their portal is open; never for a white label client) */
-const dashboardUrl = (r: { client: { slug?: string; portal_live?: boolean; client_type?: string | null } }) => (r.client.portal_live && r.client.slug && !whiteLabelOf(r) ? `${SITE()}/c/${r.client.slug}/dashboard` : null);
+const dashboardUrl = (r: { client: { slug?: string; portal_live?: boolean; client_type?: string | null } }) => (r.client.portal_live && r.client.slug && !whiteLabelOf(r) ? `${portalUrl()}/c/${r.client.slug}/dashboard` : null);
 const dashboardLine = (r: { client: { slug?: string; portal_live?: boolean; client_type?: string | null } }) => {
   const url = dashboardUrl(r);
   return url ? `\n\n<${url}|See every number on your live dashboard>` : "";
@@ -363,7 +363,7 @@ async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: stri
   const riders = await Promise.all(riderIds.map((x) => load(admin, x)));
   const wl = whiteLabelOf(r);
   // A white label client gets no link to the agency's recap page: the PDF is the recap
-  const link = wl ? null : `${SITE()}/r/${b.token}`;
+  const link = wl ? null : `${portalUrl()}/r/${b.token}`;
   const month = monthOf(b.period_start);
   const service = riders.length ? "Meta + TikTok" : platformName(r.platform);
   const bytes = await reportPdf(admin, [r, ...riders]);
@@ -385,7 +385,7 @@ async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: stri
   if (lateTo.length) {
     const toList = lateTo.map((c) => c.email);
     const headline = r.sections?.headline ?? `The ${service} part of your ${month} recap is ready.`;
-    const dash = reportCtaUrl(r.client, SITE());
+    const dash = reportCtaUrl(r.client, portalUrl());
     const parts = {
       kicker: r.client.name,
       title: `${service} is in your ${month} recap`,
@@ -454,7 +454,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     const client = parts[0].client;
     const wl = whiteLabelOf(parts[0]);
     // A white label client gets no link to the agency's recap page or portal: the PDF is the recap
-    const link = wl ? null : `${SITE()}/r/${b.token}`;
+    const link = wl ? null : `${portalUrl()}/r/${b.token}`;
     const month = monthOf(b.period_start);
     const bytes = await reportPdf(admin, parts);
     // Each buyer's message; a TikTok part riding on the Meta one reads under its own name right after it
@@ -481,7 +481,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     // One email to every contact (To) with the team in Cc, the PDF always attached; a button only to a live dashboard
     if (to.length) {
       const toList = to.map((c) => c.email);
-      const dash = reportCtaUrl(parts[0].client, SITE());
+      const dash = reportCtaUrl(parts[0].client, portalUrl());
       const shotsNote = shots ? `For ${shots.month}, we need a few photos and clips from you so your ads stay fresh: ${shots.items.slice(0, 4).join("; ")}${shots.items.length > 4 ? "…" : ""}.${shots.url ? ` Send them here: ${shots.url}` : ""}` : "";
       const bullets = parts.map((x) => `${platformName(x.platform)}: ${x.sections?.headline ?? ""}`).filter((x) => !x.endsWith(": "));
       const mail = {

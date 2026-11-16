@@ -134,7 +134,7 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
         <div className="flex items-center justify-between gap-2 pb-6 pl-5 pr-3 pt-6">
           <Link href={home} className="flex items-center gap-2">
             <Image src="/kaizen-logo.png" alt="Kaizen" width={110} height={26} priority />
-            <span className="mt-1 font-display text-sm tracking-wide text-muted">ads</span>
+            <span className="mt-1 font-display text-sm tracking-wide text-muted">app</span>
           </Link>
           <span className="flex items-center gap-1.5">
             <BriefJobsIndicator compact />
@@ -179,7 +179,7 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
           </button>
           <Link href={home} className="flex items-center gap-1.5">
             <Image src="/kaizen-logo.png" alt="Kaizen" width={92} height={21} priority />
-            <span className="mt-1 font-display text-xs tracking-wide text-muted">ads</span>
+            <span className="mt-1 font-display text-xs tracking-wide text-muted">app</span>
           </Link>
           <span className="flex h-11 items-center justify-end gap-1">
             <BriefJobsIndicator compact />
@@ -199,7 +199,7 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
             <div className="flex items-center justify-between gap-2 px-5 pb-5 pt-5">
               <Link href={home} className="flex items-center gap-2" onClick={() => setMenu(false)}>
                 <Image src="/kaizen-logo.png" alt="Kaizen" width={104} height={24} />
-                <span className="mt-1 font-display text-sm tracking-wide text-muted">ads</span>
+                <span className="mt-1 font-display text-sm tracking-wide text-muted">app</span>
               </Link>
               <button type="button" onClick={() => setMenu(false)} aria-label="Close the menu" className="grid h-10 w-10 place-items-center rounded-full text-muted active:bg-surface-2">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>

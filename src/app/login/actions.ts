@@ -2,7 +2,7 @@
 
 import { sendEmail } from "@/lib/email";
 import { magicLinkEmail } from "@/lib/magic-link-email";
-import { safeNext, siteUrl } from "@/lib/site";
+import { portalUrl, safeNext } from "@/lib/site";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 export type LinkResult = { ok: true } | { ok: false; error: string };
@@ -53,7 +53,7 @@ export async function requestMagicLink(rawEmail: string, rawNext?: string): Prom
   }
 
   const next = safeNext(rawNext, brands.length === 1 ? `/c/${brands[0].slug}` : "/c");
-  const url = `${siteUrl()}/auth/confirm?token_hash=${encodeURIComponent(link.properties.hashed_token)}&type=magiclink&next=${encodeURIComponent(next)}`;
+  const url = `${portalUrl()}/auth/confirm?token_hash=${encodeURIComponent(link.properties.hashed_token)}&type=magiclink&next=${encodeURIComponent(next)}`;
   const brandName = brands.length === 1 ? brands[0].name : null;
   const firstName = contact.full_name?.split(" ")[0] ?? null;
 

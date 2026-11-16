@@ -360,7 +360,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
           {client.auto_approve_opt_in && <span className={`${chip} bg-ok-soft text-ok`}>Opted into auto-approval</span>}
           {client.kaizen_id && <span className={`${chip} tabular bg-surface-2 text-faint`}>ID {client.kaizen_id}</span>}
           <span className="ml-1 min-w-0 text-xs text-faint [overflow-wrap:anywhere]">
-            Portal <span className="text-muted">ads.kaizenmarketing.agency/c/{client.slug}</span>
+            Portal <span className="text-muted">{(process.env.NEXT_PUBLIC_PORTAL_URL || process.env.NEXT_PUBLIC_SITE_URL || "https://ads.kaizenmarketing.agency").replace(/^https?:\/\//, "").replace(/\/$/, "")}/c/{client.slug}</span>
           </span>
         </div>
       </header>

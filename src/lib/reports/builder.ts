@@ -13,7 +13,7 @@ import type { ReportMetrics } from "./metrics";
 import type { ReportLayout } from "./format";
 import { layoutOf } from "./share";
 import { asKpiPlatform } from "@/lib/kpi/platform";
-import { siteUrl } from "@/lib/site";
+import { portalUrl } from "@/lib/site";
 import { draftReport, type Sections } from "./write";
 import { forClient, isWhiteLabel, WHITE_LABEL_RULE, whiteLabelFileName } from "./white-label";
 import { openWithHere } from "./slack-text";
@@ -36,7 +36,6 @@ export const RANGES = [
 export type RangeKey = (typeof RANGES)[number]["key"];
 export type BuiltRange = { key: string; label: string; start: string; end: string };
 
-const SITE = () => process.env.NEXT_PUBLIC_SITE_URL || "https://ads.kaizenmarketing.agency";
 const fmt = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 const monthName = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 
@@ -229,7 +228,7 @@ export async function builtInput(admin: SupabaseClient, bundleId: string, edit =
     periodLabel: rangesLabel(ranges),
     parts: parts.filter((p) => p.metrics && p.sections).map((p): ReportPart => ({ platform: asKpiPlatform(p.platform), buyer: p.profiles?.full_name ?? null, metrics: p.metrics!, sections: p.sections!, extras: p.extras, extra: p.extra_metrics, layout: layoutOf(p) })),
     edit,
-    dashboard: client.portal_live && client.slug && !whiteLabel ? `${siteUrl()}/c/${client.slug}/dashboard` : null,
+    dashboard: client.portal_live && client.slug && !whiteLabel ? `${portalUrl()}/c/${client.slug}/dashboard` : null,
     whiteLabel,
   };
 }
@@ -270,7 +269,7 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
       slackUserId: joint ? null : (parts[0].owner_id ?? by),
       // Couldn't post as the buyer: the message still goes, from the app, with the link to the report (never for a white
       // label client: that page is the agency's)
-      appFallback: whiteLabel ? "" : `\n\nThe full report: ${SITE()}/r/${b.token}`,
+      appFallback: whiteLabel ? "" : `\n\nThe full report: ${portalUrl()}/r/${b.token}`,
 
       bundleId,
       reportId: joint ? null : parts[0].id,

@@ -4,11 +4,12 @@ import { sendEmail } from "@/lib/email";
 import { diagnoseError, type Diagnosis } from "@/lib/error-diagnose";
 import { classifyError } from "@/lib/error-triage";
 import { opsLink } from "@/lib/ops-links";
+import { siteUrl } from "@/lib/site";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 // Where error alerts go (override with ERROR_ALERT_EMAIL in Vercel)
 const ALERT_TO = () => process.env.ERROR_ALERT_EMAIL || "santi@kaizenmarketing.agency";
-const SITE = "https://ads.kaizenmarketing.agency";
+const SITE = siteUrl();
 
 // Ids, numbers and dates differ per occurrence; strip them so one bug groups as one
 const normalize = (s: string) =>

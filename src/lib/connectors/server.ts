@@ -1,4 +1,5 @@
 import "server-only";
+import { integrationsUrl } from "@/lib/site";
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
@@ -498,7 +499,7 @@ export async function readyFor(admin: SupabaseClient, me: Staff, keys: string[])
         try {
           const sec = await secretsOf(admin, c.id);
           const meta = await authMeta(admin, c, sec);
-          const client = await clientFor(admin, c, meta, sec, sec?.reg_redirect_uri ?? `${(process.env.NEXT_PUBLIC_SITE_URL || "https://ads.kaizenmarketing.agency").replace(/\/$/, "")}${CALLBACK_PATH}`);
+          const client = await clientFor(admin, c, meta, sec, sec?.reg_redirect_uri ?? `${integrationsUrl()}${CALLBACK_PATH}`);
           const t = await tokenRequest(meta, client, { grant_type: "refresh_token", refresh_token: refresh!, resource: resourceOf(c.url) });
           await saveConnection(admin, me.id, c, t, refresh);
           access = t.access_token;

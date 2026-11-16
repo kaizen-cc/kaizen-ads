@@ -1,4 +1,5 @@
 import "server-only";
+import { portalUrl } from "@/lib/site";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { gtmForContext } from "@/lib/gtm";
@@ -241,7 +242,6 @@ async function post(channel: string, text: string, by: string | null) {
 export async function keepMeetTeam(admin: SupabaseClient) {
   const { FLOW_START } = await import("@/lib/presentation-types");
   const { autoOutreach } = await import("@/lib/client-outreach");
-  const { siteUrl } = await import("@/lib/site");
   const { data: clients } = await admin
     .from("clients")
     .select("id, name, slug, slack_channel_id, portal_live, services, services_extra, services_removed")
@@ -260,7 +260,7 @@ export async function keepMeetTeam(admin: SupabaseClient) {
     const meet = (sent ?? []).find((m) => m.client_id === id && m.kind === "meet_team");
     if (!meet) {
       if (!teamReady(services, seats)) continue;
-      const text = meetTeamText(c.name as string, services, seats, c.portal_live ? `${siteUrl()}/c/${c.slug}/start` : null);
+      const text = meetTeamText(c.name as string, services, seats, c.portal_live ? `${portalUrl()}/c/${c.slug}/start` : null);
       if (!(await autoOutreach(admin, id))) {
         await admin.from("client_slack_messages").insert({ client_id: id, kind: "meet_team", status: "held", text, team, auto: true });
         out[c.name as string] = "meet your team: held (client outreach is off)";

@@ -4,7 +4,7 @@ import type { ReportMetrics } from "./metrics";
 import type { Sections } from "./write";
 import type { ReportPart } from "./pdf";
 import { monthLabel, platformName, shortRange, type ReportLayout } from "./format";
-import { siteUrl } from "@/lib/site";
+import { portalUrl } from "@/lib/site";
 import { isWhiteLabel, whiteLabelFileName } from "./white-label";
 
 // Loading a report (or a client's monthly bundle) for reading: the PDF, and the live report page the client opens from
@@ -52,7 +52,7 @@ export async function loadReport(admin: SupabaseClient, id: string, edit = false
   // A white label client's: generic, no agency anywhere (and no link to the agency's portal)
   const whiteLabel = isWhiteLabel(r.clients?.client_type);
   const fileName = whiteLabel ? whiteLabelFileName(client, r.kind, short, platformName(part.platform)) : `${client} - ${platformName(part.platform).replace(" Ads", "")} ${(r.kind as string) === "built" ? "report" : r.kind} - ${short}.pdf`;
-  const dashboard = r.clients?.portal_live && !whiteLabel ? `${siteUrl()}/c/${r.clients.slug}/dashboard` : null;
+  const dashboard = r.clients?.portal_live && !whiteLabel ? `${portalUrl()}/c/${r.clients.slug}/dashboard` : null;
   // A Meta report (weekly or monthly) carries the TikTok part that rides with it (one document, a section each), as it's sent
   const parts = [part];
   if (r.kind === "weekly" || r.kind === "monthly") {

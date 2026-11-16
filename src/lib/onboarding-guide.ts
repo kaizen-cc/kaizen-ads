@@ -4,7 +4,7 @@ import { metaConfigured, metaGraph } from "@/lib/context/meta";
 import { sendEmail } from "@/lib/email";
 import { STYLES, guideSteps, type Guide, type GuideHas, type GoogleStep, type MetaStep, type StyleLook } from "@/lib/onboarding-guide-types";
 import { servicesOf } from "@/lib/services";
-import { siteUrl } from "@/lib/site";
+import { portalUrl } from "@/lib/site";
 import type { PeerInfo, VerticalInfo } from "@/lib/peer-match";
 
 // A new client's onboarding guide in their portal, sent the moment they enroll: Meta access (Kaizen's business as a
@@ -156,7 +156,7 @@ export async function welcomeClient(admin: SupabaseClient, clientId: string) {
   const contacts = await clientRecipients(admin, clientId);
   if (!contacts.length && !c.slack_channel_id) return "no contact";
   if (!c.portal_live) await admin.from("clients").update({ portal_live: true, portal_live_at: new Date().toISOString() }).eq("id", clientId);
-  const link = `${siteUrl()}/c/${c.slug}/start`;
+  const link = `${portalUrl()}/c/${c.slug}/start`;
   // Only the steps for what they buy from us
   const steps = setupSteps(servicesOf(c));
   const sent: string[] = [];
