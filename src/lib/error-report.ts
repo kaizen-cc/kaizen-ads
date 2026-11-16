@@ -12,8 +12,8 @@ const ALERT_TO = () => process.env.ERROR_ALERT_EMAIL || "santi@kaizenmarketing.a
 const SITE = siteUrl();
 
 // Ids, numbers and dates differ per occurrence; strip them so one bug groups as one
-const normalize = (s: string) =>
-  s
+const normalize = (s: string | null | undefined) =>
+  String(s ?? "")
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ":id")
     .replace(/\d{4}-\d{2}-\d{2}[T\d:.Z+-]*/g, ":date")
     .replace(/\d+/g, "#")

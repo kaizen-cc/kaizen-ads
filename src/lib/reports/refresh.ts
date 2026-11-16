@@ -120,12 +120,19 @@ export async function refreshBundleForView(admin: SupabaseClient, bundleId: stri
  */
 export async function refreshForStudio(admin: SupabaseClient, id: string, by: { id: string | null; name: string }) {
   const ids = await withRiders(admin, id);
+  const behind: string[] = [];
   await Promise.all(
     ids.map(async (x) => {
       const got = await refreshNumbers(admin, x).catch(() => null);
-      if (got?.note?.text === "pending") await updateText(admin, x, by).catch(() => null);
+      if (got?.note?.text === "pending") behind.push(x);
     }),
   );
+  // The text catching up is an AI pass (up to a minute): it runs after the page is sent, so the studio opens straight
+  // away with the new numbers and the "updating the text" note; a send still waits for it (ensureSendable)
+  if (behind.length) {
+    const { after } = await import("next/server");
+    after(() => Promise.all(behind.map((x) => updateText(admin, x, by).catch(() => null))));
+  }
 }
 
 /**
