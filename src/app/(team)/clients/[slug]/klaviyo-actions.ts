@@ -21,7 +21,12 @@ async function mine(clientId: string, manage: boolean) {
   return { me, slug: data.slug as string, admin: createAdminClient() } as const;
 }
 
-export async function connectKlaviyoKey(clientId: string, key: string): Promise<Result> {
+/**
+ * quick: connected from the Email board or the Overview while working down a list of clients. The board marks the card
+ * itself, so the answer doesn't wait on the whole board being worked out again (every client's score); those pages show
+ * the new numbers the next time they load, once the first read has landed anyway.
+ */
+export async function connectKlaviyoKey(clientId: string, key: string, opts: { quick?: boolean } = {}): Promise<Result> {
   const l = await mine(clientId, true);
   if ("error" in l) return { ok: false, error: l.error! };
   const r = await connectKlaviyo(l.admin, clientId, key, l.me.id);
@@ -32,9 +37,10 @@ export async function connectKlaviyoKey(clientId: string, key: string): Promise<
   revalidatePath(`/clients/${l.slug}`);
   // Connected from Settings › Sync health too: its Klaviyo card shows it
   revalidatePath("/settings");
-  // Connected from the Email board or the Overview: they refresh too
-  revalidatePath("/kpis");
-  revalidatePath("/pipeline");
+  if (!opts.quick) {
+    revalidatePath("/kpis");
+    revalidatePath("/pipeline");
+  }
   return { ok: true, account: r.account };
 }
 

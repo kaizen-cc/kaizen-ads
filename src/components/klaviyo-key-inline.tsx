@@ -19,13 +19,17 @@ export function KlaviyoKeyInline({ clientId, replace = false }: { clientId: stri
 
   const save = () =>
     start(async () => {
-      const r = await connectKlaviyoKey(clientId, key);
+      // Quick: the board isn't worked out again before the answer (the card is marked here instead), so the next
+      // client can be connected straight away
+      const onBoard = window.location.pathname.startsWith("/kpis");
+      const r = await connectKlaviyoKey(clientId, key, { quick: onBoard });
       if (!r.ok) return setError(r.error);
       setError(null);
       setKey("");
       setOpen(false);
       setNote(`Connected${r.account ? ` to ${r.account}` : ""}. The first 90 days are being read now; it takes a few minutes.`);
-      router.refresh();
+      window.dispatchEvent(new CustomEvent("klaviyo-connected", { detail: clientId }));
+      if (!onBoard) router.refresh();
     });
 
   if (!open)

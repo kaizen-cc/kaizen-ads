@@ -39,11 +39,20 @@ const TILE_HINT: Record<string, string> = { excellent: "20%+ better than target"
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }) : "none yet");
 
-export function ChannelBoard({ line, rows, month, switcher, initialWho, lastSync }: { line: "email" | "social"; rows: ChannelRow[]; month: Month; switcher: BoardSwitch[] | null; initialWho: "all" | "mine"; lastSync: string | null }) {
+export function ChannelBoard({ line, rows: given, month, switcher, initialWho, lastSync }: { line: "email" | "social"; rows: ChannelRow[]; month: Month; switcher: BoardSwitch[] | null; initialWho: "all" | "mine"; lastSync: string | null }) {
   const sp = useSearchParams();
   const who = (sp.get("who") as "all" | "mine" | null) ?? initialWho;
   const status = (sp.get("status") as ChannelStatus | null) ?? "all";
   const open = sp.get("open");
+  // A key pasted on the board marks its card at once ("First read in progress") instead of working the whole board out
+  // again, so the next client can be connected straight away; the numbers show the next time the board loads
+  const [justConnected, setJustConnected] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    const on = (e: Event) => setJustConnected((s) => new Set(s).add(String((e as CustomEvent).detail)));
+    window.addEventListener("klaviyo-connected", on);
+    return () => window.removeEventListener("klaviyo-connected", on);
+  }, []);
+  const rows = justConnected.size ? given.map((r) => (justConnected.has(r.clientId) && (r.data === "missing" || r.data === "failing") ? { ...r, data: "pending" as ChannelRow["data"], problem: null } : r)) : given;
   const [q, setQ] = useState(() => sp.get("q") ?? "");
   // History API, so nothing reloads and the browser's back walks the board's states
   const go = (patch: Record<string, string | null>, how: "push" | "replace" = "push") => {
