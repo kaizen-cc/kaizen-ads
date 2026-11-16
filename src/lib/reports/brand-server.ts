@@ -56,6 +56,27 @@ async function fetchBytes(url: string, headers: Record<string, string> = {}) {
 
 const attr = (tag: string, name: string) => tag.match(new RegExp(`\\b${name}\\s*=\\s*["']([^"']+)["']`, "i"))?.[1] ?? null;
 
+/**
+ * A logo that isn't the client's: the web designer's credit ("Websites by Market Muscles", "Powered by …"), anything in
+ * the footer, or a picture linking out to another site. A client's report once carried their web designer's logo.
+ */
+export function isCredit(html: string, at: number, base: string): boolean {
+  if (html.lastIndexOf("<footer", at) > html.lastIndexOf("</footer", at)) return true;
+  const before = html.slice(Math.max(0, at - 400), at);
+  if (/\b(?:powered|designed|built|developed|made|hosted|created|websites?|site|design)\s+(?:with|by)\b[^<]{0,60}(?:<[^>]*>\s*){0,3}$/i.test(before)) return true;
+  const open = before.lastIndexOf("<a ");
+  if (open >= 0 && before.lastIndexOf("</a") < open) {
+    const href = before.slice(open).match(/href=["']([^"']+)/i)?.[1];
+    try {
+      const host = (u: string) => new URL(u, base).hostname.replace(/^www\./, "");
+      if (href && /^https?:/i.test(href) && host(href) !== host(base)) return true;
+    } catch {
+      // a link that can't be read: not a reason to skip the picture
+    }
+  }
+  return false;
+}
+
 /** The pictures on a client's website that could be their logo, best first (pure, so it's tested) */
 export function logoCandidates(html: string, base: string): string[] {
   const abs = (u: string | null) => {
@@ -69,8 +90,9 @@ export function logoCandidates(html: string, base: string): string[] {
   const out: string[] = [];
   const head = html.slice(0, 300_000);
   // 1. The header's logo image (an <img> whose class, id, alt or file name says logo)
-  for (const tag of head.match(/<img\b[^>]*>/gi) ?? []) {
-    if (!/logo/i.test(tag)) continue;
+  for (const hit of head.matchAll(/<img\b[^>]*>/gi)) {
+    const tag = hit[0];
+    if (!/logo/i.test(tag) || isCredit(head, hit.index ?? 0, base)) continue;
     const src = abs(attr(tag, "src") ?? attr(tag, "data-src") ?? attr(tag, "srcset")?.split(/\s+/)[0] ?? null);
     if (src) out.push(src);
     if (out.length >= 3) break;

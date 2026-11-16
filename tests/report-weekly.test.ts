@@ -302,3 +302,13 @@ describe("swapTile", () => {
     expect(swapTile(["results", "cost_per_result", "cpc", "ctr"], ["spend", "clicks"], 3, "cpm").table).toEqual(["spend", "clicks", "ctr"]);
   });
 });
+
+describe("logoCandidates skips a web designer's credit", () => {
+  it("passes over the footer's 'Websites by' logo and takes the client's icon", () => {
+    const html = `<html><head><link rel="icon" type="image/png" href="https://cdn.example.net/Inferno-Round-Sticker-22.png"></head><body>
+      <header><a href="/"><img src="/wp-content/uploads/brand-logo.png" alt="Inferno"></a></header>
+      <div class="credit">Martial Arts &amp; Dance Studio Websites by <a href="https://marketmuscles.com" target="_blank"><img src="https://content.marketmuscles.com/images/mm-logo.png" alt="Market Muscles"></a></div>
+      <footer><img src="/footer-logo.png"></footer></body></html>`;
+    expect(logoCandidates(html, "https://myinfernofitness.com/")).toEqual(["https://myinfernofitness.com/wp-content/uploads/brand-logo.png", "https://cdn.example.net/Inferno-Round-Sticker-22.png"]);
+  });
+});
