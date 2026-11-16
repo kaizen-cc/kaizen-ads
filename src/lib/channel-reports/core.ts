@@ -5,6 +5,7 @@ import { BENCHMARKS, deliverabilityOutliers, pulseWindow, type CampaignLite, typ
 import { postRate, withRates, windowOf, type DailyRow as SocialDay, type PostView, type Window as SocialWindow } from "@/lib/social/insights";
 import type { Platform as SocialPlatformKey, PostFormat, SocialPost } from "@/lib/social/core";
 import type { RefreshNote } from "@/lib/reports/refresh-core";
+import { emailDetail, type EmailDetail, type FlowDay, type Upcoming } from "./email-detail";
 
 // Email (Klaviyo) and organic social reports as plain functions, free of server code and the database so they are tested:
 // which reports exist (platform, line, cadence), the report's dates (the month just over against the month before, or the
@@ -159,6 +160,10 @@ export type EmailMetrics = {
   refreshNote?: RefreshNote;
   /** The account score (older stored reports have none) */
   score?: EmailScoreSnapshot | null;
+  /** Orders, the daily split, each campaign and flow for the period, deliverability and subscribers (older stored reports have none) */
+  detail?: EmailDetail | null;
+  /** Dated campaigns after the period: scheduled in Klaviyo or planned by the team */
+  upcoming?: Upcoming[];
 };
 
 export type EmailInput = {
@@ -178,6 +183,11 @@ export type EmailInput = {
   /** campaign id → the picture of its saved email */
   images?: Map<string, string | null>;
   target?: TargetLine | null;
+  /** Each flow's numbers per day (klaviyo_flow_daily); null when they aren't stored */
+  flowDays?: FlowDay[] | null;
+  /** The main list's size on the days it was read */
+  sizes?: { date: string; profiles: number }[];
+  upcoming?: Upcoming[];
 };
 
 /** Campaigns that reached someone in the window (a scheduled, cancelled or test one with no recipients doesn't count) */
@@ -264,6 +274,8 @@ export function emailMetrics(i: EmailInput): EmailMetrics {
     target: i.target ?? null,
     gaps,
     through,
+    detail: emailDetail({ main: i.main, compare: i.compare, days: i.days, campaigns: i.campaigns, flowDays: i.flowDays ?? null, flows: i.flows, sizes: i.sizes ?? [] }),
+    upcoming: i.upcoming ?? [],
   };
   return m;
 }
@@ -492,6 +504,18 @@ export const int = (n: number | null | undefined) => (n == null || !Number.isFin
 /** A fraction as a percent ("3.4%") */
 export const pct = (x: number | null | undefined, digits = 1) => (x == null || !Number.isFinite(x) ? "–" : `${(x * 100).toFixed(digits)}%`);
 export const signed = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? "–" : `${n > 0 ? "+" : n < 0 ? "-" : ""}${Math.abs(Math.round(n)).toLocaleString("en-US")}`);
+/** Money short enough for a chart label ("$1.9k", "AUD 28.3k", "$640") */
+export const shortMoney = (n: number, currency: string | null = "USD") => {
+  const sym = !currency || currency === "USD" ? "$" : `${currency} `;
+  const a = Math.abs(n);
+  const body = a >= 1e6 ? `${(n / 1e6).toFixed(a >= 1e7 ? 0 : 1)}m` : a >= 1000 ? `${(n / 1000).toFixed(a >= 1e4 ? 0 : 1)}k` : `${Math.round(n)}`;
+  return `${sym}${body.replace(/\.0(?=[km])/, "")}`;
+};
+/**
+ * The font size that keeps a value on one line in a box `width` points wide: Helvetica-Bold digits and capitals run
+ * about 0.6 of the size, so a long value ("AUD 1,234,567") shrinks instead of spilling into its neighbour.
+ */
+export const fitFont = (text: string, width: number, max: number, min = 8) => Math.max(min, Math.min(max, Math.floor((width / (Math.max(1, text.length) * 0.6)) * 10) / 10));
 
 /** The change from before to now as the report shows it: a percent with one decimal, which way, and whether it's good news */
 export function moveOf(now: number | null | undefined, before: number | null | undefined, better: "up" | "down" | "none" = "up"): Move {

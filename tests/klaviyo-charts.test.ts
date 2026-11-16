@@ -14,7 +14,7 @@ describe("deliverability score", () => {
   });
 
   it("is 100 when every rate is healthy", () => {
-    expect(deliverabilityScore({ bounce: 0.002, spam: 0.0002, unsubscribe: 0.002 })).toBe(100);
+    expect(deliverabilityScore({ bounce: 0.002, spam: 0.00005, unsubscribe: 0.002 })).toBe(100);
   });
 
   it("weights spam most", () => {
@@ -44,7 +44,7 @@ describe("deliverability score", () => {
     ]);
     expect(weeks.map((w) => w.week)).toEqual(["2026-10-05", "2026-10-19"]);
     expect(weeks[0].score).toBe(100);
-    expect(weeks[1].score).toBe(50);
+    expect(weeks[1].score).toBe(30);
   });
 });
 

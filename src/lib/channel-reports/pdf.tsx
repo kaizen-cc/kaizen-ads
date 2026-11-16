@@ -27,7 +27,8 @@ async function picture(url: string | null, size = 320): Promise<string | null> {
 /** The pictures the document draws, by what they picture */
 export async function channelImages(input: ChannelPdfInput): Promise<ChannelImages> {
   const m = input.metrics;
-  const jobs: [string, string | null][] = m.platform === "klaviyo" ? m.campaigns.slice(0, 6).map((c) => [c.id, c.image]) : m.posts.slice(0, 3).map((p) => [postKey(p), p.thumbnail]);
+  // An email report with its detail draws tables, not pictures: only an older one shows the campaigns' emails
+  const jobs: [string, string | null][] = m.platform === "klaviyo" ? (m.detail ? [] : m.campaigns.slice(0, 6).map((c) => [c.id, c.image])) : m.posts.slice(0, 3).map((p) => [postKey(p), p.thumbnail]);
   const got = await Promise.all(jobs.map(([, url]) => within(20_000, picture(url), null)));
   return Object.fromEntries(jobs.map(([k], i) => [k, got[i]]));
 }

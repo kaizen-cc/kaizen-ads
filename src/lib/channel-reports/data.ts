@@ -4,6 +4,7 @@ import { loadEmailScore } from "@/lib/email-score-load";
 import { keyFlowCoverage, shiftDay, type CampaignLite, type DailyRow as EmailDay, type FlowLite } from "@/lib/klaviyo/insights";
 import type { DailyRow as SocialDay } from "@/lib/social/insights";
 import type { Platform, PostFormat, SocialPost } from "@/lib/social/core";
+import { upcomingItems, type FlowDay, type Upcoming } from "./email-detail";
 import { scoreSnapshot, campaignsIn, channelPeriods, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type SocialMetrics, type TargetRow, type Window } from "./core";
 
 // What a channel report reads: the numbers the client page already shows (klaviyo_* and social_* tables, filled by the
@@ -61,6 +62,31 @@ async function emailImages(admin: SupabaseClient, clientId: string, ids: string[
   return out;
 }
 
+/** Each flow's numbers per day over the dates (null while klaviyo_flow_daily isn't there or holds nothing for them) */
+async function readFlowDays(admin: SupabaseClient, clientId: string, from: string, to: string): Promise<FlowDay[] | null> {
+  const out: FlowDay[] = [];
+  // Paged: a month and the one before across a few dozen flows passes a single page
+  for (let at = 0; at < 20_000; at += 1000) {
+    const { data, error } = await admin.from("klaviyo_flow_daily").select("flow_id, date, recipients, delivered, opens_unique, clicks_unique, conversions, revenue").eq("client_id", clientId).gte("date", from).lte("date", to).order("date").order("flow_id").range(at, at + 999);
+    if (error) return null;
+    for (const r of data ?? []) out.push({ flowId: r.flow_id as string, date: r.date as string, recipients: num(r.recipients), delivered: num(r.delivered), opensUnique: num(r.opens_unique), clicksUnique: num(r.clicks_unique), conversions: num(r.conversions), revenue: num(r.revenue) });
+    if ((data ?? []).length < 1000) break;
+  }
+  return out.length ? out : null;
+}
+
+/** What's dated after the period: campaigns scheduled in Klaviyo, and the campaigns the team planned or suggested (email_suggestions) */
+async function readUpcoming(admin: SupabaseClient, clientId: string, after: string, camps: Record<string, unknown>[]): Promise<Upcoming[]> {
+  const until = shiftDay(after, 21);
+  const etDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const scheduled: Upcoming[] = camps
+    .filter((c) => c.send_time && !num(c.recipients) && !/cancel|draft/i.test(String(c.status ?? "")))
+    .map((c) => ({ date: etDay(String(c.send_time)), title: String(c.name ?? "").trim(), source: "klaviyo" as const }));
+  const { data, error } = await admin.from("email_suggestions").select("title, send_on, status").eq("client_id", clientId).in("status", ["new", "in_motion", "done"]).gt("send_on", after).lte("send_on", until).limit(30);
+  const planned: Upcoming[] = error ? [] : (data ?? []).map((s) => ({ date: String(s.send_on), title: String(s.title ?? "").trim(), source: s.status === "new" ? ("idea" as const) : ("planned" as const) }));
+  return upcomingItems([...scheduled, ...planned], after);
+}
+
 /** The email report's numbers for a client over given dates (null when Klaviyo has nothing for the client) */
 export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, kind: ChannelKind, main: Window, compare: Window, opts: { images?: boolean } = {}): Promise<EmailMetrics | null> {
   const today = todayET();
@@ -88,6 +114,7 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     storeOrders: numOrNull(d.store_orders),
     subscribed: numOrNull(d.subscribed),
     unsubscribed: numOrNull(d.unsubscribed),
+    conversions: numOrNull(d.conversions),
   }));
   const campaigns: CampaignLite[] = (camps ?? []).map((c) => ({
     id: c.campaign_id as string,
@@ -128,7 +155,11 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 6)
     .map((c) => c.id);
-  const images = opts.images === false ? undefined : await emailImages(admin, clientId, sentIds).catch(() => undefined);
+  const [images, flowDays, upcoming] = await Promise.all([
+    opts.images === false ? undefined : emailImages(admin, clientId, sentIds).catch(() => undefined),
+    readFlowDays(admin, clientId, compare.start, main.end),
+    readUpcoming(admin, clientId, main.end, camps ?? []),
+  ]);
   const m = emailMetrics({
     kind,
     main,
@@ -142,6 +173,9 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     currency: (conn?.currency as string | null) ?? null,
     account: (conn?.account_name as string | null) ?? null,
     images,
+    flowDays,
+    sizes: hist,
+    upcoming,
   });
   m.target = targetLine("email", await readTarget(admin, clientId, "email"), { kind, main, revenue: m.now.revenue });
   // The account score, as of now (its own 30 days), so the report can say what is lifting it and what is weighing it down

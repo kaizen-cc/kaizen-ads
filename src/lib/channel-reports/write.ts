@@ -11,6 +11,7 @@ import { voiceOf } from "@/lib/reports/work";
 import { channelName, dataFlags, lineOfPlatform, platformOfLine, type ChannelKind, type ChannelLine, type ChannelPlatform, type EmailMetrics, type SocialMetrics } from "./core";
 import { loadChannelMetrics } from "./data";
 import { channelMetricsText } from "./text";
+import { emailMessageFlags, reportTitle, withTitle } from "./email-message";
 
 // Writing a channel client report (email or organic social): the numbers (data.ts), the work behind them, the owner's own
 // voice, what this client likes in a report, and the client's Brand Bible and context. The same arc as the ads reports:
@@ -40,9 +41,19 @@ const TAKEAWAY_RULES = `takeaways: exactly three cards for the PDF, read from th
 /** What the writer is told, by line: the owner's role, what leads the report, what each number means */
 function lineRules(platform: ChannelPlatform): string {
   if (platform === "klaviyo")
-    return `Lead with attributed revenue for the period against the period before, and against the target when <numbers> gives one (say plainly how far along it is). Then the campaigns that mattered, by name, with their open and click rates and revenue; the flows and which earned most; list growth; and deliverability, honestly. If <numbers> carries an email health score, mention it once in plain words for the client: the score and its colour, what is lifting it, and what we are doing about the one or two checks holding it back. Never recite the weights, the formula or all seven checks, and say it is read over the last 30 days. Revenue is what Klaviyo attributes to email: never call it the store's total revenue and never claim email caused sales it doesn't show. Flow revenue is Klaviyo's last 30 days (as stated in <numbers>), not the period's own days: say "over the last 30 days" when you quote it. If a campaign has a preview picture, you may refer to it as a highlight. If a deliverability flag is red, say it plainly and what we're doing about it; if rates are healthy, say so in a line.`;
+    return `Revenue is what Klaviyo attributes to email and SMS: never call it the store's total revenue and never claim email caused sales it doesn't show. In anything the client reads, say "automated emails" (never "flows"), "people who received it" (never "recipients" in prose), and plain words for every rate ("60% of people opened it", "about 1.4% of the people who received it placed an order"); no jargon (RPR, CTR, CVR, AOV, deliverability score weights). Every campaign and automated email has its own numbers for the period in <numbers>: use those. If a deliverability flag is red, say it plainly and what we're doing about it.`;
   return `Lead with follower growth and reach for the period against the period before, then views, the engagement rate (interactions over reach; if <numbers> says it isn't available, don't quote one) against the target when <numbers> gives one, how much we published, and the posts that did best and why they likely worked (format, topic, hook, from what the numbers and captions show). Never claim a post caused follower growth unless the numbers show it. Instagram and Facebook are counted from Meta's own account insights; say which platform a number is from when it matters.`;
 }
+
+const EMAIL_MESSAGE = (kind: ChannelKind) => `message: the email team's ${kind} report message, plain text with Slack formatting (*bold* headers, "• " bullets), in exactly this structure and order, nothing before or after:
+1. The title line (the app sets it exactly; write it as given in <report_title>).
+2. A blank line, then "Hi Team," on its own line.
+3. One line: "Here's how email and SMS performed for the ${kind === "monthly" ? "month of" : "week of"} <period words>." (email only when no SMS was sent).
+4. *What happened*: a short paragraph (2 or 3 sentences: which campaigns went out and when, by name and date, and where most of the revenue came from, in plain words like "about four of every five dollars"), then exactly the four bullets given in <numbers> under "What happened bullets", word for word.
+5. *Highlights*: one bullet per campaign sent in the period (name: revenue from orders, with X% of people opening it, and a plain comparison such as which was stronger and the order rate against the other), then the top two to four automated emails the same way (revenue, orders, order rate). Numbers rounded the way the team rounds: whole dollars, whole percent for opens, one decimal for order rates.
+6. *What we learned*: one short paragraph with a single insight grounded in the numbers (a comparison the numbers show and what it means for the calendar). Never advice the numbers don't support.
+7. *Coming up*: one bullet per dated item, "Month D: what", only from the Coming up list in <numbers>, the work log or what was said; leave ideas out unless confirmed there. If nothing is dated, one bullet with what the work log says is next; never invent a date or a campaign.
+No sign-off, no emojis, no em dashes, no internal words (flows, Klaviyo report names, scores, AI, Kaizen Ads, team names).`;
 
 function writerSystem(kind: ChannelKind, platform: ChannelPlatform, whiteLabel = false): string {
   const line = lineOfPlatform(platform);
@@ -50,16 +61,18 @@ function writerSystem(kind: ChannelKind, platform: ChannelPlatform, whiteLabel =
 Every report follows the same arc: what we did, what we're doing now and why, and what comes next. Its job is to show the client the work behind the numbers, not just the numbers.
 Accuracy above everything: every number you write must come from the numbers given, rounded the way the ${ROLE[line]} rounds; never estimate, never invent a figure, a campaign, a post, a change or a plan. Comparisons say against what ("vs September", "vs the week before"). If results are down, say it plainly and say what we're doing about it; never spin. Only mention work that is in the work log or what the ${ROLE[line]} added (group many small edits into what they amount to). Never mention internal things: team members other than the client's own people, Kaizen Ads, AI, audits by name, internal Slack, other clients. Never use em dashes; use a comma, a colon or a new sentence.
 ${lineRules(platform)}
-message: the ${kind === "weekly" ? "Slack message to the client channel" : "Slack post that goes with the monthly report"}, in Slack formatting (*bold* for short section headers, "• " for bullets, line breaks; no # headings, no emojis unless the ${ROLE[line]} uses them). Always open with <!here> (Slack's @here, written exactly like that) and then the greeting: never a person's mention (no <@U…> code, no name with @). ${kind === "weekly" ? "Open with the headline numbers for the week against the week before, then what we did, then what's next. Keep it as short as the examples." : "A short, warm note that the monthly report is ready, the two or three numbers that matter most for the month against the month before, one line on the biggest thing we did and the biggest thing coming up; the link is added after."}
+${platform === "klaviyo" ? `${EMAIL_MESSAGE(kind)}
+sections: the same content, structured, for the report page (the PDF draws the numbers itself): headline (one line, the main takeaway), summary (the What happened paragraph), did (what we did, 2 to 6 bullets from the work log), doing (2 to 4), next (the Coming up items), highlights (the Highlights bullets).
+${TAKEAWAY_RULES}` : `message: the ${kind === "weekly" ? "Slack message to the client channel" : "Slack post that goes with the monthly report"}, in Slack formatting (*bold* for short section headers, "• " for bullets, line breaks; no # headings, no emojis unless the ${ROLE[line]} uses them). Always open with <!here> (Slack's @here, written exactly like that) and then the greeting: never a person's mention (no <@U…> code, no name with @). ${kind === "weekly" ? "Open with the headline numbers for the week against the week before, then what we did, then what's next. Keep it as short as the examples." : "A short, warm note that the monthly report is ready, the two or three numbers that matter most for the month against the month before, one line on the biggest thing we did and the biggest thing coming up; the link is added after."}
 sections: the same content, structured, for the PDF and the report page: headline (one line, the main takeaway), summary (2 to 4 sentences, the numbers in context), did (what we did, 3 to 7 bullets), doing (what we're doing now and why, 2 to 5), next (what comes next, 2 to 5), highlights (2 to 4 short numeric callouts).
-${TAKEAWAY_RULES}`;
+${TAKEAWAY_RULES}`}`;
   return whiteLabel ? `${base}\n${WHITE_LABEL_RULE}` : base;
 }
 
 const QA_SYSTEM = (platform: ChannelPlatform) => `You are the QA for client reports at Kaizen Marketing, a marketing agency. Before the ${ROLE[lineOfPlatform(platform)]} sees a draft of this ${channelName(platform).toLowerCase()} report, you check it as if the client's trust depended on it. Compare the draft (message and sections) with the source data, the work log and what the ${ROLE[lineOfPlatform(platform)]} added.
 Flag:
-- fix: a number that doesn't match the data or the math (percent changes, rates), a wrong period or comparison, a campaign, post, change or plan that isn't in the sources, revenue described as the store's total instead of attributed email revenue (email), an engagement rate quoted when the data says it isn't available (social), a client-facing mention of something internal (team names other than the client's, AI, Kaizen Ads, other clients), an em dash, an email health score or check value that doesn't match the numbers.
-- check: something the ${ROLE[lineOfPlatform(platform)]} should confirm before sending: a claim that's only loosely supported, wording that could read badly to the client, a missing part of the arc (did, doing, next), a number shown without what it's compared to, a target mentioned without its progress.
+- fix: a number that doesn't match the data or the math (percent changes, rates), a wrong period or comparison,${platform === "klaviyo" ? " a Coming up item (date or campaign) that isn't in the Coming up list, the work log or what was said, an idea listed as if it were confirmed," : ""} a campaign, post, change or plan that isn't in the sources, revenue described as the store's total instead of attributed email revenue (email), an engagement rate quoted when the data says it isn't available (social), a client-facing mention of something internal (team names other than the client's, AI, Kaizen Ads, other clients), an em dash, an email health score or check value that doesn't match the numbers.
+- check: something the ${ROLE[lineOfPlatform(platform)]} should confirm before sending: a claim that's only loosely supported, wording that could read badly to the client, ${platform === "klaviyo" ? "a message that leaves the email team's structure (title, Hi Team, What happened with its four bullets, Highlights, What we learned, Coming up), a client-facing internal word (flows, recipients, RPR)" : "a missing part of the arc (did, doing, next)"}, a number shown without what it's compared to, a target mentioned without its progress.
 - alert: something alarming in the data itself the ${ROLE[lineOfPlatform(platform)]} should know before sending, even if the draft is right: revenue or reach collapsing, nothing sent or posted, followers lost, a red deliverability flag, days with no data.
 issue: what's wrong in one sentence. where: the line or section it's in (quote a few words). suggestion: the exact fix or what to check. Only real issues; no style nitpicks.
 verdict: clean (nothing to fix or check), check (only checks or alerts), or fix (anything to fix).`;
@@ -121,6 +134,7 @@ function sourcesBlock(c: Ctx, m: Metrics, work: string, voice: string, client = 
   const lastNext = (c.last?.sections as Sections | null)?.next ?? [];
   return [
     `<client>${c.client}</client>`,
+    m.platform === "klaviyo" ? `<report_title>${reportTitle(c.client, c.r.kind, m.main)}</report_title>` : "",
     `<${ROLE[lineOfPlatform(c.r.platform)].replace(" ", "_")}>${c.owner ?? `the ${ROLE[lineOfPlatform(c.r.platform)]}`}</${ROLE[lineOfPlatform(c.r.platform)].replace(" ", "_")}>`,
     `<numbers>\n${channelMetricsText(m)}\n</numbers>`,
     `<work_log period="${c.r.period_start} to ${c.r.period_end}">\n${work}\n</work_log>`,
@@ -176,7 +190,7 @@ export async function qaChannelReport(admin: SupabaseClient, reportId: string): 
     maxTokens: 8000,
     prompt: `${sourcesBlock(c, m, c.r.work?.text ?? "", "")}\n\n<draft_message>\n${c.r.message ?? ""}\n</draft_message>\n\n<draft_sections>\n${JSON.stringify(c.r.sections ?? {})}\n</draft_sections>`,
   });
-  const flags: QaFlag[] = [...dataFlags(m), ...out.flags];
+  const flags: QaFlag[] = [...dataFlags(m), ...(m.platform === "klaviyo" ? emailMessageFlags(c.r.message, m, c.client, c.r.kind) : []), ...out.flags];
   const verdict: Qa["verdict"] = flags.some((f) => f.severity === "fix") ? "fix" : flags.length ? "check" : "clean";
   const qa: Qa = { verdict, flags, checkedAt: new Date().toISOString() };
   await admin.from("reports").update({ qa, updated_at: new Date().toISOString() }).eq("id", reportId);
@@ -210,6 +224,7 @@ export async function draftChannelReport(admin: SupabaseClient, reportId: string
       out.message = forClient(out.message, true);
       out.sections = scrubSections(out.sections);
     }
+    if (metrics.platform === "klaviyo") out.message = withTitle(out.message, reportTitle(c.client, c.r.kind, metrics.main));
     out.message = openWithHere(out.message);
     await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), updated_at: new Date().toISOString() }).eq("id", reportId);
     // The QA runs before the owner hears about it, so the note they get says whether there's anything to fix
@@ -300,6 +315,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
     out.message = forClient(out.message, true);
     out.sections = scrubSections(out.sections);
   }
+  if (m.platform === "klaviyo") out.message = withTitle(out.message, reportTitle(c.client, c.r.kind, m.main));
   out.message = openWithHere(out.message);
   await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), chat: next, updated_at: now }).eq("id", reportId);
   if (out.lesson.trim()) await (await import("@/lib/reports/write")).rememberPref(admin, c.r.client_id, out.lesson.trim());

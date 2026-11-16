@@ -1,0 +1,82 @@
+import type { ChannelKind, DataFlag, EmailMetrics } from "./core";
+
+// The email report's message, the way the email team writes it today: a title line, "Hi Team,", one line, then What
+// happened (a short paragraph and four set bullets), Highlights, What we learned and Coming up. The parts that are pure
+// arithmetic (the title, the four bullets) are made here so they are always right; the checks below catch a draft that
+// lost the structure or slipped into internal words. Pure, so it is tested.
+
+const monthDay = (d: string, year = false) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", ...(year ? { year: "numeric" } : {}), timeZone: "UTC" });
+
+/** "November 9 to November 15" (with the first day's year too when the period crosses one) */
+export function periodWords(r: { start: string; end: string }, withYear = false): string {
+  const cross = r.start.slice(0, 4) !== r.end.slice(0, 4);
+  return `${monthDay(r.start, cross)} to ${monthDay(r.end, withYear || cross)}`;
+}
+
+/** "Candy Cloud Weekly Report | November 9 to November 15, 2026" */
+export function reportTitle(client: string, kind: ChannelKind, r: { start: string; end: string }): string {
+  return `${client.trim()} ${kind === "monthly" ? "Monthly" : "Weekly"} Report | ${periodWords(r, true)}`;
+}
+
+/** Money as the team writes it in a message: whole units ("$13,179"), cents only under ten ("$4.50") */
+export function wholeMoney(n: number | null | undefined, currency: string | null = "USD"): string {
+  if (n == null || !Number.isFinite(n)) return "n/a";
+  const sym = !currency || currency === "USD" ? "$" : `${currency} `;
+  const small = Math.abs(n) < 10 && Math.round(n) !== n;
+  return `${sym}${n.toLocaleString("en-US", { minimumFractionDigits: small ? 2 : 0, maximumFractionDigits: small ? 2 : 0 })}`;
+}
+
+/** The four bullets under What happened, always in this order */
+export function whatHappenedBullets(m: EmailMetrics): string[] {
+  const c = m.currency;
+  const orders = m.detail?.orders.now;
+  return [
+    `Revenue from email and SMS: ${wholeMoney(m.now.revenue, c)}`,
+    ...(orders != null ? [`Orders: ${orders.toLocaleString("en-US")}`] : []),
+    `From automated emails: ${wholeMoney(m.now.flowRevenue, c)}`,
+    `From campaigns: ${wholeMoney(m.now.campaignRevenue, c)}`,
+  ];
+}
+
+export const MESSAGE_HEADERS = ["What happened", "Highlights", "What we learned", "Coming up"] as const;
+
+/** The title is always the first line (after the @here the app adds): whatever the draft opened with is replaced */
+export function withTitle(message: string, title: string): string {
+  const lines = message.replace(/\r\n/g, "\n").trim().split("\n");
+  // A first line that is already a title (names the report or the period) gives way to the right one
+  const first = (lines[0] ?? "").replace(/<!here>|@here/g, "").replace(/\*/g, "").trim();
+  if (/\breport\b/i.test(first) && first.includes("|")) lines.shift();
+  while (lines.length && !lines[0].trim()) lines.shift();
+  return [title, "", ...lines].join("\n");
+}
+
+/** Words that are the team's, not the client's */
+const INTERNAL = [
+  { re: /\bflows?\b/i, say: "automated emails" },
+  { re: /\bRPR\b|\brevenue per recipient\b/i, say: "revenue for each email sent" },
+  { re: /\bCTR\b|\bCVR\b|\bAOV\b/, say: "the words in full (click rate, order rate, average order)" },
+];
+
+/** Plain checks on an email report's message: the team's structure, the title, client words, no em dashes */
+export function emailMessageFlags(message: string | null | undefined, m: EmailMetrics, client: string, kind: ChannelKind): DataFlag[] {
+  const out: DataFlag[] = [];
+  const text = String(message ?? "");
+  if (!text.trim()) return out;
+  const add = (severity: DataFlag["severity"], issue: string, suggestion: string, where = "Message") => out.push({ severity, issue, where, suggestion });
+  const title = reportTitle(client, kind, m.main);
+  if (!text.includes(title)) add("fix", "The message doesn't open with the report's title line.", `Start with: ${title}`);
+  if (!/\bHi Team,/.test(text)) add("check", 'The greeting "Hi Team," is missing.', 'Put "Hi Team," on the line after the title.');
+  let at = -1;
+  for (const h of MESSAGE_HEADERS) {
+    const i = text.search(new RegExp(`\\*${h}\\*`, "i"));
+    if (i < 0) add("fix", `The "${h}" section is missing.`, `Add *${h}* in the team's order: ${MESSAGE_HEADERS.join(", ")}.`);
+    else if (i < at) add("check", `"${h}" is out of order.`, `Keep the order: ${MESSAGE_HEADERS.join(", ")}.`);
+    else at = i;
+  }
+  for (const w of INTERNAL) {
+    const hit = w.re.exec(text);
+    if (hit) add("fix", `"${hit[0]}" is the team's word, not the client's.`, `Say ${w.say}.`, `"…${text.slice(Math.max(0, hit.index - 20), hit.index + 20).replace(/\s+/g, " ")}…"`);
+  }
+  if (text.includes("—")) add("fix", "An em dash is in the message.", "Use a comma, a colon or a new sentence.");
+  return out;
+}

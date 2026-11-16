@@ -82,7 +82,7 @@ export function shareOfRevenue(email: number, store: number | null | undefined):
 
 // ─── The windows ───────────────────────────────────────────────────────────
 
-export type DailyRow = { date: string; revenue: number; campaignRevenue: number; flowRevenue: number; smsRevenue: number; sends: number; campaignsSent: number; recipients?: number; storeRevenue: number | null; storeOrders: number | null; subscribed: number | null; unsubscribed: number | null };
+export type DailyRow = { date: string; revenue: number; campaignRevenue: number; flowRevenue: number; smsRevenue: number; sends: number; campaignsSent: number; recipients?: number; storeRevenue: number | null; storeOrders: number | null; subscribed: number | null; unsubscribed: number | null; /** Placed orders attributed to email and SMS that day */ conversions?: number | null };
 export type CampaignLite = { id: string; name: string; channel: string; sendTime: string | null; subject: string | null; recipients: number; delivered: number; opensUnique: number; clicksUnique: number; unsubscribes: number; bounced: number; spamComplaints: number; revenue: number; conversions: number; openRate: number | null; clickRate: number | null };
 export type FlowLite = { id: string; name: string; status: string | null; trigger: string | null; revenue30: number; revenue90: number; recipients30: number; recipients90: number; openRate30: number | null; clickRate30: number | null; openRate90: number | null; clickRate90: number | null };
 
@@ -196,7 +196,7 @@ export type HealthTone = "bad" | "warn" | "good";
 export type HealthFinding = { id: string; tone: HealthTone; title: string; detail: string; action: string | null };
 
 /** Healthy lines the alerts are held against (campaigns, per delivered message) */
-export const BENCHMARKS = { unsubscribe: { warn: 0.003, bad: 0.005 }, spam: { warn: 0.0005, bad: 0.001 }, bounce: { warn: 0.01, bad: 0.02 }, clickLow: 0.01 } as const;
+export const BENCHMARKS = { unsubscribe: { warn: 0.003, bad: 0.005 }, spam: { warn: 0.0001, bad: 0.0005 }, bounce: { warn: 0.01, bad: 0.02 }, clickLow: 0.01 } as const;
 
 const p1 = (x: number) => `${(x * 100).toFixed(x < 0.01 ? 2 : 1)}%`;
 const rel = (a: number | null, b: number | null) => (a != null && b != null && b > 0 ? (a - b) / b : null);
