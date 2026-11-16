@@ -9,6 +9,7 @@ import { emailHtml, emailText } from "@/lib/email-layout";
 import { logClientEmail } from "@/lib/client-emails";
 import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { renderReportPdf } from "./pdf";
+import { bundleParts, ensureSendable, ensureSendableWithRiders } from "./refresh";
 import { jointMessage, metaFirst, recapIntro, riderReady, tiktokJoins, waitingParts, type QueueTarget } from "./joint-core";
 import { tiktokConfigured } from "@/lib/tiktok/core";
 import { periodsFor, type ReportMetrics } from "./metrics";
@@ -198,6 +199,8 @@ const dashboardLine = (r: { client: { slug?: string; portal_live?: boolean; clie
  * dates first; what went is kept in the history.
  */
 export async function sendWeekly(admin: SupabaseClient, id: string, by: { id: string; fullName: string; email: string | null }, delivery: Delivery, note?: string | null) {
+  // Right before it goes: the numbers from the account as they are now (the report and the TikTok part riding on it), and the text following them
+  await ensureSendableWithRiders(admin, id, { id: by.id, name: by.fullName });
   const r = await load(admin, id);
   // A TikTok part joined to its Meta report goes out with it, never on its own
   const { data: self } = await admin.from("reports").select("joined_to").eq("id", id).maybeSingle();
@@ -296,6 +299,7 @@ async function recapTo(admin: SupabaseClient, clientId: string, chosen: Delivery
  * buyer); when the last one is in, the recap goes to the client. Returns what happened, for the buyer to see.
  */
 export async function submitMonthly(admin: SupabaseClient, id: string, by: { id: string }, delivery?: Delivery | null) {
+  await ensureSendableWithRiders(admin, id, { id: by.id, name: "Kaizen" });
   const r = await load(admin, id);
   if (!r.bundle_id) throw new Error("This report isn't part of a monthly recap.");
   const riders = await submitWithRiders(admin, id);
@@ -322,6 +326,7 @@ export async function submitMonthly(admin: SupabaseClient, id: string, by: { id:
  * The other part follows on its own when its buyer approves it, on the same recap link. They hear it.
  */
 export async function sendPartNow(admin: SupabaseClient, id: string, by: { id: string; fullName: string }, delivery?: Delivery | null) {
+  await ensureSendableWithRiders(admin, id, { id: by.id, name: by.fullName });
   const r = await load(admin, id);
   if (!r.bundle_id) throw new Error("This report isn't part of a monthly recap.");
   await submitWithRiders(admin, id);
@@ -443,6 +448,8 @@ async function keepRecapSend(admin: SupabaseClient, x: { clientId: string; name:
 
 /** Sends the monthly recap to the client: a Slack post (as the buyer who completed it) and an email to their contacts. */
 export async function deliverBundle(admin: SupabaseClient, bundleId: string, by: { id: string }) {
+  // A part approved days ago may have drifted from the account: every part not yet sent is current, with its text, before the recap goes
+  await ensureSendable(admin, await bundleParts(admin, bundleId), { id: by.id, name: "Kaizen" });
   const { data: b } = await admin.from("report_bundles").update({ status: "sending" }).eq("id", bundleId).eq("status", "collecting").select("id, token, client_id, period_start").maybeSingle();
   if (!b) return; // already sent (or being sent)
   try {

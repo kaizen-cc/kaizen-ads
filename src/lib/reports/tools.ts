@@ -27,7 +27,7 @@ function slim(rows: Record<string, unknown>[]) {
 
 export type Pulled = { label: string; data: string };
 
-export async function reportTools(admin: SupabaseClient, r: { client_id: string; platform: string; kpi_targets: unknown; period_end?: string }, pulled: Pulled[]): Promise<AiTool[]> {
+export async function reportTools(admin: SupabaseClient, r: { client_id: string; platform: string; kpi_targets: unknown; period_end?: string }, pulled: Pulled[], who?: { id: string | null; name: string | null } | null): Promise<AiTool[]> {
   const t = r.kpi_targets as ({ ad_account_id: string | null } & CampaignScope) | null;
   const account = t?.ad_account_id ?? null;
   // The KPI's campaigns only: a campaign left out of it (one the client runs themselves) or outside its campaign match
@@ -222,6 +222,42 @@ export async function reportTools(admin: SupabaseClient, r: { client_id: string;
   }
 
   const { motionConnected, openSession } = await import("@/lib/motion");
+  // Numbers the buyer states themselves: they change the tiles, tables and PDF, not just the text (the same saved
+  // results as the studio's "Results" box, so they survive a refresh and a regenerate)
+  const reportId = (r as { id?: string }).id;
+  if (reportId && who) {
+    tools.push({
+      name: "set_reported_numbers",
+      description:
+        "Sets the report's headline numbers to figures the buyer explicitly gave you in this chat (for example \"Google shows 67 conversions for these dates\"), so the tiles, tables and PDF change too, not only the text. Use it ONLY for numbers the buyer states; never for a number you looked up, worked out or guessed (looked-up numbers stay in the text as data you pulled). Give what they gave: results (the count), and optionally revenue, the count and revenue for the period before, what the result is called, and the platform screen they read it from (source, e.g. \"Google Ads\"). Anything they did not give stays what the app drew. Cost per result and ROAS follow from the spend. After it returns, write the message and sections from the numbers it returns, so the text and the PDF agree, and tell the buyer which numbers you set.",
+      input_schema: {
+        type: "object",
+        properties: {
+          results: { type: "number", description: "The count the buyer gave for the report's main result, for the report's dates" },
+          revenue: { type: "number", description: "Revenue or conversion value, only if the buyer gave it" },
+          prior_results: { type: "number", description: "The count for the period before, only if the buyer gave it" },
+          prior_revenue: { type: "number", description: "Revenue for the period before, only if the buyer gave it" },
+          label: { type: "string", description: "What the result is called (Leads, Purchases, Conversions), only if different from the report's" },
+          source: { type: "string", description: "The platform the buyer says the numbers are from, e.g. Google Ads, Meta Ads, TikTok Ads" },
+          note: { type: "string", description: "Anything the buyer said about where the numbers came from" },
+        },
+        additionalProperties: false,
+      },
+      run: async (input) => {
+        const { data: row } = await admin.from("reports").select("status, period_start, period_end, metrics, manual_results").eq("id", reportId).maybeSingle();
+        if (!row?.metrics) return { ok: false, error: "This report has no numbers yet." };
+        const { withChatNumbers } = await import("./manual");
+        const { saveManual } = await import("./manual-save");
+        const made = withChatNumbers(input, { metrics: row.metrics as never, existing: (row.manual_results ?? null) as never, period: { start: row.period_start as string, end: row.period_end as string }, by: { id: who.id, name: who.name }, now: new Date().toISOString() });
+        if (!made.ok) return made;
+        const saved = await saveManual(admin, reportId, made.entered.lines, { id: who.id ?? "", fullName: who.name ?? "the buyer" }, row.status as string);
+        if (!saved.ok || !saved.metrics) return { ok: false, error: saved.ok ? "Nothing to update." : saved.error };
+        const { metricsText } = await import("./metrics");
+        note("Numbers set from the buyer's message", `${made.line.label}: ${made.line.count}${made.line.revenue != null ? `, revenue ${made.line.revenue}` : ""} (${made.line.source})`);
+        return { ok: true, saved: `${made.line.label} set to ${made.line.count} (${made.line.source}). The tiles, tables and PDF now show it.`, the_numbers_now: metricsText(saved.metrics) };
+      },
+    });
+  }
   if (await motionConnected(admin).catch(() => null)) {
     let session: Awaited<ReturnType<typeof openSession>> | null = null;
     const open = async () => (session ??= await openSession(admin));
@@ -261,5 +297,5 @@ export function toolsLine(tools: AiTool[]) {
     "everything on file for the client (Slack, email, Drive, recorded calls with transcripts, creative requests and comments, the Brand Bible, the strategy, what's remembered)",
     "this client's earlier reports",
   ].filter(Boolean);
-  return `You can look things up before you answer: ${reach.join("; ")}. When the buyer asks for a number, a breakdown, a comparison, creative performance, something said on a call or in Slack, or an earlier report's format, use the tools; never say you can't reach them. Numbers you pull are real data: use them exactly and say the range; the report's own numbers and dates stay as the app drew them (it changes the period, and redraws every page, when the buyer picks new dates). What's in Slack, email, calls and internal notes informs the report; nothing internal goes into what the client reads.`;
+  return `You can look things up before you answer: ${reach.join("; ")}. When the buyer asks for a number, a breakdown, a comparison, creative performance, something said on a call or in Slack, or an earlier report's format, use the tools; never say you can't reach them. Numbers you pull are real data: use them exactly and say the range; the report's own numbers and dates stay as the app drew them (it changes the period, and redraws every page, when the buyer picks new dates). What's in Slack, email, calls and internal notes informs the report; nothing internal goes into what the client reads.${has("set_reported_numbers") ? " When the buyer gives you the numbers themselves (\"Google shows 67 conversions\"), set them with set_reported_numbers so the tiles and PDF change too; never use it for a number you looked up or guessed." : ""}`;
 }

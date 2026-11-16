@@ -41,6 +41,8 @@ const order = (p: ReportPart) => (p.platform === "meta" ? 0 : p.platform === "ti
 
 /** One report, ready for the PDF, with its file name ("OceanBox - Meta weekly - Oct 12-18.pdf"). */
 export async function loadReport(admin: SupabaseClient, id: string, edit = false) {
+  // A report not yet sent is drawn from the account's numbers as they are now (a sent one never changes); quick, and it keeps the stored ones if the account is slow
+  await import("./refresh").then((m) => m.refreshForView(admin, id)).catch(() => null);
   const { data } = await admin.from("reports").select(REPORT_FIELDS).eq("id", id).maybeSingle();
   const r = data as unknown as Row | null;
   if (!r) return null;

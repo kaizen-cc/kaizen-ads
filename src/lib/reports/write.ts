@@ -41,7 +41,7 @@ const SECTIONS = obj({ headline: S, summary: S, did: LIST, doing: LIST, next: LI
 const TAKEAWAY_RULES = `takeaways: exactly three cards for the PDF, read from the numbers alone (the work and the plan stay in the message, not here). Each: title (a bold claim of 3 to 7 words, e.g. "More purchases, lower CPA", "Cheaper traffic, slightly lower CTR", "Creative efficiency leader") and text (one or two sentences with the real numbers and what they're compared to, e.g. "Purchases increased from 7 to 12 (+71.4%), while CPA fell from $245.78 to $140.35 (-42.9%)."). Cover the KPI and its cost first, then traffic or efficiency, then the best ad (or campaign) by the KPI. Plain and specific: no hype, no exclamation marks, no adjectives the numbers don't earn, no advice. Percent changes to one decimal.`;
 const STORY_RULES = `stories: trend charts, each told as a story. Add one when the buyer asks for a trend, a progression, a graph or "over the last N weeks or months", or when this client always wants it (their preferences); otherwise keep the ones already there, or none. Each: title (short, e.g. "Cost per purchase, last 5 weeks"), metric (cost_per_result for CPL, CPA or cost per purchase; results for leads or purchases), grain (week or month), periods (how many, 2 to 12), see (what the chart shows, with its numbers), why (why it moved, from the work log and the data), next (what we're doing about it). Read the numbers first with the trend tool when you have it; the chart is drawn from exactly those. Never write a chart as text in the sections.`;
 // Results the team entered by hand from the client's CRM (bookings and sales that never reach the ad platform)
-const MANUAL_RULE = `When <results_from_the_clients_crm> is given, those counts came from the client's own CRM and were entered by the team: they are real, use them as the results they are, and say where they come from ("from your CRM"). Never credit Meta, Google or the pixel with them, never split them by campaign or ad, and never treat the platform showing fewer or zero of them as a problem. With no prior-period number for a line, give no change for it. Cost per result for the main one is ad spend divided by its count.`;
+const MANUAL_RULE = `When <results_from_the_clients_crm> is given, those counts came from the client's own CRM and were entered by the team: they are real, use them as the results they are, and say where they come from ("from your CRM"). Never credit Meta, Google or the pixel with them, never split them by campaign or ad, and never treat the platform showing fewer or zero of them as a problem. With no prior-period number for a line, give no change for it. Cost per result for the main one is ad spend divided by its count. A line whose source says "entered by the buyer" is different: the buyer read it off the ad platform's own screen (say Google Ads), so it is that platform's number and replaces what was synced; report it as that platform's, never as the CRM's.`;
 const DRAFT_SCHEMA = obj({ message: S, sections: SECTIONS });
 
 const agentFor = (platform: string): AgentKey => (platform === "google" ? "google_reporter" : "reporter");
@@ -141,6 +141,26 @@ async function metricsFor(admin: SupabaseClient, c: Awaited<ReturnType<typeof co
     extra = await Promise.all(more.map((x) => reportMetrics(admin, c.target, "custom", dayAfter(x.end), { start: x.start, end: x.end }, opts)));
   }
   return { metrics, extra };
+}
+
+/**
+ * The numbers worked out again from the synced data, the way drafting works them out (the same dates, campaigns left out,
+ * uploads and manual results), without writing anything. The diagnosis stays as it was written (it is looked up again only
+ * when a refresh finds the numbers moved). Used to keep an unsent report current (see refresh.ts).
+ */
+export async function freshNumbers(admin: SupabaseClient, reportId: string) {
+  const c = await context(admin, reportId);
+  const was = c.r.metrics as ReportMetrics | null;
+  const { metrics: fresh, extra } = await metricsFor(admin, c);
+  fresh.diagnosis = was?.diagnosis;
+  fresh.opportunity = was?.opportunity ?? null;
+  const metrics = withEntered(fresh, c.r as unknown as { period_start: string; period_end: string; manual_results?: unknown });
+  return { was, wasExtra: ((c.r as unknown as { extra_metrics?: ReportMetrics[] | null }).extra_metrics ?? null) as ReportMetrics[] | null, metrics, extra, c };
+}
+
+/** The diagnosis looked up again for numbers that moved (data only, no AI) */
+export async function rediagnose(admin: SupabaseClient, c: Awaited<ReturnType<typeof freshNumbers>>["c"], metrics: ReportMetrics) {
+  return diagnose(admin, c.r.client_id, metrics, c.target).catch(() => metrics.diagnosis);
 }
 
 /** Results the team entered from the client's CRM for these dates (kept across regenerates), merged into the numbers (only when entered for this report's dates) */
@@ -341,14 +361,14 @@ function datesBlock(r: { period_start: string; period_end: string; kind: string 
 const PERIOD_RULE = `The report's dates are set by the app, never by you: don't write numbers for other dates into the report as if they were its period. If the buyer wants the whole report for other dates, tell them to pick them in the period menu at the top (or ask "change the dates to Nov 2 to 8"), which redraws every page with fresh numbers. Numbers you look up for other dates are only for comparisons, and always say their dates.`;
 
 /** The buyer asks for a change; the report is rewritten, the QA runs again, and a lasting preference is remembered. */
-export async function reviseReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { echo?: boolean } = {}) {
+export async function reviseReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { echo?: boolean; /** Who is asking (their profile id), recorded on numbers they give in the chat */ byId?: string | null } = {}) {
   const c = await context(admin, reportId);
   const metrics = c.r.metrics as ReportMetrics;
   const work = ((c.r as unknown as { work?: { text?: string } }).work?.text) ?? "";
   const chat = (c.r.chat ?? []) as ChatTurn[];
   // What it can look up while it works: the ad account, Motion, and everything on file for the client
   const pulled: Pulled[] = [];
-  const tools = await reportTools(admin, c.r as unknown as { client_id: string; platform: string; kpi_targets: unknown }, pulled);
+  const tools = await reportTools(admin, c.r as unknown as { client_id: string; platform: string; kpi_targets: unknown }, pulled, { id: opts.byId ?? null, name: by });
   const out = await askJsonWithTools<{ reply: string; message: string; sections: Sections; lesson: string }>({
     agent: agentFor(c.r.platform),
     label: "revise report",

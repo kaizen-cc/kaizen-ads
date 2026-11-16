@@ -20,6 +20,8 @@ export type ManualLine = {
   note: string | null;
   /** Use this line as the report's main result: cost per result and ROAS follow it */
   main: boolean;
+  /** The buyer gave this number from the ad platform's own screen (through the chat): it is that platform's number, not the client's CRM */
+  fromPlatform?: boolean;
 };
 
 /** start/end: the dates the numbers were entered for; by: who entered them, at: when */
@@ -65,6 +67,7 @@ export function cleanLines(input: unknown): ManualLine[] {
       source: String(x.source ?? "").trim().slice(0, 80) || DEFAULT_SOURCE,
       note: String(x.note ?? "").trim().slice(0, 300) || null,
       main: x.main === true,
+      ...(x.fromPlatform === true ? { fromPlatform: true } : {}),
     });
   }
   let seen = false;
@@ -156,8 +159,12 @@ export const platformConversion = (m: Pick<ReportMetrics, "conversion" | "manual
 /** The plain words that go under the numbers in a report */
 export function manualCaption(manual: ManualApplied | null | undefined): string | null {
   if (!manual?.lines.length) return null;
-  const sources = [...new Set(manual.lines.map((l) => l.source))];
-  return `${manual.lines.map((l) => l.label).join(", ")}: from ${sources.join(" and ")}, entered by the team. Not tracked by the ad platform.`;
+  const crm = manual.lines.filter((l) => !l.fromPlatform);
+  const given = manual.lines.filter((l) => l.fromPlatform);
+  return [
+    ...(crm.length ? [`${crm.map((l) => l.label).join(", ")}: from ${[...new Set(crm.map((l) => l.source))].join(" and ")}, entered by the team. Not tracked by the ad platform.`] : []),
+    ...(given.length ? [`${given.map((l) => l.label).join(", ")}: ${[...new Set(given.map((l) => l.source))].join(" and ")}.`] : []),
+  ].join(" ");
 }
 
 const money = (x: number | null) => (x == null ? "n/a" : `$${x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
@@ -168,7 +175,50 @@ export function manualText(m: Pick<ReportMetrics, "main" | "compare" | "manual">
   if (!a?.lines.length) return "";
   const rows = a.lines.map((l) => {
     const cost = manualCost(m.main.spend, l.count);
-    return `- ${l.label}: ${l.count}${l.revenue != null ? `, revenue ${money(l.revenue)}` : ""}${cost != null ? `, ${money(cost)} of ad spend per ${l.label.toLowerCase()}` : ""}; ${l.priorCount != null ? `the period before: ${l.priorCount}${l.priorRevenue != null ? `, revenue ${money(l.priorRevenue)}` : ""}` : "no prior-period number (so no comparison: don't say it went up or down)"}; source: ${l.source}${l.note ? `; note: ${l.note}` : ""}${l.main ? "; THIS IS THE MAIN RESULT of this report" : ""}`;
+    return `- ${l.label}: ${l.count}${l.revenue != null ? `, revenue ${money(l.revenue)}` : ""}${cost != null ? `, ${money(cost)} of ad spend per ${l.label.toLowerCase()}` : ""}; ${l.priorCount != null ? `the period before: ${l.priorCount}${l.priorRevenue != null ? `, revenue ${money(l.priorRevenue)}` : ""}` : "no prior-period number (so no comparison: don't say it went up or down)"}; source: ${l.source}${l.note ? `; note: ${l.note}` : ""}${l.main ? "; THIS IS THE MAIN RESULT of this report" : ""}${l.fromPlatform ? "; the buyer read this from the ad platform's own screen: report it as that platform's number, never as the CRM's" : ""}`;
   });
-  return `<results_from_the_clients_crm note="These counts happened off the ad platforms and were entered by the team (${a.byName ?? "a team member"}) from the client's own CRM. Use them: they are real results and the client expects to see them. Say they come from the client's CRM or the team's tracking, never that Meta or Google tracked them. Never split them by campaign or ad. Account level only. Cost per result and ROAS for the main result are computed from them and the spend.">\n${rows.join("\n")}\n</results_from_the_clients_crm>`;
+  return `<results_from_the_clients_crm note="These counts were entered by the team (${a.byName ?? "a team member"}). A line marked as read from the ad platform's own screen is that platform's number: report it as such. The others happened off the ad platforms and came from the client's own CRM. Use them: they are real results and the client expects to see them. Say CRM counts come from the client's CRM or the team's tracking, never that Meta or Google tracked them. Never split them by campaign or ad. Account level only. Cost per result and ROAS for the main result are computed from them and the spend.">\n${rows.join("\n")}\n</results_from_the_clients_crm>`;
+}
+
+const platformTitle = (p: string) => (p === "google" ? "Google Ads" : p === "tiktok" ? "TikTok Ads" : "Meta Ads");
+
+/** What the buyer gave in the chat (all optional but one of results or revenue): the numbers as they read them off the platform */
+export type ChatNumbers = { results?: unknown; revenue?: unknown; priorResults?: unknown; priorRevenue?: unknown; label?: unknown; source?: unknown; note?: unknown };
+
+/**
+ * The manual results after the buyer gave numbers in the report chat: one line that replaces the headline result (so the
+ * tiles, the tables and the PDF change, not just the text), kept apart from any CRM lines the team entered (those stay,
+ * no longer the main one). What the buyer didn't give stays what the platform showed (the comparison, the revenue) when
+ * they are talking about the same result; never invented. Labelled with the platform they cite and who gave it.
+ */
+export function withChatNumbers(
+  input: ChatNumbers,
+  ctx: { metrics: ReportMetrics; existing: ManualResults | null; period: { start: string; end: string }; by: { id: string | null; name: string | null }; now: string },
+): { ok: true; entered: ManualResults; line: ManualLine } | { ok: false; error: string } {
+  const was = withoutManual(ctx.metrics);
+  const label = String(input.label ?? "").trim().slice(0, 60) || was.conversion;
+  const same = label.toLowerCase() === was.conversion.toLowerCase();
+  const results = num(input.results);
+  const revenue = num(input.revenue);
+  if (results == null && revenue == null) return { ok: false, error: "Give the number of results (or the revenue) the buyer stated." };
+  const count = results ?? was.main.results;
+  const platform = platformTitle(was.platform);
+  const cited = String(input.source ?? "").trim().replace(/,?\s*entered by the buyer\.?$/i, "").slice(0, 60) || platform;
+  const line: ManualLine = {
+    id: "chat-main",
+    label,
+    count: Math.round(count * 10) / 10,
+    revenue: revenue ?? (same && was.main.revenue > 0 ? was.main.revenue : null),
+    priorCount: num(input.priorResults) ?? (same && was.compare.results != null ? was.compare.results : null),
+    priorRevenue: num(input.priorRevenue) ?? (same && was.compare.revenue > 0 ? was.compare.revenue : null),
+    source: `${cited}, entered by the buyer`,
+    note: String(input.note ?? "").trim().slice(0, 300) || null,
+    main: true,
+    fromPlatform: true,
+  };
+  // Any earlier lines stay, but only this one is the main result now
+  const lines = cleanLines([...(ctx.existing?.lines ?? []).filter((l) => l.id !== line.id).map((l) => ({ ...l, main: false })), line]);
+  const kept = lines.find((l) => l.id === line.id);
+  if (!kept) return { ok: false, error: "That line couldn't be saved." };
+  return { ok: true, line: kept, entered: { lines, start: ctx.period.start, end: ctx.period.end, by: ctx.by.id, byName: ctx.by.name, at: ctx.now } };
 }

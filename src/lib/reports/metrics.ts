@@ -13,6 +13,7 @@ import { asKpiPlatform, type KpiPlatform } from "@/lib/kpi/platform";
 import { weekLabel, type GoogleUnit, type WeekPoint } from "./weekly-core";
 import { manualText, type ManualApplied } from "./manual";
 import { covers, fileRows, mergeRows, pickUpload, type FileRow, type UploadedFile } from "./upload-csv";
+import type { RefreshNote } from "./refresh-core";
 
 // A report's numbers, from the same daily rows the KPI board reads, with the campaigns left out of the KPI left out here
 // too. On Meta, results are what each campaign is optimized for, read from the ad account (submit application, schedule,
@@ -90,6 +91,8 @@ export type ReportMetrics = {
   googleUnits?: GoogleUnit[];
   /** Results entered by the team from the client's own CRM (off the ad platform), for the report's period; account level only */
   manual?: ManualApplied;
+  /** Set when a refresh from the synced data moved the numbers before the report was sent: what moved, and what became of the text */
+  refreshNote?: RefreshNote;
   /**
    * The main period's numbers came from a file the team exported from Ads Manager (or Google Ads) and uploaded, because
    * the account couldn't be read directly. compare: where the comparison came from (the same file, the synced data, or

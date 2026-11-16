@@ -162,6 +162,8 @@ export async function composeMessage(admin: SupabaseClient, bundleId: string) {
 export async function approvePart(admin: SupabaseClient, reportId: string, by: Staff) {
   const { data: r } = await admin.from("reports").select("id, bundle_id, platform, clients(name)").eq("id", reportId).single();
   if (!r?.bundle_id) throw new Error("This report isn't part of a built report.");
+  // Approved with the account's numbers as they are now, and its text following them
+  await (await import("./refresh")).ensureSendableWithRiders(admin, reportId, { id: by.id, name: by.fullName });
   await admin.from("reports").update({ status: "submitted", submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", reportId);
   const { b, parts } = await loadParts(admin, r.bundle_id);
   const waiting = parts.filter((p) => p.status !== "submitted" && p.status !== "posted");
@@ -206,8 +208,8 @@ export async function approveMessage(admin: SupabaseClient, bundleId: string, by
 }
 
 /** The whole report as one PDF (the whole account when there's more than one service, then a section each). */
-export async function builtPdf(admin: SupabaseClient, bundleId: string, edit = false) {
-  return renderReportPdf(await builtInput(admin, bundleId, edit));
+export async function builtPdf(admin: SupabaseClient, bundleId: string, edit = false, fresh = true) {
+  return renderReportPdf(await builtInput(admin, bundleId, edit, fresh));
 }
 
 /** The whole report's file name, as it goes out (a white label client's names no agency) */
@@ -218,7 +220,9 @@ export async function builtFileName(admin: SupabaseClient, bundleId: string) {
 }
 
 /** The whole report's document input (every part), for the PDF and the studio's preview */
-export async function builtInput(admin: SupabaseClient, bundleId: string, edit = false): Promise<ReportPdfInput> {
+export async function builtInput(admin: SupabaseClient, bundleId: string, edit = false, fresh = true): Promise<ReportPdfInput> {
+  // Every part not yet sent is drawn from the account's numbers as they are now (the send path has just done this, so it asks for none)
+  if (fresh) await import("./refresh").then((m) => m.refreshBundleForView(admin, bundleId)).catch(() => null);
   const { parts, client, ranges, whiteLabel } = await loadParts(admin, bundleId);
   const { data: who } = await admin.from("report_bundles").select("client_id").eq("id", bundleId).maybeSingle();
   return {
@@ -239,6 +243,10 @@ export async function builtInput(admin: SupabaseClient, bundleId: string, edit =
  * message, one PDF, and the send kept in the history.
  */
 export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: string) {
+  // Right before it goes: every part's numbers from the account as they are now, and its text following them (else it waits, with the reason)
+  const { ensureSendable, bundleParts } = await import("./refresh");
+  const { data: who } = await admin.from("profiles").select("full_name").eq("id", by).maybeSingle();
+  await ensureSendable(admin, await bundleParts(admin, bundleId), { id: by, name: (who?.full_name as string | null) ?? "Kaizen" });
   const { data: claimed } = await admin.from("report_bundles").update({ status: "sending" }).eq("id", bundleId).in("status", ["waiting", "collecting"]).select("id").maybeSingle();
   if (!claimed) return;
   try {
@@ -250,7 +258,7 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
     const main = ranges[0];
     const stale = main ? parts.filter((p) => periodMismatch(main, p.metrics, p.sections).length) : [];
     if (stale.length) throw new Error(`The ${stale.map((p) => platformName(p.platform)).join(" and ")} part isn't for ${main.label} yet. Regenerate it first.`);
-    const bytes = await builtPdf(admin, bundleId);
+    const bytes = await builtPdf(admin, bundleId, false, false);
     const label = rangesLabel(ranges);
     const pdf = { filename: whiteLabel ? whiteLabelFileName(client.name, "built", label) : pdfFileName(client.name, "Report", label), title: `${client.name} · Report · ${label}`, bytes };
     const joint = parts.length > 1;

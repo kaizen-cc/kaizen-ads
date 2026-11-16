@@ -20,6 +20,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { writeStatus } from "@/lib/write-status";
 import { lastFullWeek, periodMismatch, rangeLabel, todayIn } from "@/lib/reports/period";
 import { clientDelivery } from "@/lib/reports/send";
+import { refreshForStudio } from "@/lib/reports/refresh";
 import { readHistory } from "@/lib/reports/history";
 import { isWhiteLabel } from "@/lib/reports/white-label";
 import { lastUsed, sendOptions } from "@/lib/reports/studio-steps";
@@ -34,15 +35,21 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   // Nobody works on reports without their own Slack connected: the Reports page asks for it first
   if (!(await slackConnection(me.id)).connected) redirect("/reports");
   const db = await createClient();
-  const { data: r } = await db
-    .from("reports")
-    .select("id, kind, platform, status, client_id, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, manual_results, extras, layout, qa, chat, error, posted_at, previous, joined_to, clients(name, slug, slack_channel_id, client_type), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)")
-    .eq("id", id)
-    .maybeSingle();
-  if (!r) notFound();
+  const reportFields = "id, kind, platform, status, client_id, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, manual_results, extras, layout, qa, chat, error, posted_at, previous, joined_to, clients(name, slug, slack_channel_id, client_type), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)";
+  const readReport = () => db.from("reports").select(reportFields).eq("id", id).maybeSingle();
+  const { data: first } = await readReport();
+  if (!first) notFound();
   // Only the account's buyer, the leads of its line and execs see a report (a link alone doesn't open it)
-  const target = r.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
-  if (!(r.owner_id === me.id || (target && (await canReportOn(db, me, target))))) notFound();
+  const target = first.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
+  if (!(first.owner_id === me.id || (target && (await canReportOn(db, me, target))))) notFound();
+  // Not yet sent: its numbers are worked out again from the synced data (and its text follows them when they moved), so the
+  // studio never shows numbers the account has since revised. A sent report is a record and is left alone.
+  let current = first;
+  if (adminConfigured() && (first.status === "draft" || first.status === "submitted") && first.metrics) {
+    await refreshForStudio(createAdminClient(), id, { id: me.id, name: me.fullName }).catch(() => null);
+    current = (await readReport()).data ?? first;
+  }
+  const r = current;
   // Its buyer opening it for the first time: the heads of the line see it's been looked at
   if (r.owner_id === me.id && !r.viewed_at && adminConfigured()) after(async () => {
     await createAdminClient().from("reports").update({ viewed_at: new Date().toISOString() }).eq("id", r.id).is("viewed_at", null);

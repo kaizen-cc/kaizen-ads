@@ -20,6 +20,8 @@ import { ManualResults, type ManualEntered } from "./manual-results";
 import { reportFileName, type DriveSave } from "@/lib/reports/drive-save-core";
 import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, editSentReport, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveManualResults, saveReport, saveToDrive, sendMyPartNow, sendReport, setCampaignLeftOut, setReportCampaignExcluded, uploadReportCsv } from "./actions";
 import { parseAdsCsv, uploadSummary } from "@/lib/reports/upload-csv";
+import { keepTextAsIs, updateTextToNumbers } from "./actions";
+import { noteText, textBehind } from "@/lib/reports/refresh-core";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
@@ -461,6 +463,28 @@ export function ReportStudio({
     }
     if (r.qa) setQa(r.qa);
     if (r.lesson) setNote({ ok: true, text: `Remembered for this client: ${r.lesson}` });
+  };
+
+  // The numbers were refreshed from the account since the text was written: bring the text up to date now, or leave it as it is
+  const [fixing, setFixing] = useState(false);
+  const followNumbers = async () => {
+    setFixing(true);
+    const r = await updateTextToNumbers(report.id);
+    setFixing(false);
+    if (!r.ok) return setNote({ ok: false, text: r.error });
+    setSectionsState(r.sections);
+    if (!built) {
+      setMessage(r.message);
+      setBasis(r.sections ? reportBasis(r.sections, extras) : basis);
+    }
+    if (r.qa) setQa(r.qa);
+    router.refresh();
+  };
+  const leaveText = async () => {
+    setFixing(true);
+    await keepTextAsIs(report.id);
+    setFixing(false);
+    router.refresh();
   };
 
   // An export from Ads Manager (or Google Ads) for an account Kaizen Ads can't read: read here for a first look (what's
@@ -1456,6 +1480,21 @@ export function ReportStudio({
           <button type="button" disabled={pending} onClick={regenerateNow} className="h-11 shrink-0 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 md:h-9">
             Redraw every page
           </button>
+        </div>
+      )}
+      {!sent && step !== "done" && report.metrics?.refreshNote && (
+        <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border px-4 py-3 ${textBehind(report.metrics) ? "border-warn/40 bg-warn-soft/40" : "border-line bg-surface"}`}>
+          <p className="min-w-0 flex-1 basis-64 text-[13px] leading-snug text-muted">{noteText(report.platform, report.metrics.refreshNote)}</p>
+          {textBehind(report.metrics) && (
+            <div className="flex shrink-0 flex-wrap gap-1.5">
+              <button type="button" disabled={fixing || pending} onClick={() => void followNumbers()} className="h-11 shrink-0 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 md:h-9">
+                {fixing ? "Updating…" : "Update the text"}
+              </button>
+              <button type="button" disabled={fixing || pending} onClick={() => void leaveText()} className="h-11 shrink-0 rounded-full border border-line px-4 text-[13px] text-fg disabled:opacity-50 md:h-9">
+                The text is fine
+              </button>
+            </div>
+          )}
         </div>
       )}
       {note && <p className={`rounded-[12px] px-4 py-3 text-sm ${note.ok ? "bg-ok-soft text-ok" : "bg-bad-soft text-bad"}`}>{note.text}</p>}

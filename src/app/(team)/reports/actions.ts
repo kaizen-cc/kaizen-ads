@@ -14,7 +14,8 @@ import { nyParts } from "@/lib/kpi/calc";
 import { canReportOn } from "@/lib/reports/access";
 import { isPeriodKey, nextPeriod, parseDates, previousPeriod, rangeLabel, resolvePeriod, restOfAsk, shiftDay, todayIn, type PeriodKey } from "@/lib/reports/period";
 import { channelsPhrase, normalizeDelivery, type Delivery } from "@/lib/reports/delivery-core";
-import { applyManual, cleanLines, type ManualLine, type ManualResults } from "@/lib/reports/manual";
+import type { ManualLine } from "@/lib/reports/manual";
+import { saveManual } from "@/lib/reports/manual-save";
 import type { DriveSave } from "@/lib/reports/drive-save-core";
 import type { UploadedFile } from "@/lib/reports/upload-csv";
 import { appendLog, canBringBack, isSkipReason, latestSkip, skipEntry, unskipEntry, type LogEntry } from "@/lib/reports/skip-log";
@@ -263,7 +264,7 @@ export async function reviseWithAi(id: string, ask: string): Promise<Result<{ ch
     const reply = `${same ? "The report already covers" : "Moving the whole report to"} ${label} (against ${before}) and redrawing every page with fresh numbers: the tiles, tables, campaigns, top ads and charts.${rest ? " Then I'll make the rest of your change." : ""}`;
     const next: ChatTurn[] = [...chat, { role: "user" as const, text: ask.trim(), at, by: ok.me.fullName }, { role: "assistant" as const, text: reply, at }].slice(-40);
     await admin.from("reports").update({ chat: next }).eq("id", id);
-    const moved = await movePeriod(id, ok.me, p, today, rest ? (a) => reviseReport(a, id, `The report has just been redrawn for ${label}. Now, from the buyer's message, everything except the dates: ${ask.trim().slice(0, 2000)}`, ok.me.fullName, { echo: false }).catch(() => null) : undefined);
+    const moved = await movePeriod(id, ok.me, p, today, rest ? (a) => reviseReport(a, id, `The report has just been redrawn for ${label}. Now, from the buyer's message, everything except the dates: ${ask.trim().slice(0, 2000)}`, ok.me.fullName, { echo: false, byId: ok.me.id }).catch(() => null) : undefined);
     if (!moved.ok) {
       await admin.from("reports").update({ chat }).eq("id", id);
       return { ok: false, error: moved.error, ...(moved.openId ? { openId: moved.openId } : {}) };
@@ -271,12 +272,40 @@ export async function reviseWithAi(id: string, ask: string): Promise<Result<{ ch
     return { ok: true, chat: next, message: (cur?.message as string) ?? "", sections: cur?.sections as Sections, qa: (cur?.qa as Qa | null) ?? null, lesson: null, redrawing: true };
   }
   try {
-    const out = await reviseReport(createAdminClient(), id, ask, ok.me.fullName);
+    const out = await reviseReport(createAdminClient(), id, ask, ok.me.fullName, { byId: ok.me.id });
     done(id);
     return { ok: true, ...out };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't change it just now." };
   }
+}
+
+/**
+ * The numbers were refreshed from the account and the text may still show the old figures (it couldn't be updated on its
+ * own): brings it up to date now, changing only the figures and what depends on them. Returns the text as it stands.
+ */
+export async function updateTextToNumbers(id: string): Promise<Result<{ message: string; sections: Sections; qa: Qa | null; note: import("@/lib/reports/refresh-core").RefreshNote | null }>> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.status !== "draft" && ok.r.status !== "submitted") return { ok: false, error: "It's already gone out, or being written." };
+  const admin = createAdminClient();
+  const { updateText } = await import("@/lib/reports/refresh");
+  const note = await updateText(admin, id, { id: ok.me.id, name: ok.me.fullName });
+  const { data: now } = await admin.from("reports").select("message, sections, qa").eq("id", id).single();
+  done(id);
+  if (note?.text === "needs_look") return { ok: false, error: "The text couldn't be updated just now. Ask the AI in the chat to update the figures, or edit them by hand." };
+  return { ok: true, note, message: (now?.message as string | null) ?? "", sections: now?.sections as Sections, qa: (now?.qa as Qa | null) ?? null };
+}
+
+/** "The text is fine as it is": the notice stays as a record and nothing holds the send. */
+export async function keepTextAsIs(id: string): Promise<Result> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  if (ok.r.status !== "draft" && ok.r.status !== "submitted") return { ok: false, error: "It's already gone out, or being written." };
+  const { keepText } = await import("@/lib/reports/refresh");
+  await keepText(createAdminClient(), id);
+  done(id);
+  return { ok: true };
 }
 
 /** Checks it again (after the buyer's own edits). */
@@ -846,20 +875,10 @@ export async function deckForReport(id: string): Promise<{ url: string; pptx: st
 export async function saveManualResults(id: string, lines: ManualLine[]): Promise<Result<{ lines: ManualLine[] }>> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
-  if (ok.r.status === "posted") return { ok: false, error: "It's already gone out." };
-  if (ok.r.status === "queued" || ok.r.status === "drafting") return { ok: false, error: "It's being written right now. Add the results when it's done." };
-  const admin = createAdminClient();
-  const { data: row } = await admin.from("reports").select("period_start, period_end, metrics").eq("id", id).maybeSingle();
-  if (!row) return { ok: false, error: "Not found." };
-  const clean = cleanLines(lines);
-  const at = new Date().toISOString();
-  const entered: ManualResults | null = clean.length ? { lines: clean, start: row.period_start as string, end: row.period_end as string, by: ok.me.id, byName: ok.me.fullName, at } : null;
-  const update: Record<string, unknown> = { manual_results: entered, updated_at: at };
-  if (row.metrics) update.metrics = applyManual(row.metrics as ReportMetrics, entered);
-  const { error } = await admin.from("reports").update(update).eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  const saved = await saveManual(createAdminClient(), id, lines, ok.me, ok.r.status);
+  if (!saved.ok) return saved;
   done(id);
-  return { ok: true, lines: clean };
+  return { ok: true, lines: saved.lines };
 }
 
 /**
@@ -979,7 +998,7 @@ export async function uploadReportCsv(id: string, file: { name: string; text: st
   if (marked.length)
     after(async () => {
       await regenerateNow(admin, id);
-      if (ask.trim()) await reviseReport(admin, id, `The report has just been redrawn from the Ads Manager export the buyer attached. Now, from the buyer's message: ${ask.trim().slice(0, 2000)}`, ok.me.fullName, { echo: false }).catch(() => null);
+      if (ask.trim()) await reviseReport(admin, id, `The report has just been redrawn from the Ads Manager export the buyer attached. Now, from the buyer's message: ${ask.trim().slice(0, 2000)}`, ok.me.fullName, { echo: false, byId: ok.me.id }).catch(() => null);
     });
   done(id);
   return { ok: true, chat: next, summary, redrawing: marked.length > 0 };
