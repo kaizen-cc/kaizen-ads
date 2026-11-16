@@ -71,14 +71,13 @@ export function windowsFor(kind: ChannelKind, period: Range, today: string): { m
 }
 
 /** The reports to queue on a weekday: the monthly on the first business days (day 1 to 3 of the month, a weekday), the weekly on Mondays that aren't the month's first business day */
+/**
+ * The same rhythm as the ads reports: every Monday from 5am New York a weekly, except the month's first Monday, which
+ * gets last month's monthly instead (a weekly and a monthly the same Monday would say the same thing twice).
+ */
 export function dueKinds(p: { weekday: string; dom: number; hour: number }): ChannelKind[] {
-  if (p.hour < 6) return [];
-  const weekday = !["Sat", "Sun"].includes(p.weekday);
-  const out: ChannelKind[] = [];
-  if (weekday && p.dom <= 3) out.push("monthly");
-  // A Monday in the first days of the month gets the monthly recap instead of a weekly saying the same thing again
-  if (p.weekday === "Mon" && !out.includes("monthly")) out.push("weekly");
-  return out;
+  if (p.weekday !== "Mon" || p.hour < 5) return [];
+  return p.dom <= 7 ? ["monthly"] : ["weekly"];
 }
 
 // ─── Numbers ───────────────────────────────────────────────────────────────

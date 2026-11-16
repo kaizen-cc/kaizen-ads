@@ -35,13 +35,13 @@ describe("periods", () => {
 });
 
 describe("what is due", () => {
-  it("queues the monthly on the first business days and nothing before 6am", () => {
+  it("queues the monthly on the month's first Monday, like the ads reports", () => {
     expect(dueKinds({ weekday: "Mon", dom: 2, hour: 7 })).toEqual(["monthly"]);
-    expect(dueKinds({ weekday: "Tue", dom: 1, hour: 9 })).toEqual(["monthly"]);
-    expect(dueKinds({ weekday: "Tue", dom: 1, hour: 4 })).toEqual([]);
-    expect(dueKinds({ weekday: "Sun", dom: 1, hour: 9 })).toEqual([]);
+    expect(dueKinds({ weekday: "Mon", dom: 7, hour: 5 })).toEqual(["monthly"]);
+    expect(dueKinds({ weekday: "Tue", dom: 1, hour: 9 })).toEqual([]);
+    expect(dueKinds({ weekday: "Mon", dom: 2, hour: 4 })).toEqual([]);
   });
-  it("queues the weekly on other Mondays, never beside the monthly", () => {
+  it("queues the weekly on every other Monday, never beside the monthly", () => {
     expect(dueKinds({ weekday: "Mon", dom: 16, hour: 6 })).toEqual(["weekly"]);
     expect(dueKinds({ weekday: "Wed", dom: 18, hour: 9 })).toEqual([]);
   });

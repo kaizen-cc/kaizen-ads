@@ -8,8 +8,8 @@ import { coverageFor, ownersFor } from "./clients";
 import { hasNumbers } from "./data";
 import { draftChannelReport } from "./write";
 
-// The channel reports' cadence. The monthly (the month just over) is queued on the first business days of the month for
-// every connected client; the weekly only for clients whose report preferences ask for it. Queued reports are drafted a few
+// The channel reports' cadence, the same as the ads reports: every Monday a weekly for every connected client, except the
+// month's first Monday, which gets the monthly (the month just over) instead. Queued reports are drafted a few
 // at a time by the same schedule that drafts the ads reports, and a failure here never reaches them. Safe to run again:
 // a client's report for a period is made once. Clients that aren't connected are never drafted empty; the Reports page
 // lists them with what to connect.
@@ -22,10 +22,9 @@ export async function queueChannelReports(admin: SupabaseClient, kind: ChannelKi
   const p = channelPeriods(kind, today).main;
   const { data: clients } = await admin.from("clients").select("id, name, services, services_extra, services_removed").is("archived_at", null).eq("internal", false).in("status", [...LIVE]);
   const all = ((clients ?? []) as { id: string; name: string; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null }[]).filter((c) => !opts.onlyClient || c.id === opts.onlyClient);
-  const { data: prefs } = kind === "weekly" ? await admin.from("client_report_prefs").select("client_id, channel_weekly") : { data: [] as { client_id: string; channel_weekly: string[] | null }[] };
-  const weekly = new Map(((prefs ?? []) as { client_id: string; channel_weekly: string[] | null }[]).map((x) => [x.client_id, x.channel_weekly ?? []]));
   for (const line of opts.lines ?? (["email", "social"] as ChannelLine[])) {
-    const buying = all.filter((c) => servicesOf(c).includes(LINE_SERVICE[line] as never) && (kind === "monthly" || weekly.get(c.id)?.includes(line)));
+    // Every connected client that buys the line gets both, like the ads reports (weekly Mondays, monthly the first Monday)
+    const buying = all.filter((c) => servicesOf(c).includes(LINE_SERVICE[line] as never));
     if (!buying.length) continue;
     const cover = await coverageFor(admin, line, buying.map((c) => c.id));
     const owners = await ownersFor(admin, line, buying.map((c) => c.id));
