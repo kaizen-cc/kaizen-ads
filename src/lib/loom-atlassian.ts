@@ -139,7 +139,9 @@ async function open(known: { cloudId: string | null }): Promise<Session> {
   const content = findTool(tools, "getLoomObjectsContent", /loom.*(object|video).*content|get.*loom.*content/i);
   if (!list) {
     await mcp.close();
-    // What Atlassian did offer (tool names only, nothing secret), so Settings shows whether Loom is there under another name
+    // What Atlassian did offer (tool names only, nothing secret), so Settings shows whether Loom is there under another name;
+    // the likely listing tools' inputs go to the log, to adapt to them
+    console.info("[loom-atlassian] tool schemas", JSON.stringify(tools.filter((t) => /loom|search|discover|executeRead|graph|activity/i.test(t.name)).map((t) => ({ name: t.name, description: t.description?.slice(0, 600), input: t.inputSchema }))).slice(0, 12000));
     throw new AtlassianMcpError("no_loom", tools.map((t) => t.name).sort().join(", ").slice(0, 600) || "none");
   }
   // A helper tool that takes no arguments we know: asked, and nothing when it fails
