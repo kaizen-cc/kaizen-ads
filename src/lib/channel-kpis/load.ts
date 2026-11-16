@@ -1,0 +1,304 @@
+import "server-only";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { LIVE } from "@/lib/live";
+import { socialClientState, plainSocialError } from "@/lib/social/core";
+import { klaviyoClientState, partialSyncWarning } from "@/lib/klaviyo/core";
+import { servicesOf } from "@/lib/services";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
+import {
+  SERVICE,
+  cumulative,
+  daysSince,
+  engagement,
+  etToday,
+  judgeEmail,
+  judgeSocial,
+  monthOf,
+  orderForBoard,
+  riskOf,
+  rollingRate,
+  shiftDay,
+  socialBasis,
+  canSetTarget,
+  LINE_SEAT_ROLES,
+  type Line,
+  type Month,
+  type Risk,
+} from "./calc";
+import type { ChannelBoard, ChannelRow, DataState, EmailSupport, SocialSupport } from "./types";
+
+// What the Email and Social KPI boards and the email and social Overview read. Everything here reads through the
+// signed-in person's session (RLS: the clients they can see), except the Klaviyo connection and the sync notes, which
+// are never readable from a browser session and are read with the server's rights for those clients only.
+// Nothing reads a paid-ads table.
+
+export type { ChannelBoard, ChannelRow, DataState, EmailSupport, SocialSupport } from "./types";
+
+type Me = { id: string; role: string; isExec: boolean; isLead: boolean };
+
+const SEAT_LABEL: Record<string, string> = { email_strategist: "Strategist", email_designer: "Designer", email_builder: "Builder", social_manager: "Social manager", social_creative: "Creative" };
+
+const num = (v: unknown) => Number(v ?? 0) || 0;
+const etDay = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/New_York" }) : "");
+
+/** Read every row of a query, a thousand at a time (the API caps a request there) */
+async function readAll<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>, max = 20): Promise<T[]> {
+  const out: T[] = [];
+  for (let p = 0; p < max; p++) {
+    const { data, error } = await page(p * 1000, p * 1000 + 999);
+    if (error || !data) break;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+
+/**
+ * Every live client of this line the person can see, with this month's main KPI against its target, the supporting
+ * numbers, where the data stands and who is on it. Worst first. `me` decides who may set a target (canEdit).
+ * Reads degrade, never throw: a table the database doesn't have yet reads as "not connected".
+ */
+export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me): Promise<ChannelBoard> {
+  const month = monthOf(etToday());
+  const { data: all } = await db.from("clients").select("id, name, slug, status, kaizen_id, services, services_extra, services_removed").is("archived_at", null).in("status", [...LIVE]).order("name");
+  const clients = (all ?? []).filter((c) => (servicesOf(c as Parameters<typeof servicesOf>[0]) as string[]).includes(SERVICE[line]));
+  const ids = clients.map((c) => c.id as string);
+  if (!ids.length) return { line, month, rows: [], targetsReady: true };
+
+  const [targetsRes, seatsRes] = await Promise.all([
+    db.from("channel_targets").select("client_id, target, notes, updated_at, updated_by, profiles:updated_by(full_name)").eq("line", line).in("client_id", ids),
+    db.from("client_assignments").select("client_id, role, profile_id, profiles(full_name)").in("client_id", ids).in("role", LINE_SEAT_ROLES[line]),
+  ]);
+  const targets = new Map((targetsRes.data ?? []).map((t) => [t.client_id as string, t]));
+  type Seat = { client_id: string; role: string; profile_id: string; profiles: { full_name: string } | null };
+  const seats = (seatsRes.data ?? []) as unknown as Seat[];
+  const seatsOf = (id: string) => seats.filter((s) => s.client_id === id);
+
+  const base: BaseOf = (c) => {
+    const t = targets.get(c.id as string);
+    const mine = seatsOf(c.id as string);
+    return {
+      line,
+      clientId: c.id as string,
+      name: c.name as string,
+      slug: c.slug as string,
+      kaizenId: (c.kaizen_id as number | null) ?? null,
+      target: t?.target == null ? null : Number(t.target),
+      targetNote: (t?.notes as string | null) ?? null,
+      targetBy: ((t?.profiles as unknown as { full_name: string } | null)?.full_name ?? null) as string | null,
+      targetAt: (t?.updated_at as string | null) ?? null,
+      canEdit: canSetTarget(me, line, mine.filter((s) => s.profile_id === me.id).map((s) => s.role)),
+      mine: mine.some((s) => s.profile_id === me.id),
+      team: mine.map((s) => ({ name: s.profiles?.full_name ?? "Someone", seat: SEAT_LABEL[s.role] ?? s.role })),
+    };
+  };
+
+  const rows = line === "email" ? await emailRows(db, clients, ids, month, base) : await socialRows(db, clients, ids, month, base);
+  return { line, month, rows: orderForBoard(rows), targetsReady: !targetsRes.error };
+}
+
+type Base = Pick<ChannelRow, "line" | "clientId" | "name" | "slug" | "kaizenId" | "target" | "targetNote" | "targetBy" | "targetAt" | "canEdit" | "mine" | "team">;
+type ClientRef = { id: unknown; name: unknown; slug?: unknown; kaizen_id?: unknown };
+type BaseOf = (c: ClientRef) => Base;
+
+// ─── Email ─────────────────────────────────────────────────────────────────
+
+async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[], month: Month, base: BaseOf): Promise<ChannelRow[]> {
+  const admin = adminConfigured() ? createAdminClient() : null;
+  const sinceCamp = shiftDay(month.today, -60);
+  const [days, camps, conns, memos] = await Promise.all([
+    readAll<Record<string, unknown>>((a, b) =>
+      db.from("klaviyo_daily").select("client_id, date, revenue, campaign_revenue, flow_revenue, conversions, store_orders, subscribed, unsubscribed").in("client_id", ids).gte("date", month.prevStart).lte("date", month.today).order("client_id").order("date").range(a, b),
+    ),
+    readAll<Record<string, unknown>>((a, b) =>
+      db.from("klaviyo_campaigns").select("client_id, campaign_id, channel, send_time, recipients, delivered, opens_unique, clicks_unique").in("client_id", ids).gte("send_time", `${sinceCamp}T00:00:00Z`).order("client_id").order("campaign_id").range(a, b),
+    ),
+    // The connection holds an encrypted key and is never readable from a session: only its state is read, with the server's rights
+    admin ? admin.from("klaviyo_connections").select("client_id, account_name, currency, status, last_synced_at, last_error").in("client_id", ids).then((r) => r.data ?? []) : Promise.resolve([] as Record<string, unknown>[]),
+    admin ? admin.from("sync_state").select("source, last_result").in("source", ids.map((i) => `klaviyo:${i}`)).then((r) => r.data ?? []) : Promise.resolve([] as Record<string, unknown>[]),
+  ]);
+  const connBy = new Map(conns.map((c) => [c.client_id as string, c]));
+  const memoBy = new Map(memos.map((m) => [String(m.source).slice("klaviyo:".length), (m.last_result ?? null) as { seriesError?: string | null; storeError?: string | null } | null]));
+  const daysBy = groupBy(days, (d) => d.client_id as string);
+  const campsBy = groupBy(camps, (c) => c.client_id as string);
+
+  return clients.map((c) => {
+    const id = c.id as string;
+    const b = base(c);
+    const mine = daysBy.get(id) ?? [];
+    const conn = connBy.get(id);
+    const memo = memoBy.get(id);
+    // With the server's rights the connection says where it stands; without them the daily rows do
+    const st = conn
+      ? klaviyoClientState({ status: conn.status as string, lastSyncedAt: (conn.last_synced_at as string | null) ?? null, error: (conn.last_error as string | null) ?? null })
+      : { state: (mine.length ? "connected" : "missing") as DataState, error: null };
+    const partial = partialSyncWarning(memo);
+    const thisMonth = mine.filter((d) => (d.date as string) >= month.start);
+    const lastMonth = mine.filter((d) => (d.date as string) < month.start);
+    const sum = (xs: Record<string, unknown>[], k: string) => xs.reduce((s, x) => s + num(x[k]), 0);
+    const mtd = sum(thisMonth, "revenue");
+    const readable = st.state !== "missing" && st.state !== "failing" && st.state !== "pending";
+    const j = judgeEmail({ readable, target: b.target, mtd, month });
+    const cs = (campsBy.get(id) ?? []).filter((x) => num(x.recipients) > 0);
+    const inMonth = cs.filter((x) => etDay(x.send_time as string) >= month.start);
+    const em = inMonth.filter((x) => x.channel !== "sms");
+    const delivered = em.reduce((s, x) => s + (num(x.delivered) || num(x.recipients)), 0);
+    const lastSendAt = cs.map((x) => x.send_time as string).sort().at(-1) ?? null;
+    const subDays = thisMonth.filter((d) => d.subscribed != null || d.unsubscribed != null);
+    const storeDays = thisMonth.filter((d) => d.store_orders != null);
+    const email: EmailSupport = {
+      campaignRevenue: sum(thisMonth, "campaign_revenue"),
+      flowRevenue: sum(thisMonth, "flow_revenue"),
+      orders: sum(thisMonth, "conversions"),
+      storeOrders: storeDays.length ? sum(storeDays, "store_orders") : null,
+      openRate: delivered ? em.reduce((s, x) => s + num(x.opens_unique), 0) / delivered : null,
+      clickRate: delivered ? em.reduce((s, x) => s + num(x.clicks_unique), 0) / delivered : null,
+      listNet: subDays.length ? subDays.reduce((s, d) => s + num(d.subscribed) - num(d.unsubscribed), 0) : null,
+      campaignsSent: inMonth.length,
+      lastSendAt,
+    };
+    // Nothing sent in the 60 days read counts as 60: only a connected client can be "quiet"
+    const quietDays = readable ? (daysSince(lastSendAt, month.today) ?? 60) : null;
+    return {
+      ...b,
+      data: st.state as DataState,
+      problem: st.error ? { message: st.error.message, fix: st.error.fix } : null,
+      warning: partial && st.state !== "missing" ? partial.message : null,
+      lastSyncedAt: (conn?.last_synced_at as string | null) ?? null,
+      account: (conn?.account_name as string | null) ?? null,
+      currency: (conn?.currency as string | null) ?? null,
+      status: j.status,
+      ratio: j.ratio,
+      value: readable ? mtd : null,
+      projected: readable ? j.projected : null,
+      prev: lastMonth.length ? sum(lastMonth, "revenue") : null,
+      basis: "month" as const,
+      series: readable ? cumulative(thisMonth.map((d) => ({ date: d.date as string, value: num(d.revenue) })), month.start, month.today) : [],
+      span: month.daysInMonth,
+      quietDays,
+      email,
+      social: null,
+    };
+  });
+}
+
+// ─── Social ────────────────────────────────────────────────────────────────
+
+async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[], month: Month, base: BaseOf): Promise<ChannelRow[]> {
+  const basis = socialBasis(month);
+  const from = basis === "month" ? month.start : shiftDay(month.today, -29);
+  // Last month for the comparison, and 36 days back so the 7 day rate has its window on the oldest day charted
+  const earliest = [month.prevStart, shiftDay(month.today, -36)].sort()[0];
+  const [links, days, posts] = await Promise.all([
+    db.from("social_accounts").select("client_id, page_id, ig_id, page_name, ig_username, last_synced_at, last_error, missing_permissions").in("client_id", ids).then((r) => r.data ?? []),
+    readAll<Record<string, unknown>>((a, b) =>
+      db.from("social_daily").select("client_id, platform, account_id, date, followers, follows_gained, follows_lost, reach, views, interactions").in("client_id", ids).gte("date", earliest).order("client_id").order("platform").order("date").range(a, b),
+    ),
+    readAll<Record<string, unknown>>((a, b) =>
+      db.from("social_posts").select("client_id, platform, account_id, post_id, caption, permalink, posted_at, interactions").in("client_id", ids).gte("posted_at", `${shiftDay(month.today, -45)}T00:00:00Z`).order("client_id").order("post_id").range(a, b),
+    ),
+  ]);
+  const linkBy = new Map(links.map((l) => [l.client_id as string, l]));
+  const daysBy = groupBy(days, (d) => d.client_id as string);
+  const postsBy = groupBy(posts, (p) => p.client_id as string);
+
+  return clients.map((c) => {
+    const id = c.id as string;
+    const b = base(c);
+    const link = linkBy.get(id);
+    const st = socialClientState(link ? { pageId: (link.page_id as string | null) ?? null, igId: (link.ig_id as string | null) ?? null, lastSyncedAt: (link.last_synced_at as string | null) ?? null, error: (link.last_error as string | null) ?? null, missing: (link.missing_permissions as string[] | null) ?? [] } : null);
+    // Only the linked accounts' rows: a Page or Instagram account picked before keeps its history, unread
+    const current = (r: Record<string, unknown>) => r.account_id === (r.platform === "facebook" ? link?.page_id : link?.ig_id);
+    const mine = (daysBy.get(id) ?? []).filter(current);
+    const win = (lo: string, hi: string) => mine.filter((d) => (d.date as string) >= lo && (d.date as string) <= hi);
+    const total = (xs: Record<string, unknown>[], k: string): number | null => {
+      let any = false;
+      let s = 0;
+      for (const x of xs) {
+        if (x[k] == null) continue;
+        any = true;
+        s += num(x[k]);
+      }
+      return any ? s : null;
+    };
+    const now = win(from, month.today);
+    const reach = total(now, "reach");
+    const interactions = total(now, "interactions");
+    const rate = engagement(interactions, reach);
+    const prevRows = win(month.prevStart, month.prevEnd);
+    const prevRate = engagement(total(prevRows, "interactions"), total(prevRows, "reach"));
+    const readable = st.state !== "missing" && st.state !== "failing" && st.state !== "pending";
+    const j = judgeSocial({ readable, target: b.target, rate });
+    // Followers now: each platform's latest count, added up
+    const latest = (p: string) => [...mine].reverse().find((d) => d.platform === p && d.followers != null)?.followers;
+    const f = (["instagram", "facebook"] as const).map(latest).filter((x) => x != null).map(Number);
+    const gained = total(now, "follows_gained");
+    const lost = total(now, "follows_lost");
+    const ps = (postsBy.get(id) ?? []).filter(current);
+    const inWin = ps.filter((p) => p.posted_at && etDay(p.posted_at as string) >= from);
+    const top = [...inWin].sort((x, y) => num(y.interactions) - num(x.interactions))[0];
+    const lastPostAt = ps.map((p) => p.posted_at as string | null).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null;
+    const social: SocialSupport = {
+      followers: f.length ? f.reduce((s, x) => s + x, 0) : null,
+      followersChange: gained == null && lost == null ? null : (gained ?? 0) - (lost ?? 0),
+      reach,
+      views: total(now, "views"),
+      interactions,
+      posts: inWin.length,
+      topPost: top && num(top.interactions) > 0 ? { caption: (top.caption as string | null) ?? null, permalink: (top.permalink as string | null) ?? null, interactions: num(top.interactions), platform: top.platform as string } : null,
+      lastPostAt,
+    };
+    const stateErr = st.error ?? (link ? plainSocialError(link.last_error as string | null, (link.missing_permissions as string[] | null) ?? []) : null);
+    // Connected but Meta gave no reach at all: the rate can't be read, and the person is told why
+    const noInsights = st.state !== "missing" && readable && rate == null;
+    return {
+      ...b,
+      data: st.state as DataState,
+      problem: stateErr ? { message: stateErr.message, fix: stateErr.fix } : noInsights ? { message: "Meta isn't giving reach for this account yet", fix: "The first read can take a day. If it stays empty, check the Page and Instagram account are shared with Kaizen's Business Manager." } : null,
+      warning: null,
+      lastSyncedAt: (link?.last_synced_at as string | null) ?? null,
+      account: link ? ([link.page_name, link.ig_username ? `@${link.ig_username}` : null].filter(Boolean).join(" · ") || null) : null,
+      currency: null,
+      status: j.status,
+      ratio: j.ratio,
+      value: rate,
+      projected: null,
+      prev: prevRate,
+      basis,
+      series: readable ? rollingRate(sumByDate(mine), shiftDay(month.today, -29), month.today) : [],
+      span: 30,
+      quietDays: readable ? (daysSince(lastPostAt, month.today) ?? 45) : null,
+      email: null,
+      social,
+    };
+  });
+}
+
+/** Both platforms' days added up per date (a day with no number from either stays null) */
+function sumByDate(rows: Record<string, unknown>[]): { date: string; interactions: number | null; reach: number | null }[] {
+  const by = new Map<string, { date: string; interactions: number | null; reach: number | null }>();
+  for (const d of rows) {
+    const k = d.date as string;
+    const x = by.get(k) ?? { date: k, interactions: null, reach: null };
+    if (d.interactions != null) x.interactions = (x.interactions ?? 0) + num(d.interactions);
+    if (d.reach != null) x.reach = (x.reach ?? 0) + num(d.reach);
+    by.set(k, x);
+  }
+  return [...by.values()];
+}
+
+function groupBy<T>(xs: T[], key: (x: T) => string): Map<string, T[]> {
+  const m = new Map<string, T[]>();
+  for (const x of xs) {
+    const k = key(x);
+    const l = m.get(k);
+    if (l) l.push(x);
+    else m.set(k, [x]);
+  }
+  return m;
+}
+
+/** A row's retention risk, with the owed replies on its client folded in */
+export function riskForRow(r: ChannelRow, owed: { n: number; escalated: number } | undefined): Risk {
+  return riskOf(r.line, { status: r.status, data: r.data, quietDays: r.quietDays, owed: owed?.n ?? 0, escalated: owed?.escalated ?? 0 });
+}

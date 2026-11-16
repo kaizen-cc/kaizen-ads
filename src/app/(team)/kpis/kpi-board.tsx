@@ -1881,6 +1881,7 @@ export function KpiBoard({
   tiktokOn = false,
   focus = null,
   only = null,
+  channels = false,
 }: {
   rows: KpiRow[];
   buyers: Person[];
@@ -1899,6 +1900,8 @@ export function KpiBoard({
   focus?: { id: string; platform: KpiPlatform } | null;
   /** Someone on one platform's team (the Meta buyers, the Google buyers) sees only that platform: no switch */
   only?: "meta" | "google" | null;
+  /** Execs and leads: Email and Social sit beside the ad platforms in the switch (their own boards, one page change away) */
+  channels?: boolean;
 }) {
   // Where you are on the board lives in the address (platform, buyer, filters, the open account and its tab): back and
   // forward walk through it, and a link lands on the same view. Changes go through the History API, so nothing reloads
@@ -2002,6 +2005,12 @@ export function KpiBoard({
                 {platformLabel(p)} <span className="tabular opacity-60">{rows.filter((r) => r.platform === p).length}</span>
               </button>
             ))}
+            {channels &&
+              (["email", "social"] as const).map((c) => (
+                <Link key={c} href={`/kpis?p=${c}`} className="inline-flex h-10 flex-1 items-center justify-center rounded-full px-3 text-sm text-muted transition-colors hover:text-fg md:h-8 md:flex-none md:px-4">
+                  {c === "email" ? "Email" : "Social"}
+                </Link>
+              ))}
           </div>
           <button onClick={() => setAdding((a) => !a)} className="h-12 shrink-0 rounded-[8px] bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover md:h-10">
             Add KPI

@@ -1,5 +1,6 @@
 import { googleAdsConfigured } from "@/lib/context/google-ads";
-import { teamPlatform } from "@/lib/roles";
+import { lineOfTeam, teamPlatform } from "@/lib/roles";
+import { ChannelKpis } from "./channel-page";
 import { orderSeats, platformOf, seatRoleFor, type SeatRow } from "@/lib/buyer-seats";
 import { clientPerms } from "@/lib/chat-permissions";
 import { requireStaff } from "@/lib/auth";
@@ -40,6 +41,10 @@ type Snap = {
 export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   const sp = await searchParams;
   const [me, supabase] = await Promise.all([requireStaff(), createClient()]);
+  // The email and social teams see their own board; execs and leads reach Email and Social from the switch (?p=)
+  const own = lineOfTeam(me.role);
+  if (own) return <ChannelKpis me={me} line={own} switcher={false} />;
+  if ((me.isExec || me.isLead) && (sp.p === "email" || sp.p === "social")) return <ChannelKpis me={me} line={sp.p} switcher />;
   // The Meta team sees Meta accounts and the Google team Google's; execs and everyone else see both
   const team = teamPlatform(me.role);
   // A buyer: only the accounts they're on (they own the KPI, or they're the client's buyer for that platform)
@@ -190,6 +195,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       googleConnected={googleAdsConfigured()}
       tiktokOn={tiktokOn}
       only={team}
+      channels={me.isExec || me.isLead}
     />
   );
 }

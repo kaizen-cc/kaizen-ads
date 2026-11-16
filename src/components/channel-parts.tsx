@@ -1,0 +1,128 @@
+import Link from "next/link";
+import { STATUS_LABEL, gapWords, moneyShort, pctText, type ChannelStatus } from "@/lib/channel-kpis/calc";
+import type { ChannelRow } from "@/lib/channel-kpis/types";
+
+// The pieces the Email and Social boards and the email and social Overview share: the status colors, how the main
+// number reads, and what to do when the data isn't connected. Server-safe (no hooks), theme tokens only.
+
+/** Colors per status: the ads board's, plus neutral for the ones with nothing to judge */
+export const TONE: Record<ChannelStatus, { text: string; pill: string; bar: string; css: string }> = {
+  excellent: { text: "text-ok", pill: "bg-ok text-bg", bar: "bg-ok", css: "var(--ok)" },
+  good: { text: "text-ok", pill: "bg-ok-soft text-ok", bar: "bg-ok", css: "var(--ok)" },
+  close: { text: "text-warn", pill: "bg-warn-soft text-warn", bar: "bg-warn", css: "var(--warn)" },
+  off: { text: "text-bad", pill: "bg-bad-soft text-bad", bar: "bg-bad", css: "var(--bad)" },
+  unset: { text: "text-fg", pill: "border border-dashed border-faint/60 bg-surface-2 text-muted", bar: "bg-faint", css: "var(--fg-faint)" },
+  setup: { text: "text-muted", pill: "bg-surface-2 text-muted", bar: "bg-faint", css: "var(--fg-faint)" },
+  early: { text: "text-fg", pill: "bg-surface-2 text-muted", bar: "bg-faint", css: "var(--fg-faint)" },
+};
+
+export function ChannelStatusPill({ status }: { status: ChannelStatus }) {
+  return <span className={`inline-flex h-6 items-center whitespace-nowrap rounded-full px-2.5 text-[11px] font-medium ${TONE[status].pill}`}>{STATUS_LABEL[status]}</span>;
+}
+
+/** The main number as text: email revenue this month, social engagement rate */
+export function mainText(r: ChannelRow): string {
+  return r.line === "email" ? moneyShort(r.value, r.currency) : pctText(r.value);
+}
+
+export function targetText(r: ChannelRow): string | null {
+  if (r.target == null) return null;
+  return r.line === "email" ? moneyShort(r.target, r.currency) : pctText(r.target);
+}
+
+/** What the main number is a number of, in a few words */
+export function mainCaption(r: ChannelRow): string {
+  if (r.line === "email") return "attributed revenue this month";
+  return r.basis === "month" ? "engagement this month" : "engagement, last 30 days";
+}
+
+/** One line on where it's heading: the pace for email, the gap for social */
+export function paceLine(r: ChannelRow): string | null {
+  if (r.status === "setup") return null;
+  if (r.line === "email") {
+    if (r.projected == null) return null;
+    if (r.target == null) return `On pace for ${moneyShort(r.projected, r.currency)} this month`;
+    if (r.status === "early") return `Early in the month: ${moneyShort(r.projected, r.currency)} at this pace`;
+    return `${moneyShort(r.projected, r.currency)} at this pace · ${gapWords(r.ratio)?.toLowerCase() ?? ""}`.replace(/ · $/, "");
+  }
+  if (r.target == null) return null;
+  return gapWords(r.ratio);
+}
+
+export type Connect = { title: string; body: string; href: string; label: string };
+
+/** What to do about missing or broken data: the one next step, and where to take it */
+export function connectStep(r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status">): Connect | null {
+  const email = r.line === "email";
+  const failing = r.data === "failing";
+  if (r.data === "missing")
+    return email
+      ? { title: "Klaviyo isn't connected", body: "Paste the client's read-only private API key on their Klaviyo card and the numbers start filling in.", href: `/clients/${r.slug}?tab=team`, label: "Open the Klaviyo card" }
+      : { title: "Social isn't linked", body: "Share their Facebook Page and Instagram account to Kaizen's Business Manager, or pick the Page on the client's Social tab.", href: `/clients/${r.slug}?service=social`, label: "Open their Social tab" };
+  if (failing) return { title: email ? "Klaviyo isn't reading" : "Social isn't reading", body: [r.problem?.message, r.problem?.fix].filter(Boolean).join(". ") || "The last read failed.", href: email ? `/clients/${r.slug}?tab=team` : `/clients/${r.slug}?service=social`, label: email ? "Fix the Klaviyo key" : "Fix the link" };
+  if (r.data === "pending") return { title: "First read in progress", body: "Connected. The first 90 days are being read; numbers show here once they're in.", href: `/clients/${r.slug}${email ? "?service=email" : "?service=social"}`, label: "Open the client" };
+  if (r.status === "setup") return { title: email ? "No numbers yet" : "Meta isn't giving reach yet", body: r.problem?.fix ?? "It can take a day after connecting.", href: `/clients/${r.slug}${email ? "?service=email" : "?service=social"}`, label: "Open the client" };
+  return null;
+}
+
+/** A row needing a connection step (not connected, failing, first read pending, or connected with nothing readable) */
+export const needsConnecting = (r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status">) => connectStep(r) != null;
+
+/** A linked call to action, the same look everywhere */
+export function ConnectCta({ r, compact = false }: { r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status">; compact?: boolean }) {
+  const c = connectStep(r);
+  if (!c) return null;
+  return (
+    <div className={`grid gap-2 rounded-[12px] border border-dashed border-line bg-surface-2/60 ${compact ? "p-3" : "p-4"}`}>
+      <p className="text-sm font-medium">{c.title}</p>
+      <p className="text-xs leading-relaxed text-muted">{c.body}</p>
+      <Link href={c.href} className="inline-flex min-h-11 w-fit items-center rounded-full bg-fg px-4 text-xs font-medium text-bg md:min-h-9">
+        {c.label}
+      </Link>
+    </div>
+  );
+}
+
+export const num = (x: number | null | undefined) => (x == null ? "n/a" : Math.round(x).toLocaleString("en-US"));
+export const signed = (x: number | null | undefined) => (x == null ? "n/a" : `${x > 0 ? "+" : x < 0 ? "-" : ""}${Math.abs(Math.round(x)).toLocaleString("en-US")}`);
+
+/** A thin gauge: how far the main number is toward its target (email: the month's pace marks where it should be) */
+export function Gauge({ r }: { r: ChannelRow }) {
+  if (r.target == null || r.value == null) return null;
+  const fill = Math.min(1, r.value / r.target);
+  const mark = r.projected != null ? Math.min(1, r.projected / r.target) : null;
+  return (
+    <div className="relative h-1.5 rounded-full bg-surface-2" role="img" aria-label={`${Math.round(fill * 100)}% of target`}>
+      <div className={`h-full rounded-full ${TONE[r.status].bar}`} style={{ width: `${fill * 100}%` }} />
+      {mark != null && r.status !== "early" && <span aria-hidden className="absolute -top-1 h-3.5 w-px bg-fg/60" style={{ left: `${mark * 100}%` }} title="Where the month lands at this pace" />}
+    </div>
+  );
+}
+
+/** The few supporting numbers a card shows under the chart */
+export function SupportChips({ r }: { r: ChannelRow }) {
+  const items =
+    r.line === "email" && r.email
+      ? [
+          ["Open", pctText(r.email.openRate)],
+          ["Click", pctText(r.email.clickRate)],
+          ["List", signed(r.email.listNet)],
+        ]
+      : r.social
+        ? [
+            ["Followers", signed(r.social.followersChange)],
+            ["Reach", num(r.social.reach)],
+            ["Posts", String(r.social.posts)],
+          ]
+        : [];
+  return (
+    <dl className="grid grid-cols-3 gap-2 border-t border-line pt-2.5">
+      {items.map(([k, v]) => (
+        <div key={k} className="min-w-0">
+          <dt className="text-[10.5px] text-faint">{k}</dt>
+          <dd className="tabular truncate text-[13px] text-fg">{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}

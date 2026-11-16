@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { isChannelOnly } from "@/lib/roles";
 import { requireStaff } from "@/lib/auth";
 import { googleAdsConfigured } from "@/lib/context/google-ads";
 import { metaConfigured } from "@/lib/context/meta";
@@ -32,6 +33,8 @@ const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: 
 export default async function SprintPage({ params }: PageProps<"/kpis/sprint/[id]">) {
   const { id } = await params;
   const me = await requireStaff();
+  // Audits and sprints are media buying: the email and social teams have their own KPI board
+  if (isChannelOnly(me.role)) redirect("/kpis");
   const supabase = await createClient();
   const { data: s } = await supabase
     .from("optimization_sprints")
