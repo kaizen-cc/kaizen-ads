@@ -13,6 +13,7 @@ import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { monthLabel } from "@/lib/reports/format";
 import { slackConnection, slackIdentity } from "@/lib/slack-user";
 import { ReportStudio } from "../report-studio";
+import { ChannelReportPage } from "../channel-report-page";
 import type { ManualEntered } from "../manual-results";
 import type { DriveSave } from "@/lib/reports/drive-save-core";
 import { after } from "next/server";
@@ -34,6 +35,11 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const me = await requireStaff();
   // Nobody works on reports without their own Slack connected: the Reports page asks for it first
   if (!(await slackConnection(me.id)).connected) redirect("/reports");
+  // An email or social report has its own studio (no ad account behind it)
+  if (adminConfigured()) {
+    const { data: kind } = await createAdminClient().from("reports").select("platform").eq("id", id).maybeSingle();
+    if (kind?.platform === "klaviyo" || kind?.platform === "social") return <ChannelReportPage id={id} me={me} />;
+  }
   const db = await createClient();
   const reportFields = "id, kind, platform, status, client_id, period_start, period_end, owner_id, viewed_at, bundle_id, message, message_basis, sections, metrics, extra_metrics, manual_results, extras, layout, qa, chat, error, posted_at, previous, joined_to, clients(name, slug, slack_channel_id, client_type), profiles!reports_owner_id_fkey(full_name), kpi_targets(id, client_id, platform, owner_id, report_layout, ad_account_id)";
   const readReport = () => db.from("reports").select(reportFields).eq("id", id).maybeSingle();

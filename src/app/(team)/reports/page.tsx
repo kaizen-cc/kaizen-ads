@@ -18,6 +18,9 @@ import { buyerRole, orderSeats, primaryOf, type SeatRow } from "@/lib/buyer-seat
 import { readHistory } from "@/lib/reports/history";
 import { SendHistory } from "./send-history";
 import { canBringBack, latestSkip, skipLine } from "@/lib/reports/skip-log";
+import { linesFor } from "@/lib/channel-reports/access-core";
+import { ChannelReports } from "./channel-page";
+import { LineSwitch } from "./line-switch";
 
 export const metadata: Metadata = { title: "Reports" };
 export const maxDuration = 300;
@@ -36,6 +39,15 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const asked = sp.view === "sent" ? "sent" : sp.view === "build" ? "build" : sp.view === "ready" ? "ready" : null;
   // The Monday drafts, one platform at a time (execs switch; everyone else is on their own line) and one buyer at a time
   const pick = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
+  // The email and social teams (and execs, on the Email and Social lines) have their own reports
+  const channelLines = linesFor(me);
+  const lineAsked = sp.line === "email" || sp.line === "social" ? sp.line : null;
+  const channelLine = me.isExec ? lineAsked : (channelLines[0] ?? null);
+  if (channelLine && channelLines.includes(channelLine)) {
+    const slackNow = await slackConnection(me.id);
+    if (!slackNow.connected) return <ConnectSlack />;
+    return <ChannelReports me={me} line={channelLine} view={typeof sp.view === "string" ? sp.view : null} slack={slackNow} />;
+  }
   const db = await createClient();
   const today = nyParts(new Date()).date;
   const month = periodsFor("monthly", today).main;
@@ -46,6 +58,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
     .from("reports")
     .select("id, kind, platform, status, qa, posted_at, viewed_at, owner_id, client_id, period_start, period_end, bundle_id, clients(name, slug), profiles!reports_owner_id_fkey(full_name)")
     .in("kind", ["weekly", "monthly", "custom"])
+    .in("platform", ["meta", "google", "tiktok"])
     .is("hidden_at", null)
     .gte("created_at", daysAgo(60))
     .order("created_at");
@@ -107,7 +120,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const builtRows = reach.filter((b) => b.status !== "sent" && b.reports.some((p) => p.status !== "skipped"));
   // The send history: every report that went to the clients this person reports on (everything for an exec), never
   // trimmed by age; a client at a time on the page
-  const history = (admin ? await readHistory(admin, { clientIds: me.isExec ? null : clientIds, limit: 400 }, today) : []).filter((s) => !line || !s.platform || s.platform === line);
+  const history = (admin ? await readHistory(admin, { clientIds: me.isExec ? null : clientIds, limit: 400 }, today) : []).filter((s) => s.platform !== "klaviyo" && s.platform !== "social").filter((s) => !line || !s.platform || s.platform === line);
   const sentBuilt = reach.filter((b) => b.status === "sent" && (b.sent_at ?? b.created_at) >= daysAgo(30));
   const yesterday = new Date(Date.parse(`${today}T12:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 
@@ -259,6 +272,8 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
         </div>
         <SlackConnect connected={slack.connected} next="/reports" />
       </header>
+
+      {me.isExec && <LineSwitch current="ads" />}
 
       {/* The three parts of reporting */}
       <nav className="grid grid-cols-3 gap-1.5 rounded-[22px] border border-line bg-surface p-1.5" aria-label="Reports">

@@ -84,7 +84,7 @@ export function kpiRows(m: ReportMetrics): KpiRow[] {
   ];
 }
 
-export const platformName = (p: string) => (p === "google" ? "Google Ads" : p === "tiktok" ? "TikTok Ads" : "Meta Ads");
+export const platformName = (p: string) => (p === "google" ? "Google Ads" : p === "tiktok" ? "TikTok Ads" : p === "klaviyo" ? "Email Marketing" : p === "social" ? "Organic Social" : "Meta Ads");
 
 /** "Oct 12-18", "Sep 28-Oct 4": a short period for file names. */
 export function shortRange(start: string, end: string) {

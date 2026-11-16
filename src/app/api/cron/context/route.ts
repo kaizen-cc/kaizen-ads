@@ -233,7 +233,24 @@ export async function GET(request: Request) {
       const drafted = await draftQueued(admin, 600_000);
       const remindNow = minute < 15 && ((weekday === "Mon" && hour === 14) || (weekday === "Tue" && hour === 10));
       const reminded = remindNow ? await remindReports(admin, date) : 0;
-      return Response.json({ queued, drafted, reminded });
+      // The email and organic social reports: the monthly on the first business days, the weekly (clients that ask for it)
+      // on Mondays. Guarded on its own: a failure here never reaches the ads reports above
+      const channel = await (async () => {
+        try {
+          const ch = await import("@/lib/channel-reports/queue");
+          const { dueKinds } = await import("@/lib/channel-reports/core");
+          const dueKindsNow = dueKinds({ weekday, dom, hour });
+          const made: Record<string, unknown> = {};
+          for (const kind of dueKindsNow) made[kind] = await ch.queueChannelReports(admin, kind, date);
+          const done = await ch.draftChannelQueued(admin, 240_000);
+          const told = remindNow ? await ch.remindChannelReports(admin, date) : 0;
+          return { queued: made, drafted: done, reminded: told };
+        } catch (e) {
+          await reportError({ message: `Channel reports: ${e instanceof Error ? e.message : String(e)}`, path: "/api/cron/context?step=reports", kind: "server", stack: e instanceof Error ? e.stack : null }).catch(() => null);
+          return { error: e instanceof Error ? e.message : String(e) };
+        }
+      })();
+      return Response.json({ queued, drafted, reminded, channel });
     }
     if (step === "loom") {
       const { aiEnabled } = await import("@/lib/ai");

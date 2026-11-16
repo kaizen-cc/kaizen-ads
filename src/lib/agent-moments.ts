@@ -218,6 +218,9 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Writes the weekly and monthly client report for a Meta account, in the buyer's voice", where: "Reports · KPIs", trigger: "auto", when: "Mondays and the 1st, and when someone builds a report", labels: ["weekly report", "monthly report", "custom report", "built report"] },
     { title: "Rewrites a report from the buyer's note", where: "Reports · a report", trigger: "click", when: "When the buyer asks for changes", labels: ["revise report"] },
     { title: "Brings the Slack message up to date when the buyer edited the report after it was written", where: "Reports · a report", trigger: "auto", when: "On the message step, when the report changed since", labels: ["refresh report message"] },
+    { title: "Writes the monthly and weekly email and organic social reports, in the strategist's or social media manager's voice", where: "Reports · Email and Social", trigger: "auto", when: "The first business days of the month, Mondays for clients with a weekly, and when someone drafts one", labels: ["monthly klaviyo report", "weekly klaviyo report", "monthly social report", "weekly social report"] },
+    { title: "Rewrites an email or social report from the owner's note", where: "Reports · an email or social report", trigger: "click", when: "When the owner asks for changes, or the numbers moved", labels: ["revise channel report"] },
+    { title: "Brings an email or social report's Slack message up to date when it was edited after it was written", where: "Reports · an email or social report", trigger: "click", when: "On the message step", labels: ["refresh channel report message"] },
     { title: "Writes the message that goes with a joint report", where: "Reports · Build a report", trigger: "click", when: "When a report covers more than one service", labels: ["joint report message"] },
     { title: "Matches the columns of an Ads Manager export it doesn't recognize, so the report can be built from the file", where: "Reports · a report · Ask the AI", trigger: "click", when: "When the buyer attaches an export with renamed or unfamiliar headers", labels: ["report upload headers"] },
     { title: "Reads the team's monthly recap template once and says where each piece of the recap goes (kept per template)", where: "Reports · a monthly recap · Fill our PowerPoint template", trigger: "click", when: "The first time a template without {{placeholders}} is filled, or on Map the template again", labels: ["recap deck map "] },
@@ -231,6 +234,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   ],
   report_qa: [
     { title: "Checks every report before it goes out: numbers match the data, nothing invented, Kaizen's writing rules", where: "Reports", trigger: "auto", when: "Right after each report is written", labels: ["report QA"] },
+    { title: "Checks every email and social report before it goes out", where: "Reports · Email and Social", trigger: "auto", when: "Right after each report is written or changed", labels: ["channel report QA"] },
   ],
   // The TikTok Ads Buyer ships offline: these are where its skills will run once an exec brings it online
   tiktok_auditor: [

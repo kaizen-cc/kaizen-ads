@@ -11,7 +11,7 @@ import { draftQueued, sendWeekly, submitMonthly, tiktokJoinsFor } from "@/lib/re
 import { draftReport, qaReport, recountReport, reviseReport, type ChatTurn, type Qa, type Sections } from "@/lib/reports/write";
 import { periodsFor } from "@/lib/reports/metrics";
 import { nyParts } from "@/lib/kpi/calc";
-import { canReportOn } from "@/lib/reports/access";
+import { canAccessReport, canReportOn } from "@/lib/reports/access";
 import { isPeriodKey, nextPeriod, parseDates, previousPeriod, rangeLabel, resolvePeriod, restOfAsk, shiftDay, todayIn, type PeriodKey } from "@/lib/reports/period";
 import { channelsPhrase, normalizeDelivery, type Delivery } from "@/lib/reports/delivery-core";
 import type { ManualLine } from "@/lib/reports/manual";
@@ -26,10 +26,15 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 async function mine(id: string) {
   const me = await requireStaff();
   const db = await createClient();
-  const { data } = await db.from("reports").select("id, owner_id, status, kind, client_id, platform, kpi_targets(id, client_id, platform, owner_id)").eq("id", id).maybeSingle();
-  if (!data) return null;
-  const t = data.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
-  if (data.owner_id !== me.id && !(t && (await canReportOn(db, me, t)))) return null;
+  const sel = "id, owner_id, status, kind, client_id, platform, kpi_targets(id, client_id, platform, owner_id)";
+  const { data } = await db.from("reports").select(sel).eq("id", id).maybeSingle();
+  if (!data) {
+    // An email or social report (a channel role may not read the row yet): read by the server, then the same rule in code
+    const { data: row } = await createAdminClient().from("reports").select(sel).eq("id", id).maybeSingle();
+    if (row && (await canAccessReport(db, me, row as unknown as { owner_id: string | null; client_id: string; platform: string }))) return { me, r: row };
+    return null;
+  }
+  if (!(await canAccessReport(db, me, data as unknown as { owner_id: string | null; client_id: string; platform: string; kpi_targets: unknown }))) return null;
   return { me, r: data };
 }
 const done = (id: string) => {
@@ -761,11 +766,10 @@ async function mySend(sendId: string) {
   const admin = createAdminClient();
   const { data: s } = await admin.from("report_sends").select("id, client_id, report_id, bundle_id, kind, period_start, period_end").eq("id", sendId).maybeSingle();
   if (!s) return null;
-  const q = admin.from("reports").select("owner_id, kpi_targets(id, client_id, platform, owner_id)");
+  const q = admin.from("reports").select("owner_id, client_id, platform, kpi_targets(id, client_id, platform, owner_id)");
   const { data: rows } = s.report_id ? await q.eq("id", s.report_id) : s.bundle_id ? await q.eq("bundle_id", s.bundle_id) : { data: [] };
   for (const r of rows ?? []) {
-    const t = r.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
-    if (r.owner_id === me.id || (t && (await canReportOn(db, me, t)))) return { me, s };
+    if (await canAccessReport(db, me, r as unknown as { owner_id: string | null; client_id: string; platform: string; kpi_targets: unknown })) return { me, s };
   }
   return null;
 }
@@ -829,6 +833,15 @@ export async function duplicateForNext(sendId: string): Promise<Result<{ id: str
   if (!reportId) return { ok: false, error: "Not found." };
   const { data: r } = await admin.from("reports").select("client_id, target_id, platform, kind, owner_id, layout").eq("id", reportId).single();
   if (!r) return { ok: false, error: "Not found." };
+  if (r.platform === "klaviyo" || r.platform === "social") {
+    // An email or social report: the next month (or week), drafted by the channel writer
+    const { draftChannelNow, draftChannelQueued } = await import("@/lib/channel-reports/queue");
+    const out = await draftChannelNow(admin, { clientId: r.client_id as string, line: r.platform === "klaviyo" ? "email" : "social", kind: r.kind === "monthly" ? "monthly" : "weekly", period: next, ownerId: (r.owner_id as string | null) ?? ok.me.id });
+    if (!out.ok) return out;
+    if (!out.existing) after(() => draftChannelQueued(admin, 200_000));
+    revalidatePath("/reports");
+    return { ok: true, id: out.id };
+  }
   const kind = r.kind === "weekly" ? "weekly" : "custom";
   const { data: was } = await admin.from("reports").select("id, status").eq("target_id", r.target_id).eq("kind", kind).eq("period_start", next.start).maybeSingle();
   if (was && was.status !== "skipped") return { ok: true, id: was.id as string };

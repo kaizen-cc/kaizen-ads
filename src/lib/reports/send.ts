@@ -56,7 +56,7 @@ export async function rememberDelivery(admin: SupabaseClient, clientId: string, 
   else await admin.from("client_report_prefs").insert({ client_id: clientId, notes: [], ...row });
 }
 
-export type SendPart = { platform: "meta" | "google" | "tiktok"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null } | null };
+export type SendPart = { platform: "meta" | "google" | "tiktok" | "klaviyo" | "social"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null } | null };
 export type SendArgs = {
   /** client_type "whitelabel": no agency name, link or brand anywhere in what goes */
   client: { id: string; name: string; slack_channel_id: string | null; slug?: string | null; portal_live?: boolean | null; client_type?: string | null };
@@ -80,6 +80,9 @@ export type SendArgs = {
   /** The profiles that own the report's parts: copied on the email with the client's buyers on those platforms */
   owners?: (string | null | undefined)[];
   resendOf?: string | null;
+  /** A channel report (email or social): its service and its own key numbers for the email */
+  serviceLabel?: string | null;
+  keyLines?: string[] | null;
   note?: string | null;
 };
 export type SendOutcome = {
@@ -132,7 +135,7 @@ export async function deliver(admin: SupabaseClient, sent: SendArgs): Promise<Se
   if (d.channels.includes("email")) {
     // One email to every contact picked (To), the team in Cc, the PDF always attached
     const to = d.recipients.map((r) => r.email);
-    const e = buildReportEmail({ client: a.client.name, kind: a.kind, periodLabel: a.period.label, parts: a.parts, from: { name: a.by.fullName, email: a.by.email }, first: firstNameFor(d.recipients), dashboard: dashboardOf(a.client), note: a.note, whiteLabel: wl });
+    const e = buildReportEmail({ client: a.client.name, kind: a.kind, periodLabel: a.period.label, parts: a.parts, from: { name: a.by.fullName, email: a.by.email }, first: firstNameFor(d.recipients), dashboard: dashboardOf(a.client), note: a.note, whiteLabel: wl, serviceLabel: a.serviceLabel, keyLines: a.keyLines });
     const failed: { email: string; error: string }[] = [];
     let sent: string[] = [];
     let cc: string[] = [];
@@ -239,8 +242,11 @@ export async function resendReport(admin: SupabaseClient, sendId: string, by: { 
       : { data: [] };
   const owners = ((rows ?? []) as { owner_id?: string | null }[]).map((r) => r.owner_id);
   const parts: SendPart[] = ((rows ?? []) as { platform: string; metrics: ReportMetrics | null; sections: SendPart["sections"] }[])
-    .map((r) => ({ platform: r.platform === "google" ? ("google" as const) : r.platform === "tiktok" ? ("tiktok" as const) : ("meta" as const), metrics: r.metrics, sections: r.sections }))
+    .map((r) => ({ platform: r.platform === "google" ? ("google" as const) : r.platform === "tiktok" ? ("tiktok" as const) : r.platform === "klaviyo" ? ("klaviyo" as const) : r.platform === "social" ? ("social" as const) : ("meta" as const), metrics: r.platform === "klaviyo" || r.platform === "social" ? null : r.metrics, sections: r.sections }))
     .sort((a, b) => ["meta", "tiktok", "google"].indexOf(a.platform) - ["meta", "tiktok", "google"].indexOf(b.platform));
+  // A channel report (email or social): its own key numbers and service in the email
+  const channel = ((rows ?? []) as { platform: string; metrics: unknown }[]).find((r) => r.platform === "klaviyo" || r.platform === "social");
+  const chanLines = channel?.metrics ? (await import("@/lib/channel-reports/core")).keyLines(channel.metrics as never) : null;
   const label = s.period_label ?? (s.period_start && s.period_end ? `${s.period_start} to ${s.period_end}` : "");
   const joint = parts.length > 1;
   return deliver(admin, {
@@ -258,6 +264,7 @@ export async function resendReport(admin: SupabaseClient, sendId: string, by: { 
     bundleId: s.bundle_id,
     owners,
     resendOf: s.id,
+    ...(channel ? { serviceLabel: channel.platform === "klaviyo" ? "Email" : "Social", keyLines: chanLines } : {}),
     note,
   });
 }

@@ -17,7 +17,7 @@ export default async function ReportsPage({ params }: { params: Promise<{ slug: 
   if (!client || (viewer.kind === "contact" && !client.portal_live)) notFound();
   const [{ data: bundles }, { data: weekly }] = await Promise.all([
     admin.from("report_bundles").select("id, token, kind, period_start, period_end, sent_at, ranges").eq("client_id", client.id).eq("status", "sent").order("sent_at", { ascending: false }).limit(24),
-    admin.from("reports").select("id, platform, period_start, period_end, posted_at, sections").eq("client_id", client.id).eq("kind", "weekly").eq("status", "posted").order("posted_at", { ascending: false }).limit(24),
+    admin.from("reports").select("id, platform, period_start, period_end, posted_at, sections").eq("client_id", client.id).in("platform", ["meta", "google", "tiktok"]).eq("kind", "weekly").eq("status", "posted").order("posted_at", { ascending: false }).limit(24),
   ]);
   const { data: heads } = bundles?.length ? await admin.from("reports").select("bundle_id, platform, sections").in("bundle_id", bundles.map((b) => b.id)).in("status", ["submitted", "posted"]) : { data: [] };
   const date = (d: string, o: Intl.DateTimeFormatOptions) => new Date(`${d.slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", o);

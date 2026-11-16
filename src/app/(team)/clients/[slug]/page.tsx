@@ -269,6 +269,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         .from("reports")
         .select("id, kind, platform, status, period_start, period_end, bundle_id, owner_id, posted_at, sections, metrics, profiles!reports_owner_id_fkey(full_name), report_bundles(status, sent_at, token, ranges)")
         .eq("client_id", client.id)
+        // The ads reports (email and social reports live on the Reports page, under their own line)
+        .in("platform", ["meta", "google", "tiktok"])
         .order("period_start", { ascending: false })
         .limit(300),
       // Their Loom videos: what's in the queue, waiting or couldn't be read

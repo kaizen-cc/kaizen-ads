@@ -78,7 +78,9 @@ export async function markForRegenerate(admin: SupabaseClient, ids: string[], by
 
 /** Writes one marked report: the account's numbers pulled first (time-boxed), then the draft and its QA. */
 export async function regenerateNow(admin: SupabaseClient, id: string) {
-  const { data } = await admin.from("reports").select("target_id").eq("id", id).maybeSingle();
+  const { data } = await admin.from("reports").select("target_id, platform").eq("id", id).maybeSingle();
+  // An email or social report is written by the channel writer from its synced tables (no account to pull from)
+  if (data?.platform === "klaviyo" || data?.platform === "social") return (await import("@/lib/channel-reports/write")).draftChannelReport(admin, id);
   await freshen(admin, (data?.target_id as string | undefined) ?? null);
   await draftReport(admin, id);
 }

@@ -1,6 +1,6 @@
 import { requireStaff } from "@/lib/auth";
 import { canSeeReports } from "@/lib/roles";
-import { canReportOn } from "@/lib/reports/access";
+import { canAccessReport } from "@/lib/reports/access";
 import { pdfDisposition } from "@/lib/reports/format";
 import { sendPdf } from "@/lib/reports/send";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -20,12 +20,12 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/reports/sen
   const { data: s } = await admin.from("report_sends").select("id, report_id, bundle_id, kind, pdf_path, file_name").eq("id", id).maybeSingle();
   if (!s) return new Response("Not found", { status: 404 });
   const db = await createClient();
-  const q = admin.from("reports").select("owner_id, kpi_targets(id, client_id, platform, owner_id)");
+  const q = admin.from("reports").select("owner_id, client_id, platform, kpi_targets(id, client_id, platform, owner_id)");
   const { data: rows } = s.report_id ? await q.eq("id", s.report_id) : s.bundle_id ? await q.eq("bundle_id", s.bundle_id) : { data: [] };
   let allowed = false;
   for (const r of rows ?? []) {
-    const t = r.kpi_targets as unknown as { id: string; client_id: string; platform: string; owner_id: string | null } | null;
-    if (r.owner_id === me.id || (t && (await canReportOn(db, me, t)))) {
+
+    if (await canAccessReport(db, me, r as { owner_id: string | null; client_id: string; platform: string; kpi_targets: unknown })) {
       allowed = true;
       break;
     }

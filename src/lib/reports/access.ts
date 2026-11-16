@@ -57,3 +57,20 @@ export async function reportListeners(admin: SupabaseClient, ids: (string | null
   const { data } = await admin.from("profiles").select("id, role, is_exec").in("id", want);
   return new Set((data ?? []).filter((p) => canSeeReports({ role: p.role as string, isExec: p.is_exec as boolean })).map((p) => p.id as string));
 }
+
+/**
+ * Whether this person may open a report row, ads or channel: an ads report by its account (the rule above), an email or
+ * social report by the client and the line (src/lib/channel-reports/access-core.ts). The owner always may.
+ */
+export async function canAccessReport(db: SupabaseClient, me: Staff, r: { owner_id: string | null; client_id: string; platform: string; kpi_targets?: unknown }) {
+  if (!canSeeReports(me)) return false;
+  if (r.owner_id === me.id) return true;
+  const { isChannelPlatform } = await import("@/lib/channel-reports/core");
+  if (isChannelPlatform(r.platform)) {
+    const { canOpenReport } = await import("@/lib/channel-reports/clients");
+    const { createAdminClient } = await import("@/lib/supabase/admin");
+    return canOpenReport(createAdminClient(), me, r);
+  }
+  const t = r.kpi_targets as T | null | undefined;
+  return Boolean(t && (await canReportOn(db, me, t)));
+}

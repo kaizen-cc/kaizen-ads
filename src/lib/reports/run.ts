@@ -114,7 +114,7 @@ export async function draftQueued(admin: SupabaseClient, budgetMs = 600_000, opt
   while (Date.now() < until - 150_000) {
     // Queued ones, and any stuck mid-draft for 20 minutes (a timeout), monthly first (they're critical)
     const stuck = new Date(Date.now() - 20 * 60_000).toISOString();
-    let q = admin.from("reports").select("id, status, updated_at, target_id, regenerated_at").or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`);
+    let q = admin.from("reports").select("id, status, updated_at, target_id, regenerated_at").in("platform", ["meta", "google", "tiktok"]).or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`);
     if (opts.regenerated) q = q.gte("regenerated_at", new Date(Date.now() - 6 * 3_600_000).toISOString());
     const { data } = await q.order("kind", { ascending: true }).order("created_at").limit(opts.regenerated ? 2 : 3);
     if (!data?.length) break;
@@ -525,7 +525,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
 
 /** Reminders: weekly reports not posted by Monday afternoon; monthly parts not submitted as the 5th nears (Slack-free: in the app and by email via notifications). */
 export async function remindReports(admin: SupabaseClient, today = nyParts(new Date()).date) {
-  const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, status, clients(name)").in("status", ["draft", "failed"]).is("joined_to", null).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
+  const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, status, clients(name)").in("status", ["draft", "failed"]).in("platform", ["meta", "google", "tiktok"]).is("joined_to", null).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
   const day = Number(today.slice(8, 10));
   let n = 0;
   // The report's owner, with the client's secondary buyers on that platform copied in

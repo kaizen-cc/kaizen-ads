@@ -107,7 +107,7 @@ export type ReportEmailInput = {
   kind: string;
   periodLabel: string;
   /** One part per service (a joint report has two) */
-  parts: { platform: "meta" | "google" | "tiktok"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null; did?: string[] | null; next?: string[] | null } | null }[];
+  parts: { platform: "meta" | "google" | "tiktok" | "klaviyo" | "social"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null; did?: string[] | null; next?: string[] | null } | null }[];
   /** The buyer sending it: the email is signed by them and replies go to them */
   from: { name: string; email: string | null };
   /** First name of the person it's addressed to, when it goes to one */
@@ -118,6 +118,9 @@ export type ReportEmailInput = {
   note?: string | null;
   /** A white label client: no agency name, sign-off or link anywhere in it */
   whiteLabel?: boolean;
+  /** A channel report (email or social): the service it is for, and its own key numbers in place of the ad tiles */
+  serviceLabel?: string | null;
+  keyLines?: string[] | null;
 };
 
 export type ReportEmail = {
@@ -148,18 +151,18 @@ export function buildReportEmail(p: ReportEmailInput): ReportEmail {
 function writeReportEmail(p: ReportEmailInput): ReportEmail {
   const wl = Boolean(p.whiteLabel);
   const joint = p.parts.length > 1;
-  const subject = reportSubject(p.client, p.kind, p.periodLabel);
+  const subject = p.serviceLabel ? `${p.client} ${p.serviceLabel} ${KIND_WORD[p.kind] ?? "report"} · ${p.periodLabel}` : reportSubject(p.client, p.kind, p.periodLabel);
   const lines = joint ? p.parts.flatMap((x) => summaryLines(x.sections).slice(0, 1).map((l) => `${platformName(x.platform)}: ${l}`)) : summaryLines(p.parts[0]?.sections);
-  const bullets = p.parts.flatMap((x) => keyNumbers(x.metrics, joint ? platformName(x.platform).replace(" Ads", "") : undefined));
+  const bullets = p.keyLines ?? p.parts.flatMap((x) => keyNumbers(x.metrics, joint ? platformName(x.platform).replace(" Ads", "") : undefined));
   const firstName = p.from.name.split(" ")[0] || (wl ? "Your account team" : "The Kaizen team");
   const hello = p.first ? `Hi ${p.first},` : "Hi team,";
-  const intro = `Here's your ${KIND_WORD[p.kind] ?? "report"} for ${p.periodLabel}. The full report is attached as a PDF.`;
+  const intro = `Here's your ${p.serviceLabel ? `${p.serviceLabel.toLowerCase()} ` : ""}${KIND_WORD[p.kind] ?? "report"} for ${p.periodLabel}. The full report is attached as a PDF.`;
   // White label: signed by the buyer alone, and no link to the agency's portal
   const sign = wl ? firstName : `${firstName}, Kaizen Marketing`;
   const note = [p.note?.trim() || "", "Any questions, just reply to this email.", sign].filter(Boolean).join(" ");
   const cta = p.dashboard && !wl ? { label: "See every number on your dashboard", url: p.dashboard } : null;
   // A weekly's narrative travels here, not in the PDF (which holds the numbers): what we did and what's next, briefly
-  const story = p.kind === "weekly" || p.kind === "custom" ? p.parts.flatMap((x) => narrativeLines(x.sections, joint ? platformName(x.platform).replace(" Ads", "") : null)) : [];
+  const story = p.kind === "weekly" || p.kind === "custom" || p.serviceLabel ? p.parts.flatMap((x) => narrativeLines(x.sections, joint ? platformName(x.platform).replace(" Ads", "") : null)) : [];
   const allLines = [intro, ...lines, ...story];
   const text = [hello, "", ...allLines.flatMap((l) => [l, ""]), ...(bullets.length ? ["The key numbers:", ...bullets.map((b) => `• ${b}`), ""] : []), ...(cta ? [`${cta.label}: ${cta.url}`, ""] : []), ...(p.note?.trim() ? [p.note.trim(), ""] : []), "Any questions, just reply to this email.", "", firstName, ...(wl ? [] : ["Kaizen Marketing"])].join("\n");
   return {

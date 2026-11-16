@@ -6,11 +6,17 @@ import type { ReportPart } from "@/lib/reports/pdf";
 import { loadBundle } from "@/lib/reports/share";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { AdImage } from "./ad-image";
+import { ChannelRecap } from "./channel-recap";
+import { loadChannelShare } from "@/lib/channel-reports/share";
 
 // A white label client's recap names no agency, in the tab either
 const bundleOf = cache(async (token: string) => (adminConfigured() ? loadBundle(createAdminClient(), token) : null));
+const channelOf = cache(async (token: string) => (adminConfigured() ? loadChannelShare(createAdminClient(), token) : null));
 export async function generateMetadata({ params }: PageProps<"/r/[token]">): Promise<Metadata> {
-  const bundle = await bundleOf((await params).token);
+  const { token } = await params;
+  const bundle = await bundleOf(token);
+  const channel = bundle ? null : await channelOf(token);
+  if (channel) return { title: channel.whiteLabel ? `${channel.title} · ${channel.client}` : `${channel.title} · Kaizen Marketing`, robots: { index: false, follow: false } };
   return { title: bundle?.whiteLabel ? `${bundle.title} · ${bundle.client}` : "Monthly recap · Kaizen Marketing", robots: { index: false, follow: false } };
 }
 export const viewport: Viewport = { themeColor: "#ffffff" };
@@ -45,7 +51,12 @@ export default async function MonthlyRecap({ params }: PageProps<"/r/[token]">) 
   const { token } = await params;
   if (!adminConfigured()) notFound();
   const bundle = await bundleOf(token);
-  if (!bundle) notFound();
+  if (!bundle) {
+    // An email or social report sent on its own has its own page
+    const channel = await channelOf(token);
+    if (!channel) notFound();
+    return <ChannelRecap r={{ client: channel.client, whiteLabel: channel.whiteLabel, label: channel.label, title: channel.title, token, metrics: channel.input.metrics, sections: channel.input.sections }} />;
+  }
   const ready = bundle.ready && bundle.input.parts.length > 0;
   const parts = bundle.input.parts;
 

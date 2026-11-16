@@ -988,3 +988,6 @@ export function WeeklyReport({ input, images }: { input: WeeklyInput; images: (s
     </Page>
   );
 }
+
+/** The pieces of this design that other documents draw with (the channel reports use the same header, hero, tiles and footer look) */
+export const docKit = { s, Logo, Arrow, Tile, Hot, toneOf, INK, MUTED, FAINT, LINE, BG, GOOD, BAD, FLAT, PAD, INNER, HERO_H, fullRange, shortRange };

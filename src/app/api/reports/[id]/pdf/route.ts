@@ -5,7 +5,7 @@ import { renderReportPdf } from "@/lib/reports/pdf";
 import { loadReport } from "@/lib/reports/share";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { canReportOn } from "@/lib/reports/access";
+import { canAccessReport, canReportOn } from "@/lib/reports/access";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -17,6 +17,18 @@ export async function GET(request: Request, ctx: RouteContext<"/api/reports/[id]
   if (!canSeeReports(me)) return new Response("Not found", { status: 404 });
   const { id } = await ctx.params;
   if (!adminConfigured() || !/^[0-9a-f-]{36}$/i.test(id)) return new Response("Not found", { status: 404 });
+  // An email or social report: its own document, and its own rule (the client and the line)
+  const { data: kind } = await createAdminClient().from("reports").select("owner_id, client_id, platform").eq("id", id).maybeSingle();
+  if (kind && (kind.platform === "klaviyo" || kind.platform === "social")) {
+    if (!(await canAccessReport(await createClient(), me, kind))) return new Response("Not found", { status: 404 });
+    const { loadChannelReport } = await import("@/lib/channel-reports/share");
+    const { renderChannelPdf } = await import("@/lib/channel-reports/pdf");
+    const loaded = await loadChannelReport(createAdminClient(), id);
+    if (!loaded) return new Response("This report hasn't been written yet", { status: 404 });
+    const bytes = await renderChannelPdf(loaded.input);
+    const inline = new URL(request.url).searchParams.get("download") !== "1";
+    return new Response(bytes as BodyInit, { headers: { "content-type": "application/pdf", "content-disposition": pdfDisposition(loaded.fileName, inline), "cache-control": "private, no-store" } });
+  }
   // The same rule as the report itself: its account's buyer, the leads of its line, execs
   const db = await createClient();
   const { data: r } = await db.from("reports").select("owner_id, bundle_id, kind, kpi_targets(id, client_id, platform, owner_id)").eq("id", id).maybeSingle();
