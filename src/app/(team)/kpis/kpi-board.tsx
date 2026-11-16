@@ -10,7 +10,7 @@ import { CONVERSIONS } from "@/lib/kpi/conversions";
 import { onCard } from "@/lib/buyer-seats";
 import { STATUS, deviationTone, kpiValue, money } from "@/lib/kpi/format";
 import { freshness } from "@/lib/dates";
-import { addKpiTarget, archiveKpiTarget, exploreKpi, linkAdAccount, pullClientKpis, saveAccountNotes, saveKpiTarget, setExtraMetrics, type NoteKey } from "./actions";
+import { addKpiTarget, archiveKpiTarget, disregardAdAccount, exploreKpi, linkAdAccount, pullClientKpis, saveAccountNotes, saveKpiTarget, setExtraMetrics, type NoteKey } from "./actions";
 import { ClientChat } from "../clients/[slug]/client-chat";
 import type { ClientPerms } from "@/lib/chat-permissions";
 import type { Explore } from "@/lib/kpi/explore";
@@ -1774,17 +1774,57 @@ function AddKpi({ clients, buyers, platform, preset = null, onDone }: { clients:
 }
 
 /** Ad accounts Meta shares with the agency that the name match couldn't pin to a client. */
-function Unlinked({ accounts, clients }: { accounts: { id: string; name: string; bm?: { id: string; name: string } }[]; clients: { id: string; name: string }[] }) {
+function Unlinked({ accounts, disregarded = [], clients }: { accounts: { id: string; name: string; bm?: { id: string; name: string } }[]; disregarded?: { id: string; name: string }[]; clients: { id: string; name: string }[] }) {
   const [open, setOpen] = useState(false);
+  const [showIgnored, setShowIgnored] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const router = useRouter();
+  // Disregard (a past client's account) or bring one back: never deleted, just no longer asked about
+  const toggle = async (a: { id: string; name: string }, restore: boolean) => {
+    setBusy(a.id);
+    setErr(null);
+    const r = await disregardAdAccount(a.id, a.name, restore);
+    setBusy(null);
+    if (!r.ok) setErr(r.error);
+    else router.refresh();
+  };
+  const ignoredList = disregarded.length > 0 && (
+    <div className={accounts.length ? "mt-2 border-t border-line pt-2" : ""}>
+      <button onClick={() => setShowIgnored((o) => !o)} className="flex min-h-[44px] w-full items-center justify-between gap-3 text-left text-xs text-muted hover:text-fg md:min-h-0">
+        <span>
+          <span className="tabular">{disregarded.length}</span> disregarded (past clients&apos; accounts)
+        </span>
+        <span className="shrink-0">{showIgnored ? "Hide" : "Show"}</span>
+      </button>
+      {showIgnored && (
+        <ul className="mt-2 grid gap-1.5">
+          {disregarded.map((a) => (
+            <li key={a.id} className="flex items-center justify-between gap-3 rounded-[10px] px-4 py-2 text-sm text-muted">
+              <span className="min-w-0 truncate">
+                {a.name} <span className="tabular text-xs text-faint">act_{a.id}</span>
+              </span>
+              <button type="button" disabled={busy === a.id} onClick={() => void toggle(a, true)} className="h-11 shrink-0 rounded-full px-3 text-xs text-brand-text hover:bg-surface disabled:opacity-50 md:h-8">
+                {busy === a.id ? "One moment…" : "Bring back"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
   return (
     <div className="rounded-[14px] border border-dashed border-line px-4 py-2 md:px-5 md:py-4">
-      <button onClick={() => setOpen((o) => !o)} className="flex min-h-[44px] w-full items-center justify-between gap-3 text-left text-sm md:min-h-0">
-        <span>
-          <span className="tabular font-medium">{accounts.length}</span> ad {accounts.length === 1 ? "account" : "accounts"} shared with us that aren&apos;t linked to a client
-        </span>
-        <span className="shrink-0 text-xs text-muted">{open ? "Hide" : "Review"}</span>
-      </button>
-      {open && (
+      {accounts.length > 0 && (
+        <button onClick={() => setOpen((o) => !o)} className="flex min-h-[44px] w-full items-center justify-between gap-3 text-left text-sm md:min-h-0">
+          <span>
+            <span className="tabular font-medium">{accounts.length}</span> ad {accounts.length === 1 ? "account" : "accounts"} shared with us that aren&apos;t linked to a client
+          </span>
+          <span className="shrink-0 text-xs text-muted">{open ? "Hide" : "Review"}</span>
+        </button>
+      )}
+      {err && <p className="mt-2 text-xs text-bad">{err}</p>}
+      {open && accounts.length > 0 && (
         <ul className="mb-2 mt-2 grid gap-2 md:mb-0 md:mt-4">
           {accounts.map((a) => (
             <li key={a.id} className="grid items-center gap-3 rounded-[10px] bg-surface px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
@@ -1792,22 +1832,34 @@ function Unlinked({ accounts, clients }: { accounts: { id: string; name: string;
                 <span className="block truncate text-sm">{a.name}</span>
                 <span className="tabular text-xs text-faint">act_{a.id} · via {a.bm?.name ?? "Kaizen"}</span>
               </span>
-              <ActionForm action={linkAdAccount.bind(null, a.id)} submitLabel="Link" className="flex flex-wrap items-center gap-2 [&>div]:shrink-0">
-                <select name="client_id" required defaultValue="" className={`${field} min-w-0 flex-1`}>
-                  <option value="" disabled>
-                    Whose account is this?
-                  </option>
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
+              <div className="flex flex-wrap items-center gap-2">
+                <ActionForm action={linkAdAccount.bind(null, a.id)} submitLabel="Link" className="flex min-w-0 flex-1 flex-wrap items-center gap-2 [&>div]:shrink-0">
+                  <select name="client_id" required defaultValue="" className={`${field} min-w-0 flex-1`}>
+                    <option value="" disabled>
+                      Whose account is this?
                     </option>
-                  ))}
-                </select>
-              </ActionForm>
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </ActionForm>
+                <button
+                  type="button"
+                  disabled={busy === a.id}
+                  onClick={() => void toggle(a, false)}
+                  title="A past client's account: stop asking about it (it can be brought back)"
+                  className="h-11 shrink-0 rounded-full border border-line px-4 text-[13px] text-muted hover:text-fg disabled:opacity-50 md:h-10"
+                >
+                  {busy === a.id ? "One moment…" : "Disregard"}
+                </button>
+              </div>
             </li>
           ))}
         </ul>
       )}
+      {ignoredList}
     </div>
   );
 }
@@ -1824,6 +1876,7 @@ export function KpiBoard({
   initialOwner,
   lastSync,
   unlinked = [],
+  disregarded = [],
   googleConnected = false,
   tiktokOn = false,
   focus = null,
@@ -1836,6 +1889,8 @@ export function KpiBoard({
   initialOwner: string;
   lastSync: string | null;
   unlinked?: { id: string; name: string; bm?: { id: string; name: string } }[];
+  /** Unlinked ad accounts an exec disregarded (past clients'): listed apart, each can be brought back */
+  disregarded?: { id: string; name: string }[];
   /** Google Ads is set up (it reads through the manager account); its KPIs fill in on the next sync */
   googleConnected?: boolean;
   /** TikTok is set up and connected (or has cards): its switch shows. Hidden before, so nothing changes while it's dormant */
@@ -2006,7 +2061,7 @@ export function KpiBoard({
         </div>
       </div>
 
-      {platform === "meta" && unlinked.length > 0 && <Unlinked accounts={unlinked} clients={clients} />}
+      {platform === "meta" && (unlinked.length > 0 || disregarded.length > 0) && <Unlinked accounts={unlinked} disregarded={disregarded} clients={clients} />}
 
       {adding && (
         <AddKpi

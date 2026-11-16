@@ -156,7 +156,12 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
 
   // Ad accounts Meta shares with us that no client has yet (server-side bookmark; execs link them)
   const { data: accounts } = me.isExec && adminConfigured() ? await createAdminClient().from("sync_state").select("last_result").eq("source", "meta:accounts").maybeSingle() : { data: null };
-  const unlinked = ((accounts?.last_result as { unlinked?: { id: string; name: string; bm?: { id: string; name: string } }[] } | null)?.unlinked ?? []).slice(0, 50);
+  // Less the ones an exec disregarded (past clients' accounts), which are listed apart so they can be brought back
+  const { data: ignoredRows } = me.isExec && adminConfigured() ? await createAdminClient().from("disregarded_ad_accounts").select("ad_account_id, name").eq("platform", "meta") : { data: null };
+  const ignored = new Set((ignoredRows ?? []).map((r) => r.ad_account_id as string));
+  const allUnlinked = (accounts?.last_result as { unlinked?: { id: string; name: string; bm?: { id: string; name: string } }[] } | null)?.unlinked ?? [];
+  const unlinked = allUnlinked.filter((a) => !ignored.has(a.id)).slice(0, 50);
+  const disregarded = allUnlinked.filter((a) => ignored.has(a.id)).map((a) => ({ id: a.id, name: a.name }));
 
   const lastSync = (snaps ?? []).map((s) => s.computed_at as string).sort().at(-1) ?? null;
   // A buyer opens on their own accounts: the ones they own and the ones they're a secondary buyer on
@@ -181,6 +186,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       focus={focus ? { id: focus.id, platform: focus.platform } : null}
       lastSync={lastSync}
       unlinked={unlinked}
+      disregarded={disregarded}
       googleConnected={googleAdsConfigured()}
       tiktokOn={tiktokOn}
       only={team}

@@ -130,6 +130,23 @@ export async function linkAdAccount(accountId: string, form: FormData): Promise<
   return { ok: true };
 }
 
+/**
+ * Execs: an ad account shared with us that's no current client's (a past client's, a test account) stops being asked
+ * about. Nothing is deleted: bringing it back (restore) puts it on the list again.
+ */
+export async function disregardAdAccount(accountId: string, name: string, restore = false): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!me.isExec) return { ok: false, error: "Only an exec can do this." };
+  if (!adminConfigured()) return { ok: false, error: "Not available here." };
+  const admin = createAdminClient();
+  const { error } = restore
+    ? await admin.from("disregarded_ad_accounts").delete().eq("platform", "meta").eq("ad_account_id", accountId)
+    : await admin.from("disregarded_ad_accounts").upsert({ platform: "meta", ad_account_id: accountId, name: name.slice(0, 200), disregarded_by: me.id });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/kpis");
+  return { ok: true };
+}
+
 /** The KPI card's explorer: numbers for a "counts as a result" before it's saved, what the account reports, and its extra metric boxes. */
 export async function exploreKpi(targetId: string, tryOut: { conversion: string; custom: string | null; campaignMatch: string | null }): Promise<{ ok: true; data: Explore } | { ok: false; error: string }> {
   await requireStaff();
