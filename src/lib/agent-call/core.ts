@@ -217,8 +217,14 @@ export const TURN = {
   speechLevel: 0.018,
   /** Speech counts once it lasts this long (a cough or a click doesn't start a turn) */
   minSpeechMs: 160,
-  /** Silence this long after speech ends the turn */
-  endSilenceMs: 750,
+  /**
+   * Silence this long after speech ends the turn: long enough for a breath or a pause to think, so the agent never
+   * jumps in mid-thought (the owner found 0.75s cut people off)
+   */
+  endSilenceMs: 1600,
+  /** After a long stretch of talking (thinking out loud), it waits longer still before answering */
+  longTurnMs: 8000,
+  longTurnSilenceMs: 2400,
   /** Talking over the agent: louder than normal speech (its own voice can leak into the mic) … */
   bargeLevel: 0.045,
   /** … for this long */
@@ -274,7 +280,7 @@ export function createTurnDetector(opts: Partial<typeof TURN> = {}) {
         return null;
       }
       silenceMs += ms;
-      if (silenceMs >= t.endSilenceMs) {
+      if (silenceMs >= (speechMs >= t.longTurnMs ? t.longTurnSilenceMs : t.endSilenceMs)) {
         inSpeech = false;
         speechMs = 0;
         silenceMs = 0;

@@ -98,6 +98,15 @@ describe("turn taking", () => {
     expect(run(d, 0.001, TURN.endSilenceMs - 100)).toEqual([]);
     expect(run(d, 0.001, 200)).toEqual(["turn_end"]);
   });
+  it("waits longer before answering after a long stretch of thinking out loud", () => {
+    const d = createTurnDetector();
+    run(d, 0.1, TURN.longTurnMs + 200);
+    expect(run(d, 0.001, TURN.endSilenceMs + 200)).toEqual([]);
+    expect(run(d, 0.001, TURN.longTurnSilenceMs - TURN.endSilenceMs)).toEqual(["turn_end"]);
+  });
+  it("lets a pause of a second and a half go by without answering", () => {
+    expect(TURN.endSilenceMs).toBeGreaterThanOrEqual(1500);
+  });
   it("ignores a click or a cough", () => {
     const d = createTurnDetector();
     expect(run(d, 0.2, 60)).toEqual([]);
