@@ -18,6 +18,10 @@ type Row = {
   status: string;
   kaizen_id: number | null;
   client_type: string;
+  brand_color: string | null;
+  brand_light: string | null;
+  brand_checked: string | null;
+  brand_logo: string | null;
   creative_package: boolean;
   creative_package_until: string | null;
   meta_ad_account_id: string | null;
@@ -40,7 +44,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const req = supabase
     .from("clients")
     .select(
-      "id, name, slug, status, kaizen_id, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, services_removed, creative_packages(label), client_assignments(role, profile_id, is_primary, created_at, profiles(full_name)), contact_clients(contact_id, removed_at)",
+      "id, name, slug, status, kaizen_id, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, services_removed, creative_packages(label), brand_color:report_brand->>color, brand_light:report_brand->>light, brand_checked:report_brand->>checkedAt, brand_logo:report_brand->>source, client_assignments(role, profile_id, is_primary, created_at, profiles(full_name)), contact_clients(contact_id, removed_at)",
     )
     .neq("status", "offboarded")
     .order("name");
@@ -123,6 +127,13 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
       channel: lineOfTeam(me.role),
       status: r.status,
       whiteLabel: r.client_type === "whitelabel",
+      // Their own look on the card: the brand colour and logo their reports carry (the logo is read from its own address)
+      brand: {
+        color: /^#[0-9a-f]{6}$/i.test(r.brand_color ?? "") ? r.brand_color : null,
+        light: r.brand_light === "true",
+        // Looked for and none found: no request at all; not looked for yet: the address looks for it
+        logo: r.brand_checked && !r.brand_logo ? null : `/api/clients/${r.id}/logo?v=${encodeURIComponent(r.brand_checked ?? "new")}`,
+      },
       packageLabel: channel ? null : (r.creative_packages?.label ?? null),
       images: { used: u?.images_used ?? 0, cap: u?.images_per_month ?? 0 },
       videos: { used: u?.videos_used ?? 0, cap: u?.videos_per_month ?? 0 },

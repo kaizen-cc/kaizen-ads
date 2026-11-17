@@ -26,6 +26,8 @@ export type ClientCard = {
   channel: "email" | "social" | null;
   status: string;
   whiteLabel: boolean;
+  /** Their brand colour (hex) and logo (an address), the ones their reports carry; light: a white logo, shown on dark */
+  brand?: { color: string | null; light: boolean; logo: string | null };
   packageLabel: string | null;
   /** ongoing (from the forms), sprint (exec override with an end date) or none */
   pkg: "ongoing" | "sprint" | "none";
@@ -106,7 +108,9 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
   const [error, setError] = useState<string | null>(null);
   const [, start] = useTransition();
   const [pausing, startPause] = useTransition();
-  const tint = tintFor(c.name);
+  // Their brand colour where we know it, else a colour from their name
+  const tint = c.brand?.color ?? tintFor(c.name);
+  const [logoOk, setLogoOk] = useState(Boolean(c.brand?.logo));
   const has = (s: ServiceSlug) => services.includes(s);
   const toggleOpen = () => (open ? closeParams("card") : pushParams({ card: c.id }));
 
@@ -166,12 +170,21 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
       className={`group relative grid cursor-pointer content-start gap-4 overflow-hidden rounded-[14px] border bg-surface p-5 transition-colors hover:border-faint/70 ${open ? "border-faint/60" : "border-line"} ${c.status === "paused" ? "opacity-60" : ""}`}
     >
       {/* A wash of the client's color along the top */}
-      <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-24 opacity-[0.10]" style={{ background: `linear-gradient(180deg, ${tint}, transparent)` }} />
+      <span aria-hidden className={`pointer-events-none absolute inset-x-0 top-0 h-28 ${c.brand?.color ? "opacity-[0.18]" : "opacity-[0.10]"}`} style={{ background: `linear-gradient(180deg, ${tint}, transparent)` }} />
+      {c.brand?.color && <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[3px]" style={{ background: tint }} />}
 
       <div className="relative flex items-start gap-3">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] font-heading text-lg" style={{ background: `${tint}26`, color: tint }}>
-          {c.name.replace(/[^A-Za-z0-9]/g, "").slice(0, 1).toUpperCase()}
-        </span>
+        {logoOk && c.brand?.logo ? (
+          // Their logo on a chip that keeps it readable in either theme (a white logo on dark, any other on white)
+          <span className={`grid h-11 min-w-11 max-w-[112px] shrink-0 place-items-center overflow-hidden rounded-[10px] px-2 ring-1 ring-line ${c.brand.light ? "bg-[#111]" : "bg-white"}`}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- a small, cached logo from our own address */}
+            <img src={c.brand.logo} alt="" loading="lazy" decoding="async" onError={() => setLogoOk(false)} className="max-h-7 w-auto max-w-[96px] object-contain" />
+          </span>
+        ) : (
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] font-heading text-lg" style={{ background: `${tint}26`, color: tint }}>
+            {c.name.replace(/[^A-Za-z0-9]/g, "").slice(0, 1).toUpperCase()}
+          </span>
+        )}
         <div className="min-w-0 flex-1">
           <Link href={`/clients/${c.slug}`} prefetch={intent ? true : null} className="block truncate font-heading text-[17px] leading-snug hover:text-brand-text">
             {c.name}

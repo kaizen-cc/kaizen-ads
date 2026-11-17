@@ -22,7 +22,8 @@ export type CreativeSide = "lead" | "maker" | null;
 const I = {
   home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z",
   board: "M4 4h4v16H4zM10 4h4v10h-4zM16 4h4v13h-4z",
-  clients: "M4 20V8l8-5 8 5v12M9 20v-6h6v6",
+  // A briefcase (accounts), so it never reads as a second house beside Overview
+  clients: "M4 8h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM9 8V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18",
   kpis: "M4 19h16M6 15l4-5 3 3 5-7",
   reports: "M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h4",
   ideas: "M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1.1 2h5c.1-.8.5-1.5 1.1-2A6 6 0 0 0 12 3z",

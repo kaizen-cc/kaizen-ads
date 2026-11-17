@@ -1,6 +1,6 @@
 import { after } from "next/server";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
-import { roleLabel, type TeamRole } from "@/lib/roles";
+import { isCreativeRole, roleLabel, type TeamRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
 import { loadShadows } from "@/lib/asana";
 import { BoardClient } from "./board-client";
@@ -100,7 +100,8 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
       canRequest
       can={{ review: isExecOrLead(me), approveCopy: isExecOrLead(me) || me.isCopywriter, exec: me.isExec }}
       shadows={shadows}
-      me={{ id: me.id, lead: isExecOrLead(me) }}
+      // The creative team (designers, editors and their heads) opens the board on their own work
+      me={{ id: me.id, lead: isExecOrLead(me), mine: isCreativeRole(me.role) }}
       tabs={lead ? <BoardTabs active="board" /> : null}
     />
   );

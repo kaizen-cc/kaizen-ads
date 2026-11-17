@@ -11,6 +11,7 @@ import { BOARD_ORDER, PHASE_LABEL, health, stageInfo, type Format, type Health, 
 import { TicketCard } from "./ticket-card";
 import { MoveDialog } from "./move-dialog";
 import { ShadowCard, ShadowSheet } from "./shadow";
+import { moveAsanaTask } from "./actions";
 import type { ShadowTicket } from "@/lib/asana";
 import { TicketDrawer } from "./ticket-drawer";
 import { CompletedLog, closeCompleted } from "./completed-log";
@@ -50,7 +51,8 @@ export function BoardClient({
   demo?: boolean;
   /** Open Asana tasks not migrated yet (outline cards) */
   shadows?: ShadowTicket[];
-  me?: { id: string; lead: boolean } | null;
+  /** mine: the board opens on this person's own work (the creative team), until they pick someone else or Anyone */
+  me?: { id: string; lead: boolean; mine?: boolean } | null;
   /** The Board's views (execs and leads), beside the title */
   tabs?: React.ReactNode;
 }) {
@@ -113,7 +115,11 @@ export function BoardClient({
   // walk through what was opened (search typing replaces the entry instead of adding one per key)
   const q = params.get("q") ?? "";
   const client = params.get("client");
-  const person = params.get("person");
+  // The creative team opens the board on their own work: no person in the address is them, "all" is everyone
+  const personParam = params.get("person");
+  const mineFirst = Boolean(me?.mine);
+  const person = personParam === "all" ? null : (personParam ?? (mineFirst && me ? me.id : null));
+  const pickPerson = (v: string | null) => pushParams({ person: mineFirst ? (v === me?.id ? null : (v ?? "all")) : v });
   const format = (params.get("format") as Format | null) ?? null;
   const only = (params.get("only") as Health | null) ?? null;
   // High or Urgent only (Kaizen tickets and the Asana outlines, both read as one set)
@@ -125,6 +131,20 @@ export function BoardClient({
   // Dragging a ticket across the board, and where it's hovering
   const [dragging, setDragging] = useState<Ticket | null>(null);
   const [dropOn, setDropOn] = useState<Stage | null>(null);
+  // An Asana task being dragged, and the columns Asana tasks were just dropped in (shown there before Asana answers)
+  const [draggingShadow, setDraggingShadow] = useState<ShadowTicket | null>(null);
+  const [shadowMoved, setShadowMoved] = useState<Map<string, Stage>>(new Map());
+  const mayMoveShadow = (x: ShadowTicket) => !demo && Boolean(me && (me.lead || x.profileId === me.id));
+  const dropShadow = (x: ShadowTicket, to: Stage) => {
+    const from = shadowMoved.get(x.gid) ?? x.stage;
+    if (from === to) return;
+    setShadowMoved((m) => new Map(m).set(x.gid, to));
+    moveAsanaTask(x.gid, to).then((r) => {
+      if (r.ok) return router.refresh();
+      setShadowMoved((m) => new Map(m).set(x.gid, from));
+      toast({ tone: "bad", title: "Couldn't move it in Asana", body: r.error });
+    });
+  };
 
   const filtered = useMemo(() => {
     const t = q.trim().toLowerCase().replace(/^#/, "");
@@ -172,7 +192,8 @@ export function BoardClient({
   const shadowsBy = useMemo(() => {
     const t = q.trim().toLowerCase();
     const m = new Map<Stage, ShadowTicket[]>();
-    for (const x of shadows) {
+    for (const raw of shadows) {
+      const x = shadowMoved.has(raw.gid) ? { ...raw, stage: shadowMoved.get(raw.gid)! } : raw;
       if (client && x.clientSlug !== client) continue;
       if (person && x.profileId !== person) continue;
       if (format && x.format !== format) continue;
@@ -182,7 +203,7 @@ export function BoardClient({
       m.set(x.stage, [...(m.get(x.stage) ?? []), x]);
     }
     return m;
-  }, [shadows, q, client, person, format, only, priority]);
+  }, [shadows, shadowMoved, q, client, person, format, only, priority]);
   const selectedClient = clients.find((c) => c.slug === client) ?? null;
 
   // Getting around a board wider than the screen: a visible scrollbar, the phase labels and arrows jump along it, and
@@ -238,7 +259,9 @@ export function BoardClient({
   const optimisticMove = (id: string, stage: Stage) =>
     setTickets((all) => all.map((x) => (x.id === id ? { ...x, stage, minutesInStage: 0, minutesOver: 0 } : x)));
 
-  const filtersOn = Boolean(q || client || person || format || only || priority);
+  // The person filter counts as one only when it isn't the board's own starting view
+  const filtersOn = Boolean(q || client || personParam || format || only || priority);
+  const onlyMine = Boolean(me && person === me.id);
 
   return (
     <div className="grid gap-6">
@@ -250,7 +273,14 @@ export function BoardClient({
             {tabs}
           </div>
           <p className="mt-1 text-sm text-muted">
-            {selectedClient ? (
+            {onlyMine && !selectedClient ? (
+              <>
+                Your work, wherever it&apos;s sitting.{" "}
+                <button type="button" onClick={() => pickPerson(null)} className="text-fg underline-offset-4 hover:underline">
+                  See everyone&apos;s
+                </button>
+              </>
+            ) : selectedClient ? (
               <>
                 Everything for <span className="text-fg">{selectedClient.name}</span>, wherever it&apos;s sitting.
               </>
@@ -311,8 +341,9 @@ export function BoardClient({
           placeholder="Anyone"
           allLabel="Anyone"
           value={person}
-          onChange={(v) => pushParams({ person: v })}
-          options={people.map((p) => ({ value: p.id, label: p.name, hint: p.role }))}
+          onChange={pickPerson}
+          // You first, so your own work is one tap away from anyone else's
+          options={[...people.filter((p) => p.id === me?.id).map((p) => ({ value: p.id, label: `You (${p.name.split(" ")[0]})`, hint: p.role })), ...people.filter((p) => p.id !== me?.id).map((p) => ({ value: p.id, label: p.name, hint: p.role }))]}
         />
         <div className="flex w-full rounded-full border border-line bg-surface p-0.5 text-sm md:w-auto">
           {([null, "image", "video", "carousel"] as const).map((f) => (
@@ -457,6 +488,11 @@ export function BoardClient({
                   style={{ "--col": `${COL}px` } as CSSProperties}
                   // Drop a ticket here to move it (the move checks it has what this stage needs first)
                   onDragOver={(e) => {
+                    if (draggingShadow) {
+                      if ((shadowMoved.get(draggingShadow.gid) ?? draggingShadow.stage) === s) return;
+                      e.preventDefault();
+                      return setDropOn(s);
+                    }
                     if (!dragging || dragging.stage === s || demo) return;
                     e.preventDefault();
                     setDropOn(s);
@@ -465,8 +501,10 @@ export function BoardClient({
                   onDrop={(e) => {
                     e.preventDefault();
                     setDropOn(null);
-                    if (dragging && dragging.stage !== s) pushParams({ move: String(dragging.number), to: s });
+                    if (draggingShadow) dropShadow(draggingShadow, s);
+                    else if (dragging && dragging.stage !== s) pushParams({ move: String(dragging.number), to: s });
                     setDragging(null);
+                    setDraggingShadow(null);
                   }}
                   className={`grid w-[88vw] shrink-0 snap-start content-start gap-2 rounded-[10px] p-2 transition-colors md:w-[var(--col)] ${dropOn === s ? "bg-brand-soft ring-1 ring-brand-text/50" : "bg-surface/50"}`}
                 >
@@ -504,7 +542,23 @@ export function BoardClient({
                     />
                   ))}
                   {(shadowsBy.get(s) ?? []).map((x) => (
-                    <ShadowCard key={x.gid} s={x} onOpen={() => pushParams({ a: x.gid })} />
+                    <ShadowCard
+                      key={x.gid}
+                      s={x}
+                      onOpen={() => pushParams({ a: x.gid })}
+                      // Dragged to another column: moved there in Asana too
+                      onDragStart={
+                        mayMoveShadow(x)
+                          ? (e) => {
+                              e.dataTransfer.effectAllowed = "move";
+                              e.dataTransfer.setData("text/plain", x.gid);
+                              setDraggingShadow(x);
+                            }
+                          : undefined
+                      }
+                      dragging={draggingShadow?.gid === x.gid}
+                      onDragEnd={() => (setDraggingShadow(null), setDropOn(null))}
+                    />
                   ))}
                   {list.length === 0 && !(shadowsBy.get(s) ?? []).length && (
                     <div className="grid h-20 place-items-center rounded-brand border border-dashed border-line/70 text-xs text-faint">

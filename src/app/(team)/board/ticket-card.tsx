@@ -6,6 +6,7 @@ import { tintFor } from "@/lib/colors";
 import { businessDuration, FORMAT_LABEL, health, type Health } from "@/lib/stages";
 import type { Ticket } from "./types";
 import { prefetchMedia } from "./media-cache";
+import { DuePill } from "@/components/due-pill";
 
 const STAMP: Record<Health, string> = {
   ok: "bg-ok-soft text-ok",
@@ -108,21 +109,21 @@ export function TicketCard({
       } ${arrived ? "animate-[step-in_.45s_cubic-bezier(.2,.8,.2,1)] shadow-[0_0_0_2px_var(--color-ok),0_14px_36px_-14px_var(--color-ok)]" : ""}`}
     >
       <div className="flex items-center justify-between gap-2">
-        <ClientTag name={ticket.clientName} small />
+        <ClientTag name={ticket.clientName} />
         <span className="flex shrink-0 items-center gap-1.5 text-faint">
           <PriorityBadge priority={ticket.priority} />
           <FormatBadge format={ticket.format} />
         </span>
       </div>
-      <p className="line-clamp-2 text-sm font-medium leading-snug">{ticket.title}</p>
+      <p className="line-clamp-3 text-[15px] font-medium leading-snug">{ticket.title}</p>
       {(ticket.avatar || ticket.angleName) && (
-        <p className="-mt-1 flex min-w-0 flex-wrap gap-1 text-[11px] md:text-[10.5px]" title="Avatar and angle: name files and folders by them">
+        <p className="-mt-1 flex min-w-0 flex-wrap gap-1 text-xs" title="Avatar and angle: name files and folders by them">
           {ticket.avatar && <span className={`max-w-full truncate rounded-full px-1.5 py-px ${ticket.avatarTest ? "bg-warn-soft text-warn" : "bg-surface-2 text-muted"}`}>{ticket.avatarTest ? "Test: " : ""}{ticket.avatar}</span>}
           {ticket.angleName && <span className="max-w-full truncate rounded-full border border-line px-1.5 py-px text-faint">{ticket.angleName}</span>}
         </p>
       )}
       {ticket.uploaded && (
-        <p className="-mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-faint">
+        <p className="-mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-faint">
           <span className={ticket.uploaded.new >= ticket.newCount ? "text-ok" : ""}>
             {ticket.uploaded.new}/{ticket.newCount} new
           </span>
@@ -134,15 +135,15 @@ export function TicketCard({
           {ticket.format === "carousel" && ticket.cards ? <span>{ticket.cards} cards each</span> : null}
         </p>
       )}
-      {ticket.parentNumber && <p className="-mt-1 text-[11px] text-ok">Client-approved part of #{ticket.parentNumber}</p>}
-      {ticket.clientProgress && <p className="-mt-1 text-[11px] text-ok">{ticket.clientProgress}</p>}
+      {ticket.parentNumber && <p className="-mt-1 text-xs text-ok">Client-approved part of #{ticket.parentNumber}</p>}
+      {ticket.clientProgress && <p className="-mt-1 text-xs text-ok">{ticket.clientProgress}</p>}
       {ticket.migration && (
-        <p className="-mt-1 rounded-[6px] bg-warn-soft px-2 py-1 text-[11px] text-warn">
+        <p className="-mt-1 rounded-[6px] bg-warn-soft px-2 py-1 text-xs text-warn">
           From Asana: {[ticket.migration.needsCreative && "upload the creative", ticket.migration.needsCopy && "add the copy"].filter(Boolean).join(" and ")}
         </p>
       )}
       {((ticket.internalRounds ?? 0) > 0 || (ticket.clientRounds ?? 0) > 0) && (
-        <p className="-mt-1 flex flex-wrap gap-1 text-[11px] md:text-[10.5px]" title="Revision rounds: sent back by the Head of Creative (internal) and by the client">
+        <p className="-mt-1 flex flex-wrap gap-1 text-xs" title="Revision rounds: sent back by the Head of Creative (internal) and by the client">
           {(ticket.internalRounds ?? 0) > 0 && <span className="rounded-full bg-surface-2 px-1.5 py-px text-muted">{ticket.internalRounds} internal rev</span>}
           {(ticket.clientRounds ?? 0) > 0 && (
             <span className={`rounded-full px-1.5 py-px ${(ticket.clientRounds ?? 0) >= 2 ? "bg-warn-soft text-warn" : "bg-brand-soft text-brand-text"}`}>
@@ -151,8 +152,9 @@ export function TicketCard({
           )}
         </p>
       )}
+      {ticket.stageDueAt && ticket.stage !== "launched" && <DuePill due={ticket.stageDueAt} className="justify-self-start" />}
       <div className="flex items-center justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
+        <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted">
           {ticket.assigneeName ? (
             <>
               <PersonAvatar name={ticket.assigneeName} size={20} />

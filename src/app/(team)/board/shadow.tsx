@@ -5,31 +5,50 @@ import { useEffect } from "react";
 import type { ShadowTicket } from "@/lib/asana";
 import { PriorityBadge } from "@/components/priority-badge";
 import { stageInfo } from "@/lib/stages";
+import { DuePill } from "@/components/due-pill";
 
 const day = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-/** An Asana task on the board: an outline card, not a ticket yet. It moves when it moves in Asana. */
-export function ShadowCard({ s, onOpen }: { s: ShadowTicket; onOpen: () => void }) {
+/**
+ * An Asana task on the board: an outline card, not a ticket yet. It moves when it moves in Asana, and dragging it to
+ * another column moves it there in Asana too (for the person it's assigned to, a lead or an exec).
+ */
+export function ShadowCard({
+  s,
+  onOpen,
+  onDragStart,
+  onDragEnd,
+  dragging = false,
+}: {
+  s: ShadowTicket;
+  onOpen: () => void;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragEnd?: () => void;
+  dragging?: boolean;
+}) {
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="grid gap-2 rounded-brand border border-dashed border-faint/50 bg-transparent p-3 text-left transition-colors hover:border-fg/40 hover:bg-surface/40 max-md:p-3.5 max-md:active:bg-surface/40"
+      draggable={Boolean(onDragStart)}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      className={`grid gap-2.5 rounded-brand border border-dashed border-faint/50 bg-surface/30 p-3.5 text-left transition hover:border-fg/40 hover:bg-surface/60 max-md:active:bg-surface/60 ${onDragStart ? "cursor-grab active:cursor-grabbing" : ""} ${dragging ? "opacity-40" : ""}`}
     >
       <span className="flex items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1 rounded-full border border-line px-1.5 py-0.5 text-[11px] text-muted md:text-[10px]">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-line px-2 py-0.5 text-xs text-muted">
           <span className="h-1.5 w-1.5 rounded-full bg-[#f06a6a]" />
           In Asana
         </span>
-        <PriorityBadge priority={s.priority} />
+        <PriorityBadge priority={s.priority} size="md" />
       </span>
-      <span className="line-clamp-3 text-[13px] leading-snug text-muted">{s.title}</span>
-      {s.section && s.section.trim().toLowerCase() !== stageInfo(s.stage).label.toLowerCase() && <span className="text-[11px] text-faint md:text-[10px]">Asana: {s.section}</span>}
-      <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-faint">
+      <span className="line-clamp-3 text-[15px] font-medium leading-snug text-fg">{s.title}</span>
+      {s.section && s.section.trim().toLowerCase() !== stageInfo(s.stage).label.toLowerCase() && <span className="text-[13px] text-faint">Asana: {s.section}</span>}
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-muted">
         <span className="truncate">{s.clientName ?? (s.clientRef ? `Client ${s.clientRef}` : "Client not matched")}</span>
-        {s.assignee && <span>· {s.assignee.split(" ")[0]}</span>}
-        {s.dueOn && <span>· due {day(s.dueOn)}</span>}
+        {s.assignee && <span className="text-faint">· {s.assignee.split(" ")[0]}</span>}
       </span>
+      {s.dueOn && <DuePill due={s.dueOn} className="justify-self-start" />}
     </button>
   );
 }

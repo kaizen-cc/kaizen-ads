@@ -195,3 +195,33 @@ export async function restoreTicket(id: string): Promise<ActionResult> {
   revalidatePath("/settings");
   return done(error);
 }
+
+/**
+ * An Asana task dragged to another column on the board: moved there in Asana itself (the board mirrors Asana, so a move
+ * made only here would snap back on the next sync), and the mirror updated at once. The person it's assigned to, a lead
+ * or an exec, like migrating it. The column is Asana's own one for that stage (the first, in the board's order).
+ */
+export async function moveAsanaTask(gid: string, stage: Stage): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!/^\d{5,30}$/.test(gid)) return { ok: false, error: "That task isn't on the board." };
+  if (!adminConfigured()) return { ok: false, error: "Not set up here." };
+  const admin = createAdminClient();
+  const { data: task } = await admin.from("asana_tasks").select("gid, profile_id, section, stage, moves, open, request_id").eq("gid", gid).maybeSingle();
+  if (!task || !task.open || task.request_id) return { ok: false, error: "That task isn't on the board any more." };
+  if (!isExecOrLead(me) && task.profile_id !== me.id) return { ok: false, error: "Only the person it's assigned to, a lead or an exec can move it." };
+  if (task.stage === stage) return { ok: true };
+  const { asana, asanaConfigured, asanaWrite, projectGid, stageForColumn } = await import("@/lib/asana");
+  if (!asanaConfigured()) return { ok: false, error: "Asana isn't connected here." };
+  try {
+    const project = await projectGid(admin);
+    const { data: sections } = await asana<{ gid: string; name: string }[]>(`/projects/${project}/sections`, { opt_fields: "name" });
+    const to = sections.find((x) => stageForColumn(x.name) === stage);
+    if (!to) return { ok: false, error: `The Creative board in Asana has no column for ${stage.replace(/_/g, " ")}.` };
+    await asanaWrite(`/sections/${to.gid}/addTask`, { task: gid });
+    const moves = [...((task.moves ?? []) as { from: string | null; to: string | null; at: string }[]), { from: task.section as string | null, to: to.name, at: new Date().toISOString() }].slice(-30);
+    await admin.from("asana_tasks").update({ section: to.name, stage, moves, synced_at: new Date().toISOString() }).eq("gid", gid);
+    return done();
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message.replace(/^Asana: /, "Asana said: ") : "Asana didn't take the move." };
+  }
+}
