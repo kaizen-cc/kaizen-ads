@@ -1812,20 +1812,31 @@ function AddKpi({ clients, buyers, platform, preset = null, onDone }: { clients:
 }
 
 /** Ad accounts Meta shares with the agency that the name match couldn't pin to a client. */
-function Unlinked({ accounts, disregarded = [], clients }: { accounts: { id: string; name: string; bm?: { id: string; name: string } }[]; disregarded?: { id: string; name: string }[]; clients: { id: string; name: string }[] }) {
+function Unlinked({ accounts: fromServer, disregarded: ignoredFromServer = [], clients }: { accounts: { id: string; name: string; bm?: { id: string; name: string } }[]; disregarded?: { id: string; name: string }[]; clients: { id: string; name: string }[] }) {
   const [open, setOpen] = useState(false);
   const [showIgnored, setShowIgnored] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const router = useRouter();
+  // Moved here the moment the save lands, so the row goes at once (the whole board reloading behind it takes a while):
+  // id -> true disregarded, false brought back
+  const [moved, setMoved] = useState<Map<string, { name: string; ignored: boolean }>>(new Map());
+  const all: { id: string; name: string; bm?: { id: string; name: string }; ignored: boolean }[] = [...fromServer.map((a) => ({ ...a, ignored: false })), ...ignoredFromServer.map((a) => ({ ...a, ignored: true }))];
+  const isIgnored = (a: { id: string; ignored: boolean }) => moved.get(a.id)?.ignored ?? a.ignored;
+  const accounts = all.filter((a) => !isIgnored(a));
+  const disregarded = all.filter(isIgnored).map((a) => ({ id: a.id, name: a.name }));
   // Disregard (a past client's account) or bring one back: never deleted, just no longer asked about
   const toggle = async (a: { id: string; name: string }, restore: boolean) => {
     setBusy(a.id);
     setErr(null);
     const r = await disregardAdAccount(a.id, a.name, restore);
     setBusy(null);
-    if (!r.ok) setErr(r.error);
-    else router.refresh();
+    if (!r.ok) {
+      setErr(r.error);
+      return;
+    }
+    setMoved((m) => new Map(m).set(a.id, { name: a.name, ignored: !restore }));
+    router.refresh();
   };
   const ignoredList = disregarded.length > 0 && (
     <div className={accounts.length ? "mt-2 border-t border-line pt-2" : ""}>
