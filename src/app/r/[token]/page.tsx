@@ -1,7 +1,8 @@
 import { cache, type CSSProperties, type ReactNode } from "react";
 import type { Metadata, Viewport } from "next";
 import { notFound } from "next/navigation";
-import { count, headlineTiles, kpiRows, money, multiple, percent, platformName, singular, type Delta, type Tile } from "@/lib/reports/format";
+import { count, delta, headlineTiles, kpiRows, money, multiple, percent, platformName, singular, type Delta, type Tile } from "@/lib/reports/format";
+import { goalCostLabel, goalLines, type GoalLine } from "@/lib/reports/goal-split";
 import type { ReportPart } from "@/lib/reports/pdf";
 import { loadBundle } from "@/lib/reports/share";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -112,6 +113,7 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
   const one = singular(m.conversion);
   const ads = part.platform !== "google" ? m.topAds.slice(0, 3) : [];
   const roas = m.campaigns.some((c) => c.roas != null);
+  const goals = goalLines(m);
 
   return (
     <section id={part.platform} className="mx-auto max-w-5xl scroll-mt-6 px-4 pb-16 sm:px-8 sm:pb-24 print:break-before-page">
@@ -133,6 +135,16 @@ function PlatformSection({ part, token }: { part: ReportPart; token: string }) {
           <TileCard key={t.label} tile={t} before={m.compare.label} now={m.main.label} />
         ))}
       </div>
+
+      {goals.length > 1 && (
+        <Block title="Results by goal">
+          <div className={`grid gap-3 sm:grid-cols-2 ${goals.length >= 3 ? "lg:grid-cols-3" : ""}`}>
+            {goals.map((g) => (
+              <GoalCard key={g.label} g={g} before={m.compare.label} />
+            ))}
+          </div>
+        </Block>
+      )}
 
       <Block title="Key metrics">
         {/* Phones: one card per metric */}
@@ -274,6 +286,37 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
     <div className="mt-14 break-inside-avoid">
       <p className="mb-4 text-[11px] font-medium tracking-[0.12em] text-muted uppercase">{title}</p>
       {children}
+    </div>
+  );
+}
+
+/** One result the campaigns are optimized for: its count and change, what each cost, its spend (and ROAS for purchases) */
+function GoalCard({ g, before }: { g: GoalLine; before: string }) {
+  const prior = g.before.spend > 0 || g.before.results > 0;
+  const moved = prior ? delta(g.results, g.before.results, "up") : null;
+  const cost = delta(g.costPerResult, g.before.costPerResult, "down");
+  const stat = (label: string, value: string, d: Delta | null) => (
+    <div className="min-w-0">
+      <dt className="truncate text-[10px] tracking-[0.08em] text-faint uppercase">{label}</dt>
+      <dd className="truncate">
+        {value}
+        {d && <span className={`ml-1.5 text-[12px] font-medium ${toneClass(d)}`}>{d.text}</span>}
+      </dd>
+    </div>
+  );
+  return (
+    <div className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 sm:p-5">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="min-w-0 text-[11px] tracking-[0.08em] text-muted uppercase [overflow-wrap:anywhere]">{g.label}</p>
+        {g.share != null && <p className="shrink-0 text-[12px] text-faint tabular-nums">{Math.round(g.share)}% of spend</p>}
+      </div>
+      <p className="mt-2 font-heading text-[22px] tracking-tight tabular-nums sm:text-3xl">{count(g.results)}</p>
+      <p className={`mt-3 text-[13px] font-medium ${toneClass(moved)}`}>{moved ? `${moved.text} vs ${before}` : prior ? `${count(g.before.results)} in ${before}` : "No comparison"}</p>
+      <dl className={`mt-4 grid gap-2 border-t border-line pt-3 text-[13px] tabular-nums ${g.value ? "grid-cols-3" : "grid-cols-2"}`}>
+        {stat(goalCostLabel(g.label), money(g.costPerResult), cost)}
+        {g.value && stat("ROAS", multiple(g.roas), delta(g.roas, g.before.roas, "up"))}
+        {stat("Spend", money(g.spend), null)}
+      </dl>
     </div>
   );
 }

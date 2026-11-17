@@ -7,7 +7,8 @@ import { count, manualTiles, metricNumber, money, multiple, platformName } from 
 import { manualCaption, platformConversion } from "./manual";
 import { hue, paletteFor, parseHex, saturation } from "./brand";
 import { campaignTable, type CampaignColumnKey } from "./campaign-table";
-import { barMetric, barsRead, sayable, scoreHead, chartWeeks, costLabel, niceMax, scoreColumns, scoreValue, scorecardRows, shortLabel, supportKeys, takeawaysFor, weeklyTile, weeklyTileKeys, weeklyValue, type Move, type ScoreRow, type Takeaway } from "./weekly-core";
+import { barMetric, barsRead, move, sayable, scoreHead, chartWeeks, costLabel, niceMax, scoreColumns, scoreValue, scorecardRows, shortLabel, supportKeys, takeawaysFor, weeklyTile, weeklyTileKeys, weeklyValue, type Move, type ScoreRow, type Takeaway } from "./weekly-core";
+import { goalCostLabel, goalLines, type GoalLine } from "./goal-split";
 
 // Every client report (weekly, monthly, built), after the hand-made report the team loved: a co-branded header (the
 // client's logo beside Kaizen's, Kaizen leading; a white label client's logo and colours alone), a hero band with the
@@ -240,27 +241,109 @@ function Hero({ input, part, look, cad, joint }: { input: WeeklyInput; part: Wee
   );
 }
 
+/** A move as a chip: green or red with its arrow, or "New" with no prior number */
+function MoveChip({ mv }: { mv: Move }) {
+  const c = toneOf(mv);
+  return mv ? (
+    <View style={[s.chip, { backgroundColor: c.bg }]}>
+      {mv.tone !== "flat" || mv.pct !== "0.0%" ? <Arrow up={mv.up} color={c.fg} /> : null}
+      <Text style={[s.chipText, { color: c.fg }]}>{mv.pct}</Text>
+    </View>
+  ) : (
+    <View style={[s.chip, { backgroundColor: FLAT.bg }]}>
+      <Text style={[s.chipText, { color: FLAT.fg }]}>New</Text>
+    </View>
+  );
+}
+
 /** One tile: the label, the number, a green or red move and the prior value */
 function Tile({ label, value, mv, before, size, prior, hot }: { label: string; value: string; mv: Move; before: string; size: number; prior: string; hot?: string | null }) {
-  const c = toneOf(mv);
   return (
     <View style={s.tile}>
       <Text style={s.tileLabel}>{label}</Text>
       <Text style={[s.tileValue, { fontSize: size }]}>{value}</Text>
       <View style={s.moveRow}>
-        {mv ? (
-          <View style={[s.chip, { backgroundColor: c.bg }]}>
-            {mv.tone !== "flat" || mv.pct !== "0.0%" ? <Arrow up={mv.up} color={c.fg} /> : null}
-            <Text style={[s.chipText, { color: c.fg }]}>{mv.pct}</Text>
-          </View>
-        ) : (
-          <View style={[s.chip, { backgroundColor: FLAT.bg }]}>
-            <Text style={[s.chipText, { color: FLAT.fg }]}>New</Text>
-          </View>
-        )}
+        <MoveChip mv={mv} />
         <Text style={s.baseline}>{before === "–" ? "No prior number" : `vs ${before} prior ${prior}`}</Text>
       </View>
       <Hot href={hot} />
+    </View>
+  );
+}
+
+/** A small number under a goal's count (its cost, ROAS, spend), with its move beside it when there is one */
+function GoalStat({ value, label, mv }: { value: string; label: string; mv?: Move }) {
+  const c = toneOf(mv ?? null);
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+        <Text style={{ fontSize: 9.5, fontFamily: "Helvetica-Bold" }}>{value}</Text>
+        {mv && (mv.tone !== "flat" || mv.pct !== "0.0%") ? (
+          <>
+            <Arrow up={mv.up} color={c.fg} />
+            <Text style={{ fontSize: 5.8, fontFamily: "Helvetica-Bold", color: c.fg }}>{mv.pct}</Text>
+          </>
+        ) : null}
+      </View>
+      <Text style={{ fontSize: 5.2, color: MUTED, marginTop: 1.5, textTransform: "uppercase", letterSpacing: 0.2, lineHeight: 1.25 }}>{label}</Text>
+    </View>
+  );
+}
+
+/** One goal: its results with their move, then what each cost, its spend and (purchases) its ROAS */
+function GoalTile({ g, m, cad, size }: { g: GoalLine; m: ReportMetrics; cad: Cadence; size: number }) {
+  const prior = g.before.spend > 0 || g.before.results > 0;
+  return (
+    <View style={s.tile}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+        <Text style={[s.tileLabel, { flex: 1 }]}>{g.label}</Text>
+        {g.share != null ? <Text style={s.baseline}>{Math.round(g.share)}% of spend</Text> : null}
+      </View>
+      <Text style={[s.tileValue, { fontSize: size }]}>{count(g.results)}</Text>
+      <View style={s.moveRow}>
+        <MoveChip mv={prior ? move("results", g.results, g.before.results) : null} />
+        <Text style={s.baseline}>{prior ? `vs ${count(g.before.results)} prior ${cad.prior}` : "No prior number"}</Text>
+      </View>
+      <View style={{ flexDirection: "row", gap: 8, marginTop: 9, paddingTop: 8, borderTopWidth: 1, borderTopColor: LINE }}>
+        <GoalStat value={money(g.costPerResult)} label={goalCostLabel(g.label)} mv={move("cost_per_result", g.costPerResult, g.before.costPerResult)} />
+        {g.value ? <GoalStat value={multiple(g.roas)} label="ROAS" mv={move("roas", g.roas, g.before.roas)} /> : null}
+        <GoalStat value={money(g.spend)} label="Spend" />
+      </View>
+      {g.mtd && m.mtd && cad.word === "Weekly" ? (
+        <Text style={[s.baseline, { marginTop: 7 }]}>
+          {m.mtd.label.split(" ")[0]} so far: {count(g.mtd.results)} at {money(g.mtd.costPerResult)} each
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * Results by goal: when the campaigns go after different results (purchases and leads, bookings and calls), a tile for
+ * each, right under the glance, so no result is lost inside another. One goal: nothing here.
+ */
+function GoalBreakdown({ part, cad }: { part: WeeklyPart; cad: Cadence }) {
+  const m = part.metrics;
+  const lines = goalLines(m);
+  if (lines.length < 2) return null;
+  // Four to a row at most; a short last row keeps the tiles the same width
+  const per = Math.min(4, lines.length);
+  const rows = Array.from({ length: Math.ceil(lines.length / per) }, (_, i) => lines.slice(i * per, i * per + per));
+  const size = per <= 2 ? 19 : per === 3 ? 17 : 15;
+  return (
+    <View style={s.section} wrap={false}>
+      <View style={s.head}>
+        <Text style={s.h2}>Results by goal</Text>
+        <Text style={s.sub}>Each result the campaigns are optimized for, on its own · {cad.movement}</Text>
+      </View>
+      {rows.map((row, r) => (
+        <View key={r} style={[s.tiles, r ? { marginTop: 8 } : {}]}>
+          {row.map((g) => (
+            <GoalTile key={g.label} g={g} m={m} cad={cad} size={size} />
+          ))}
+          {row.length < per ? Array.from({ length: per - row.length }, (_, i) => <View key={`gap-${i}`} style={{ flex: 1 }} />) : null}
+        </View>
+      ))}
     </View>
   );
 }
@@ -969,6 +1052,7 @@ export function WeeklyReport({ input, images }: { input: WeeklyInput; images: (s
             <Hero input={input} part={part} look={look} cad={cad} joint={joint} />
             {joint && i === 0 ? <Account input={input} look={look} /> : null}
             <Glance input={input} part={part} cad={cad} />
+            <GoalBreakdown part={part} cad={cad} />
             <Trend part={part} look={look} />
             <CampaignPerformance input={input} part={part} />
             <Creative input={input} part={part} images={images[i] ?? []} look={look} />

@@ -46,6 +46,7 @@ function scrubMetrics(m: ReportMetrics): ReportMetrics {
     campaigns: m.campaigns.map((c) => ({ ...c, name: scrubName(c.name) })),
     topAds: m.topAds.map((a) => ({ ...a, name: scrubName(a.name), campaign: a.campaign ? scrubName(a.campaign) : a.campaign, link: clean(a.link) })),
     ...(m.googleUnits ? { googleUnits: m.googleUnits.map((u) => ({ ...u, name: scrubName(u.name), campaign: scrubName(u.campaign), headline: u.headline ? scrubAgency(u.headline) : u.headline })) } : {}),
+    ...(m.goalParts ? { goalParts: m.goalParts.map((p) => ({ ...p, label: scrubAgency(p.label), name: scrubName(p.name) })) } : {}),
   };
 }
 

@@ -72,7 +72,8 @@ export function leaveOutCampaigns(input: ReportMetrics, names: readonly (string 
   const gone = m.campaigns.filter((c) => isLeftOut(c, set));
   const adGone = (a: { campaign: string | null }) => a.campaign != null && set.has(a.campaign);
   const unitGone = (u: { campaign: string; campaignId?: string }) => set.has(u.campaign) || (u.campaignId != null && set.has(String(u.campaignId)));
-  if (!gone.length && !m.topAds.some(adGone) && !(m.googleUnits ?? []).some(unitGone)) return input;
+  const partGone = (p: { id: string; name: string }) => isLeftOut(p, set);
+  if (!gone.length && !m.topAds.some(adGone) && !(m.googleUnits ?? []).some(unitGone) && !(m.goalParts ?? []).some(partGone)) return input;
 
   const carried = gone.reduce((n, c) => add(n, share(c)), ZERO);
   const main = periodFrom(m.main, minus(sumsOf(m.main), carried));
@@ -110,6 +111,8 @@ export function leaveOutCampaigns(input: ReportMetrics, names: readonly (string 
     topAds: m.topAds.filter((a) => !adGone(a)),
     ...(weeks ? { weeks } : {}),
     ...(goals ? { goals } : {}),
+    // Results by goal: the left-out campaigns' parts leave with them (one goal left: no breakdown)
+    ...(m.goalParts ? { goalParts: m.goalParts.filter((p) => !partGone(p)) } : {}),
     ...(m.googleUnits ? { googleUnits: m.googleUnits.filter((u) => !unitGone(u)) } : {}),
     ...(left.length ? { leftOut: left } : {}),
   };

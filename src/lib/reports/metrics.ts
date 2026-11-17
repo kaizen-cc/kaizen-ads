@@ -14,6 +14,7 @@ import { weekLabel, type GoogleUnit, type WeekPoint } from "./weekly-core";
 import { manualText, type ManualApplied } from "./manual";
 import { covers, fileRows, mergeRows, pickUpload, type FileRow, type UploadedFile } from "./upload-csv";
 import type { RefreshNote } from "./refresh-core";
+import { NOT_A_RESULT, googleGoals, goalLinesText, goalParts, metaGoal, pluralOf, type GoalOf, type GoalPart } from "./goal-split";
 
 // A report's numbers, from the same daily rows the KPI board reads, with the campaigns left out of the KPI left out here
 // too. On Meta, results are what each campaign is optimized for, read from the ad account (submit application, schedule,
@@ -75,6 +76,12 @@ export type ReportMetrics = {
   gaps: string[]; // days in the period with no data at all (a sync gap, or the account off)
   /** Each result the campaigns are optimized for, in the main period (when read from the ad account) */
   goals?: { label: string; spend: number; results: number; costPerResult: number | null }[];
+  /**
+   * Each campaign's part of the result it goes after (Meta: what it's optimized for; Google: its main kind of conversion),
+   * in every period of the report, whatever the KPI counts: the "Results by goal" breakdown (goalLines in goal-split.ts)
+   * when there are two or more. Reports drafted before it have none and show no breakdown.
+   */
+  goalParts?: GoalPart[];
   /** Day by day in the main period (the client dashboard's chart), when asked for */
   daily?: { date: string; spend: number; results: number; revenue: number; clicks: number; impressions: number }[];
   /** Where performance is weak and why (set when the report is drafted) */
@@ -103,22 +110,7 @@ export type ReportMetrics = {
 
 type Target = { id: string; client_id: string; platform: string; ad_account_id: string | null; conversion: string; custom_action: string | null; campaign_match: string | null; target: number | null; monthly_budget: number | null; excluded_campaigns?: string[] | null; campaign_results?: Record<string, string> | null };
 
-// What a campaign can be optimized for that isn't a business result
-const NOT_A_RESULT = /^(post_engagement|page_engagement|post_reaction|post_interaction|like|comment|onsite_conversion\.post_save|video_view|thruplay|link_click|landing_page_view|omni_landing_page_view|reach|impressions|photo_view)/;
-// A goal's name as the thing counted, plural
-const PLURAL: [RegExp, string][] = [
-  [/application/i, "Applications"],
-  [/schedul|appoint|book/i, "Bookings"],
-  [/purchase|order|sale/i, "Purchases"],
-  [/registration|sign.?up/i, "Registrations"],
-  [/lead/i, "Leads"],
-  [/contact|call/i, "Contacts"],
-  [/message|conversation/i, "Conversations"],
-  [/subscri/i, "Subscriptions"],
-  [/trial/i, "Trials"],
-];
-// Ads Manager's names ("Website schedules") already read as the thing counted
-export const pluralOf = (label: string) => PLURAL.find(([re]) => re.test(label))?.[1] ?? (/^Website /.test(label) ? label : `${label} results`);
+export { pluralOf } from "./goal-split";
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
 const shift = (day: string, n: number) => {
@@ -291,15 +283,27 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
   // Every campaign's own optimization, reach and engagement included (for its line in the campaign table)
   let own: Map<string, string[]> | undefined;
   let labels = new Map<string, string>();
-  if (platform === "meta" && !kpiConv.roas && t.ad_account_id) {
+  // Each campaign's goal for the results-by-goal breakdown, whatever the KPI counts (a ROAS KPI's too)
+  const split = new Map<string, GoalOf>();
+  let read = new Map<string, string[]>();
+  if (platform === "meta" && t.ad_account_id) {
     const account = String(t.ad_account_id).replace(/^act_/, "");
-    const [read, { data: named }] = await Promise.all([goalsFor(admin, account, platform, t.campaign_results), admin.from("campaign_goals").select("campaign_id, label").eq("ad_account_id", account)]);
+    const [got, { data: named }] = await Promise.all([goalsFor(admin, account, platform, t.campaign_results), admin.from("campaign_goals").select("campaign_id, label").eq("ad_account_id", account)]);
+    read = got;
     labels = new Map((named ?? []).map((g) => [String(g.campaign_id), String(g.label ?? "")]));
     // An uploaded file's campaigns: the result the file says each counted, when the account doesn't know it
     if (fromFile) {
       for (const [id, types] of fromFile.goals) if (!read.has(id)) read.set(id, types);
       for (const [id, label] of fromFile.labels) if (!labels.get(id)) labels.set(id, label);
     }
+    for (const [id, types] of read) {
+      // A result picked by hand on the card is named by itself; else by what the campaign is optimized for
+      const picked = t.campaign_results?.[id];
+      const g = metaGoal(types, picked ? actionLabel(picked) : labels.get(id));
+      if (g) split.set(id, g);
+    }
+  }
+  if (platform === "meta" && !kpiConv.roas && t.ad_account_id) {
     own = read;
     const spent = new Set(all.filter((r) => r.date >= ps.main.start && r.date <= ps.main.end && Number(r.spend) > 0).map((r) => String(r.campaign_id)));
     const isResult = (types: string[]) => types.some((x) => !NOT_A_RESULT.test(x));
@@ -455,6 +459,9 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
   const gaps: string[] = [];
   for (let d = ps.main.start; d <= ps.main.end; d = shift(d, 1)) if (!dates.has(d) && !(file && !file.daily)) gaps.push(d);
   const compare = period(allBefore, daysBefore, ps.compare, conv, type, valueType);
+  // Results by goal: each campaign's part of the result it goes after (Google: its main kind of conversion action)
+  const goalSplit = platform === "google" ? googleGoals(all, ps.main) : split;
+  const parts: GoalPart[] = goalSplit.size ? goalParts(all, goalSplit, ps, allBefore) : [];
   const through = [...days].map((d) => d.date).sort().at(-1) ?? null;
   return {
     platform,
@@ -477,6 +484,8 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
     ...(weeks.length ? { weeks } : {}),
     ...(googleUnits.length ? { googleUnits } : {}),
     ...(useGoals && goalLines.length ? { goals: goalLines } : {}),
+    // Kept only when there are two or more goals to show side by side (one goal: nothing to split)
+    ...(new Set(parts.filter((p) => p.main.spend > 0).map((p) => p.label)).size >= 2 ? { goalParts: parts } : {}),
     ...(file ? { upload: { name: file.name, at: file.at, byName: file.byName, level: file.level, daily: file.daily, start: file.start!, end: file.end!, datesAssumed: Boolean(file.datesAssumed), compare: compare.days ? (compareFromFile ? ("file" as const) : ("synced" as const)) : ("none" as const) } } : {}),
     ...(opts.daily
       ? {
@@ -576,7 +585,7 @@ export function metricsText(m: ReportMetrics) {
     "Campaigns (main period, by spend):",
     ...m.campaigns.slice(0, 15).map((c) => `- ${c.name}: ${money(c.spend)}, ${c.results} ${c.result ? `${c.result.toLowerCase()} (what it's optimized for)` : "results"}, ${money(c.costPerResult)} each${m.roasKpi && c.roas ? `, ROAS ${c.roas}` : ""}, CTR ${c.ctr ?? "—"}%`),
     ...(m.topAds.length ? ["Top ads (main period):", ...m.topAds.map((a, i) => `${i + 1}. ${a.name} (${a.campaign ?? "?"}): ${a.results} results at ${money(a.costPerResult)}, ${money(a.spend)} spent, ${a.clicks} link clicks, CTR ${a.ctr ?? "—"}%${a.link ? `, preview ${a.link}` : ""}`)] : []),
-    ...(m.goals && m.goals.length > 1 ? ["Results by what the campaigns are optimized for (main period):", ...m.goals.map((g) => `- ${g.label}: ${g.results} at ${money(g.costPerResult)} each, ${money(g.spend)} spent`)] : m.goals?.length ? [`The campaigns are optimized for: ${m.goals[0].label}.`] : []),
+    ...(goalLinesText(m).length ? goalLinesText(m) : m.goals && m.goals.length > 1 ? ["Results by what the campaigns are optimized for (main period):", ...m.goals.map((g) => `- ${g.label}: ${g.results} at ${money(g.costPerResult)} each, ${money(g.spend)} spent`)] : m.goals?.length ? [`The campaigns are optimized for: ${m.goals[0].label}.`] : []),
     ...(m.gaps.length ? [`Days with no data in the main period: ${m.gaps.join(", ")}`] : []),
     ...(m.google ? [googleHealthText(m.google)] : []),
     ...(m.upload ? [uploadText(m)] : []),
