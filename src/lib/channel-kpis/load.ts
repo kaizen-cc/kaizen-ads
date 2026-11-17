@@ -69,9 +69,13 @@ async function readAll<T>(page: (from: number, to: number) => PromiseLike<{ data
  * numbers, where the data stands and who is on it. Worst first. `me` decides who may set a target (canEdit).
  * Reads degrade, never throw: a table the database doesn't have yet reads as "not connected".
  */
-export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me): Promise<ChannelBoard> {
+export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me, only?: string[] | null): Promise<ChannelBoard> {
   const month = monthOf(etToday());
-  const { data: all } = await db.from("clients").select("id, name, slug, status, kaizen_id, services, services_extra, services_removed, channel_sheet").is("archived_at", null).in("status", [...LIVE]).order("name");
+  // `only`: just these clients (the daily recap for someone seated on a few), so nothing else is read
+  if (only && !only.length) return { line, month, rows: [], targetsReady: true };
+  let q = db.from("clients").select("id, name, slug, status, kaizen_id, services, services_extra, services_removed, channel_sheet").is("archived_at", null).in("status", [...LIVE]);
+  if (only) q = q.in("id", only);
+  const { data: all } = await q.order("name");
   const clients = (all ?? []).filter((c) => (servicesOf(c as Parameters<typeof servicesOf>[0]) as string[]).includes(SERVICE[line]));
   const ids = clients.map((c) => c.id as string);
   if (!ids.length) return { line, month, rows: [], targetsReady: true };

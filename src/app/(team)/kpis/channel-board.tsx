@@ -19,6 +19,8 @@ import { EmailRevenueChart, RevenuePace } from "@/components/email-revenue-chart
 import { RANK_LABEL } from "@/lib/email-metrics";
 import { BoardBreakdown } from "./board-breakdown";
 import { klaviyoReadProgress, setChannelTarget, type ReadState } from "./channel-actions";
+import { EmailAccountSheet } from "./email-sheet";
+import { closeParams, pushParams, replaceParams } from "@/lib/url-state";
 
 // The Email and Social KPI boards: every client of the line against this month's target, worst first. One board for both
 // lines (the main number and the supporting numbers differ). Where you are (filters, the open client) lives in the
@@ -86,15 +88,10 @@ export function ChannelBoard({ line, rows: given, month, switcher, initialWho, l
     };
   }, [readingKey, router]);
   const [q, setQ] = useState(() => sp.get("q") ?? "");
-  // History API, so nothing reloads and the browser's back walks the board's states
-  const go = (patch: Record<string, string | null>, how: "push" | "replace" = "push") => {
-    const u = new URL(window.location.href);
-    for (const [k, v] of Object.entries(patch)) {
-      if (v == null || v === "") u.searchParams.delete(k);
-      else u.searchParams.set(k, v);
-    }
-    if (u.href !== window.location.href) window.history[how === "push" ? "pushState" : "replaceState"](null, "", u);
-  };
+  // History API, so nothing reloads and the browser's back walks the board's states (closing a sheet goes back to
+  // before it opened, its tabs and views with it)
+  const go = (patch: Record<string, string | null>, how: "push" | "replace" = "push") => (how === "push" ? pushParams : replaceParams)(patch);
+  const close = () => closeParams("open", "tab", "en", "et", "sug", "elr");
   const channel = line === "email" ? "Email" : "Social";
   const hasMine = rows.some((r) => r.mine);
   const base = rows.filter((r) => who === "all" || r.mine);
@@ -290,7 +287,12 @@ export function ChannelBoard({ line, rows: given, month, switcher, initialWho, l
           )}
         </>
       )}
-      {openRow && <Detail key={openRow.clientId} r={openRow} month={month} onClose={() => go({ open: null })} onStep={step} />}
+      {openRow &&
+        (openRow.line === "email" ? (
+          <EmailAccountSheet key={openRow.clientId} r={openRow} month={month} onClose={close} onStep={step} />
+        ) : (
+          <Detail key={openRow.clientId} r={openRow} month={month} onClose={close} onStep={step} />
+        ))}
     </div>
   );
 }
@@ -529,6 +531,7 @@ function Stat({ k, v, hint }: { k: string; v: React.ReactNode; hint?: React.Reac
   );
 }
 
+/** The Social account sheet (an email account opens EmailAccountSheet, in email-sheet.tsx) */
 function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; onClose: () => void; onStep: (dir: 1 | -1) => void }) {
   const tone = TONE[r.status];
   const connect = needsConnecting(r);

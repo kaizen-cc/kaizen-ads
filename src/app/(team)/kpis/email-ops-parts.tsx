@@ -9,7 +9,7 @@ import { checkEmailSprintNow, closeEmailSprint, setEmailActionStatus, startEmail
 // The buttons and cards behind the email audit page, the sprint page and the client page's Audit and ideas tab.
 
 /** Starts an audit of the client's Klaviyo account and opens it (it fills in while it runs) */
-export function RunEmailAudit({ clientId, label = "Run an audit", quiet = false }: { clientId: string; label?: string; quiet?: boolean }) {
+export function RunEmailAudit({ clientId, label = "Run an audit", quiet = false, onStarted }: { clientId: string; label?: string; quiet?: boolean; /** Stay where you are (the KPI sheet follows it there) instead of opening the audit page */ onStarted?: (auditId: string) => Promise<unknown> | void }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +25,8 @@ export function RunEmailAudit({ clientId, label = "Run an audit", quiet = false 
             const res = await fetch("/api/email-ops/audit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId }) });
             const out = (await res.json().catch(() => ({ error: "Couldn't start the audit." }))) as { id?: string; error?: string };
             if (!out.id) return setError(out.error ?? "Couldn't start the audit.");
-            router.push(`/kpis/email-audit/${out.id}`);
+            if (onStarted) await onStarted(out.id);
+            else router.push(`/kpis/email-audit/${out.id}`);
           })
         }
         className={`min-h-11 rounded-full px-4 text-[13px] font-medium transition-colors disabled:opacity-60 md:min-h-9 ${quiet ? "border border-line text-muted hover:text-fg" : "bg-fg text-bg"}`}
@@ -73,7 +74,7 @@ export function FollowAudit({ auditId, label = "Follow it as a sprint" }: { audi
 }
 
 /** One action in the audit's plan: tick it off when it is done (everyone sees who and when), or add just this one to the sprint */
-export function EmailActionCard({ auditId, index, action, areaLabel, done, listed }: { auditId: string; index: number; action: EmailAction; areaLabel: string; done: { by: string; at: string } | null; listed: string | null }) {
+export function EmailActionCard({ auditId, index, action, areaLabel, done, listed, onChange }: { auditId: string; index: number; action: EmailAction; areaLabel: string; done: { by: string; at: string } | null; listed: string | null; /** Called after a change, inside it, so a view that loaded the audit itself reads it again before the tick settles */ onChange?: () => Promise<unknown> }) {
   const router = useRouter();
   const [adding, startAdd] = useTransition();
   const [, start] = useTransition();
@@ -83,6 +84,7 @@ export function EmailActionCard({ auditId, index, action, areaLabel, done, liste
     start(async () => {
       setChecked(!checked);
       await tickEmailAuditAction(auditId, index, !checked);
+      await onChange?.();
       router.refresh();
     });
   return (
@@ -141,6 +143,7 @@ export function EmailActionCard({ auditId, index, action, areaLabel, done, liste
                 onClick={() =>
                   startAdd(async () => {
                     await startEmailSprint(auditId, index);
+                    await onChange?.();
                     router.refresh();
                   })
                 }
@@ -164,16 +167,17 @@ const STATUS: { value: "todo" | "doing" | "done" | "skipped"; label: string }[] 
 ];
 
 /** One sprint move: set where it stands (saved on change) and leave a note the next check reads */
-export function SprintMove({ id, title, owner, steps, why, impact, status, note, aiNote }: { id: string; title: string; owner: string | null; steps: string[]; why: string | null; impact: string | null; status: "todo" | "doing" | "done" | "skipped"; note: string | null; aiNote: string | null }) {
+export function SprintMove({ id, title, owner, steps, why, impact, status, note, aiNote, onChange, compact = false }: { id: string; title: string; owner: string | null; steps: string[]; why: string | null; impact: string | null; status: "todo" | "doing" | "done" | "skipped"; note: string | null; aiNote: string | null; onChange?: () => Promise<unknown>; /** Steps folded away until asked for (the KPI sheet) */ compact?: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [current, setCurrent] = useState(status);
   const [text, setText] = useState(note ?? "");
-  const [open, setOpen] = useState(status === "todo" || status === "doing");
+  const [open, setOpen] = useState(!compact && (status === "todo" || status === "doing"));
   const save = (s: typeof status, n?: string) =>
     start(async () => {
       setCurrent(s);
       await setEmailActionStatus(id, s, n);
+      await onChange?.();
       router.refresh();
     });
   const finished = current === "done" || current === "skipped";

@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { AGENT_MOMENTS } from "@/lib/agent-moments";
 import { AiUnavailable, askJson, forgetAgent, type AgentKey } from "@/lib/ai";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireExec, requireStaff, type Staff } from "@/lib/auth";
@@ -10,6 +9,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { readShared, SHARED_RULES, type AgentFile, type Attachment } from "@/lib/agent-docs";
 import { changeTarget } from "@/lib/agent-change";
 import { canTrainAgent } from "@/lib/agent-access";
+import { loadRolePlaybook } from "@/lib/role-playbook";
 import { logTraining, revertChange, snapshot } from "@/lib/agent-training";
 
 // Who may change an agent: executives every one, each service line's head their own line's agent and skills (see
@@ -417,57 +417,19 @@ When they give feedback, change yourself so you do better next time:
 
 reply: plain text, conversational, like a sharp colleague. No markdown, no asterisks, no bullet symbols, no headings, no emojis. Usually 1 to 4 sentences; longer only when they ask you to explain how you work. When you propose changes, say in a sentence what you'd change and where (the exec applies each change with a click). Refer to people by role, never by name.`;
 
-// Keep the agent's whole playbook within a sensible prompt: long items show their start and are marked truncated
-const ITEM_CAP = 6000;
-const PLAYBOOK_CAP = 90000;
-
 export async function chatWithAgent(roleKey: string, message: string, files: AgentFile[] = []): Promise<{ ok: true; messages: RoleChatMessage[] } | { ok: false; error: string }> {
   const me = await trainer(roleKey);
   if (!me) return NOT_YOURS;
   const text = message.trim();
   if (!text && !files.length) return { ok: false, error: "Write something first." };
   const supabase = createAdminClient();
-  const [{ data: role }, { data: skills }, { data: spine }, { data: history }] = await Promise.all([
-    supabase.from("ai_roles").select("key, label, description, core").eq("key", roleKey).maybeSingle(),
-    supabase.from("ai_agents").select("key, label, description, model, effort, instructions, live").eq("role_key", roleKey).order("sort_order"),
-    supabase.from("ai_spine").select("body").eq("id", 1).maybeSingle(),
+  const [book, { data: history }] = await Promise.all([
+    loadRolePlaybook(supabase, roleKey),
     supabase.from("ai_role_chats").select("role, content, changes").eq("role_key", roleKey).order("created_at", { ascending: false }).limit(16),
   ]);
-  if (!role) return { ok: false, error: "Unknown agent." };
-  const keys = (skills ?? []).map((k) => k.key as string);
-  const [{ data: items }, { data: shared }] = await Promise.all([
-    keys.length ? supabase.from("ai_knowledge").select("id, agent_key, kind, title, body, active").in("agent_key", keys).order("created_at") : Promise.resolve({ data: [] as never[] }),
-    supabase.from("ai_knowledge").select("title").is("agent_key", null).eq("active", true).order("created_at"),
-  ]);
-
-  let budget = PLAYBOOK_CAP;
-  const truncated = new Set<string>();
-  const itemXml = (k: { id: string; kind: string; title: string; body: string; active: boolean }) => {
-    const room = Math.max(400, Math.min(ITEM_CAP, budget));
-    const cut = k.body.length > room;
-    if (cut) truncated.add(k.id);
-    budget -= Math.min(k.body.length, room);
-    return `<item id="${k.id}" kind="${k.kind}" ${k.active ? "" : 'off="true" '}${cut ? 'truncated="true" ' : ""}title="${k.title.replace(/"/g, "'")}">\n${cut ? `${k.body.slice(0, room)}…` : k.body}\n</item>`;
-  };
-  const playbook = [
-    `<kaizen_strategy read_only="true">\n${spine?.body ?? ""}\n</kaizen_strategy>`,
-    `<me agent="${role.label}">\n<description>${role.description}</description>\n<core>\n${role.core || "(empty)"}\n</core>\n</me>`,
-    ...(skills ?? []).map((sk) =>
-      [
-        `<skill key="${sk.key}" name="${sk.label}" model="${sk.model}" effort="${sk.effort}" ${sk.live ? "in use" : "not wired into the app yet"}>`,
-        `<description>${sk.description}</description>`,
-        (AGENT_MOMENTS[sk.key] ?? []).length ? `<where_it_runs>\n${AGENT_MOMENTS[sk.key].map((m) => `${m.title} (${m.where}; ${m.when})`).join("\n")}\n</where_it_runs>` : "",
-        `<instructions>\n${sk.instructions || "(empty)"}\n</instructions>`,
-        ...(items ?? []).filter((k) => k.agent_key === sk.key).map(itemXml),
-        "</skill>",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    ),
-    shared?.length ? `<shared_knowledge read_only="true">\n${shared.map((k) => k.title).join("\n")}\n</shared_knowledge>` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  if (!book) return { ok: false, error: "Unknown agent." };
+  const { role, owner, truncated, text: playbook } = book;
+  const keys = book.skills.map((k) => k.key);
   const convo = (history ?? [])
     .slice()
     .reverse()
@@ -486,7 +448,6 @@ export async function chatWithAgent(roleKey: string, message: string, files: Age
       prompt: `${playbook}\n\n<conversation_so_far>\n${convo || "(new conversation)"}\n</conversation_so_far>\n\n${shared.block}\n\n<exec_says>\n${text || "(shared the material above)"}\n</exec_says>`,
     });
     // Only edits to this agent's own core, skills and items survive; an item edit is filed under the item's real skill
-    const owner = new Map((items ?? []).map((k) => [k.id as string, k.agent_key as string]));
     const changes = out.changes
       .map((c): Change | null => {
         if (c.op === "set_core") return { ...c, skill: "core", item_id: "" };

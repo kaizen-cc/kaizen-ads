@@ -8,10 +8,11 @@ import { loadOwedReplies } from "@/lib/owed-replies";
 import { loadSaidPromises } from "@/lib/message-promises";
 import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion } from "@/lib/suggestions";
 import { LIVE } from "@/lib/live";
-import { isCreativeRole } from "@/lib/roles";
+import { isCreativeRole, lineOfTeam } from "@/lib/roles";
 import { secondarySeatKeys } from "@/lib/buyer-seats";
 import { INTAKE_WAIT_DAYS, addBusinessDays as addBizDays } from "@/lib/brand-bible";
 import { countLooks, hideKeyOf, type Looks } from "@/lib/today-counts";
+import { byRetention } from "@/lib/today-lines-core";
 
 // The daily recap: everything that needs an exec or lead today, one item at a time, most critical first. Critical
 // means it can cost us the client: a promise we made and haven't kept, a new client waiting on us, an important
@@ -20,12 +21,14 @@ import { countLooks, hideKeyOf, type Looks } from "@/lib/today-counts";
 // item they saw that someone else has since acted on comes back once as "taken care of", with who and what.
 
 export type Tier = "critical" | "high" | "normal";
-export type TopicKey = "mine" | "promises" | "onboarding" | "accounts" | "work" | "briefs" | "ads" | "allotments";
+export type TopicKey = "mine" | "promises" | "onboarding" | "accounts" | "email" | "social" | "work" | "briefs" | "ads" | "allotments";
 export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   mine: { label: "Your work", blurb: "Tickets and tasks on you" },
   promises: { label: "Waiting on us", blurb: "Promised, said yes to, or not answered" },
   onboarding: { label: "New clients", blurb: "First impressions" },
   accounts: { label: "Accounts", blurb: "Results against target" },
+  email: { label: "Email", blurb: "Email accounts, plans, reports and ideas" },
+  social: { label: "Social", blurb: "Social accounts, posting and reports" },
   work: { label: "Late work", blurb: "Work running late on our side" },
   briefs: { label: "Ideas", blurb: "Briefs the strategist suggests" },
   ads: { label: "Ads", blurb: "Ads ready for a refresh" },
@@ -77,6 +80,8 @@ const money = (n: number) => `$${n.toLocaleString("en-US", { maximumFractionDigi
 const PRIORITY_BOOST: Record<string, number> = { high: 10, medium: 4, low: 0 };
 
 type Draft = Omit<TodayItem, "tier" | "state" | "carried">;
+/** An item before this person's marks are read: what every gatherer (ads, email, social) hands the recap */
+export type TodayDraft = Draft;
 
 /** Which topics a person's day covers. Everyone has their own work; managers see across their clients. */
 export function topicsFor(me: Staff): Set<TopicKey> {
@@ -92,6 +97,11 @@ export function topicsFor(me: Staff): Set<TopicKey> {
   if (me.role === "head_of_creative") t.delete("accounts");
   // The Head of Google: Google only (Meta ads wearing out, creative briefs and allotments aren't theirs)
   if (me.role === "head_of_google") ["ads", "briefs", "allotments"].forEach((k) => t.delete(k as TopicKey));
+  // Email and organic social: execs both, each line's team its own (an ads person seated on a line gets its items
+  // too, counted as they come)
+  if (me.isExec) ["email", "social"].forEach((k) => t.add(k as TopicKey));
+  const line = lineOfTeam(me.role);
+  if (line) t.add(line);
   return t;
 }
 
@@ -168,14 +178,16 @@ async function mine(db: SupabaseClient, me: Staff): Promise<Draft[]> {
 // The creative team's day: what's on them and what they can act on (ads wearing out, late or stuck tickets, first
 // rounds, briefs, clients behind on creative, promises with a brief to make) can be urgent. Anything else (someone
 // else's escalation, a footage nudge) stays in the day as information, never an alarm.
-const CREATIVE_ACTIONABLE = new Set(["mine", "owed", "owed2", "said", "said2", "fatigue", "attention", "onboarding", "allot-behind", "promise", "brief"]);
+const CREATIVE_ACTIONABLE = new Set(["mine", "owed", "owed2", "said", "said2", "fatigue", "attention", "onboarding", "allot-behind", "promise", "brief", "social-quiet", "contact"]);
 export function forCreative<T extends { key: string; score: number }>(items: T[]): T[] {
   return items.map((d) => (CREATIVE_ACTIONABLE.has(d.key.split(":")[0]) ? d : { ...d, score: Math.min(d.score, 59) }));
 }
 
 /** Every item for this person right now, scored. */
 async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
-  const out = await gatherAll(db, me);
+  // The ads side and the email and social lines, read side by side, then ordered by how likely each client is to leave
+  const [ads, lines] = await Promise.all([gatherAll(db, me), import("@/lib/today-lines").then(({ gatherLines }) => gatherLines(db, me)).catch(() => [] as Draft[])]);
+  const out = byRetention([...ads, ...lines]);
   return isCreativeRole(me.role) ? forCreative(out) : out;
 }
 
@@ -192,7 +204,8 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     topics.has("ads") ? loadWatchList(db, manager ? { limit: 20 } : { buyerId: me.id, limit: 20 }).catch(() => []) : [],
     topics.has("work") || topics.has("allotments") ? loadHome(db, me).catch(() => null) : null,
     mine(db, me).catch(() => []),
-    loadOwedReplies(db, me).catch(() => []),
+    // The heads of Email and Organic Social, like the other leads: their own, and their team's past a second notice
+    loadOwedReplies(db, me, manager || me.role === "head_of_email" || me.role === "head_of_social").catch(() => []),
     loadSaidPromises(db, me).catch(() => []),
   ]);
   const out: Draft[] = [...own];
@@ -558,7 +571,18 @@ async function whatHappened(db: SupabaseClient, keys: { key: string; snapshot: {
       const { data } = await db.from("owed_replies").select("status, target_id, dismissed_by").eq("id", rest[0]).maybeSingle();
       if (!data) continue;
       out.push({ ...base, by: await name((data.status === "dismissed" ? data.dismissed_by : data.target_id) as string | null), what: data.status === "answered" ? "replied" : "marked it as not needing a reply" });
-    } else out.push({ ...base, by: null, what: "it's been taken care of" });
+    } else if (kind === "report") {
+      // An email or social report someone sent (or set aside)
+      const { data } = await db.from("reports").select("status, owner_id").eq("id", rest[0]).maybeSingle();
+      if (!data) continue;
+      out.push({ ...base, by: await name((data.owner_id as string | null) ?? null), what: data.status === "posted" || data.status === "submitted" ? "sent it" : data.status === "skipped" ? "skipped it" : "took it off the list" });
+    } else if (kind === "contact") {
+      const { data } = await db.from("contact_change_requests").select("status, decided_by").eq("id", rest[0]).maybeSingle();
+      if (!data) continue;
+      out.push({ ...base, by: await name((data.decided_by as string | null) ?? null), what: data.status === "dismissed" ? "set the request aside" : "confirmed the change" });
+    } else if (kind === "email-score" || kind === "social-target") out.push({ ...base, by: null, what: kind === "email-score" ? "the email score is back in the green" : "it's back on target" });
+    else if (kind === "email-quiet" || kind === "social-quiet") out.push({ ...base, by: null, what: kind === "email-quiet" ? "a campaign went out" : "a post went up" });
+    else out.push({ ...base, by: null, what: "it's been taken care of" });
   }
   return out;
 }

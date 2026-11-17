@@ -2,6 +2,8 @@ import "server-only";
 import { addStats, KLAVIYO_BASE,KLAVIYO_REVISION, REPORT_STATS, SERIES_STATS, errorText, nextLink, parseAccount, parseAudiences, parseCampaigns, parseFlows, parseSeriesReport, parseValuesReport, metricIds, metricList, parseCampaignMessages, placedOrderId, redactKey, reportWait, retryDecision, type AudienceInfo, type CampaignInfo, type FlowInfo, type KlaviyoAccount, type KlaviyoMetric, type SeriesRow, type ValuesRow } from "./core";
 import { aggregateBody, parseMetricAggregate, type DayValue } from "./insights";
 import { BY_MESSAGE } from "./locations";
+import { filterDate, parseCampaignSnaps, parseFlowSnaps, parseFormSnaps, parseNamedSnaps } from "./changes-core";
+import type { ChangeObject, ObjectSnap } from "@/lib/email-ops/changes-core";
 
 // Klaviyo's REST API, read only: GET calls and the Reporting API's POST queries (which read, never change anything).
 // One private key per client account. Every call carries the pinned revision, waits and retries on 429 (Retry-After)
@@ -216,6 +218,52 @@ async function reportPages(key: string, path: string, body: unknown, parse: (jso
     next = nextLink(json);
   }
   return out;
+}
+
+// ─── The change history (what someone did in the account) ──────────────────
+
+/**
+ * What changed in the account since `sinceIso`, as far as Klaviyo's API shows it (it has no public audit log): the
+ * campaigns updated since then, every flow with its steps (their status and times), and the templates, lists,
+ * segments and forms touched since then. Each part that fails (a key without that read scope) is skipped and noted;
+ * `complete` names the listings that are whole, so something missing from them was removed. GET calls only.
+ */
+export async function readChangeObjects(key: string, sinceIso: string): Promise<{ objects: ObjectSnap[]; complete: ChangeObject[]; errors: string[] }> {
+  const since = filterDate(sinceIso);
+  const objects: ObjectSnap[] = [];
+  const complete: ChangeObject[] = [];
+  const errors: string[] = [];
+  const older = (rs: ObjectSnap[]) => rs.length > 0 && (rs[rs.length - 1].updated ?? "") < sinceIso;
+  const part = async (label: string, run: () => Promise<ObjectSnap[]>) => {
+    try {
+      objects.push(...(await run()));
+      return true;
+    } catch (e) {
+      if (e instanceof KlaviyoError && e.status === 401) throw e;
+      errors.push(`${label}: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200));
+      return false;
+    }
+  };
+  for (const channel of ["email", "sms"] as const) {
+    const q = new URLSearchParams({ filter: `equals(messages.channel,'${channel}'),greater-or-equal(updated_at,${since})`, sort: "-updated_at", "fields[campaign]": "name,status,archived,created_at,updated_at,scheduled_at,send_time,send_strategy" });
+    // Refused (an older account or revision): the newest campaigns by when they were made, instead
+    const plain = new URLSearchParams({ filter: `equals(messages.channel,'${channel}')`, sort: "-created_at", "fields[campaign]": "name,status,archived,created_at,updated_at,scheduled_at,send_time" });
+    const ok = await part(`${channel} campaigns`, () => pagesOf(key, `/api/campaigns/?${q}`, parseCampaignSnaps, 4));
+    if (!ok) await part(`${channel} campaigns (newest)`, () => pagesOf(key, `/api/campaigns/?${plain}`, parseCampaignSnaps, 2));
+  }
+  // Every flow with its steps (a step's own times say when an email in it was edited); without the steps if refused
+  const withSteps = new URLSearchParams({ "fields[flow]": "name,status,archived,created,updated", "fields[flow-action]": "action_type,status,created,updated", include: "flow-actions", filter: "equals(archived,false)" });
+  const flowsOk =
+    (await part("flow steps", () => pagesOf(key, `/api/flows/?${withSteps}`, parseFlowSnaps, 10))) ||
+    (await part("flows", () => pagesOf(key, `/api/flows/?${new URLSearchParams({ "fields[flow]": "name,status,archived,created,updated", filter: "equals(archived,false)" })}`, parseFlowSnaps, 10)));
+  if (flowsOk) complete.push("flow");
+  if (flowsOk && !errors.some((e) => e.startsWith("flow steps"))) complete.push("flow_step");
+  await part("templates", async () => (await pagesOf(key, `/api/templates/?${new URLSearchParams({ "fields[template]": "name,created,updated", sort: "-updated" })}`, (j) => parseNamedSnaps(j, "template"), 3, older)).filter((x) => (x.updated ?? x.created ?? "") >= sinceIso));
+  await part("lists", async () => (await pagesOf(key, `/api/lists/?${new URLSearchParams({ "fields[list]": "name,created,updated", sort: "-created" })}`, (j) => parseNamedSnaps(j, "list"), 2, (rs) => rs.length > 0 && (rs[rs.length - 1].created ?? "") < sinceIso)).filter((x) => (x.created ?? "") >= sinceIso));
+  await part("segments", async () => (await pagesOf(key, `/api/segments/?${new URLSearchParams({ "fields[segment]": "name,created,updated", sort: "-created" })}`, (j) => parseNamedSnaps(j, "segment"), 2, (rs) => rs.length > 0 && (rs[rs.length - 1].created ?? "") < sinceIso)).filter((x) => (x.created ?? "") >= sinceIso));
+  // Forms: every one (a handful), so a form switched live is seen by its status
+  if (await part("forms", () => pagesOf(key, `/api/forms/?${new URLSearchParams({ "fields[form]": "name,status,created_at,updated_at" })}`, parseFormSnaps, 4))) complete.push("form");
+  return { objects, complete, errors };
 }
 
 // ─── Locations (multi-location clients) ────────────────────────────────────

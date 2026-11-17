@@ -625,6 +625,8 @@ export async function syncKlaviyo(admin: SupabaseClient, clientId: string, opts:
     const out = window === "full" ? await readFull(admin, conn, key) : await readRecent(admin, conn, key);
     // Once a day: a multi-location client's orders by restaurant, or the weekly check that suggests the flag (never fails the read)
     const locationError = window === "full" ? await import("./location-store").then((l) => l.locationStep(admin, clientId, key)).catch((e) => `Locations: ${redactKey(errText(e), key).slice(0, 200)}`) : (memo?.locationError ?? null);
+    // Every read: what someone changed in the account since the last (the change history; never fails the read)
+    await import("@/lib/email-ops/changes").then((c) => c.recordKlaviyoChanges(admin, clientId, key)).catch((e) => console.error("[klaviyo] change history:", redactKey(errText(e), key)));
     const now = new Date().toISOString();
     await admin
       .from("klaviyo_connections")

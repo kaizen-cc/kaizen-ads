@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { subjectPatterns, weeklyListChange } from "@/lib/kaizen-ai/email-insights";
 import { clientKlaviyo } from "@/lib/klaviyo/store";
 import { auditDigest, type EmailAuditResult } from "./audit-core";
+import { changesBlock } from "./changes";
 import { emailScoreOf } from "./score";
 
 // What the client chat knows about an email client when the person is on the email team: the Klaviyo numbers and the
@@ -58,6 +59,8 @@ export async function emailDeskBlock(admin: SupabaseClient, clientId: string): P
     const l = (sprint.latest as { score?: number } | null)?.score;
     parts.push(`<email_sprint score_at_start="${b ?? "?"}" score_now="${l ?? "?"}">\n${acts.map((a) => `- [${a.status}] ${a.title}`).join("\n")}\n</email_sprint>`);
   }
+  // Is anyone working in the account: what was created, edited, scheduled or switched on lately
+  parts.push(await changesBlock(admin, clientId, 30).catch(() => ""));
   if ((ideas ?? []).length) parts.push(`<open_campaign_ideas>\n${(ideas ?? []).map((i) => `- ${i.title}${i.send_on ? ` (send by ${i.send_on})` : ""} [${i.status}]: ${String(i.idea).slice(0, 220)}`).join("\n")}\n</open_campaign_ideas>`);
   return parts.join("\n\n");
 }
@@ -67,6 +70,6 @@ export function emailDeskSystem(adsSystem: string): string {
   const head = adsSystem.split("\nChanges in the ad account")[0].replace(/If they ask you to run an audit[^\n]*/, 'If they ask you to run an audit, say they can start one from the client\'s Email tab, under "Audit and ideas".');
   return `${head}
 
-You are talking with the email team about this client's Klaviyo email program. You answer as Kaizen's Email Strategist: read <email_account> (the email score and its eight checks, the last 30 days against the 30 before, key flows, campaigns, lists), the subject line patterns, the list change, the latest audit, the sprint and the open campaign ideas, and argue from those numbers. Name the check and its bar when you explain the score (revenue pace: where the month lands against its target of last month +10%, a quarter of the score, nothing at half the pace or less; attributed revenue 30%, revenue per recipient $0.15, deliverability 65, campaign open 30% and click 1%, flow open 35% and click 1.5%; green from 80, yellow from 60, red under). When the data is thin, say so. Say what you would do next and who does it (the email strategist, the email designer, the email builder, the client). Nothing can be sent, edited or scheduled in Klaviyo from here: when they ask for that, say the email team makes the move in Klaviyo, and offer to put it on the audit's plan or say what to do.
+You are talking with the email team about this client's Klaviyo email program. You answer as Kaizen's Email Strategist: read <email_account> (the email score and its eight checks, the last 30 days against the 30 before, key flows, campaigns, lists), the subject line patterns, the list change, the latest audit, the sprint, the changes in the email account (what was created, edited, scheduled or switched on, so you can say whether anyone is working in it; who made a change is not known) and the open campaign ideas, and argue from those numbers. Name the check and its bar when you explain the score (revenue pace: where the month lands against its target of last month +10%, a quarter of the score, nothing at half the pace or less; attributed revenue 30%, revenue per recipient $0.15, deliverability 65, campaign open 30% and click 1%, flow open 35% and click 1.5%; green from 80, yellow from 60, red under). When the data is thin, say so. Say what you would do next and who does it (the email strategist, the email designer, the email builder, the client). Nothing can be sent, edited or scheduled in Klaviyo from here: when they ask for that, say the email team makes the move in Klaviyo, and offer to put it on the audit's plan or say what to do.
 Set change.wanted false and launch.wanted false with "" fields: nothing in an ad account is changed or launched from the email desk.`;
 }

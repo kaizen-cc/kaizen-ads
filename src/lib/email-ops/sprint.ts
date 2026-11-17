@@ -4,18 +4,26 @@ import { askJson } from "@/lib/ai";
 import type { EmailAuditResult } from "./audit-core";
 import { emailTeamFor, whoHears } from "./people";
 import { emailScoreOf } from "./score";
-import { movement, nextCheckAt, plainMessage, snapshotOf, tally, verdictOf, type ScoreSnapshot, type SprintVerdict } from "./sprint-core";
+import { changeLines } from "./changes-core";
+import { loadAccountChanges } from "./changes";
+import { autoMoves, movement, nextCheckAt, plainMessage, snapshotOf, tally, verdictOf, type ScoreSnapshot, type SprintVerdict } from "./sprint-core";
 
 // Email sprints: an audit's plan followed to done with the email strategist, like the ads sprints. Actions are ticked
-// off (todo, doing, done, skipped); a check re-measures the email score and its seven checks, tells the strategist what
-// moved, and decides when to look again. A sprint closes itself once the account is back in the green.
+// off (todo, doing, done, skipped); a check re-measures the email score and its checks, reads what changed in the email
+// account since the last check (the change history), says for each move whether it shows in the account, tells the
+// strategist what moved, and decides when to look again. A red account's audit opens its sprint by itself. A sprint
+// closes itself once the account is back in the green.
 
-/** Opens the client's sprint from a finished audit: every action of its plan, or only `only` (one move added to the list). One live sprint per client: an older one is closed, never deleted. */
-export async function openEmailSprint(admin: SupabaseClient, auditId: string, by: string | null, only?: number): Promise<string | null> {
+/**
+ * Opens the client's sprint from a finished audit: every action of its plan, only `only` (one move added to the list),
+ * or the moves listed in `only` (a sprint opened by itself). One live sprint per client: an older one is closed, never deleted.
+ */
+export async function openEmailSprint(admin: SupabaseClient, auditId: string, by: string | null, only?: number | number[]): Promise<string | null> {
   const { data: a } = await admin.from("email_audits").select("id, client_id, status, result, inputs").eq("id", auditId).maybeSingle();
   if (!a || a.status !== "ready") return null;
   const clientId = a.client_id as string;
-  const plan = ((a.result as EmailAuditResult | null)?.actions ?? []).map((x, i) => ({ x, i })).filter(({ i }) => only === undefined || i === only);
+  const picked = only === undefined ? null : new Set(Array.isArray(only) ? only : [only]);
+  const plan = ((a.result as EmailAuditResult | null)?.actions ?? []).map((x, i) => ({ x, i })).filter(({ i }) => !picked || picked.has(i));
   if (!plan.length) return null;
 
   const { data: live } = await admin.from("email_sprints").select("id, audit_id").eq("client_id", clientId).eq("status", "active").maybeSingle();
@@ -46,7 +54,26 @@ export async function openEmailSprint(admin: SupabaseClient, auditId: string, by
   return sprintId;
 }
 
-type CheckOut = { message: string };
+/**
+ * A red account's audit opens its sprint by itself, with today's and this week's moves, so the plan is followed and
+ * checked without waiting for someone to press Follow. A live sprint someone has started on (a move begun) is left as
+ * it is; an untouched one from an older audit is replaced. Returns the sprint, or null when none was opened.
+ */
+export async function autoEmailSprint(admin: SupabaseClient, auditId: string): Promise<string | null> {
+  const { data: a } = await admin.from("email_audits").select("client_id, band, status, result, created_by").eq("id", auditId).maybeSingle();
+  if (!a || a.status !== "ready" || a.band !== "bad") return null;
+  const { data: live } = await admin.from("email_sprints").select("id, audit_id").eq("client_id", a.client_id).eq("status", "active").maybeSingle();
+  if (live?.audit_id === auditId) return live.id as string;
+  if (live) {
+    const { count } = await admin.from("email_sprint_actions").select("id", { count: "exact", head: true }).eq("sprint_id", live.id).neq("status", "todo");
+    if (count) return null;
+  }
+  const moves = autoMoves((a.result as EmailAuditResult | null)?.actions ?? []);
+  if (!moves.length) return null;
+  return openEmailSprint(admin, auditId, (a.created_by as string | null) ?? null, moves);
+}
+
+type CheckOut = { message: string; actions: { n: number; status: "looks_done" | "partly" | "not_done"; note: string }[] };
 
 /** One check: re-measure the score, tally the moves, say what moved, decide when to look again. Never throws. */
 export async function checkEmailSprint(admin: SupabaseClient, sprintId: string) {
@@ -62,29 +89,53 @@ export async function checkEmailSprint(admin: SupabaseClient, sprintId: string) 
   }
   const now = snapshotOf(score);
   const base = (Object.keys((s.baseline ?? {}) as object).length ? s.baseline : now) as ScoreSnapshot;
-  const { data: actions } = await admin.from("email_sprint_actions").select("title, status, note, when").eq("sprint_id", sprintId).order("sort_order");
-  const list = (actions ?? []) as { title: string; status: string; note: string | null; when: string | null }[];
+  const { data: actions } = await admin.from("email_sprint_actions").select("id, title, status, note, when, steps, done_at").eq("sprint_id", sprintId).order("sort_order");
+  const list = (actions ?? []) as { id: string; title: string; status: string; note: string | null; when: string | null; steps: string[] | null; done_at: string | null }[];
+  // What changed in the email account: since the sprint began (is anyone working) and since the last check (what's new)
+  const { data: times } = await admin.from("email_sprints").select("started_at, last_check_at").eq("id", sprintId).single();
+  const startedAt = (times?.started_at as string | undefined) ?? new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const lastAt = (times?.last_check_at as string | null) ?? startedAt;
+  const sinceStart = await loadAccountChanges(admin, clientId, { since: startedAt, limit: 120 });
+  const known = await historyKnown(admin, clientId);
+  const recent = sinceStart.filter((c) => c.at >= lastAt);
   const t = tally(list.map((x) => x.status));
   const m = movement(base, now);
-  const verdict: SprintVerdict = verdictOf(m, t, now);
-  let message = plainMessage(verdict, m, t, now);
+  const verdict: SprintVerdict = verdictOf(m, t, now, sinceStart.filter((c) => c.manual).length);
+  let message = plainMessage(verdict, m, t, now, known ? recent.filter((c) => c.manual).length : null);
+  let judged: CheckOut["actions"] = [];
   try {
     const out = await askJson<CheckOut>({
       agent: "email_audit",
       label: "email sprint check",
       clientId,
       system:
-        "You are Kaizen Marketing's Email Strategist, checking in on a sprint with the email strategist who holds the client. Write 2 to 4 plain sentences in the first person: what the email score did since the sprint began, which of the seven checks moved and why that is likely, which moves are done and which are still waiting, and what to do next. Use only the numbers given; do not invent any. Refer to people by role, never by name. No em dashes, no bullet points.",
-      schema: { type: "object", properties: { message: { type: "string" } }, required: ["message"], additionalProperties: false },
-      maxTokens: 2000,
-      prompt: `<facts>\nScore now ${now.score}, at the start ${base.score} (${m.delta >= 0 ? "+" : ""}${m.delta}). Verdict: ${verdict}.\nChecks that now meet their bar: ${m.gained.join(", ") || "none"}. Slipped under their bar: ${m.lost.join(", ") || "none"}. Still under: ${m.open.join(", ") || "none"}.\n${now.checks.map((c) => `- ${c.label}: ${c.value == null ? "nothing to measure" : c.value} (bar ${c.bar}, ${c.met ? "met" : "under"}), at the start ${base.checks.find((b) => b.key === c.key)?.value ?? "n/a"}`).join("\n")}\nMoves: ${list.map((x) => `${x.title} [${x.status}]${x.note ? ` (note: ${x.note})` : ""}`).join("; ") || "none"}\n</facts>\n\nWrite the check-in for ${clientName}.`,
+        "You are Kaizen Marketing's Email Strategist, checking in on a sprint with the email strategist who holds the client. You see the email score now and at the start, the moves on the plan with what was ticked, and what changed in the email account (read from the provider's created and updated times and statuses: several edits between two reads show as one, and who made them is not known). Write 2 to 5 plain sentences in the first person: what the score did since the sprint began and which checks moved, whether the planned moves are actually happening in the account (name a move ticked done that nothing in the account shows, and changes made that match no move), and what to do next. If nothing changed in the account and nothing is ticked, say plainly that nobody has worked in the account since the sprint began and name the first move. Use only the numbers and changes given; do not invent any. Refer to people by role, never by name. No em dashes, no bullet points.\nactions: for each move by its number, whether the account changes show it (looks_done when a change clearly matches it, partly when some of it, not_done when nothing does) with a short note naming the change. Moves that need no change in the account (a question for the client, a test to read) go by what was ticked and noted.",
+      schema: {
+        type: "object",
+        properties: {
+          message: { type: "string" },
+          actions: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, status: { type: "string", enum: ["looks_done", "partly", "not_done"] }, note: { type: "string" } }, required: ["n", "status", "note"], additionalProperties: false } },
+        },
+        required: ["message", "actions"],
+        additionalProperties: false,
+      },
+      maxTokens: 3000,
+      prompt: `<facts>\nScore now ${now.score}, at the start ${base.score} (${m.delta >= 0 ? "+" : ""}${m.delta}). Verdict: ${verdict}.\nChecks that now meet their bar: ${m.gained.join(", ") || "none"}. Slipped under their bar: ${m.lost.join(", ") || "none"}. Still under: ${m.open.join(", ") || "none"}.\n${now.checks.map((c) => `- ${c.label}: ${c.value == null ? "nothing to measure" : c.value} (bar ${c.bar}, ${c.met ? "met" : "under"}), at the start ${base.checks.find((b) => b.key === c.key)?.value ?? "n/a"}`).join("\n")}\nSprint began ${startedAt.slice(0, 10)}; last check ${lastAt.slice(0, 10)}.\n</facts>\n\n<moves>\n${list.map((x, i) => `${i + 1}. [${x.status}${x.done_at ? `, ticked ${x.done_at.slice(0, 10)}` : ""}] ${x.title}${x.steps?.length ? ` (steps: ${x.steps.slice(0, 4).join(" / ")})` : ""}${x.note ? ` (note: ${x.note})` : ""}`).join("\n") || "(none)"}\n</moves>\n\n<changes_in_the_email_account_since_the_sprint_began>\n${known ? changeLines(sinceStart, 60).join("\n") || "(none: nothing was created, edited, scheduled or switched on or off)" : "(the change history isn't read for this account yet: go by the ticks and notes)"}\n</changes_in_the_email_account_since_the_sprint_began>\n\nWrite the check-in for ${clientName}.`,
     });
-    if (out?.message?.trim()) message = out.message.trim().slice(0, 900);
+    if (out?.message?.trim()) message = out.message.trim().replace(/\s*—\s*/g, ", ").slice(0, 900);
+    judged = out?.actions ?? [];
   } catch {
     // The plain message stands (AI paused or offline): the numbers are the point
   }
   const next = nextCheckAt(verdict);
   const { data: check } = await admin.from("email_sprint_checks").insert({ sprint_id: sprintId, verdict, message, score: now, next_check_at: next }).select("id").single();
+  // What the check saw about each move, on the move (the sprint page and the sheet show it)
+  for (const j of judged) {
+    const x = list[j.n - 1];
+    if (!x || !j.note?.trim()) continue;
+    const lead = j.status === "looks_done" ? "Seen in the account" : j.status === "partly" ? "Partly seen in the account" : "Not seen in the account yet";
+    await admin.from("email_sprint_actions").update({ ai_note: `${lead}: ${j.note.trim()}`.replace(/\s*—\s*/g, ", ").slice(0, 400) }).eq("id", x.id);
+  }
   const done = verdict === "done";
   await admin
     .from("email_sprints")
@@ -108,6 +159,12 @@ export async function checkEmailSprint(admin: SupabaseClient, sprintId: string) 
         { onConflict: "profile_id,key", ignoreDuplicates: true },
       );
   }
+}
+
+/** Whether this client's change history is read at all (an account the history has read at least once) */
+async function historyKnown(admin: SupabaseClient, clientId: string): Promise<boolean> {
+  const { data } = await admin.from("sync_state").select("last_result").eq("source", `klaviyo-changes:${clientId}`).maybeSingle();
+  return Boolean((data?.last_result as { at?: string } | null)?.at);
 }
 
 /** The scheduled step: every sprint whose next check is due */

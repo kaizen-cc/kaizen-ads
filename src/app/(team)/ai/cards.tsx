@@ -6,6 +6,7 @@ import { ChatPlan } from "@/app/(team)/clients/[slug]/chat-plan";
 import { LaunchCard } from "@/app/(team)/clients/[slug]/launch-card";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 import { ConfirmCardView, ConnectCardView, ConnectorSteps } from "./connectors-ui";
+import { EmailDesignCardView } from "./email-design-card";
 import type { BriefCard, Card, CopyCard, CopyField, LinkCard, ListCard, MetricsCard, ToolRun } from "@/lib/kaizen-ai/types";
 
 // What Kaizen AI's tools put on screen: metrics tables, copy sets with character counts, briefs ready to send, report
@@ -382,6 +383,8 @@ export function CardView({ card }: { card: Card }) {
       return <ConnectCardView c={card} />;
     case "connector_confirm":
       return <ConfirmCardView c={card} />;
+    case "email_design":
+      return <EmailDesignCardView c={card} />;
     case "launch":
       return (
         <div className="grid gap-1">

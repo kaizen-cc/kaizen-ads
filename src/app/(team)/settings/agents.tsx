@@ -36,6 +36,8 @@ import { proposalOf, changeTarget } from "@/lib/agent-change";
 import type { EvalRow } from "@/lib/agent-evals";
 import type { LearningView } from "@/lib/learnings";
 import { AgentOnline } from "./agent-online";
+import { AgentCall, AgentVoice } from "./agent-call";
+import { defaultVoiceName } from "@/lib/agent-call/core";
 import { ReportThis } from "@/components/report-this";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -788,6 +790,12 @@ function ChatPanel({
   const [messages, setMessages] = useState(initial);
   const [text, setText] = useState("");
   const [thinking, start] = useTransition();
+  // New messages from the server (a voice call that just ended) come in when the page refreshes
+  const [seen, setSeen] = useState(initial);
+  if (seen !== initial) {
+    setSeen(initial);
+    if (!thinking && initial.length > messages.length) setMessages(initial);
+  }
   const [error, setError] = useState<string | null>(null);
   // The last message failed on the server: its error, so it can be reported from the chat
   const [sendError, setSendError] = useState<string | null>(null);
@@ -1365,6 +1373,8 @@ export type Role = {
   updatedAt: string;
   updatedBy: string | null;
   proposals: number; // edits it proposed in its own chat that nobody has applied yet
+  /** The ElevenLabs voice it speaks in on calls (null: its role's default) */
+  voiceId?: string | null;
 };
 
 /** A rule split into its short title (up to the first full stop or colon) and the rest. */
@@ -1773,10 +1783,11 @@ function TalkToAgent({ role, skills, items, chat }: { role: Role; skills: Agent[
         <div>
           <h3 className="font-heading text-[20px] leading-tight">Talk to the {role.label}</h3>
           <p className="mt-1 max-w-2xl text-sm text-muted">
-            Ask how it works, tell it what to do better, or share files and links (SOPs, examples of great work, call notes) like you would with a teammate. It works out whether that belongs in its core or in one of its {skills.length} skills and proposes the exact edit. You apply each one.
+            Ask how it works, tell it what to do better, or share files and links (SOPs, examples of great work, call notes) like you would with a teammate. It works out whether that belongs in its core or in one of its {skills.length} skills and proposes the exact edit. You apply each one. Or call it and talk: calls show up here too.
           </p>
         </div>
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <AgentCall roleKey={role.key} label={role.label} icon={<AgentIcon icon={role.icon} size={112} />} tint={TINT[role.icon] ?? TINT.spark} size="compact" />
           <span className="rounded-full bg-brand-soft px-2.5 py-1 text-[11px] text-brand-text">Core</span>
           {skills.map((s) => (
             <span key={s.key} className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">
@@ -1829,6 +1840,10 @@ export function RoleDetail({ role, skills, items, chat, isExec = true }: { role:
                   <AgentOnline roleKey={role.key} offline={Boolean(role.offline)} isExec={isExec} />
                 </div>
               )}
+              <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+                <AgentCall roleKey={role.key} label={role.label} icon={<AgentIcon icon={role.icon} size={112} />} tint={TINT[role.icon] ?? TINT.spark} />
+                <AgentVoice roleKey={role.key} voiceId={role.voiceId ?? null} defaultName={defaultVoiceName(role.key)} />
+              </div>
             </div>
             <dl className="grid w-full grid-cols-2 gap-x-8 gap-y-3 border-t border-line pt-5 sm:grid-cols-5">
               {[

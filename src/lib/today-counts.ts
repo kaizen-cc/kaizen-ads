@@ -6,7 +6,7 @@ import type { Tier, TodayItem, TopicKey } from "@/lib/today";
 // gather as one "Team" row. A client's row is as urgent as its most urgent item. Pure: no database, no server-only.
 
 export const TIER_ORDER: Tier[] = ["critical", "high", "normal"];
-export const TOPIC_KEYS: TopicKey[] = ["mine", "promises", "onboarding", "accounts", "work", "briefs", "ads", "allotments"];
+export const TOPIC_KEYS: TopicKey[] = ["mine", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments"];
 const RANK: Record<Tier, number> = { critical: 2, high: 1, normal: 0 };
 
 type Countable = Pick<TodayItem, "client" | "tier" | "score" | "topic">;
@@ -98,6 +98,10 @@ export function lookHeadline(topic: TopicKey, n: number): string {
       return `${n} new ${s(n, "client needs", "clients need")} you`;
     case "accounts":
       return `${n} ${s(n, "client has", "clients have")} accounts off or near target`;
+    case "email":
+      return `${n} email ${s(n, "client needs", "clients need")} a look: the account, its plan, its report or an idea`;
+    case "social":
+      return `${n} social ${s(n, "client needs", "clients need")} a look: results, posting or a report`;
     case "work":
       return `${n} ${s(n, "client has", "clients have")} work stuck or running late`;
     case "briefs":
@@ -120,6 +124,10 @@ export function lookChip(topic: TopicKey, n: number): string {
       return `${n} new ${s(n, "client needs", "clients need")} you`;
     case "accounts":
       return `${n} ${s(n, "client", "clients")} with accounts off or near target`;
+    case "email":
+      return `${n} email ${s(n, "client", "clients")} to look at`;
+    case "social":
+      return `${n} social ${s(n, "client", "clients")} to look at`;
     case "work":
       return `${n} ${s(n, "client", "clients")} with work stuck or late`;
     case "briefs":

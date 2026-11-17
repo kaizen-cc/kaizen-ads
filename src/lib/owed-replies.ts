@@ -40,6 +40,13 @@ export const LEAD_OF: Record<string, string | null> = {
   lead_video_editor: "head_of_creative",
   copywriter: "head_of_creative",
   customer_success: null,
+  // The email and organic social teams answer to their line's head
+  email_strategist: "head_of_email",
+  email_designer: "head_of_email",
+  email_builder: "head_of_email",
+  social_media_manager: "head_of_social",
+  head_of_email: null,
+  head_of_social: null,
   head_of_meta: null,
   head_of_google: null,
   head_of_creative: null,

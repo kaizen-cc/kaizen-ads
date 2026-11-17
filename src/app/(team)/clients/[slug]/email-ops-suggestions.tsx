@@ -37,7 +37,7 @@ const FILTERS: { value: string; label: string }[] = [
 ];
 const day = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-function Card({ s, showClient }: { s: SuggestionView; showClient: boolean }) {
+function Card({ s, showClient, onChange }: { s: SuggestionView; showClient: boolean; onChange?: () => Promise<unknown> }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [reasoning, setReasoning] = useState(false);
@@ -47,7 +47,10 @@ function Card({ s, showClient }: { s: SuggestionView; showClient: boolean }) {
       setError(null);
       const r = await work();
       if (!r.ok) setError(r.error ?? "That didn't save.");
-      else router.refresh();
+      else {
+        await onChange?.();
+        router.refresh();
+      }
     });
   return (
     <article className={`grid min-w-0 gap-3 rounded-[16px] border border-line bg-surface p-4 md:p-5 ${s.status === "dismissed" ? "opacity-70" : ""} ${pending ? "opacity-80" : ""}`}>
@@ -158,7 +161,7 @@ function Card({ s, showClient }: { s: SuggestionView; showClient: boolean }) {
 }
 
 /** The suggestion list with its filter in the address (?sug=), and (when allowed) a button to write new ones for one client */
-export function EmailOpsSuggestions({ suggestions, clientId = null, showClient = false, title = "Campaign ideas" }: { suggestions: SuggestionView[]; clientId?: string | null; showClient?: boolean; title?: string }) {
+export function EmailOpsSuggestions({ suggestions, clientId = null, showClient = false, title = "Campaign ideas", onChange }: { suggestions: SuggestionView[]; clientId?: string | null; showClient?: boolean; title?: string; /** Called after a change, so a view that loaded the list itself (the KPI sheet) reads it again */ onChange?: () => Promise<unknown> }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [note, setNote] = useState<string | null>(null);
@@ -185,6 +188,7 @@ export function EmailOpsSuggestions({ suggestions, clientId = null, showClient =
                   setNote("Reading the sends and the calendar…");
                   const r = await writeEmailSuggestions(clientId);
                   setNote(r.ok ? (r.note ?? (r.added ? `${r.added} new idea${r.added === 1 ? "" : "s"}.` : "Nothing new this time.")) : r.error);
+                  await onChange?.();
                   router.refresh();
                 })
               }
@@ -207,7 +211,7 @@ export function EmailOpsSuggestions({ suggestions, clientId = null, showClient =
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {shown.map((s) => (
-            <Card key={s.id} s={s} showClient={showClient} />
+            <Card key={s.id} s={s} showClient={showClient} onChange={onChange} />
           ))}
         </div>
       )}

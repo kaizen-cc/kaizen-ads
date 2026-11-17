@@ -44,12 +44,14 @@ export const tally = (statuses: readonly string[]): ActionTally => ({
 });
 
 /**
- * The verdict of a check, from the score movement and the actions ticked. Nothing ticked yet: "no_action" (the nudge).
- * Back in the green: "done". The score up by 3 points or more: "improving"; down by 3 or more: "worse"; otherwise "on_track".
+ * The verdict of a check, from the score movement, the actions ticked and what changed in the account. Nothing ticked
+ * and nothing changed in the account since the sprint began: "no_action" (the nudge). Back in the green: "done". The
+ * score up by 3 points or more: "improving"; down by 3 or more: "worse"; otherwise "on_track". `changes` is how many
+ * changes someone made in the email account since the sprint began (the change history; 0 when unknown).
  */
-export function verdictOf(m: Movement, t: ActionTally, now: ScoreSnapshot): SprintVerdict {
+export function verdictOf(m: Movement, t: ActionTally, now: ScoreSnapshot, changes = 0): SprintVerdict {
   if (now.band === "good") return "done";
-  if (t.done + t.doing === 0) return "no_action";
+  if (t.done + t.doing === 0 && changes === 0) return "no_action";
   if (m.delta >= 3) return "improving";
   if (m.delta <= -3) return "worse";
   return "on_track";
@@ -63,8 +65,25 @@ export function nextCheckAt(v: SprintVerdict, now = Date.now()): string {
   return new Date(now + days * DAY).toISOString();
 }
 
+/**
+ * What the change history says against the ticks, in a sentence (or nothing): moves ticked done with nothing changed in
+ * the account is worth a look; changes made with nothing ticked are worth ticking. `recent` is the changes someone made
+ * since the last check, null when the history isn't read for this account.
+ */
+export function workLine(t: ActionTally, recent: number | null): string {
+  if (recent == null) return "";
+  if (recent === 0 && t.done + t.doing > 0) return " Nothing has changed in the email account since the last check, so I can't see the ticked moves in it yet.";
+  if (recent === 0) return " Nothing has changed in the email account since the last check.";
+  if (t.done + t.doing === 0) return ` I can see ${recent} ${recent === 1 ? "change" : "changes"} in the email account since the last check, but no move is ticked: tick what's done so I can follow it.`;
+  return ` I can see ${recent} ${recent === 1 ? "change" : "changes"} in the email account since the last check.`;
+}
+
 /** The check's message when no AI is available, or as the AI's facts: plain, first person, specific */
-export function plainMessage(v: SprintVerdict, m: Movement, t: ActionTally, now: ScoreSnapshot): string {
+export function plainMessage(v: SprintVerdict, m: Movement, t: ActionTally, now: ScoreSnapshot, recent: number | null = null): string {
+  return plainCore(v, m, t, now) + workLine(t, recent);
+}
+
+function plainCore(v: SprintVerdict, m: Movement, t: ActionTally, now: ScoreSnapshot): string {
   const lead = `The score is ${now.score} (${m.delta === 0 ? "unchanged" : `${m.delta > 0 ? "up" : "down"} ${Math.abs(m.delta)} since the sprint began`}).`;
   const gained = m.gained.length ? ` ${m.gained.join(", ")} now meets its bar.` : "";
   const lost = m.lost.length ? ` ${m.lost.join(", ")} slipped under its bar.` : "";
@@ -74,6 +93,15 @@ export function plainMessage(v: SprintVerdict, m: Movement, t: ActionTally, now:
   if (v === "worse") return `${lead}${lost}${open} ${t.done} of ${t.done + t.doing + t.todo} moves done: worth checking what changed in Klaviyo since the last look.`;
   if (v === "improving") return `${lead}${gained}${open} ${t.done} of ${t.done + t.doing + t.todo} moves done: keep going.`;
   return `${lead}${gained}${lost}${open} Metrics take a few days to move after a change, so I will look again soon.`;
+}
+
+/**
+ * The moves a sprint opened by itself starts with (a red account's audit): today's and this week's, in the audit's
+ * order; every move when the plan has none marked for now. "Next" ones wait to be added from the audit.
+ */
+export function autoMoves(actions: readonly { when: string }[]): number[] {
+  const soon = actions.map((a, i) => ({ a, i })).filter(({ a }) => a.when === "now" || a.when === "this_week").map(({ i }) => i);
+  return soon.length ? soon : actions.map((_, i) => i);
 }
 
 /** The band an unmeasured sprint start would have (guards a missing score) */

@@ -60,11 +60,14 @@ export default async function Home() {
   const [me, db] = await Promise.all([requireStaff(), createClient()]);
   const now = new Date();
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
-  // The email and organic social teams: their clients and a note that their KPIs and reports are coming. Nothing here
-  // reads the ad tables (the recap and Next for me are built from them)
-  const channel = lineOfTeam(me.role);
-  if (channel) return <ChannelHome me={me} line={channel} today={base.today} greeting={base.greeting} firstName={base.firstName} />;
   const hiddenQuery = () => db.from("hidden_items").select("key, how, label, href, hidden_at").eq("profile_id", me.id).order("hidden_at", { ascending: false }).limit(200);
+  // The email and organic social teams: their day first (the same recap as everyone, built from their line only: no
+  // ad accounts, allotments or buyer alerts), then their clients ordered by how likely each is to leave
+  const channel = lineOfTeam(me.role);
+  if (channel) {
+    const { data: hiddenRows } = await hiddenQuery();
+    return <ChannelHome me={me} line={channel} today={base.today} greeting={base.greeting} firstName={base.firstName} recap={<Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />} />;
+  }
   const assignedQuery = () => db.from("client_assignments").select("client_id").eq("profile_id", me.id);
 
   // Team members (designers, editors, buyers, the copywriter, customer success): their recap and their Next for me.
@@ -118,7 +121,8 @@ export default async function Home() {
     todaySnapshot(db, me).catch(() => null),
   ]);
   // The recap's counts (clients, per topic) and which topics it covers for this person, for the theme cards
-  const looks = snap ? { byTopic: snap.today.looks.byTopic, covered: [...topicsFor(me)] } : null;
+  // (plus any line someone works on through a seat, like a buyer seated as a client's email strategist)
+  const looks = snap ? { byTopic: snap.today.looks.byTopic, covered: [...new Set([...topicsFor(me), ...snap.today.items.map((i) => i.topic)])] } : null;
   const hidden = new Set((hiddenRows ?? []).map((r) => r.key as string));
   h.attention = h.attention.filter((a) => !hidden.has(`alert:${a.id}`));
   // The Head of Creative: only the call promises with a brief to make; the rest are the buyers' and account managers'

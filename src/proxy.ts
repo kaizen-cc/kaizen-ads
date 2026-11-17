@@ -8,8 +8,9 @@ import { cookieDomain } from "@/lib/site";
 // signature); /api/portal-chat/avatar draws initials for Slack to show beside a client's portal message; /api/loom checks
 // its own token (LOOM_WEBHOOK_TOKEN); /handled acts only with a signed link from a notice email (or as whoever's signed
 // in); /api/email/inbound is Resend's (it checks the webhook signature); /api/connectors/client-metadata.json is Kaizen
-// AI's OAuth Client ID Metadata Document, which a connector's sign in server fetches (public, no secret in it)
-const PUBLIC_PATHS = ["/login", "/about", "/privacy", "/terms", "/auth/", "/p/", "/r/", "/api/cron/", "/api/zapier/", "/api/loom", "/api/slack/events", "/api/portal-chat/avatar", "/manifest.webmanifest", "/handled", "/api/email/inbound", "/api/connectors/client-metadata.json"];
+// AI's OAuth Client ID Metadata Document, which a connector's sign in server fetches (public, no secret in it);
+// /api/email-preview/ is a Kaizen AI email design for Figma's import (a signed week-long token, one design)
+const PUBLIC_PATHS = ["/login", "/about", "/privacy", "/terms", "/auth/", "/p/", "/r/", "/api/cron/", "/api/zapier/", "/api/loom", "/api/slack/events", "/api/portal-chat/avatar", "/manifest.webmanifest", "/handled", "/api/email/inbound", "/api/connectors/client-metadata.json", "/api/email-preview/"];
 
 // Refreshes the Supabase session cookie on every request and sends signed-out
 // visitors to /login (keeping where they were headed). Real authorization is RLS.

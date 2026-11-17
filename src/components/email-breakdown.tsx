@@ -233,13 +233,13 @@ function Flows({ flows, money, link }: { flows: BFlow[]; money: ReturnType<typeo
 }
 
 /** Campaigns and live flows under an account's score */
-export function EmailBreakdown({ campaigns, flows, currency, clientId, provider = null, revenueMeasured = true }: { campaigns: BCampaign[]; flows: BFlow[]; currency: string | null; /** Turns on the campaign preview */ clientId?: string; /** Which email provider the numbers are from (flow links and the revenue columns depend on it) */ provider?: EmailProvider | null; revenueMeasured?: boolean }) {
+export function EmailBreakdown({ campaigns, flows, currency, clientId, provider = null, revenueMeasured = true, only = null }: { campaigns: BCampaign[]; flows: BFlow[]; currency: string | null; /** Turns on the campaign preview */ clientId?: string; /** Which email provider the numbers are from (flow links and the revenue columns depend on it) */ provider?: EmailProvider | null; revenueMeasured?: boolean; /** One table alone (the KPI sheet gives campaigns and flows a tab each) */ only?: "campaigns" | "flows" | null }) {
   // A source with no revenue shows n/a, never $0
   const money: ReturnType<typeof moneyOf> = revenueMeasured ? moneyOf(currency) : () => "n/a";
   return (
     <div className="grid gap-6">
-      <Campaigns rows={campaigns} money={money} clientId={clientId} />
-      <Flows flows={flows} money={money} link={!provider || provider === "klaviyo"} />
+      {only !== "flows" && <Campaigns rows={campaigns} money={money} clientId={clientId} />}
+      {only !== "campaigns" && <Flows flows={flows} money={money} link={!provider || provider === "klaviyo"} />}
     </div>
   );
 }

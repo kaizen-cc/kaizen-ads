@@ -104,7 +104,7 @@ async function history(admin: SupabaseClient, rows: MsgRow[]): Promise<{ message
   for (let i = rows.length - 1; i >= 0; i--) {
     const m = rows[i];
     if (m.role === "assistant") {
-      const done = [...(m.tools ?? []).filter((t) => t.ok).map((t) => t.label.replace(/…$/, "")), ...(m.cards ?? []).map((c) => `showed a ${c.type} card`)];
+      const done = [...(m.tools ?? []).filter((t) => t.ok).map((t) => t.label.replace(/…$/, "")), ...(m.cards ?? []).map((c) => (c.type === "email_design" ? `showed email design ${c.options.map((o) => `${o.name || "design"} (design_id ${o.id}, v${o.version})`).join(", ")}` : `showed a ${c.type} card`))];
       let text = `${m.content}${done.length ? `\n\n(On the way: ${[...new Set(done)].join("; ")}.)` : ""}`.trim();
       if (!text) continue;
       if (text.length > budget) text = `${text.slice(0, Math.max(0, budget))}…`;

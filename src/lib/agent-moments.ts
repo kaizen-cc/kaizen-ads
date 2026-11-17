@@ -183,6 +183,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Judges a proposed change to an agent: replays recent real calls with and without it and says better, same or worse", where: "Settings · AI agents · Test this change", trigger: "click", when: "When someone tests a change; weekly drift check", labels: ["agent eval"] },
     { title: "Edits another agent's playbook from your feedback", where: "Settings · AI agents · Coach", trigger: "click", when: "When someone coaches an agent", labels: ["coach"] },
     { title: "Answers an agent's chat in Settings and proposes edits to its skills", where: "Settings \u00b7 AI agents \u00b7 an agent's chat", trigger: "click", when: "With every message", labels: ["agent chat"] },
+    { title: "Answers a voice call with an agent in its voice, and saves what the caller teaches it to its skills", where: "Settings · AI agents · an agent · Call", trigger: "click", when: "With every turn of a call", labels: ["agent call"] },
   ],
   launcher: [
     { title: "Adjusts a ticket's launch plan in the Ads launcher chat: the ad set or campaign, a cloned ad set, the budget, the link or the names", where: "Board · Ticket · Ads launcher", trigger: "click", when: "When the buyer asks it to change the plan", labels: ["launch chat"] },
@@ -248,8 +249,12 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Audits a client's Klaviyo account against the email account score and writes the findings and the plan", where: "Client page · Email · Audit and ideas, and the audit page", trigger: "auto", when: "When someone runs an audit, and on its own when an account's email score goes red (refreshed after 3 days if untouched)", labels: ["email account audit"] },
     { title: "Re-measures the score for an email sprint and tells the strategist what moved", where: "Email sprint page", trigger: "auto", when: "At each sprint check (every few days, sooner after a slip), or on Check the score now", labels: ["email sprint check"] },
   ],
-  email_calendar: [{ title: "Suggests the next campaigns from what worked in past sends, the calendar and what the client mentioned in Slack, email and calls", where: "Client page · Email · Audit and ideas, and the email Overview", trigger: "auto", when: "Weekly for each connected client, and on Suggest more", labels: ["email campaign suggestions"] }],
+  email_calendar: [{ title: "Suggests the next campaigns from what worked in past sends, the calendar and what the client mentioned in Slack, email and calls", where: "Client page · Email · Audit and ideas, the email Overview, and Your day · Email", trigger: "auto", when: "Weekly for each connected client, and on Suggest more", labels: ["email campaign suggestions"] }],
   email_copy: [{ title: "Writes subject line options for each suggested campaign, in the client's voice", where: "Client page · Email · Audit and ideas", trigger: "auto", when: "With each batch of campaign suggestions", labels: ["email subject line options"] }],
+  email_design_brief: [
+    { title: "Designs finished HTML emails from the copy on the client's brand (Brand Bible, logo and colour, past emails, attached references), in one or several layouts", where: "Kaizen AI · email design studio", trigger: "click", when: "When someone on the email team asks Kaizen AI for an email design or layout options", labels: ["email design"] },
+    { title: "Revises an email design made in the thread into a new version", where: "Kaizen AI · email design studio", trigger: "click", when: "When someone asks for a change to a design", labels: ["email design revision"] },
+  ],
   email_desk: [{ title: "Answers the email team in the client chat, from the Klaviyo data, the email score, the latest audit and the sprint", where: "Client page · client chat", trigger: "click", when: "When someone on the email team asks about a client", labels: ["email desk"] }],
   fatigue: [{ title: "Flags ads wearing out from their own numbers (no AI call; the strategist writes the refresh)", where: "Overview · Client page · Next for me", trigger: "auto", when: "After every Meta sync", labels: [] }],
 };

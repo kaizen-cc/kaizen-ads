@@ -8,7 +8,7 @@ import { loadEmailBreakdown } from "./email-breakdown-actions";
 
 // The breakdown inside an opened account on the Email board: fetched when the sheet opens so the board stays light.
 
-export function BoardBreakdown({ clientId, currency, provider = null, revenueMeasured = true }: { clientId: string; currency: string | null; provider?: EmailProvider | null; revenueMeasured?: boolean }) {
+export function BoardBreakdown({ clientId, currency, provider = null, revenueMeasured = true, only = null }: { clientId: string; currency: string | null; provider?: EmailProvider | null; revenueMeasured?: boolean; only?: "campaigns" | "flows" | null }) {
   const [state, setState] = useState<{ id: string; data: { campaigns: BCampaign[]; flows: BFlow[] } | null; error: string | null } | null>(null);
   useEffect(() => {
     let live = true;
@@ -27,5 +27,5 @@ export function BoardBreakdown({ clientId, currency, provider = null, revenueMea
       </div>
     );
   if (!state.data) return <p className="text-sm text-bad">{state.error}</p>;
-  return <EmailBreakdown campaigns={state.data.campaigns} flows={state.data.flows} currency={currency} clientId={clientId} provider={provider} revenueMeasured={revenueMeasured} />;
+  return <EmailBreakdown campaigns={state.data.campaigns} flows={state.data.flows} currency={currency} clientId={clientId} provider={provider} revenueMeasured={revenueMeasured} only={only} />;
 }

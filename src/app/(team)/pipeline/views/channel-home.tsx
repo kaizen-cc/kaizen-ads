@@ -35,7 +35,7 @@ async function owedByClient(db: Awaited<ReturnType<typeof createClient>>, me: Me
  * gone quiet, owed a reply, or numbers we can't see), each with this month's main KPI against its target, then the
  * clients whose data still needs connecting. It reads nothing from the ad tables.
  */
-export async function ChannelHome({ me, line, today, greeting, firstName }: { me: Me; line: Line; today: string; greeting: string; firstName: string }) {
+export async function ChannelHome({ me, line, today, greeting, firstName, recap = null }: { me: Me; line: Line; today: string; greeting: string; firstName: string; /** Their day (the recap's way in), above their clients */ recap?: React.ReactNode }) {
   const db = await createClient();
   const [board, owed] = await Promise.all([loadChannelBoard(db, line, me), owedByClient(db, me)]);
   const ranked: Ranked[] = orderByRisk(board.rows.map((r) => ({ ...r, risk: riskForRow(r, owed.get(r.clientId)) })));
@@ -69,6 +69,7 @@ export async function ChannelHome({ me, line, today, greeting, firstName }: { me
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
       <PageHeader today={today} title={`${greeting}, ${firstName}`} subtitle={`${roleLabel(me.role)} · ${total} ${total === 1 ? "client" : "clients"} · ${needs ? `${needs} ${needs === 1 ? "needs" : "need"} a look` : total ? "all steady today" : "no clients yet"}`} />
+      {recap}
 
       {total === 0 ? (
         <section className="grid justify-items-start gap-3 rounded-[18px] border border-dashed border-line p-6 md:p-8">

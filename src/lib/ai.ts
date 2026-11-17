@@ -19,7 +19,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 export const MODEL_IDS = { opus: "claude-opus-5-5", sonnet: "claude-sonnet-5-5", haiku: "claude-haiku-5-5" } as const;
 export type ModelKey = keyof typeof MODEL_IDS;
 export type Effort = "low" | "medium" | "high";
-export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm" | "market" | "winners" | "verticals" | "auditor" | "google_auditor" | "google_launcher" | "reporter" | "google_reporter" | "report_qa" | "tiktok_auditor" | "tiktok_launcher" | "tiktok_reporter" | "email_audit" | "email_calendar" | "email_copy" | "email_desk";
+export type AgentKey = "suggest" | "review" | "briefing" | "copy" | "launcher" | "fatigue" | "scripts" | "brandbible" | "creativecheck" | "creativereview" | "coach" | "strategist" | "lab" | "industry" | "calls" | "gtm" | "market" | "winners" | "verticals" | "auditor" | "google_auditor" | "google_launcher" | "reporter" | "google_reporter" | "report_qa" | "tiktok_auditor" | "tiktok_launcher" | "tiktok_reporter" | "email_audit" | "email_calendar" | "email_copy" | "email_desk" | "email_design_brief";
 export const SOURCE_KEYS = ["meta", "briefing", "recent_messages", "memory", "angles", "recent_requests", "allotment", "kpis"] as const;
 export type Sources = Partial<Record<(typeof SOURCE_KEYS)[number], boolean>>;
 
@@ -70,6 +70,7 @@ const DEFAULTS: Record<AgentKey, Pick<AgentConfig, "model" | "effort">> = {
   email_calendar: { model: "sonnet", effort: "medium" },
   email_copy: { model: "sonnet", effort: "low" },
   email_desk: { model: "sonnet", effort: "medium" },
+  email_design_brief: { model: "opus", effort: "medium" }, // Kaizen AI's email design studio: finished HTML emails on the client's brand
   coach: { model: "opus", effort: "medium" }, // talking to an agent (its page) or one skill: edits its core and playbooks from feedback
 };
 

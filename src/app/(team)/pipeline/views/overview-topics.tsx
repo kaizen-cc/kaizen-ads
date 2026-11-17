@@ -279,7 +279,8 @@ export function buildThemes(d: SharedTopics, extra: { first?: Theme | null; deli
   const growthBuilt = by("briefs", "fatigue", "patterns");
   const freshBuilt = by("onboarding");
   const allotBuilt = by("allotments");
-  const risk = parts(riskBuilt, ["promises", "work", "accounts"]);
+  // Email and organic social clients at risk sit with the ad accounts (their chips show only for people on those lines)
+  const risk = parts(riskBuilt, ["promises", "work", "accounts", "email", "social"]);
   const growth = parts(growthBuilt, ["briefs", "ads"]);
   const fresh = parts(freshBuilt, ["onboarding"]);
   const allot = parts(allotBuilt, ["allotments"]);

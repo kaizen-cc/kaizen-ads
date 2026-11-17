@@ -14,6 +14,8 @@ const MODULES: { key: string; label: string; load: () => Promise<{ tools: Shared
   { key: "elevenlabs", label: "ElevenLabs", load: () => import("@/lib/ai-tools/elevenlabs") },
   { key: "higgsfield", label: "Higgsfield", load: () => import("@/lib/ai-tools/higgsfield") },
   { key: "motion", label: "Motion", load: () => import("@/lib/ai-tools/motion") },
+  { key: "team-ops", label: "Team tools", load: () => import("@/lib/ai-tools/team-ops") },
+  { key: "email-design", label: "Email design", load: () => import("@/lib/ai-tools/email-design") },
 ];
 
 function wrap(t: SharedTool, label: string, ctx: ToolCtx): ChatTool {

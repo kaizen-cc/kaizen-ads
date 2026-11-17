@@ -114,3 +114,45 @@ export async function elevenlabsStatus(): Promise<{ configured: boolean; reachab
     return { configured: true, reachable: false, quota: null, error: e instanceof ConnectorError ? e.message : "Couldn't reach ElevenLabs." };
   }
 }
+
+// ─── Voice calls with the agents ────────────────────────────────────────────
+
+/**
+ * A short sentence spoken for a call, streamed as it's made (MP3, 44.1kHz at 64kbps: small and quick to start). The
+ * call's low-latency model; the body is passed straight on to the browser. Characters are what the text costs.
+ */
+export async function speechStream(input: { voiceId: string; text: string; model: string; signal?: AbortSignal }): Promise<{ body: ReadableStream<Uint8Array>; characters: number }> {
+  if (!/^[A-Za-z0-9]{8,40}$/.test(input.voiceId)) throw new ConnectorError("Pick a voice.");
+  const res = await fetch(`${BASE}/v1/text-to-speech/${encodeURIComponent(input.voiceId)}/stream?output_format=mp3_44100_64`, {
+    method: "POST",
+    headers: { "xi-api-key": key(), "content-type": "application/json", accept: "audio/mpeg" },
+    body: JSON.stringify({
+      text: input.text,
+      model_id: input.model,
+      voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0, use_speaker_boost: true, speed: 1.05 },
+    }),
+    signal: input.signal,
+  });
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => null);
+    throw new ConnectorError(friendlyStatus(NAME, res.status, detailOf(body)), res.status, res.status === 429 || res.status >= 500);
+  }
+  const used = Number(res.headers.get("character-cost") ?? res.headers.get("x-character-count") ?? NaN);
+  return { body: res.body, characters: Number.isFinite(used) ? used : input.text.length };
+}
+
+/**
+ * A single-use token for ElevenLabs' realtime speech to text (Scribe), so the browser streams the microphone straight
+ * to ElevenLabs without ever seeing the key. Good for one session, used within 15 minutes; the session lasts up to
+ * `seconds`.
+ */
+export async function realtimeSttToken(seconds: number): Promise<string> {
+  const r = await fetchJson<{ token?: string }>(
+    NAME,
+    `${BASE}/v1/single-use-token/realtime_scribe?max_session_duration_seconds=${Math.max(60, Math.round(seconds))}`,
+    { method: "POST", headers: { "xi-api-key": key() } },
+    10_000,
+  );
+  if (!r.token) throw new ConnectorError("ElevenLabs didn't send a speech token.");
+  return r.token;
+}

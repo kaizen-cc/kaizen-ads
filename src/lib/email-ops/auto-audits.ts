@@ -10,6 +10,7 @@ import { emailScoreOf } from "./score";
 // Email accounts in the red audit themselves, like the ads accounts do: when a client's email score is under 60 and it
 // has no audit yet, or its last audit is three days old and nobody has started on it (no action ticked, no sprint move
 // begun), a fresh one runs and the client's email strategist hears about it (the Head of Email when nobody is seated).
+// The finished audit opens its sprint by itself (runEmailAudit), so the plan is followed and checked from the start.
 // A few per run so the AI calls stay spread out; the lowest scores go first. Called hourly by the context cron
 // (step=email_audits).
 
@@ -61,13 +62,15 @@ async function tellTeam(admin: SupabaseClient, auditId: string, d: Due) {
   const to = whoHears(await emailTeamFor(admin, d.clientId));
   if (!to.length) return;
   const first = (res?.actions ?? []).filter((x) => x.when === "now").slice(0, 3).map((x) => `· ${x.title}`);
+  // The audit opened its sprint by itself (a red account): the link goes to the moves, which the checks follow
+  const { data: sprint } = await admin.from("email_sprints").select("id").eq("audit_id", auditId).eq("status", "active").maybeSingle();
   await admin.from("notifications").upsert(
     to.map((id) => ({
       profile_id: id,
       kind: "email_audit",
       title: `${d.name}'s email score is ${a.score ?? d.score}: the audit is ready`,
-      body: [res?.verdict?.headline ?? "", first.length ? `To do first:\n${first.join("\n")}` : ""].filter(Boolean).join("\n\n").slice(0, 1000),
-      href: `/kpis/email-audit/${auditId}`,
+      body: [res?.verdict?.headline ?? "", first.length ? `To do first:\n${first.join("\n")}` : "", sprint ? "The sprint is open with these moves, and its checks look in the account for them." : ""].filter(Boolean).join("\n\n").slice(0, 1000),
+      href: sprint ? `/kpis/email-sprint/${sprint.id}` : `/kpis/email-audit/${auditId}`,
       client_id: d.clientId,
       key: `email-audit:${auditId}`,
       priority: "critical",

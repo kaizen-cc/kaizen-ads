@@ -97,7 +97,29 @@ export type LaunchCardRef = { type: "launch"; id: string; client: string };
 export type ConnectCard = { type: "connect"; key: string; name: string; reason: string; reconnect?: boolean; auth?: string };
 /** A connector's tool that changes something, waiting for the person's Run (or Cancel) before it's switched on */
 export type ConnectorConfirmCard = { type: "connector_confirm"; id: string; key: string; name: string; tool: string; summary: string; input: string; status: "pending" | "approved" | "cancelled" };
-export type Card = MetricsCard | CopyCard | BriefCard | LinkCard | PlanCard | ListCard | LaunchCardRef | ConnectCard | ConnectorConfirmCard;
+/**
+ * An email design from the email design studio (src/lib/ai-tools/email-design.ts): one option, or up to three layout
+ * options of the same copy, each previewed from /api/ai/email-design/<id>?v=<version> (desktop, mobile, dark mode)
+ */
+export type EmailDesignCard = {
+  type: "email_design";
+  client: string | null;
+  title: string;
+  /** Whether the person has Figma connected in Kaizen AI (its styles can be read before designing) */
+  figma: boolean;
+  options: {
+    id: string;
+    version: number;
+    name: string;
+    note: string;
+    subject: string | null;
+    preheader: string | null;
+    checks: { ok: boolean; text: string }[];
+    /** A week-long public link to the preview, for Figma's html.to.design import (null when links can't be signed) */
+    shareUrl: string | null;
+  }[];
+};
+export type Card = MetricsCard | CopyCard | BriefCard | LinkCard | PlanCard | ListCard | LaunchCardRef | ConnectCard | ConnectorConfirmCard | EmailDesignCard;
 
 export type ChatMessage = {
   id: string;
