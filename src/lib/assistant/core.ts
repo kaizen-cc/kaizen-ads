@@ -135,7 +135,33 @@ export function safeLink(href: unknown): { href: string; external: boolean } | n
 
 // ─── Personal memory ────────────────────────────────────────────────────────
 
-export const FACT_TOPICS = ["birthday", "family", "trip", "preference", "work", "hobby", "likes", "needs", "goals", "focus", "routine", "uses", "other"] as const;
+export const FACT_TOPICS = ["birthday", "family", "trip", "preference", "work", "hobby", "likes", "needs", "goals", "focus", "routine", "uses", "favorites", "other"] as const;
+
+/**
+ * Casual questions the assistant drops in now and then at the start of a call, like a friend would ("so I've been
+ * thinking since we last talked, what's your favorite movie?"). Each is asked once; the answer is kept under favorites
+ * and used later in conversation and for the odd analogy. The key is what the saved note starts with.
+ */
+export const CASUAL: { key: string; ask: string }[] = [
+  { key: "Favorite movie", ask: "what's your all-time favorite movie?" },
+  { key: "Favorite food", ask: "what's the one meal you'd never get tired of?" },
+  { key: "Music", ask: "what have you had on repeat lately?" },
+  { key: "Favorite show", ask: "what's the last show you binged?" },
+  { key: "Sports team", ask: "do you root for a team? Which one?" },
+  { key: "Coffee", ask: "coffee or tea, and how do you take it?" },
+  { key: "Dream trip", ask: "if you could be anywhere in the world next week, where?" },
+  { key: "Weekend", ask: "what's your ideal Saturday look like?" },
+  { key: "Childhood dream job", ask: "what did you want to be when you were a kid?" },
+  { key: "Hidden talent", ask: "got a hidden talent most people at work don't know about?" },
+];
+
+/** About one call in three that starts fresh or a few hours later, a casual question they haven't been asked yet */
+export function casualFor(memory: readonly Pick<MemoryRow, "kind" | "topic" | "body">[], seed: number): { key: string; ask: string } | null {
+  if (Math.abs(seed) % 3 !== 0) return null;
+  const known = memory.filter((m) => m.kind === "fact" && m.topic === "favorites").map((m) => m.body.toLowerCase());
+  const left = CASUAL.filter((c) => !known.some((b) => b.startsWith(c.key.toLowerCase())));
+  return left.length ? left[Math.abs(seed >> 3) % left.length] : null;
+}
 
 /**
  * Getting to know them at work, asked on the first call and over the next ones until each is known: what they love
@@ -246,6 +272,12 @@ export function assistantGreeting(input: {
   }
   // The very first call: hello, and ask to get to know them before diving in
   if (!memory.length) return { text: `Hey ${name}! I'm your new assistant. Before we dive in, mind if I ask you a few quick questions so I can actually be useful to you?`, followed: null };
+  // Now and then, instead of a plain hello, a casual question (after birthdays, call-backs and follow-ups, never on the first call)
+  const casual = memory.length && input.mode !== "continue" ? casualFor(memory, seed) : null;
+  if (casual) {
+    const lead = [`Hey ${name}! Random one before we start: I've been thinking since we last talked,`, `Hi ${name}! Quick one first, totally unrelated:`, `Hey ${name}! Before anything else, I've been curious:`];
+    return { text: `${lead[seed % lead.length]} ${casual.ask}`, followed: null };
+  }
   // A fresh start: a hello that fits the time of day (a morning call usually wants the day's rundown)
   const h = input.hour ?? 12;
   const plain =

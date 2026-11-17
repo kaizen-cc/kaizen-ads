@@ -234,7 +234,21 @@ describe("the assistant's hello follows the time, like the agents'", () => {
     const { assistantGreeting } = await import("@/lib/assistant/core");
     const memory = [{ id: "m1", profile_id: "p", kind: "fact" as const, topic: "likes", body: "Building reports", on_date: null, follow_up_on: null, followed_up_at: null, created_at: "", updated_at: "" }];
     expect(assistantGreeting({ name: "Dana", memory, today: "2026-11-18", mode: "soon", timed: "Hey again, Dana! Good to hear from you so soon." }).text).toBe("Hey again, Dana! Good to hear from you so soon.");
-    expect(assistantGreeting({ name: "Dana", memory, today: "2026-11-18", mode: "fresh", hour: 8, seed: 0 }).text).toContain("Morning, Dana");
-    expect(assistantGreeting({ name: "Dana", memory, today: "2026-11-18", mode: "fresh", hour: 19, seed: 0 }).text).toContain("working late");
+    // Seed 1: a plain hello (seed 0 would open with a casual question instead)
+    expect(assistantGreeting({ name: "Dana", memory, today: "2026-11-18", mode: "fresh", hour: 8, seed: 1 }).text).toMatch(/morning, Dana/i);
+    expect(assistantGreeting({ name: "Dana", memory, today: "2026-11-18", mode: "fresh", hour: 19, seed: 1 }).text).toMatch(/evening, Dana|working late/i);
+    expect(assistantGreeting({ name: "Dana", memory, today: "2026-11-18", mode: "fresh", hour: 10, seed: 0 }).text).toMatch(/\?$/);
+  });
+});
+
+
+describe("casual questions now and then", () => {
+  it("asks about one call in three, never the same one twice", async () => {
+    const { casualFor, CASUAL } = await import("@/lib/assistant/core");
+    expect(casualFor([], 1)).toBeNull();
+    const first = casualFor([], 0)!;
+    expect(CASUAL.map((c) => c.key)).toContain(first.key);
+    const known = CASUAL.map((c) => ({ kind: "fact" as const, topic: "favorites", body: `${c.key}: something` }));
+    expect(casualFor(known, 0)).toBeNull();
   });
 });
