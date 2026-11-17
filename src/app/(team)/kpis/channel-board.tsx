@@ -9,7 +9,7 @@ import { KlaviyoLocations } from "@/components/klaviyo-locations";
 import { BoardLocations } from "./board-locations";
 import { KlaviyoMetricPicker } from "@/components/klaviyo-metric-picker";
 import { ChannelStatusPill, ConnectCta, Gauge, SupportChips, TONE, mainCaption, mainText, needsConnecting, num, paceLine, signed, targetText } from "@/components/channel-parts";
-import { BAND_TONE, ScoreBadge, ScoreChecks, WeighingDown, checkText } from "@/components/email-score-parts";
+import { BAND_TONE, ScoreBadge, ScoreChecks, WeighingDown, checkText, pointsLost } from "@/components/email-score-parts";
 import { field, label as labelCls } from "@/components/ui";
 import { freshness } from "@/lib/dates";
 import { moneyShort, pctText, STATUS_LABEL, type ChannelStatus, type Month } from "@/lib/channel-kpis/calc";
@@ -313,40 +313,63 @@ function SplitBar({ a, b }: { a: number; b: number }) {
 }
 
 /**
- * Who is on the account: the strategist (in charge) first, then the designer and builder (graphic designer and video
- * editor on social). A name the Account Overview sheet gives who isn't in the app yet is dimmed, with why on hover.
+ * Who is in charge of the account: the strategist alone (the designer, builder and creatives are in the sheet that opens).
+ * A name the Account Overview sheet gives who isn't in the app yet is dimmed, with why on hover.
  */
 function Crew({ r }: { r: ChannelRow }) {
   const lead = r.team.filter((t) => t.seat === "Strategist");
-  const rest = r.team.filter((t) => t.seat !== "Strategist");
-  const who = (t: ChannelRow["team"][number]) => (
-    <span key={`${t.seat}-${t.name}`} className={t.pending ? "opacity-60" : undefined} title={t.pending ? `${t.name} is named in the Account Overview sheet but isn't in the app yet: invite them and the next sheet sync seats them` : undefined}>
-      {t.name}
-    </span>
-  );
   return (
-    <>
-      <p className="mt-0.5 truncate text-xs text-faint">
-        {r.kaizenId != null && <span className="tabular">ID {r.kaizenId} · </span>}
-        {lead.length ? (
-          <>
-            <span className="text-muted">Strategist</span> {lead.map((t, i) => [i ? " + " : "", who(t)])}
-          </>
-        ) : (
-          "No strategist yet"
-        )}
-      </p>
-      {rest.length > 0 && (
-        <p className="truncate text-xs text-faint">
-          {rest.map((t, i) => (
-            <span key={`${t.seat}-${t.name}`}>
-              {i ? " · " : ""}
-              <span className="text-muted">{t.seat}</span> {who(t)}
-            </span>
-          ))}
-        </p>
+    <p className="mt-0.5 truncate text-xs text-faint">
+      {r.kaizenId != null && <span className="tabular">ID {r.kaizenId} · </span>}
+      {lead.length ? (
+        <>
+          <span className="text-muted">Strategist</span>{" "}
+          {lead.map((t, i) => [
+            i ? " + " : "",
+            <span key={t.name} className={t.pending ? "opacity-60" : undefined} title={t.pending ? `${t.name} is named in the Account Overview sheet but isn't in the app yet: invite them and the next sheet sync seats them` : undefined}>
+              {t.name}
+            </span>,
+          ])}
+        </>
+      ) : (
+        "No strategist yet"
       )}
-    </>
+    </p>
+  );
+}
+
+/**
+ * The score with what drags it down on hover: every check under its bar and the points it costs, worst first, or a cheer
+ * when nothing is. It sits inside the card's button, so it's hover only; a tap or the keyboard opens the sheet with the
+ * same breakdown (and the card's footer lists the top two).
+ */
+function ScoreHover({ r }: { r: ChannelRow }) {
+  if (!r.score) return null;
+  const down = r.score.weighingDown;
+  return (
+    <span className="group/score relative inline-flex">
+      <ScoreBadge r={r.score} />
+      <span
+        aria-hidden
+        className="pointer-events-none invisible absolute left-0 top-full z-30 mt-2 w-[min(19rem,78vw)] translate-y-1 rounded-[14px] border border-line bg-surface-2 p-3 text-left opacity-0 shadow-xl transition-all duration-150 group-hover/score:visible group-hover/score:translate-y-0 group-hover/score:opacity-100"
+      >
+        {down.length ? (
+          <span className="grid gap-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">What&apos;s dragging it down</span>
+            {down.map((c) => (
+              <span key={c.key} className="flex items-baseline justify-between gap-3 text-[12.5px]">
+                <span className="min-w-0 text-fg">
+                  {c.label} <span className="tabular text-faint">{checkText(c.unit, c.value, r.currency, c.bar)} vs {checkText(c.unit, c.bar, r.currency)}</span>
+                </span>
+                <span className="tabular shrink-0 text-bad">-{pointsLost(c)} pts</span>
+              </span>
+            ))}
+          </span>
+        ) : (
+          <span className="block text-[13px] font-medium text-ok">This account is crushing it!</span>
+        )}
+      </span>
+    </span>
   );
 }
 
@@ -399,7 +422,7 @@ function Card({ r, reading, active, onOpen }: { r: ChannelRow; reading: ReadStat
               <>
                 {r.score ? (
                   <div className="flex items-baseline gap-2">
-                    <ScoreBadge r={r.score} />
+                    <ScoreHover r={r} />
                     <span className="truncate text-xs text-faint">{mainCaption(r)}</span>
                   </div>
                 ) : (
@@ -624,7 +647,7 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
               {!connect && r.line === "email" && r.score && (
                 <section className="grid gap-4 rounded-[20px] border border-line bg-surface p-4 md:grid-cols-2 md:p-5">
                   <div className="grid content-start gap-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">The seven checks</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">The checks</p>
                     <ScoreChecks score={r.score} currency={r.currency} />
                     <p className="text-[11px] text-faint">Last 30 days, to {when(r.score.window.to)}. Flows are Klaviyo&apos;s 30-day numbers.</p>
                   </div>

@@ -1,22 +1,32 @@
 // The email account score (0 to 100): how healthy a client's Klaviyo account is, from the seven checks Kaizen's email
-// team runs. Email has no single KPI like ads (too many moving parts), so the score is what colours an account, orders
+// team runs plus the month's revenue pace. Email has no single KPI like ads (too many moving parts), so the score is what colours an account, orders
 // the team's day and shows what is weighing it down. Pure, so the board, the Overview, the reports, the audits and the
 // AI all score an account the same way. Window: the last 30 days (flows come as Klaviyo's 30-day numbers).
 //
 // Each check has a bar and a weight. Money weighs most. A check at or over its bar gets all its points; under it, its
-// share of the bar (27% attributed against a 30% bar earns 90% of 20 points), so the score moves smoothly.
+// share of the bar (27% attributed against a 30% bar earns 90% of its points), so the score moves smoothly.
+//
+// Revenue pace (where the month's attributed revenue lands at this pace, against the month's target: last month +10%, or
+// a higher one typed on the board) is worth a quarter of the score, so an account with strong rates but far behind on
+// revenue can't sit at 100. Its credit is steeper: on pace earns it all, half the pace or less earns nothing. It's left
+// out (the rest scaled up, exactly as before it existed) with no target or in the first days of the month. The other
+// seven keep their old proportions (20/20/15/11/11/11/12 scaled to 75).
 
-export type EmailCheckKey = "attributed" | "rpr" | "deliverability" | "campaignOpen" | "campaignClick" | "flowOpen" | "flowClick";
+export type EmailCheckKey = "pace" | "attributed" | "rpr" | "deliverability" | "campaignOpen" | "campaignClick" | "flowOpen" | "flowClick";
 
 export const EMAIL_CHECKS: readonly { key: EmailCheckKey; label: string; bar: number; weight: number; unit: "pct" | "money" | "score" }[] = [
-  { key: "attributed", label: "Attributed revenue", bar: 0.3, weight: 20, unit: "pct" },
-  { key: "rpr", label: "Revenue per recipient", bar: 0.15, weight: 20, unit: "money" },
-  { key: "deliverability", label: "Deliverability", bar: 65, weight: 15, unit: "score" },
-  { key: "campaignOpen", label: "Campaign open rate", bar: 0.3, weight: 11, unit: "pct" },
-  { key: "campaignClick", label: "Campaign click rate", bar: 0.01, weight: 11, unit: "pct" },
-  { key: "flowOpen", label: "Flow open rate", bar: 0.35, weight: 11, unit: "pct" },
-  { key: "flowClick", label: "Flow click rate", bar: 0.015, weight: 12, unit: "pct" },
+  { key: "pace", label: "Revenue pace", bar: 1, weight: 25, unit: "pct" },
+  { key: "attributed", label: "Attributed revenue", bar: 0.3, weight: 15, unit: "pct" },
+  { key: "rpr", label: "Revenue per recipient", bar: 0.15, weight: 15, unit: "money" },
+  { key: "deliverability", label: "Deliverability", bar: 65, weight: 11.25, unit: "score" },
+  { key: "campaignOpen", label: "Campaign open rate", bar: 0.3, weight: 8.25, unit: "pct" },
+  { key: "campaignClick", label: "Campaign click rate", bar: 0.01, weight: 8.25, unit: "pct" },
+  { key: "flowOpen", label: "Flow open rate", bar: 0.35, weight: 8.25, unit: "pct" },
+  { key: "flowClick", label: "Flow click rate", bar: 0.015, weight: 9, unit: "pct" },
 ];
+
+/** Revenue pace earns nothing at half the pace or less, all of it on pace, in a straight line between */
+const PACE_FLOOR = 0.5;
 
 /** Green from 80, yellow from 60, red under 60 */
 export type EmailBand = "good" | "watch" | "bad";
@@ -24,6 +34,8 @@ export const emailBand = (score: number): EmailBand => (score >= 80 ? "good" : s
 
 /** The last 30 days of an account, as rates and totals (null where Klaviyo gave nothing to measure) */
 export type EmailInputs = {
+  /** Where the month lands at this pace over its target (1 = on pace); null with no target or too early in the month */
+  pace?: number | null;
   /** Klaviyo-attributed revenue / the store's revenue */
   attributed: number | null;
   /** Attributed revenue / recipients (campaigns and flows) */
@@ -47,8 +59,8 @@ const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
  */
 export function emailScore(i: EmailInputs): EmailScore {
   const checks: EmailCheck[] = EMAIL_CHECKS.map((c) => {
-    const value = i[c.key];
-    const share = value === null || !Number.isFinite(value) ? null : clamp01(value / c.bar);
+    const value = i[c.key] ?? null;
+    const share = value === null || !Number.isFinite(value) ? null : c.key === "pace" ? clamp01((value - PACE_FLOOR) / (c.bar - PACE_FLOOR)) : clamp01(value / c.bar);
     return { key: c.key, label: c.label, value: value ?? null, bar: c.bar, weight: c.weight, unit: c.unit, points: share === null ? 0 : share * c.weight, met: value !== null && value >= c.bar };
   });
   const measured = checks.filter((c) => c.value !== null);

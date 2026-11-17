@@ -1,5 +1,6 @@
 import { EMAIL_CHECKS } from "./email-score";
-import { isLiveFlow, scoreFromRows, type EmailScoreResult } from "./email-score-calc";
+import { isLiveFlow, paceInput, scoreFromRows, type EmailScoreResult } from "./email-score-calc";
+import { revenueTarget } from "./email-metrics";
 
 // The pure side of the account breakdown (campaigns and flows under the score): row shapes, the colour of a rate against
 // its bar, the campaign tabs and the flow sort. Shared by the KPI board and the client's Email panel.
@@ -95,6 +96,8 @@ export function scoreFromKlaviyo(k: {
   today: string;
   /** False when the source reports no revenue: the money checks are left out */
   revenueMeasured?: boolean;
+  /** A monthly revenue target typed on the board; the pace check uses last month +10% when it's higher or missing */
+  targetManual?: number | null;
   daily: { date: string; revenue: number; storeRevenue: number | null; recipients: number }[];
   campaigns: { channel: string; sendTime: string | null; recipients: number; delivered: number; bounced: number; spamComplaints: number; unsubscribes: number; opensUnique: number; openRate: number | null; clickRate: number | null }[];
   flows: { status: string | null; recipients30: number; openRate30: number | null; clickRate30: number | null }[];
@@ -102,12 +105,22 @@ export function scoreFromKlaviyo(k: {
   const shift = (day: string, n: number) => new Date(Date.parse(`${day}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
   const from = shift(k.today, -29);
   const ny = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  // The revenue pace check, the way the board works it out: this month so far against last month +10% (or higher by hand)
+  const [y, m, dom] = k.today.split("-").map(Number);
+  const start = k.today.slice(0, 8) + "01";
+  const prevEnd = shift(start, -1);
+  const prevStart = prevEnd.slice(0, 8) + "01";
+  const sum = (a: string, b: string) => k.daily.filter((d) => d.date >= a && d.date <= b).reduce((n, d) => n + d.revenue, 0);
+  const hadLast = k.daily.some((d) => d.date >= prevStart && d.date <= prevEnd);
+  const target = revenueTarget(hadLast ? sum(prevStart, prevEnd) : null, k.targetManual ?? null).target;
+  const pace = paceInput(sum(start, k.today), target, { dayOfMonth: dom, daysInMonth: new Date(Date.UTC(y, m, 0)).getUTCDate() });
   return scoreFromRows(
     {
       days: k.daily.filter((d) => d.date >= from && d.date <= k.today).map((d) => ({ revenue: d.revenue, storeRevenue: d.storeRevenue, campaignRecipients: d.recipients, flowRecipients: 0 })),
       campaigns: k.campaigns.filter((c) => c.sendTime && ny(c.sendTime) >= from && ny(c.sendTime) <= k.today).map((c) => ({ channel: c.channel, recipients: c.recipients, delivered: c.delivered, bounced: c.bounced, spam: c.spamComplaints, unsubscribes: c.unsubscribes, opens: c.opensUnique, openRate: c.openRate, clickRate: c.clickRate })),
       flows: k.flows.map((f) => ({ status: f.status, recipients30: f.recipients30, openRate30: f.openRate30, clickRate30: f.clickRate30 })),
       ...(k.revenueMeasured === false ? { noRevenue: true } : {}),
+      pace,
     },
     { from, to: k.today },
   );

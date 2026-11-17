@@ -1,9 +1,9 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { etToday, shiftDay } from "@/lib/channel-kpis/calc";
-import { conversionMetricsOf } from "./email-metrics";
+import { etToday, monthOf, shiftDay } from "@/lib/channel-kpis/calc";
+import { conversionMetricsOf, revenueTarget } from "./email-metrics";
 import { emailConnection } from "./email-providers/which";
-import { scoreFromRows, type EmailScoreResult, type MetricDay, type ScoreCampaign, type ScoreDay, type ScoreFlow } from "./email-score-calc";
+import { paceInput, scoreFromRows, type EmailScoreResult, type MetricDay, type ScoreCampaign, type ScoreDay, type ScoreFlow } from "./email-score-calc";
 
 // Loads each client's email account score from the synced Klaviyo tables: the last 30 days, New York dates. Pass the
 // server client for an all-clients read (the Overview, reports, audits) or a person's session (RLS then limits it).
@@ -57,10 +57,13 @@ export async function loadEmailScores(admin: SupabaseClient, clientIds: string[]
   if (!clientIds.length) return out;
   const to = etToday();
   const from = shiftDay(to, -29);
+  // The month and the one before it too, for the revenue pace check (the board's target: last month +10%, or higher by hand)
+  const month = monthOf(to);
+  const readFrom = month.prevStart < from ? month.prevStart : from;
   const ranked = ranks ?? (await rankedMetrics(admin, clientIds).catch(() => new Map<string, string[]>()));
   const extraIds = [...new Set([...ranked.values()].flatMap((l) => l.slice(1)))];
-  const [days, camps, flows, metricDays] = await Promise.all([
-    readAll<Record<string, unknown>>((a, b) => admin.from("klaviyo_daily").select("client_id, date, revenue, store_revenue, campaign_recipients, flow_recipients").in("client_id", clientIds).gte("date", from).lte("date", to).order("client_id").order("date").range(a, b)),
+  const [allDays, camps, flows, metricDays, manual] = await Promise.all([
+    readAll<Record<string, unknown>>((a, b) => admin.from("klaviyo_daily").select("client_id, date, revenue, store_revenue, campaign_recipients, flow_recipients").in("client_id", clientIds).gte("date", readFrom).lte("date", to).order("client_id").order("date").range(a, b)),
     // A day of slack either side of the window, then cut to New York dates below
     readAll<Record<string, unknown>>((a, b) =>
       admin
@@ -78,7 +81,22 @@ export async function loadEmailScores(admin: SupabaseClient, clientIds: string[]
     extraIds.length
       ? readAll<Record<string, unknown>>((a, b) => admin.from("klaviyo_metric_daily").select("client_id, metric_id, date, revenue, store_revenue").in("client_id", clientIds).in("metric_id", extraIds).gte("date", from).lte("date", to).order("client_id").order("metric_id").order("date").range(a, b))
       : Promise.resolve([] as Record<string, unknown>[]),
+    // A target typed on the board (quietly none before its table exists, or where the session can't read it)
+    admin
+      .from("channel_targets")
+      .select("client_id, target")
+      .eq("line", "email")
+      .in("client_id", clientIds)
+      .then((r) => new Map((r.error ? [] : (r.data ?? [])).map((t) => [t.client_id as string, t.target == null ? null : Number(t.target)]))),
   ]);
+  const days = allDays.filter((d) => (d.date as string) >= from);
+  const sumOf = (rows: Record<string, unknown>[]) => rows.reduce((n, r) => n + num(r.revenue), 0);
+  const paceBy = new Map<string, number | null>();
+  for (const [id, rows] of groupBy(allDays, (r) => r).entries()) {
+    const last = rows.filter((r) => (r.date as string) >= month.prevStart && (r.date as string) <= month.prevEnd);
+    const target = revenueTarget(last.length ? sumOf(last) : null, manual.get(id) ?? null).target;
+    paceBy.set(id, paceInput(sumOf(rows.filter((r) => (r.date as string) >= month.start)), target, month));
+  }
   const inWindow = camps.filter((c) => {
     const d = c.send_time ? nyDay(c.send_time as string) : "";
     return d >= from && d <= to;
@@ -96,7 +114,7 @@ export async function loadEmailScores(admin: SupabaseClient, clientIds: string[]
   for (const id of clientIds) {
     if (!dayBy.has(id) && !campBy.has(id) && !flowBy.has(id)) continue;
     const extra = (ranked.get(id) ?? []).slice(1).map((m) => metricBy.get(`${id}:${m}`) ?? []);
-    out.set(id, scoreFromRows({ days: dayBy.get(id) ?? [], campaigns: campBy.get(id) ?? [], flows: flowBy.get(id) ?? [], ...(extra.length ? { extra } : {}), ...(noRevenue?.has(id) ? { noRevenue: true } : {}) }, { from, to }));
+    out.set(id, scoreFromRows({ days: dayBy.get(id) ?? [], campaigns: campBy.get(id) ?? [], flows: flowBy.get(id) ?? [], ...(extra.length ? { extra } : {}), ...(noRevenue?.has(id) ? { noRevenue: true } : {}), pace: paceBy.get(id) ?? null }, { from, to }));
   }
   return out;
 }

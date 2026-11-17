@@ -498,7 +498,7 @@ function Intro({ k }: { k: ClientKlaviyo }) {
   );
 }
 
-/** The account score at the top of the Overview: the seven checks and what is weighing it down */
+/** The account score at the top of the Overview: the checks and what is weighing it down */
 function ScoreSection({ k }: { k: ClientKlaviyo }) {
   const score = useMemo(() => scoreFromKlaviyo(k), [k]);
   if (score.unmeasured.length >= score.checks.length) return null;

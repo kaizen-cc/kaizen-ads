@@ -27,7 +27,20 @@ describe("emailScore", () => {
   it("leaves out what it can't measure and scales the rest", () => {
     const s = emailScore({ ...healthy, campaignOpen: null, campaignClick: null });
     expect(s.score).toBe(100);
-    expect(s.unmeasured).toEqual(["campaignOpen", "campaignClick"]);
+    expect(s.unmeasured).toEqual(["pace", "campaignOpen", "campaignClick"]);
+  });
+  it("revenue pace: strong rates far behind on revenue can't sit at 100", () => {
+    // 38% of pace (the Aldecoa case): nothing from the quarter pace is worth, so the account drops to watch
+    const behind = emailScore({ ...healthy, pace: 0.38 });
+    expect(behind.score).toBe(75);
+    expect(behind.band).toBe("watch");
+    expect(behind.weighingDown[0].key).toBe("pace");
+    // Partial credit in a straight line from half the pace (0) to on pace (all 25)
+    expect(emailScore({ ...healthy, pace: 0.85 }).score).toBe(93);
+    expect(emailScore({ ...healthy, pace: 1.2 }).score).toBe(100);
+    // Without a target (or early in the month) it's left out and the rest score exactly as before
+    expect(emailScore({ ...healthy, campaignClick: 0.005 }).score).toBe(emailScore({ ...healthy, campaignClick: 0.005, pace: null }).score);
+    expect(emailScore({ ...healthy, campaignClick: 0.005 }).score).toBe(95);
   });
   it("bands at 80 and 60", () => {
     expect(emailBand(80)).toBe("good");
@@ -51,5 +64,16 @@ describe("deliverabilityScore", () => {
   it("drops with bounces and spam complaints", () => {
     const s = deliverabilityScore({ recipients: 1000, delivered: 970, bounced: 30, spam: 3, unsubscribes: 15, opens: 200, clicks: 5 })!;
     expect(s.score).toBeLessThan(65);
+  });
+});
+
+describe("paceInput", () => {
+  it("projects the month against its target, not judged in the first three days unless the target is met", async () => {
+    const { paceInput } = await import("@/lib/email-score-calc");
+    // Day 15 of 30, $280 so far, target $1,107: lands at $580, 52% of the target
+    expect(paceInput(280, 1107, { dayOfMonth: 15, daysInMonth: 30 })).toBeCloseTo(0.524, 2);
+    expect(paceInput(100, 1000, { dayOfMonth: 2, daysInMonth: 30 })).toBeNull();
+    expect(paceInput(1200, 1000, { dayOfMonth: 2, daysInMonth: 30 })).toBeGreaterThanOrEqual(1);
+    expect(paceInput(500, null, { dayOfMonth: 15, daysInMonth: 30 })).toBeNull();
   });
 });

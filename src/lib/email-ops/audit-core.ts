@@ -55,7 +55,7 @@ export const EMAIL_AUDIT_SCHEMA = obj({
 });
 
 export const EMAIL_AUDIT_SYSTEM = `You are Kaizen Marketing's Email Strategist, auditing one client's Klaviyo account for the email strategist who holds it. This is a real audit and the team acts on it today. Speak to the strategist directly, in the first person ("I found", "I'd"), plain and specific.
-Read everything given: the email score and its seven checks (each value against its bar and the points it costs), the last 30 days against the 30 before, campaigns with subject lines and results, flows and which key flows are missing, list and segment health, deliverability signals, and the client page (Brand Bible, memory, calls) when it is given.
+Read everything given: the email score and its eight checks (the month's revenue pace against its target first) (each value against its bar and the points it costs), the last 30 days against the 30 before, campaigns with subject lines and results, flows and which key flows are missing, list and segment health, deliverability signals, and the client page (Brand Bible, memory, calls) when it is given.
 Argue from this account's numbers. Every cause and action names the check or the campaign or flow it rests on, with the value against its bar. Order by money and risk: deliverability first when it is under its bar (it caps everything), then the flows that earn while nobody works, then campaign cadence, offers, segmentation and subject lines. Never recommend sending harder to a list that is bouncing, complaining or unsubscribing: a smaller, warmer segment first. A check with nothing to measure is not a failure: say what is missing to measure it. If the data is too thin to judge something, say so instead of guessing, and do not invent a benchmark that is not in what you were given.
 Nothing here sends, edits or schedules in Klaviyo: every action is made by the email team in Klaviyo and ticked off in Kaizen Ads. Refer to people by role, never by name. No em dashes.
 
@@ -82,6 +82,7 @@ export function checkLine(c: EmailCheck): string {
 export type RuleFinding = { title: string; area: EmailArea; severity: "high" | "medium" | "low"; evidence: string[] };
 
 const CHECK_AREA: Record<EmailCheck["key"], EmailArea> = {
+  pace: "campaigns",
   attributed: "flows",
   rpr: "campaigns",
   deliverability: "deliverability",

@@ -1,7 +1,7 @@
 import { deliverabilityScore, emailScore, type EmailInputs, type EmailScore } from "./email-score";
 import { blendByRank, effectiveWeights } from "./email-metrics";
 
-// The pure half of the email score loader: raw Klaviyo rows in, the seven inputs out. No database, so it is tested alone.
+// The pure half of the email score loader: raw Klaviyo rows in, the score's inputs out. No database, so it is tested alone.
 
 export type ScoreDay = { revenue: number; storeRevenue: number | null; campaignRecipients: number; flowRecipients: number };
 export type ScoreCampaign = { channel: string | null; recipients: number; delivered: number; bounced: number; spam: number; unsubscribes: number; opens: number; openRate: number | null; clickRate: number | null };
@@ -135,8 +135,23 @@ export function aggregateEmailScore(d: { days: ScoreDay[]; campaigns: ScoreCampa
   };
 }
 
-/** Rows in, the full result out */
-export function scoreFromRows(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[]; extra?: MetricDay[][]; noRevenue?: boolean }, window: { from: string; to: string }): EmailScoreResult {
+/**
+ * The revenue pace input: where the month lands at this pace (today counts as half a day, as the board's pace does) over
+ * the month's target. Already at the target counts as on pace at least. Null with no target, or in the first three days
+ * of the month unless the target is already met (too thin to judge), the same rule the board's pace colour follows.
+ */
+export function paceInput(mtd: number, target: number | null | undefined, m: { dayOfMonth: number; daysInMonth: number }): number | null {
+  if (target == null || !(target > 0) || m.dayOfMonth < 1) return null;
+  const projected = (mtd / Math.max(0.5, m.dayOfMonth - 0.5)) * m.daysInMonth;
+  const ratio = projected / target;
+  if (mtd >= target) return Math.max(1, ratio);
+  if (m.dayOfMonth <= 3) return null;
+  return ratio;
+}
+
+/** Rows in, the full result out (pace: see paceInput; left out when not given) */
+export function scoreFromRows(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[]; extra?: MetricDay[][]; noRevenue?: boolean; pace?: number | null }, window: { from: string; to: string }): EmailScoreResult {
   const a = aggregateEmailScore(d);
+  if (d.pace != null && !d.noRevenue) a.inputs.pace = d.pace;
   return { ...emailScore(a.inputs), ...a, window };
 }
