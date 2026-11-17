@@ -194,18 +194,81 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
         const pick = items.filter((i) =>
           only === "critical" ? i.tier === "critical" : only === "tickets" ? i.source === "ticket" || i.source === "email_ticket" : only === "reports" ? i.source === "report" : only === "replies" ? i.source === "owed" : only === "reminders" ? i.source === "ask" : only === "notifications" ? i.source === "notification" : true,
         );
-        return { count: pick.length, items: pick.slice(0, Math.min(40, Number(input.limit) || 20)).map((i) => ({ tier: i.tier, client: i.client, title: i.title, why: i.why, open: i.href })) };
+        return { count: pick.length, items: pick.slice(0, Math.min(40, Number(input.limit) || 20)).map((i) => ({ id: i.id, tier: i.tier, client: i.client, title: i.title, why: i.why, open: i.href })) };
       },
     },
     {
       name: "open_screen",
-      description: "Opens a screen in the app for the person while the call carries on: a client's page (/clients/<slug>, tabs as ?tab=), the KPI board (/kpis), a report (/reports/<id>), a ticket (/board?t=<number> or /board/email?t=<number>), the Overview (/pipeline), Kaizen AI (/ai). Use when they ask to see something or when showing beats telling. Say in a few words what you opened.",
-      input_schema: { type: "object", properties: { href: { type: "string", description: "An in-app path starting with /" } }, required: ["href"], additionalProperties: false },
+      description: "Takes the person to a screen in the app while the call carries on (take me to a client's page, open the Email Board, show me my reports). Give a client by name (client, with an optional tab: overview, ads, email, social, creative, team, reports) or a place (overview, boards, creative board, email board, clients, kpis, email kpis, reports, kaizen ai, ideas, ads lab, settings, my assistant, notifications), or an exact in-app path (href: a report /reports/<id>, a ticket /board?t=<number> or /board/email?t=<number>). Use it whenever they ask to go somewhere or when showing beats telling; say in a few words what you opened.",
+      input_schema: {
+        type: "object",
+        properties: {
+          client: CLIENT,
+          tab: { type: "string", enum: ["overview", "ads", "email", "social", "creative", "team", "reports"] },
+          place: { type: "string", enum: ["overview", "boards", "creative board", "email board", "clients", "kpis", "email kpis", "reports", "kaizen ai", "ideas", "ads lab", "settings", "my assistant", "notifications"] },
+          href: { type: "string", description: "An in-app path starting with /" },
+        },
+        additionalProperties: false,
+      },
       run: async (input) => {
-        const href = safeAppPath(input.href);
+        const PLACES: Record<string, string> = { overview: "/pipeline", boards: "/board", "creative board": "/board", "email board": "/board/email", clients: "/clients", kpis: "/kpis", "email kpis": "/kpis?p=email", reports: "/reports", "kaizen ai": "/ai", ideas: "/ideas", "ads lab": "/lab", settings: "/settings", "my assistant": "/assistant", notifications: "/notifications" };
+        const TABS: Record<string, string> = { ads: "?service=meta", email: "?service=email", social: "?service=social", creative: "?service=creative", team: "?tab=team", reports: "?tab=reports", overview: "" };
+        let wanted = typeof input.href === "string" ? input.href : null;
+        if (!wanted && input.place) wanted = PLACES[String(input.place)] ?? null;
+        if (!wanted && input.client) {
+          // The client by name, through the person's own session (only clients they can see)
+          const name = String(input.client).trim();
+          const { data } = await ctx.db.from("clients").select("name, slug").is("archived_at", null).ilike("name", `%${name.replace(/[%_]/g, "")}%`).limit(5);
+          const list = (data ?? []) as { name: string; slug: string }[];
+          const hit = list.find((c) => c.name.toLowerCase() === name.toLowerCase()) ?? list[0];
+          if (!hit) return { opened: false, note: `No client called ${name} that they can see. Ask which client they meant.` };
+          wanted = `/clients/${hit.slug}${TABS[String(input.tab ?? "overview")] ?? ""}`;
+        }
+        const href = safeAppPath(wanted);
         if (!href) return { opened: false, note: "That isn't a screen in the app." };
         ctx.emit({ t: "navigate", href });
         return { opened: href };
+      },
+    },
+    {
+      name: "clear_my_item",
+      description: "Clears something off the person's own day when they say it's handled, to dismiss it, or that it isn't theirs (those two are done, dismiss that nudge, that's not mine). Use the ids from my_work. done: they handled it; dismissed: drop the nudge; not_mine: it isn't theirs to do. It leaves their Overview and recap only; it stays for everyone else. Tickets and reports aren't cleared this way: move the ticket or send the report instead. Say what you cleared in a few words.",
+      input_schema: { type: "object", properties: { ids: { type: "array", items: { type: "string" }, description: "Item ids from my_work" }, how: { type: "string", enum: ["done", "dismissed", "not_mine"] } }, required: ["ids", "how"], additionalProperties: false },
+      run: async (input) => {
+        const ids = (Array.isArray(input.ids) ? input.ids : []).map(String).slice(0, 20);
+        const status = input.how === "done" ? "done" : "dismissed";
+        const items = new Map((await myWork(ctx.db, ctx.me)).map((i) => [i.id, i]));
+        const { markItem } = await import("@/lib/item-state");
+        const done: string[] = [];
+        const skipped: string[] = [];
+        for (const id of ids) {
+          const it = items.get(id);
+          const label = it?.title ?? id;
+          try {
+            if (id.startsWith("recap-")) {
+              const { setItem } = await import("@/app/today/actions");
+              await setItem(id.slice(6), status, { topic: it?.kind ?? "work", client: it?.client ?? "", title: label, clientId: null });
+            } else if (id.startsWith("a-") || id.startsWith("next-ask-")) {
+              const askId = id.startsWith("a-") ? id.slice(2) : id.slice(9);
+              await ctx.db.from("agent_asks").update({ status, done_at: new Date().toISOString() }).eq("id", askId).eq("owner_id", ctx.me.id);
+            } else if (id.startsWith("o-")) {
+              const { setItem, dismissOwed } = await import("@/app/today/actions");
+              if (status === "done") await setItem(`owed:${id.slice(2)}`, "done", { topic: "promises", client: it?.client ?? "", title: label, clientId: null });
+              else await dismissOwed(id.slice(2));
+            } else if (id.startsWith("n-")) {
+              await ctx.db.from("notifications").update({ read_at: new Date().toISOString() }).eq("profile_id", ctx.me.id).eq("id", id.slice(2));
+            } else if (id.startsWith("next-")) {
+              await markItem(ctx.db, ctx.me.id, `next:${id.slice(5)}`, status, { topic: "work", client: it?.client ?? "", title: label }, { label, href: it?.href ?? null });
+            } else {
+              skipped.push(label);
+              continue;
+            }
+            done.push(label);
+          } catch {
+            skipped.push(label);
+          }
+        }
+        return { cleared: done, not_cleared: skipped.length ? { items: skipped, why: "Tickets and reports move by their own steps (move_ticket, send the report), or the item wasn't found." } : undefined };
       },
     },
     {

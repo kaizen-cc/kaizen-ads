@@ -296,15 +296,21 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     (bucket === "now" ? now : coming).push(item);
   }
 
+  // Cleared by this person (from the assistant: "that's done", "dismiss it", "not mine"): marked next:<id> for them
+  // only, it stays for everyone else
+  const { data: cleared } = await db.from("daily_items").select("key").eq("profile_id", me.id).like("key", "next:%").in("status", ["done", "dismissed"]);
+  const gone = new Set((cleared ?? []).map((c) => String(c.key).slice(5)));
+  const kept = (xs: NextItem[]) => xs.filter((x) => !gone.has(x.id));
+
   const rank = { bad: 0, warn: 1, brand: 2, ok: 3 } as const;
-  const sort = (xs: NextItem[]) => xs.sort((a, b) => rank[a.tone] - rank[b.tone]);
+  const sort = (xs: NextItem[]) => kept(xs).sort((a, b) => rank[a.tone] - rank[b.tone]);
   return {
     now: sort(now),
     decide: sort(decide),
     watch: sort(watch),
-    bibles,
-    waiting,
-    coming,
+    bibles: kept(bibles),
+    waiting: kept(waiting),
+    coming: kept(coming),
     stats: { onMe: h.mine.length, late: h.mine.filter((r) => r.minutes_over > 0).length, dueToday: h.dueToday, toDecide: decide.length },
   };
 }
