@@ -293,7 +293,12 @@ export async function GET(request: Request) {
     }
     if (step === "asana") {
       const { asanaConfigured, syncAsana } = await import("@/lib/asana");
-      return Response.json(asanaConfigured() ? await syncAsana(admin) : { skipped: "ASANA_TOKEN not set" });
+      if (!asanaConfigured()) return Response.json({ skipped: "ASANA_TOKEN not set" });
+      // The Creative board, then the email board (its own mirror for the Email Board); one failing never stops the other
+      const creative = await syncAsana(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      const { syncAsanaEmail } = await import("@/lib/asana-email");
+      const email = await syncAsanaEmail(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      return Response.json({ creative, email });
     }
     if (step === "email_ops") {
       const { weekday, hour } = nyNow();

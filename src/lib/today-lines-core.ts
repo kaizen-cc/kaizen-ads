@@ -23,6 +23,7 @@ export type LineKind =
   | "email-sprint"
   | "email-idea"
   | "email-location"
+  | "email-ticket"
   | "social-target"
   | "social-drop"
   | "social-quiet"
@@ -38,6 +39,7 @@ export const KIND_SEATS: Record<LineKind, readonly string[]> = {
   "email-sprint": ["email_strategist", "email_designer", "email_builder"],
   "email-idea": ["email_strategist", "email_designer"],
   "email-location": ["email_strategist"],
+  "email-ticket": ["email_strategist", "email_designer", "email_builder"],
   "social-target": ["social_manager"],
   "social-drop": ["social_manager"],
   "social-quiet": ["social_manager", "social_creative"],
@@ -403,6 +405,45 @@ export function locationItem(c: { clientId: string; name: string; slug: string }
     action: { label: "Pick the property", href: `/kpis?p=email&open=${c.clientId}` },
     alt: { label: "Client page", href: `/clients/${c.slug}?service=email` },
   };
+}
+
+export type EmailTicketIn = { id: string; number: number; title: string; clientId: string; client: string; slug: string; stage: string; stageLabel: string; assigneeId: string | null; minutesOver: number; dueOn: string | null };
+
+/**
+ * Email Board tickets in someone's day: their own (assigned to them) when late, due today or past due, or waiting on
+ * them to move it on; for an exec or the Head of Email, anyone's that are 12+ business hours over or past their send
+ * day. With the client, a ticket waits on the client, not on us, so it only shows once its send day has passed.
+ */
+export function emailTicketItems(tickets: readonly EmailTicketIn[], me: Pick<Person, "id">, scope: LineScope, today: string): (TodayDraft & { kind: LineKind })[] {
+  const out: (TodayDraft & { kind: LineKind })[] = [];
+  for (const t of tickets) {
+    const mine = t.assigneeId === me.id;
+    const late = t.minutesOver > 12 * 60;
+    const over = t.minutesOver > 0;
+    const pastDue = Boolean(t.dueOn && t.dueOn < today);
+    const dueToday = t.dueOn === today;
+    const withClient = t.stage === "with_client";
+    if (withClient && !pastDue) continue;
+    if (mine ? !(over || pastDue || dueToday) : !(scope.all && (late || pastDue))) continue;
+    const score = pastDue ? 78 : late ? 72 : dueToday ? 66 : 60;
+    out.push({
+      topic: "email",
+      client: t.client,
+      clientSlug: t.slug,
+      clientId: t.clientId,
+      kind: "email-ticket",
+      key: `email-ticket:${t.id}`,
+      score,
+      stat: pastDue ? { value: day(t.dueOn!), label: "send day passed" } : dueToday ? { value: "Today", label: "sends or goes live" } : { value: `${Math.round(t.minutesOver / 60)}h`, label: "over its turnaround" },
+      title: `E-${t.number} ${t.title}`,
+      story: `${mine ? "Waiting on you" : "Sitting"} in ${t.stageLabel}${pastDue ? `, and its send day (${day(t.dueOn!)}) has passed` : dueToday ? ", and it should go out today" : ""}.`,
+      why: pastDue ? "An email that should already be out" : late ? "Past its turnaround" : dueToday ? "Goes out today" : "Waiting on you",
+      evidence: [],
+      action: { label: "Open the ticket", href: `/board/email?t=${t.number}` },
+      alt: { label: "Client page", href: `/clients/${t.slug}?service=email` },
+    });
+  }
+  return out;
 }
 
 // ─── Ordering by retention risk ────────────────────────────────────────────

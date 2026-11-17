@@ -101,6 +101,9 @@ async function all<T>(path: string, params: Record<string, string>) {
   return out;
 }
 
+/** Every page of a list from Asana (the email board's mirror reads with it too) */
+export const asanaAll = all;
+
 /** Asana's columns → our stages (only stages on the board). "Launched" isn't mirrored: it's done. */
 export const COLUMN_STAGE: [RegExp, Stage | null][] = [
   [/^creative brief/i, "requested"],

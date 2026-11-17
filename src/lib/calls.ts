@@ -451,8 +451,8 @@ const COVER_SCHEMA = {
       type: "array",
       items: {
         type: "object",
-        properties: { commitment: { type: "integer" }, tickets: { type: "array", items: { type: "integer" } }, asana: { type: "array", items: { type: "integer" } } },
-        required: ["commitment", "tickets", "asana"],
+        properties: { commitment: { type: "integer" }, tickets: { type: "array", items: { type: "integer" } }, asana: { type: "array", items: { type: "integer" } }, emails: { type: "array", items: { type: "integer" } } },
+        required: ["commitment", "tickets", "asana", "emails"],
         additionalProperties: false,
       },
     },
@@ -462,6 +462,8 @@ const COVER_SCHEMA = {
 };
 
 type CoverTicket = { number: number; title: string; brief: string | null; created_at: string };
+/** An Email Board ticket (a campaign batch or a flow) */
+type CoverEmail = { number: number; title: string; brief: string | null; kind: string; created_at: string };
 type CoverTask = { gid: string; name: string; notes: string | null; section: string | null; asana_created_at: string };
 
 // A task made the same day just before the call is often the same work (a brief written ahead of the meeting)
@@ -482,6 +484,12 @@ export async function asanaSince(admin: SupabaseClient, clientId: string, since:
   return (data ?? []) as CoverTask[];
 }
 
+/** Email Board tickets for the client made since a moment: an email promise is in motion once one exists */
+async function emailsSince(admin: SupabaseClient, clientId: string, since: string) {
+  const { data, error } = await admin.from("email_tickets").select("number, title, brief, kind, created_at").eq("client_id", clientId).gte("created_at", graced(since)).is("deleted_at", null).order("created_at", { ascending: false }).limit(30);
+  return error ? [] : ((data ?? []) as CoverEmail[]);
+}
+
 /** An Asana task's request: past the standard note at the top when there is one ("Here is what you submitted:") */
 const requestOf = (notes: string | null) => {
   const text = (notes ?? "").replace(/\s+/g, " ").trim();
@@ -490,14 +498,15 @@ const requestOf = (notes: string | null) => {
 };
 
 /** Which promises a ticket in Kaizen Ads or a task in Asana since the call already covers. */
-async function coverCheck(promises: { what: string }[], requests: CoverTicket[], tasks: CoverTask[]) {
-  return askJson<{ covered: { commitment: number; tickets: number[]; asana: number[] }[] }>({
+async function coverCheck(promises: { what: string }[], requests: CoverTicket[], tasks: CoverTask[], emails: CoverEmail[] = [], clientId: string | null = null) {
+  return askJson<{ covered: { commitment: number; tickets: number[]; asana: number[]; emails: number[] }[] }>({
     agent: "calls",
     label: "commitments covered",
+    clientId,
     system:
-      "You check whether promises made on a client call have been turned into creative work since: a ticket in Kaizen Ads, or a task on the Asana creative board (the team is still moving over from Asana). A ticket or task covers a promise when it makes substantially the same thing, or a real part of it (10 images of a promised 10 images and 3 videos counts: the work is in motion). Judge the request itself: an Asana task can start with a standard note about the creative package before what was asked for.",
+      "You check whether promises made on a client call have been turned into work since: a creative ticket in Kaizen Ads, a task on the Asana creative board (the team is still moving over from Asana), or an email ticket on the Email Board (a campaign batch or a flow). A ticket or task covers a promise when it makes substantially the same thing, or a real part of it (10 images of a promised 10 images and 3 videos counts: the work is in motion; a promised welcome series is covered by a welcome flow ticket). Judge the request itself: an Asana task can start with a standard note about the creative package before what was asked for.",
     schema: COVER_SCHEMA,
-    prompt: `Promises:\n${promises.map((c, i) => `${i + 1}. ${c.what}`).join("\n")}\n\nKaizen Ads tickets made since the call:\n${requests.map((r) => `#${r.number} "${r.title}": ${(r.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\nAsana tasks made since the call:\n${tasks.map((t, i) => `A${i + 1} "${t.name}" (${t.section ?? "done"}): ${requestOf(t.notes).slice(0, 1500)}`).join("\n") || "(none)"}\n\ncovered: each promise number that work covers, with the ticket numbers (tickets) and the Asana task numbers without the A (asana). Leave out promises nothing covers.`,
+    prompt: `Promises:\n${promises.map((c, i) => `${i + 1}. ${c.what}`).join("\n")}\n\nKaizen Ads tickets made since the call:\n${requests.map((r) => `#${r.number} "${r.title}": ${(r.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\nAsana tasks made since the call:\n${tasks.map((t, i) => `A${i + 1} "${t.name}" (${t.section ?? "done"}): ${requestOf(t.notes).slice(0, 1500)}`).join("\n") || "(none)"}\n\nEmail Board tickets made since the call:\n${emails.map((e) => `E${e.number} (${e.kind === "flow" ? "flow" : "campaign batch"}) "${e.title}": ${(e.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\ncovered: each promise number that work covers, with the ticket numbers (tickets), the Asana task numbers without the A (asana) and the email ticket numbers without the E (emails). Leave out promises nothing covers.`,
   });
 }
 
@@ -526,19 +535,21 @@ export async function watchCommitments(admin: SupabaseClient, max = 12) {
     const since = list.reduce((m, c) => (((c.client_calls as unknown as { occurred_at: string }).occurred_at < m ? (c.client_calls as unknown as { occurred_at: string }).occurred_at : m)), new Date().toISOString());
     const { data: requests } = await admin.from("requests").select("number, title, brief, created_at").eq("client_id", clientId).gte("created_at", since).is("deleted_at", null).limit(30);
     const tasks = await asanaSince(admin, clientId, since);
-    const covered = new Map<string, { tickets: number[]; asana: string[] }>();
-    if (requests?.length || tasks.length) {
-      const out = await coverCheck(list, requests ?? [], tasks);
+    const emails = await emailsSince(admin, clientId, since);
+    const covered = new Map<string, { tickets: number[]; asana: string[]; emails: number[] }>();
+    if (requests?.length || tasks.length || emails.length) {
+      const out = await coverCheck(list, requests ?? [], tasks, emails, clientId);
       for (const c of out.covered) {
         const asana = c.asana.map((n) => tasks[n - 1]?.gid).filter((g): g is string => Boolean(g));
-        if (list[c.commitment - 1] && (c.tickets.length || asana.length)) covered.set(list[c.commitment - 1].id, { tickets: c.tickets, asana });
+        const mails = (c.emails ?? []).filter((n) => emails.some((e) => e.number === n));
+        if (list[c.commitment - 1] && (c.tickets.length || asana.length || mails.length)) covered.set(list[c.commitment - 1].id, { tickets: c.tickets, asana, emails: mails });
       }
     }
     for (const c of list) {
       const now = new Date().toISOString();
       const cover = covered.get(c.id);
       if (cover) {
-        await admin.from("call_commitments").update({ status: "in_motion", request_numbers: cover.tickets, asana_gids: cover.asana, checked_at: now }).eq("id", c.id);
+        await admin.from("call_commitments").update({ status: "in_motion", request_numbers: cover.tickets, asana_gids: cover.asana, ...(cover.emails.length ? { email_ticket_numbers: cover.emails } : {}), checked_at: now }).eq("id", c.id);
         inMotion++;
         continue;
       }
@@ -598,19 +609,21 @@ export async function sweepCovered(admin: SupabaseClient, clientId?: string) {
       .order("created_at", { ascending: false })
       .limit(30);
     const tasks = await asanaSince(admin, client, since);
+    const emails = await emailsSince(admin, client, since);
     // Only when something new has been made since the last look
-    if (!(requests ?? []).some((r) => r.created_at > lastCheck) && !tasks.some((t) => t.asana_created_at > lastCheck)) continue;
+    if (!(requests ?? []).some((r) => r.created_at > lastCheck) && !tasks.some((t) => t.asana_created_at > lastCheck) && !emails.some((e) => e.created_at > lastCheck)) continue;
     checked += list.length;
     const now = new Date().toISOString();
-    const out = await coverCheck(list, requests ?? [], tasks);
-    const covered = new Map<string, { tickets: number[]; asana: string[] }>();
+    const out = await coverCheck(list, requests ?? [], tasks, emails, client);
+    const covered = new Map<string, { tickets: number[]; asana: string[]; emails: number[] }>();
     for (const c of out.covered) {
       const p = list[c.commitment - 1];
       if (!p) continue;
       // Only work made after that promise's own call
       const tickets = c.tickets.filter((n) => (requests ?? []).some((r) => r.number === n && r.created_at >= callAt(p)));
       const asana = c.asana.map((n) => tasks[n - 1]).filter((t) => t && t.asana_created_at >= graced(callAt(p))).map((t) => t.gid);
-      if (tickets.length || asana.length) covered.set(p.id, { tickets, asana });
+      const mails = (c.emails ?? []).filter((n) => emails.some((e) => e.number === n && e.created_at >= graced(callAt(p))));
+      if (tickets.length || asana.length || mails.length) covered.set(p.id, { tickets, asana, emails: mails });
     }
     for (const c of list) {
       const cover = covered.get(c.id);
@@ -618,7 +631,7 @@ export async function sweepCovered(admin: SupabaseClient, clientId?: string) {
         await admin.from("call_commitments").update({ cover_checked_at: now }).eq("id", c.id);
         continue;
       }
-      await admin.from("call_commitments").update({ status: "in_motion", request_numbers: cover.tickets, asana_gids: cover.asana, cover_checked_at: now, checked_at: now }).eq("id", c.id);
+      await admin.from("call_commitments").update({ status: "in_motion", request_numbers: cover.tickets, asana_gids: cover.asana, ...(cover.emails.length ? { email_ticket_numbers: cover.emails } : {}), cover_checked_at: now, checked_at: now }).eq("id", c.id);
       // Its brief on Home isn't needed any more
       if (c.suggestion_id) await admin.from("creative_suggestions").update({ status: "expired" }).eq("id", c.suggestion_id).eq("status", "open");
       inMotion++;

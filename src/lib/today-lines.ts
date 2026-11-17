@@ -14,6 +14,7 @@ import {
   contactItem,
   emailOpsItems,
   emailRowItems,
+  emailTicketItems,
   ideaItem,
   isLineHead,
   lineScopes,
@@ -25,6 +26,7 @@ import {
   socialRowItems,
   type LineKind,
   type LineScope,
+  type EmailTicketIn,
   type ReportIn,
   type Seat,
 } from "@/lib/today-lines-core";
@@ -72,6 +74,26 @@ async function locationGaps(ids: string[]): Promise<Set<string>> {
   return new Set((data ?? []).filter((c) => !Object.keys(locationPropsOf(c.location_props)).length).map((c) => c.client_id as string));
 }
 
+/** The Email Board's open tickets on these clients (empty before the board's tables exist) */
+async function emailTickets(db: SupabaseClient, ids: string[]): Promise<EmailTicketIn[]> {
+  const { emailStageInfo } = await import("@/lib/email-board-core");
+  const { data, error } = await db.from("email_board").select("id, number, title, client_id, client_name, client_slug, stage, assignee_id, minutes_over, due_on").in("client_id", ids).neq("stage", "live").limit(400);
+  if (error) return [];
+  return (data ?? []).map((t) => ({
+    id: t.id as string,
+    number: t.number as number,
+    title: t.title as string,
+    clientId: t.client_id as string,
+    client: (t.client_name as string) ?? "Client",
+    slug: (t.client_slug as string) ?? "",
+    stage: t.stage as string,
+    stageLabel: emailStageInfo(t.stage as Parameters<typeof emailStageInfo>[0]).label,
+    assigneeId: (t.assignee_id as string | null) ?? null,
+    minutesOver: (t.minutes_over as number) ?? 0,
+    dueOn: (t.due_on as string | null) ?? null,
+  }));
+}
+
 /** One line's items for this person */
 async function lineItems(db: SupabaseClient, me: Staff, s: LineScope, today: string, dayOfMonth: number): Promise<TodayDraft[]> {
   const [board, reports] = await Promise.all([loadChannelBoard(db, s.line, me, scopeIds(s)).catch(() => null), openReports(db, s.line).catch(() => [] as ReportIn[])]);
@@ -98,6 +120,9 @@ async function lineItems(db: SupabaseClient, me: Staff, s: LineScope, today: str
       loadSuggestions(db, ids, Math.max(60, ids.length * 4)).catch(() => []),
       locationGaps(ids).catch(() => new Set<string>()),
     ]);
+    // Email Board tickets: each person's own when they're late or due, the line head's and execs' when they're well over
+    const tickets = await emailTickets(db, ids).catch(() => [] as EmailTicketIn[]);
+    for (const d of emailTicketItems(tickets, me, s, today)) out.push(plain(d));
     for (const r of rows) {
       const c = { clientId: r.clientId, name: r.name, slug: r.slug };
       emailOpsItems(c, audits.get(r.clientId) ?? null, sprints.get(r.clientId) ?? null).forEach(keep);

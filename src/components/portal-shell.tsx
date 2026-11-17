@@ -19,6 +19,7 @@ const ICONS: Record<string, string> = {
   plan: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 8v4l3 2",
   report: "M7 3h7l5 5v13H7z M14 3v5h5 M10 13h6 M10 17h6",
   chat: "M4 5h16v11H9l-5 4z M8 10h8 M8 13h5",
+  mail: "M3 6h18v12H3z M3 7l9 6 9-6",
 };
 
 function Icon({ name, className = "" }: { name: string; className?: string }) {
@@ -37,6 +38,7 @@ export function PortalShell({
   team,
   live,
   waiting,
+  emails = 0,
   setup,
   plan,
   chat = null,
@@ -50,6 +52,8 @@ export function PortalShell({
   live: boolean;
   /** Ads waiting on them (the badge on Home) */
   waiting: number;
+  /** Email tickets waiting on them (the Emails section shows while there are any, or while they're on it) */
+  emails?: number;
   setup: boolean;
   plan: boolean;
   /** Their team chat (their Slack channel with us), when it's set up: messages from us they haven't read */
@@ -59,6 +63,7 @@ export function PortalShell({
   const path = usePathname();
   const items: Item[] = [
     { href: `/c/${slug}`, label: "Home", icon: "home", badge: waiting || null },
+    ...(emails > 0 || path.endsWith("/emails") ? [{ href: `/c/${slug}/emails`, label: "Emails", icon: "mail", badge: emails || null }] : []),
     ...(chat ? [{ href: `/c/${slug}/chat`, label: "Chat", icon: "chat", badge: path.endsWith("/chat") ? null : chat.unread || null }] : []),
     { href: `/c/${slug}/dashboard`, label: "Dashboard", icon: "chart" },
     { href: `/c/${slug}/reports`, label: "Reports", icon: "report" },

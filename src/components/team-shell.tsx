@@ -38,7 +38,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
     items: [
       // Everyone's home: the daily recap, then what's next for them
       { href: "/pipeline", label: "Overview", icon: I.home },
-      { href: "/board", label: "Board", icon: I.board },
+      { href: "/board", label: "Boards", icon: I.board },
       // The creative team's own KPIs (the Creative KPI tab on the Board), one tap away for the Head of Creative
       { href: "/board?view=kpis", label: "Team KPIs", icon: I.kpis, creativeLead: true },
       { href: "/clients", label: "Clients", icon: I.clients },
@@ -69,14 +69,15 @@ function Icon({ d }: { d: string }) {
   );
 }
 
-export function TeamShell({ name, roles, tier, creative = null, reports = false, channel = false, theme = null, children }: { name: string; roles: string; tier: Tier; creative?: CreativeSide; reports?: boolean; channel?: boolean; theme?: Theme | null; children: React.ReactNode }) {
+export function TeamShell({ name, roles, tier, creative = null, reports = false, channel = false, role = null, theme = null, children }: { name: string; roles: string; tier: Tier; creative?: CreativeSide; reports?: boolean; channel?: boolean; role?: string | null; theme?: Theme | null; children: React.ReactNode }) {
   const path = usePathname();
   const view = useSearchParams().get("view");
   // The creative team doesn't get the media-buying tools; the Head of Creative gets their team's KPIs instead. Reports
   // are only for executives and media buyers
   const can = (i: Item) => (!i.tiers || i.tiers.includes(tier)) && !(i.buyer && creative) && (!i.reports || reports) && (!i.creativeLead || creative === "lead");
-  // The email and social teams get only Overview, Clients, KPIs, Reports and Kaizen AI (Feedback and Settings sit apart)
-  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i) && (!channel || channelNavOk(i.href))) })).filter((g) => g.items.length);
+  // The email and social teams get only Overview, Clients, KPIs, Reports and Kaizen AI (Feedback and Settings sit apart);
+  // the email team also gets Boards (their Email Board)
+  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i) && (!channel || channelNavOk(i.href, role))) })).filter((g) => g.items.length);
   const settings = can(SETTINGS) ? SETTINGS : null;
   // The tab bar on phones: home (the Overview), the board, clients and KPIs (the creative team: their own
   // KPIs, or Ideas); everything else is in the menu

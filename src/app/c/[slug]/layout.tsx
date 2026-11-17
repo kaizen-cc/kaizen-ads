@@ -17,9 +17,11 @@ export default async function PortalLayout({ children, params }: { children: Rea
   if (!client || (viewer.kind === "contact" && !client.portal_live)) notFound();
   const admin = createAdminClient();
   const { unreadCount } = await import("@/lib/portal-chat");
-  const [nav, { count: waiting }, unread] = await Promise.all([
+  const [nav, { count: waiting }, { count: emails }, unread] = await Promise.all([
     portalSections(admin, client.id),
     admin.from("requests").select("id", { count: "exact", head: true }).eq("client_id", client.id).eq("stage", "client_review").is("deleted_at", null),
+    // Emails waiting on them (the Email Board's With client)
+    admin.from("email_tickets").select("id", { count: "exact", head: true }).eq("client_id", client.id).eq("stage", "with_client").is("deleted_at", null).then((r) => r, () => ({ count: 0 })),
     // Their team chat: what our team wrote since they last looked
     client.slack_channel_id ? unreadCount(admin, client.id, viewer.id).catch(() => 0) : Promise.resolve(0),
   ]);
@@ -32,6 +34,7 @@ export default async function PortalLayout({ children, params }: { children: Rea
       team={viewer.kind === "staff"}
       live={Boolean(client.portal_live)}
       waiting={waiting ?? 0}
+      emails={emails ?? 0}
       setup={nav.setup}
       plan={nav.plan}
       chat={client.slack_channel_id ? { unread, me: viewer.kind === "contact" ? viewer.fullName || viewer.email.split("@")[0]! : viewer.fullName, hasChannel: Boolean(process.env.SLACK_BOT_TOKEN), slackLink: `https://slack.com/app_redirect?channel=${client.slack_channel_id}` } : null}

@@ -34,7 +34,11 @@ async function runJob(job: SyncJob) {
   if (job === "asana") {
     const { asanaConfigured, syncAsana } = await import("@/lib/asana");
     if (!asanaConfigured()) throw new Error("ASANA_TOKEN isn't set in Vercel yet");
-    return syncAsana(admin);
+    const creative = await syncAsana(admin);
+    // The email board's mirror too (the Email Board's outline cards)
+    const { syncAsanaEmail } = await import("@/lib/asana-email");
+    const email = await syncAsanaEmail(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+    return { ...creative, email };
   }
   return (await import("@/lib/context/run")).collectStep(admin, job, 600_000);
 }

@@ -1,6 +1,6 @@
 import { TeamShell } from "@/components/team-shell";
-import { AgentCallProvider } from "@/components/agent-call-provider";
 import { UploadProvider } from "@/components/upload-provider";
+import { AgentCallProvider } from "@/components/agent-call-provider";
 import { Toaster } from "@/components/toasts";
 import { AuditWatcher } from "@/components/audit-watcher";
 import { ActivityTracker } from "@/components/activity-tracker";
@@ -20,18 +20,18 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
   return (
     <UploadProvider>
       <AgentCallProvider>
-      <TeamShell name={me.fullName} roles={roleLabel(me.role)} tier={me.isExec ? "exec" : me.isLead ? "lead" : "member"} creative={isCreativeRole(me.role) ? (me.role === "head_of_creative" ? "lead" : "maker") : null} reports={canSeeReports(me)} channel={isChannelOnly(me.role)} theme={(pref?.theme as Theme | null) ?? null}>
+      <TeamShell name={me.fullName} roles={roleLabel(me.role)} tier={me.isExec ? "exec" : me.isLead ? "lead" : "member"} creative={isCreativeRole(me.role) ? (me.role === "head_of_creative" ? "lead" : "maker") : null} reports={canSeeReports(me)} channel={isChannelOnly(me.role)} role={me.role} theme={(pref?.theme as Theme | null) ?? null}>
         <CreativeFormatsProvider formats={formatList(me)} can={{ briefWhy: can(me, "brief").ok ? null : "Briefs are for the creative team and the buyers", copyWhy: can(me, "copy").ok ? null : "Copy is for the copywriter and the buyers" }}>
           {children}
         </CreativeFormatsProvider>
       </TeamShell>
-      </AgentCallProvider>
       <Toaster />
       <AuditWatcher />
       <ActivityTracker />
       <Suspense fallback={null}>
         <FeedbackBubble />
       </Suspense>
+      </AgentCallProvider>
     </UploadProvider>
   );
 }

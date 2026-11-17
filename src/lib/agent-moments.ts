@@ -249,13 +249,23 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Audits a client's Klaviyo account against the email account score and writes the findings and the plan", where: "Client page · Email · Audit and ideas, and the audit page", trigger: "auto", when: "When someone runs an audit, and on its own when an account's email score goes red (refreshed after 3 days if untouched)", labels: ["email account audit"] },
     { title: "Re-measures the score for an email sprint and tells the strategist what moved", where: "Email sprint page", trigger: "auto", when: "At each sprint check (every few days, sooner after a slip), or on Check the score now", labels: ["email sprint check"] },
   ],
-  email_calendar: [{ title: "Suggests the next campaigns from what worked in past sends, the calendar and what the client mentioned in Slack, email and calls", where: "Client page · Email · Audit and ideas, the email Overview, and Your day · Email", trigger: "auto", when: "Weekly for each connected client, and on Suggest more", labels: ["email campaign suggestions"] }],
-  email_copy: [{ title: "Writes subject line options for each suggested campaign, in the client's voice", where: "Client page · Email · Audit and ideas", trigger: "auto", when: "With each batch of campaign suggestions", labels: ["email subject line options"] }],
+  email_calendar: [
+    { title: "Suggests the next campaigns from what worked in past sends, the calendar and what the client mentioned in Slack, email and calls", where: "Client page · Email · Audit and ideas, the email Overview, and Your day · Email", trigger: "auto", when: "Weekly for each connected client, and on Suggest more", labels: ["email campaign suggestions"] },
+    { title: "Writes the brief for an email request (a campaign batch of up to 5 sends or a flow of up to 6 messages) from the client's email results and what they said lately", where: "Email Board · New email request", trigger: "click", when: "When someone asks for the brief on the email request form", labels: ["email board brief"] },
+  ],
+  email_copy: [
+    { title: "Writes subject line options for each suggested campaign, in the client's voice", where: "Client page · Email · Audit and ideas", trigger: "auto", when: "With each batch of campaign suggestions", labels: ["email subject line options"] },
+    { title: "Writes every message's copy on an Email Board ticket (subject, preview text, body and buttons, or the text message) for the strategist to approve", where: "Email Board · Copy for review", trigger: "auto", when: "The moment a ticket is made, and on Rewrite with a note", labels: ["email board copy"] },
+  ],
   email_design_brief: [
     { title: "Designs finished HTML emails from the copy on the client's brand (Brand Bible, logo and colour, past emails, attached references), in one or several layouts", where: "Kaizen AI · email design studio", trigger: "click", when: "When someone on the email team asks Kaizen AI for an email design or layout options", labels: ["email design"] },
     { title: "Revises an email design made in the thread into a new version", where: "Kaizen AI · email design studio", trigger: "click", when: "When someone asks for a change to a design", labels: ["email design revision"] },
+    { title: "Reviews each email design on the Email Board against the approved copy and the brand, and pins its notes on the design", where: "Email Board · a ticket · Design", trigger: "auto", when: "When a design is uploaded, before the strategist's review, and on Run again", labels: ["email board design review"] },
   ],
-  email_desk: [{ title: "Answers the email team in the client chat, from the Klaviyo data, the email score, the latest audit and the sprint", where: "Client page · client chat", trigger: "click", when: "When someone on the email team asks about a client", labels: ["email desk"] }],
+  email_desk: [
+    { title: "Answers the email team in the client chat, from the Klaviyo data, the email score, the latest audit and the sprint", where: "Client page · client chat", trigger: "click", when: "When someone on the email team asks about a client", labels: ["email desk"] },
+    { title: "Sorts each client comment on emails into copy (to the strategist) or design (to the designer)", where: "Email Board · Revisions", trigger: "auto", when: "When the client sends emails back with changes", labels: ["email board comment routing"] },
+  ],
   fatigue: [{ title: "Flags ads wearing out from their own numbers (no AI call; the strategist writes the refresh)", where: "Overview · Client page · Next for me", trigger: "auto", when: "After every Meta sync", labels: [] }],
 };
 

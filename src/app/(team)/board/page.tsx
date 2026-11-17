@@ -1,6 +1,8 @@
 import { after } from "next/server";
+import { redirect } from "next/navigation";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
-import { isCreativeRole, roleLabel, type TeamRole } from "@/lib/roles";
+import { isCreativeRole, roleLabel, seesCreativeBoard, seesEmailBoard, type TeamRole } from "@/lib/roles";
+import { BoardSwitch } from "./board-switch";
 import { createClient } from "@/lib/supabase/server";
 import { loadShadows } from "@/lib/asana";
 import { BoardClient } from "./board-client";
@@ -15,6 +17,8 @@ export const maxDuration = 800; // room for the AI creative review that starts a
 export default async function Board({ searchParams }: PageProps<"/board">) {
   const { t, view, period } = await searchParams;
   const [me, supabase] = await Promise.all([requireStaff(), createClient()]);
+  // Boards: the email team works on the Email Board only
+  if (!seesCreativeBoard(me) && seesEmailBoard(me)) redirect("/board/email");
   const lead = isExecOrLead(me);
   // The creative team's KPIs: execs and leads only (anyone else asking for it gets the Board)
   if (view === "kpis" && lead) {
@@ -102,7 +106,14 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
       shadows={shadows}
       // The creative team (designers, editors and their heads) opens the board on their own work
       me={{ id: me.id, lead: isExecOrLead(me), mine: isCreativeRole(me.role) }}
-      tabs={lead ? <BoardTabs active="board" /> : null}
+      tabs={
+        lead || seesEmailBoard(me) ? (
+          <>
+            {seesEmailBoard(me) && <BoardSwitch active="creative" />}
+            {lead && <BoardTabs active="board" />}
+          </>
+        ) : null
+      }
     />
   );
   return board;
