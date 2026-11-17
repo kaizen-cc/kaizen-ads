@@ -135,7 +135,27 @@ export function safeLink(href: unknown): { href: string; external: boolean } | n
 
 // ─── Personal memory ────────────────────────────────────────────────────────
 
-export const FACT_TOPICS = ["birthday", "family", "trip", "preference", "work", "hobby", "other"] as const;
+export const FACT_TOPICS = ["birthday", "family", "trip", "preference", "work", "hobby", "likes", "needs", "goals", "focus", "routine", "uses", "other"] as const;
+
+/**
+ * Getting to know them at work, asked on the first call and over the next ones until each is known: what they love
+ * about the job, what they need help with, what they're working toward, the clients they find hard or want to watch,
+ * their day's rhythm, and what they'll use the assistant for. The memory grows from every call after that.
+ */
+export const DISCOVERY: { topic: string; ask: string }[] = [
+  { topic: "likes", ask: "what they enjoy most about their job" },
+  { topic: "needs", ask: "what eats their time or what they'd most like help with" },
+  { topic: "focus", ask: "which clients are the most challenging right now, or the ones they want to keep a close eye on" },
+  { topic: "goals", ask: "what they're working toward this quarter (for themselves or their clients)" },
+  { topic: "routine", ask: "how their day usually runs and when a rundown from you would help most" },
+  { topic: "uses", ask: "what they picture using you for day to day" },
+];
+
+/** The discovery questions not answered yet, in order (an empty list: they're known, just talk) */
+export function discoveryLeft(memory: readonly Pick<MemoryRow, "kind" | "topic">[]): { topic: string; ask: string }[] {
+  const known = new Set(memory.filter((m) => m.kind === "fact").map((m) => m.topic));
+  return DISCOVERY.filter((d) => !known.has(d.topic));
+}
 export const STYLE_TOPICS = ["length", "humor", "numbers", "pace", "other"] as const;
 
 export type MemoryRow = { id: string; profile_id: string; kind: "fact" | "style"; topic: string; body: string; on_date: string | null; follow_up_on: string | null; followed_up_at: string | null };
@@ -211,6 +231,8 @@ export function assistantGreeting(input: { name: string; memory: readonly Memory
     const ask = due.topic === "trip" ? `How was ${/^(the|a|your|my)\b/i.test(about) ? about.replace(/^my\b/i, "your") : `the trip: ${about}`}?` : `Last time you mentioned ${about.replace(/^(i|i'm|i am)\b/i, "you")}. How did that go?`;
     return { text: `Hey ${name}! ${ask}`, followed: due.id };
   }
+  // The very first call: hello, and ask to get to know them before diving in
+  if (!memory.length) return { text: `Hey ${name}! I'm your new assistant. Before we dive in, mind if I ask you a few quick questions so I can actually be useful to you?`, followed: null };
   const plain = [`Hey ${name}, it's your assistant. What can I do for you?`, `Hi ${name}! What are we tackling?`, `Hey ${name}. Want the rundown of your day, or something specific?`];
   return { text: plain[seed % plain.length], followed: null };
 }

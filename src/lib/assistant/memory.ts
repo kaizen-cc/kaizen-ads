@@ -67,8 +67,9 @@ const SCHEMA = {
 
 const SYSTEM = `You keep a friendly work assistant's private memory of one person, from what THEY said on a call with it. Pick out:
 - facts they shared about themselves that a good colleague would remember: their birthday, family (names, ages, milestones), trips and events coming up, hobbies, food and work preferences (how they like updates, when they're busiest);
+- about their work life, from what they said: what they enjoy about the job (topic likes), what eats their time or what they want help with (needs), what they're working toward (goals), the clients they find challenging or want to watch closely, by name with why (focus), how their day runs and when they want a rundown (routine), and what they use you for, including things they keep asking for (uses). Update a note when it changes (a new focus client, a goal reached).
 - how they like to talk (style): brief or chatty, humor or straight, numbers first or the story first, fast or relaxed. Only when it's clear from how they talked.
-Never keep: anything about clients or the business (that lives elsewhere), passwords or numbers, health, religion, politics, money troubles, other people's private details beyond a name and relation, or anything they asked you to forget. Nothing they didn't say themselves. Most calls give nothing new: then return an empty list. At most six notes, none repeating what's already known.`;
+Never keep: client data or numbers (that lives elsewhere; only which clients they find hard or want to watch, and why, in their words), passwords or numbers, health, religion, politics, money troubles, other people's private details beyond a name and relation, or anything they asked you to forget. Nothing they didn't say themselves. Most calls give nothing new: then return an empty list. At most six notes, none repeating what's already known.`;
 
 /**
  * After an assistant call: what the person shared and how they talk, read with a cheap model from their own lines only

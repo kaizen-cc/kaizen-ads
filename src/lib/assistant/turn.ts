@@ -8,7 +8,7 @@ import { CONCISE_RULE, DISTRESS_RULE, END_CALL_RULE, firstNameOf, pendingItems }
 import { callContext, readMoment, streamAnswer, turnExtras, voiceSystem, type Answer, type CallRow, type TurnInput } from "@/lib/agent-call/server";
 import { loadRolePlaybook } from "@/lib/role-playbook";
 import { withFrame } from "@/lib/agent-call/call-extras";
-import { ASSISTANT_KEY, ASSISTANT_LABEL, memoryForPrompt, routeTurn, SPECIALISTS, suggestSpecialist } from "./core";
+import { ASSISTANT_KEY, ASSISTANT_LABEL, discoveryLeft, memoryForPrompt, routeTurn, SPECIALISTS, suggestSpecialist } from "./core";
 import { myContext } from "./context";
 import { loadMemory } from "./memory";
 import { assistantTools, type AssistantCtx } from "./tools";
@@ -30,7 +30,7 @@ How you speak:
 - Match how they like to talk (their style, below). Use what you remember naturally and only when it fits; never recite their memory back.
 - Refer to teammates by role, except ${firstName} and someone you've just asked to do something.
 
-Their day: asked "what do I need to do today?" or similar, give the critical items first (what's most at risk), then the rest from quick and simple to long and complex. Say how many there are and the first two or three; offer the rest. Their context below is already in that order; my_work has everything.
+Their day: asked "what do I need to do today?" or similar, give the critical items first (what's most at risk), then the rest from quick and simple to long and complex. Say how many there are and the first two or three; offer the rest. Their context below is already in that order; my_work has everything. Use what you know about them: put the clients they told you they're watching (focus) and the work they want help with (needs) first among equals, and fit the rundown to their routine. The more you learn about them, the more your answers should lean on it.
 
 Doing things: ${TOOLS_RULE} Use the tools for anything about clients, numbers, tickets and reports; never guess a number. You act only within ${firstName}'s own rights: if a tool says no, say why plainly. Anything that sends to a client, spends money or AI credits, or goes live (a report, an audit, a new ticket, moving a ticket to the client or live, a launch) needs a clear spoken yes first: say in one sentence exactly what will happen and ask "shall I?", then run it with confirmed: true only after they say yes. Never go live without a spoken yes.
 
@@ -92,6 +92,14 @@ export async function runAssistantTurn(input: Input) {
   const tools = await assistantTools(actx);
   const hint = !call.guest_role ? suggestSpecialist(text) : null;
   const mem = memoryForPrompt(memory, todayIso());
+  // Getting to know them: the first call is mostly this; after that, one gentle question per call until each is known
+  const left = discoveryLeft(memory);
+  const first = !memory.length;
+  const discovery = left.length
+    ? first
+      ? `<getting_to_know_them>This is your first call with ${firstName}. If they're happy to, get to know them before anything else: ask these one at a time, like a friendly new colleague, reacting briefly to each answer before the next: ${left.map((d) => d.ask).join("; ")}. If they'd rather get straight to work, help them and keep the questions for later calls. Thank them at the end and say how you'll use it.</getting_to_know_them>`
+      : `<getting_to_know_them>Still to learn about ${firstName}: ${left.map((d) => d.ask).join("; ")}. Once, when the moment is natural (a lull, or at the end), ask one of these; never in the middle of a task.</getting_to_know_them>`
+    : "";
   emit({ t: "speaker", role: ASSISTANT_KEY, label: ASSISTANT_LABEL, icon: "spark" });
   const out = await streamAnswer({
     system: assistantSystem(firstName),
@@ -103,6 +111,7 @@ export async function runAssistantTurn(input: Input) {
       ctxNow.text,
       extra.where,
       mem ? `<what_you_know_about_${firstName} private="true">\n${mem}\n</what_you_know_about_${firstName}>` : "",
+      discovery,
       uploadsBlock(call),
       call.guest_role ? `<on_the_line>The ${SPECIALISTS.find((s) => s.key === call.guest_role)?.label ?? call.guest_role} is on the call with you.</on_the_line>` : "",
       hint ? `<hint>This sounds like the ${hint.label}'s area (${hint.about}). If it needs real depth, offer to call it in; if you can answer from the data, just answer.</hint>` : "",

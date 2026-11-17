@@ -216,3 +216,14 @@ describe("hanging up on goodbye", () => {
     expect(stripEndMarker("bye for now, but first the numbers")).toEqual({ text: "bye for now, but first the numbers", ended: false });
   });
 });
+
+
+describe("getting to know them", () => {
+  it("asks to get to know them on the very first call, and keeps the questions not answered yet", async () => {
+    const { assistantGreeting, discoveryLeft, DISCOVERY } = await import("@/lib/assistant/core");
+    expect(assistantGreeting({ name: "Dana", memory: [], today: "2026-11-18" }).text).toContain("few quick questions");
+    expect(discoveryLeft([])).toHaveLength(DISCOVERY.length);
+    const known = [{ kind: "fact" as const, topic: "likes" }, { kind: "fact" as const, topic: "focus" }, { kind: "style" as const, topic: "needs" }];
+    expect(discoveryLeft(known).map((d) => d.topic)).toEqual(["needs", "goals", "routine", "uses"]);
+  });
+});
