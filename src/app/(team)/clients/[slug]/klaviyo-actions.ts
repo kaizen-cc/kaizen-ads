@@ -171,15 +171,23 @@ export async function detectKlaviyoLocations(clientId: string) {
 }
 
 /** Turn the breakdown on or off and pick each metric's location property (a lead or an exec); turning it on reads the orders right after */
-export async function saveKlaviyoLocations(clientId: string, setting: { multi: boolean; props: Record<string, string> }): Promise<Result> {
+export async function saveKlaviyoLocations(clientId: string, setting: { multi: boolean; props: Record<string, string> }): Promise<{ ok: true; props: Record<string, string> } | { ok: false; error: string }> {
   const l = await mine(clientId, true);
   if ("error" in l) return { ok: false, error: l.error! };
-  const { saveLocationSetting, syncLocations } = await import("@/lib/klaviyo/location-store");
-  const props = Object.fromEntries(Object.entries(setting?.props ?? {}).slice(0, 4).map(([k, v]) => [String(k).slice(0, 64), String(v ?? "").slice(0, 120)]));
+  const { detectLocations, locationSetup, saveLocationSetting, syncLocations } = await import("@/lib/klaviyo/location-store");
+  let props: Record<string, string> = Object.fromEntries(Object.entries(setting?.props ?? {}).slice(0, 4).map(([k, v]) => [String(k).slice(0, 64), String(v ?? "").slice(0, 120)]));
+  // Turned on with no property picked: look at the latest orders and take the property that names the location (the
+  // one the card would suggest), instead of switching on a breakdown that has nothing to split by
+  if (setting?.multi && !Object.values(props).some(Boolean)) {
+    const { suggestedProp } = await import("@/lib/klaviyo/locations");
+    const found = await detectLocations(l.admin, clientId).catch(() => null);
+    const metrics = (await locationSetup(l.admin, clientId))?.metrics ?? [];
+    if (found?.ok) props = Object.fromEntries(metrics.flatMap((m) => ((p) => (p ? [[m.id, p.prop]] : []))(suggestedProp(found.detected[m.id] ?? []))));
+  }
   const r = await saveLocationSetting(l.admin, clientId, { multi: Boolean(setting?.multi), props });
   if (!r.ok) return r;
   const admin = l.admin;
   if (setting.multi && Object.values(props).some(Boolean)) after(() => syncLocations(admin, clientId, undefined, { deadline: Date.now() + 250_000 }).then(() => undefined));
   revalidatePath(`/clients/${l.slug}`);
-  return { ok: true };
+  return { ok: true, props };
 }

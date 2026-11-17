@@ -4,7 +4,7 @@ import { emailConnections } from "@/lib/email-providers/which";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
-import { linesFor, mayOpen, SEATS_OF, type Who } from "./access-core";
+import { buys, linesFor, mayOpen, SEATS_OF, type Who } from "./access-core";
 import { isChannelPlatform, lineOfPlatform, LINE_SERVICE, OWNER_SEAT, type ChannelLine } from "./core";
 
 // Which clients a person reports on for a line, who is connected (and what to connect for those who aren't), and who owns
@@ -31,7 +31,9 @@ async function seatsOf(admin: SupabaseClient, profileId: string) {
 export async function channelClients(admin: SupabaseClient, me: Who & { id: string }, line: ChannelLine): Promise<ChannelClient[]> {
   if (!linesFor(me).includes(line)) return [];
   const [{ data }, seats] = await Promise.all([admin.from("clients").select(CLIENT_FIELDS).is("archived_at", null).eq("internal", false).in("status", [...LIVE]).order("name"), me.isExec ? Promise.resolve(new Map<string, string[]>()) : seatsOf(admin, me.id)]);
-  return ((data ?? []) as ClientRow[]).map(toClient).filter((c) => mayOpen(me, line, { services: c.services, myRoles: seats.get(c.id) ?? [] }));
+  // Only the clients on this service (an exec may open any client's report, but the list is the ones that buy it), and
+  // for everyone but the execs and the line's head, only the ones they're seated on
+  return ((data ?? []) as ClientRow[]).map(toClient).filter((c) => buys(c.services, line) && mayOpen(me, line, { services: c.services, myRoles: seats.get(c.id) ?? [] }));
 }
 
 /** Whether this person may open a channel report (the line's report on that client); false for anything that isn't a channel report */

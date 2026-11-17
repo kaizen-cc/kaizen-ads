@@ -47,7 +47,9 @@ export function KlaviyoLocations({ clientId }: { clientId: string }) {
         setSetup(was);
         return setError(r.error);
       }
-      setNote(multi ? "Saved. Reading the orders by location now; the first days land in a few minutes." : "Saved. Reports no longer break down by location.");
+      // The server picks the property itself when it was switched on without one
+      setSetup((cur) => (cur ? { ...cur, props: r.props } : cur));
+      setNote(multi ? (Object.keys(r.props).length ? "Saved. Reading the orders by location now; the first days land in a few minutes." : "Saved, but the latest orders don't name a location yet: check them again once orders come in.") : "Saved. Reports no longer break down by location.");
     });
   };
   const suggestedProps = () => Object.fromEntries(setup.metrics.flatMap((m) => {
@@ -67,6 +69,12 @@ export function KlaviyoLocations({ clientId }: { clientId: string }) {
       setNote(r.suggested ? "Found more than one location in the latest orders." : "The latest orders show a single location or none.");
     });
 
+  // Opened before any look at the orders: look now, so the properties are there to pick from
+  const openUp = () => {
+    setOpen(true);
+    if (!Object.keys(setup.detected).length) check();
+  };
+
   const picked = setup.metrics.filter((m) => setup.props[m.id]);
   const best = setup.metrics.map((m) => ({ m, c: suggestedProp(setup.detected[m.id] ?? []) })).find((x) => x.c);
 
@@ -76,7 +84,7 @@ export function KlaviyoLocations({ clientId }: { clientId: string }) {
         <span>By location:</span>
         {!open && <span className="text-fg">{setup.multi ? (picked.length ? picked.map((m) => `${setup.props[m.id]} on ${m.name}`).join(", ") : "on, no property picked yet") : "off"}</span>}
         {canEdit && !open && (
-          <button type="button" onClick={() => setOpen(true)} className="inline-flex min-h-11 items-center text-sm text-brand-text underline-offset-4 hover:underline md:min-h-0">
+          <button type="button" onClick={openUp} className="inline-flex min-h-11 items-center text-sm text-brand-text underline-offset-4 hover:underline md:min-h-0">
             {setup.multi ? "Change" : "Set up"}
           </button>
         )}
@@ -94,7 +102,7 @@ export function KlaviyoLocations({ clientId }: { clientId: string }) {
               <button type="button" disabled={pending} onClick={() => save(true, suggestedProps())} className="inline-flex min-h-11 items-center rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-60 md:min-h-9">
                 Turn on
               </button>
-              <button type="button" disabled={pending} onClick={() => setOpen(true)} className="inline-flex min-h-11 items-center rounded-full px-3 text-sm text-muted hover:text-fg md:min-h-9">
+              <button type="button" disabled={pending} onClick={openUp} className="inline-flex min-h-11 items-center rounded-full px-3 text-sm text-muted hover:text-fg md:min-h-9">
                 Pick the properties
               </button>
             </div>
