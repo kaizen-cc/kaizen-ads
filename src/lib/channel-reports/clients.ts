@@ -1,4 +1,6 @@
 import "server-only";
+import { providerName } from "@/lib/email-providers/core";
+import { emailConnections } from "@/lib/email-providers/which";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
@@ -52,14 +54,14 @@ export async function coverageFor(admin: SupabaseClient, line: ChannelLine, clie
   const out = new Map<string, Coverage>();
   if (!clientIds.length) return out;
   if (line === "email") {
-    const { data, error } = await admin.from("klaviyo_connections").select("client_id, status, last_synced_at, last_error").in("client_id", clientIds);
-    const by = new Map((data ?? []).map((r) => [r.client_id as string, r]));
+    const by = await emailConnections(admin, clientIds).catch(() => null);
+    const error = by == null;
     for (const id of clientIds) {
-      const r = by.get(id);
-      if (error) out.set(id, { clientId: id, state: "missing", what: "Klaviyo isn't set up in the database yet." });
-      else if (!r) out.set(id, { clientId: id, state: "missing", what: "Connect Klaviyo: paste the client's private API key on their page, in Team & setup." });
-      else if (r.status === "invalid") out.set(id, { clientId: id, state: "failing", what: "Klaviyo refused the key. Paste a new private API key in Team & setup." });
-      else if (!r.last_synced_at) out.set(id, { clientId: id, state: "pending", what: "Connected, and the first read is still running. It reports once the numbers are in." });
+      const r = by?.get(id);
+      if (error) out.set(id, { clientId: id, state: "missing", what: "Email isn't set up in the database yet." });
+      else if (!r) out.set(id, { clientId: id, state: "missing", what: "Connect the client's email provider (Klaviyo, Brevo or Customer.io): paste its read-only key on their page, in Team & setup." });
+      else if (r.status === "invalid") out.set(id, { clientId: id, state: "failing", what: `${providerName(r.provider)} refused the key. Paste a new key in Team & setup.` });
+      else if (!r.lastSyncedAt) out.set(id, { clientId: id, state: "pending", what: "Connected, and the first read is still running. It reports once the numbers are in." });
       else out.set(id, { clientId: id, state: "connected", what: null });
     }
     return out;

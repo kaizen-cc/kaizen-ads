@@ -82,7 +82,7 @@ function weighted(rows: { w: number; rate: number | null }[]): number | null {
  * carry no bounce or spam counts. Campaign rates are weighted by delivered (recipients when that is missing); flow
  * rates by their 30-day recipients, over live flows only.
  */
-export function aggregateEmailScore(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[]; extra?: MetricDay[][] }): { inputs: EmailInputs; deliverability: Deliverability | null; totals: EmailScoreTotals; byMetric: MetricMoney[] } {
+export function aggregateEmailScore(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[]; extra?: MetricDay[][]; /** The source reports no revenue (Customer.io without a purchase event, Brevo without a store): the money checks are unmeasured, not zero */ noRevenue?: boolean }): { inputs: EmailInputs; deliverability: Deliverability | null; totals: EmailScoreTotals; byMetric: MetricMoney[] } {
   const revenue = d.days.reduce((n, x) => n + x.revenue, 0);
   const storeDays = d.days.filter((x) => x.storeRevenue != null);
   const storeRevenue = storeDays.reduce((n, x) => n + (x.storeRevenue ?? 0), 0);
@@ -103,7 +103,7 @@ export function aggregateEmailScore(d: { days: ScoreDay[]; campaigns: ScoreCampa
   // The money checks per ranked metric. The primary reads as it always has; a lower one counts only once it carries
   // money in the window (a reservations metric with no value would otherwise drag revenue per recipient to zero)
   const money = [
-    { revenue, storeRevenue: storeDays.length ? storeRevenue : null, attributed: storeDays.length && storeRevenue > 0 ? revenue / storeRevenue : null, rpr: recipients > 0 ? revenue / recipients : null },
+    { revenue, storeRevenue: storeDays.length ? storeRevenue : null, attributed: storeDays.length && storeRevenue > 0 ? revenue / storeRevenue : null, rpr: recipients > 0 && !d.noRevenue ? revenue / recipients : null },
     ...(d.extra ?? []).map((days) => {
       const rev = days.reduce((n, x) => n + x.revenue, 0);
       const sd = days.filter((x) => x.storeRevenue != null);
@@ -136,7 +136,7 @@ export function aggregateEmailScore(d: { days: ScoreDay[]; campaigns: ScoreCampa
 }
 
 /** Rows in, the full result out */
-export function scoreFromRows(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[]; extra?: MetricDay[][] }, window: { from: string; to: string }): EmailScoreResult {
+export function scoreFromRows(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[]; extra?: MetricDay[][]; noRevenue?: boolean }, window: { from: string; to: string }): EmailScoreResult {
   const a = aggregateEmailScore(d);
   return { ...emailScore(a.inputs), ...a, window };
 }

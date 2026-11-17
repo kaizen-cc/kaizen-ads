@@ -1,4 +1,5 @@
 import type { ConversionMetric, MonthRevenue, RevenueTarget } from "@/lib/email-metrics";
+import type { EmailProvider } from "@/lib/email-providers/core";
 import type { EmailScoreResult } from "@/lib/email-score-calc";
 import type { ChannelStatus, Line, Month } from "./calc";
 
@@ -60,6 +61,10 @@ export type ChannelRow = {
   warning: string | null;
   lastSyncedAt: string | null;
   account: string | null;
+  /** Email: which provider the numbers come from (Klaviyo, Brevo or Customer.io); null when none is connected */
+  provider?: EmailProvider | null;
+  /** Email: false when the source reports no revenue, so the revenue goal, graph and money checks are left out */
+  revenueMeasured?: boolean;
   /** Email: the Klaviyo metric that counts as the sale (Placed Order, Bought Ticket...), when it was named */
   conversionMetric?: string | null;
   /** Email: the ranked metrics that count as the sale, primary first (empty when only the automatic one is used) */

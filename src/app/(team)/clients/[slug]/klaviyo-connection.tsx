@@ -3,17 +3,25 @@
 import { useRouter } from "next/navigation";
 import { KlaviyoLocations } from "@/components/klaviyo-locations";
 import { KlaviyoMetricPicker } from "@/components/klaviyo-metric-picker";
+import { CustomerioExtras, ProviderChoice } from "@/components/klaviyo-key-inline";
 import { useState, useTransition } from "react";
 import type { KlaviyoConnectionView } from "@/lib/klaviyo/store";
-import { KLAVIYO_SCOPE_NAMES, plainKlaviyoError } from "@/lib/klaviyo/core";
+import { KLAVIYO_SCOPE_NAMES } from "@/lib/klaviyo/core";
+import { KEY_HELP, plainEmailError, providerName, type EmailProvider } from "@/lib/email-providers/core";
 import { sentence } from "@/lib/google-health";
-import { connectKlaviyoKey, removeKlaviyoKey, syncKlaviyoNow } from "./klaviyo-actions";
+import { connectEmailKey, removeKlaviyoKey, setCustomerioRevenueEvent, syncKlaviyoNow } from "./klaviyo-actions";
 
-// Klaviyo in Team & setup: the account it reads (name and time zone, from Klaviyo itself), the key's last 4, when it
-// was last read, and Replace, Remove and Sync now. A lead or exec pastes a read-only private API key; it's never shown
-// again. Read only: Kaizen Ads never sends, edits or schedules anything in Klaviyo.
+// The client's email provider in Team & setup (Klaviyo, Brevo or Customer.io): the account it reads (name and time zone,
+// from the provider itself), the key's last 4, when it was last read, and Replace, Remove and Sync now. A lead or exec
+// pastes a read-only key; it's never shown again. A client has one provider: with none connected the lead or exec picks.
+// The conversion metric picker and the location breakdown are Klaviyo's only. Read only: Kaizen Ads never sends, edits
+// or schedules anything in the provider.
 
-const SCOPES = KLAVIYO_SCOPE_NAMES;
+const STEPS: Record<EmailProvider, string[]> = {
+  klaviyo: ["In the client's Klaviyo account: Settings › Account › API keys › Create Private API Key.", `Name it "Kaizen Ads", choose Custom key, and give Read Access to ${KLAVIYO_SCOPE_NAMES}. Nothing else.`, "Create it, copy the key (it starts with pk_) and paste it here."],
+  brevo: ["In the client's Brevo account: SMTP & API › API keys › Generate a new API key.", 'Name it "Kaizen Ads", generate it and copy the key (it starts with xkeysib-).', "Paste it here. Revenue shows when their store is connected to Brevo (ecommerce attribution)."],
+  customerio: ["In the client's Customer.io workspace: Settings › Account settings › API credentials › App API keys.", 'Create a key named "Kaizen Ads" and copy it.', "Paste it here, with the region if you know it, and the name of their purchase event if they have one (Customer.io reports no revenue of its own)."],
+};
 
 const ago = (iso: string) => {
   const m = Math.round((Date.now() - Date.parse(iso)) / 60_000);
@@ -23,18 +31,25 @@ const ago = (iso: string) => {
 export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: string; conn: KlaviyoConnectionView | null; canEdit: boolean }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
+  const [picked, setPicked] = useState<EmailProvider>("klaviyo");
   const [key, setKey] = useState("");
+  const [region, setRegion] = useState("");
+  const [event, setEvent] = useState("");
+  const [eventNow, setEventNow] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  // Why it isn't reading, in plain words with the fix (a missing Placed Order metric only warns)
-  const plain = conn ? plainKlaviyoError(conn.error, conn.status) : null;
+  const provider: EmailProvider = conn?.provider ?? picked;
+  const name = providerName(provider);
+  // Why it isn't reading, in plain words with the fix (a missing revenue source only warns)
+  const plain = conn ? plainEmailError(provider, conn.error, conn.status) : null;
   const failing = plain?.severity === "bad";
   const open = editing || (!conn && canEdit);
+  const h = KEY_HELP[provider];
 
   const save = () =>
     start(async () => {
-      const r = await connectKlaviyoKey(clientId, key);
+      const r = await connectEmailKey(clientId, provider, key, { region, revenueEvent: event });
       if (!r.ok) return setError(r.error);
       setError(null);
       setKey("");
@@ -49,9 +64,11 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
         <div className="grid gap-2 rounded-[12px] border border-line bg-bg p-3.5">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
             <span className={`h-2 w-2 shrink-0 rounded-full ${failing ? "bg-bad" : conn.lastSyncedAt ? "bg-ok" : "bg-warn"}`} aria-hidden />
-            <span className="min-w-0 truncate font-medium">{conn.account ?? "Klaviyo account"}</span>
+            <span className="min-w-0 truncate font-medium">{conn.account ?? `${name} account`}</span>
+            <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">{name}</span>
             <span className="tabular text-[12px] text-faint">key ••••{conn.last4 ?? "????"}</span>
             {conn.timezone && <span className="text-[12px] text-faint">{conn.timezone}</span>}
+            {conn.region && <span className="text-[12px] text-faint">{conn.region.toUpperCase()} region</span>}
           </div>
           {plain ? (
             <p className="grid gap-0.5 text-[12px] leading-relaxed">
@@ -65,15 +82,44 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
                 : "Connected. The first read (90 days back) runs in the next few minutes."}
             </p>
           )}
-          <KlaviyoMetricPicker clientId={clientId} current={conn.conversionMetrics ?? []} fallback={conn.conversionMetric ?? null} canPick={canEdit} />
-          <KlaviyoLocations clientId={clientId} />
+          {provider === "brevo" && <p className="text-[12px] text-muted">Brevo gives campaigns, lists and, with their store connected, revenue. Its API lists no automations, so those are not measured.</p>}
+          {provider === "customerio" && (
+            <div className="grid gap-1.5">
+              <p className="text-[12px] text-muted">
+                {conn.revenueEvent ? (conn.revenueRead ? `Revenue is the value of their "${conn.revenueEvent}" event (last 30 days are read each run).` : `Revenue event "${conn.revenueEvent}" set; no value read from it yet.`) : "No revenue: Customer.io reports none. Name their purchase event to count its value."}
+              </p>
+              {canEdit && (
+                <div className="flex flex-wrap gap-2">
+                  <input value={eventNow ?? conn.revenueEvent ?? ""} onChange={(e) => setEventNow(e.target.value)} spellCheck={false} autoComplete="off" placeholder="Purchase event name" aria-label="Purchase event whose value counts as revenue" className="h-11 min-w-0 flex-1 basis-48 rounded-[10px] border border-line bg-surface px-3 text-sm outline-none focus:border-brand-text/60 md:h-9" />
+                  <button
+                    type="button"
+                    disabled={pending || eventNow == null || eventNow === (conn.revenueEvent ?? "")}
+                    onClick={() =>
+                      start(async () => {
+                        const r = await setCustomerioRevenueEvent(clientId, eventNow ?? "");
+                        setError(r.ok ? null : r.error);
+                        if (r.ok) setNote("Saved. The numbers are being read again with it.");
+                        setEventNow(null);
+                        router.refresh();
+                      })
+                    }
+                    className="h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 md:h-9"
+                  >
+                    Save
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {provider === "klaviyo" && <KlaviyoMetricPicker clientId={clientId} current={conn.conversionMetrics ?? []} fallback={conn.conversionMetric ?? null} canPick={canEdit} />}
+          {provider === "klaviyo" && <KlaviyoLocations clientId={clientId} />}
           <div className="flex flex-wrap gap-x-4 gap-y-1 pt-0.5">
             <button
               type="button"
               disabled={pending}
               onClick={() =>
                 start(async () => {
-                  setNote("Reading Klaviyo… this takes about a minute.");
+                  setNote(`Reading ${name}… this takes about a minute.`);
                   const r = await syncKlaviyoNow(clientId);
                   setNote(null);
                   setError(r.ok ? null : r.error);
@@ -93,7 +139,7 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
                   type="button"
                   disabled={pending}
                   onClick={() => {
-                    if (!confirm("Remove Klaviyo from this client? The key is deleted and syncing stops; the email history already read stays.")) return;
+                    if (!confirm(`Remove ${name} from this client? The key is deleted and syncing stops; the email history already read stays. You can then connect another provider.`)) return;
                     start(async () => {
                       const r = await removeKlaviyoKey(clientId);
                       setError(r.ok ? null : r.error);
@@ -110,14 +156,15 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
         </div>
       )}
 
-      {!conn && !canEdit && <p className="text-sm text-faint">Not connected. A lead or an exec connects Klaviyo with a Full Access private key.</p>}
+      {!conn && !canEdit && <p className="text-sm text-faint">Not connected. A lead or an exec connects the client&apos;s email provider (Klaviyo, Brevo or Customer.io) with a read-only key.</p>}
 
       {open && canEdit && (
         <div className="grid gap-3 rounded-[12px] border border-line bg-bg p-4">
+          {!conn && <ProviderChoice value={picked} onChange={setPicked} />}
           <ol className="grid list-decimal gap-1 pl-5 text-[13px] leading-relaxed text-muted">
-            <li>In the client&apos;s Klaviyo account: Settings › Account › API keys › Create Private API Key.</li>
-            <li>Name it &quot;Kaizen Ads&quot;, choose Custom key, and give Read Access to {SCOPES}. Nothing else.</li>
-            <li>Create it, copy the key (it starts with pk_) and paste it here.</li>
+            {STEPS[provider].map((s) => (
+              <li key={s}>{s}</li>
+            ))}
           </ol>
           <input
             type="password"
@@ -126,11 +173,12 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
             value={key}
             onChange={(e) => setKey(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && key.trim() && !pending && save()}
-            placeholder="pk_…"
-            aria-label="Klaviyo private API key"
+            placeholder={h.placeholder}
+            aria-label={h.label}
             className="tabular h-11 rounded-[10px] border border-line bg-surface px-3 text-sm outline-none focus:border-brand-text/60"
           />
-          <p className="text-[11.5px] text-faint">Checked with Klaviyo, encrypted, and never shown again. Only the team enters keys; never ask a client to paste one in a chat.</p>
+          {provider === "customerio" && <CustomerioExtras region={region} onRegion={setRegion} event={event} onEvent={setEvent} />}
+          <p className="text-[11.5px] text-faint">{`Checked with ${name}, encrypted, and never shown again. Only the team enters keys; never ask a client to paste one in a chat.`}</p>
           <div className="flex flex-wrap gap-2">
             <button type="button" disabled={pending || !key.trim()} onClick={save} className="h-11 rounded-full bg-brand px-5 text-sm font-medium text-white disabled:opacity-50 md:h-9">
               {pending ? "Checking…" : conn ? "Check and replace" : "Check and connect"}

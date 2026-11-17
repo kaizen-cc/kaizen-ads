@@ -33,7 +33,7 @@ export async function emailBrief(admin: SupabaseClient, clientId: string): Promi
 /** The text block the email desk reads, or a plain note when there is no Klaviyo data yet */
 export async function emailDeskBlock(admin: SupabaseClient, clientId: string): Promise<string> {
   const [k, score] = await Promise.all([clientKlaviyo(admin, clientId).catch(() => null), emailScoreOf(admin, clientId).catch(() => null)]);
-  if (!k) return "<email_account>\nNo Klaviyo numbers for this client yet: it is not connected, or the first sync has not finished. Say so, and say that a lead or an exec connects it on the client's Team & setup.\n</email_account>";
+  if (!k) return "<email_account>\nNo email numbers for this client yet: it is not connected, or the first sync has not finished. Say so, and say that a lead or an exec connects it on the client's Team & setup.\n</email_account>";
   const today = nyToday();
   const { data: client } = await admin.from("clients").select("name").eq("id", clientId).maybeSingle();
   const name = (client?.name as string | null) ?? "the client";

@@ -1,4 +1,5 @@
 import "server-only";
+import { activeEmailClients } from "@/lib/email-providers/which";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { LIVE } from "@/lib/live";
@@ -31,7 +32,7 @@ export async function generateSuggestions(admin: SupabaseClient, clientId: strin
   const today = nyToday();
   const markState = (error: string | null) => admin.from("email_ops_state").upsert({ client_id: clientId, suggestions_at: new Date().toISOString(), suggestions_error: error, updated_at: new Date().toISOString() });
   const k = await clientKlaviyo(admin, clientId).catch(() => null);
-  if (!k) return { added: 0, note: "No Klaviyo numbers yet: connect Klaviyo and let the first sync finish." };
+  if (!k) return { added: 0, note: "No email numbers yet: connect the client's email provider and let the first sync finish." };
 
   const [{ data: client }, { data: items }, { data: have }, ctx] = await Promise.all([
     admin.from("clients").select("name, industry, industry_detail, website").eq("id", clientId).maybeSingle(),
@@ -88,8 +89,7 @@ async function subjectOptions(admin: SupabaseClient, clientId: string, name: str
 /** The scheduled step: a few connected clients whose suggestions are a week old (or never written), oldest first */
 export async function refreshSuggestions(admin: SupabaseClient, budgetMs = 500_000) {
   const until = Date.now() + budgetMs;
-  const { data: conns } = await admin.from("klaviyo_connections").select("client_id, clients!inner(archived_at, status)").eq("status", "active").is("clients.archived_at", null).in("clients.status", [...LIVE]);
-  const ids = ((conns ?? []) as { client_id: string }[]).map((c) => c.client_id);
+  const ids = (await activeEmailClients(admin, LIVE)).map((c) => c.client_id);
   if (!ids.length) return { due: 0, ran: 0 };
   const { data: state } = await admin.from("email_ops_state").select("client_id, suggestions_at").in("client_id", ids);
   const at = new Map((state ?? []).map((s) => [s.client_id as string, (s.suggestions_at as string | null) ?? ""]));

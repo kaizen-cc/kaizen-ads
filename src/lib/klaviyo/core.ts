@@ -405,7 +405,7 @@ export type EmailPulseContext = {
   bottom?: EmailCampaignLine[];
 };
 
-export function emailContextLine(input: { account: string | null; currency: string | null; now: EmailWindow; before: EmailWindow | null; recent: EmailCampaignLine[]; storeRevenue?: number | null; through?: string | null; pulse?: EmailPulseContext | null }): string {
+export function emailContextLine(input: { /** The email source's name: Klaviyo, Brevo or Customer.io */ provider?: string; /** False when the source reports no revenue (the line then says so instead of $0) */ revenueMeasured?: boolean; account: string | null; currency: string | null; now: EmailWindow; before: EmailWindow | null; recent: EmailCampaignLine[]; storeRevenue?: number | null; through?: string | null; pulse?: EmailPulseContext | null }): string {
   const { now, before, recent, pulse } = input;
   if (!now.sends && !now.revenue && !recent.length) return "";
   const cur = input.currency ?? "USD";
@@ -413,10 +413,12 @@ export function emailContextLine(input: { account: string | null; currency: stri
   const storeTotal = pulse?.storeRevenue ?? input.storeRevenue ?? null;
   const shareFrac = pulse?.share ?? (storeTotal ? now.revenue / storeTotal : null);
   const share = shareFrac != null ? `, ${Math.round(shareFrac * 100)}% of the store's revenue${storeTotal ? ` (${money(storeTotal, cur)} Placed Order)` : ""}` : "";
-  const line = (c: EmailCampaignLine) => `${c.sendTime ? c.sendTime.slice(0, 10) : "unsent"} ${c.channel === "sms" ? "SMS" : "email"} "${c.name}"${c.subject ? `, subject "${c.subject.slice(0, 90)}"` : ""}: ${c.recipients.toLocaleString("en-US")} recipients, open ${pct(c.openRate)}, click ${pct(c.clickRate)}, ${money(c.revenue, cur)} from ${Math.round(c.conversions)} orders`;
+  const line = (c: EmailCampaignLine) => `${c.sendTime ? c.sendTime.slice(0, 10) : "unsent"} ${c.channel === "sms" ? "SMS" : "email"} "${c.name}"${c.subject ? `, subject "${c.subject.slice(0, 90)}"` : ""}: ${c.recipients.toLocaleString("en-US")} recipients, open ${pct(c.openRate)}, click ${pct(c.clickRate)}${input.revenueMeasured === false ? "" : `, ${money(c.revenue, cur)} from ${Math.round(c.conversions)} orders`}`;
   const lines = [
-    `Email and SMS (Klaviyo${input.account ? `, ${input.account}` : ""}; read only${input.through ? `, data through ${input.through}` : ""}):`,
-    `- Last 30 days: ${money(now.revenue, cur)} attributed revenue${pulse?.estimated ? " (estimated from campaign and flow totals)" : ""}${change}${share} (campaigns ${money(now.campaignRevenue, cur)}, flows ${money(now.flowRevenue, cur)}), ${now.campaignsSent} campaigns sent, ${now.sends.toLocaleString("en-US")} messages, open rate ${pct(now.openRate)}, click rate ${pct(now.clickRate)}`,
+    `Email and SMS (${input.provider ?? "Klaviyo"}${input.account ? `, ${input.account}` : ""}; read only${input.through ? `, data through ${input.through}` : ""}):`,
+    input.revenueMeasured === false
+      ? `- Last 30 days: revenue is not measured by this source (never quote it as zero), ${now.campaignsSent} campaigns sent, ${now.sends.toLocaleString("en-US")} messages, open rate ${pct(now.openRate)}, click rate ${pct(now.clickRate)}`
+      : `- Last 30 days: ${money(now.revenue, cur)} attributed revenue${pulse?.estimated ? " (estimated from campaign and flow totals)" : ""}${change}${share} (campaigns ${money(now.campaignRevenue, cur)}, flows ${money(now.flowRevenue, cur)}), ${now.campaignsSent} campaigns sent, ${now.sends.toLocaleString("en-US")} messages, open rate ${pct(now.openRate)}, click rate ${pct(now.clickRate)}`,
     ...recent.slice(0, 3).map((c) => `- ${line(c)}`),
   ];
   if (pulse?.keyFlows?.length) lines.push(`- Key flows: ${pulse.keyFlows.map((k) => `${k.label} ${k.state === "live" ? "live" : k.state === "present" ? "built, not live" : "missing"}`).join("; ")}`);

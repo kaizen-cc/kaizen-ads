@@ -75,14 +75,14 @@ function Tiles({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof moneyF
   const { now, before } = k;
   return (
     <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-      <Tile k="Email revenue" v={money(now.revenue)} move={relMove(now.revenue, before.revenue)} sub="vs prior 30 days">
+      {k.revenueMeasured && <Tile k="Email revenue" v={money(now.revenue)} move={relMove(now.revenue, before.revenue)} sub="vs prior 30 days">
         <SplitBar a={now.campaignRevenue} b={now.flowRevenue} />
         <span className="text-[11px] text-muted">
           Campaigns {money(now.campaignRevenue)} · Flows {money(now.flowRevenue)}
         </span>
-      </Tile>
-      <Tile k="Share of store" v={now.share != null ? pct(now.share, 0) : "n/a"} move={ptsMove(now.share, before.share, true, 0)} sub={now.storeRevenue != null ? `of ${money(now.storeRevenue)} in Placed Order` : "Store revenue reads on the next full sync"} />
-      <Tile k="Revenue per recipient" v={now.revenuePerRecipient != null ? money(now.revenuePerRecipient, true) : "n/a"} move={relMove(now.revenuePerRecipient, before.revenuePerRecipient)} sub={`${count(now.sends)} messages`} />
+      </Tile>}
+      {k.revenueMeasured && <Tile k="Share of store" v={now.share != null ? pct(now.share, 0) : "n/a"} move={ptsMove(now.share, before.share, true, 0)} sub={now.storeRevenue != null ? `of ${money(now.storeRevenue)} in Placed Order` : "Store revenue reads on the next full sync"} />}
+      {k.revenueMeasured && <Tile k="Revenue per recipient" v={now.revenuePerRecipient != null ? money(now.revenuePerRecipient, true) : "n/a"} move={relMove(now.revenuePerRecipient, before.revenuePerRecipient)} sub={`${count(now.sends)} messages`} />}
       <Tile k="Campaigns sent" v={count(now.campaignsSent)} move={relMove(now.campaignsSent, before.campaignsSent)} sub={`${now.cadence} a week`} />
       <Tile k="Open rate" v={pct(now.openRate)} move={ptsMove(now.openRate, before.openRate)} sub="campaigns, unique" />
       <Tile k="Click rate" v={pct(now.clickRate, 2)} move={ptsMove(now.clickRate, before.clickRate, true, 2)} sub="campaigns, unique" />
@@ -267,7 +267,8 @@ function FlowsTab({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof mon
   const flows = [...k.flows].sort((a, b) => b.revenue30 - a.revenue30 || b.revenue90 - a.revenue90);
   return (
     <div className="grid gap-5">
-      <section className="grid gap-3">
+      {!k.flowsKnown && <p className="rounded-[12px] border border-line px-3 py-2 text-[12.5px] text-muted">{k.providerName}&apos;s API doesn&apos;t list automations, so flows aren&apos;t measured here.</p>}
+      {k.flowsKnown && <section className="grid gap-3">
         <h3 className="font-heading text-[16px]">Key flows</h3>
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
           {k.keyFlows.map((f) => (
@@ -281,7 +282,7 @@ function FlowsTab({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof mon
             </div>
           ))}
         </div>
-      </section>
+      </section>}
 
       <section className="grid gap-1 rounded-[18px] border border-line bg-surface p-2 md:p-3">
         <div className="hidden grid-cols-[minmax(0,1fr)_96px_96px_88px_64px_64px] gap-3 px-3 pb-2 pt-1 text-right text-[11px] uppercase tracking-[0.08em] text-faint md:grid">
@@ -482,7 +483,8 @@ function Intro({ k }: { k: ClientKlaviyo }) {
     <div className="grid gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-sm text-muted">
-          {k.account ?? "Klaviyo"} · last 30 days against the 30 before{k.through ? `, data through ${shortDay(k.through)}` : ""}. Revenue is what Klaviyo attributes to email and SMS on Placed Order.
+          {k.account ?? k.providerName} · last 30 days against the 30 before{k.through ? `, data through ${shortDay(k.through)}` : ""}.{" "}
+          {k.provider === "klaviyo" ? "Revenue is what Klaviyo attributes to email and SMS on Placed Order." : k.revenueMeasured ? `Revenue is what ${k.providerName} reports for email and SMS.` : `${k.providerName} reports no revenue for this client, so revenue and its checks are not shown.`}
         </p>
         <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">Read only</span>
       </div>
@@ -524,13 +526,13 @@ function OverviewTab({ k, clientId, money }: { k: ClientKlaviyo; clientId: strin
     <div className="grid gap-5">
       <ScoreSection k={k} />
       <Tiles k={k} money={money} />
-      <RevenueByDayChart k={k} money={money} />
+      {k.revenueMeasured && <RevenueByDayChart k={k} money={money} />}
       <div className="grid gap-5 lg:grid-cols-2">
-        <RprChart k={k} money={money} />
+        {k.revenueMeasured && <RprChart k={k} money={money} />}
         <DeliverabilityScoreChart k={k} />
       </div>
       <HealthList health={k.health} />
-      <EmailBreakdown campaigns={campaigns} flows={flows} currency={k.currency} clientId={clientId} />
+      <EmailBreakdown campaigns={campaigns} flows={flows} currency={k.currency} clientId={clientId} provider={k.provider} revenueMeasured={k.revenueMeasured} />
     </div>
   );
 }

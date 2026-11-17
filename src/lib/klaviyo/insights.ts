@@ -206,7 +206,7 @@ const rel = (a: number | null, b: number | null) => (a != null && b != null && b
  * spam and bounce rates against healthy lines, the key flows, revenue leaning on one flow, flows against campaigns,
  * share of the store, SMS, revenue trend and list growth. Each says what to do.
  */
-export function emailHealth(input: { now: PulseWindow; before: PulseWindow | null; campaigns: CampaignLite[]; flows: FlowLite[]; keyFlows: KeyFlow[]; today: string; money: (x: number) => string }): HealthFinding[] {
+export function emailHealth(input: { now: PulseWindow; before: PulseWindow | null; campaigns: CampaignLite[]; flows: FlowLite[]; keyFlows: KeyFlow[]; today: string; money: (x: number) => string; /** False when the source doesn't list automations (Brevo): the flow findings are skipped, flows aren't zero */ flowsKnown?: boolean }): HealthFinding[] {
   const { now, before, today, money } = input;
   const out: HealthFinding[] = [];
   const add = (f: HealthFinding) => out.push(f);
@@ -247,7 +247,7 @@ export function emailHealth(input: { now: PulseWindow; before: PulseWindow | nul
     else if (k.state === "present") add({ id: `flow_${k.id}`, tone: "warn", title: `${k.label} built but not live`, detail: `${k.flows.map((f) => `${f.name} (${f.status ?? "no status"})`).slice(0, 2).join(", ")}.`, action: "Review it and switch it live." });
   }
   const liveKeys = input.keyFlows.filter((k) => k.state === "live").length;
-  if (liveKeys === input.keyFlows.length) add({ id: "flows_all", tone: "good", title: "Every key flow is live", detail: input.keyFlows.map((k) => k.label).join(", ") + ".", action: null });
+  if (input.keyFlows.length && liveKeys === input.keyFlows.length) add({ id: "flows_all", tone: "good", title: "Every key flow is live", detail: input.keyFlows.map((k) => k.label).join(", ") + ".", action: null });
 
   // Revenue leaning on one flow
   const flowTotal = input.flows.reduce((s, f) => s + f.revenue30, 0);
@@ -256,7 +256,7 @@ export function emailHealth(input: { now: PulseWindow; before: PulseWindow | nul
     add({ id: "concentration", tone: "warn", title: `${Math.round((top.revenue30 / flowTotal) * 100)}% of flow revenue from one flow`, detail: `${top.name} earns ${money(top.revenue30)} of ${money(flowTotal)} in 30 days.`, action: "Build out the other key flows so revenue doesn't hang on one." });
 
   // Flows against campaigns
-  if (now.revenue > 0) {
+  if (now.revenue > 0 && input.flowsKnown !== false) {
     const flowShare = now.flowRevenue / now.revenue;
     if (flowShare < 0.25) add({ id: "split", tone: "warn", title: `Flows bring only ${Math.round(flowShare * 100)}% of email revenue`, detail: `Flows ${money(now.flowRevenue)}, campaigns ${money(now.campaignRevenue)}.`, action: "Healthy accounts get a third or more from flows: strengthen welcome, abandonment and post-purchase." });
     else if (flowShare >= 0.3 && flowShare <= 0.75) add({ id: "split", tone: "good", title: `Balanced: flows bring ${Math.round(flowShare * 100)}% of email revenue`, detail: `Flows ${money(now.flowRevenue)}, campaigns ${money(now.campaignRevenue)}.`, action: null });

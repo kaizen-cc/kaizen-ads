@@ -1,4 +1,6 @@
 import "server-only";
+import { forProvider } from "@/lib/email-providers/core";
+import { emailConnection, emailSourceName } from "@/lib/email-providers/which";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AgentOffline, AiPaused, AiUnavailable, askJson } from "@/lib/ai";
 import { notLive } from "@/lib/live-guard";
@@ -23,8 +25,8 @@ export type AuditStart = { id: string; running: boolean } | { error: string };
 export async function requestEmailAudit(db: SupabaseClient, admin: SupabaseClient, clientId: string, by: string | null, auto = false): Promise<AuditStart> {
   const why = await notLive(db, clientId);
   if (why) return { error: why };
-  const { data: conn } = await db.from("klaviyo_connections").select("client_id").eq("client_id", clientId).maybeSingle();
-  if (!conn) return { error: "Connect Klaviyo for this client first: an audit reads its numbers." };
+  const conn = await emailConnection(admin, clientId);
+  if (!conn) return { error: "Connect the client's email provider first: an audit reads its numbers." };
   const { data: running } = await admin.from("email_audits").select("id, created_at").eq("client_id", clientId).eq("status", "running").order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (running && Date.now() - Date.parse(running.created_at as string) < STALE_MS) return { id: running.id as string, running: false };
   const { data, error } = await admin.from("email_audits").insert({ client_id: clientId, created_by: by, auto, step: "Starting", progress: 2 }).select("id").single();
@@ -43,9 +45,9 @@ export async function runEmailAudit(admin: SupabaseClient, auditId: string) {
   if (!row) return;
   const clientId = row.client_id as string;
   try {
-    await progress(admin, auditId, "Reading the Klaviyo account", 10);
+    await progress(admin, auditId, `Reading the ${await emailSourceName(admin, clientId)} account`, 10);
     const [{ data: client }, k, score] = await Promise.all([admin.from("clients").select("name").eq("id", clientId).maybeSingle(), clientKlaviyo(admin, clientId), emailScoreOf(admin, clientId)]);
-    if (!k) throw new Error("There are no Klaviyo numbers for this client yet: the first sync has not finished.");
+    if (!k) throw new Error("There are no email numbers for this client yet: the first sync has not finished.");
     if (!score) throw new Error("The email score could not be worked out: there is nothing to measure yet.");
     const today = nyToday();
     const name = (client?.name as string | null) ?? "the client";
@@ -61,7 +63,7 @@ export async function runEmailAudit(admin: SupabaseClient, auditId: string) {
       agent: "email_audit",
       label: "email account audit",
       clientId,
-      system: EMAIL_AUDIT_SYSTEM,
+      system: forProvider(EMAIL_AUDIT_SYSTEM, k.providerName),
       schema: EMAIL_AUDIT_SCHEMA as unknown as Record<string, unknown>,
       maxTokens: 16000,
       onText: (t) => void progress(admin, auditId, "Writing the audit", Math.min(90, 50 + Math.round(t.length / 250))),

@@ -93,6 +93,8 @@ export function sortFlows(flows: BFlow[], key: FlowSortKey | null, dir: "asc" | 
 /** The score read from what the client page already holds (its 90 days of daily rows, campaigns and flows), same math as the server loader */
 export function scoreFromKlaviyo(k: {
   today: string;
+  /** False when the source reports no revenue: the money checks are left out */
+  revenueMeasured?: boolean;
   daily: { date: string; revenue: number; storeRevenue: number | null; recipients: number }[];
   campaigns: { channel: string; sendTime: string | null; recipients: number; delivered: number; bounced: number; spamComplaints: number; unsubscribes: number; opensUnique: number; openRate: number | null; clickRate: number | null }[];
   flows: { status: string | null; recipients30: number; openRate30: number | null; clickRate30: number | null }[];
@@ -105,6 +107,7 @@ export function scoreFromKlaviyo(k: {
       days: k.daily.filter((d) => d.date >= from && d.date <= k.today).map((d) => ({ revenue: d.revenue, storeRevenue: d.storeRevenue, campaignRecipients: d.recipients, flowRecipients: 0 })),
       campaigns: k.campaigns.filter((c) => c.sendTime && ny(c.sendTime) >= from && ny(c.sendTime) <= k.today).map((c) => ({ channel: c.channel, recipients: c.recipients, delivered: c.delivered, bounced: c.bounced, spam: c.spamComplaints, unsubscribes: c.unsubscribes, opens: c.opensUnique, openRate: c.openRate, clickRate: c.clickRate })),
       flows: k.flows.map((f) => ({ status: f.status, recipients30: f.recipients30, openRate30: f.openRate30, clickRate30: f.clickRate30 })),
+      ...(k.revenueMeasured === false ? { noRevenue: true } : {}),
     },
     { from, to: k.today },
   );

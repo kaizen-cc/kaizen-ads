@@ -3,6 +3,7 @@ import { BAND_TONE } from "@/components/email-score-parts";
 import { KlaviyoKeyInline } from "@/components/klaviyo-key-inline";
 import { STATUS_LABEL, gapWords, moneyShort, pctText, type ChannelStatus } from "@/lib/channel-kpis/calc";
 import type { ChannelRow } from "@/lib/channel-kpis/types";
+import { providerName } from "@/lib/email-providers/core";
 
 // The pieces the Email and Social boards and the email and social Overview share: the status colors, how the main
 // number reads, and what to do when the data isn't connected. Server-safe (no hooks), theme tokens only.
@@ -45,6 +46,8 @@ export function mainCaption(r: ChannelRow): string {
 /** One line on where it's heading: the pace for email, the gap for social */
 export function paceLine(r: ChannelRow): string | null {
   if (r.status === "setup") return null;
+  // A source with no revenue has no pace to show
+  if (r.line === "email" && r.revenueMeasured === false) return null;
   // Email: the pace against the optional monthly revenue target, as a supporting line under the score
   if (r.line === "email") {
     if (r.projected == null) return null;
@@ -58,24 +61,25 @@ export function paceLine(r: ChannelRow): string | null {
 export type Connect = { title: string; body: string; href: string; label: string };
 
 /** What to do about missing or broken data: the one next step, and where to take it */
-export function connectStep(r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status">): Connect | null {
+export function connectStep(r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status"> & { provider?: ChannelRow["provider"] }): Connect | null {
   const email = r.line === "email";
+  const name = providerName(r.provider);
   const failing = r.data === "failing";
   if (r.data === "missing")
     return email
-      ? { title: "Klaviyo isn't connected", body: "Paste the client's read-only private API key and the numbers start filling in. A lead or an exec can do it right here; everyone else on their Klaviyo card.", href: `/clients/${r.slug}?tab=team`, label: "Open the Klaviyo card" }
+      ? { title: "Email isn't connected", body: "Pick the client's email provider (Klaviyo, Brevo or Customer.io) and paste its read-only key; the numbers start filling in. A lead or an exec can do it right here; everyone else on the client's email card.", href: `/clients/${r.slug}?tab=team`, label: "Open the email card" }
       : { title: "Social isn't linked", body: "Share their Facebook Page and Instagram account to Kaizen's Business Manager, or pick the Page on the client's Social tab.", href: `/clients/${r.slug}?service=social`, label: "Open their Social tab" };
-  if (failing) return { title: email ? "Klaviyo isn't reading" : "Social isn't reading", body: [r.problem?.message, r.problem?.fix].filter(Boolean).join(". ") || "The last read failed.", href: email ? `/clients/${r.slug}?tab=team` : `/clients/${r.slug}?service=social`, label: email ? "Fix the Klaviyo key" : "Fix the link" };
+  if (failing) return { title: email ? `${name} isn't reading` : "Social isn't reading", body: [r.problem?.message, r.problem?.fix].filter(Boolean).join(". ") || "The last read failed.", href: email ? `/clients/${r.slug}?tab=team` : `/clients/${r.slug}?service=social`, label: email ? `Fix the ${name} key` : "Fix the link" };
   if (r.data === "pending") return { title: "First read in progress", body: "Connected. The first 90 days are being read; numbers show here once they're in.", href: `/clients/${r.slug}${email ? "?service=email" : "?service=social"}`, label: "Open the client" };
   if (r.status === "setup") return { title: email ? "No numbers yet" : "Meta isn't giving reach yet", body: r.problem?.fix ?? "It can take a day after connecting.", href: `/clients/${r.slug}${email ? "?service=email" : "?service=social"}`, label: "Open the client" };
   return null;
 }
 
 /** A row needing a connection step (not connected, failing, first read pending, or connected with nothing readable) */
-export const needsConnecting = (r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status">) => connectStep(r) != null;
+export const needsConnecting = (r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status"> & { provider?: ChannelRow["provider"] }) => connectStep(r) != null;
 
 /** A linked call to action, the same look everywhere */
-export function ConnectCta({ r, compact = false }: { r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status" | "clientId" | "canConnect">; compact?: boolean }) {
+export function ConnectCta({ r, compact = false }: { r: Pick<ChannelRow, "line" | "slug" | "data" | "problem" | "status" | "clientId" | "canConnect"> & { provider?: ChannelRow["provider"] }; compact?: boolean }) {
   const c = connectStep(r);
   if (!c) return null;
   // A lead or an exec pastes (or replaces) the Klaviyo key right here, through the client card's own action; everyone else gets the link
@@ -85,7 +89,7 @@ export function ConnectCta({ r, compact = false }: { r: Pick<ChannelRow, "line" 
       <p className="text-sm font-medium">{c.title}</p>
       <p className="text-xs leading-relaxed text-muted">{c.body}</p>
       {inline ? (
-        <KlaviyoKeyInline clientId={r.clientId} replace={r.data === "failing"} />
+        <KlaviyoKeyInline clientId={r.clientId} replace={r.data === "failing"} provider={r.data === "failing" ? (r.provider ?? null) : null} />
       ) : (
         <Link href={c.href} className="inline-flex min-h-11 w-fit items-center rounded-full bg-fg px-4 text-xs font-medium text-bg md:min-h-9">
           {c.label}

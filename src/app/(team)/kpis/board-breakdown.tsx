@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import { EmailBreakdown } from "@/components/email-breakdown";
 import type { BCampaign, BFlow } from "@/lib/email-breakdown";
+import type { EmailProvider } from "@/lib/email-providers/core";
 import { loadEmailBreakdown } from "./email-breakdown-actions";
 
 // The breakdown inside an opened account on the Email board: fetched when the sheet opens so the board stays light.
 
-export function BoardBreakdown({ clientId, currency }: { clientId: string; currency: string | null }) {
+export function BoardBreakdown({ clientId, currency, provider = null, revenueMeasured = true }: { clientId: string; currency: string | null; provider?: EmailProvider | null; revenueMeasured?: boolean }) {
   const [state, setState] = useState<{ id: string; data: { campaigns: BCampaign[]; flows: BFlow[] } | null; error: string | null } | null>(null);
   useEffect(() => {
     let live = true;
@@ -26,5 +27,5 @@ export function BoardBreakdown({ clientId, currency }: { clientId: string; curre
       </div>
     );
   if (!state.data) return <p className="text-sm text-bad">{state.error}</p>;
-  return <EmailBreakdown campaigns={state.data.campaigns} flows={state.data.flows} currency={currency} clientId={clientId} />;
+  return <EmailBreakdown campaigns={state.data.campaigns} flows={state.data.flows} currency={currency} clientId={clientId} provider={provider} revenueMeasured={revenueMeasured} />;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { EmailProvider } from "@/lib/email-providers/core";
 import { CampaignPreviewCard, CampaignPreviewSheet } from "@/app/(team)/clients/[slug]/email-preview";
 import { HoverCard } from "@/components/hover-card";
 import { pushParams, useParam } from "@/lib/url-state";
@@ -136,7 +137,7 @@ const FLOW_HEAD: { key: FlowSortKey; label: string }[] = [
   { key: "rpr", label: "Per recip." },
 ];
 
-function Flows({ flows, money }: { flows: BFlow[]; money: ReturnType<typeof moneyOf> }) {
+function Flows({ flows, money, link }: { flows: BFlow[]; money: ReturnType<typeof moneyOf>; /** The flow's editor opens in Klaviyo: only for Klaviyo clients */ link: boolean }) {
   const sortRaw = useParam("ebs");
   const key: FlowSortKey | null = FLOW_SORTS.includes(sortRaw as FlowSortKey) ? (sortRaw as FlowSortKey) : null;
   const dir = useParam("ebd") === "desc" ? "desc" : "asc";
@@ -197,10 +198,14 @@ function Flows({ flows, money }: { flows: BFlow[]; money: ReturnType<typeof mone
               const rpr = flowRpr(f, w);
               return (
                 <li key={f.id} className={`grid gap-2 border-t border-line/60 px-3 py-3 first:border-t-0 md:items-center md:gap-3 ${FLOW_COLS}`}>
-                  <a href={klaviyoFlowUrl(f.id)} target="_blank" rel="noreferrer" title="Open this flow in Klaviyo" className="group/flow flex min-h-11 min-w-0 items-center gap-1.5 text-[13.5px] font-medium underline-offset-4 hover:underline md:min-h-0">
-                    <span className="truncate">{f.name}</span>
-                    <span aria-hidden className="shrink-0 text-[11px] text-faint transition-colors group-hover/flow:text-fg">↗</span>
-                  </a>
+                  {link ? (
+                    <a href={klaviyoFlowUrl(f.id)} target="_blank" rel="noreferrer" title="Open this flow in Klaviyo" className="group/flow flex min-h-11 min-w-0 items-center gap-1.5 text-[13.5px] font-medium underline-offset-4 hover:underline md:min-h-0">
+                      <span className="truncate">{f.name}</span>
+                      <span aria-hidden className="shrink-0 text-[11px] text-faint transition-colors group-hover/flow:text-fg">↗</span>
+                    </a>
+                  ) : (
+                    <span className="flex min-h-11 min-w-0 items-center text-[13.5px] font-medium md:min-h-0"><span className="truncate">{f.name}</span></span>
+                  )}
                   <span className="grid grid-cols-5 gap-2 text-[12px] md:contents">
                     {[
                       ["Recipients", <span key="r" className="tabular">{rec.toLocaleString("en-US")}</span>],
@@ -228,12 +233,13 @@ function Flows({ flows, money }: { flows: BFlow[]; money: ReturnType<typeof mone
 }
 
 /** Campaigns and live flows under an account's score */
-export function EmailBreakdown({ campaigns, flows, currency, clientId }: { campaigns: BCampaign[]; flows: BFlow[]; currency: string | null; /** Turns on the campaign preview */ clientId?: string }) {
-  const money = moneyOf(currency);
+export function EmailBreakdown({ campaigns, flows, currency, clientId, provider = null, revenueMeasured = true }: { campaigns: BCampaign[]; flows: BFlow[]; currency: string | null; /** Turns on the campaign preview */ clientId?: string; /** Which email provider the numbers are from (flow links and the revenue columns depend on it) */ provider?: EmailProvider | null; revenueMeasured?: boolean }) {
+  // A source with no revenue shows n/a, never $0
+  const money: ReturnType<typeof moneyOf> = revenueMeasured ? moneyOf(currency) : () => "n/a";
   return (
     <div className="grid gap-6">
       <Campaigns rows={campaigns} money={money} clientId={clientId} />
-      <Flows flows={flows} money={money} />
+      <Flows flows={flows} money={money} link={!provider || provider === "klaviyo"} />
     </div>
   );
 }

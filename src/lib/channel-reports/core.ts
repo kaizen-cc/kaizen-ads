@@ -138,6 +138,10 @@ export const scoreSnapshot = (r: EmailScoreResult): EmailScoreSnapshot => ({ sco
 
 export type EmailMetrics = {
   platform: "klaviyo";
+  /** The email provider the numbers come from, by name (older reports have none: Klaviyo) */
+  source?: string;
+  /** False when that source reports no revenue: revenue, orders and their rates are left out, never shown as zero */
+  revenueMeasured?: boolean;
   version: 1;
   kind: ChannelKind;
   currency: string | null;
@@ -195,6 +199,9 @@ export type EmailInput = {
   profiles: number | null;
   currency: string | null;
   account: string | null;
+  /** The provider's name and whether it reports revenue (Klaviyo when not given) */
+  source?: string;
+  revenueMeasured?: boolean;
   /** campaign id → the picture of its saved email */
   images?: Map<string, string | null>;
   target?: TargetLine | null;
@@ -270,6 +277,8 @@ export function emailMetrics(i: EmailInput): EmailMetrics {
   const gaps = i.days.length ? missingDays(i.days, i.main.start, i.main.end) : [];
   const m: EmailMetrics = {
     platform: "klaviyo",
+    ...(i.source && i.source !== "Klaviyo" ? { source: i.source } : {}),
+    ...(i.revenueMeasured === false ? { revenueMeasured: false } : {}),
     version: 1,
     kind: i.kind,
     currency: i.currency,
@@ -281,7 +290,7 @@ export function emailMetrics(i: EmailInput): EmailMetrics {
     campaigns,
     campaignsTotal: sent.length,
     flows,
-    flowsBasis: `Klaviyo's flow report, last 30 days to ${shortDay(i.today)}`,
+    flowsBasis: `${i.source ?? "Klaviyo"}'s flow report, last 30 days to ${shortDay(i.today)}`,
     keyFlows: i.keyFlows.map((k) => ({ label: k.label, state: k.state })),
     list: { profiles: i.profiles, net: sub.length ? (subscribed ?? 0) - (unsubscribed ?? 0) : null, subscribed, unsubscribed },
     trend,

@@ -1,4 +1,5 @@
 import "server-only";
+import { activeEmailClients } from "@/lib/email-providers/which";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
 import { auditTouched, requestEmailAudit, runEmailAudit } from "./audit";
@@ -25,13 +26,13 @@ async function lastAudit(admin: SupabaseClient, clientId: string): Promise<LastA
 
 /** The connected clients that are red and due an audit, lowest score first */
 async function due(admin: SupabaseClient, until: number): Promise<Due[]> {
-  const { data: conns } = await admin.from("klaviyo_connections").select("client_id, clients!inner(name, status, archived_at)").eq("status", "active").is("clients.archived_at", null).in("clients.status", [...LIVE]);
+  const conns = await activeEmailClients(admin, LIVE);
   const out: Due[] = [];
-  for (const c of (conns ?? []) as unknown as { client_id: string; clients: { name: string } }[]) {
+  for (const c of conns) {
     if (Date.now() > until) break;
     const score = await emailScoreOf(admin, c.client_id).catch(() => null);
     if (!score) continue;
-    if (needsAutoAudit(score.score, await lastAudit(admin, c.client_id))) out.push({ clientId: c.client_id, name: c.clients.name, score: score.score });
+    if (needsAutoAudit(score.score, await lastAudit(admin, c.client_id))) out.push({ clientId: c.client_id, name: c.name ?? "", score: score.score });
   }
   return out.sort((a, b) => a.score - b.score);
 }

@@ -168,7 +168,8 @@ export async function GET(request: Request) {
     await admin.rpc("expire_sprint_packages");
     if (step === "kpi") return Response.json(await refreshAllKpis(admin));
     if (step === "tiktok") return Response.json(await (await import("@/lib/tiktok/store")).syncAllTikTok(admin));
-    if (step === "klaviyo") return Response.json(await (await import("@/lib/klaviyo/store")).syncAllKlaviyo(admin, { budgetMs: 640_000 }));
+    // Klaviyo, then Brevo and Customer.io clients, on the same schedule: all three feed the same email tables
+    if (step === "klaviyo") return Response.json(await (await import("@/lib/email-providers")).syncAllEmail(admin, { budgetMs: 640_000 }));
     if (step === "social") return Response.json(await (await import("@/lib/social/store")).syncAllSocial(admin, { budgetMs: 640_000 }));
     if (step === "meta_tokens") return Response.json(await (await import("@/lib/meta-tokens")).checkAllBusinessTokens(admin));
     if (step === "connectors") return Response.json(await (await import("@/lib/connectors/registry-sync")).syncConnectorRegistry(admin));

@@ -67,6 +67,15 @@ const SOCIAL_MESSAGE = (kind: ChannelKind) => `message: the social team's ${kind
 7. *Coming up*: one bullet per planned item from the work log or what was said ("Month D: what" when it's dated); never invent a date, a post or a campaign.
 No sign-off, no emojis, no em dashes, no internal words (AI, Kaizen Ads, team names, insights jargon).`;
 
+/** The writer's rules name the platform: for Brevo and Customer.io clients that name replaces Klaviyo, and a source with no revenue is told so */
+function forSource(text: string, m: unknown): string {
+  const x = (m ?? null) as { source?: string; revenueMeasured?: boolean } | null;
+  const name = x?.source;
+  const named = name && name !== "Klaviyo" ? text.split("Klaviyo").join(name) : text;
+  return x?.revenueMeasured === false ? `${named}
+This client's ${name ?? "email"} reports no revenue: never write revenue, orders, order rates or revenue targets; build the report on sends, opens, clicks, list growth and what we did.` : named;
+}
+
 function writerSystem(kind: ChannelKind, platform: ChannelPlatform, whiteLabel = false): string {
   const line = lineOfPlatform(platform);
   const base = `You draft a ${kind} ${channelName(platform).toLowerCase()} report for a client of Kaizen Marketing, a marketing agency, as the ${ROLE[line]} who runs this channel for the client. The ${ROLE[line]} reads it, may edit it, and sends it as themselves, so it must sound exactly like them: match the voice, warmth, length, formatting and habits in their examples (greeting, how they introduce numbers, headers, bullets, sign-off). If there are no examples, write warm, plain and confident. This is not a paid ads report: ignore any guidance meant for ad accounts, budgets, ROAS or cost per result.
@@ -218,7 +227,7 @@ export async function draftChannelReport(admin: SupabaseClient, reportId: string
     const c = await context(admin, reportId);
     const line = lineOfPlatform(c.r.platform);
     const loaded = await loadChannelMetrics(admin, c.r.platform, c.r.client_id, c.r.kind, { start: c.r.period_start, end: c.r.period_end });
-    if (!loaded) throw new Error(`There are no ${line === "email" ? "Klaviyo" : "social"} numbers for this client yet: connect it first.`);
+    if (!loaded) throw new Error(`There are no ${line === "email" ? "email" : "social"} numbers for this client yet: connect it first.`);
     const metrics = applyStated(loaded, c.r.manual_results?.stated);
     // The tiles and columns picked on the client's last report on this line carry over (as an ads report's layout does)
     if (!c.r.layout) {
@@ -232,7 +241,7 @@ export async function draftChannelReport(admin: SupabaseClient, reportId: string
       agent: "reporter",
       label: `${c.r.kind} ${line} report`,
       clientId: c.r.client_id,
-      system: writerSystem(c.r.kind, c.r.platform, c.whiteLabel),
+      system: forSource(writerSystem(c.r.kind, c.r.platform, c.whiteLabel), metrics),
       schema: DRAFT_SCHEMA,
       maxTokens: 12000,
       prompt: `${sourcesBlock(c, metrics, work.text, voice, client)}\n\nWrite the ${c.r.kind} ${channelName(c.r.platform).toLowerCase()} report for ${metrics.main.label}.`,
@@ -277,7 +286,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
     agent: "reporter",
     label: "revise channel report",
     clientId: c.r.client_id,
-    system: `${writerSystem(c.r.kind, c.r.platform, c.whiteLabel)}\n\n${REVISE_SYSTEM}\n${PERIOD_RULE}\n\n${channelToolsLine(c.r.platform)}`,
+    system: `${forSource(writerSystem(c.r.kind, c.r.platform, c.whiteLabel), c.r.metrics)}\n\n${REVISE_SYSTEM}\n${PERIOD_RULE}\n\n${channelToolsLine(c.r.platform)}`,
     schema: REVISE_SCHEMA,
     tools,
     maxRounds: 6,

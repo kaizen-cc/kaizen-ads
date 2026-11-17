@@ -6,7 +6,9 @@ import type { EmailScoreResult } from "@/lib/email-score-calc";
 import { loadEmailScores } from "@/lib/email-score-load";
 import { conversionMetricsOf, monthRevenue, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
 import { socialClientState, plainSocialError } from "@/lib/social/core";
-import { klaviyoClientState, partialSyncWarning } from "@/lib/klaviyo/core";
+import { partialSyncWarning } from "@/lib/klaviyo/core";
+import { emailClientState } from "@/lib/email-providers/core";
+import { emailConnections, type EmailConn } from "@/lib/email-providers/which";
 import { servicesOf } from "@/lib/services";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -132,24 +134,25 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
         .then((r) => new Map((r.error ? [] : (r.data ?? [])).map((c) => [c.client_id as string, conversionMetricsOf(c.conversion_metrics, { id: (c.conversion_metric_id as string | null) ?? null, name: (c.conversion_metric_name as string | null) ?? null })])))
     : new Map();
   const extraIds = [...new Set([...ranked.values()].flatMap((l) => (l.length > 1 ? l.map((m) => m.id) : [])))];
-  const [days, camps, conns, memos, scores, metricDays] = await Promise.all([
+  // Every client's provider and its state (Klaviyo, Brevo or Customer.io), read with the server's rights
+  const connMap = admin ? await emailConnections(admin, ids).catch(() => new Map<string, EmailConn>()) : new Map<string, EmailConn>();
+  const noRevenue = new Set([...connMap.values()].filter((c) => !c.revenueRead).map((c) => c.clientId));
+  const [days, camps, memos, scores, metricDays] = await Promise.all([
     readAll<Record<string, unknown>>((a, b) =>
       db.from("klaviyo_daily").select("client_id, date, revenue, campaign_revenue, flow_revenue, conversions, store_revenue, store_orders, subscribed, unsubscribed").in("client_id", ids).gte("date", month.prevStart).lte("date", month.today).order("client_id").order("date").range(a, b),
     ),
     readAll<Record<string, unknown>>((a, b) =>
       db.from("klaviyo_campaigns").select("client_id, campaign_id, channel, send_time, recipients, delivered, opens_unique, clicks_unique").in("client_id", ids).gte("send_time", `${sinceCamp}T00:00:00Z`).order("client_id").order("campaign_id").range(a, b),
     ),
-    // The connection holds an encrypted key and is never readable from a session: only its state is read, with the server's rights
-    admin ? admin.from("klaviyo_connections").select("client_id, account_name, currency, status, last_synced_at, last_error, conversion_metric_name").in("client_id", ids).then((r) => r.data ?? []) : Promise.resolve([] as Record<string, unknown>[]),
     admin ? admin.from("sync_state").select("source, last_result").in("source", ids.map((i) => `klaviyo:${i}`)).then((r) => r.data ?? []) : Promise.resolve([] as Record<string, unknown>[]),
     // The account score (the main email KPI), read through the same session as the rest
-    loadEmailScores(db, ids, new Map([...ranked.entries()].map(([k, l]) => [k, l.map((m) => m.id)]))).catch(() => new Map<string, EmailScoreResult>()),
+    loadEmailScores(db, ids, new Map([...ranked.entries()].map(([k, l]) => [k, l.map((m) => m.id)])), noRevenue).catch(() => new Map<string, EmailScoreResult>()),
     // Each ranked metric's own days this month, for the side by side (none until a lead ranks more than one)
     extraIds.length
       ? readAll<Record<string, unknown>>((a, b) => db.from("klaviyo_metric_daily").select("client_id, metric_id, date, revenue, conversions, store_revenue, store_orders").in("client_id", ids).in("metric_id", extraIds).gte("date", month.start).lte("date", month.today).order("client_id").order("metric_id").order("date").range(a, b)).catch(() => [] as Record<string, unknown>[])
       : Promise.resolve([] as Record<string, unknown>[]),
   ]);
-  const connBy = new Map(conns.map((c) => [c.client_id as string, c]));
+  const connBy = connMap;
   const memoBy = new Map(memos.map((m) => [String(m.source).slice("klaviyo:".length), (m.last_result ?? null) as { seriesError?: string | null; storeError?: string | null } | null]));
   const daysBy = groupBy(days, (d) => d.client_id as string);
   const campsBy = groupBy(camps, (c) => c.client_id as string);
@@ -162,7 +165,7 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
     const memo = memoBy.get(id);
     // With the server's rights the connection says where it stands; without them the daily rows do
     const st = conn
-      ? klaviyoClientState({ status: conn.status as string, lastSyncedAt: (conn.last_synced_at as string | null) ?? null, error: (conn.last_error as string | null) ?? null })
+      ? emailClientState(conn.provider, { status: conn.status, lastSyncedAt: conn.lastSyncedAt, error: conn.lastError })
       : { state: (mine.length ? "connected" : "missing") as DataState, error: null };
     const partial = partialSyncWarning(memo);
     const thisMonth = mine.filter((d) => (d.date as string) >= month.start);
@@ -170,12 +173,14 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
     const sum = (xs: Record<string, unknown>[], k: string) => xs.reduce((s, x) => s + num(x[k]), 0);
     const mtd = sum(thisMonth, "revenue");
     const readable = st.state !== "missing" && st.state !== "failing" && st.state !== "pending";
+    // A source with no revenue (Customer.io without a purchase event, Brevo without a store) has no revenue goal or graph: unmeasured, never zero
+    const revenueOn = conn ? conn.revenueRead : true;
     // The month's revenue target: last month + 10% by itself, a higher one typed on the board wins
     const prevTotal = lastMonth.length ? sum(lastMonth, "revenue") : null;
-    const rt = revenueTarget(prevTotal, b.targetManual ?? null);
+    const rt = revenueOn ? revenueTarget(prevTotal, b.targetManual ?? null) : revenueTarget(null, null);
     // The main KPI is the score; the month's pace against the target is the progression goal beside it
     const j = judgeEmail({ readable, target: rt.target, mtd, month });
-    const rev = readable ? monthRevenue({ days: thisMonth.map((d) => ({ date: d.date as string, value: num(d.revenue) })), prevDays: lastMonth.map((d) => ({ date: d.date as string, value: num(d.revenue) })), month, target: rt.target }) : null;
+    const rev = readable && revenueOn ? monthRevenue({ days: thisMonth.map((d) => ({ date: d.date as string, value: num(d.revenue) })), prevDays: lastMonth.map((d) => ({ date: d.date as string, value: num(d.revenue) })), month, target: rt.target }) : null;
     const list = ranked.get(id) ?? [];
     const found = readable ? (scores.get(id) ?? null) : null;
     const score = found && found.unmeasured.length < found.checks.length ? found : null;
@@ -229,10 +234,12 @@ async function emailRows(db: SupabaseClient, clients: ClientRef[], ids: string[]
       data: st.state as DataState,
       problem: st.error ? { message: st.error.message, fix: st.error.fix } : null,
       warning: partial && st.state !== "missing" ? partial.message : null,
-      lastSyncedAt: (conn?.last_synced_at as string | null) ?? null,
-      account: (conn?.account_name as string | null) ?? null,
-      conversionMetric: (conn?.conversion_metric_name as string | null) ?? null,
-      currency: (conn?.currency as string | null) ?? null,
+      provider: conn?.provider ?? null,
+      revenueMeasured: revenueOn,
+      lastSyncedAt: conn?.lastSyncedAt ?? null,
+      account: conn?.account ?? null,
+      conversionMetric: conn?.conversionMetric ?? null,
+      currency: conn?.currency ?? null,
       status,
       ratio: j.ratio,
       value: readable ? mtd : null,

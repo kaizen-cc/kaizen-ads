@@ -52,7 +52,7 @@ import type { ClientKlaviyo, KlaviyoConnectionView } from "@/lib/klaviyo/store";
 import { KlaviyoConnection } from "./klaviyo-connection";
 import { GoogleSyncPanel } from "@/components/platform-fields";
 import type { GoogleClientHealth } from "@/lib/google-health";
-import { klaviyoClientState } from "@/lib/klaviyo/core";
+import { emailClientState, providerName } from "@/lib/email-providers/core";
 import { emailTabs } from "./email-tabs";
 import { socialTabs } from "./social-tabs";
 import type { ClientSocial, SocialLinkView } from "@/lib/social/store";
@@ -263,7 +263,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
     ...(!client.slack_channel_id ? [{ tone: "info" as const, text: "Connect their Slack channel: it's their portal chat too", href: tab("team") }] : []),
   ];
   // Google not connected or failing, and Klaviyo failing, count too (a client without Klaviyo may simply not use it)
-  const klaviyoFailing = klaviyo?.conn ? klaviyoClientState(klaviyo.conn).state === "failing" : false;
+  const klaviyoFailing = klaviyo?.conn ? emailClientState(klaviyo.conn.provider ?? "klaviyo", klaviyo.conn).state === "failing" : false;
   const needsSetup = [!contacts.length, !client.slack_channel_id, !client.drive_folder_id, googleSync?.state === "missing" || googleSync?.state === "failing", klaviyoFailing].filter(Boolean).length;
   const sprintMoves = Object.values(sprints ?? {}).reduce((n, s) => n + Math.max(0, s.total - s.done), 0);
   const inMotion = [
@@ -692,7 +692,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                     </Section>
                   )}
                   {klaviyo && (
-                    <Section title="Klaviyo" description="Their email and SMS, read only: campaigns, flows, lists and revenue, refreshed every 30 minutes in business hours (hourly otherwise) as context for the accounts. A lead or exec connects it with a read-only private API key.">
+                    <Section title={klaviyo.conn ? providerName(klaviyo.conn.provider) : "Email provider"} description="Their email and SMS (Klaviyo, Brevo or Customer.io), read only: campaigns, flows, lists and revenue where the provider reports them, refreshed every 30 minutes in business hours (hourly otherwise) as context for the accounts. A lead or exec connects it with a read-only private API key.">
                       <KlaviyoConnection clientId={client.id} conn={klaviyo.conn} canEdit={can.assign && !demo} />
                     </Section>
                   )}
@@ -1090,15 +1090,15 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   id: "email",
                   label: "Email",
                   tone: klaviyo.conn.status !== "active" || klaviyo.conn.error ? ("bad" as const) : null,
-                  note: klaviyo.data ? `${klaviyo.data.currency && klaviyo.data.currency !== "USD" ? `${klaviyo.data.currency} ` : "$"}${Math.round(klaviyo.data.now.revenue).toLocaleString("en-US")} · 30 days` : "Klaviyo",
+                  note: klaviyo.data ? `${klaviyo.data.currency && klaviyo.data.currency !== "USD" ? `${klaviyo.data.currency} ` : "$"}${Math.round(klaviyo.data.now.revenue).toLocaleString("en-US")} · 30 days` : providerName(klaviyo.conn.provider),
                   tabs: klaviyo.data
                     ? [...emailTabs(klaviyo.data, client.id), ...(emailOps ? [{ id: "ops", label: "Audit and ideas", hint: "The email audit, the sprint that follows it and campaign ideas", content: emailOps }] : [])]
                     : [
                         {
                           id: "overview",
                           label: "Overview",
-                          hint: "Email and SMS from Klaviyo (read only)",
-                          content: <p className="text-sm text-faint">{klaviyo.conn.error ? `Klaviyo isn't reading: ${klaviyo.conn.error}` : "Klaviyo is connected. The first 90 days are being read; the numbers show here once they're in."}</p>,
+                          hint: `Email and SMS from ${providerName(klaviyo.conn.provider)} (read only)`,
+                          content: <p className="text-sm text-faint">{klaviyo.conn.error ? `${providerName(klaviyo.conn.provider)} isn't reading: ${klaviyo.conn.error}` : `${providerName(klaviyo.conn.provider)} is connected.`+" The first 90 days are being read; the numbers show here once they're in."}</p>,
                         },
                       ],
                 },

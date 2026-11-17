@@ -592,14 +592,15 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
 
               {!connect && r.line === "email" && e && (
                 <dl className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
-                  <Stat k="Campaign revenue" v={moneyShort(e.campaignRevenue, r.currency)} hint={`${e.campaignsSent} ${e.campaignsSent === 1 ? "campaign" : "campaigns"} sent`} />
-                  <Stat k="Flow revenue" v={moneyShort(e.flowRevenue, r.currency)} hint={r.value ? `${Math.round((e.flowRevenue / r.value) * 100)}% of the total` : undefined} />
-                  <Stat k="vs last month" v={vsLast == null ? "n/a" : `${vsLast >= 0 ? "+" : "-"}${Math.abs(Math.round(vsLast * 100))}%`} hint={r.prev != null ? `Last month ${moneyShort(r.prev, r.currency)}, this month at pace` : undefined} />
+                  {r.revenueMeasured !== false && <Stat k="Campaign revenue" v={moneyShort(e.campaignRevenue, r.currency)} hint={`${e.campaignsSent} ${e.campaignsSent === 1 ? "campaign" : "campaigns"} sent`} />}
+                  {r.revenueMeasured !== false && <Stat k="Flow revenue" v={moneyShort(e.flowRevenue, r.currency)} hint={r.value ? `${Math.round((e.flowRevenue / r.value) * 100)}% of the total` : undefined} />}
+                  {r.revenueMeasured !== false && <Stat k="vs last month" v={vsLast == null ? "n/a" : `${vsLast >= 0 ? "+" : "-"}${Math.abs(Math.round(vsLast * 100))}%`} hint={r.prev != null ? `Last month ${moneyShort(r.prev, r.currency)}, this month at pace` : undefined} />}
+                  {r.revenueMeasured === false && <Stat k="Campaigns sent" v={num(e.campaignsSent)} hint="This month" />}
                   <Stat k="Open rate" v={pctText(e.openRate)} hint="Email campaigns this month" />
                   <Stat k="Click rate" v={pctText(e.clickRate)} hint="Email campaigns this month" />
                   <Stat k="List growth" v={signed(e.listNet)} hint="Subscribed less unsubscribed" />
-                  <Stat k="Orders attributed" v={num(e.orders)} hint="Placed by email and SMS" />
-                  <Stat k="Store orders" v={num(e.storeOrders)} hint="All orders Klaviyo sees" />
+                  {r.revenueMeasured !== false && <Stat k="Orders attributed" v={num(e.orders)} hint="Placed by email and SMS" />}
+                  {(!r.provider || r.provider === "klaviyo") && <Stat k="Store orders" v={num(e.storeOrders)} hint="All orders Klaviyo sees" />}
                   <Stat k="Last campaign" v={when(e.lastSendAt)} hint={r.quietDays != null && r.quietDays >= 14 ? `${r.quietDays} days ago` : undefined} />
                 </dl>
               )}
@@ -672,8 +673,8 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
                 </dl>
               )}
 
-              {!connect && r.line === "email" && r.score && <BoardBreakdown clientId={r.clientId} currency={r.currency} />}
-              {!connect && r.line === "email" && r.data !== "missing" && <BoardLocations clientId={r.clientId} />}
+              {!connect && r.line === "email" && r.score && <BoardBreakdown clientId={r.clientId} currency={r.currency} provider={r.provider ?? null} revenueMeasured={r.revenueMeasured !== false} />}
+              {!connect && r.line === "email" && r.data !== "missing" && (!r.provider || r.provider === "klaviyo") && <BoardLocations clientId={r.clientId} />}
 
               {/* The target */}
               <section className="grid gap-3 rounded-[16px] border border-line bg-surface p-4 md:p-5">
@@ -727,8 +728,8 @@ function Detail({ r, month, onClose, onStep }: { r: ChannelRow; month: Month; on
                     {r.problem.message}. {r.problem.fix}
                   </p>
                 )}
-                {r.line === "email" && r.data !== "missing" && <KlaviyoMetricPicker clientId={r.clientId} current={r.conversionMetrics ?? []} fallback={r.conversionMetric ?? null} canPick={r.canConnect} />}
-                {r.line === "email" && r.data !== "missing" && <KlaviyoLocations clientId={r.clientId} />}
+                {r.line === "email" && r.data !== "missing" && (!r.provider || r.provider === "klaviyo") && <KlaviyoMetricPicker clientId={r.clientId} current={r.conversionMetrics ?? []} fallback={r.conversionMetric ?? null} canPick={r.canConnect} />}
+                {r.line === "email" && r.data !== "missing" && (!r.provider || r.provider === "klaviyo") && <KlaviyoLocations clientId={r.clientId} />}
                 {r.team.length > 0 && <p className="text-xs text-faint">On it: {r.team.map((t) => `${t.name} (${t.seat})`).join(", ")}</p>}
               </section>
             </div>

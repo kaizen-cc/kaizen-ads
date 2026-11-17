@@ -13,7 +13,7 @@ export function emailText(m: EmailMetrics): string {
   const c = m.currency;
   const { now, before } = m;
   const out: string[] = [
-    `Email marketing (Klaviyo${m.account ? `, account ${m.account}` : ""}). Period: ${m.main.label} (${m.main.start} to ${m.main.end}), compared with ${m.compare.label} (${m.compare.start} to ${m.compare.end}). Revenue is what Klaviyo attributes to email through its Placed Order metric, never the store's total revenue.${now.estimated ? " The daily rows were short, so revenue is added up from the campaigns sent and the flows' own totals." : ""}`,
+    `Email marketing (${m.source ?? "Klaviyo"}${m.account ? `, account ${m.account}` : ""}). Period: ${m.main.label} (${m.main.start} to ${m.main.end}), compared with ${m.compare.label} (${m.compare.start} to ${m.compare.end}). ${m.revenueMeasured === false ? `${m.source ?? "This source"} reports no revenue for this client: never quote revenue, orders or order rates, and leave them out.` : m.source ? `Revenue is what ${m.source} reports for email and SMS, never the store's total revenue.` : "Revenue is what Klaviyo attributes to email through its Placed Order metric, never the store's total revenue."}${now.estimated ? " The daily rows were short, so revenue is added up from the campaigns sent and the flows' own totals." : ""}`,
     line("Attributed revenue", money(now.revenue, c), money(before.revenue, c)),
     line("Campaign revenue", money(now.campaignRevenue, c), money(before.campaignRevenue, c)),
     line("Flow revenue", money(now.flowRevenue, c), money(before.flowRevenue, c)),

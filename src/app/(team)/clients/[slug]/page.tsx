@@ -425,7 +425,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   const klaviyo = admin && line !== "social"
     ? await (async () => {
         const k = await import("@/lib/klaviyo/store");
-        const conn = await k.klaviyoConnection(admin, client.id).catch(() => undefined);
+        const conn = await (await import("@/lib/email-providers")).emailConnectionFlat(admin, client.id).catch(() => undefined);
         if (conn === undefined) return null;
         if (!conn) return { conn: null, data: null, storeRevenue: null };
         const [data, biz] = await Promise.all([k.clientKlaviyo(admin, client.id).catch(() => null), import("@/lib/integrations").then(({ businessSummary }) => businessSummary(admin, client.id)).catch(() => null)]);

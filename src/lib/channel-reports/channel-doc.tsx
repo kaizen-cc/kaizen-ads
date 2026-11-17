@@ -946,14 +946,14 @@ function Notes({ input, look, hot }: { input: ChannelPdfInput; look: Look; hot: 
 }
 
 function Footer({ input }: { input: ChannelPdfInput }) {
-  const src = input.metrics.platform === "klaviyo" ? "Klaviyo" : "Meta (Facebook and Instagram insights)";
+  const src = input.metrics.platform === "klaviyo" ? (input.metrics.source ?? "Klaviyo") : "Meta (Facebook and Instagram insights)";
   return (
     <>
       <View style={s.footer} fixed>
         <Text style={[s.footText, { maxWidth: 250 }]}>
           {input.whiteLabel ? `Prepared for ${input.client}` : `Prepared for ${input.client} · Kaizen`} | Data: {src}, synced daily
         </Text>
-        <Text style={[s.footText, { textAlign: "right", flex: 1 }]}>{input.metrics.platform === "klaviyo" ? "Revenue and orders are attributed by Klaviyo · rates are of delivered email · order rate is orders over recipients" : "Engagement rate is interactions over reach"}</Text>
+        <Text style={[s.footText, { textAlign: "right", flex: 1 }]}>{input.metrics.platform === "klaviyo" ? (input.metrics.revenueMeasured === false ? "Rates are of delivered email" : `Revenue and orders are attributed by ${input.metrics.source ?? "Klaviyo"} · rates are of delivered email · order rate is orders over recipients`) : "Engagement rate is interactions over reach"}</Text>
       </View>
       <Text style={s.pageNumber} fixed render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
     </>
@@ -998,7 +998,7 @@ function MetricSides({ m }: { m: EmailMetrics }) {
           <Text style={{ width: 90, fontSize: 7.4, textAlign: "right", color: MUTED }}>{cash(x.store.now)}</Text>
         </View>
       ))}
-      <Text style={[s.note, { marginTop: 4, paddingHorizontal: 5 }]}>Each metric is attributed by Klaviyo on its own, against the {prior} before; the store total counts every order of that metric, from email or not.</Text>
+      <Text style={[s.note, { marginTop: 4, paddingHorizontal: 5 }]}>Each metric is attributed by {m.source ?? "Klaviyo"} on its own, against the {prior} before; the store total counts every order of that metric, from email or not.</Text>
     </View>
   );
 }
@@ -1110,7 +1110,7 @@ function LocationSection({ m }: { m: EmailMetrics }) {
   return (
     <View break>
       <View style={s.section} wrap={false}>
-        <Head title="Location breakdown" sub={`Campaigns sent ${m.main.label} · revenue and conversions attributed by Klaviyo, by the restaurant the order came from`} />
+        <Head title="Location breakdown" sub={`Campaigns sent ${m.main.label} · revenue and conversions attributed by ${m.source ?? "Klaviyo"}, by the restaurant the order came from`} />
         <StatRow height={58}>
           {boxes.map((x, i) => (
             <Fragment key={x.key}>

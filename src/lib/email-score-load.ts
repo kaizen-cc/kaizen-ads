@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { etToday, shiftDay } from "@/lib/channel-kpis/calc";
 import { conversionMetricsOf } from "./email-metrics";
+import { emailConnection } from "./email-providers/which";
 import { scoreFromRows, type EmailScoreResult, type MetricDay, type ScoreCampaign, type ScoreDay, type ScoreFlow } from "./email-score-calc";
 
 // Loads each client's email account score from the synced Klaviyo tables: the last 30 days, New York dates. Pass the
@@ -51,7 +52,7 @@ async function rankedMetrics(db: SupabaseClient, clientIds: string[]): Promise<M
  * client's metric ids, primary first) blends the money checks across the ranked metrics; without it they're read from
  * the connection when this client can.
  */
-export async function loadEmailScores(admin: SupabaseClient, clientIds: string[], ranks?: Map<string, string[]>): Promise<Map<string, EmailScoreResult>> {
+export async function loadEmailScores(admin: SupabaseClient, clientIds: string[], ranks?: Map<string, string[]>, noRevenue?: Set<string>): Promise<Map<string, EmailScoreResult>> {
   const out = new Map<string, EmailScoreResult>();
   if (!clientIds.length) return out;
   const to = etToday();
@@ -95,11 +96,14 @@ export async function loadEmailScores(admin: SupabaseClient, clientIds: string[]
   for (const id of clientIds) {
     if (!dayBy.has(id) && !campBy.has(id) && !flowBy.has(id)) continue;
     const extra = (ranked.get(id) ?? []).slice(1).map((m) => metricBy.get(`${id}:${m}`) ?? []);
-    out.set(id, scoreFromRows({ days: dayBy.get(id) ?? [], campaigns: campBy.get(id) ?? [], flows: flowBy.get(id) ?? [], ...(extra.length ? { extra } : {}) }, { from, to }));
+    out.set(id, scoreFromRows({ days: dayBy.get(id) ?? [], campaigns: campBy.get(id) ?? [], flows: flowBy.get(id) ?? [], ...(extra.length ? { extra } : {}), ...(noRevenue?.has(id) ? { noRevenue: true } : {}) }, { from, to }));
   }
   return out;
 }
 
 export async function loadEmailScore(admin: SupabaseClient, clientId: string): Promise<EmailScoreResult | null> {
-  return (await loadEmailScores(admin, [clientId])).get(clientId) ?? null;
+  // With the server's rights the connection says whether the source reports revenue; a session reads nothing here and scores as before
+  const conn = await emailConnection(admin, clientId).catch(() => null);
+  const noRevenue = conn && !conn.revenueRead ? new Set([clientId]) : undefined;
+  return (await loadEmailScores(admin, [clientId], undefined, noRevenue)).get(clientId) ?? null;
 }

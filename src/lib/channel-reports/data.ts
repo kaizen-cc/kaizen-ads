@@ -1,4 +1,6 @@
 import "server-only";
+import { providerHasFlows, providerName } from "@/lib/email-providers/core";
+import { emailConnection } from "@/lib/email-providers/which";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadEmailScore } from "@/lib/email-score-load";
 import { keyFlowCoverage, shiftDay, type CampaignLite, type DailyRow as EmailDay, type FlowLite } from "@/lib/klaviyo/insights";
@@ -99,7 +101,7 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     admin.from("klaviyo_campaigns").select("*").eq("client_id", clientId).not("send_time", "is", null).gte("send_time", `${shiftDay(compare.start, -1)}T00:00:00Z`).order("send_time", { ascending: false }).limit(600),
     admin.from("klaviyo_flows").select("*").eq("client_id", clientId).order("revenue_30", { ascending: false }).limit(200),
     admin.from("klaviyo_audiences").select("audience_id, kind, name, profile_count").eq("client_id", clientId).eq("kind", "list").order("profile_count", { ascending: false, nullsFirst: false }).limit(10),
-    admin.from("klaviyo_connections").select("account_name, currency").eq("client_id", clientId).maybeSingle(),
+    emailConnection(admin, clientId).then((c) => ({ data: c ? { account_name: c.account, currency: c.currency, provider: c.provider, revenue: c.revenueRead } : null })),
     admin.from("klaviyo_audience_sizes").select("audience_id, date, profile_count").eq("client_id", clientId).gte("date", shiftDay(main.end, -45)).order("date"),
   ]);
   if (error || (!days?.length && !camps?.length && !flows?.length)) return null;
@@ -170,7 +172,10 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     days: dailyRows,
     campaigns,
     flows: flowViews,
-    keyFlows: keyFlowCoverage(flowViews),
+    // A source that doesn't list automations (Brevo) has no key flows to judge
+    keyFlows: providerHasFlows(conn?.provider ?? "klaviyo") ? keyFlowCoverage(flowViews) : [],
+    source: conn ? providerName(conn.provider) : undefined,
+    revenueMeasured: conn ? conn.revenue : true,
     profiles: top?.profile_count != null ? Number(top.profile_count) : (hist.at(-1)?.profiles ?? null),
     currency: (conn?.currency as string | null) ?? null,
     account: (conn?.account_name as string | null) ?? null,
@@ -180,7 +185,7 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     upcoming,
   });
   // The target the board paces against: last month + 10% by itself, a higher one typed on the board wins
-  m.target = targetLine("email", await emailTarget(admin, clientId, main), { kind, main, revenue: m.now.revenue });
+  m.target = m.revenueMeasured === false ? null : targetLine("email", await emailTarget(admin, clientId, main), { kind, main, revenue: m.now.revenue });
   // Several metrics counting as the sale: each one's numbers side by side, primary first
   const ranked = await rankedMetrics(admin, clientId);
   if (ranked.length > 1) m.byMetric = await metricSides(admin, clientId, ranked, main, compare).catch(() => null);

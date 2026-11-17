@@ -119,14 +119,17 @@ export function auditDigest(client: string, score: EmailScore, k: ClientKlaviyo,
   const n = k.now;
   const b = k.before;
   const lines: string[] = [];
+  lines.push(`<email_source>The numbers are from ${k.providerName}.${k.revenueMeasured ? "" : ` ${k.providerName} reports no revenue for this client: revenue, orders and the checks built on them are not measured (never quote them as zero, never add an action about them beyond connecting revenue).`}${k.flowsKnown ? "" : ` ${k.providerName}'s API doesn't list automations: flows are not measured here, so never say a key flow is missing; ask the email team to check the account for them.`}</email_source>`);
   lines.push(`<email_score client="${client}" date="${today}">`);
   lines.push(`Score ${score.score} of 100 (${score.band === "good" ? "green, from 80" : score.band === "watch" ? "yellow, from 60" : "red, under 60"}).`);
   for (const c of score.checks) lines.push(`- ${checkLine(c)}`);
   if (score.unmeasured.length) lines.push(`Not measured: ${score.unmeasured.join(", ")} (left out, the rest scaled up).`);
   lines.push("</email_score>");
   lines.push(`<last_30_days_vs_the_30_before currency="${k.currency ?? "USD"}">`);
-  lines.push(`Attributed revenue ${money(n.revenue)} (before ${money(b.revenue)}): campaigns ${money(n.campaignRevenue)}, flows ${money(n.flowRevenue)}, SMS ${money(n.smsRevenue)}.`);
-  lines.push(`Share of the store's revenue ${pct(n.share)}; revenue per recipient ${n.revenuePerRecipient == null ? "n/a" : `$${n.revenuePerRecipient.toFixed(3)}`}.`);
+  if (k.revenueMeasured) {
+    lines.push(`Attributed revenue ${money(n.revenue)} (before ${money(b.revenue)}): campaigns ${money(n.campaignRevenue)}, flows ${money(n.flowRevenue)}, SMS ${money(n.smsRevenue)}.`);
+    lines.push(`Share of the store's revenue ${pct(n.share)}; revenue per recipient ${n.revenuePerRecipient == null ? "n/a" : `$${n.revenuePerRecipient.toFixed(3)}`}.`);
+  } else lines.push("Revenue: not measured by this source.");
   lines.push(`Campaigns sent ${n.campaignsSent} (before ${b.campaignsSent}), ${n.cadence.toFixed(1)} a week. Open ${pct(n.openRate)} (before ${pct(b.openRate)}); click ${pct(n.clickRate, 2)} (before ${pct(b.clickRate, 2)}).`);
   lines.push(`Unsubscribe ${pct(n.unsubscribeRate, 2)}; spam ${pct(n.spamRate, 3)}; bounce ${pct(n.bounceRate, 2)}. List growth ${n.listGrowth == null ? "n/a" : `${n.listGrowth >= 0 ? "+" : ""}${n.listGrowth}`} profiles.`);
   if (n.estimated) lines.push("Revenue is estimated: the daily rows were missing, so it is added up from campaigns and the flows' own totals.");

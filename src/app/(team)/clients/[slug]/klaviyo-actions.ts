@@ -3,7 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
-import { campaignPreview, connectKlaviyo, klaviyoMetricChoices, removeKlaviyo, setKlaviyoMetric, setKlaviyoMetrics, syncKlaviyo, type CampaignPreview } from "@/lib/klaviyo/store";
+import { connectKlaviyo, klaviyoMetricChoices, setKlaviyoMetric, setKlaviyoMetrics, syncKlaviyo, type CampaignPreview } from "@/lib/klaviyo/store";
+import { connectEmail, emailPreview, removeEmail, setRevenueEvent, syncEmail } from "@/lib/email-providers";
+import { isCioRegion, isEmailProvider, type EmailProvider } from "@/lib/email-providers/core";
+import { emailConnection } from "@/lib/email-providers/which";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -44,25 +47,65 @@ export async function connectKlaviyoKey(clientId: string, key: string, opts: { q
   return { ok: true, account: r.account };
 }
 
+/**
+ * Connects the client's email provider (Klaviyo, Brevo or Customer.io): the same check, sealing, first read and rule
+ * (a lead or an exec) as the Klaviyo key above, whichever provider is named. Customer.io also takes its region (blank:
+ * found by trying the US host, then the EU one) and the purchase event whose value counts as revenue.
+ */
+export async function connectEmailKey(clientId: string, provider: string, key: string, opts: { quick?: boolean; region?: string; revenueEvent?: string } = {}): Promise<Result> {
+  if (!isEmailProvider(provider)) return { ok: false, error: "Pick Klaviyo, Brevo or Customer.io." };
+  const l = await mine(clientId, true);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const region = isCioRegion(opts.region) ? opts.region : undefined;
+  // Blank leaves any event already named (replacing a key must not clear it); the card's own field clears it
+  const event = String(opts.revenueEvent ?? "").trim().slice(0, 120);
+  const revenueEvent = provider === "customerio" && event ? event : undefined;
+  const r = await connectEmail(l.admin, provider as EmailProvider, clientId, key, l.me.id, { region, revenueEvent });
+  if (!r.ok) return r;
+  const admin = l.admin;
+  after(() => syncEmail(admin, clientId).then(() => undefined));
+  revalidatePath(`/clients/${l.slug}`);
+  revalidatePath("/settings");
+  if (!opts.quick) {
+    revalidatePath("/kpis");
+    revalidatePath("/pipeline");
+  }
+  return { ok: true, account: r.account };
+}
+
+/** Removes the client's email provider, whichever it is: the key is deleted, the history already read stays */
 export async function removeKlaviyoKey(clientId: string): Promise<Result> {
   const l = await mine(clientId, true);
   if ("error" in l) return { ok: false, error: l.error! };
-  const r = await removeKlaviyo(l.admin, clientId);
+  const conn = await emailConnection(l.admin, clientId);
+  const r = await removeEmail(l.admin, conn?.provider ?? "klaviyo", clientId);
   revalidatePath(`/clients/${l.slug}`);
   return r;
+}
+
+/** Customer.io: the purchase event whose value counts as revenue (empty clears it); the 90 days are read again with it */
+export async function setCustomerioRevenueEvent(clientId: string, event: string): Promise<Result> {
+  const l = await mine(clientId, true);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const r = await setRevenueEvent(l.admin, clientId, String(event ?? ""));
+  if (!r.ok) return r;
+  const admin = l.admin;
+  after(() => syncEmail(admin, clientId, { window: "full" }).then(() => undefined));
+  revalidatePath(`/clients/${l.slug}`);
+  return { ok: true };
 }
 
 /** A campaign's preview for the Email tab: the email's HTML (made safe) or the SMS text, cached after the first read */
 export async function klaviyoCampaignPreview(clientId: string, campaignId: string): Promise<{ ok: true; preview: CampaignPreview } | { ok: false; error: string }> {
   const l = await mine(clientId, false);
   if ("error" in l) return { ok: false, error: l.error! };
-  return campaignPreview(l.admin, clientId, String(campaignId).slice(0, 64));
+  return emailPreview(l.admin, clientId, String(campaignId).slice(0, 64));
 }
 
 export async function syncKlaviyoNow(clientId: string): Promise<Result> {
   const l = await mine(clientId, false);
   if ("error" in l) return { ok: false, error: l.error! };
-  const r = await syncKlaviyo(l.admin, clientId);
+  const r = await syncEmail(l.admin, clientId);
   revalidatePath(`/clients/${l.slug}`);
   revalidatePath("/settings");
   return r.ok ? { ok: true } : { ok: false, error: (r.error ?? "The sync failed.").slice(0, 240) };

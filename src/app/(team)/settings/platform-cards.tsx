@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { GoogleIdField, KlaviyoKeyField } from "@/components/platform-fields";
 import { freshness } from "@/lib/dates";
+import { providerName, type EmailProvider } from "@/lib/email-providers/core";
 import { sentence, type PlainError } from "@/lib/google-health";
 import type { GoogleRosterRow } from "@/lib/google-sync-health";
 import type { KlaviyoRosterRow } from "@/lib/klaviyo/store";
@@ -150,27 +151,34 @@ export function GoogleAdsCard({ rows, run, progress, summary, setupError }: { ro
   );
 }
 
+const ABOUT: Record<EmailProvider, string> = {
+  klaviyo: "Each client's email and SMS, read only: every run reads today and yesterday's totals, the last 7 days' campaigns and each flow's 30 days; once a day the full 120 days, lists and segments. Six clients at a time, each within Klaviyo's limits for its own account. A client with no email provider yet is listed here: connect Klaviyo, Brevo or Customer.io right on its row.",
+  brevo: "Clients whose email is on Brevo, read only: campaigns and SMS with their numbers, lists and segments, and revenue from Brevo's ecommerce attribution when their store is connected. Brevo's API lists no automations, so flows aren't measured. Brevo allows 100 calls an hour per account for most endpoints: a recent read is about 3 calls, the daily full read about 10.",
+  customerio: "Clients whose email is on Customer.io, read only: one-time sends and broadcasts, automations with their daily numbers, segments with their sizes. It reports no revenue unless the client's purchase event is named on its card, then that event's value is the revenue (the last 30 days are read each run). Within its 10 calls a second.",
+};
+
 const ORDER = { failing: 0, missing: 1, behind: 2, pending: 3, connected: 4 } as const;
 
-export function KlaviyoSyncCard({ rows, run, progress, summary }: { rows: KlaviyoRosterRow[] | null; run: RunState; progress: Progress; summary: PlatformSummary }) {
+export function KlaviyoSyncCard({ rows, run, progress, summary, provider = "klaviyo" }: { rows: KlaviyoRosterRow[] | null; run: RunState; progress: Progress; summary: PlatformSummary; /** Klaviyo's, Brevo's or Customer.io's card: the same read, the same rows */ provider?: EmailProvider }) {
+  const name = providerName(provider);
   const list = [...(rows ?? [])].sort((a, b) => ORDER[a.state] - ORDER[b.state] || a.name.localeCompare(b.name));
   return (
     <Card
-      name="Klaviyo"
+      name={name}
       cadence="Per client · every 30 min (business hours), hourly otherwise · full read daily"
-      job="klaviyo"
+      job={provider}
       run={run}
       progress={progress}
       summary={summary}
       missingLabel="missing"
-      about="Each client's email and SMS, read only: every run reads today and yesterday's totals, the last 7 days' campaigns and each flow's 30 days; once a day the full 120 days, lists and segments. Six clients at a time, each within Klaviyo's limits for its own account."
-      banner={!rows && <p className="rounded-[12px] border border-line px-3 py-2 text-[12px] text-faint">Klaviyo isn&apos;t set up in the database yet: its migration hasn&apos;t been applied.</p>}
+      about={ABOUT[provider]}
+      banner={!rows && <p className="rounded-[12px] border border-line px-3 py-2 text-[12px] text-faint">{name} isn&apos;t set up in the database yet: its migration hasn&apos;t been applied.</p>}
     >
-      {rows && list.length === 0 && <li className="px-3 py-3 text-xs text-faint">No live clients.</li>}
+      {rows && list.length === 0 && <li className="px-3 py-3 text-xs text-faint">{provider === "klaviyo" ? "No live clients." : `No live client is on ${name}. Connect one from its client page or the Email board.`}</li>}
       {list.map((r) => {
         const meta = r.state === "missing" ? null : [r.account, r.last4 ? `key ••••${r.last4}` : null].filter(Boolean).join(" · ");
         const retry = <RetryOne source={`klaviyo:${r.id}`} />;
-        if (r.state === "missing") return <Row key={r.id} dot="missing" name={r.name} slug={r.slug} anchor="klaviyo" status="Not connected" action={<KlaviyoKeyField clientId={r.id} />} />;
+        if (r.state === "missing") return <Row key={r.id} dot="missing" name={r.name} slug={r.slug} anchor="klaviyo" status="Not connected" action={<KlaviyoKeyField clientId={r.id} label="Connect email" />} />;
         if (r.state === "failing")
           return (
             <Row
@@ -186,7 +194,7 @@ export function KlaviyoSyncCard({ rows, run, progress, summary }: { rows: Klaviy
               action={
                 <>
                   {retry}
-                  <KlaviyoKeyField clientId={r.id} label="Replace key" />
+                  <KlaviyoKeyField clientId={r.id} label="Replace key" provider={provider} />
                 </>
               }
             />

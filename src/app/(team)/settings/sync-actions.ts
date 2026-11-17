@@ -6,8 +6,8 @@ import { requireExec } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/error-report";
 
-export type SyncJob = "kpi" | "google" | "klaviyo" | "social" | "slack" | "gmail" | "drive" | "meta" | "tiktok" | "calls" | "verticals" | "asana" | "sheet" | "docs";
-const JOBS: SyncJob[] = ["kpi", "google", "klaviyo", "social", "slack", "gmail", "drive", "meta", "tiktok", "calls", "verticals", "asana", "sheet", "docs"];
+export type SyncJob = "kpi" | "google" | "klaviyo" | "brevo" | "customerio" | "social" | "slack" | "gmail" | "drive" | "meta" | "tiktok" | "calls" | "verticals" | "asana" | "sheet" | "docs";
+const JOBS: SyncJob[] = ["kpi", "google", "klaviyo", "brevo", "customerio", "social", "slack", "gmail", "drive", "meta", "tiktok", "calls", "verticals", "asana", "sheet", "docs"];
 
 /** Runs one job the way the schedule does. */
 async function runJob(job: SyncJob) {
@@ -15,6 +15,12 @@ async function runJob(job: SyncJob) {
   if (job === "kpi") return (await import("@/lib/kpi/sync")).refreshAllKpis(admin, 600_000);
   if (job === "google") return (await import("@/lib/kpi/sync")).refreshGoogleKpis(admin, 600_000);
   if (job === "klaviyo") return (await import("@/lib/klaviyo/store")).syncAllKlaviyo(admin, { budgetMs: 600_000, force: true });
+  // Brevo and Customer.io clients read the same way, on their own card
+  if (job === "brevo" || job === "customerio") {
+    const { DEFS } = await import("@/lib/email-providers");
+    const { syncAllProvider } = await import("@/lib/email-providers/runner");
+    return syncAllProvider(admin, DEFS[job], { budgetMs: 600_000, force: true });
+  }
   if (job === "social") return (await import("@/lib/social/store")).syncAllSocial(admin, { budgetMs: 600_000, force: true });
   if (job === "tiktok") return (await import("@/lib/tiktok/store")).syncAllTikTok(admin, 600_000);
   if (job === "calls") return (await import("@/lib/calls")).collectCalls(admin);
@@ -107,11 +113,15 @@ export async function syncOne(source: string): Promise<{ ok: true; note: string 
       return r.error ? { error: r.error } : { ok: true, note: `${r.items ?? 0} new` };
     }
     if (source.startsWith("klaviyo:")) {
-      const r = await (await import("@/lib/klaviyo/store")).syncKlaviyo(admin, source.slice(8));
+      // Whichever provider the client is on (the read memo keeps the Klaviyo name for all three)
+      const clientId = source.slice(8);
+      const r = await (await import("@/lib/email-providers")).syncEmail(admin, clientId);
       revalidatePath("/settings");
       if (!r.ok) {
-        const { plainKlaviyoError } = await import("@/lib/klaviyo/core");
-        return { error: plainKlaviyoError(r.error)?.message ?? "The read failed" };
+        const { plainEmailError } = await import("@/lib/email-providers/core");
+        const { emailConnection } = await import("@/lib/email-providers/which");
+        const conn = await emailConnection(admin, clientId);
+        return { error: plainEmailError(conn?.provider ?? "klaviyo", r.error)?.message ?? "The read failed" };
       }
       return { ok: true, note: r.window === "full" ? "Read in full" : "Recent numbers read" };
     }

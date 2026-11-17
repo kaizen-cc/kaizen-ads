@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { saveGoogleCustomerId } from "@/app/(team)/settings/platform-actions";
-import { connectKlaviyoKey } from "@/app/(team)/clients/[slug]/klaviyo-actions";
+import { KlaviyoKeyInline } from "@/components/klaviyo-key-inline";
+import type { EmailProvider } from "@/lib/email-providers/core";
 import { sentence, type GoogleClientHealth } from "@/lib/google-health";
 
 // Inline fixes for a client's ad platforms, used in Settings › Sync health and the client's Team & setup: add the
@@ -52,24 +53,12 @@ export function GoogleIdField({ clientId, compact = false }: { clientId: string;
   );
 }
 
-/** "Paste API key", opening a field with the scopes it needs: the same check and save as the client's Team & setup */
-export function KlaviyoKeyField({ clientId, label = "Paste API key", open: startOpen = false }: { clientId: string; label?: string; open?: boolean }) {
-  const router = useRouter();
+/**
+ * "Paste API key", opening the same field as the Email board's card: the provider picker (Klaviyo, Brevo or Customer.io)
+ * when the client has none, or its own provider's field to replace the key. One component, one server action.
+ */
+export function KlaviyoKeyField({ clientId, label = "Paste API key", open: startOpen = false, provider = null }: { clientId: string; label?: string; open?: boolean; provider?: EmailProvider | null }) {
   const [open, setOpen] = useState(startOpen);
-  const [key, setKey] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
-  const [pending, start] = useTransition();
-  const save = () =>
-    start(async () => {
-      const r = await connectKlaviyoKey(clientId, key);
-      if (!r.ok) return setError(r.error);
-      setError(null);
-      setKey("");
-      setDone(`Connected${r.account ? ` to ${r.account}` : ""}. The first 90 days are being read now; it takes a few minutes.`);
-      router.refresh();
-    });
-  if (done) return <p className="text-[12.5px] text-ok">{done}</p>;
   if (!open)
     return (
       <button type="button" onClick={() => setOpen(true)} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[12.5px] text-muted transition-colors hover:border-fg/30 hover:text-fg md:min-h-8 md:px-3">
@@ -77,28 +66,8 @@ export function KlaviyoKeyField({ clientId, label = "Paste API key", open: start
       </button>
     );
   return (
-    <div className="grid max-w-md gap-1.5">
-      <div className="flex min-w-0 gap-2">
-        <input
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          autoFocus={!startOpen}
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && key.trim() && !pending && save()}
-          placeholder="pk_…"
-          aria-label="Klaviyo private API key"
-          className={input}
-        />
-        <button type="button" disabled={pending || !key.trim()} onClick={save} className={primary}>
-          {pending ? "Checking…" : "Connect"}
-        </button>
-      </div>
-      <p className="text-[11.5px] leading-relaxed text-faint">
-        A private key from their Klaviyo (Settings › API keys › Create Private API Key), with <b>Full Access</b>, so the same key covers the email team building and sending from Kaizen Ads later. Today Kaizen Ads only reads with it. Checked with Klaviyo, encrypted, never shown again.
-      </p>
-      {error && <p className="text-[12px] text-bad">{error}</p>}
+    <div className="grid w-full max-w-md gap-1.5">
+      <KlaviyoKeyInline clientId={clientId} provider={provider} />
     </div>
   );
 }

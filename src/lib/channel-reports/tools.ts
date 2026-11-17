@@ -165,9 +165,9 @@ export async function channelReportTools(admin: SupabaseClient, r: Report, pulle
           const { clientKlaviyo, topAndBottom } = await import("@/lib/klaviyo/store");
           const { subjectPatterns, weeklyListChange } = await import("@/lib/kaizen-ai/email-insights");
           const k = await clientKlaviyo(admin, r.client_id);
-          if (!k) throw new Error("No Klaviyo numbers for this client: it isn't connected, or the first read hasn't run.");
+          if (!k) throw new Error("No email numbers for this client: it isn't connected, or the first read hasn't run.");
           const best = topAndBottom(k);
-          return note("Klaviyo account, last 30 days", {
+          return note(`${k.providerName} account, last 30 days`, {
             data_through: k.through,
             currency: k.currency ?? "USD",
             last_30_days: { revenue: r2(k.now.revenue), campaign_revenue: r2(k.now.campaignRevenue), flow_revenue: r2(k.now.flowRevenue), campaigns_sent: k.now.campaignsSent, open_rate_pct: pct(k.now.openRate), click_rate_pct: pct(k.now.clickRate), unsubscribe_rate_pct: pct(k.now.unsubscribeRate), spam_rate_pct: pct(k.now.spamRate), share_of_store_revenue_pct: pct(k.now.share), revenue_per_recipient: r2(k.now.revenuePerRecipient), campaigns_per_week: k.now.cadence, list_growth: k.now.listGrowth },
@@ -192,9 +192,9 @@ export async function channelReportTools(admin: SupabaseClient, r: Report, pulle
           if (!DAY.test(since) || !DAY.test(until) || since > until) throw new Error("Dates must be YYYY-MM-DD, since before until.");
           const { clientKlaviyo } = await import("@/lib/klaviyo/store");
           const k = await clientKlaviyo(admin, r.client_id);
-          if (!k) throw new Error("No Klaviyo numbers for this client yet.");
+          if (!k) throw new Error("No email numbers for this client yet.");
           const list = k.campaigns.filter((x) => etDay(x.sendTime) >= since && etDay(x.sendTime) <= until && (!input.channel || x.channel === input.channel));
-          return note(`Klaviyo campaigns · ${since} to ${until} (${list.length})`, list.slice(0, 60).map((x) => ({ id: x.id, sent: etDay(x.sendTime), channel: x.channel, name: x.name, subject: x.subject, preview: x.previewText, audiences: x.audiences, recipients: x.recipients, open_rate_pct: pct(x.openRate), click_rate_pct: pct(x.clickRate), orders: x.conversions, revenue: r2(x.revenue), unsubscribes: x.unsubscribes, spam_complaints: x.spamComplaints })));
+          return note(`${k.providerName} campaigns · ${since} to ${until} (${list.length})`, list.slice(0, 60).map((x) => ({ id: x.id, sent: etDay(x.sendTime), channel: x.channel, name: x.name, subject: x.subject, preview: x.previewText, audiences: x.audiences, recipients: x.recipients, open_rate_pct: pct(x.openRate), click_rate_pct: pct(x.clickRate), orders: x.conversions, revenue: r2(x.revenue), unsubscribes: x.unsubscribes, spam_complaints: x.spamComplaints })));
         },
       },
       {
@@ -204,7 +204,7 @@ export async function channelReportTools(admin: SupabaseClient, r: Report, pulle
         run: async (input) => {
           const { clientKlaviyo } = await import("@/lib/klaviyo/store");
           const k = await clientKlaviyo(admin, r.client_id);
-          if (!k) throw new Error("No Klaviyo numbers for this client yet.");
+          if (!k) throw new Error("No email numbers for this client yet.");
           const since = DAY.test(String(input.since ?? "")) ? String(input.since) : null;
           const until = DAY.test(String(input.until ?? "")) ? String(input.until) : null;
           const days: Record<string, { recipients: number; orders: number; revenue: number }> = {};
@@ -217,7 +217,7 @@ export async function channelReportTools(admin: SupabaseClient, r: Report, pulle
               t.revenue += Number(d.revenue) || 0;
             }
           }
-          return note(`Klaviyo automated emails${since && until ? ` · ${since} to ${until}` : ""}`, k.flows.slice(0, 30).map((f) => ({ id: f.id, name: f.name, status: f.status, trigger: f.trigger, revenue_30d: r2(f.revenue30), revenue_90d: r2(f.revenue90), recipients_30d: f.recipients30, open_rate_30d_pct: pct(f.openRate30), click_rate_30d_pct: pct(f.clickRate30), ...(days[f.id] ? { in_those_dates: { recipients: days[f.id].recipients, orders: days[f.id].orders, revenue: r2(days[f.id].revenue) } } : {}) })));
+          return note(`${k.providerName} automated emails${since && until ? ` · ${since} to ${until}` : ""}`, k.flows.slice(0, 30).map((f) => ({ id: f.id, name: f.name, status: f.status, trigger: f.trigger, revenue_30d: r2(f.revenue30), revenue_90d: r2(f.revenue90), recipients_30d: f.recipients30, open_rate_30d_pct: pct(f.openRate30), click_rate_30d_pct: pct(f.clickRate30), ...(days[f.id] ? { in_those_dates: { recipients: days[f.id].recipients, orders: days[f.id].orders, revenue: r2(days[f.id].revenue) } } : {}) })));
         },
       },
       {

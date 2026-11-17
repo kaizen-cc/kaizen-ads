@@ -105,6 +105,8 @@ export function tileView(m: Metrics, key: string): TileView | null {
   const c = m.currency;
   const { now, before } = m;
   const d = m.detail ?? null;
+  // A source with no revenue (Customer.io without a purchase event, Brevo without a store) has no money tiles: unmeasured, not zero
+  if (m.revenueMeasured === false && ["revenue", "orders", "split", "campaignRevenue", "flowRevenue", "aov", "orderRate", "sms", "rpr"].includes(key)) return null;
   switch (key) {
     case "revenue":
       return tile(key, d ? "Revenue from email & SMS" : "Attributed revenue", money(now.revenue, c), targetSub(m.target, c) ?? (now.estimated ? "Added up from campaigns and automated emails" : d ? "Attributed by Klaviyo" : null), money(before.revenue, c), moveOf(now.revenue, before.revenue));
