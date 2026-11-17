@@ -9,6 +9,7 @@ import { formatsFor } from "@/lib/creative-formats";
 import { isCreativeRole } from "@/lib/roles";
 import { seatKeys, type SeatRow } from "@/lib/buyer-seats";
 import { loadBiblesToReview } from "@/lib/bible-review";
+import { askItem, callReviewItem, type AskRow } from "@/lib/agent-call/next-items";
 
 // Everything that's on one person, in one list: what to do now, what to decide, what to keep an eye on, and what's
 // coming. Pulled from the tickets, the briefs the AI wrote, the KPI tracker, the fatigue watcher and onboarding, and
@@ -16,7 +17,7 @@ import { loadBiblesToReview } from "@/lib/bible-review";
 
 export type NextItem = {
   id: string;
-  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint" | "task" | "bible";
+  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint" | "task" | "bible" | "call-learnings" | "ask";
   tone: "bad" | "warn" | "brand" | "ok";
   client: string;
   title: string;
@@ -29,6 +30,8 @@ export type NextItem = {
   chip?: { label: string; tone: "ok" | "quiet" };
   /** A Brand Bible version this person can mark reviewed from the list */
   bible?: { clientId: string; version: string };
+  /** A reminder or task asked of an agent: marked done from the list */
+  ask?: { id: string };
 };
 
 export type NextForMe = {
@@ -282,6 +285,17 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     (w.severity === "tired" && w.briefId ? decide : watch).push(item);
   }
 
+  // ─── From the AI agents: calls with learnings to keep or toss, and reminders and tasks asked of an agent ───
+  const [reviews, asks] = await Promise.all([
+    import("@/lib/agent-call/reviews").then(async ({ loadCallReviews }) => loadCallReviews((await import("@/lib/supabase/admin")).createAdminClient(), me)).catch(() => []),
+    loadAsks(db, me.id),
+  ]);
+  for (const r of reviews) decide.push(callReviewItem(r));
+  for (const a of asks) {
+    const { item, bucket } = askItem(a, me.id);
+    (bucket === "now" ? now : coming).push(item);
+  }
+
   const rank = { bad: 0, warn: 1, brand: 2, ok: 3 } as const;
   const sort = (xs: NextItem[]) => xs.sort((a, b) => rank[a.tone] - rank[b.tone]);
   return {
@@ -293,4 +307,18 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     coming,
     stats: { onMe: h.mine.length, late: h.mine.filter((r) => r.minutes_over > 0).length, dueToday: h.dueToday, toDecide: decide.length },
   };
+}
+
+/** Open reminders and tasks for this person from conversations with the agents (none before its migration) */
+async function loadAsks(db: SupabaseClient, me: string): Promise<AskRow[]> {
+  const { data, error } = await db
+    .from("agent_asks")
+    .select("id, kind, title, detail, due_on, created_at, asked_by, profiles:asked_by(full_name), ai_roles(label), clients(name, slug)")
+    .eq("owner_id", me)
+    .eq("status", "open")
+    .order("created_at", { ascending: false })
+    .limit(40);
+  if (error) return [];
+  type Row = Omit<AskRow, "askerName" | "roleLabel" | "client"> & { profiles: { full_name: string } | null; ai_roles: { label: string } | null; clients: { name: string; slug: string } | null };
+  return ((data ?? []) as unknown as Row[]).map((r) => ({ id: r.id, kind: r.kind, title: r.title, detail: r.detail, due_on: r.due_on, created_at: r.created_at, asked_by: r.asked_by, askerName: r.profiles?.full_name ?? null, roleLabel: r.ai_roles?.label ?? null, client: r.clients }));
 }

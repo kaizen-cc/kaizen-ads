@@ -3,6 +3,7 @@ import { openCall, runCallTurn } from "@/lib/agent-call/server";
 import type { CallEvent } from "@/lib/agent-call/core";
 import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 // One turn of a voice call with an agent: what the person said in, the agent's answer out as it's written (one JSON
 // event per line), then anything it learned. Talking over the agent aborts the request, which stops the model; what it
@@ -15,6 +16,8 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown } | null;
   const admin = createAdminClient();
   const call = await openCall(admin, me, body?.callId);
+  // The person's own session: the tools read what they may see (taken here, while the request is still open)
+  const db = await createClient();
   if (!call) return Response.json({ error: "This call has ended." }, { status: 410 });
   const text = String(body?.text ?? "").slice(0, 4000);
   const encoder = new TextEncoder();
@@ -29,7 +32,7 @@ export async function POST(request: Request) {
           open = false;
         }
       };
-      const work = runCallTurn({ me, admin, call, text, signal: request.signal, emit })
+      const work = runCallTurn({ me, admin, db, call, text, signal: request.signal, emit })
         .catch((e) => {
           console.error("[agent call] turn", e instanceof Error ? e.message : e);
           emit({ t: "error", message: "Sorry, something went wrong on my side. Say that again?" });

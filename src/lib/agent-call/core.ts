@@ -47,10 +47,94 @@ export function firstNameOf(fullName: string | null | undefined): string {
   return first && /\p{L}/u.test(first) ? first : "there";
 }
 
-/** What the agent says when it picks up: the person's first name and one line offering help */
-export function greetingFor(fullName: string | null | undefined, roleLabel: string): string {
+// ─── Picking up where you left off ──────────────────────────────────────────
+
+/** Called back within this many minutes of the last thing said: the same conversation carries on (a cut-off) */
+export const RESUME_CONTINUE_MINUTES = 10;
+/** Called again within this many hours the same day: "Hey again", remembering what was said */
+export const RESUME_SOON_HOURS = 4;
+/** The day a call falls on is New York's (where the team works), so a late call isn't "tomorrow" in UTC */
+export const CALL_TIME_ZONE = "America/New_York";
+
+/**
+ * How a new call relates to the last one with the same agent: "continue" (cut off a moment ago: carry on as if nothing
+ * happened), "soon" (a few hours later the same day: hey again), "later_today" (the morning's call, now the end of the
+ * day: pick up or something new) or "fresh" (another day, or nothing was said last time).
+ */
+export type ResumeMode = "continue" | "soon" | "later_today" | "fresh";
+
+/** The last call with the agent: when it was last talked in and how many turns it had */
+export type PreviousCall = { startedAt: string; endedAt: string | null; lastTurnAt: string | null; turns: number };
+
+const dayIn = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: CALL_TIME_ZONE });
+
+/** When the previous call was last alive: its last turn, else its end, else its start */
+export function lastAliveAt(prev: PreviousCall): number {
+  return Date.parse(prev.lastTurnAt ?? prev.endedAt ?? prev.startedAt);
+}
+
+export function resumeModeFor(prev: PreviousCall | null, now: Date = new Date()): ResumeMode {
+  if (!prev || prev.turns <= 0) return "fresh";
+  const at = lastAliveAt(prev);
+  if (!Number.isFinite(at)) return "fresh";
+  const gap = now.getTime() - at;
+  if (gap <= RESUME_CONTINUE_MINUTES * 60_000) return "continue";
+  if (dayIn(new Date(at)) !== dayIn(now)) return "fresh";
+  if (gap <= RESUME_SOON_HOURS * 3_600_000) return "soon";
+  return "later_today";
+}
+
+/** A topic as it's said after "about": short, no full stop at the end */
+function topicPhrase(topic: string | null | undefined): string | null {
+  const t = String(topic ?? "")
+    .replace(/\s+/g, " ")
+    .replace(/[.!?\s]+$/, "")
+    .replace(/^(about|asking about)\s+/i, "")
+    .trim();
+  if (!t) return null;
+  const words = t.split(" ");
+  return words.length > 14 ? words.slice(0, 14).join(" ") : t;
+}
+
+const GREETINGS: Record<ResumeMode, { withTopic: string[]; plain: string[] }> = {
+  fresh: {
+    withTopic: [],
+    plain: ["Hey {name}, it's the {label}. What can I help you with?", "Hi {name}, {label} here. What's on your mind?", "Hey {name}! It's the {label}. What are we working on?"],
+  },
+  continue: {
+    withTopic: ["Sorry {name}, we got cut off. You were asking about {topic}.", "Sorry about that, {name}, we got cut off. We were on {topic}.", "{name}, sorry, the line dropped. You were asking about {topic}."],
+    plain: ["Sorry {name}, we got cut off. Where were we?", "Sorry about that, {name}, the line dropped. Go ahead."],
+  },
+  soon: {
+    withTopic: ["Hey again, {name}! Good to hear from you so soon. More on {topic}, or something else?", "{name}, hey again! Back so soon. What's up?"],
+    plain: ["Hey again, {name}! Good to hear from you so soon. What's up?", "{name}, hey again! Back so soon. What can I do?"],
+  },
+  later_today: {
+    withTopic: ["Hey {name}! Want to pick up from our conversation earlier today about {topic}, or something new?", "Hi again, {name}. Do you want to carry on with {topic} from earlier, or something new?"],
+    plain: ["Hey {name}! Want to pick up from our conversation earlier today, or something new?", "Hi again, {name}. Carry on from earlier today, or something new?"],
+  },
+};
+
+/**
+ * What the agent says when it picks up: the person's first name, in a line that fits how this call follows the last
+ * one (a cut-off, a quick call back, later the same day, or a fresh start). `seed` picks among a few ways of saying it
+ * so it never sounds canned (seedOf the call's id; 0 is the first way).
+ */
+export function greetingFor(fullName: string | null | undefined, roleLabel: string, mode: ResumeMode = "fresh", topic: string | null = null, seed = 0): string {
   const name = firstNameOf(fullName);
-  return `Hey ${name}, it's the ${roleLabel}. What can I help you with?`;
+  const t = topicPhrase(topic);
+  const set = GREETINGS[mode];
+  const list = t && set.withTopic.length ? set.withTopic : set.plain;
+  const line = list[Math.abs(Math.trunc(seed)) % list.length];
+  const out = line.replace("{name}", name).replace("{label}", roleLabel).replace("{topic}", t ?? "");
+  return out.charAt(0).toUpperCase() + out.slice(1);
+}
+
+/** A number from a string (a call's id), to pick a greeting with */
+export function seedOf(text: string): number {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
+  return Math.abs(h);
 }
 
 // ─── Speaking ───────────────────────────────────────────────────────────────
@@ -258,8 +342,9 @@ export type Learning = { type: "note" | "rewrite"; skill: string; kind: "knowled
 export const LEARNINGS_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["learnings"],
+  required: ["topic", "learnings"],
   properties: {
+    topic: { type: "string", description: "What the person is asking or talking about in this moment, as a short phrase that fits after 'You were asking about' (up to eight words, no full stop)" },
     learnings: {
       type: "array",
       items: {
@@ -338,8 +423,85 @@ export type CallEvent =
   | { t: "done" }
   | { t: "error"; message: string };
 
-/** A learning as the call screen shows it: saved (with its item, for Undo) or sent to the chat as a proposal */
-export type LearnedItem = { id: string | null; type: "note" | "rewrite"; skill: string; title: string; body: string; undone?: boolean };
+/**
+ * A learning as the call keeps it. Heard on the call it's pending: nothing is written to the agent until a person keeps
+ * it on the review (a note becomes an item in its skill, id set; a rewrite goes to the chat as a proposal) or tosses
+ * it. `key` names it on the review. Items from before the review have no status: those were saved straight away.
+ */
+export type LearnedItem = {
+  key?: string;
+  id: string | null;
+  type: "note" | "rewrite";
+  skill: string;
+  kind?: Learning["kind"];
+  title: string;
+  body: string;
+  status?: LearnStatus;
+  undone?: boolean;
+};
+
+export type LearnStatus = "pending" | "kept" | "tossed";
+
+/** Where an item stands (one saved before reviews existed counts as kept) */
+export const statusOf = (l: LearnedItem): LearnStatus => l.status ?? "kept";
+
+/** The key an item is decided by (older items had none: their item id or title stands in) */
+export const keyOf = (l: LearnedItem): string => l.key ?? l.id ?? l.title;
+
+/** The items still waiting for a person to keep or toss */
+export const pendingOf = (items: readonly LearnedItem[]) => items.filter((l) => statusOf(l) === "pending");
+
+/** What was heard on a turn, as pending items (nothing is written to the agent yet) */
+export function pendingItems(learnings: readonly Learning[], makeKey: () => string): LearnedItem[] {
+  return learnings.map((l) => ({ key: makeKey(), id: null, type: l.type, skill: l.skill, kind: l.kind, title: l.title, body: l.body, status: "pending" as const }));
+}
+
+/** Keep (with the note's text as edited on the review) or toss one pending item */
+export type Decision = { keep: boolean; title?: string; body?: string };
+
+/**
+ * The review's decisions applied to a call's items: only pending ones change; a kept one carries its edited title and
+ * text (checked like a learning: not empty, nothing secret); every pending item needs a decision. Returns the items as
+ * they'll be stored and the ones to write (kept), or why it can't be applied.
+ */
+export function decide(items: readonly LearnedItem[], decisions: Record<string, Decision>): { ok: true; items: LearnedItem[]; keep: LearnedItem[]; tossed: number } | { ok: false; error: string } {
+  const keep: LearnedItem[] = [];
+  const next: LearnedItem[] = [];
+  let tossed = 0;
+  for (const l of items) {
+    if (statusOf(l) !== "pending") {
+      next.push(l);
+      continue;
+    }
+    const d = decisions[keyOf(l)];
+    if (!d) return { ok: false, error: "Keep or toss every item first." };
+    if (!d.keep) {
+      tossed++;
+      next.push({ ...l, status: "tossed" });
+      continue;
+    }
+    const title = String(d.title ?? l.title)
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120);
+    const body = String(d.body ?? l.body)
+      .trim()
+      .slice(0, 2000);
+    if (!title || body.length < 12) return { ok: false, error: `"${l.title}" needs a title and a sentence or two to keep.` };
+    if (looksSensitive(`${title}\n${body}`)) return { ok: false, error: `"${title}" looks like it holds a secret or someone's details. Take that out, or toss it.` };
+    const kept: LearnedItem = { ...l, title, body, status: "kept" };
+    keep.push(kept);
+    next.push(kept);
+  }
+  return { ok: true, items: next, keep, tossed };
+}
+
+/** The topic of a moment, from the same read that picks out learnings (null when there's none) */
+export function parseTopic(raw: unknown): string | null {
+  const t = raw && typeof raw === "object" ? (raw as { topic?: unknown }).topic : null;
+  const s = typeof t === "string" ? t.replace(/\s+/g, " ").trim().slice(0, 120) : "";
+  return s && !looksSensitive(s) ? s : null;
+}
 
 /** mm:ss for the call timer */
 export function clock(seconds: number): string {

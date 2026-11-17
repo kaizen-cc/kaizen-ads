@@ -413,6 +413,8 @@ export async function askJsonWithTools<T>({
   maxRounds = 6,
   onTool,
   clientId = null,
+  images = [],
+  pdfs = [],
 }: {
   agent: AgentKey;
   label: string;
@@ -422,12 +424,15 @@ export async function askJsonWithTools<T>({
   prompt: string;
   schema: Record<string, unknown>;
   tools: AiTool[];
+  /** Pictures and PDFs to read (sent before the text), as askJson takes them */
+  images?: { mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp"; data: string }[];
+  pdfs?: { data: string; title?: string }[];
   maxTokens?: number;
   maxRounds?: number;
   /** Told about each lookup as it happens (name and input), for "Pulled from Meta…" notes */
   onTool?: (name: string, input: Record<string, unknown>, ok: boolean) => void;
 }): Promise<T> {
-  if (!tools.length) return askJson<T>({ agent, label, system, prompt, schema, maxTokens, clientId });
+  if (!tools.length) return askJson<T>({ agent, label, system, prompt, schema, maxTokens, clientId, images, pdfs });
   if (!aiEnabled()) throw new AiUnavailable("AI isn't connected yet.");
   await assertOnline(agent);
   const cfg = await getAgent(agent);
@@ -436,7 +441,19 @@ export async function askJsonWithTools<T>({
   const run = { agent_key: agent, label, model: cfg.model, effort: cfg.effort };
   const who = adminConfigured() ? actorNow() : Promise.resolve(AUTO);
   const used = { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 };
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: wellFormed(prompt) }];
+  const messages: Anthropic.MessageParam[] = [
+    {
+      role: "user",
+      content:
+        images.length || pdfs.length
+          ? [
+              ...pdfs.map((d) => ({ type: "document" as const, source: { type: "base64" as const, media_type: "application/pdf" as const, data: d.data }, ...(d.title ? { title: d.title } : {}) })),
+              ...images.map((im) => ({ type: "image" as const, source: { type: "base64" as const, media_type: im.mediaType, data: im.data } })),
+              { type: "text" as const, text: wellFormed(prompt) },
+            ]
+          : wellFormed(prompt),
+    },
+  ];
   const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
   // Set when the API can't compile the answer format: the format goes in the instructions instead
   let plain = false;

@@ -1,46 +1,80 @@
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { canTrainAgent } from "@/lib/agent-access";
-import { logTraining } from "@/lib/agent-training";
+import { canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
 import { AiUnavailable, MODEL_IDS, aiBusy, aiEnabled, anthropicClient, askJson, cachedBlock, usageFor } from "@/lib/ai";
 import type { Staff } from "@/lib/auth";
 import { loadRolePlaybook, type RolePlaybook } from "@/lib/role-playbook";
-import { CALL_LIMIT_SECONDS, LEARNINGS_SCHEMA, firstNameOf, parseLearnings, type CallEvent, type LearnedItem, type Learning } from "./core";
+import { TOOLS_RULE, agentTools } from "./agent-tools";
+import { CALL_LIMIT_SECONDS, LEARNINGS_SCHEMA, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type LearnedItem, type Learning, type ResumeMode } from "./core";
+import { focusFor } from "./role-focus";
+import { fillerFor, runToolLoop, type LoopMessage } from "./tool-loop";
 
 // A voice call with one of the AI agents, on the server: the call's row (who, which agent, how long, what it cost and
-// learned), each turn (the agent's answer streamed from Claude as it's written, from the same playbook its chat reads,
-// in a speaking style), and what the person taught it (saved to its skills straight away, or sent to its chat as a
-// proposed edit when it would rewrite its core or a skill's instructions).
+// what it heard), each turn (the agent's answer streamed from Claude as it's written, from the same playbook its chat
+// reads, in a speaking style, looking up live data with the person's own tools when asked), what the person taught it
+// (held as pending until a person keeps or tosses it on the review; only for those who may train it), the call's
+// short summary at the end, and closing calls that were never hung up (a closed tab, a dropped phone).
 
-export type CallRow = { id: string; role_key: string; profile_id: string; voice_id: string | null; stt: string | null; started_at: string; ended_at: string | null; learned: LearnedItem[] };
+export type CallRow = {
+  id: string;
+  role_key: string;
+  profile_id: string;
+  voice_id: string | null;
+  stt: string | null;
+  started_at: string;
+  ended_at: string | null;
+  learned: LearnedItem[];
+  resumed_from?: string | null;
+  resume_mode?: ResumeMode | null;
+};
+
+const CALL_COLUMNS = "id, role_key, profile_id, voice_id, stt, started_at, ended_at, learned, resumed_from, resume_mode";
 
 /** The call when it's this person's, still open and inside its time (a minute's grace for the last answer) */
 export async function openCall(admin: SupabaseClient, me: Staff, callId: unknown): Promise<CallRow | null> {
   if (typeof callId !== "string" || !/^[0-9a-f-]{36}$/.test(callId)) return null;
-  const { data } = await admin.from("ai_role_calls").select("id, role_key, profile_id, voice_id, stt, started_at, ended_at, learned").eq("id", callId).maybeSingle();
+  const first = await admin.from("ai_role_calls").select(CALL_COLUMNS).eq("id", callId).maybeSingle();
+  let data = first.data;
+  // Before the review migration: the columns it adds aren't there yet
+  if (first.error) ({ data } = await admin.from("ai_role_calls").select("id, role_key, profile_id, voice_id, stt, started_at, ended_at, learned").eq("id", callId).maybeSingle());
   if (!data || data.profile_id !== me.id || data.ended_at) return null;
-  if (!canTrainAgent(me, data.role_key as string)) return null;
+  if (!canTalkToAgent(me, data.role_key as string)) return null;
   if (Date.now() - new Date(data.started_at as string).getTime() > (CALL_LIMIT_SECONDS + 60) * 1000) return null;
-  return data as CallRow;
+  return data as unknown as CallRow;
 }
 
-const voiceSystem = (label: string, firstName: string) => `You are the ${label}, one of the AI agents inside Kaizen Ads, the app Kaizen Marketing (a paid social agency) uses for creative requests, approvals, launches, reports and KPIs. ${firstName}, who trains you, has called you. You're on a live voice call: everything you write is spoken aloud by a text to speech voice as you write it.
+const voiceSystem = (label: string, roleKey: string, firstName: string, trains: boolean) => `You are the ${label}, one of the AI agents inside Kaizen Ads, the app Kaizen Marketing (a paid social, email and organic social agency) uses for creative requests, approvals, launches, reports and KPIs. ${firstName}, from the team, has called you. You're on a live voice call: everything you write is spoken aloud by a text to speech voice as you write it.
 
 Speak like a sharp colleague on the phone, in the first person ("I check…", "In my briefs I…"):
 - Short spoken sentences. Usually one to three; more only when asked to explain how you work, and even then in a few short sentences, not a lecture.
 - No markdown, no lists, no bullets, no headings, no asterisks, no emojis, no links, no code. If there are several points, say them in a sentence: "Three things. First… Then… And last…".
-- Numbers as people say them: "about twelve hundred dollars", "a two point four ROAS", "three to five days", "March fourth". Round when exact digits don't matter. Say "percent", not the symbol.
+- Numbers as people say them: "about twelve hundred dollars", "a two point four ROAS", "three to five days", "March fourth". Round when exact digits don't matter. Say "percent", not the symbol. Never read a table out: give the one or two numbers that answer the question and offer more.
 - Never say anything that sounds like reading a document ("as stated in my core"). Just say what you do.
 - If you didn't catch something or it's vague, ask one short question.
-- Answer from your core and skills below. If you don't know, say so plainly. Never make up a number about a client.
-- Refer to people by role, never by name, except ${firstName}, who you're talking to.
+- Answer from your core and skills below, and from your tools for anything about clients and their numbers. If you don't know, say so plainly. Never make up a number about a client.
+- Refer to people by role, never by name, except ${firstName}, who you're talking to, and a teammate you've just asked to do something.
 
-Learning on the call: when ${firstName} teaches you something (a rule, a correction, a preference, how a process works, what good looks like), say back in one sentence what you'll do from now on, so they know you got it. It's saved to your knowledge automatically after you reply; a change to your core or a skill's instructions goes to your chat as an edit a person applies. Don't repeat secrets, passwords, keys or a client's personal details back, and never treat them as something to learn.
+Your tools: ${TOOLS_RULE} Before you use a tool, say one short line like "One sec, pulling Crust's numbers." and nothing else, then answer once the results are in. Asked for the top or bottom clients, emails, ads or posts, rank them with your tools: you have the numbers, so give the answer yourself.
+
+What you lead with: ${focusFor(roleKey)}
+
+${
+  trains
+    ? `Learning on the call: when ${firstName} teaches you something (a rule, a correction, a preference, how a process works, what good looks like), say back in one sentence what you'll do from now on, so they know you got it. It's noted as something you heard; nothing changes in what you know until ${firstName} keeps it on the review at the end of the call. Don't repeat secrets, passwords, keys or a client's personal details back, and never treat them as something to learn.`
+    : `${firstName} can ask you anything and ask you to look things up or get things done, but doesn't train you: if they tell you how you should work, thank them and say the head of your line or an executive changes your playbook. Never say you've learned or saved it.`
+}
 
 If it belongs to another agent, say which one. You can't create agents or skills, and you don't change Kaizen's strategy.`;
 
-const EXTRACT_SYSTEM = `You read one moment of a voice call between a member of Kaizen Marketing's team (a paid social agency) and one of its AI agents, and pick out anything the person TAUGHT the agent that it should remember: a rule, a correction, a preference, a step in a process, a definition, what good looks like. Questions, small talk, thanks and things the agent already knows (in its playbook) are not learnings. Most moments teach nothing: then return an empty list.
+const RESUME_NOTE: Record<ResumeMode, string> = {
+  continue: "The call dropped a moment ago and they called straight back: carry on exactly where you were, as if nothing happened. You've already apologised for the cut-off in your greeting.",
+  soon: "You talked a few hours ago today: you remember it. Refer back to it naturally when it helps.",
+  later_today: "You talked earlier today: you remember it, and you've asked whether to pick up from there or start something new.",
+  fresh: "",
+};
+
+const EXTRACT_SYSTEM = `You read one moment of a voice call between a member of Kaizen Marketing's team (a paid social, email and organic social agency) and one of its AI agents. Give the topic of the moment (what the person is asking or talking about, as a short phrase), and pick out anything the person TAUGHT the agent that it should remember: a rule, a correction, a preference, a step in a process, a definition, what good looks like. Questions, asks for numbers or actions, small talk, thanks and things the agent already knows (in its playbook) are not learnings. Most moments teach nothing: then return an empty list.
 
 For each learning:
 - type "note" when it's a fact, a method or an example that fits as its own item in ONE of the agent's skills; type "rewrite" only when it changes the agent's core (skill "core": a rule for everything it does, its tone, its priorities) or rewrites a skill's existing instructions.
@@ -51,19 +85,38 @@ For each learning:
 - Never include passwords, keys, tokens, logins, email addresses, phone numbers, payment details or anyone's personal details. If the lesson can't be written without them, leave it out.
 - Don't repeat an item the playbook already has. At most three learnings.`;
 
-/** The conversation so far for the prompt: the agent's chat (typed and spoken), oldest first */
-async function recentChat(admin: SupabaseClient, roleKey: string, firstName: string) {
-  const { data } = await admin.from("ai_role_chats").select("role, content").eq("role_key", roleKey).order("created_at", { ascending: false }).limit(24);
-  return (data ?? [])
-    .slice()
-    .reverse()
-    .map((m) => `${m.role === "user" ? firstName : "You"}: ${m.content}`)
-    .join("\n");
+type Turn = { role: string; content: string };
+const said = (rows: Turn[], firstName: string) => rows.map((m) => `${m.role === "user" ? firstName : "You"}: ${m.content}`).join("\n");
+
+/** This call's turns so far, and how it follows the last call (its turns or its summary), for the prompt */
+async function callContext(admin: SupabaseClient, call: CallRow, firstName: string): Promise<string> {
+  const { data: now } = await admin.from("ai_role_chats").select("role, content").eq("call_id", call.id).order("created_at").limit(60);
+  const parts: string[] = [];
+  const mode = call.resume_mode ?? "fresh";
+  if (call.resumed_from && mode !== "fresh") {
+    const [{ data: prev }, { data: turns }] = await Promise.all([
+      admin.from("ai_role_calls").select("summary, started_at").eq("id", call.resumed_from).maybeSingle(),
+      admin
+        .from("ai_role_chats")
+        .select("role, content")
+        .eq("call_id", call.resumed_from)
+        .order("created_at", { ascending: false })
+        .limit(mode === "continue" ? 16 : 8),
+    ]);
+    const before = said(((turns ?? []) as Turn[]).slice().reverse(), firstName);
+    const summary = (prev?.summary as string | null) ?? null;
+    const when = prev?.started_at ? new Date(prev.started_at as string).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) : "earlier";
+    if (mode === "continue") parts.push(`<the_call_that_dropped>\n${before || "(nothing said yet)"}\n</the_call_that_dropped>`);
+    else parts.push(`<earlier_today at="${when}">\n${summary ?? before ?? "(nothing kept)"}\n</earlier_today>`);
+    parts.push(RESUME_NOTE[mode]);
+  }
+  parts.push(`<this_call>\n${said((now ?? []) as Turn[], firstName) || "(the call just started)"}\n</this_call>`);
+  return parts.join("\n\n");
 }
 
-/** What the person taught in this moment, checked and ready to save (never throws: a failed read learns nothing) */
-async function extractLearnings(book: RolePlaybook, said: string, reply: string): Promise<Learning[]> {
-  if (said.trim().split(/\s+/).length < 5) return [];
+/** The topic of a moment and what the person taught in it, checked (never throws: a failed read learns nothing) */
+async function readMoment(book: RolePlaybook, text: string, reply: string): Promise<{ topic: string | null; learnings: Learning[] }> {
+  if (text.trim().split(/\s+/).length < 5) return { topic: null, learnings: [] };
   try {
     const out = await askJson<unknown>({
       agent: "coach",
@@ -74,81 +127,94 @@ async function extractLearnings(book: RolePlaybook, said: string, reply: string)
       system: EXTRACT_SYSTEM,
       schema: LEARNINGS_SCHEMA,
       maxTokens: 4000,
-      prompt: `<agent>${book.role.label}</agent>\n<skills>\n${book.skills.map((s) => `${s.key}: ${s.label}. ${s.description}`).join("\n")}\n</skills>\n\n<playbook>\n${book.text}\n</playbook>\n\n<person_said>\n${said}\n</person_said>\n\n<agent_replied>\n${reply}\n</agent_replied>`,
+      prompt: `<agent>${book.role.label}</agent>\n<skills>\n${book.skills.map((s) => `${s.key}: ${s.label}. ${s.description}`).join("\n")}\n</skills>\n\n<playbook>\n${book.text}\n</playbook>\n\n<person_said>\n${text}\n</person_said>\n\n<agent_replied>\n${reply}\n</agent_replied>`,
     });
-    return parseLearnings(out, book.skills.map((s) => s.key));
+    return { topic: parseTopic(out), learnings: parseLearnings(out, book.skills.map((s) => s.key)) };
   } catch (e) {
     console.error("[agent call] learnings", e instanceof Error ? e.message : e);
-    return [];
+    return { topic: null, learnings: [] };
   }
 }
 
-/**
- * Save what was learned: each note becomes an item in its skill straight away (kept in the agent's history like any
- * applied edit, so an exec can revert it); each rewrite is kept on the call and sent to the chat at hang-up.
- */
-async function saveLearnings(admin: SupabaseClient, me: Staff, call: CallRow, learnings: Learning[]): Promise<LearnedItem[]> {
-  const out: LearnedItem[] = [];
-  for (const l of learnings) {
-    if (l.type === "rewrite") {
-      out.push({ id: null, type: "rewrite", skill: l.skill, title: l.title, body: l.body });
-      continue;
-    }
-    if (!canTrainAgent(me, l.skill)) continue;
-    const { data, error } = await admin
-      .from("ai_knowledge")
-      .insert({ agent_key: l.skill, kind: l.kind, title: l.title, body: l.body, created_by: me.id })
-      .select("id")
-      .single();
-    if (error || !data) {
-      console.error("[agent call] save learning", error?.message);
-      continue;
-    }
-    await logTraining(admin, { me, agentKey: l.skill, target: "item:new", record: `item:${data.id}`, before: null });
-    out.push({ id: data.id as string, type: "note", skill: l.skill, title: l.title, body: l.body });
-  }
-  return out;
-}
+/** The most rounds of lookups in one turn before the agent answers with what it has */
+const MAX_TOOL_ROUNDS = 5;
 
 /**
- * One turn of the call: the agent answers what the person said, streamed as it's written; meanwhile what they taught
- * is read and saved. Both sides are kept in the agent's chat, tagged with the call. Logged in ai_runs like any run.
+ * One turn of the call: the agent answers what the person said, streamed as it's written, looking things up with the
+ * person's tools on the way (a short spoken line covers the wait); meanwhile what they taught is noted as pending (for
+ * those who train it). Both sides are kept in the agent's chat, tagged with the call. Logged in ai_runs like any run.
  */
-export async function runCallTurn(input: { me: Staff; admin: SupabaseClient; call: CallRow; text: string; signal: AbortSignal; emit: (e: CallEvent) => void }) {
+export async function runCallTurn(input: { me: Staff; admin: SupabaseClient; db: SupabaseClient; call: CallRow; text: string; signal: AbortSignal; emit: (e: CallEvent) => void }) {
   const { me, admin, call, signal, emit } = input;
-  const said = input.text.trim().slice(0, 4000);
-  if (!said) return emit({ t: "done" });
+  const text = input.text.trim().slice(0, 4000);
+  if (!text) return emit({ t: "done" });
   if (!aiEnabled()) return emit({ t: "error", message: "AI isn't connected yet." });
   const firstName = firstNameOf(me.fullName);
-  const [book, convo] = await Promise.all([loadRolePlaybook(admin, call.role_key), recentChat(admin, call.role_key, firstName)]);
+  const trains = canTrainAgent(me, call.role_key);
+  const [book, convo] = await Promise.all([loadRolePlaybook(admin, call.role_key), callContext(admin, call, firstName)]);
   if (!book) return emit({ t: "error", message: "Unknown agent." });
+  const tools = await agentTools({ me, db: input.db, admin, roleKey: call.role_key, label: book.role.label, callId: call.id });
+  const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
+  if (defs.length) (defs[defs.length - 1] as Anthropic.Tool).cache_control = { type: "ephemeral" };
+  const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
   const model = "sonnet" as const;
   const effort = "low" as const;
   const started = Date.now();
   let reply = "";
   let error: string | null = null;
+  let fillers = 0;
   const used = { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 };
+  const messages: LoopMessage[] = [{ role: "user", content: `Today is ${today} (New York).\n\n${convo}\n\n<${firstName}_says>\n${text}\n</${firstName}_says>` }];
+  let roundText = "";
   try {
-    const stream = anthropicClient().messages.stream(
-      {
-        model: MODEL_IDS[model],
-        max_tokens: 4000,
-        // The agent's whole playbook is the same every turn: cached, so later turns read it at a tenth of the price
-        system: [cachedBlock(`${voiceSystem(book.role.label, firstName)}\n\n${book.text}`)] as Anthropic.TextBlockParam[],
-        thinking: { type: "adaptive" },
-        output_config: { effort },
-        messages: [{ role: "user", content: `<conversation_so_far>\n${convo || "(the call just started)"}\n</conversation_so_far>\n\n<${firstName}_says>\n${said}\n</${firstName}_says>` }],
+    await runToolLoop({
+      tools,
+      messages,
+      maxRounds: MAX_TOOL_ROUNDS,
+      signal,
+      step: async (msgs, last) => {
+        roundText = "";
+        const stream = anthropicClient().messages.stream(
+          {
+            model: MODEL_IDS[model],
+            max_tokens: 4000,
+            // The agent's whole playbook is the same every turn: cached, so later turns read it at a tenth of the price
+            system: [cachedBlock(`${voiceSystem(book.role.label, call.role_key, firstName, trains)}\n\n${book.text}`)] as Anthropic.TextBlockParam[],
+            thinking: { type: "adaptive" },
+            output_config: { effort },
+            ...(last || !defs.length ? {} : { tools: defs }),
+            messages: msgs as Anthropic.MessageParam[],
+          },
+          { signal },
+        );
+        stream.on("text", (d) => {
+          roundText += d;
+          reply += d;
+          emit({ t: "text", d });
+        });
+        const res = await stream.finalMessage();
+        const u = usageFor(res.usage);
+        used.input_tokens += u.input_tokens;
+        used.output_tokens += u.output_tokens;
+        used.cache_write_tokens += u.cache_write_tokens;
+        used.cache_read_tokens += u.cache_read_tokens;
+        if (res.stop_reason === "refusal") error = "refusal";
+        return { content: res.content as unknown as { type: string }[], stop: res.stop_reason };
       },
-      { signal },
-    );
-    stream.on("text", (d) => {
-      reply += d;
-      emit({ t: "text", d });
+      // While lookups run: the line the agent said, or one said for it, so the call never goes quiet. A line break
+      // ends it, so the answer that follows is spoken as its own sentence
+      onTools: (calls) => {
+        if (!roundText.trim() && fillers === 0) {
+          const line = fillerFor(calls, Date.now());
+          reply += line;
+          emit({ t: "text", d: line });
+          fillers++;
+        }
+        reply += "\n";
+        emit({ t: "text", d: "\n" });
+      },
     });
-    const res = await stream.finalMessage();
-    Object.assign(used, usageFor(res.usage));
-    if (res.stop_reason === "refusal") error = "refusal";
   } catch (e) {
     if (!signal.aborted) {
       error = (e instanceof Error ? e.message : String(e)).slice(0, 300);
@@ -162,15 +228,86 @@ export async function runCallTurn(input: { me: Staff; admin: SupabaseClient; cal
     .then(({ error: e }) => e && console.error("[agent call] log run", e.message));
 
   // Kept in the agent's chat (what was cut short by talking over it ends with an ellipsis)
-  const spoken = reply.trim() ? `${reply.trim()}${signal.aborted ? "…" : ""}` : "";
+  const spoken = reply.replace(/\n+/g, " ").trim() ? `${reply.replace(/\n+/g, " ").trim()}${signal.aborted ? "…" : ""}` : "";
   await admin.from("ai_role_chats").insert([
-    { role_key: call.role_key, role: "user", content: said, attachments: [], changes: [], created_by: me.id, call_id: call.id },
+    { role_key: call.role_key, role: "user", content: text, attachments: [], changes: [], created_by: me.id, call_id: call.id },
     ...(spoken ? [{ role_key: call.role_key, role: "agent", content: spoken, attachments: [], changes: [], created_by: me.id, call_id: call.id }] : []),
   ]);
 
-  // What they taught, read after the answer (so it never slows the voice down), saved and shown on the call
-  const learned = await saveLearnings(admin, me, call, await extractLearnings(book, said, reply));
-  await admin.rpc("ai_role_call_add", { p_id: call.id, p_chars: 0, p_turns: 1, p_learned: learned });
-  if (learned.length) emit({ t: "learned", items: learned });
+  // The topic and what they taught, read after the answer (so it never slows the voice down). Only someone who trains
+  // this agent teaches it: for anyone else nothing is captured. Held as pending until kept or tossed on the review.
+  const moment = await readMoment(book, text, reply);
+  const heard = trains ? pendingItems(moment.learnings.filter((l) => canTrainAgent(me, l.type === "note" ? l.skill : call.role_key)), () => crypto.randomUUID()) : [];
+  await admin.rpc("ai_role_call_add", { p_id: call.id, p_chars: 0, p_turns: 1, p_learned: heard });
+  if (moment.topic) void admin.from("ai_role_calls").update({ topic: moment.topic }).eq("id", call.id).then(({ error: e }) => e && console.error("[agent call] topic", e.message));
+  if (heard.length) emit({ t: "learned", items: heard });
   emit({ t: "done" });
+}
+
+// ─── The call's summary ─────────────────────────────────────────────────────
+
+const SUMMARY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["summary", "topic"],
+  properties: {
+    summary: { type: "string", description: "Two to four plain sentences: what was asked and answered, numbers that came up, anything agreed or left open" },
+    topic: { type: "string", description: "The main thing talked about, as a short phrase that fits after 'our conversation about' (up to eight words)" },
+  },
+};
+
+/** A short summary of a call, written once it ends (a cheap model), so later calls the same day can refer back to it */
+export async function summarizeCall(admin: SupabaseClient, callId: string): Promise<void> {
+  const { data: rows } = await admin.from("ai_role_chats").select("role, content").eq("call_id", callId).order("created_at").limit(80);
+  const turns = (rows ?? []) as Turn[];
+  if (turns.filter((t) => t.role === "user").length === 0) return;
+  try {
+    const out = await askJson<{ summary: string; topic: string }>({
+      agent: "coach",
+      label: "agent call summary",
+      bare: true,
+      noSample: true,
+      override: { model: "haiku", effort: "low" },
+      system: "You summarise a voice call between a member of a marketing agency's team and one of its AI agents, for the agent to remember later today. Plain words, no names of people (say 'they'), no secrets or personal details.",
+      schema: SUMMARY_SCHEMA,
+      maxTokens: 1200,
+      prompt: `<call>\n${said(turns, "They")}\n</call>`,
+    });
+    const topic = parseTopic(out);
+    await admin
+      .from("ai_role_calls")
+      .update({ summary: String(out.summary ?? "").trim().slice(0, 1500) || null, ...(topic ? { topic } : {}) })
+      .eq("id", callId);
+  } catch (e) {
+    console.error("[agent call] summary", e instanceof Error ? e.message : e);
+  }
+}
+
+// ─── Calls never hung up ────────────────────────────────────────────────────
+
+/**
+ * Closes calls nobody hung up (a closed tab, a dropped phone, a call past its time): ended when last talked in, what
+ * they heard left pending for review (it shows in the person's Overview), a call that heard nothing marked reviewed.
+ * `profileId`: every open call of that person (they're starting another); else every call past its time.
+ */
+export async function sweepOpenCalls(admin: SupabaseClient, opts: { profileId?: string } = {}): Promise<{ closed: string[] }> {
+  let q = admin.from("ai_role_calls").select("id, started_at, last_turn_at, learned").is("ended_at", null).limit(200);
+  if (opts.profileId) q = q.eq("profile_id", opts.profileId);
+  else q = q.lt("started_at", new Date(Date.now() - (CALL_LIMIT_SECONDS + 120) * 1000).toISOString());
+  const { data, error } = await q;
+  if (error) return { closed: [] };
+  const closed: string[] = [];
+  for (const c of data ?? []) {
+    const start = Date.parse(c.started_at as string);
+    const last = c.last_turn_at ? Date.parse(c.last_turn_at as string) : start;
+    const end = new Date(Math.min(Math.max(last, start), start + CALL_LIMIT_SECONDS * 1000, Date.now())).toISOString();
+    const pending = pendingOf((c.learned ?? []) as LearnedItem[]).length;
+    const { error: e } = await admin
+      .from("ai_role_calls")
+      .update({ ended_at: end, ...(pending ? {} : { reviewed_at: new Date().toISOString() }) })
+      .eq("id", c.id)
+      .is("ended_at", null);
+    if (!e) closed.push(c.id as string);
+  }
+  return { closed };
 }

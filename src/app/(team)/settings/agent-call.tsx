@@ -1,9 +1,13 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition, type ReactNode } from "react";
 import { field } from "@/components/ui";
 import { useAgentCall } from "@/components/agent-call-provider";
-import { HeadsetIcon, PhoneIcon } from "@/components/agent-call-views";
+import { HeadsetIcon, PhoneIcon, ReviewSheet } from "@/components/agent-call-views";
+import type { LearnedItem } from "@/lib/agent-call/core";
+import { onDay } from "@/lib/agent-call/next-items";
+import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import { callVoices, setAgentVoice, type CallVoice } from "./call-actions";
 
 // Calling an agent: the button on its page. The call itself (microphone, listening, the agent's voice, the huddle on
@@ -58,6 +62,65 @@ export function AgentCall({ roleKey, label, icon, tint, size = "full" }: Props) 
       <span className="md:hidden">Call</span>
       <span className="hidden md:inline">{here ? "In the huddle" : "Huddle"}</span>
     </button>
+  );
+}
+
+export type PendingReview = { callId: string; startedAt: string; items: LearnedItem[] };
+
+/**
+ * Calls whose learnings still wait for keep or toss (hung up without deciding, or the line dropped), offered on the
+ * agent's page. Review opens the same sheet as at hang-up, held in the address (?review=<call>) so back closes it and
+ * the Overview's link opens it.
+ */
+export function CallReviews({ roleKey, label, icon, tint, reviews, skills }: Props & { reviews: PendingReview[]; skills: Record<string, string> }) {
+  const router = useRouter();
+  const open = useParam("review");
+  const [done, setDone] = useState<string[]>([]);
+  const left = reviews.filter((r) => !done.includes(r.callId));
+  const current = reviews.find((r) => r.callId === open) ?? null;
+  const agent = { roleKey, label, icon, tint };
+  if (!left.length && !current) return null;
+  const count = left.reduce((n, r) => n + r.items.length, 0);
+  return (
+    <>
+      {left.length > 0 && (
+        <section aria-label="From your calls" className="relative overflow-hidden rounded-[18px] border border-brand/30 bg-brand-soft/40 p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-brand-text">From your calls</p>
+              <p className="mt-1 font-heading text-[18px] leading-tight">
+                {count === 1 ? "One thing you taught me waits" : `${count} things you taught me wait`} for keep or toss
+              </p>
+              <p className="mt-1 text-sm text-muted">Nothing changes in what I know until you decide.</p>
+            </div>
+          </div>
+          <ul className="mt-3 grid gap-2">
+            {left.map((r) => (
+              <li key={r.callId} className="flex min-h-14 items-center gap-3 rounded-[14px] border border-line bg-surface px-3.5 py-2.5">
+                <span className="grid min-w-0 flex-1 gap-0.5">
+                  <span className="text-[14px]">Our call {onDay(r.startedAt)}</span>
+                  <span className="truncate text-[12px] text-faint">{r.items.map((i) => i.title).join(" · ")}</span>
+                </span>
+                <button type="button" onClick={() => pushParams({ review: r.callId })} className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white transition hover:bg-brand-hover md:min-h-9">
+                  Review
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {current && !done.includes(current.callId) && (
+        <ReviewSheet
+          agent={agent}
+          callId={current.callId}
+          items={current.items}
+          skills={skills}
+          day={onDay(current.startedAt)}
+          onClose={() => closeThen(() => router.refresh(), "review")}
+          onApplied={() => setDone((d) => [...d, current.callId])}
+        />
+      )}
+    </>
   );
 }
 

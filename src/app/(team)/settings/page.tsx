@@ -10,8 +10,11 @@ import { DEFAULT_URL_TAGS, metaWriteSetting } from "@/lib/meta-write";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isExecOrLead, requireStaff, type Staff } from "@/lib/auth";
-import { canTrainAgent, trainableRoles } from "@/lib/agent-access";
-import { lineOfRole, parseLine } from "@/lib/agent-lines";
+import { ROLE_SKILLS, canTalkToAgent, canTrainAgent, trainableRoles } from "@/lib/agent-access";
+import { lineByKey, lineOfRole, parseLine } from "@/lib/agent-lines";
+import { roleChatRows } from "@/lib/agent-call/chat-scope";
+import { loadCallReviews } from "@/lib/agent-call/reviews";
+import { AgentTalk, AgentsToTalk, type TalkRole } from "./agent-talk";
 import { HeadChanges } from "./head-changes";
 import { loadHeadChanges } from "@/lib/agent-training";
 import { daysAgoIso, freshness } from "@/lib/dates";
@@ -61,7 +64,7 @@ const LEAD_TABS = ["team", "deleted"];
 const HEAD_TABS = ["agents"];
 // One Connections tab for everyone: your own accounts first (connecting itself lives in Kaizen AI); execs also enable
 // the team's connectors and answer requests, and leads and execs see the media keys (ElevenLabs, Higgsfield, Motion)
-const EVERYONE_TABS = ["connections"];
+const EVERYONE_TABS = ["connections", "agents"];
 const CONNECTION_SECTIONS = [
   ["yours", "Your accounts", "everyone"],
   ["team", "Team connectors", "exec"],
@@ -78,7 +81,28 @@ const day = (offset: number) => {
 const sixDaysAgo = () => new Date(Date.now() - 6 * 86_400_000);
 const tomorrow = () => new Date(Date.now() + 86_400_000);
 
+/** The role agents anyone can talk to (every one that's online), for the talk-only pages */
+async function talkRoles(): Promise<TalkRole[]> {
+  const { data } = await createAdminClient().from("ai_roles").select("*").order("sort_order");
+  return (data ?? [])
+    .filter((r) => ROLE_SKILLS[r.key as string] && !(r as { offline?: boolean }).offline)
+    .map((r) => ({ key: r.key as string, label: r.label as string, description: (r.description as string) ?? "", icon: (r.icon as string) ?? "spark", line: lineByKey(lineOfRole(r.key as string)).label }));
+}
+
+/** Everyone on the team can call and chat with every agent; only its trainers see its playbook and settings */
+async function TalkOnly({ me, role }: { me: Staff; role: string | null }) {
+  const roles = await talkRoles();
+  const open = role ? roles.find((r) => r.key === role) : null;
+  if (open && canTalkToAgent(me, open.key)) {
+    const rows = await roleChatRows(createAdminClient(), me, open.key, { limit: 200 });
+    const chat: RoleChatMessage[] = rows.map((m) => ({ id: m.id, role: m.role as "user" | "agent", content: m.content, changes: [], at: m.created_at }));
+    return <AgentTalk role={open} chat={chat} />;
+  }
+  return <AgentsToTalk roles={roles} />;
+}
+
 async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, section: askedSection, range, by }: { me: Staff; open: string | null; role: string | null; line: string | null; section: string; range: string; by: string }) {
+  if (!trainableRoles(me).length || (askedRole && !canTrainAgent(me, askedRole) && canTalkToAgent(me, askedRole))) return <TalkOnly me={me} role={askedRole} />;
   const supabase = await createClient();
   // A head sees only their line's agent and its skills, and none of the exec-only sections (strategy, shared
   // knowledge, the heads' changes, expenses)
@@ -212,11 +236,11 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
   const agent = list.find((a) => a.key === open);
   const role = roles.find((r) => r.key === openRole);
   if (!agent && role) {
-    const { data: talk } = await chatDb.from("ai_role_chats").select("id, role, content, changes, created_at").eq("role_key", role.key).order("created_at").limit(200);
-    const chat: RoleChatMessage[] = (talk ?? []).map((m) => ({ id: m.id, role: m.role, content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
+    const [talk, reviews] = await Promise.all([roleChatRows(createAdminClient(), me, role.key, { limit: 200 }), loadCallReviews(createAdminClient(), me, role.key).catch(() => [])]);
+    const chat: RoleChatMessage[] = talk.map((m) => ({ id: m.id, role: m.role as "user" | "agent", content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
     return (
       <div className="grid gap-6">
-        <RoleDetail key={role.key} role={role} skills={list.filter((a) => a.roleKey === role.key)} items={items} chat={chat} isExec={me.isExec} />
+        <RoleDetail key={role.key} role={role} skills={list.filter((a) => a.roleKey === role.key)} items={items} chat={chat} isExec={me.isExec} reviews={reviews.map((r) => ({ callId: r.callId, startedAt: r.startedAt, items: r.items }))} />
         <KnowledgePanel
           target={{ scope: "agent", agentKey: `role:${role.key}` }}
           docs={await listKnowledge(supabase, { scope: "agent", agentKey: `role:${role.key}` })}
@@ -250,7 +274,14 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
             const line = me.isExec ? parseLine(askedLine) : null;
             const inLine = line ? roles.filter((r) => lineOfRole(r.key) === line) : roles;
             if (me.isExec && !(line && inLine.length)) return <LinesOverview roles={roles} agents={list.filter((a) => a.roleKey)} total7={[...cost7.values()].reduce((t, c) => t + c, 0)} />;
-            return <RolesOverview roles={inLine} agents={list.filter((a) => a.roleKey && inLine.some((r) => r.key === a.roleKey))} items={items} isExec={me.isExec} line={line} />;
+            const overview = <RolesOverview roles={inLine} agents={list.filter((a) => a.roleKey && inLine.some((r) => r.key === a.roleKey))} items={items} isExec={me.isExec} line={line} />;
+            if (me.isExec) return overview;
+            return (
+              <div className="grid gap-10">
+                {overview}
+                <OtherAgents mine={roles.map((r) => r.key)} />
+              </div>
+            );
           })()
         )}
       </div>
@@ -973,7 +1004,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
     <div className="grid grid-cols-[minmax(0,1fr)] gap-5 md:gap-7">
       <header>
         <h1 className="font-heading text-[26px] leading-tight md:text-[32px]">Settings</h1>
-        <p className="mt-1.5 text-sm text-muted">{isExecOrLead(me) || trains ? "Tune the AI agents and look under the hood at the data behind every number." : "Your connected accounts. Connect and manage them from the plug button in Kaizen AI."}</p>
+        <p className="mt-1.5 text-sm text-muted">{isExecOrLead(me) || trains ? "Tune the AI agents and look under the hood at the data behind every number." : "Talk to the AI agents, and your connected accounts."}</p>
       </header>
       {/* Phones: one row of pills that scrolls sideways and snaps; desktop: the row wraps as before */}
       <nav className="no-scrollbar -mx-4 flex snap-x snap-mandatory scroll-px-4 gap-1.5 overflow-x-auto px-4 md:mx-0 md:snap-none md:flex-wrap md:overflow-visible md:px-0">
@@ -1045,4 +1076,10 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       {tab === "deleted" && <Deleted />}
     </div>
   );
+}
+
+/** A head's page also lists the agents outside their line, to call and chat with */
+async function OtherAgents({ mine }: { mine: string[] }) {
+  const others = (await talkRoles()).filter((r) => !mine.includes(r.key));
+  return <AgentsToTalk roles={others} title="More agents to talk to" sub="Call or chat with any of them about your clients. Their own heads shape what they know." />;
 }

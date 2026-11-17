@@ -5,6 +5,7 @@ import type { AiTool } from "@/lib/ai";
 import { conversionFor } from "@/lib/kpi/conversions";
 import { shownStatus } from "@/lib/kpi/calc";
 import { extensionTools } from "./extensions";
+import { rankTools } from "./rank-tools";
 import { clampFormats, formatList, formatsFor, formatsRule } from "@/lib/creative-formats";
 import { can, roleWidePerms, type Who } from "@/lib/chat-permissions";
 import { isChannelOnly, lineOfTeam } from "@/lib/roles";
@@ -278,7 +279,7 @@ const csvCell = (v: unknown) => {
 // ─── The tools ───────────────────────────────────────────────────────────────
 
 /** The tools the email and organic social teams get (the email one only for the email team) */
-const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "email_marketing", "organic_social", "search_client", "recent_calls", "read_call"]);
+const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "email_marketing", "organic_social", "search_client", "recent_calls", "read_call", "rank_clients", "top_emails", "email_detail", "top_posts"]);
 /** Per turn: the add-on tools loaded for this person, which the email and social teams get as well */
 const CHANNEL_EXTRA = new Set<string>(["make_deck"]);
 
@@ -985,6 +986,9 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     for (const t of reused) if (label[t.name]) tools.push({ ...t, description: `${t.description} (Only for the client this thread is pinned to.)`, status: () => label[t.name] });
   }
 
+  // Rankings across clients: clients on a line, and single emails, ads and posts (each scoped to the person's line)
+  for (const t of rankTools(ctx)) tools.push(t);
+
   // The connectors in src/lib/ai-tools (Google policy checker, monthly recap deck, ElevenLabs, Higgsfield, Motion)
   const extra = await extensionTools(ctx);
   for (const t of extra) if (!tools.some((x) => x.name === t.name)) tools.push(t);
@@ -1002,7 +1006,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
 export function toolsFor<T extends { name: string; input_schema?: unknown }>(me: Who, tools: T[]): T[] {
   // The email and social teams: client lookup, shared context, calls and their own channel. Every other tool reads ad
   // data with the server's rights, so none of them are offered
-  if (isChannelOnly(me.role)) return tools.filter((t) => (CHANNEL_TOOLS.has(t.name) || CHANNEL_EXTRA.has(t.name)) && !(t.name === "email_marketing" && lineOfTeam(me.role) !== "email") && !(t.name === "organic_social" && lineOfTeam(me.role) !== "social"));
+  if (isChannelOnly(me.role)) return tools.filter((t) => (CHANNEL_TOOLS.has(t.name) || CHANNEL_EXTRA.has(t.name)) && !(["email_marketing", "top_emails", "email_detail"].includes(t.name) && lineOfTeam(me.role) !== "email") && !(["organic_social", "top_posts"].includes(t.name) && lineOfTeam(me.role) !== "social"));
   const p = roleWidePerms(me);
   const changeOn = (["meta", "google"] as const).filter((x) => p.change[x]);
   const drop = new Set<string>();

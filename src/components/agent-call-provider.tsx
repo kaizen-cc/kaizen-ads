@@ -67,7 +67,7 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
   const [ears, setEars] = useState<"scribe" | "browser" | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [now, setNow] = useState(0);
-  const [summary, setSummary] = useState<{ seconds: number; proposals: number } | null>(null);
+  const [summary, setSummary] = useState<{ seconds: number; canReview: boolean; skills: Record<string, string> } | null>(null);
   const [lastCall, setLastCall] = useState<string | null>(null);
   const [minimized, setMinimized] = useState(false);
   const [switchTo, setSwitchTo] = useState<AgentRef | null>(null);
@@ -108,8 +108,8 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
       const r = await endCall(id);
       if (r.ok) {
         setLearned(r.learned);
-        setSummary({ seconds: r.seconds, proposals: r.proposals });
-      } else setSummary({ seconds: spent, proposals: 0 });
+        setSummary({ seconds: r.seconds, canReview: r.canReview, skills: r.skills });
+      } else setSummary({ seconds: spent, canReview: false, skills: {} });
       router.refresh();
     },
     [router],
@@ -271,7 +271,6 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
         summary,
         learned,
         callId: lastCall,
-        onUndo: (i, undone) => setLearned((cur) => cur.map((x, j) => (j === i ? { ...x, undone } : x))),
         onDone: () => {
           setStage("idle");
           setSummary(null);

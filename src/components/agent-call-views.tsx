@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition, type ReactNode, type RefObject } from "react";
-import { undoLearning } from "@/app/(team)/settings/call-actions";
-import { CALL_LIMIT_SECONDS, clock, type LearnedItem } from "@/lib/agent-call/core";
+import { reviewCallLearnings, undoLearning } from "@/app/(team)/settings/call-actions";
+import { field } from "@/components/ui";
+import { CALL_LIMIT_SECONDS, clock, keyOf, statusOf, type LearnedItem } from "@/lib/agent-call/core";
 import type { Call, Line, Phase } from "@/lib/agent-call/engine";
 
 // The two ways a call is shown. On phones it takes the whole screen; on computers it is a huddle: a small panel
@@ -35,10 +36,9 @@ export type CallView = {
 
 export type SummaryView = {
   agent: AgentRef;
-  summary: { seconds: number; proposals: number } | null;
+  summary: { seconds: number; canReview: boolean; skills: Record<string, string> } | null;
   learned: LearnedItem[];
   callId: string | null;
-  onUndo: (index: number, undone: boolean) => void;
   onDone: () => void;
 };
 
@@ -114,12 +114,12 @@ function LearnedChips({ learned, max = 3 }: { learned: LearnedItem[]; max?: numb
   return (
     <>
       {learned.slice(-max).map((l, i) => (
-        <span key={`${l.title}-${i}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-ok-soft px-3 py-1 text-[12px] text-ok">
+        <span key={`${l.title}-${i}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-brand-soft px-3 py-1 text-[12px] text-brand-text">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0">
             <path d="M20 6 9 17l-5-5" />
           </svg>
           <span className="truncate">
-            {l.type === "note" ? "Learned" : "Edit to propose"}: {l.title}
+            Heard: {l.title}
           </span>
         </span>
       ))}
@@ -330,80 +330,245 @@ export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; mi
   );
 }
 
-// ─── What I learned ─────────────────────────────────────────────────────────
+// ─── What I heard: keep or toss ─────────────────────────────────────────────
 
-function Learned({ item, callId, onChange }: { item: LearnedItem; callId: string | null; onChange: (undone: boolean) => void }) {
+/** Where a learning would go, in plain words */
+function whereTo(item: LearnedItem, skills: Record<string, string>): string {
+  const skill = skills[item.skill] ?? item.skill;
+  if (item.type === "note") return `A note in my ${skill} skill`;
+  return item.skill === "core" ? "A change to my core, sent to my chat as an edit" : `A change to my ${skill} instructions, sent to my chat as an edit`;
+}
+
+type Choice = { keep: boolean | null; title: string; body: string };
+
+/** One thing heard on the call: where it would go, the exact text that would be applied (editable), Keep or Toss */
+function HeardItem({ item, skills, choice, onChange, disabled }: { item: LearnedItem; skills: Record<string, string>; choice: Choice; onChange: (c: Choice) => void; disabled: boolean }) {
+  const [editing, setEditing] = useState(false);
+  const tossed = choice.keep === false;
+  return (
+    <li className={`grid gap-2.5 rounded-[16px] border p-3.5 transition-colors ${choice.keep === true ? "border-ok/50 bg-ok-soft/40" : tossed ? "border-line bg-surface-2/50" : "border-line bg-surface"}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className={`text-[14.5px] font-medium leading-snug [overflow-wrap:anywhere] ${tossed ? "text-faint line-through" : ""}`}>{choice.title}</p>
+          <p className="mt-0.5 text-[11.5px] text-faint">{whereTo(item, skills)}</p>
+        </div>
+        {!editing && !tossed && (
+          <button type="button" onClick={() => setEditing(true)} disabled={disabled} className="inline-flex min-h-11 shrink-0 items-center rounded-full px-3 text-[12.5px] text-muted transition-colors hover:bg-surface-2 hover:text-fg md:min-h-8">
+            Edit
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <div className="grid gap-2">
+          <label className="sr-only" htmlFor={`t-${keyOf(item)}`}>
+            Title
+          </label>
+          <input id={`t-${keyOf(item)}`} value={choice.title} onChange={(e) => onChange({ ...choice, title: e.target.value })} className={`${field} h-11 md:h-9`} />
+          <label className="sr-only" htmlFor={`b-${keyOf(item)}`}>
+            What will be applied
+          </label>
+          <textarea id={`b-${keyOf(item)}`} value={choice.body} onChange={(e) => onChange({ ...choice, body: e.target.value })} rows={4} className={`${field} h-auto py-2.5 text-[13.5px] font-normal leading-relaxed`} />
+          <button type="button" onClick={() => setEditing(false)} className="min-h-11 justify-self-start text-[12.5px] text-muted hover:text-fg md:min-h-0">
+            Done editing
+          </button>
+        </div>
+      ) : (
+        <p className={`text-[13px] leading-relaxed ${tossed ? "text-faint" : "text-muted"}`}>{choice.body}</p>
+      )}
+      <div role="radiogroup" aria-label={`Keep or toss: ${choice.title}`} className="grid grid-cols-2 gap-2">
+        {([true, false] as const).map((k) => {
+          const on = choice.keep === k;
+          return (
+            <button
+              key={String(k)}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              disabled={disabled}
+              onClick={() => onChange({ ...choice, keep: k })}
+              className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full border text-[13.5px] font-medium transition active:scale-[0.98] md:min-h-9 ${
+                on ? (k ? "border-ok bg-ok text-white" : "border-fg bg-fg text-bg") : "border-line text-muted hover:border-faint hover:text-fg"
+              }`}
+            >
+              {k ? "Keep" : "Toss"}
+            </button>
+          );
+        })}
+      </div>
+    </li>
+  );
+}
+
+/** A decided item after the review: a kept note can be undone (Put back turns it on again) */
+function KeptItem({ item, callId, skills, onChange }: { item: LearnedItem; callId: string; skills: Record<string, string>; onChange: (undone: boolean) => void }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const toggle = () =>
     start(async () => {
-      if (!callId || !item.id) return;
+      if (!item.id) return;
       setError(null);
       const r = await undoLearning(callId, item.id, !item.undone);
       if (r.ok) onChange(!item.undone);
       else setError(r.error);
     });
+  const tossed = statusOf(item) === "tossed";
   return (
-    <li className={`grid gap-1.5 rounded-[14px] border border-line p-3.5 transition-opacity ${item.undone ? "opacity-55" : ""}`}>
+    <li className={`grid gap-1 rounded-[14px] border border-line p-3.5 ${tossed || item.undone ? "opacity-60" : ""}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className={`text-[14.5px] font-medium leading-snug ${item.undone ? "line-through" : ""}`}>{item.title}</p>
-          <p className="mt-0.5 text-[11px] text-faint">{item.type === "note" ? (item.undone ? "Undone" : `Saved to ${item.skill}`) : item.skill === "core" ? "Proposed for my core" : `Proposed for ${item.skill}`}</p>
+          <p className={`text-[14px] font-medium leading-snug ${tossed || item.undone ? "line-through" : ""}`}>{item.title}</p>
+          <p className="mt-0.5 text-[11.5px] text-faint">{tossed ? "Tossed" : item.undone ? "Undone" : item.type === "note" ? `Saved to my ${skills[item.skill] ?? item.skill} skill` : "Sent to my chat as an edit to apply"}</p>
         </div>
-        {item.type === "note" && item.id && (
+        {!tossed && item.type === "note" && item.id && (
           <button type="button" onClick={toggle} disabled={pending} className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-line px-3.5 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg disabled:opacity-50 md:min-h-8">
             {item.undone ? "Put back" : "Undo"}
           </button>
         )}
       </div>
-      <p className="text-[13px] leading-relaxed text-muted">{item.body}</p>
       {error && <p className="text-xs text-bad">{error}</p>}
     </li>
   );
 }
 
-function SummaryBody({ s }: { s: SummaryView }) {
-  const { summary, learned } = s;
+/**
+ * The review of what a call heard: each pending item with where it would go and the exact text that would be applied
+ * (editable), Keep or Toss, Keep all or Toss all, then Apply. Only kept items are written. Decide later leaves them
+ * pending (they wait on the Overview and the agent's page). Used at hang-up and from the Overview or the agent's page.
+ */
+export function ReviewBody({ agent, callId, items, skills, heading, sub, onDone, onApplied }: { agent: AgentRef; callId: string | null; items: LearnedItem[] | null; skills: Record<string, string>; heading: string; sub: string; onDone: () => void; onApplied?: () => void }) {
+  const pendingNow = (items ?? []).filter((l) => statusOf(l) === "pending");
+  const [choices, setChoices] = useState<Record<string, Choice>>({});
+  const [result, setResult] = useState<{ learned: LearnedItem[]; kept: number; tossed: number; proposals: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, start] = useTransition();
+  const choiceOf = (l: LearnedItem): Choice => choices[keyOf(l)] ?? { keep: null, title: l.title, body: l.body };
+  const set = (l: LearnedItem, c: Choice) => setChoices((cur) => ({ ...cur, [keyOf(l)]: c }));
+  const all = (keep: boolean) => setChoices(Object.fromEntries(pendingNow.map((l) => [keyOf(l), { ...choiceOf(l), keep }])));
+  const decided = pendingNow.filter((l) => choiceOf(l).keep !== null);
+  const kept = decided.filter((l) => choiceOf(l).keep).length;
+  const apply = () =>
+    start(async () => {
+      if (!callId) return;
+      setError(null);
+      const decisions = Object.fromEntries(
+        pendingNow.map((l) => {
+          const c = choiceOf(l);
+          return [keyOf(l), { keep: Boolean(c.keep), ...(c.keep ? { title: c.title, body: c.body } : {}) }];
+        }),
+      );
+      const r = await reviewCallLearnings(callId, decisions);
+      if (!r.ok) return setError(r.error);
+      setResult({ learned: r.learned, kept: r.kept, tossed: r.tossed, proposals: r.proposals });
+      onApplied?.();
+    });
+  const proposalsLine = (n: number) => `${n === 1 ? "One change" : `${n} changes`} to my core or a skill's instructions ${n === 1 ? "is" : "are"} on the way to my chat as ${n === 1 ? "an edit" : "edits"} for you to apply.`;
+
   return (
     <>
       <div className="flex items-center gap-4 border-b border-line px-5 py-5">
-        <div className="shrink-0">{s.agent.icon(48)}</div>
+        <div className="shrink-0">{agent.icon(48)}</div>
         <div className="min-w-0">
-          <p className="font-heading text-[20px] leading-tight">What I learned</p>
-          <p className="mt-0.5 text-sm text-muted">{summary ? `Call with the ${s.agent.label} · ${clock(summary.seconds)}` : "Hanging up…"}</p>
+          <p className="font-heading text-[20px] leading-tight">{result ? "Applied" : heading}</p>
+          <p className="mt-0.5 text-sm text-muted">{sub}</p>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        {!summary ? (
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
+        {items === null ? (
           <p className="text-sm text-muted">Saving the call…</p>
-        ) : learned.length === 0 ? (
-          <p className="text-sm leading-relaxed text-muted">Nothing new this time. The whole call is in my chat, so you can read it back any time.</p>
+        ) : result ? (
+          <div className="grid gap-3">
+            <p className="text-sm leading-relaxed text-muted">
+              {result.kept ? `Kept ${result.kept}` : "Kept nothing"}
+              {result.tossed ? `, tossed ${result.tossed}` : ""}. {result.proposals ? proposalsLine(result.proposals) : ""}
+            </p>
+            <ul className="grid gap-2.5">
+              {result.learned
+                .filter((l) => pendingNow.some((p) => keyOf(p) === keyOf(l)))
+                .map((l, i) => (
+                  <KeptItem key={`${keyOf(l)}-${i}`} item={l} callId={callId ?? ""} skills={skills} onChange={(u) => setResult((cur) => (cur ? { ...cur, learned: cur.learned.map((x) => (keyOf(x) === keyOf(l) ? { ...x, undone: u } : x)) } : cur))} />
+                ))}
+            </ul>
+          </div>
+        ) : pendingNow.length === 0 ? (
+          <p className="text-sm leading-relaxed text-muted">Nothing to keep this time. The whole call is in my chat, so you can read it back any time.</p>
         ) : (
-          <ul className="grid gap-3">
-            {learned.map((l, i) => (
-              <Learned key={`${l.id ?? l.title}-${i}`} item={l} callId={s.callId} onChange={(u) => s.onUndo(i, u)} />
-            ))}
-          </ul>
+          <div className="grid gap-3">
+            <p className="text-[13px] leading-relaxed text-muted">Nothing here changes what I know until you keep it. Edit the wording if it isn&apos;t quite right.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => all(true)} disabled={busy} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-8">
+                Keep all
+              </button>
+              <button type="button" onClick={() => all(false)} disabled={busy} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-8">
+                Toss all
+              </button>
+              <span className="tabular ml-auto text-[12px] text-faint">
+                {decided.length} of {pendingNow.length} decided
+              </span>
+            </div>
+            <ul className="grid gap-3">
+              {pendingNow.map((l) => (
+                <HeardItem key={keyOf(l)} item={l} skills={skills} choice={choiceOf(l)} onChange={(c) => set(l, c)} disabled={busy} />
+              ))}
+            </ul>
+          </div>
         )}
-        {summary && summary.proposals > 0 && (
-          <p className="mt-4 rounded-[12px] bg-brand-soft px-3.5 py-3 text-[13px] leading-relaxed text-brand-text">
-            {summary.proposals === 1 ? "One change" : `${summary.proposals} changes`} to my core or a skill&apos;s instructions {summary.proposals === 1 ? "is" : "are"} on the way to my chat as {summary.proposals === 1 ? "an edit" : "edits"} for you to apply.
-          </p>
-        )}
+        {error && <p className="mt-3 text-sm text-bad">{error}</p>}
       </div>
-      <div className="border-t border-line px-5 py-4">
-        <button type="button" onClick={s.onDone} className="min-h-12 w-full rounded-full bg-brand px-5 text-[14.5px] font-medium text-white transition hover:bg-brand-hover md:min-h-10">
-          Done
-        </button>
+      <div className="grid gap-2 border-t border-line px-5 py-4">
+        {!result && pendingNow.length > 0 && callId ? (
+          <>
+            <button
+              type="button"
+              onClick={apply}
+              disabled={busy || decided.length < pendingNow.length}
+              className="min-h-12 w-full rounded-full bg-brand px-5 text-[14.5px] font-medium text-white transition hover:bg-brand-hover disabled:opacity-50 md:min-h-10"
+            >
+              {busy ? "Applying…" : decided.length < pendingNow.length ? "Keep or toss each one" : kept ? `Apply: keep ${kept}${pendingNow.length - kept ? `, toss ${pendingNow.length - kept}` : ""}` : "Apply: toss all"}
+            </button>
+            <button type="button" onClick={onDone} disabled={busy} className="min-h-11 w-full rounded-full text-[13.5px] text-muted transition-colors hover:text-fg md:min-h-9">
+              Decide later
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={onDone} className="min-h-12 w-full rounded-full bg-brand px-5 text-[14.5px] font-medium text-white transition hover:bg-brand-hover md:min-h-10">
+            Done
+          </button>
+        )}
       </div>
     </>
   );
 }
 
+/** After a call: the review (for those who train the agent) or a short wrap-up */
+function SummaryBody({ s }: { s: SummaryView }) {
+  const sub = s.summary ? `Call with the ${s.agent.label} · ${clock(s.summary.seconds)}` : "Hanging up…";
+  if (s.summary && !s.summary.canReview)
+    return (
+      <>
+        <div className="flex items-center gap-4 border-b border-line px-5 py-5">
+          <div className="shrink-0">{s.agent.icon(48)}</div>
+          <div className="min-w-0">
+            <p className="font-heading text-[20px] leading-tight">Call ended</p>
+            <p className="mt-0.5 text-sm text-muted">{sub}</p>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <p className="text-sm leading-relaxed text-muted">The whole call is in my chat, so you can read it back any time. Anything you asked me to remind you of or pass on is on the Overview.</p>
+        </div>
+        <div className="border-t border-line px-5 py-4">
+          <button type="button" onClick={s.onDone} className="min-h-12 w-full rounded-full bg-brand px-5 text-[14.5px] font-medium text-white transition hover:bg-brand-hover md:min-h-10">
+            Done
+          </button>
+        </div>
+      </>
+    );
+  return <ReviewBody agent={s.agent} callId={s.callId} items={s.summary ? s.learned : null} skills={s.summary?.skills ?? {}} heading="What I heard" sub={sub} onDone={s.onDone} />;
+}
+
 /** Phones: the whole screen */
 export function FullScreenSummary({ s }: { s: SummaryView }) {
   return (
-    <div role="dialog" aria-modal aria-label="What I learned" className="fixed inset-0 z-[80] flex flex-col bg-bg pt-safe pb-safe animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)]">
+    <div role="dialog" aria-modal aria-label="What I heard" className="fixed inset-0 z-[80] flex flex-col bg-bg pt-safe pb-safe animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)]">
       <SummaryBody s={s} />
     </div>
   );
@@ -412,8 +577,35 @@ export function FullScreenSummary({ s }: { s: SummaryView }) {
 /** Computers: a small sheet where the huddle was */
 export function HuddleSummary({ s }: { s: SummaryView }) {
   return (
-    <div role="dialog" aria-label="What I learned" className={`${DOCK} flex max-h-[min(70vh,560px)] w-[380px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[20px] border border-line bg-surface shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65)] animate-[sheet-up_.26s_cubic-bezier(.2,.8,.2,1)]`}>
+    <div role="dialog" aria-label="What I heard" className={`${DOCK} flex max-h-[min(78vh,640px)] w-[400px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[20px] border border-line bg-surface shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65)] animate-[sheet-up_.26s_cubic-bezier(.2,.8,.2,1)]`}>
       <SummaryBody s={s} />
+    </div>
+  );
+}
+
+/**
+ * The same review opened later (from the Overview or the agent's page): the whole screen on phones, a centred sheet on
+ * computers. Esc or the backdrop closes it (the items stay pending).
+ */
+export function ReviewSheet({ agent, callId, items, skills, day, onClose, onApplied }: { agent: AgentRef; callId: string; items: LearnedItem[]; skills: Record<string, string>; day: string; onClose: () => void; onApplied?: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    const was = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = was;
+    };
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-[85] flex items-stretch justify-center md:items-center md:p-6" role="dialog" aria-modal aria-label={`What you taught the ${agent.label}`}>
+      <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0 hidden bg-black/50 backdrop-blur-[2px] animate-[sheet-fade_.2s_ease-out] md:block" />
+      <div className="relative flex w-full flex-col overflow-hidden bg-bg pt-safe pb-safe animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)] md:max-h-[min(86vh,760px)] md:max-w-lg md:rounded-[22px] md:border md:border-line md:bg-surface md:pt-0 md:pb-0 md:shadow-2xl">
+        <ReviewBody agent={agent} callId={callId} items={items} skills={skills} heading="What you taught me" sub={`From our call ${day}`} onDone={onClose} onApplied={onApplied} />
+      </div>
     </div>
   );
 }
@@ -427,7 +619,7 @@ export function SwitchAsk({ current, next, onStay, onLeave }: { current: string;
       <div className="relative w-full max-w-sm rounded-[20px] border border-line bg-surface p-5 shadow-2xl animate-[sheet-up_.24s_cubic-bezier(.2,.8,.2,1)]">
         <p className="font-heading text-[18px] leading-tight">Leave your call?</p>
         <p className="mt-1.5 text-sm leading-relaxed text-muted">
-          You&apos;re on a call with the {current}. Leave it to start one with the {next}? What the {current} learned is kept.
+          You&apos;re on a call with the {current}. Leave it to start one with the {next}? Anything it heard waits for you on the Overview.
         </p>
         <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" onClick={onStay} className="min-h-11 rounded-full border border-line px-5 text-[14px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-10">

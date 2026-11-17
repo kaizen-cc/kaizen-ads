@@ -1,14 +1,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { AiUnavailable, askJson, forgetAgent, type AgentKey } from "@/lib/ai";
+import { AiUnavailable, askJson, askJsonWithTools, forgetAgent, type AgentKey } from "@/lib/ai";
+import { TOOLS_RULE, agentTools } from "@/lib/agent-call/agent-tools";
+import { focusFor } from "@/lib/agent-call/role-focus";
+import { roleChatRows } from "@/lib/agent-call/chat-scope";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireExec, requireStaff, type Staff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readShared, SHARED_RULES, type AgentFile, type Attachment } from "@/lib/agent-docs";
 import { changeTarget } from "@/lib/agent-change";
-import { canTrainAgent } from "@/lib/agent-access";
+import { canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
 import { loadRolePlaybook } from "@/lib/role-playbook";
 import { logTraining, revertChange, snapshot } from "@/lib/agent-training";
 
@@ -418,37 +421,46 @@ When they give feedback, change yourself so you do better next time:
 reply: plain text, conversational, like a sharp colleague. No markdown, no asterisks, no bullet symbols, no headings, no emojis. Usually 1 to 4 sentences; longer only when they ask you to explain how you work. When you propose changes, say in a sentence what you'd change and where (the exec applies each change with a click). Refer to people by role, never by name.`;
 
 export async function chatWithAgent(roleKey: string, message: string, files: AgentFile[] = []): Promise<{ ok: true; messages: RoleChatMessage[] } | { ok: false; error: string }> {
-  const me = await trainer(roleKey);
-  if (!me) return NOT_YOURS;
+  // Everyone can talk to every agent and ask it about their clients; only its trainers change it (proposed edits)
+  const me = await requireStaff();
+  if (!canTalkToAgent(me, roleKey)) return { ok: false, error: "That isn't one of the agents." };
+  const trains = canTrainAgent(me, roleKey);
   const text = message.trim();
   if (!text && !files.length) return { ok: false, error: "Write something first." };
   const supabase = createAdminClient();
-  const [book, { data: history }] = await Promise.all([
-    loadRolePlaybook(supabase, roleKey),
-    supabase.from("ai_role_chats").select("role, content, changes").eq("role_key", roleKey).order("created_at", { ascending: false }).limit(16),
-  ]);
+  // Its trainers share one conversation with it; anyone else has their own
+  const [book, history] = await Promise.all([loadRolePlaybook(supabase, roleKey), roleChatRows(supabase, me, roleKey, { limit: 16, newestFirst: true })]);
   if (!book) return { ok: false, error: "Unknown agent." };
   const { role, owner, truncated, text: playbook } = book;
   const keys = book.skills.map((k) => k.key);
+  const who = trains ? "Exec" : "Teammate";
   const convo = (history ?? [])
     .slice()
     .reverse()
-    .map((m) => `${m.role === "user" ? "Exec" : "You"}: ${m.content}${m.role === "agent" && (m.changes as Change[]).length ? ` [proposed ${(m.changes as Change[]).map((c) => `${c.op} on ${c.skill}${c.title ? ` "${c.title}"` : ""}${c.applied ? " (applied)" : ""}`).join(", ")}]` : ""}`)
+    .map((m) => `${m.role === "user" ? who : "You"}: ${m.content}${m.role === "agent" && (m.changes as Change[]).length ? ` [proposed ${(m.changes as Change[]).map((c) => `${c.op} on ${c.skill}${c.title ? ` "${c.title}"` : ""}${c.applied ? " (applied)" : ""}`).join(", ")}]` : ""}`)
     .join("\n");
 
   try {
     const shared = await readShared(createAdminClient(), roleKey, files, text);
-    const out = await askJson<{ reply: string; changes: Change[] }>({
+    // Live data: the same tools Kaizen AI's chat has, for this person's own clients and line (read only, or asked first)
+    const tools = await agentTools({ me, db: await createClient(), admin: supabase, roleKey, label: role.label, callId: null });
+    const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    const teach = trains
+      ? ""
+      : `\n\nThis teammate doesn't train you: answer their questions and do what they ask with your tools, but propose no changes (changes: an empty list). If they tell you how you should work, thank them and say the head of your line or an executive changes your playbook.`;
+    const out = await askJsonWithTools<{ reply: string; changes: Change[] }>({
       agent: "coach",
       label: `agent chat ${roleKey}`,
-      system: `${roleSystem(role.label)}\n${SHARED_RULES}`,
+      system: `${roleSystem(role.label)}\n${SHARED_RULES}\n\nToday is ${today} (New York). ${TOOLS_RULE} Give the numbers that answer the question in a sentence or two; never paste a table. Questions about clients and their numbers get answers, not proposed edits.\nWhat you lead with: ${focusFor(roleKey)}${teach}`,
       schema: ROLE_SCHEMA,
+      tools,
+      maxRounds: 6,
       images: shared.images,
       pdfs: shared.pdfs,
-      prompt: `${playbook}\n\n<conversation_so_far>\n${convo || "(new conversation)"}\n</conversation_so_far>\n\n${shared.block}\n\n<exec_says>\n${text || "(shared the material above)"}\n</exec_says>`,
+      prompt: `${playbook}\n\n<conversation_so_far>\n${convo || "(new conversation)"}\n</conversation_so_far>\n\n${shared.block}\n\n<${trains ? "exec" : "teammate"}_says>\n${text || "(shared the material above)"}\n</${trains ? "exec" : "teammate"}_says>`,
     });
-    // Only edits to this agent's own core, skills and items survive; an item edit is filed under the item's real skill
-    const changes = out.changes
+    // Only edits to this agent's own core, skills and items survive (and only for its trainers); an item edit is filed under the item's real skill
+    const changes = (trains ? out.changes : [])
       .map((c): Change | null => {
         if (c.op === "set_core") return { ...c, skill: "core", item_id: "" };
         if (c.op === "update_item" || c.op === "turn_off_item") {
@@ -476,9 +488,11 @@ export async function chatWithAgent(roleKey: string, message: string, files: Age
 }
 
 export async function loadRoleChat(roleKey: string): Promise<RoleChatMessage[]> {
-  if (!(await trainer(roleKey))) return [];
+  const me = await requireStaff();
+  if (!canTalkToAgent(me, roleKey)) return [];
   const supabase = createAdminClient();
-  const { data } = await supabase.from("ai_role_chats").select("id, role, content, changes, attachments, created_at").eq("role_key", roleKey).order("created_at").limit(200);
+  // Its trainers share one conversation with it; everyone else sees their own
+  const data = await roleChatRows(supabase, me, roleKey, { limit: 200 });
   return (data ?? []).map((m) => ({ id: m.id, role: m.role as "user" | "agent", content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at, attachments: (m.attachments ?? []) as Attachment[] }));
 }
 
@@ -511,9 +525,13 @@ export async function applyRoleChange(roleKey: string, chatId: number, index: nu
 }
 
 export async function clearRoleChat(roleKey: string): Promise<ActionResult> {
-  if (!(await trainer(roleKey))) return NOT_YOURS;
+  const me = await requireStaff();
+  if (!canTalkToAgent(me, roleKey)) return NOT_YOURS;
   const supabase = createAdminClient();
-  const { error } = await supabase.from("ai_role_chats").delete().eq("role_key", roleKey);
+  // A trainer clears the shared conversation; anyone else only their own
+  let q = supabase.from("ai_role_chats").delete().eq("role_key", roleKey);
+  if (!canTrainAgent(me, roleKey)) q = q.eq("created_by", me.id);
+  const { error } = await q;
   return done(error);
 }
 

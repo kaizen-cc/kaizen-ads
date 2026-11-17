@@ -36,7 +36,7 @@ import { proposalOf, changeTarget } from "@/lib/agent-change";
 import type { EvalRow } from "@/lib/agent-evals";
 import type { LearningView } from "@/lib/learnings";
 import { AgentOnline } from "./agent-online";
-import { AgentCall, AgentVoice } from "./agent-call";
+import { AgentCall, AgentVoice, CallReviews, type PendingReview } from "./agent-call";
 import { defaultVoiceName } from "@/lib/agent-call/core";
 import { ReportThis } from "@/components/report-this";
 
@@ -110,7 +110,7 @@ const TINT = AGENT_TINT;
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 const tokensOf = (s: string) => Math.round(s.length / 4);
 
-function AgentIcon({ icon, size = 44 }: { icon: string; size?: number }) {
+export function AgentIcon({ icon, size = 44 }: { icon: string; size?: number }) {
   const tint = TINT[icon] ?? TINT.spark;
   return (
     <span className="relative grid shrink-0 place-items-center rounded-[14px]" style={{ width: size, height: size, background: `${tint}22`, color: tint, boxShadow: `inset 0 0 0 1px ${tint}33` }}>
@@ -746,7 +746,7 @@ const safeName = (n: string) => n.normalize("NFKD").replace(/[^\w.\-]+/g, "-").r
 const PAPERCLIP = "m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5";
 
 /** One running conversation with an agent or one of its skills: messages, proposed edits with Apply, and the composer. */
-function ChatPanel({
+export function ChatPanel({
   icon,
   heading,
   intro,
@@ -1819,7 +1819,7 @@ function TalkToAgent({ role, skills, items, chat }: { role: Role; skills: Agent[
   );
 }
 
-export function RoleDetail({ role, skills, items, chat, isExec = true }: { role: Role; skills: Agent[]; items: Item[]; chat: RoleChatMessage[]; isExec?: boolean }) {
+export function RoleDetail({ role, skills, items, chat, isExec = true, reviews = [] }: { role: Role; skills: Agent[]; items: Item[]; chat: RoleChatMessage[]; isExec?: boolean; /** Calls whose learnings still wait for keep or toss */ reviews?: PendingReview[] }) {
   const st = roleStats(role, skills);
   return (
     <ExecCtx.Provider value={isExec}>
@@ -1861,6 +1861,8 @@ export function RoleDetail({ role, skills, items, chat, isExec = true }: { role:
             </dl>
           </div>
         </header>
+
+        <CallReviews roleKey={role.key} label={role.label} icon={(size) => <AgentIcon icon={role.icon} size={size} />} tint={TINT[role.icon] ?? TINT.spark} reviews={reviews} skills={Object.fromEntries(skills.map((k) => [k.key as string, k.label]))} />
 
         <TalkToAgent role={role} skills={skills} items={items} chat={chat} />
 

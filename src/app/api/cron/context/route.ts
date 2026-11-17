@@ -379,7 +379,11 @@ export async function GET(request: Request) {
       const due = (Object.keys(MODEL_NAMES) as (keyof typeof MODEL_NAMES)[]).filter((m) => !last[m]?.at || Date.now() - Date.parse(last[m]!.at!) > 5 * 86_400_000);
       return Response.json(due.length ? await runPatterns(admin, 200_000, due) : { done: "this week" });
     }
-    if (step === "owed") return Response.json(await (await import("@/lib/owed-replies")).runOwedReplies(admin));
+    if (step === "owed") {
+      // Also closes calls with the AI agents nobody hung up (a closed tab, a dropped phone): what they heard stays for review
+      const calls = await (await import("@/lib/agent-call/server")).sweepOpenCalls(admin).catch((e) => ({ error: String(e) }));
+      return Response.json({ ...(await (await import("@/lib/owed-replies")).runOwedReplies(admin)), calls });
+    }
     if (step === "approvals") return Response.json(await (await import("@/lib/approval-notices")).runApprovalNotices(admin));
     if (step === "market") return Response.json(await syncMarket(admin));
     if (step === "clients")

@@ -20,3 +20,14 @@ export async function markBibleReviewed(clientId: string, version: string): Prom
   revalidatePath("/pipeline");
   return { ok: true };
 }
+
+/** A reminder or task asked of an agent is done: it leaves the person's list (their own session: only their own) */
+export async function markAskDone(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { error } = await db.from("agent_asks").update({ status: "done", done_at: new Date().toISOString() }).eq("id", id).eq("owner_id", me.id);
+  if (error) return { ok: false, error: "Couldn't mark it done. Try again." };
+  await db.from("notifications").update({ read_at: new Date().toISOString() }).eq("profile_id", me.id).eq("key", `agent-ask:${id}`).is("read_at", null);
+  revalidatePath("/pipeline");
+  return { ok: true };
+}

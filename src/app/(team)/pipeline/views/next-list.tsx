@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
-import { markBibleReviewed } from "../next-actions";
+import { markAskDone, markBibleReviewed } from "../next-actions";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import { initials } from "@/lib/initials";
 import type { NextForMe, NextItem } from "@/lib/next-for-me";
@@ -21,7 +21,7 @@ type Icon = "bolt" | "split" | "book" | "eye" | "calendar";
 
 const SECTIONS: { key: Key; title: string; hint: string; accent: string; glow: string; icon: Icon }[] = [
   { key: "now", title: "Now", hint: "Late, due today, or waiting on you", accent: "#ff4d5e", glow: "rgba(200,16,46,0.45)", icon: "bolt" },
-  { key: "decide", title: "To decide", hint: "Briefs the AI suggests for your clients", accent: "#9aa8ff", glow: "rgba(90,110,255,0.32)", icon: "split" },
+  { key: "decide", title: "To decide", hint: "Briefs the AI suggests, and what to keep from your calls with the agents", accent: "#9aa8ff", glow: "rgba(90,110,255,0.32)", icon: "split" },
   { key: "bibles", title: "Brand Bibles to review", hint: "Read each one, then mark it reviewed", accent: "#ff6b78", glow: "rgba(178,30,44,0.4)", icon: "book" },
   { key: "waiting", title: "Waiting on the client", hint: "48 business hours with them and no decision: chase them", accent: "#f2b14c", glow: "rgba(224,150,40,0.35)", icon: "eye" },
   { key: "watch", title: "Keep an eye on", hint: "Your accounts and clients", accent: "#f2b14c", glow: "rgba(224,150,40,0.35)", icon: "eye" },
@@ -73,6 +73,8 @@ const KIND: Record<NextItem["kind"], string> = {
   client: "Client",
   task: "Plan task",
   bible: "Brand Bible",
+  "call-learnings": "From your call",
+  ask: "Asked via an agent",
 };
 
 /** The short title a row leads with, plus a sprint's progress (done of total) when it has one. */
@@ -131,8 +133,18 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
       else router.refresh();
     });
   };
+  const done = (it: NextItem) => {
+    if (!it.ask) return;
+    const id = it.ask.id;
+    setReviewed((r) => [...r, it.id]);
+    startReview(async () => {
+      const r = await markAskDone(id);
+      if (!r.ok) setReviewed((x) => x.filter((k) => k !== it.id));
+      else router.refresh();
+    });
+  };
   const bibles = data.bibles.filter((it) => !reviewed.includes(it.id));
-  const itemsOf = (k: Key) => (k === "bibles" ? bibles : data[k]);
+  const itemsOf = (k: Key) => (k === "bibles" ? bibles : data[k].filter((it) => !reviewed.includes(it.id)));
   const total = data.now.length + data.decide.length + data.watch.length + bibles.length + data.waiting.length;
   const shown = SECTIONS.filter((s) => itemsOf(s.key).length > 0);
   const clear = SECTIONS.filter((s) => !itemsOf(s.key).length && !OPTIONAL.has(s.key));
@@ -156,7 +168,7 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
       ) : (
         <>
           {shown.map((s, i) => (
-            <Group key={s.key} s={s} index={i} items={itemsOf(s.key)} open={!closed.includes(s.key)} onToggle={() => toggle(s.key)} onBrief={(b) => pushParams({ todo: b.id })} onReviewed={review} />
+            <Group key={s.key} s={s} index={i} items={itemsOf(s.key)} open={!closed.includes(s.key)} onToggle={() => toggle(s.key)} onBrief={(b) => pushParams({ todo: b.id })} onReviewed={(it) => (it.ask ? done(it) : review(it))} />
           ))}
           {clear.length > 0 && (
             <p className="flex min-h-11 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-full border border-ink/[0.07] px-4 py-2 text-[13px] text-ink/55" style={{ animation: `next-in .45s ${0.06 * shown.length}s cubic-bezier(.2,.8,.2,1) both` }}>
@@ -468,6 +480,15 @@ function Row({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient
             <span className="hidden sm:inline-flex">
               <SaveIdeaStar source={{ kind: "suggestion", id: it.suggestion.id }} from={{ kicker: KIND[it.kind], label: it.title }} clientId={it.suggestion.clientId} clientName={it.client} size="sm" />
             </span>
+          )}
+          {it.ask && (
+            // A reminder or task asked of an agent: done right here (it leaves the list at once)
+            <button type="button" onClick={() => onReviewed(it)} className="order-2 inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full px-4 text-[13px] text-ink/55 transition-colors hover:bg-ink/[0.06] hover:text-fg sm:order-none sm:min-h-9">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M5 12.5 10 17 19 7.5" />
+              </svg>
+              Mark done
+            </button>
           )}
           {it.bible && (
             // A Brand Bible: open it to read, or mark it reviewed right here (it leaves the list at once)

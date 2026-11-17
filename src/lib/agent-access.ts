@@ -67,6 +67,16 @@ export function canTrainAgent(me: Me, target: string | null | undefined): boolea
   return Boolean(role && trainableRoles(me).includes(role));
 }
 
+/**
+ * Whether this person can talk to an agent: call it or chat with it and ask it to look things up or act. Everyone on
+ * the team can, with every role agent; what it reads is limited by their own rights. Only trainers (canTrainAgent)
+ * change what it knows: for everyone else nothing they say is captured as a learning.
+ */
+export function canTalkToAgent(me: Me, roleKey: string | null | undefined): boolean {
+  if (!roleKey || !ROLE_SKILLS[roleKey]) return false;
+  return Boolean(me.role) || Boolean(me.isExec);
+}
+
 /** Whether someone is a head who trains an agent (not an exec): their changes are logged for the execs' digest */
 export const isHeadTrainer = (me: Me) => !me.isExec && trainableRoles(me).length > 0;
 

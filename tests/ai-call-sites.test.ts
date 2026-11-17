@@ -166,7 +166,7 @@ function sites(): Site[] {
 // cross-client work where no single client is the subject.
 const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/lib/agent-evals.ts": { labels: ["agent eval"], why: "the evals run the agent bare on purpose, to test its own config" },
-  "src/lib/agent-call/server.ts": { labels: ["agent call learnings"], why: "reads what a person taught an agent on a voice call; extraction" },
+  "src/lib/agent-call/server.ts": { labels: ["agent call learnings", "agent call summary"], why: "reads what a person taught an agent on a voice call (extraction), and summarises a call once it ends" },
   "src/app/(team)/ai/actions.ts": { labels: ["claude import client match"], why: "sorts a person's imported chats across every client; a classifier" },
   "src/lib/ai-router.ts": { labels: [""], why: "routes a message to a model level; a classifier" },
   "src/lib/asana.ts": { labels: ["asana allotment count"], why: "counts units across many tickets at once" },

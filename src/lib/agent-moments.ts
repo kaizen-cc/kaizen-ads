@@ -182,8 +182,9 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   coach: [
     { title: "Judges a proposed change to an agent: replays recent real calls with and without it and says better, same or worse", where: "Settings · AI agents · Test this change", trigger: "click", when: "When someone tests a change; weekly drift check", labels: ["agent eval"] },
     { title: "Edits another agent's playbook from your feedback", where: "Settings · AI agents · Coach", trigger: "click", when: "When someone coaches an agent", labels: ["coach"] },
-    { title: "Answers an agent's chat in Settings and proposes edits to its skills", where: "Settings \u00b7 AI agents \u00b7 an agent's chat", trigger: "click", when: "With every message", labels: ["agent chat"] },
-    { title: "Answers a voice call with an agent in its voice, and saves what the caller teaches it to its skills", where: "Settings · AI agents · an agent · Call", trigger: "click", when: "With every turn of a call", labels: ["agent call"] },
+    { title: "Answers an agent's chat in Settings for anyone on the team: looks up their clients' live numbers and rankings with their own tools, makes reminders and asks teammates when told to, and proposes edits to its skills for its trainers", where: "Settings \u00b7 AI agents \u00b7 an agent's chat", trigger: "click", when: "With every message", labels: ["agent chat"] },
+    { title: "Answers a voice call with an agent in its voice, looking up live numbers with the caller's own tools, and notes what a trainer teaches it for review at hang-up", where: "Settings · AI agents · an agent · Call", trigger: "click", when: "With every turn of a call", labels: ["agent call"] },
+    { title: "Writes a short summary of a voice call with an agent when it ends, so a call later the same day can pick up from it", where: "Settings · AI agents · an agent · Call", trigger: "auto", when: "When a call ends", labels: ["agent call summary"] },
   ],
   launcher: [
     { title: "Adjusts a ticket's launch plan in the Ads launcher chat: the ad set or campaign, a cloned ad set, the budget, the link or the names", where: "Board · Ticket · Ads launcher", trigger: "click", when: "When the buyer asks it to change the plan", labels: ["launch chat"] },
