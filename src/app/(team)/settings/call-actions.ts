@@ -3,10 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
-import { CALL_LIMIT_SECONDS, decide, firstNameOf, greetingFor, isVoiceId, pendingOf, resumeModeFor, seedOf, statusOf, voiceFor, type Decision, type LearnedItem, type ResumeMode } from "@/lib/agent-call/core";
+import { CALL_LIMIT_SECONDS, assistantVoiceFor, decide, firstNameOf, greetingFor, isVoiceId, pendingOf, resumeModeFor, seedOf, statusOf, voiceFor, type Decision, type LearnedItem, type ResumeMode } from "@/lib/agent-call/core";
 import { summarizeCall, sweepOpenCalls } from "@/lib/agent-call/server";
 import { reviewCallSafety } from "@/lib/agent-call/safety";
-import { ASSISTANT_KEY, assistantGreeting } from "@/lib/assistant/core";
+import { ASSISTANT_KEY, ASSISTANT_LABEL, assistantGreeting } from "@/lib/assistant/core";
+import { formatTranscript, transcriptFileName } from "@/lib/agent-call/transcript";
 import { learnFromCall, loadMemory, markFollowedUp } from "@/lib/assistant/memory";
 import { writeCallNotes } from "@/lib/assistant/notes";
 import { logTraining, snapshot } from "@/lib/agent-training";
@@ -51,7 +52,10 @@ export async function startCall(roleKey: string): Promise<StartedCall | Fail> {
     console.error("[agent call] speech token", e instanceof Error ? e.message : e);
     return null;
   });
-  const row = { role_key: roleKey, profile_id: me.id, voice_id: voiceFor(roleKey, (role as { voice_id?: string | null }).voice_id), stt: sttToken ? "scribe" : "browser" };
+  const roleVoice = (role as { voice_id?: string | null }).voice_id;
+  // The assistant speaks in the voice its person picked (theirs alone), else the assistant's voice for everyone
+  const personal = roleKey === ASSISTANT_KEY ? await personalVoice(admin, me.id) : null;
+  const row = { role_key: roleKey, profile_id: me.id, voice_id: roleKey === ASSISTANT_KEY ? assistantVoiceFor(personal, roleVoice) : voiceFor(roleKey, roleVoice), stt: sttToken ? "scribe" : "browser" };
   let { data: call, error } = await admin
     .from("ai_role_calls")
     .insert({ ...row, resumed_from: mode === "fresh" ? null : (prev?.id ?? null), resume_mode: mode })
@@ -71,6 +75,13 @@ export async function startCall(roleKey: string): Promise<StartedCall | Fail> {
   }
   await admin.from("ai_role_chats").insert({ role_key: roleKey, role: "agent", content: greeting, attachments: [], changes: [], created_by: me.id, call_id: call.id });
   return { ok: true, callId: call.id as string, greeting, sttToken, limitSeconds: CALL_LIMIT_SECONDS, startedAt: call.started_at as string, mode, canTeach: canTrainAgent(me, roleKey) };
+}
+
+/** The voice a person picked for their own assistant (null before the migration, or when they haven't) */
+async function personalVoice(admin: ReturnType<typeof createAdminClient>, profileId: string): Promise<string | null> {
+  const { data, error } = await admin.from("profiles").select("assistant_voice").eq("id", profileId).maybeSingle();
+  if (error) return null;
+  return (data?.assistant_voice as string | null) ?? null;
 }
 
 /** A new speech to text token mid-call (the first one is single use: a dropped connection needs another) */
@@ -283,4 +294,36 @@ export async function ackCallNotice(): Promise<{ ok: true } | Fail> {
   const me = await requireStaff();
   const { error } = await createAdminClient().from("call_notice_acks").upsert({ profile_id: me.id, version: 1, acked_at: new Date().toISOString() }, { onConflict: "profile_id" });
   return error ? { ok: false, error: "Couldn't save that. Try again." } : { ok: true };
+}
+
+// ─── The transcript ─────────────────────────────────────────────────────────
+
+/**
+ * A call's transcript as a text file (the call screen's menu, the summary after it, the Assistant page and the agent's
+ * page): the date, the agent, and every line with its time into the call. Only the caller's own calls; an exec can
+ * read anyone's, as they already can in the agents' chats.
+ */
+export async function callTranscript(callId: string): Promise<{ ok: true; name: string; text: string } | Fail> {
+  const me = await requireStaff();
+  if (!/^[0-9a-f-]{36}$/.test(callId)) return { ok: false, error: "That call isn't there." };
+  const admin = createAdminClient();
+  const { data: call } = await admin.from("ai_role_calls").select("id, role_key, profile_id, started_at, ended_at").eq("id", callId).maybeSingle();
+  if (!call || (call.profile_id !== me.id && !me.isExec)) return { ok: false, error: "That call isn't yours." };
+  const [{ data: rows }, { data: roles }, { data: who }] = await Promise.all([
+    admin.from("ai_role_chats").select("role, content, role_key, created_at").eq("call_id", callId).order("created_at").limit(2000),
+    admin.from("ai_roles").select("key, label"),
+    call.profile_id === me.id ? Promise.resolve({ data: { full_name: me.fullName } }) : admin.from("profiles").select("full_name").eq("id", call.profile_id as string).maybeSingle(),
+  ]);
+  const labels = Object.fromEntries((roles ?? []).map((r) => [r.key as string, r.label as string]));
+  const label = (key: string | null | undefined) => (key === ASSISTANT_KEY ? ASSISTANT_LABEL : (labels[key ?? ""] ?? "Agent"));
+  const agentLabel = label(call.role_key as string);
+  const personName = firstNameOf((who?.full_name as string | null) ?? null);
+  const text = formatTranscript({
+    startedAt: call.started_at as string,
+    endedAt: (call.ended_at as string | null) ?? null,
+    agentLabel,
+    personName: personName === "there" ? "You" : personName,
+    lines: (rows ?? []).map((r) => ({ at: r.created_at as string, who: r.role === "user" ? "user" : "agent", speaker: r.role === "user" ? null : label((r.role_key as string | null) ?? (call.role_key as string)), text: String(r.content ?? "") })),
+  });
+  return { ok: true, name: transcriptFileName(call.started_at as string, agentLabel), text };
 }

@@ -236,11 +236,19 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
   const agent = list.find((a) => a.key === open);
   const role = roles.find((r) => r.key === openRole);
   if (!agent && role) {
-    const [talk, reviews] = await Promise.all([roleChatRows(createAdminClient(), me, role.key, { limit: 200 }), loadCallReviews(createAdminClient(), me, role.key).catch(() => [])]);
+    const [talk, reviews, { data: myCalls }] = await Promise.all([
+      roleChatRows(createAdminClient(), me, role.key, { limit: 200 }),
+      loadCallReviews(createAdminClient(), me, role.key).catch(() => []),
+      // Your own latest calls with it, for their transcripts
+      createAdminClient().from("ai_role_calls").select("id, started_at, ended_at, topic, turns").eq("profile_id", me.id).eq("role_key", role.key).not("ended_at", "is", null).order("started_at", { ascending: false }).limit(6),
+    ]);
+    const calls = (myCalls ?? [])
+      .filter((c) => Number(c.turns ?? 0) > 0)
+      .map((c) => ({ id: c.id as string, startedAt: c.started_at as string, seconds: Math.max(0, Math.round((Date.parse(c.ended_at as string) - Date.parse(c.started_at as string)) / 1000)), topic: (c.topic as string | null) ?? null }));
     const chat: RoleChatMessage[] = talk.map((m) => ({ id: m.id, role: m.role as "user" | "agent", content: m.content, changes: (m.changes ?? []) as Change[], at: m.created_at }));
     return (
       <div className="grid gap-6">
-        <RoleDetail key={role.key} role={role} skills={list.filter((a) => a.roleKey === role.key)} items={items} chat={chat} isExec={me.isExec} reviews={reviews.map((r) => ({ callId: r.callId, startedAt: r.startedAt, items: r.items }))} />
+        <RoleDetail key={role.key} role={role} skills={list.filter((a) => a.roleKey === role.key)} items={items} chat={chat} isExec={me.isExec} reviews={reviews.map((r) => ({ callId: r.callId, startedAt: r.startedAt, items: r.items }))} calls={calls} />
         <KnowledgePanel
           target={{ scope: "agent", agentKey: `role:${role.key}` }}
           docs={await listKnowledge(supabase, { scope: "agent", agentKey: `role:${role.key}` })}

@@ -6,7 +6,8 @@ import { AiUnavailable, MODEL_IDS, aiBusy, aiEnabled, anthropicClient, askJson, 
 import type { Staff } from "@/lib/auth";
 import { loadRolePlaybook, type RolePlaybook } from "@/lib/role-playbook";
 import { TOOLS_RULE, agentTools } from "./agent-tools";
-import { CALL_LIMIT_SECONDS, CONCISE_RULE, DISTRESS_RULE, END_CALL_RULE, LEARNINGS_SCHEMA, endMarkerFilter, stripEndMarker, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type LearnedItem, type Learning, type ResumeMode } from "./core";
+import { CALL_LIMIT_SECONDS, CONCISE_RULE, DISTRESS_RULE, SPOKEN_RULE, END_CALL_RULE, LEARNINGS_SCHEMA, endMarkerFilter, stripEndMarker, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type LearnedItem, type Learning, type ResumeMode } from "./core";
+import { callHistory } from "./history";
 import { focusFor } from "./role-focus";
 import { callConnectors, noConnectors, type CallConnectors } from "./call-connectors";
 import type { CallContext } from "./call-context";
@@ -61,6 +62,8 @@ export const voiceSystem = (label: string, roleKey: string, firstName: string, t
 
 ${CONCISE_RULE}
 
+${SPOKEN_RULE}
+
 Speak like a sharp colleague on the phone, in the first person ("I check…", "In my briefs I…"):
 - Short spoken sentences, one to three by default.
 - No markdown, no lists, no bullets, no headings, no asterisks, no emojis, no links, no code. If there are several points, say them in a sentence: "Three things. First… Then… And last…".
@@ -111,7 +114,11 @@ export const said = (rows: Turn[], firstName: string, self?: string) =>
 
 /** This call's turns so far, and how it follows the last call (its turns or its summary), for the prompt */
 export async function callContext(admin: SupabaseClient, call: CallRow, firstName: string): Promise<string> {
-  const { data: now } = await admin.from("ai_role_chats").select("role, content, role_key").eq("call_id", call.id).order("created_at").limit(60);
+  // The latest lines (it used to take the first sixty, so a long call lost its recent turns while the prompt kept
+  // growing): the newest whole, older ones as a short digest, so each answer is as quick at minute thirty as at one
+  const { data: latest } = await admin.from("ai_role_chats").select("role, content, role_key").eq("call_id", call.id).order("created_at", { ascending: false }).limit(200);
+  const history = callHistory(((latest ?? []) as Turn[]).slice().reverse());
+  const now = history.recent;
   const parts: string[] = [];
   const mode = call.resume_mode ?? "fresh";
   if (call.resumed_from && mode !== "fresh") {
@@ -131,7 +138,7 @@ export async function callContext(admin: SupabaseClient, call: CallRow, firstNam
     else parts.push(`<earlier_today at="${when}">\n${summary ?? before ?? "(nothing kept)"}\n</earlier_today>`);
     parts.push(RESUME_NOTE[mode]);
   }
-  parts.push(`<this_call>\n${said((now ?? []) as Turn[], firstName, call.role_key) || "(the call just started)"}\n</this_call>`);
+  parts.push(`<this_call>\n${history.digest ? `${history.digest}\n\n` : ""}${said(now, firstName, call.role_key) || "(the call just started)"}\n</this_call>`);
   return parts.join("\n\n");
 }
 

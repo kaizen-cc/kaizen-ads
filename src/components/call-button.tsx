@@ -4,7 +4,7 @@ import { useAgentCall } from "@/components/agent-call-provider";
 import { HeadsetIcon, PhoneIcon } from "@/components/agent-call-views";
 import { AgentGlyph } from "@/components/assistant-call-parts";
 import { CALL_ROLES, type CallContext } from "@/lib/agent-call/call-context";
-import { ASSISTANT_TINT, tintOf } from "@/lib/agent-look";
+import { tintOf } from "@/lib/agent-look";
 
 // The Call button beside a chat in the app (Kaizen AI, the client desk, the KPI board's Ask about, a report's AI): a
 // voice call with the agent that fits what's on screen, carrying where it was pressed (the client, the report, the
@@ -20,10 +20,10 @@ type Props = {
 };
 
 export function CallButton({ roleKey, context, variant = "pill", className = "" }: Props) {
-  const { start, activeRole, live } = useAgentCall();
+  const { start, activeRole, live, assistantTint } = useAgentCall();
   const look = CALL_ROLES[roleKey] ?? CALL_ROLES.assistant;
   const key = CALL_ROLES[roleKey] ? roleKey : "assistant";
-  const tint = key === "assistant" ? ASSISTANT_TINT : tintOf(look.icon);
+  const tint = key === "assistant" ? assistantTint : tintOf(look.icon);
   const who = key === "assistant" ? "your assistant" : `the ${look.label}`;
   const here = live && activeRole === key;
   const about = context.client ? ` about ${context.client}` : "";

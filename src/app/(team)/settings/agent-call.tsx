@@ -5,6 +5,8 @@ import { useRef, useState, useTransition, type ReactNode } from "react";
 import { field } from "@/components/ui";
 import { useAgentCall } from "@/components/agent-call-provider";
 import { HeadsetIcon, PhoneIcon, ReviewSheet } from "@/components/agent-call-views";
+import { TranscriptButton } from "@/components/assistant-call-parts";
+import { clock } from "@/lib/agent-call/core";
 import type { LearnedItem } from "@/lib/agent-call/core";
 import { onDay } from "@/lib/agent-call/next-items";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
@@ -121,6 +123,31 @@ export function CallReviews({ roleKey, label, icon, tint, reviews, skills }: Pro
         />
       )}
     </>
+  );
+}
+
+export type RecentCall = { id: string; startedAt: string; seconds: number; topic: string | null };
+
+/** Your latest calls with this agent, each with its transcript to download */
+export function RecentCalls({ calls }: { calls: RecentCall[] }) {
+  if (!calls.length) return null;
+  return (
+    <section aria-label="Your calls" className="grid gap-2">
+      <h2 className="text-[11px] uppercase tracking-[0.16em] text-faint">Your calls</h2>
+      <ul className="grid gap-2">
+        {calls.map((c) => (
+          <li key={c.id} className="flex min-h-14 items-center gap-3 rounded-[14px] border border-line bg-surface px-3.5 py-2">
+            <span className="grid min-w-0 flex-1 gap-0.5">
+              <span className="truncate text-[14px]">{c.topic ?? `Our call ${onDay(c.startedAt)}`}</span>
+              <span className="text-[12px] text-faint">
+                {onDay(c.startedAt)} · {clock(c.seconds)}
+              </span>
+            </span>
+            <TranscriptButton callId={c.id} label="Transcript" className="min-h-11 shrink-0 rounded-full border border-line px-3.5 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-9" />
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

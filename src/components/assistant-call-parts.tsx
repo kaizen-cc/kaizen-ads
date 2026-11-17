@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { callTranscript } from "@/app/(team)/settings/call-actions";
 import type { CallCard, UploadAsk } from "@/lib/agent-call/core";
 import type { Speaker } from "@/lib/agent-call/engine";
 import { tintOf } from "@/lib/agent-look";
@@ -9,7 +10,7 @@ import type { CallNotes } from "@/lib/assistant/notes";
 // The pieces a call shows beyond talking: an agent's icon, the specialist on the line, link cards ("take a look"),
 // the upload panel when the assistant asks for files, the assistant's notes after the call, and the one-time notice
 // that calls are recorded, and sharing the screen for a look (the ask to share, and the bar while it's shared). Used
-// by both the phone's full screen and the computer's huddle.
+// by both the phone's full screen and the computer's huddle. And the button that downloads a call's transcript.
 
 const ICONS: Record<string, string> = {
   compass: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zm3.5-12.5-2 5-5 2 2-5z",
@@ -274,5 +275,36 @@ export function RecordingNotice({ onAccept, onCancel }: { onAccept: () => void; 
         </div>
       </div>
     </div>
+  );
+}
+
+/** Downloads a call's transcript as a text file (the date, the agent, every line with its time) */
+export function TranscriptButton({ callId, className = "", label = "Download transcript", onDone }: { callId: string; className?: string; label?: string; onDone?: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const go = async () => {
+    setBusy(true);
+    setError(null);
+    const r = await callTranscript(callId).catch(() => null);
+    setBusy(false);
+    if (!r || !r.ok) return setError(r && !r.ok ? r.error : "Couldn't get the transcript.");
+    const url = URL.createObjectURL(new Blob([r.text], { type: "text/plain;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = r.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    onDone?.();
+  };
+  return (
+    <button type="button" onClick={() => void go()} disabled={busy} className={`inline-flex items-center gap-2 disabled:opacity-60 ${className}`}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0">
+        <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
+      </svg>
+      <span>{busy ? "Getting it…" : label}</span>
+      {error && <span className="text-bad">{error}</span>}
+    </button>
   );
 }

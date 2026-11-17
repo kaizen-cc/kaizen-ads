@@ -8,7 +8,12 @@ export const CALL_LIMIT_SECONDS = 30 * 60;
 
 // ─── Voices ─────────────────────────────────────────────────────────────────
 
-/** ElevenLabs' low-latency model, for speaking in a call (about 75ms to the first sound, half the characters' cost) */
+/**
+ * ElevenLabs' low-latency model, for speaking in a call (about 100ms to the first sound, half the characters' cost).
+ * Turbo v2.5 is deprecated in its favour; the v4 realtime voice is only on the dialogue WebSocket; Multilingual v2 is
+ * smoother but several times slower to start. Flash doesn't normalise numbers itself (unless asked, which costs
+ * latency), so every sentence is put into spoken words first (speech-text.ts). ELEVENLABS_CALL_MODEL overrides it.
+ */
 export const CALL_TTS_MODEL = "eleven_flash_v2_5";
 
 /** A starting voice for each agent (ElevenLabs' own premade voices, on every account), changed on the agent's page */
@@ -39,6 +44,11 @@ export function voiceFor(roleKey: string, picked?: string | null): string {
 }
 
 export const defaultVoiceName = (roleKey: string) => (DEFAULT_VOICES[roleKey] ?? FALLBACK_VOICE).name;
+
+/** The assistant's voice for one person: the one they picked, else the one set for the assistant, else its default */
+export function assistantVoiceFor(personal: string | null | undefined, roleVoice: string | null | undefined): string {
+  return isVoiceId(personal) ? personal : voiceFor("assistant", roleVoice);
+}
 
 // ─── Greeting ───────────────────────────────────────────────────────────────
 
@@ -196,14 +206,17 @@ export function splitSpeakable(buffer: string): { ready: string[]; rest: string 
   return { ready, rest };
 }
 
-/** Text as it should be read aloud: no markdown, links as their words, no em dashes or bullet marks */
+/** Where a bare link was (never read out: forSpeech says it's on screen instead) */
+export const LINK_MARK = "\uE000";
+
+/** Text as it should be read aloud: no markdown, links as their words (a bare link as LINK_MARK), no em dashes or bullet marks */
 export function speakable(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`([^`]*)`/g, "$1")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/https?:\/\/\S+/g, "the link")
+    .replace(/https?:\/\/\S+/g, ` ${LINK_MARK} `)
     .replace(/(\*\*|__|\*|_)(\S[^*_]*?)\1/g, "$2")
     .replace(/^\s*(#{1,6}|[-*•]|\d+[.)])\s+/gm, "")
     .replace(/\s*[–—]\s*/g, ", ")
@@ -234,6 +247,25 @@ export const TURN = {
   bargeMs: 280,
   /** Speech must be this many times louder than the room's noise */
   noiseRatio: 3,
+  /** Just unmuted: the room's noise is learned again quickly for this long (it may be a different room now) */
+  relearnMs: 400,
+  /** ... but never above this, so words said straight after unmuting aren't taken for the room */
+  relearnNoiseCap: 0.015,
+  /**
+   * "Speech" that never once dips below the speech level for a second and a half after this long is steady noise (a
+   * fan, traffic, a busy cafe), not a person: the room's noise is raised to it so the turn can end
+   */
+  steadyNoiseMs: 3000,
+  steadyWindowMs: 1500,
+  steadySwing: 2,
+  /** The room's noise is kept in this range by ordinary learning (only steady noise, above, can raise it further) */
+  noiseMin: 0.001,
+  noiseMax: 0.02,
+  steadyNoiseMax: 0.05,
+  /** The agent's voice and its echo: nothing is learned while it speaks and for this long after */
+  afterAgentHoldMs: 500,
+  /** ... then the room is learned quickly for this long (the agent's reply may have changed the gain) */
+  afterAgentQuickMs: 300,
 };
 
 export type TurnEvent = "speech_start" | "turn_end" | "barge_in" | null;
@@ -250,15 +282,40 @@ export function createTurnDetector(opts: Partial<typeof TURN> = {}) {
   let silenceMs = 0;
   let inSpeech = false;
   let loudMs = 0;
+  /** Time left learning the room quickly with speech detection off (after unmuting) */
+  let quickMs = 0;
+  /** Time left not learning (the agent just stopped), then learning faster */
+  let holdMs = 0;
+  let fastMs = 0;
+  /** The latest levels while listening, to tell steady noise from a person talking */
+  let recent: number[] = [];
+  const clamp = (n: number, max = t.noiseMax) => Math.min(max, Math.max(t.noiseMin, n));
+  const threshold = () => Math.max(t.speechLevel, noise * t.noiseRatio);
+  const clear = () => {
+    inSpeech = false;
+    speechMs = 0;
+    silenceMs = 0;
+    loudMs = 0;
+    recent = [];
+  };
   return {
     /** level: this frame's RMS; ms: how long the frame is; agentSpeaking: whether the agent's voice is playing */
     feed(level: number, ms: number, agentSpeaking: boolean): TurnEvent {
-      const threshold = Math.max(t.speechLevel, noise * t.noiseRatio);
+      if (quickMs > 0) {
+        quickMs -= ms;
+        noise = clamp(noise * 0.7 + level * 0.3, t.relearnNoiseCap);
+        return null;
+      }
+      const th = threshold();
       if (agentSpeaking) {
+        // Its own voice leaks into the mic: never learned as the room
+        holdMs = t.afterAgentHoldMs;
+        fastMs = t.afterAgentQuickMs;
         inSpeech = false;
         speechMs = 0;
         silenceMs = 0;
-        loudMs = level >= Math.max(t.bargeLevel, threshold) ? loudMs + ms : 0;
+        recent = [];
+        loudMs = level >= Math.max(t.bargeLevel, th) ? loudMs + ms : 0;
         if (loudMs >= t.bargeMs) {
           loudMs = 0;
           inSpeech = true;
@@ -267,17 +324,35 @@ export function createTurnDetector(opts: Partial<typeof TURN> = {}) {
         return null;
       }
       loudMs = 0;
-      if (level >= threshold) {
+      recent.push(level);
+      if (recent.length * ms > t.steadyWindowMs) recent.shift();
+      if (level >= th) {
         silenceMs = 0;
         speechMs += ms;
         if (!inSpeech && speechMs >= t.minSpeechMs) {
           inSpeech = true;
           return "speech_start";
         }
+        // Not one quiet moment for a second and a half, a few seconds into a "turn": that's the room, not a person
+        if (inSpeech && speechMs >= t.steadyNoiseMs && recent.length * ms >= t.steadyWindowMs) {
+          const floor = Math.min(...recent);
+          // ... and steady: a voice swings well above its quietest moments, a fan or traffic barely moves
+          if (floor >= th && Math.max(...recent) < floor * t.steadySwing) {
+            noise = clamp((floor * 1.15) / t.noiseRatio, t.steadyNoiseMax);
+            recent = [];
+          }
+        }
         return null;
       }
-      // Quiet: learn the room's noise slowly (only from quiet frames, so speech never raises it)
-      noise = noise * 0.95 + level * 0.05;
+      // Quiet. The room is learned only between turns (the dips between someone's words would creep it up until
+      // their speech counted as quiet), never just after the agent spoke, faster down than up, within a sane range
+      if (holdMs > 0) holdMs -= ms;
+      else if (!inSpeech) {
+        const fast = fastMs > 0;
+        if (fast) fastMs -= ms;
+        const a = level < noise ? (fast ? 0.3 : 0.1) : fast ? 0.15 : 0.02;
+        noise = noise > t.noiseMax ? noise * (1 - a) + level * a : clamp(noise * (1 - a) + level * a);
+      }
       if (!inSpeech) {
         speechMs = 0;
         return null;
@@ -294,11 +369,93 @@ export function createTurnDetector(opts: Partial<typeof TURN> = {}) {
     get speaking() {
       return inSpeech;
     },
+    /** The room's noise as learned so far, and the level that counts as speech (for the debug overlay) */
+    get noise() {
+      return noise;
+    },
+    get threshold() {
+      return threshold();
+    },
     reset() {
-      inSpeech = false;
-      speechMs = 0;
-      silenceMs = 0;
-      loudMs = 0;
+      clear();
+      quickMs = 0;
+    },
+    /** Starting fresh after unmuting: nothing in progress, and the room's noise learned again quickly */
+    relearn() {
+      clear();
+      quickMs = t.relearnMs;
+    },
+  };
+}
+
+// ─── Mute, and turns that stall ─────────────────────────────────────────────
+
+/**
+ * Muting mid-turn: what was heard so far is sent as a finished turn ("send"), unless nothing was heard and nobody was
+ * talking ("drop"). Only while it's listening (an answer on its way or playing carries on).
+ */
+export function muteTurn(s: { phase: string; heard: string; carry: string; speaking: boolean }): "send" | "drop" {
+  if (s.phase !== "listening") return "drop";
+  return s.heard.trim() || s.carry.trim() || s.speaking ? "send" : "drop";
+}
+
+/** A turn with no first word of its answer playing after this long is stalled: retried once, then given up on */
+export const STALL_MS = 12_000;
+
+/** "long": a long turn was just sent ("Got it, thinking…"); "slow": retrying ("Still working…"); "failed": it didn't go through (Retry) */
+export type StallState = "long" | "slow" | "failed" | null;
+
+/**
+ * Watches a turn from when it's sent until its first words play. Anything coming back from the server starts the
+ * clock again (it's working). The first time it runs out, onSlow (show "Still working…" and retry); the second time,
+ * onGiveUp (tell the person it didn't go through, with a Retry).
+ */
+export function createTurnWatchdog(o: { ms?: number; onSlow: () => void; onGiveUp: () => void }) {
+  const ms = o.ms ?? STALL_MS;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let attempt = 0;
+  let active = false;
+  const disarm = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  const arm = () => {
+    disarm();
+    timer = setTimeout(fire, ms);
+  };
+  function fire() {
+    timer = null;
+    if (!active) return;
+    if (attempt === 0) {
+      attempt = 1;
+      arm();
+      o.onSlow();
+    } else {
+      active = false;
+      o.onGiveUp();
+    }
+  }
+  return {
+    /** A turn was sent (`retry`: the same turn again, so a second stall gives up) */
+    begin(retry = false) {
+      active = true;
+      if (!retry) attempt = 0;
+      arm();
+    },
+    /** Something came back: the clock starts again */
+    progress() {
+      if (active) arm();
+    },
+    /** Its first words played, or the turn ended or was stopped */
+    stop() {
+      active = false;
+      disarm();
+    },
+    get attempt() {
+      return attempt;
+    },
+    get active() {
+      return active;
     },
   };
 }
@@ -444,7 +601,9 @@ export type CallEvent =
   // The agent wants to see the screen: a frame of the shared screen, the ask to share it, or (phones) the upload panel
   | { t: "look" }
   // The agent said goodbye: the call hangs up once its last words have played
-  | { t: "end" };
+  | { t: "end" }
+  // Still working (sent every few seconds while a long answer or a tool is under way, so the line stays open)
+  | { t: "ping" };
 
 /** A link the call shows as a card: tapped, it opens in the app (the call stays up) or in a new tab */
 export type CallCard = { id: string; title: string; detail: string; href: string; external: boolean; cta: string };
@@ -544,6 +703,9 @@ export function clock(seconds: number): string {
 
 /** The firm rule for every spoken answer (calls with any agent and the assistant) */
 export const CONCISE_RULE = `Be brief. This is a firm rule. By default answer in one to three short spoken sentences. Go longer only when they ask for it ("tell me more", "walk me through it"), and even then keep it tight. Never repeat their question back, no filler ("great question", "sure thing, so"), and never close with "let me know if you need anything else".`;
+
+/** How every spoken answer is written: for the ear, so the voice sounds like a person, not a document */
+export const SPOKEN_RULE = `Write for the ear. Use contractions (it's, you'll, we're, that's). Round numbers the way people say them ("about thirty thousand dollars", "just over two x", "up about twelve percent") unless the exact figure matters. Spell out what a symbol would stand for, and say short forms the way people do on a call. Never read out a link, a web address or an email address: say you've put it on screen. A natural "so" or "okay" now and then is fine; never more than one in an answer. Don't end an answer with a generic open question ("what's on your mind?", "anything else?"): end on the point, or offer the obvious next step by name.`;
 
 /** The same rule for the agents' text chats */
 export const CONCISE_CHAT_RULE = `Be brief, as a firm rule: a few short lines by default, longer only when asked. No recap of the question, no filler, no "let me know if you need anything else".`;

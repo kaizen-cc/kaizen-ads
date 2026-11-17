@@ -1,34 +1,36 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useAgentCall } from "@/components/agent-call-provider";
-import { AgentGlyph, NotesBlock } from "@/components/assistant-call-parts";
+import { AgentGlyph, NotesBlock, TranscriptButton } from "@/components/assistant-call-parts";
 import { field } from "@/components/ui";
-import { ASSISTANT_TINT } from "@/lib/agent-look";
+import { ASSISTANT_PALETTE, ASSISTANT_TINT } from "@/lib/agent-look";
+import { DEFAULT_VOICES } from "@/lib/agent-call/core";
 import { clock } from "@/lib/agent-call/core";
 import type { CallNotes } from "@/lib/assistant/notes";
 import { pushParams, replaceParams, useParam } from "@/lib/url-state";
-import { addMemory, deleteMemory, updateMemory, type MemoryItem } from "./actions";
+import { addMemory, assistantVoices, deleteMemory, setAssistantLook, updateMemory, type AssistantVoice, type MemoryItem } from "./actions";
 
-// Your assistant's page: the call button, the notes from your calls, and "What I know about you" (only you see it:
-// view, edit, delete one thing or everything). The tab lives in the address, so back returns to it.
+// Your assistant's page: the call button, its voice and color (yours alone), the notes from your calls (with their
+// transcripts), and "What I know about you" (only you see it: view, edit, delete one thing or everything). The tab
+// lives in the address, so back returns to it.
 
 export type PastCall = { id: string; startedAt: string; seconds: number; topic: string | null; notes: CallNotes | null };
 
 const TOPIC_WORDS: Record<string, string> = { birthday: "Birthday", family: "Family", trip: "Trips", preference: "Preferences", work: "Work", hobby: "Hobbies", other: "Other", length: "Length", humor: "Humor", numbers: "Numbers or story", pace: "Pace" };
 const when = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 
-export function AssistantHome({ name, memory, calls }: { name: string; memory: MemoryItem[]; calls: PastCall[] }) {
-  const { startAssistant, activeRole, live } = useAgentCall();
+export function AssistantHome({ name, memory, calls, voice }: { name: string; memory: MemoryItem[]; calls: PastCall[]; voice: string | null }) {
+  const { startAssistant, activeRole, live, assistantTint: ASSISTANT_COLOR } = useAgentCall();
   const tab = useParam("tab") === "memory" ? "memory" : "calls";
   const on = live && activeRole === "assistant";
   return (
     <div className="mx-auto grid max-w-3xl gap-6">
       <section className="relative overflow-hidden rounded-[24px] border border-line bg-surface p-5 sm:p-7">
-        <span aria-hidden className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full opacity-20 blur-3xl" style={{ background: ASSISTANT_TINT }} />
+        <span aria-hidden className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full opacity-20 blur-3xl" style={{ background: ASSISTANT_COLOR }} />
         <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center">
-          <AgentGlyph icon="spark" tint={ASSISTANT_TINT} size={64} />
+          <AgentGlyph icon="spark" tint={ASSISTANT_COLOR} size={64} />
           <div className="min-w-0 flex-1">
             <p className="text-[11px] uppercase tracking-[0.16em] text-faint">Your assistant</p>
             <h1 className="mt-1 font-heading text-[26px] leading-tight">Hey {name}, I&apos;m here when you need me</h1>
@@ -46,6 +48,8 @@ export function AssistantHome({ name, memory, calls }: { name: string; memory: M
           {on ? "Back to the call" : "Call my assistant"}
         </button>
       </section>
+
+      <YourAssistant voice={voice} />
 
       <div role="tablist" aria-label="Your assistant" className="flex gap-1 rounded-full border border-line bg-surface p-1 sm:self-start">
         {(["calls", "memory"] as const).map((t) => (
@@ -91,6 +95,7 @@ function Calls({ calls }: { calls: PastCall[] }) {
               <div className="border-t border-line px-4 py-4">
                 <NotesBlock notes={c.notes ?? "none"} />
                 {!c.notes && <p className="text-sm text-muted">No notes for this call.</p>}
+                <TranscriptButton callId={c.id} className="mt-3 min-h-11 rounded-full border border-line px-4 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-9" />
               </div>
             )}
           </li>
@@ -273,5 +278,131 @@ function AddForm({ busy, onAdd, onCancel }: { busy: boolean; onAdd: (input: { ki
         </button>
       </div>
     </form>
+  );
+}
+
+/** Your assistant's voice and color: yours alone (nobody else's assistant changes), saved as you pick */
+function YourAssistant({ voice }: { voice: string | null }) {
+  const router = useRouter();
+  const { assistantTint, setAssistantTint } = useAgentCall();
+  const [voices, setVoices] = useState<AssistantVoice[] | null>(null);
+  const [value, setValue] = useState(voice ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const [loading, setLoading] = useState(false);
+  const preview = useRef<HTMLAudioElement | null>(null);
+  const load = () => {
+    if (voices || loading) return;
+    setLoading(true);
+    void assistantVoices().then((r) => {
+      setLoading(false);
+      if (r.ok) setVoices(r.voices);
+      else setError(r.error);
+    });
+  };
+  const save = (change: { voice?: string | null; color?: string | null }, what: string) =>
+    start(async () => {
+      setError(null);
+      setSaved(null);
+      const r = await setAssistantLook(change);
+      if (!r.ok) return setError(r.error);
+      setSaved(what);
+      router.refresh();
+    });
+  const pickVoice = (id: string) => {
+    setValue(id);
+    save({ voice: id || null }, "Voice saved. You'll hear it on your next call.");
+  };
+  const pickColor = (hex: string) => {
+    setAssistantTint(hex);
+    save({ color: hex === ASSISTANT_TINT ? null : hex }, "Color saved.");
+  };
+  const current = voices?.find((v) => v.id === value);
+  const play = () => {
+    const url = current?.preview;
+    if (!url) return;
+    preview.current?.pause();
+    preview.current = new Audio(url);
+    void preview.current.play().catch(() => undefined);
+  };
+  return (
+    <section aria-label="Your assistant" className="grid gap-5 rounded-[24px] border border-line bg-surface p-5 sm:p-6">
+      <div>
+        <h2 className="font-heading text-[18px] leading-tight">Make it yours</h2>
+        <p className="mt-1 text-[13px] leading-relaxed text-muted">The voice and color of your assistant are yours alone. Nobody else&apos;s assistant changes.</p>
+      </div>
+
+      <div className="grid gap-2">
+        <label htmlFor="assistant-voice" className="text-[11px] uppercase tracking-[0.16em] text-faint">
+          Voice
+        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            id="assistant-voice"
+            value={value}
+            onFocus={load}
+            onPointerDown={load}
+            onChange={(e) => pickVoice(e.target.value)}
+            disabled={pending}
+            className={`${field} h-11 min-w-0 flex-1 sm:max-w-sm md:h-10`}
+          >
+            <option value="">{DEFAULT_VOICES.assistant.name} (default)</option>
+            {voice && !voices && <option value={voice}>Your pick</option>}
+            {(voices ?? []).map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+                {v.about ? ` · ${v.about}` : ""}
+              </option>
+            ))}
+          </select>
+          {current?.preview && (
+            <button type="button" onClick={play} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-line px-4 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-10">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              Preview
+            </button>
+          )}
+        </div>
+        {loading && <p className="text-[12px] text-faint">Loading the voices…</p>}
+      </div>
+
+      <div className="grid gap-2">
+        <p id="assistant-color" className="text-[11px] uppercase tracking-[0.16em] text-faint">
+          Color
+        </p>
+        <div role="radiogroup" aria-labelledby="assistant-color" className="flex flex-wrap gap-1.5">
+          {ASSISTANT_PALETTE.map((c) => {
+            const on = assistantTint === c.hex;
+            return (
+              <button
+                key={c.hex}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                aria-label={c.name}
+                title={c.name}
+                onClick={() => pickColor(c.hex)}
+                className="grid h-11 w-11 place-items-center rounded-full transition active:scale-95"
+                style={{ boxShadow: on ? `0 0 0 2px ${c.hex}` : undefined }}
+              >
+                <span className="grid h-8 w-8 place-items-center rounded-full text-white" style={{ background: c.hex }}>
+                  {on && (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <p aria-live="polite" className="min-h-[1.2em] text-[12.5px]">
+        {error ? <span className="text-bad">{error}</span> : saved ? <span className="text-muted">{saved}</span> : null}
+      </p>
+    </section>
   );
 }

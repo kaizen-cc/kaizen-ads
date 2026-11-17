@@ -1,4 +1,5 @@
 import { CALL_TTS_MODEL, speakable, voiceFor } from "@/lib/agent-call/core";
+import { forSpeech } from "@/lib/agent-call/speech-text";
 import { openCall } from "@/lib/agent-call/server";
 import { specialistOf } from "@/lib/assistant/core";
 import { requireStaff } from "@/lib/auth";
@@ -7,18 +8,21 @@ import { elevenlabsConfigured, speechStream } from "@/lib/elevenlabs";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 // One sentence of a call spoken in the agent's voice: ElevenLabs' low-latency model, streamed straight back to the
-// browser as MP3. The key stays here; the characters it cost are added to the call.
+// browser as MP3. The key stays here; the characters it cost are added to the call. The sentence is put into spoken
+// words first (money, dates, short forms; links never read out), with the sentence before it for a smooth flow. On
+// an assistant call the assistant speaks in the voice its person picked (set on the call when it starts).
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
   const me = await requireStaff();
   if (!adminConfigured()) return Response.json({ error: "Not set up" }, { status: 503 });
   if (!elevenlabsConfigured()) return Response.json({ error: "ElevenLabs isn't connected." }, { status: 503 });
-  const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown; role?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown; role?: unknown; previous?: unknown } | null;
   const admin = createAdminClient();
   const call = await openCall(admin, me, body?.callId);
   if (!call) return Response.json({ error: "This call has ended." }, { status: 410 });
-  const text = speakable(String(body?.text ?? "")).slice(0, 600);
+  const text = forSpeech(speakable(String(body?.text ?? "").slice(0, 600))).slice(0, 900);
+  const previous = typeof body?.previous === "string" ? forSpeech(speakable(body.previous.slice(0, 600))) : null;
   if (!text) return new Response(null, { status: 204 });
   try {
     // On an assistant call a specialist it called in speaks in its own voice
@@ -28,7 +32,7 @@ export async function POST(request: Request) {
       const { data: r } = await admin.from("ai_roles").select("voice_id").eq("key", role).maybeSingle();
       voiceId = voiceFor(role, (r?.voice_id as string | null) ?? null);
     }
-    const speech = await speechStream({ voiceId, text, model: CALL_TTS_MODEL, signal: request.signal });
+    const speech = await speechStream({ voiceId, text, previous, model: process.env.ELEVENLABS_CALL_MODEL || CALL_TTS_MODEL, signal: request.signal });
     void admin.rpc("ai_role_call_add", { p_id: call.id, p_chars: speech.characters }).then(({ error }) => error && console.error("[agent call] characters", error.message));
     return new Response(speech.body, { headers: { "content-type": "audio/mpeg", "cache-control": "no-store" } });
   } catch (e) {

@@ -16,10 +16,12 @@ import type { Theme } from "./theme-actions";
 
 export default async function TeamLayout({ children }: LayoutProps<"/">) {
   const me = await requireStaff();
-  const { data: pref } = await (await createClient()).from("profiles").select("theme").eq("id", me.id).maybeSingle();
+  const db = await createClient();
+  // Their own assistant's color is read on its own, so the theme still loads before its migration
+  const [{ data: pref }, { data: look }] = await Promise.all([db.from("profiles").select("theme").eq("id", me.id).maybeSingle(), db.from("profiles").select("assistant_color").eq("id", me.id).maybeSingle()]);
   return (
     <UploadProvider>
-      <AgentCallProvider>
+      <AgentCallProvider assistantColor={(look?.assistant_color as string | null | undefined) ?? null}>
       <TeamShell name={me.fullName} roles={roleLabel(me.role)} tier={me.isExec ? "exec" : me.isLead ? "lead" : "member"} creative={isCreativeRole(me.role) ? (me.role === "head_of_creative" ? "lead" : "maker") : null} reports={canSeeReports(me)} channel={isChannelOnly(me.role)} role={me.role} theme={(pref?.theme as Theme | null) ?? null}>
         <CreativeFormatsProvider formats={formatList(me)} can={{ briefWhy: can(me, "brief").ok ? null : "Briefs are for the creative team and the buyers", copyWhy: can(me, "copy").ok ? null : "Copy is for the copywriter and the buyers" }}>
           {children}

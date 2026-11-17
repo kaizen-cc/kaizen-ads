@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { AUDIO_BUCKET } from "@/lib/agent-call/safety";
-import { CALL_LIMIT_SECONDS, audioPartPath } from "@/lib/agent-call/core";
+import { CALL_LIMIT_SECONDS, audioPartPath, isVoiceId } from "@/lib/agent-call/core";
+import { paletteColor } from "@/lib/agent-look";
+import { elevenlabsConfigured, listVoices } from "@/lib/elevenlabs";
 import { screenFileName } from "@/lib/agent-call/call-context";
 import { FACT_TOPICS, STYLE_TOPICS } from "@/lib/assistant/core";
 import type { CallNotes } from "@/lib/assistant/notes";
@@ -214,6 +216,48 @@ export async function addMemory(input: { kind: "fact" | "style"; topic: string; 
   const on = input.onDate && /^\d{4}-\d{2}-\d{2}$/.test(input.onDate) ? input.onDate : null;
   const { error } = await db.from("assistant_memory").insert({ profile_id: me.id, kind, topic, body, on_date: on });
   if (error) return { ok: false, error: kind === "style" ? "That style is already set: edit it instead." : "Couldn't save that." };
+  revalidatePath("/assistant");
+  return { ok: true };
+}
+
+// ─── Your assistant's voice and color ───────────────────────────────────────
+
+export type AssistantVoice = { id: string; name: string; about: string; preview: string | null };
+
+/** The voices a person can give their own assistant (the same ElevenLabs list the agents pick from) */
+export async function assistantVoices(): Promise<{ ok: true; voices: AssistantVoice[] } | Fail> {
+  await requireStaff();
+  if (!elevenlabsConfigured()) return { ok: false, error: "ElevenLabs isn't connected." };
+  try {
+    const voices = await listVoices();
+    return {
+      ok: true,
+      voices: voices.map((v) => ({ id: v.id, name: v.name, about: [v.labels.gender, v.labels.accent, v.labels.age, v.labels.description ?? v.labels.descriptive].filter(Boolean).join(", "), preview: v.previewUrl })),
+    };
+  } catch {
+    return { ok: false, error: "Couldn't load the voices." };
+  }
+}
+
+/**
+ * Your assistant's voice or color (null: back to the default). Only ever the signed-in person's own row, so it never
+ * changes anyone else's assistant; the voice takes effect from the next call.
+ */
+export async function setAssistantLook(change: { voice?: string | null; color?: string | null }): Promise<{ ok: true } | Fail> {
+  const me = await requireStaff();
+  const update: Record<string, string | null> = {};
+  if ("voice" in change) {
+    if (change.voice !== null && !isVoiceId(change.voice)) return { ok: false, error: "Pick a voice." };
+    update.assistant_voice = change.voice ?? null;
+  }
+  if ("color" in change) {
+    const color = change.color === null ? null : paletteColor(change.color);
+    if (change.color !== null && !color) return { ok: false, error: "Pick one of the colors." };
+    update.assistant_color = color;
+  }
+  if (!Object.keys(update).length) return { ok: true };
+  const { error } = await createAdminClient().from("profiles").update(update).eq("id", me.id);
+  if (error) return { ok: false, error: /assistant_(voice|color)/.test(error.message) ? "Voice and color need a database update first." : "Couldn't save that. Try again." };
   revalidatePath("/assistant");
   return { ok: true };
 }

@@ -3,6 +3,7 @@ import { openCall, runCallTurn } from "@/lib/agent-call/server";
 import { runAssistantTurn } from "@/lib/assistant/turn";
 import type { CallEvent } from "@/lib/agent-call/core";
 import { parseCallContext } from "@/lib/agent-call/call-context";
+import { longTurnText } from "@/lib/agent-call/history";
 import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -24,7 +25,8 @@ export async function POST(request: Request) {
   // The person's own session: the tools read what they may see (taken here, while the request is still open)
   const db = await createClient();
   if (!call) return Response.json({ error: "This call has ended." }, { status: 410 });
-  const text = String(body?.text ?? "").slice(0, 4000);
+  // A long monologue (two to five minutes is a few thousand words) is taken whole; only a truly huge one is cut
+  const text = longTurnText(String(body?.text ?? ""));
   const context = parseCallContext(body?.context);
   const frame = typeof body?.frame === "string" ? body.frame.slice(0, 300) : null;
   const encoder = new TextEncoder();
@@ -39,12 +41,16 @@ export async function POST(request: Request) {
           open = false;
         }
       };
+      // A line every few seconds while the answer is being worked out (tools, a long think), so nothing in between
+      // closes a quiet stream and the call knows it's still working
+      const ping = setInterval(() => emit({ t: "ping" }), 5000);
       const work = (call.role_key === "assistant" ? runAssistantTurn : runCallTurn)({ me, admin, db, call, text, signal: request.signal, emit, context, frame, startedAt })
         .catch((e) => {
           console.error("[agent call] turn", e instanceof Error ? e.message : e);
           emit({ t: "error", message: "Sorry, something went wrong on my side. Say that again?" });
         })
         .finally(() => {
+          clearInterval(ping);
           open = false;
           try {
             controller.close();

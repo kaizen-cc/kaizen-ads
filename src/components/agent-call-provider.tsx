@@ -7,12 +7,12 @@ import { ackCallNotice, endCall, startCall } from "@/app/(team)/settings/call-ac
 import { assistantCallNotes, audioUploadSlot, callUploadSlots, callUploadsDone, screenFrameSaved, screenFrameSlot } from "@/app/(team)/assistant/actions";
 import { lookPlan } from "@/lib/agent-call/call-context";
 import { canShareScreen, grabFrame, startScreenShare, stopScreenShare } from "@/lib/agent-call/screen-share";
-import { CALL_LIMIT_SECONDS, type CallCard, type LearnedItem, type UploadAsk } from "@/lib/agent-call/core";
+import { CALL_LIMIT_SECONDS, type CallCard, type LearnedItem, type StallState, type UploadAsk } from "@/lib/agent-call/core";
 import { Call, chime, type Line, type Phase, type Speaker } from "@/lib/agent-call/engine";
 import { ASSISTANT_KEY, ASSISTANT_LABEL } from "@/lib/assistant/core";
 import type { CallNotes } from "@/lib/assistant/notes";
 import { createClient } from "@/lib/supabase/client";
-import { ASSISTANT_TINT } from "@/lib/agent-look";
+import { assistantTintOf } from "@/lib/agent-look";
 import { captureFrames } from "@/lib/uploads/video-prep";
 import { AgentGlyph, RecordingNotice } from "./assistant-call-parts";
 import { FullScreenCall, FullScreenSummary, Huddle, HuddleSummary, SwitchAsk, type AgentRef, type CallView, type SummaryView } from "./agent-call-views";
@@ -37,9 +37,13 @@ type Ctx = {
   activeRole: string | null;
   /** A call is being set up or running */
   live: boolean;
+  /** This person's own assistant color (their pick on the Assistant page, else the default) */
+  assistantTint: string;
+  /** Shown straight away when they pick another (saved by the Assistant page) */
+  setAssistantTint: (hex: string | null) => void;
 };
 
-const CallCtx = createContext<Ctx>({ start: () => undefined, startAssistant: () => undefined, activeRole: null, live: false });
+const CallCtx = createContext<Ctx>({ start: () => undefined, startAssistant: () => undefined, activeRole: null, live: false, assistantTint: assistantTintOf(null), setAssistantTint: () => undefined });
 
 export const useAgentCall = () => useContext(CallCtx);
 
@@ -65,9 +69,14 @@ const typing = (t: EventTarget | null) => {
   return el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A", "SUMMARY"].includes(el.tagName) || el.getAttribute("role") === "button";
 };
 
-const ASSISTANT: AgentRef = { roleKey: ASSISTANT_KEY, label: ASSISTANT_LABEL, tint: ASSISTANT_TINT, icon: (size) => <AgentGlyph icon="spark" tint={ASSISTANT_TINT} size={size} /> };
+/** The assistant on a call, in its person's own color */
+const assistantRef = (tint: string, context?: AgentRef["context"]): AgentRef => ({ roleKey: ASSISTANT_KEY, label: ASSISTANT_LABEL, tint, icon: (size) => <AgentGlyph icon="spark" tint={tint} size={size} />, ...(context ? { context } : {}) });
 
-export function AgentCallProvider({ children }: { children: React.ReactNode }) {
+/** The hidden debug overlay (?calldebug=1): the noise floor, the threshold, the listening and whose turn it is */
+const subscribeNone = () => () => undefined;
+const debugOn = () => /[?&]calldebug=1/.test(window.location.search);
+
+export function AgentCallProvider({ assistantColor = null, children }: { assistantColor?: string | null; children: React.ReactNode }) {
   const router = useRouter();
   const desktop = useDesktop();
   const mounted = useSyncExternalStore(
@@ -99,6 +108,17 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
   const [sharing, setSharing] = useState(false);
   const [shareAsk, setShareAsk] = useState(false);
   const [looking, setLooking] = useState(false);
+  const [stall, setStall] = useState<StallState>(null);
+  const [liveId, setLiveId] = useState<string | null>(null);
+  const [canSend, setCanSend] = useState(false);
+  const debug = useSyncExternalStore(subscribeNone, debugOn, () => false);
+  // Their own assistant color: from their profile, changed at once when they pick another
+  const [tint, setTint] = useState(() => assistantTintOf(assistantColor));
+  const [seenColor, setSeenColor] = useState(assistantColor);
+  if (seenColor !== assistantColor) {
+    setSeenColor(assistantColor);
+    setTint(assistantTintOf(assistantColor));
+  }
   const shareStream = useRef<MediaStream | null>(null);
   /** The look that's waiting for the screen to be shared */
   const lookWaiting = useRef(false);
@@ -154,6 +174,7 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
       call.current?.close();
       call.current = null;
       callId.current = null;
+      setLiveId(null);
       startedRef.current = null;
       setUploadAsk(null);
       if (!id) {
@@ -224,7 +245,7 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
     call.current?.setMuted(m);
   }, []);
 
-  // Computers: Space mutes (when you aren't typing or on a button), Esc minimises (it doesn't hang up)
+  // Computers: Space mutes and Enter sends what's been heard (when you aren't typing or on a button), Esc minimises (it doesn't hang up)
   useEffect(() => {
     if (stage !== "call" || !desktop) return;
     const onKey = (e: KeyboardEvent) => {
@@ -233,6 +254,10 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
         if (typing(e.target)) return;
         e.preventDefault();
         if (!e.repeat) toggleMute();
+      } else if (e.key === "Enter") {
+        if (typing(e.target) || e.repeat) return;
+        e.preventDefault();
+        call.current?.sendNow();
       } else if (e.key === "Escape") {
         setMinimized(true);
       }
@@ -280,6 +305,8 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
       setCards([]);
       setUploadAsk(null);
       setNotes(null);
+      setStall(null);
+      setCanSend(false);
       stopShare();
       setStage("call");
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -295,6 +322,8 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
         onLearned: (items) => setLearned((cur) => [...cur, ...items]),
         onError: setError,
         onEars: setEars,
+        onStall: setStall,
+        onCanSend: setCanSend,
         onGuest: setGuest,
         onNavigate: openHref,
         onCard: (card) => setCards((cur) => [...cur.filter((x) => x.href !== card.href), card].slice(-6)),
@@ -333,6 +362,7 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
         }
         id = r.callId;
         callId.current = r.callId;
+        setLiveId(r.callId);
         c.callId = r.callId;
         const t0 = Date.now();
         startedRef.current = t0;
@@ -369,7 +399,8 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
     [agent, dial],
   );
 
-  const startAssistant = useCallback(() => start(ASSISTANT), [start]);
+  const startAssistant = useCallback(() => start(assistantRef(tint)), [start, tint]);
+  const setAssistantTint = useCallback((hex: string | null) => setTint(assistantTintOf(hex)), []);
 
   const leaveAndStart = () => {
     const next = switchTo;
@@ -507,11 +538,13 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
     }
   }, [uploadAsk]);
 
-  const ctx = useMemo<Ctx>(() => ({ start, startAssistant, activeRole: stage === "idle" ? null : (agent?.roleKey ?? null), live: stage === "call" }), [start, startAssistant, stage, agent]);
+  const ctx = useMemo<Ctx>(() => ({ start, startAssistant, activeRole: stage === "idle" ? null : (agent?.roleKey ?? null), live: stage === "call", assistantTint: tint, setAssistantTint }), [start, startAssistant, stage, agent, tint, setAssistantTint]);
 
-  const view: CallView | null = agent
+  // The assistant always shows in its person's current color (even one picked mid-call)
+  const shown = agent?.roleKey === ASSISTANT_KEY ? assistantRef(tint, agent.context) : agent;
+  const view: CallView | null = shown
     ? {
-        agent,
+        agent: shown,
         phase,
         lines,
         partial,
@@ -524,6 +557,13 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
         call,
         onMute: toggleMute,
         onHangUp: () => void hangUp(),
+        canSend,
+        onSend: () => call.current?.sendNow(),
+        onType: (text) => call.current?.sendText(text),
+        stall,
+        onRetry: () => call.current?.retry(),
+        callId: liveId,
+        debug,
         guest,
         cards,
         uploadAsk,
@@ -547,13 +587,13 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
         },
       }
     : null;
-  const sum: SummaryView | null = agent
+  const sum: SummaryView | null = shown
     ? {
-        agent,
+        agent: shown,
         summary,
         learned,
         callId: lastCall,
-        notes: agent.roleKey === ASSISTANT_KEY ? notes : undefined,
+        notes: shown.roleKey === ASSISTANT_KEY ? notes : undefined,
         onDone: () => {
           setStage("idle");
           setSummary(null);

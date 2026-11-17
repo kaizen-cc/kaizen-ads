@@ -1,4 +1,5 @@
-import { downsample, createTurnDetector, rms, splitSpeakable, toPcm16, type CallCard, type CallEvent, type LearnedItem, type UploadAsk } from "./core";
+import { downsample, createTurnDetector, createTurnWatchdog, rms, splitSpeakable, toPcm16, type CallCard, type CallEvent, type LearnedItem, type StallState, type UploadAsk } from "./core";
+import { canSend, createTranscript, hasFloor, initialTurns, isCurrent, shouldCheckpoint, shownPhase, stepTurns, wordsStalled, type TurnEffect, type TurnInput, type TurnState } from "./turns";
 import type { CallContext } from "./call-context";
 import { AUDIO_PART_SECONDS } from "@/lib/assistant/core";
 import { renewSttToken } from "@/app/(team)/settings/call-actions";
@@ -7,8 +8,9 @@ import { renewSttToken } from "@/app/(team)/settings/call-actions";
 // about screens; the call provider (src/components/agent-call-provider.tsx) owns one of these and both ways of
 // showing it (the full screen on phones, the huddle on computers) read the same state.
 // The microphone streams to ElevenLabs realtime speech to text (or the browser's own listening where that's all
-// there is); a pause ends your turn; the agent's answer streams from Claude and is spoken sentence by sentence as it
-// arrives; talking over it stops it.
+// there is); a pause ends your turn (or Send, or a typed turn); the agent's answer streams from Claude and is spoken
+// sentence by sentence as it arrives; talking over it stops it. Whose turn it is lives in a plain state machine
+// (turns.ts): this file only carries out what it says, so mute, Send and stale answers behave the same every time.
 
 export type Phase = "connecting" | "listening" | "thinking" | "speaking";
 /** A line of the call; `speaker` names the agent that said it when more than one is on the line */
@@ -17,11 +19,20 @@ export type Line = { id: number; who: "you" | "agent"; text: string; speaker?: {
 /** Who is speaking now (an assistant call can have a specialist on the line) */
 export type Speaker = { role: string; label: string; icon: string };
 
+/** What the hidden debug overlay shows (?calldebug=1) */
+export type CallDebug = { phase: string; muted: boolean; ears: string; noise: number; threshold: number; level: number; speaking: boolean; commit: number | null; asking: number | null; heard: number; stall: StallState; queue: number };
+
 const STT_RATE = 16000;
 /** Audio kept from just before someone starts talking over the agent, so their first words aren't lost */
 const PRE_ROLL_SAMPLES = STT_RATE / 2;
 /** How much audio goes to speech to text in one message (100ms) */
 const SEND_SAMPLES = STT_RATE / 10;
+/** The longest wait for the transcriber's last words of a turn */
+const END_TURN_WAIT_MS = 2500;
+/** A sentence's voice that hasn't arrived in this long is skipped (the call never hangs on one) */
+const SPEAK_TIMEOUT_MS = 15_000;
+/** Keep-alive pings count as progress for the stall watch only this long into a turn */
+const PING_PROGRESS_MS = 45_000;
 
 const WORKLET = `class KzTap extends AudioWorkletProcessor { process(inputs) { const ch = inputs[0] && inputs[0][0]; if (ch) this.port.postMessage(ch.slice(0)); return true; } } registerProcessor("kz-tap", KzTap);`;
 
@@ -36,12 +47,18 @@ const b64 = (bytes: Uint8Array) => {
 /** What turns speech into text for the call: ElevenLabs realtime, or the browser's own */
 interface Ears {
   readonly kind: "scribe" | "browser";
+  /** Where the connection stands, for the debug overlay */
+  readonly state: string;
   /** Audio at 16kHz while the person has the floor */
   feed(samples: Float32Array): void;
   /** Their turn is over: everything they said in it */
   endTurn(): Promise<string>;
   /** Forget what was heard (the agent's own voice, or a turn already sent) */
   reset(): void;
+  /** Muted: stop hearing (the browser's own listening has its own microphone); unmuted: hear again */
+  pause(on: boolean): void;
+  /** Unmuted: reconnect if the connection dropped meanwhile */
+  wake(): void;
   close(): void;
 }
 
@@ -61,18 +78,39 @@ function browserSpeech(): (new () => SpeechRec) | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
-/** ElevenLabs Scribe over a WebSocket, opened with the single-use token the server minted (the key never leaves it) */
+/**
+ * ElevenLabs Scribe over a WebSocket, opened with the single-use token the server minted (the key never leaves it).
+ * Long turns are committed in pieces at natural pauses and joined in order; a quiet line gets a tiny keep-alive; a
+ * dropped connection gets a new token and reconnects (backing off, and only falling back to the browser's own
+ * listening after several failures in a row), keeping the words heard so far.
+ */
 function scribeEars(token: string, opts: { onPartial: (t: string) => void; onLost: () => void; renew: () => Promise<string | null> }): Ears {
-  let committed: string[] = [];
-  let partial = "";
+  const words = createTranscript();
   let pending: number[] = [];
   let waiting: (() => void) | null = null;
   let closed = false;
-  let ws: WebSocket;
-  let retries = 0;
+  let ws: WebSocket | null = null;
+  let failures = 0;
+  let openedAt = 0;
+  let reconnecting = false;
+  let lastSent = Date.now();
+  let uncommitted = 0;
+  /** Messages made while connecting, sent once it's open (a few seconds at most) */
+  let backlog: string[] = [];
+
+  const settle = () => {
+    if (words.settled) waiting?.();
+  };
   const open = (t: string) => {
-    ws = new WebSocket(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&token=${encodeURIComponent(t)}&audio_format=pcm_16000&commit_strategy=manual&language_code=en`);
-    ws.onmessage = (m) => {
+    const sock = new WebSocket(`wss://api.elevenlabs.io/v1/speech-to-text/realtime?model_id=scribe_v2_realtime&token=${encodeURIComponent(t)}&audio_format=pcm_16000&commit_strategy=manual&language_code=en`);
+    ws = sock;
+    sock.onopen = () => {
+      openedAt = Date.now();
+      for (const m of backlog) sock.send(m);
+      backlog = [];
+    };
+    sock.onmessage = (m) => {
+      if (ws !== sock) return;
       let e: { message_type?: string; text?: string; error?: string };
       try {
         e = JSON.parse(String(m.data));
@@ -80,66 +118,108 @@ function scribeEars(token: string, opts: { onPartial: (t: string) => void; onLos
         return;
       }
       if (e.message_type === "partial_transcript") {
-        partial = e.text ?? "";
-        opts.onPartial([...committed, partial].join(" ").trim());
+        if (words.partial(e.text ?? "")) opts.onPartial(words.text);
       } else if (e.message_type === "committed_transcript") {
-        if (e.text?.trim()) committed.push(e.text.trim());
-        partial = "";
-        opts.onPartial(committed.join(" "));
-        waiting?.();
+        if (words.committed(e.text ?? "")) opts.onPartial(words.text);
+        settle();
       } else if (e.error) console.warn("[call] speech to text:", e.message_type, e.error);
     };
-    ws.onclose = () => {
-      if (closed) return;
-      // A dropped connection: a new token and connect again, twice at most, then the browser's own listening
-      if (retries++ < 2)
-        void opts.renew().then((nt) => {
-          if (nt && !closed) open(nt);
-          else if (!closed) opts.onLost();
-        });
-      else opts.onLost();
+    sock.onclose = () => {
+      if (closed || ws !== sock) return;
+      ws = null;
+      // What was heard stays; a turn waiting on its last words goes ahead with them
+      words.lost();
+      waiting?.();
+      // A connection that lived a while was fine: only drops in a row count against it
+      if (Date.now() - openedAt > 10_000) failures = 0;
+      failures++;
+      void reconnect();
     };
   };
-  open(token);
-  const send = (samples: ArrayLike<number>, commit: boolean) => {
-    if (ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: b64(toPcm16(samples)), commit, sample_rate: STT_RATE }));
+  const reconnect = async () => {
+    if (closed || reconnecting) return;
+    if (failures > 4) return opts.onLost();
+    reconnecting = true;
+    if (failures > 1) await new Promise((r) => setTimeout(r, 600 * failures));
+    const nt = await opts.renew().catch(() => null);
+    reconnecting = false;
+    if (closed) return;
+    if (nt) open(nt);
+    else if (++failures > 4) opts.onLost();
+    else void reconnect();
   };
+  open(token);
+
+  const send = (samples: ArrayLike<number>, commit: boolean) => {
+    const msg = JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: b64(toPcm16(samples)), commit, sample_rate: STT_RATE });
+    lastSent = Date.now();
+    if (commit) {
+      words.sent();
+      uncommitted = 0;
+    } else uncommitted += samples.length;
+    if (ws?.readyState === WebSocket.OPEN) ws.send(msg);
+    else if (ws?.readyState === WebSocket.CONNECTING && backlog.length < 40) backlog.push(msg);
+    // Nowhere to send it: a commit is counted back at once, so nothing waits on it
+    else if (commit) words.committed("");
+  };
+  // A quiet line (muted, or a long answer) gets a tenth of a second of silence now and then, so it isn't closed
+  const keepAlive = setInterval(() => {
+    if (ws?.readyState === WebSocket.OPEN && Date.now() - lastSent > 8000) send(new Array(SEND_SAMPLES).fill(0), false);
+  }, 4000);
+
   return {
     kind: "scribe",
+    get state() {
+      return ws ? ["connecting", "open", "closing", "closed"][ws.readyState] : reconnecting ? "reconnecting" : "closed";
+    },
     feed(samples) {
       for (let i = 0; i < samples.length; i++) pending.push(samples[i]);
       if (pending.length >= SEND_SAMPLES) {
-        send(pending, false);
+        // A long monologue: committed in pieces at a pause, so nothing is cut or dropped
+        const checkpoint = shouldCheckpoint({ uncommittedMs: ((uncommitted + pending.length) / STT_RATE) * 1000, level: rms(pending) });
+        send(pending, checkpoint);
         pending = [];
       }
     },
     async endTurn() {
-      // Whatever is left, with a commit: Scribe sends the final words of the turn back
+      // Whatever is left, with a commit: Scribe sends the final words of the turn back (all pieces, in order)
       send(pending.length ? pending : new Array(160).fill(0), true);
       pending = [];
-      await new Promise<void>((resolve) => {
-        const t = setTimeout(resolve, 1500);
-        waiting = () => {
-          clearTimeout(t);
-          resolve();
-        };
-      });
+      if (!words.settled)
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(() => {
+            words.expire();
+            resolve();
+          }, END_TURN_WAIT_MS);
+          waiting = () => {
+            clearTimeout(t);
+            resolve();
+          };
+        });
       waiting = null;
-      const text = [...committed, partial].join(" ").replace(/\s+/g, " ").trim();
-      committed = [];
-      partial = "";
-      return text;
+      return words.take();
     },
     reset() {
-      committed = [];
-      partial = "";
       pending = [];
+      // Words still on the server for this turn are committed and thrown away, so they never start the next one
+      if (words.forget()) {
+        uncommitted = 0;
+        lastSent = Date.now();
+        const msg = JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: b64(toPcm16(new Array(160).fill(0))), commit: true, sample_rate: STT_RATE });
+        if (ws?.readyState === WebSocket.OPEN) ws.send(msg);
+        else words.expire();
+        setTimeout(() => words.expire(), END_TURN_WAIT_MS);
+      }
+    },
+    pause() {},
+    wake() {
+      if (!closed && !ws && !reconnecting) void reconnect();
     },
     close() {
       closed = true;
+      clearInterval(keepAlive);
       try {
-        ws.close();
+        ws?.close();
       } catch {
         // already closed
       }
@@ -147,7 +227,11 @@ function scribeEars(token: string, opts: { onPartial: (t: string) => void; onLos
   };
 }
 
-/** The browser's own speech recognition (Chrome, Edge, Safari): the fallback when ElevenLabs can't be reached */
+/**
+ * The browser's own speech recognition (Chrome, Edge, Safari): the fallback when ElevenLabs can't be reached. It
+ * stops on its own every minute or so: what was heard before it stopped is kept for the turn (it used to be lost).
+ * It listens with its own microphone, so muting stops it.
+ */
 function browserEars(Rec: new () => SpeechRec, opts: { onPartial: (t: string) => void }): Ears {
   const rec = new Rec();
   rec.continuous = true;
@@ -155,35 +239,47 @@ function browserEars(Rec: new () => SpeechRec, opts: { onPartial: (t: string) =>
   rec.lang = navigator.language || "en-US";
   let results: { isFinal: boolean; text: string }[] = [];
   let from = 0;
+  let banked = "";
   let closed = false;
+  let paused = false;
+  let running = false;
   let waiting: (() => void) | null = null;
-  const text = () =>
+  const current = () =>
     results
       .slice(from)
       .map((r) => r.text)
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
+      .join(" ");
+  const text = () => `${banked} ${current()}`.replace(/\s+/g, " ").trim();
+  const start = () => {
+    if (running || closed || paused) return;
+    try {
+      rec.start();
+      running = true;
+    } catch {
+      // already starting
+    }
+  };
   rec.onresult = (e) => {
     results = Array.from({ length: e.results.length }, (_, i) => ({ isFinal: e.results[i].isFinal, text: e.results[i][0].transcript }));
     opts.onPartial(text());
     if (results.slice(from).every((r) => r.isFinal)) waiting?.();
   };
-  // It stops on its own after a quiet spell: started again for as long as the call lasts
   rec.onend = () => {
-    if (closed) return;
+    running = false;
+    // What it heard before stopping is kept for the turn
+    banked = text();
     results = [];
     from = 0;
-    try {
-      rec.start();
-    } catch {
-      // already starting
-    }
+    waiting?.();
+    start();
   };
   rec.onerror = (e) => e.error !== "no-speech" && e.error !== "aborted" && console.warn("[call] browser listening:", e.error);
-  rec.start();
+  start();
   return {
     kind: "browser",
+    get state() {
+      return paused ? "paused" : running ? "listening" : "restarting";
+    },
     feed() {},
     async endTurn() {
       // A moment for the last words to be final
@@ -197,11 +293,26 @@ function browserEars(Rec: new () => SpeechRec, opts: { onPartial: (t: string) =>
         });
       waiting = null;
       const said = text();
+      banked = "";
       from = results.length;
       return said;
     },
     reset() {
+      banked = "";
       from = results.length;
+    },
+    pause(on) {
+      paused = on;
+      if (on) {
+        try {
+          rec.stop();
+        } catch {
+          // already stopped
+        }
+      } else start();
+    },
+    wake() {
+      start();
     },
     close() {
       closed = true;
@@ -223,6 +334,10 @@ export type Hooks = {
   onLearned: (items: LearnedItem[]) => void;
   onError: (msg: string) => void;
   onEars: (kind: "scribe" | "browser") => void;
+  /** A long turn was sent, an answer is slow (retrying), or it didn't go through (null: all well) */
+  onStall?: (s: StallState) => void;
+  /** Whether Send has something to send */
+  onCanSend?: (can: boolean) => void;
   /** A specialist joined (or left: null) */
   onGuest?: (g: Speaker | null) => void;
   /** Open a screen in the app; the call carries on */
@@ -268,6 +383,8 @@ export function chime(kind: "connect" | "end") {
   }
 }
 
+type Queued = { text: string; audio: Promise<AudioBuffer | null>; speaker: Speaker | null; turn: number | null };
+
 /** Everything a live call runs: the microphone, turn taking, listening, the agent's answers and its voice */
 export class Call {
   private ctx: AudioContext;
@@ -276,14 +393,13 @@ export class Call {
   private node: AudioWorkletNode | null = null;
   private ears: Ears | null = null;
   private detector = createTurnDetector();
-  private phase: Phase = "connecting";
-  private muted = false;
+  private st: TurnState = initialTurns();
   private closed = false;
   private preRoll: number[] = [];
   private frame: number[] = [];
   private turn: AbortController | null = null;
   private voice: AbortController | null = null;
-  private queue: { text: string; audio: Promise<AudioBuffer | null>; speaker: Speaker | null }[] = [];
+  private queue: Queued[] = [];
   /** Who the next words are from (set by the turn's speaker events) */
   private speaker: Speaker | null = null;
   /** The agent said goodbye: hang up once the queue has played */
@@ -297,8 +413,12 @@ export class Call {
   private streamDone = true;
   private lineId = 0;
   private wake: { release: () => Promise<void> } | null = null;
-  /** What they said before carrying on talking (the turn hadn't been sent yet): sent with the next turn */
-  private carry = "";
+  /** When the words of this turn last changed (the words safety net) */
+  private wordsAt = 0;
+  /** The sentence before this one in the same answer, so the voice carries on smoothly from it */
+  private lastSentence = "";
+  private watch = createTurnWatchdog({ onSlow: () => this.dispatch({ t: "slow" }), onGiveUp: () => this.dispatch({ t: "failed" }) });
+  private canSendNow = false;
   /** The latest loudness, mic or voice, for the waveform */
   level = 0;
   /** Set once the server has opened the call */
@@ -314,9 +434,56 @@ export class Call {
     this.out.connect(this.ctx.destination);
   }
 
-  private setPhase(p: Phase) {
-    this.phase = p;
-    this.hooks.onPhase(p);
+  // ─── Turns ──────────────────────────────────────────────────────────────
+
+  private dispatch(e: TurnInput) {
+    if (this.closed) return;
+    const before = shownPhase(this.st);
+    const { state, effects } = stepTurns(this.st, e);
+    this.st = state;
+    const after = shownPhase(state);
+    if (after !== before) this.hooks.onPhase(after);
+    for (const fx of effects) this.run(fx);
+    const can = canSend(state);
+    if (can !== this.canSendNow) {
+      this.canSendNow = can;
+      this.hooks.onCanSend?.(can);
+    }
+  }
+
+  private run(fx: TurnEffect) {
+    switch (fx.do) {
+      case "commit": {
+        const ears = this.ears;
+        if (!ears) return this.dispatch({ t: "heard", commit: fx.commit, text: "" });
+        void ears.endTurn().then((text) => this.dispatch({ t: "heard", commit: fx.commit, text }));
+        return;
+      }
+      case "ask":
+        return void this.ask(fx.turn, fx.said, fx.frame);
+      case "stop_agent":
+        return this.stopAgent();
+      case "line":
+        return this.hooks.onLine({ id: ++this.lineId, who: "you", text: fx.text });
+      case "partial":
+        return this.hooks.onPartial(fx.text);
+      case "ears_reset":
+        return this.ears?.reset();
+      case "ears_pause":
+        return this.ears?.pause(fx.on);
+      case "ears_wake":
+        return this.ears?.wake();
+      case "ears_preroll":
+        return this.ears?.feed(Float32Array.from(this.preRoll));
+      case "detector_reset":
+        return this.detector.reset();
+      case "detector_relearn":
+        return this.detector.relearn();
+      case "stall":
+        return this.hooks.onStall?.(fx.state);
+      case "watch":
+        return fx.on ? this.watch.begin(fx.retry) : this.watch.stop();
+    }
   }
 
   /** On the tap itself: phones only let a page play sound it started from a tap, so a silent blip unlocks it */
@@ -356,12 +523,14 @@ export class Call {
     } catch {
       // The screen may sleep; the call goes on
     }
+    this.dispatch({ t: "ready" });
     // Picks up: the greeting, in its voice
     this.streamDone = false;
     this.voice = new AbortController();
-    this.say(greeting);
+    this.lastSentence = "";
+    this.say(greeting, null);
     this.streamDone = true;
-    this.drain();
+    void this.drain();
   }
 
   /** One part of the recording: a whole file of its own, a couple of minutes long, then the next */
@@ -398,6 +567,7 @@ export class Call {
       if (!Rec) return this.hooks.onError("Listening dropped and this browser can't listen on its own. Hang up and call again.");
       this.ears?.close();
       this.ears = browserEars(Rec, { onPartial: (t) => this.partial(t) });
+      if (this.st.muted) this.ears.pause(true);
       this.hooks.onEars("browser");
     };
     if (token) {
@@ -417,12 +587,8 @@ export class Call {
   }
 
   private partial(t: string) {
-    if (this.phase === "listening" || this.phase === "thinking") this.hooks.onPartial(t);
-  }
-
-  /** The person has the floor (not muted, and the agent isn't speaking) */
-  private get floor() {
-    return !this.muted && (this.phase === "listening" || this.phase === "thinking");
+    if (t !== this.st.heard) this.wordsAt = performance.now();
+    this.dispatch({ t: "partial", text: t });
   }
 
   private onAudio(chunk: Float32Array) {
@@ -432,29 +598,22 @@ export class Call {
     const size = Math.round(this.ctx.sampleRate / 50);
     while (this.frame.length >= size) {
       const f = this.frame.splice(0, size);
-      const level = this.muted ? 0 : rms(f);
-      if (this.phase !== "speaking") this.level = level;
+      const level = this.st.muted ? 0 : rms(f);
+      const speaking = this.st.phase === "speaking";
+      if (!speaking) this.level = level;
       const low = downsample(f, this.ctx.sampleRate, STT_RATE);
       for (let i = 0; i < low.length; i++) this.preRoll.push(low[i]);
       if (this.preRoll.length > PRE_ROLL_SAMPLES) this.preRoll.splice(0, this.preRoll.length - PRE_ROLL_SAMPLES);
-      if (this.floor) this.ears?.feed(low);
-      if (this.muted || this.phase === "connecting") continue;
-      const ev = this.detector.feed(level, 20, this.phase === "speaking");
-      if (ev === "barge_in") this.bargeIn();
-      else if (ev === "speech_start" && this.phase === "thinking") {
-        // They carried on talking before the answer came: stop it and keep listening (what they'd said is kept)
-        this.stopAgent();
-        this.setPhase("listening");
-      } else if (ev === "turn_end" && this.phase === "listening") void this.endTurn();
+      if (hasFloor(this.st)) this.ears?.feed(low);
+      if (this.st.muted || this.st.phase === "connecting") continue;
+      const ev = this.detector.feed(level, 20, speaking);
+      if (ev) this.dispatch({ t: ev });
+      // The words safety net: the transcriber heard words, the level never said they stopped
+      else if (this.st.phase === "listening" && wordsStalled({ heard: this.st.heard, sinceWordsMs: performance.now() - this.wordsAt, speaking: this.detector.speaking })) {
+        this.detector.reset();
+        this.dispatch({ t: "turn_end" });
+      }
     }
-  }
-
-  /** Talking over the agent: its voice stops, and what they say (from just before) is heard */
-  private bargeIn() {
-    this.stopAgent();
-    this.ears?.reset();
-    this.setPhase("listening");
-    this.ears?.feed(Float32Array.from(this.preRoll));
   }
 
   private stopAgent() {
@@ -475,35 +634,17 @@ export class Call {
     }
   }
 
-  private async endTurn() {
-    if (!this.ears) return;
-    this.setPhase("thinking");
-    const heard = await this.ears.endTurn();
-    const said = `${this.carry} ${heard}`.replace(/\s+/g, " ").trim();
-    this.carry = "";
-    if (this.closed) return;
-    // They carried on talking while their words were being finished: kept for the end of the turn
-    if (this.phase !== "thinking") {
-      this.carry = said;
-      return;
-    }
-    if (!said || /^[\s.,!?]*$/.test(said)) {
-      this.hooks.onPartial("");
-      this.setPhase("listening");
-      return;
-    }
-    this.hooks.onPartial("");
-    this.hooks.onLine({ id: ++this.lineId, who: "you", text: said });
-    await this.ask(said);
-  }
-
-  /** Sends what they said; the answer is spoken sentence by sentence as it's written */
-  private async ask(said: string, frame: string | null = null) {
+  /** Sends a turn; the answer is spoken sentence by sentence as it's written. Anything from an older turn is ignored */
+  private async ask(turnNo: number, said: string, frame: string | null) {
     const turn = new AbortController();
     this.turn = turn;
     this.voice = new AbortController();
     this.streamDone = false;
+    this.speaker = null;
+    this.lastSentence = "";
+    const startedAt = Date.now();
     let buffer = "";
+    const live = () => !turn.signal.aborted && isCurrent(this.st, turnNo);
     try {
       const res = await fetch("/api/agent-call/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text: said, ...(this.context ? { context: this.context } : {}), ...(frame ? { frame } : {}) }), signal: turn.signal });
       if (res.status === 410) return this.hooks.onError("The call has ended.");
@@ -513,25 +654,32 @@ export class Call {
       let rest = "";
       for (;;) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done || !live()) break;
         rest += dec.decode(value, { stream: true });
         const lines = rest.split("\n");
         rest = lines.pop() ?? "";
         for (const l of lines) {
           if (!l.trim()) continue;
-          const e = JSON.parse(l) as CallEvent;
+          let e: CallEvent;
+          try {
+            e = JSON.parse(l) as CallEvent;
+          } catch {
+            continue;
+          }
+          if (e.t !== "ping" || Date.now() - startedAt < PING_PROGRESS_MS) this.watch.progress();
           if (e.t === "text") {
             buffer += e.d;
             const { ready, rest: left } = splitSpeakable(buffer);
             buffer = left;
-            ready.forEach((s) => this.say(s));
+            ready.forEach((s) => this.say(s, turnNo));
           } else if (e.t === "learned") this.hooks.onLearned(e.items);
-          else if (e.t === "error") this.say(e.message);
+          else if (e.t === "error") this.say(e.message, turnNo);
           else if (e.t === "speaker") {
             // A new voice: what the last one was still writing is said first
-            if (buffer.trim()) this.say(buffer.trim());
+            if (buffer.trim()) this.say(buffer.trim(), turnNo);
             buffer = "";
             this.speaker = { role: e.role, label: e.label, icon: e.icon };
+            this.lastSentence = "";
           } else if (e.t === "guest") this.hooks.onGuest?.(e.role ? { role: e.role, label: e.label ?? "", icon: e.icon ?? "spark" } : null);
           else if (e.t === "navigate") this.hooks.onNavigate?.(e.href);
           else if (e.t === "card") this.hooks.onCard?.(e.card);
@@ -540,45 +688,40 @@ export class Call {
           else if (e.t === "end") this.ending = true;
         }
       }
-      if (buffer.trim()) this.say(buffer.trim());
+      if (live() && buffer.trim()) this.say(buffer.trim(), turnNo);
     } catch {
-      if (turn.signal.aborted) return;
-      this.say("Sorry, I lost the line for a second. Could you say that again?");
+      if (!live()) return;
+      this.say("Sorry, I lost the line for a second. Could you say that again?", turnNo);
     } finally {
       if (this.turn === turn) {
         this.turn = null;
         this.streamDone = true;
-        this.drain();
+        void this.drain();
       }
     }
   }
 
   /** One sentence: its audio is fetched straight away (in parallel with the ones before), played in order, in its speaker's voice */
-  private say(text: string) {
-    const signal = this.voice?.signal;
+  private say(text: string, turn: number | null) {
+    if (!isCurrent(this.st, turn)) return;
+    const outer = this.voice?.signal;
     const speaker = this.speaker;
-    const audio = fetch("/api/agent-call/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text, ...(speaker ? { role: speaker.role } : {}) }), signal })
+    const previous = this.lastSentence;
+    this.lastSentence = text;
+    // Its own timeout, so one slow sentence never holds the call
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), SPEAK_TIMEOUT_MS);
+    const onAbort = () => ctl.abort();
+    outer?.addEventListener("abort", onAbort, { once: true });
+    const audio = fetch("/api/agent-call/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text, ...(previous ? { previous } : {}), ...(speaker ? { role: speaker.role } : {}) }), signal: ctl.signal })
       .then(async (r) => (r.ok && r.status !== 204 ? this.ctx.decodeAudioData(await r.arrayBuffer()) : null))
-      .catch(() => null);
-    this.queue.push({ text, audio, speaker });
-    this.drain();
-  }
-
-  /**
-   * A turn sent without speaking (the files they just uploaded): shown as a note on the call and answered like
-   * anything they said. Waits for the agent to finish talking first.
-   */
-  inject(text: string, shown: string, frame: string | null = null) {
-    if (this.closed) return;
-    const go = () => {
-      if (this.closed) return;
-      if (this.phase === "speaking" || this.phase === "thinking" || this.turn) return void setTimeout(go, 400);
-      this.ears?.reset();
-      this.hooks.onLine({ id: ++this.lineId, who: "you", text: shown });
-      this.setPhase("thinking");
-      void this.ask(text, frame);
-    };
-    go();
+      .catch(() => null)
+      .finally(() => {
+        clearTimeout(timer);
+        outer?.removeEventListener("abort", onAbort);
+      });
+    this.queue.push({ text, audio, speaker, turn });
+    void this.drain();
   }
 
   private async drain() {
@@ -591,11 +734,7 @@ export class Call {
         this.hooks.onEnd?.();
         return;
       }
-      if (this.streamDone && this.phase !== "listening") {
-        this.ears?.reset();
-        this.detector.reset();
-        this.setPhase("listening");
-      }
+      if (this.streamDone) this.dispatch({ t: "idle" });
       return;
     }
     // Held so a second drain doesn't start the sentence after this one meanwhile
@@ -604,37 +743,91 @@ export class Call {
     const buf = await next.audio;
     if (this.playing !== hold) return;
     this.playing = null;
-    if (!buf || this.closed) return void this.drain();
+    if (!buf || this.closed || !isCurrent(this.st, next.turn)) return void this.drain();
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.connect(this.out);
     this.playing = src;
     src.onended = () => {
+      src.disconnect();
       if (this.playing === src) this.playing = null;
       void this.drain();
     };
-    if (this.phase !== "speaking") this.setPhase("speaking");
+    this.dispatch({ t: "audio", turn: next.turn });
+    this.dispatch({ t: "agent_line", text: next.text });
     this.hooks.onLine({ id: ++this.lineId, who: "agent", text: next.text, ...(next.speaker ? { speaker: next.speaker } : {}) });
     src.start();
   }
 
+  /**
+   * A turn sent without speaking (the files they just uploaded): shown as a note on the call and answered like
+   * anything they said. Waits for the agent to finish talking first.
+   */
+  inject(text: string, shown: string, frame: string | null = null) {
+    if (this.closed) return;
+    const go = () => {
+      if (this.closed) return;
+      if (this.st.phase !== "listening" || this.st.commit !== null || this.turn) return void setTimeout(go, 400);
+      this.dispatch({ t: "inject", text, shown, frame });
+    };
+    go();
+  }
+
+  /** Send what's been heard so far, now (the Send button, or Enter on a computer) */
+  sendNow() {
+    this.dispatch({ t: "send" });
+  }
+
+  /** A typed turn (loud places, or the transcriber missed it): sent as if said */
+  sendText(text: string) {
+    this.dispatch({ t: "typed", text });
+  }
+
+  /** The last turn didn't go through: send it again */
+  retry() {
+    this.dispatch({ t: "retry" });
+  }
+
   /** The agent's voice level while it speaks (read each animation frame) */
   sample() {
-    if (this.phase !== "speaking") return this.level;
+    if (this.st.phase !== "speaking") return this.level;
     const data = new Float32Array(this.out.fftSize);
     this.out.getFloatTimeDomainData(data);
     return rms(data);
   }
 
   setMuted(m: boolean) {
-    this.muted = m;
+    if (m === this.st.muted) return;
     this.mic?.getAudioTracks().forEach((t) => (t.enabled = !m));
-    if (m) this.detector.reset();
+    if (m) this.dispatch({ t: "mute", speaking: this.detector.speaking });
+    else {
+      this.wordsAt = performance.now();
+      this.dispatch({ t: "unmute" });
+    }
+  }
+
+  /** What the hidden debug overlay shows */
+  debug(): CallDebug {
+    return {
+      phase: this.st.phase,
+      muted: this.st.muted,
+      ears: this.ears ? `${this.ears.kind} (${this.ears.state})` : "none",
+      noise: this.detector.noise,
+      threshold: this.detector.threshold,
+      level: this.level,
+      speaking: this.detector.speaking,
+      commit: this.st.commit,
+      asking: this.st.asking,
+      heard: this.st.heard.length,
+      stall: this.st.stall,
+      queue: this.queue.length,
+    };
   }
 
   close() {
     if (this.closed) return;
     this.closed = true;
+    this.watch.stop();
     // The last part of the recording is finished and handed over
     if (this.recTimer) clearTimeout(this.recTimer);
     try {
@@ -644,6 +837,10 @@ export class Call {
     }
     this.stopAgent();
     this.ears?.close();
+    if (this.node) {
+      this.node.port.onmessage = null;
+      this.node.disconnect();
+    }
     this.node?.port.close();
     this.mic?.getTracks().forEach((t) => t.stop());
     void this.wake?.release().catch(() => undefined);

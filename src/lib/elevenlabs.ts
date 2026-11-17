@@ -117,11 +117,14 @@ export async function elevenlabsStatus(): Promise<{ configured: boolean; reachab
 
 // ─── Voice calls with the agents ────────────────────────────────────────────
 
+/** How a call's voice is tuned (see speechStream) */
+export const CALL_VOICE_SETTINGS = { stability: 0.45, similarity_boost: 0.75, style: 0, use_speaker_boost: true, speed: 1 };
+
 /**
  * A short sentence spoken for a call, streamed as it's made (MP3, 44.1kHz at 64kbps: small and quick to start). The
  * call's low-latency model; the body is passed straight on to the browser. Characters are what the text costs.
  */
-export async function speechStream(input: { voiceId: string; text: string; model: string; signal?: AbortSignal }): Promise<{ body: ReadableStream<Uint8Array>; characters: number }> {
+export async function speechStream(input: { voiceId: string; text: string; model: string; previous?: string | null; signal?: AbortSignal }): Promise<{ body: ReadableStream<Uint8Array>; characters: number }> {
   if (!/^[A-Za-z0-9]{8,40}$/.test(input.voiceId)) throw new ConnectorError("Pick a voice.");
   const res = await fetch(`${BASE}/v1/text-to-speech/${encodeURIComponent(input.voiceId)}/stream?output_format=mp3_44100_64`, {
     method: "POST",
@@ -129,7 +132,11 @@ export async function speechStream(input: { voiceId: string; text: string; model
     body: JSON.stringify({
       text: input.text,
       model_id: input.model,
-      voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0, use_speaker_boost: true, speed: 1.05 },
+      // Natural rather than flat: a little looser stability, a touch less similarity (it brings out artifacts), no
+      // added style (slower, wobblier), speaker boost on, normal speed (faster sounded clipped)
+      voice_settings: CALL_VOICE_SETTINGS,
+      // The sentence before, so sentences sent one by one keep their flow instead of each starting cold
+      ...(input.previous ? { previous_text: input.previous.slice(-400) } : {}),
     }),
     signal: input.signal,
   });

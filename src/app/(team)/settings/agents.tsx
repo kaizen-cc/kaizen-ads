@@ -36,7 +36,7 @@ import { proposalOf, changeTarget } from "@/lib/agent-change";
 import type { EvalRow } from "@/lib/agent-evals";
 import type { LearningView } from "@/lib/learnings";
 import { AgentOnline } from "./agent-online";
-import { AgentCall, AgentVoice, CallReviews, type PendingReview } from "./agent-call";
+import { AgentCall, AgentVoice, CallReviews, RecentCalls, type PendingReview, type RecentCall } from "./agent-call";
 import { defaultVoiceName } from "@/lib/agent-call/core";
 import { ReportThis } from "@/components/report-this";
 
@@ -1819,7 +1819,7 @@ function TalkToAgent({ role, skills, items, chat }: { role: Role; skills: Agent[
   );
 }
 
-export function RoleDetail({ role, skills, items, chat, isExec = true, reviews = [] }: { role: Role; skills: Agent[]; items: Item[]; chat: RoleChatMessage[]; isExec?: boolean; /** Calls whose learnings still wait for keep or toss */ reviews?: PendingReview[] }) {
+export function RoleDetail({ role, skills, items, chat, isExec = true, reviews = [], calls = [] }: { role: Role; skills: Agent[]; items: Item[]; chat: RoleChatMessage[]; isExec?: boolean; /** Calls whose learnings still wait for keep or toss */ reviews?: PendingReview[]; /** Your latest calls with it (transcripts) */ calls?: RecentCall[] }) {
   const st = roleStats(role, skills);
   return (
     <ExecCtx.Provider value={isExec}>
@@ -1863,6 +1863,8 @@ export function RoleDetail({ role, skills, items, chat, isExec = true, reviews =
         </header>
 
         <CallReviews roleKey={role.key} label={role.label} icon={(size) => <AgentIcon icon={role.icon} size={size} />} tint={TINT[role.icon] ?? TINT.spark} reviews={reviews} skills={Object.fromEntries(skills.map((k) => [k.key as string, k.label]))} />
+
+        <RecentCalls calls={calls} />
 
         <TalkToAgent role={role} skills={skills} items={items} chat={chat} />
 

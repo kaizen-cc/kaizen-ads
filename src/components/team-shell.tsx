@@ -12,7 +12,6 @@ import { MediaJobsIndicator, MediaJobsRoot } from "./media-jobs";
 import { PersonAvatar } from "@/components/person-avatar";
 import { channelNavOk } from "@/lib/roles";
 import { useAgentCall } from "./agent-call-provider";
-import { ASSISTANT_TINT } from "@/lib/agent-look";
 
 type Tier = "exec" | "lead" | "member";
 // buyer: media-buying tools the creative team doesn't use (hidden for them); reports: only executives and media buyers;
@@ -65,7 +64,7 @@ const FEEDBACK: Item = { href: "/feedback", label: "Feedback", icon: "M21 12a8 8
 
 /** Call my assistant: everyone's personal assistant, a call away from any page (the call lives above every page) */
 function AssistantButton({ size = "side", onPress }: { size?: "side" | "menu"; onPress?: () => void }) {
-  const { startAssistant, activeRole, live } = useAgentCall();
+  const { startAssistant, activeRole, live, assistantTint: tint } = useAgentCall();
   const on = live && activeRole === "assistant";
   return (
     <button
@@ -76,9 +75,9 @@ function AssistantButton({ size = "side", onPress }: { size?: "side" | "menu"; o
       }}
       className={`group relative flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-[12px] border border-line bg-surface-2/40 text-left transition-colors hover:border-faint active:scale-[0.99] ${size === "menu" ? "min-h-12 px-3 text-[15px]" : "px-3 py-2.5 text-sm"}`}
     >
-      <span aria-hidden className="pointer-events-none absolute -left-6 -top-8 h-16 w-24 rounded-full opacity-25 blur-2xl transition-opacity group-hover:opacity-40" style={{ background: ASSISTANT_TINT }} />
-      <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-[9px]" style={{ background: `${ASSISTANT_TINT}22`, color: ASSISTANT_TINT, boxShadow: `inset 0 0 0 1px ${ASSISTANT_TINT}33` }}>
-        {on && <span aria-hidden className="absolute inset-0 animate-ping rounded-[9px] opacity-30" style={{ background: ASSISTANT_TINT }} />}
+      <span aria-hidden className="pointer-events-none absolute -left-6 -top-8 h-16 w-24 rounded-full opacity-25 blur-2xl transition-opacity group-hover:opacity-40" style={{ background: tint }} />
+      <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-[9px]" style={{ background: `${tint}22`, color: tint, boxShadow: `inset 0 0 0 1px ${tint}33` }}>
+        {on && <span aria-hidden className="absolute inset-0 animate-ping rounded-[9px] opacity-30" style={{ background: tint }} />}
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" />
         </svg>

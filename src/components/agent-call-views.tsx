@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState, useTransition, type ReactNode, type RefObject } from "react";
 import { reviewCallLearnings, undoLearning } from "@/app/(team)/settings/call-actions";
 import { field } from "@/components/ui";
-import { CALL_LIMIT_SECONDS, clock, keyOf, statusOf, type LearnedItem } from "@/lib/agent-call/core";
-import type { Call, Line, Phase, Speaker } from "@/lib/agent-call/engine";
+import { CALL_LIMIT_SECONDS, clock, keyOf, statusOf, type LearnedItem, type StallState } from "@/lib/agent-call/core";
+import type { Call, CallDebug, Line, Phase, Speaker } from "@/lib/agent-call/engine";
 import type { CallCard, UploadAsk } from "@/lib/agent-call/core";
 import type { CallNotes } from "@/lib/assistant/notes";
 import type { CallContext } from "@/lib/agent-call/call-context";
-import { CardsStrip, GuestChip, NotesBlock, RecordedMark, ScreenIcon, ShareAsk, SharingBar, UploadPanel } from "./assistant-call-parts";
+import { CardsStrip, GuestChip, NotesBlock, RecordedMark, ScreenIcon, ShareAsk, SharingBar, TranscriptButton, UploadPanel } from "./assistant-call-parts";
 
 // The two ways a call is shown. On phones it takes the whole screen; on computers it is a huddle: a small panel
 // docked bottom right that stays while you move around the app, and shrinks to a pill. Both read the same state,
@@ -51,6 +51,17 @@ export type CallView = {
   onMinimize?: () => void;
   /** Computers: sharing the screen for a look (whether it can, it is, it's asked, a look is being taken) */
   screen?: { can: boolean; sharing: boolean; asked: boolean; looking: boolean; onShare: () => void; onStop: () => void; onCancel: () => void };
+  /** Send what's been heard now (and whether there's anything to send), or a typed turn */
+  canSend?: boolean;
+  onSend?: () => void;
+  onType?: (text: string) => void;
+  /** A long turn sent, a slow answer being retried, or one that didn't go through (with Retry) */
+  stall?: StallState;
+  onRetry?: () => void;
+  /** The call's id once it's picked up (for the transcript) */
+  callId?: string | null;
+  /** The hidden debug overlay (?calldebug=1) */
+  debug?: boolean;
 };
 
 export type SummaryView = {
@@ -128,7 +139,166 @@ export function Wave({ call, phase, tint, className = "h-16 w-full max-w-sm", ba
   return <canvas ref={canvas} aria-hidden className={className} />;
 }
 
-const status = (v: Pick<CallView, "muted" | "phase">) => (v.muted ? "Muted" : PHASE_LABEL[v.phase]);
+const status = (v: Pick<CallView, "muted" | "phase" | "stall">) =>
+  v.muted ? "Muted" : v.phase === "thinking" && v.stall === "slow" ? "Still working…" : v.phase === "thinking" && v.stall === "long" ? "Got it, thinking…" : PHASE_LABEL[v.phase];
+
+const KeyboardIcon = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="2.5" y="6" width="19" height="12" rx="2.5" />
+    <path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M7.5 14h9" />
+  </svg>
+);
+
+const SendIcon = ({ size = 15 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M5 12h13M13 6l6 6-6 6" />
+  </svg>
+);
+
+/**
+ * Send now: the live caption of what will be sent, and a Send button that sends it without waiting for the pause
+ * (noise, or the pause just isn't caught). Type instead opens a small input for loud places or a missed turn. When an
+ * answer didn't go through, this is where it says so, with Retry.
+ */
+function SendBar({ v, compact }: { v: CallView; compact: boolean }) {
+  const [typing, setTyping] = useState(false);
+  const [draft, setDraft] = useState("");
+  if (!v.onSend || v.phase === "connecting") return null;
+  if (v.stall === "failed" && v.phase === "listening" && !v.partial && !typing)
+    return (
+      <div role="alert" className="flex items-center gap-2 rounded-[18px] border border-bad/25 bg-bad/[0.06] p-1.5 pl-3.5">
+        <p className="min-w-0 flex-1 text-[13.5px] leading-snug">That didn&apos;t go through.</p>
+        <button type="button" onClick={() => setTyping(true)} aria-label="Type instead" title="Type instead" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg md:h-9 md:w-9">
+          <KeyboardIcon size={16} />
+        </button>
+        <button type="button" onClick={v.onRetry} className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-brand px-4 text-[13.5px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.97] md:min-h-9">
+          Retry
+        </button>
+      </div>
+    );
+  if (typing)
+    return (
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!draft.trim()) return;
+          v.onType?.(draft);
+          setDraft("");
+          setTyping(false);
+        }}
+        className="flex items-center gap-1.5 rounded-[18px] border border-line bg-surface p-1.5"
+      >
+        <label className="sr-only" htmlFor="call-type">
+          Type what you want to say
+        </label>
+        <input
+          id="call-type"
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && setTyping(false)}
+          enterKeyHint="send"
+          autoComplete="off"
+          placeholder="Type it instead"
+          className="h-11 min-w-0 flex-1 rounded-full bg-transparent px-3 text-[16px] text-fg outline-none placeholder:text-faint md:h-9 md:text-[14px]"
+        />
+        <button type="button" onClick={() => setTyping(false)} aria-label="Back to talking" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg md:h-9 md:w-9">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+        <button type="submit" disabled={!draft.trim()} className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-brand px-4 text-[13.5px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.97] disabled:opacity-40 md:min-h-9">
+          Send
+          <SendIcon size={14} />
+        </button>
+      </form>
+    );
+  const hint = v.muted ? "Muted. Unmute to talk, or type it." : v.phase === "listening" ? "Listening. It sends when you pause, or tap Send." : "";
+  const caption = v.partial || hint;
+  const sendButton = (
+    <button
+      type="button"
+      onClick={v.onSend}
+      disabled={!v.canSend}
+      title={compact ? "Send what I heard now (Enter)" : "Send what I heard now"}
+      className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-brand px-4 text-[13.5px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.97] disabled:opacity-35 md:min-h-9"
+    >
+      Send
+      <SendIcon size={14} />
+    </button>
+  );
+  if (compact)
+    return (
+      <div className="flex items-center gap-1 rounded-[16px] border border-line bg-surface-2/40 p-1 pl-3">
+        <p aria-live="polite" className={`line-clamp-2 min-w-0 flex-1 text-[12.5px] leading-snug ${v.partial ? "text-fg" : "text-faint"}`}>
+          {caption}
+        </p>
+        <button type="button" onClick={() => setTyping(true)} aria-label="Type instead" title="Type instead" className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg">
+          <KeyboardIcon size={16} />
+        </button>
+        {sendButton}
+      </div>
+    );
+  return (
+    <div className="grid gap-1.5 rounded-[20px] border border-line bg-surface/80 p-2 pl-3.5 backdrop-blur">
+      <p aria-live="polite" className={`line-clamp-3 min-h-[2.6em] pr-1 pt-1 text-[14.5px] leading-snug ${v.partial ? "text-fg" : "text-faint"}`}>
+        {caption}
+      </p>
+      <div className="flex items-center justify-between gap-2">
+        <button type="button" onClick={() => setTyping(true)} className="inline-flex min-h-11 items-center gap-2 rounded-full px-1.5 text-[13px] text-muted transition-colors hover:text-fg">
+          <KeyboardIcon size={17} />
+          Type instead
+        </button>
+        {sendButton}
+      </div>
+    </div>
+  );
+}
+
+/** The call's small menu: download the transcript so far */
+function CallMenu({ callId, small = false }: { callId: string | null | undefined; small?: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (!callId) return null;
+  return (
+    <span className="relative">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-label="More" aria-expanded={open} title="More" className={`grid place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg ${small ? "h-8 w-8" : "h-11 w-11"}`}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+          <circle cx="5" cy="12" r="1.7" />
+          <circle cx="12" cy="12" r="1.7" />
+          <circle cx="19" cy="12" r="1.7" />
+        </svg>
+      </button>
+      {open && (
+        <>
+          <button type="button" aria-label="Close the menu" onClick={() => setOpen(false)} className="fixed inset-0 z-10 cursor-default" />
+          <span className="absolute right-0 top-full z-20 mt-1.5 grid min-w-[220px] rounded-[14px] border border-line bg-surface p-1 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.55)] animate-[sheet-fade_.15s_ease-out]">
+            <TranscriptButton callId={callId} onDone={() => setOpen(false)} className="min-h-11 w-full rounded-[10px] px-3 text-left text-[13.5px] text-fg transition-colors hover:bg-surface-2 md:min-h-9" />
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
+/** The hidden debug overlay (?calldebug=1): what the call hears and decides, to diagnose a real call */
+function DebugOverlay({ call }: { call: RefObject<Call | null> }) {
+  const [d, setD] = useState<CallDebug | null>(null);
+  useEffect(() => {
+    const t = setInterval(() => setD(call.current?.debug() ?? null), 250);
+    return () => clearInterval(t);
+  }, [call]);
+  if (!d) return null;
+  const n = (x: number) => x.toFixed(4);
+  return (
+    <pre className="pointer-events-none fixed left-2 top-2 z-[99] rounded-[10px] bg-black/75 px-3 py-2 font-mono text-[11px] leading-snug text-white">
+      {`phase ${d.phase}${d.muted ? " (muted)" : ""}  stall ${d.stall ?? "-"}
+ears ${d.ears}
+level ${n(d.level)}  noise ${n(d.noise)}  threshold ${n(d.threshold)}
+in speech ${d.speaking ? "yes" : "no"}  heard ${d.heard} chars
+commit ${d.commit ?? "-"}  asking ${d.asking ?? "-"}  queue ${d.queue}`}
+    </pre>
+  );
+}
 
 /** Whose line it is, when a specialist is (or was) on the call: captions show who's speaking */
 const speakerOf = (l: Line, v: CallView) => (l.who === "agent" && l.speaker && (v.guest || l.speaker.role !== v.agent.roleKey) ? l.speaker.label : null);
@@ -169,6 +339,7 @@ function LearnedChips({ learned, max = 3 }: { learned: LearnedItem[]; max?: numb
 // ─── Phones: the whole screen ───────────────────────────────────────────────
 
 export function FullScreenCall({ v }: { v: CallView }) {
+  // The live words are shown in the Send bar, under the captions
   const { agent, phase, lines, partial, muted, error, elapsed, left } = v;
   const captions = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -189,10 +360,14 @@ export function FullScreenCall({ v }: { v: CallView }) {
           <span className="text-[11px] uppercase tracking-[0.16em] text-faint">{v.ears === "browser" ? "Call · browser listening" : "Call"}</span>
           <RecordedMark />
         </span>
+        <span className="flex items-center gap-1">
+        <CallMenu callId={v.callId} />
         <span className={`tabular rounded-full px-3 py-1 text-xs ${left < 120 ? "bg-warn-soft text-warn" : "bg-surface-2 text-muted"}`} aria-label={`${clock(elapsed)} of ${clock(CALL_LIMIT_SECONDS)}`}>
           {clock(elapsed)} <span className="text-faint">/ {clock(CALL_LIMIT_SECONDS)}</span>
         </span>
+        </span>
       </header>
+      {v.debug && <DebugOverlay call={v.call} />}
 
       <div className="relative grid flex-none justify-items-center gap-4 px-5 pt-8 sm:pt-14">
         <div className="relative grid place-items-center">
@@ -222,7 +397,6 @@ export function FullScreenCall({ v }: { v: CallView }) {
               {l.text}
             </p>
           ))}
-          {partial && <p className="ml-auto max-w-[85%] rounded-[16px] rounded-br-[6px] border border-dashed border-line px-3.5 py-2 text-[14.5px] leading-relaxed text-faint">{partial}</p>}
         </div>
       </div>
 
@@ -235,6 +409,10 @@ export function FullScreenCall({ v }: { v: CallView }) {
           <LearnedChips learned={v.learned} />
         </div>
       )}
+
+      <div className="relative mx-auto w-full max-w-xl px-5 pb-1">
+        <SendBar v={v} compact={false} />
+      </div>
 
       <footer className="relative flex items-center justify-center gap-10 px-5 pb-6 pt-3">
         <button
@@ -332,6 +510,7 @@ export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; mi
         <span className={`tabular rounded-full px-2.5 py-1 text-xs ${left < 120 ? "bg-warn-soft text-warn" : "bg-surface-2 text-muted"}`} aria-label={`${clock(elapsed)} of ${clock(CALL_LIMIT_SECONDS)}`}>
           {clock(elapsed)}
         </span>
+        <CallMenu callId={v.callId} small />
         <button type="button" onClick={onMinimize} aria-label="Minimise the huddle (Esc)" title="Minimise (Esc)" className="grid h-8 w-8 place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
             <path d="M5 12h14" />
@@ -346,14 +525,13 @@ export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; mi
       <div className="relative px-4 pb-1 pt-2">
         {full ? (
           <div ref={scroller} className="grid max-h-64 gap-2 overflow-y-auto overscroll-contain pr-1" aria-label="Transcript">
-            {v.lines.length === 0 && !v.partial && <p className="text-[13px] text-faint">Nothing said yet.</p>}
+            {v.lines.length === 0 && <p className="text-[13px] text-faint">Nothing said yet.</p>}
             {v.lines.map((l) => (
               <p key={l.id} className={l.who === "you" ? "ml-auto max-w-[88%] rounded-[14px] rounded-br-[5px] bg-surface-2 px-3 py-1.5 text-[13px] leading-snug text-muted" : "max-w-[94%] text-[13.5px] leading-snug text-fg"}>
                 {speakerOf(l, v) && <span className="block text-[10.5px] uppercase tracking-[0.14em] text-faint">{speakerOf(l, v)}</span>}
                 {l.text}
               </p>
             ))}
-            {v.partial && <p className="ml-auto max-w-[88%] rounded-[14px] rounded-br-[5px] border border-dashed border-line px-3 py-1.5 text-[13px] leading-snug text-faint">{v.partial}</p>}
           </div>
         ) : (
           <div className="grid min-h-[44px] gap-1.5" aria-label="Latest captions">
@@ -363,8 +541,8 @@ export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; mi
                 {lastAgent.text}
               </p>
             )}
-            {v.partial ? <p className="line-clamp-2 text-[13px] leading-snug text-faint">{v.partial}</p> : lastYou && (!lastAgent || lastYou.id > lastAgent.id) && <p className="line-clamp-2 text-[13px] leading-snug text-muted">{lastYou.text}</p>}
-            {!lastAgent && !v.partial && !lastYou && <p className="text-[13px] text-faint">{phase === "connecting" ? "Calling…" : "Say something, it's listening."}</p>}
+            {lastYou && (!lastAgent || lastYou.id > lastAgent.id) && <p className="line-clamp-2 text-[13px] leading-snug text-muted">{lastYou.text}</p>}
+            {!lastAgent && !lastYou && <p className="text-[13px] text-faint">{phase === "connecting" ? "Calling…" : "Say something, it's listening."}</p>}
           </div>
         )}
         {v.lines.length > 0 && (
@@ -387,10 +565,15 @@ export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; mi
         </div>
       )}
 
+      <div className="relative px-4 pb-2.5 pt-1.5">
+        <SendBar v={v} compact />
+      </div>
+      {v.debug && <DebugOverlay call={v.call} />}
+
       <div className="relative flex items-center justify-between gap-3 border-t border-line px-4 py-3">
         <span className="grid gap-1 text-[11px] leading-tight text-faint">
           <RecordedMark />
-          <span>Space mutes · Esc minimises</span>
+          <span>Space mutes · Enter sends · Esc minimises</span>
         </span>
         <span className="flex items-center gap-2.5">
           {v.screen?.can && (
@@ -518,7 +701,7 @@ function KeptItem({ item, callId, skills, onChange }: { item: LearnedItem; callI
  * (editable), Keep or Toss, Keep all or Toss all, then Apply. Only kept items are written. Decide later leaves them
  * pending (they wait on the Overview and the agent's page). Used at hang-up and from the Overview or the agent's page.
  */
-export function ReviewBody({ agent, callId, items, skills, heading, sub, onDone, onApplied }: { agent: AgentRef; callId: string | null; items: LearnedItem[] | null; skills: Record<string, string>; heading: string; sub: string; onDone: () => void; onApplied?: () => void }) {
+export function ReviewBody({ agent, callId, items, skills, heading, sub, onDone, onApplied, transcript = false }: { agent: AgentRef; callId: string | null; items: LearnedItem[] | null; skills: Record<string, string>; heading: string; sub: string; onDone: () => void; onApplied?: () => void; transcript?: boolean }) {
   const pendingNow = (items ?? []).filter((l) => statusOf(l) === "pending");
   const [choices, setChoices] = useState<Record<string, Choice>>({});
   const [result, setResult] = useState<{ learned: LearnedItem[]; kept: number; tossed: number; proposals: number } | null>(null);
@@ -598,6 +781,7 @@ export function ReviewBody({ agent, callId, items, skills, heading, sub, onDone,
         {error && <p className="mt-3 text-sm text-bad">{error}</p>}
       </div>
       <div className="grid gap-2 border-t border-line px-5 py-4">
+        {transcript && callId && <TranscriptButton callId={callId} className={TRANSCRIPT_LINK} />}
         {!result && pendingNow.length > 0 && callId ? (
           <>
             <button
@@ -622,6 +806,8 @@ export function ReviewBody({ agent, callId, items, skills, heading, sub, onDone,
   );
 }
 
+const TRANSCRIPT_LINK = "min-h-11 w-full justify-center rounded-full border border-line text-[13.5px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-9";
+
 /** After a call: the review (for those who train the agent) or a short wrap-up */
 function SummaryBody({ s }: { s: SummaryView }) {
   const sub = s.summary ? `Call with the ${s.agent.label} · ${clock(s.summary.seconds)}` : "Hanging up…";
@@ -640,6 +826,7 @@ function SummaryBody({ s }: { s: SummaryView }) {
           <p className="mt-4 text-[12.5px] leading-relaxed text-faint">Your calls and what I remember about you are on your assistant&apos;s page.</p>
         </div>
         <div className="grid gap-2 border-t border-line px-5 py-4">
+          {s.callId && <TranscriptButton callId={s.callId} className={TRANSCRIPT_LINK} />}
           <a href="/assistant" className="inline-flex min-h-11 w-full items-center justify-center rounded-full border border-line text-[13.5px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-9">
             Open my assistant
           </a>
@@ -662,14 +849,15 @@ function SummaryBody({ s }: { s: SummaryView }) {
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <p className="text-sm leading-relaxed text-muted">The whole call is in my chat, so you can read it back any time. Anything you asked me to remind you of or pass on is on the Overview.</p>
         </div>
-        <div className="border-t border-line px-5 py-4">
+        <div className="grid gap-2 border-t border-line px-5 py-4">
+          {s.callId && <TranscriptButton callId={s.callId} className={TRANSCRIPT_LINK} />}
           <button type="button" onClick={s.onDone} className="min-h-12 w-full rounded-full bg-brand px-5 text-[14.5px] font-medium text-white transition hover:bg-brand-hover md:min-h-10">
             Done
           </button>
         </div>
       </>
     );
-  return <ReviewBody agent={s.agent} callId={s.callId} items={s.summary ? s.learned : null} skills={s.summary?.skills ?? {}} heading="What I heard" sub={sub} onDone={s.onDone} />;
+  return <ReviewBody agent={s.agent} callId={s.callId} items={s.summary ? s.learned : null} skills={s.summary?.skills ?? {}} heading="What I heard" sub={sub} onDone={s.onDone} transcript />;
 }
 
 /** Phones: the whole screen */

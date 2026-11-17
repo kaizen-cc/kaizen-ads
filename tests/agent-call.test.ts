@@ -57,7 +57,7 @@ describe("splitting the reply into sentences to speak", () => {
 describe("text for speech", () => {
   it("strips markdown, links and dashes", () => {
     expect(speakable("**Three things** to check:\n- [the report](https://x.y/z)\n- frequency — always")).toBe("Three things to check: the report frequency, always");
-    expect(speakable("See https://example.com/a for it")).toBe("See the link for it");
+    expect(speakable("See https://example.com/a for it")).toBe("See \uE000 for it");
   });
 });
 
@@ -100,7 +100,8 @@ describe("turn taking", () => {
   });
   it("waits longer before answering after a long stretch of thinking out loud", () => {
     const d = createTurnDetector();
-    run(d, 0.1, TURN.longTurnMs + 200);
+    // A voice swings (a perfectly flat level would be a fan, not a person)
+    for (let t = 0; t < TURN.longTurnMs + 200; t += 20) d.feed(t % 200 < 100 ? 0.06 : 0.16, 20, false);
     expect(run(d, 0.001, TURN.endSilenceMs + 200)).toEqual([]);
     expect(run(d, 0.001, TURN.longTurnSilenceMs - TURN.endSilenceMs)).toEqual(["turn_end"]);
   });
