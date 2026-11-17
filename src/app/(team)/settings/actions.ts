@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { AiUnavailable, askJson, askJsonWithTools, forgetAgent, type AgentKey } from "@/lib/ai";
 import { TOOLS_RULE, agentTools } from "@/lib/agent-call/agent-tools";
+import { CONCISE_CHAT_RULE } from "@/lib/agent-call/core";
 import { focusFor } from "@/lib/agent-call/role-focus";
 import { roleChatRows } from "@/lib/agent-call/chat-scope";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -451,7 +452,7 @@ export async function chatWithAgent(roleKey: string, message: string, files: Age
     const out = await askJsonWithTools<{ reply: string; changes: Change[] }>({
       agent: "coach",
       label: `agent chat ${roleKey}`,
-      system: `${roleSystem(role.label)}\n${SHARED_RULES}\n\nToday is ${today} (New York). ${TOOLS_RULE} Give the numbers that answer the question in a sentence or two; never paste a table. Questions about clients and their numbers get answers, not proposed edits.\nWhat you lead with: ${focusFor(roleKey)}${teach}`,
+      system: `${roleSystem(role.label)}\n${SHARED_RULES}\n\n${CONCISE_CHAT_RULE}\n\nToday is ${today} (New York). ${TOOLS_RULE} Give the numbers that answer the question in a sentence or two; never paste a table. Questions about clients and their numbers get answers, not proposed edits.\nWhat you lead with: ${focusFor(roleKey)}${teach}`,
       schema: ROLE_SCHEMA,
       tools,
       maxRounds: 6,

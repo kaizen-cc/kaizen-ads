@@ -3,8 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
-import { CALL_LIMIT_SECONDS, decide, greetingFor, isVoiceId, pendingOf, resumeModeFor, seedOf, statusOf, voiceFor, type Decision, type LearnedItem, type ResumeMode } from "@/lib/agent-call/core";
+import { CALL_LIMIT_SECONDS, decide, firstNameOf, greetingFor, isVoiceId, pendingOf, resumeModeFor, seedOf, statusOf, voiceFor, type Decision, type LearnedItem, type ResumeMode } from "@/lib/agent-call/core";
 import { summarizeCall, sweepOpenCalls } from "@/lib/agent-call/server";
+import { reviewCallSafety } from "@/lib/agent-call/safety";
+import { ASSISTANT_KEY, assistantGreeting } from "@/lib/assistant/core";
+import { learnFromCall, loadMemory, markFollowedUp } from "@/lib/assistant/memory";
+import { writeCallNotes } from "@/lib/assistant/notes";
 import { logTraining, snapshot } from "@/lib/agent-training";
 import { aiEnabled } from "@/lib/ai";
 import { requireStaff, type Staff } from "@/lib/auth";
@@ -20,7 +24,7 @@ import { chatWithAgent } from "./actions";
 // the agent's page) they keep or toss each item, and only kept ones are written. The turns themselves stream through
 // /api/agent-call/turn and /api/agent-call/speak.
 
-type Fail = { ok: false; error: string };
+type Fail = { ok: false; error: string; needsNotice?: boolean };
 const NOT_YOURS: Fail = { ok: false, error: "Only an executive or the head of this agent's line can change what it knows." };
 
 export type StartedCall = { ok: true; callId: string; greeting: string; sttToken: string | null; limitSeconds: number; startedAt: string; mode: ResumeMode; canTeach: boolean };
@@ -32,6 +36,8 @@ export async function startCall(roleKey: string): Promise<StartedCall | Fail> {
   if (!aiEnabled()) return { ok: false, error: "AI isn't connected yet." };
   if (!elevenlabsConfigured()) return { ok: false, error: "Calls need ElevenLabs: an exec adds ELEVENLABS_API_KEY in Vercel." };
   const admin = createAdminClient();
+  // The one-time notice that calls are recorded and may be reviewed, before the first call of any kind
+  if (!(await noticeAcked(admin, me.id))) return { ok: false, error: "Calls with Kaizen's AI are recorded and may be reviewed for safety and compliance.", needsNotice: true };
   const { data: role } = await admin.from("ai_roles").select("*").eq("key", roleKey).maybeSingle();
   if (!role) return { ok: false, error: "Unknown agent." };
   // A call of theirs never hung up (a closed tab, a dropped line) is closed first; what it heard stays for review
@@ -54,7 +60,14 @@ export async function startCall(roleKey: string): Promise<StartedCall | Fail> {
   // Before the review migration: a plain call
   if (error) ({ data: call, error } = await admin.from("ai_role_calls").insert(row).select("id, started_at").single());
   if (error || !call) return { ok: false, error: error?.message ?? "Couldn't start the call." };
-  const greeting = greetingFor(me.fullName, role.label as string, mode, (prev?.topic as string | null) ?? null, seedOf(call.id as string));
+  let greeting = greetingFor(me.fullName, role.label as string, mode, (prev?.topic as string | null) ?? null, seedOf(call.id as string));
+  // The assistant: a hello that remembers them (a birthday, how the trip went), unless the line just dropped
+  if (roleKey === ASSISTANT_KEY && mode !== "continue") {
+    const memory = await loadMemory(admin, me.id);
+    const hello = assistantGreeting({ name: firstNameOf(me.fullName), memory, today: new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }), seed: seedOf(call.id as string) });
+    greeting = hello.text;
+    if (hello.followed) await markFollowedUp(admin, me.id, hello.followed);
+  }
   await admin.from("ai_role_chats").insert({ role_key: roleKey, role: "agent", content: greeting, attachments: [], changes: [], created_by: me.id, call_id: call.id });
   return { ok: true, callId: call.id as string, greeting, sttToken, limitSeconds: CALL_LIMIT_SECONDS, startedAt: call.started_at as string, mode, canTeach: canTrainAgent(me, roleKey) };
 }
@@ -111,11 +124,23 @@ export async function endCall(callId: string): Promise<EndedCall | Fail> {
       actor: "person",
     });
     after(() => summarizeCall(admin, callId));
+    // The assistant's notes and what it learned about the person (their private memory), then every call's safety review
+    if (call.role_key === ASSISTANT_KEY) {
+      after(() => writeCallNotes(admin, callId).then(() => undefined));
+      after(() => learnFromCall(admin, callId).then(() => undefined));
+    }
+    // A little later, so the last part of the recording has landed before the review decides whether to keep it
+    after(async () => {
+      await new Promise((r) => setTimeout(r, 20_000));
+      await reviewCallSafety(admin, callId);
+    });
     revalidatePath("/settings");
   }
-  const { data: skillRows } = await admin.from("ai_agents").select("key, label").eq("role_key", call.role_key as string);
+  // On an assistant call, what was heard belongs to the specialists it called in
+  const roles = call.role_key === ASSISTANT_KEY ? [...new Set(learned.map((l) => l.role).filter((r): r is string => Boolean(r)))] : [call.role_key as string];
+  const { data: skillRows } = roles.length ? await admin.from("ai_agents").select("key, label").in("role_key", roles) : { data: [] };
   const skills = Object.fromEntries((skillRows ?? []).map((k) => [k.key as string, k.label as string]));
-  return { ok: true, seconds, learned, canReview: canTrainAgent(me, call.role_key as string), skills };
+  return { ok: true, seconds, learned, canReview: roles.some((r) => canTrainAgent(me, r)), skills };
 }
 
 export type ReviewedCall = { ok: true; learned: LearnedItem[]; kept: number; tossed: number; proposals: number };
@@ -132,9 +157,10 @@ export async function reviewCallLearnings(callId: string, decisions: Record<stri
   const admin = createAdminClient();
   const { data: call } = await admin.from("ai_role_calls").select("id, role_key, profile_id, learned, reviewed_at").eq("id", callId).maybeSingle();
   if (!call) return { ok: false, error: "That call isn't there any more." };
-  const roleKey = call.role_key as string;
-  if (!canTrainAgent(me, roleKey) || (call.profile_id !== me.id && !me.isExec)) return NOT_YOURS;
   const items = (call.learned ?? []) as LearnedItem[];
+  // An assistant call's items were taught to the specialist it called in (each carries its agent)
+  const roleKey = call.role_key === ASSISTANT_KEY ? (items.find((l) => l.role)?.role ?? "") : (call.role_key as string);
+  if (!canTrainAgent(me, roleKey) || (call.profile_id !== me.id && !me.isExec)) return NOT_YOURS;
   const plan = decide(items, decisions);
   if (!plan.ok) return plan;
   // Claimed, so two tabs can't write the same notes twice
@@ -168,10 +194,12 @@ export async function reviewCallLearnings(callId: string, decisions: Record<stri
     .from("ai_role_calls")
     .update({ learned: next, ...(stillPending ? { reviewed_at: null, reviewed_by: null } : {}) })
     .eq("id", callId);
-  if (proposals.length) {
-    const asked = `From our call, change how you work: ${proposals.map((p) => `${p.skill === "core" ? "in your core" : `in your ${p.skill} skill`}, ${p.body}`).join(" Also, ")}`;
+  // Proposals go to each agent's own chat (an assistant call can have taught more than one)
+  for (const [agent, list] of Object.entries(Object.groupBy(proposals, (p) => p.role ?? roleKey))) {
+    if (!list?.length || !canTrainAgent(me, agent)) continue;
+    const asked = `From our call, change how you work: ${list.map((p) => `${p.skill === "core" ? "in your core" : `in your ${p.skill} skill`}, ${p.body}`).join(" Also, ")}`;
     after(async () => {
-      const r = await chatWithAgent(roleKey, asked);
+      const r = await chatWithAgent(agent, asked);
       if (!r.ok) console.error("[agent call] proposals", r.error);
     });
   }
@@ -238,4 +266,20 @@ export async function setAgentVoice(roleKey: string, voiceId: string | null): Pr
   if (error) return { ok: false, error: error.message };
   revalidatePath("/settings");
   return { ok: true };
+}
+
+// ─── The recording notice ───────────────────────────────────────────────────
+
+async function noticeAcked(admin: ReturnType<typeof createAdminClient>, profileId: string): Promise<boolean> {
+  const { data, error } = await admin.from("call_notice_acks").select("profile_id").eq("profile_id", profileId).maybeSingle();
+  // Before the migration: no notice table yet, calls go on as before
+  if (error) return true;
+  return Boolean(data);
+}
+
+/** The person read the notice (calls are recorded and may be reviewed): kept with the time, asked once */
+export async function ackCallNotice(): Promise<{ ok: true } | Fail> {
+  const me = await requireStaff();
+  const { error } = await createAdminClient().from("call_notice_acks").upsert({ profile_id: me.id, version: 1, acked_at: new Date().toISOString() }, { onConflict: "profile_id" });
+  return error ? { ok: false, error: "Couldn't save that. Try again." } : { ok: true };
 }

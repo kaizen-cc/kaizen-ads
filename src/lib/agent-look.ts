@@ -2,3 +2,6 @@
 // everywhere.
 export const AGENT_TINT: Record<string, string> = { compass: "#5b8def", shield: "#b21e2c", feed: "#2fa37a", pen: "#c08a2e", rocket: "#8a63d2", pulse: "#d1495b", film: "#e07a3f", book: "#3fa7b5", eye: "#6c7ee1", scan: "#9b6bd6", target: "#e0a03f", spark: "#888888" };
 export const tintOf = (icon: string | null | undefined) => AGENT_TINT[icon ?? ""] ?? AGENT_TINT.spark;
+
+/** The personal assistant's colour (Call my assistant), the same on the menu, the call and its page */
+export const ASSISTANT_TINT = "#b06ad9";

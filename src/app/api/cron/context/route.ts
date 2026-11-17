@@ -213,7 +213,12 @@ export async function GET(request: Request) {
       return Response.json(sheetConfigured() ? await syncAccountSheet(admin) : { skipped: "Google isn't connected" });
     }
     if (step === "remind") return Response.json(await (await import("@/lib/notifications")).remindRecaps(admin));
-    if (step === "notify") return Response.json(await (await import("@/lib/notifications")).emailNotifications(admin));
+    if (step === "notify") {
+      // Also: the safety review of ended calls (and their audio's retention), and reports the assistant is watching
+      const safety = await (await import("@/lib/agent-call/safety")).sweepCallSafety(admin).catch((e) => ({ error: String(e) }));
+      const watches = await (await import("@/lib/assistant/tools")).sweepReportWatches(admin).catch((e) => ({ error: String(e) }));
+      return Response.json({ ...(await (await import("@/lib/notifications")).emailNotifications(admin)), safety, watches });
+    }
     if (step === "feedback") {
       const { feedbackDigest, runFeedback } = await import("@/lib/feedback");
       const out = await runFeedback(admin);

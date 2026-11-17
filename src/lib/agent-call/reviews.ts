@@ -12,13 +12,15 @@ export type CallReview = { callId: string; roleKey: string; roleLabel: string; i
 
 export async function loadCallReviews(admin: SupabaseClient, me: Staff, roleKey?: string): Promise<CallReview[]> {
   let q = admin.from("ai_role_calls").select("id, role_key, started_at, ended_at, learned").eq("profile_id", me.id).is("reviewed_at", null).order("started_at", { ascending: false }).limit(20);
-  if (roleKey) q = q.eq("role_key", roleKey);
+  if (roleKey) q = q.in("role_key", [roleKey, "assistant"]);
   const { data, error } = await q;
   if (error || !data?.length) return [];
   // A call still going isn't ready; one past its time without a hang-up is (the sweep closes it soon)
   const stale = Date.now() - (CALL_LIMIT_SECONDS + 120) * 1000;
-  const rows = data.filter((c) => (c.ended_at || Date.parse(c.started_at as string) < stale) && canTrainAgent(me, c.role_key as string));
-  const ready = rows.map((c) => ({ c, items: pendingOf((c.learned ?? []) as LearnedItem[]) })).filter((x) => x.items.length);
+  // An assistant call's items were taught to the specialist it called in: the review is that agent's
+  const agentOf = (c: { role_key: unknown; learned: unknown }) => (c.role_key === "assistant" ? (((c.learned ?? []) as LearnedItem[]).find((l) => l.role)?.role ?? "") : (c.role_key as string));
+  const rows = data.filter((c) => (c.ended_at || Date.parse(c.started_at as string) < stale) && canTrainAgent(me, agentOf(c)) && (!roleKey || agentOf(c) === roleKey));
+  const ready = rows.map((c) => ({ c: { ...c, role_key: agentOf(c) }, items: pendingOf((c.learned ?? []) as LearnedItem[]) })).filter((x) => x.items.length);
   if (!ready.length) return [];
   const { data: roles } = await admin.from("ai_roles").select("key, label, icon").in("key", [...new Set(ready.map((x) => x.c.role_key as string))]);
   const roleBy = new Map((roles ?? []).map((r) => [r.key as string, r]));

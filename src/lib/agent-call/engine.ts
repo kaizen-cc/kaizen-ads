@@ -1,4 +1,5 @@
-import { downsample, createTurnDetector, rms, splitSpeakable, toPcm16, type CallEvent, type LearnedItem } from "./core";
+import { downsample, createTurnDetector, rms, splitSpeakable, toPcm16, type CallCard, type CallEvent, type LearnedItem, type UploadAsk } from "./core";
+import { AUDIO_PART_SECONDS } from "@/lib/assistant/core";
 import { renewSttToken } from "@/app/(team)/settings/call-actions";
 
 // The live call itself: the microphone, turn taking, listening, the agent's answers and its voice. It knows nothing
@@ -9,7 +10,11 @@ import { renewSttToken } from "@/app/(team)/settings/call-actions";
 // arrives; talking over it stops it.
 
 export type Phase = "connecting" | "listening" | "thinking" | "speaking";
-export type Line = { id: number; who: "you" | "agent"; text: string };
+/** A line of the call; `speaker` names the agent that said it when more than one is on the line */
+export type Line = { id: number; who: "you" | "agent"; text: string; speaker?: { role: string; label: string; icon: string } };
+
+/** Who is speaking now (an assistant call can have a specialist on the line) */
+export type Speaker = { role: string; label: string; icon: string };
 
 const STT_RATE = 16000;
 /** Audio kept from just before someone starts talking over the agent, so their first words aren't lost */
@@ -217,7 +222,48 @@ export type Hooks = {
   onLearned: (items: LearnedItem[]) => void;
   onError: (msg: string) => void;
   onEars: (kind: "scribe" | "browser") => void;
+  /** A specialist joined (or left: null) */
+  onGuest?: (g: Speaker | null) => void;
+  /** Open a screen in the app; the call carries on */
+  onNavigate?: (href: string) => void;
+  /** A link card on the call */
+  onCard?: (c: CallCard) => void;
+  /** The assistant asked for files */
+  onUpload?: (ask: UploadAsk) => void;
+  /** The agent said goodbye and its last words have played: hang up */
+  onEnd?: () => void;
+  /** A finished part of the call's recording (both sides), to upload */
+  onAudioPart?: (part: { blob: Blob; index: number; startSeconds: number; mime: string }) => void;
 };
+
+/**
+ * A short tone made right here (no file): a soft rising pair when the call connects, a pleasant falling pair when it
+ * ends (whoever hangs up). Its own audio context, so it plays after the call's is closed.
+ */
+export function chime(kind: "connect" | "end") {
+  try {
+    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new AC();
+    const notes = kind === "end" ? [659.25, 493.88] : [523.25, 659.25];
+    const t0 = ctx.currentTime + 0.02;
+    notes.forEach((f, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.value = f;
+      const at = t0 + i * 0.16;
+      g.gain.setValueAtTime(0, at);
+      g.gain.linearRampToValueAtTime(kind === "end" ? 0.16 : 0.1, at + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.32);
+      o.connect(g).connect(ctx.destination);
+      o.start(at);
+      o.stop(at + 0.34);
+    });
+    setTimeout(() => void ctx.close().catch(() => undefined), 900);
+  } catch {
+    // No sound: the call still ends
+  }
+}
 
 /** Everything a live call runs: the microphone, turn taking, listening, the agent's answers and its voice */
 export class Call {
@@ -234,7 +280,16 @@ export class Call {
   private frame: number[] = [];
   private turn: AbortController | null = null;
   private voice: AbortController | null = null;
-  private queue: { text: string; audio: Promise<AudioBuffer | null> }[] = [];
+  private queue: { text: string; audio: Promise<AudioBuffer | null>; speaker: Speaker | null }[] = [];
+  /** Who the next words are from (set by the turn's speaker events) */
+  private speaker: Speaker | null = null;
+  /** The agent said goodbye: hang up once the queue has played */
+  private ending = false;
+  private recorder: MediaRecorder | null = null;
+  private recDest: MediaStreamAudioDestinationNode | null = null;
+  private recTimer: ReturnType<typeof setTimeout> | null = null;
+  private recIndex = 0;
+  private recStarted = 0;
   private playing: AudioBufferSourceNode | null = null;
   private streamDone = true;
   private lineId = 0;
@@ -282,6 +337,14 @@ export class Call {
     const silent = this.ctx.createGain();
     silent.gain.value = 0;
     src.connect(this.node).connect(silent).connect(this.ctx.destination);
+    // The recording (people are told before their first call): the microphone and the agent's voice together
+    if (this.hooks.onAudioPart && typeof MediaRecorder !== "undefined") {
+      this.recDest = this.ctx.createMediaStreamDestination();
+      src.connect(this.recDest);
+      this.out.connect(this.recDest);
+      this.recStarted = Date.now();
+      this.recordPart();
+    }
     this.listenWith(sttToken);
     try {
       this.wake = await (navigator as unknown as { wakeLock?: { request: (t: "screen") => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request("screen") ?? null;
@@ -294,6 +357,33 @@ export class Call {
     this.say(greeting);
     this.streamDone = true;
     this.drain();
+  }
+
+  /** One part of the recording: a whole file of its own, a couple of minutes long, then the next */
+  private recordPart() {
+    if (!this.recDest || this.closed) return;
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported?.(m)) ?? "";
+    let rec: MediaRecorder;
+    try {
+      rec = new MediaRecorder(this.recDest.stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+    } catch {
+      return;
+    }
+    const index = this.recIndex++;
+    const startSeconds = Math.round((Date.now() - this.recStarted) / 1000);
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => {
+      if (e.data.size) chunks.push(e.data);
+    };
+    rec.onstop = () => {
+      if (chunks.length) this.hooks.onAudioPart?.({ blob: new Blob(chunks, { type: rec.mimeType || mime || "audio/webm" }), index, startSeconds, mime: rec.mimeType || mime || "audio/webm" });
+    };
+    rec.start();
+    this.recorder = rec;
+    this.recTimer = setTimeout(() => {
+      rec.stop();
+      this.recordPart();
+    }, AUDIO_PART_SECONDS * 1000);
   }
 
   private listenWith(token: string | null) {
@@ -432,6 +522,16 @@ export class Call {
             ready.forEach((s) => this.say(s));
           } else if (e.t === "learned") this.hooks.onLearned(e.items);
           else if (e.t === "error") this.say(e.message);
+          else if (e.t === "speaker") {
+            // A new voice: what the last one was still writing is said first
+            if (buffer.trim()) this.say(buffer.trim());
+            buffer = "";
+            this.speaker = { role: e.role, label: e.label, icon: e.icon };
+          } else if (e.t === "guest") this.hooks.onGuest?.(e.role ? { role: e.role, label: e.label ?? "", icon: e.icon ?? "spark" } : null);
+          else if (e.t === "navigate") this.hooks.onNavigate?.(e.href);
+          else if (e.t === "card") this.hooks.onCard?.(e.card);
+          else if (e.t === "upload") this.hooks.onUpload?.(e.ask);
+          else if (e.t === "end") this.ending = true;
         }
       }
       if (buffer.trim()) this.say(buffer.trim());
@@ -447,20 +547,44 @@ export class Call {
     }
   }
 
-  /** One sentence: its audio is fetched straight away (in parallel with the ones before), played in order */
+  /** One sentence: its audio is fetched straight away (in parallel with the ones before), played in order, in its speaker's voice */
   private say(text: string) {
     const signal = this.voice?.signal;
-    const audio = fetch("/api/agent-call/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text }), signal })
+    const speaker = this.speaker;
+    const audio = fetch("/api/agent-call/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text, ...(speaker ? { role: speaker.role } : {}) }), signal })
       .then(async (r) => (r.ok && r.status !== 204 ? this.ctx.decodeAudioData(await r.arrayBuffer()) : null))
       .catch(() => null);
-    this.queue.push({ text, audio });
+    this.queue.push({ text, audio, speaker });
     this.drain();
+  }
+
+  /**
+   * A turn sent without speaking (the files they just uploaded): shown as a note on the call and answered like
+   * anything they said. Waits for the agent to finish talking first.
+   */
+  inject(text: string, shown: string) {
+    if (this.closed) return;
+    const go = () => {
+      if (this.closed) return;
+      if (this.phase === "speaking" || this.phase === "thinking" || this.turn) return void setTimeout(go, 400);
+      this.ears?.reset();
+      this.hooks.onLine({ id: ++this.lineId, who: "you", text: shown });
+      this.setPhase("thinking");
+      void this.ask(text);
+    };
+    go();
   }
 
   private async drain() {
     if (this.playing || this.closed) return;
     const next = this.queue.shift();
     if (!next) {
+      // The goodbye has played: hang up
+      if (this.streamDone && this.ending) {
+        this.ending = false;
+        this.hooks.onEnd?.();
+        return;
+      }
       if (this.streamDone && this.phase !== "listening") {
         this.ears?.reset();
         this.detector.reset();
@@ -484,7 +608,7 @@ export class Call {
       void this.drain();
     };
     if (this.phase !== "speaking") this.setPhase("speaking");
-    this.hooks.onLine({ id: ++this.lineId, who: "agent", text: next.text });
+    this.hooks.onLine({ id: ++this.lineId, who: "agent", text: next.text, ...(next.speaker ? { speaker: next.speaker } : {}) });
     src.start();
   }
 
@@ -505,6 +629,13 @@ export class Call {
   close() {
     if (this.closed) return;
     this.closed = true;
+    // The last part of the recording is finished and handed over
+    if (this.recTimer) clearTimeout(this.recTimer);
+    try {
+      if (this.recorder && this.recorder.state !== "inactive") this.recorder.stop();
+    } catch {
+      // already stopped
+    }
     this.stopAgent();
     this.ears?.close();
     this.node?.port.close();

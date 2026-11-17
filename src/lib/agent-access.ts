@@ -62,6 +62,8 @@ export function trainableRoles(me: Me): readonly string[] {
  * knowledge target "role:<key>". Null (shared knowledge, read by every agent) is executives only.
  */
 export function canTrainAgent(me: Me, target: string | null | undefined): boolean {
+  // The personal assistant learns nothing shared (only each person's private memory): nobody trains it
+  if (target === "assistant" || target === "role:assistant") return false;
   if (me.isExec) return true;
   const role = roleOfAgent(target);
   return Boolean(role && trainableRoles(me).includes(role));
@@ -73,6 +75,8 @@ export function canTrainAgent(me: Me, target: string | null | undefined): boolea
  * change what it knows: for everyone else nothing they say is captured as a learning.
  */
 export function canTalkToAgent(me: Me, roleKey: string | null | undefined): boolean {
+  // The personal assistant (Call my assistant): everyone has their own; nobody trains it
+  if (roleKey === "assistant") return Boolean(me.role) || Boolean(me.isExec);
   if (!roleKey || !ROLE_SKILLS[roleKey]) return false;
   return Boolean(me.role) || Boolean(me.isExec);
 }

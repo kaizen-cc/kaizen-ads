@@ -11,6 +11,8 @@ import { BriefJobsIndicator, BriefJobsRoot } from "./brief-jobs";
 import { MediaJobsIndicator, MediaJobsRoot } from "./media-jobs";
 import { PersonAvatar } from "@/components/person-avatar";
 import { channelNavOk } from "@/lib/roles";
+import { useAgentCall } from "./agent-call-provider";
+import { ASSISTANT_TINT } from "@/lib/agent-look";
 
 type Tier = "exec" | "lead" | "member";
 // buyer: media-buying tools the creative team doesn't use (hidden for them); reports: only executives and media buyers;
@@ -60,6 +62,31 @@ const SETTINGS: Item = { href: "/settings", label: "Settings", icon: "M12 15a3 3
 
 // Everyone: what they've sent from the feedback bubble; execs also see everyone's, grouped and prioritized
 const FEEDBACK: Item = { href: "/feedback", label: "Feedback", icon: "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12zM9 11h.01M12 11h.01M15 11h.01" };
+
+/** Call my assistant: everyone's personal assistant, a call away from any page (the call lives above every page) */
+function AssistantButton({ size = "side", onPress }: { size?: "side" | "menu"; onPress?: () => void }) {
+  const { startAssistant, activeRole, live } = useAgentCall();
+  const on = live && activeRole === "assistant";
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        onPress?.();
+        startAssistant();
+      }}
+      className={`group relative flex w-full items-center gap-3 overflow-hidden rounded-[12px] border border-line bg-surface-2/40 text-left transition-colors hover:border-faint active:scale-[0.99] ${size === "menu" ? "min-h-12 px-3 text-[15px]" : "px-3 py-2.5 text-sm"}`}
+    >
+      <span aria-hidden className="pointer-events-none absolute -left-6 -top-8 h-16 w-24 rounded-full opacity-25 blur-2xl transition-opacity group-hover:opacity-40" style={{ background: ASSISTANT_TINT }} />
+      <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-[9px]" style={{ background: `${ASSISTANT_TINT}22`, color: ASSISTANT_TINT, boxShadow: `inset 0 0 0 1px ${ASSISTANT_TINT}33` }}>
+        {on && <span aria-hidden className="absolute inset-[-3px] animate-ping rounded-[10px] opacity-30" style={{ background: ASSISTANT_TINT }} />}
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" />
+        </svg>
+      </span>
+      <span className="relative min-w-0 flex-1 truncate text-fg">{on ? "On a call with your assistant" : "Call my assistant"}</span>
+    </button>
+  );
+}
 
 function Icon({ d }: { d: string }) {
   return (
@@ -166,6 +193,9 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
           ))}
         </nav>
         <div className="mt-auto grid gap-0.5 px-3 pb-2">
+          <div className="pb-2">
+            <AssistantButton />
+          </div>
           {link(FEEDBACK)}
           {settings && link(settings)}
         </div>
@@ -221,6 +251,9 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
                   <path d="M6 6l12 12M18 6L6 18" />
                 </svg>
               </button>
+            </div>
+            <div className="px-3 pb-4">
+              <AssistantButton size="menu" onPress={() => setMenu(false)} />
             </div>
             <nav className="grid flex-1 content-start gap-6 overflow-y-auto px-3" aria-label="Main">
               {groups.map((g) => (

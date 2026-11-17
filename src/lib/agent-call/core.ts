@@ -24,6 +24,8 @@ export const DEFAULT_VOICES: Record<string, { id: string; name: string }> = {
   email_strategist: { id: "FGY2WhTYpPnrIDTdsKH5", name: "Laura" },
   email_creative: { id: "pFZP5JQG7iQjIQuC4Bku", name: "Lily" },
   email_builder: { id: "iP95p4xoKVk53GoZ742B", name: "Chris" },
+  // The personal assistant: a warm, friendly voice
+  assistant: { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda" },
 };
 const FALLBACK_VOICE = { id: "CwhRBWXzGAHq8TQ4Fs17", name: "Roger" };
 
@@ -427,7 +429,25 @@ export type CallEvent =
   | { t: "text"; d: string }
   | { t: "learned"; items: LearnedItem[] }
   | { t: "done" }
-  | { t: "error"; message: string };
+  | { t: "error"; message: string }
+  // Who speaks the text that follows (the assistant, or the specialist it called in)
+  | { t: "speaker"; role: string; label: string; icon: string }
+  // A specialist joined the call, or left it (role null)
+  | { t: "guest"; role: string | null; label: string | null; icon: string | null }
+  // Open a screen in the app while the call carries on
+  | { t: "navigate"; href: string }
+  // A link card on the call ("take a look"): in the app or a new tab
+  | { t: "card"; card: CallCard }
+  // The assistant asks for files: the upload panel opens on the call
+  | { t: "upload"; ask: UploadAsk }
+  // The agent said goodbye: the call hangs up once its last words have played
+  | { t: "end" };
+
+/** A link the call shows as a card: tapped, it opens in the app (the call stays up) or in a new tab */
+export type CallCard = { id: string; title: string; detail: string; href: string; external: boolean; cta: string };
+
+/** What the assistant asked to be uploaded: launch creatives, or files for it to read */
+export type UploadAsk = { purpose: "creatives" | "files"; client: string | null; note: string };
 
 /**
  * A learning as the call keeps it. Heard on the call it's pending: nothing is written to the agent until a person keeps
@@ -444,6 +464,8 @@ export type LearnedItem = {
   body: string;
   status?: LearnStatus;
   undone?: boolean;
+  /** The agent it was taught to, when that isn't the call's own (a specialist called in by the assistant) */
+  role?: string;
 };
 
 export type LearnStatus = "pending" | "kept" | "tossed";
@@ -513,4 +535,65 @@ export function parseTopic(raw: unknown): string | null {
 export function clock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// ─── How every agent talks, and hanging up ──────────────────────────────────
+
+/** The firm rule for every spoken answer (calls with any agent and the assistant) */
+export const CONCISE_RULE = `Be brief. This is a firm rule. By default answer in one to three short spoken sentences. Go longer only when they ask for it ("tell me more", "walk me through it"), and even then keep it tight. Never repeat their question back, no filler ("great question", "sure thing, so"), and never close with "let me know if you need anything else".`;
+
+/** The same rule for the agents' text chats */
+export const CONCISE_CHAT_RULE = `Be brief, as a firm rule: a few short lines by default, longer only when asked. No recap of the question, no filler, no "let me know if you need anything else".`;
+
+/** What ends a call from the agent's side: written at the very end of its goodbye, never spoken */
+export const END_MARKER = "[[END_CALL]]";
+
+export const END_CALL_RULE = `Hanging up: when they're clearly wrapping up the whole call ("ok that's all, thanks", "ok bye", "talk later", "that's it for now"), say a very short goodbye (a few words) and then write ${END_MARKER} at the very end. Never write it for a "bye" inside a longer thought, a thanks mid-conversation, or when they're still asking something.`;
+
+/** Gentle support when someone is struggling, on every call */
+export const DISTRESS_RULE = `If they sound genuinely distressed or unsafe (not just busy or annoyed), pause the work. Be kind and brief, ask how they're doing, suggest talking with someone they trust or their lead, and if they may be in danger, urge them to call their local emergency number (988 in the US).`;
+
+/**
+ * Takes the agent's reply as it streams and holds back the end marker: text is passed on as it comes, except a tail
+ * that could be the start of the marker (held until it's clearly not); once the marker appears, what comes before it
+ * is passed on, the rest is dropped and `ended` is set.
+ */
+export function endMarkerFilter() {
+  let held = "";
+  let ended = false;
+  return {
+    feed(delta: string): string {
+      if (ended) return "";
+      const s = held + delta;
+      const at = s.indexOf(END_MARKER);
+      if (at >= 0) {
+        ended = true;
+        held = "";
+        return s.slice(0, at);
+      }
+      let keep = 0;
+      for (let k = Math.min(END_MARKER.length - 1, s.length); k > 0; k--)
+        if (END_MARKER.startsWith(s.slice(s.length - k))) {
+          keep = k;
+          break;
+        }
+      held = s.slice(s.length - keep);
+      return s.slice(0, s.length - keep);
+    },
+    /** What's still held once the reply is complete (never part of the marker) */
+    flush(): string {
+      const h = held;
+      held = "";
+      return ended ? "" : h;
+    },
+    get ended() {
+      return ended;
+    },
+  };
+}
+
+/** A whole reply without the end marker, and whether it was there */
+export function stripEndMarker(text: string): { text: string; ended: boolean } {
+  const at = text.indexOf(END_MARKER);
+  return at < 0 ? { text, ended: false } : { text: text.slice(0, at).trimEnd(), ended: true };
 }

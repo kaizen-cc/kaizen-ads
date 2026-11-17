@@ -140,7 +140,7 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
   const [{ data: agents }, { data: knowledge }, { data: roleRows }, { data: spineRow }, { data: chats }, { data: roleChats }] = await Promise.all([
     supabase.from("ai_agents").select("*, profiles(full_name)").order("sort_order"),
     supabase.from("ai_knowledge").select("*").order("created_at"),
-    supabase.from("ai_roles").select("*, profiles(full_name)").order("sort_order"),
+    supabase.from("ai_roles").select("*, profiles(full_name)").neq("key", "assistant").order("sort_order"),
     supabase.from("ai_spine").select("body, updated_at, profiles(full_name)").eq("id", 1).maybeSingle(),
     chatDb.from("ai_agent_chats").select("agent_key, changes").eq("role", "coach").gte("created_at", daysAgoIso(90)),
     chatDb.from("ai_role_chats").select("role_key, changes").eq("role", "agent").gte("created_at", daysAgoIso(90)),

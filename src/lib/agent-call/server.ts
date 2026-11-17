@@ -6,9 +6,9 @@ import { AiUnavailable, MODEL_IDS, aiBusy, aiEnabled, anthropicClient, askJson, 
 import type { Staff } from "@/lib/auth";
 import { loadRolePlaybook, type RolePlaybook } from "@/lib/role-playbook";
 import { TOOLS_RULE, agentTools } from "./agent-tools";
-import { CALL_LIMIT_SECONDS, LEARNINGS_SCHEMA, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type LearnedItem, type Learning, type ResumeMode } from "./core";
+import { CALL_LIMIT_SECONDS, CONCISE_RULE, DISTRESS_RULE, END_CALL_RULE, LEARNINGS_SCHEMA, endMarkerFilter, stripEndMarker, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type LearnedItem, type Learning, type ResumeMode } from "./core";
 import { focusFor } from "./role-focus";
-import { fillerFor, runToolLoop, type LoopMessage } from "./tool-loop";
+import { fillerFor, runToolLoop, type LoopMessage, type LoopTool } from "./tool-loop";
 
 // A voice call with one of the AI agents, on the server: the call's row (who, which agent, how long, what it cost and
 // what it heard), each turn (the agent's answer streamed from Claude as it's written, from the same playbook its chat
@@ -27,27 +27,39 @@ export type CallRow = {
   learned: LearnedItem[];
   resumed_from?: string | null;
   resume_mode?: ResumeMode | null;
+  /** Assistant calls: the specialist on the line, files uploaded on the call, and the Kaizen AI thread its cards live in */
+  guest_role?: string | null;
+  uploads?: unknown[];
+  thread_id?: string | null;
 };
 
 const CALL_COLUMNS = "id, role_key, profile_id, voice_id, stt, started_at, ended_at, learned, resumed_from, resume_mode";
+const ASSISTANT_COLUMNS = `${CALL_COLUMNS}, guest_role, uploads, thread_id`;
 
 /** The call when it's this person's, still open and inside its time (a minute's grace for the last answer) */
 export async function openCall(admin: SupabaseClient, me: Staff, callId: unknown): Promise<CallRow | null> {
   if (typeof callId !== "string" || !/^[0-9a-f-]{36}$/.test(callId)) return null;
-  const first = await admin.from("ai_role_calls").select(CALL_COLUMNS).eq("id", callId).maybeSingle();
-  let data = first.data;
-  // Before the review migration: the columns it adds aren't there yet
-  if (first.error) ({ data } = await admin.from("ai_role_calls").select("id, role_key, profile_id, voice_id, stt, started_at, ended_at, learned").eq("id", callId).maybeSingle());
+  const first = await admin.from("ai_role_calls").select(ASSISTANT_COLUMNS).eq("id", callId).maybeSingle();
+  let data = first.data as Record<string, unknown> | null;
+  // Before the assistant migration (or the review one): the columns they add aren't there yet
+  if (first.error) {
+    const second = await admin.from("ai_role_calls").select(CALL_COLUMNS).eq("id", callId).maybeSingle();
+    data = second.data as Record<string, unknown> | null;
+    if (second.error) data = (await admin.from("ai_role_calls").select("id, role_key, profile_id, voice_id, stt, started_at, ended_at, learned").eq("id", callId).maybeSingle()).data as Record<string, unknown> | null;
+  }
   if (!data || data.profile_id !== me.id || data.ended_at) return null;
   if (!canTalkToAgent(me, data.role_key as string)) return null;
   if (Date.now() - new Date(data.started_at as string).getTime() > (CALL_LIMIT_SECONDS + 60) * 1000) return null;
   return data as unknown as CallRow;
 }
 
-const voiceSystem = (label: string, roleKey: string, firstName: string, trains: boolean) => `You are the ${label}, one of the AI agents inside Kaizen Ads, the app Kaizen Marketing (a paid social, email and organic social agency) uses for creative requests, approvals, launches, reports and KPIs. ${firstName}, from the team, has called you. You're on a live voice call: everything you write is spoken aloud by a text to speech voice as you write it.
+/** The spoken-call instructions for an agent (`conference`: it was called into a call with the person's assistant) */
+export const voiceSystem = (label: string, roleKey: string, firstName: string, trains: boolean, conference = "") => `You are the ${label}, one of the AI agents inside Kaizen OS, the app Kaizen Marketing (a paid social, email and organic social agency) uses for creative requests, approvals, launches, reports and KPIs. ${firstName}, from the team, has called you. You're on a live voice call: everything you write is spoken aloud by a text to speech voice as you write it.
+
+${CONCISE_RULE}
 
 Speak like a sharp colleague on the phone, in the first person ("I check…", "In my briefs I…"):
-- Short spoken sentences. Usually one to three; more only when asked to explain how you work, and even then in a few short sentences, not a lecture.
+- Short spoken sentences, one to three by default.
 - No markdown, no lists, no bullets, no headings, no asterisks, no emojis, no links, no code. If there are several points, say them in a sentence: "Three things. First… Then… And last…".
 - Numbers as people say them: "about twelve hundred dollars", "a two point four ROAS", "three to five days", "March fourth". Round when exact digits don't matter. Say "percent", not the symbol. Never read a table out: give the one or two numbers that answer the question and offer more.
 - Never say anything that sounds like reading a document ("as stated in my core"). Just say what you do.
@@ -65,7 +77,11 @@ ${
     : `${firstName} can ask you anything and ask you to look things up or get things done, but doesn't train you: if they tell you how you should work, thank them and say the head of your line or an executive changes your playbook. Never say you've learned or saved it.`
 }
 
-If it belongs to another agent, say which one. You can't create agents or skills, and you don't change Kaizen's strategy.`;
+If it belongs to another agent, say which one. You can't create agents or skills, and you don't change Kaizen's strategy.
+
+${DISTRESS_RULE}
+
+${conference || END_CALL_RULE}`;
 
 const RESUME_NOTE: Record<ResumeMode, string> = {
   continue: "The call dropped a moment ago and they called straight back: carry on exactly where you were, as if nothing happened. You've already apologised for the cut-off in your greeting.",
@@ -85,12 +101,14 @@ For each learning:
 - Never include passwords, keys, tokens, logins, email addresses, phone numbers, payment details or anyone's personal details. If the lesson can't be written without them, leave it out.
 - Don't repeat an item the playbook already has. At most three learnings.`;
 
-type Turn = { role: string; content: string };
-const said = (rows: Turn[], firstName: string) => rows.map((m) => `${m.role === "user" ? firstName : "You"}: ${m.content}`).join("\n");
+type Turn = { role: string; content: string; role_key?: string | null };
+/** The lines as the agent reads them: the person by first name, itself as "You", another agent on the call by its role */
+export const said = (rows: Turn[], firstName: string, self?: string) =>
+  rows.map((m) => `${m.role === "user" ? firstName : !self || !m.role_key || m.role_key === self ? "You" : `The ${m.role_key.replace(/_/g, " ")}`}: ${m.content}`).join("\n");
 
 /** This call's turns so far, and how it follows the last call (its turns or its summary), for the prompt */
-async function callContext(admin: SupabaseClient, call: CallRow, firstName: string): Promise<string> {
-  const { data: now } = await admin.from("ai_role_chats").select("role, content").eq("call_id", call.id).order("created_at").limit(60);
+export async function callContext(admin: SupabaseClient, call: CallRow, firstName: string): Promise<string> {
+  const { data: now } = await admin.from("ai_role_chats").select("role, content, role_key").eq("call_id", call.id).order("created_at").limit(60);
   const parts: string[] = [];
   const mode = call.resume_mode ?? "fresh";
   if (call.resumed_from && mode !== "fresh") {
@@ -98,24 +116,24 @@ async function callContext(admin: SupabaseClient, call: CallRow, firstName: stri
       admin.from("ai_role_calls").select("summary, started_at").eq("id", call.resumed_from).maybeSingle(),
       admin
         .from("ai_role_chats")
-        .select("role, content")
+        .select("role, content, role_key")
         .eq("call_id", call.resumed_from)
         .order("created_at", { ascending: false })
         .limit(mode === "continue" ? 16 : 8),
     ]);
-    const before = said(((turns ?? []) as Turn[]).slice().reverse(), firstName);
+    const before = said(((turns ?? []) as Turn[]).slice().reverse(), firstName, call.role_key);
     const summary = (prev?.summary as string | null) ?? null;
     const when = prev?.started_at ? new Date(prev.started_at as string).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) : "earlier";
     if (mode === "continue") parts.push(`<the_call_that_dropped>\n${before || "(nothing said yet)"}\n</the_call_that_dropped>`);
     else parts.push(`<earlier_today at="${when}">\n${summary ?? before ?? "(nothing kept)"}\n</earlier_today>`);
     parts.push(RESUME_NOTE[mode]);
   }
-  parts.push(`<this_call>\n${said((now ?? []) as Turn[], firstName) || "(the call just started)"}\n</this_call>`);
+  parts.push(`<this_call>\n${said((now ?? []) as Turn[], firstName, call.role_key) || "(the call just started)"}\n</this_call>`);
   return parts.join("\n\n");
 }
 
 /** The topic of a moment and what the person taught in it, checked (never throws: a failed read learns nothing) */
-async function readMoment(book: RolePlaybook, text: string, reply: string): Promise<{ topic: string | null; learnings: Learning[] }> {
+export async function readMoment(book: RolePlaybook, text: string, reply: string): Promise<{ topic: string | null; learnings: Learning[] }> {
   if (text.trim().split(/\s+/).length < 5) return { topic: null, learnings: [] };
   try {
     const out = await askJson<unknown>({
@@ -154,74 +172,16 @@ export async function runCallTurn(input: { me: Staff; admin: SupabaseClient; db:
   const [book, convo] = await Promise.all([loadRolePlaybook(admin, call.role_key), callContext(admin, call, firstName)]);
   if (!book) return emit({ t: "error", message: "Unknown agent." });
   const tools = await agentTools({ me, db: input.db, admin, roleKey: call.role_key, label: book.role.label, callId: call.id });
-  const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
-  if (defs.length) (defs[defs.length - 1] as Anthropic.Tool).cache_control = { type: "ephemeral" };
   const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
-  const model = "sonnet" as const;
-  const effort = "low" as const;
-  const started = Date.now();
-  let reply = "";
-  let error: string | null = null;
-  let fillers = 0;
-  const used = { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 };
-  const messages: LoopMessage[] = [{ role: "user", content: `Today is ${today} (New York).\n\n${convo}\n\n<${firstName}_says>\n${text}\n</${firstName}_says>` }];
-  let roundText = "";
-  try {
-    await runToolLoop({
-      tools,
-      messages,
-      maxRounds: MAX_TOOL_ROUNDS,
-      signal,
-      step: async (msgs, last) => {
-        roundText = "";
-        const stream = anthropicClient().messages.stream(
-          {
-            model: MODEL_IDS[model],
-            max_tokens: 4000,
-            // The agent's whole playbook is the same every turn: cached, so later turns read it at a tenth of the price
-            system: [cachedBlock(`${voiceSystem(book.role.label, call.role_key, firstName, trains)}\n\n${book.text}`)] as Anthropic.TextBlockParam[],
-            thinking: { type: "adaptive" },
-            output_config: { effort },
-            ...(last || !defs.length ? {} : { tools: defs }),
-            messages: msgs as Anthropic.MessageParam[],
-          },
-          { signal },
-        );
-        stream.on("text", (d) => {
-          roundText += d;
-          reply += d;
-          emit({ t: "text", d });
-        });
-        const res = await stream.finalMessage();
-        const u = usageFor(res.usage);
-        used.input_tokens += u.input_tokens;
-        used.output_tokens += u.output_tokens;
-        used.cache_write_tokens += u.cache_write_tokens;
-        used.cache_read_tokens += u.cache_read_tokens;
-        if (res.stop_reason === "refusal") error = "refusal";
-        return { content: res.content as unknown as { type: string }[], stop: res.stop_reason };
-      },
-      // While lookups run: the line the agent said, or one said for it, so the call never goes quiet. A line break
-      // ends it, so the answer that follows is spoken as its own sentence
-      onTools: (calls) => {
-        if (!roundText.trim() && fillers === 0) {
-          const line = fillerFor(calls, Date.now());
-          reply += line;
-          emit({ t: "text", d: line });
-          fillers++;
-        }
-        reply += "\n";
-        emit({ t: "text", d: "\n" });
-      },
-    });
-  } catch (e) {
-    if (!signal.aborted) {
-      error = (e instanceof Error ? e.message : String(e)).slice(0, 300);
-      console.error("[agent call] turn", error);
-      emit({ t: "error", message: aiBusy(e) ? "I'm a bit busy right now. Try me again in a moment." : e instanceof AiUnavailable ? e.message : "Sorry, I lost my train of thought. Say that again?" });
-    }
-  }
+  const out = await streamAnswer({
+    system: `${voiceSystem(book.role.label, call.role_key, firstName, trains)}\n\n${book.text}`,
+    tools,
+    content: `Today is ${today} (New York).\n\n${convo}\n\n<${firstName}_says>\n${text}\n</${firstName}_says>`,
+    signal,
+    emit,
+  });
+  const { reply, error, used, model, effort, started } = out;
   void admin
     .from("ai_runs")
     .insert({ agent_key: "coach", label: `agent call ${call.role_key}`, model, effort, ms: Date.now() - started, ...used, ok: !error, error, profile_id: me.id, actor: "person" })
@@ -241,7 +201,91 @@ export async function runCallTurn(input: { me: Staff; admin: SupabaseClient; db:
   await admin.rpc("ai_role_call_add", { p_id: call.id, p_chars: 0, p_turns: 1, p_learned: heard });
   if (moment.topic) void admin.from("ai_role_calls").update({ topic: moment.topic }).eq("id", call.id).then(({ error: e }) => e && console.error("[agent call] topic", e.message));
   if (heard.length) emit({ t: "learned", items: heard });
+  if (out.ended) emit({ t: "end" });
   emit({ t: "done" });
+}
+
+/** What one spoken answer came to: the words (without the end marker), whether it hung up, and its cost */
+export type Answer = { reply: string; ended: boolean; error: string | null; used: { input_tokens: number; output_tokens: number; cache_write_tokens: number; cache_read_tokens: number }; model: "sonnet"; effort: "low"; started: number };
+
+/**
+ * One spoken answer: streamed from Claude as it's written (each piece sent on as a text event), looking things up with
+ * the tools on the way (a short spoken line covers the wait), the end marker held back (a goodbye that hangs up sets
+ * `ended`). Used by every agent's call turn and by the assistant and the specialist it calls in.
+ */
+export async function streamAnswer(input: { system: string; tools: readonly LoopTool[]; content: string; signal: AbortSignal; emit: (e: CallEvent) => void; maxRounds?: number }): Promise<Answer> {
+  const { signal, emit, tools } = input;
+  const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
+  if (defs.length) (defs[defs.length - 1] as Anthropic.Tool).cache_control = { type: "ephemeral" };
+  const model = "sonnet" as const;
+  const effort = "low" as const;
+  const started = Date.now();
+  let reply = "";
+  let error: string | null = null;
+  let fillers = 0;
+  const used = { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 };
+  const messages: LoopMessage[] = [{ role: "user", content: input.content }];
+  const marker = endMarkerFilter();
+  const say = (d: string) => {
+    if (!d) return;
+    reply += d;
+    emit({ t: "text", d });
+  };
+  let roundText = "";
+  try {
+    await runToolLoop({
+      tools,
+      messages,
+      maxRounds: input.maxRounds ?? MAX_TOOL_ROUNDS,
+      signal,
+      step: async (msgs, last) => {
+        roundText = "";
+        const stream = anthropicClient().messages.stream(
+          {
+            model: MODEL_IDS[model],
+            // Spoken answers are short: room for a little thinking and a few sentences, never a lecture
+            max_tokens: 2500,
+            // The agent's whole playbook is the same every turn: cached, so later turns read it at a tenth of the price
+            system: [cachedBlock(input.system)] as Anthropic.TextBlockParam[],
+            thinking: { type: "adaptive" },
+            output_config: { effort },
+            ...(last || !defs.length ? {} : { tools: defs }),
+            messages: msgs as Anthropic.MessageParam[],
+          },
+          { signal },
+        );
+        stream.on("text", (d) => {
+          roundText += d;
+          say(marker.feed(d));
+        });
+        const res = await stream.finalMessage();
+        say(marker.flush());
+        const u = usageFor(res.usage);
+        used.input_tokens += u.input_tokens;
+        used.output_tokens += u.output_tokens;
+        used.cache_write_tokens += u.cache_write_tokens;
+        used.cache_read_tokens += u.cache_read_tokens;
+        if (res.stop_reason === "refusal") error = "refusal";
+        return { content: res.content as unknown as { type: string }[], stop: marker.ended ? "end_turn" : res.stop_reason };
+      },
+      // While lookups run: the line the agent said, or one said for it, so the call never goes quiet. A line break
+      // ends it, so the answer that follows is spoken as its own sentence
+      onTools: (calls) => {
+        if (!roundText.trim() && fillers === 0) {
+          say(fillerFor(calls, Date.now()));
+          fillers++;
+        }
+        say("\n");
+      },
+    });
+  } catch (e) {
+    if (!signal.aborted) {
+      error = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+      console.error("[agent call] turn", error);
+      emit({ t: "error", message: aiBusy(e) ? "I'm a bit busy right now. Try me again in a moment." : e instanceof AiUnavailable ? e.message : "Sorry, I lost my train of thought. Say that again?" });
+    }
+  }
+  return { reply: stripEndMarker(reply).text, ended: marker.ended, error, used, model, effort, started };
 }
 
 // ─── The call's summary ─────────────────────────────────────────────────────

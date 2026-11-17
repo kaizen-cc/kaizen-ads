@@ -1,5 +1,6 @@
 import { after } from "next/server";
 import { openCall, runCallTurn } from "@/lib/agent-call/server";
+import { runAssistantTurn } from "@/lib/assistant/turn";
 import type { CallEvent } from "@/lib/agent-call/core";
 import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -8,7 +9,8 @@ import { createClient } from "@/lib/supabase/server";
 // One turn of a voice call with an agent: what the person said in, the agent's answer out as it's written (one JSON
 // event per line), then anything it learned. Talking over the agent aborts the request, which stops the model; what it
 // said so far is kept, and what it learned is still saved (finished after the response, see after()).
-export const maxDuration = 120;
+// The assistant may keep checking on a report it started for a few minutes after the answer (after())
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   const me = await requireStaff();
@@ -32,7 +34,7 @@ export async function POST(request: Request) {
           open = false;
         }
       };
-      const work = runCallTurn({ me, admin, db, call, text, signal: request.signal, emit })
+      const work = (call.role_key === "assistant" ? runAssistantTurn : runCallTurn)({ me, admin, db, call, text, signal: request.signal, emit })
         .catch((e) => {
           console.error("[agent call] turn", e instanceof Error ? e.message : e);
           emit({ t: "error", message: "Sorry, something went wrong on my side. Say that again?" });
