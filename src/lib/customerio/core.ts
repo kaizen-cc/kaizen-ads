@@ -1,4 +1,4 @@
-// Customer.io (App API) in Kaizen Ads: the plain parts, kept apart from the network and the database so they can be
+// Customer.io (App API) in Kaizen OS: the plain parts, kept apart from the network and the database so they can be
 // tested. Every endpoint and field was checked against https://docs.customer.io/integrations/api/app/ (the page is
 // named beside each constant). Read only: nothing here sends, edits or triggers anything in Customer.io.
 

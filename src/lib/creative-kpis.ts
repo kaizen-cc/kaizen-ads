@@ -49,7 +49,7 @@ export type Maker = Scorecard & {
   /** Profitable winners made from their work */
   winners: WinnerAd[];
 };
-/** A winner credited to whoever made it: from a ticket launched in Kaizen Ads (certain) or matched by name (likely) */
+/** A winner credited to whoever made it: from a ticket launched in Kaizen OS (certain) or matched by name (likely) */
 export type WinnerAd = Winner & { how: "launched" | "name"; task: string | null };
 export type ClientAllotment = {
   id: string;

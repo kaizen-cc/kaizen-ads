@@ -164,7 +164,7 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
               </Part>
 
               <footer className="border-t border-[#e7e2e3] pt-6 text-[11px] text-[#8a8189]">
-                Written by Kaizen Ads from {client.name}&apos;s page, calls, docs, tickets and sprint. Internal only.
+                Written by Kaizen OS from {client.name}&apos;s page, calls, docs, tickets and sprint. Internal only.
               </footer>
             </>
           )}
@@ -249,7 +249,7 @@ function Comeback({ d, client }: { d: ComebackDoc; client: string }) {
       </Part>
 
       <footer className="border-t border-[#e7e2e3] pt-6 text-[11px] text-[#8a8189]">
-        Written by Kaizen Ads after a full sync of {client}&apos;s ad accounts, Slack, email and Drive. Internal only.
+        Written by Kaizen OS after a full sync of {client}&apos;s ad accounts, Slack, email and Drive. Internal only.
       </footer>
     </>
   );

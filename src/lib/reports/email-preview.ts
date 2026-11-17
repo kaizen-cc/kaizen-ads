@@ -51,8 +51,8 @@ export async function reportEmailPreview(admin: SupabaseClient, id: string, by: 
       ? await admin.from("reports").select(cols).eq("bundle_id", r.bundle_id).neq("status", "skipped").neq("id", id)
       : await admin.from("reports").select(cols).eq("joined_to", id).neq("status", "skipped");
   const rows = [r, ...((more ?? []) as unknown as Row[])].sort((a, b) => ORDER.indexOf(a.platform) - ORDER.indexOf(b.platform));
-  const sender = fromWithName(process.env.RESEND_FROM_EMAIL || "Kaizen Ads <ads@contact.kaizenmarketing.agency>", wl ? WHITE_LABEL_FROM : undefined);
-  const fromName = wl ? WHITE_LABEL_FROM : sender.match(/^(.*?)\s*</)?.[1] || "Kaizen Ads";
+  const sender = fromWithName(process.env.RESEND_FROM_EMAIL || "Kaizen OS <ads@contact.kaizenmarketing.agency>", wl ? WHITE_LABEL_FROM : undefined);
+  const fromName = wl ? WHITE_LABEL_FROM : sender.match(/^(.*?)\s*</)?.[1] || "Kaizen OS";
   // A white label client's sender shows no address (it's the agency's domain)
   const fromAddress = wl ? null : (sender.match(/<([^>]+)>/)?.[1] ?? null);
   const first = greetingFor(to);

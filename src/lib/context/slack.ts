@@ -130,7 +130,7 @@ export async function linkNewChannel(admin: SupabaseClient, channelId: string) {
     joined = true;
   }
   const { data: client } = await admin.from("clients").select("id, name, slack_channel_id, internal_slack_channel_id").eq("kaizen_id", Number(id)).maybeSingle();
-  if (!client) return { ok: true, channel: `#${channel.name}`, joined, linked: null, note: `No client with ID ${id} in Kaizen Ads yet; it links on the next run once they're added` };
+  if (!client) return { ok: true, channel: `#${channel.name}`, joined, linked: null, note: `No client with ID ${id} in Kaizen OS yet; it links on the next run once they're added` };
   const field = isInternal(channel) ? "internal_slack_channel_id" : "slack_channel_id";
   if (!client[field]) await admin.from("clients").update({ [field]: channelId }).eq("id", client.id);
   return { ok: true, channel: `#${channel.name}`, joined, linked: client.name, as: field === "internal_slack_channel_id" ? "internal" : "client channel", alreadyLinked: Boolean(client[field]) };

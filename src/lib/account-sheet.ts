@@ -7,7 +7,7 @@ import { contactsFromTab } from "@/lib/sheet-contacts";
 // The Kaizen Account Overview sheet, the source of truth for each account while the team moves over: its Meta,
 // Google and TikTok tabs give every ad account's media buyer, monthly budget and KPI target, plus the team's notes (priority, the
 // #1 problem and its solution, the latest media buying, creative and copy updates). Read at 12pm and 5pm ET: the
-// buyer, budget and target it gives replace what's in Kaizen Ads, the notes sit on the KPI for the card and the
+// buyer, budget and target it gives replace what's in Kaizen OS, the notes sit on the KPI for the card and the
 // agents, and the client's Meta buyer follows the sheet. Matched by ad account ID; nothing is written to the sheet.
 
 export const SHEET_ID = process.env.ACCOUNT_SHEET_ID || "12GYdOWPTVuXVrCC9ryHa-we_8yaEjt8ZllbdMW2ANs8";
@@ -84,7 +84,7 @@ export function accountOf(r: Record<string, string>) {
   return digits(key ? r[key] : "");
 }
 
-/** Reads the sheet and brings Kaizen Ads in line with it. */
+/** Reads the sheet and brings Kaizen OS in line with it. */
 export async function syncAccountSheet(admin: SupabaseClient) {
   const { tracker } = await import("@/lib/progress");
   const t = await tracker(admin, "sheet", "accounts");
@@ -163,7 +163,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       }
       let target = (targets ?? []).find((x) => x.platform === platform && digits(x.ad_account_id ?? "") === account);
       if (!target) {
-        // An ad account the sheet tracks but Kaizen Ads doesn't yet: its KPI is set up from the sheet's row
+        // An ad account the sheet tracks but Kaizen OS doesn't yet: its KPI is set up from the sheet's row
         const c = clientNamed(name);
         if (!c) {
           out.noKpi.push(`${name} (${platform}) · no client by that name`);
@@ -186,7 +186,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       const kpi = money(r["KPI"]);
       const budget = budgetOf(r["Budget"]);
       const fromSheet = Object.fromEntries(NOTE_FIELDS.map(([k, h]) => [k, r[h] ?? ""]).filter(([, v]) => v)) as Record<string, string>;
-      // Notes edited in Kaizen Ads hold: the sheet takes a field back only when that cell has changed since the edit
+      // Notes edited in Kaizen OS hold: the sheet takes a field back only when that cell has changed since the edit
       const prev = (target.sheet ?? {}) as Record<string, unknown>;
       const edits = { ...((prev.edits ?? {}) as Record<string, { at: string; by: string; sheetWas: string }>) };
       const sheet: Record<string, string> = { ...fromSheet };
@@ -198,7 +198,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       }
       const patch: Record<string, unknown> = { sheet: { ...sheet, edits, name, platform, syncedAt: now }, sheet_synced_at: now };
       // A ROAS KPI isn't a dollar target: the sheet's dollar KPI doesn't replace it. Nor one the client confirmed in their
-      // plan review: it's theirs until the team changes it in Kaizen Ads
+      // plan review: it's theirs until the team changes it in Kaizen OS
       if (kpi != null && target.conversion !== "roas" && !target.client_confirmed_at && Number(target.target) !== kpi) patch.target = kpi;
       if (budget != null && Number(target.monthly_budget) !== budget) patch.monthly_budget = budget;
       if (buyer && target.owner_id !== buyer.id) patch.owner_id = buyer.id;
@@ -250,7 +250,7 @@ export async function syncAccountSheet(admin: SupabaseClient) {
         (execs ?? []).map((e) => ({
           profile_id: e.id,
           kind: "client",
-          title: `The Account Overview sheet names ${missing.join(", ")}, not on the team in Kaizen Ads`,
+          title: `The Account Overview sheet names ${missing.join(", ")}, not on the team in Kaizen OS`,
           body: `Their accounts have no buyer here until they're added on the Team page: ${out.unknownBuyer.slice(0, 8).join("; ")}${out.unknownBuyer.length > 8 ? "…" : ""}`,
           href: "/team",
           key: `sheet-unknown-buyers:${now.slice(0, 10)}`,
@@ -361,7 +361,7 @@ async function clientIds(admin: SupabaseClient, rows: Record<string, string>[], 
     const c = clientId ? mine.get(clientId) : null;
     if (!c) continue;
     if (c.kaizen_id != null) {
-      if (Number(c.kaizen_id) !== id) idConflicts.push(`${name}: the sheet says ${id}, Kaizen Ads has ${c.kaizen_id}`);
+      if (Number(c.kaizen_id) !== id) idConflicts.push(`${name}: the sheet says ${id}, Kaizen OS has ${c.kaizen_id}`);
       continue;
     }
     const taken = byId.get(id);

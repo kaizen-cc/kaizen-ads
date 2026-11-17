@@ -211,7 +211,7 @@ const NOTE_KEYS = ["priority", "problem", "solution", "buying", "creative", "cop
 export type NoteKey = (typeof NOTE_KEYS)[number];
 
 /**
- * The account's notes (#1 problem, solution, the media buying, creative and copy updates…), edited in Kaizen Ads. An
+ * The account's notes (#1 problem, solution, the media buying, creative and copy updates…), edited in Kaizen OS. An
  * edit holds through the sheet's syncs; the sheet only takes a field back if that cell changes there afterwards. Who
  * can edit: anyone who can edit the KPI (RLS checks it).
  */

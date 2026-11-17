@@ -1,4 +1,4 @@
-// Brevo (API v3) in Kaizen Ads: the plain parts, kept apart from the network and the database so they can be tested.
+// Brevo (API v3) in Kaizen OS: the plain parts, kept apart from the network and the database so they can be tested.
 // Every endpoint and field below was checked against https://developers.brevo.com (the page for each is named beside
 // its constant). Read only: nothing here sends, edits or schedules anything in Brevo.
 

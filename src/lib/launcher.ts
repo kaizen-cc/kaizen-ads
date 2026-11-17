@@ -499,7 +499,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
       add(key, label, meant ? "warn" : "block", meant ? `${detail} Confirmed as intended.` : detail);
     };
     if (!goal)
-      add("goal", "Client's conversion", "warn", conversion ? `The KPI counts "${conversion}", which isn't sales or leads: check the objective and event by hand before signing off.` : `${ticket.clients.name} has no Meta KPI target, so Kaizen Ads can't tell sales from leads: set it on the KPI board, and check the objective and event by hand before signing off.`);
+      add("goal", "Client's conversion", "warn", conversion ? `The KPI counts "${conversion}", which isn't sales or leads: check the objective and event by hand before signing off.` : `${ticket.clients.name} has no Meta KPI target, so Kaizen OS can't tell sales from leads: set it on the KPI board, and check the objective and event by hand before signing off.`);
     else {
       const leadsOnSales = goal === "leads" && adset.objective === "OUTCOME_SALES" && GOAL_EVENTS.leads.includes(event ?? "");
       if (OBJECTIVES[goal].includes(adset.objective) || leadsOnSales) add("goal", "Objective", "ok", `A ${words(adset.objective)} campaign, for a ${goal} client (the KPI counts ${conversion}).`);
@@ -555,7 +555,7 @@ export async function planLaunch(admin: SupabaseClient, launchId: string, overri
         }
       const prevForm = (l.plan as LaunchPlan | null)?.leadFormId;
       leadFormId = overrides.leadFormId ?? (prevForm && leadForms.some((f) => f.id === prevForm) ? prevForm : null) ?? mostCommon(adset.forms ?? []) ?? null;
-      if (!leadFormId) add("form", "Instant form", "block", leadForms.length ? `"${adset.name}" sends people to an instant form: pick which one these ads open.` : `"${adset.name}" sends people to an instant form, and Kaizen Ads can't see the Page's forms: the system user needs the client's Page assigned with Create ads.`);
+      if (!leadFormId) add("form", "Instant form", "block", leadForms.length ? `"${adset.name}" sends people to an instant form: pick which one these ads open.` : `"${adset.name}" sends people to an instant form, and Kaizen OS can't see the Page's forms: the system user needs the client's Page assigned with Create ads.`);
       else add("form", "Instant form", "ok", `The ads open "${leadForms.find((f) => f.id === leadFormId)?.name ?? leadFormId}"${(adset.forms ?? []).includes(leadFormId) ? " (the one this ad set's ads use)" : ""}.`);
     }
     if (!pageId) add("page", "Facebook Page", "block", "No Page this account can advertise for; the system user needs the client's Page assigned in Business Manager.");
@@ -887,7 +887,7 @@ export const accessError = (m: string) => /permission|not authorized|advertiser 
 export function accessHelp(m: string) {
   const page = m.match(/Page (\d{6,})/)?.[1];
   if (/development mode|must be in public/i.test(m))
-    return "The Meta app Kaizen Ads uses is in Development mode, and Meta only lets a Live app create ad posts. In developers.facebook.com → the app: add a Privacy Policy URL, category and icon under App settings → Basic, then switch App Mode to Live.";
+    return "The Meta app Kaizen OS uses is in Development mode, and Meta only lets a Live app create ad posts. In developers.facebook.com → the app: add a Privacy Policy URL, category and icon under App settings → Basic, then switch App Mode to Live.";
   if (/application does not have permission/i.test(m))
     return `Meta says the app's token can't post as the Page${page ? ` ${page}` : ""}: the system user's token needs pages_manage_ads, pages_read_engagement and pages_show_list. Settings → Sync health → Check write access shows what the token has and what to do.`;
   if (/page/i.test(m) && /permission|role/i.test(m))
@@ -1037,7 +1037,7 @@ async function createAd(admin: SupabaseClient, plan: LaunchPlan, fields: Record<
 }
 
 /** Sandbox only: a paused traffic campaign and ad set in Kaizen's own account, so there's somewhere to test launches. */
-const SANDBOX_CAMPAIGN = "Kaizen Ads launcher test";
+const SANDBOX_CAMPAIGN = "Kaizen OS launcher test";
 
 export async function makeSandboxCampaign(admin: SupabaseClient) {
   const s = await metaWriteSetting(admin);
@@ -1068,7 +1068,7 @@ async function buyerOf(admin: SupabaseClient, t: TicketRow) {
   return primarySeat(admin, t.client_id, "meta_buyer");
 }
 
-/** A note on the ticket from Kaizen Ads, the ticket handed to the buyer, and a notification to them (and the client's secondary Meta buyers). */
+/** A note on the ticket from Kaizen OS, the ticket handed to the buyer, and a notification to them (and the client's secondary Meta buyers). */
 async function handTo(admin: SupabaseClient, t: TicketRow, buyer: string | null, note: string, n: { title: string; body: string; priority: "critical" | "normal"; key: string }) {
   await admin.from("request_events").insert({ request_id: t.id, kind: "comment", actor_id: null, body: note.slice(0, 2000) });
   if (!buyer) return;

@@ -75,7 +75,7 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
 
 type SlackUser = { id: string; deleted?: boolean; is_bot?: boolean; is_restricted?: boolean; is_ultra_restricted?: boolean; real_name?: string; profile?: { email?: string; real_name?: string; display_name?: string } };
 
-/** Our workspace's people (not guests: those are clients), and each teammate in Kaizen Ads matched to their Slack. */
+/** Our workspace's people (not guests: those are clients), and each teammate in Kaizen OS matched to their Slack. */
 export type SlackWho = Awaited<ReturnType<typeof slackPeople>>;
 async function slackPeople(admin: Admin) {
   const users: SlackUser[] = [];
@@ -212,7 +212,7 @@ async function scanSlack(admin: Admin) {
         const tagged = [...new Set([...m.text.matchAll(MENTION)].map((x) => who.profileOf.get(x[1])).filter((p): p is string => Boolean(p) && p !== authorProfile))];
         // A client's untagged reply in a thread is on the teammates already in that thread (whoever started it, say
         // email marketing), not every buyer on the account. Only a new top-level message (or a thread with nobody from
-        // the team in it) falls to the account's buyers. Teammates not in Kaizen Ads aren't chased here.
+        // the team in it) falls to the account's buyers. Teammates not in Kaizen OS aren't chased here.
         const inThread = m.thread_ts ? (threads.get(m.thread_ts) ?? []).filter((x) => Number(x.ts) < Number(m.ts) && x.user && x.user !== m.user && who.team.has(x.user)) : [];
         const threadPeople = [...new Set(inThread.map((x) => who.profileOf.get(x.user!)).filter((p): p is string => Boolean(p)))];
         const targets = tagged.length ? tagged : fromTeam || !client?.external ? [] : inThread.length ? threadPeople : onAccount(client.id);
@@ -330,7 +330,7 @@ export async function closeByHand(admin: Admin, id: string, profileId: string, h
   return true;
 }
 
-/** Answered from Kaizen Ads itself (the drafted reply, sent): closed the same way as a reply seen in Slack. */
+/** Answered from Kaizen OS itself (the drafted reply, sent): closed the same way as a reply seen in Slack. */
 export async function markReplied(admin: Admin, id: string, profileId: string) {
   const { data: o } = await admin.from("owed_replies").select("*").eq("id", id).eq("target_id", profileId).in("status", OPEN).maybeSingle();
   if (o) await closeAnswered(admin, o as Row, new Date().toISOString(), "replied");

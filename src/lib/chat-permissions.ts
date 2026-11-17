@@ -94,7 +94,7 @@ function copyOk(me: Who) {
 
 function adsVerdict(me: Who, action: "ads.change" | "ads.launch", ctx: PermCtx): Verdict {
   const p = ctx.platform;
-  if (p === "tiktok") return no("TikTok changes aren't connected yet: Kaizen Ads reads TikTok's numbers but can't change anything there. Make the change in TikTok Ads Manager.");
+  if (p === "tiktok") return no("TikTok changes aren't connected yet: Kaizen OS reads TikTok's numbers but can't change anything there. Make the change in TikTok Ads Manager.");
   if (p !== "meta" && p !== "google") return no("Say which ad account: Meta or Google Ads.");
   if (isExec(me)) return YES;
   const r = me.role ?? "";

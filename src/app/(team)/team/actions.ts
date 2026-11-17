@@ -82,12 +82,12 @@ export async function sendInvite(profileId: string): Promise<ActionResult> {
   const role = ROLES.find((r) => r.value === p.role)?.label ?? "the team";
   const res = await sendEmail({
     to: p.email,
-    subject: `${me.fullName.split(" ")[0]} invited you to Kaizen Ads`,
-    text: `Hi ${first},\n\n${me.fullName} added you to Kaizen Ads as ${role}. Sign in with your Google account (${p.email}):\n${link}\n\nYour work, your clients and your daily recap will be waiting.`,
+    subject: `${me.fullName.split(" ")[0]} invited you to Kaizen OS`,
+    text: `Hi ${first},\n\n${me.fullName} added you to Kaizen OS as ${role}. Sign in with your Google account (${p.email}):\n${link}\n\nYour work, your clients and your daily recap will be waiting.`,
     html: `<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#17131a">
-<p style="font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#c8102e;margin:0 0 16px">Kaizen Ads</p>
+<p style="font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:#c8102e;margin:0 0 16px">Kaizen OS</p>
 <h1 style="font-size:24px;line-height:1.25;margin:0 0 12px">You're in, ${esc(first)}.</h1>
-<p style="font-size:15px;line-height:1.6;color:#4d464f;margin:0 0 24px">${esc(me.fullName)} added you to Kaizen Ads as <b>${esc(role)}</b>. Your work, your clients and your daily recap are waiting.</p>
+<p style="font-size:15px;line-height:1.6;color:#4d464f;margin:0 0 24px">${esc(me.fullName)} added you to Kaizen OS as <b>${esc(role)}</b>. Your work, your clients and your daily recap are waiting.</p>
 <a href="${link}" style="display:inline-block;background:#c8102e;color:#fff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 22px;border-radius:999px">Sign in with Google</a>
 <p style="font-size:12px;color:#8a8189;margin:24px 0 0">Use your ${esc(p.email)} Google account.</p>
 </div>`,

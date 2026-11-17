@@ -3,12 +3,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Stage } from "@/lib/stages";
 import { cleanTitle, normalizePriority, type PriorityLevel } from "@/lib/task-title";
 
-// Asana's Creative board, mirrored while the team moves over to Kaizen Ads. Every few minutes the open tasks are read
+// Asana's Creative board, mirrored while the team moves over to Kaizen OS. Every few minutes the open tasks are read
 // (column, assignee, due date, Client ID, priority, description) and kept as "shadow" tickets in the matching stage.
 // Moves and edits in Asana show up here; tasks completed or removed in Asana drop off the board (completed ones are
 // kept, counted against the month's allotment with what they asked for: see countUnits). Organic social requests are
-// left out (this app is paid ads and creative). Written to Asana: tasks for teams not yet in Kaizen Ads (createAsanaTask,
-// e.g. reviewing a new client's intake), and creative requests briefed in Kaizen Ads and sent to the Creative board built
+// left out (this app is paid ads and creative). Written to Asana: tasks for teams not yet in Kaizen OS (createAsanaTask,
+// e.g. reviewing a new client's intake), and creative requests briefed in Kaizen OS and sent to the Creative board built
 // exactly like the Google Form's (src/lib/asana-request.ts).
 
 export const asanaConfigured = () => Boolean(process.env.ASANA_TOKEN);
@@ -50,7 +50,7 @@ export async function asanaWrite<T>(path: string, data: Record<string, unknown>)
 }
 
 /**
- * A task for someone on a team that isn't in Kaizen Ads yet, assigned by their email. In a project when one is given,
+ * A task for someone on a team that isn't in Kaizen OS yet, assigned by their email. In a project when one is given,
  * otherwise in the workspace (it lands in their My Tasks). Someone Asana doesn't know by that email: the task is made
  * unassigned with their name at the top, so it isn't lost.
  */

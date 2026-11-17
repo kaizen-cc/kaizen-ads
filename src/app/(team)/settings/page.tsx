@@ -440,7 +440,7 @@ async function Errors({ all }: { all: boolean }) {
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-3xl text-sm text-muted">
-          Every error someone hits in Kaizen Ads, on a page, a button or in the background. Harmless ones (a dropped connection, a tab on an old version) are explained and
+          Every error someone hits in Kaizen OS, on a page, a button or in the background. Harmless ones (a dropped connection, a tab on an old version) are explained and
           closed automatically. Real ones get a diagnosis, and you&apos;re emailed the first time, then at most hourly while it keeps happening.
         </p>
         <Link href={all ? "/settings?tab=errors" : "/settings?tab=errors&show=all"} className="inline-flex h-11 shrink-0 items-center rounded-full border border-line px-4 text-xs text-muted hover:text-fg md:h-auto md:rounded-none md:border-0 md:px-0">

@@ -246,7 +246,7 @@ export function checkGooglePlan(plan: GooglePlan, inAccount: Set<string> = new S
         out.push({ key: `targeting:${c.key}`, level: "error", message: `Couldn't resolve "${c.locationAsk.trim()}"${c.unresolvedPlaces?.length ? ` (${c.unresolvedPlaces.map((u) => `"${u}"`).join(", ")} isn't a place Google knows)` : ""}, so it won't deploy showing everywhere.`, fix: "Say the places again (a country, states or cities)." });
       else if (c.type === "SEARCH" && !c.locations.length) out.push({ key: `targeting:${c.key}`, level: "warn", message: "No locations: it would show everywhere Google serves.", fix: "Say where to show it (cities, a radius, states)." });
       if (c.bidding === "MAXIMIZE_CONVERSIONS" && c.targetCpa != null && c.targetCpa <= 0) out.push({ key: `campaign:${c.key}`, level: "error", message: "The target CPA must be above $0." });
-      if (c.type === "PERFORMANCE_MAX") out.push({ key: `campaign:${c.key}`, level: "warn", message: "A new Performance Max campaign is built by hand for now (it needs images, logos and video Kaizen Ads can't upload yet): it stays on the checklist." });
+      if (c.type === "PERFORMANCE_MAX") out.push({ key: `campaign:${c.key}`, level: "warn", message: "A new Performance Max campaign is built by hand for now (it needs images, logos and video Kaizen OS can't upload yet): it stays on the checklist." });
     }
     c.negatives.forEach((k, i) => {
       if (chars(k.text) > G.keyword) out.push({ key: `cneg:${c.key}:${i}`, level: "error", message: `Negative "${k.text}" is ${chars(k.text)} characters (Google's limit is ${G.keyword}).` });
@@ -446,12 +446,12 @@ export const campaignOption = (c: AccountCampaign) => `${c.name} (${c.type === "
 export function googleQuestions(d: GoogleDraft, campaigns: AccountCampaign[], adGroups: AccountAdGroup[], about: string, scopeType: CampaignType | null = null, comeback: Pick<Comeback, "id" | "name" | "why"> | null = null, keepPaused: ReadonlySet<string> = new Set()): LaunchQuestion[] {
   const out: LaunchQuestion[] = [];
   const named = [...new Set(d.adGroups.map((g) => g.campaign.trim()).filter(Boolean))];
-  // Only a live Kaizen campaign named in the sheet is taken as it is (or a paused one Kaizen Ads launched)
+  // Only a live Kaizen campaign named in the sheet is taken as it is (or a paused one Kaizen OS launched)
   const known = (n: string) => campaigns.find((c) => c.name.toLowerCase() === n.toLowerCase() && isKaizenName(c.name) && (c.status === "ENABLED" || keepPaused.has(c.id)));
   const theme = `${about} ${named.join(" ")} ${d.adGroups.map((g) => g.name).join(" ")}`;
   const fits = relevantCampaigns(campaigns, theme, scopeType);
   const good = goodFits(fits, theme);
-  // The paused campaigns Kaizen Ads just launched and the request names: first, since that's where it's going
+  // The paused campaigns Kaizen OS just launched and the request names: first, since that's where it's going
   const own = campaigns.filter((c) => keepPaused.has(c.id) && c.status !== "ENABLED" && about.toLowerCase().includes(c.name.toLowerCase()));
   // No live Kaizen campaign fits: a paused Kaizen one with a good record is offered back
   const back = !good.length && !own.length && comeback ? comebackOption(comeback) : null;
@@ -494,7 +494,7 @@ export function campaignChoice(answer: string | null | undefined, campaigns: Acc
   if (!a) return null;
   const hit = [...campaigns].sort((x, y) => y.name.length - x.name.length).find((c) => a.includes(c.name.toLowerCase()));
   if (hit && !isKaizenName(hit.name)) return null;
-  // A paused campaign Kaizen Ads launched (or the buyer insisted on) is built into as it is: it stays paused
+  // A paused campaign Kaizen OS launched (or the buyer insisted on) is built into as it is: it stays paused
   if (hit) return { mode: "existing", id: hit.id, revive: hit.status !== "ENABLED" && (!keepPaused.has(hit.id) || BRING_BACK.test(a)) };
   if (/performance max|pmax/.test(a) && /new/.test(a)) return { mode: "new", type: "PERFORMANCE_MAX" };
   if (/new/.test(a)) return { mode: "new", type: "SEARCH" };
@@ -532,7 +532,7 @@ export const NEW_AD_GROUP = "A new ad group named for the theme";
  */
 /**
  * The buyer insisting on a paused campaign as it is: "paused on purpose", "we're testing", "the one you just created",
- * "same campaign", "I know it's paused". Never needed for a campaign Kaizen Ads launched (that's taken anyway).
+ * "same campaign", "I know it's paused". Never needed for a campaign Kaizen OS launched (that's taken anyway).
  */
 export const KEEP_PAUSED = /\bpaused on purpose\b|\b(keep|leave) it paused\b|\b(we('| a)?re|i'?m|just) testing\b|\btesting (it|this|the feature)\b|\bi know (it'?s|its|it is) paused\b|\b(same|that|this|existing) campaign\b|\bthe (campaign|one) (you|u) (just )?(created|made|started|built|launched)\b|\b(you|u) (just )?(created|made|started|built|launched)\b|\bfinish (building|it)\b|\bcomplete (the|that|it)\b/i;
 
@@ -543,7 +543,7 @@ export function campaignRefusal(answer: string | null | undefined, campaigns: Ac
   const c = named[0];
   const alt = relevantCampaigns(campaigns, String(answer ?? ""))[0]?.name ?? null;
   if (!isKaizenName(c.name)) return notKaizenLine(c.name, alt);
-  // A paused Kaizen campaign Kaizen Ads launched, or one the buyer insists on as it is: taken, never refused
+  // A paused Kaizen campaign Kaizen OS launched, or one the buyer insists on as it is: taken, never refused
   if (keepPaused.has(c.id) || KEEP_PAUSED.test(String(answer ?? ""))) return null;
   // Nothing added to a paused campaign runs: taken only as a comeback (offered, or asked for in so many words)
   if (c.status !== "ENABLED" && comeback?.id !== c.id && !BRING_BACK.test(String(answer ?? "")))
@@ -707,7 +707,7 @@ export type Ops = { ops: Record<string, unknown>[]; keys: string[]; byHand: { ke
  * The whole plan as GoogleAdsService.Mutate operations, in dependency order, with temporary resource names (negative
  * ids) for what's new so one call creates it all. keys[i] is the plan line operation i belongs to (a line can need
  * several: a sitelink is an asset and its link to the campaign). Every campaign, ad group, keyword, ad and asset link
- * is created PAUSED. What Kaizen Ads can't create yet is listed in byHand, with why.
+ * is created PAUSED. What Kaizen OS can't create yet is listed in byHand, with why.
  */
 export function googleOperations(plan: GooglePlan, customer: string): Ops {
   const cust = `customers/${String(customer).replace(/\D/g, "")}`;
@@ -786,7 +786,7 @@ export function googleOperations(plan: GooglePlan, customer: string): Ops {
     const camp = plan.campaigns.find((c) => c.key === g.campaignKey);
     const cRes = campaignRes.get(g.campaignKey);
     if (!camp || camp.type === "PERFORMANCE_MAX" || (!cRes && !(g.mode === "existing" && g.existingId))) {
-      byHand.push({ key: `adgroup:${g.key}`, why: "Its campaign isn't one Kaizen Ads can create yet." });
+      byHand.push({ key: `adgroup:${g.key}`, why: "Its campaign isn't one Kaizen OS can create yet." });
       continue;
     }
     let res: string;

@@ -118,7 +118,7 @@ export async function receiveOffboarding(admin: SupabaseClient, raw: Record<stri
       key: `offboard-unmatched:${key}`,
       priority: "critical",
     });
-    return { ok: false, error: m.candidates.length > 1 ? "More than one client could match: nothing archived" : "No matching client in Kaizen Ads", asked: m.asked, candidates: m.candidates };
+    return { ok: false, error: m.candidates.length > 1 ? "More than one client could match: nothing archived" : "No matching client in Kaizen OS", asked: m.asked, candidates: m.candidates };
   }
 
   // A last day still ahead: archived on that day (the hourly clients step), so the work runs until then

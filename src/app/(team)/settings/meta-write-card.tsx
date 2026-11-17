@@ -17,7 +17,7 @@ const TAGS: [string, string][] = [
 ];
 
 // Writing to Meta: the sandbox switch (on until an exec turns it off, after confirming) and a one-click check that
-// Kaizen Ads can write to an account, which is a dry run with Meta that creates nothing.
+// Kaizen OS can write to an account, which is a dry run with Meta that creates nothing.
 
 export function MetaWriteCard({ sandbox, sandboxAccount, canEdit, updated, urlTags, defaultTags }: { sandbox: boolean; sandboxAccount: string; canEdit: boolean; updated: string | null; urlTags: string | null; defaultTags: string }) {
   const [tags, setTags] = useState(urlTags ?? "");
@@ -48,8 +48,8 @@ export function MetaWriteCard({ sandbox, sandboxAccount, canEdit, updated, urlTa
           </p>
           <p className="text-sm text-muted">
             {on
-              ? `Kaizen Ads can only create or change ads in Kaizen's own ad account (${sandboxAccount}). The launcher and audit changes refuse every client account until this is switched off.`
-              : "Kaizen Ads can create ads (paused) and apply approved audit changes in any client account the system user manages. Every write is checked with Meta first and confirmed by a person."}
+              ? `Kaizen OS can only create or change ads in Kaizen's own ad account (${sandboxAccount}). The launcher and audit changes refuse every client account until this is switched off.`
+              : "Kaizen OS can create ads (paused) and apply approved audit changes in any client account the system user manages. Every write is checked with Meta first and confirmed by a person."}
           </p>
           {updated && <p className="text-[11px] text-faint">Last changed {updated}</p>}
         </div>
@@ -176,7 +176,7 @@ export function GoogleWriteCard({ clients }: { clients: GoogleLiveClient[] }) {
           Writing to Google Ads · {on ? `live for ${clients.length} ${clients.length === 1 ? "client" : "clients"}` : "off for every client"}
         </p>
         <p className="text-sm text-muted">
-          Kaizen Ads plans changes from audits, sprints and chat, and Google checks each one, but nothing is applied in a client&apos;s Google Ads account until an exec switches live changes in Google Ads on
+          Kaizen OS plans changes from audits, sprints and chat, and Google checks each one, but nothing is applied in a client&apos;s Google Ads account until an exec switches live changes in Google Ads on
           for that client in its Team &amp; setup. There&apos;s no switch for everyone.
         </p>
       </div>

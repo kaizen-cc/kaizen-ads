@@ -13,7 +13,7 @@ import { connectedElsewhere, elsewhereMessage, emailConnection, emailConnections
 import { isEmailProvider, providerHasFlows, providerName, type EmailProvider } from "@/lib/email-providers/core";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
-// Klaviyo in Kaizen Ads: each client's connection (a read-only private API key, encrypted at rest), the daily sync
+// Klaviyo in Kaizen OS: each client's connection (a read-only private API key, encrypted at rest), the daily sync
 // (campaigns, flows, lists and segments, the account's totals per day), and what the client page and the agents read.
 // Read only. Everything returns early, touching nothing, until the Klaviyo migration is applied.
 

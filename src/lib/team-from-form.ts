@@ -114,7 +114,7 @@ export async function applyContacts(admin: SupabaseClient, clientId: string, raw
   return added;
 }
 
-/** Names on the form that aren't on the team in Kaizen Ads: execs hear about it so someone adds them or assigns by hand. */
+/** Names on the form that aren't on the team in Kaizen OS: execs hear about it so someone adds them or assigns by hand. */
 export async function flagUnmatched(admin: SupabaseClient, clientId: string, unmatched: string[]) {
   if (!unmatched.length) return;
   const [{ data: c }, { data: execs }] = await Promise.all([admin.from("clients").select("name, slug").eq("id", clientId).single(), admin.from("profiles").select("id").eq("role", "executive").eq("is_active", true).not("joined_at", "is", null)]);
@@ -123,7 +123,7 @@ export async function flagUnmatched(admin: SupabaseClient, clientId: string, unm
       profile_id: e.id,
       kind: "client",
       title: `${c?.name ?? "A new client"}: ${unmatched.join(", ")} ${unmatched.length === 1 ? "isn't" : "aren't"} on the team`,
-      body: "The onboarding form named them, but there's no one by that name in Kaizen Ads. Add them on the Team page, or assign the client's team by hand.",
+      body: "The onboarding form named them, but there's no one by that name in Kaizen OS. Add them on the Team page, or assign the client's team by hand.",
       href: c?.slug ? `/clients/${c.slug}` : "/team",
       client_id: clientId,
       key: `form-team:${clientId}:${unmatched.join("|")}`.slice(0, 300),
@@ -204,7 +204,7 @@ standard: the set package's key if the answer is exactly one set package with no
 }
 
 /**
- * The services ticked on the enrollment or upsell form become the client's services in Kaizen Ads straight away (a new
+ * The services ticked on the enrollment or upsell form become the client's services in Kaizen OS straight away (a new
  * client isn't in Kaizen Track yet, so nothing else would bring them in). Added only: a form never takes one off, and
  * one ticked again comes back even if it had been removed here.
  */

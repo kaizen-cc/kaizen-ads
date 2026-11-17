@@ -7,7 +7,7 @@ import { tiktokConfigured } from "@/lib/tiktok/core";
 
 // Accounts in the red get audited without anyone asking: when a KPI is off target and has no audit yet, or its last
 // audit is three days old and nobody has started on it (no action ticked, no change made from it, no sprint move
-// begun), Kaizen Ads runs a fresh one and tells the account's buyer, with the moves it can make for them. A few per
+// begun), Kaizen OS runs a fresh one and tells the account's buyer, with the moves it can make for them. A few per
 // run, so the AI and ad platform calls stay spread out; the worst accounts go first.
 
 const PER_RUN = 3;
@@ -87,7 +87,7 @@ export async function autoAudits(admin: SupabaseClient, budgetMs = 700_000) {
 
 type Action = { title: string; short?: string; area: string; owner: string; steps?: string[]; inPlatform?: boolean };
 
-/** The buyer hears it ran, what it found, and the moves Kaizen Ads can make for them. */
+/** The buyer hears it ran, what it found, and the moves Kaizen OS can make for them. */
 async function tellBuyer(admin: SupabaseClient, auditId: string, t: Off) {
   const { data: a } = await admin.from("account_audits").select("status, result").eq("id", auditId).single();
   if (a?.status !== "ready" || !t.owner_id) return;
@@ -104,7 +104,7 @@ async function tellBuyer(admin: SupabaseClient, auditId: string, t: Off) {
       profile_id: id,
       kind: "kpi",
       title: `${t.clients.name} is off target: the audit is ready`,
-      body: [res?.verdict?.headline ?? "", list.length ? `${quick.length ? (platform === "tiktok" ? `${quick.length} to make in TikTok Ads Manager` : `${quick.length} you can do from Kaizen Ads`) : `${actions.length} actions`}:\n${list.join("\n")}` : ""].filter(Boolean).join("\n\n").slice(0, 1000),
+      body: [res?.verdict?.headline ?? "", list.length ? `${quick.length ? (platform === "tiktok" ? `${quick.length} to make in TikTok Ads Manager` : `${quick.length} you can do from Kaizen OS`) : `${actions.length} actions`}:\n${list.join("\n")}` : ""].filter(Boolean).join("\n\n").slice(0, 1000),
       href: `/kpis/audit/${auditId}`,
       client_id: t.client_id,
       key: `auto-audit:${auditId}`,

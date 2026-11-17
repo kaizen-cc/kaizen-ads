@@ -106,7 +106,7 @@ export function PortalShell({
           {who && <p className="truncate px-2 text-[13px] text-muted">{who}</p>}
           {team ? (
             <Link href={`/clients/${slug}`} className="px-2 text-[12.5px] text-faint hover:text-fg">
-              ← Back to Kaizen Ads
+              ← Back to Kaizen OS
             </Link>
           ) : (
             <form action="/auth/signout" method="post">
@@ -122,7 +122,7 @@ export function PortalShell({
           <BrandSwitcher current={{ name: brand, slug }} brands={brands} />
           {team ? (
             <Link href={`/clients/${slug}`} className="inline-flex min-h-11 items-center text-[12.5px] text-muted">
-              Kaizen Ads
+              Kaizen OS
             </Link>
           ) : (
             <form action="/auth/signout" method="post">

@@ -4,7 +4,7 @@ import { asana, asanaWrite, projectGid } from "@/lib/asana";
 import { conceptLine, unitsFor } from "@/lib/allotment";
 import { primaryOf, type SeatRow } from "@/lib/buyer-seats";
 
-// A creative request briefed in Kaizen Ads, sent to the Creative board in Asana built exactly like the Google Form's
+// A creative request briefed in Kaizen OS, sent to the Creative board in Asana built exactly like the Google Form's
 // tasks, so the creative team sees nothing different while briefing moves here: one task per format, named
 // "Meta Ads - Need a new creative - {Client} - {Format}", in the Creative Brief column, the Client ID field set, assigned
 // to the client's designer or video editor, and the description in the form's order (media buyer, platform, type,
@@ -152,7 +152,7 @@ async function fieldValues(project: string, fields: PlannedTask["fields"]) {
 /**
  * Sends the request to the Creative board: the planned tasks, each created in the Creative Brief column with its
  * fields, assignee (by email; created unassigned if Asana doesn't know them) and the sender as a follower. Kept as a sent
- * request, and put on the mirror straight away (marked as made in Kaizen Ads) so the Board shows it now.
+ * request, and put on the mirror straight away (marked as made in Kaizen OS) so the Board shows it now.
  */
 export async function sendAsanaRequest(admin: SupabaseClient, d: AsanaDraft, by: { id: string; email: string | null }, extra: { suggestionId?: string | null; origin?: Record<string, unknown> | null } = {}) {
   const planned = await planAsanaRequest(admin, d);

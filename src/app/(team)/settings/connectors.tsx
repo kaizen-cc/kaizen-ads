@@ -488,7 +488,7 @@ function CustomScreen({ setPending, onAdded, onCancel }: { setPending: (p: Pendi
           <span className="text-[12px] text-faint">The HTTPS address where the server accepts MCP requests, for example https://mcp.example.com/mcp</span>
         </label>
         <p className="rounded-[14px] bg-surface-2/70 px-4 py-3 text-[12.5px] leading-relaxed text-muted">
-          Only use connectors from developers you trust. Kaizen Ads doesn&apos;t control which tools a server offers or check what it does, and it can read whatever each person connects.
+          Only use connectors from developers you trust. Kaizen OS doesn&apos;t control which tools a server offers or check what it does, and it can read whatever each person connects.
         </p>
         {err ? <p className="text-[12.5px] text-bad">{err}</p> : null}
       </div>

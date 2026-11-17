@@ -5,7 +5,7 @@ import { GoogleButton } from "./google-button";
 
 const errors: Record<string, string> = {
   not_invited:
-    "You haven't been added to Kaizen Ads yet. Ask an executive to add your @kaizenmarketing.agency email, then try again.",
+    "You haven't been added to Kaizen OS yet. Ask an executive to add your @kaizenmarketing.agency email, then try again.",
   inactive: "This account isn't active. Reach out to your Kaizen team if this is a mistake.",
   link_expired: "That sign-in link has expired or was already used. Enter your email for a new one.",
   failed: "Sign-in didn't complete. Please try again.",

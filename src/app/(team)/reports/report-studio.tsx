@@ -519,7 +519,7 @@ export function ReportStudio({
     router.refresh();
   };
 
-  // An export from Ads Manager (or Google Ads) for an account Kaizen Ads can't read: read here for a first look (what's
+  // An export from Ads Manager (or Google Ads) for an account Kaizen OS can't read: read here for a first look (what's
   // in it), then sent; the report is redrawn from it on the server and the page follows
   // An email or social report takes an export too (from Klaviyo, Meta Business Suite...): the AI reads it with the ask
   const canAttach = report.platform === "meta" || report.platform === "google" || Boolean(ch);

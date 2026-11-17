@@ -608,7 +608,7 @@ const toDay = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleD
 const weeklyTaskSummary: AiTool = {
   name: "weekly_task_summary",
   description:
-    "The person's own open work this week from Kaizen Ads: tickets they hold or make or buy for, their Asana tasks (the mirrored board), the plan tasks they own for clients, and the replies they owe (Slack and email people are waiting on), organised as late, each day of this week, later and no date, each group by client. Then also read their connected Gmail, Asana and Slack with those connectors if they are connected (flagged emails, tasks assigned to them, mentions) and merge what you find into the same list by due date and client. Present a clean list with the most urgent first. Read only: nothing is changed.",
+    "The person's own open work this week from Kaizen OS: tickets they hold or make or buy for, their Asana tasks (the mirrored board), the plan tasks they own for clients, and the replies they owe (Slack and email people are waiting on), organised as late, each day of this week, later and no date, each group by client. Then also read their connected Gmail, Asana and Slack with those connectors if they are connected (flagged emails, tasks assigned to them, mentions) and merge what you find into the same list by due date and client. Present a clean list with the most urgent first. Read only: nothing is changed.",
   input_schema: { type: "object", properties: {}, additionalProperties: false },
   run: async (user: Staff, _input, chat) => {
     const db = await createClient();

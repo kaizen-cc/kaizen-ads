@@ -13,7 +13,7 @@ export const MONTHS = ["January", "February", "March", "April", "May", "June", "
 export const REPLACED = "_Replaced";
 /** The folder made in the client's Drive folder when they have none */
 export const AD_CREATIVES = "Ad Creatives";
-/** The start of the ticket's message when the client has no Drive folder at all (the file stays in Kaizen Ads) */
+/** The start of the ticket's message when the client has no Drive folder at all (the file stays in Kaizen OS) */
 export const NO_DRIVE = "Drive isn't connected for this client";
 
 /** En and em dashes, written as code points so the source holds none */
@@ -374,7 +374,7 @@ export async function ensureAdCreative(drive: FolderDrive, clientFolder: string)
 
 /**
  * Where a client's uploads go before any Drive call: the Ad Creatives folder set by hand or found earlier, else look
- * in (or make it in) their Drive folder, else nowhere: Drive isn't connected for them, the file stays in Kaizen Ads.
+ * in (or make it in) their Drive folder, else nowhere: Drive isn't connected for them, the file stays in Kaizen OS.
  */
 export function rootPlan(c: { ad_creative_folder_id?: string | null; drive_folder_id?: string | null } | null): { use: string } | { lookIn: string } | { noDrive: true } {
   if (c?.ad_creative_folder_id) return { use: c.ad_creative_folder_id };

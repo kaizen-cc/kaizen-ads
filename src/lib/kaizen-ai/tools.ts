@@ -306,7 +306,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     },
     {
       name: "get_client_context",
-      description: "Everything Kaizen Ads knows about a client, newest first: the Brand Bible, go-to-market strategy, rules and logged dos and don'ts, what to remember, the team's learnings, KPI targets and how the accounts are doing, what's happening now (tickets, comments, approvals, promises, replies owed), the last 45 days of Slack, email and calls, and recent creative. Read it before answering anything about a client that isn't already in the conversation.",
+      description: "Everything Kaizen OS knows about a client, newest first: the Brand Bible, go-to-market strategy, rules and logged dos and don'ts, what to remember, the team's learnings, KPI targets and how the accounts are doing, what's happening now (tickets, comments, approvals, promises, replies owed), the last 45 days of Slack, email and calls, and recent creative. Read it before answering anything about a client that isn't already in the conversation.",
       input_schema: { type: "object", properties: { client: CLIENT }, additionalProperties: false },
       status: (input, client) => `Reading everything on ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
@@ -516,7 +516,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           key_flows: k.keyFlows.map((f) => ({ flow: f.label, state: f.state, matched: f.flows.map((x) => x.name) })),
           best_campaigns_90d: best.top.map((x) => ({ sent: x.sendTime?.slice(0, 10) ?? null, subject: x.subject ?? x.name, channel: x.channel, recipients: x.recipients, open_rate_pct: pct(x.openRate), revenue: r2(x.revenue) })),
           weakest_campaigns_90d: best.bottom.map((x) => ({ sent: x.sendTime?.slice(0, 10) ?? null, subject: x.subject ?? x.name, recipients: x.recipients, open_rate_pct: pct(x.openRate), click_rate_pct: pct(x.clickRate), revenue: r2(x.revenue) })),
-          read_only: `Nothing can be sent, edited or scheduled in ${k.providerName} from Kaizen Ads.`,
+          read_only: `Nothing can be sent, edited or scheduled in ${k.providerName} from Kaizen OS.`,
         };
       },
     },
@@ -561,7 +561,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
             { title: "Posts", detail: `${r.posts_in_period} (${r.posts_per_week} a week)` },
           ],
         });
-        return { client: c.name, connected: true, ...r, read_only: "Nothing can be posted, edited or scheduled from Kaizen Ads." };
+        return { client: c.name, connected: true, ...r, read_only: "Nothing can be posted, edited or scheduled from Kaizen OS." };
       },
     },
     {

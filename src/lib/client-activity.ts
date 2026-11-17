@@ -217,7 +217,7 @@ export async function activityBlock(supabase: SupabaseClient, clientId: string):
   );
 
   if (!out.length) return "";
-  let text = `<client_activity note="What's happening with this client in Kaizen Ads right now, newest first. It's newer than the Brand Bible and the briefing: where it differs, it wins.">\n${out.join("\n")}\n</client_activity>`;
+  let text = `<client_activity note="What's happening with this client in Kaizen OS right now, newest first. It's newer than the Brand Bible and the briefing: where it differs, it wins.">\n${out.join("\n")}\n</client_activity>`;
   if (text.length > MAX_CHARS) text = `${text.slice(0, MAX_CHARS - 40)}\n…(trimmed)\n</client_activity>`;
   return text;
 }

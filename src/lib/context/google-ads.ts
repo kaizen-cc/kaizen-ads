@@ -5,7 +5,7 @@ import { parseGoogleErrors, type GoogleError } from "@/lib/google-launch/core";
 
 // Google Ads: campaign numbers per day for every client account with a Google KPI target, read through Kaizen's
 // manager (MCC) account. The same shape as Meta's daily rows, so the KPI board, audits, the daily recap and
-// notifications treat both alike. Reads, plus the changes someone confirms in Kaizen Ads (see ad-changes.ts): never
+// notifications treat both alike. Reads, plus the changes someone confirms in Kaizen OS (see ad-changes.ts): never
 // a change on its own.
 //
 // Access belongs to the Google Cloud project that owns the sign-in (developer tokens were retired on Sep 9, 2026):
@@ -417,7 +417,7 @@ export async function managedAccounts() {
 export type GoogleAccess = { account: string; name: string | null; status: string | null; linked: boolean; read: boolean; write: boolean | null; error: string | null };
 
 /**
- * Can Kaizen Ads change this Google Ads account? Three cheap looks: is it under our manager account, can we read it
+ * Can Kaizen OS change this Google Ads account? Three cheap looks: is it under our manager account, can we read it
  * (its name and status), and a dry run of creating a shared budget there (validate only: Google checks our access to
  * make changes and creates nothing). The dry run skips the live-changes gate because nothing is written.
  */
@@ -435,7 +435,7 @@ export async function googleAccess(customer: string, managed?: { id: string }[])
     return { ...base, error: e instanceof Error ? e.message : String(e) };
   }
   try {
-    await googleMutate(id, "campaignBudgets", [{ create: { name: `Kaizen Ads access check ${Date.now()}`, amountMicros: "1000000", deliveryMethod: "STANDARD", explicitlyShared: true } }], true);
+    await googleMutate(id, "campaignBudgets", [{ create: { name: `Kaizen OS access check ${Date.now()}`, amountMicros: "1000000", deliveryMethod: "STANDARD", explicitlyShared: true } }], true);
     return { ...base, write: true };
   } catch (e) {
     return { ...base, write: false, error: e instanceof Error ? e.message : String(e) };

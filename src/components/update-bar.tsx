@@ -48,7 +48,7 @@ export function UpdateBar({ preview = false }: { preview?: boolean } = {}) {
       <span className="text-brand-text" aria-hidden>
         ✦
       </span>
-      <p className="min-w-0 flex-1">Kaizen Ads was updated. Refresh to get the latest version.</p>
+      <p className="min-w-0 flex-1">Kaizen OS was updated. Refresh to get the latest version.</p>
       <button onClick={() => window.location.reload()} className="h-8 max-md:h-11 shrink-0 rounded-brand bg-brand px-3 text-xs font-medium text-white hover:bg-brand-hover">
         Refresh
       </button>

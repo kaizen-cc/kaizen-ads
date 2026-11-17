@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { metaConfigured, metaGraph, withMetaAccount } from "@/lib/context/meta";
 
-// Every write Kaizen Ads makes to Meta goes through here: the launcher creating ads, and audit or sprint changes
+// Every write Kaizen OS makes to Meta goes through here: the launcher creating ads, and audit or sprint changes
 // (pausing, budgets). Two guards, whatever asked:
 // - the sandbox: while it's on (Settings), only Kaizen's own ad account can be written to; client accounts are refused
 // - validate first: each write can be sent to Meta as a dry run (validate_only), which checks it in full and changes nothing
@@ -98,7 +98,7 @@ export async function ownerAccount(objectId: string, account?: string | null): P
 }
 
 /**
- * Can Kaizen Ads write to this account? A dry run of creating a paused campaign there: Meta checks the token's
+ * Can Kaizen OS write to this account? A dry run of creating a paused campaign there: Meta checks the token's
  * permission (ads_management), the system user's role on the account, and the account's state, and creates nothing.
  */
 // What the system user's token must carry: ads for the account, and the Page permissions Meta needs to create the
@@ -163,8 +163,8 @@ export async function writeAccess(admin: SupabaseClient, account: string): Promi
         : `The system user's token is missing ${scopes.missing.join(", ")}. Generate a new token for the system user in Business Manager (Users → System users → Generate new token) with those permissions ticked, then replace META_SYSTEM_USER_TOKEN in Vercel. It has now: ${scopes.granted.join(", ") || "nothing readable"}.`,
     };
   try {
-    await metaWrite(admin, account, `act_${bare(account)}/campaigns`, { name: "Kaizen Ads access check", objective: "OUTCOME_TRAFFIC", status: "PAUSED", special_ad_categories: "[]", is_adset_budget_sharing_enabled: "false" }, true);
-    return { ok: true, detail: `Kaizen Ads can create and change ads here, ${via.label} (checked with Meta, nothing was created).` };
+    await metaWrite(admin, account, `act_${bare(account)}/campaigns`, { name: "Kaizen OS access check", objective: "OUTCOME_TRAFFIC", status: "PAUSED", special_ad_categories: "[]", is_adset_budget_sharing_enabled: "false" }, true);
+    return { ok: true, detail: `Kaizen OS can create and change ads here, ${via.label} (checked with Meta, nothing was created).` };
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
     const hint = /permission|not authorized|ads_management|\(#200\)|\(#10\)/i.test(m)

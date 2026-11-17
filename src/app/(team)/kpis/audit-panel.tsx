@@ -19,7 +19,7 @@ export type AuditSummary = {
   done: number;
   error: string | null;
   steps: AuditStep[];
-  /** The moves Kaizen Ads can make in the ad account itself (pause, turn on, budgets; bids and negatives on Google) */
+  /** The moves Kaizen OS can make in the ad account itself (pause, turn on, budgets; bids and negatives on Google) */
   quick?: QuickAction[];
   platform?: "meta" | "google" | "tiktok";
 } | null;

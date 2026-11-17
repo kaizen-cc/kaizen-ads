@@ -9,7 +9,7 @@ import { adDiagnosis, adGroups, advertiserInfo, advertisersOf, ads as listAds, e
 import { diagnosticsText, parseDiagnosis, parsePixels, parsePixelStats, statusWarning, withCounts, type DiagnosisWarning, type PixelView, type TikTokDiagnostics } from "./diagnostics-core";
 import { AD_ATTRS, CAMPAIGN_ATTRS, REPORT_METRICS, adDayRow, addUp, campaignDayRow, chunkRange, shiftDay, statusWord, summarize, summaryLine, tiktokConfigured, type TikTokSummary } from "./core";
 
-// TikTok Ads in Kaizen Ads: the connection (an exec's OAuth grant, its token encrypted at rest), the advertisers it
+// TikTok Ads in Kaizen OS: the connection (an exec's OAuth grant, its token encrypted at rest), the advertisers it
 // reaches and the client each belongs to, and the daily pulls (campaigns for the KPI board, ads for top ads and hook
 // rates). Read only. Everything here returns early, touching nothing, while TikTok isn't set up (tiktokConfigured).
 

@@ -63,8 +63,8 @@ export async function POST(req: Request) {
   await sendEmail({
     to: from,
     subject: r.closed ? "Closed: thanks for the update" : "Got it: it's still open",
-    text: `${r.message}\n\nAdd more or mark it handled in Kaizen Ads.`,
-    html: `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#17131a"><p style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#c8102e;margin:0 0 14px">Kaizen Ads</p><p style="font-size:15px;line-height:1.5">${r.message.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p></div>`,
+    text: `${r.message}\n\nAdd more or mark it handled in Kaizen OS.`,
+    html: `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#17131a"><p style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#c8102e;margin:0 0 14px">Kaizen OS</p><p style="font-size:15px;line-height:1.5">${r.message.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p></div>`,
   }).catch(() => null);
   return Response.json({ ok: true, closed: r.closed });
 }

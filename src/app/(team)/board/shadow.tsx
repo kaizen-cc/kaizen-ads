@@ -53,7 +53,7 @@ export function ShadowCard({
   );
 }
 
-/** The Asana task in full, and the way into Kaizen Ads at the stage it's reached. */
+/** The Asana task in full, and the way into Kaizen OS at the stage it's reached. */
 export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMigrate: boolean; onClose: () => void }) {
   useEffect(() => {
     const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -71,7 +71,7 @@ export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMi
           <div className="grid gap-2 max-md:min-w-0 max-md:[overflow-wrap:anywhere]">
             <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-dashed border-line px-2 py-0.5 text-[11px] text-muted">
               <span className="h-1.5 w-1.5 rounded-full bg-[#f06a6a]" />
-              Mirrored from Asana · not a Kaizen Ads ticket yet
+              Mirrored from Asana · not a Kaizen OS ticket yet
             </span>
             <h2 className="font-heading text-xl leading-snug">{s.title}</h2>
             {s.priority !== "normal" && (
@@ -103,14 +103,14 @@ export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMi
         </dl>
 
         <div className="grid gap-3 rounded-[14px] border border-line bg-surface p-4">
-          <p className="text-sm font-medium">Move it into Kaizen Ads</p>
+          <p className="text-sm font-medium">Move it into Kaizen OS</p>
           <p className="text-[13px] leading-relaxed text-muted">
             It becomes a real ticket in <b className="text-fg">{stageInfo(s.stage).label}</b>, where it&apos;s up to in Asana. The request form opens filled in from this task and asks only for what&apos;s
             missing for that stage. After that it&apos;s worked here, with the AI, turnarounds and the allotment.
           </p>
           {canMigrate ? (
             <Link href={`/requests/new?asana=${s.gid}`} className="justify-self-start rounded-full bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-hover max-md:grid max-md:h-12 max-md:w-full max-md:place-items-center max-md:justify-self-stretch">
-              Migrate to Kaizen Ads →
+              Migrate to Kaizen OS →
             </Link>
           ) : (
             <p className="text-xs text-faint">The person it&apos;s assigned to, a lead or an exec can migrate it.</p>

@@ -49,7 +49,7 @@ export function ActivityTracker() {
   // Each page opened, with its title (set by the page a moment after it renders)
   useEffect(() => {
     const t = setTimeout(() => {
-      const label = document.title.replace(/\s*[·|–-]\s*Kaizen Ads\s*$/i, "").trim() || pathname;
+      const label = document.title.replace(/\s*[·|–-]\s*Kaizen OS\s*$/i, "").trim() || pathname;
       send("activity_log", { p_kind: "page", p_path: here(), p_label: label });
     }, 800);
     return () => clearTimeout(t);

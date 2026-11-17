@@ -344,7 +344,7 @@ const TIKTOK_CHECK_SYSTEM = `${CHECK_SYSTEM.replace(/\bMeta best practice\b/g, "
   .replace(/\bMeta\b/g, "TikTok")
   .replace(/ad sets/g, "ad groups")
   .replace(/resetting learning on a winner, starving the best ad set, splitting budget thinner/, "resetting learning on a winning ad group, letting tired creative run on, splitting a small budget across more ad groups")}
-TikTok is read only in Kaizen Ads: the buyer makes every change in TikTok Ads Manager. What you can see is each ad's status (on, off, rejected) and which ads started or stopped spending; budget, bid and targeting changes aren't visible, so for those go by what the buyer ticked and noted. On TikTok creative tires in days: new ads going live is often the right move.`;
+TikTok is read only in Kaizen OS: the buyer makes every change in TikTok Ads Manager. What you can see is each ad's status (on, off, rejected) and which ads started or stopped spending; budget, bid and targeting changes aren't visible, so for those go by what the buyer ticked and noted. On TikTok creative tires in days: new ads going live is often the right move.`;
 
 const fmt = (k: Kpi, v: number | null) => (v == null ? "no results" : k.roas ? `${v}x ROAS` : `$${v} per ${k.label.toLowerCase().replace(/s$/, "")}`);
 

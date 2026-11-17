@@ -21,7 +21,7 @@ export type Person = {
   joined: boolean;
   invitedAt?: string | null;
   clientCount: number;
-  /** Execs only: when they were last on and how much they use Kaizen Ads */
+  /** Execs only: when they were last on and how much they use Kaizen OS */
   usage?: { lastActive: string | null; lastSignIn: string | null; perWeek: string | null; thisWeek: string | null } | null;
 };
 

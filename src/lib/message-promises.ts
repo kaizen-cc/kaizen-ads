@@ -303,10 +303,10 @@ type Data<T = Row> = { data: T[] | T | null };
 const many = (r: Data) => (Array.isArray(r.data) ? r.data : r.data ? [r.data] : []);
 
 /**
- * What Kaizen Ads itself shows happened for the client from a little before it was said until now: the client added
+ * What Kaizen OS itself shows happened for the client from a little before it was said until now: the client added
  * or enrolled, onboarding started (welcome sent, access steps, the call checked, what's blocking it), the intake sent
  * and back, portal people invited, the kickoff message sent, the Brand Bible and go-to-market started, KPI targets and
- * ad accounts linked, launches. Work done in Kaizen Ads isn't in a thread or a ticket, and counts all the same.
+ * ad accounts linked, launches. Work done in Kaizen OS isn't in a thread or a ticket, and counts all the same.
  */
 export async function systemSince(admin: Admin, clientId: string, at: string) {
   const from = new Date(Date.parse(at) - 6 * 3_600_000).toISOString();
@@ -331,7 +331,7 @@ export async function systemSince(admin: Admin, clientId: string, at: string) {
   };
   const cl = c.data as Row | null;
   if (cl) {
-    add(cl.created_at, `the client was added to Kaizen Ads (status now: ${cl.status})`);
+    add(cl.created_at, `the client was added to Kaizen OS (status now: ${cl.status})`);
     add(cl.reonboarded_at, "the client was enrolled for onboarding again");
     add(cl.reactivated_at, "the client was made active again");
     add(cl.portal_live_at, "the client portal went live");
@@ -396,7 +396,7 @@ export async function systemSince(admin: Admin, clientId: string, at: string) {
 type TeamNote = { at: string; by: string; text: string; client?: string | null };
 const notesOf = (p: Row) => ((p.team_context ?? []) as TeamNote[]).filter((n) => n?.text?.trim());
 
-/** For each promise: done, moving (a ticket, a task, the thread, the ad account or Kaizen Ads shows it), or nothing yet. */
+/** For each promise: done, moving (a ticket, a task, the thread, the ad account or Kaizen OS shows it), or nothing yet. */
 async function movement(admin: Admin, list: Row[], who: SlackWho | null, names: Map<string, string>) {
   const blocks: string[] = [];
   const tasksOf = new Map<string, { gid: string }[]>();
@@ -412,10 +412,10 @@ async function movement(admin: Admin, list: Row[], who: SlackWho | null, names: 
         admin.from("clients").select("name, status").eq("id", p.client_id).maybeSingle(),
       ]);
       tasksOf.set(String(p.id), tasks);
-      work = `Client: ${client?.name ?? "unknown"}${client?.status ? ` (status now: ${client.status})` : ""}\nTickets made since: ${(tickets ?? []).map((t) => `#${t.number} "${t.title}": ${String(t.brief ?? "").replace(/\s+/g, " ").slice(0, 160)}`).join(" | ") || "none"}\nAsana tasks made since: ${tasks.map((t, n) => `A${n + 1} "${t.name}"`).join(" | ") || "none"}\nChanges in their ad accounts around then and since (Meta and Google's own history): ${changes || "none"}\nWhat Kaizen Ads shows happened for this client since:\n${system || "nothing"}`;
+      work = `Client: ${client?.name ?? "unknown"}${client?.status ? ` (status now: ${client.status})` : ""}\nTickets made since: ${(tickets ?? []).map((t) => `#${t.number} "${t.title}": ${String(t.brief ?? "").replace(/\s+/g, " ").slice(0, 160)}`).join(" | ") || "none"}\nAsana tasks made since: ${tasks.map((t, n) => `A${n + 1} "${t.name}"`).join(" | ") || "none"}\nChanges in their ad accounts around then and since (Meta and Google's own history): ${changes || "none"}\nWhat Kaizen OS shows happened for this client since:\n${system || "nothing"}`;
     }
     const notes = notesOf(p);
-    const told = notes.length ? `\nWhat the team told Kaizen Ads about it:\n${notes.map((n) => `${nyDay(n.at)} ${n.by}: ${n.text.replace(/\s+/g, " ").slice(0, 500)}`).join("\n")}` : "";
+    const told = notes.length ? `\nWhat the team told Kaizen OS about it:\n${notes.map((n) => `${nyDay(n.at)} ${n.by}: ${n.text.replace(/\s+/g, " ").slice(0, 500)}`).join("\n")}` : "";
     blocks.push(`${i + 1}. ${names.get(String(p.owner_id)) ?? "A teammate"} said on ${nyDay(String(p.said_at))} they'd: ${p.what} (asked by ${p.asked_by ?? "someone"}: ${p.ask ?? ""})\nSaid since, where it was promised:\n${after || "(nothing)"}${work ? `\n${work}` : ""}${told}`);
   }
   try {
@@ -425,7 +425,7 @@ async function movement(admin: Admin, list: Row[], who: SlackWho | null, names: 
       bare: true,
       maxTokens: 4000,
       system:
-        "You check whether something the team said they'd do has happened or is moving. done: the later messages show it delivered (sent, shared, live, launched, changed, \"here it is\"), or the ad accounts' own change history shows it done (ads or ad sets paused or their status changed for a pause, names changed for a rename, budgets changed for a budget change), or for a rename or a naming change, the current campaign names already show it, whoever's name is on it, since people use their own Meta or Google names. moving: a ticket or Asana task makes substantially the same thing, or the messages show it started or handed on (\"with design now\", \"drafting it\", a new date agreed with the person who asked). nothing: no sign of either. The person who asked dropping it (\"never mind\", \"let's hold off\") counts as done. Work done in Kaizen Ads counts like work anywhere else: a promise to get a client onboarded, start onboarding, kick off or set up a new client or location is moving once Kaizen Ads shows that client added or enrolled, the welcome sent or onboarding steps under way, and done once the onboarding call is checked off, the kickoff is sent or ads are launched; an intake, portal invite, Brand Bible, go-to-market, KPI target or launch shown there covers a promise to do that thing. What the team told Kaizen Ads about it is their own account: when it says it's handled, done or no longer needed, it's done; when it says it's started or with someone, it's moving; when it only explains, weigh it with the rest. evidence: one short line saying what showed it (or \"nothing since\"). tickets: the ticket numbers that cover it; asana: the Asana task numbers without the A.",
+        "You check whether something the team said they'd do has happened or is moving. done: the later messages show it delivered (sent, shared, live, launched, changed, \"here it is\"), or the ad accounts' own change history shows it done (ads or ad sets paused or their status changed for a pause, names changed for a rename, budgets changed for a budget change), or for a rename or a naming change, the current campaign names already show it, whoever's name is on it, since people use their own Meta or Google names. moving: a ticket or Asana task makes substantially the same thing, or the messages show it started or handed on (\"with design now\", \"drafting it\", a new date agreed with the person who asked). nothing: no sign of either. The person who asked dropping it (\"never mind\", \"let's hold off\") counts as done. Work done in Kaizen OS counts like work anywhere else: a promise to get a client onboarded, start onboarding, kick off or set up a new client or location is moving once Kaizen OS shows that client added or enrolled, the welcome sent or onboarding steps under way, and done once the onboarding call is checked off, the kickoff is sent or ads are launched; an intake, portal invite, Brand Bible, go-to-market, KPI target or launch shown there covers a promise to do that thing. What the team told Kaizen OS about it is their own account: when it says it's handled, done or no longer needed, it's done; when it says it's started or with someone, it's moving; when it only explains, weigh it with the rest. evidence: one short line saying what showed it (or \"nothing since\"). tickets: the ticket numbers that cover it; asana: the Asana task numbers without the A.",
       schema: MOVE_SCHEMA,
       prompt: blocks.join("\n\n"),
     });
@@ -442,7 +442,7 @@ const whereOf = (p: Row) => (p.source === "gmail" ? "by email" : `in #${p.channe
 
 /** Due ones checked; nothing moving → the person who said it; still nothing once they've seen that → lead and execs. */
 export async function followPromises(admin: Admin, who: SlackWho | null) {
-  // Promises with no client yet: matched against today's clients first, so what Kaizen Ads shows for them counts
+  // Promises with no client yet: matched against today's clients first, so what Kaizen OS shows for them counts
   const matched = await attachClients(admin).catch(() => null);
   if (matched && matched.matched + matched.byAi) console.log("[promises] clients matched:", matched);
   const nowIso = new Date().toISOString();

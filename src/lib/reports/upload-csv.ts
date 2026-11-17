@@ -1,4 +1,4 @@
-// An ad account's numbers from a file the buyer exported (Meta Ads Manager, or Google Ads), for when Kaizen Ads can't
+// An ad account's numbers from a file the buyer exported (Meta Ads Manager, or Google Ads), for when Kaizen OS can't
 // read the account itself (Meta answering "(#200) Ad account owner has NOT grant ads_management or ads_read
 // permission", say). Pure functions: the CSV is read here, the same way every time, and turned into the daily campaign
 // rows the KPI board and the reports already count, so a file's numbers follow every rule the synced ones do (the

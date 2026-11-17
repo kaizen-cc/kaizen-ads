@@ -102,7 +102,7 @@ export type GoogleResolution = {
   context?: LaunchContext | null;
   /** The paused Kaizen campaign worth bringing back for this launch, when no live Kaizen campaign fits */
   comeback?: Comeback | null;
-  /** Campaigns Kaizen Ads launched for this client (ids): built into as they are, paused or not */
+  /** Campaigns Kaizen OS launched for this client (ids): built into as they are, paused or not */
   own?: string[];
   /** Answers settled before the launch was read (adding to a campaign that was just launched: its name) */
   preset?: Record<string, string> | null;
@@ -112,7 +112,7 @@ export type GoogleResolution = {
 export type GoogleQa = { at: string; lines: QaLine[]; summary?: string; missing?: string[]; ids?: Record<string, string>; added?: string | null };
 
 /**
- * The campaigns Kaizen Ads launched for this client (from the launch lines it created): a paused one of these is built
+ * The campaigns Kaizen OS launched for this client (from the launch lines it created): a paused one of these is built
  * into as it is ("it's paused, so nothing runs until you turn it on", said once), never refused.
  */
 export async function ownGoogleCampaigns(admin: SupabaseClient, clientId: string): Promise<string[]> {
@@ -147,7 +147,7 @@ async function load(admin: SupabaseClient, id: string): Promise<Run | null> {
 }
 const patch = (admin: SupabaseClient, id: string, p: Record<string, unknown>) => admin.from("launch_runs").update({ ...p, updated_at: now() }).eq("id", id);
 
-const RULES = `Kaizen's Google launch rules: Kaizen only touches what Kaizen set up. A launch goes into a live campaign with "Kaizen" in its name (and only ad groups inside one), a paused Kaizen campaign brought back when its record says so, or a new campaign whose name has Kaizen in it the way the account names its Kaizen campaigns ("Search | Non Brand | Kaizen"). Campaigns without Kaizen in the name are context only (what converts, what runs): never propose, plan or add to them; if the buyer names one, say in one sentence Kaizen didn't set it up so you won't touch it, and offer the Kaizen one or a new Kaizen campaign. Never propose or plan launching into a paused campaign or ad group (nothing added there runs) unless it's the paused Kaizen campaign offered back, a campaign Kaizen Ads launched itself (marked [launched by Kaizen Ads]) or a paused Kaizen campaign the buyer names and insists on: then build into it as it is, say at most once that it's paused so nothing runs until they turn it on, and never refuse or repeat that. Everything new is created PAUSED: that's Kaizen's rule, not a question, so never ask or confirm it ("Taking that as paused" is never said). A plainly written keyword goes in as phrase match, Kaizen's default: never ask for a match type unless the buyer raises it. Never ask what the account, the history or the client context already answers; decide like a senior buyer and say your pick. Respect Google's limits exactly: RSA headlines up to 30 characters (3 to 15 of them), descriptions up to 90 (2 to 4), display paths up to 15 each, keywords up to 80 characters and 10 words, sitelink text 25, callouts 25. No exclamation marks in headlines, no repeated punctuation, no emojis, no phone numbers in ad text, no all-caps words except brand names and acronyms. Match types: [exact], "phrase", broad as plain text. Profitability first: the searches that convert and the copy that won lead; what wastes spend becomes a negative. Refer to people by role (the buyer, the client, the head of Google), never by name. Plain text, no markdown, no emojis, no em dashes.`;
+const RULES = `Kaizen's Google launch rules: Kaizen only touches what Kaizen set up. A launch goes into a live campaign with "Kaizen" in its name (and only ad groups inside one), a paused Kaizen campaign brought back when its record says so, or a new campaign whose name has Kaizen in it the way the account names its Kaizen campaigns ("Search | Non Brand | Kaizen"). Campaigns without Kaizen in the name are context only (what converts, what runs): never propose, plan or add to them; if the buyer names one, say in one sentence Kaizen didn't set it up so you won't touch it, and offer the Kaizen one or a new Kaizen campaign. Never propose or plan launching into a paused campaign or ad group (nothing added there runs) unless it's the paused Kaizen campaign offered back, a campaign Kaizen OS launched itself (marked [launched by Kaizen OS]) or a paused Kaizen campaign the buyer names and insists on: then build into it as it is, say at most once that it's paused so nothing runs until they turn it on, and never refuse or repeat that. Everything new is created PAUSED: that's Kaizen's rule, not a question, so never ask or confirm it ("Taking that as paused" is never said). A plainly written keyword goes in as phrase match, Kaizen's default: never ask for a match type unless the buyer raises it. Never ask what the account, the history or the client context already answers; decide like a senior buyer and say your pick. Respect Google's limits exactly: RSA headlines up to 30 characters (3 to 15 of them), descriptions up to 90 (2 to 4), display paths up to 15 each, keywords up to 80 characters and 10 words, sitelink text 25, callouts 25. No exclamation marks in headlines, no repeated punctuation, no emojis, no phone numbers in ad text, no all-caps words except brand names and acronyms. Match types: [exact], "phrase", broad as plain text. Profitability first: the searches that convert and the copy that won lead; what wastes spend becomes a negative. Refer to people by role (the buyer, the client, the head of Google), never by name. Plain text, no markdown, no emojis, no em dashes.`;
 
 // ─── Starting one ───────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -295,7 +295,7 @@ function accountText(r: GoogleResolution, o: { groups?: number; terms?: number; 
   const adGroups = [...r.adGroups].sort((a, b) => Number(kaizenIds.has(b.campaignId)) - Number(kaizenIds.has(a.campaignId)));
   return [
     "CAMPAIGNS (id, type, status, bidding, daily budget, last 30 days; [Kaizen] ones can be launched into, the rest are context only)",
-    ...camps.map((c) => `- ${c.id} "${c.name}" ${isKaizenName(c.name) ? "[Kaizen]" : "[not Kaizen's]"}${r.own?.includes(c.id) ? " [launched by Kaizen Ads]" : ""} ${c.type} ${c.status} ${c.bidding.toLowerCase()} ${money(c.budget)}/day · ${money(c.spend30)} spent, ${c.conversions30} conv${c.conversions30 ? ` ($${Math.round(c.spend30 / c.conversions30)}/conv)` : ""}`),
+    ...camps.map((c) => `- ${c.id} "${c.name}" ${isKaizenName(c.name) ? "[Kaizen]" : "[not Kaizen's]"}${r.own?.includes(c.id) ? " [launched by Kaizen OS]" : ""} ${c.type} ${c.status} ${c.bidding.toLowerCase()} ${money(c.budget)}/day · ${money(c.spend30)} spent, ${c.conversions30} conv${c.conversions30 ? ` ($${Math.round(c.spend30 / c.conversions30)}/conv)` : ""}`),
     "AD GROUPS (id, campaign, ads and their best ad strength)",
     ...adGroups.slice(0, groups).map((g) => `- ${g.id} "${g.name}" in "${g.campaign}"${kaizenIds.has(g.campaignId) ? "" : " [not Kaizen's]"} ${g.status}${g.rsas ? `, ${g.rsas} RSA${g.rsas === 1 ? "" : "s"}${g.strength ? ` (${g.strength.toLowerCase()})` : ""}` : ", no RSA"}`),
     ...(r.adGroups.length > groups ? [`(${r.adGroups.length - groups} more ad groups)`] : []),
@@ -306,7 +306,7 @@ function accountText(r: GoogleResolution, o: { groups?: number; terms?: number; 
   ].join("\n");
 }
 
-/** The paused campaigns built into as they are: the ones Kaizen Ads launched for this client */
+/** The paused campaigns built into as they are: the ones Kaizen OS launched for this client */
 const keepOf = (r: Pick<GoogleResolution, "own"> | null | undefined): ReadonlySet<string> => new Set(r?.own ?? []);
 
 /** Answers settled before the launch was read (the campaign that was just launched), taken as given */
@@ -637,7 +637,7 @@ export async function googleLaunchReply(admin: SupabaseClient, id: string, messa
   const context = await ensureContext(admin, run);
   const comeback = run.resolution.comeback ?? null;
   const lastSaid = [...run.turns].reverse().find((t) => t.role === "assistant") ?? null;
-  // The campaigns Kaizen Ads launched here: built into as they are, paused or not (fresh: one may have just been)
+  // The campaigns Kaizen OS launched here: built into as they are, paused or not (fresh: one may have just been)
   const own = await ownGoogleCampaigns(admin, run.client_id).catch(() => run.resolution?.own ?? []);
   run.resolution = { ...run.resolution, own };
   const keep = keepOf(run.resolution);
@@ -854,7 +854,7 @@ export function buildGooglePlan(
     /** Where the buyer said to show it, in their words (the locations answer) */
     locationAsk?: string | null;
     revive?: string | null;
-    /** A paused campaign built into as it is (launched by Kaizen Ads, or the buyer insisted) */
+    /** A paused campaign built into as it is (launched by Kaizen OS, or the buyer insisted) */
     keepPaused?: ReadonlySet<string>;
   },
 ): { plan: GooglePlan; warnings: string[] } {
@@ -1014,7 +1014,7 @@ export async function planGoogleRun(admin: SupabaseClient, id: string) {
     let draft = run.sheet ?? { adGroups: [], campaignNegatives: [], notes: [] };
     const matchAnswer = run.questions.find((q) => q.key === "match_types")?.answer;
     if (matchAnswer) draft = applyMatchAnswer(draft, matchAnswer);
-    // The campaigns Kaizen Ads launched (and one the buyer insisted on by name) are built into as they are
+    // The campaigns Kaizen OS launched (and one the buyer insisted on by name) are built into as they are
     const campaignAnswer = run.questions.find((q) => q.key === "campaign")?.answer ?? null;
     const keep = new Set([...(await ownGoogleCampaigns(admin, run.client_id).catch(() => res.own ?? [])), ...(KEEP_PAUSED.test(campaignAnswer ?? "") ? campaignsNamed(campaignAnswer, res.campaigns).map((c) => c.id) : [])]);
     res.own = [...new Set([...(res.own ?? []), ...keep])];

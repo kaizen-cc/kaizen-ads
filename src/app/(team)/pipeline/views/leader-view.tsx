@@ -58,7 +58,7 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
           </div>
         </Topic>
       ) : (
-        <p className="px-1 text-xs text-faint">Your team&apos;s load, overdue work and flow fill in here once requests move through Kaizen Ads instead of Asana.</p>
+        <p className="px-1 text-xs text-faint">Your team&apos;s load, overdue work and flow fill in here once requests move through Kaizen OS instead of Asana.</p>
       ),
     },
   });

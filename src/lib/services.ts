@@ -14,9 +14,9 @@ export const SERVICES = [
 
 export type ServiceSlug = (typeof SERVICES)[number]["slug"];
 
-/** Everything the client buys: Track's services and those added in Kaizen Ads, in the order above. */
+/** Everything the client buys: Track's services and those added in Kaizen OS, in the order above. */
 export function servicesOf(c: { services?: string[] | null; services_extra?: string[] | null; services_removed?: string[] | null }): ServiceSlug[] {
-  // Taken off in Kaizen Ads (Track's included) stays off
+  // Taken off in Kaizen OS (Track's included) stays off
   const removed = new Set(c.services_removed ?? []);
   const all = new Set([...(c.services ?? []), ...(c.services_extra ?? [])].filter((s) => !removed.has(s)));
   return SERVICES.filter((s) => all.has(s.slug)).map((s) => s.slug);

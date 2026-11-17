@@ -138,7 +138,7 @@ export type DebugToken = { app_id?: string; application?: string; is_valid?: boo
 export type TokenCheck = { ok: true; scopes: string[]; expiresAt: string | null; appId: string; missingSuggested: string[] } | { ok: false; reason: string };
 
 /**
- * Is this token one Kaizen Ads can use? Valid, made by Kaizen's own app (the same app as the default token), and with
+ * Is this token one Kaizen OS can use? Valid, made by Kaizen's own app (the same app as the default token), and with
  * ads_management, ads_read and business_management. A plain reason when it isn't.
  */
 export function checkDebugToken(d: DebugToken | null | undefined, kaizenAppId: string | null): TokenCheck {

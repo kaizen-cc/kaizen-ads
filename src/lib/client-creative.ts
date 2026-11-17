@@ -39,7 +39,7 @@ export type MetaRow = {
   holdRate?: number | null;
 };
 export type ClientCreative = { moving: CreativeRow[]; launched: CreativeRow[]; live: MetaRow[]; paused: MetaRow[]; syncedAt: string | null; asana: AsanaWork[] };
-/** Open work still on the Asana creative board (not moved into Kaizen Ads yet): it counts as in production */
+/** Open work still on the Asana creative board (not moved into Kaizen OS yet): it counts as in production */
 export type AsanaWork = { gid: string; name: string; section: string | null };
 
 type Row = {

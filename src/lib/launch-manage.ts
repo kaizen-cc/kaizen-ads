@@ -4,7 +4,7 @@ import { metaGraph } from "@/lib/context/meta";
 import { metaWrite } from "@/lib/meta-write";
 import { CTA, ENHANCEMENTS, checkCreative, params, sandboxClient, specFor, suggestGeneralRule, trackingSpecs, update, type LaunchPlan, type Result } from "@/lib/launcher";
 
-// Running a launched ad from Kaizen Ads instead of Ads Manager: what Meta shows for it now (each ad, its ad set and
+// Running a launched ad from Kaizen OS instead of Ads Manager: what Meta shows for it now (each ad, its ad set and
 // campaign, on or paused, in review, refused), turning it on or pausing it, and editing what the launcher decided
 // (names, texts, headlines, descriptions, the button, the link and its URL parameters, the Page and Instagram account,
 // Advantage+ enhancements, the daily budget). Ad creatives can't be changed in Meta, so an edit makes a new creative
@@ -71,11 +71,11 @@ export async function setDelivery(admin: SupabaseClient, launchId: string, by: s
   if (!ids.length) throw new Error("Nothing to change.");
   for (const id of ids) await metaWrite(admin, l.plan.account, id, { status }, false);
   const what = target === "ads" ? (ids.length === 1 ? "the ad" : `the ${ids.length} ads`) : target === "adset" ? `the ad set "${now.adset?.name}"` : `the campaign "${now.campaign?.name}"`;
-  await note(admin, l.request_id, by, `${on ? "Turned on" : "Paused"} ${what} in Meta from Kaizen Ads.`);
+  await note(admin, l.request_id, by, `${on ? "Turned on" : "Paused"} ${what} in Meta from Kaizen OS.`);
   if (on && target === "ads") {
     await admin.from("launches").update({ live_at: new Date().toISOString() }).eq("id", launchId).is("live_at", null);
     const { data: t } = await admin.from("requests").select("stage").eq("id", l.request_id).single();
-    if (t?.stage === "ready_for_launch") await admin.rpc("system_move_request", { p_request: l.request_id, p_stage: "launched", p_note: `Turned on in Meta from Kaizen Ads: ${now.ads.map((a) => a.name).join("; ")}`.slice(0, 1000) });
+    if (t?.stage === "ready_for_launch") await admin.rpc("system_move_request", { p_request: l.request_id, p_stage: "launched", p_note: `Turned on in Meta from Kaizen OS: ${now.ads.map((a) => a.name).join("; ")}`.slice(0, 1000) });
   }
   return delivery(l.result);
 }
@@ -222,7 +222,7 @@ export async function editLaunch(admin: SupabaseClient, launchId: string, by: st
 
   const why = reason.trim().slice(0, 600);
   await update(admin, launchId, { plan: next, result, edits: [...(l.edits ?? []), { at: new Date().toISOString(), by, changes, reason: why || null }] });
-  await note(admin, l.request_id, by, `Edited the launched ${made.length === 1 ? "ad" : "ads"} from Kaizen Ads: ${changes.join(", ")}.${why ? ` Why: ${why}` : ""}`);
+  await note(admin, l.request_id, by, `Edited the launched ${made.length === 1 ? "ad" : "ads"} from Kaizen OS: ${changes.join(", ")}.${why ? ` Why: ${why}` : ""}`);
 
   // The reason is learned: the launcher reads it first for this client, every agent sees it in the client's memory
   if (why) {

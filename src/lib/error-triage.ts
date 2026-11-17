@@ -31,7 +31,7 @@ export function classifyError(message: string, stack?: string | null): AutoHandl
       kind: "network",
       summary: "A request from someone's browser never finished — their connection dropped mid-load.",
       cause:
-        "This is how browsers report a lost connection (switching apps on a phone, weak Wi-Fi or mobile data, a VPN reconnecting). It isn't a bug in Kaizen Ads.",
+        "This is how browsers report a lost connection (switching apps on a phone, weak Wi-Fi or mobile data, a VPN reconnecting). It isn't a bug in Kaizen OS.",
       handled: "Nothing was lost. Their page retried by itself once the connection came back. Closed automatically; you're only emailed if many people hit it at once (that would look like an outage).",
     };
   }
@@ -39,8 +39,8 @@ export function classifyError(message: string, stack?: string | null): AutoHandl
     return {
       kind: "stale",
       summary: "A tab that had been open since before the last update tried to load something from the old version.",
-      cause: "Kaizen Ads was updated while the tab stayed open, so it asked for files that the new version replaced.",
-      handled: "The 'Kaizen Ads was updated — Refresh' bar prompts them to reload, which fixes it. Closed automatically.",
+      cause: "Kaizen OS was updated while the tab stayed open, so it asked for files that the new version replaced.",
+      handled: "The 'Kaizen OS was updated — Refresh' bar prompts them to reload, which fixes it. Closed automatically.",
     };
   }
   return null;

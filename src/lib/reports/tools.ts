@@ -82,7 +82,7 @@ export async function reportTools(admin: SupabaseClient, r: { client_id: string;
     },
     {
       name: "client_overview",
-      description: `Everything Kaizen Ads knows about ${client?.name ?? "the client"} in one read: the Brand Bible, the go-to-market strategy, what to remember about them, the latest briefing from Slack, email and Drive, recent messages, what their ads proved (the playbook), KPI targets, recent creative requests and what earlier reports promised. Read it when the report needs context beyond the numbers.`,
+      description: `Everything Kaizen OS knows about ${client?.name ?? "the client"} in one read: the Brand Bible, the go-to-market strategy, what to remember about them, the latest briefing from Slack, email and Drive, recent messages, what their ads proved (the playbook), KPI targets, recent creative requests and what earlier reports promised. Read it when the report needs context beyond the numbers.`,
       input_schema: { type: "object", properties: {}, additionalProperties: false },
       run: async () => {
         const { clientContext, contextBlock } = await import("@/lib/ai");

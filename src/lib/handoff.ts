@@ -142,7 +142,7 @@ async function moveWork(admin: SupabaseClient, clientId: string, fromId: string 
 export async function handOff(admin: SupabaseClient, clientId: string, fromId: string | null, toId: string | null, byId: string | null, via: "app" | "sheet" | "form") {
   if (!toId || toId === fromId) return null;
   const moved = await moveWork(admin, clientId, fromId, toId);
-  // No handoff for someone who hasn't signed in to Kaizen Ads yet (the team is still being onboarded): the work
+  // No handoff for someone who hasn't signed in to Kaizen OS yet (the team is still being onboarded): the work
   // still moves to them, but there's nobody to read a doc
   const { data: buyer } = await admin.from("profiles").select("auth_user_id").eq("id", toId).maybeSingle();
   if (!buyer?.auth_user_id) return null;
@@ -312,7 +312,7 @@ async function writeComeback(admin: SupabaseClient, id: string, clientId: string
   }
 }
 
-/** A client back live: a comeback brief for each of their buyers (Meta and Google) who uses Kaizen Ads, once a day at most. */
+/** A client back live: a comeback brief for each of their buyers (Meta and Google) who uses Kaizen OS, once a day at most. */
 export async function startComebacks(admin: SupabaseClient, clientId: string, byId: string | null) {
   const { data: buyers } = await admin.from("client_assignments").select("profile_id, profiles(auth_user_id)").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]);
   const ids = [...new Set((buyers ?? []).filter((b) => (b.profiles as unknown as { auth_user_id: string | null } | null)?.auth_user_id).map((b) => b.profile_id as string))];

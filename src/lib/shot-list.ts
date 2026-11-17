@@ -171,7 +171,7 @@ export async function keepShotLists(admin: SupabaseClient) {
   for (const c of due) {
     const cycle = end.get(c.id as string)!;
     if (done.has(`${c.id}:${cycle}`)) continue;
-    const r = await writeShotList(admin, c.id as string, "Kaizen Ads (each billing cycle)", { cycleStart: cycle, auto: true }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+    const r = await writeShotList(admin, c.id as string, "Kaizen OS (each billing cycle)", { cycleStart: cycle, auto: true }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
     return { [c.name as string]: "error" in r ? r.error : `${r.list.shots.length} shots for ${r.list.month}` };
   }
   return {};

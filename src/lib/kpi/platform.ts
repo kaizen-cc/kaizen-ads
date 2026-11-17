@@ -20,5 +20,5 @@ export const defaultConversion = (p: unknown) => (p === "google" ? "conversions"
 /** An ad account id as each platform's days store it: Google's digits, Meta's without act_, TikTok's advertiser id as is */
 export const accountKey = (p: unknown, account: string) => (p === "google" ? account.replace(/\D/g, "") : account.replace(/^act_/, "").trim());
 
-/** TikTok is read only: no audits, sprints, launches or changes from Kaizen Ads */
+/** TikTok is read only: no audits, sprints, launches or changes from Kaizen OS */
 export const readOnlyPlatform = (p: unknown) => p === "tiktok";

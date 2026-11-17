@@ -198,7 +198,7 @@ export async function withKnowledge(agent: AgentKey, label: string, prompt: stri
   return [prompt, block, learned, playbook].filter(Boolean).join("\n\n");
 }
 
-/** Who set an AI call off: the signed-in team member, or Kaizen Ads itself (a scheduled job, no one signed in) */
+/** Who set an AI call off: the signed-in team member, or Kaizen OS itself (a scheduled job, no one signed in) */
 type Actor = { profile_id: string | null; actor: "person" | "auto" };
 const AUTO: Actor = { profile_id: null, actor: "auto" };
 const profileOf = new Map<string, string | null>();
@@ -887,18 +887,18 @@ export function contextBlock(ctx: ClientContext, request?: { images: number; vid
   else if (ctx.meta) lines.push("<meta_ads_performance>", ctx.meta, "</meta_ads_performance>");
   else lines.push(ctx.adAccountConnected ? "Meta ad account linked, but no performance pulled yet. Don't invent metrics." : "No Meta ad account linked yet. Don't invent metrics.");
   if (on("meta") && ctx.tiktok)
-    lines.push("<tiktok_ads_performance>", "TikTok is read only in Kaizen Ads: its numbers are here, but nothing can be changed or launched in TikTok from here yet (say so if asked to).", ctx.tiktok, "</tiktok_ads_performance>");
+    lines.push("<tiktok_ads_performance>", "TikTok is read only in Kaizen OS: its numbers are here, but nothing can be changed or launched in TikTok from here yet (say so if asked to).", ctx.tiktok, "</tiktok_ads_performance>");
   if (ctx.email)
     lines.push(
       "<email_marketing>",
-      "Their email and SMS from Klaviyo, read only: nothing can be sent, edited or scheduled in Klaviyo from Kaizen Ads (say so if asked to). Use it as context: how much of the business email carries (its share of the store's revenue), which offers and subject lines their list answers, which key flows are missing or not live, and the health alerts with what to do. Mention email where it matters to the ads (a missing abandoned-checkout flow leaks the traffic the ads buy; a launch the list hears about first).",
+      "Their email and SMS from Klaviyo, read only: nothing can be sent, edited or scheduled in Klaviyo from Kaizen OS (say so if asked to). Use it as context: how much of the business email carries (its share of the store's revenue), which offers and subject lines their list answers, which key flows are missing or not live, and the health alerts with what to do. Mention email where it matters to the ads (a missing abandoned-checkout flow leaks the traffic the ads buy; a launch the list hears about first).",
       ctx.email,
       "</email_marketing>",
     );
   if (ctx.social)
     lines.push(
       "<organic_social>",
-      "Their organic Facebook and Instagram, read only: nothing can be posted, scheduled or edited from Kaizen Ads (say so if asked to). Use it as context: which formats and topics earn reach and saves, whether the account is growing and posting steadily, and the health alerts with what to do. Mention social where it matters to the ads (a post that already does well is the one to boost; a silent account wastes the traffic the ads send).",
+      "Their organic Facebook and Instagram, read only: nothing can be posted, scheduled or edited from Kaizen OS (say so if asked to). Use it as context: which formats and topics earn reach and saves, whether the account is growing and posting steadily, and the health alerts with what to do. Mention social where it matters to the ads (a post that already does well is the one to boost; a silent account wastes the traffic the ads send).",
       ctx.social,
       "</organic_social>",
     );

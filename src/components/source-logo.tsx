@@ -34,7 +34,7 @@ export function SourceChip({ source }: { source: "slack" | "gmail" }) {
   );
 }
 
-/** Meta's mark, for actions Kaizen Ads can make in Meta from here */
+/** Meta's mark, for actions Kaizen OS can make in Meta from here */
 export function MetaMark({ size = 12 }: { size?: number }) {
   return (
     <svg width={size} height={(size * 2) / 3} viewBox="0 0 36 24" aria-hidden>
@@ -66,7 +66,7 @@ export function TikTokMark({ size = 12 }: { size?: number }) {
   );
 }
 
-/** Google Ads' mark, for actions Kaizen Ads can make in Google Ads from here */
+/** Google Ads' mark, for actions Kaizen OS can make in Google Ads from here */
 export function GoogleAdsMark({ size = 12 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>

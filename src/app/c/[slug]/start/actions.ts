@@ -356,7 +356,7 @@ export async function trackingStep(slug: string, op: { picks: string[]; other?: 
       const { sendEmail } = await import("@/lib/email");
       const { siteUrl } = await import("@/lib/site");
       const link = `${siteUrl()}/clients/${l.client.slug}`;
-      await sendEmail({ to: techEmail, subject: `${l.client.name}: where their orders, bookings or leads live`, text: `${body}\n\n${link}`, html: `<div style="font:14px/1.55 Helvetica,Arial,sans-serif;color:#222;max-width:560px"><p style="font-weight:700;font-size:16px;margin:0 0 8px">${l.client.name}: tracking platforms</p>${(op.notSure ? [body] : [`${l.by} uses ${picks.map((x) => x.name).join(", ")}.`, ...lines]).map((x) => `<p style="margin:0 0 6px">${x.replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[ch]!)}</p>`).join("")}<a href="${link}" style="color:#b21e2c">Open the client in Kaizen Ads →</a></div>` }).catch(() => null);
+      await sendEmail({ to: techEmail, subject: `${l.client.name}: where their orders, bookings or leads live`, text: `${body}\n\n${link}`, html: `<div style="font:14px/1.55 Helvetica,Arial,sans-serif;color:#222;max-width:560px"><p style="font-weight:700;font-size:16px;margin:0 0 8px">${l.client.name}: tracking platforms</p>${(op.notSure ? [body] : [`${l.by} uses ${picks.map((x) => x.name).join(", ")}.`, ...lines]).map((x) => `<p style="margin:0 0 6px">${x.replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[ch]!)}</p>`).join("")}<a href="${link}" style="color:#b21e2c">Open the client in Kaizen OS →</a></div>` }).catch(() => null);
     }
     done(slug);
     return { ok: true, step };

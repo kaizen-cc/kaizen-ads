@@ -117,7 +117,7 @@ export type RefInput = {
   origin: { kind?: string; label?: string; link?: string | null; thumb?: string | null; suggestionId?: string | null } | null;
   savedRefIds: string[];
   refs: string[];
-  /** The app's address, for links back into Kaizen Ads */
+  /** The app's address, for links back into Kaizen OS */
   appOrigin: string;
 };
 
@@ -180,7 +180,7 @@ export async function gatherReferences(db: SupabaseClient, admin: SupabaseClient
       days: null,
       video: false,
       note: null,
-      links: [{ label: "Open in Kaizen Ads", url: abs(`/winners?ad=${encodeURIComponent(adId)}`, input.appOrigin)! }],
+      links: [{ label: "Open in Kaizen OS", url: abs(`/winners?ad=${encodeURIComponent(adId)}`, input.appOrigin)! }],
       picture: () => adPicture(admin, adId, thumb && /^https?:/.test(thumb) ? thumb : null),
     });
 

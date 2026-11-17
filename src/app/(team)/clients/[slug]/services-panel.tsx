@@ -176,7 +176,7 @@ export function ServicesPanel({
                   <button
                     type="button"
                     onClick={() => {
-                      if (fromTrack && !confirm(`Take ${s.label} off this client in Kaizen Ads? Kaizen Track still lists it; this keeps it off here.`)) return;
+                      if (fromTrack && !confirm(`Take ${s.label} off this client in Kaizen OS? Kaizen Track still lists it; this keeps it off here.`)) return;
                       toggle(s.slug, false);
                     }}
                     disabled={pending}

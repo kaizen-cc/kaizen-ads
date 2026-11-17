@@ -99,7 +99,7 @@ export async function syncOpsSheet(admin: SupabaseClient) {
         unmatched.add(name);
         continue;
       }
-      // Only what's missing: a value already set in Kaizen Ads is never replaced
+      // Only what's missing: a value already set in Kaizen OS is never replaced
       const patch: Record<string, string> = {};
       const s = slackId(cell(row, "slack"));
       if (s && !c.slack_channel_id) patch.slack_channel_id = s;

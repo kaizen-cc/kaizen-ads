@@ -146,7 +146,7 @@ export async function confirmLaunch(id: string, fingerprint?: string): Promise<{
     if (!r.sandbox && r.ok > 0) {
       const { data: l } = await admin.from("launches").select("request_id").eq("id", id).single();
       const names = r.result.ads.filter((a) => a.adId).map((a) => a.name);
-      await (await createClient()).rpc("move_request", { p_request: l!.request_id, p_stage: "launched", p_note: `Launched paused in Meta from Kaizen Ads: ${names.join("; ")}`.slice(0, 1000) });
+      await (await createClient()).rpc("move_request", { p_request: l!.request_id, p_stage: "launched", p_note: `Launched paused in Meta from Kaizen OS: ${names.join("; ")}`.slice(0, 1000) });
     }
     revalidatePath("/board");
     return { ok: true, launched: r.ok, total: r.total, link: r.result.link, sandbox: r.sandbox };

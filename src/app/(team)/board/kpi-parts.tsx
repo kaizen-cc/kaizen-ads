@@ -426,7 +426,7 @@ export function WinnersSheet({ makers }: { makers: Maker[] }) {
           <div className="min-w-0 flex-1">
             <p className="truncate font-heading text-[20px] leading-tight">{m.name}&rsquo;s winning ads</p>
             <p className="text-[12.5px] text-muted">
-              {m.winners.length} profitable {m.winners.length === 1 ? "winner" : "winners"} · {launched} launched from Kaizen Ads{m.winners.length - launched ? `, ${m.winners.length - launched} matched to their Asana work by name` : ""}
+              {m.winners.length} profitable {m.winners.length === 1 ? "winner" : "winners"} · {launched} launched from Kaizen OS{m.winners.length - launched ? `, ${m.winners.length - launched} matched to their Asana work by name` : ""}
             </p>
           </div>
           <button type="button" onClick={() => closeParams("winners")} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full text-muted hover:bg-ink/[0.06] hover:text-fg">
@@ -793,7 +793,7 @@ export function WinnerCard({ w, credit, copy }: { w: Winner; credit?: WinnerAd; 
         )}
         {credit && (
           <p className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted">
-            <span className={`rounded-full px-2 py-0.5 font-medium ${credit.how === "launched" ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn"}`}>{credit.how === "launched" ? "Launched from Kaizen Ads" : "Matched by name"}</span>
+            <span className={`rounded-full px-2 py-0.5 font-medium ${credit.how === "launched" ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn"}`}>{credit.how === "launched" ? "Launched from Kaizen OS" : "Matched by name"}</span>
             {credit.task && <span className="min-w-0 truncate">{credit.task}</span>}
           </p>
         )}

@@ -10,7 +10,7 @@ import { adStats, statsText, targetOf, windowLabel, type AdStats } from "@/lib/a
 import { can, canChangeBuyer } from "@/lib/chat-permissions";
 import { canOn } from "@/lib/chat-permissions-server";
 
-// Changes made to an ad account from Kaizen Ads. An audit action or a sprint move is turned into specific changes by
+// Changes made to an ad account from Kaizen OS. An audit action or a sprint move is turned into specific changes by
 // the buyer agent (from the account's live setup), each one checked with the platform without being applied (Google's
 // validate-only, Meta's validate_only dry run), then applied only when someone allowed confirms. The "from" side of
 // every change is read from the platform, never written by the AI.

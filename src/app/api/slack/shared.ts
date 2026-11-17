@@ -1,4 +1,4 @@
-// Where to send someone after connecting: only a path inside Kaizen Ads, never another site
+// Where to send someone after connecting: only a path inside Kaizen OS, never another site
 export function safeNext(next: string | null | undefined) {
   return next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : "/reports";
 }

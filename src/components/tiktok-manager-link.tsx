@@ -1,6 +1,6 @@
 import { tiktokManagerLink } from "@/lib/tiktok/audit-core";
 
-// Where a TikTok move is made: TikTok is read only in Kaizen Ads, so an audit action or sprint move on a TikTok account
+// Where a TikTok move is made: TikTok is read only in Kaizen OS, so an audit action or sprint move on a TikTok account
 // gets this link (the account in TikTok Ads Manager) instead of a "Make this change" button.
 
 export function TikTokManagerLink({ advertiserId, className = "" }: { advertiserId: string | null | undefined; className?: string }) {

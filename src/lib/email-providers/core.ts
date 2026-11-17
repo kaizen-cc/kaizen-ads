@@ -1,4 +1,4 @@
-// Email providers in Kaizen Ads: Klaviyo, Brevo and Customer.io are three SOURCES feeding the same email tables, so the
+// Email providers in Kaizen OS: Klaviyo, Brevo and Customer.io are three SOURCES feeding the same email tables, so the
 // plain parts every source shares live here (no network, no database, tested alone): the provider names, the pasted key
 // checks for the two newer ones, redaction, plain-word errors per provider and a client's state. Klaviyo keeps its own
 // parsing in ../klaviyo/core; this only adds what the others need.

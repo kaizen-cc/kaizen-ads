@@ -168,7 +168,7 @@ export async function resolveSheet(admin: SupabaseClient, clientId: string, shee
     return res;
   }
   if (!metaConfigured()) {
-    add({ key: "account", label: "Meta connection", level: "fail", detail: "Meta isn't connected to Kaizen Ads.", fix: "Set META_SYSTEM_USER_TOKEN." });
+    add({ key: "account", label: "Meta connection", level: "fail", detail: "Meta isn't connected to Kaizen OS.", fix: "Set META_SYSTEM_USER_TOKEN." });
     return res;
   }
   // Every part below is read at once (they don't depend on each other, except posts on the Pages); each keeps its own

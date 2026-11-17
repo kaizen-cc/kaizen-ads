@@ -1,4 +1,4 @@
-// Whether an audit action or sprint move is something Kaizen Ads can do in the ad account itself: what the change
+// Whether an audit action or sprint move is something Kaizen OS can do in the ad account itself: what the change
 // planners know how to make (src/lib/ad-changes.ts). Meta: switching campaigns, ad sets or ads on or off and daily
 // budgets. Google: also bids (target CPA / ROAS) and negative keywords. Anything else (tracking, reporting, the site,
 // the offer, creative, copy, naming, audiences) is done by a person, and the "Make this change" button isn't offered.

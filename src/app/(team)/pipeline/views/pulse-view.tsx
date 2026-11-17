@@ -72,7 +72,7 @@ export function PulseView(d: PulseData) {
           </div>
         </Topic>
       ) : (
-        <p className="px-1 text-xs text-faint">Turnaround, first-pass approval, flow and team load fill in here once requests move through Kaizen Ads instead of Asana.</p>
+        <p className="px-1 text-xs text-faint">Turnaround, first-pass approval, flow and team load fill in here once requests move through Kaizen OS instead of Asana.</p>
       ),
     },
   });

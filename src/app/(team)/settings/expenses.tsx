@@ -146,7 +146,7 @@ export function Expenses({ rows, people, roles, skills, range: asked, by }: { ro
             (k, i) => {
               const p = people.find((x) => x.id === k);
               return k === "auto"
-                ? { label: "Kaizen Ads on its own", sub: "Scheduled: syncs, audits, Brand Bibles, briefings", color: "#e0505c" }
+                ? { label: "Kaizen OS on its own", sub: "Scheduled: syncs, audits, Brand Bibles, briefings", color: "#e0505c" }
                 : k === "before"
                   ? { label: "Before people were tracked", sub: "Calls before Oct 28, 2026", color: "#6a6a72" }
                   : { label: p?.name ?? "Former team member", sub: p?.role, color: PALETTE[(i + 1) % PALETTE.length], person: p?.name ?? "?" };

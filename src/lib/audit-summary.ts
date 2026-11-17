@@ -20,7 +20,7 @@ export async function latestAudits(db: SupabaseClient, targetIds?: string[]) {
     const raw = (a.kpi_targets as unknown as { platform: string } | null)?.platform;
     const platform: "google" | "meta" | "tiktok" = raw === "google" ? "google" : raw === "tiktok" ? "tiktok" : "meta";
     const done = (a.done ?? {}) as Record<string, unknown>;
-    // The moves Kaizen Ads can make in the ad account itself, for the quick list under the verdict
+    // The moves Kaizen OS can make in the ad account itself, for the quick list under the verdict
     const quick: QuickAction[] = (res?.actions ?? [])
       .map((x, index) => ({ x, index }))
       .filter(({ x }) => x.owner === "media_buyer" && inPlatform(x, platform))
@@ -32,7 +32,7 @@ export async function latestAudits(db: SupabaseClient, targetIds?: string[]) {
       progress: a.progress,
       step: a.step,
       createdAt: a.created_at,
-      by: a.auto ? "Kaizen Ads (the account is off target)" : ((a.profiles as unknown as { full_name: string } | null)?.full_name ?? null),
+      by: a.auto ? "Kaizen OS (the account is off target)" : ((a.profiles as unknown as { full_name: string } | null)?.full_name ?? null),
       verdict: res?.verdict ?? null,
       actions: res?.actions?.length ?? 0,
       done: Object.keys(done).length,

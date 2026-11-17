@@ -2,7 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 // Posting to Slack as a person, not the bot. Each team member connects their own Slack once
-// (/api/slack/connect) and Kaizen Ads keeps their user token in slack_user_tokens (server-only,
+// (/api/slack/connect) and Kaizen OS keeps their user token in slack_user_tokens (server-only,
 // no RLS policies, read and written with the admin client). Client reports then land in the
 // client channel under the buyer's own name and face, the way a message they typed would.
 //

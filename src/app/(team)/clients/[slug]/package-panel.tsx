@@ -52,7 +52,7 @@ function DbCheck({ db, imagesUsed, videosUsed }: { db: CreativeDb; imagesUsed: n
         Last 45 days: {n(db.last45.newImages + db.last45.newVideos, "new creative", "new creatives")} ({db.last45.newImages} images, {db.last45.newVideos} videos),{" "}
         {db.last45.allImages + db.last45.allVideos} with variations.
       </span>
-      {ahead && <span className="text-warn">The database shows more delivered this month than is counted above. A request may be missing from Kaizen Ads and Asana.</span>}
+      {ahead && <span className="text-warn">The database shows more delivered this month than is counted above. A request may be missing from Kaizen OS and Asana.</span>}
     </div>
   );
 }

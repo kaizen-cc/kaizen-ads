@@ -10,7 +10,7 @@ import type { SocialSummary } from "@/lib/social/summary";
 import Link from "next/link";
 
 // The whole business at a glance: every service the client buys side by side (paid ads on each platform, creative,
-// and what's run outside Kaizen Ads), what all their advertising spent together, and a way into each service.
+// and what's run outside Kaizen OS), what all their advertising spent together, and a way into each service.
 
 export type ServiceCard =
   | { id: "meta" | "google" | "tiktok"; kind: "ads"; label: string; kpis: ClientKpi[]; summary: PlatformSummary | null; extra: string[] }
@@ -191,7 +191,7 @@ export function BusinessOverview({ cards, audits, sprints, email = null, social 
                 {c.label}
                 {c.tier && <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">{c.tier}</span>}
               </span>
-              <span className="text-xs text-faint">Run outside Kaizen Ads. Its tier and team are in Team &amp; setup.</span>
+              <span className="text-xs text-faint">Run outside Kaizen OS. Its tier and team are in Team &amp; setup.</span>
             </div>
           );
         })}

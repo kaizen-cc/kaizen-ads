@@ -23,9 +23,9 @@ export default async function HandledPage({ searchParams }: PageProps<"/handled"
     return (
       <Shell>
         <h1 className="font-heading text-[22px] leading-tight">This link has expired</h1>
-        <p className="text-sm leading-relaxed text-muted">Links in notice emails work for two weeks, for the person they went to. Open it from the bell in Kaizen Ads instead.</p>
+        <p className="text-sm leading-relaxed text-muted">Links in notice emails work for two weeks, for the person they went to. Open it from the bell in Kaizen OS instead.</p>
         <Link href="/pipeline" className="inline-flex h-11 w-full items-center justify-center rounded-brand bg-fg px-4 text-sm font-medium text-bg sm:w-auto">
-          Open Kaizen Ads
+          Open Kaizen OS
         </Link>
       </Shell>
     );

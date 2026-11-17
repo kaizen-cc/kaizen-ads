@@ -16,10 +16,10 @@ const LABEL: Record<OpsAction, { title: string; button: string }> = {
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const page = (title: string, body: string, status = 200) =>
   new Response(
-    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Kaizen Ads</title></head>
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Kaizen OS</title></head>
 <body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b0b;color:#f2f2f2;font-family:system-ui,sans-serif">
 <main style="max-width:440px;padding:28px;margin:16px;border:1px solid #2a2a2a;border-radius:8px;background:#141414">
-<p style="margin:0 0 4px;color:#e0505c;font-size:12px;letter-spacing:.08em;text-transform:uppercase">Kaizen Ads</p>
+<p style="margin:0 0 4px;color:#e0505c;font-size:12px;letter-spacing:.08em;text-transform:uppercase">Kaizen OS</p>
 <h1 style="margin:0 0 12px;font-size:20px">${title}</h1>${body}</main></body></html>`,
     { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
   );
@@ -37,7 +37,7 @@ async function load(fingerprint: string) {
 export async function GET(req: Request) {
   const token = new URL(req.url).searchParams.get("t");
   const t = readOpsToken(token);
-  if (!t || !adminConfigured()) return page("This link has expired", "<p>Open Settings › Errors in Kaizen Ads instead.</p>", 400);
+  if (!t || !adminConfigured()) return page("This link has expired", "<p>Open Settings › Errors in Kaizen OS instead.</p>", 400);
   const e = await load(t.fingerprint);
   if (!e) return page("That error is gone", link(`${siteUrl()}/settings?tab=errors`, "Open Settings › Errors"), 404);
   if (t.action === "fix" && e.fix_issue_url) return page("Claude is already on it", link(e.fix_issue_url, "See the fix in GitHub"));
@@ -53,7 +53,7 @@ ${t.action === "fix" ? '<p style="color:#bbb;font-size:14px">Claude reads the er
 export async function POST(req: Request) {
   const form = await req.formData();
   const t = readOpsToken(String(form.get("t") ?? ""));
-  if (!t || !adminConfigured()) return page("This link has expired", "<p>Open Settings › Errors in Kaizen Ads instead.</p>", 400);
+  if (!t || !adminConfigured()) return page("This link has expired", "<p>Open Settings › Errors in Kaizen OS instead.</p>", 400);
   const admin = createAdminClient();
   const e = await load(t.fingerprint);
   if (!e) return page("That error is gone", "", 404);

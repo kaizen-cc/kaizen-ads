@@ -86,7 +86,7 @@ export async function reportError(input: {
       const list = [...people].join(", ");
       await sendEmail({
         to: ALERT_TO(),
-        subject: `[Kaizen Ads] Possible outage: ${people.size} people lost their connection in the last hour`,
+        subject: `[Kaizen OS] Possible outage: ${people.size} people lost their connection in the last hour`,
         text: `${people.size} people had requests fail to load in the last hour (${list}). That usually means Vercel or Supabase had a hiccup, or a shared network is down.\n\nVercel status: https://www.vercel-status.com · Supabase status: https://status.supabase.com\nAll errors: ${SITE}/settings?tab=errors?show=all`,
         html: `<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;color:#111"><p><strong>Possible outage.</strong> ${people.size} people had requests fail to load in the last hour.</p><p style="color:#666">${esc(list)}</p><p>That usually means Vercel or Supabase had a hiccup, or a shared network is down. Check <a href="https://www.vercel-status.com">Vercel status</a> and <a href="https://status.supabase.com">Supabase status</a>.</p><p><a href="${SITE}/settings?tab=errors?show=all">See all errors</a></p></div>`,
       });
@@ -130,11 +130,11 @@ export async function reportError(input: {
       fixUrl = (await createFixIssue(fingerprint, "automatically", true).catch(() => ({ url: undefined }))).url ?? null;
     }
     const handled = d?.handled ?? "Recorded; the person saw a friendly error page and their work is safe.";
-    const subject = `[Kaizen Ads] ${sev === "high" ? "🔴 " : sev === "low" ? "" : "🟠 "}${count > 1 ? `${count}× ` : ""}${input.message.slice(0, 80)}`;
+    const subject = `[Kaizen OS] ${sev === "high" ? "🔴 " : sev === "low" ? "" : "🟠 "}${count > 1 ? `${count}× ` : ""}${input.message.slice(0, 80)}`;
     const fixHref = fixUrl ?? opsLink("fix", fingerprint);
     const fixLabel = fixUrl ? (sev === "low" ? "Claude is fixing it (merges itself if the checks pass)" : "Claude is already on it") : "Have Claude fix it";
     const text = [
-      d ? `What happened: ${d.summary}` : `Something broke in Kaizen Ads: ${input.message}`,
+      d ? `What happened: ${d.summary}` : `Something broke in Kaizen OS: ${input.message}`,
       d ? `Why: ${d.cause}` : "",
       d ? `Impact: ${d.impact}${d.dataRisk ? " (data may be affected)" : ""}` : "",
       d ? `What would fix it: ${d.fix}` : "",
@@ -152,7 +152,7 @@ export async function reportError(input: {
       .filter((l, i, a) => l !== "" || (i > 0 && a[i - 1] !== ""))
       .join("\n");
     const html = `<div style="font-family:system-ui,sans-serif;font-size:14px;line-height:1.5;color:#111;max-width:640px">
-<p style="font-size:16px"><strong>${d ? esc(d.summary) : "Something broke in Kaizen Ads."}</strong></p>
+<p style="font-size:16px"><strong>${d ? esc(d.summary) : "Something broke in Kaizen OS."}</strong></p>
 <table style="border-collapse:collapse">
 ${d ? row("Why", esc(d.cause)) : ""}
 ${d ? row("Impact", esc(d.impact) + (d.dataRisk ? ' <strong style="color:#B21E2C">· data may be affected</strong>' : "")) : ""}

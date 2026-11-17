@@ -1041,7 +1041,7 @@ export async function uploadReportCsv(id: string, file: { name: string; text: st
   // The period the report compares with (a monthly: the month before; else the same number of days just before)
   const before = row.kind === "monthly" ? periodsFor("monthly", shiftDay(period.end, 1)).compare : previousPeriod(period);
   const prior = rangeLabel(before, today);
-  const compareNote = upload.daily && covers(upload, before) ? `The comparison with ${prior} comes from the file too.` : `For ${prior} it uses what Kaizen Ads synced earlier, and shows no change if there's nothing.`;
+  const compareNote = upload.daily && covers(upload, before) ? `The comparison with ${prior} comes from the file too.` : `For ${prior} it uses what Kaizen OS synced earlier, and shows no change if there's nothing.`;
   const reply = used
     ? `Read ${summary} from ${name}${mappedByAi ? " (some headers matched by the AI)" : ""}${datesAssumed ? `. The file has no dates, so I read it as the report's dates, ${rangeLabel(period, today)}` : ""}. Redrawing every page from it now: the tiles, campaigns${upload.level === "ad" ? ", top ads" : ""}, the PDF and the message. ${compareNote}${ask.trim() ? " Then I'll make the rest of your change." : ""}`
     : `Read ${summary} from ${name}, but the report covers ${rangeLabel(period, today)}, so it isn't used. Export ${upload.daily ? "a Day breakdown that spans those dates" : "the totals for exactly those dates"} and attach it here. The file is kept on the report.`;

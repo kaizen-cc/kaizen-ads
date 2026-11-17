@@ -3,7 +3,7 @@ import "server-only";
 // Sends through Resend using the OS's verified domain (contact.kaizenmarketing.agency).
 // Mirrors kaizen-cc's lib/email/client.ts so the two can merge later.
 
-const DEFAULT_FROM = "Kaizen Ads <ads@contact.kaizenmarketing.agency>";
+const DEFAULT_FROM = "Kaizen OS <ads@contact.kaizenmarketing.agency>";
 const DEFAULT_REPLY_TO = "admin@kaizenmarketing.agency";
 const MAX_ATTEMPTS = 3;
 const BACKOFF_MS = [1000, 2000];

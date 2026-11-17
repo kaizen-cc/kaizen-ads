@@ -11,7 +11,7 @@ export const isWhiteLabel = (clientType: string | null | undefined) => {
 
 /** What the writing AI is told for a white label client: nothing of the agency, ever */
 export const WHITE_LABEL_RULE =
-  "This client is white label: the report goes to an agency partner who passes it on as their own. Never write the agency's name (Kaizen, Kaizen Marketing, Kaizen Ads) or any link to its website or portal, and don't sign off with a company name. Say \"we\" or \"our team\" instead. Don't suggest any other service, channel or product.";
+  "This client is white label: the report goes to an agency partner who passes it on as their own. Never write the agency's name (Kaizen, Kaizen Marketing, Kaizen OS) or any link to its website or portal, and don't sign off with a company name. Say \"we\" or \"our team\" instead. Don't suggest any other service, channel or product.";
 
 /** The signature and from-name used where the agency's name would go */
 export const WHITE_LABEL_FROM = "Performance Report";

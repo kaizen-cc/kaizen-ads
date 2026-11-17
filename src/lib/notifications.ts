@@ -151,7 +151,7 @@ export async function emailNotifications(admin: SupabaseClient) {
     const p = mine[0].profiles as unknown as { email: string | null; full_name: string } | null;
     if (send.length && p?.email) {
       const one = send.length === 1 ? send[0] : null;
-      const subject = one ? (one.title as string) : `${send.length} updates in Kaizen Ads${send.some((n) => n.priority === "critical") ? ", including something critical" : ""}`;
+      const subject = one ? (one.title as string) : `${send.length} updates in Kaizen OS${send.some((n) => n.priority === "critical") ? ", including something critical" : ""}`;
       // A promise or an unanswered message: two buttons to close it from here, signed for this person and this item
       const actions = (n: (typeof send)[number]) => {
         const item = noticeItem(n.key as string | null);
@@ -189,7 +189,7 @@ export async function emailNotifications(admin: SupabaseClient) {
             return `${n.title}\n${n.body ?? ""}\n${linkOf(n.href as string | null)}${a ? `\nIt's handled: ${a.done}\nAdd context: ${a.context}` : ""}`;
           })
           .join("\n\n"),
-        html: `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#17131a"><p style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#c8102e;margin:0 0 14px">Kaizen Ads</p>${rows}${replyTo ? `<p style="font-size:12px;color:#8a8189;margin-top:16px">Or reply to this email with what happened: it's read, and closes this if it's handled.</p>` : ""}<p style="font-size:12px;color:#8a8189;margin-top:20px">Change what you get by email in Kaizen Ads: Notifications → Settings.</p></div>`,
+        html: `<div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#17131a"><p style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#c8102e;margin:0 0 14px">Kaizen OS</p>${rows}${replyTo ? `<p style="font-size:12px;color:#8a8189;margin-top:16px">Or reply to this email with what happened: it's read, and closes this if it's handled.</p>` : ""}<p style="font-size:12px;color:#8a8189;margin-top:20px">Change what you get by email in Kaizen OS: Notifications → Settings.</p></div>`,
       });
       if (r.ok) sent++;
     }

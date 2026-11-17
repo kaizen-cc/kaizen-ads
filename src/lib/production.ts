@@ -5,7 +5,7 @@ import type { HistoryEvent } from "@/lib/asana";
 // How creative production is going, from each Asana task's history (every column move and reassignment): how long a
 // piece takes to reach the client, how many come back for revisions (copy or creative), how fast revisions go back,
 // and, per designer, editor and copywriter, a scorecard of their own work. Business days throughout (weekdays, New
-// York). While the team works in Asana this is the source; tickets in Kaizen Ads join it as they move over.
+// York). While the team works in Asana this is the source; tickets in Kaizen OS join it as they move over.
 
 export type Col = "brief" | "make" | "creative_review" | "copy" | "copy_review" | "client" | "client_revision" | "launch" | "done";
 const COLS: [RegExp, Col][] = [

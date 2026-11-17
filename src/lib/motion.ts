@@ -23,7 +23,7 @@ async function clientId(admin: SupabaseClient, redirectUri: string) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      client_name: "Kaizen Ads",
+      client_name: "Kaizen OS",
       redirect_uris: [redirectUri],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -152,7 +152,7 @@ export async function openSession(admin: SupabaseClient) {
     session = res.headers.get("mcp-session-id") ?? session;
     return rpcReply(res, id);
   };
-  await request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Kaizen Ads", version: "1.0" } });
+  await request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Kaizen OS", version: "1.0" } });
   await post({ jsonrpc: "2.0", method: "notifications/initialized" });
   return {
     list: async () => ((await request("tools/list", {})) as { tools: MotionTool[] }).tools ?? [],

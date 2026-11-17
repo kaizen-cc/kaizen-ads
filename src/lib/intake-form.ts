@@ -10,9 +10,9 @@ import { siteUrl } from "@/lib/site";
 // The marketing intake in the client's portal, right after their access steps: the questions tailored to them (their
 // services, how they sell, their industry; what we already know filled in for them to confirm), saved as they go, and
 // sent through exactly the path the old Google Form took (kept as answered, read by the AI, the Bible written from it).
-// Then the team hears it: the internal Slack channel, Kaizen Ads for the Meta and creative people, and an Asana task in
+// Then the team hears it: the internal Slack channel, Kaizen OS for the Meta and creative people, and an Asana task in
 // the client's own Asana project for everyone else on the account (from the Account Overview sheet; they aren't in
-// Kaizen Ads yet). Last, the onboarding call: done-for-you when
+// Kaizen OS yet). Last, the onboarding call: done-for-you when
 // setup hit a wall or two or more access steps are still open, otherwise done-with-you.
 
 export type IntakeFormRow = {
@@ -181,14 +181,14 @@ export async function submitIntakeForm(admin: SupabaseClient, clientId: string, 
   return { ok: true as const, intakeId: r.duplicate ? null : r.id };
 }
 
-/** After it's sent: read it like any intake, and tell the team (Slack, Kaizen Ads, Asana for the teams not in it yet) */
+/** After it's sent: read it like any intake, and tell the team (Slack, Kaizen OS, Asana for the teams not in it yet) */
 export async function afterIntakeSubmitted(admin: SupabaseClient, clientId: string, intakeId: string) {
   const { processIntake } = await import("@/lib/onboarding");
   await processIntake(admin, intakeId).catch((e) => console.error("[intake] read", e));
   await tellTeamIntake(admin, clientId).catch((e) => console.error("[intake] tell team", e));
 }
 
-/** Services the Meta and creative people cover: they review the intake in Kaizen Ads; every other team gets Asana */
+/** Services the Meta and creative people cover: they review the intake in Kaizen OS; every other team gets Asana */
 const IN_KAIZEN_ADS = new Set(["facebook-ads", "tiktok-ads", "creative"]);
 
 async function tellTeamIntake(admin: SupabaseClient, clientId: string) {
@@ -209,7 +209,7 @@ async function tellTeamIntake(admin: SupabaseClient, clientId: string) {
       body: JSON.stringify({ channel: c.internal_slack_channel_id, text: `📋 ${c.name} filled in their marketing intake in their portal (${lines.length} answers). Review it: ${link}`, unfurl_links: false }),
     }).catch(() => null);
 
-  // Meta and creative: in Kaizen Ads
+  // Meta and creative: in Kaizen OS
   const { data: assigned } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "graphic_designer", "video_editor", "copywriter"]);
   const ids = [...new Set((assigned ?? []).map((a) => a.profile_id as string))];
   if (ids.length)
@@ -251,7 +251,7 @@ async function tellTeamIntake(admin: SupabaseClient, clientId: string) {
     try {
       const t = await createAsanaTask({
         name: `Review ${c.name}'s marketing intake`,
-        notes: `${c.name} filled in their marketing intake in their Kaizen portal. Review what matters for your part (${teamNames.join(", ")}) before kickoff.\n\nIn Kaizen Ads: ${link}\n\n— Their answers —\n\n${summary}`,
+        notes: `${c.name} filled in their marketing intake in their Kaizen portal. Review what matters for your part (${teamNames.join(", ")}) before kickoff.\n\nIn Kaizen OS: ${link}\n\n— Their answers —\n\n${summary}`,
         assignee: email,
         project,
         dueOn: due,
@@ -264,7 +264,7 @@ async function tellTeamIntake(admin: SupabaseClient, clientId: string) {
   await admin.from("client_intake_forms").update({ asana_tasks: { made, project, projectNote } }).eq("client_id", clientId);
 }
 
-/** A role the Meta and creative people hold: they review in Kaizen Ads, not Asana */
+/** A role the Meta and creative people hold: they review in Kaizen OS, not Asana */
 const IN_APP_ROLE = /meta|facebook|instagram|tiktok|graphic|designer|video|editor|copy|creative/i;
 
 /**
@@ -276,7 +276,7 @@ async function accountTeam(admin: SupabaseClient, c: { name: string; kaizenId: n
   const people = new Map<string, string[]>(); // email → what they do on the account
   const add = (email: string, what: string) => people.set(email.toLowerCase(), [...new Set([...(people.get(email.toLowerCase()) ?? []), what])]);
   const track = process.env.TRACK_SUPABASE_URL && process.env.TRACK_SUPABASE_SECRET_KEY ? createSupabase(process.env.TRACK_SUPABASE_URL, process.env.TRACK_SUPABASE_SECRET_KEY, { auth: { persistSession: false } }) : null;
-  // Everyone at Kaizen by name: Track has every team, Kaizen Ads the ones already in it
+  // Everyone at Kaizen by name: Track has every team, Kaizen OS the ones already in it
   const [{ data: ours }, theirs] = await Promise.all([
     admin.from("profiles").select("full_name, email").eq("is_active", true),
     track ? track.from("profiles").select("full_name, email").eq("is_active", true).then((r) => r.data ?? []) : Promise.resolve([] as { full_name: string; email: string }[]),

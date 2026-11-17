@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // A client paying for creative and getting nothing: any billing period on a creative package (monthly, a sprint or a
 // one-off) that ended with nothing made for them is flagged to the head of creative and the leads, and shown on the
 // client page's package panel; one far into its period with nothing started is flagged as at risk. Made counts the
-// same way the allotment does: tickets made in Kaizen Ads and creative counted in Asana, in the billing period.
+// same way the allotment does: tickets made in Kaizen OS and creative counted in Asana, in the billing period.
 
 const ymd = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 

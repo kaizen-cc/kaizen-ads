@@ -5,7 +5,7 @@ import { aboutLeftOut } from "./format";
 import { withoutMentions } from "./slack-text";
 
 // Everything done on an account in a report's period, from every place it shows up: changes in the ad account (its
-// change history, and changes applied from Kaizen Ads), the sprint's moves, audits, creative made and in production,
+// change history, and changes applied from Kaizen OS), the sprint's moves, audits, creative made and in production,
 // what was said on calls, in Slack and email, and docs written. The report turns it into "what we did, what we're
 // doing and why, what's next", so the client sees the work behind the numbers.
 

@@ -52,7 +52,7 @@ export async function POST(request: Request, ctx: RouteContext<"/api/zapier/[for
       // Their inbox: not synced any more, kept as history (Sync health shows it under Offboarded)
       const { data: inbox } = await admin.from("sync_state").select("last_result").eq("source", `gmail:${email}`).maybeSingle();
       if (inbox) await admin.from("sync_state").update({ last_result: { ...((inbox.last_result ?? {}) as object), offboarded: true, offboarded_at: now } }).eq("source", `gmail:${email}`);
-      if (!who) return Response.json({ ok: true, email, profile: "not in Kaizen Ads", inbox: Boolean(inbox) });
+      if (!who) return Response.json({ ok: true, email, profile: "not in Kaizen OS", inbox: Boolean(inbox) });
       if (who.is_active) await admin.from("profiles").update({ is_active: false }).eq("id", who.id);
       // What they were on, for a lead to hand over (assignments are kept so history still shows who did what)
       const { data: on } = await admin.from("client_assignments").select("role, clients!inner(name, archived_at)").eq("profile_id", who.id).is("clients.archived_at", null);

@@ -7,7 +7,7 @@ import type { QuickAction } from "./audit-panel";
 import { GoogleChange } from "./google-change";
 import { TikTokManagerLink } from "@/components/tiktok-manager-link";
 
-// Under an audit's verdict: the moves Kaizen Ads can make in the ad account itself, one line each, stacked. Hover and
+// Under an audit's verdict: the moves Kaizen OS can make in the ad account itself, one line each, stacked. Hover and
 // the line opens a little in place with the gist; click to open the whole move with the button that makes it. No need
 // to open the full audit to act on it.
 

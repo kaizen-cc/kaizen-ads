@@ -51,7 +51,7 @@ export async function checkGoogleAccess(clientId: string): Promise<GoogleAccessR
   return { ok: true, rows, checkedAt: new Date().toISOString() };
 }
 
-/** Execs: can Kaizen Ads write to this ad account? A dry run with Meta; nothing is created. */
+/** Execs: can Kaizen OS write to this ad account? A dry run with Meta; nothing is created. */
 export async function checkMetaWrite(account: string): Promise<{ ok: boolean; detail: string }> {
   await requireExec();
   if (!adminConfigured()) return { ok: false, detail: "Can't check here." };

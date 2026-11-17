@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { explainMoved, moveLaunched, type LaunchView } from "./launch-actions";
 
 // After a launch: the buyer can move the ads to where they belong (an existing ad set, a new one copied from one, or a
-// brand-new campaign built like one; Kaizen Ads makes the ads there, paused, and archives the old ones), or explain a
+// brand-new campaign built like one; Kaizen OS makes the ads there, paused, and archives the old ones), or explain a
 // move they made by hand in Ads Manager. Either way the reason becomes a rule the launcher reads first for this
 // client next time.
 

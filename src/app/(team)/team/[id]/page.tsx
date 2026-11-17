@@ -6,7 +6,7 @@ import { PersonAvatar } from "@/components/person-avatar";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { activityLog, duration, usageOf, type ActivityEntry } from "@/lib/activity";
 
-// One person's activity, for execs: when they were last on, how much they use Kaizen Ads, their minutes day by day
+// One person's activity, for execs: when they were last on, how much they use Kaizen OS, their minutes day by day
 // for the last four weeks, and everything they did, a week at a time (sign-ins, pages opened, ticket moves, reviews,
 // copy, uploads, reports sent).
 
@@ -87,7 +87,7 @@ export default async function PersonActivity({ params, searchParams }: PageProps
 
       <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 sm:p-5">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <h2 className="font-heading text-lg">Time in Kaizen Ads</h2>
+          <h2 className="font-heading text-lg">Time in Kaizen OS</h2>
           <p className="text-xs text-faint">Minutes actually in use, each day for four weeks</p>
         </div>
         <div className="flex h-28 items-end gap-1">

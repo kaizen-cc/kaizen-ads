@@ -470,7 +470,7 @@ type CoverTask = { gid: string; name: string; notes: string | null; section: str
 const GRACE_MS = 86_400_000;
 const graced = (iso: string) => new Date(Date.parse(iso) - GRACE_MS).toISOString();
 
-/** Asana tasks for the client made since a moment (open, or completed): work in motion before the move to Kaizen Ads. */
+/** Asana tasks for the client made since a moment (open, or completed): work in motion before the move to Kaizen OS. */
 export async function asanaSince(admin: SupabaseClient, clientId: string, since: string) {
   const { data } = await admin
     .from("asana_tasks")
@@ -497,16 +497,16 @@ const requestOf = (notes: string | null) => {
   return at >= 0 ? text.slice(at) : text;
 };
 
-/** Which promises a ticket in Kaizen Ads or a task in Asana since the call already covers. */
+/** Which promises a ticket in Kaizen OS or a task in Asana since the call already covers. */
 async function coverCheck(promises: { what: string }[], requests: CoverTicket[], tasks: CoverTask[], emails: CoverEmail[] = [], clientId: string | null = null) {
   return askJson<{ covered: { commitment: number; tickets: number[]; asana: number[]; emails: number[] }[] }>({
     agent: "calls",
     label: "commitments covered",
     clientId,
     system:
-      "You check whether promises made on a client call have been turned into work since: a creative ticket in Kaizen Ads, a task on the Asana creative board (the team is still moving over from Asana), or an email ticket on the Email Board (a campaign batch or a flow). A ticket or task covers a promise when it makes substantially the same thing, or a real part of it (10 images of a promised 10 images and 3 videos counts: the work is in motion; a promised welcome series is covered by a welcome flow ticket). Judge the request itself: an Asana task can start with a standard note about the creative package before what was asked for.",
+      "You check whether promises made on a client call have been turned into work since: a creative ticket in Kaizen OS, a task on the Asana creative board (the team is still moving over from Asana), or an email ticket on the Email Board (a campaign batch or a flow). A ticket or task covers a promise when it makes substantially the same thing, or a real part of it (10 images of a promised 10 images and 3 videos counts: the work is in motion; a promised welcome series is covered by a welcome flow ticket). Judge the request itself: an Asana task can start with a standard note about the creative package before what was asked for.",
     schema: COVER_SCHEMA,
-    prompt: `Promises:\n${promises.map((c, i) => `${i + 1}. ${c.what}`).join("\n")}\n\nKaizen Ads tickets made since the call:\n${requests.map((r) => `#${r.number} "${r.title}": ${(r.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\nAsana tasks made since the call:\n${tasks.map((t, i) => `A${i + 1} "${t.name}" (${t.section ?? "done"}): ${requestOf(t.notes).slice(0, 1500)}`).join("\n") || "(none)"}\n\nEmail Board tickets made since the call:\n${emails.map((e) => `E${e.number} (${e.kind === "flow" ? "flow" : "campaign batch"}) "${e.title}": ${(e.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\ncovered: each promise number that work covers, with the ticket numbers (tickets), the Asana task numbers without the A (asana) and the email ticket numbers without the E (emails). Leave out promises nothing covers.`,
+    prompt: `Promises:\n${promises.map((c, i) => `${i + 1}. ${c.what}`).join("\n")}\n\nKaizen OS tickets made since the call:\n${requests.map((r) => `#${r.number} "${r.title}": ${(r.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\nAsana tasks made since the call:\n${tasks.map((t, i) => `A${i + 1} "${t.name}" (${t.section ?? "done"}): ${requestOf(t.notes).slice(0, 1500)}`).join("\n") || "(none)"}\n\nEmail Board tickets made since the call:\n${emails.map((e) => `E${e.number} (${e.kind === "flow" ? "flow" : "campaign batch"}) "${e.title}": ${(e.brief ?? "").replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "(none)"}\n\ncovered: each promise number that work covers, with the ticket numbers (tickets), the Asana task numbers without the A (asana) and the email ticket numbers without the E (emails). Leave out promises nothing covers.`,
   });
 }
 

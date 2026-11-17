@@ -888,7 +888,7 @@ function Detail({ r, free, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; 
                 </div>
                 {tiktok ? (
                   <p className="rounded-[14px] border border-dashed border-line px-4 py-3 text-[13px] leading-relaxed text-muted">
-                    TikTok is read only: Kaizen Ads audits the account and writes the moves, and you make them in TikTok Ads Manager.{" "}
+                    TikTok is read only: Kaizen OS audits the account and writes the moves, and you make them in TikTok Ads Manager.{" "}
                     <button type="button" onClick={() => setTab("actions")} className="inline-flex min-h-11 items-center text-fg underline-offset-4 hover:underline md:min-h-0">
                       The audit and its moves →
                     </button>

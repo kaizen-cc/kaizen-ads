@@ -62,7 +62,7 @@ Never invent; say what's unknown.`,
   return row ? { id: row.id as string, markdown, summary } : null;
 }
 
-/** Back in Kaizen Ads after being archived: the last package's "where we left off" goes into their memory */
+/** Back in Kaizen OS after being archived: the last package's "where we left off" goes into their memory */
 export async function restoreExport(admin: SupabaseClient, clientId: string) {
   const { data: last } = await admin.from("client_exports").select("id, markdown, created_at").eq("client_id", clientId).is("restored_at", null).order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (!last) return false;

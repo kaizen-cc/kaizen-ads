@@ -14,7 +14,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   suggest: [
     { title: "Suggests angle, audience, hooks, copy direction and the format mix", where: "New request form", trigger: "auto", when: "When a client is picked and as the request fills in", labels: ["suggest"] },
     { title: "Applies a fix from the review to the request", where: "New request form · Review", trigger: "click", when: "When someone clicks a suggested fix", labels: ["apply fix"] },
-    { title: "Reads an Asana task into the request form when it's moved into Kaizen Ads", where: "Board \u00b7 Asana task \u2192 Migrate to Kaizen Ads", trigger: "click", when: "When someone migrates an Asana task", labels: ["asana migration"] },
+    { title: "Reads an Asana task into the request form when it's moved into Kaizen OS", where: "Board \u00b7 Asana task \u2192 Migrate to Kaizen OS", trigger: "click", when: "When someone migrates an Asana task", labels: ["asana migration"] },
   ],
   review: [
     { title: "Sorts imported Claude chats by the client each is about", where: "Kaizen AI · Import from Claude", trigger: "auto", when: "When the import list opens, for the chats no client name settles", labels: ["claude import client match"] },

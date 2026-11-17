@@ -14,7 +14,7 @@ export type Diagnosis = {
 };
 
 const MODELS = ["claude-sonnet-5-5", "claude-haiku-5-5"];
-const APP = `Kaizen Ads is the internal creative request and approval app of Kaizen Marketing (a paid social agency): Next.js 16
+const APP = `Kaizen OS is the internal creative request and approval app of Kaizen Marketing (a paid social agency): Next.js 16
 App Router on Vercel, Supabase Postgres with row-level security. Media buyers request ads, designers and editors upload creative,
 the team reviews it, clients approve it in a portal, and it launches to Meta. AI agents (Claude) write briefs, copy and reviews;
 background jobs sync Meta, Slack, Gmail, Drive, call notes and Motion.

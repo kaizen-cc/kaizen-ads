@@ -71,7 +71,7 @@ export function NoticeSettings({ initial, groups, email }: { initial: NoticePref
         <Toggle on={prefs.popups} onChange={(on) => save({ ...prefs, popups: on })} label="Pop-ups for critical notifications" />
         <div className="grid gap-0.5">
           <p className="text-[15px] font-medium">Pop-ups for critical ones</p>
-          <p className="text-xs text-muted">Something critical that arrives while you&apos;re in Kaizen Ads shows bottom-right as well as in the bell.</p>
+          <p className="text-xs text-muted">Something critical that arrives while you&apos;re in Kaizen OS shows bottom-right as well as in the bell.</p>
         </div>
       </div>
 

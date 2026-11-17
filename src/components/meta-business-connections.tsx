@@ -348,7 +348,7 @@ function HowTo() {
         <li>In the partner&rsquo;s Business Manager: Users › System users › Add (Admin).</li>
         <li>Assign that system user the client ad accounts with Manage campaigns (full control is fine), their Pages, and Kaizen&rsquo;s app.</li>
         <li>Generate new token for the system user, with Kaizen&rsquo;s app selected, set to never expire, with ads_management, ads_read, business_management, pages_read_engagement and pages_show_list.</li>
-        <li>Paste it here with Connect. Kaizen Ads checks it with Meta and lists the accounts it reaches. Then pick the Business Manager in each of its clients&rsquo; Team &amp; setup.</li>
+        <li>Paste it here with Connect. Kaizen OS checks it with Meta and lists the accounts it reaches. Then pick the Business Manager in each of its clients&rsquo; Team &amp; setup.</li>
       </ol>
       <p className="mt-2 text-faint">Never use Connect an app ID in their Business Manager: it can move the app&rsquo;s ownership to them.</p>
     </details>

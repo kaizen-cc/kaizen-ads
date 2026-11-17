@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { stageInfo } from "@/lib/stages";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
-// The team's activity record, for execs: when each person was last on, how much they use Kaizen Ads (minutes in use,
+// The team's activity record, for execs: when each person was last on, how much they use Kaizen OS (minutes in use,
 // from the heartbeat in src/components/activity-tracker.tsx), and a log of what they did: sign-ins, pages opened,
 // every ticket move, review, copy pass and upload (the ticket history), and reports sent.
 

@@ -9,7 +9,7 @@ import { LaunchManage } from "./launch-manage";
 import { LaunchMove } from "./launch-move";
 import { confirmLaunch, discardLaunch, launchFor, loadLaunch, replanLaunch, sandboxCampaign, startLaunch, type LaunchView } from "./launch-actions";
 
-// Launch to Meta, on a ticket in Ready to launch. Kaizen Ads launches it on its own when the ticket gets here (the
+// Launch to Meta, on a ticket in Ready to launch. Kaizen OS launches it on its own when the ticket gets here (the
 // Media Buyer picks the ad set and names, Kaizen's checks and Meta's dry run, then the ads are created paused) and
 // hands the ticket to the buyer to turn them on; the ticket completes itself once Meta shows them on. This panel shows
 // how that went, and when something stopped it, it's where the buyer adjusts and launches by hand.
@@ -117,7 +117,7 @@ export function LaunchPanel({ requestId, isExec, launched = false }: { requestId
             Launching automatically
           </p>
           <p className="max-w-[56ch] text-sm text-muted">
-            Kaizen Ads picks up tickets in Ready to launch within five minutes: it places the ads, names them, runs the checks and Meta&apos;s dry run, and creates them paused. The ticket then comes to the buyer with the link to turn them on.
+            Kaizen OS picks up tickets in Ready to launch within five minutes: it places the ads, names them, runs the checks and Meta&apos;s dry run, and creates them paused. The ticket then comes to the buyer with the link to turn them on.
           </p>
         </div>
         <div className="relative flex flex-wrap items-center gap-3">

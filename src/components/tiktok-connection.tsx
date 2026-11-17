@@ -20,7 +20,7 @@ const primary = "inline-flex min-h-11 flex-1 items-center justify-center rounded
 /**
  * Settings › Sync health › TikTok (execs). Before Kaizen's TikTok app is approved and its keys are in Vercel, only the
  * waiting state. Then: connect with TikTok (OAuth), the ad accounts the grant reaches, and the client each belongs to
- * (linked by name when it's clear, otherwise picked here, with the likeliest clients first). Read only: Kaizen Ads pulls
+ * (linked by name when it's clear, otherwise picked here, with the likeliest clients first). Read only: Kaizen OS pulls
  * TikTok's numbers and changes nothing there.
  */
 export function TikTokConnection() {
@@ -45,7 +45,7 @@ export function TikTokConnection() {
     <div className="grid min-w-0 gap-3">
       <div className="grid min-w-0 gap-0.5">
         <p className="font-heading text-lg">TikTok Ads</p>
-        <p className="text-[12.5px] leading-relaxed text-faint">TikTok&rsquo;s numbers on the KPI board, client pages, reports and the AI. Read only: nothing is changed in TikTok from Kaizen Ads.</p>
+        <p className="text-[12.5px] leading-relaxed text-faint">TikTok&rsquo;s numbers on the KPI board, client pages, reports and the AI. Read only: nothing is changed in TikTok from Kaizen OS.</p>
       </div>
       {notice && <Notice text={notice} />}
       {!data && <div className="h-14 animate-pulse rounded-[14px] bg-surface-2" aria-label="Loading TikTok" />}

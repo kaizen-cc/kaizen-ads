@@ -11,7 +11,7 @@ export const TIKTOK_AUTH = "https://business-api.tiktok.com/portal/auth";
 export const TIKTOK_REDIRECT_PATH = "/api/tiktok/callback";
 export const WAITING_TEXT = "Waiting on TikTok approval: add TIKTOK_APP_ID and TIKTOK_APP_SECRET in Vercel";
 /** What the chat says when someone asks to change something in TikTok */
-export const READ_ONLY_TEXT = "TikTok changes aren't connected yet: Kaizen Ads reads TikTok's numbers but can't change anything there. Make the change in TikTok Ads Manager.";
+export const READ_ONLY_TEXT = "TikTok changes aren't connected yet: Kaizen OS reads TikTok's numbers but can't change anything there. Make the change in TikTok Ads Manager.";
 
 type Env = Record<string, string | undefined>;
 

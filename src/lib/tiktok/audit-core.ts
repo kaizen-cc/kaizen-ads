@@ -20,7 +20,7 @@ export const TIKTOK_FRAMING = `This is a TikTok ad account, not Meta. Judge it t
 - CPA (or ROAS) against the target, by campaign, ad group and ad, with the spend behind it. Don't call a result on a handful of conversions.
 - Structure: campaigns and ad groups (TikTok's ad sets), the optimization event each ad group optimizes for, too many ad groups splitting a small budget, ad groups stuck learning or limited, Smart+ or automated campaigns versus manual ones, and budgets too small to exit learning (roughly 50 conversions a week per ad group).
 - Delivery and tracking: rejected or limited ads, TikTok's own diagnosis of each ad group, and whether the pixel's events are firing (a purchase or lead event that stopped firing makes every number lie).
-TikTok is read only in Kaizen Ads: nothing can be changed in TikTok from here. Every action is a checklist the buyer works through in TikTok Ads Manager, step by step, naming the campaign, ad group or ad. Call ad sets "ad groups". Never suggest Meta-only features (Advantage+, Conversions API on Meta, Ads Manager on Facebook).`;
+TikTok is read only in Kaizen OS: nothing can be changed in TikTok from here. Every action is a checklist the buyer works through in TikTok Ads Manager, step by step, naming the campaign, ad group or ad. Call ad sets "ad groups". Never suggest Meta-only features (Advantage+, Conversions API on Meta, Ads Manager on Facebook).`;
 
 // ─── TikTok Ads Manager ───────────────────────────────────────────────────
 

@@ -91,7 +91,7 @@ const ago = (iso: string) => {
 const softTerms = (r: TermsRow) => r.status === "ready" && r.accepted === false;
 
 /**
- * Can Kaizen Ads change each Meta ad account? Per account: is our system user assigned with Manage campaigns (or only
+ * Can Kaizen OS change each Meta ad account? Per account: is our system user assigned with Manage campaigns (or only
  * view, or not at all), and, on accounts that use customer lists, has Kaizen's Business Manager accepted Meta's Custom
  * Audience terms (without them Meta refuses any change to an ad set that targets a list, pausing too). Plus the
  * token's own permissions, once. One client's accounts (the live-changes widget) or every client's (Sync health,

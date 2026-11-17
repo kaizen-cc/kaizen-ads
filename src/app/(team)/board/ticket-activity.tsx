@@ -266,12 +266,12 @@ export function TicketActivity({
                   <PersonAvatar name={e.actor} size={28} />
                 ) : (
                   <span className="relative grid h-7 w-7 place-items-center rounded-full border border-line bg-surface">
-                    <Image src="/kaizen-mark.png" alt="Kaizen Ads" width={18} height={18} />
+                    <Image src="/kaizen-mark.png" alt="Kaizen OS" width={18} height={18} />
                   </span>
                 )}
                 <div className="grid min-w-0 gap-1.5 pt-1">
                   <p className="text-sm leading-snug text-muted">
-                    <span className="font-medium text-fg">{e.actor ?? "Kaizen Ads"}</span> {describe(e)}
+                    <span className="font-medium text-fg">{e.actor ?? "Kaizen OS"}</span> {describe(e)}
                     <span className="ml-2 whitespace-nowrap text-xs text-faint">{fmtDate(e.at)}</span>
                   </p>
                   {e.body && <p className="whitespace-pre-wrap rounded-[8px] bg-surface px-3.5 py-2.5 text-sm leading-relaxed">{linkify(e.body)}</p>}

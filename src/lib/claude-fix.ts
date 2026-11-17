@@ -27,7 +27,7 @@ export const commitUrl = (sha: string) => `https://github.com/${repo()}/commit/$
 export async function openClaudeIssue(title: string, body: string, autoMerge: boolean): Promise<{ url?: string; number?: number; error?: string }> {
   if (!githubConfigured()) return { error: "Automatic fixes aren't connected yet: add GITHUB_TOKEN in Vercel." };
   // Make sure the labels exist (422 = they already do)
-  await github("/labels", { body: { name: LABEL, color: "B21E2C", description: "Kaizen Ads error handed to Claude to fix" } }).catch(() => null);
+  await github("/labels", { body: { name: LABEL, color: "B21E2C", description: "Kaizen OS error handed to Claude to fix" } }).catch(() => null);
   if (autoMerge) await github("/labels", { body: { name: "auto-merge", color: "2EB67D", description: "Low-severity fix: merges itself when the checks pass" } }).catch(() => null);
   const res = await github("/issues", { body: { title: title.slice(0, 200), body, labels: autoMerge ? [LABEL, "auto-merge"] : [LABEL] } });
   if (!res) return { error: "Automatic fixes aren't connected yet: add GITHUB_TOKEN in Vercel." };
@@ -54,7 +54,7 @@ export async function createFixIssue(fingerprint: string, by = "by Santi", autoM
   const d = (e.diagnosis ?? {}) as Record<string, unknown>;
   const sample = (e.sample ?? {}) as Record<string, unknown>;
   const body = [
-    `Reported by Kaizen Ads's error monitor and handed to Claude ${by}.`,
+    `Reported by Kaizen OS's error monitor and handed to Claude ${by}.`,
     ``,
     `**Error:** \`${e.message}\``,
     `**Where:** ${e.path ?? "unknown"} (${e.kind}) · seen ${e.count}× · people: ${((e.people as string[]) ?? []).join(", ") || "unknown"}`,

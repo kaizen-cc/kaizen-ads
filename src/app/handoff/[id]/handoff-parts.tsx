@@ -157,7 +157,7 @@ export function AccountChat({ id, client, initial, ready }: { id: string; client
         <div className="flex items-start gap-3 border-b border-[#e7e2e3] px-4 py-3 max-md:pt-[max(12px,env(safe-area-inset-top))]">
           <div className="grid min-w-0 flex-1 gap-0.5">
             <p className="text-sm font-semibold [overflow-wrap:anywhere]">Ask about {client}</p>
-            <p className="text-xs text-[#8a8189]">Answers come from everything Kaizen Ads knows about the account.</p>
+            <p className="text-xs text-[#8a8189]">Answers come from everything Kaizen OS knows about the account.</p>
           </div>
           <button type="button" onClick={() => setOpen(false)} aria-label="Close the chat" className="-mr-2 -mt-1 grid h-11 w-11 shrink-0 place-items-center rounded-full text-lg text-[#4d464f] active:bg-[#f4f2f1] md:hidden">
             ✕

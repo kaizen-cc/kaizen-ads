@@ -1,7 +1,7 @@
-// Klaviyo (email and SMS) in Kaizen Ads, the plain parts kept apart from the network and the database so they can be
+// Klaviyo (email and SMS) in Kaizen OS, the plain parts kept apart from the network and the database so they can be
 // tested: what a pasted private key must look like, reading the Accounts answer, reading Reporting API answers (values
 // and series, in the shapes Klaviyo has used), when to wait and retry after a refusal, the daily rollup, and the short
-// line every agent reads. Read only: nothing here (or anywhere in Kaizen Ads) sends, edits or schedules in Klaviyo.
+// line every agent reads. Read only: nothing here (or anywhere in Kaizen OS) sends, edits or schedules in Klaviyo.
 
 /**
  * The API revision every call is pinned to. 2026-07-15 is the last stable revision before the omnichannel campaign
@@ -74,7 +74,7 @@ export function errorText(status: number, json: unknown): string {
   // answer for this account, and the key is fine
   if (status === 401 || (status === 400 && (!detail || /api key/i.test(detail)))) return "Klaviyo refused this key. Check it was copied whole and hasn't been deleted.";
   if (status === 400) return `Klaviyo couldn't answer: ${detail}`;
-  if (status === 403) return `This key can't read everything Kaizen Ads needs. Make a new private key with read access to ${KLAVIYO_SCOPES.join(", ")}.`;
+  if (status === 403) return `This key can't read everything Kaizen OS needs. Make a new private key with read access to ${KLAVIYO_SCOPES.join(", ")}.`;
   if (status === 429) return "Klaviyo is rate limiting this account right now. It's tried again on the next sync.";
   return `Klaviyo answered ${status}${detail ? `: ${detail}` : ""}`;
 }

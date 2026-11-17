@@ -10,7 +10,7 @@ import { cleanError, matchPage, pickSocialWindow, plainSocialError, shiftDay, so
 import { combineFollowers, dailyTotal, platformFollowers, rateSeries, type DayPoint, type RatePoint } from "./charts";
 import { bestAndWeakest, filterPosts, followerGrowth, formatStats, longestGap, postsPerWeek, socialHealth, withRates, windowOf, type DailyRow, type FollowerPoint, type HealthFinding, type PlatformPulse, type PostView, type Window } from "./insights";
 
-// Social in Kaizen Ads: each organic social client's Facebook Page and Instagram account (found by name through the
+// Social in Kaizen OS: each organic social client's Facebook Page and Instagram account (found by name through the
 // ad account's promotable Pages or the system user's Pages, or picked by a person), the daily sync of their account
 // insights and recent posts, and what the client page and the agents read. Read only. Everything returns early,
 // touching nothing, until the Social migration is applied.

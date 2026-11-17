@@ -24,7 +24,7 @@ export async function moveTicket(id: string, stage: Stage, note?: string): Promi
   if (!error && stage === "client_review" && adminConfigured()) {
     after(() => onReachedClient(createAdminClient(), id));
   }
-  // Ready to launch: Kaizen Ads launches it (paused) now, rather than at the next scheduled pass
+  // Ready to launch: Kaizen OS launches it (paused) now, rather than at the next scheduled pass
   if (!error && stage === "ready_for_launch" && adminConfigured()) {
     after(async () => {
       const { autoLaunch } = await import("@/lib/launcher");
@@ -89,7 +89,7 @@ export async function moveCheck(id: string, stage: Stage): Promise<MoveCheck> {
     const ok = made.filter((d) => d.client_status === "approved").length;
     if (made.length && ok < made.length) out.warnings.push(`The client has approved ${ok} of ${made.length} designs.`);
     if (copy && copy.status !== "approved") out.warnings.push("The copy isn't approved.");
-    out.effects.push("Kaizen Ads creates the ads in Meta right away, paused, for the buyer to turn on.");
+    out.effects.push("Kaizen OS creates the ads in Meta right away, paused, for the buyer to turn on.");
   }
   if (stage === "client_review") out.effects.push("It shows in the client's portal for their approval.");
   if (stage === "copy") out.effects.push("The AI drafts the copy if there isn't any yet.");

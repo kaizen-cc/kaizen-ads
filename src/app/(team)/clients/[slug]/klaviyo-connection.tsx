@@ -14,13 +14,13 @@ import { connectEmailKey, removeKlaviyoKey, setCustomerioRevenueEvent, syncKlavi
 // The client's email provider in Team & setup (Klaviyo, Brevo or Customer.io): the account it reads (name and time zone,
 // from the provider itself), the key's last 4, when it was last read, and Replace, Remove and Sync now. A lead or exec
 // pastes a read-only key; it's never shown again. A client has one provider: with none connected the lead or exec picks.
-// The conversion metric picker and the location breakdown are Klaviyo's only. Read only: Kaizen Ads never sends, edits
+// The conversion metric picker and the location breakdown are Klaviyo's only. Read only: Kaizen OS never sends, edits
 // or schedules anything in the provider.
 
 const STEPS: Record<EmailProvider, string[]> = {
-  klaviyo: ["In the client's Klaviyo account: Settings › Account › API keys › Create Private API Key.", `Name it "Kaizen Ads", choose Custom key, and give Read Access to ${KLAVIYO_SCOPE_NAMES}. Nothing else.`, "Create it, copy the key (it starts with pk_) and paste it here."],
-  brevo: ["In the client's Brevo account: SMTP & API › API keys › Generate a new API key.", 'Name it "Kaizen Ads", generate it and copy the key (it starts with xkeysib-).', "Paste it here. Revenue shows when their store is connected to Brevo (ecommerce attribution)."],
-  customerio: ["In the client's Customer.io workspace: Settings › Account settings › API credentials › App API keys.", 'Create a key named "Kaizen Ads" and copy it.', "Paste it here, with the region if you know it, and the name of their purchase event if they have one (Customer.io reports no revenue of its own)."],
+  klaviyo: ["In the client's Klaviyo account: Settings › Account › API keys › Create Private API Key.", `Name it "Kaizen OS", choose Custom key, and give Read Access to ${KLAVIYO_SCOPE_NAMES}. Nothing else.`, "Create it, copy the key (it starts with pk_) and paste it here."],
+  brevo: ["In the client's Brevo account: SMTP & API › API keys › Generate a new API key.", 'Name it "Kaizen OS", generate it and copy the key (it starts with xkeysib-).', "Paste it here. Revenue shows when their store is connected to Brevo (ecommerce attribution)."],
+  customerio: ["In the client's Customer.io workspace: Settings › Account settings › API credentials › App API keys.", 'Create a key named "Kaizen OS" and copy it.', "Paste it here, with the region if you know it, and the name of their purchase event if they have one (Customer.io reports no revenue of its own)."],
 };
 
 const ago = (iso: string) => {

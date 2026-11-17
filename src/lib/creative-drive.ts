@@ -204,7 +204,7 @@ export function folderCache(admin: SupabaseClient, clientId: string, root: strin
 
 class NoFolder extends Error {}
 
-/** The ticket's plain message when the client has no Drive folder: the file stays in Kaizen Ads, nothing stray is made */
+/** The ticket's plain message when the client has no Drive folder: the file stays in Kaizen OS, nothing stray is made */
 const NO_DRIVE_TEXT = `${NO_DRIVE}. The file is saved here; add their Drive folder on the client page and it's copied over.`;
 
 /**

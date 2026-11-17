@@ -18,7 +18,7 @@ const HOW: Record<IntegrationKind, { account: string; secret: string; secret2?: 
     secret: "Admin API access token",
     steps: [
       "Once our collaborator access is accepted, open the store's admin: Settings › Apps and sales channels › Develop apps.",
-      "Create an app named \"Kaizen Ads\", then Configure Admin API scopes: read_orders and read_customers (read_all_orders too, to read further back than 60 days).",
+      "Create an app named \"Kaizen OS\", then Configure Admin API scopes: read_orders and read_customers (read_all_orders too, to read further back than 60 days).",
       "Install the app and reveal the Admin API access token (Shopify shows it once). Paste it here.",
     ],
   },
@@ -26,21 +26,21 @@ const HOW: Record<IntegrationKind, { account: string; secret: string; secret2?: 
     account: "Site address",
     secret: "Consumer key",
     secret2: "Consumer secret",
-    steps: ["In WordPress: WooCommerce › Settings › Advanced › REST API › Add key.", "Description \"Kaizen Ads\", user: our tech account, permissions Read. Generate, then paste the consumer key and secret here."],
+    steps: ["In WordPress: WooCommerce › Settings › Advanced › REST API › Add key.", "Description \"Kaizen OS\", user: our tech account, permissions Read. Generate, then paste the consumer key and secret here."],
   },
   gohighlevel: {
     account: "Location ID (the sub-account)",
     secret: "Private integration token",
     steps: [
       "Every GoHighLevel account we manage needs its own token: one per sub-account (location).",
-      "In the client's sub-account: Settings › Private Integrations › Create new integration, named \"Kaizen Ads\", with read access to contacts, opportunities and locations.",
+      "In the client's sub-account: Settings › Private Integrations › Create new integration, named \"Kaizen OS\", with read access to contacts, opportunities and locations.",
       "Copy the token (shown once). The location ID is in Settings › Business Profile, or in the address bar after /location/.",
     ],
   },
   hubspot: {
     account: "Account name (optional)",
     secret: "Private app access token",
-    steps: ["In HubSpot: Settings › Integrations › Private Apps › Create a private app named \"Kaizen Ads\".", "Scopes: crm.objects.contacts.read and crm.objects.deals.read. Create it and paste the access token."],
+    steps: ["In HubSpot: Settings › Integrations › Private Apps › Create a private app named \"Kaizen OS\".", "Scopes: crm.objects.contacts.read and crm.objects.deals.read. Create it and paste the access token."],
   },
   other: { account: "Which CRM (name)", secret: "", steps: ["We can't read this one yet: it's kept on the page so the team and the agents know where their leads live, and it's covered on a call."] },
 };

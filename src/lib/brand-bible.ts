@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiUnavailable, askJson, BRAND_BIBLE_SCHEMA, clientContext, contextBlock, researchWeb, type BrandBibleOut } from "@/lib/ai";
 
-// The Brand Bible: every client that touches Kaizen Ads gets one, and it's kept current. Built from web research (the
+// The Brand Bible: every client that touches Kaizen OS gets one, and it's kept current. Built from web research (the
 // brand, then the market: competitors with their links and ads, what buyers say in forums and in competitors' reviews,
 // studies to use in ads), the intake form, every recorded call (Fireflies and Gemini, transcripts included), the full
 // Slack and email history, what the client said about our creative, and everything else the app knows about them.
@@ -391,7 +391,7 @@ export function addBusinessDays(iso: string | Date, days: number) {
 const DAILY_CAP = 15;
 
 /**
- * Every client in Kaizen Ads (onboarding, active or paused; not archived) with a Brand Bible. Each run builds one, in
+ * Every client in Kaizen OS (onboarding, active or paused; not archived) with a Brand Bible. Each run builds one, in
  * this order: clients with none (onboarding and active first), then ones whose new intake came in after the Bible was
  * built, then a monthly update for active clients (it keeps what holds and brings in the month's calls, messages,
  * reviews and feedback). Between those the playbook adds what their ads prove. A failed build waits a day.

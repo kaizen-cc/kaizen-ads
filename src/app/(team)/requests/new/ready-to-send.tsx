@@ -64,7 +64,7 @@ const refPicture = (u: string) => {
 const host = (u: string) => {
   try {
     const x = new URL(u, "https://x.invalid");
-    return { host: x.host === "x.invalid" ? "Kaizen Ads" : x.host.replace(/^www\./, ""), path: x.pathname.length > 1 ? x.pathname : "" };
+    return { host: x.host === "x.invalid" ? "Kaizen OS" : x.host.replace(/^www\./, ""), path: x.pathname.length > 1 ? x.pathname : "" };
   } catch {
     return { host: u, path: "" };
   }

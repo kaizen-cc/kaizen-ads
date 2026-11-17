@@ -5,7 +5,7 @@ import type { Delivery } from "@/lib/launch-manage";
 import { eventLabel, firedAgo } from "@/lib/meta-events";
 import { editLaunched, launchDelivery, switchDelivery, type LaunchView } from "./launch-actions";
 
-// The launched ads, run from Kaizen Ads: what Meta shows for them now, turning them on (or pausing them), and editing
+// The launched ads, run from Kaizen OS: what Meta shows for them now, turning them on (or pausing them), and editing
 // what the launcher decided. Ads Manager stays one link away, but nothing here needs it.
 
 const field = "w-full rounded-[10px] border border-line bg-bg px-3 text-sm text-fg outline-none transition-colors focus:border-[#0866ff]/60";
@@ -405,7 +405,7 @@ export function LaunchManage({ l, onDone }: { l: LaunchView; onDone: () => void 
 
           <div className="grid gap-2 border-t border-line pt-4">
             <p className="text-xs leading-relaxed text-faint">
-              Kaizen Ads checks it with Meta first, so nothing changes if Meta would refuse it. New text or settings go into the same {l.result!.ads.filter((x) => x.adId).length === 1 ? "ad" : "ads"} (same ID and history); an ad that&apos;s on goes back through Meta&apos;s review. The copy the client approved stays as it was on the ticket.
+              Kaizen OS checks it with Meta first, so nothing changes if Meta would refuse it. New text or settings go into the same {l.result!.ads.filter((x) => x.adId).length === 1 ? "ad" : "ads"} (same ID and history); an ad that&apos;s on goes back through Meta&apos;s review. The copy the client approved stays as it was on the ticket.
             </p>
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={save} disabled={pending} className="h-10 rounded-full bg-fg px-5 text-sm font-medium text-bg disabled:opacity-60 max-md:h-12 max-md:flex-1">

@@ -1,4 +1,4 @@
-// Which version of Kaizen Ads is live: open tabs compare it with their own (UpdateBar)
+// Which version of Kaizen OS is live: open tabs compare it with their own (UpdateBar)
 export const dynamic = "force-dynamic";
 
 export function GET() {
