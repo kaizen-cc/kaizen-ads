@@ -20,7 +20,7 @@ import { freshen } from "./regenerate";
 import { reportListeners } from "./access";
 import { periodMismatch } from "./period";
 import { normalizeDelivery, pdfFileName, type Delivery } from "./delivery-core";
-import { clientDelivery, deliver, recordSend } from "./send";
+import { clientDelivery, deliver, recordSend, removedContactEmails } from "./send";
 import { greetingFor, reportCtaUrl } from "./cc-core";
 import { reportCc } from "./cc";
 import { forClient, isWhiteLabel, WHITE_LABEL_FROM, whiteLabelFileName } from "./white-label";
@@ -291,7 +291,9 @@ async function recapDelivery(admin: SupabaseClient, bundleId: string): Promise<D
 async function recapTo(admin: SupabaseClient, clientId: string, chosen: Delivery | null) {
   if (!chosen) return recapRecipients(admin, clientId);
   if (!chosen.channels.includes("email")) return [];
-  return chosen.recipients.map((c) => ({ email: c.email, full_name: c.name ?? null }));
+  // Nobody taken off the client since it was chosen
+  const removed = await removedContactEmails(admin, clientId);
+  return chosen.recipients.filter((c) => !removed.has(c.email.trim().toLowerCase())).map((c) => ({ email: c.email, full_name: c.name ?? null }));
 }
 
 /**

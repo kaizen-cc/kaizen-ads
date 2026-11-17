@@ -87,6 +87,7 @@ export async function contactMap(admin: SupabaseClient) {
   const { data: links } = await admin
     .from("contact_clients")
     .select("client_id, contacts(email), clients!inner(archived_at, status)")
+    .is("removed_at", null)
     .is("clients.archived_at", null)
     .in("clients.status", LIVE);
   const map = new Map<string, string[]>();
@@ -179,7 +180,7 @@ const domainOf = (s: string | null | undefined) => {
 export async function emailKeys(admin: SupabaseClient, clientIds?: string[]) {
   let cq = admin.from("clients").select("id, name, status, created_at, website, email_history_covered").is("archived_at", null).in("status", ["onboarding", "active", "paused"]);
   if (clientIds) cq = cq.in("id", clientIds);
-  const [{ data: clients }, { data: links }] = await Promise.all([cq, admin.from("contact_clients").select("client_id, contacts(email)")]);
+  const [{ data: clients }, { data: links }] = await Promise.all([cq, admin.from("contact_clients").select("client_id, contacts(email)").is("removed_at", null)]);
   const keys = new Map<string, Set<string>>();
   for (const c of clients ?? []) {
     const d = domainOf(c.website as string | null);

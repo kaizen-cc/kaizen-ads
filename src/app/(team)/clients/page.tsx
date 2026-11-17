@@ -29,7 +29,7 @@ type Row = {
   services_removed: string[] | null;
   creative_packages: { label: string } | null;
   client_assignments: { role: string; profile_id: string; is_primary: boolean | null; created_at: string | null; profiles: { full_name: string } | null }[];
-  contact_clients: { contact_id: string }[];
+  contact_clients: { contact_id: string; removed_at: string | null }[];
 };
 
 export default async function Clients({ searchParams }: PageProps<"/clients">) {
@@ -40,7 +40,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const req = supabase
     .from("clients")
     .select(
-      "id, name, slug, status, kaizen_id, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, services_removed, creative_packages(label), client_assignments(role, profile_id, is_primary, created_at, profiles(full_name)), contact_clients(contact_id)",
+      "id, name, slug, status, kaizen_id, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, services_removed, creative_packages(label), client_assignments(role, profile_id, is_primary, created_at, profiles(full_name)), contact_clients(contact_id, removed_at)",
     )
     .neq("status", "offboarded")
     .order("name");
@@ -100,7 +100,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     const u = (usage ?? []).find((x) => x.client_id === r.id);
     return { images: u?.images_per_month ?? 0, videos: u?.videos_per_month ?? 0 };
   };
-  const missing = (r: Row) => SLOTS.filter((s) => servicesFor(r).includes(SLOT_SERVICE[s.value]) && seatNeeded(s.value, capsOf(r)) && !current(r, s.value)).length + (r.contact_clients.length ? 0 : 1);
+  const missing = (r: Row) => SLOTS.filter((s) => servicesFor(r).includes(SLOT_SERVICE[s.value]) && seatNeeded(s.value, capsOf(r)) && !current(r, s.value)).length + (r.contact_clients.some((l) => !l.removed_at) ? 0 : 1);
   const inFlight = new Map<string, number>();
   for (const o of open ?? []) inFlight.set(o.client_id, (inFlight.get(o.client_id) ?? 0) + 1);
 
@@ -127,7 +127,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
       images: { used: u?.images_used ?? 0, cap: u?.images_per_month ?? 0 },
       videos: { used: u?.videos_used ?? 0, cap: u?.videos_per_month ?? 0 },
       inFlight: channel ? 0 : (inFlight.get(r.id) ?? 0),
-      contacts: r.contact_clients.length,
+      contacts: r.contact_clients.filter((l) => !l.removed_at).length,
       live: {
         meta: channel ? null : tone(r.meta_ad_account_id, metaAt.get(r.id)),
         slack: tone(r.slack_channel_id || r.internal_slack_channel_id, newest(syncedAt.get(`slack:${r.slack_channel_id}`), syncedAt.get(`slack:${r.internal_slack_channel_id}`))),

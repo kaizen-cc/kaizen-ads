@@ -16,7 +16,7 @@ export async function clientReadiness(db: SupabaseClient, clientId: string): Pro
     db.from("clients").select("services, services_extra, services_removed, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, website").eq("id", clientId).maybeSingle(),
     db.from("kpi_targets").select("id, platform, label, ad_account_id, target").eq("client_id", clientId).eq("active", true),
     db.from("client_assignments").select("role").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer"]),
-    db.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", clientId),
+    db.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", clientId).is("removed_at", null),
   ]);
   const targets = (rows ?? []).map((r) => ({ id: r.id as string, platform: r.platform as string, label: (r.label as string | null) ?? null, target: r.target == null ? null : Number(r.target), account: r.ad_account_id as string | null }));
   const hasMeta = Boolean(c?.meta_ad_account_id) || targets.some((t) => t.platform === "meta" && t.account);

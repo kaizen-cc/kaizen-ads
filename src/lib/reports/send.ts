@@ -7,7 +7,7 @@ import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { siteUrl } from "@/lib/site";
 import type { ReportMetrics } from "./metrics";
 import { buildReportEmail, channelsLabel, normalizeDelivery, type Channel, type Delivery, type Recipient } from "./delivery-core";
-import { defaultRecipients, firstNameFor, recipientsToUse, reportCtaUrl } from "./cc-core";
+import { defaultRecipients, firstNameFor, recipientsToUse, reportCtaUrl, withoutRemoved } from "./cc-core";
 import { reportCc } from "./cc";
 import { forClient, isWhiteLabel, WHITE_LABEL_FROM } from "./white-label";
 import { openWithHere } from "./slack-text";
@@ -23,7 +23,7 @@ export const emailReady = () => Boolean(process.env.RESEND_API_KEY);
 /** The client's contacts (primary first) and how they last got their reports, for the send step */
 export async function clientDelivery(admin: SupabaseClient, clientId: string) {
   const [{ data: links }, prefs, { data: client }] = await Promise.all([
-    admin.from("contact_clients").select("is_primary, created_at, contacts(email, full_name, is_active)").eq("client_id", clientId),
+    admin.from("contact_clients").select("is_primary, created_at, removed_at, contacts(email, full_name, is_active)").eq("client_id", clientId),
     admin
       .from("client_report_prefs")
       .select("channels, recipients, delivery_updated_at")
@@ -32,12 +32,16 @@ export async function clientDelivery(admin: SupabaseClient, clientId: string) {
       .then((r) => (r.error ? { data: null } : r)),
     admin.from("clients").select("slack_channel_id").eq("id", clientId).maybeSingle(),
   ]);
-  const contacts: (Recipient & { primary: boolean; addedAt: string | null })[] = ((links ?? []) as unknown as { is_primary: boolean; created_at: string | null; contacts: { email: string; full_name: string | null; is_active: boolean } | null }[])
-    .filter((l) => l.contacts?.email && l.contacts.is_active !== false)
+  const all = (links ?? []) as unknown as { is_primary: boolean; created_at: string | null; removed_at: string | null; contacts: { email: string; full_name: string | null; is_active: boolean } | null }[];
+  // Taken off the client: out of the list, and out of a choice remembered from before
+  const removed = removedOf(all);
+  const contacts: (Recipient & { primary: boolean; addedAt: string | null })[] = all
+    .filter((l) => !l.removed_at && l.contacts?.email && l.contacts.is_active !== false)
     .map((l) => ({ email: l.contacts!.email.toLowerCase(), name: l.contacts!.full_name, primary: Boolean(l.is_primary), addedAt: l.created_at ?? null }))
     .sort((a, b) => Number(b.primary) - Number(a.primary));
   const row = prefs.data as { channels?: string[] | null; recipients?: Recipient[] | null; delivery_updated_at?: string | null } | null;
-  const saved = row && (row.recipients?.length || (row.channels?.length && !(row.channels.length === 1 && row.channels[0] === "slack"))) ? normalizeDelivery(row) : null;
+  const kept = row && (row.recipients?.length || (row.channels?.length && !(row.channels.length === 1 && row.channels[0] === "slack"))) ? normalizeDelivery(row) : null;
+  const saved = kept ? { ...kept, recipients: withoutRemoved(kept.recipients, removed) } : null;
   const slackChannel = Boolean(client?.slack_channel_id);
   // Every contact the client has is in by default; a choice remembered earlier stands, with the contacts gained since added
   const everyone = defaultRecipients(contacts).map((c) => ({ email: c.email, name: c.name }));
@@ -46,6 +50,18 @@ export async function clientDelivery(admin: SupabaseClient, clientId: string) {
   const fallback: Delivery = slackChannel ? { channels: ["slack"], recipients: everyone } : { channels: contacts.length ? ["email"] : ["slack"], recipients: everyone };
   const initial: Delivery = saved ? { channels: saved.channels, recipients: remembered } : fallback;
   return { contacts, saved, initial, slackChannel, emailReady: emailReady() };
+}
+
+/** The addresses taken off a client (and not on it some other way) */
+function removedOf(links: { removed_at: string | null; contacts: { email: string } | null }[]) {
+  const on = new Set(links.filter((l) => !l.removed_at && l.contacts?.email).map((l) => l.contacts!.email.toLowerCase()));
+  return new Set(links.filter((l) => l.removed_at && l.contacts?.email).map((l) => l.contacts!.email.toLowerCase()).filter((e) => !on.has(e)));
+}
+
+/** The addresses taken off a client, read at the moment a report goes (a delivery chosen earlier may still name them) */
+export async function removedContactEmails(admin: SupabaseClient, clientId: string) {
+  const { data } = await admin.from("contact_clients").select("removed_at, contacts(email)").eq("client_id", clientId);
+  return removedOf((data ?? []) as unknown as { removed_at: string | null; contacts: { email: string } | null }[]);
 }
 
 /** Remembers how this client gets their reports (the channels and who the email goes to), for the next one */
@@ -106,7 +122,9 @@ export async function deliver(admin: SupabaseClient, sent: SendArgs): Promise<Se
   // The message always opens with @here, never with a person's mention (whoever the buyer's draft opened with)
   const opened: SendArgs = { ...sent, message: openWithHere(sent.message) };
   const a: SendArgs = wl ? { ...opened, message: forClient(opened.message, true), note: sent.note ? forClient(sent.note, true) : sent.note, appFallback: sent.appFallback != null ? forClient(sent.appFallback, true) : sent.appFallback } : opened;
-  const d = normalizeDelivery(a.delivery);
+  const chosen = normalizeDelivery(a.delivery);
+  // Nobody taken off the client since the delivery was chosen
+  const d = { ...chosen, recipients: withoutRemoved(chosen.recipients, await removedContactEmails(admin, a.client.id)) };
   const went: Channel[] = [];
   let slack: SendOutcome["slack"] = null;
   let email: SendOutcome["email"] = null;

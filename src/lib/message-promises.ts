@@ -316,7 +316,7 @@ export async function systemSince(admin: Admin, clientId: string, at: string) {
     admin.from("client_onboarding").select("welcomed_at, call_checked_at, meta, google, assets, style, blockers").eq("client_id", clientId).maybeSingle(),
     admin.from("client_intakes").select("received_at, status").eq("client_id", clientId).gte("received_at", from).limit(5),
     admin.from("client_intake_forms").select("status, prepared_at, started_at, submitted_at, call_booked_at").eq("client_id", clientId).maybeSingle(),
-    admin.from("contact_clients").select("created_at, contacts(full_name, last_seen_at)").eq("client_id", clientId).gte("created_at", from).limit(10),
+    admin.from("contact_clients").select("created_at, contacts(full_name, last_seen_at)").eq("client_id", clientId).is("removed_at", null).gte("created_at", from).limit(10),
     admin.from("client_kickoffs").select("status, drafted_at, sent_at").eq("client_id", clientId).maybeSingle(),
     admin.from("client_brand_bibles").select("status, started_at, generated_at").eq("client_id", clientId).maybeSingle(),
     admin.from("client_gtm_strategies").select("status, started_at, generated_at").eq("client_id", clientId).maybeSingle(),

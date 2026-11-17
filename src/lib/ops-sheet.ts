@@ -130,7 +130,8 @@ export async function syncOpsSheet(admin: SupabaseClient) {
         await admin.from("contacts").upsert({ email, full_name: emails.length === 1 ? cell(row, "contactName") || null : null }, { onConflict: "email", ignoreDuplicates: true });
         const { data: ct } = await admin.from("contacts").select("id").eq("email", email).maybeSingle();
         if (!ct) continue;
-        const { count } = await admin.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", c.id);
+        const { count } = await admin.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", c.id).is("removed_at", null);
+        // Linked already, or taken off this client: the sheet never puts them back
         const { data: linked } = await admin.from("contact_clients").select("contact_id").eq("client_id", c.id).eq("contact_id", ct.id).maybeSingle();
         if (linked) continue;
         await admin.from("contact_clients").insert({ contact_id: ct.id, client_id: c.id, is_primary: !count });

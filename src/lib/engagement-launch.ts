@@ -280,7 +280,7 @@ async function tell(admin: SupabaseClient, clientId: string, what: string, body:
 async function tellClientLive(admin: SupabaseClient, clientId: string) {
   const [{ data: c }, { data: links }, { data: l }] = await Promise.all([
     admin.from("clients").select("name, slug, slack_channel_id").eq("id", clientId).single(),
-    admin.from("contact_clients").select("contacts(email, full_name, is_active)").eq("client_id", clientId),
+    admin.from("contact_clients").select("contacts(email, full_name, is_active)").eq("client_id", clientId).is("removed_at", null),
     admin.from("engagement_launches").select("ad_ids, plan").eq("client_id", clientId).single(),
   ]);
   if (!c || !l) return;

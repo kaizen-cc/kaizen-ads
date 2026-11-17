@@ -59,6 +59,14 @@ export function recipientsToUse<T extends Contact & { addedAt?: string | null }>
   return [...saved, ...added.map((c) => ({ email: c.email, name: c.name ?? null }))];
 }
 
+/**
+ * A choice kept from before, less anyone taken off the client since (by the team, or by the client's own email asking
+ * to stop sending to them). An address that is still one of their contacts stays.
+ */
+export function withoutRemoved<T extends Contact>(recipients: readonly T[], removed: ReadonlySet<string>): T[] {
+  return recipients.filter((r) => !removed.has(r.email.trim().toLowerCase()));
+}
+
 /** The first name the email opens with: one contact's, else null (the email then says "Hi team,") */
 export const firstNameFor = (to: readonly Contact[]): string | null => (to.length === 1 ? to[0].name?.trim().split(/\s+/)[0] || null : null);
 

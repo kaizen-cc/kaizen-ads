@@ -382,7 +382,7 @@ async function collectCallsRun(admin: SupabaseClient, budgetMs: number, t: Track
 
   const [{ data: clients }, { data: links }] = await Promise.all([
     admin.from("clients").select("id, name").is("archived_at", null).in("status", LIVE),
-    admin.from("contact_clients").select("client_id, contacts(email), clients!inner(archived_at, status)").is("clients.archived_at", null).in("clients.status", LIVE),
+    admin.from("contact_clients").select("client_id, contacts(email), clients!inner(archived_at, status)").is("removed_at", null).is("clients.archived_at", null).in("clients.status", LIVE),
   ]);
   const contacts = new Map<string, string>();
   for (const l of links ?? []) {

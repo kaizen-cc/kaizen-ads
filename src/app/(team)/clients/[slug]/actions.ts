@@ -5,7 +5,7 @@ import { after } from "next/server";
 import { backInCycle } from "@/lib/reactivate";
 import { clientReadiness, type Readiness } from "@/lib/readiness";
 import { SERVICES } from "@/lib/services";
-import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
 import { lineOfTeam } from "@/lib/roles";
 import { detectIndustries, INDUSTRIES } from "@/lib/industry";
 import { refreshBriefing } from "@/lib/context/briefing";
@@ -238,11 +238,47 @@ export async function addContact(clientId: string, slug: string, form: FormData)
   return done(slug, error);
 }
 
+/** Off the client's list (never deleted: kept under Removed, and they can be brought back) */
 export async function removeContact(clientId: string, slug: string, contactId: string): Promise<ActionResult> {
   await requireStaff();
   const supabase = await createClient();
   const { error } = await supabase.rpc("remove_client_contact", { p_client: clientId, p_contact: contactId });
   return done(slug, error);
+}
+
+/** Whoever manages contacts, and the client's own account team (they get the notice and its undo) */
+async function mayChangeContacts(me: Awaited<ReturnType<typeof requireStaff>>, clientId: string) {
+  if (seesAllClients(me)) return true;
+  if (!adminConfigured()) return false;
+  const { CONTACT_TEAM_SEATS } = await import("@/lib/contact-changes-core");
+  const { data } = await createAdminClient().from("client_assignments").select("profile_id").eq("client_id", clientId).eq("profile_id", me.id).in("role", [...CONTACT_TEAM_SEATS]).limit(1);
+  return Boolean(data?.length);
+}
+
+/** A contact taken off, back on the client's list */
+export async function bringBackContact(clientId: string, slug: string, contactId: string): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!(await mayChangeContacts(me, clientId))) return { ok: false, error: "Only leads, execs and this client's team can change their contacts." };
+  const { restoreContact } = await import("@/lib/contact-changes");
+  try {
+    await restoreContact(createAdminClient(), clientId, contactId);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  return done(slug);
+}
+
+/** One change a client's email asked for: applied, dismissed, or (applied on its own) undone */
+export async function decideContactChange(clientId: string, slug: string, requestId: string, index: number, what: "apply" | "dismiss" | "undo", form?: FormData): Promise<ActionResult> {
+  const me = await requireStaff();
+  if (!(await mayChangeContacts(me, clientId))) return { ok: false, error: "Only leads, execs and this client's team can change their contacts." };
+  const { decideChange } = await import("@/lib/contact-changes");
+  try {
+    await decideChange(createAdminClient(), clientId, requestId, index, what, me.id, form ? str(form, "contact") : null);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  return done(slug);
 }
 
 export async function addAngle(clientId: string, slug: string, form: FormData): Promise<ActionResult> {

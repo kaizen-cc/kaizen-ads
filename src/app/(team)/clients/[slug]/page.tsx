@@ -18,6 +18,9 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loadClientCreative } from "@/lib/client-creative";
 import { ClientView } from "./client-view";
+import { ContactChangesPanel, type RemovedContact } from "./contact-changes-panel";
+import { contactRequestsFor } from "@/lib/contact-changes";
+import { CONTACT_TEAM_SEATS } from "@/lib/contact-changes-core";
 import { latestAudits } from "@/lib/audit-summary";
 import { changeKey, loadChanges } from "@/lib/account-changes";
 import type { ShotList } from "@/lib/shot-list";
@@ -195,7 +198,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   ] = await Promise.all([
     t("core", Promise.all([
       supabase.from("client_assignments").select("role, profile_id, is_primary, created_at, profiles(full_name)").eq("client_id", client.id),
-      supabase.from("contact_clients").select("is_primary, contacts(id, email, full_name, auth_user_id)").eq("client_id", client.id),
+      supabase.from("contact_clients").select("is_primary, removed_at, removed_source, removed_reason, contacts(id, email, full_name, auth_user_id), remover:profiles!contact_clients_removed_by_fkey(full_name)").eq("client_id", client.id),
       supabase.from("angles").select("id, name, kind, description, status").eq("client_id", client.id).order("status").order("name"),
       supabase.from("client_allotment_usage").select("*").eq("client_id", client.id).maybeSingle(),
       supabase.from("profiles").select("id, full_name, role, also_buys, also_social, also_designs_email").eq("is_active", true).order("full_name"),
@@ -326,10 +329,20 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   };
   const secondariesIn = (slot: string) => seatRows.filter((a) => a.role === slot && a !== primaryOf(seatRows, slot)).map(asOption);
   const optionsFor = (slot: (typeof SLOTS)[number]) => (staff ?? []).filter((p) => canHold(slot, p)).map((p) => ({ id: p.id, name: p.full_name }));
-  const contacts = (links ?? []).flatMap((l: { is_primary: boolean; contacts: unknown }) => {
+  type LinkRow = { is_primary: boolean; removed_at: string | null; removed_source: string | null; removed_reason: string | null; contacts: unknown; remover: unknown };
+  const contacts = ((links ?? []) as LinkRow[]).flatMap((l) => {
     const c = l.contacts as { id: string; email: string; full_name: string | null; auth_user_id: string | null } | null;
-    return c ? [{ ...c, isPrimary: l.is_primary }] : [];
+    return c && !l.removed_at ? [{ ...c, isPrimary: l.is_primary }] : [];
   });
+  // Taken off (never deleted): listed quietly under the contacts, newest first, to bring back
+  const removedContacts: RemovedContact[] = ((links ?? []) as LinkRow[])
+    .flatMap((l) => {
+      const c = l.contacts as { id: string; email: string; full_name: string | null } | null;
+      return c && l.removed_at ? [{ id: c.id, email: c.email, name: c.full_name, at: l.removed_at, by: (l.remover as { full_name: string } | null)?.full_name ?? null, source: l.removed_source, reason: l.removed_reason }] : [];
+    })
+    .sort((a, b) => b.at.localeCompare(a.at));
+  const contactRequests = await contactRequestsFor(supabase, client.id);
+  const canChangeContacts = seesAllClients(me) || seatRows.some((a) => a.profile_id === me.id && CONTACT_TEAM_SEATS.includes(a.role));
 
   // In the market: the competitors this client named first, then what's proven, testing or new in their industry
   // Only the formats this person works in: a designer never sees video examples (the owner's rule)
@@ -556,6 +569,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       today={nyToday()}
       team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot), secondaries: secondariesIn(slot.value) }]))}
       contacts={contacts}
+      contactChanges={<ContactChangesPanel clientId={client.id} slug={client.slug} requests={contactRequests} removed={removedContacts} contacts={contacts} canEdit={canChangeContacts} />}
       angles={angles ?? []}
       memory={(memory ?? []).map((m) => ({ id: m.id, kind: m.kind, body: m.body, source: m.source, shareReason: m.share_reason, dated: m.dated, by: (m.profiles as unknown as { full_name: string } | null)?.full_name ?? null }))}
       digest={digest}

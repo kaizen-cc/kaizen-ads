@@ -589,7 +589,7 @@ export async function chatDigest(admin: Admin) {
     if (!(await autoOutreach(admin, clientId))) continue;
     const [{ data: c }, { data: links }] = await Promise.all([
       admin.from("clients").select("name, slug, portal_live").eq("id", clientId).single(),
-      admin.from("contact_clients").select("contacts(id, email, full_name, is_active)").eq("client_id", clientId),
+      admin.from("contact_clients").select("contacts(id, email, full_name, is_active)").eq("client_id", clientId).is("removed_at", null),
     ]);
     if (!c?.portal_live) continue;
     for (const l of links ?? []) {

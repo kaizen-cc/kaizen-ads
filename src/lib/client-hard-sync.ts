@@ -55,7 +55,7 @@ export async function hardSyncClient(admin: SupabaseClient, clientId: string, aw
       : null,
     googleConfigured()
       ? part(out, "email", 180_000, async () => {
-          const { data: links } = await admin.from("contact_clients").select("contacts(email)").eq("client_id", clientId);
+          const { data: links } = await admin.from("contact_clients").select("contacts(email)").eq("client_id", clientId).is("removed_at", null);
           const contacts = new Map<string, string[]>();
           for (const l of links ?? []) {
             const email = (l.contacts as unknown as { email: string } | null)?.email?.toLowerCase();

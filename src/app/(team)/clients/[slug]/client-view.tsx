@@ -236,10 +236,12 @@ export type ClientViewProps = {
   businessAudit?: React.ReactNode;
   /** What works for businesses like this one, across our clients, and whether they use it */
   patterns?: React.ReactNode;
+  /** Under the contacts: changes their emails asked for (to confirm, or to undo) and the people taken off */
+  contactChanges?: React.ReactNode;
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, line = null, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, emailOps = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, line = null, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, emailOps = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null, contactChanges = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -740,7 +742,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
               ))}
             </dl>
           </Section>
-                  <Section title="Client contacts" description="They get a magic link and can approve. The first approval counts.">
+                  <div id="contacts" className="grid min-w-0 scroll-mt-24">
+                  <Section title="Client contacts" description="They get a magic link and can approve. The first approval counts. Taking someone off stops our emails to them; they're kept under Removed.">
             {contacts.length > 0 ? (
               <ul className="grid gap-2">
                 {contacts.map((c) => (
@@ -752,7 +755,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         {c.auth_user_id ? "Signed in" : "Not signed in yet"}
                       </span>
                     </span>
-                    {can.contacts && <ActionButton action={removeContact.bind(null, client.id, client.slug, c.id)} label="Remove" confirmText="Remove?" />}
+                    {can.contacts && <ActionButton action={removeContact.bind(null, client.id, client.slug, c.id)} label="Remove" confirmText="Take them off? Our emails stop." />}
                   </li>
                 ))}
               </ul>
@@ -775,7 +778,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 </div>
               </ActionForm>
             )}
+            {contactChanges}
           </Section>
+                  </div>
                   {emails && (
                     <Section title="Client emails" description="Push the email for where they are now, see exactly what it says first, and every email they've had from us.">
                       {emails}

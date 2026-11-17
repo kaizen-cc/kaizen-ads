@@ -19,7 +19,8 @@ const run = async (fn: () => Promise<string>): Promise<Check> => {
 export async function checkSetup(admin: SupabaseClient) {
   const { count: withContacts } = await admin
     .from("contact_clients")
-    .select("client_id", { count: "exact", head: true });
+    .select("client_id", { count: "exact", head: true })
+    .is("removed_at", null);
   const google = await checkGoogle();
   return {
     cronSecret: { ok: Boolean(process.env.CRON_SECRET), detail: process.env.CRON_SECRET ? "Set" : "CRON_SECRET is missing, so the 12pm/6pm runs won't start" },

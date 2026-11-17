@@ -134,9 +134,9 @@ export function liveEmail(p: { brand: string; slug: string; posts: number; geo: 
   return { subject: `${p.brand}: your first campaign is live`, text: emailText(parts), html: emailHtml(parts) };
 }
 
-/** Who gets it: every active contact, read at the moment it's sent (so a contact added a minute ago is included) */
+/** Who gets it: every active contact, read at the moment it's sent (so a contact added a minute ago is included, one taken off isn't) */
 export async function clientRecipients(admin: SupabaseClient, clientId: string): Promise<Contact[]> {
-  const { data } = await admin.from("contact_clients").select("contacts(email, full_name, is_active)").eq("client_id", clientId);
+  const { data } = await admin.from("contact_clients").select("contacts(email, full_name, is_active)").eq("client_id", clientId).is("removed_at", null);
   const seen = new Set<string>();
   return (data ?? [])
     .map((l) => l.contacts as unknown as { email: string; full_name: string | null; is_active: boolean } | null)

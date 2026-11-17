@@ -172,7 +172,7 @@ export async function sendPresentation(admin: SupabaseClient, clientId: string, 
   const [{ data: c }, { data: p }, { data: links }] = await Promise.all([
     admin.from("clients").select("name, slug, portal_live, slack_channel_id, kaizen_id").eq("id", clientId).single(),
     admin.from("client_presentations").select("status, deck, without_intake").eq("client_id", clientId).maybeSingle(),
-    admin.from("contact_clients").select("contacts(id, email, full_name, is_active)").eq("client_id", clientId),
+    admin.from("contact_clients").select("contacts(id, email, full_name, is_active)").eq("client_id", clientId).is("removed_at", null),
   ]);
   if (!c || !p?.deck) return { ok: false as const, error: "There's no presentation to send." };
   if (p.status === "sent" || p.status === "approved") return { ok: false as const, error: "It's already been sent." };

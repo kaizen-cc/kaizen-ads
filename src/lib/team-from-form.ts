@@ -105,7 +105,8 @@ export async function applyContacts(admin: SupabaseClient, clientId: string, raw
       await admin.from("contacts").upsert({ email, full_name: emails.length === 1 ? (nameQ?.[1].trim() || null) : null, is_active: true }, { onConflict: "email", ignoreDuplicates: true });
       const { data: c } = await admin.from("contacts").select("id").eq("email", email).maybeSingle();
       if (!c) continue;
-      const { count } = await admin.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", clientId);
+      const { count } = await admin.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", clientId).is("removed_at", null);
+      // ignoreDuplicates: someone taken off this client stays off
       await admin.from("contact_clients").upsert({ contact_id: c.id, client_id: clientId, is_primary: !count }, { onConflict: "contact_id,client_id", ignoreDuplicates: true });
       added.push(email);
     }

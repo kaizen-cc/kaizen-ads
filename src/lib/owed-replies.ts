@@ -6,6 +6,7 @@ import { getCursor, setCursor, trimBody } from "@/lib/context/shared";
 import { listChannels, openableLink, permalink, queueSlackLooms, slack, slackConfigured, type SlackMessage } from "@/lib/context/slack";
 import { addresses, gmailToken, google, googleConfigured, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
 import { gmailLink, isCalendarEmail } from "@/lib/email-filters";
+import { candidateOf, runContactChanges, type MailCandidate } from "@/lib/contact-changes";
 import { APPROVE_EMOJI, COMMIT, REQUESTISH, clearNotices, followPromises, recordPromises, type Candidate } from "@/lib/message-promises";
 
 // Messages someone on the team owes a reply to. Slack: anyone tagged in a channel the Kaizen OS bot is in, and a
@@ -350,7 +351,7 @@ async function slackSince(o: Row) {
 async function scanGmail(admin: Admin) {
   const [{ data: people }, { data: links }] = await Promise.all([
     admin.from("profiles").select("id, email, full_name").eq("is_active", true).not("email", "is", null),
-    admin.from("contact_clients").select("client_id, contacts(email, name), clients!inner(archived_at, status)").is("clients.archived_at", null).in("clients.status", LIVE),
+    admin.from("contact_clients").select("client_id, contacts(email, name), clients!inner(archived_at, status)").is("removed_at", null).is("clients.archived_at", null).in("clients.status", LIVE),
   ]);
   const team = new Map((people ?? []).map((p) => [String(p.email).toLowerCase(), p]));
   const contacts = new Map<string, { clientId: string; name: string | null }>();
@@ -362,6 +363,8 @@ async function scanGmail(admin: Admin) {
   let found = 0;
   const errors: string[] = [];
   const said: Candidate[] = [];
+  // Emails that might change who's on a client's list (contact-changes.ts reads them after the scan)
+  const lists: MailCandidate[] = [];
   for (const [mailbox, person] of team) {
     const key = `owed:gmail:${mailbox}`;
     const started = new Date();
@@ -374,6 +377,8 @@ async function scanGmail(admin: Admin) {
         const m = await google<GmailMessage>(token, `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}`, { format: "full" });
         const header = (n: string) => m.payload.headers.find((h) => h.name.toLowerCase() === n)?.value ?? null;
         const from = addresses(header("from"))[0];
+        const list = candidateOf(mailbox, m, team);
+        if (list) lists.push(list);
         // Written to them (not a copy), by a client contact or a teammate; mailing lists and tools don't count
         if (!from || header("list-id") || !(addresses(header("to")) as string[]).includes(mailbox)) continue;
         // A calendar invite or RSVP isn't a message to answer
@@ -411,7 +416,7 @@ async function scanGmail(admin: Admin) {
       errors.push(`${mailbox}: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
     }
   }
-  return { said, notes: { mailboxes: team.size, found, said: said.length, errors: errors.slice(0, 5) } };
+  return { said, lists, notes: { mailboxes: team.size, found, said: said.length, errors: errors.slice(0, 5) } };
 }
 
 /**
@@ -549,9 +554,12 @@ export async function runOwedReplies(admin: Admin) {
   const fail = (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) });
   const slackRun = slackOn ? await scanSlack(admin).catch(fail) : null;
   const gmailRun = gmailOn ? await scanGmail(admin).catch(fail) : null;
+  // Client emails asking to change who gets our emails: applied or left to confirm (its own failure stops nothing else)
+  const contactChanges = gmailRun && !("error" in gmailRun) ? await runContactChanges(admin, gmailRun.lists).catch(fail) : null;
   const scanned = {
     slack: !slackRun ? { skipped: "Slack isn't connected" } : "error" in slackRun ? slackRun : slackRun.notes,
     gmail: !gmailRun ? { skipped: "Google isn't connected" } : "error" in gmailRun ? gmailRun : gmailRun.notes,
+    contactChanges,
   };
 
   const cutoff = new Date(Date.now() - 14 * 86_400_000).toISOString();

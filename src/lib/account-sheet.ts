@@ -309,9 +309,10 @@ export async function syncSheetContacts(admin: SupabaseClient, tabs: string[][][
           namesFilled++;
         }
         if (!id) continue;
+        // Linked already, or taken off this client (by the team or the client's email): the sheet never puts them back
         const { data: linked } = await admin.from("contact_clients").select("contact_id").eq("client_id", clientId).eq("contact_id", id).maybeSingle();
         if (linked) continue;
-        if (!linkedCount.has(clientId)) linkedCount.set(clientId, (await admin.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", clientId)).count ?? 0);
+        if (!linkedCount.has(clientId)) linkedCount.set(clientId, (await admin.from("contact_clients").select("contact_id", { count: "exact", head: true }).eq("client_id", clientId).is("removed_at", null)).count ?? 0);
         const n = linkedCount.get(clientId)!;
         const { error } = await admin.from("contact_clients").insert({ contact_id: id, client_id: clientId, is_primary: n === 0 });
         if (error) continue;
