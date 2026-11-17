@@ -8,15 +8,16 @@ import { useEffect, useRef, useState } from "react";
  * Board's fingerprint) and refresh the numbers only then, and at once when the tab comes back. The refresh swaps the
  * data in place, so there's no flash; numbers glide to their new value.
  */
-export function LiveRefresh() {
+export function LiveRefresh({ board = "creative" }: { /** Whose tickets to watch: the Creative Board's or the Email Board's */ board?: "creative" | "email" }) {
   const router = useRouter();
   useEffect(() => {
     let last: string | null = null;
     let busy = false;
+    const src = board === "email" ? "/api/board/version?board=email" : "/api/board/version";
     const check = async () => {
       if (busy || document.visibilityState !== "visible") return;
       busy = true;
-      const r = await fetch("/api/board/version", { cache: "no-store" }).catch(() => null);
+      const r = await fetch(src, { cache: "no-store" }).catch(() => null);
       const v = r?.ok ? ((await r.json()) as { v: string }).v : null;
       if (v && last !== null && v !== last) router.refresh();
       if (v) last = v;
@@ -32,7 +33,7 @@ export function LiveRefresh() {
       document.removeEventListener("visibilitychange", back);
       window.removeEventListener("focus", back);
     };
-  }, [router]);
+  }, [router, board]);
   return null;
 }
 

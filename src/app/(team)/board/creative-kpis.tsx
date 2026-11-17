@@ -14,17 +14,24 @@ const TONE_SOFT = { ok: "bg-ok-soft", warn: "bg-warn-soft", bad: "bg-bad-soft" }
 const TONE_BAR = { ok: "bg-ok", warn: "bg-warn", bad: "bg-bad" } as const;
 export const TONES = { TONE_TEXT, TONE_SOFT, TONE_BAR };
 
-/** The Board's views, a compact switch beside the title (execs and leads only; the page checks on the server) */
-export function BoardTabs({ active }: { active: "board" | "kpis" | "copy-kpis" }) {
+const VIEWS = {
+  creative: [
+    ["board", "Board", "/board"],
+    ["kpis", "Creative KPIs", "/board?view=kpis"],
+    ["copy-kpis", "Copy KPIs", "/board?view=copy-kpis"],
+  ],
+  email: [
+    ["board", "Board", "/board/email"],
+    ["kpis", "Email design KPIs", "/board/email?view=kpis"],
+    ["copy-kpis", "Email copy KPIs", "/board/email?view=copy-kpis"],
+  ],
+} as const;
+
+/** A board's views, a compact switch beside the title (execs and leads only; the page checks on the server) */
+export function BoardTabs({ active, board = "creative" }: { active: "board" | "kpis" | "copy-kpis"; board?: "creative" | "email" }) {
   return (
-    <nav aria-label="Board views" className="inline-flex rounded-full bg-ink/[0.06] p-1 text-[13px]">
-      {(
-        [
-          ["board", "Board", "/board"],
-          ["kpis", "Creative KPIs", "/board?view=kpis"],
-          ["copy-kpis", "Copy KPIs", "/board?view=copy-kpis"],
-        ] as const
-      ).map(([k, label, href]) => (
+    <nav aria-label="Board views" className="inline-flex max-w-full overflow-x-auto rounded-full bg-ink/[0.06] p-1 text-[13px] [scrollbar-width:none]">
+      {VIEWS[board].map(([k, label, href]) => (
         <Link
           key={k}
           href={href}
@@ -39,14 +46,14 @@ export function BoardTabs({ active }: { active: "board" | "kpis" | "copy-kpis" }
 }
 
 /** The KPI tabs' header: the Board title with its views, and the period */
-export function KpiHeader({ active, period, base, switcher = false }: { active: "kpis" | "copy-kpis"; period: Period; base: string; switcher?: boolean }) {
+export function KpiHeader({ active, period, base, switcher = false, board = "creative" }: { active: "kpis" | "copy-kpis"; period: Period; base: string; switcher?: boolean; board?: "creative" | "email" }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="font-heading text-3xl">Board</h1>
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <h1 className="font-heading text-3xl">{board === "email" ? "Email Board" : "Board"}</h1>
         {/* The Creative Board | Email Board switch stays on the KPI views too (the executives see both boards) */}
-        {switcher && <BoardSwitch active="creative" />}
-        <BoardTabs active={active} />
+        {switcher && <BoardSwitch active={board} />}
+        <BoardTabs active={active} board={board} />
       </div>
       <nav aria-label="Period" className="inline-flex rounded-full border border-line p-1 text-[12.5px]">
         {PERIODS.map((p) => (

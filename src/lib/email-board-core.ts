@@ -188,6 +188,9 @@ export function routesOf(comments: readonly { route: Route | null }[]): Route[] 
 
 /** Asana's email columns → the Email Board's stages (the first match wins; Sent, Live, Scheduled and Done are done) */
 export const EMAIL_COLUMN_STAGE: [RegExp, EmailStage | null][] = [
+  // The team's real Asana columns first: "Email Requests" (new requests) and "Needs Revision" (client changes)
+  [/^email requests?/i, "copy_review"],
+  [/^needs? revisions?/i, "revisions"],
   [/^(copy|copywriting).*(review|approval)/i, "copy_review"],
   [/^(brief|request|backlog|to ?do|new|ideas?|copy|copywriting|writing)/i, "copy_review"],
   [/^(ready for design|design|in design|designing|in progress)/i, "ready_for_design"],
