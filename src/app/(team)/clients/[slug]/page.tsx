@@ -233,7 +233,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       supabase.from("contact_clients").select("is_primary, removed_at, removed_source, removed_reason, contacts(id, email, full_name, auth_user_id), remover:profiles!contact_clients_removed_by_fkey(full_name)").eq("client_id", client.id),
       supabase.from("angles").select("id, name, kind, description, status").eq("client_id", client.id).order("status").order("name"),
       supabase.from("client_allotment_usage").select("*").eq("client_id", client.id).maybeSingle(),
-      supabase.from("profiles").select("id, full_name, role, also_buys, also_social, also_designs_email").eq("is_active", true).order("full_name"),
+      supabase.from("profiles").select("id, full_name, role, also_buys, also_social, also_designs_email, teams").eq("is_active", true).order("full_name"),
       supabase.from("client_memory").select("id, kind, body, source, share_reason, created_at, dated, profiles(full_name)").eq("client_id", client.id).eq("status", "active").order("created_at", { ascending: false }),
       supabase.from("client_briefings").select("digest, generated_at, sources").eq("client_id", client.id).maybeSingle(),
       // Execs only (RLS): which of this client's Slack channels the bot couldn't get into on the last run

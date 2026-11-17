@@ -145,22 +145,70 @@ export function seatNeeded(slot: string, allotment: { images: number; videos: nu
   return true;
 }
 
+/** The teams people work on: ads (paid ads and their creative), email, organic social */
+export type Team = "ads" | "email" | "social";
+export const TEAMS: { value: Team; label: string }[] = [
+  { value: "ads", label: "Ads" },
+  { value: "email", label: "Email" },
+  { value: "social", label: "Social" },
+];
+
+/** The team someone's role belongs to (null for execs, leads across lines and the coordinator: they work across all) */
+export function homeTeam(role: string | null | undefined): Team | null {
+  if (isEmailRole(role)) return "email";
+  if (isSocialRole(role)) return "social";
+  if (!role || role === "executive" || role === "coordinator" || role === "customer_success") return null;
+  return "ads";
+}
+
+/** The makers who can design for another team: the ads creatives (graphic, video, their leads and head) */
+const AD_MAKERS = (role: string) => worksAs(role, "head_of_creative", "graphic_designer", "video_editor");
+
 /**
- * Who can hold a seat: their role, or someone with the matching switch on: also_buys for the buyer seats (an exec who
- * buys media), also_social for the social creative seat (creatives only with it on), also_designs_email for an email
- * builder on the email designer seat.
+ * The extra teams that mean something for this position (each one opens that team's seats that fit their craft):
+ * an ads creative can also work on email (the email designer seat) and social (the social creative seat); an email
+ * designer or builder on ads (the designer seat) and social; a social media manager on email (as an email designer).
  */
-export function canHold(slot: { value: string; eligible: readonly TeamRole[] }, p: { role: string; also_buys?: boolean | null; also_social?: boolean | null; also_designs_email?: boolean | null }) {
-  // A creative holds the social creative seat only with also_social on, even though their role is in the list
-  if (slot.value === "social_creative") return slot.eligible.includes(p.role as TeamRole) && Boolean(p.also_social);
-  if (slot.value === "email_designer" && p.role === "email_builder") return Boolean(p.also_designs_email);
+export function teamsOfferedFor(role: string | null | undefined): Team[] {
+  const r = String(role ?? "");
+  if (AD_MAKERS(r)) return ["email", "social"];
+  // (An email builder who also designs email keeps its own "Designs email" badge: that's a craft, not another team)
+  if (r === "email_designer" || r === "email_builder") return ["ads", "social"];
+  if (r === "social_media_manager") return ["email"];
+  return [];
+}
+
+/** Someone's extra teams, the old switches included (also_social is social, also_designs_email is email) */
+export function extraTeams(p: { teams?: readonly string[] | null; also_social?: boolean | null; also_designs_email?: boolean | null }): Set<Team> {
+  const t = new Set<Team>((p.teams ?? []).filter((x): x is Team => x === "ads" || x === "email" || x === "social"));
+  if (p.also_social) t.add("social");
+  if (p.also_designs_email) t.add("email");
+  return t;
+}
+
+/**
+ * Who can hold a seat: their role, or a team badge that opens it: social for the social creative seat (creatives only
+ * with it, and email designers), email for the email designer seat (an ads creative, an email builder or a social media
+ * manager), ads for the designer seat (an email designer), and also_buys for the buyer seats.
+ */
+export function canHold(slot: { value: string; eligible: readonly TeamRole[] }, p: { role: string; also_buys?: boolean | null; also_social?: boolean | null; also_designs_email?: boolean | null; teams?: readonly string[] | null }) {
+  const t = extraTeams(p);
+  // A creative holds the social creative seat only with the social badge, even though their role is in the list
+  if (slot.value === "social_creative") return (slot.eligible.includes(p.role as TeamRole) || p.role === "email_designer" || p.role === "email_builder") && t.has("social");
+  // The email designer seat: an email builder by its Designs email badge (the old switch), an ads creative or a social
+  // media manager by the Email team badge
+  if (slot.value === "email_designer" && !slot.eligible.includes(p.role as TeamRole)) {
+    if (p.role === "email_builder") return Boolean(p.also_designs_email);
+    return (AD_MAKERS(p.role) || p.role === "social_media_manager") && (p.teams ?? []).includes("email");
+  }
+  if (slot.value === "graphic_designer" && (p.role === "email_designer" || p.role === "email_builder")) return t.has("ads");
   return slot.eligible.includes(p.role as TeamRole) || (Boolean(p.also_buys) && (slot.value === "meta_buyer" || slot.value === "google_buyer" || slot.value === "tiktok_buyer"));
 }
 
-/** Whether the "Also works on organic social" switch applies to this position (the creative roles) */
+/** Whether the social badge applies to this position as it did as a switch (the ads creatives) */
 export const canAlsoSocial = (role: string | null | undefined) => worksAs(role, "head_of_creative", "graphic_designer", "video_editor");
 
-/** Whether the "Also designs email" switch applies to this position (the email builder) */
+/** Whether the "Designs email" badge applies to this position (the email builder) */
 export const canAlsoDesignEmail = (role: string | null | undefined) => role === "email_builder";
 
 /** The ad platform someone's team works on: the Meta team (buyers and head) Meta, the Google team Google, anyone else null (both) */
@@ -173,5 +221,15 @@ export function teamPlatform(role: string): "meta" | "google" | null {
 /** The places the six email and social positions get in the menu (plus Feedback; Settings only where their tier already gives it) */
 export const CHANNEL_NAV: readonly string[] = ["/pipeline", "/clients", "/kpis", "/reports", "/ai"];
 
-/** Whether a menu place is open to someone in one of the six email and social positions */
-export const channelNavOk = (href: string) => CHANNEL_NAV.includes(href);
+/** Whether a menu place is open to someone in one of the six email and social positions (the email team also gets Boards: their Email Board) */
+export const channelNavOk = (href: string, role?: string | null) => CHANNEL_NAV.includes(href) || (href === "/board" && isEmailRole(role));
+
+/**
+ * Boards: the Creative Board and the Email Board. Executives see both (with a switch); the email team only the Email
+ * Board; everyone else on the ads side (the creative team, media buyers, the copywriter, customer success) only the
+ * Creative Board. The organic social team sees neither.
+ */
+export const seesEmailBoard = (p: { role: string | null | undefined; isExec?: boolean | null }) => Boolean(p.isExec) || isEmailRole(p.role);
+export const seesCreativeBoard = (p: { role: string | null | undefined; isExec?: boolean | null }) => Boolean(p.isExec) || !isChannelOnly(p.role);
+/** Who approves an Email Board ticket's copy and does the final checks: the strategists, the Head of Email and the execs */
+export const approvesEmailCopy = (p: { role: string | null | undefined; isExec?: boolean | null }) => Boolean(p.isExec) || p.role === "email_strategist" || p.role === "head_of_email";

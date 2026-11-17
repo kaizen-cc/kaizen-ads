@@ -89,6 +89,14 @@ describe("the email and social seats", () => {
     expect(canHold(seat("email_designer"), { role: "graphic_designer", also_designs_email: true })).toBe(false);
   });
 
+  it("open a team's seats with its badge", () => {
+    expect(canHold(seat("email_designer"), { role: "graphic_designer", teams: ["email"] })).toBe(true);
+    expect(canHold(seat("social_creative"), { role: "email_designer", teams: ["social"] })).toBe(true);
+    expect(canHold(seat("social_creative"), { role: "email_designer" })).toBe(false);
+    expect(canHold(seat("graphic_designer"), { role: "email_designer", teams: ["ads"] })).toBe(true);
+    expect(canHold(seat("graphic_designer"), { role: "email_designer" })).toBe(false);
+  });
+
   it("leave the existing seats as they were", () => {
     expect(canHold(seat("meta_buyer"), { role: "executive", also_buys: true })).toBe(true);
     expect(canHold(seat("meta_buyer"), { role: "executive" })).toBe(false);

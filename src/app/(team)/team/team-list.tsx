@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
-import { ROLES, TIERS, canAlsoDesignEmail, canAlsoSocial, roleLabel, tierOf, type TeamRole, type Tier } from "@/lib/roles";
-import { invitePerson, sendInvite, setActive, setRole, setSwitch } from "./actions";
+import { ROLES, TEAMS, TIERS, canAlsoDesignEmail, extraTeams, homeTeam, roleLabel, teamsOfferedFor, tierOf, type Team, type TeamRole, type Tier } from "@/lib/roles";
+import { invitePerson, sendInvite, setActive, setRole, setSwitch, setTeams } from "./actions";
 
 export type Person = {
   id: string;
@@ -16,6 +16,8 @@ export type Person = {
   alsoSocial?: boolean;
   /** An email builder who also designs email */
   alsoDesignsEmail?: boolean;
+  /** The other teams they work on (ads, email, social), beyond their role's own */
+  teams?: string[];
   joined: boolean;
   invitedAt?: string | null;
   clientCount: number;
@@ -38,6 +40,82 @@ function RoleOptions() {
         </optgroup>
       ))}
     </>
+  );
+}
+
+const TEAM_TONE: Record<Team, string> = {
+  ads: "bg-brand-soft text-brand-text",
+  email: "bg-warn-soft text-warn",
+  social: "bg-[#8b5cf6]/15 text-[#a78bfa]",
+};
+
+/**
+ * The teams someone works on, as badges: their role's own team first (fixed), then any others they also work on, each
+ * removable, and "+ Team" to add one (an exec; only the teams that mean something for their position). An email
+ * builder who also designs email has a "Designs email" badge the same way.
+ */
+function TeamBadges({ p, canEdit, run, pending }: { p: Person; canEdit: boolean; run: (fn: () => Promise<{ ok: true } | { ok: false; error: string }>) => void; pending: boolean }) {
+  const home = homeTeam(p.role);
+  const offered = teamsOfferedFor(p.role);
+  const [extra, setExtra] = useState<Team[]>(() => [...extraTeams({ teams: p.teams, also_social: p.alsoSocial })].filter((t) => offered.includes(t)));
+  const [designs, setDesigns] = useState(Boolean(p.alsoDesignsEmail));
+  const [adding, setAdding] = useState(false);
+  const builder = canAlsoDesignEmail(p.role);
+  if (!home && !offered.length) return null;
+  const save = (next: Team[]) => {
+    setExtra(next);
+    setAdding(false);
+    run(() => setTeams(p.id, next));
+  };
+  const toAdd = offered.filter((t) => !extra.includes(t));
+  const label = (t: Team) => TEAMS.find((x) => x.value === t)!.label;
+  const chip = "inline-flex min-h-8 items-center gap-1 rounded-full px-2.5 text-[11px] font-medium sm:min-h-6";
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5" aria-label={`Teams ${p.fullName} works on`}>
+      {home && <span className={`${chip} ${TEAM_TONE[home]}`}>{label(home)}</span>}
+      {extra.map((t) => (
+        <span key={t} className={`${chip} ${TEAM_TONE[t]}`}>
+          {label(t)}
+          {canEdit && (
+            <button type="button" disabled={pending} onClick={() => save(extra.filter((x) => x !== t))} aria-label={`Take ${p.fullName} off the ${label(t)} team`} className="-mr-1 grid h-6 w-6 place-items-center rounded-full opacity-70 hover:opacity-100 sm:h-4 sm:w-4">
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+      {builder && (designs || canEdit) && (
+        <button
+          type="button"
+          disabled={!canEdit || pending}
+          aria-pressed={designs}
+          onClick={() => {
+            const next = !designs;
+            setDesigns(next);
+            run(() => setSwitch(p.id, "also_designs_email", next));
+          }}
+          className={`${chip} ${designs ? TEAM_TONE.email : "border border-dashed border-line text-faint hover:text-fg"}`}
+        >
+          {designs ? "Designs email" : "+ Designs email"}
+        </button>
+      )}
+      {canEdit && toAdd.length > 0 &&
+        (adding ? (
+          <span className="inline-flex flex-wrap items-center gap-1">
+            {toAdd.map((t) => (
+              <button key={t} type="button" disabled={pending} onClick={() => save([...extra, t])} className={`${chip} border border-line text-muted hover:border-faint hover:text-fg`}>
+                + {label(t)}
+              </button>
+            ))}
+            <button type="button" onClick={() => setAdding(false)} className={`${chip} text-faint hover:text-fg`}>
+              Cancel
+            </button>
+          </span>
+        ) : (
+          <button type="button" onClick={() => setAdding(true)} className={`${chip} border border-dashed border-line text-faint hover:text-fg`}>
+            + Team
+          </button>
+        ))}
+    </div>
   );
 }
 
@@ -71,19 +149,7 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
           {p.email}
           {p.clientCount > 0 && <span className="text-faint"> · {p.clientCount} clients</span>}
         </p>
-        {/* The per-person switches, only for the positions they apply to (execs change them) */}
-        {(canAlsoSocial(p.role) || canAlsoDesignEmail(p.role)) && (
-          <label className={`mt-1 flex min-h-11 items-center gap-2.5 text-xs text-muted sm:min-h-0 ${canEdit ? "cursor-pointer" : ""}`}>
-            <input
-              type="checkbox"
-              className="h-5 w-5 accent-brand sm:h-4 sm:w-4"
-              defaultChecked={canAlsoSocial(p.role) ? p.alsoSocial : p.alsoDesignsEmail}
-              disabled={!canEdit || pending}
-              onChange={(e) => run(() => setSwitch(p.id, canAlsoSocial(p.role) ? "also_social" : "also_designs_email", e.target.checked))}
-            />
-            {canAlsoSocial(p.role) ? "Also works on organic social" : "Also designs email"}
-          </label>
-        )}
+        <TeamBadges p={p} canEdit={canEdit} run={run} pending={pending} />
         {p.usage && p.joined && (
           <p className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-faint">
             <span className="inline-flex items-center gap-1.5">

@@ -50,7 +50,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     .order("name");
   const [{ data }, { data: staff }, { data: usage }, { data: open }, { data: snaps }, { data: archived }, { data: kpiRows }] = await Promise.all([
     req,
-    supabase.from("profiles").select("id, full_name, role, also_buys, also_social, also_designs_email").eq("is_active", true).order("full_name"),
+    supabase.from("profiles").select("id, full_name, role, also_buys, also_social, also_designs_email, teams").eq("is_active", true).order("full_name"),
     supabase.from("client_allotment_usage").select("*"),
     supabase.from("requests").select("client_id").neq("stage", "launched"),
     supabase.from("meta_snapshots").select("client_id, fetched_at").order("fetched_at", { ascending: false }).limit(500),

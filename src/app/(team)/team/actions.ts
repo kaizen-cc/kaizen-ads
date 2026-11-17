@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireExec } from "@/lib/auth";
-import { ROLES, canAlsoDesignEmail, canAlsoSocial, type TeamRole } from "@/lib/roles";
+import { ROLES, canAlsoDesignEmail, canAlsoSocial, teamsOfferedFor, type Team, type TeamRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
 import { sendEmail } from "@/lib/email";
 
@@ -34,6 +34,23 @@ export async function setSwitch(profileId: string, which: "also_social" | "also_
   if (which === "also_social" && !canAlsoSocial(p.role as string)) return { ok: false, error: "That switch is for the creative team." };
   if (which === "also_designs_email" && !canAlsoDesignEmail(p.role as string)) return { ok: false, error: "That switch is for email builders." };
   const { error } = await supabase.from("profiles").update({ [which]: on }).eq("id", profileId);
+  revalidatePath("/team");
+  revalidatePath("/clients", "layout");
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/**
+ * Execs: the other teams someone works on (badges on the Team page): each opens that team's seats that fit their craft.
+ * Only the teams that mean something for their position are taken; the old social switch stays in step.
+ */
+export async function setTeams(profileId: string, teams: string[]): Promise<ActionResult> {
+  await requireExec();
+  const supabase = await createClient();
+  const { data: p } = await supabase.from("profiles").select("role").eq("id", profileId).maybeSingle();
+  if (!p) return { ok: false, error: "Not found." };
+  const offered = teamsOfferedFor(p.role as string);
+  const next = [...new Set((Array.isArray(teams) ? teams : []).filter((t): t is Team => offered.includes(t as Team)))].sort();
+  const { error } = await supabase.from("profiles").update({ teams: next, also_social: next.includes("social") }).eq("id", profileId);
   revalidatePath("/team");
   revalidatePath("/clients", "layout");
   return error ? { ok: false, error: error.message } : { ok: true };
