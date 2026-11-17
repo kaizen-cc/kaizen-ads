@@ -25,7 +25,7 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     const { cachedCreativeKpis } = await import("@/lib/board-kpis-cache");
     const k = await cachedCreativeKpis(period === "30" || period === "90" ? period : "cycle");
     return (
-      <CreativeKpisView k={k} canDismiss={lead} />
+      <CreativeKpisView k={k} canDismiss={lead} switcher={seesEmailBoard(me)} />
     );
   }
   // The copy team's KPIs: execs and leads only
@@ -33,7 +33,7 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     const [{ cachedCopyKpis }, { CopyKpisView }] = await Promise.all([import("@/lib/board-kpis-cache"), import("./copy-kpis")]);
     const k = await cachedCopyKpis(period === "30" || period === "90" ? period : "cycle");
     return (
-      <CopyKpisView k={k} />
+      <CopyKpisView k={k} switcher={seesEmailBoard(me)} />
     );
   }
   // Execs and leads: the KPI tabs worked out while they look at the Board, so switching to them is instant

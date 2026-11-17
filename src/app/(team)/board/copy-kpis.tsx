@@ -55,13 +55,13 @@ function WriterCard({ w }: { w: Copywriter }) {
   );
 }
 
-export function CopyKpisView({ k }: { k: CopyKpis }) {
+export function CopyKpisView({ k, switcher = false }: { k: CopyKpis; switcher?: boolean }) {
   const total = k.split.copy + k.split.creative;
   const copyShare = total ? Math.round((k.split.copy / total) * 100) : 0;
   return (
     <div className="grid gap-12">
       <LiveRefresh />
-      <KpiHeader active="copy-kpis" period={k.period} base="/board?view=copy-kpis" />
+      <KpiHeader active="copy-kpis" period={k.period} base="/board?view=copy-kpis" switcher={switcher} />
       <section className="grid gap-5">
         <div className="max-w-2xl">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Copy · last {k.days} days</p>

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PERIODS, type CreativeKpis, type Headline, type Maker, type Period } from "@/lib/creative-kpis";
 import { LiveRefresh, Tween } from "./live-kpis";
+import { BoardSwitch } from "./board-switch";
 import { ActionLink, AllotmentList, CheckErrors, ClientRevisions, LateRow, PersonCard, PersonSheet, TiringCard, WinnerCard, WinnersSheet } from "./kpi-parts";
 
 // The creative team's KPIs (execs and leads, a tab on the Board), built to read top to bottom: how it's going in six
@@ -38,11 +39,13 @@ export function BoardTabs({ active }: { active: "board" | "kpis" | "copy-kpis" }
 }
 
 /** The KPI tabs' header: the Board title with its views, and the period */
-export function KpiHeader({ active, period, base }: { active: "kpis" | "copy-kpis"; period: Period; base: string }) {
+export function KpiHeader({ active, period, base, switcher = false }: { active: "kpis" | "copy-kpis"; period: Period; base: string; switcher?: boolean }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="font-heading text-3xl">Board</h1>
+        {/* The Creative Board | Email Board switch stays on the KPI views too (the executives see both boards) */}
+        {switcher && <BoardSwitch active="creative" />}
         <BoardTabs active={active} />
       </div>
       <nav aria-label="Period" className="inline-flex rounded-full border border-line p-1 text-[12.5px]">
@@ -132,7 +135,7 @@ function rate(n: number, of: number) {
   return of ? `${Math.round((n / of) * 100)}%` : "—";
 }
 
-export function CreativeKpisView({ k, canDismiss }: { k: CreativeKpis; canDismiss: boolean }) {
+export function CreativeKpisView({ k, canDismiss, switcher = false }: { k: CreativeKpis; canDismiss: boolean; switcher?: boolean }) {
   const total = k.split.copy + k.split.creative;
   const copyShare = total ? Math.round((k.split.copy / total) * 100) : 0;
   const groups = [...ROLE_ORDER.map((r) => ({ ...r, people: k.makers.filter((m) => m.roleKey === r.key) })), { key: "other", title: "Others", people: k.makers.filter((m) => !ROLE_ORDER.some((r) => r.key === m.roleKey)) }].filter((g) => g.people.length);
@@ -142,7 +145,7 @@ export function CreativeKpisView({ k, canDismiss }: { k: CreativeKpis; canDismis
       <LiveRefresh />
       <PersonSheet makers={k.makers as Maker[]} />
       <WinnersSheet makers={k.makers as Maker[]} />
-      <KpiHeader active="kpis" period={k.period} base="/board?view=kpis" />
+      <KpiHeader active="kpis" period={k.period} base="/board?view=kpis" switcher={switcher} />
 
       {/* How it's going */}
       <section className="grid gap-5">
