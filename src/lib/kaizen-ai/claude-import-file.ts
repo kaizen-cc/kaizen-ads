@@ -73,12 +73,19 @@ function objectsIn(raw: unknown): Obj[] {
   return out.length ? out : [o];
 }
 
+/** A project: knowledge docs, a prompt_template (even an empty one), or a named thing with a project's flags and no email */
+function looksLikeProject(o: Obj) {
+  if (Array.isArray(o.docs) || "prompt_template" in o) return true;
+  if (typeof o.email_address === "string" || typeof o.email === "string") return false;
+  return typeof o.name === "string" && ("is_private" in o || "is_starter_project" in o || "is_shared" in o);
+}
+
 /** What a parsed file holds, told by content: chats have chat_messages, projects docs or a prompt_template, people an email */
 export function classifyExportJson(raw: unknown): ExportFiles {
   const out: ExportFiles = { conversations: [], projects: [], users: [] };
   for (const o of objectsIn(raw)) {
     if (Array.isArray(o.chat_messages) || (Array.isArray(o.messages) && (o.uuid || o.id))) out.conversations.push(o);
-    else if (Array.isArray(o.docs) || typeof o.prompt_template === "string") out.projects.push(o);
+    else if (looksLikeProject(o)) out.projects.push(o);
     else if (typeof o.email_address === "string" || (typeof o.email === "string" && (o.uuid || o.id))) out.users!.push(o);
   }
   return out;
@@ -241,7 +248,8 @@ export class JsonItemSplitter {
 // ---- Whose chats: an organization's export is narrowed to the person's own while it's read ----
 
 const CHAT_HINT = /"(?:chat_messages|messages)"\s*:/;
-const PROJECT_HINT = /"(?:docs|prompt_template)"\s*:/;
+const PROJECT_HINT = /"(?:docs|prompt_template|is_starter_project)"\s*:/;
+const CREATOR_RE = /"creator"\s*:\s*\{\s*"uuid"\s*:\s*"([^"\\]{1,200})"|"creator_uuid"\s*:\s*"([^"\\]{1,200})"/;
 const ID_RE = /"(?:uuid|id)"\s*:\s*"([^"\\]{1,200})"/;
 const ACCOUNT_RE = /"account"\s*:\s*\{\s*"uuid"\s*:\s*"([^"\\]{1,200})"|"account_uuid"\s*:\s*"([^"\\]{1,200})"/;
 
@@ -298,8 +306,15 @@ class OwnerGate {
       return false;
     }
     if (PROJECT_HINT.test(text)) {
-      if (this.mode === "mine") this.skippedProjects++;
-      return false;
+      // A project made by someone else is left out unparsed; one that doesn't say who made it is read (it's the
+      // person's when their own chats are inside it, which ownChats settles once the chats are in)
+      const c = CREATOR_RE.exec(text);
+      const by = c ? (c[1] ?? c[2] ?? "") : "";
+      if (this.mode === "mine" && by && by !== this.me) {
+        this.skippedProjects++;
+        return false;
+      }
+      return true;
     }
     // A person, or something else small: parsed
     return true;
@@ -315,7 +330,8 @@ class OwnerGate {
         this.skipChat(idOf(c), accountOf(c));
         return false;
       });
-      const projects = found.projects.filter((p) => creatorOf(p) === this.me);
+      // Projects that don't say who made them stay (ownChats keeps them only when the person's own chats are inside)
+      const projects = found.projects.filter((p) => !creatorOf(p) || creatorOf(p) === this.me);
       this.skippedProjects += found.projects.length - projects.length;
       return { ...found, conversations, projects };
     }

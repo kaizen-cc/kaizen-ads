@@ -8,7 +8,16 @@ import { worksAs } from "./roles";
 
 /** Who can spend credits: the creative team (designers, editors, copywriters), leads and execs. Everyone else views. */
 export function canGenerateMedia(s: { isExec: boolean; isLead: boolean; isCreative: boolean; isCopywriter: boolean; role: string }) {
-  return s.isExec || s.isLead || s.isCreative || s.isCopywriter || worksAs(s.role, "head_of_creative", "graphic_designer", "video_editor", "copywriter");
+  // The ads creative team, and the email and social teams who make visuals too (email designers and builders, social
+  // media managers and both heads): product shots, banners, lifestyle pictures for campaigns and posts
+  return (
+    s.isExec ||
+    s.isLead ||
+    s.isCreative ||
+    s.isCopywriter ||
+    worksAs(s.role, "head_of_creative", "graphic_designer", "video_editor", "copywriter") ||
+    ["head_of_email", "email_designer", "email_builder", "head_of_social", "social_media_manager"].includes(s.role)
+  );
 }
 
 // ─── ElevenLabs ─────────────────────────────────────────────────────────────

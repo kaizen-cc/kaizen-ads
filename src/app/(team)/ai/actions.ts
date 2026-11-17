@@ -185,13 +185,13 @@ export async function uploadSlots(files: { name: string; mime: string; bytes: nu
 
 // ─── Imported from Claude ────────────────────────────────────────────────────
 
-export type ClaudeImport = { id: string; fileName: string | null; created: number; skipped: number; threads: number; status: string; createdAt: string };
+export type ClaudeImport = { id: string; fileName: string | null; conversations: number; created: number; skipped: number; threads: number; status: string; createdAt: string };
 
 /** What the person already imported (Claude conversation ids, so they're skipped) and their imports */
 export async function claudeImportState(): Promise<{ imported: string[]; projects: string[]; imports: ClaudeImport[] }> {
   const me = await requireStaff();
   const db = await createClient();
-  const { data: imps } = await db.from("ai_imports").select("id, file_name, created, skipped, status, created_at").eq("profile_id", me.id).order("created_at", { ascending: false }).limit(20);
+  const { data: imps } = await db.from("ai_imports").select("id, file_name, conversations, created, skipped, status, created_at").eq("profile_id", me.id).order("created_at", { ascending: false }).limit(20);
   // Page by page (a read returns at most 1,000 rows)
   const rows: { source_id: string; import_id: string | null }[] = [];
   for (let from = 0; from < 50_000; from += 1000) {
@@ -206,7 +206,7 @@ export async function claudeImportState(): Promise<{ imported: string[]; project
   return {
     imported: rows.map((r) => String(r.source_id)),
     projects: (projs ?? []).map((p) => String(p.source_id)),
-    imports: (imps ?? []).filter((i) => i.file_name !== NO_IMPORT).map((i) => ({ id: i.id as string, fileName: (i.file_name as string | null) ?? null, created: Number(i.created) || 0, skipped: Number(i.skipped) || 0, threads: per.get(i.id as string) ?? 0, status: String(i.status), createdAt: String(i.created_at) })),
+    imports: (imps ?? []).filter((i) => i.file_name !== NO_IMPORT).map((i) => ({ id: i.id as string, fileName: (i.file_name as string | null) ?? null, conversations: Number(i.conversations) || 0, created: Number(i.created) || 0, skipped: Number(i.skipped) || 0, threads: per.get(i.id as string) ?? 0, status: String(i.status), createdAt: String(i.created_at) })),
   };
 }
 
@@ -232,6 +232,8 @@ export async function skipClaudeImport(): Promise<Ok> {
 export async function startClaudeImport(fileName: string, conversations: number): Promise<Ok<{ id: string }>> {
   const me = await requireStaff();
   const db = await createClient();
+  // An import left running is replaced by this one (it runs in the browser, so one left open never finishes on its own)
+  await db.from("ai_imports").update({ status: "done", finished_at: new Date().toISOString() }).eq("profile_id", me.id).eq("status", "running");
   const { data, error } = await db.from("ai_imports").insert({ profile_id: me.id, file_name: fileName.slice(0, 200), conversations: Math.max(0, Math.round(conversations) || 0) }).select("id").single();
   return error || !data ? { ok: false, error: "Couldn't start the import." } : { ok: true, id: data.id as string };
 }

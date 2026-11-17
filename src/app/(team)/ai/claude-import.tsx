@@ -81,6 +81,14 @@ export function useClaudeImport(onProgress: () => void) {
     },
     [onProgress],
   );
+  // Leaving the page while it runs stops it where it is: say so before they go
+  const live = Boolean(job?.running);
+  useEffect(() => {
+    if (!live) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [live]);
   return { job, start, clear: () => setJob((j) => (j?.running ? j : null)) };
 }
 
@@ -161,10 +169,12 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
       // Every chat each project holds, imported before or now: they're all put inside it
       const projectChats: Record<string, string[]> = {};
       for (const c of all) if (c.projectUuid) (projectChats[c.projectUuid] ??= []).push(c.uuid);
-      const notice =
-        own.kind === "org"
-          ? `This is your organization's export: only your own ${plural(all.length, "chat is", "chats are")} shown; the other ${plural(own.otherPeople, "person's", "people's")} chats are skipped and never leave your browser.`
-          : null;
+      const notes = [
+        own.kind === "org" ? `This is your organization's export: only your own ${plural(all.length, "chat is", "chats are")} shown; the other ${plural(own.otherPeople, "person's", "people's")} chats are skipped and never leave your browser.` : "",
+        own.skippedProjects ? `${plural(own.skippedProjects, "project", "projects")} made by other people ${own.skippedProjects === 1 ? "was" : "were"} left out.` : "",
+        !raw.projects.length && !own.skippedProjects ? "No projects were found in these files. Claude projects are in projects.json: if you have some, drop the ZIP that holds it too (the light_metadata one in a newer export)." : "",
+      ].filter(Boolean);
+      const notice = notes.length ? notes.join(" ") : null;
       const fileName = names.length > 1 ? `${names[0]} + ${names.length - 1} more` : (names[0] ?? "Claude export");
       setStep({ at: "preview", fileName, convs, projects, projectChats, already: all.length - convs.length, account: own.account, notice });
     } catch (e) {
@@ -190,6 +200,7 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
   };
 
   const running = Boolean(job?.running);
+  const unfinished = state?.imports.find((i) => i.status === "running" && i.created + i.skipped < i.conversations) ?? null;
   const busy = step.at === "reading" || running;
 
   return (
@@ -215,6 +226,11 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {job && (running || step.at !== "preview") ? <JobCard job={job} onOpenThread={onOpenThread} /> : null}
+          {unfinished && !running && step.at !== "preview" ? (
+            <p className="mx-5 mt-4 rounded-[12px] bg-warn-soft/50 px-3 py-2.5 text-[13px] leading-relaxed text-fg/90">
+              An import from {day(unfinished.createdAt)} was left unfinished: {unfinished.created} of {unfinished.conversations} came in, because it only runs while this page stays open. Drop the same export files again to pick up where it stopped. Chats already in are skipped, and your projects are made and the chats put inside them.
+            </p>
+          ) : null}
 
           {step.at === "preview" && !running ? (
             <Preview

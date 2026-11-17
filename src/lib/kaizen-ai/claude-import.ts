@@ -338,6 +338,30 @@ export function creatorOf(raw: unknown): string | null {
   return str(obj(p.creator)?.uuid) || str(p.creator_uuid) || str(obj(p.account)?.uuid) || null;
 }
 
+/** The Claude project a raw conversation sits in (project_uuid, or project.uuid), when the export says */
+export function projectOfChat(raw: unknown): string | null {
+  const c = obj(raw);
+  if (!c) return null;
+  return str(c.project_uuid) || str(obj(c.project)?.uuid) || null;
+}
+
+const idOfRaw = (raw: unknown) => {
+  const o = obj(raw);
+  return o ? str(o.uuid) || str(o.id) : "";
+};
+
+/**
+ * Whether a project is the member's own: they made it, or, when the export doesn't say who made it, their own chats
+ * are inside it. A project someone else clearly made (a creator that isn't them) is never theirs, even when their
+ * chats sit in it.
+ */
+export function isMyProject(raw: unknown, me: string, myProjectIds: Set<string>): boolean {
+  const creator = creatorOf(raw);
+  if (creator) return creator === me;
+  const id = idOfRaw(raw);
+  return Boolean(id) && myProjectIds.has(id);
+}
+
 export type Ownership =
   | {
       ok: true;
@@ -394,7 +418,8 @@ export function ownChats(files: { conversations: unknown; projects: unknown; use
     };
   }
   const kept = convs.filter((c) => accountOf(c) === me.uuid);
-  const keptProjects = projects.filter((p) => creatorOf(p) === me.uuid);
+  const myProjectIds = new Set(kept.map(projectOfChat).filter((x): x is string => Boolean(x)));
+  const keptProjects = projects.filter((p) => isMyProject(p, me.uuid, myProjectIds));
   const others = new Set([...accounts, ...skipped.accounts].filter((a) => a !== me.uuid));
   for (const u of users) if (u.uuid !== me.uuid) others.add(u.uuid);
   return {

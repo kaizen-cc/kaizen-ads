@@ -87,6 +87,21 @@ describe("splitting streamed JSON into items", () => {
 describe("reading a big organization export, keeping only my chats as it streams", () => {
   const big = [chat("o1", "acc-owner", 3), chat("b1", "acc-buyer"), chat("e1", "acc-editor"), chat("o2", "acc-owner"), chat("n1", null), chat("b2", "acc-buyer")];
 
+  it("keeps a project that doesn't say who made it, and one with no docs, so my own chats inside it can claim it", async () => {
+    const inP = { ...chat("o1", "acc-owner"), project_uuid: "p-free" };
+    const files = [
+      zip("conversations-000.zip", { "conversations.json": [inP, chat("b1", "acc-buyer")] }),
+      zip("projects-000.zip", { "projects.json": [{ uuid: "p-free", name: "No creator", prompt_template: "", docs: [] }, { uuid: "p-bare", name: "Bare", is_private: true, prompt_template: null }, { uuid: "p-theirs", name: "Theirs", creator: { uuid: "acc-buyer" }, docs: [] }] }),
+      zip("light_metadata-000.zip", { "users.json": users }),
+    ];
+    for (const streamOver of [0, 1e9]) {
+      const read = await readClaudeExportFiles(files, { email: "owner@kaizenmarketing.agency", streamOver });
+      expect(uuids(read.projects)).toEqual(["p-bare", "p-free"]);
+      const own = ownChats(read, "owner@kaizenmarketing.agency");
+      expect(own.ok && uuids(own.projects)).toEqual(["p-free"]);
+    }
+  });
+
   it("reads who's who first even when it comes last, then keeps only mine from the streamed parts", async () => {
     const files = [
       zip("conversations-000.zip", { "conversations.json": big.slice(0, 3) }),

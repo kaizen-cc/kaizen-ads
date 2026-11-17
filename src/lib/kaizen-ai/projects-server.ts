@@ -147,6 +147,9 @@ export async function importProject(
   const chats = [...new Set((Array.isArray(p.chatUuids) ? p.chatUuids : []).map((u) => clean(u, 100)).filter(Boolean))];
   for (let i = 0; i < chats.length; i += 200)
     await admin.from("ai_threads").update({ project_id: projectId, source_project: sid }).eq("profile_id", me.id).eq("source", "claude").in("source_id", chats.slice(i, i + 200)).is("project_id", null);
+  // Chats imported before that already carry this Claude project's id (source_project), whether or not this run's files
+  // hold them: put inside it too
+  await admin.from("ai_threads").update({ project_id: projectId }).eq("profile_id", me.id).eq("source", "claude").eq("source_project", sid).is("project_id", null);
   // Teammates' chats from the same Claude project, imported before it came over, when they can see it now
   let others = admin.from("ai_threads").update({ project_id: projectId }).eq("source_project", sid).is("project_id", null).neq("profile_id", me.id);
   if (visibility !== "everyone") others = others.in("profile_id", visibility === "people" ? people : []);

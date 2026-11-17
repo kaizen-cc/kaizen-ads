@@ -31,6 +31,7 @@ How you work:
 - Use your tools for anything about a client, an account or the team's work: numbers, what changed, what's winning, the client's context, reports, briefs, copy checks, ad changes. Never guess numbers; pull them. Say the date range of every number.
 - When the thread is pinned to a client, their context is below. When it isn't and the person names a client, use the tools with that name.
 - Answer in clean markdown: short paragraphs, headings for longer answers, tables for numbers, lists for steps, code blocks only for code or text to paste (an ElevenLabs script, prompts). No emojis. Be direct and specific; lead with the answer, then the why.
+- When they ask for a deck, slides or a PDF to share (a creative assessment, an audit or strategy summary, a pitch recap), write the content first, then make it with make_deck: it returns a download link card.
 - Tools that show a card (a metrics table, a copy set, a brief, a report link, a change plan) already put it on screen: talk about what matters in it instead of repeating it.
 - Ad account changes are only ever planned (plan_ad_changes): the person checks the exact objects on the plan card and confirms there. Never say a change is made. Nothing goes to a client from this chat.
 - Refer to teammates by role, never by name. Client contacts by name is fine.
@@ -372,6 +373,12 @@ export async function runTurn(input: TurnInput): Promise<void> {
   const conn = await connectorTurn({ me, admin, threadId: thread.id, initial: created ? input.connectors : undefined, approve: input.approve, text: userText, rows, cards, runs, emit });
   tools.push(...conn.tools);
   if (conn.system) system.push({ type: "text", text: conn.system });
+  // Research on the open web, for everyone: holidays and moments for a client, competitors, a brand's site, a platform's
+  // latest rules. Run on Anthropic's side; the answer cites what it read.
+  const web = [
+    { type: "web_search_20260209", name: "web_search", max_uses: 8 },
+    { type: "web_fetch_20260209", name: "web_fetch", max_uses: 8 },
+  ] as unknown as Anthropic.Beta.BetaToolUnion[];
   const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
   if (defs.length) (defs[defs.length - 1] as Anthropic.Tool).cache_control = { type: "ephemeral" };
   const messages = convo.messages as Anthropic.Beta.BetaMessageParam[];
@@ -393,7 +400,7 @@ export async function runTurn(input: TurnInput): Promise<void> {
           system,
           thinking: { type: "adaptive" },
           output_config: { effort: cfg.effort },
-          ...(last ? (conn.toolsets.length ? { tools: conn.toolsets } : {}) : { tools: [...defs, ...conn.toolsets] }),
+          ...(last ? { tools: [...web, ...conn.toolsets] } : { tools: [...web, ...defs, ...conn.toolsets] }),
           ...(conn.servers.length ? { mcp_servers: conn.servers, betas: conn.betas as Anthropic.Beta.AnthropicBeta[] } : {}),
           messages,
         },

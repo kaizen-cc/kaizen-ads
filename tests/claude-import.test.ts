@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { batches, foreignItems, notImported, ownChats, parseConversation, parseConversations, parseProjects, partsOf, suggestClient } from "@/lib/kaizen-ai/claude-import";
+import { isMyProject, projectOfChat, batches, foreignItems, notImported, ownChats, parseConversation, parseConversations, parseProjects, partsOf, suggestClient } from "@/lib/kaizen-ai/claude-import";
 
 // Reading Claude's data export into Kaizen AI threads: both the older shape (text per message) and the newer one
 // (content blocks with tool calls and thinking, branches from edits), skipping what's already imported, and the
@@ -181,6 +181,27 @@ describe("only the importer's own chats", () => {
     const r = ownChats({ conversations: orgConvs, projects: [project("p-mine", "acc-owner"), project("p-buyer", "acc-buyer"), project("p-unknown", null)], users }, "owner@kaizenmarketing.agency");
     expect(r.ok && parseProjects(r.projects).map((p) => [p.uuid, p.creator])).toEqual([["p-mine", "acc-owner"]]);
     expect(r.ok && r.skippedProjects).toBe(2);
+  });
+
+  it("brings a project that doesn't say who made it when my own chats are inside it, never one someone else clearly made", () => {
+    const inProject = (c: ReturnType<typeof chat>, projectUuid: string) => ({ ...c, project_uuid: projectUuid });
+    const convs = [inProject(chat("o1", "acc-owner"), "p-unknown"), inProject(chat("o2", "acc-owner"), "p-buyer"), inProject(chat("b1", "acc-buyer"), "p-other"), chat("o3", "acc-owner")];
+    const r = ownChats(
+      { conversations: convs, projects: [project("p-unknown", null), project("p-buyer", "acc-buyer"), project("p-other", null), project("p-mine", "acc-owner")], users },
+      "owner@kaizenmarketing.agency",
+    );
+    expect(r.ok && parseProjects(r.projects).map((p) => p.uuid).sort()).toEqual(["p-mine", "p-unknown"]);
+    expect(r.ok && r.skippedProjects).toBe(2);
+  });
+
+  it("tells which project a chat is in and whether a project is mine", () => {
+    expect(projectOfChat({ project_uuid: "p1" })).toBe("p1");
+    expect(projectOfChat({ project: { uuid: "p2" } })).toBe("p2");
+    expect(projectOfChat({})).toBeNull();
+    expect(isMyProject({ uuid: "p1" }, "me", new Set(["p1"]))).toBe(true);
+    expect(isMyProject({ uuid: "p1" }, "me", new Set())).toBe(false);
+    expect(isMyProject({ uuid: "p1", creator: { uuid: "them" } }, "me", new Set(["p1"]))).toBe(false);
+    expect(isMyProject({ uuid: "p1", creator_uuid: "me" }, "me", new Set())).toBe(true);
   });
 
   it("refuses chats from several accounts with no users.json to say whose is whose", () => {

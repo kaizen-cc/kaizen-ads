@@ -11,6 +11,7 @@ import { isChannelOnly, lineOfTeam } from "@/lib/roles";
 import { channelMaySee } from "./channel-access";
 import { servicesOf } from "@/lib/services";
 import { subjectPatterns, weeklyListChange } from "./email-insights";
+import { SLIDE_KINDS, cleanSlides, clip } from "./deck-core";
 import type { Attachment, BriefCard, Card, CopyCard, CopyField, MetricsCard, MetricsRow } from "./types";
 
 // What Kaizen AI can look up and do. Every tool runs on the server with the person's own permissions: a client is only
@@ -746,7 +747,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     {
       name: "creative_assessment",
       description:
-        "Creative assessment. With a ticket number: starts the full AI creative review on that ticket's uploaded designs (the same as the Board's AI review) and returns the link. Without one: returns the client's creative standards (Brand Bible rules, what they asked us to avoid, the creative director's past disagreements) so you can assess the attached pictures or video yourself.",
+        "Creative assessment. With a ticket number: starts the full AI creative review on that ticket's uploaded designs (the same as the Board's AI review) and returns the link. Without one: returns the client's creative standards (Brand Bible rules, what they asked us to avoid, the creative director's past disagreements) so you can assess the attached pictures or video yourself. When they want it as slides to share (\"generate the deck\"), follow up with make_deck, putting each ad beside its notes.",
       input_schema: { type: "object", properties: { client: CLIENT, ticket: { type: "integer", description: "The ticket number on the Board (#123)" } }, additionalProperties: false },
       status: (input) => (input.ticket ? `Starting the creative review on #${input.ticket}…` : "Reading the brand standards…"),
       run: async (input) => {
@@ -779,6 +780,54 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           creative_director_disagreed_before: past || "(none)",
           attached_now: ctx.files.map((f) => `${f.name} (${f.kind})`),
         };
+      },
+    },
+    {
+      name: "make_deck",
+      description:
+        "Turns what you worked out into a Kaizen-branded PDF deck (16:9 slides, the look of Kaizen's reports) the person can download and share: a creative assessment of attached ads, a strategy or audit summary, a pitch-style recap. Write the finished content first, then call this once with every slide. Start with a cover, keep to one idea per slide and at most 5 short bullets (a slide that runs long is cut, so split it). Slide kinds: cover (title, text), section (title, text), bullets (title, bullets), two_column (title, left and right each with heading and bullets), stats (title, stats of value, label, note; up to 4), quote (text, by), image_notes (title, image, caption, bullets: image is the name of a picture attached to this message, or its number, so an ad sits beside your notes), scorecard (title, rows of label, tone good, watch or bad, note; up to 5). Plain words, no em dashes, roles not names. Returns a download link card.",
+      input_schema: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "The deck's title" },
+          subtitle: { type: "string" },
+          client: CLIENT,
+          slides: {
+            type: "array",
+            description: "In order. Up to 30.",
+            items: {
+              type: "object",
+              properties: {
+                kind: { type: "string", enum: [...SLIDE_KINDS] },
+                title: { type: "string" },
+                text: { type: "string", description: "cover or section: the line under the title. stats: a closing line. quote: the quote." },
+                bullets: { type: "array", items: { type: "string" }, description: "bullets or image_notes" },
+                left: { type: "object", properties: { heading: { type: "string" }, bullets: { type: "array", items: { type: "string" } } } },
+                right: { type: "object", properties: { heading: { type: "string" }, bullets: { type: "array", items: { type: "string" } } } },
+                stats: { type: "array", items: { type: "object", properties: { value: { type: "string" }, label: { type: "string" }, note: { type: "string" } }, required: ["value", "label"] } },
+                by: { type: "string", description: "quote: who said it" },
+                image: { type: "string", description: "image_notes: an attached picture's file name, or its number among the attached pictures" },
+                caption: { type: "string" },
+                rows: { type: "array", items: { type: "object", properties: { label: { type: "string" }, tone: { type: "string", enum: ["good", "watch", "bad"] }, note: { type: "string" } }, required: ["label", "tone"] } },
+              },
+              required: ["kind"],
+            },
+          },
+        },
+        required: ["title", "slides"],
+        additionalProperties: false,
+      },
+      status: (input, client) => `Making the deck${nameFor(ctx, input) ?? client ? ` for ${nameFor(ctx, input) ?? client}` : ""}…`,
+      run: async (input) => {
+        const title = clip(input.title, 90);
+        if (!title) throw new Error("Give the deck a title.");
+        const c = input.client || ctx.clientId ? await clientOf(ctx, input).catch(() => null) : null;
+        const slides = cleanSlides(input.slides, title, clip(input.subtitle, 140));
+        if (slides.length < 2) throw new Error("Add the slides: a deck needs content after its cover.");
+        const { makeDeckPdf } = await import("./deck-server");
+        const made = await makeDeckPdf({ admin: ctx.admin, profileId: ctx.me.id, title, subtitle: clip(input.subtitle, 140), client: c ? { id: c.id, name: c.name } : null, slides, files: ctx.files });
+        card({ type: "link", title, detail: `${made.slides} slides · PDF · the link works for 7 days`, href: made.url, cta: "Download the deck", external: true });
+        return { made: true, slides: made.slides, ...(made.missingPictures.length ? { pictures_not_found: made.missingPictures, note: "Those pictures weren't among the files attached to this message, so their slides show no picture. Ask them to attach the ads again, then make the deck again." } : { note: "The download card is on screen. Say what's in the deck in a line; don't repeat it." }) };
       },
     },
     {
