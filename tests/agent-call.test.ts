@@ -117,7 +117,7 @@ describe("turn taking", () => {
     run(d, 0.1, 400);
     expect(run(d, 0.001, 400)).toEqual([]);
     expect(run(d, 0.1, 200)).toEqual([]);
-    expect(run(d, 0.001, 1000)).toEqual(["turn_end"]);
+    expect(run(d, 0.001, TURN.endSilenceMs + 100)).toEqual(["turn_end"]);
   });
   it("hears someone talking over the agent, but not its quiet echo", () => {
     const d = createTurnDetector();
