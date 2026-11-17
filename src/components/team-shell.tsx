@@ -85,10 +85,19 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
   const [menu, setMenu] = useState(false);
   // The menu closes on its own when the page changes, and the page behind doesn't scroll while it's open
   const [seenPath, setSeenPath] = useState(path);
-  if (seenPath !== path) {
+  // The place just pressed lights up at once, before its page arrives, so a click never looks ignored
+  const [going, setGoing] = useState<string | null>(null);
+  const [seenView, setSeenView] = useState(view);
+  if (seenPath !== path || seenView !== view) {
     setSeenPath(path);
+    setSeenView(view);
     setMenu(false);
+    setGoing(null);
   }
+  const press = (href: string) => (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    setGoing(href);
+  };
   useEffect(() => {
     if (!menu) return;
     const prev = document.body.style.overflow;
@@ -104,18 +113,20 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
   // Winners and Market live under Ideas; Team under Settings
   // A place with a view in its address (Team KPIs) is on only with that view, and the Board then isn't
   const teamKpis = all.some((i) => i.href === "/board?view=kpis");
-  const active = (href: string) => {
+  const activeNow = (href: string) => {
     const [base, query] = href.split("?");
     if (query) return path === base && view === new URLSearchParams(query).get("view");
     if (href === "/board" && teamKpis && view === "kpis" && path === "/board") return false;
     return path === href || path.startsWith(`${href}/`) || (href === "/ideas" && (path.startsWith("/winners") || path.startsWith("/market"))) || (href === "/settings" && path.startsWith("/team"));
   };
+  const active = (href: string) => (going ? going === href : activeNow(href));
   const link = (item: Item) => {
     const on = active(item.href);
     return (
       <Link
         key={item.href}
         href={item.href}
+        onClick={press(item.href)}
         aria-current={on ? "page" : undefined}
         className={`relative flex items-center gap-3 rounded-brand px-3 py-2.5 text-sm transition-colors ${on ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2/60 hover:text-fg"}`}
       >
@@ -217,7 +228,10 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
                     <Link
                       key={item.href}
                       href={item.href}
-                      onClick={() => setMenu(false)}
+                      onClick={(e) => {
+                        press(item.href)(e);
+                        setMenu(false);
+                      }}
                       aria-current={active(item.href) ? "page" : undefined}
                       className={`flex min-h-12 items-center gap-3.5 rounded-[12px] px-3 text-[15px] transition-colors ${active(item.href) ? "bg-surface-2 text-fg" : "text-muted active:bg-surface-2/60"}`}
                     >
@@ -231,7 +245,10 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
               ))}
               <Link
                 href={FEEDBACK.href}
-                onClick={() => setMenu(false)}
+                onClick={(e) => {
+                  press(FEEDBACK.href)(e);
+                  setMenu(false);
+                }}
                 className={`flex min-h-12 items-center gap-3.5 rounded-[12px] px-3 text-[15px] ${active(FEEDBACK.href) ? "bg-surface-2 text-fg" : "text-muted active:bg-surface-2/60"}`}
               >
                 <Icon d={FEEDBACK.icon} />
@@ -240,7 +257,10 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
               {settings && (
                 <Link
                   href={settings.href}
-                  onClick={() => setMenu(false)}
+                  onClick={(e) => {
+                    press(settings.href)(e);
+                    setMenu(false);
+                  }}
                   className={`flex min-h-12 items-center gap-3.5 rounded-[12px] px-3 text-[15px] ${active(settings.href) ? "bg-surface-2 text-fg" : "text-muted active:bg-surface-2/60"}`}
                 >
                   <Icon d={settings.icon} />
@@ -272,7 +292,7 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
           {tabs.map((item) => {
             const on = active(item.href);
             return (
-              <Link key={item.href} href={item.href} aria-current={on ? "page" : undefined} className={`flex h-[58px] flex-col items-center justify-center gap-1 text-[10.5px] ${on ? "text-fg" : "text-faint active:text-muted"}`}>
+              <Link key={item.href} href={item.href} onClick={press(item.href)} aria-current={on ? "page" : undefined} className={`flex h-[58px] flex-col items-center justify-center gap-1 text-[10.5px] ${on ? "text-fg" : "text-faint active:text-muted"}`}>
                 <span className={`grid h-7 w-12 place-items-center rounded-full transition-colors ${on ? "bg-brand/15 text-brand-text" : ""}`}>
                   <Icon d={item.icon} />
                 </span>

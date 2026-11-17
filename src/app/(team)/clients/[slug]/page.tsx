@@ -173,6 +173,38 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     };
   };
 
+  // The panels read with the server's rights (requests to change contacts, permissions, TikTok, email, social, Google
+  // sync): started now, beside everything below, instead of one after another once it's in
+  const tiktokOn = tiktokConfigured() && !channel;
+  const servicesNow = servicesOf({ services: client.services, services_extra: client.services_extra, services_removed: client.services_removed }) as string[];
+  const extras = Promise.all([
+    t("contact requests", contactRequestsFor(supabase, client.id)),
+    t("perms", admin ? permsOn(admin, me, client.id) : Promise.resolve(clientPerms(me))),
+    tiktokOn && admin ? t("tiktok", import("@/lib/tiktok/store").then((m) => m.clientTikTok(admin, client.id)).catch(() => null)) : Promise.resolve(null),
+    tiktokOn && admin ? t("tiktok prefs", Promise.resolve(admin.from("client_report_prefs").select("tiktok_separate").eq("client_id", client.id).maybeSingle()).then((r) => Boolean(r.data?.tiktok_separate))) : Promise.resolve(false),
+    // Klaviyo (email and SMS, read only): nothing shows until its migration is applied
+    admin && line !== "social"
+      ? t("email", async () => {
+          const [k, conn] = await Promise.all([import("@/lib/klaviyo/store"), import("@/lib/email-providers").then((m) => m.emailConnectionFlat(admin, client.id)).catch(() => undefined)]);
+          if (conn === undefined) return null;
+          if (!conn) return { conn: null, data: null, storeRevenue: null };
+          const [data, biz] = await Promise.all([k.clientKlaviyo(admin, client.id).catch(() => null), import("@/lib/integrations").then(({ businessSummary }) => businessSummary(admin, client.id)).catch(() => null)]);
+          return { conn, data, storeRevenue: biz?.store && biz.last30.revenue > 0 ? biz.last30.revenue : null };
+        })
+      : Promise.resolve(null),
+    // Organic social, for clients with the social media service (who sees it is decided once the seats are in)
+    admin && line !== "email" && servicesNow.includes("social-media")
+      ? t("social", async () => {
+          const sm = await import("@/lib/social/store");
+          const link = await sm.socialLink(admin, client.id).catch(() => undefined);
+          if (link === undefined) return null;
+          return { link, data: await sm.clientSocial(admin, client.id).catch(() => null) };
+        })
+      : Promise.resolve(null),
+    // Google Ads sync: each account's state and, when it fails, why and the fix (null when they don't run Google)
+    admin && !channel ? t("google sync", import("@/lib/google-sync-health").then((m) => m.clientGoogleHealth(admin, client.id)).catch(() => null)) : Promise.resolve(null),
+  ]);
+
   // Everything the page needs, all at once
   const [
     [{ data: assignments }, { data: links }, { data: angles }, { data: usage }, { data: staff }, { data: memory }, { data: briefing }, { data: slackSync }, { data: allotment }, { data: packages }],
@@ -341,7 +373,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       return c && l.removed_at ? [{ id: c.id, email: c.email, name: c.full_name, at: l.removed_at, by: (l.remover as { full_name: string } | null)?.full_name ?? null, source: l.removed_source, reason: l.removed_reason }] : [];
     })
     .sort((a, b) => b.at.localeCompare(a.at));
-  const contactRequests = await contactRequestsFor(supabase, client.id);
+  const [contactRequests, perms, tiktok, tiktokSeparate, klaviyo, socialAll, googleSync] = await extras;
   const canChangeContacts = seesAllClients(me) || seatRows.some((a) => a.profile_id === me.id && CONTACT_TEAM_SEATS.includes(a.role));
 
   // In the market: the competitors this client named first, then what's proven, testing or new in their industry
@@ -376,7 +408,6 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   const shotList = shot ? { id: shot.id, list: shot.list as ShotList, createdAt: shot.created_at, sentAt: shot.sent_at } : null;
   const changes = Object.fromEntries(kpis.filter((k) => k.accountId).map((k) => [k.id, changeBy.get(changeKey(k.platform, k.accountId!)) ?? []]));
   // What this person may do on this client (src/lib/chat-permissions.ts): the chat and its cards offer only that
-  const perms = admin ? await permsOn(admin, me, client.id) : clientPerms(me);
   // An audit judges the account against its KPI: none until the KPI is set
   const targets: AuditTarget[] = kpis
     .filter((k) => k.accountId && k.target != null)
@@ -430,35 +461,10 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       };
     })
     .sort((a, b) => b.start.localeCompare(a.start));
-  // TikTok (read only), once Kaizen's TikTok app is set up: dormant and invisible until then
-  const tiktokOn = tiktokConfigured() && !channel;
-  const tiktok = tiktokOn && admin ? await (await import("@/lib/tiktok/store")).clientTikTok(admin, client.id).catch(() => null) : null;
-  const tiktokSeparate = tiktokOn && admin ? Boolean((await admin.from("client_report_prefs").select("tiktok_separate").eq("client_id", client.id).maybeSingle()).data?.tiktok_separate) : false;
-  // Klaviyo (email and SMS, read only): nothing shows until its migration is applied
-  const klaviyo = admin && line !== "social"
-    ? await (async () => {
-        const k = await import("@/lib/klaviyo/store");
-        const conn = await (await import("@/lib/email-providers")).emailConnectionFlat(admin, client.id).catch(() => undefined);
-        if (conn === undefined) return null;
-        if (!conn) return { conn: null, data: null, storeRevenue: null };
-        const [data, biz] = await Promise.all([k.clientKlaviyo(admin, client.id).catch(() => null), import("@/lib/integrations").then(({ businessSummary }) => businessSummary(admin, client.id)).catch(() => null)]);
-        return { conn, data, storeRevenue: biz?.store && biz.last30.revenue > 0 ? biz.last30.revenue : null };
-      })()
-    : null;
-  // Organic social (Facebook and Instagram, read only), for clients with the social media service: nothing shows until its migration is applied
+  // Organic social: the social line, or anyone but the makers (a maker holding this client's social creative seat sees it)
   const heldSocialCreative = (assignments ?? []).some((a) => a.role === "social_creative" && a.profile_id === me.id);
   const showSocial = line === "social" || (line === null && (!isCreativeRole(me.role) || heldSocialCreative));
-  const social =
-    admin && showSocial && (servicesOf({ services: client.services, services_extra: client.services_extra, services_removed: client.services_removed }) as string[]).includes("social-media")
-      ? await (async () => {
-          const sm = await import("@/lib/social/store");
-          const link = await sm.socialLink(admin, client.id).catch(() => undefined);
-          if (link === undefined) return null;
-          return { link, data: await sm.clientSocial(admin, client.id).catch(() => null) };
-        })()
-      : null;
-  // Google Ads sync: each account's state and, when it fails, why and the fix (null when they don't run Google)
-  const googleSync = admin && !channel ? await (await import("@/lib/google-sync-health")).clientGoogleHealth(admin, client.id).catch(() => null) : null;
+  const social = showSocial ? socialAll : null;
   const docs = (docRows ?? []).map((d) => ({ id: d.id, kind: d.kind, name: d.name, url: d.url, path: d.path, mime: d.mime, bytes: d.bytes, title: d.title, summary: d.summary, status: d.status, note: d.note, via: d.via, at: d.created_at, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
   const billingHistory = (billingLog ?? []).map((h) => ({ at: h.at as string, oldDay: (h.old_day as number | null) ?? null, newDay: (h.new_day as number | null) ?? null, source: (h.source as string | null) ?? null, note: (h.note as string | null) ?? null, by: (h.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
 
