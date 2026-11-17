@@ -1787,7 +1787,7 @@ function TalkToAgent({ role, skills, items, chat }: { role: Role; skills: Agent[
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <AgentCall roleKey={role.key} label={role.label} icon={<AgentIcon icon={role.icon} size={112} />} tint={TINT[role.icon] ?? TINT.spark} size="compact" />
+          <AgentCall roleKey={role.key} label={role.label} icon={(size) => <AgentIcon icon={role.icon} size={size} />} tint={TINT[role.icon] ?? TINT.spark} size="compact" />
           <span className="rounded-full bg-brand-soft px-2.5 py-1 text-[11px] text-brand-text">Core</span>
           {skills.map((s) => (
             <span key={s.key} className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">
@@ -1841,7 +1841,7 @@ export function RoleDetail({ role, skills, items, chat, isExec = true }: { role:
                 </div>
               )}
               <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-                <AgentCall roleKey={role.key} label={role.label} icon={<AgentIcon icon={role.icon} size={112} />} tint={TINT[role.icon] ?? TINT.spark} />
+                <AgentCall roleKey={role.key} label={role.label} icon={(size) => <AgentIcon icon={role.icon} size={size} />} tint={TINT[role.icon] ?? TINT.spark} />
                 <AgentVoice roleKey={role.key} voiceId={role.voiceId ?? null} defaultName={defaultVoiceName(role.key)} />
               </div>
             </div>
