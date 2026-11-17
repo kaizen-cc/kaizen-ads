@@ -70,8 +70,6 @@ describe("the breakdown", () => {
     row({ location: "Hayward", campaignId: "c0", revenue: 50, conversions: 2 }),
     row({ location: "Union City", campaignId: "c7", revenue: 5 }),
     row({ metricId: "pos", location: "Oakland", campaignId: "c1", revenue: 70, conversions: 3 }),
-    // Not sent in the period: left out
-    row({ location: "Fremont", campaignId: "zz", revenue: 999 }),
   ];
   const b = locationBreakdown({ metrics: [{ id: "toast", name: "Toast" }, { id: "pos", name: "Custom POS" }], rows, campaigns })!;
 
@@ -112,6 +110,19 @@ describe("the breakdown", () => {
     expect(locationChecks(b, { toast: 2000 }, "USD")[0]).toContain("57%");
     const unknown = locationBreakdown({ metrics: [{ id: "toast", name: "Toast" }], rows: [row({ location: UNKNOWN_LOCATION, campaignId: "c0", revenue: 50 }), row({ location: "Fremont", campaignId: "c0", revenue: 50 })], campaigns });
     expect(locationChecks(unknown, {}, "USD")[0]).toContain("carries no location");
+  });
+
+  it("counts a campaign sent before the dates that still earned in them, and the flows in a column of their own", () => {
+    const withMore = locationBreakdown({
+      metrics: [{ id: "toast", name: "Toast" }],
+      rows: [row({ location: "Fremont", campaignId: "c0", revenue: 40 }), row({ location: "Fremont", campaignId: "earlier", revenue: 60 }), row({ location: "Hayward", campaignId: null, flowId: "welcome", revenue: 25 })],
+      campaigns,
+    })!;
+    const toast = withMore.metrics[0];
+    expect(toast.revenue).toBe(125);
+    expect(toast.columns.map((c) => c.name)).toEqual(["Earlier campaign", "Campaign 0", "Flows"]);
+    expect(toast.rows.find((r) => r.location === "Hayward")!.cells).toEqual([null, null, 25]);
+    expect(toast.summary).toContain("2 campaigns and the flows");
   });
 
   it("is null with nothing to show", () => {

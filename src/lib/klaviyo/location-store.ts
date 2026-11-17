@@ -288,6 +288,19 @@ export async function readLocationRows(db: SupabaseClient, clientId: string, met
   return out;
 }
 
+/** A flagged client's location rows between two days, campaigns' and flows' alike (null when the table is missing) */
+export async function readLocationRowsIn(db: SupabaseClient, clientId: string, metricIds: string[], from: string, to: string): Promise<LocationRow[] | null> {
+  if (!metricIds.length) return [];
+  const out: LocationRow[] = [];
+  for (let at = 0; at < 50_000; at += 1000) {
+    const { data, error } = await db.from("klaviyo_location_daily").select("metric_id, date, location, message_id, campaign_id, flow_id, conversions, revenue").eq("client_id", clientId).in("metric_id", metricIds).gte("date", from).lte("date", to).order("date").order("location").order("message_id").range(at, at + 999);
+    if (error) return null;
+    for (const r of data ?? []) out.push({ metricId: r.metric_id as string, date: r.date as string, location: r.location as string, messageId: r.message_id as string, campaignId: (r.campaign_id as string | null) ?? null, flowId: (r.flow_id as string | null) ?? null, conversions: Number(r.conversions ?? 0) || 0, revenue: Number(r.revenue ?? 0) || 0 });
+    if ((data ?? []).length < 1000) break;
+  }
+  return out;
+}
+
 /** Whether a client is flagged, with its ranked metrics that have a location property (null: not flagged or not set up) */
 export async function locationConfig(admin: SupabaseClient, clientId: string): Promise<{ metrics: ConversionMetric[] } | null> {
   const { data, error } = await admin.from("klaviyo_connections").select("conversion_metric_id, conversion_metric_name, conversion_metrics, multi_location, location_props").eq("client_id", clientId).maybeSingle();

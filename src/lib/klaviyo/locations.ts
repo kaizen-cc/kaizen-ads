@@ -267,36 +267,41 @@ export function locationBreakdown(input: { metrics: { id: string; name: string }
   const allLocations = new Set<string>();
   const anyCampaign = new Set<string>();
   for (const m of input.metrics) {
-    const rows = input.rows.filter((r) => r.metricId === m.id && r.campaignId && sent.has(r.campaignId));
+    // Every attributed order in the dates: a campaign's (sent then or earlier and still earning) or a flow's
+    const rows = input.rows.filter((r) => r.metricId === m.id && (r.campaignId || r.flowId));
     if (!rows.length) continue;
     // Campaign totals pick the columns: the best by revenue, shown in send order
     const byCampaign = new Map<string, number>();
-    for (const r of rows) byCampaign.set(r.campaignId!, (byCampaign.get(r.campaignId!) ?? 0) + r.revenue);
+    for (const r of rows) if (r.campaignId) byCampaign.set(r.campaignId, (byCampaign.get(r.campaignId) ?? 0) + r.revenue);
+    const flowTotal = rows.filter((r) => !r.campaignId).reduce((s, r) => s + r.revenue, 0);
     const ranked = [...byCampaign.entries()].sort((a, b) => b[1] - a[1] || (order.get(a[0]) ?? 0) - (order.get(b[0]) ?? 0));
     const fold = ranked.length > max;
     const shown = (fold ? ranked.slice(0, max) : ranked).map(([id]) => id).sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
     const shownSet = new Set(shown);
     const rest = ranked.filter(([id]) => !shownSet.has(id));
-    const columns: LocationColumn[] = shown.map((id) => ({ id, name: sent.get(id)!.name, sendDay: sent.get(id)!.sendDay, revenue: r2(byCampaign.get(id) ?? 0) }));
-    if (rest.length) columns.push({ id: "other", name: `Other campaigns (${rest.length})`, sendDay: null, revenue: r2(rest.reduce((s, [, v]) => s + v, 0)), count: rest.length });
+    const columns: LocationColumn[] = shown.map((id) => ({ id, name: sent.get(id)?.name ?? "Earlier campaign", sendDay: sent.get(id)?.sendDay ?? null, revenue: r2(byCampaign.get(id) ?? 0) }));
+    const otherAt = rest.length ? columns.push({ id: "other", name: `Other campaigns (${rest.length})`, sendDay: null, revenue: r2(rest.reduce((s, [, v]) => s + v, 0)), count: rest.length }) - 1 : -1;
+    // The flows' orders (welcome, abandoned cart, win-back...) in one column of their own
+    const flowAt = flowTotal > 0 ? columns.push({ id: "flows", name: "Flows", sendDay: null, revenue: r2(flowTotal) }) - 1 : -1;
     const colIndex = new Map(shown.map((id, i) => [id, i]));
     // Locations: one row each, cells by column
     const table = new Map<string, LocationTableRow>();
     for (const r of rows) {
       const t = table.get(r.location) ?? { location: r.location, cells: columns.map(() => null), conversions: 0, total: 0 };
-      const i = colIndex.get(r.campaignId!) ?? columns.length - 1;
+      const i = r.campaignId ? (colIndex.get(r.campaignId) ?? otherAt) : flowAt;
+      if (i < 0) continue;
       t.cells[i] = r2((t.cells[i] ?? 0) + r.revenue);
       t.conversions += r.conversions;
       t.total = r2(t.total + r.revenue);
       table.set(r.location, t);
       allLocations.add(r.location);
-      anyCampaign.add(r.campaignId!);
+      if (r.campaignId) anyCampaign.add(r.campaignId);
     }
     const list = [...table.values()].sort((a, b) => b.total - a.total || b.conversions - a.conversions || a.location.localeCompare(b.location));
     const conversions = Math.round(list.reduce((s, x) => s + x.conversions, 0));
     const revenue = r2(list.reduce((s, x) => s + x.total, 0));
     const rankedLocs: RankedLocation[] = list.map((x, i) => ({ rank: i + 1, location: x.location, conversions: Math.round(x.conversions), revenue: x.total }));
-    metrics.push({ metricId: m.id, name: m.name, conversions, revenue, columns, rows: list, ranked: rankedLocs, summary: summaryLine(rankedLocs, revenue, byCampaign.size, input.currency ?? null) });
+    metrics.push({ metricId: m.id, name: m.name, conversions, revenue, columns, rows: list, ranked: rankedLocs, summary: summaryLine(rankedLocs, revenue, byCampaign.size, input.currency ?? null, flowTotal > 0) });
   }
   if (!metrics.length) return null;
   return {
@@ -310,11 +315,12 @@ export function locationBreakdown(input: { metrics: { id: string; name: string }
 }
 
 /** Part 2's one-line summary: how many locations converted, the leader and its share, and the last */
-export function summaryLine(ranked: RankedLocation[], revenue: number, campaigns: number, currency: string | null): string {
+export function summaryLine(ranked: RankedLocation[], revenue: number, campaigns: number, currency: string | null, flows = false): string {
   if (!ranked.length) return "No attributed orders carried a location.";
   const top = ranked[0];
   const share = revenue > 0 ? Math.round((top.revenue / revenue) * 100) : 0;
-  const head = `${ranked.length} ${ranked.length === 1 ? "location" : "locations"} converted from ${campaigns} ${campaigns === 1 ? "campaign" : "campaigns"}. ${top.location} led with ${moneyText(top.revenue, currency)} (${share}% of the total, ${top.conversions} conversions)`;
+  const from = [campaigns ? `${campaigns} ${campaigns === 1 ? "campaign" : "campaigns"}` : "", flows ? "the flows" : ""].filter(Boolean).join(" and ") || "email";
+  const head = `${ranked.length} ${ranked.length === 1 ? "location" : "locations"} converted from ${from}. ${top.location} led with ${moneyText(top.revenue, currency)} (${share}% of the total, ${top.conversions} conversions)`;
   if (ranked.length < 3) return `${head}.`;
   const last = ranked[ranked.length - 1];
   return `${head}; ${last.location} had the least at ${moneyText(last.revenue, currency)}.`;

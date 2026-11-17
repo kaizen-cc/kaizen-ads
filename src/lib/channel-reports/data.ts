@@ -249,12 +249,14 @@ async function metricSides(admin: SupabaseClient, clientId: string, metrics: Con
  * campaigns per metric (for the QA's check). Undefined for a client that isn't multi-location.
  */
 async function locationsFor(admin: SupabaseClient, clientId: string, main: Window, campaigns: CampaignLite[], currency: string | null): Promise<{ breakdown: LocationBreakdown | null; attributed: Record<string, number> } | undefined> {
-  const { locationConfig, readLocationRows } = await import("@/lib/klaviyo/location-store");
+  const { locationConfig, readLocationRowsIn } = await import("@/lib/klaviyo/location-store");
   const cfg = await locationConfig(admin, clientId);
   if (!cfg) return undefined;
   const sent = campaignsIn(campaigns, main.start, main.end);
-  const rows = await readLocationRows(admin, clientId, cfg.metrics.map((m) => m.id), sent.map((c) => c.id), main.start);
-  const breakdown = rows ? locationBreakdown({ metrics: cfg.metrics, rows, campaigns: sent.map((c) => ({ id: c.id, name: c.name, sendDay: new Date(c.sendTime ?? "").toLocaleDateString("en-CA", { timeZone: "America/New_York" }) })), maxColumns: 6, currency }) : null;
+  // Every order in the dates by location: campaigns sent then or earlier (still earning) and the flows
+  const rows = await readLocationRowsIn(admin, clientId, cfg.metrics.map((m) => m.id), main.start, main.end);
+  const sendDay = (c: CampaignLite) => new Date(c.sendTime ?? "").toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const breakdown = rows ? locationBreakdown({ metrics: cfg.metrics, rows, campaigns: campaigns.map((c) => ({ id: c.id, name: c.name, sendDay: sendDay(c) })), maxColumns: 6, currency }) : null;
   // The primary's campaign revenue is on the campaigns; the others' in klaviyo_campaign_metrics
   const attributed: Record<string, number> = {};
   const primary = cfg.metrics[0];
