@@ -10,13 +10,16 @@ import { columnKeys, tileViews, type ChannelLayout, type TileView } from "./layo
 import { wholeMoney } from "./email-message";
 import { grade, RATE_BARS, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
+import { cardCampaigns, cardStats, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, RPR_BAR, shareText, tint, type CardStat } from "./email-cards";
 
 // A channel client report as a PDF, in the same design as the ads report (weekly-doc.tsx): the client's logo beside
 // Kaizen's, the hero band with the period, the period at a glance, and three takeaways. Email reads like the overview the
 // email team used to pull from Klaviyo, kept to two pages: revenue and orders, each day's campaigns against automated
 // emails, campaign and flow performance against Kaizen's bars with every campaign and the best flows, deliverability and
-// subscriber growth, each against the period before; a multi-location client's report ends with its orders by
-// restaurant on pages of their own. Social: each platform and the best posts with their pictures.
+// subscriber growth, each against the period before; each campaign is a card with the top of its email (linked to it in
+// Klaviyo) and its numbers against the bars; a multi-location client's report ends with its orders by restaurant (a
+// headline band, the locations ranked, the three best and a shaded location by campaign table), straight after the
+// rest. Social: each platform and the best posts with their pictures.
 // Boxes have fixed heights and values are sized to fit them, so nothing can overlap whatever the numbers are. The
 // narrative travels in the message, never in the document. A white label client's carries only the client's brand.
 
@@ -41,6 +44,8 @@ const CAMPAIGN_HEX = "#24364d";
 /** Image data URIs by what they picture (a campaign's id, a post's platform and id) */
 export type ChannelImages = Record<string, string | null>;
 export const postKey = (p: { platform: string; id: string }) => `${p.platform}:${p.id}`;
+/** A campaign card's picture: the top of the email as drawn (or its first picture) */
+export const shotKey = (campaignId: string) => `shot:${campaignId}`;
 
 const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 const weekday = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
@@ -468,9 +473,11 @@ function Table({ cols, rows, currency, foot, keys, hot }: { cols: Col[]; rows: (
   const lines = rows.length > 8 ? 1 : 2;
   const th = { fontSize: 5.4, color: "#6f7f92", fontFamily: "Helvetica-Bold" as const, textTransform: "uppercase" as const, letterSpacing: 0.25 };
   const box = (c: Col) => (c.width ? { width: c.width } : { flex: 1, paddingRight: 8 });
+  // A table that fits a page is one card that moves whole; a longer one runs across pages unframed, its header on each
+  const framed = rows.length <= 18;
   return (
-    <View style={[s.panel, { paddingVertical: 8, marginTop: GAP }]}>
-      <View style={s.th} fixed>
+    <View style={framed ? [s.panel, { paddingVertical: 8, marginTop: GAP }] : { marginTop: GAP }} wrap={!framed}>
+      <View style={s.th} fixed={!framed}>
         {cols.map((c) => (
           <View key={c.key} style={box(c)}>
             <Text style={[th, { textAlign: c.align ?? "right" }]}>{c.head}</Text>
@@ -499,8 +506,98 @@ function Table({ cols, rows, currency, foot, keys, hot }: { cols: Col[]; rows: (
 }
 
 const MAX_CAMPAIGNS = 14;
+const CARD_H = 184;
+const PIC_W = 122;
 
-function CampaignPerformance({ m, keys, hot }: { m: EmailMetrics; keys: string[]; hot: HotOf }) {
+/** Placeholder for a card with no picture: a text message, or an email whose preview couldn't be read */
+function NoPicture({ sms }: { sms: boolean }) {
+  return (
+    <View style={{ width: PIC_W, height: CARD_H, backgroundColor: "#eef2f5", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 }}>
+      <Text style={{ fontSize: 8, fontFamily: "Helvetica-Bold", color: MUTED, textTransform: "uppercase", letterSpacing: 0.8 }}>{sms ? "SMS" : "Email"}</Text>
+      <Text style={{ fontSize: 6.4, color: FAINT, marginTop: 3, textAlign: "center" }}>{sms ? "A text message" : "Preview not available"}</Text>
+    </View>
+  );
+}
+
+/** A rate against its bar: the track, the fill in the grade's colour and a tick where the bar sits */
+function Gauge({ fill, mark, g }: { fill: number; mark: number; g: Grade | null }) {
+  const c = g ? GRADE_TONE[g].fg : CAMPAIGN_HEX;
+  return (
+    <View style={{ height: 7, justifyContent: "center", marginTop: 4 }}>
+      <View style={{ height: 3, borderRadius: 1.5, backgroundColor: "#edf1f4" }}>
+        <View style={{ width: `${Math.max(2, fill * 100)}%`, height: 3, borderRadius: 1.5, backgroundColor: c }} />
+      </View>
+      <View style={{ position: "absolute", left: `${mark * 100}%`, top: 0, width: 1, height: 7, backgroundColor: INK, opacity: 0.55 }} />
+    </View>
+  );
+}
+
+function CardCell({ x, w }: { x: CardStat; w: number }) {
+  return (
+    <View style={{ width: w, height: 46, paddingRight: 8 }}>
+      <Text style={[label, { fontSize: 6.2 }]}>{x.label}</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 3, height: 14 }}>
+        <Text style={{ fontSize: fitFont(x.value, w - (x.grade ? 44 : 10), x.strong ? 13.5 : 12.5), fontFamily: "Helvetica-Bold", color: INK, letterSpacing: -0.2, lineHeight: 1 }}>{x.value}</Text>
+        <Badge g={x.grade ?? null} />
+      </View>
+      {x.gauge ? <Gauge fill={x.gauge.fill} mark={x.gauge.mark} g={x.grade ?? null} /> : null}
+      {x.sub ? <Text style={{ fontSize: 6.2, color: MUTED, marginTop: x.gauge ? 1 : 4, maxLines: 1 }}>{x.sub}</Text> : null}
+    </View>
+  );
+}
+
+/** One campaign as the email itself (its top half, linked to the campaign in Klaviyo) beside its numbers against the bars */
+function CampaignCard({ r, m, pic, total, look }: { r: MessageRow; m: EmailMetrics; pic: string | null | undefined; total: number; look: Look }) {
+  const link = fromKlaviyo(m.source) ? klaviyoCampaignUrl(r.id) : null;
+  const stats = cardStats(r, m.currency, m.revenueMeasured !== false);
+  const right = INNER - 2 - PIC_W - 28;
+  const cw = right / 3;
+  const share = total > 0 && m.revenueMeasured !== false ? r.revenue / total : null;
+  // eslint-disable-next-line jsx-a11y/alt-text -- a PDF image, no alt prop
+  const picture = pic ? <Image src={pic} style={{ width: PIC_W, height: CARD_H, objectFit: "cover", objectPosition: "top" }} /> : <NoPicture sms={r.channel === "sms"} />;
+  return (
+    <View wrap={false} style={{ flexDirection: "row", height: CARD_H, backgroundColor: "#ffffff", borderWidth: 1, borderColor: LINE, borderRadius: 10, overflow: "hidden", marginTop: GAP }}>
+      <View style={{ width: PIC_W, height: CARD_H, borderRightWidth: 1, borderRightColor: LINE }}>
+        {link ? (
+          <Link src={link} style={{ textDecoration: "none" }}>
+            {picture}
+          </Link>
+        ) : (
+          picture
+        )}
+      </View>
+      <View style={{ flex: 1, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10 }}>
+        <View style={{ flexDirection: "row", alignItems: "flex-start", height: 44 }}>
+          <View style={{ flex: 1, paddingRight: 10 }}>
+            <Text style={{ fontSize: 6.4, fontFamily: "Helvetica-Bold", color: look.primary, letterSpacing: 0.8, textTransform: "uppercase" }}>
+              {r.date ? `Sent ${weekday(r.date)} ${day(r.date)}` : "Sent"} · {r.channel === "sms" ? "SMS" : "Email"}
+            </Text>
+            <Text style={{ fontSize: 9.5, fontFamily: "Helvetica-Bold", color: INK, lineHeight: 1.22, marginTop: 3, maxLines: 2, textOverflow: "ellipsis" }}>{r.name}</Text>
+          </View>
+          {share != null ? (
+            <View style={{ alignItems: "flex-end" }}>
+              <Text style={{ fontSize: 14, fontFamily: "Helvetica-Bold", color: look.barsText, lineHeight: 1 }}>{`${Math.round(share * 100)}%`}</Text>
+              <Text style={{ fontSize: 6.2, color: MUTED, marginTop: 2 }}>of campaign revenue</Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={{ height: 1, backgroundColor: "#edf1f4", marginBottom: 9 }} />
+        <View style={{ flexDirection: "row", flexWrap: "wrap", rowGap: 8 }}>
+          {stats.map((x) => (
+            <CardCell key={x.key} x={x} w={cw} />
+          ))}
+        </View>
+        {link ? (
+          <Link src={link} style={{ position: "absolute", right: 14, bottom: 9, fontSize: 7.2, fontFamily: "Helvetica-Bold", color: look.primary, textDecoration: "none" }}>
+            Open the campaign in Klaviyo ›
+          </Link>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function CampaignPerformance({ m, keys, hot, images, look }: { m: EmailMetrics; keys: string[]; hot: HotOf; images: ChannelImages; look: Look }) {
   const d = m.detail!;
   const prior = priorWord(m);
   const n = d.campaigns.length;
@@ -511,22 +608,34 @@ function CampaignPerformance({ m, keys, hot }: { m: EmailMetrics; keys: string[]
         <Head title="Campaign performance" />
         <View style={s.panel}>
           <Text style={{ fontSize: 8, color: INK }}>No campaigns were sent in {m.main.label}.</Text>
-          <Text style={{ fontSize: 7, color: MUTED, marginTop: 3 }}>
+          <Text style={{ fontSize: 7.2, color: MUTED, marginTop: 3 }}>
             {before ? `The ${prior} before: ${before} ${before === 1 ? "campaign" : "campaigns"}, ${money(d.campaign.revenue.before, m.currency)} in revenue.` : `None were sent the ${prior} before either.`} Revenue this {prior} came from automated emails.
           </Text>
         </View>
       </View>
     );
-  const shown = d.campaigns.slice(0, MAX_CAMPAIGNS);
-  const rest = d.campaigns.slice(MAX_CAMPAIGNS);
+  const cards = cardCampaigns(d.campaigns);
+  const carded = new Set(cards.map((c) => c.id));
+  const others = d.campaigns.filter((c) => !carded.has(c.id));
+  const shown = others.slice(0, MAX_CAMPAIGNS);
+  const rest = others.slice(MAX_CAMPAIGNS);
   const foot = rest.length ? `And ${rest.length} more ${rest.length === 1 ? "campaign" : "campaigns"} earning ${money(rest.reduce((a, r) => a + r.revenue, 0), m.currency)}.` : null;
+  const total = d.campaigns.reduce((a, r) => a + r.revenue, 0);
+  const card = (r: MessageRow) => <CampaignCard key={r.id} r={r} m={m} pic={images[shotKey(r.id)]} total={total} look={look} />;
   return (
     <View style={s.section}>
-      <View wrap={false}>
-        <Head title="Campaign performance" sub={`${n} ${n === 1 ? "campaign" : "campaigns"} sent · graded against Kaizen's bars: open ${pct(RATE_BARS.campaign.open, 0)}, click ${pct(RATE_BARS.campaign.click, 0)}`} />
+      {/* The heading and the totals stay together, and never sit alone at the foot of a page */}
+      <View wrap={false} minPresenceAhead={120}>
+        <Head title="Campaign performance" sub={`${n} ${n === 1 ? "campaign" : "campaigns"} sent · graded against Kaizen's bars: open ${pct(RATE_BARS.campaign.open, 0)}, click ${pct(RATE_BARS.campaign.click, 0)}, ${money(RPR_BAR, m.currency)} per recipient`} />
         <PerfCells p={d.campaign} bars={RATE_BARS.campaign} prior={prior} kind="campaign" />
       </View>
-      <Table cols={pickedCols(CAMPAIGN_COLS, keys)} rows={shown} currency={m.currency} foot={foot} keys={keys} hot={hot} />
+      {cards.map(card)}
+      {shown.length ? (
+        <View wrap={shown.length > 18} minPresenceAhead={60}>
+          <Text style={[s.h3, { marginTop: 14 }]}>{`The other ${others.length} ${others.length === 1 ? "campaign" : "campaigns"}`}</Text>
+          <Table cols={pickedCols(CAMPAIGN_COLS, keys)} rows={shown} currency={m.currency} foot={foot} keys={keys} hot={hot} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -537,8 +646,9 @@ function FlowPerformance({ m, keys, hot }: { m: EmailMetrics; keys: string[]; ho
   const prior = priorWord(m);
   const sent = d.flow.sent.now ?? 0;
   const rows: (MessageRow & { muted?: boolean })[] = [...d.flows, ...(d.flowsOther ? [{ ...d.flowsOther, muted: true }] : [])];
+  // A short table moves with its heading as one block, so its card is never cut across two pages
   return (
-    <View style={s.section}>
+    <View style={s.section} wrap={rows.length > 18}>
       <View wrap={false}>
         <Head title="Automated email performance" sub={`${sent} ${sent === 1 ? "flow" : "flows"} sent · graded against Kaizen's bars: open ${pct(RATE_BARS.flow.open, 0)}, click ${pct(RATE_BARS.flow.click, 1)}`} />
         <PerfCells p={d.flow} bars={RATE_BARS.flow} prior={prior} kind="flow" />
@@ -1005,137 +1115,276 @@ function MetricSides({ m }: { m: EmailMetrics }) {
 
 // ─── Location breakdown (multi-location clients) ───────────────────────────
 
-const LOC_NAME_W = 112;
-const LOC_TOTAL_W = 52;
+type LocViews = ReturnType<typeof locationViews>;
+const LOC_HERO_H = 104;
+const LOC_ROW = 15;
 
-/** Part 1: revenue by location (rows, best first) and campaign (columns, the best six in send order, the rest together) */
-function LocationTable({ x, currency }: { x: LocationMetricBreakdown; currency: string | null }) {
-  const n = Math.max(1, x.columns.length);
-  const colW = Math.min(64, (INNER - 16 - 10 - LOC_NAME_W - LOC_TOTAL_W) / n);
-  const th = { fontSize: 5.2, color: "#6f7f92", fontFamily: "Helvetica-Bold" as const };
-  const totals = x.columns.map((_, i) => x.rows.reduce((t, r) => t + (r.cells[i] ?? 0), 0));
-  const size = x.rows.length > 22 ? 6.3 : 6.8;
-  const num = { fontSize: size, textAlign: "right" as const };
+/** Where a metric's located orders came from, in a few words */
+function fromWhat(x: LocationMetricBreakdown): string {
+  const flows = x.columns.some((col) => col.id === "flows");
+  const camps = x.columns.some((col) => col.id !== "flows");
+  return camps && flows ? "campaigns and flows" : flows ? "automated emails" : "campaigns";
+}
+
+/** The headline: what email earned across the restaurants, how many converted, the orders, and who led */
+function LocationHero({ x, v, m, look }: { x: LocationMetricBreakdown; v: LocViews; m: EmailMetrics; look: Look }) {
+  const c = m.currency;
+  const lead = v.leader;
+  const stats = [
+    { label: "Locations converted", value: int(x.ranked.length), sub: fromWhat(x) },
+    { label: "Attributed orders", value: int(x.conversions), sub: x.conversions > 0 ? `${wholeMoney(x.revenue / x.conversions, c)} per order` : null },
+    { label: "Per location", value: wholeMoney(v.average, c), sub: "average revenue" },
+  ];
+  const leftW = 140;
+  const statW = 76;
   return (
-    <View style={[s.panel, { paddingVertical: 8, paddingHorizontal: 8 }]} wrap={x.rows.length > 28}>
-      <View style={[s.th, { alignItems: "flex-end", paddingVertical: 5 }]} fixed>
-        <Text style={[th, { width: LOC_NAME_W, textTransform: "uppercase", letterSpacing: 0.25 }]}>Location</Text>
-        {x.columns.map((col) => (
-          <View key={col.id} style={{ width: colW, paddingLeft: 4 }}>
-            <Text style={[th, { textAlign: "right", lineHeight: 1.2, maxLines: 3, textOverflow: "ellipsis", fontFamily: col.id === "other" ? "Helvetica-Oblique" : "Helvetica-Bold" }]}>{col.name}</Text>
-            {col.sendDay ? <Text style={{ fontSize: 5, color: FAINT, textAlign: "right", marginTop: 1 }}>{day(col.sendDay)}</Text> : null}
+    <View style={{ height: LOC_HERO_H, borderRadius: 12, overflow: "hidden" }}>
+      <Svg width={INNER} height={LOC_HERO_H} viewBox={`0 0 ${INNER} ${LOC_HERO_H}`} style={{ position: "absolute", top: 0, left: 0 }}>
+        <Defs>
+          <LinearGradient id="locband" x1="0" y1="0" x2="1" y2="1">
+            <Stop offset="0" stopColor={look.hero} />
+            <Stop offset="1" stopColor={look.heroEdge} />
+          </LinearGradient>
+        </Defs>
+        <Rect x={0} y={0} width={INNER} height={LOC_HERO_H} fill="url(#locband)" />
+        <Circle cx={INNER - 40} cy={LOC_HERO_H + 10} r={96} fill="none" stroke="#ffffff" strokeOpacity={0.09} strokeWidth={1} />
+        <Circle cx={INNER - 40} cy={LOC_HERO_H + 10} r={128} fill="none" stroke="#ffffff" strokeOpacity={0.05} strokeWidth={24} />
+      </Svg>
+      <View style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, paddingHorizontal: 20, paddingVertical: 16, flexDirection: "row", alignItems: "stretch" }}>
+        <View style={{ width: leftW, justifyContent: "space-between" }}>
+          <Text style={[s.eyebrow, { color: look.heroSoft }]}>Attributed revenue</Text>
+          <View>
+            <Text style={{ fontSize: fitFont(wholeMoney(x.revenue, c), leftW - 10, 26), fontFamily: "Helvetica-Bold", color: "#ffffff", letterSpacing: -0.5, lineHeight: 1 }}>{wholeMoney(x.revenue, c)}</Text>
+            <Text style={{ fontSize: 7.4, color: "#d8dde3", marginTop: 5 }}>across {x.ranked.length} {x.ranked.length === 1 ? "restaurant" : "restaurants"}, {m.main.label}</Text>
+          </View>
+        </View>
+        {stats.map((st) => (
+          <View key={st.label} style={{ width: statW, paddingLeft: 12, borderLeftWidth: 1, borderLeftColor: "rgba(255,255,255,0.2)", justifyContent: "flex-end" }}>
+            <Text style={{ fontSize: 6.2, color: look.heroSoft, fontFamily: "Helvetica-Bold", textTransform: "uppercase", letterSpacing: 0.7, maxLines: 2, height: 16, lineHeight: 1.25 }}>{st.label}</Text>
+            <Text style={{ fontSize: fitFont(st.value, statW - 14, 15), fontFamily: "Helvetica-Bold", color: "#ffffff", marginTop: 4, lineHeight: 1 }}>{st.value}</Text>
+            {st.sub ? <Text style={{ fontSize: 6.4, color: "#d8dde3", marginTop: 3, maxLines: 1, textOverflow: "ellipsis" }}>{st.sub}</Text> : null}
           </View>
         ))}
-        <Text style={[th, { width: LOC_TOTAL_W, textAlign: "right", textTransform: "uppercase", letterSpacing: 0.25 }]}>Total</Text>
-      </View>
-      {x.rows.map((r, i) => (
-        <View key={r.location} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 3.1, paddingHorizontal: 5, backgroundColor: i % 2 ? "#f9fafc" : "#ffffff" }} wrap={false}>
-          <Text style={{ width: LOC_NAME_W, fontSize: size, color: INK, maxLines: 1, textOverflow: "ellipsis", paddingRight: 6 }}>{r.location}</Text>
-          {r.cells.map((v, j) => (
-            <Text key={x.columns[j].id} style={[num, { width: colW, color: v ? INK : FAINT }]}>
-              {v ? wholeMoney(v, currency) : "–"}
-            </Text>
-          ))}
-          <Text style={[num, { width: LOC_TOTAL_W, fontFamily: "Helvetica-Bold", color: INK }]}>{wholeMoney(r.total, currency)}</Text>
-        </View>
-      ))}
-      <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 5, paddingHorizontal: 5, borderTopWidth: 1, borderTopColor: LINE, marginTop: 1 }} wrap={false}>
-        <Text style={{ width: LOC_NAME_W, fontSize: 6.4, fontFamily: "Helvetica-Bold", color: INK, letterSpacing: 0.4 }}>TOTAL</Text>
-        {totals.map((t, j) => (
-          <Text key={x.columns[j].id} style={[num, { width: colW, fontFamily: "Helvetica-Bold", color: INK }]}>
-            {wholeMoney(t, currency)}
-          </Text>
-        ))}
-        <Text style={[num, { width: LOC_TOTAL_W, fontFamily: "Helvetica-Bold", color: INK }]}>{wholeMoney(x.revenue, currency)}</Text>
+        {lead ? (
+          <View style={{ flex: 1, marginLeft: 12, backgroundColor: "#ffffff", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 9, justifyContent: "space-between" }}>
+            <Text style={{ fontSize: 6.2, color: look.primary, fontFamily: "Helvetica-Bold", textTransform: "uppercase", letterSpacing: 0.7 }}>Top location</Text>
+            <Text style={{ fontSize: 8.6, fontFamily: "Helvetica-Bold", color: INK, lineHeight: 1.2, maxLines: 2, textOverflow: "ellipsis" }}>{lead.name}</Text>
+            <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" }}>
+              <Text style={{ fontSize: 13, fontFamily: "Helvetica-Bold", color: INK, lineHeight: 1 }}>{wholeMoney(lead.revenue, c)}</Text>
+              <Text style={{ fontSize: 7.4, fontFamily: "Helvetica-Bold", color: look.barsText }}>{shareText(lead.share)} share</Text>
+            </View>
+          </View>
+        ) : null}
       </View>
     </View>
   );
 }
 
-/** Part 2: every location by revenue, in two columns so a 40-restaurant client still fits, with the total and one line */
-function LocationRanks({ x, currency }: { x: LocationMetricBreakdown; currency: string | null }) {
-  const half = Math.ceil(x.ranked.length / 2);
-  const cols = x.ranked.length > 8 ? [x.ranked.slice(0, half), x.ranked.slice(half)] : [x.ranked];
-  const w = cols.length === 2 ? (INNER - 18 - GAP) / 2 : INNER - 18;
-  const th = { fontSize: 5.2, color: "#6f7f92", fontFamily: "Helvetica-Bold" as const, textTransform: "uppercase" as const, letterSpacing: 0.25 };
-  const top = x.ranked[0]?.revenue ?? 0;
+/** Every location (or the best fifteen and the rest together) as a bar of its revenue, with its share and orders */
+function LocationBars({ v, currency, look }: { v: LocViews; currency: string | null; look: Look }) {
+  const max = v.shown[0]?.revenue ?? 0;
+  const nameW = 132;
   return (
-    <View style={[s.panel, { paddingVertical: 8, paddingHorizontal: 8 }]} wrap={false}>
-      <View style={{ flexDirection: "row", gap: GAP }}>
-        {cols.map((list, ci) => (
-          <View key={ci} style={{ width: w }}>
-            <View style={[s.th, { paddingVertical: 5 }]}>
-              <Text style={[th, { width: 16 }]}>#</Text>
-              <Text style={[th, { flex: 1 }]}>Location</Text>
-              <Text style={[th, { width: 40, textAlign: "right" }]}>Conv.</Text>
-              <Text style={[th, { width: 54, textAlign: "right" }]}>Revenue</Text>
+    <View style={[s.panel, { paddingVertical: 10, paddingHorizontal: 12 }]}>
+      {v.shown.map((r) => {
+        const top3 = r.rank <= 3;
+        return (
+          <View key={r.full} style={{ flexDirection: "row", alignItems: "center", height: LOC_ROW }}>
+            <Text style={{ width: 16, fontSize: 7.2, fontFamily: top3 ? "Helvetica-Bold" : "Helvetica", color: top3 ? INK : FAINT }}>{r.rank}</Text>
+            <Text style={{ width: nameW, fontSize: 7.4, fontFamily: top3 ? "Helvetica-Bold" : "Helvetica", color: INK, maxLines: 1, textOverflow: "ellipsis", paddingRight: 8 }}>{r.name}</Text>
+            <View style={{ flex: 1, height: 8, justifyContent: "center" }}>
+              <View style={{ width: `${max > 0 ? Math.max(1.5, (r.revenue / max) * 100) : 0}%`, height: 8, borderRadius: 2.5, backgroundColor: top3 ? look.bars : tint(look.bars, 0.42) }} />
             </View>
-            {list.map((r) => (
-              <View key={r.location} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 3, paddingHorizontal: 5, borderBottomWidth: 1, borderBottomColor: "#f0f3f6" }} wrap={false}>
-                <Text style={{ width: 16, fontSize: 6.4, color: r.rank <= 3 ? INK : FAINT, fontFamily: r.rank <= 3 ? "Helvetica-Bold" : "Helvetica" }}>{r.rank}</Text>
-                <View style={{ flex: 1, paddingRight: 6 }}>
-                  <Text style={{ fontSize: 6.8, color: INK, maxLines: 1, textOverflow: "ellipsis" }}>{r.location}</Text>
-                  <View style={{ height: 1.6, marginTop: 2.6, borderRadius: 1, backgroundColor: "#edf1f4" }}>
-                    <View style={{ height: 1.6, borderRadius: 1, width: `${top > 0 ? Math.max(2, (r.revenue / top) * 100) : 0}%`, backgroundColor: CAMPAIGN_HEX }} />
-                  </View>
-                </View>
-                <Text style={{ width: 40, fontSize: 6.8, textAlign: "right", color: MUTED }}>{int(r.conversions)}</Text>
-                <Text style={{ width: 54, fontSize: 6.8, textAlign: "right", fontFamily: "Helvetica-Bold", color: INK }}>{wholeMoney(r.revenue, currency)}</Text>
-              </View>
-            ))}
+            <Text style={{ width: 56, fontSize: 7.4, fontFamily: "Helvetica-Bold", color: INK, textAlign: "right" }}>{wholeMoney(r.revenue, currency)}</Text>
+            <Text style={{ width: 34, fontSize: 7.2, color: top3 ? look.barsText : MUTED, fontFamily: top3 ? "Helvetica-Bold" : "Helvetica", textAlign: "right" }}>{shareText(r.share)}</Text>
+            <Text style={{ width: 52, fontSize: 7.2, color: MUTED, textAlign: "right" }}>
+              {int(r.conversions)} {r.conversions === 1 ? "order" : "orders"}
+            </Text>
           </View>
-        ))}
-      </View>
-      <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 5, paddingHorizontal: 5, marginTop: 4, backgroundColor: "#f3f6f9", borderRadius: 5 }}>
-        <Text style={{ flex: 1, fontSize: 6.4, fontFamily: "Helvetica-Bold", color: INK, letterSpacing: 0.4 }}>TOTAL · {x.ranked.length} LOCATIONS</Text>
-        <Text style={{ width: 90, fontSize: 6.8, textAlign: "right", color: MUTED }}>{int(x.conversions)} conversions</Text>
-        <Text style={{ width: 64, fontSize: 6.8, textAlign: "right", fontFamily: "Helvetica-Bold", color: INK }}>{wholeMoney(x.revenue, currency)}</Text>
-      </View>
-      <Text style={[s.note, { paddingHorizontal: 5 }]}>{x.summary}</Text>
+        );
+      })}
+      {v.rest ? (
+        <View style={{ flexDirection: "row", alignItems: "center", height: LOC_ROW + 2, borderTopWidth: 1, borderTopColor: "#edf1f4", marginTop: 3 }}>
+          <Text style={{ width: 16 }} />
+          <Text style={{ flex: 1, fontSize: 7.4, fontFamily: "Helvetica-Oblique", color: MUTED }}>
+            And {v.rest.count} more {v.rest.count === 1 ? "location" : "locations"}, each in the table below
+          </Text>
+          <Text style={{ width: 56, fontSize: 7.4, fontFamily: "Helvetica-Bold", color: MUTED, textAlign: "right" }}>{wholeMoney(v.rest.revenue, currency)}</Text>
+          <Text style={{ width: 34, fontSize: 7.2, color: MUTED, textAlign: "right" }}>{shareText(v.rest.share)}</Text>
+          <Text style={{ width: 52 }} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** The three best restaurants as cards: revenue, share, orders, order value and what earned them the most */
+function TopLocations({ v, currency, look }: { v: LocViews; currency: string | null; look: Look }) {
+  const top = v.all.slice(0, 3);
+  if (top.length < 2) return null;
+  return (
+    <View style={{ flexDirection: "row", gap: GAP }}>
+      {top.map((r, i) => (
+        <View key={r.full} style={{ flex: 1, backgroundColor: "#ffffff", borderWidth: 1, borderColor: LINE, borderRadius: 10, overflow: "hidden" }}>
+          <View style={{ height: 3, backgroundColor: i === 0 ? look.primary : i === 1 ? look.bars : tint(look.bars, 0.5) }} />
+          <View style={{ paddingHorizontal: 11, paddingTop: 9, paddingBottom: 10 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <View style={{ backgroundColor: i === 0 ? look.primary : INK, borderRadius: 4, paddingVertical: 2.5, paddingHorizontal: 5 }}>
+                <Text style={{ fontSize: 6.6, fontFamily: "Helvetica-Bold", color: "#ffffff" }}>#{r.rank}</Text>
+              </View>
+              <Text style={{ fontSize: 7.4, fontFamily: "Helvetica-Bold", color: look.barsText }}>{shareText(r.share)} of revenue</Text>
+            </View>
+            <Text style={{ fontSize: 9.2, fontFamily: "Helvetica-Bold", color: INK, lineHeight: 1.2, marginTop: 7, height: 22, maxLines: 2, textOverflow: "ellipsis" }}>{r.name}</Text>
+            <Text style={{ fontSize: fitFont(wholeMoney(r.revenue, currency), 140, 17), fontFamily: "Helvetica-Bold", color: INK, letterSpacing: -0.3, marginTop: 4, lineHeight: 1 }}>{wholeMoney(r.revenue, currency)}</Text>
+            <View style={{ flexDirection: "row", marginTop: 8, paddingTop: 7, borderTopWidth: 1, borderTopColor: "#edf1f4" }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 8, fontFamily: "Helvetica-Bold", color: INK }}>{int(r.conversions)}</Text>
+                <Text style={{ fontSize: 6.2, color: MUTED, marginTop: 1.5 }}>orders</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 8, fontFamily: "Helvetica-Bold", color: INK }}>{r.conversions > 0 ? wholeMoney(r.revenue / r.conversions, currency) : "–"}</Text>
+                <Text style={{ fontSize: 6.2, color: MUTED, marginTop: 1.5 }}>per order</Text>
+              </View>
+            </View>
+            {r.best ? (
+              <Text style={{ fontSize: 7.2, color: MUTED, marginTop: 6, lineHeight: 1.3, maxLines: 2, textOverflow: "ellipsis" }}>
+                Most from <Text style={{ fontFamily: "Helvetica-Bold", color: INK }}>{r.best.id === "flows" ? "automated emails" : r.best.name}</Text> ({shareText(r.best.share)})
+              </Text>
+            ) : null}
+          </View>
+        </View>
+      ))}
+      {top.length < 3 ? <View style={{ flex: 1 }} /> : null}
     </View>
   );
 }
 
 /**
- * The report's last section for a multi-location client: the overall summary (each metric's conversions and revenue,
- * and the metrics summed), then per metric Part 1 (revenue by location and campaign) and Part 2 (locations ranked).
- * Starts on its own page; a table that doesn't fit what's left of a page moves whole to the next one.
+ * Every location against each campaign and the flows, each cell shaded by its revenue (darker earns more), with the
+ * totals. Up to 40 rows stay one card that moves whole; a longer one runs across pages without a frame, its header on
+ * each page.
  */
-function LocationSection({ m }: { m: EmailMetrics }) {
-  const b = m.locations;
-  if (!b) return null;
+function LocationHeat({ x, v, currency, look }: { x: LocationMetricBreakdown; v: LocViews; currency: string | null; look: Look }) {
+  const framed = x.rows.length <= 40;
+  const nameW = 124;
+  const totalW = 56;
+  const n = Math.max(1, x.columns.length);
+  const colW = Math.min(66, (INNER - 2 - 20 - nameW - totalW) / n);
+  const th = { fontSize: 6, color: "#5f6f82", fontFamily: "Helvetica-Bold" as const };
+  const totals = x.columns.map((_, i) => x.rows.reduce((t, r) => t + (r.cells[i] ?? 0), 0));
+  const cell = (val: number | null, key: string) => {
+    const t = heat(val, v.maxCell);
+    return (
+      <View key={key} style={{ width: colW, paddingHorizontal: 1.5, height: 14 }}>
+        <View style={{ flex: 1, borderRadius: 3, backgroundColor: t ? tint(look.bars, t) : "#f6f8fa", justifyContent: "center", paddingHorizontal: 4 }}>
+          <Text style={{ fontSize: 7.2, textAlign: "right", color: t > 0.55 ? "#ffffff" : val ? INK : FAINT, fontFamily: t > 0.55 ? "Helvetica-Bold" : "Helvetica" }}>{val ? wholeMoney(val, currency) : "–"}</Text>
+        </View>
+      </View>
+    );
+  };
+  return (
+    <View style={framed ? [s.panel, { paddingVertical: 9, paddingHorizontal: 10 }] : { paddingHorizontal: 1 }} wrap={!framed}>
+      <View style={[s.th, { alignItems: "flex-end", paddingVertical: 6 }]} fixed={!framed}>
+        <Text style={[th, { width: nameW, textTransform: "uppercase", letterSpacing: 0.3 }]}>Location</Text>
+        {x.columns.map((col) => (
+          <View key={col.id} style={{ width: colW, paddingLeft: 4, paddingRight: 1.5 }}>
+            <Text style={[th, { textAlign: "right", lineHeight: 1.2, maxLines: 3, textOverflow: "ellipsis", fontFamily: col.id === "other" ? "Helvetica-Oblique" : "Helvetica-Bold" }]}>{col.name}</Text>
+            <Text style={{ fontSize: 5.8, color: FAINT, textAlign: "right", marginTop: 1 }}>{col.sendDay ? day(col.sendDay) : col.id === "flows" ? "Automated" : col.id === "other" ? "Added up" : "Before these dates"}</Text>
+          </View>
+        ))}
+        <Text style={[th, { width: totalW, textAlign: "right", textTransform: "uppercase", letterSpacing: 0.3 }]}>Total</Text>
+      </View>
+      {x.rows.map((r) => (
+        <View key={r.location} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 1, paddingHorizontal: 5 }} wrap={false}>
+          <Text style={{ width: nameW, fontSize: 7.2, color: INK, maxLines: 1, textOverflow: "ellipsis", paddingRight: 6 }}>{v.name(r.location)}</Text>
+          {r.cells.map((val, j) => cell(val, x.columns[j].id))}
+          <Text style={{ width: totalW, fontSize: 7.4, textAlign: "right", fontFamily: "Helvetica-Bold", color: INK }}>{wholeMoney(r.total, currency)}</Text>
+        </View>
+      ))}
+      <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6, paddingHorizontal: 5, marginTop: 4, backgroundColor: "#f3f6f9", borderRadius: 5 }} wrap={false}>
+        <Text style={{ width: nameW, fontSize: 6.8, fontFamily: "Helvetica-Bold", color: INK, letterSpacing: 0.4 }}>TOTAL · {x.rows.length}</Text>
+        {totals.map((t, j) => (
+          <Text key={x.columns[j].id} style={{ width: colW, fontSize: 7.2, textAlign: "right", fontFamily: "Helvetica-Bold", color: INK, paddingRight: 5.5 }}>
+            {wholeMoney(t, currency)}
+          </Text>
+        ))}
+        <Text style={{ width: totalW, fontSize: 7.6, textAlign: "right", fontFamily: "Helvetica-Bold", color: INK }}>{wholeMoney(x.revenue, currency)}</Text>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 7, paddingHorizontal: 5 }} wrap={false}>
+        <Text style={{ fontSize: 6.4, color: MUTED, marginRight: 5 }}>Less</Text>
+        {[0.12, 0.3, 0.5, 0.7, 0.9].map((t) => (
+          <View key={t} style={{ width: 14, height: 6, borderRadius: 1.5, backgroundColor: tint(look.bars, t), marginRight: 2 }} />
+        ))}
+        <Text style={{ fontSize: 6.4, color: MUTED, marginLeft: 3 }}>More revenue</Text>
+        <Text style={{ flex: 1, fontSize: 6.4, color: MUTED, textAlign: "right" }}>{x.summary.split(". ")[0]}.</Text>
+      </View>
+    </View>
+  );
+}
+
+/** The location blocks for one metric: the headline band, the ranked bars, the three best, then the full table */
+function LocationMetric({ x, m, look, first }: { x: LocationMetricBreakdown; m: EmailMetrics; look: Look; first: React.ReactNode }) {
   const c = m.currency;
-  const boxes = [...b.metrics.map((x) => ({ key: x.metricId, title: x.name, value: wholeMoney(x.revenue, c), sub: `${int(x.conversions)} conversions · ${x.ranked.length} locations` })), ...(b.metrics.length > 1 ? [{ key: "combined", title: "Combined", value: wholeMoney(b.combined.revenue, c), sub: `${int(b.combined.conversions)} conversions` }] : [])];
+  const v = locationViews(x, x.ranked.length <= 18 ? 18 : 15);
+  const several = (m.locations?.metrics.length ?? 0) > 1;
+  return (
+    <>
+      <View style={s.section} wrap={false}>
+        {first}
+        {several ? <Text style={[s.h3, { marginBottom: 7 }]}>{x.name}</Text> : null}
+        <LocationHero x={x} v={v} m={m} look={look} />
+      </View>
+      <View style={s.section} wrap={false}>
+        <Head title={several ? `${x.name} · revenue by location` : "Revenue by location"} sub={v.rest ? `The best ${v.shown.length} of ${v.all.length}, with each one's share of the total` : "Each location's share of the total"} />
+        <LocationBars v={v} currency={c} look={look} />
+      </View>
+      {v.all.length >= 2 ? (
+        <View style={s.section} wrap={false}>
+          <Head title={several ? `${x.name} · top locations` : "Top locations"} sub="What earned each of them the most" />
+          <TopLocations v={v} currency={c} look={look} />
+        </View>
+      ) : null}
+      <View style={s.section} wrap={x.rows.length > 40}>
+        <View wrap={false} minPresenceAhead={80}>
+          <Head title={several ? `${x.name} · by location and campaign` : "By location and campaign"} sub={x.columns.some((col) => col.id === "other") ? "The six best campaigns in send order, the rest together, and the automated emails" : "Each campaign in send order, and the automated emails"} />
+        </View>
+        <LocationHeat x={x} v={v} currency={c} look={look} />
+      </View>
+    </>
+  );
+}
+
+/**
+ * The report's last section for a multi-location client, straight after the rest (no page of its own): per metric a
+ * headline band, the locations ranked as bars, the three best as cards and every location against each campaign as a
+ * shaded table. Several metrics get their totals side by side first, with the note that they aren't deduplicated.
+ */
+function LocationSection({ m, look }: { m: EmailMetrics; look: Look }) {
+  const b = m.locations;
+  if (!b || !b.metrics.length) return null;
+  const c = m.currency;
+  const head = <Head title="Orders by location" sub={`Revenue ${m.source ?? "Klaviyo"} attributes to email, by the restaurant each order came from · ${m.main.label}`} />;
+  if (b.metrics.length === 1) return <LocationMetric x={b.metrics[0]} m={m} look={look} first={head} />;
+  const boxes = [...b.metrics.map((x) => ({ key: x.metricId, title: x.name, value: wholeMoney(x.revenue, c), sub: `${int(x.conversions)} orders · ${x.ranked.length} locations` })), { key: "combined", title: "Combined", value: wholeMoney(b.combined.revenue, c), sub: `${int(b.combined.conversions)} orders` }];
   const w = (INNER - 2 - (boxes.length - 1)) / boxes.length;
   return (
-    <View break>
+    <>
       <View style={s.section} wrap={false}>
-        <Head title="Location breakdown" sub={`Campaigns sent ${m.main.label} · revenue and conversions attributed by ${m.source ?? "Klaviyo"}, by the restaurant the order came from`} />
-        <StatRow height={58}>
+        {head}
+        <StatRow height={60}>
           {boxes.map((x, i) => (
             <Fragment key={x.key}>
               {i ? <Rule /> : null}
-              <Stat title={x.title} value={x.value} sub={x.sub} prior={priorWord(m)} width={w} height={58} max={17} color={x.key === "combined" ? CAMPAIGN_HEX : undefined} />
+              <Stat title={x.title} value={x.value} sub={x.sub} prior={priorWord(m)} width={w} height={60} max={17} color={x.key === "combined" ? look.barsText : undefined} />
             </Fragment>
           ))}
         </StatRow>
-        {b.metrics.length > 1 ? <Text style={s.note}>{b.note}</Text> : null}
+        <Text style={[s.note, { fontSize: 7.2 }]}>{b.note}</Text>
       </View>
       {b.metrics.map((x) => (
-        <View key={x.metricId}>
-          <View style={s.section}>
-            <View wrap={false}>
-              <Head title={`${x.name} · revenue by location and campaign`} sub={x.columns.some((col) => col.id === "other") ? "The six best campaigns by revenue, in send order; the rest together" : "Each campaign sent, in send order"} />
-            </View>
-            <LocationTable x={x} currency={c} />
-          </View>
-          <View style={s.section} wrap={false}>
-            <Head title={`${x.name} · locations ranked`} sub="Attributed conversions and revenue by location" />
-            <LocationRanks x={x} currency={c} />
-          </View>
-        </View>
+        <LocationMetric key={x.metricId} x={x} m={m} look={look} first={null} />
       ))}
-    </View>
+    </>
   );
 }
 
@@ -1153,7 +1402,7 @@ function EmailBody({ m, images, look, layout, hot }: { m: EmailMetrics; images: 
         <LegacyCampaigns m={m} images={images} />
         <LegacyFlows m={m} />
         <LegacyListHealth m={m} />
-        <LocationSection m={m} />
+        <LocationSection m={m} look={look} />
       </>
     );
   const keys = columnKeys("klaviyo", layout);
@@ -1161,10 +1410,10 @@ function EmailBody({ m, images, look, layout, hot }: { m: EmailMetrics; images: 
     <>
       <EmailGlance m={m} layout={layout} hot={hot} />
       <ConversionSummary m={m} look={look} />
-      <CampaignPerformance m={m} keys={keys} hot={hot} />
+      <CampaignPerformance m={m} keys={keys} hot={hot} images={images} look={look} />
       <FlowPerformance m={m} keys={keys} hot={hot} />
       <ListAndDelivery m={m} />
-      <LocationSection m={m} />
+      <LocationSection m={m} look={look} />
     </>
   );
 }

@@ -9,6 +9,16 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { AdImage } from "./ad-image";
 import { ChannelRecap } from "./channel-recap";
 import { loadChannelShare } from "@/lib/channel-reports/share";
+import { cardCampaigns } from "@/lib/channel-reports/email-cards";
+
+/** Signed links to the drawn top of each card campaign's email (only what the draft saved: the page never draws) */
+async function channelShots(clientId: string | null | undefined, metrics: { platform: string; detail?: { campaigns: { id: string; channel: string; revenue: number; date: string | null }[] } | null }): Promise<Record<string, string>> {
+  if (!clientId || metrics.platform !== "klaviyo" || !metrics.detail) return {};
+  const ids = cardCampaigns(metrics.detail.campaigns).filter((c) => c.channel !== "sms").map((c) => c.id);
+  if (!ids.length) return {};
+  const { emailShotLinks } = await import("@/lib/channel-reports/email-shots");
+  return emailShotLinks(createAdminClient(), clientId, ids).catch(() => ({}));
+}
 
 // A white label client's recap names no agency, in the tab either
 const bundleOf = cache(async (token: string) => (adminConfigured() ? loadBundle(createAdminClient(), token) : null));
@@ -56,7 +66,8 @@ export default async function MonthlyRecap({ params }: PageProps<"/r/[token]">) 
     // An email or social report sent on its own has its own page
     const channel = await channelOf(token);
     if (!channel) notFound();
-    return <ChannelRecap r={{ client: channel.client, whiteLabel: channel.whiteLabel, label: channel.label, title: channel.title, token, metrics: channel.input.metrics, sections: channel.input.sections, layout: channel.input.layout ?? null }} />;
+    const shots = await channelShots(channel.input.clientId, channel.input.metrics);
+    return <ChannelRecap r={{ client: channel.client, whiteLabel: channel.whiteLabel, label: channel.label, title: channel.title, token, metrics: channel.input.metrics, sections: channel.input.sections, layout: channel.input.layout ?? null, shots }} />;
   }
   const ready = bundle.ready && bundle.input.parts.length > 0;
   const parts = bundle.input.parts;

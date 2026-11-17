@@ -13,6 +13,7 @@ import { channelMetricsText } from "./text";
 import { channelTitle, emailMessageFlags, withTitle } from "./email-message";
 import { applyStated, type Stated } from "./stated";
 import { channelReportTools, channelToolsLine } from "./tools";
+import { cardCampaigns } from "./email-cards";
 
 // Writing a channel client report (email or organic social): the numbers (data.ts), the work behind them, the owner's own
 // voice, what this client likes in a report, and the client's Brand Bible and context. The same arc as the ads reports:
@@ -225,6 +226,15 @@ export async function qaChannelReport(admin: SupabaseClient, reportId: string): 
   return qa;
 }
 
+/** Draws and saves the top of each card campaign's email (never failing the draft, and never more than a minute) */
+async function warmShots(admin: SupabaseClient, clientId: string, m: Metrics): Promise<void> {
+  if (m.platform !== "klaviyo" || !m.detail) return;
+  const ids = cardCampaigns(m.detail.campaigns).filter((x) => x.channel !== "sms").map((x) => x.id);
+  if (!ids.length) return;
+  const { ensureEmailShots } = await import("./email-shots");
+  await Promise.race([ensureEmailShots(admin, clientId, ids, { fetch: true, budgetMs: 50_000 }).catch(() => null), new Promise((done) => setTimeout(done, 60_000))]);
+}
+
 /** Drafts (or redrafts) a channel report from scratch: numbers, work, voice and the client's context, then the QA */
 export async function draftChannelReport(admin: SupabaseClient, reportId: string) {
   await admin.from("reports").update({ status: "drafting", error: null, updated_at: new Date().toISOString() }).eq("id", reportId);
@@ -239,6 +249,8 @@ export async function draftChannelReport(admin: SupabaseClient, reportId: string
       const { data: prev } = await admin.from("reports").select("layout").eq("client_id", c.r.client_id).eq("platform", c.r.platform).is("target_id", null).neq("id", reportId).not("layout", "is", null).order("period_start", { ascending: false }).limit(1).maybeSingle();
       if (prev?.layout) await admin.from("reports").update({ layout: prev.layout }).eq("id", reportId);
     }
+    // The campaign cards' pictures are drawn while the report is written, so the PDF only reads them
+    const shots = warmShots(admin, c.r.client_id, metrics).catch(() => null);
     const [work, voice, client] = await Promise.all([channelWork(admin, c.r.client_id, line, c.r.period_start, c.r.period_end), voiceOf(admin, c.owner, c.r.client_id), clientBlock(admin, c.r.client_id)]);
     await admin.from("reports").update({ metrics, work, extra_metrics: null }).eq("id", reportId);
     c.r.metrics = metrics;
@@ -263,6 +275,7 @@ export async function draftChannelReport(admin: SupabaseClient, reportId: string
     await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), updated_at: new Date().toISOString() }).eq("id", reportId);
     // The QA runs before the owner hears about it, so the note they get says whether there's anything to fix
     await qaChannelReport(admin, reportId).catch(() => null);
+    await shots;
     await admin.from("reports").update({ status: "draft", updated_at: new Date().toISOString() }).eq("id", reportId);
   } catch (e) {
     await admin.from("reports").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 400), updated_at: new Date().toISOString() }).eq("id", reportId);
