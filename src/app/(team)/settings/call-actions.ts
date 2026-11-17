@@ -64,7 +64,8 @@ export async function startCall(roleKey: string): Promise<StartedCall | Fail> {
   // The assistant: a hello that remembers them (a birthday, how the trip went), unless the line just dropped
   if (roleKey === ASSISTANT_KEY && mode !== "continue") {
     const memory = await loadMemory(admin, me.id);
-    const hello = assistantGreeting({ name: firstNameOf(me.fullName), memory, today: new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }), seed: seedOf(call.id as string) });
+    const hour = Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: "America/New_York" }).format(new Date())) % 24;
+    const hello = assistantGreeting({ name: firstNameOf(me.fullName), memory, today: new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }), seed: seedOf(call.id as string), mode, timed: greeting, hour });
     greeting = hello.text;
     if (hello.followed) await markFollowedUp(admin, me.id, hello.followed);
   }

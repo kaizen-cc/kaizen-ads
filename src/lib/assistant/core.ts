@@ -218,11 +218,24 @@ export function memoryForPrompt(rows: readonly MemoryRow[], today: string): stri
  * ("How was the trip to Lisbon?"), else a warm plain hello. `followed` is the memory row asked about (marked so it's
  * asked once).
  */
-export function assistantGreeting(input: { name: string; memory: readonly MemoryRow[]; today: string; seed?: number }): { text: string; followed: string | null } {
+export function assistantGreeting(input: {
+  name: string;
+  memory: readonly MemoryRow[];
+  today: string;
+  seed?: number;
+  /** How this call follows the last one (the same timing the agents' calls use) */
+  mode?: "continue" | "soon" | "later_today" | "fresh";
+  /** The agents' timing hello for that mode ("Hey again! Good to hear from you so soon"), used for soon and later today */
+  timed?: string | null;
+  /** The hour in New York, for a hello that fits the time of day */
+  hour?: number;
+}): { text: string; followed: string | null } {
   const { name, memory, today } = input;
   const seed = Math.abs(input.seed ?? 0);
   const birthday = memory.find((m) => m.kind === "fact" && m.topic === "birthday" && m.on_date && mmdd(m.on_date) === mmdd(today));
   if (birthday) return { text: `Happy birthday, ${name}! I hope it's a good one. What can I take off your plate today?`, followed: null };
+  // Called back a few hours later, or again late in the day: the same hellos the agents use, so it feels like one person
+  if ((input.mode === "soon" || input.mode === "later_today") && input.timed && memory.length) return { text: input.timed, followed: null };
   const due = memory
     .filter((m) => m.kind === "fact" && m.follow_up_on && m.follow_up_on <= today && !m.followed_up_at)
     .sort((a, b) => String(b.follow_up_on).localeCompare(String(a.follow_up_on)))[0];
@@ -233,7 +246,14 @@ export function assistantGreeting(input: { name: string; memory: readonly Memory
   }
   // The very first call: hello, and ask to get to know them before diving in
   if (!memory.length) return { text: `Hey ${name}! I'm your new assistant. Before we dive in, mind if I ask you a few quick questions so I can actually be useful to you?`, followed: null };
-  const plain = [`Hey ${name}, it's your assistant. What can I do for you?`, `Hi ${name}! What are we tackling?`, `Hey ${name}. Want the rundown of your day, or something specific?`];
+  // A fresh start: a hello that fits the time of day (a morning call usually wants the day's rundown)
+  const h = input.hour ?? 12;
+  const plain =
+    h < 12
+      ? [`Morning, ${name}! Want the rundown of your day, or something specific?`, `Good morning, ${name}. Ready to plan the day?`]
+      : h < 17
+        ? [`Hey ${name}, it's your assistant. What can I do for you?`, `Hi ${name}! What are we tackling this afternoon?`]
+        : [`Hey ${name}, working late? What can I help you wrap up?`, `Evening, ${name}. Want a quick look at what's left for today, or tomorrow's plan?`];
   return { text: plain[seed % plain.length], followed: null };
 }
 

@@ -227,3 +227,14 @@ describe("getting to know them", () => {
     expect(discoveryLeft(known).map((d) => d.topic)).toEqual(["needs", "goals", "routine", "uses"]);
   });
 });
+
+
+describe("the assistant's hello follows the time, like the agents'", () => {
+  it("uses the timing hello when called back the same day, and a time-of-day hello on a fresh start", async () => {
+    const { assistantGreeting } = await import("@/lib/assistant/core");
+    const memory = [{ id: "m1", profile_id: "p", kind: "fact" as const, topic: "likes", body: "Building reports", on_date: null, follow_up_on: null, followed_up_at: null, created_at: "", updated_at: "" }];
+    expect(assistantGreeting({ name: "Dana", memory, today: "2026-11-18", mode: "soon", timed: "Hey again, Dana! Good to hear from you so soon." }).text).toBe("Hey again, Dana! Good to hear from you so soon.");
+    expect(assistantGreeting({ name: "Dana", memory, today: "2026-11-18", mode: "fresh", hour: 8, seed: 0 }).text).toContain("Morning, Dana");
+    expect(assistantGreeting({ name: "Dana", memory, today: "2026-11-18", mode: "fresh", hour: 19, seed: 0 }).text).toContain("working late");
+  });
+});
