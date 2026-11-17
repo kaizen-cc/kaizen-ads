@@ -14,6 +14,7 @@ export const ROLE_FOCUS: Record<string, string> = {
   strategist: "You lead with each client's main KPI against target across their lines, and who is most at risk (rank_clients, get_client_context).",
   market_analyst: "You lead with what's working across clients: winning ads and angles, and trends by kind of business (top_ads, winners_and_fatigue).",
   account_manager: "You lead with how each client is doing against their goals, what changed and what's owed to them (rank_clients, what_changed).",
+  social_strategist: "You lead with organic social: engagement rate (interactions over reach), reach against the 30 days before, followers gained and posts per week. Asked for the best post or client, rank posts by engagement (top_posts, organic_social).",
 };
 
 /** The agent's line for its instructions (a general one for an agent without its own) */
@@ -34,4 +35,5 @@ export const OWNER_SEAT: Record<string, string> = {
   strategist: "coordinator",
   market_analyst: "coordinator",
   account_manager: "coordinator",
+  social_strategist: "social_manager",
 };

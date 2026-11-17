@@ -34,6 +34,8 @@ import type { LogEntry } from "@/lib/reports/skip-log";
 import { SendHistory, type HistoryItem } from "./send-history";
 import { ReportThis } from "@/components/report-this";
 import { messageKey } from "@/lib/chat-report";
+import { CallButton } from "@/components/call-button";
+import { roleForReport } from "@/lib/agent-call/call-context";
 import { channelNoteText, takeawaysFor as channelTakeaways, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
 import type { ChannelPdfInput } from "@/lib/channel-reports/channel-doc";
 import { columnKeys, columnLabel, columnOptions, MAX_TILES, swapChannelTile, tileKeys, tileLabel, tileOptions, type ChannelLayout } from "@/lib/channel-reports/layout";
@@ -1286,6 +1288,8 @@ export function ReportStudio({
   const reportTurns = () => chat.map((t) => ({ role: t.role === "user" ? "user" : "ai", text: t.text, at: t.at, name: t.by ?? null }));
   const reportState = () => ({ reportId: report.id, kind: report.kind, platform: report.platform, period: { start: report.period.start, end: report.period.end, key: report.period.key }, status: report.status });
   const flagCount = qa?.flags.length ?? 0;
+  // Talk the report through with the agent that writes it (the Media Buyer, the Google Ads Buyer, the Email Strategist...)
+  const callButton = <CallButton roleKey={roleForReport(report.platform)} variant="icon" context={{ screen: `${client.name}'s ${report.periodLabel} report`, reportId: report.id, client: client.name }} />;
   const tabs = (
     <div className="flex items-center gap-1.5">
       <div className="flex flex-1 gap-1 rounded-full bg-surface-2 p-1 text-sm">
@@ -1295,6 +1299,7 @@ export function ReportStudio({
           </button>
         ))}
       </div>
+      {callButton}
       <PanelButton label={minned ? "Restore the panel" : "Minimize"} onClick={() => (minned ? closeParams("chat") : pushParams({ chat: "min" }))} className="max-lg:hidden">
         {minned ? "▴" : "–"}
       </PanelButton>
@@ -1540,6 +1545,7 @@ export function ReportStudio({
                   <span className="h-1.5 w-1.5 rounded-full bg-brand" aria-hidden />
                   Ask the AI{flagCount ? <span className="tabular text-faint">· {flagCount}</span> : null}
                 </button>
+                {callButton}
                 <div className="grid min-w-0 flex-1">{foot}</div>
               </div>
             </div>

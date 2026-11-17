@@ -8,7 +8,8 @@ import type { CallNotes } from "@/lib/assistant/notes";
 
 // The pieces a call shows beyond talking: an agent's icon, the specialist on the line, link cards ("take a look"),
 // the upload panel when the assistant asks for files, the assistant's notes after the call, and the one-time notice
-// that calls are recorded. Used by both the phone's full screen and the computer's huddle.
+// that calls are recorded, and sharing the screen for a look (the ask to share, and the bar while it's shared). Used
+// by both the phone's full screen and the computer's huddle.
 
 const ICONS: Record<string, string> = {
   compass: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zm3.5-12.5-2 5-5 2 2-5z",
@@ -62,6 +63,62 @@ export function RecordedMark() {
   );
 }
 
+/** A screen, for sharing it on a call */
+export function ScreenIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 5h18v11H3zM8 20h8M12 16v4" />
+    </svg>
+  );
+}
+
+/**
+ * The agent asked to take a look and nothing is shared yet: one tap opens the browser's own picker (a tab, a window
+ * or the whole screen). What's shared is only looked at when the agent asks; it stops when the call ends.
+ */
+export function ShareAsk({ agent, onShare, onCancel }: { agent: string; onShare: () => void; onCancel: () => void }) {
+  return (
+    <section aria-label="Share your screen" className="relative grid gap-3 rounded-[18px] border border-brand/30 bg-brand-soft/30 p-3.5 animate-[sheet-up_.22s_cubic-bezier(.2,.8,.2,1)]">
+      <div className="flex items-start gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] bg-surface text-brand-text shadow-[inset_0_0_0_1px_var(--color-line)]">
+          <ScreenIcon size={17} />
+        </span>
+        <div className="min-w-0">
+          <p className="text-[13.5px] font-medium leading-snug">Share your screen so {agent} can take a look</p>
+          <p className="mt-0.5 text-[12px] leading-snug text-muted">Pick a tab, a window or your whole screen. It only looks when you ask, and sharing stops when the call ends.</p>
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-2">
+        <button type="button" onClick={onCancel} className="inline-flex min-h-11 items-center rounded-full px-4 text-[13px] text-muted transition-colors hover:bg-surface-2 hover:text-fg md:min-h-9">
+          Not now
+        </button>
+        <button type="button" onClick={onShare} className="inline-flex min-h-11 items-center gap-2 rounded-full bg-brand px-4 text-[13px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] md:min-h-9">
+          <ScreenIcon size={15} />
+          Share screen
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/** While the screen is shared: a clear mark, and Stop sharing */
+export function SharingBar({ onStop, looking }: { onStop: () => void; looking: boolean }) {
+  return (
+    <div role="status" className="flex items-center justify-between gap-3 rounded-full border border-bad/25 bg-bad/[0.07] py-1 pl-3 pr-1">
+      <span className="flex min-w-0 items-center gap-2 text-[12.5px]">
+        <span aria-hidden className="relative grid h-2 w-2 place-items-center">
+          <span className="absolute inset-0 animate-ping rounded-full bg-bad/50 [animation-duration:2s]" />
+          <span className="relative h-2 w-2 rounded-full bg-bad" />
+        </span>
+        <span className="truncate">{looking ? "Taking a look…" : "Sharing your screen"}</span>
+      </span>
+      <button type="button" onClick={onStop} className="inline-flex min-h-9 shrink-0 items-center rounded-full bg-surface px-3 text-[12px] font-medium text-fg shadow-[inset_0_0_0_1px_var(--color-line)] transition-colors hover:bg-surface-2">
+        Stop sharing
+      </button>
+    </div>
+  );
+}
+
 /** Link cards the agent showed: in the app (the call stays up) or a new tab */
 export function CardsStrip({ cards, onOpen, onDismiss, compact = false }: { cards: CallCard[]; onOpen: (c: CallCard) => void; onDismiss: (id: string) => void; compact?: boolean }) {
   if (!cards.length) return null;
@@ -104,7 +161,7 @@ export function UploadPanel({ ask, busy, onFiles, onClose }: { ask: UploadAsk; b
     <section aria-label="Upload for the assistant" className="relative grid gap-3 rounded-[18px] border border-brand/30 bg-brand-soft/30 p-3.5 animate-[sheet-up_.22s_cubic-bezier(.2,.8,.2,1)]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-[0.16em] text-brand-text">{ask.purpose === "creatives" ? "Creatives" : "Files"}{ask.client ? ` · ${ask.client}` : ""}</p>
+          <p className="text-[11px] uppercase tracking-[0.16em] text-brand-text">{ask.purpose === "creatives" ? "Creatives" : ask.purpose === "screen" ? "A screenshot" : "Files"}{ask.client ? ` · ${ask.client}` : ""}</p>
           <p className="mt-0.5 text-[13.5px] leading-snug">{ask.note}</p>
         </div>
         <button type="button" onClick={onClose} disabled={Boolean(busy)} aria-label="Close the upload" className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg">
@@ -133,11 +190,11 @@ export function UploadPanel({ ask, busy, onFiles, onClose }: { ask: UploadAsk; b
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="text-muted">
             <path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
           </svg>
-          <span className="text-[13.5px] font-medium">{busy ?? "Choose files or drop them here"}</span>
-          {!busy && <span className="text-[11.5px] text-faint">Pictures, videos, PDFs and sheets. The call stays up.</span>}
+          <span className="text-[13.5px] font-medium">{busy ?? (ask.purpose === "screen" ? "Choose a screenshot" : "Choose files or drop them here")}</span>
+          {!busy && <span className="text-[11.5px] text-faint">{ask.purpose === "screen" ? "Take a screenshot, then pick it here. The call stays up." : "Pictures, videos, PDFs and sheets. The call stays up."}</span>}
         </span>
       </button>
-      <input ref={input} type="file" multiple hidden accept="image/*,video/*,application/pdf,.csv,.xlsx,.docx,.pptx,.txt" onChange={(e) => pick(e.target.files)} />
+      <input ref={input} type="file" multiple={ask.purpose !== "screen"} hidden accept={ask.purpose === "screen" ? "image/*" : "image/*,video/*,application/pdf,.csv,.xlsx,.docx,.pptx,.txt"} onChange={(e) => pick(e.target.files)} />
     </section>
   );
 }

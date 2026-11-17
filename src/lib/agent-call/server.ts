@@ -8,6 +8,9 @@ import { loadRolePlaybook, type RolePlaybook } from "@/lib/role-playbook";
 import { TOOLS_RULE, agentTools } from "./agent-tools";
 import { CALL_LIMIT_SECONDS, CONCISE_RULE, DISTRESS_RULE, END_CALL_RULE, LEARNINGS_SCHEMA, endMarkerFilter, stripEndMarker, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type LearnedItem, type Learning, type ResumeMode } from "./core";
 import { focusFor } from "./role-focus";
+import { callConnectors, noConnectors, type CallConnectors } from "./call-connectors";
+import type { CallContext } from "./call-context";
+import { contextBlock, lookHint, lookTool, loadFrame, withFrame } from "./call-extras";
 import { fillerFor, runToolLoop, type LoopMessage, type LoopTool } from "./tool-loop";
 
 // A voice call with one of the AI agents, on the server: the call's row (who, which agent, how long, what it cost and
@@ -162,25 +165,56 @@ const MAX_TOOL_ROUNDS = 5;
  * person's tools on the way (a short spoken line covers the wait); meanwhile what they taught is noted as pending (for
  * those who train it). Both sides are kept in the agent's chat, tagged with the call. Logged in ai_runs like any run.
  */
-export async function runCallTurn(input: { me: Staff; admin: SupabaseClient; db: SupabaseClient; call: CallRow; text: string; signal: AbortSignal; emit: (e: CallEvent) => void }) {
+export type TurnInput = {
+  me: Staff;
+  admin: SupabaseClient;
+  db: SupabaseClient;
+  call: CallRow;
+  text: string;
+  signal: AbortSignal;
+  emit: (e: CallEvent) => void;
+  /** Where they called from (a client, a report, a Kaizen AI thread), from the screen's Call button */
+  context?: CallContext | null;
+  /** A screenshot of their screen that comes with this turn (a look), in the call's uploads */
+  frame?: string | null;
+  /** When the turn arrived (an ask for a yes must be older than this) */
+  startedAt?: number;
+};
+
+/** What every turn reads besides the agent's own playbook: where they called from, their connectors, a screenshot */
+export async function turnExtras(input: TurnInput, text: string) {
+  const [where, connectors, frame] = await Promise.all([
+    contextBlock(input.db, input.context).catch(() => ""),
+    callConnectors({ me: input.me, admin: input.admin, callId: input.call.id, text, turnStart: input.startedAt ?? Date.now() }).catch((e) => {
+      console.error("[agent call] connectors", e instanceof Error ? e.message : e);
+      return noConnectors();
+    }),
+    input.frame ? loadFrame(input.admin, input.me, input.call.id, input.frame).catch(() => null) : null,
+  ]);
+  return { where, connectors, frame, look: lookTool(input.emit), hint: lookHint(text, Boolean(frame)) };
+}
+
+export async function runCallTurn(input: TurnInput) {
   const { me, admin, call, signal, emit } = input;
   const text = input.text.trim().slice(0, 4000);
   if (!text) return emit({ t: "done" });
   if (!aiEnabled()) return emit({ t: "error", message: "AI isn't connected yet." });
   const firstName = firstNameOf(me.fullName);
   const trains = canTrainAgent(me, call.role_key);
-  const [book, convo] = await Promise.all([loadRolePlaybook(admin, call.role_key), callContext(admin, call, firstName)]);
+  const [book, convo, extra] = await Promise.all([loadRolePlaybook(admin, call.role_key), callContext(admin, call, firstName), turnExtras(input, text)]);
   if (!book) return emit({ t: "error", message: "Unknown agent." });
   const tools = await agentTools({ me, db: input.db, admin, roleKey: call.role_key, label: book.role.label, callId: call.id });
   const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
   const out = await streamAnswer({
     system: `${voiceSystem(book.role.label, call.role_key, firstName, trains)}\n\n${book.text}`,
-    tools,
-    content: `Today is ${today} (New York).\n\n${convo}\n\n<${firstName}_says>\n${text}\n</${firstName}_says>`,
+    tools: [...tools, extra.look, ...extra.connectors.tools],
+    content: withFrame([`Today is ${today} (New York).`, extra.where, convo, extra.hint, `<${firstName}_says>\n${text}\n</${firstName}_says>`].filter(Boolean).join("\n\n"), extra.frame),
     signal,
     emit,
+    connectors: extra.connectors,
   });
+  await extra.connectors.settle().catch(() => undefined);
   const { reply, error, used, model, effort, started } = out;
   void admin
     .from("ai_runs")
@@ -208,13 +242,21 @@ export async function runCallTurn(input: { me: Staff; admin: SupabaseClient; db:
 /** What one spoken answer came to: the words (without the end marker), whether it hung up, and its cost */
 export type Answer = { reply: string; ended: boolean; error: string | null; used: { input_tokens: number; output_tokens: number; cache_write_tokens: number; cache_read_tokens: number }; model: "sonnet"; effort: "low"; started: number };
 
+/** The person's connected services for one answer (see call-connectors.ts) */
+type Conn = Pick<CallConnectors, "servers" | "toolsets" | "betas" | "system" | "drop" | "nameOf">;
+
+type Reply = { content: unknown[]; stop_reason: string | null; usage: Anthropic.Usage };
+
 /**
  * One spoken answer: streamed from Claude as it's written (each piece sent on as a text event), looking things up with
  * the tools on the way (a short spoken line covers the wait), the end marker held back (a goodbye that hangs up sets
- * `ended`). Used by every agent's call turn and by the assistant and the specialist it calls in.
+ * `ended`). Used by every agent's call turn and by the assistant and the specialist it calls in. `content` can carry a
+ * screenshot (image blocks first). With the person's connectors, the request goes through the MCP connector (a beta):
+ * their services' tools run on Anthropic's side within the answer.
  */
-export async function streamAnswer(input: { system: string; tools: readonly LoopTool[]; content: string; signal: AbortSignal; emit: (e: CallEvent) => void; maxRounds?: number }): Promise<Answer> {
+export async function streamAnswer(input: { system: string; tools: readonly LoopTool[]; content: string | unknown[]; signal: AbortSignal; emit: (e: CallEvent) => void; maxRounds?: number; connectors?: Conn | null }): Promise<Answer> {
   const { signal, emit, tools } = input;
+  const conn = input.connectors ?? null;
   const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
   if (defs.length) (defs[defs.length - 1] as Anthropic.Tool).cache_control = { type: "ephemeral" };
   const model = "sonnet" as const;
@@ -232,6 +274,53 @@ export async function streamAnswer(input: { system: string; tools: readonly Loop
     emit({ t: "text", d });
   };
   let roundText = "";
+  // The agent's whole playbook is the same every turn: cached, so later turns read it at a tenth of the price. What
+  // their connectors are comes after it, uncached (it changes when they connect something)
+  const system = (): Anthropic.TextBlockParam[] => [cachedBlock(input.system) as Anthropic.TextBlockParam, ...(conn?.system ? [{ type: "text" as const, text: conn.system }] : [])];
+
+  /** One request to the model, streamed; with connectors, through the MCP connector */
+  const ask = async (msgs: LoopMessage[], last: boolean): Promise<Reply> => {
+    const withConn = Boolean(conn?.servers.length);
+    const base = {
+      model: MODEL_IDS[model],
+      // Spoken answers are short: room for a little thinking and a few sentences, never a lecture
+      max_tokens: 2500,
+      system: system(),
+      thinking: { type: "adaptive" as const },
+      output_config: { effort },
+      messages: msgs as Anthropic.MessageParam[],
+    };
+    if (!withConn || !conn) {
+      const stream = anthropicClient().messages.stream({ ...base, ...(last || !defs.length ? {} : { tools: defs }) } as Anthropic.MessageCreateParamsStreaming, { signal });
+      stream.on("text", (d) => {
+        roundText += d;
+        say(marker.feed(d));
+      });
+      return (await stream.finalMessage()) as unknown as Reply;
+    }
+    const stream = anthropicClient().beta.messages.stream(
+      {
+        ...base,
+        tools: [...(last ? [] : defs), ...conn.toolsets],
+        mcp_servers: conn.servers,
+        betas: conn.betas,
+      } as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming,
+      { signal },
+    );
+    stream.on("text", (d) => {
+      roundText += d;
+      say(marker.feed(d));
+    });
+    // Their service is being read (on Anthropic's side): a line so the call doesn't go quiet
+    stream.on("contentBlock", (b) => {
+      const block = b as unknown as { type: string; server_name?: string };
+      if (block.type !== "mcp_tool_use" || roundText.trim() || fillers > 0) return;
+      say(`One sec, checking your ${conn.nameOf(String(block.server_name ?? ""))}.\n`);
+      fillers++;
+    });
+    return (await stream.finalMessage()) as unknown as Reply;
+  };
+
   try {
     await runToolLoop({
       tools,
@@ -240,33 +329,35 @@ export async function streamAnswer(input: { system: string; tools: readonly Loop
       signal,
       step: async (msgs, last) => {
         roundText = "";
-        const stream = anthropicClient().messages.stream(
-          {
-            model: MODEL_IDS[model],
-            // Spoken answers are short: room for a little thinking and a few sentences, never a lecture
-            max_tokens: 2500,
-            // The agent's whole playbook is the same every turn: cached, so later turns read it at a tenth of the price
-            system: [cachedBlock(input.system)] as Anthropic.TextBlockParam[],
-            thinking: { type: "adaptive" },
-            output_config: { effort },
-            ...(last || !defs.length ? {} : { tools: defs }),
-            messages: msgs as Anthropic.MessageParam[],
-          },
-          { signal },
-        );
-        stream.on("text", (d) => {
-          roundText += d;
-          say(marker.feed(d));
-        });
-        const res = await stream.finalMessage();
-        say(marker.flush());
-        const u = usageFor(res.usage);
-        used.input_tokens += u.input_tokens;
-        used.output_tokens += u.output_tokens;
-        used.cache_write_tokens += u.cache_write_tokens;
-        used.cache_read_tokens += u.cache_read_tokens;
+        let res: Reply | null = null;
+        // A connector the API couldn't reach or sign in to: the round again without it (once). A long run of connector
+        // calls pauses (pause_turn): sent back as it is to carry on, a few times at most
+        let retried = false;
+        for (let pause = 0; ; ) {
+          try {
+            res = await ask(msgs, last);
+          } catch (e) {
+            if (!signal.aborted && !retried && conn?.servers.length && !roundText && conn.drop(e)) {
+              retried = true;
+              continue;
+            }
+            throw e;
+          }
+          say(marker.flush());
+          const u = usageFor(res.usage);
+          used.input_tokens += u.input_tokens;
+          used.output_tokens += u.output_tokens;
+          used.cache_write_tokens += u.cache_write_tokens;
+          used.cache_read_tokens += u.cache_read_tokens;
+          if (res.stop_reason === "pause_turn" && pause < 3 && !signal.aborted && !marker.ended) {
+            pause++;
+            msgs.push({ role: "assistant", content: res.content });
+            continue;
+          }
+          break;
+        }
         if (res.stop_reason === "refusal") error = "refusal";
-        return { content: res.content as unknown as { type: string }[], stop: marker.ended ? "end_turn" : res.stop_reason };
+        return { content: res.content as { type: string }[], stop: marker.ended ? "end_turn" : res.stop_reason };
       },
       // While lookups run: the line the agent said, or one said for it, so the call never goes quiet. A line break
       // ends it, so the answer that follows is spoken as its own sentence

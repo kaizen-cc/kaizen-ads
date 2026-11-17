@@ -1,4 +1,5 @@
 import { downsample, createTurnDetector, rms, splitSpeakable, toPcm16, type CallCard, type CallEvent, type LearnedItem, type UploadAsk } from "./core";
+import type { CallContext } from "./call-context";
 import { AUDIO_PART_SECONDS } from "@/lib/assistant/core";
 import { renewSttToken } from "@/app/(team)/settings/call-actions";
 
@@ -230,6 +231,8 @@ export type Hooks = {
   onCard?: (c: CallCard) => void;
   /** The assistant asked for files */
   onUpload?: (ask: UploadAsk) => void;
+  /** The agent wants to see the screen ("take a look") */
+  onLook?: () => void;
   /** The agent said goodbye and its last words have played: hang up */
   onEnd?: () => void;
   /** A finished part of the call's recording (both sides), to upload */
@@ -300,6 +303,8 @@ export class Call {
   level = 0;
   /** Set once the server has opened the call */
   callId = "";
+  /** Where they called from (a client, a report, a Kaizen AI thread): sent with every turn */
+  context: CallContext | null = null;
 
   constructor(private hooks: Hooks) {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -493,14 +498,14 @@ export class Call {
   }
 
   /** Sends what they said; the answer is spoken sentence by sentence as it's written */
-  private async ask(said: string) {
+  private async ask(said: string, frame: string | null = null) {
     const turn = new AbortController();
     this.turn = turn;
     this.voice = new AbortController();
     this.streamDone = false;
     let buffer = "";
     try {
-      const res = await fetch("/api/agent-call/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text: said }), signal: turn.signal });
+      const res = await fetch("/api/agent-call/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text: said, ...(this.context ? { context: this.context } : {}), ...(frame ? { frame } : {}) }), signal: turn.signal });
       if (res.status === 410) return this.hooks.onError("The call has ended.");
       if (!res.ok || !res.body) throw new Error(String(res.status));
       const reader = res.body.getReader();
@@ -531,6 +536,7 @@ export class Call {
           else if (e.t === "navigate") this.hooks.onNavigate?.(e.href);
           else if (e.t === "card") this.hooks.onCard?.(e.card);
           else if (e.t === "upload") this.hooks.onUpload?.(e.ask);
+          else if (e.t === "look") this.hooks.onLook?.();
           else if (e.t === "end") this.ending = true;
         }
       }
@@ -562,7 +568,7 @@ export class Call {
    * A turn sent without speaking (the files they just uploaded): shown as a note on the call and answered like
    * anything they said. Waits for the agent to finish talking first.
    */
-  inject(text: string, shown: string) {
+  inject(text: string, shown: string, frame: string | null = null) {
     if (this.closed) return;
     const go = () => {
       if (this.closed) return;
@@ -570,7 +576,7 @@ export class Call {
       this.ears?.reset();
       this.hooks.onLine({ id: ++this.lineId, who: "you", text: shown });
       this.setPhase("thinking");
-      void this.ask(text);
+      void this.ask(text, frame);
     };
     go();
   }

@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
+import { AI_BUCKET } from "@/lib/kaizen-ai/files";
 import { audioDeleteAfter, audioDue, parseSafetyReview, SAFETY_SCHEMA, timedTranscript } from "@/lib/assistant/core";
 
 // The safety review every call gets once it ends (people are told before their first call that calls are recorded
@@ -8,7 +9,8 @@ import { audioDeleteAfter, audioDue, parseSafetyReview, SAFETY_SCHEMA, timedTran
 // harassment, discrimination, taking client or company confidential data out, fraud or deceiving clients, or the
 // person in real distress. A flagged call is a private notification to the executives (not the caller themselves),
 // with the transcript, the audio and the moments to skip to. The caller is not told about the flag. Unflagged audio
-// is deleted right after the review; flagged audio is kept about 90 days, then deleted by the cleanup.
+// is deleted right after the review; flagged audio is kept about 90 days, then deleted by the cleanup. Screenshots of
+// the person's screen taken on the call ("take a look") follow the audio: deleted with it, kept with it when flagged.
 
 export const AUDIO_BUCKET = "call-audio";
 
@@ -27,8 +29,9 @@ Do NOT flag: ordinary frustration, swearing, venting about a busy day or a hard 
 
 /** Reviews one ended call (never throws). Returns whether it was flagged, or null when it couldn't run. */
 export async function reviewCallSafety(admin: SupabaseClient, callId: string): Promise<boolean | null> {
-  const { data: call } = await admin.from("ai_role_calls").select("id, profile_id, role_key, started_at, ended_at, safety_reviewed_at, audio_parts").eq("id", callId).maybeSingle();
+  const { data: call } = await admin.from("ai_role_calls").select("id, profile_id, role_key, started_at, ended_at, safety_reviewed_at, audio_parts, uploads").eq("id", callId).maybeSingle();
   if (!call || !call.ended_at || call.safety_reviewed_at) return null;
+  const shots = screenshotsOf(call.uploads).length;
   const { data: rows } = await admin.from("ai_role_chats").select("role, role_key, content, created_at").eq("call_id", callId).order("created_at").limit(400);
   const { data: who } = await admin.from("profiles").select("full_name").eq("id", call.profile_id as string).maybeSingle();
   const name = String(who?.full_name ?? "The caller").split(/\s+/)[0];
@@ -67,7 +70,7 @@ export async function reviewCallSafety(admin: SupabaseClient, callId: string): P
       moments: result.moments,
       distress: result.distress,
       reviewed_at: now.toISOString(),
-      audio_delete_after: Number(call.audio_parts ?? 0) > 0 ? deleteAfter.toISOString() : null,
+      audio_delete_after: Number(call.audio_parts ?? 0) > 0 || shots > 0 ? deleteAfter.toISOString() : null,
     },
     { onConflict: "call_id" },
   );
@@ -98,11 +101,26 @@ export async function reviewCallSafety(admin: SupabaseClient, callId: string): P
   return result.flagged;
 }
 
-/** Deletes every recorded part of a call's audio */
+type Upload = { path?: string; purpose?: string };
+/** The screenshots kept on a call (looks at the person's screen) */
+const screenshotsOf = (uploads: unknown): Upload[] => (Array.isArray(uploads) ? (uploads as Upload[]).filter((u) => u?.purpose === "screen" && typeof u.path === "string") : []);
+
+/** Deletes a call's screenshots (the files, and their place on the call) */
+export async function deleteCallScreenshots(admin: SupabaseClient, callId: string): Promise<void> {
+  const { data } = await admin.from("ai_role_calls").select("uploads").eq("id", callId).maybeSingle();
+  const all = (Array.isArray(data?.uploads) ? data.uploads : []) as Upload[];
+  const shots = screenshotsOf(all);
+  if (!shots.length) return;
+  await admin.storage.from(AI_BUCKET).remove(shots.map((u) => u.path as string));
+  await admin.from("ai_role_calls").update({ uploads: all.filter((u) => u?.purpose !== "screen") }).eq("id", callId);
+}
+
+/** Deletes every recorded part of a call's audio, and its screenshots */
 export async function deleteCallAudio(admin: SupabaseClient, callId: string): Promise<void> {
   const { data: files } = await admin.storage.from(AUDIO_BUCKET).list(callId, { limit: 100 });
   const paths = (files ?? []).map((f) => `${callId}/${f.name}`);
   if (paths.length) await admin.storage.from(AUDIO_BUCKET).remove(paths);
+  await deleteCallScreenshots(admin, callId).catch((e) => console.error("[call safety] screenshots", e instanceof Error ? e.message : e));
   await admin.from("call_safety_reviews").update({ audio_deleted_at: new Date().toISOString() }).eq("call_id", callId);
 }
 
@@ -146,6 +164,7 @@ export async function sweepCallSafety(admin: SupabaseClient): Promise<{ reviewed
     const { data: files } = await admin.storage.from(AUDIO_BUCKET).list(s.id as string, { limit: 100 });
     const paths = (files ?? []).map((f) => `${s.id}/${f.name}`);
     if (paths.length) await admin.storage.from(AUDIO_BUCKET).remove(paths);
+    await deleteCallScreenshots(admin, s.id as string).catch(() => undefined);
     await admin.from("ai_role_calls").update({ audio_parts: 0 }).eq("id", s.id as string);
     deleted++;
   }

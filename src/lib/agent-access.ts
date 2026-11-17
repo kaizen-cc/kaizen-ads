@@ -20,6 +20,8 @@ export const ROLE_SKILLS: Record<string, readonly string[]> = {
   strategist: ["suggest", "strategist", "gtm", "brandbible", "lab"],
   market_analyst: ["market", "winners", "industry", "verticals"],
   account_manager: ["briefing", "calls"],
+  // Organic social: a core only for now (its skills are written once the social team's playbook is), on calls and in its chat
+  social_strategist: [],
 };
 
 /** The role agents that ship offline (parked): no AI path calls their skills until an exec brings the role online */
@@ -37,6 +39,7 @@ export const HEAD_LINES: Partial<Record<TeamRole, readonly string[]>> = {
   head_of_google: ["google_buyer"],
   head_of_creative: ["creative_director"],
   head_of_email: ["email_strategist", "email_creative", "email_builder"],
+  head_of_social: ["social_strategist"],
 };
 
 /** The role agent a skill belongs to (a role key is its own); null for a skill outside the six or shared knowledge */

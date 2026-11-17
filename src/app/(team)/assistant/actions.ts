@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { AUDIO_BUCKET } from "@/lib/agent-call/safety";
-import { CALL_LIMIT_SECONDS } from "@/lib/agent-call/core";
+import { CALL_LIMIT_SECONDS, audioPartPath } from "@/lib/agent-call/core";
+import { screenFileName } from "@/lib/agent-call/call-context";
 import { FACT_TOPICS, STYLE_TOPICS } from "@/lib/assistant/core";
 import type { CallNotes } from "@/lib/assistant/notes";
 import { describeUploads, kindOf, type CallUpload } from "@/lib/assistant/uploads";
@@ -45,13 +46,14 @@ export async function assistantCallNotes(callId: string): Promise<{ ok: true; no
  * Where the next part of the call's audio goes (both sides, recorded in parts so a dropped call keeps what came
  * before): a signed upload to the private call-audio bucket. The person was told before their first call.
  */
-export async function audioUploadSlot(callId: string, index: number, startSeconds: number): Promise<{ ok: true; path: string; token: string } | Fail> {
+export async function audioUploadSlot(callId: string, index: number, startSeconds: number, mime?: string): Promise<{ ok: true; path: string; token: string } | Fail> {
   const got = await myCall(callId, 120);
   if (!got) return { ok: false, error: "This call has ended." };
   // Once the review has run, nothing more is kept
   if ((got.call as { safety_reviewed_at?: string | null }).safety_reviewed_at) return { ok: false, error: "This call has ended." };
   const i = Math.max(0, Math.min(60, Math.floor(index)));
-  const path = `${callId}/${String(i).padStart(3, "0")}-${Math.max(0, Math.floor(startSeconds))}.webm`;
+  // Named by what the browser really recorded (Safari: audio/mp4), so it plays back as what it is
+  const path = audioPartPath(callId, i, startSeconds, typeof mime === "string" ? mime.slice(0, 60) : null);
   const { data, error } = await got.admin.storage.from(AUDIO_BUCKET).createSignedUploadUrl(path, { upsert: true });
   if (error || !data) return { ok: false, error: "Couldn't save the audio." };
   if (Number(got.call.audio_parts ?? 0) < i + 1) await got.admin.from("ai_role_calls").update({ audio_parts: i + 1 }).eq("id", callId);
@@ -85,18 +87,23 @@ export async function callUploadSlots(callId: string, files: { name: string; mim
   return { ok: true, slots };
 }
 
-/** The files are up: they're looked at (so the assistant can say what it got) and kept on the call */
+/**
+ * The files are up: they're looked at (so the assistant can say what it got) and kept on the call. Creatives for a
+ * client with a launch in progress (being asked about, or a plan waiting) are also staged with that launch's media,
+ * where the launch reads its files from. A screenshot (a look on a phone) isn't described: the agent sees it itself.
+ */
 export async function callUploadsDone(
   callId: string,
   files: { path: string; name: string; mime: string; bytes: number; frames?: { path: string; ms: number }[] }[],
-  purpose: "creatives" | "files",
+  purpose: "creatives" | "files" | "screen",
   client: string | null,
-): Promise<{ ok: true; files: { name: string; about: string }[] } | Fail> {
+): Promise<{ ok: true; files: { name: string; about: string; path: string }[]; launch: string | null } | Fail> {
   const got = await myCall(callId, 60);
   if (!got) return { ok: false, error: "This call has ended." };
   const prefix = `${got.me.id}/call-${callId}/`;
   const mine = files.filter((f) => f.path.startsWith(prefix)).slice(0, 20);
   if (!mine.length) return { ok: false, error: "Nothing was uploaded." };
+  const kindOfUpload: CallUpload["purpose"] = purpose === "creatives" ? "creatives" : purpose === "screen" ? "screen" : "files";
   const ups: CallUpload[] = mine.map((f) => ({
     path: f.path,
     name: String(f.name).slice(0, 200),
@@ -104,13 +111,62 @@ export async function callUploadsDone(
     bytes: Math.max(0, Number(f.bytes) || 0),
     kind: kindOf(f.name, f.mime),
     frames: (f.frames ?? []).filter((fr) => fr.path.startsWith(prefix)).slice(0, 3),
-    purpose: purpose === "creatives" ? "creatives" : "files",
+    purpose: kindOfUpload,
     client: client ? String(client).slice(0, 120) : null,
   }));
-  const read = await describeUploads(got.admin, ups);
+  const read = kindOfUpload === "screen" ? ups.map((u) => ({ ...u, about: "a screenshot of their screen" })) : await describeUploads(got.admin, ups);
+  const launch = kindOfUpload === "creatives" && client ? await stageForLaunch(got.admin, got.me.id, client, read).catch(() => null) : null;
   const { data: now } = await got.admin.from("ai_role_calls").select("uploads").eq("id", callId).maybeSingle();
   await got.admin.from("ai_role_calls").update({ uploads: [...((now?.uploads ?? []) as CallUpload[]), ...read].slice(-40) }).eq("id", callId);
-  return { ok: true, files: read.map((f) => ({ name: f.name, about: f.about ?? "" })) };
+  return { ok: true, files: read.map((f) => ({ name: f.name, about: f.about ?? "", path: f.path })), launch };
+}
+
+/**
+ * Creatives uploaded on a call for a client whose launch is in progress: copied into that launch's staging in the
+ * ad-media bucket (launch/<run>/), next to the files the launch stages from Drive, and marked on each upload. The
+ * client is found through the person's own session (only clients they can see). Returns the launch, or null.
+ */
+async function stageForLaunch(admin: ReturnType<typeof createAdminClient>, profileId: string, client: string, ups: CallUpload[]): Promise<string | null> {
+  const db = await createClient();
+  const name = client.replace(/[%_,()]/g, " ").trim();
+  if (!name) return null;
+  const exact = await db.from("clients").select("id").ilike("name", name).limit(1).maybeSingle();
+  const row = exact.data ?? (await db.from("clients").select("id").ilike("name", `%${name}%`).limit(1).maybeSingle()).data;
+  if (!row) return null;
+  const { openRunFor } = await import("@/lib/launch-sheet/runs");
+  const run = await openRunFor(admin, row.id as string, profileId);
+  if (!run) return null;
+  for (const u of ups) {
+    if (u.kind !== "image" && u.kind !== "video") continue;
+    const to = `launch/${run.id}/call-${u.path.split("/").pop() ?? safeName(u.name)}`;
+    const { error } = await admin.storage.from(AI_BUCKET).copy(u.path, to, { destinationBucket: "ad-media" });
+    if (!error) u.staged = { launch: run.id as string, path: to };
+  }
+  return run.id as string;
+}
+
+/** Where a screenshot of the shared screen goes: with the call's uploads, under the person's own folder */
+export async function screenFrameSlot(callId: string): Promise<{ ok: true; path: string; token: string } | Fail> {
+  const got = await myCall(callId, 60);
+  if (!got || got.call.ended_at) return { ok: false, error: "This call has ended." };
+  // Once the safety review has run, nothing more is kept
+  if ((got.call as { safety_reviewed_at?: string | null }).safety_reviewed_at) return { ok: false, error: "This call has ended." };
+  const path = `${got.me.id}/call-${callId}/${screenFileName(new Date())}`;
+  const { data, error } = await got.admin.storage.from(AI_BUCKET).createSignedUploadUrl(path);
+  if (error || !data) return { ok: false, error: "Couldn't take the screenshot." };
+  return { ok: true, path: data.path, token: data.token };
+}
+
+/** The screenshot is up: kept on the call (deleted with the call's audio, or kept with it when the call is flagged) */
+export async function screenFrameSaved(callId: string, path: string, bytes: number): Promise<{ ok: true } | Fail> {
+  const got = await myCall(callId, 60);
+  if (!got) return { ok: false, error: "This call has ended." };
+  if (!path.startsWith(`${got.me.id}/call-${callId}/screen-`)) return { ok: false, error: "That isn't this call's screenshot." };
+  const at = new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
+  const up: CallUpload = { path, name: `Your screen at ${at}`, mime: "image/jpeg", bytes: Math.max(0, Number(bytes) || 0), kind: "image", purpose: "screen", client: null, about: "a screenshot of their screen" };
+  const { data: now } = await got.admin.from("ai_role_calls").select("uploads").eq("id", callId).maybeSingle();
+  await got.admin.from("ai_role_calls").update({ uploads: [...((now?.uploads ?? []) as CallUpload[]), up].slice(-40) }).eq("id", callId);
+  return { ok: true };
 }
 
 // ─── What I know about you ──────────────────────────────────────────────────

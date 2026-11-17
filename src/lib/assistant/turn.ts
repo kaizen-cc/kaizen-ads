@@ -4,9 +4,10 @@ import { canTrainAgent } from "@/lib/agent-access";
 import { aiEnabled } from "@/lib/ai";
 import type { Staff } from "@/lib/auth";
 import { TOOLS_RULE, agentTools } from "@/lib/agent-call/agent-tools";
-import { CONCISE_RULE, DISTRESS_RULE, END_CALL_RULE, firstNameOf, pendingItems, type CallEvent } from "@/lib/agent-call/core";
-import { callContext, readMoment, streamAnswer, voiceSystem, type Answer, type CallRow } from "@/lib/agent-call/server";
+import { CONCISE_RULE, DISTRESS_RULE, END_CALL_RULE, firstNameOf, pendingItems } from "@/lib/agent-call/core";
+import { callContext, readMoment, streamAnswer, turnExtras, voiceSystem, type Answer, type CallRow, type TurnInput } from "@/lib/agent-call/server";
 import { loadRolePlaybook } from "@/lib/role-playbook";
+import { withFrame } from "@/lib/agent-call/call-extras";
 import { ASSISTANT_KEY, ASSISTANT_LABEL, memoryForPrompt, routeTurn, SPECIALISTS, suggestSpecialist } from "./core";
 import { myContext } from "./context";
 import { loadMemory } from "./memory";
@@ -56,7 +57,7 @@ function uploadsBlock(call: CallRow): string {
 const today = () => new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
 const todayIso = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
-type Input = { me: Staff; admin: SupabaseClient; db: SupabaseClient; call: CallRow; text: string; signal: AbortSignal; emit: (e: CallEvent) => void };
+type Input = TurnInput;
 
 function logRun(admin: SupabaseClient, me: Staff, roleKey: string, out: Answer) {
   void admin
@@ -86,7 +87,7 @@ export async function runAssistantTurn(input: Input) {
   }
 
   const firstName = firstNameOf(me.fullName);
-  const [ctxNow, memory, convo] = await Promise.all([myContext(input.db, admin, me), loadMemory(admin, me.id), callContext(admin, call, firstName)]);
+  const [ctxNow, memory, convo, extra] = await Promise.all([myContext(input.db, admin, me), loadMemory(admin, me.id), callContext(admin, call, firstName), turnExtras(input, text)]);
   const actx: AssistantCtx = { me, db: input.db, admin, callId: call.id, said: text, emit, state: { guest: call.guest_role ?? null, guestQuestion: null, threadId: call.thread_id ?? null } };
   const tools = await assistantTools(actx);
   const hint = !call.guest_role ? suggestSpecialist(text) : null;
@@ -94,22 +95,29 @@ export async function runAssistantTurn(input: Input) {
   emit({ t: "speaker", role: ASSISTANT_KEY, label: ASSISTANT_LABEL, icon: "spark" });
   const out = await streamAnswer({
     system: assistantSystem(firstName),
-    tools,
-    content: [
+    tools: [...tools, extra.look, ...extra.connectors.tools],
+    connectors: extra.connectors,
+    content: withFrame(
+      [
       `Today is ${today()} (New York).`,
       ctxNow.text,
+      extra.where,
       mem ? `<what_you_know_about_${firstName} private="true">\n${mem}\n</what_you_know_about_${firstName}>` : "",
       uploadsBlock(call),
       call.guest_role ? `<on_the_line>The ${SPECIALISTS.find((s) => s.key === call.guest_role)?.label ?? call.guest_role} is on the call with you.</on_the_line>` : "",
       hint ? `<hint>This sounds like the ${hint.label}'s area (${hint.about}). If it needs real depth, offer to call it in; if you can answer from the data, just answer.</hint>` : "",
       convo,
+      extra.hint,
       `<${firstName}_says>\n${text}\n</${firstName}_says>`,
     ]
       .filter(Boolean)
       .join("\n\n"),
+      extra.frame,
+    ),
     signal,
     emit,
   });
+  await extra.connectors.settle().catch(() => undefined);
   logRun(admin, me, ASSISTANT_KEY, out);
   const spoken = spokenOf(out.reply, signal.aborted);
   await admin.from("ai_role_chats").insert([
@@ -131,18 +139,23 @@ async function guestTurn(input: Input, roleKey: string, text: string, justJoined
   const { me, admin, call, emit, signal } = input;
   const firstName = firstNameOf(me.fullName);
   const trains = canTrainAgent(me, roleKey);
-  const [book, convo] = await Promise.all([loadRolePlaybook(admin, roleKey), callContext(admin, { ...call, role_key: roleKey }, firstName)]);
+  const [book, convo, extra] = await Promise.all([loadRolePlaybook(admin, roleKey), callContext(admin, { ...call, role_key: roleKey }, firstName), turnExtras(input, text)]);
   if (!book) return emit({ t: "error", message: "That agent isn't available." });
   const tools = await agentTools({ me, db: input.db, admin, roleKey, label: book.role.label, callId: call.id });
   const { data: role } = await admin.from("ai_roles").select("icon").eq("key", roleKey).maybeSingle();
   emit({ t: "speaker", role: roleKey, label: book.role.label, icon: (role?.icon as string) ?? "spark" });
   const out = await streamAnswer({
     system: `${voiceSystem(book.role.label, roleKey, firstName, trains, conferenceNote(firstName))}\n\n${book.text}`,
-    tools,
-    content: `Today is ${today()} (New York).\n\n${convo}\n\n${justJoined ? `<just_joined>You've just been called in. Say hi to ${firstName} in a few words and answer.</just_joined>\n\n` : ""}<${firstName}_says>\n${text}\n</${firstName}_says>`,
+    tools: [...tools, extra.look, ...extra.connectors.tools],
+    connectors: extra.connectors,
+    content: withFrame(
+      [`Today is ${today()} (New York).`, extra.where, convo, extra.hint, justJoined ? `<just_joined>You've just been called in. Say hi to ${firstName} in a few words and answer.</just_joined>` : "", `<${firstName}_says>\n${text}\n</${firstName}_says>`].filter(Boolean).join("\n\n"),
+      extra.frame,
+    ),
     signal,
     emit,
   });
+  await extra.connectors.settle().catch(() => undefined);
   logRun(admin, me, roleKey, out);
   const spoken = spokenOf(out.reply, signal.aborted);
   await admin.from("ai_role_chats").insert([

@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { ackCallNotice, endCall, startCall } from "@/app/(team)/settings/call-actions";
-import { assistantCallNotes, audioUploadSlot, callUploadSlots, callUploadsDone } from "@/app/(team)/assistant/actions";
+import { assistantCallNotes, audioUploadSlot, callUploadSlots, callUploadsDone, screenFrameSaved, screenFrameSlot } from "@/app/(team)/assistant/actions";
+import { lookPlan } from "@/lib/agent-call/call-context";
+import { canShareScreen, grabFrame, startScreenShare, stopScreenShare } from "@/lib/agent-call/screen-share";
 import { CALL_LIMIT_SECONDS, type CallCard, type LearnedItem, type UploadAsk } from "@/lib/agent-call/core";
 import { Call, chime, type Line, type Phase, type Speaker } from "@/lib/agent-call/engine";
 import { ASSISTANT_KEY, ASSISTANT_LABEL } from "@/lib/assistant/core";
@@ -21,9 +23,13 @@ import { FullScreenCall, FullScreenSummary, Huddle, HuddleSummary, SwitchAsk, ty
 // computers as the huddle (a small panel bottom right). Only one call at a time: starting another asks to leave the
 // current one. The assistant's calls add a specialist on the line, link cards, an upload panel and screens it opens.
 // Before anyone's first call, the notice that calls are recorded and may be reviewed is shown and acknowledged.
+// A call started from a chat in the app carries where it came from (the client, the report, the Kaizen AI thread).
+// "Take a look": when the agent wants to see the screen, a computer shares it (the browser's own picker the first
+// time, then a still of it on each look, uploaded with the call's files); a phone gets the upload panel for a
+// screenshot. Sharing stops on hang-up.
 
 type Ctx = {
-  /** Start a call with an agent (call it from the click itself: browsers only play sound after a tap) */
+  /** Start a call with an agent (call it from the click itself: browsers only play sound after a tap). `agent.context`: where it's started from */
   start: (agent: AgentRef) => void;
   /** Call my assistant (from the side menu) */
   startAssistant: () => void;
@@ -90,6 +96,19 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
   const [uploading, setUploading] = useState<string | null>(null);
   const [notice, setNotice] = useState<AgentRef | null>(null);
   const [notes, setNotes] = useState<CallNotes | null | "none">(null);
+  const [sharing, setSharing] = useState(false);
+  const [shareAsk, setShareAsk] = useState(false);
+  const [looking, setLooking] = useState(false);
+  const shareStream = useRef<MediaStream | null>(null);
+  /** The look that's waiting for the screen to be shared */
+  const lookWaiting = useRef(false);
+  /** The latest look handler, for the call's hooks (made once, when the call is dialled) */
+  const lookRef = useRef<() => void>(() => undefined);
+  const canShare = useSyncExternalStore(
+    () => () => undefined,
+    () => canShareScreen(),
+    () => false,
+  );
   const call = useRef<Call | null>(null);
   const callId = useRef<string | null>(null);
   const startedRef = useRef<number | null>(null);
@@ -115,10 +134,21 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
     setNotes("none");
   }, []);
 
+  /** Stops sharing the screen (the button, the browser's own Stop, or the call ending) */
+  const stopShare = useCallback(() => {
+    stopScreenShare(shareStream.current);
+    shareStream.current = null;
+    lookWaiting.current = false;
+    setSharing(false);
+    setShareAsk(false);
+    setLooking(false);
+  }, []);
+
   /** Ends the call. `quiet` skips the wrap-up (leaving one call to start another) */
   const hangUp = useCallback(
     async (quiet = false) => {
       const id = callId.current;
+      stopShare();
       const spent = startedRef.current ? (Date.now() - startedRef.current) / 1000 : 0;
       const wasAssistant = agent?.roleKey === ASSISTANT_KEY;
       call.current?.close();
@@ -148,7 +178,7 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
       if (wasAssistant) void fetchNotes(id);
       router.refresh();
     },
-    [router, agent, fetchNotes],
+    [router, agent, fetchNotes, stopShare],
   );
   const hangUpRef = useRef(hangUp);
   useEffect(() => {
@@ -214,7 +244,7 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
   /** One recorded part of the call, straight to private storage */
   const uploadAudio = useCallback(async (id: string, part: { blob: Blob; index: number; startSeconds: number; mime: string }) => {
     try {
-      const slot = await audioUploadSlot(id, part.index, part.startSeconds);
+      const slot = await audioUploadSlot(id, part.index, part.startSeconds, part.mime);
       if (!slot.ok) return;
       await createClient().storage.from("call-audio").uploadToSignedUrl(slot.path, slot.token, part.blob, { contentType: part.mime.split(";")[0] });
     } catch {
@@ -250,6 +280,7 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
       setCards([]);
       setUploadAsk(null);
       setNotes(null);
+      stopShare();
       setStage("call");
       if (!navigator.mediaDevices?.getUserMedia) {
         setError("This browser can't use the microphone here.");
@@ -271,12 +302,14 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
           setUploadAsk(ask);
           setMinimized(false);
         },
+        onLook: () => lookRef.current(),
         onEnd: () => void hangUpRef.current(),
         onAudioPart: (part) => {
           if (id) void uploadAudio(id, part);
         },
       });
       c.prime();
+      c.context = a.context ?? null;
       call.current = c;
       void (async () => {
         await before;
@@ -318,14 +351,17 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
         }
       })();
     },
-    [openHref, uploadAudio],
+    [openHref, uploadAudio, stopShare],
   );
 
   const start = useCallback(
     (a: AgentRef) => {
       if (stageRef.current === "call") {
-        // One call at a time: on the same agent it just opens the call again
-        if (agent?.roleKey === a.roleKey) return setMinimized(false);
+        // One call at a time: on the same agent it just opens the call again (now about where it was pressed)
+        if (agent?.roleKey === a.roleKey) {
+          if (a.context && call.current) call.current.context = a.context;
+          return setMinimized(false);
+        }
         return setSwitchTo(a);
       }
       dial(a);
@@ -350,6 +386,71 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
     if (!a) return;
     dial(a, ackCallNotice());
   };
+
+  /** A still of the shared screen: up with the call's files, then sent to the agent as a turn with the picture */
+  const sendFrame = useCallback(async () => {
+    const id = callId.current;
+    const stream = shareStream.current;
+    if (!id || !stream) return;
+    setLooking(true);
+    try {
+      const blob = await grabFrame(stream);
+      if (!blob) {
+        stopShare();
+        setError("Sharing stopped, so I couldn't take a look.");
+        return;
+      }
+      const slot = await screenFrameSlot(id);
+      if (!slot.ok) throw new Error(slot.error);
+      const { error } = await createClient().storage.from("ai-files").uploadToSignedUrl(slot.path, slot.token, blob, { contentType: "image/jpeg" });
+      if (error) throw new Error("The screenshot didn't upload.");
+      await screenFrameSaved(id, slot.path, blob.size);
+      call.current?.inject("(Here's my screen right now. Take a look at what I asked about.)", "Shared my screen", slot.path);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't take a look.");
+    } finally {
+      setLooking(false);
+    }
+  }, [stopShare]);
+
+  /** Share the screen: the browser's own picker (from the tap). A look that was waiting for it goes ahead */
+  const share = useCallback(async () => {
+    setShareAsk(false);
+    if (shareStream.current) return;
+    try {
+      const stream = await startScreenShare();
+      shareStream.current = stream;
+      // The browser's own "Stop sharing" ends it too
+      stream.getVideoTracks()[0]?.addEventListener("ended", () => {
+        if (shareStream.current === stream) stopShare();
+      });
+      setSharing(true);
+      if (lookWaiting.current) {
+        lookWaiting.current = false;
+        void sendFrame();
+      }
+    } catch {
+      // The picker was closed: a look that waited on it is told, so the agent doesn't wait on a picture
+      if (lookWaiting.current) call.current?.inject("(I didn't share my screen.)", "Didn't share the screen");
+      lookWaiting.current = false;
+    }
+  }, [sendFrame, stopShare]);
+
+  /** The agent wants to see the screen: a still of what's shared, the ask to share, or (phones) the upload panel */
+  const look = useCallback(() => {
+    const plan = lookPlan({ desktop: desktopRef.current, canShare: canShareScreen(), sharing: Boolean(shareStream.current) });
+    setMinimized(false);
+    if (plan === "grab") return void sendFrame();
+    if (plan === "ask_share") {
+      lookWaiting.current = true;
+      setShareAsk(true);
+      return;
+    }
+    setUploadAsk({ purpose: "screen", client: null, note: "Take a screenshot of what you want me to see, then upload it here." });
+  }, [sendFrame]);
+  useEffect(() => {
+    lookRef.current = look;
+  }, [look]);
 
   /** Files the assistant asked for: up to storage (videos with a few frames), read, then the assistant is told */
   const uploadFiles = useCallback(async (files: File[]) => {
@@ -390,8 +491,15 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
       );
       if (!done.ok) throw new Error(done.error);
       setUploadAsk(null);
+      // A screenshot for a look (phones): the agent sees the picture with the turn
+      if (ask?.purpose === "screen") {
+        const shot = done.files.find((f, i) => files[i]?.type.startsWith("image/")) ?? done.files[0];
+        call.current?.inject("(Here's a screenshot of my screen. Take a look at what I asked about.)", "Uploaded a screenshot", shot?.path ?? null);
+        return;
+      }
       const names = done.files.map((f) => f.name).join(", ");
-      call.current?.inject(`(I just uploaded ${done.files.length === 1 ? "a file" : `${done.files.length} files`} on the call: ${names}. Confirm you got them and say briefly what they are.)`, `Uploaded ${done.files.length === 1 ? names : `${done.files.length} files`}`);
+      const staged = done.launch ? " They're also staged with the launch in progress." : "";
+      call.current?.inject(`(I just uploaded ${done.files.length === 1 ? "a file" : `${done.files.length} files`} on the call: ${names}. Confirm you got them and say briefly what they are.${staged})`, `Uploaded ${done.files.length === 1 ? names : `${done.files.length} files`}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "The upload didn't go through.");
     } finally {
@@ -425,6 +533,18 @@ export function AgentCallProvider({ children }: { children: React.ReactNode }) {
         onUpload: (files) => void uploadFiles(files),
         onCloseUpload: () => setUploadAsk(null),
         onMinimize: () => setMinimized(true),
+        screen: {
+          can: canShare && desktop,
+          sharing,
+          asked: shareAsk,
+          looking,
+          onShare: () => void share(),
+          onStop: stopShare,
+          onCancel: () => {
+            lookWaiting.current = false;
+            setShareAsk(false);
+          },
+        },
       }
     : null;
   const sum: SummaryView | null = agent

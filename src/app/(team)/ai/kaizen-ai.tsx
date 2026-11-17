@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/client";
 import { captureFrames, extractAudio } from "@/lib/uploads/video-prep";
 import { pushParams, replaceParams, closeParams, useParam } from "@/lib/url-state";
 import { QUICK_ACTIONS, type QuickAction } from "@/lib/kaizen-ai/agents";
+import { CallButton } from "@/components/call-button";
+import { roleForThread } from "@/lib/agent-call/call-context";
 import { AGENT_LABEL, CHAT_AGENTS, kindOf, type AiModel, type Attachment, type AttachmentKind, type Card, type ChatAgent, type ChatEvent, type ChatMessage, type Thread, type ToolRun } from "@/lib/kaizen-ai/types";
 import { lineOfTeam, type TeamRole } from "@/lib/roles";
 import { deleteImportedThread, deleteTemplate, listTemplates, listThreads, loadThread, saveTemplate, shareThread, teammates, updateThread, uploadSlots, usedTemplate, type Template, skipClaudeImport } from "./actions";
@@ -111,6 +113,9 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
   const readOnly = Boolean(thread && thread.profile_id !== me.id);
   const model: AiModel = thread?.model ?? draft.model;
   const agentPick: ChatAgent | null = thread ? ((thread.agent_key as ChatAgent | null) ?? null) : draft.agent;
+  // The call button reaches this chat's agent: the one picked, else the one that last answered, else the assistant
+  const lastAgentKey = [...messages].reverse().find((m) => m.role === "assistant" && m.agent_key)?.agent_key ?? null;
+  const callRole = roleForThread(agentPick ?? lastAgentKey);
   const client: ClientOpt | null = thread?.client_id ? (clients.find((c) => c.id === thread.client_id) ?? (thread.clients ? { id: thread.client_id, name: thread.clients.name, slug: thread.clients.slug } : null)) : draft.client;
   // "Report this" / "Ask for this" under a message that falls short: the whole chat as the browser has it
   const report: ReportCtx = {
@@ -511,6 +516,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
               if (flash) replaceParams({ connected: null, connect_error: null });
             }}
             connectors={<ConnectorsMenu key={`${thread?.id ?? "new"}-${messages.length}`} threadId={thread?.id ?? null} draft={draftConnectors} onDraft={setDraftConnectors} />}
+            call={<CallButton roleKey={callRole} variant="icon" context={{ screen: thread ? `Kaizen AI, the chat "${thread.title}"` : "Kaizen AI", threadId: thread?.id ?? null, clientId: client?.id ?? null, client: client?.name ?? null }} />}
             onSend={() => void run("send", text)}
             onStop={stop}
             agent={agentPick}
@@ -1248,6 +1254,7 @@ function Composer({
   quickIds,
   placeholder,
   connectors,
+  call,
 }: {
   placeholder?: string;
   input: React.RefObject<HTMLTextAreaElement | null>;
@@ -1273,6 +1280,8 @@ function Composer({
   quickIds: string[];
   /** The connections menu (connectors switched on in this chat) */
   connectors?: React.ReactNode;
+  /** Call the agent of this chat (or the assistant), carrying on from it */
+  call?: React.ReactNode;
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [agentMenu, setAgentMenu] = useState(false);
@@ -1397,6 +1406,7 @@ function Composer({
               <Icon d={P.clip} />
             </button>
             {connectors}
+            {call}
             <div className="relative">
               <button type="button" onClick={() => setAgentMenu(!agentMenu)} className="flex min-h-10 max-w-[230px] items-center gap-1.5 rounded-full px-3 text-[12.5px] text-muted hover:bg-ink/[0.05] hover:text-fg">
                 <span className="truncate">

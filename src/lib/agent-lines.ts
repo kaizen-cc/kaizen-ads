@@ -1,7 +1,7 @@
 // Settings › AI agents is grouped by service line first: each line shows its agents, and clicking it opens them. The
 // line of a role agent comes from this one small function, so a new role lands in a sensible place without a code change.
 
-export type LineKey = "strategy" | "meta" | "google" | "tiktok" | "email" | "creative" | "copy";
+export type LineKey = "strategy" | "meta" | "google" | "tiktok" | "email" | "social" | "creative" | "copy";
 
 export type Line = { key: LineKey; label: string; description: string };
 
@@ -12,6 +12,7 @@ export const LINES: readonly Line[] = [
   { key: "google", label: "Google Ads", description: "Media buying on Google: account audits, launches and client reports." },
   { key: "tiktok", label: "TikTok Ads", description: "Media buying on TikTok: audits, launches and reports, parked until its skills are written." },
   { key: "email", label: "Email Marketing", description: "Email strategy, design and copy, and building in Klaviyo: account audits, sprints, campaign suggestions and the client chat. Each has a starter core; the playbook is being written." },
+  { key: "social", label: "Organic Social", description: "Organic social for each client: the posting plan, formats, engagement and growth on Facebook and Instagram, read from the Social tab." },
   { key: "creative", label: "Creative", description: "Design and video: reviewing creative against the brand and the brief." },
   { key: "copy", label: "Copy", description: "Ad copy and video scripts, in each client's voice." },
 ];
@@ -26,6 +27,7 @@ const LINE_OF_ROLE: Record<string, LineKey> = {
   email_strategist: "email",
   email_creative: "email",
   email_builder: "email",
+  social_strategist: "social",
   creative_director: "creative",
   copywriter: "copy",
 };

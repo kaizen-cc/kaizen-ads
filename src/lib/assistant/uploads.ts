@@ -8,7 +8,20 @@ import { AI_BUCKET } from "@/lib/kaizen-ai/files";
 // videos as the frames the browser captured, PDFs whole). Saved on the call for the assistant's next turns, and passed
 // to the chat tools as attachments (a launch sheet uploaded here starts a launch like one attached in Kaizen AI).
 
-export type CallUpload = { path: string; name: string; mime: string; bytes: number; kind: "image" | "video" | "pdf" | "doc" | "text"; frames?: { path: string; ms: number }[]; purpose: "creatives" | "files"; client: string | null; about?: string };
+export type CallUpload = {
+  path: string;
+  name: string;
+  mime: string;
+  bytes: number;
+  kind: "image" | "video" | "pdf" | "doc" | "text";
+  frames?: { path: string; ms: number }[];
+  /** creatives and files the assistant asked for; screen: a screenshot for a look (deleted with the call's audio) */
+  purpose: "creatives" | "files" | "screen";
+  client: string | null;
+  about?: string;
+  /** Creatives copied into a launch in progress (ad-media launch/<run>/...) */
+  staged?: { launch: string; path: string };
+};
 
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"] as const;
 const MAX_BYTES = 4_500_000;

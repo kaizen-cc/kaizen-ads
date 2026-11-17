@@ -2,6 +2,7 @@ import { after } from "next/server";
 import { openCall, runCallTurn } from "@/lib/agent-call/server";
 import { runAssistantTurn } from "@/lib/assistant/turn";
 import type { CallEvent } from "@/lib/agent-call/core";
+import { parseCallContext } from "@/lib/agent-call/call-context";
 import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -13,15 +14,19 @@ import { createClient } from "@/lib/supabase/server";
 export const maxDuration = 300;
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
   const me = await requireStaff();
   if (!adminConfigured()) return Response.json({ error: "Not set up" }, { status: 503 });
-  const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown } | null;
+  // With the turn: where they called from (a client, a report, a Kaizen AI thread) and, on a look, the screenshot
+  const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown; context?: unknown; frame?: unknown } | null;
   const admin = createAdminClient();
   const call = await openCall(admin, me, body?.callId);
   // The person's own session: the tools read what they may see (taken here, while the request is still open)
   const db = await createClient();
   if (!call) return Response.json({ error: "This call has ended." }, { status: 410 });
   const text = String(body?.text ?? "").slice(0, 4000);
+  const context = parseCallContext(body?.context);
+  const frame = typeof body?.frame === "string" ? body.frame.slice(0, 300) : null;
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
@@ -34,7 +39,7 @@ export async function POST(request: Request) {
           open = false;
         }
       };
-      const work = (call.role_key === "assistant" ? runAssistantTurn : runCallTurn)({ me, admin, db, call, text, signal: request.signal, emit })
+      const work = (call.role_key === "assistant" ? runAssistantTurn : runCallTurn)({ me, admin, db, call, text, signal: request.signal, emit, context, frame, startedAt })
         .catch((e) => {
           console.error("[agent call] turn", e instanceof Error ? e.message : e);
           emit({ t: "error", message: "Sorry, something went wrong on my side. Say that again?" });

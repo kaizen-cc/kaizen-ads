@@ -11,6 +11,8 @@ import { useFabClear } from "@/components/fab-clear";
 import type { ChatTurn } from "@/lib/handoff";
 import { ALL_PERMS, type ClientPerms } from "@/lib/chat-permissions";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
+import { CallButton } from "@/components/call-button";
+import { roleForService } from "@/lib/agent-call/call-context";
 import { askClientAi, clearClientAi, loadClientAi, openClientDoc, undoClientDesk } from "./actions";
 import { createClient } from "@/lib/supabase/client";
 import { Layer } from "./layer";
@@ -115,6 +117,7 @@ export function ClientChat({
   scope = null,
   perms = ALL_PERMS,
   desk = null,
+  line = null,
 }: {
   clientId: string;
   client: string;
@@ -127,6 +130,8 @@ export function ClientChat({
   perms?: ClientPerms;
   /** "email": the email team's desk (starters about the Klaviyo account; answers from the email agents) */
   desk?: "email" | null;
+  /** The email or organic social team's line (the client page): their line's agent takes the call */
+  line?: "email" | "social" | null;
 }) {
   const router = useRouter();
   // Starters: only the ones this person may act on (a change, a launch on their own platform)
@@ -136,6 +141,10 @@ export function ClientChat({
   );
   const canLaunchHere = Boolean(scope && perms.launch[scope.platform]);
   const mayLaunch = perms.launch.meta || perms.launch.google;
+  // The call reaches the agent for what's in view: the service tab on the client page, the KPI card's platform
+  const service = useParam("service");
+  const callRole = roleForService(variant === "floating" ? service : null, { desk, platform: scope?.platform ?? null, line });
+  const callContext = { screen: variant === "inline" ? (desk === "email" ? "the email KPI board" : "the KPI board") : `${client}'s client page${service ? `, ${service} tab` : ""}`, clientId, client };
   // On the client page the open chat is in the address (?chat=1), so back closes it and a link opens it. The inline
   // button sits on cards that can share a page, so it keeps its own.
   const floating = variant === "floating";
@@ -290,6 +299,7 @@ export function ClientChat({
           Ask about {client}
         </button>
       ) : null}
+      {variant === "inline" && <CallButton roleKey={callRole} context={callContext} />}
       {variant === "inline" && scope && canLaunchHere && (
         <button
           type="button"
@@ -343,6 +353,7 @@ export function ClientChat({
             </p>
           </div>
           <span className="flex shrink-0 gap-1.5">
+            <CallButton roleKey={callRole} context={callContext} variant="icon" className="h-11 w-11 border border-ink/10 md:h-8 md:w-8" />
             {chat.length > 0 && (
               <button
                 type="button"

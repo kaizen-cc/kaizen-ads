@@ -24,6 +24,7 @@ export const DEFAULT_VOICES: Record<string, { id: string; name: string }> = {
   email_strategist: { id: "FGY2WhTYpPnrIDTdsKH5", name: "Laura" },
   email_creative: { id: "pFZP5JQG7iQjIQuC4Bku", name: "Lily" },
   email_builder: { id: "iP95p4xoKVk53GoZ742B", name: "Chris" },
+  social_strategist: { id: "Xb7hH8MSUJpSbSDYk0k2", name: "Alice" },
   // The personal assistant: a warm, friendly voice
   assistant: { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda" },
 };
@@ -440,14 +441,16 @@ export type CallEvent =
   | { t: "card"; card: CallCard }
   // The assistant asks for files: the upload panel opens on the call
   | { t: "upload"; ask: UploadAsk }
+  // The agent wants to see the screen: a frame of the shared screen, the ask to share it, or (phones) the upload panel
+  | { t: "look" }
   // The agent said goodbye: the call hangs up once its last words have played
   | { t: "end" };
 
 /** A link the call shows as a card: tapped, it opens in the app (the call stays up) or in a new tab */
 export type CallCard = { id: string; title: string; detail: string; href: string; external: boolean; cta: string };
 
-/** What the assistant asked to be uploaded: launch creatives, or files for it to read */
-export type UploadAsk = { purpose: "creatives" | "files"; client: string | null; note: string };
+/** What the assistant asked to be uploaded: launch creatives, files for it to read, or a screenshot to look at */
+export type UploadAsk = { purpose: "creatives" | "files" | "screen"; client: string | null; note: string };
 
 /**
  * A learning as the call keeps it. Heard on the call it's pending: nothing is written to the agent until a person keeps
@@ -597,3 +600,18 @@ export function stripEndMarker(text: string): { text: string; ended: boolean } {
   const at = text.indexOf(END_MARKER);
   return at < 0 ? { text, ended: false } : { text: text.slice(0, at).trimEnd(), ended: true };
 }
+
+// ─── Recorded audio ─────────────────────────────────────────────────────────
+
+/** The file ending for a recording's type: Safari records audio/mp4, Chrome and Firefox audio/webm or ogg */
+export function audioExt(mime: string | null | undefined): "webm" | "m4a" | "ogg" | "wav" {
+  const m = String(mime ?? "").toLowerCase().split(";")[0].trim();
+  if (m === "audio/mp4" || m === "audio/aac" || m === "audio/x-m4a" || m === "video/mp4") return "m4a";
+  if (m === "audio/ogg") return "ogg";
+  if (m === "audio/wav" || m === "audio/x-wav") return "wav";
+  return "webm";
+}
+
+/** Where one recorded part of a call goes in the call-audio bucket, named by its real type */
+export const audioPartPath = (callId: string, index: number, startSeconds: number, mime?: string | null) =>
+  `${callId}/${String(Math.max(0, Math.min(60, Math.floor(index)))).padStart(3, "0")}-${Math.max(0, Math.floor(startSeconds))}.${audioExt(mime)}`;

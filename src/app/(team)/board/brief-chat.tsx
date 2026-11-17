@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ReportThis } from "@/components/report-this";
+import { CallButton } from "@/components/call-button";
 import { askAboutBrief, briefChat, type BriefChatMessage } from "./brief-chat-actions";
 import { card, label } from "./ticket-parts";
 import type { Ticket } from "./types";
@@ -70,11 +71,15 @@ export function BriefChat({ ticket, demo = false }: { ticket: Ticket; demo?: boo
     <section className={card} aria-label="Questions about the brief">
       <div className="flex items-center justify-between gap-3">
         <p className={label}>Ask about the brief</p>
-        {list.length > 0 && (
-          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="-my-2 -mr-2 min-h-11 rounded-full px-3 text-xs text-muted hover:bg-surface-2 hover:text-fg">
-            {open ? "Hide" : `Show all ${list.length}`}
-          </button>
-        )}
+        <span className="-my-2 -mr-2 flex items-center">
+          {list.length > 0 && (
+            <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="min-h-11 rounded-full px-3 text-xs text-muted hover:bg-surface-2 hover:text-fg">
+              {open ? "Hide" : `Show all ${list.length}`}
+            </button>
+          )}
+          {/* Talk the brief through with the Creative Director, with the client set */}
+          {!demo && <CallButton roleKey="creative_director" variant="icon" context={{ screen: `the brief for the ticket "${ticket.title}"`, clientId: ticket.clientId, client: ticket.clientName }} />}
+        </span>
       </div>
 
       {open ? (

@@ -7,7 +7,8 @@ import { CALL_LIMIT_SECONDS, clock, keyOf, statusOf, type LearnedItem } from "@/
 import type { Call, Line, Phase, Speaker } from "@/lib/agent-call/engine";
 import type { CallCard, UploadAsk } from "@/lib/agent-call/core";
 import type { CallNotes } from "@/lib/assistant/notes";
-import { CardsStrip, GuestChip, NotesBlock, RecordedMark, UploadPanel } from "./assistant-call-parts";
+import type { CallContext } from "@/lib/agent-call/call-context";
+import { CardsStrip, GuestChip, NotesBlock, RecordedMark, ScreenIcon, ShareAsk, SharingBar, UploadPanel } from "./assistant-call-parts";
 
 // The two ways a call is shown. On phones it takes the whole screen; on computers it is a huddle: a small panel
 // docked bottom right that stays while you move around the app, and shrinks to a pill. Both read the same state,
@@ -19,6 +20,8 @@ export type AgentRef = {
   tint: string;
   /** The agent's icon at a given size */
   icon: (size: number) => ReactNode;
+  /** Where the call was started from (a client, a report, a Kaizen AI thread), sent with every turn */
+  context?: CallContext | null;
 };
 
 export type CallView = {
@@ -46,6 +49,8 @@ export type CallView = {
   onCloseUpload?: () => void;
   /** Phones: shrink the call to its pill (to see a screen it opened) */
   onMinimize?: () => void;
+  /** Computers: sharing the screen for a look (whether it can, it is, it's asked, a look is being taken) */
+  screen?: { can: boolean; sharing: boolean; asked: boolean; looking: boolean; onShare: () => void; onStop: () => void; onCancel: () => void };
 };
 
 export type SummaryView = {
@@ -131,9 +136,12 @@ const speakerOf = (l: Line, v: CallView) => (l.who === "agent" && l.speaker && (
 /** The specialist, link cards and the upload panel (assistant calls), under the captions */
 function CallExtras({ v, compact }: { v: CallView; compact: boolean }) {
   const cards = v.cards ?? [];
-  if (!cards.length && !v.uploadAsk) return null;
+  const sc = v.screen;
+  if (!cards.length && !v.uploadAsk && !sc?.asked && !sc?.sharing) return null;
   return (
     <div className="grid gap-2.5">
+      {sc?.sharing && <SharingBar onStop={sc.onStop} looking={sc.looking} />}
+      {sc?.asked && !sc.sharing && <ShareAsk agent={v.agent.roleKey === "assistant" ? "your assistant" : `the ${v.agent.label}`} onShare={sc.onShare} onCancel={sc.onCancel} />}
       {v.uploadAsk && v.onUpload && <UploadPanel ask={v.uploadAsk} busy={v.uploading ?? null} onFiles={v.onUpload} onClose={() => v.onCloseUpload?.()} />}
       {cards.length > 0 && v.onOpenCard && <CardsStrip cards={cards} compact={compact} onOpen={v.onOpenCard} onDismiss={(id) => v.onDismissCard?.(id)} />}
     </div>
@@ -366,7 +374,7 @@ export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; mi
         )}
       </div>
 
-      {(v.guest || (v.cards ?? []).length > 0 || v.uploadAsk) && (
+      {(v.guest || (v.cards ?? []).length > 0 || v.uploadAsk || v.screen?.asked || v.screen?.sharing) && (
         <div className="relative grid max-h-[46vh] gap-2 overflow-y-auto px-4 pb-1 pt-2">
           {v.guest && <GuestChip guest={v.guest} speaking={phase === "speaking" && lastAgent?.speaker?.role === v.guest.role} />}
           <CallExtras v={v} compact />
@@ -385,6 +393,18 @@ export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; mi
           <span>Space mutes · Esc minimises</span>
         </span>
         <span className="flex items-center gap-2.5">
+          {v.screen?.can && (
+            <button
+              type="button"
+              onClick={v.screen.sharing ? v.screen.onStop : v.screen.onShare}
+              aria-pressed={v.screen.sharing}
+              aria-label={v.screen.sharing ? "Stop sharing your screen" : "Share your screen"}
+              title={v.screen.sharing ? "Stop sharing" : "Share your screen so it can take a look"}
+              className={`grid h-11 w-11 place-items-center rounded-full border transition active:scale-95 ${v.screen.sharing ? "border-bad/40 bg-bad/10 text-bad" : "border-line bg-surface text-fg hover:border-faint"}`}
+            >
+              <ScreenIcon size={18} />
+            </button>
+          )}
           {muteButton(false)}
           {leaveButton(false)}
         </span>

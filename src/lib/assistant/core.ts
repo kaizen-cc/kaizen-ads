@@ -23,6 +23,7 @@ export const SPECIALISTS: readonly Specialist[] = [
   { key: "copywriter", label: "Copywriter", about: "ad copy and scripts", words: /\b(ad copy|copy ?writ\w*|headlines?|primary text|scripts?|captions?)\b/i },
   { key: "strategist", label: "Strategist", about: "client strategy and briefs across lines", words: /\b(strateg\w*|brief(s|ing)? strategy|go to market|positioning|brand bible|angles?)\b/i },
   { key: "market_analyst", label: "Market Analyst", about: "what's working across clients and the market", words: /\b(competitors?|market|trends?|industry|benchmarks?|other brands)\b/i },
+  { key: "social_strategist", label: "Social Strategist", about: "organic social: posts, reels, engagement, followers, the posting plan", words: /\b(organic|social posts?|posts?|reels?|stories|engagement rate|followers?|content calendar|posting plan|social media)\b/i },
   { key: "account_manager", label: "Account Manager", about: "client relationships, what's owed and how clients feel", words: /\b(client (call|relationship|happy|upset|churn)|retention|renewal|owed|follow up with the client|check-?in)\b/i },
 ];
 
