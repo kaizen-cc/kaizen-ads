@@ -1,10 +1,10 @@
 import type { MetadataRoute } from "next";
 
-// Lets clients and the team add Kaizen Ads to their phone's home screen.
+// Lets clients and the team add Kaizen OS to their phone's home screen.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Kaizen App",
-    short_name: "Kaizen App",
+    name: "Kaizen OS",
+    short_name: "Kaizen OS",
     description: "Review and approve your ads with Kaizen Marketing",
     start_url: "/",
     scope: "/",

@@ -27,10 +27,10 @@ const osake = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Kaizen App",
+  title: "Kaizen OS",
   description: "Creative requests, approvals and launches with Kaizen Marketing",
-  applicationName: "Kaizen App",
-  appleWebApp: { capable: true, title: "Kaizen App", statusBarStyle: "black-translucent" },
+  applicationName: "Kaizen OS",
+  appleWebApp: { capable: true, title: "Kaizen OS", statusBarStyle: "black-translucent" },
   formatDetection: { telephone: false },
 };
 
