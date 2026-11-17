@@ -5,7 +5,7 @@ import { scrubAgency, scrubSections } from "@/lib/reports/white-label";
 import type { Sections } from "@/lib/reports/write";
 import type { Move } from "@/lib/reports/weekly-core";
 import { BENCHMARKS } from "@/lib/klaviyo/insights";
-import { channelName, fitFont, int, metricsSupport, money, moveOf, pct, postRateText, shortMoney, signed, socialName, takeawaysFor, type EmailMetrics, type SocialMetrics, type TrendPoint } from "./core";
+import { cadenceWord, channelName, fitFont, int, metricsSupport, money, moveOf, pct, postRateText, priorWordOf, shortMoney, signed, socialName, takeawaysFor, type EmailMetrics, type SocialMetrics, type TrendPoint } from "./core";
 import { columnKeys, tileViews, type ChannelLayout, type TileView } from "./layout";
 import { wholeMoney } from "./email-message";
 import { grade, RATE_BARS, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
@@ -45,7 +45,7 @@ export const postKey = (p: { platform: string; id: string }) => `${p.platform}:$
 const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 const weekday = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
 const fullRange = (a: string, b: string) => `${day(a)} – ${new Date(`${b}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}`;
-const priorWord = (m: { kind: string }) => (m.kind === "monthly" ? "month" : "week");
+const priorWord = (m: { kind: string }) => priorWordOf(m.kind);
 
 function Masthead({ input, look }: { input: ChannelPdfInput; look: Look }) {
   const agency = !input.whiteLabel;
@@ -69,7 +69,7 @@ function Masthead({ input, look }: { input: ChannelPdfInput; look: Look }) {
 function Hero({ input, look }: { input: ChannelPdfInput; look: Look }) {
   const m = input.metrics;
   const long = input.client.length > 16;
-  const word = m.kind === "monthly" ? "Monthly" : "Weekly";
+  const word = cadenceWord(m.kind);
   return (
     <View style={s.hero}>
       <Svg width={INNER} height={HERO_H} viewBox={`0 0 ${INNER} ${HERO_H}`} style={{ position: "absolute", top: 0, left: 0 }}>
@@ -85,7 +85,7 @@ function Hero({ input, look }: { input: ChannelPdfInput; look: Look }) {
       </Svg>
       <View style={s.heroBody}>
         <View style={{ maxWidth: 300 }}>
-          <Text style={[s.eyebrow, { color: look.heroSoft }]}>{word} {m.platform === "klaviyo" ? "Email Marketing" : "Organic Social"} Report</Text>
+          <Text style={[s.eyebrow, { color: look.heroSoft }]}>{word ? `${word} ` : ""}{m.platform === "klaviyo" ? "Email Marketing" : "Organic Social"} Report</Text>
           <Text style={[s.h1, long ? { fontSize: 20 } : {}]}>{input.client.length <= 11 ? `${input.client} Performance\nOverview` : `${input.client}\nPerformance Overview`}</Text>
           <Text style={s.heroSub}>{m.platform === "klaviyo" ? "Revenue, campaigns, automated emails & list health" : "Audience growth, reach & what resonated"}</Text>
         </View>
@@ -185,7 +185,7 @@ const hotOf = (input: ChannelPdfInput): HotOf => (what) => (input.edit ? `${inpu
 function Glance({ m, layout, hot }: { m: EmailMetrics | SocialMetrics; layout?: ChannelLayout | null; hot: HotOf }) {
   return (
     <View style={s.section} wrap={false}>
-      <Head title="Performance at a glance" sub={`${m.kind === "monthly" ? "Month-over-month" : "Week-over-week"} movement · green = favorable, red = unfavorable`} />
+      <Head title="Performance at a glance" sub={`${m.kind === "monthly" ? "Month-over-month" : m.kind === "weekly" ? "Week-over-week" : "Period-over-period"} movement · green = favorable, red = unfavorable`} />
       <Tiles m={m} tiles={tileViews(m, layout)} hot={hot} height={86} />
       <View style={[s.support, { marginTop: 8 }]}>
         {metricsSupport(m).map((x) => (
@@ -280,7 +280,7 @@ function Tiles({ m, tiles, hot, height }: { m: EmailMetrics | SocialMetrics; til
 function EmailGlance({ m, layout, hot }: { m: EmailMetrics; layout?: ChannelLayout | null; hot: HotOf }) {
   return (
     <View style={s.section} wrap={false}>
-      <Head title="Performance at a glance" sub={`${m.kind === "monthly" ? "Month-over-month" : "Week-over-week"} movement · green = favorable, red = unfavorable`} />
+      <Head title="Performance at a glance" sub={`${m.kind === "monthly" ? "Month-over-month" : m.kind === "weekly" ? "Week-over-week" : "Period-over-period"} movement · green = favorable, red = unfavorable`} />
       <Tiles m={m} tiles={tileViews(m, layout)} hot={hot} height={84} />
       <MetricSides m={m} />
     </View>
@@ -1175,7 +1175,7 @@ export function ChannelDocument({ input: asked, images }: { input: ChannelPdfInp
   const m = input.metrics;
   const hot = hotOf(input);
   const by = input.whiteLabel ? input.client : AGENCY;
-  const title = `${input.client} · ${m.kind === "monthly" ? "Monthly" : "Weekly"} ${channelName(m.platform).toLowerCase()} report · ${m.main.label}`;
+  const title = `${input.client} · ${[cadenceWord(m.kind), channelName(m.platform).toLowerCase()].filter(Boolean).join(" ")} report · ${m.main.label}`;
   return (
     <Document title={input.whiteLabel ? scrubAgency(title) : title} author={by} creator={by} producer={by}>
       <Page size="A4" style={s.page}>

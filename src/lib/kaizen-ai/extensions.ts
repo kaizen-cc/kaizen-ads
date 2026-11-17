@@ -29,7 +29,11 @@ function wrap(t: SharedTool, label: string, ctx: ToolCtx): ChatTool {
       if (t.spends && input.confirmed !== true) throw new Error("Not run: ask the person to confirm first (it spends credits), then call again with confirmed: true.");
       const rest = { ...input };
       delete rest.confirmed;
-      return t.run(ctx.me, rest);
+      return t.run(ctx.me, rest, {
+        files: ctx.files.map((f) => ({ name: f.name, kind: f.kind, mime: f.mime, path: f.path })),
+        clientId: ctx.clientId,
+        card: (c) => void ctx.cards.push(c as unknown as ToolCtx["cards"][number]),
+      });
     },
   };
 }
@@ -49,8 +53,12 @@ export async function extensionTools(ctx: ToolCtx): Promise<ChatTool[]> {
     ),
   );
   const taken = new Set<string>();
+  const { isChannelOnly, lineOfTeam } = await import("@/lib/roles");
+  const myLine = isChannelOnly(ctx.me.role) ? (lineOfTeam(ctx.me.role) ?? "ads") : "ads";
   for (const { m, tools } of loaded)
     for (const t of tools) {
+      // A tool for some teams only (an email tool isn't offered to the ads side, and the other way round); execs get all
+      if (t.lines && !ctx.me.isExec && !t.lines.includes(myLine as "ads" | "email" | "social")) continue;
       if (taken.has(t.name)) continue;
       taken.add(t.name);
       out.push(wrap(t, m.label, ctx));

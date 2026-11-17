@@ -1,4 +1,4 @@
-import { int, pct, signed, type ChannelKind, type DataFlag, type EmailMetrics, type SocialMetrics } from "./core";
+import { cadenceWord, int, pct, signed, type ChannelKind, type DataFlag, type EmailMetrics, type SocialMetrics } from "./core";
 
 // The email report's message, the way the email team writes it today: a title line, "Hi Team,", one line, then What
 // happened (a short paragraph and four set bullets), Highlights, What we learned and Coming up. The parts that are pure
@@ -17,7 +17,7 @@ export function periodWords(r: { start: string; end: string }, withYear = false)
 
 /** "Candy Cloud Weekly Report | November 9 to November 15, 2026" (a social report: "Candy Cloud Weekly Social Media Report | ...") */
 export function reportTitle(client: string, kind: ChannelKind, r: { start: string; end: string }, service?: string | null): string {
-  return `${client.trim()} ${kind === "monthly" ? "Monthly" : "Weekly"} ${service ? `${service} ` : ""}Report | ${periodWords(r, true)}`;
+  return [client.trim(), cadenceWord(kind), service, `Report | ${periodWords(r, true)}`].filter(Boolean).join(" ");
 }
 
 /** The title for a report on either line: email keeps the team's own, social names itself */

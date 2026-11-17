@@ -19,9 +19,8 @@ import { readHistory } from "@/lib/reports/history";
 import { SendHistory } from "./send-history";
 import { canBringBack, latestSkip, skipLine } from "@/lib/reports/skip-log";
 import { isHeadOf, linesFor, SEATS_OF } from "@/lib/channel-reports/access-core";
-import { channelClients, type ChannelClient } from "@/lib/channel-reports/clients";
-import { lineOfPlatform, platformOfLine, type ChannelLine } from "@/lib/channel-reports/core";
-import { ChannelBuild } from "./channel-build";
+import { channelClients, coverageFor, ownersFor, type ChannelClient } from "@/lib/channel-reports/clients";
+import { lastMonthOf, lineOfPlatform, platformOfLine, type ChannelLine } from "@/lib/channel-reports/core";
 
 export const metadata: Metadata = { title: "Reports" };
 export const maxDuration = 300;
@@ -75,7 +74,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   // Email and social reports live in the same table (no ad account behind them): read by the server, kept to the person's clients
   const { data: chanData } =
     admin && chanIds.length
-      ? await admin.from("reports").select(SELECT).in("kind", ["weekly", "monthly"]).in("platform", lines.map(platformOfLine)).in("client_id", chanIds).is("hidden_at", null).gte("created_at", daysAgo(120)).order("created_at")
+      ? await admin.from("reports").select(SELECT).in("kind", ["weekly", "monthly", "custom"]).in("platform", lines.map(platformOfLine)).in("client_id", chanIds).is("hidden_at", null).gte("created_at", daysAgo(120)).order("created_at")
       : { data: [] };
   const adsRows = (adsRes.data ?? []) as unknown as Row[];
   const chanRows = ((chanData ?? []) as unknown as Row[]).filter((r) => chanBy.get(lineOfPlatform(r.platform as "klaviyo" | "social"))?.some((c) => c.id === r.client_id));
@@ -87,7 +86,8 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const [lastWeek, lastMonth] = [latest("weekly"), latest("monthly")];
   const allWeekly = adsRows.filter((r) => r.kind === "weekly" && r.period_start === lastWeek && waiting(r));
   const allMonthly = adsRows.filter((r) => r.kind === "monthly" && r.period_start === lastMonth && waiting(r));
-  const onDemand = adsRows.filter((r) => r.kind === "custom" && waiting(r));
+  // Built by hand: the ads ones on a single account, and email and social reports built for dates picked in the builder
+  const onDemand = rows.filter((r) => r.kind === "custom" && waiting(r));
   // Email and social go out on their own (no recap bundle): each platform's latest month and week, shown like single weeklies
   const latestChan = (r: Row) => chanRows.filter((x) => x.platform === r.platform && x.kind === r.kind).map((x) => x.period_start).sort().at(-1) ?? null;
   const chanMonthly = chanRows.filter((r) => r.kind === "monthly" && r.period_start === latestChan(r) && waiting(r));
@@ -182,7 +182,9 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
     isChan(r.platform)
       ? r.kind === "monthly"
         ? { kind: "monthly", label: "Monthly report", dates: new Date(`${r.period_start}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" }) }
-        : { kind: "weekly", label: "Weekly report", dates: `${short(r.period_start)} – ${short(r.period_end)}` }
+        : r.kind === "custom"
+          ? { kind: "built", label: "Built by hand", dates: `${short(r.period_start)} – ${short(r.period_end)}` }
+          : { kind: "weekly", label: "Weekly report", dates: `${short(r.period_start)} – ${short(r.period_end)}` }
       : r.kind === "weekly"
       ? { kind: "weekly", label: "Monday weekly", dates: `${short(r.period_start)} – ${short(r.period_end)}` }
       : r.kind === "monthly"
@@ -260,6 +262,35 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   // The Monday drafts already waiting for this person, by client: the builder offers them before building another
   const waitingFor: Record<string, { id: string; tag: Tag; platform: string }[]> = {};
   for (const r of [...allMonthly, ...allWeekly].filter((r) => isMine(r.client_id, r) && ["draft", "queued", "drafting"].includes(r.status))) (waitingFor[r.client_id] ??= []).push({ id: r.id, tag: tagOf(r), platform: plat(r) });
+  // Email and social build in the same builder as ads, one line at a time: the clients that buy the line (with this
+  // person's seats; all of the line's for its head, every client on it for an exec), each with its one service and who
+  // it's drafted for. A client not connected yet is listed too, and says what to connect when picked
+  let chanBuilder: { line: ChannelLine; clients: BuilderClient[]; quick: QuickPick[]; waiting: typeof waitingFor } | null = null;
+  if (view === "build" && (wp === "klaviyo" || wp === "social")) {
+    const l = lineOfPlatform(wp);
+    const list = chanBy.get(l) ?? [];
+    const ids = list.map((c) => c.id);
+    const [cover, owners] = admin && ids.length ? await Promise.all([coverageFor(admin, l, ids), ownersFor(admin, l, ids)]) : [new Map<string, never>(), new Map<string, string | null>()];
+    const nameOf = (id: string) => seatRows.find((x) => x.profile_id === id)?.profiles?.full_name ?? null;
+    const clients: BuilderClient[] = list.map((c) => {
+      const cv = cover.get(c.id);
+      const ownerId = owners.get(c.id) ?? null;
+      const mine = !ownerId || ownerId === me.id;
+      return { id: c.id, name: c.name, slug: c.slug, hasChannel: c.hasChannel, services: [{ platform: wp, owner: mine ? null : nameOf(ownerId), mine }], setup: !cv || cv.state === "connected" ? null : { state: cv.state, what: cv.what ?? "It isn't connected yet." } };
+    });
+    // Quick create: this person's own connected clients with no report for the month just over
+    const month = lastMonthOf(today);
+    const monthWord = new Date(`${month.start}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+    const hasMonth = new Set(chanRows.filter((r) => r.platform === wp && r.kind === "monthly" && r.period_start === month.start && r.status !== "skipped").map((r) => r.client_id));
+    const quickChan: QuickPick[] = clients
+      .filter((c) => !c.setup && !hasMonth.has(c.id) && (owners.get(c.id) === me.id || coSeats(c.id, wp).some((x) => x.profile_id === me.id)))
+      .slice(0, 4)
+      .map((c) => ({ clientId: c.id, ranges: ["lastMonth"], services: [wp], reason: `Your client · no ${monthWord} report yet` }));
+    // Their own drafts already waiting on a client: offered before building another
+    const waitingChan: typeof waitingFor = {};
+    for (const r of [...chanMonthly, ...chanWeekly, ...onDemand].filter((r) => r.platform === wp && isMine(r.client_id, r) && ["draft", "queued", "drafting"].includes(r.status))) (waitingChan[r.client_id] ??= []).push({ id: r.id, tag: tagOf(r), platform: plat(r) });
+    chanBuilder = { line: l, clients, quick: quickChan, waiting: waitingChan };
+  }
   const drafts = readyReports.filter((r) => r.status === "draft");
   const stats = [
     { n: drafts.length, label: "ready to review", tone: "text-fg" },
@@ -370,8 +401,12 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       )}
 
       {view === "build" &&
-        (wp === "klaviyo" || wp === "social" ? (
-          <ChannelBuild line={lineOfPlatform(wp)} clients={chanBy.get(lineOfPlatform(wp)) ?? []} rows={chanRows.filter((r) => r.platform === wp)} />
+        (chanBuilder ? (
+          chanBuilder.clients.length ? (
+            <ReportBuilder key={chanBuilder.line} line={chanBuilder.line} clients={chanBuilder.clients} quick={chanBuilder.quick} yesterday={yesterday} waiting={chanBuilder.waiting} />
+          ) : (
+            <Empty title="No clients yet" body={`The clients that buy ${chanBuilder.line === "email" ? "Email Marketing" : "Social Media"} and have you seated show here, ready to build a report for.`} />
+          )
         ) : (
           <ReportBuilder clients={builderClients} quick={quick} yesterday={yesterday} waiting={waitingFor} />
         ))}

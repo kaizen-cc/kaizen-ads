@@ -279,6 +279,8 @@ const csvCell = (v: unknown) => {
 
 /** The tools the email and organic social teams get (the email one only for the email team) */
 const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "email_marketing", "organic_social", "search_client", "recent_calls", "read_call"]);
+/** Per turn: the add-on tools loaded for this person, which the email and social teams get as well */
+const CHANNEL_EXTRA = new Set<string>(["make_deck"]);
 
 export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   const card = (c: Card) => {
@@ -984,7 +986,11 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   }
 
   // The connectors in src/lib/ai-tools (Google policy checker, monthly recap deck, ElevenLabs, Higgsfield, Motion)
-  for (const t of await extensionTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  const extra = await extensionTools(ctx);
+  for (const t of extra) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  // The add-on tools (src/lib/ai-tools: image generation, research, email design, list cleaning...) and the deck are
+  // for the email and social teams too; each checks its own rights and team
+  for (const t of extra) CHANNEL_EXTRA.add(t.name);
   return toolsFor(ctx.me, tools);
 }
 
@@ -996,7 +1002,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
 export function toolsFor<T extends { name: string; input_schema?: unknown }>(me: Who, tools: T[]): T[] {
   // The email and social teams: client lookup, shared context, calls and their own channel. Every other tool reads ad
   // data with the server's rights, so none of them are offered
-  if (isChannelOnly(me.role)) return tools.filter((t) => CHANNEL_TOOLS.has(t.name) && !(t.name === "email_marketing" && lineOfTeam(me.role) !== "email") && !(t.name === "organic_social" && lineOfTeam(me.role) !== "social"));
+  if (isChannelOnly(me.role)) return tools.filter((t) => (CHANNEL_TOOLS.has(t.name) || CHANNEL_EXTRA.has(t.name)) && !(t.name === "email_marketing" && lineOfTeam(me.role) !== "email") && !(t.name === "organic_social" && lineOfTeam(me.role) !== "social"));
   const p = roleWidePerms(me);
   const changeOn = (["meta", "google"] as const).filter((x) => p.change[x]);
   const drop = new Set<string>();

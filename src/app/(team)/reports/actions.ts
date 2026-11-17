@@ -871,7 +871,7 @@ export async function duplicateForNext(sendId: string): Promise<Result<{ id: str
   if (r.platform === "klaviyo" || r.platform === "social") {
     // An email or social report: the next month (or week), drafted by the channel writer
     const { draftChannelNow, draftChannelQueued } = await import("@/lib/channel-reports/queue");
-    const out = await draftChannelNow(admin, { clientId: r.client_id as string, line: r.platform === "klaviyo" ? "email" : "social", kind: r.kind === "monthly" ? "monthly" : "weekly", period: next, ownerId: (r.owner_id as string | null) ?? ok.me.id });
+    const out = await draftChannelNow(admin, { clientId: r.client_id as string, line: r.platform === "klaviyo" ? "email" : "social", kind: r.kind === "monthly" ? "monthly" : r.kind === "custom" ? "custom" : "weekly", period: next, ownerId: (r.owner_id as string | null) ?? ok.me.id });
     if (!out.ok) return out;
     if (!out.existing) after(() => draftChannelQueued(admin, 200_000));
     revalidatePath("/reports");

@@ -5,16 +5,29 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { buildReportAction } from "./actions";
+import { buildChannelReportAction } from "./channel-actions";
 import { TagChip, type Tag } from "./report-cards";
 import { isPeriodKey, resolvePeriod, shiftDay } from "@/lib/reports/period";
 
 // The report builder: the client, one date range (compared with the period before it), and
 // the services. Another buyer's service is drafted for them and they're asked to approve it; the whole thing goes to
 // the client as one report. On the right, the report as it takes shape: what it covers, who's in it, where it goes.
+// Email and organic social build the same way, on their own tab (`line`): the clients that buy that service, the same
+// dates, the service, and one button that drafts it for the client's strategist (or social media manager). A client
+// that isn't connected yet can be picked, and says what to connect before it can be built.
 
 /** A one-tap report: what this person builds again and again, or their client with no report this week */
 export type QuickPick = { clientId: string; ranges: string[]; services: string[]; reason: string };
-export type BuilderClient = { id: string; name: string; slug: string; hasChannel: boolean; services: { platform: "meta" | "google" | "tiktok"; owner: string | null; mine: boolean }[] };
+export type BuilderPlatform = "meta" | "google" | "tiktok" | "klaviyo" | "social";
+export type BuilderClient = {
+  id: string;
+  name: string;
+  slug: string;
+  hasChannel: boolean;
+  services: { platform: BuilderPlatform; owner: string | null; mine: boolean }[];
+  /** Email and social: what to connect (or fix) before a report can be built; absent or null when it's connected */
+  setup?: { state: "missing" | "pending" | "failing"; what: string } | null;
+};
 
 const RANGES = [
   { key: "lastWeek", label: "Last week", hint: "Monday to Sunday" },
@@ -25,11 +38,14 @@ const RANGES = [
   { key: "lastMonth", label: "Last month", hint: "The full month" },
   { key: "custom", label: "Custom", hint: "Any dates" },
 ] as const;
-const PLATFORM = {
-  meta: { name: "Meta Ads", color: "#4f7cff", glow: "rgba(79,124,255,0.35)" },
-  google: { name: "Google Ads", color: "#34c38f", glow: "rgba(52,195,143,0.3)" },
-  tiktok: { name: "TikTok Ads", color: "#e0508c", glow: "rgba(224,80,140,0.3)" },
-} as const;
+const PLATFORM: Record<BuilderPlatform, { name: string; short: string; color: string; glow: string }> = {
+  meta: { name: "Meta Ads", short: "Meta", color: "#4f7cff", glow: "rgba(79,124,255,0.35)" },
+  google: { name: "Google Ads", short: "Google", color: "#34c38f", glow: "rgba(52,195,143,0.3)" },
+  tiktok: { name: "TikTok Ads", short: "TikTok", color: "#e0508c", glow: "rgba(224,80,140,0.3)" },
+  klaviyo: { name: "Email Marketing", short: "Email", color: "#e8a33d", glow: "rgba(232,163,61,0.3)" },
+  social: { name: "Organic Social", short: "Social", color: "#a66cf0", glow: "rgba(166,108,240,0.3)" },
+};
+const LINE = { email: { service: "Email Marketing" }, social: { service: "Social Media" } } as const;
 
 const fmt = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 /** The dates a range covers, as of yesterday (where the data runs to): the same presets as a report's period */
@@ -40,7 +56,22 @@ function datesOf(key: string, yesterday: string, custom: { start: string; end: s
 }
 const initials = (n: string) => n.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
 
-function Mark({ platform, size = 18 }: { platform: "meta" | "google" | "tiktok"; size?: number }) {
+function Mark({ platform, size = 18 }: { platform: BuilderPlatform; size?: number }) {
+  if (platform === "klaviyo")
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <rect x="3" y="5" width="18" height="14" rx="2.5" />
+        <path d="m4 7 8 6 8-6" />
+      </svg>
+    );
+  if (platform === "social")
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <rect x="3.5" y="3.5" width="17" height="17" rx="5" />
+        <circle cx="12" cy="12" r="4" />
+        <path d="M17 7h.01" />
+      </svg>
+    );
   if (platform === "tiktok")
     return (
       <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -73,7 +104,7 @@ function Step({ n, title, done, children, last = false, enter = false }: { n: nu
   );
 }
 
-export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: { clients: BuilderClient[]; quick?: QuickPick[]; yesterday: string; waiting?: Record<string, { id: string; tag: Tag; platform: string }[]> }) {
+export function ReportBuilder({ clients, quick = [], yesterday, waiting = {}, line }: { clients: BuilderClient[]; quick?: QuickPick[]; yesterday: string; waiting?: Record<string, { id: string; tag: Tag; platform: string }[]>; line?: "email" | "social" }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   // The client is the first step, kept in the address (?client=): back returns to picking one, and a link from a
@@ -121,18 +152,17 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
   const others = chosen.filter((s) => !s.mine);
   const joint = chosen.length > 1;
   const rangesReady = ranges.length > 0 && (!ranges.includes("custom") || Boolean(custom.start));
-  const ready = Boolean(picked) && rangesReady && chosen.length > 0;
+  // Email and social: a client that isn't connected yet can't be built until it is
+  const setup = picked?.setup ?? null;
+  const ready = Boolean(picked) && rangesReady && chosen.length > 0 && !setup;
 
   const build = () =>
     start(async () => {
       if (!picked) return;
       setError(null);
-      const r = await buildReportAction(
-        picked.id,
-        ranges.map((k) => (k === "custom" ? { key: k, start: custom.start, end: custom.end } : { key: k })),
-        services,
-        replacing === picked.id ? already.map((a) => a.id) : [],
-      );
+      const asked = ranges.map((k) => (k === "custom" ? { key: k, start: custom.start, end: custom.end } : { key: k }));
+      const replace = replacing === picked.id ? already.map((a) => a.id) : [];
+      const r = line ? await buildChannelReportAction(picked.id, line, asked[0], replace) : await buildReportAction(picked.id, asked, services, replace);
       if (!r.ok) return setError(r.error);
       router.push(`/reports/${r.id}`);
     });
@@ -147,7 +177,9 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
           <div className="mb-5 grid gap-1.5">
             <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-text">Report builder</span>
             <h2 className="font-heading text-[30px] leading-[1.1] tracking-tight md:text-[36px]">One report, everything they need to see</h2>
-            <p className="max-w-xl text-sm text-ink/55">Pick the client, the dates and the services. Each service is written for its buyer, and the client gets it all as one.</p>
+            <p className="max-w-xl text-sm text-ink/55">
+              {line ? `Pick the client, the dates and the service. It's written in the voice of whoever runs their ${LINE[line].service.toLowerCase()}, checked by the QA, and ready to send.` : "Pick the client, the dates and the services. Each service is written for its buyer, and the client gets it all as one."}
+            </p>
           </div>
 
           <Step n={1} title="Who it's for" done={Boolean(picked)} last={!picked}>
@@ -156,7 +188,7 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
                 <span className="grid h-11 w-11 place-items-center rounded-[12px] bg-gradient-to-br from-brand to-[#7a0a1c] font-heading text-sm text-white">{initials(picked.name)}</span>
                 <span className="grid min-w-0 flex-1">
                   <span className="truncate font-heading text-lg leading-tight">{picked.name}</span>
-                  <span className="text-xs text-ink/50">{picked.services.map((s) => PLATFORM[s.platform].name).join(" · ")}</span>
+                  <span className={`text-xs ${setup ? "text-warn" : "text-ink/50"}`}>{setup ? (setup.state === "pending" ? "Connected, first read still running" : "Not connected yet") : picked.services.map((s) => PLATFORM[s.platform].name).join(" · ")}</span>
                 </span>
                 <button type="button" onClick={() => closeParams("client")} className="h-9 rounded-full border border-ink/10 px-3.5 text-xs text-ink/60 hover:text-fg max-md:h-11">
                   Change
@@ -196,8 +228,8 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
                           <span className="flex flex-wrap items-center gap-1.5">
                             {p.services.map((sv) => (
                               <span key={sv} className="flex items-center gap-1 rounded-full bg-ink/[0.06] px-2 py-0.5 text-[11px] text-ink/70">
-                                <span className="h-1.5 w-1.5 rounded-full" style={{ background: PLATFORM[sv as "meta" | "google" | "tiktok"]?.color }} />
-                                {PLATFORM[sv as "meta" | "google" | "tiktok"]?.name.replace(" Ads", "")}
+                                <span className="h-1.5 w-1.5 rounded-full" style={{ background: PLATFORM[sv as BuilderPlatform]?.color }} />
+                                {PLATFORM[sv as BuilderPlatform]?.short}
                               </span>
                             ))}
                           </span>
@@ -220,19 +252,42 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
                           {c.services.map((s) => (
                             <span key={s.platform} className="flex items-center gap-1">
                               <span className="h-1.5 w-1.5 rounded-full" style={{ background: PLATFORM[s.platform].color }} />
-                              {PLATFORM[s.platform].name.replace(" Ads", "")}
+                              {PLATFORM[s.platform].short}
                             </span>
                           ))}
+                          {c.setup && <span className="text-warn">· {c.setup.state === "pending" ? "First read running" : "Not connected"}</span>}
                         </span>
                       </span>
                     </button>
                   ))}
-                  {!matches.length && <p className="px-1 text-sm text-ink/45">No client by that name with an ad account to report on.</p>}
+                  {!matches.length && <p className="px-1 text-sm text-ink/45">{line ? `No client by that name that buys ${LINE[line].service}.` : "No client by that name with an ad account to report on."}</p>}
                 </div>
                 )}
               </div>
             )}
           </Step>
+
+          {picked && setup && (
+            <div className="relative -mt-2 mb-6 ml-12 grid gap-3 overflow-hidden rounded-[20px] border border-warn/30 bg-warn/[0.07] p-5 max-md:ml-0" style={{ animation: "step-in .4s cubic-bezier(.2,.8,.2,1) both" }}>
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-warn/15 text-warn">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+                    <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+                  </svg>
+                </span>
+                <span className="grid gap-1">
+                  <span className="font-heading text-[18px] leading-snug">{setup.state === "pending" ? "Almost ready: the first read is still running" : setup.state === "failing" ? "The connection needs fixing first" : "Connect it first"}</span>
+                  <span className="text-sm text-ink/60">{setup.what}</span>
+                </span>
+              </div>
+              {setup.state !== "pending" && (
+                <Link href={`/clients/${picked.slug}`} className="inline-flex h-11 items-center justify-self-start rounded-full bg-fg px-5 text-sm font-medium text-bg transition hover:opacity-90 md:h-10">
+                  Open {picked.name} to connect it <span aria-hidden className="ml-1.5">→</span>
+                </Link>
+              )}
+            </div>
+          )}
 
           {picked && holding && (
             <div className="relative -mt-2 mb-6 ml-12 grid gap-4 overflow-hidden rounded-[20px] border border-ok/30 bg-ok/[0.07] p-5" style={{ animation: "step-in .4s cubic-bezier(.2,.8,.2,1) both" }}>
@@ -253,7 +308,7 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
                   <Link key={a.id} href={`/reports/${a.id}`} className="group flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-ink/10 bg-ink/[0.04] px-4 py-3 transition hover:border-ok/50 hover:bg-ink/[0.07]">
                     <span className="flex flex-wrap items-center gap-2">
                       <TagChip tag={a.tag} />
-                      <span className="text-xs text-ink/50">{PLATFORM[a.platform as "meta" | "google" | "tiktok"]?.name}</span>
+                      <span className="text-xs text-ink/50">{PLATFORM[a.platform as BuilderPlatform]?.name}</span>
                     </span>
                     <span className="inline-flex h-9 items-center gap-1.5 rounded-full bg-fg px-4 text-xs font-medium text-bg">
                       Review and send <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
@@ -300,7 +355,7 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
           )}
 
           {picked && !holding && ranges.length > 0 && (
-          <Step key={`services-${picked.id}`} n={3} title="Which services" done={chosen.length > 0} last enter>
+          <Step key={`services-${picked.id}`} n={3} title={line ? "Which service" : "Which services"} done={chosen.length > 0} last enter>
             <div className="grid gap-2 sm:grid-cols-2">
               {picked.services.map((s) => {
                 const on = services.includes(s.platform);
@@ -321,7 +376,7 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
                       <span className="font-medium">{p.name}</span>
                       <span className="flex items-center gap-1.5 text-[11.5px] text-ink/50">
                         <span className="grid h-4 w-4 place-items-center rounded-full bg-ink/15 text-[8px] font-semibold text-fg">{s.mine ? "Y" : initials(s.owner ?? "?")}</span>
-                        {s.mine ? "You write it" : s.owner ? `${s.owner} approves it` : "No buyer set"}
+                        {s.mine ? "You write it" : s.owner ? (line ? `Drafted for ${s.owner} to send` : `${s.owner} approves it`) : line ? "Nobody seated yet: drafted for you" : "No buyer set"}
                       </span>
                     </span>
                     <span className={`grid h-6 w-6 place-items-center rounded-full border text-[11px] ${on ? "border-transparent bg-fg text-bg" : "border-ink/20 text-transparent"}`}>✓</span>
@@ -362,11 +417,17 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
             <ul className="grid gap-2.5 text-[13px] text-ink/65">
               <li className="flex gap-2.5">
                 <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
-                {others.length ? `${others.map((o) => o.owner ?? "The other buyer").join(" and ")} ${others.length === 1 ? "is" : "are"} asked to approve their part` : "Written in your voice, for you to review"}
+                {line
+                  ? others[0]?.owner
+                    ? `Written in ${others[0].owner}'s voice, for them to review`
+                    : "Written in your voice, for you to review"
+                  : others.length
+                    ? `${others.map((o) => o.owner ?? "The other buyer").join(" and ")} ${others.length === 1 ? "is" : "are"} asked to approve their part`
+                    : "Written in your voice, for you to review"}
               </li>
               <li className="flex gap-2.5">
                 <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
-                {joint ? "Goes out once, from the Kaizen app: one message, one PDF" : "Goes out as you, with the PDF attached"}
+                {joint ? "Goes out once, from the Kaizen app: one message, one PDF" : line && others[0]?.owner ? `Goes out as ${others[0].owner}, with the PDF attached` : "Goes out as you, with the PDF attached"}
               </li>
               <li className="flex gap-2.5">
                 <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${picked && !picked.hasChannel ? "bg-warn" : "bg-brand"}`} />
@@ -383,7 +444,7 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {} }: 
               className="group relative h-14 overflow-hidden rounded-[16px] bg-brand text-[15px] font-semibold text-white shadow-[0_18px_40px_-14px_rgba(200,16,46,0.95)] transition hover:-translate-y-0.5 hover:bg-brand-hover disabled:translate-y-0 disabled:opacity-35 disabled:shadow-none"
             >
               <span aria-hidden className="absolute inset-y-0 -left-1/2 w-1/2 -skew-x-12 bg-ink/20 opacity-0 transition-all duration-700 group-hover:left-full group-hover:opacity-100" />
-              {pending ? "Building…" : ready ? "Build the report →" : !picked ? "Pick a client to start" : !rangesReady ? "Pick the dates" : "Pick a service"}
+              {pending ? "Building…" : ready ? "Build the report →" : !picked ? "Pick a client to start" : setup ? (setup.state === "pending" ? "Waiting on the first read" : "Connect it first") : !rangesReady ? "Pick the dates" : "Pick a service"}
             </button>
             <p className="text-center text-[11.5px] text-ink/40">Written and checked in about a minute</p>
           </div>

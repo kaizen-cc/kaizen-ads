@@ -105,15 +105,18 @@ export async function remindChannelReports(admin: SupabaseClient, today: string)
   return n;
 }
 
-/** Drafts a channel report on demand for a client and period (a month or a week just over, or the one after a sent report): the existing one is opened instead of a second */
+/** Drafts a channel report on demand for a client and period (a month or a week just over, dates picked in the builder, or the one after a sent report): the existing one is opened instead of a second */
 export async function draftChannelNow(admin: SupabaseClient, p: { clientId: string; line: ChannelLine; kind: ChannelKind; period: { start: string; end: string }; ownerId: string | null }): Promise<{ ok: true; id: string; existing: boolean } | { ok: false; error: string }> {
   const platform = platformOfLine(p.line);
   const yesterday = new Date(Date.now() - 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   if (p.period.end > yesterday) return { ok: false, error: "That period isn't over yet: the data runs through yesterday." };
-  const { data: had } = await admin.from("reports").select("id, status").eq("client_id", p.clientId).eq("platform", platform).eq("kind", p.kind).eq("period_start", p.period.start).is("target_id", null).maybeSingle();
-  if (had && had.status !== "skipped") return { ok: true, id: had.id as string, existing: true };
+  const { data: had } = await admin.from("reports").select("id, status, period_end").eq("client_id", p.clientId).eq("platform", platform).eq("kind", p.kind).eq("period_start", p.period.start).is("target_id", null).maybeSingle();
+  // Dates picked by hand that start the same day but end on another: the same report, moved to the new dates and written again
+  const moved = had && p.kind === "custom" && had.period_end !== p.period.end;
+  if (moved && had.status === "posted") return { ok: false, error: "A report starting that day already went to this client. Pick different dates." };
+  if (had && had.status !== "skipped" && !moved) return { ok: true, id: had.id as string, existing: true };
   if (had) {
-    await admin.from("reports").update({ status: "queued", error: null, updated_at: new Date().toISOString() }).eq("id", had.id);
+    await admin.from("reports").update({ status: "queued", error: null, period_end: p.period.end, hidden_at: null, updated_at: new Date().toISOString() }).eq("id", had.id);
     return { ok: true, id: had.id as string, existing: false };
   }
   const { data, error } = await admin.from("reports").insert({ client_id: p.clientId, target_id: null, platform, kind: p.kind, period_start: p.period.start, period_end: p.period.end, owner_id: p.ownerId, status: "queued" }).select("id").single();

@@ -91,6 +91,9 @@ describe("the message", () => {
   it("titles the report the way the team does", () => {
     expect(reportTitle("Candy Cloud", "weekly", main)).toBe("Candy Cloud Weekly Report | November 9 to November 15, 2026");
     expect(reportTitle("Acme", "monthly", { start: "2026-10-01", end: "2026-10-31" })).toBe("Acme Monthly Report | October 1 to October 31, 2026");
+    // Dates picked in the report builder: no cadence word
+    expect(reportTitle("Acme", "custom", { start: "2026-11-01", end: "2026-11-14" })).toBe("Acme Report | November 1 to November 14, 2026");
+    expect(reportTitle("Acme", "custom", { start: "2026-11-01", end: "2026-11-14" }, "Social Media")).toBe("Acme Social Media Report | November 1 to November 14, 2026");
     expect(periodWords({ start: "2026-12-28", end: "2027-01-03" })).toBe("December 28, 2026 to January 3, 2027");
   });
   it("has the four What happened bullets in order", () => {

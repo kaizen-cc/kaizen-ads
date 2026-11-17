@@ -46,10 +46,15 @@ function lineRules(platform: ChannelPlatform): string {
   return `Lead with follower growth and reach for the period against the period before, then views, the engagement rate (interactions over reach; if <numbers> says it isn't available, don't quote one) against the target when <numbers> gives one, how much we published, and the posts that did best and why they likely worked (format, topic, hook, from what the numbers and captions show). Never claim a post caused follower growth unless the numbers show it. Instagram and Facebook are counted from Meta's own account insights; say which platform a number is from when it matters.`;
 }
 
-const EMAIL_MESSAGE = (kind: ChannelKind) => `message: the email team's ${kind} report message, plain text with Slack formatting (*bold* headers, "• " bullets), in exactly this structure and order, nothing before or after:
+/** The report's cadence in the writer's words: a report on dates picked by hand is a report on those dates */
+const KIND_WORD = (kind: ChannelKind) => (kind === "custom" ? "custom-dates" : kind);
+/** How the message's opening line leads into the dates */
+const PERIOD_LEAD = (kind: ChannelKind) => (kind === "monthly" ? "for the month of" : kind === "weekly" ? "for the week of" : "from");
+
+const EMAIL_MESSAGE = (kind: ChannelKind) => `message: the email team's ${KIND_WORD(kind)} report message, plain text with Slack formatting (*bold* headers, "• " bullets), in exactly this structure and order, nothing before or after:
 1. The title line (the app sets it exactly; write it as given in <report_title>).
 2. A blank line, then "Hi Team," on its own line.
-3. One line: "Here's how email and SMS performed for the ${kind === "monthly" ? "month of" : "week of"} <period words>." (email only when no SMS was sent).
+3. One line: "Here's how email and SMS performed ${PERIOD_LEAD(kind)} <period words>." (email only when no SMS was sent).
 4. *What happened*: a short paragraph (2 or 3 sentences: which campaigns went out and when, by name and date, and where most of the revenue came from, in plain words like "about four of every five dollars"), then exactly the four bullets given in <numbers> under "What happened bullets", word for word.
 5. *Highlights*: one bullet per campaign sent in the period (name: revenue from orders, with X% of people opening it, and a plain comparison such as which was stronger and the order rate against the other), then the top two to four automated emails the same way (revenue, orders, order rate). Numbers rounded the way the team rounds: whole dollars, whole percent for opens, one decimal for order rates.
 6. *What we learned*: one short paragraph with a single insight grounded in the numbers (a comparison the numbers show and what it means for the calendar). Never advice the numbers don't support.
@@ -57,10 +62,10 @@ const EMAIL_MESSAGE = (kind: ChannelKind) => `message: the email team's ${kind} 
 No sign-off, no emojis, no em dashes, no internal words (flows, Klaviyo report names, scores, AI, Kaizen Ads, team names).`;
 
 /** The organic social message: the email team's structure, so both lines read the same in the client's channel */
-const SOCIAL_MESSAGE = (kind: ChannelKind) => `message: the social team's ${kind} report message, plain text with Slack formatting (*bold* headers, "• " bullets), in exactly this structure and order, nothing before or after:
+const SOCIAL_MESSAGE = (kind: ChannelKind) => `message: the social team's ${KIND_WORD(kind)} report message, plain text with Slack formatting (*bold* headers, "• " bullets), in exactly this structure and order, nothing before or after:
 1. The title line (the app sets it exactly; write it as given in <report_title>).
 2. A blank line, then "Hi Team," on its own line.
-3. One line: "Here's how organic social performed for the ${kind === "monthly" ? "month of" : "week of"} <period words>." (name Instagram and Facebook only if both were posted to).
+3. One line: "Here's how organic social performed ${PERIOD_LEAD(kind)} <period words>." (name Instagram and Facebook only if both were posted to).
 4. *What happened*: a short paragraph (2 or 3 sentences: how much we published and in which formats, and where most of the reach and engagement came from, in plain words), then exactly the four bullets given in <numbers> under "What happened bullets", word for word.
 5. *Highlights*: one bullet per top post of the period (platform and format, a few words of what it was, its interactions and reach, and a plain comparison with the others), then one bullet on follower growth against the period before.
 6. *What we learned*: one short paragraph with a single insight grounded in the numbers (which format, topic or hook worked and what it means for the calendar). Never advice the numbers don't support.
@@ -78,7 +83,7 @@ This client's ${name ?? "email"} reports no revenue: never write revenue, orders
 
 function writerSystem(kind: ChannelKind, platform: ChannelPlatform, whiteLabel = false): string {
   const line = lineOfPlatform(platform);
-  const base = `You draft a ${kind} ${channelName(platform).toLowerCase()} report for a client of Kaizen Marketing, a marketing agency, as the ${ROLE[line]} who runs this channel for the client. The ${ROLE[line]} reads it, may edit it, and sends it as themselves, so it must sound exactly like them: match the voice, warmth, length, formatting and habits in their examples (greeting, how they introduce numbers, headers, bullets, sign-off). If there are no examples, write warm, plain and confident. This is not a paid ads report: ignore any guidance meant for ad accounts, budgets, ROAS or cost per result.
+  const base = `You draft a ${KIND_WORD(kind)} ${channelName(platform).toLowerCase()} report for a client of Kaizen Marketing, a marketing agency, as the ${ROLE[line]} who runs this channel for the client. The ${ROLE[line]} reads it, may edit it, and sends it as themselves, so it must sound exactly like them: match the voice, warmth, length, formatting and habits in their examples (greeting, how they introduce numbers, headers, bullets, sign-off). If there are no examples, write warm, plain and confident. This is not a paid ads report: ignore any guidance meant for ad accounts, budgets, ROAS or cost per result.
 Every report follows the same arc: what we did, what we're doing now and why, and what comes next. Its job is to show the client the work behind the numbers, not just the numbers.
 Accuracy above everything: every number you write must come from the numbers given, rounded the way the ${ROLE[line]} rounds; never estimate, never invent a figure, a campaign, a post, a change or a plan. Comparisons say against what ("vs September", "vs the week before"). If results are down, say it plainly and say what we're doing about it; never spin. Only mention work that is in the work log or what the ${ROLE[line]} added (group many small edits into what they amount to). Never mention internal things: team members other than the client's own people, Kaizen Ads, AI, audits by name, internal Slack, other clients. Never use em dashes; use a comma, a colon or a new sentence.
 ${lineRules(platform)}
@@ -239,12 +244,12 @@ export async function draftChannelReport(admin: SupabaseClient, reportId: string
     c.r.metrics = metrics;
     const out = await askJson<{ message: string; sections: Sections }>({
       agent: "reporter",
-      label: `${c.r.kind} ${line} report`,
+      label: `${KIND_WORD(c.r.kind)} ${line} report`,
       clientId: c.r.client_id,
       system: forSource(writerSystem(c.r.kind, c.r.platform, c.whiteLabel), metrics),
       schema: DRAFT_SCHEMA,
       maxTokens: 12000,
-      prompt: `${sourcesBlock(c, metrics, work.text, voice, client)}\n\nWrite the ${c.r.kind} ${channelName(c.r.platform).toLowerCase()} report for ${metrics.main.label}.`,
+      prompt: `${sourcesBlock(c, metrics, work.text, voice, client)}\n\nWrite the ${KIND_WORD(c.r.kind)} ${channelName(c.r.platform).toLowerCase()} report for ${metrics.main.label}.`,
     });
     out.sections = plain(out.sections);
     out.message = noEmDashes(out.message);

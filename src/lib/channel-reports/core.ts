@@ -20,7 +20,12 @@ import { locationChecks, type LocationBreakdown } from "@/lib/klaviyo/locations"
 
 export type ChannelPlatform = "klaviyo" | "social";
 export type ChannelLine = "email" | "social";
-export type ChannelKind = "weekly" | "monthly";
+/** A channel report's cadence: the Monday weekly, the monthly, or dates picked by hand in the report builder */
+export type ChannelKind = "weekly" | "monthly" | "custom";
+/** The cadence word in a title: "Monthly", "Weekly", or none for dates picked by hand */
+export const cadenceWord = (k: string) => (k === "monthly" ? "Monthly" : k === "weekly" ? "Weekly" : "");
+/** What the period before is called: the month, the week, or the period (dates picked by hand) */
+export const priorWordOf = (k: string) => (k === "monthly" ? "month" : k === "weekly" ? "week" : "period");
 
 export const CHANNEL_PLATFORMS: readonly ChannelPlatform[] = ["klaviyo", "social"];
 export const isChannelPlatform = (p: unknown): p is ChannelPlatform => p === "klaviyo" || p === "social";

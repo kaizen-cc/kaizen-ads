@@ -10,7 +10,20 @@ export type AiTool = {
   input_schema: { type: "object"; properties: Record<string, unknown>; required?: string[]; additionalProperties?: boolean };
   /** True when running it spends money or makes something (the chat should confirm with the person first) */
   spends?: boolean;
-  run: (user: Staff, input: Record<string, unknown>) => Promise<unknown>;
+  run: (user: Staff, input: Record<string, unknown>, chat?: ChatExtra) => Promise<unknown>;
+  /** Only for these teams' lines (leave out for everyone): "ads" (the ads side), "email", "social" */
+  lines?: ("ads" | "email" | "social")[];
+};
+
+/**
+ * What a tool gets when Kaizen AI runs it in a chat (other screens pass nothing): the files attached to the newest
+ * message (read them with the server's rights from the ai-files bucket), the thread's client, and a way to show a card
+ * in the chat (a link, a list, a download).
+ */
+export type ChatExtra = {
+  files: { name: string; kind: string; mime: string; path: string }[];
+  clientId: string | null;
+  card: (c: Record<string, unknown> & { type: string }) => void;
 };
 
 /** What the media connectors' tools return: the data and a one-line summary, or an error to show as is */
