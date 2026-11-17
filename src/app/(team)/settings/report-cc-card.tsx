@@ -3,11 +3,13 @@
 import { useState, useTransition } from "react";
 import { setReportCc } from "./report-cc-actions";
 
-// Settings → Team: who is copied on every client report email. A tap on a name saves at once (no Save button).
+// Settings → Team: who is copied on every client report email, as one line (Change opens the list). A tap on a name
+// saves at once (no Save button).
 
 export function ReportCcCard({ people, selected }: { people: { id: string; name: string; role: string }[]; selected: string[] }) {
   const [ids, setIds] = useState(selected);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
 
   const toggle = (id: string) => {
@@ -24,36 +26,43 @@ export function ReportCcCard({ people, selected }: { people: { id: string; name:
     });
   };
 
+  const chosen = people.filter((p) => ids.includes(p.id));
   return (
-    <section className="grid min-w-0 max-w-4xl gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-5">
-      <div className="grid gap-1">
-        <h2 className="font-heading text-lg">Copied on every client report</h2>
-        <p className="max-w-[62ch] text-sm text-muted">
-          Each report email goes to all of the client&apos;s contacts, with the media buyers on that account copied in. These people are copied on every one, on top of the buyers.
-        </p>
+    // One line until someone wants to change it: who's always copied, and Change to open the full list
+    <section className="grid min-w-0 max-w-4xl gap-3 rounded-[18px] border border-line bg-surface px-4 py-3 md:px-5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 className="text-sm font-medium">Copied on every report</h2>
+        <p className="min-w-0 flex-1 truncate text-sm text-muted">{chosen.length ? chosen.map((p) => p.name.split(" ")[0]).join(", ") : "Nobody beyond each line's own people"}</p>
+        <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="inline-flex min-h-11 items-center text-sm text-brand-text underline-offset-4 hover:underline md:min-h-0">
+          {open ? "Done" : "Change"}
+        </button>
       </div>
-      <ul className="flex flex-wrap gap-2" aria-label="People copied on every report">
-        {people.map((p) => {
-          const on = ids.includes(p.id);
-          return (
-            <li key={p.id}>
-              <button
-                type="button"
-                role="checkbox"
-                aria-checked={on}
-                disabled={pending}
-                onClick={() => toggle(p.id)}
-                className={`inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-sm transition-colors disabled:opacity-60 md:min-h-9 ${on ? "border-fg bg-fg text-bg" : "border-line bg-surface text-muted hover:border-faint hover:text-fg"}`}
-              >
-                <span aria-hidden className="text-[11px]">{on ? "✓" : "+"}</span>
-                {p.name}
-                <span className={`text-[11px] ${on ? "opacity-70" : "text-faint"}`}>{p.role}</span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <p className="text-xs text-faint">{ids.length ? `${ids.length} ${ids.length === 1 ? "person" : "people"} always copied.` : "Nobody is always copied: only the media buyers on each account."}</p>
+      {open && (
+        <>
+          <p className="max-w-[62ch] text-xs text-faint">On top of each line&apos;s own people (the client&apos;s buyer, strategist or social manager, and that line&apos;s head), these people are copied on every report email.</p>
+          <ul className="flex flex-wrap gap-1.5" aria-label="People copied on every report">
+            {people.map((p) => {
+              const on = ids.includes(p.id);
+              return (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={on}
+                    disabled={pending}
+                    onClick={() => toggle(p.id)}
+                    title={p.role}
+                    className={`inline-flex min-h-11 items-center gap-1.5 rounded-full border px-3 text-[13px] transition-colors disabled:opacity-60 md:min-h-8 ${on ? "border-fg bg-fg text-bg" : "border-line text-muted hover:border-faint hover:text-fg"}`}
+                  >
+                    <span aria-hidden className="text-[11px]">{on ? "✓" : "+"}</span>
+                    {p.name}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
       {error && <p className="text-sm text-warn" role="alert">{error}</p>}
     </section>
   );
