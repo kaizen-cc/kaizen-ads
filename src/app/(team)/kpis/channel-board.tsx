@@ -327,7 +327,8 @@ function Crew({ r }: { r: ChannelRow }) {
           {lead.map((t, i) => [
             i ? " + " : "",
             <span key={t.name} className={t.pending ? "opacity-60" : undefined} title={t.pending ? `${t.name} is named in the Account Overview sheet but isn't in the app yet: invite them and the next sheet sync seats them` : undefined}>
-              {t.name}
+              {/* First name, like the Meta and Google cards */}
+              {t.name.split(" ")[0]}
             </span>,
           ])}
         </>

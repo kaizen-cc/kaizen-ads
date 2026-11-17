@@ -4,7 +4,7 @@ import { emailConnections } from "@/lib/email-providers/which";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
-import { buys, linesFor, mayOpen, SEATS_OF, type Who } from "./access-core";
+import { buys, linesFor, mayOpen, type Who } from "./access-core";
 import { isChannelPlatform, lineOfPlatform, LINE_SERVICE, OWNER_SEAT, type ChannelLine } from "./core";
 
 // Which clients a person reports on for a line, who is connected (and what to connect for those who aren't), and who owns
@@ -83,12 +83,15 @@ export async function coverageFor(admin: SupabaseClient, line: ChannelLine, clie
 
 // ─── Who owns a client's channel reports ───────────────────────────────────
 
-/** The owner of each client's reports on a line: its strategist (or social media manager), the primary one first, else anyone on the line's seats; null when nobody holds one (the head and the execs still see it) */
+/**
+ * The owner of each client's reports on a line: its strategist (or social media manager), the primary one first. Never
+ * the designer or the builder: with no strategist seated it's null, and the line's head and the execs still see it.
+ */
 export async function ownersFor(admin: SupabaseClient, line: ChannelLine, clientIds: string[]): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>(clientIds.map((id) => [id, null]));
   if (!clientIds.length) return out;
-  const { data } = await admin.from("client_assignments").select("client_id, profile_id, role, is_primary, created_at").in("client_id", clientIds).in("role", [...SEATS_OF[line]]).order("created_at");
-  const rank = (r: { role: string; is_primary: boolean | null }) => (r.role === OWNER_SEAT[line] ? 0 : 2) + (r.is_primary === false ? 1 : 0);
+  const { data } = await admin.from("client_assignments").select("client_id, profile_id, role, is_primary, created_at").in("client_id", clientIds).eq("role", OWNER_SEAT[line]).order("created_at");
+  const rank = (r: { role: string; is_primary: boolean | null }) => r.is_primary === false ? 1 : 0;
   const rows = ((data ?? []) as { client_id: string; profile_id: string; role: string; is_primary: boolean | null }[]).sort((a, b) => rank(a) - rank(b));
   for (const r of rows) if (out.get(r.client_id) == null) out.set(r.client_id, r.profile_id);
   return out;
