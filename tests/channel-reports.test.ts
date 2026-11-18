@@ -189,7 +189,10 @@ describe("who sees which line", () => {
     expect(mayOpen({ role: "head_of_email" }, "social", client)).toBe(false);
     expect(mayOpen({ role: "head_of_email" }, "email", { services: ["social-media"], myRoles: [] })).toBe(false);
     expect(mayOpen({ role: "email_builder" }, "email", client)).toBe(false);
-    expect(mayOpen({ role: "email_builder" }, "email", { ...client, myRoles: ["email_builder"] })).toBe(true);
+    // Only strategists own and send email reports: a builder or designer seated on the client does not
+    expect(mayOpen({ role: "email_builder" }, "email", { ...client, myRoles: ["email_builder"] })).toBe(false);
+    expect(mayOpen({ role: "email_designer" }, "email", { ...client, myRoles: ["email_designer"] })).toBe(false);
+    expect(mayOpen({ role: "email_strategist" }, "email", { ...client, myRoles: ["email_strategist"] })).toBe(true);
     expect(mayOpen({ role: "email_builder" }, "email", { ...client, myRoles: ["social_manager"] })).toBe(false);
     expect(mayOpen({ role: "media_buyer" }, "email", { ...client, myRoles: ["email_builder"] })).toBe(false);
     expect(mayOpen({ role: "executive", isExec: true }, "social", { services: [], myRoles: [] })).toBe(true);

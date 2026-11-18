@@ -6,6 +6,8 @@ import { locationText } from "@/lib/klaviyo/locations";
 import { channelMtdText } from "./mtd";
 import { sourcesText } from "./email-sources";
 import { campaignPicks } from "./email-cards";
+import { audienceLines } from "@/lib/klaviyo/audiences";
+import { splitLegend } from "./email-split";
 
 // A channel report's numbers as the text the writer and the QA read: every figure the report may quote, with its dates and
 // what it is compared with, in one place so what the AI says and what the PDF draws can never differ.
@@ -63,6 +65,12 @@ export function emailText(m: EmailMetrics): string {
 const was = (p: Pair, f: (x: number | null) => string) => `${f(p.now)} (before: ${f(p.before)})`;
 const row = (r: MessageRow, c: string | null) => `${int(r.recipients)} recipients, ${r.openRate != null ? `${pct(r.openRate)} opened, ` : ""}${pct(r.clickRate, 2)} clicked, ${int(r.orders)} orders (${pct(r.orderRate, 2)} of recipients ordered), ${money(r.revenue, c)} revenue${r.recipients > 0 ? `, ${money(r.revenue / r.recipients, c)} per recipient` : ""}${r.orders ? `, average order ${money(r.revenue / r.orders, c)}` : ""}`;
 
+/** Who a campaign went to and who it left out, as the data gives it (nothing when none is stored) */
+const audienceFact = (r: MessageRow) => {
+  const a = audienceLines(r.audiences, 6);
+  return a.sent || a.excluded ? ` [${a.sent ? `sent to: ${a.sent}` : ""}${a.sent && a.excluded ? "; " : ""}${a.excluded ? `excluded: ${a.excluded}` : ""}]` : "";
+};
+
 /** The detail the PDF draws, as the writer reads it: every campaign and the flows for the report's own dates, and what's coming up */
 function detailText(m: EmailMetrics): string {
   const d = m.detail!;
@@ -74,16 +82,20 @@ function detailText(m: EmailMetrics): string {
     `Campaign performance (${d.campaign.sent.now ?? 0} sent; before: ${d.campaign.sent.before ?? 0}): recipients ${was(d.campaign.recipients, int)}; open rate ${was(d.campaign.open, (x) => pct(x))} (${grade(d.campaign.open.now, RATE_BARS.campaign.open) ?? "n/a"} against Kaizen's ${pct(RATE_BARS.campaign.open, 0)} bar); click rate ${was(d.campaign.click, (x) => pct(x, 2))} (${grade(d.campaign.click.now, RATE_BARS.campaign.click) ?? "n/a"} against ${pct(RATE_BARS.campaign.click, 0)}); placed order rate ${was(d.campaign.orderRate, (x) => pct(x, 2))}.`,
     ...(d.campaign.rpr ? [`Campaign revenue per recipient: ${was(d.campaign.rpr, (x) => money(x, c))}.`] : []),
     `Every campaign sent in the period, by date:`,
-    ...d.campaigns.map((r) => `- ${r.date} ${r.channel === "sms" ? "SMS" : "email"} "${r.name}": ${row(r, c)}`),
+    ...d.campaigns.map((r) => `- ${r.date} ${r.channel === "sms" ? "SMS" : "email"} "${r.name}": ${row(r, c)}${audienceFact(r)}${r.channel === "sms" && r.smsBody ? ` [text: ${r.smsBody.replace(/\s+/g, " ").slice(0, 200)}]` : ""}`),
   ];
   const picks = campaignPicks(d.campaigns, { currency: c, revenueMeasured: m.revenueMeasured !== false });
   if (picks) out.push(`The report's campaign section shows the best and the lowest performer by ${picks.basis === "rpr" ? "revenue per recipient" : "click rate (revenue isn't tracked)"}: best "${picks.best.row.name}" (${picks.best.why}); lowest "${picks.lowest.row.name}" (${picks.lowest.why})`);
   const ch = d.channels;
   if (ch) out.push(`Email against SMS (texts went out; mention SMS in the message when it earned a real part of the revenue or changed from the period before): email ${was(ch.email.revenue, (x) => money(x, c))} from ${was(ch.email.sends, int)} sends; SMS ${was(ch.sms.revenue, (x) => money(x, c))} from ${was(ch.sms.sends, int)} texts across ${was(ch.sms.campaigns, int)} SMS campaigns (automated texts' revenue is in the SMS revenue, their sends in email's).`);
+  if (d.split) {
+    const lg = splitLegend(d.split.now, d.split.before);
+    out.push(`Attribution split (email campaigns, automated emails${lg.sms ? ", SMS campaigns, automated texts" : ""}): ${lg.rows.map((x) => `${x.label} ${money(x.revenue, c)}${x.share != null ? ` (${Math.round(x.share * 100)}%)` : ""}${x.before != null ? `, before ${money(x.before, c)}` : ""}`).join("; ")}; total ${money(lg.total, c)}.`);
+  }
   if (d.flow) {
     out.push(`Automated emails (flows) for the period's own dates (call them automated emails in the client's message, never flows): ${d.flow.sent.now ?? 0} sent; recipients ${was(d.flow.recipients, int)}; open rate ${was(d.flow.open, (x) => pct(x))} (${grade(d.flow.open.now, RATE_BARS.flow.open) ?? "n/a"} against ${pct(RATE_BARS.flow.open, 0)}); click rate ${was(d.flow.click, (x) => pct(x, 2))} (${grade(d.flow.click.now, RATE_BARS.flow.click) ?? "n/a"} against ${pct(RATE_BARS.flow.click, 1)}); placed order rate ${was(d.flow.orderRate, (x) => pct(x, 2))}; revenue ${was(d.flow.revenue, (x) => money(x, c))}${d.flow.rpr ? `; revenue per recipient ${was(d.flow.rpr, (x) => money(x, c))}` : ""}.`);
     out.push(`Each automated email that sent, best revenue first:`);
-    for (const r of d.flows) out.push(`- "${r.name}" (${r.status ?? "status unknown"}): ${row(r, c)}`);
+    for (const r of d.flows) out.push(`- "${r.name}" (${r.status ?? "status unknown"}): ${row(r, c)}${r.prevRevenue != null ? `, revenue before ${money(r.prevRevenue, c)}${r.prevRpr != null ? `, per recipient before ${money(r.prevRpr, c)}` : ""}` : ", did not send in the period before"}`);
     if (d.flowsOther) out.push(`- ${d.flowsOther.name} together: ${row(d.flowsOther, c)}`);
   } else {
     out.push(`Automated emails (${m.flowsBasis}; not the period's own days, so say "over the last 30 days" if you quote one):`);

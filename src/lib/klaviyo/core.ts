@@ -232,7 +232,7 @@ export function sumSince(row: SeriesRow, from: string): Stats {
 
 // ─── Campaigns and flows as listed ─────────────────────────────────────────
 
-export type CampaignInfo = { id: string; name: string; channel: "email" | "sms" | string; status: string | null; sendTime: string | null; audienceIds: string[]; subject: string | null; previewText: string | null; archived: boolean; messageId?: string | null; body?: string | null };
+export type CampaignInfo = { id: string; name: string; channel: "email" | "sms" | string; status: string | null; sendTime: string | null; audienceIds: string[]; /** The lists and segments it left out */ excludedIds?: string[]; subject: string | null; previewText: string | null; archived: boolean; messageId?: string | null; body?: string | null };
 
 /**
  * GET /api/campaigns with include=campaign-messages: each campaign, its audiences (list and segment ids) and its first
@@ -262,6 +262,7 @@ export function parseCampaigns(json: unknown, channel: string): CampaignInfo[] {
       status: str(a.status),
       sendTime: str(a.send_time) ?? str(a.scheduled_at),
       audienceIds: (Array.isArray(aud.included) ? aud.included : []).map(String),
+      excludedIds: (Array.isArray(aud.excluded) ? aud.excluded : []).map(String),
       subject: str(content.subject),
       previewText: str(content.preview_text),
       archived: a.archived === true,

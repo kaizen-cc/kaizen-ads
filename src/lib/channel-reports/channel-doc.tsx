@@ -9,10 +9,12 @@ import { cadenceWord, channelName, fitFont, int, metricsSupport, money, moveOf, 
 import { channelMtdView, MTD_STATUS_WORD, type ChannelMtdView } from "./mtd";
 import { columnKeys, tileViews, type ChannelLayout, type TileView } from "./layout";
 import { wholeMoney } from "./email-message";
-import { channelBars, grade, RATE_BARS, rprOf, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
+import { splitDay, splitLegend, splitOfDays, splitTotal, SPLIT_HEX } from "./email-split";
+import { audienceLines } from "@/lib/klaviyo/audiences";
+import { grade, RATE_BARS, rprOf, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
 import type { RevenueSource } from "./email-sources";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
-import { campaignPicks, cardCampaigns, cardStats, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, shareText, tint, type CardStat } from "./email-cards";
+import { campaignPicks, cardCampaigns, cardStats, flowCardViews, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, shareText, tint, type CardStat, type FlowCardView } from "./email-cards";
 import { SocialBody } from "./social-doc";
 
 // A channel client report as a PDF, in the same design as the ads report (weekly-doc.tsx): the client's logo beside
@@ -43,8 +45,6 @@ const AMBER = { fg: "#a1650f", bg: "#fdf1dc" };
 const GRADE_TONE: Record<Grade, { fg: string; bg: string }> = { good: GOOD, fair: AMBER, poor: BAD };
 const GRADE_WORD: Record<Grade, string> = { good: "Good", fair: "Fair", poor: "Poor" };
 const CAMPAIGN_HEX = "#24364d";
-/** SMS on the charts: a warm teal that reads apart from both email colours */
-const SMS_HEX = "#1f9e8f";
 /** Revenue per recipient with its cents */
 const centsMoney = (n: number | null | undefined, currency: string | null) => (n == null || !Number.isFinite(n) ? "–" : `${!currency || currency === "USD" ? "$" : `${currency} `}${n.toFixed(2)}`);
 
@@ -486,54 +486,51 @@ function LegendRow({ color, name, value, share, mv, prior, before }: { color: st
   );
 }
 
-/** Each day's revenue from campaigns stacked on automated emails, with the split and its move beside it */
-function ConversionSummary({ m, look }: { m: EmailMetrics; look: Look }) {
+/**
+ * Each day's revenue by channel and type, stacked in one palette (email blues, SMS oranges; the darker shade for campaigns,
+ * the lighter for automations), with the legend, each part's share and the total beside it. The SMS shades only appear
+ * when texts earned revenue in the period. The numbers come from email-split.ts, the same as the live page's.
+ */
+function ConversionSummary({ m }: { m: EmailMetrics }) {
   const d = m.detail!;
   const c = m.currency;
   const prior = priorWord(m);
-  const total = m.now.campaignRevenue + m.now.flowRevenue;
-  const share = (x: number) => (total > 0 ? `${Math.round((x / total) * 100)}%` : "");
-  // Texts on the chart: their own colour beside email's, when the client sent any in the period
+  const daily = d.daily;
+  const now = d.split?.now ?? splitOfDays(daily) ?? splitDay({ campaign: m.now.campaignRevenue, flow: m.now.flowRevenue, sms: m.now.smsRevenue });
+  const before = d.split ? d.split.before : splitDay({ campaign: m.before.campaignRevenue, flow: m.before.flowRevenue, sms: m.before.smsRevenue });
+  const lg = splitLegend(now, before);
   const ch = d.channels ?? null;
-  const withSms = Boolean(ch && ((ch.sms.revenue.now ?? 0) > 0 || (ch.sms.sends.now ?? 0) > 0) && d.daily.some((p) => p.sms != null));
-  const bars = d.daily.map((p) => (withSms ? channelBars(p) : { campaign: p.campaign, flow: p.flow, sms: 0 }));
+  const parts = daily.map(splitDay);
+  const keys = lg.rows.map((r) => r.key);
   const left = 132;
   const W = INNER - 26 - left - 14;
-  const H = 128;
+  const H = lg.sms ? 200 : 132;
   const top = 12;
   const base = H - 16;
-  const daily = d.daily;
-  const scale = niceTop(Math.max(...daily.map((x) => x.campaign + x.flow), 0));
+  const scale = niceTop(Math.max(...parts.map(splitTotal), 0));
   const slot = daily.length ? (W - 30) / daily.length : 0;
   const bar = Math.max(3, Math.min(30, slot * 0.62));
   const y = (v: number) => base - (v / scale) * (base - top);
   const few = daily.length <= 10;
+  const shareText2 = (x: number | null) => (x == null ? "" : `${Math.round(x * 100)}%`);
   return (
     <View style={s.section} wrap={false}>
-      <Head title="Conversion summary" sub={withSms ? `Revenue by day from email campaigns, automated emails and SMS, ${m.main.label}` : `Revenue attributed to email and SMS by day, ${m.main.label}`} />
+      <Head title="Conversion summary" sub={lg.sms ? `Revenue by day from email and SMS, campaigns and automations, ${m.main.label}` : `Revenue by day from email campaigns and automations, ${m.main.label}`} />
       <View style={[s.panel, { flexDirection: "row" }]}>
         <View style={{ width: left, paddingRight: 10, borderRightWidth: 1, borderRightColor: "#edf1f4", marginRight: 14 }}>
-          {withSms && ch ? (
-            <>
-              <LegendRow color={CAMPAIGN_HEX} name="Email" value={wholeMoney(ch.email.revenue.now, c)} share={share(ch.email.revenue.now ?? 0)} mv={moveOf(ch.email.revenue.now, ch.email.revenue.before)} before={wholeMoney(ch.email.revenue.before, c)} prior={prior} />
-              <LegendRow color={SMS_HEX} name="SMS" value={wholeMoney(ch.sms.revenue.now, c)} share={share(ch.sms.revenue.now ?? 0)} mv={moveOf(ch.sms.revenue.now, ch.sms.revenue.before)} before={wholeMoney(ch.sms.revenue.before, c)} prior={prior} />
-              <Text style={{ fontSize: 6.2, color: MUTED, lineHeight: 1.35 }}>
-                {int(ch.email.sends.now)} emails and {int(ch.sms.sends.now)} texts sent ({int(ch.sms.campaigns.now)} SMS {ch.sms.campaigns.now === 1 ? "campaign" : "campaigns"})
-              </Text>
-              <View style={{ flexDirection: "row", alignItems: "center", marginTop: 5 }}>
-                <View style={[s.dot, { backgroundColor: CAMPAIGN_HEX, marginRight: 3 }]} />
-                <Text style={{ fontSize: 5.8, color: MUTED, marginRight: 6 }}>Campaigns</Text>
-                <View style={[s.dot, { backgroundColor: look.bars, marginRight: 3 }]} />
-                <Text style={{ fontSize: 5.8, color: MUTED }}>Automated</Text>
-              </View>
-            </>
-          ) : (
-            <>
-              <LegendRow color={CAMPAIGN_HEX} name="Campaigns" value={wholeMoney(m.now.campaignRevenue, c)} share={share(m.now.campaignRevenue)} mv={moveOf(m.now.campaignRevenue, m.before.campaignRevenue)} before={wholeMoney(m.before.campaignRevenue, c)} prior={prior} />
-              <LegendRow color={look.bars} name="Automated emails" value={wholeMoney(m.now.flowRevenue, c)} share={share(m.now.flowRevenue)} mv={moveOf(m.now.flowRevenue, m.before.flowRevenue)} before={wholeMoney(m.before.flowRevenue, c)} prior={prior} />
-              {m.now.smsRevenue > 0 ? <Text style={{ fontSize: 6.4, color: MUTED }}>SMS within these: {money(m.now.smsRevenue, c)}</Text> : null}
-            </>
-          )}
+          {lg.rows.map((r) => (
+            <LegendRow key={r.key} color={r.color} name={r.label} value={wholeMoney(r.revenue, c)} share={shareText2(r.share)} mv={moveOf(r.revenue, r.before)} before={wholeMoney(r.before, c)} prior={prior} />
+          ))}
+          <View style={{ borderTopWidth: 1, borderTopColor: "#edf1f4", paddingTop: 6 }}>
+            <Text style={{ fontSize: 7, color: MUTED }}>Total attributed</Text>
+            <Text style={{ fontSize: fitFont(wholeMoney(lg.total, c), 120, 13), fontFamily: "Helvetica-Bold", marginTop: 3, marginBottom: 3, lineHeight: 1 }}>{wholeMoney(lg.total, c)}</Text>
+            <MoveLine mv={moveOf(lg.total, lg.totalBefore)} before={wholeMoney(lg.totalBefore, c)} prior={prior} />
+          </View>
+          {lg.sms && ch ? (
+            <Text style={{ fontSize: 6.2, color: MUTED, lineHeight: 1.35, marginTop: 5 }}>
+              {int(ch.email.sends.now)} emails and {int(ch.sms.sends.now)} texts sent ({int(ch.sms.campaigns.now)} SMS {ch.sms.campaigns.now === 1 ? "campaign" : "campaigns"})
+            </Text>
+          ) : null}
         </View>
         {daily.length ? (
           <Svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
@@ -547,21 +544,24 @@ function ConversionSummary({ m, look }: { m: EmailMetrics; look: Look }) {
             ))}
             {daily.map((p, i) => {
               const x = 30 + i * slot + (slot - bar) / 2;
-              const b = bars[i];
-              const yf = y(b.flow);
-              const yc = y(b.flow + b.campaign);
-              const yt = y(p.flow + p.campaign);
+              const b = parts[i];
+              const dayTotal = splitTotal(b);
+              // Stacked from the bottom in the legend's order, so the two blues sit under the two oranges
+              let acc = 0;
+              const rects = keys.map((k) => {
+                const from = acc;
+                acc += b[k];
+                return b[k] > 0 ? <Rect key={k} x={x} y={y(acc)} width={bar} height={Math.max(0.8, y(from) - y(acc))} fill={SPLIT_HEX[k]} /> : null;
+              });
               // A long period labels every few days, counted back from the last so the last day is always named
               const every = few ? 1 : Math.ceil(daily.length / 7);
               const named = (daily.length - 1 - i) % every === 0;
               return (
                 <G key={p.date}>
-                  {b.flow > 0 ? <Rect x={x} y={yf} width={bar} height={base - yf} fill={look.bars} /> : null}
-                  {b.campaign > 0 ? <Rect x={x} y={yc} width={bar} height={Math.max(0.8, yf - yc)} fill={CAMPAIGN_HEX} /> : null}
-                  {b.sms > 0 ? <Rect x={x} y={yt} width={bar} height={Math.max(0.8, yc - yt)} fill={SMS_HEX} /> : null}
-                  {few && p.flow + p.campaign > 0 ? (
-                    <SvgText x={x + bar / 2} y={yt - 3} anchor="middle" fill={INK} size={6}>
-                      {shortMoney(p.flow + p.campaign, c)}
+                  {rects}
+                  {few && dayTotal > 0 ? (
+                    <SvgText x={x + bar / 2} y={y(dayTotal) - 3} anchor="middle" fill={INK} size={6}>
+                      {shortMoney(dayTotal, c)}
                     </SvgText>
                   ) : null}
                   {named ? (
@@ -615,17 +615,6 @@ const CAMPAIGN_COLS: Col[] = [
   { key: "name", head: "Campaign", align: "left" },
   { key: "date", head: "Sent", width: 38 },
   { key: "channel", head: "Type", width: 30 },
-  { key: "recipients", head: "Recipients", width: 48 },
-  { key: "open", head: "Open", width: 36 },
-  { key: "click", head: "Click", width: 36 },
-  { key: "orders", head: "Orders", width: 34 },
-  { key: "orderRate", head: "Order rate", width: 42 },
-  { key: "revenue", head: "Revenue", width: 56 },
-  { key: "rpr", head: "Per recip.", width: 42 },
-];
-const FLOW_COLS: Col[] = [
-  { key: "name", head: "Automated email (flow)", align: "left" },
-  { key: "status", head: "Status", width: 38 },
   { key: "recipients", head: "Recipients", width: 48 },
   { key: "open", head: "Open", width: 36 },
   { key: "click", head: "Click", width: 36 },
@@ -696,9 +685,16 @@ function Table({ cols, rows, currency, foot, keys, hot }: { cols: Col[]; rows: (
         <View key={r.id} style={[s.tr, { paddingVertical: 5, borderBottomWidth: i === rows.length - 1 ? 0 : 1 }]} wrap={false}>
           {cols.map((c) =>
             c.key === "name" ? (
-              <Text key={c.key} style={[box(c), { fontSize: 7.2, fontFamily: r.muted ? "Helvetica-Oblique" : "Helvetica-Bold", color: r.muted ? MUTED : INK, lineHeight: 1.25, maxLines: lines, textOverflow: "ellipsis" }]}>
-                {r.name}
-              </Text>
+              <View key={c.key} style={box(c)}>
+                <Text style={{ fontSize: 7.2, fontFamily: r.muted ? "Helvetica-Oblique" : "Helvetica-Bold", color: r.muted ? MUTED : INK, lineHeight: 1.25, maxLines: lines, textOverflow: "ellipsis" }}>{r.name}</Text>
+                {audienceLines(r.audiences).sent || audienceLines(r.audiences).excluded ? (
+                  <Text style={{ fontSize: 5.6, color: MUTED, lineHeight: 1.3, marginTop: 1.5, maxLines: 2, textOverflow: "ellipsis" }}>
+                    {audienceLines(r.audiences).sent ? `Sent to ${audienceLines(r.audiences).sent}` : ""}
+                    {audienceLines(r.audiences).sent && audienceLines(r.audiences).excluded ? " · " : ""}
+                    {audienceLines(r.audiences).excluded ? `Excluded ${audienceLines(r.audiences).excluded}` : ""}
+                  </Text>
+                ) : null}
+              </View>
             ) : (
               <Text key={c.key} style={[box(c), { fontSize: 7.2, textAlign: "right", color: r.muted ? MUTED : INK, fontFamily: c.key === "revenue" ? "Helvetica-Bold" : "Helvetica" }]}>
                 {cell(r, c.key, currency)}
@@ -722,6 +718,19 @@ function NoPicture({ sms, height = CARD_H }: { sms: boolean; height?: number }) 
     <View style={{ width: PIC_W, height, backgroundColor: "#eef2f5", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 }}>
       <Text style={{ fontSize: 8, fontFamily: "Helvetica-Bold", color: MUTED, textTransform: "uppercase", letterSpacing: 0.8 }}>{sms ? "SMS" : "Email"}</Text>
       <Text style={{ fontSize: 6.4, color: FAINT, marginTop: 3, textAlign: "center" }}>{sms ? "A text message" : "Preview not available"}</Text>
+    </View>
+  );
+}
+
+/** A text message as it arrived: a phone-grey panel holding the message in a bubble, in place of an email's picture */
+function SmsPhone({ body, height }: { body: string; height: number }) {
+  return (
+    <View style={{ width: PIC_W, height, backgroundColor: "#eef2f5", paddingHorizontal: 10, paddingTop: 12, alignItems: "center" }}>
+      <View style={{ width: 26, height: 3, borderRadius: 1.5, backgroundColor: "#d5dce3", marginBottom: 10 }} />
+      <View style={{ alignSelf: "flex-start", maxWidth: PIC_W - 28, backgroundColor: "#ffffff", borderRadius: 9, borderBottomLeftRadius: 3, paddingHorizontal: 8, paddingVertical: 7 }}>
+        <Text style={{ fontSize: 6.6, color: INK, lineHeight: 1.35, maxLines: Math.max(6, Math.floor((height - 60) / 9)), textOverflow: "ellipsis" }}>{body}</Text>
+      </View>
+      <Text style={{ position: "absolute", bottom: 8, left: 0, right: 0, textAlign: "center", fontSize: 5.8, fontFamily: "Helvetica-Bold", color: FAINT, letterSpacing: 0.8 }}>SMS</Text>
     </View>
   );
 }
@@ -763,10 +772,13 @@ function CampaignCard({ r, m, pic, total, look, pick }: { r: MessageRow; m: Emai
   const right = INNER - 2 - PIC_W - 28;
   const cw = right / 3;
   const share = total > 0 && m.revenueMeasured !== false ? r.revenue / total : null;
-  const h = pick ? PICK_H : CARD_H;
+  const aud = audienceLines(r.audiences);
+  // Who it went to and who it left out: one more line under the numbers, so the card grows a little for it
+  const audRows = (aud.sent ? 1 : 0) + (aud.excluded ? 1 : 0);
+  const h = (pick ? PICK_H : CARD_H) + audRows * 9 + (audRows ? 4 : 0);
   const pickTone = pick?.tone === "best" ? GOOD : AMBER;
   // eslint-disable-next-line jsx-a11y/alt-text -- a PDF image, no alt prop
-  const picture = pic ? <Image src={pic} style={{ width: PIC_W, height: h, objectFit: "cover", objectPosition: "top" }} /> : <NoPicture sms={r.channel === "sms"} height={h} />;
+  const picture = pic ? <Image src={pic} style={{ width: PIC_W, height: h, objectFit: "cover", objectPosition: "top" }} /> : r.channel === "sms" && r.smsBody ? <SmsPhone body={r.smsBody} height={h} /> : <NoPicture sms={r.channel === "sms"} height={h} />;
   return (
     <View wrap={false} style={{ flexDirection: "row", height: h, backgroundColor: "#ffffff", borderWidth: 1, borderColor: LINE, borderRadius: 10, overflow: "hidden", marginTop: GAP }}>
       <View style={{ width: PIC_W, height: h, borderRightWidth: 1, borderRightColor: LINE }}>
@@ -811,6 +823,22 @@ function CampaignCard({ r, m, pic, total, look, pick }: { r: MessageRow; m: Emai
             <Text style={{ fontFamily: "Helvetica-Bold", color: pickTone.fg }}>Why: </Text>
             {pick.why}
           </Text>
+        ) : null}
+        {audRows ? (
+          <View style={{ marginTop: 4, paddingRight: link ? 128 : 0 }}>
+            {aud.sent ? (
+              <Text style={{ fontSize: 6.2, color: MUTED, maxLines: 1, textOverflow: "ellipsis" }}>
+                <Text style={{ fontFamily: "Helvetica-Bold", color: INK }}>Sent to: </Text>
+                {aud.sent}
+              </Text>
+            ) : null}
+            {aud.excluded ? (
+              <Text style={{ fontSize: 6.2, color: MUTED, maxLines: 1, textOverflow: "ellipsis" }}>
+                <Text style={{ fontFamily: "Helvetica-Bold", color: INK }}>Excluded: </Text>
+                {aud.excluded}
+              </Text>
+            ) : null}
+          </View>
         ) : null}
         {link ? (
           <Link src={link} style={{ position: "absolute", right: 14, bottom: 9, fontSize: 7.2, fontFamily: "Helvetica-Bold", color: look.primary, textDecoration: "none" }}>
@@ -887,23 +915,116 @@ function CampaignPerformance({ m, keys, hot, images, look }: { m: EmailMetrics; 
   );
 }
 
-function FlowPerformance({ m, keys, hot }: { m: EmailMetrics; keys: string[]; hot: HotOf }) {
+const FLOW_CARD_H = 88;
+
+/** A small labelled number on a flow card, coloured by its grade against Kaizen's bar when it has one */
+function FlowMini({ label: text, value, g, mv, sub }: { label: string; value: string; g?: Grade | null; mv?: Move; sub?: string | null }) {
+  return (
+    <View style={{ flex: 1, paddingRight: 6 }}>
+      <Text style={{ fontSize: 5.6, color: "#6f7f92", fontFamily: "Helvetica-Bold", textTransform: "uppercase", letterSpacing: 0.4, maxLines: 1 }}>{text}</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+        <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: g ? GRADE_TONE[g].fg : INK, lineHeight: 1 }}>{value}</Text>
+        {mv ? (
+          <View style={{ marginLeft: 4 }}>
+            <Chip mv={mv} />
+          </View>
+        ) : null}
+      </View>
+      {sub ? <Text style={{ fontSize: 5.6, color: FAINT, marginTop: 1.5, maxLines: 1 }}>{sub}</Text> : null}
+    </View>
+  );
+}
+
+/** One automated email: its revenue with the move against the period before, revenue per recipient, opens and clicks against the bars, and its share of the flow revenue as a bar */
+function FlowCard({ v, m, w, look }: { v: FlowCardView; m: EmailMetrics; w: number; look: Look }) {
+  const r = v.row;
+  const c = m.currency;
+  const measured = m.revenueMeasured !== false;
+  const bars = RATE_BARS.flow;
+  const rev = wholeMoney(r.revenue, c);
+  const mv = measured && r.prevRevenue != null ? moveOf(r.revenue, r.prevRevenue) : null;
+  const status = r.status ? r.status.charAt(0).toUpperCase() + r.status.slice(1).toLowerCase() : null;
+  return (
+    <View wrap={false} style={{ width: w, height: FLOW_CARD_H, backgroundColor: v.top ? look.barsSoft : "#ffffff", borderWidth: v.top ? 1.4 : 1, borderColor: v.top ? look.primary : LINE, borderRadius: 10, paddingHorizontal: 11, paddingVertical: 9 }}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", height: 32 }}>
+        <View style={{ flex: 1, paddingRight: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", height: 11 }}>
+            {v.top ? (
+              <View style={{ height: 10, borderRadius: 3, paddingHorizontal: 4, backgroundColor: GOOD.bg, justifyContent: "center", marginRight: 5 }}>
+                <Text style={{ fontSize: 5.6, fontFamily: "Helvetica-Bold", color: GOOD.fg, letterSpacing: 0.5 }}>TOP AUTOMATION</Text>
+              </View>
+            ) : null}
+            {status ? <Text style={{ fontSize: 5.8, color: MUTED, maxLines: 1 }}>{status}</Text> : null}
+          </View>
+          <Text style={{ fontSize: 8.6, fontFamily: "Helvetica-Bold", color: INK, lineHeight: 1.2, marginTop: 3, maxLines: 1, textOverflow: "ellipsis" }}>{r.name}</Text>
+        </View>
+        {measured ? (
+          <View style={{ alignItems: "flex-end" }}>
+            <Text style={{ fontSize: fitFont(rev, w * 0.32, 14), fontFamily: "Helvetica-Bold", color: look.barsText, lineHeight: 1 }}>{rev}</Text>
+            <View style={{ marginTop: 4, flexDirection: "row", alignItems: "center" }}>
+              {mv ? <Chip mv={mv} /> : <Text style={{ fontSize: 5.8, color: FAINT }}>{r.prevRevenue == null ? "New this period" : ""}</Text>}
+            </View>
+          </View>
+        ) : null}
+      </View>
+      <View style={{ flexDirection: "row", marginTop: 6, height: 26 }}>
+        {measured ? <FlowMini label="Revenue per recipient" value={centsMoney(v.rpr, c)} mv={moveOf(v.rpr, r.prevRpr)} /> : <FlowMini label="Recipients" value={int(r.recipients)} />}
+        <FlowMini label="Open rate" value={pct(r.openRate, 1)} g={grade(r.openRate, bars.open)} />
+        <FlowMini label="Click rate" value={pct(r.clickRate, 2)} g={grade(r.clickRate, bars.click)} />
+        {measured ? <FlowMini label="Orders" value={int(r.orders)} sub={`${int(r.recipients)} recipients`} /> : null}
+      </View>
+      {measured && v.share != null ? (
+        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 3, height: 10 }}>
+          <View style={{ flex: 1, height: 4, borderRadius: 2, backgroundColor: "#edf1f4" }}>
+            <View style={{ width: `${Math.max(2, v.share * 100)}%`, height: 4, borderRadius: 2, backgroundColor: v.top ? look.primary : look.bars }} />
+          </View>
+          <Text style={{ fontSize: 6.2, fontFamily: "Helvetica-Bold", color: MUTED, marginLeft: 6, width: 78, textAlign: "right" }}>{`${shareText(v.share)} of automation revenue`}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function FlowPerformance({ m, look }: { m: EmailMetrics; look: Look }) {
   const d = m.detail!;
   if (!d.flow) return <LegacyFlows m={m} />;
   const prior = priorWord(m);
   const sent = d.flow.sent.now ?? 0;
-  const rows: (MessageRow & { muted?: boolean })[] = [...d.flows, ...(d.flowsOther ? [{ ...d.flowsOther, muted: true }] : [])];
-  // A short table moves with its heading as one block, so its card is never cut across two pages
+  const view = flowCardViews(d.flows, d.flowsOther);
+  const [first, ...rest] = view.cards;
+  const half = (INNER - GAP) / 2;
+  const pairs: (typeof view.cards)[] = [];
+  for (let i = 0; i < rest.length; i += 2) pairs.push(rest.slice(i, i + 2));
+  const o = view.other;
   return (
-    <View style={s.section} wrap={rows.length > 18}>
+    <View style={s.section}>
       <View wrap={false}>
         <Head title="Automated email performance" sub={`${sent} ${sent === 1 ? "flow" : "flows"} sent · graded against Kaizen's bars: open ${pct(RATE_BARS.flow.open, 0)}, click ${pct(RATE_BARS.flow.click, 1)}`} />
         <PerfCells p={d.flow} bars={RATE_BARS.flow} prior={prior} kind="flow" currency={m.currency} measured={m.revenueMeasured !== false} />
+        {first ? (
+          <View style={{ marginTop: GAP }}>
+            <FlowCard v={first} m={m} w={INNER} look={look} />
+          </View>
+        ) : null}
       </View>
-      {rows.length ? <Table cols={pickedCols(FLOW_COLS, keys)} rows={rows} currency={m.currency} foot={d.flowsOther ? "Best by revenue; the rest are added up in the last row." : null} keys={keys} hot={hot} /> : null}
+      {pairs.map((p) => (
+        <View key={p[0].row.id} wrap={false} style={{ flexDirection: "row", gap: GAP, marginTop: GAP }}>
+          {p.map((v) => (
+            <FlowCard key={v.row.id} v={v} m={m} w={half} look={look} />
+          ))}
+        </View>
+      ))}
+      {o ? (
+        <View wrap={false} style={[s.panel, { marginTop: GAP, flexDirection: "row", alignItems: "center", paddingVertical: 7 }]}>
+          <Text style={{ flex: 1, fontSize: 7.2, fontFamily: "Helvetica-Oblique", color: MUTED }}>{o.row.name}, added up</Text>
+          {m.revenueMeasured !== false ? <Text style={{ fontSize: 7.2, color: MUTED, marginRight: 14 }}>{`${centsMoney(o.rpr, m.currency)} per recipient`}</Text> : null}
+          <Text style={{ fontSize: 7.2, fontFamily: "Helvetica-Bold", color: INK }}>{m.revenueMeasured !== false ? `${wholeMoney(o.row.revenue, m.currency)}${o.share != null ? ` · ${shareText(o.share)}` : ""}` : `${int(o.row.recipients)} recipients`}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
+
 
 // ─── Deliverability and subscribers ────────────────────────────────────────
 
@@ -1527,9 +1648,9 @@ function EmailBody({ m, images, look, layout, hot }: { m: EmailMetrics; images: 
       <EmailGlance m={m} layout={layout} hot={hot} />
       <RevenueSources m={m} look={look} />
       <ChannelMtd m={m} look={look} />
-      <ConversionSummary m={m} look={look} />
+      <ConversionSummary m={m} />
       <CampaignPerformance m={m} keys={keys} hot={hot} images={images} look={look} />
-      <FlowPerformance m={m} keys={keys} hot={hot} />
+      <FlowPerformance m={m} look={look} />
       <ListAndDelivery m={m} />
       <LocationSection m={m} look={look} />
     </>

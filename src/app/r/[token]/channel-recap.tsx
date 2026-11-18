@@ -1,8 +1,10 @@
 import type { CSSProperties, ReactNode } from "react";
-import { int, metricsSupport, money, pct, signed, socialName, takeawaysFor, postRateText, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
+import { int, metricsSupport, money, moveOf, pct, signed, socialName, takeawaysFor, postRateText, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
+import { splitDay, splitLegend, splitOfDays, splitTotal, SPLIT_HEX, SPLIT_ORDER } from "@/lib/channel-reports/email-split";
+import { audienceLines } from "@/lib/klaviyo/audiences";
 import { tileViews, type ChannelLayout, type TileView } from "@/lib/channel-reports/layout";
-import { cardCampaigns, cardStats, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, shareText, type CardStat } from "@/lib/channel-reports/email-cards";
-import { RATE_BARS, type Grade, type MessageRow } from "@/lib/channel-reports/email-detail";
+import { cardCampaigns, cardStats, flowCardViews, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, rprMoney, shareText, type CardStat, type FlowCardView } from "@/lib/channel-reports/email-cards";
+import { grade, RATE_BARS, type Grade, type MessageRow } from "@/lib/channel-reports/email-detail";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
 import type { Sections } from "@/lib/reports/write";
 import { AdImage } from "./ad-image";
@@ -148,8 +150,12 @@ function EmailBody({ m, shots }: { m: EmailMetrics; shots: Record<string, string
           </div>
         </Block>
       )}
+      <ConversionSummary m={m} />
       <CampaignCards m={m} shots={shots} />
-      {m.flows.length > 0 && (
+      {m.detail?.flow && m.detail.flows.length > 0 ? (
+        <FlowCards m={m} />
+      ) : (
+        m.flows.length > 0 && (
         <Block title="Flows">
           <div className="grid gap-2">
             {m.flows.slice(0, 6).map((f) => (
@@ -161,6 +167,7 @@ function EmailBody({ m, shots }: { m: EmailMetrics; shots: Record<string, string
           </div>
           <p className="mt-3 text-xs text-faint">{m.flowsBasis}</p>
         </Block>
+        )
       )}
       <Block title="List and deliverability">
         <div className="grid gap-3 sm:grid-cols-2">
@@ -256,7 +263,39 @@ function SocialBody({ m }: { m: SocialMetrics }) {
 
 // ─── Campaign cards ────────────────────────────────────────────────────────
 
-type CardRow = Pick<MessageRow, "id" | "name" | "date" | "channel" | "recipients" | "openRate" | "clickRate" | "orders" | "orderRate" | "revenue"> & { image: string | null; subject: string | null };
+type CardRow = Pick<MessageRow, "id" | "name" | "date" | "channel" | "recipients" | "openRate" | "clickRate" | "orders" | "orderRate" | "revenue" | "smsBody" | "audiences"> & { image: string | null; subject: string | null };
+
+/** Who a campaign went to and who it left out, as two short lines */
+function Audiences({ a }: { a: MessageRow["audiences"] }) {
+  const l = audienceLines(a, 4);
+  if (!l.sent && !l.excluded) return null;
+  return (
+    <div className="mt-2 grid gap-0.5 text-[12px] leading-snug text-muted [overflow-wrap:anywhere]">
+      {l.sent && (
+        <p>
+          <span className="font-medium text-fg">Sent to </span>
+          {l.sent}
+        </p>
+      )}
+      {l.excluded && (
+        <p>
+          <span className="font-medium text-fg">Excluded </span>
+          {l.excluded}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A text message as it arrived: the words in a bubble on a phone-grey panel, where an email would show its picture */
+function SmsBubble({ text }: { text: string }) {
+  return (
+    <div className="absolute inset-0 grid content-start gap-2 bg-surface-2 p-2.5 sm:p-3">
+      <span className="mx-auto h-0.5 w-6 rounded-full bg-border" aria-hidden />
+      <p className="line-clamp-[9] w-fit max-w-[92%] whitespace-pre-wrap rounded-[12px] rounded-bl-[4px] bg-surface px-2.5 py-2 text-[11px] leading-snug text-fg [overflow-wrap:anywhere] sm:text-[12px]">{text}</p>
+    </div>
+  );
+}
 
 /** The campaigns to draw as cards: this period's (from the detail) or, on an older report, the best ones it kept */
 function cardRows(m: EmailMetrics): { rows: CardRow[]; all: CardRow[] } {
@@ -313,8 +352,14 @@ function CampaignCards({ m, shots }: { m: EmailMetrics; shots: Record<string, st
           const src = shots[r.id] ?? r.image;
           const pic = (
             <div className="relative aspect-[2/3] w-full overflow-hidden bg-surface-2">
-              <AdImage src={src} top />
-              {!src && <span className="absolute inset-0 grid place-items-center text-[11px] tracking-[0.12em] text-faint uppercase">{r.channel === "sms" ? "SMS" : "No preview"}</span>}
+              {r.channel === "sms" && r.smsBody ? (
+                <SmsBubble text={r.smsBody} />
+              ) : (
+                <>
+                  <AdImage src={src} top />
+                  {!src && <span className="absolute inset-0 grid place-items-center text-[11px] tracking-[0.12em] text-faint uppercase">{r.channel === "sms" ? "SMS" : "No preview"}</span>}
+                </>
+              )}
             </div>
           );
           return (
@@ -333,7 +378,8 @@ function CampaignCards({ m, shots }: { m: EmailMetrics; shots: Record<string, st
                       {dayText(r.date) ?? "Sent"} · {r.channel === "sms" ? "SMS" : "Email"}
                     </p>
                     <p className="mt-1 line-clamp-2 font-heading text-base leading-snug [overflow-wrap:anywhere]">{r.name}</p>
-                    {r.subject && <p className="mt-0.5 line-clamp-1 text-[13px] text-muted">{r.subject}</p>}
+                    {r.subject && r.channel !== "sms" && <p className="mt-0.5 line-clamp-1 text-[13px] text-muted">{r.subject}</p>}
+                    <Audiences a={r.audiences} />
                   </div>
                   {measured && total > 0 && (
                     <p className="shrink-0 text-right">
@@ -365,14 +411,162 @@ function CampaignCards({ m, shots }: { m: EmailMetrics; shots: Record<string, st
               <span className="min-w-0 [overflow-wrap:anywhere]">
                 {r.name}
                 <span className="ml-2 text-[12px] text-faint">{dayText(r.date)}</span>
+                <Audiences a={r.audiences} />
               </span>
               <span className="shrink-0 tabular-nums">
-                <span className="mr-3 text-[13px] text-muted">{pct(r.openRate)} opened</span>
+                {r.channel !== "sms" && <span className="mr-3 text-[13px] text-muted">{pct(r.openRate)} opened</span>}
                 {measured && <span className="font-medium">{money(r.revenue, m.currency)}</span>}
               </span>
             </div>
           ))}
         </div>
+      )}
+    </Block>
+  );
+}
+
+// ─── Conversion summary ────────────────────────────────────────────────────
+
+const weekdayText = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", day: "numeric", timeZone: "UTC" });
+const shortDay = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** Each day's revenue by channel and type in the report's palette (email blues, SMS oranges, darker for campaigns), with its legend and totals */
+function ConversionSummary({ m }: { m: EmailMetrics }) {
+  const d = m.detail;
+  if (!d || m.revenueMeasured === false) return null;
+  const c = m.currency;
+  const daily = d.daily;
+  const now = d.split?.now ?? splitOfDays(daily) ?? splitDay({ campaign: m.now.campaignRevenue, flow: m.now.flowRevenue, sms: m.now.smsRevenue });
+  const before = d.split ? d.split.before : splitDay({ campaign: m.before.campaignRevenue, flow: m.before.flowRevenue, sms: m.before.smsRevenue });
+  const lg = splitLegend(now, before);
+  if (lg.total <= 0) return null;
+  const parts = daily.map(splitDay);
+  const keys = new Set(lg.rows.map((r) => r.key));
+  const peak = Math.max(...parts.map(splitTotal), 0);
+  const move = (a: number | null, b: number | null) => {
+    const mv = moveOf(a, b);
+    return mv ? <span className={`text-[12px] font-medium ${tone(mv)}`}>{`${mv.up ? "+" : "-"}${mv.pct} vs ${m.compare.label}`}</span> : null;
+  };
+  return (
+    <Block title="Conversion summary">
+      <div className="grid gap-5 rounded-xl border border-line bg-surface p-4 sm:p-5 lg:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
+        <div className="grid content-start gap-3.5">
+          {lg.rows.map((r) => (
+            <div key={r.key}>
+              <p className="flex items-center gap-2 text-[12px] text-muted">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: r.color }} aria-hidden />
+                {r.label}
+                {r.share != null && <span className="text-faint">{shareText(r.share)}</span>}
+              </p>
+              <p className="mt-1 font-heading text-xl tracking-tight tabular-nums">{money(r.revenue, c)}</p>
+              {move(r.revenue, r.before)}
+            </div>
+          ))}
+          <div className="border-t border-line pt-3">
+            <p className="text-[12px] text-muted">Total attributed</p>
+            <p className="mt-1 font-heading text-2xl tracking-tight tabular-nums">{money(lg.total, c)}</p>
+            {move(lg.total, lg.totalBefore)}
+          </div>
+        </div>
+        {daily.length > 0 && peak > 0 && (
+          <div className="flex min-w-0 items-end gap-[3px] sm:gap-1" style={{ height: 200 }} role="img" aria-label={`Revenue by day, ${m.main.label}`}>
+            {daily.map((p, i) => {
+              const b = parts[i];
+              const total = splitTotal(b);
+              return (
+                <div key={p.date} className="flex h-full min-w-0 flex-1 flex-col justify-end" title={`${shortDay(p.date)}: ${money(total, c)}`}>
+                  <div className="flex flex-col-reverse overflow-hidden rounded-t-[3px]" style={{ height: `${(total / peak) * 88}%` }}>
+                    {SPLIT_ORDER.filter((k) => keys.has(k) && b[k] > 0).map((k) => (
+                      <div key={k} style={{ height: `${(b[k] / total) * 100}%`, backgroundColor: SPLIT_HEX[k] }} />
+                    ))}
+                  </div>
+                  <p className="mt-1 truncate text-center text-[10px] text-faint tabular-nums">{daily.length <= 10 ? weekdayText(p.date) : daily.length <= 16 || i % 3 === 0 || i === daily.length - 1 ? shortDay(p.date) : ""}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Block>
+  );
+}
+
+// ─── Automated email (flow) cards ──────────────────────────────────────────
+
+function FlowCard({ v, m }: { v: FlowCardView; m: EmailMetrics }) {
+  const r = v.row;
+  const c = m.currency;
+  const measured = m.revenueMeasured !== false;
+  const bars = RATE_BARS.flow;
+  const mv = measured && r.prevRevenue != null ? moveOf(r.revenue, r.prevRevenue) : null;
+  const rate = (x: number | null, g: Grade | null, digits: number) => <span className={g === "poor" ? "text-bad" : g === "fair" ? "text-warn" : g === "good" ? "text-ok" : ""}>{pct(x, digits)}</span>;
+  return (
+    <article className={`flex min-w-0 flex-col rounded-xl border bg-surface p-4 sm:p-5 ${v.top ? "border-brand bg-brand-soft sm:col-span-2" : "border-line"}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          {v.top && <p className="mb-1 text-[10px] font-medium tracking-[0.1em] text-brand-text uppercase">Top automated email</p>}
+          <p className="line-clamp-2 font-heading text-base leading-snug [overflow-wrap:anywhere]">{r.name}</p>
+        </div>
+        {measured && (
+          <p className="shrink-0 text-right">
+            <span className="block font-heading text-xl tabular-nums sm:text-2xl">{money(r.revenue, c)}</span>
+            {mv ? <span className={`text-[12px] font-medium ${tone(mv)}`}>{`${mv.up ? "+" : "-"}${mv.pct} vs ${m.compare.label}`}</span> : r.prevRevenue == null ? <span className="text-[12px] text-faint">New this period</span> : null}
+          </p>
+        )}
+      </div>
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-line pt-3 text-[13px] tabular-nums sm:grid-cols-4">
+        {measured && (
+          <div>
+            <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Revenue per recipient</dt>
+            <dd className="mt-0.5 font-medium">{v.rpr == null ? "–" : rprMoney(v.rpr, c)}</dd>
+          </div>
+        )}
+        <div>
+          <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Open rate</dt>
+          <dd className="mt-0.5 font-medium">{rate(r.openRate, grade(r.openRate, bars.open), 1)}</dd>
+        </div>
+        <div>
+          <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Click rate</dt>
+          <dd className="mt-0.5 font-medium">{rate(r.clickRate, grade(r.clickRate, bars.click), 2)}</dd>
+        </div>
+        <div>
+          <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">{measured ? "Orders" : "Recipients"}</dt>
+          <dd className="mt-0.5 font-medium">{int(measured ? r.orders : r.recipients)}</dd>
+        </div>
+      </dl>
+      {measured && v.share != null && (
+        <div className="mt-3 flex items-center gap-3">
+          <span className="h-1.5 flex-1 rounded-full bg-surface-2">
+            <span className={`block h-1.5 rounded-full ${v.top ? "bg-brand" : "bg-brand/50"}`} style={{ width: `${Math.max(2, v.share * 100)}%` }} />
+          </span>
+          <span className="shrink-0 text-[12px] text-muted tabular-nums">{shareText(v.share)} of automation revenue</span>
+        </div>
+      )}
+    </article>
+  );
+}
+
+/** The period's automated emails as cards: the top one wide, the rest beside each other, each with its share of the flow revenue */
+function FlowCards({ m }: { m: EmailMetrics }) {
+  const d = m.detail!;
+  const view = flowCardViews(d.flows, d.flowsOther);
+  const o = view.other;
+  const measured = m.revenueMeasured !== false;
+  return (
+    <Block title={`Automated emails · ${d.flow?.sent.now ?? view.cards.length} sent`}>
+      <p className="-mt-2 mb-4 text-[13px] text-muted">
+        Graded against Kaizen&apos;s bars: open {pct(RATE_BARS.flow.open, 0)}, click {pct(RATE_BARS.flow.click, 1)}.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {view.cards.map((v) => (
+          <FlowCard key={v.row.id} v={v} m={m} />
+        ))}
+      </div>
+      {o && (
+        <p className="mt-3 flex items-baseline justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-[13px] text-muted">
+          <span className="min-w-0 italic [overflow-wrap:anywhere]">{o.row.name}, added up</span>
+          <span className="shrink-0 tabular-nums">{measured ? `${money(o.row.revenue, m.currency)}${o.share != null ? ` · ${shareText(o.share)}` : ""}` : `${int(o.row.recipients)} recipients`}</span>
+        </p>
       )}
     </Block>
   );

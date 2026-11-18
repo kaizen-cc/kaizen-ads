@@ -18,7 +18,7 @@ import { buyerRole, orderSeats, primaryOf, type SeatRow } from "@/lib/buyer-seat
 import { readHistory } from "@/lib/reports/history";
 import { SendHistory } from "./send-history";
 import { canBringBack, latestSkip, skipLine } from "@/lib/reports/skip-log";
-import { isHeadOf, linesFor, SEATS_OF } from "@/lib/channel-reports/access-core";
+import { isHeadOf, linesFor, REPORT_SEATS } from "@/lib/channel-reports/access-core";
 import { channelClients, coverageFor, ownersFor, type ChannelClient } from "@/lib/channel-reports/clients";
 import { lastMonthOf, lineOfPlatform, platformOfLine, type ChannelLine } from "@/lib/channel-reports/core";
 
@@ -100,7 +100,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const line = me.isExec ? null : teamPlatform(me.role);
   // Seats: the buyer seats of the ad clients, and the email and social seats of those clients (the person filter reads them)
   const seatClientIds = [...new Set([...clientIds, ...chanIds])];
-  const { data: slots } = admin && seatClientIds.length ? await admin.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("client_id", seatClientIds).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer", ...SEATS_OF.email, ...SEATS_OF.social]) : { data: [] };
+  const { data: slots } = admin && seatClientIds.length ? await admin.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("client_id", seatClientIds).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer", ...REPORT_SEATS.email, ...REPORT_SEATS.social]) : { data: [] };
   const [{ data: allTargets }, { data: built }] = admin && clientIds.length
     ? await Promise.all([
         admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line ? [line] : ["meta", "google"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
@@ -113,7 +113,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const seatRows = orderSeats((slots ?? []) as unknown as Slot[]);
   // Ads: the secondary buyers. Email and social: everyone seated on that line's client (any of its seats)
   const coSeats = (clientId: string, platform: string) =>
-    isChan(platform) ? seatRows.filter((s) => s.client_id === clientId && SEATS_OF[lineOfPlatform(platform as "klaviyo" | "social")].includes(s.role)) : seatRows.filter((s) => s.client_id === clientId && s.role === buyerRole(platform) && s.is_primary === false);
+    isChan(platform) ? seatRows.filter((s) => s.client_id === clientId && REPORT_SEATS[lineOfPlatform(platform as "klaviyo" | "social")].includes(s.role)) : seatRows.filter((s) => s.client_id === clientId && s.role === buyerRole(platform) && s.is_primary === false);
   const isMine = (clientId: string, p: { owner_id: string | null; platform: string }) => p.owner_id === me.id || coSeats(clientId, p.platform).some((s) => s.profile_id === me.id);
   const byClient = new Map<string, BuilderClient>();
   for (const t of (allTargets ?? []) as unknown as { client_id: string; platform: "meta" | "google" | "tiktok"; owner_id: string | null; clients: { name: string; slug: string; slack_channel_id: string | null }; profiles: { full_name: string } | null }[]) {

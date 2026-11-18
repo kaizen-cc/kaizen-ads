@@ -6,6 +6,7 @@ import { servicesOf } from "@/lib/services";
 import { attributedPages, audienceSize, campaignContent, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, metricDaily, placedOrderMetric, pulseMetrics, listMetrics } from "./api";
 import { BACKFILL_DAYS, cleanKey, dayIn, emailContextLine, emptyStats, keyLast4, keyProblem, klaviyoClientState, klaviyoCostMs, partialSyncWarning, pickKlaviyoWindow, rates, redactKey, rollupDays, sumSince, type CampaignInfo, type KlaviyoClientState, type KlaviyoPlainError, type KlaviyoWindow, type SeriesRow, type Stats } from "./core";
 import { audienceGrowth, emailHealth, keyFlowCoverage, pulseWindow, sanitizeEmailHtml, seriesChunks, sortCampaigns, type CampaignLite, type DailyRow, type DayValue, type FlowLite, type HealthFinding, type KeyFlow, type PulseWindow } from "./insights";
+import { audienceSets, type AudienceLookup } from "./audiences";
 import { tracker } from "@/lib/progress";
 import { conversionMetricsOf, MAX_CONVERSION_METRICS, type ConversionMetric } from "@/lib/email-metrics";
 import { runBounded } from "@/lib/bounded";
@@ -225,14 +226,14 @@ async function orNamed<T>(custom: () => Promise<T>, named: () => Promise<T>): Pr
 }
 const isAuth = (e: unknown) => e instanceof KlaviyoError && (e.status === 401 || e.status === 403);
 
-export function campaignRow(clientId: string, c: CampaignInfo, s: Stats, names: Map<string, string>, now: string, source = "klaviyo") {
+export function campaignRow(clientId: string, c: CampaignInfo, s: Stats, names: Map<string, string>, now: string, source = "klaviyo", lookup?: AudienceLookup) {
   const r = rates(s);
-  return { client_id: clientId, campaign_id: c.id, name: c.name, channel: c.channel, status: c.status, send_time: c.sendTime, audiences: c.audienceIds.map((a) => names.get(a) ?? a), subject: c.subject, preview_text: c.previewText, recipients: s.recipients, delivered: s.delivered, opens_unique: s.opensUnique, open_rate: r4(r.openRate), clicks_unique: s.clicksUnique, click_rate: r4(r.clickRate), unsubscribes: s.unsubscribes, bounced: s.bounced, spam_complaints: s.spamComplaints, conversions: s.conversions, revenue: Math.round(s.revenue * 100) / 100, updated_at: now, ...(c.messageId ? { message_id: c.messageId } : {}), ...(source !== "klaviyo" ? { source } : {}) };
+  return { client_id: clientId, campaign_id: c.id, name: c.name, channel: c.channel, status: c.status, send_time: c.sendTime, audiences: c.audienceIds.map((a) => names.get(a) ?? a), ...(lookup ? { audiences_detail: audienceSets({ included: c.audienceIds, excluded: c.excludedIds ?? [] }, lookup) } : {}), subject: c.subject, preview_text: c.previewText, recipients: s.recipients, delivered: s.delivered, opens_unique: s.opensUnique, open_rate: r4(r.openRate), clicks_unique: s.clicksUnique, click_rate: r4(r.clickRate), unsubscribes: s.unsubscribes, bounced: s.bounced, spam_complaints: s.spamComplaints, conversions: s.conversions, revenue: Math.round(s.revenue * 100) / 100, updated_at: now, ...(c.messageId ? { message_id: c.messageId } : {}), ...(source !== "klaviyo" ? { source } : {}) };
 }
 export const dayRow = (clientId: string, d: ReturnType<typeof rollupDays>[number], now: string, source = "klaviyo") => ({ ...(source !== "klaviyo" ? { source } : {}), client_id: clientId, date: d.date, campaign_revenue: d.campaignRevenue, flow_revenue: d.flowRevenue, revenue: d.revenue, campaign_recipients: d.campaignRecipients, flow_recipients: d.flowRecipients, sends: d.sends, campaigns_sent: d.campaignsSent, conversions: d.conversions, sms_revenue: d.smsRevenue, updated_at: now });
 
 /** Columns the Klaviyo pulse migration adds: left out (and the save tried again) while it isn't applied */
-const PULSE_COLUMNS = ["message_id", "store_revenue", "store_orders", "sms_revenue", "subscribed", "unsubscribed"];
+const PULSE_COLUMNS = ["audiences_detail", "message_id", "store_revenue", "store_orders", "sms_revenue", "subscribed", "unsubscribed"];
 const missingColumn = (msg: string) => /column|schema cache/i.test(msg);
 
 export async function save(admin: SupabaseClient, table: string, rows: Record<string, unknown>[], conflict: string) {
@@ -513,7 +514,7 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
 
   const now = new Date().toISOString();
   const byCampaign = new Map(values.map((v) => [v.id, v.stats]));
-  const campaignRows = [...email, ...sms].filter((c) => c.sendTime || byCampaign.has(c.id)).map((c) => campaignRow(clientId, c, byCampaign.get(c.id) ?? emptyStats(), names, now));
+  const campaignRows = [...email, ...sms].filter((c) => c.sendTime || byCampaign.has(c.id)).map((c) => campaignRow(clientId, c, byCampaign.get(c.id) ?? emptyStats(), names, now, "klaviyo", new Map([...lists, ...segments].map((a) => [a.id, { name: a.name, type: a.kind }] as const))));
   const flowRows = flows.map((f) => {
     const st = flowStats.get(f.id) ?? { d30: emptyStats(), d90: emptyStats() };
     const a = rates(st.d30);
@@ -607,10 +608,11 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
 
   const now = new Date().toISOString();
   // Audience names from the last full read (lists and segments aren't listed on a recent one)
-  const { data: auds } = await admin.from("klaviyo_audiences").select("audience_id, name").eq("client_id", clientId);
+  const { data: auds } = await admin.from("klaviyo_audiences").select("audience_id, name, kind").eq("client_id", clientId);
+  const lookup: AudienceLookup = new Map((auds ?? []).filter((a) => a.name).map((a) => [a.audience_id as string, { name: a.name as string, type: a.kind === "segment" ? ("segment" as const) : ("list" as const) }] as const));
   const names = new Map((auds ?? []).map((a) => [a.audience_id as string, (a.name as string | null) ?? (a.audience_id as string)]));
   const byCampaign = new Map(values.map((v) => [v.id, v.stats]));
-  const campaignRows = recent.map((c) => campaignRow(clientId, c, byCampaign.get(c.id) ?? emptyStats(), names, now));
+  const campaignRows = recent.map((c) => campaignRow(clientId, c, byCampaign.get(c.id) ?? emptyStats(), names, now, "klaviyo", lookup));
   // The 30-day numbers only: the 90-day ones stay as the last full read left them
   const flowRows = metricId
     ? flows.map((f) => {

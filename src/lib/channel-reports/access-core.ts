@@ -23,6 +23,16 @@ export const SEATS_OF: Record<ChannelLine, readonly string[]> = {
   social: ["social_manager", "social_creative"],
 };
 
+/**
+ * The seats that own and send a line's reports: for email only the strategists (a designer or a builder seated on the
+ * client never reports on it); social keeps both of its seats. The head of email sees her strategists' reports through
+ * the service rule below, never through a seat.
+ */
+export const REPORT_SEATS: Record<ChannelLine, readonly string[]> = {
+  email: ["email_strategist"],
+  social: ["social_manager", "social_creative"],
+};
+
 /** The head of a line sees every client that buys its service */
 export const isHeadOf = (me: Who, line: ChannelLine) => me.role === (line === "email" ? "head_of_email" : "head_of_social");
 
@@ -37,5 +47,5 @@ export function mayOpen(me: Who, line: ChannelLine, client: { services: readonly
   if (me.isExec) return true;
   if (!linesFor(me).includes(line)) return false;
   if (isHeadOf(me, line) && buys(client.services, line)) return true;
-  return client.myRoles.some((r) => SEATS_OF[line].includes(r));
+  return client.myRoles.some((r) => REPORT_SEATS[line].includes(r));
 }

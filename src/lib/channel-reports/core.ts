@@ -6,6 +6,7 @@ import { postRate, withRates, windowOf, type DailyRow as SocialDay, type PostVie
 import type { Platform as SocialPlatformKey, PostFormat, SocialPost } from "@/lib/social/core";
 import type { RefreshNote } from "@/lib/reports/refresh-core";
 import { fillPriorFollowers, priorFollowersOver } from "./social-followers";
+import type { CampaignAudiences } from "@/lib/klaviyo/audiences";
 import { emailDetail, type EmailDetail, type FlowDay, type Pair, type Upcoming } from "./email-detail";
 import { locationChecks, type LocationBreakdown } from "@/lib/klaviyo/locations";
 import type { RevenueSources } from "./email-sources";
@@ -235,6 +236,10 @@ export type EmailInput = {
   /** The main list's size on the days it was read */
   sizes?: { date: string; profiles: number }[];
   upcoming?: Upcoming[];
+  /** The text of each SMS campaign, by campaign id */
+  smsBodies?: Record<string, string>;
+  /** The lists and segments each campaign went to and left out, by campaign id */
+  audiences?: Record<string, CampaignAudiences>;
 };
 
 /** Campaigns that reached someone in the window (a scheduled, cancelled or test one with no recipients doesn't count) */
@@ -324,7 +329,7 @@ export function emailMetrics(i: EmailInput): EmailMetrics {
     gaps,
     through,
     ...(i.kind === "weekly" ? { mtd: emailMtdOf(i.main.end, win) } : {}),
-    detail: emailDetail({ main: i.main, compare: i.compare, days: i.days, campaigns: i.campaigns, flowDays: i.flowDays ?? null, flows: i.flows, sizes: i.sizes ?? [] }),
+    detail: emailDetail({ main: i.main, compare: i.compare, days: i.days, campaigns: i.campaigns, flowDays: i.flowDays ?? null, flows: i.flows, sizes: i.sizes ?? [], smsBodies: i.smsBodies, audiences: i.audiences }),
     upcoming: i.upcoming ?? [],
   };
   return m;

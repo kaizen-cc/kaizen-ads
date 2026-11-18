@@ -37,7 +37,7 @@ describe("campaign cards", () => {
     expect(by.open.gauge?.mark).toBeCloseTo(0.625);
   });
   it("leaves revenue out when the provider reports none", () => {
-    expect(cardStats({ channel: "sms", recipients: 10, openRate: null, clickRate: 0.1, orders: 0, orderRate: null, revenue: 0 }, "USD", false).map((x) => x.key)).toEqual(["recipients", "open", "click"]);
+    expect(cardStats({ channel: "sms", recipients: 10, openRate: null, clickRate: 0.1, orders: 0, orderRate: null, revenue: 0 }, "USD", false).map((x) => x.key)).toEqual(["recipients", "click"]);
   });
   it("links to the campaign's report in Klaviyo", () => {
     expect(klaviyoCampaignUrl("01ABC")).toBe("https://www.klaviyo.com/campaign/01ABC/reports");

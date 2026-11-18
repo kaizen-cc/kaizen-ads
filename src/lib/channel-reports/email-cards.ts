@@ -88,9 +88,10 @@ export function cardStats(r: Pick<MessageRow, "channel" | "recipients" | "openRa
   const sms = r.channel === "sms";
   const rpr = r.recipients > 0 ? r.revenue / r.recipients : null;
   const bars = RATE_BARS.campaign;
+  // A text has no open rate: its card reads recipients, clicks and orders, never an email's open gauge
   const out: CardStat[] = [
-    { key: "recipients", label: "Recipients", value: int(r.recipients) },
-    { key: "open", label: "Open rate", value: sms ? "SMS" : pct(r.openRate, 1), grade: sms ? null : grade(r.openRate, bars.open), gauge: sms ? null : gaugeOf(r.openRate, bars.open), sub: sms ? "Texts aren't opened" : `Bar ${pct(bars.open, 0)}` },
+    { key: "recipients", label: sms ? "Texts sent" : "Recipients", value: int(r.recipients) },
+    ...(sms ? [] : [{ key: "open", label: "Open rate", value: pct(r.openRate, 1), grade: grade(r.openRate, bars.open), gauge: gaugeOf(r.openRate, bars.open), sub: `Bar ${pct(bars.open, 0)}` } satisfies CardStat]),
     { key: "click", label: "Click rate", value: pct(r.clickRate, 2), grade: grade(r.clickRate, bars.click), gauge: gaugeOf(r.clickRate, bars.click), sub: `Bar ${pct(bars.click, 0)}` },
   ];
   if (!revenueMeasured) return out;
@@ -102,8 +103,31 @@ export function cardStats(r: Pick<MessageRow, "channel" | "recipients" | "openRa
   return out;
 }
 
+// ─── Automated email (flow) cards ──────────────────────────────────────────
+
+export type FlowCardView = {
+  row: MessageRow;
+  /** This flow's share of all the period's flow revenue (null when flows earned nothing) */
+  share: number | null;
+  /** The best earner, drawn larger */
+  top: boolean;
+  /** Revenue per recipient */
+  rpr: number | null;
+};
+
+/**
+ * The flows as cards: best revenue first, each with its share of the period's flow revenue (the rest added up counts in
+ * the total) and its revenue per recipient (read off the row, or worked out from its revenue and recipients). Only the
+ * first with revenue is the top flow.
+ */
+export function flowCardViews(rows: MessageRow[], other: MessageRow | null): { cards: FlowCardView[]; other: FlowCardView | null; total: number } {
+  const total = rows.reduce((t, r) => t + r.revenue, 0) + (other?.revenue ?? 0);
+  const view = (row: MessageRow, top: boolean): FlowCardView => ({ row, share: total > 0 ? row.revenue / total : null, top, rpr: row.rpr ?? rprOf(row.revenue, row.recipients) });
+  return { cards: rows.map((r, i) => view(r, i === 0 && r.revenue > 0)), other: other ? view(other, false) : null, total };
+}
+
 /** Cents always shown: revenue per recipient is a small number */
-const rprMoney = (n: number, currency: string | null) => `${!currency || currency === "USD" ? "$" : `${currency} `}${n.toFixed(2)}`;
+export const rprMoney = (n: number, currency: string | null) => `${!currency || currency === "USD" ? "$" : `${currency} `}${n.toFixed(2)}`;
 
 // ─── Locations ─────────────────────────────────────────────────────────────
 

@@ -12,6 +12,7 @@ import { monthSoFar } from "@/lib/reports/period";
 import { locationBreakdown, type LocationBreakdown, type LocationRow } from "@/lib/klaviyo/locations";
 import { mirroredOverlap, revenueSources } from "./email-sources";
 import { campaignPicks } from "./email-cards";
+import { parseAudiencesJson, type CampaignAudiences } from "@/lib/klaviyo/audiences";
 
 // What a channel report reads: the numbers the client page already shows (klaviyo_* and social_* tables, filled by the
 // syncs), gathered for the report's own dates and worked out by core.ts. Read with the admin client, after the caller has
@@ -64,6 +65,25 @@ async function emailImages(admin: SupabaseClient, clientId: string, ids: string[
       missing.map(async (id) => {
         const got = await within(9_000, campaignPreview(admin, clientId, id).catch(() => null), null);
         if (got && got.ok) out.set(id, heroImage(got.preview.html));
+      }),
+    );
+  }
+  return out;
+}
+
+/** The words of each SMS campaign (saved previews first; up to six missing ones are read once from the provider, cached by the call) */
+async function smsTexts(admin: SupabaseClient, clientId: string, ids: string[]): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  if (!ids.length) return out;
+  const { data } = await admin.from("klaviyo_previews").select("campaign_id, body").eq("client_id", clientId).in("campaign_id", ids);
+  for (const r of data ?? []) if (typeof r.body === "string" && r.body.trim()) out[r.campaign_id as string] = r.body.trim();
+  const missing = ids.filter((id) => !out[id]).slice(0, 6);
+  if (missing.length) {
+    const { emailPreview } = await import("@/lib/email-providers");
+    await Promise.all(
+      missing.map(async (id) => {
+        const got = await within(9_000, emailPreview(admin, clientId, id).catch(() => null), null);
+        if (got && got.ok && got.preview.body && got.preview.body.trim()) out[id] = got.preview.body.trim();
       }),
     );
   }
@@ -164,8 +184,16 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
   // The best few by revenue, and the best and lowest by revenue per recipient (the report's two campaign cards)
   const picks = campaignPicks(inPeriod.map((c) => ({ ...c, orders: c.conversions, channel: c.channel === "sms" ? ("sms" as const) : ("email" as const) })), { currency: null, revenueMeasured: conn ? conn.revenue : true });
   const sentIds = [...new Set([...(picks ? [picks.best.row.id, picks.lowest.row.id] : []), ...[...inPeriod].sort((a, b) => b.revenue - a.revenue).slice(0, 6).map((c) => c.id)])];
-  const [images, flowDays, upcoming] = await Promise.all([
-    opts.images === false ? undefined : emailImages(admin, clientId, sentIds).catch(() => undefined),
+  // A text has no picture to draw: its words go in a message bubble instead
+  const textIds = new Set(inPeriod.filter((c) => c.channel === "sms").map((c) => c.id));
+  const audiences: Record<string, CampaignAudiences> = {};
+  for (const c of camps ?? []) {
+    const a = parseAudiencesJson((c as { audiences_detail?: unknown }).audiences_detail);
+    if (a && inPeriod.some((x) => x.id === c.campaign_id)) audiences[c.campaign_id as string] = a;
+  }
+  const [images, smsBodies, flowDays, upcoming] = await Promise.all([
+    opts.images === false ? undefined : emailImages(admin, clientId, sentIds.filter((id) => !textIds.has(id))).catch(() => undefined),
+    smsTexts(admin, clientId, [...textIds]).catch(() => ({}) as Record<string, string>),
     readFlowDays(admin, clientId, compare.start, main.end),
     readUpcoming(admin, clientId, main.end, camps ?? []),
   ]);
@@ -188,6 +216,8 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     flowDays,
     sizes: hist,
     upcoming,
+    smsBodies,
+    audiences,
   });
   // The target the board paces against: last month + 10% by itself, a higher one typed on the board wins
   const row = m.revenueMeasured === false ? null : await emailTarget(admin, clientId, main);

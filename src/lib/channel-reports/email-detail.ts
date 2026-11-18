@@ -1,5 +1,7 @@
 import { deliverabilityScore, EMAIL_CHECKS, type EmailCheckKey } from "@/lib/email-score";
 import type { CampaignLite, DailyRow, FlowLite } from "@/lib/klaviyo/insights";
+import type { CampaignAudiences } from "@/lib/klaviyo/audiences";
+import { splitOfDays, type Split } from "./email-split";
 
 // The email report's detail, the way the email team reads an account in Klaviyo's overview dashboard, but only what they
 // use: orders, each day's revenue from campaigns against automated emails, campaign and flow performance for the
@@ -28,7 +30,17 @@ export function grade(value: number | null | undefined, target: number): Grade |
 }
 
 /** One campaign or flow as a table row */
-export type MessageRow = { id: string; name: string; date: string | null; channel: "email" | "sms"; status: string | null; recipients: number; delivered: number; openRate: number | null; clickRate: number | null; orders: number; orderRate: number | null; revenue: number };
+export type MessageRow = { id: string; name: string; date: string | null; channel: "email" | "sms"; status: string | null; recipients: number; delivered: number; openRate: number | null; clickRate: number | null; orders: number; orderRate: number | null; revenue: number;
+  /** Revenue per recipient (older stored reports have none: it is worked out from revenue and recipients) */
+  rpr?: number | null;
+  /** A flow's revenue and revenue per recipient over the period before, when it sent then too */
+  prevRevenue?: number | null;
+  prevRpr?: number | null;
+  /** The text of an SMS campaign, for the message bubble */
+  smsBody?: string | null;
+  /** The lists and segments a campaign went to and the ones it left out (klaviyo_campaigns.audiences_detail) */
+  audiences?: CampaignAudiences | null;
+};
 
 /** The performance of campaigns (or flows) over the period and the one before */
 export type PerfBlock = { recipients: Pair; open: Pair; click: Pair; orderRate: Pair; orders: Pair; revenue: Pair; sent: Pair; /** Revenue per recipient (older stored reports have none) */ rpr?: Pair };
@@ -58,6 +70,8 @@ export type EmailDetail = {
   flowsOther: (MessageRow & { count: number }) | null;
   /** Campaign email: bounces, spam complaints and unsubscribes, and Kaizen's deliverability score */
   deliverability: { recipients: Pair; bounce: Pair; spam: Pair; unsub: Pair; score: Pair } | null;
+  /** Revenue split four ways (email campaigns, email automations, SMS campaigns, SMS automations), this period and the one before (older stored reports have none) */
+  split?: { now: Split; before: Split | null } | null;
   /** The main list: its size at the end of each period, and the joins and leaves in it */
   subscribers: { total: Pair; joined: Pair; left: Pair } | null;
 };
@@ -74,6 +88,10 @@ export type DetailInput = {
   sizes: { date: string; profiles: number }[];
   /** How many flows the table shows before the rest are added up */
   topFlows?: number;
+  /** The text of each SMS campaign (campaign id to body) */
+  smsBodies?: Record<string, string>;
+  /** Who each campaign went to and who it left out (campaign id to audiences) */
+  audiences?: Record<string, CampaignAudiences>;
 };
 
 const sum = <T,>(xs: T[], f: (x: T) => number) => xs.reduce((s, x) => s + f(x), 0);
@@ -149,20 +167,28 @@ function deliverabilityOf(list: CampaignLite[]) {
   return { recipients: em.length ? recipients : null, bounce: ratio(bounced, recipients), spam: ratio(spam, delivered), unsub: ratio(unsubs, delivered), score: deliverabilityScore({ recipients, delivered, bounced, spam, unsubscribes: unsubs, opens, clicks })?.score ?? null };
 }
 
+/** Each day of a window as campaigns, automated messages and texts (quiet days kept, at zero); empty with no daily row in it */
+function dayParts(i: DetailInput, w: Win, sent: CampaignLite[]): { date: string; campaign: number; flow: number; sms: number; smsCampaign: number }[] {
+  if (!i.days.some((d) => inWin(d.date, w))) return [];
+  const byDate = new Map(i.days.map((d) => [d.date, d]));
+  const out: { date: string; campaign: number; flow: number; sms: number; smsCampaign: number }[] = [];
+  for (let d = w.start; d <= w.end; d = nextDay(d)) {
+    const row = byDate.get(d);
+    const smsCampaign = r2(sum(sent.filter((c) => c.channel === "sms" && etDay(c.sendTime) === d), (c) => c.revenue));
+    out.push({ date: d, campaign: r2(row?.campaignRevenue ?? 0), flow: r2(row?.flowRevenue ?? 0), sms: r2(Math.max(row?.smsRevenue ?? 0, smsCampaign)), smsCampaign });
+  }
+  return out;
+}
+
 export function emailDetail(i: DetailInput): EmailDetail {
   const top = i.topFlows ?? 8;
   const now = sentIn(i.campaigns, i.main);
   const before = sentIn(i.campaigns, i.compare);
 
   // Each day of the period, campaigns against automated emails (quiet days kept, at zero)
-  const byDate = new Map(i.days.map((d) => [d.date, d]));
-  const daily: EmailDetail["daily"] = [];
-  if (i.days.some((d) => inWin(d.date, i.main)))
-    for (let d = i.main.start; d <= i.main.end; d = nextDay(d)) {
-      const row = byDate.get(d);
-      const smsCampaign = r2(sum(now.filter((c) => c.channel === "sms" && etDay(c.sendTime) === d), (c) => c.revenue));
-      daily.push({ date: d, campaign: r2(row?.campaignRevenue ?? 0), flow: r2(row?.flowRevenue ?? 0), sms: r2(Math.max(row?.smsRevenue ?? 0, smsCampaign)), smsCampaign });
-    }
+  const daily: EmailDetail["daily"] = dayParts(i, i.main, now);
+  const splitNow = splitOfDays(daily);
+  const split = splitNow ? { now: splitNow, before: splitOfDays(dayParts(i, i.compare, before)) } : null;
 
   const campaigns: MessageRow[] = [...now]
     .sort((a, b) => (a.sendTime ?? "").localeCompare(b.sendTime ?? "") || a.name.localeCompare(b.name))
@@ -179,6 +205,9 @@ export function emailDetail(i: DetailInput): EmailDetail {
       orders: Math.round(c.conversions),
       orderRate: ratio(c.conversions, c.recipients),
       revenue: r2(c.revenue),
+      rpr: rprOf(c.revenue, c.recipients),
+      ...(c.channel === "sms" && i.smsBodies?.[c.id] ? { smsBody: i.smsBodies[c.id] } : {}),
+      ...(i.audiences?.[c.id] ? { audiences: i.audiences[c.id] } : {}),
     }));
 
   // Flows: exact for the period from their daily rows; nothing read at all means the store doesn't have them yet
@@ -191,11 +220,14 @@ export function emailDetail(i: DetailInput): EmailDetail {
     const prevRows = i.flowDays.filter((r) => inWin(r.date, i.compare));
     const per = new Map<string, FlowDay[]>();
     for (const r of mainRows) per.set(r.flowId, [...(per.get(r.flowId) ?? []), r]);
+    const prevPer = new Map<string, FlowDay[]>();
+    for (const r of prevRows) prevPer.set(r.flowId, [...(prevPer.get(r.flowId) ?? []), r]);
     const rows: MessageRow[] = [...per.entries()]
       .map(([id, rs]) => {
         const t = flowTotals(rs);
         const m = meta.get(id);
-        return { id, name: m?.name ?? "Flow", date: null, channel: "email" as const, status: m?.status ?? null, recipients: t.recipients, delivered: t.delivered, openRate: ratio(t.opens, t.delivered || t.recipients), clickRate: ratio(t.clicks, t.delivered || t.recipients), orders: Math.round(t.orders), orderRate: ratio(t.orders, t.recipients), revenue: r2(t.revenue) };
+        const pt = prevPer.has(id) ? flowTotals(prevPer.get(id)!) : null;
+        return { rpr: rprOf(t.revenue, t.recipients), prevRevenue: pt ? r2(pt.revenue) : null, prevRpr: pt ? rprOf(pt.revenue, pt.recipients) : null, id, name: m?.name ?? "Flow", date: null, channel: "email" as const, status: m?.status ?? null, recipients: t.recipients, delivered: t.delivered, openRate: ratio(t.opens, t.delivered || t.recipients), clickRate: ratio(t.clicks, t.delivered || t.recipients), orders: Math.round(t.orders), orderRate: ratio(t.orders, t.recipients), revenue: r2(t.revenue) };
       })
       .filter((r) => r.recipients > 0 || r.revenue > 0)
       .sort((a, b) => b.revenue - a.revenue || b.recipients - a.recipients);
@@ -205,7 +237,7 @@ export function emailDetail(i: DetailInput): EmailDetail {
       const t = { recipients: sum(rest, (r) => r.recipients), delivered: sum(rest, (r) => r.delivered), orders: sum(rest, (r) => r.orders), revenue: r2(sum(rest, (r) => r.revenue)) };
       const opens = sum(rest, (r) => (r.openRate ?? 0) * (r.delivered || r.recipients));
       const clicks = sum(rest, (r) => (r.clickRate ?? 0) * (r.delivered || r.recipients));
-      flowsOther = { id: "other", name: `Other flows (${rest.length})`, date: null, channel: "email", status: null, ...t, openRate: ratio(opens, t.delivered || t.recipients), clickRate: ratio(clicks, t.delivered || t.recipients), orderRate: ratio(t.orders, t.recipients), count: rest.length };
+      flowsOther = { rpr: rprOf(t.revenue, t.recipients), id: "other", name: `Other flows (${rest.length})`, date: null, channel: "email", status: null, ...t, openRate: ratio(opens, t.delivered || t.recipients), clickRate: ratio(clicks, t.delivered || t.recipients), orderRate: ratio(t.orders, t.recipients), count: rest.length };
     }
     const sentFlows = (rs: FlowDay[]) => new Set(rs.filter((r) => r.recipients > 0).map((r) => r.flowId)).size;
     flow = perfPair(flowPerf(flowTotals(mainRows), sentFlows(mainRows)), flowPerf(flowTotals(prevRows), sentFlows(prevRows)));
@@ -235,6 +267,7 @@ export function emailDetail(i: DetailInput): EmailDetail {
     flow,
     flows,
     flowsOther,
+    split,
     deliverability,
     subscribers,
   };
