@@ -97,6 +97,26 @@ export async function removeKnowledge(id: string): Promise<R> {
   }
 }
 
+/** What the Loom intake filed to an email or social agent: approved (the agent reads it from now on) or declined (set aside on record) */
+export async function reviewKnowledge(id: string, approve: boolean): Promise<R> {
+  try {
+    const { admin, d, t } = await loadDoc(id);
+    if (t.scope !== "agent") return { ok: false, error: "Only an agent's pending knowledge needs approving." };
+    const me = await requireStaff();
+    const now = new Date().toISOString();
+    await admin
+      .from("knowledge_docs")
+      .update(approve ? { review: "approved", reviewed_by: me.id, reviewed_at: now, updated_at: now } : { removed_at: now, reviewed_by: me.id, reviewed_at: now, updated_at: now })
+      .eq("id", d.id as string)
+      .eq("review", "pending");
+    forgetIndex();
+    revalidatePath(pathFor(t), "layout");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't save your answer." };
+  }
+}
+
 /** A client's document set aside as background (out of date, superseded): read last, and only when it matches strongly */
 export async function setKnowledgeBackground(id: string, background: boolean): Promise<R> {
   try {

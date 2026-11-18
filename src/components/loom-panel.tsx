@@ -26,8 +26,8 @@ const TAB_LABEL: Record<Exclude<LoomTab, "queue">, string> = {
 const CLIENT_LABEL: Partial<Record<LoomTab, string>> = { clients: "Filed here", prospects: "Pre-sale audits" };
 const ORDER: Exclude<LoomTab, "queue">[] = ["decide", "method", "clients", "prospects", "skipped", "failed"];
 const SOURCE: Record<string, string> = { slack: "Slack", webhook: "Zapier", bulk: "Pasted", client: "Client page", folder: "Folder", atlassian: "Atlassian" };
-const PLATFORM: Record<string, string> = { meta: "Meta", google: "Google", both: "Meta + Google" };
-const AGENT: Record<string, string> = { "role:media_buyer": "Media Buyer", google_auditor: "Google Ads Buyer" };
+const PLATFORM: Record<string, string> = { meta: "Meta", google: "Google", both: "Meta + Google", email: "Email", social: "Social" };
+const AGENT: Record<string, string> = { "role:media_buyer": "Media Buyer", google_auditor: "Google Ads Buyer", "role:email_strategist": "Email Strategist", "role:email_creative": "Email Creative", "role:email_builder": "Email Builder", "role:social_strategist": "Social Strategist" };
 const PAGE = 25;
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: new Date(iso).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "never");

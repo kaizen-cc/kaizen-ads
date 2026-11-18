@@ -40,9 +40,11 @@ export type KnowledgeDoc = {
   at: string;
   /** Where it came from when it's text from a link (a Loom video), not an uploaded file */
   url: string | null;
+  /** pending: filed by the Loom intake and waiting for the head of the line (or an exec) to approve it; agents read only approved */
+  review: "approved" | "pending";
 };
 
-const SELECT = "id, name, title, summary, key_points, pages, status, progress, note, method, background, bytes, mime, source_url, created_at, profiles:uploaded_by(full_name)";
+const SELECT = "id, review, name, title, summary, key_points, pages, status, progress, note, method, background, bytes, mime, source_url, created_at, profiles:uploaded_by(full_name)";
 
 /** The knowledge added to one place, newest first (removed agent, shared and Lab files are left out) */
 export async function listKnowledge(db: SupabaseClient, t: KnowledgeTarget): Promise<KnowledgeDoc[]> {
@@ -67,6 +69,7 @@ export async function listKnowledge(db: SupabaseClient, t: KnowledgeTarget): Pro
     by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
     at: d.created_at as string,
     url: (d.source_url as string | null) ?? null,
+    review: d.review === "pending" ? "pending" : "approved",
   }));
 }
 
@@ -125,7 +128,7 @@ export async function addKnowledgeText(
   admin: SupabaseClient,
   t: KnowledgeTarget,
   by: string | null,
-  doc: { name: string; text: string; url?: string | null; mime?: string; title?: string | null; summary?: string | null; keyPoints?: string[]; method?: string },
+  doc: { name: string; text: string; url?: string | null; mime?: string; title?: string | null; summary?: string | null; keyPoints?: string[]; method?: string; review?: "approved" | "pending" },
 ) {
   const { data, error } = await admin
     .from("knowledge_docs")
@@ -143,6 +146,7 @@ export async function addKnowledgeText(
       key_points: (doc.keyPoints ?? []).map((k) => k.trim()).filter(Boolean).slice(0, 8),
       method: doc.method ?? "text",
       source_url: doc.url ?? null,
+      review: doc.review ?? "approved",
       uploaded_by: by,
     })
     .select("id")
@@ -351,7 +355,7 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 /** Every ready document, which client each belongs to and each skill's role (kept a minute) */
 async function knowledgeIndex(admin: SupabaseClient) {
   if (index && Date.now() - index.at < 60_000) return index;
-  const { data } = await admin.from("knowledge_docs").select("id, scope, agent_key, client_id, title, name, summary, background").eq("status", "ready").is("removed_at", null).neq("scope", "lab").limit(2000);
+  const { data } = await admin.from("knowledge_docs").select("id, scope, agent_key, client_id, title, name, summary, background").eq("status", "ready").eq("review", "approved").is("removed_at", null).neq("scope", "lab").limit(2000);
   const docs: IndexDoc[] = (data ?? []).map((d) => ({ id: d.id as string, scope: d.scope as KnowledgeScope, agentKey: (d.agent_key as string | null) ?? null, clientId: (d.client_id as string | null) ?? null, title: ((d.title as string | null) || (d.name as string)).replace(/"/g, "'"), summary: (d.summary as string | null) ?? null, background: Boolean(d.background) }));
   const ids = [...new Set(docs.map((d) => d.clientId).filter((x): x is string => Boolean(x)))];
   const [{ data: cs }, { data: agents }] = await Promise.all([

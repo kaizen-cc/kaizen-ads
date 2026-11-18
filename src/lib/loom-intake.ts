@@ -6,6 +6,7 @@ import { casesDoc, DISTILL, DISTILL_RULES, saveInsights, type Distilled } from "
 import { atlassianConfigured } from "@/lib/atlassian-mcp";
 import { listLoomFolder, readLoom } from "@/lib/loom";
 import { loomFolders, loomLinks } from "@/lib/loom-links";
+import { agentsFor, cleanTopics, EMAIL_TOPICS, lineOfPlatform, lineSignal, needsApproval, platformWords, settleLine, type EmailTopic } from "@/lib/loom-lines";
 
 // Loom videos into the agents' knowledge, automatically. Every intake path (a link posted in Slack, Zapier or an email
 // rule posting to /api/loom, a pasted list of links, a shared folder read daily) queues the video here; a background
@@ -13,6 +14,9 @@ import { loomFolders, loomLinks } from "@/lib/loom-links";
 // start of its transcript (fast and cheap), and only the ones worth filing get the full read:
 //   ad-buying method → the Media Buyer's knowledge (every skill: auditor, launcher, fatigue…), and the Google auditor's
 //   when it's about Google Ads;
+//   email marketing or organic social method → the Email Strategist's (and the Email Creative's or Builder's when it's
+//   design, copy or a build; the Social Strategist's for social), filed as pending: the head of that line or an exec
+//   approves it before the agent reads it;
 //   a client situation → that client's knowledge, plus memory notes for what it settles (dated to the recording);
 //   neither (internal, admin, personal) → skipped, kept as a record.
 // A client situation whose client isn't clear waits in Settings › AI agents › Knowledge for someone to pick it.
@@ -33,8 +37,6 @@ export type LoomIntake = {
   recordedAt?: string | null;
 };
 
-const MEDIA_BUYER = "role:media_buyer";
-const GOOGLE = "google_auditor";
 /** How much of the transcript the classification reads (the full read is only for what gets filed) */
 const CLASSIFY_CHARS = 6000;
 const FILE_CHARS = 90_000;
@@ -189,13 +191,14 @@ async function clientList(admin: Admin): Promise<ClientRef[]> {
     });
 }
 
-const SYSTEM = `You sort the agency's Loom videos into what its AI agents should learn. Kaizen is a paid ads and creative agency (Meta and Google Ads). Most videos are a senior buyer walking through an ad account (how he reads it, what he'd keep, cut, scale or test, and why) or talking through a client's situation; some are neither (internal admin, hiring, tools, personal). Refer to people by role (the exec, a senior buyer, the client), never by name.`;
+const SYSTEM = `You sort the agency's Loom videos into what its AI agents should learn. Kaizen is a paid ads and creative agency (Meta and Google Ads) that also runs email marketing (Klaviyo, Brevo, Customer.io and similar) and organic social for clients. Most videos are a senior buyer walking through an ad account (how he reads it, what he'd keep, cut, scale or test, and why) or talking through a client's situation; many are the email team walking through an email program audit, a flow or campaign build, campaign and calendar strategy, deliverability, or email design and copy; some are neither (internal admin, hiring, tools, personal). Refer to people by role (the exec, a senior buyer, the client), never by name.`;
 
 const CLASSIFY = {
   type: "object",
   properties: {
     kind: { type: "string", enum: ["method", "client", "both", "other"] },
-    platform: { type: "string", enum: ["meta", "google", "both", "none"] },
+    platform: { type: "string", enum: ["meta", "google", "both", "email", "social", "none"] },
+    topics: { type: "array", items: { type: "string", enum: [...EMAIL_TOPICS] } },
     clients: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, sure: { type: "boolean" } }, required: ["n", "sure"], additionalProperties: false } },
     title: { type: "string" },
     summary: { type: "string" },
@@ -206,7 +209,7 @@ const CLASSIFY = {
       additionalProperties: false,
     },
   },
-  required: ["kind", "platform", "clients", "title", "summary", "prospect"],
+  required: ["kind", "platform", "topics", "clients", "title", "summary", "prospect"],
   additionalProperties: false,
 };
 
@@ -226,7 +229,7 @@ const FILE = {
   additionalProperties: false,
 };
 
-type Classified = { kind: "method" | "client" | "both" | "other"; platform: "meta" | "google" | "both" | "none"; clients: { n: number; sure: boolean }[]; title: string; summary: string; prospect?: ProspectGuess };
+type Classified = { kind: "method" | "client" | "both" | "other"; platform: "meta" | "google" | "both" | "email" | "social" | "none"; topics?: EmailTopic[]; clients: { n: number; sure: boolean }[]; title: string; summary: string; prospect?: ProspectGuess };
 type Filed = { key_points: string[]; lessons: { rule: string; when: string }[]; situation: string; memory: { kind: "prefer" | "avoid" | "note"; text: string }[]; cases?: string };
 
 const NO_CAPTIONS =
@@ -240,12 +243,14 @@ async function update(admin: Admin, id: string, patch: Record<string, unknown>) 
 
 /** A knowledge document for this video in this place, once (a second run never files it twice) */
 async function fileDoc(admin: Admin, t: KnowledgeTarget, row: Row, doc: { name: string; text: string; title: string; summary: string; keyPoints: string[] }, url = row.url) {
+  // What goes to an email or social agent waits for approval; the buying agents' and clients' knowledge goes straight in, as before
+  const review = t.scope === "agent" && needsApproval(t.agentKey) ? ("pending" as const) : undefined;
   let q = admin.from("knowledge_docs").select("id").eq("source_url", url).eq("scope", t.scope).is("removed_at", null).limit(1);
   if (t.scope === "agent") q = q.eq("agent_key", t.agentKey);
   if (t.scope === "client") q = q.eq("client_id", t.clientId);
   const { data: had } = await q;
   if (had?.length) return had[0].id as string;
-  return addKnowledgeText(admin, t, row.by, { ...doc, url, mime: "text/x-loom", method: "loom" });
+  return addKnowledgeText(admin, t, row.by, { ...doc, url, mime: "text/x-loom", method: "loom", review });
 }
 
 /** What the video settles for one client: its situation in their knowledge, its durable decisions in memory (dated) */
@@ -327,8 +332,12 @@ export async function processLoom(admin: Admin, row: Row) {
             maxTokens: 2500,
             system: SYSTEM,
             schema: CLASSIFY,
-            prompt: `${head}\n\n<transcript_start>\n${transcript.slice(0, CLASSIFY_CHARS)}\n</transcript_start>\n\nOur clients (number. name · website · ad account names):\n${roster}\n\nkind: "method" when it teaches how to read, buy or fix ad accounts in a way that applies beyond one client (an account audit walkthrough is method even when it uses one client's account, and usually "both"; a sales prospect's account audit is "both" too); "client" when it's about one client's situation (results, a decision, a problem, a plan, the relationship); "both" when it does both; "other" for anything else (internal admin, hiring, tools, personal, a sales demo with no account read).\nplatform: which ad platform it's about (none when neither).\nclients: the numbers of the clients it's about, matched by name, brand, website or ad account name said or shown; sure: true only when it's clearly that client. Empty when none or you can't tell.\ntitle: a clear title in a few words (keep Loom's when it's good). summary: two or three sentences on what it covers.\n${PROSPECT_RULES}`,
+            prompt: `${head}\n\n<transcript_start>\n${transcript.slice(0, CLASSIFY_CHARS)}\n</transcript_start>\n\nOur clients (number. name · website · ad account names):\n${roster}\n\nkind: "method" when it teaches how to read, buy or fix ad accounts in a way that applies beyond one client (an account audit walkthrough is method even when it uses one client's account, and usually "both"; a sales prospect's account audit is "both" too); "client" when it's about one client's situation (results, a decision, a problem, a plan, the relationship); "both" when it does both (an audit of one client's email program is usually "both"); "other" for anything else (internal admin, hiring, tools, personal, a sales demo with no account read). An email program audit, a Klaviyo or other email tool walkthrough (flows, campaigns, segments, deliverability, design or copy) that teaches how we do it is method too, and so is organic social how-to. Email and organic social videos are never "other" just because they aren't about ads.\nplatform: meta or google (or both) when it's about paid ads on those; email when it's about email marketing (Klaviyo, Brevo, Customer.io, Mailchimp, flows, campaigns, newsletters); social when it's about organic social posting and growth; none when none of these.\ntopics: for an email video, what it covers (audit, calendar, flow_build, campaign_strategy, deliverability, design, copy, build: an email being built in the tool); empty for anything else.\nclients: the numbers of the clients it's about, matched by name, brand, website or ad account name said or shown; sure: true only when it's clearly that client. Empty when none or you can't tell.\ntitle: a clear title in a few words (keep Loom's when it's good). summary: two or three sentences on what it covers.\n${PROSPECT_RULES}`,
           });
+    // The AI decides; the words in the title and transcript only catch the clear misses (an email audit sorted as "other")
+    if (!row.forced_kind) Object.assign(c, settleLine(c, lineSignal(row.title, transcript)));
+    c.topics = cleanTopics(c.topics);
+    const line = lineOfPlatform(c.platform);
     const sure = c.clients.filter((x) => x.sure).map((x) => clients[x.n - 1]).filter(Boolean);
     const unsure = c.clients.filter((x) => !x.sure).map((x) => clients[x.n - 1]).filter(Boolean);
     const about = { title: clean(c.title || row.title || "Loom video").slice(0, 160), summary: clean(c.summary).slice(0, 1500) };
@@ -345,7 +354,7 @@ export async function processLoom(admin: Admin, row: Row) {
 
     // 3. The full read, only for what gets filed. Ad-buying method is distilled (opus) into the senior buyer's
     // principles, decision rules, cases, diagnostics and voice; a client-only situation gets a lighter read.
-    const what = `${head}\nWhat it is: ${c.kind === "both" ? "ad-buying method and a client situation" : c.kind === "method" ? "ad-buying method" : "a client situation"} (${c.platform === "none" ? "no ad platform" : c.platform === "both" ? "Meta and Google" : c.platform === "google" ? "Google Ads" : "Meta"})${clientIds.length ? `, about ${clientIds.map((id) => clients.find((x) => x.id === id)?.name).join(", ")}` : ""}.`;
+    const what = `${head}\nWhat it is: ${c.kind === "both" ? "ad-buying method and a client situation" : c.kind === "method" ? (line ? `${line} method` : "ad-buying method") : "a client situation"} (${platformWords(c.platform)})${clientIds.length ? `, about ${clientIds.map((id) => clients.find((x) => x.id === id)?.name).join(", ")}` : ""}.`;
     // A prospect's audit keeps its situation and memory too, for the day they become a client
     const keepSituation = forClient || Boolean(prospect);
     const SITUATION = keepSituation ? "what's going on with the client, as markdown: where things stand, the problem or opportunity, what was decided or recommended and why, what's next. Specific." : "empty.";
@@ -363,6 +372,18 @@ export async function processLoom(admin: Admin, row: Row) {
         system: SYSTEM,
         schema: FILE,
         prompt: `${what}\n\n<transcript>\n${transcript.slice(0, FILE_CHARS)}\n</transcript>\n\nkey_points: 3 to 8 short lines, the specifics worth knowing.\nlessons: empty.\nsituation: ${SITUATION}\nmemory: ${MEMORY}`,
+      });
+    } else if (line) {
+      // Email and organic social method: one lighter read (no buying insights: those feed the Media Buyer's skills)
+      filed = await askJson<Filed>({
+        agent: "auditor",
+        label: "loom line file",
+        clientId: clientIds.length === 1 ? clientIds[0] : null,
+        override: { model: "sonnet", effort: "medium" },
+        maxTokens: 12000,
+        system: SYSTEM,
+        schema: FILE,
+        prompt: `${what}${c.topics?.length ? `\nIt covers: ${c.topics.join(", ")}.` : ""}\n\n<transcript>\n${transcript.slice(0, FILE_CHARS)}\n</transcript>\n\nThis is how Kaizen's ${line === "email" ? "email team" : "social team"} does the work, to teach the ${line === "email" ? "email" : "social"} agents. Keep the specifics: the tool's settings, thresholds and benchmarks, the order things are checked in, what is good or bad and why, what gets fixed first.\nkey_points: 4 to 10 short lines, the specifics worth knowing.\nlessons: the rules and checks taught, each as rule (what to do or check, with any threshold) and when (the situation it applies to, "" for always). Skip anything that is only about one client's own numbers.\nsituation: ${SITUATION}\nmemory: ${MEMORY}`,
       });
     } else {
       distilled = await askJson<Distilled>({
@@ -397,11 +418,23 @@ export async function processLoom(admin: Admin, row: Row) {
       const text = clean(
         `# ${about.title}\nA Loom recorded ${date} by Kaizen's senior buyer. ${about.summary}\n\n## What he teaches\n${filed.lessons.map((l) => `- ${l.rule}${l.when ? ` (${l.when})` : ""}`).join("\n") || "- (see the transcript)"}\n\n## How he reads an account\n${distilled.diagnostics.map((d) => `- ${d.check}`).join("\n") || "- (see the transcript)"}\n\n## Transcript\n${transcript}`,
       );
-      const keys = c.platform === "google" ? [GOOGLE] : c.platform === "both" ? [MEDIA_BUYER, GOOGLE] : [MEDIA_BUYER];
+      const keys = agentsFor(c.platform);
       const cases = casesDoc(about.title, row.url, distilled);
       for (const k of keys) {
         docIds.push(await fileDoc(admin, { scope: "agent", agentKey: k }, row, { name: `${about.title} (Loom)`, text, title: about.title, summary: about.summary, keyPoints: filed.lessons.map((l) => l.rule).slice(0, 8) }));
         if (cases) docIds.push(await fileDoc(admin, { scope: "agent", agentKey: k }, row, { name: `Cases: ${about.title} (Loom)`, text: cases, title: `Cases: ${about.title}`, summary: `Account situations from this Loom, each with how Kaizen's senior buyer read it and what he did.`, keyPoints: [] }, `${row.url}#cases`));
+        agentKeys.push(k);
+      }
+    }
+
+    // Email or organic social method: the agents' knowledge, waiting for the head of the line (or an exec) to approve it
+    if (line && c.kind !== "client") {
+      const date = dateOf(row.recorded_at ?? row.created_at);
+      const text = clean(
+        `# ${about.title}\nA Loom recorded ${date} by a Kaizen ${line} team member. ${about.summary}\n\n## What it teaches\n${filed.lessons.map((l) => `- ${l.rule}${l.when ? ` (${l.when})` : ""}`).join("\n") || "- (see the transcript)"}\n\n${filed.key_points.length ? `## Key points\n${filed.key_points.map((k) => `- ${k}`).join("\n")}\n\n` : ""}## Transcript\n${transcript}`,
+      );
+      for (const k of agentsFor(c.platform, c.topics)) {
+        docIds.push(await fileDoc(admin, { scope: "agent", agentKey: k }, row, { name: `${about.title} (Loom)`, text, title: about.title, summary: about.summary, keyPoints: filed.lessons.map((l) => l.rule).slice(0, 8) }));
         agentKeys.push(k);
       }
     }

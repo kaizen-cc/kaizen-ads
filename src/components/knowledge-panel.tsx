@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Upload } from "tus-js-client";
-import { knowledgeUploadSlots, removeKnowledge, rereadKnowledge, saveKnowledge, setKnowledgeBackground } from "@/app/(team)/knowledge-actions";
+import { knowledgeUploadSlots, removeKnowledge, reviewKnowledge, rereadKnowledge, saveKnowledge, setKnowledgeBackground } from "@/app/(team)/knowledge-actions";
 import type { KnowledgeDoc, KnowledgeTarget } from "@/lib/knowledge";
 import { createClient } from "@/lib/supabase/client";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
@@ -238,6 +238,16 @@ function DocRow({ d, target, canEdit, compact }: { d: KnowledgeDoc; target: Know
               )}
             </p>
           )}
+          {canEdit && d.review === "pending" && (
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={busy} onClick={() => act(reviewKnowledge(d.id, true))} className="min-h-11 rounded-full bg-brand px-4 text-[13px] font-medium text-white disabled:opacity-50 md:min-h-9">
+                Approve for the agent
+              </button>
+              <button type="button" disabled={busy} onClick={() => act(reviewKnowledge(d.id, false))} className="min-h-11 rounded-full border border-line px-4 text-[13px] text-muted hover:text-bad disabled:opacity-50 md:min-h-9">
+                Decline
+              </button>
+            </div>
+          )}
           {canEdit && (
             <div className="flex flex-wrap gap-2">
               <button type="button" disabled={busy || d.status === "reading"} onClick={() => act(rereadKnowledge(d.id))} className="min-h-11 rounded-full border border-line px-4 text-[13px] text-muted hover:text-fg disabled:opacity-50 md:min-h-9">
@@ -268,6 +278,7 @@ function DocRow({ d, target, canEdit, compact }: { d: KnowledgeDoc; target: Know
 }
 
 function Status({ d }: { d: KnowledgeDoc }) {
+  if (d.review === "pending") return <span className="shrink-0 rounded-full bg-warn-soft px-2.5 py-1 text-[11px] font-medium text-warn">Waiting for approval</span>;
   if (d.status === "reading") return <span className="shrink-0 rounded-full bg-brand-soft px-2.5 py-1 text-[11px] font-medium text-brand-text">Reading {d.progress ? `${d.progress}%` : "…"}</span>;
   if (d.status === "failed") return <span className="shrink-0 rounded-full bg-bad-soft px-2.5 py-1 text-[11px] font-medium text-bad">Couldn&rsquo;t read</span>;
   return <span className="shrink-0 rounded-full bg-ok-soft px-2.5 py-1 text-[11px] font-medium text-ok">Ready</span>;
