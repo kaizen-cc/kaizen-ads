@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_VOICES, assistantVoiceFor, speakable } from "@/lib/agent-call/core";
-import { LINK_LINE, forSpeech, intWords, numberWords, ordinalWords } from "@/lib/agent-call/speech-text";
+import { LINK_LINE, SAY_AS, forSpeech, intWords, numberWords, ordinalWords, sayAs } from "@/lib/agent-call/speech-text";
 import { ASSISTANT_PALETTE, ASSISTANT_TINT, assistantTintOf, paletteColor } from "@/lib/agent-look";
 import { formatTranscript, stamp, transcriptFileName } from "@/lib/agent-call/transcript";
 import { RECENT_LINES, TURN_CHARS, callHistory, longTurnText } from "@/lib/agent-call/history";
@@ -25,6 +25,19 @@ describe("numbers in words", () => {
 });
 
 describe("text for the voice", () => {
+  it("brand names the voice gets wrong are respelled the way they're said", () => {
+    expect(say("Klaviyo is set up.")).toBe("Clay-vee-oh is set up.");
+    expect(say("Check klaviyo's flows and the KLAVIYO list.")).toBe("Check Clay-vee-oh's flows and the Clay-vee-oh list.");
+    expect(say("It syncs Cloudbeds and Customer.io.")).toBe("It syncs Cloud beds and Customer I O.");
+    expect(say("Book it on OpenTable.")).toBe("Book it on Open Table.");
+    // Only whole words, and a real link still isn't read out
+    expect(say("Klaviyos")).toBe("Klaviyos");
+    expect(say("See https://klaviyo.com/x for it.")).toBe(`See for it. ${LINK_LINE}`);
+  });
+  it("adding a brand is one line of data", () => {
+    expect(Object.keys(SAY_AS)).toContain("Klaviyo");
+    for (const [name, said] of Object.entries(SAY_AS)) expect(sayAs(name)).toBe(said);
+  });
   it("money", () => {
     expect(say("Spend was $1.2k yesterday.")).toBe("Spend was one point two thousand dollars yesterday.");
     expect(say("Revenue hit $30,512 this month.")).toBe("Revenue hit thirty thousand five hundred twelve dollars this month.");

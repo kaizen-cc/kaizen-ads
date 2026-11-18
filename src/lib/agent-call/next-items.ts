@@ -1,4 +1,5 @@
 import type { NextItem } from "@/lib/next-for-me";
+import { cleanItems, type CheckItem } from "./ask-rules";
 import { firstNameOf } from "./core";
 
 // The Overview's Next for me rows that come from the agents: a call whose learnings still wait for keep or toss, and
@@ -42,7 +43,7 @@ export function callReviewItem(r: { callId: string; roleKey: string; roleLabel: 
   };
 }
 
-export type AskRow = { id: string; kind: "reminder" | "task"; title: string; detail: string; due_on: string | null; created_at: string; asked_by: string; askerName: string | null; roleLabel: string | null; client: { name: string; slug: string } | null };
+export type AskRow = { id: string; kind: "reminder" | "task"; title: string; detail: string; due_on: string | null; created_at: string; asked_by: string; askerName: string | null; roleLabel: string | null; client: { name: string; slug: string } | null; checklist?: unknown; call_id?: string | null; with_transcript?: boolean | null };
 
 /**
  * A reminder or a task from a conversation with an agent: on the person it's for, credited to who asked and which
@@ -55,6 +56,8 @@ export function askItem(a: AskRow, me: string, now = new Date()): { item: NextIt
   const credit = mine ? `Your reminder${via}` : `From ${firstNameOf(a.askerName)}${via}`;
   const due = a.due_on ? new Date(`${a.due_on}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ }) : null;
   const late = Boolean(a.due_on && a.due_on < today);
+  // A checklist reminder: its items ticked off one by one on the row
+  const items: CheckItem[] = cleanItems(a.checklist);
   const item: NextItem = {
     id: `ask-${a.id}`,
     kind: "ask",
@@ -65,7 +68,7 @@ export function askItem(a: AskRow, me: string, now = new Date()): { item: NextIt
     when: due ? (late ? `Was due ${due}` : `Due ${due}`) : `Asked ${dayWord(a.created_at, now)}`,
     href: a.client ? `/clients/${a.client.slug}` : "/pipeline#next",
     action: a.client ? "Open client" : "Open",
-    ask: { id: a.id },
+    ask: { id: a.id, checklist: items.length ? items : undefined, transcriptCallId: a.with_transcript && a.call_id ? a.call_id : undefined },
   };
   return { item, bucket: !a.due_on || a.due_on <= today ? "now" : "coming" };
 }

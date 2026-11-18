@@ -432,3 +432,27 @@ export function metaFindings(f: MetaFacts): Finding[] {
   const order = { blocker: 0, fix: 1, watch: 2 };
   return out.sort((a, b) => order[a.severity] - order[b.severity]);
 }
+
+// ─── The national days library ───────────────────────────────────────────────────────────────────────────────────────
+
+/** The title every national days library item starts with (knowledge on the Email Strategist's calendar skill) */
+export const NATIONAL_DAYS_TITLE = "National days library";
+const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
+/**
+ * One month's lines from the library (its "## <Month>" section), so monthly_moments offers the fun national days
+ * alongside the big holidays. Month is 1 to 12. Empty when the library has no section for it.
+ */
+export function monthSection(markdown: string, month: number): string {
+  const name = MONTH_NAMES[month - 1];
+  if (!name) return "";
+  const lines = markdown.split(/\r?\n/);
+  const at = lines.findIndex((l) => new RegExp(`^#{1,4}\\s*${name}\\b`, "i").test(l.trim()));
+  if (at < 0) return "";
+  const out: string[] = [];
+  for (const l of lines.slice(at + 1)) {
+    if (/^#{1,4}\s/.test(l.trim())) break;
+    if (l.trim()) out.push(l.trim());
+  }
+  return out.join("\n");
+}

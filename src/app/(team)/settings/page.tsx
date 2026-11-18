@@ -1026,6 +1026,14 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
             {name}
           </Link>
         ))}
+        {/* Everyone's own assistant: its voice, color and what it knows live on the Assistant page */}
+        <Link
+          href="/assistant#make-it-yours"
+          className="inline-flex h-11 shrink-0 snap-start items-center gap-1.5 whitespace-nowrap rounded-full bg-surface px-4 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-fg active:bg-surface-2 md:h-9 md:bg-transparent"
+        >
+          Assistant
+          <span aria-hidden className="text-faint">↗</span>
+        </Link>
       </nav>
       {tab === "agents" && (
         <Agents

@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { ackCallNotice, endCall, startCall } from "@/app/(team)/settings/call-actions";
 import { assistantCallNotes, audioUploadSlot, callUploadSlots, callUploadsDone, screenFrameSaved, screenFrameSlot } from "@/app/(team)/assistant/actions";
 import { lookPlan } from "@/lib/agent-call/call-context";
+import { openPlan } from "@/lib/agent-call/open-link";
 import { canShareScreen, grabFrame, startScreenShare, stopScreenShare } from "@/lib/agent-call/screen-share";
 import { CALL_LIMIT_SECONDS, type CallCard, type LearnedItem, type StallState, type UploadAsk } from "@/lib/agent-call/core";
 import { Call, chime, type Line, type Phase, type Speaker } from "@/lib/agent-call/engine";
@@ -98,6 +99,8 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
   const [summary, setSummary] = useState<{ seconds: number; canReview: boolean; skills: Record<string, string> } | null>(null);
   const [lastCall, setLastCall] = useState<string | null>(null);
   const [minimized, setMinimized] = useState(false);
+  /** The phone stopped the call's audio while it was in the background: shown until it's back */
+  const [awayPaused, setAwayPaused] = useState(false);
   const [switchTo, setSwitchTo] = useState<AgentRef | null>(null);
   const [guest, setGuest] = useState<Speaker | null>(null);
   const [cards, setCards] = useState<CallCard[]>([]);
@@ -227,6 +230,30 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
     [],
   );
 
+  // Switching apps, tabs or windows never ends the call: the engine is told when the page goes out of sight and comes
+  // back (pagehide and pageshow too: a phone may freeze the page and restore it), and quietly picks up (away.ts)
+  useEffect(() => {
+    if (stage !== "call") return;
+    const sync = () => call.current?.setAway(document.visibilityState === "hidden");
+    const hide = () => call.current?.setAway(true);
+    const show = () => call.current?.setAway(false);
+    document.addEventListener("visibilitychange", sync);
+    window.addEventListener("pagehide", hide);
+    window.addEventListener("pageshow", show);
+    window.addEventListener("focus", show);
+    document.addEventListener("freeze", hide);
+    document.addEventListener("resume", show);
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      window.removeEventListener("pagehide", hide);
+      window.removeEventListener("pageshow", show);
+      window.removeEventListener("focus", show);
+      document.removeEventListener("freeze", hide);
+      document.removeEventListener("resume", show);
+      setAwayPaused(false);
+    };
+  }, [stage]);
+
   // Phones: the call takes the whole screen (unless minimised to its pill), and the page behind doesn't scroll
   const fullScreen = !desktop && stage !== "idle" && !(stage === "call" && minimized);
   useEffect(() => {
@@ -277,10 +304,16 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
     }
   }, []);
 
-  /** Opens a screen the agent asked for; on phones the call shrinks to its pill so the screen shows */
+  /**
+   * Opens a screen the agent asked for (or a card's Open) through the app's router, so the call stays up; the screen
+   * already showing is refreshed rather than pushed again. On phones the call shrinks to its pill so the screen shows.
+   */
   const openHref = useCallback(
     (href: string) => {
-      router.push(href);
+      const plan = openPlan({ href }, window.location);
+      if (plan.how === "tab") window.open(plan.href, "_blank", "noopener,noreferrer");
+      else if (plan.how === "refresh") router.refresh();
+      else router.push(plan.href, { scroll: true });
       if (!desktopRef.current) setMinimized(true);
     },
     [router],
@@ -333,6 +366,7 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
         },
         onLook: () => lookRef.current(),
         onEnd: () => void hangUpRef.current(),
+        onAway: (paused) => setAwayPaused(paused),
         onAudioPart: (part) => {
           if (id) void uploadAudio(id, part);
         },
@@ -555,6 +589,7 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
         elapsed,
         left,
         call,
+        awayPaused,
         onMute: toggleMute,
         onHangUp: () => void hangUp(),
         canSend,

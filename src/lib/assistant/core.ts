@@ -106,7 +106,64 @@ export function orderForToday<T extends DayItem>(items: readonly T[]): T[] {
 // ─── Screens and links ──────────────────────────────────────────────────────
 
 /** The places in the app the assistant may open during a call */
-const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market"];
+const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next"];
+
+/**
+ * The named places open_screen knows (each screen's own address, with its URL state where a place is a view inside a
+ * page: a Settings tab, the Email or Social KPI board, the assistant's settings or what it knows)
+ */
+export const SCREEN_PLACES: Record<string, string> = {
+  overview: "/pipeline",
+  boards: "/board",
+  "creative board": "/board",
+  "email board": "/board/email",
+  "new email request": "/board/email/new",
+  "new brief": "/requests/new",
+  clients: "/clients",
+  kpis: "/kpis",
+  "meta kpis": "/kpis?p=meta",
+  "google kpis": "/kpis?p=google",
+  "tiktok kpis": "/kpis?p=tiktok",
+  "email kpis": "/kpis?p=email",
+  "social kpis": "/kpis?p=social",
+  reports: "/reports",
+  "kaizen ai": "/ai",
+  ideas: "/ideas",
+  "ads lab": "/lab",
+  market: "/market",
+  winners: "/winners",
+  fatigue: "/fatigue",
+  feedback: "/feedback",
+  notifications: "/notifications",
+  team: "/team",
+  settings: "/settings",
+  "settings ai agents": "/settings?tab=agents",
+  "settings team": "/settings?tab=team",
+  "settings raw data": "/settings?tab=data",
+  "settings sync health": "/settings?tab=sync",
+  "settings connections": "/settings?tab=connections",
+  "settings errors": "/settings?tab=errors",
+  "settings deleted": "/settings?tab=deleted",
+  "my assistant": "/assistant",
+  "assistant settings": "/assistant#make-it-yours",
+  "what my assistant knows": "/assistant?tab=memory",
+};
+
+/** A card's tabs on the ads KPI board, and on the Email and Social sheets */
+export const KPI_CARD_TABS = ["overview", "numbers", "actions", "policy", "creative", "notes", "settings"] as const;
+export const CHANNEL_SHEET_TABS = ["overview", "numbers", "campaigns", "flows", "actions", "notes", "settings"] as const;
+
+/** One account's card on the ads KPI board, open on a tab (?target= opens it, with everyone's accounts showing) */
+export function kpiCardHref(targetId: string, tab?: string | null): string {
+  const t = tab && (KPI_CARD_TABS as readonly string[]).includes(tab) && tab !== "overview" ? `&tab=${tab}` : "";
+  return `/kpis?target=${encodeURIComponent(targetId)}${t}`;
+}
+
+/** A client's sheet on the Email or Social KPI board, open on a tab */
+export function channelSheetHref(line: "email" | "social", clientId: string, tab?: string | null): string {
+  const t = tab && (CHANNEL_SHEET_TABS as readonly string[]).includes(tab) && tab !== "overview" ? `&tab=${tab}` : "";
+  return `/kpis?p=${line}&open=${encodeURIComponent(clientId)}${t}`;
+}
 
 /** An in-app address the assistant may open (its path checked against the app's places), or null */
 export function safeAppPath(href: unknown): string | null {
@@ -120,12 +177,27 @@ export function safeAppPath(href: unknown): string | null {
 /** Outside sites a link card may open in a new tab: the ad platforms, Klaviyo and Google's docs */
 const LINK_HOSTS = /(^|\.)(facebook\.com|fb\.com|instagram\.com|google\.com|klaviyo\.com|tiktok\.com|loom\.com|youtube\.com)$/i;
 
+/** The app's own host name (from its public address), so a full link to it opens in the app */
+function appHost(): string | null {
+  try {
+    return process.env.NEXT_PUBLIC_APP_URL ? new URL(process.env.NEXT_PUBLIC_APP_URL).hostname : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A link card's address: in the app, or a known outside site over https (opened in a new tab), else null */
 export function safeLink(href: unknown): { href: string; external: boolean } | null {
   const inApp = safeAppPath(href);
   if (inApp) return { href: inApp, external: false };
   try {
     const u = new URL(String(href ?? ""));
+    // A full link to the app itself opens in the app (with the call kept up), not in a new tab
+    const own = appHost();
+    if (own && u.hostname === own) {
+      const path = safeAppPath(`${u.pathname}${u.search}${u.hash}`);
+      if (path) return { href: path, external: false };
+    }
     if (u.protocol !== "https:" || u.username || u.password || !LINK_HOSTS.test(u.hostname)) return null;
     return { href: u.toString().slice(0, 1000), external: true };
   } catch {

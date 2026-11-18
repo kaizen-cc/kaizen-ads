@@ -306,12 +306,15 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     },
     {
       name: "get_client_context",
-      description: "Everything Kaizen OS knows about a client, newest first: the Brand Bible, go-to-market strategy, rules and logged dos and don'ts, what to remember, the team's learnings, KPI targets and how the accounts are doing, what's happening now (tickets, comments, approvals, promises, replies owed), the last 45 days of Slack, email and calls, and recent creative. Read it before answering anything about a client that isn't already in the conversation.",
+      description: "Everything Kaizen OS knows about a client, newest first: its package tier per service, the Brand Bible, go-to-market strategy, rules and logged dos and don'ts, what to remember, the team's learnings, KPI targets and how the accounts are doing, what's happening now (tickets, comments, approvals, promises, replies owed), the last 45 days of Slack, email and calls, and recent creative. Read it before answering anything about a client that isn't already in the conversation.",
       input_schema: { type: "object", properties: { client: CLIENT }, additionalProperties: false },
       status: (input, client) => `Reading everything on ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
-        return isChannelOnly(ctx.me.role) ? channelBrief(ctx.admin, c.id) : clientBrief(ctx.admin, c.id);
+        // With the package (its tier per service and what it includes), so scope and volume are never guessed
+        const { clientPackage, packageBlock } = await import("@/lib/client-package");
+        const [brief, pkg] = await Promise.all([isChannelOnly(ctx.me.role) ? channelBrief(ctx.admin, c.id) : clientBrief(ctx.admin, c.id), clientPackage(ctx.admin, c.id).catch(() => null)]);
+        return pkg ? `${brief}\n\n${packageBlock(pkg)}` : brief;
       },
     },
     {

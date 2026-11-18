@@ -30,8 +30,8 @@ export type NextItem = {
   chip?: { label: string; tone: "ok" | "quiet" };
   /** A Brand Bible version this person can mark reviewed from the list */
   bible?: { clientId: string; version: string };
-  /** A reminder or task asked of an agent: marked done from the list */
-  ask?: { id: string };
+  /** A reminder or task asked of an agent: marked done from the list (a checklist's items ticked one by one; the call's transcript to download when it was asked for) */
+  ask?: { id: string; checklist?: { text: string; done: boolean }[]; transcriptCallId?: string };
 };
 
 export type NextForMe = {
@@ -317,14 +317,12 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
 
 /** Open reminders and tasks for this person from conversations with the agents (none before its migration) */
 async function loadAsks(db: SupabaseClient, me: string): Promise<AskRow[]> {
-  const { data, error } = await db
-    .from("agent_asks")
-    .select("id, kind, title, detail, due_on, created_at, asked_by, profiles:asked_by(full_name), ai_roles(label), clients(name, slug)")
-    .eq("owner_id", me)
-    .eq("status", "open")
-    .order("created_at", { ascending: false })
-    .limit(40);
+  const cols = "id, kind, title, detail, due_on, created_at, asked_by, call_id, profiles:asked_by(full_name), ai_roles(label), clients(name, slug)";
+  const read = (extra: string) => db.from("agent_asks").select(`${cols}${extra}`).eq("owner_id", me).eq("status", "open").order("created_at", { ascending: false }).limit(40);
+  // The checklist and transcript came with their own migration: before it, read without them
+  let { data, error } = await read(", checklist, with_transcript");
+  if (error) ({ data, error } = await read(""));
   if (error) return [];
   type Row = Omit<AskRow, "askerName" | "roleLabel" | "client"> & { profiles: { full_name: string } | null; ai_roles: { label: string } | null; clients: { name: string; slug: string } | null };
-  return ((data ?? []) as unknown as Row[]).map((r) => ({ id: r.id, kind: r.kind, title: r.title, detail: r.detail, due_on: r.due_on, created_at: r.created_at, asked_by: r.asked_by, askerName: r.profiles?.full_name ?? null, roleLabel: r.ai_roles?.label ?? null, client: r.clients }));
+  return ((data ?? []) as unknown as Row[]).map((r) => ({ id: r.id, kind: r.kind, title: r.title, detail: r.detail, due_on: r.due_on, created_at: r.created_at, asked_by: r.asked_by, askerName: r.profiles?.full_name ?? null, roleLabel: r.ai_roles?.label ?? null, client: r.clients, checklist: r.checklist ?? [], call_id: r.call_id ?? null, with_transcript: r.with_transcript ?? false }));
 }

@@ -1,6 +1,7 @@
 import { downsample, createTurnDetector, createTurnWatchdog, rms, splitSpeakable, toPcm16, type CallCard, type CallEvent, type LearnedItem, type StallState, type UploadAsk } from "./core";
 import { canSend, createTranscript, hasFloor, initialTurns, isCurrent, shouldCheckpoint, shownPhase, stepTurns, wordsStalled, type TurnEffect, type TurnInput, type TurnState } from "./turns";
 import type { CallContext } from "./call-context";
+import { initialAway, stepAway, type AwayEffect, type AwayEvent, type AwayState } from "./away";
 import { AUDIO_PART_SECONDS } from "@/lib/assistant/core";
 import { renewSttToken } from "@/app/(team)/settings/call-actions";
 
@@ -213,7 +214,12 @@ function scribeEars(token: string, opts: { onPartial: (t: string) => void; onLos
     },
     pause() {},
     wake() {
-      if (!closed && !ws && !reconnecting) void reconnect();
+      // Back from a mute or from the background: drops while away don't count against it
+      if (closed || reconnecting) return;
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        failures = 0;
+        void reconnect();
+      }
     },
     close() {
       closed = true;
@@ -350,6 +356,8 @@ export type Hooks = {
   onLook?: () => void;
   /** The agent said goodbye and its last words have played: hang up */
   onEnd?: () => void;
+  /** The phone stopped the call's audio while the page was in the background (true), or it's back (false) */
+  onAway?: (paused: boolean) => void;
   /** A finished part of the call's recording (both sides), to upload */
   onAudioPart?: (part: { blob: Blob; index: number; startSeconds: number; mime: string }) => void;
 };
@@ -419,6 +427,10 @@ export class Call {
   private lastSentence = "";
   private watch = createTurnWatchdog({ onSlow: () => this.dispatch({ t: "slow" }), onGiveUp: () => this.dispatch({ t: "failed" }) });
   private canSendNow = false;
+  /** The microphone's source in the audio graph (opened again after the phone takes it away) */
+  private src: MediaStreamAudioSourceNode | null = null;
+  /** Switching apps, tabs and windows (away.ts) */
+  private awayState: AwayState = initialAway();
   /** The latest loudness, mic or voice, for the waveform */
   level = 0;
   /** Set once the server has opened the call */
@@ -432,6 +444,87 @@ export class Call {
     this.out = this.ctx.createAnalyser();
     this.out.fftSize = 512;
     this.out.connect(this.ctx.destination);
+    // The audio engine stopping (a phone in the background, another app taking the audio) and starting again
+    this.ctx.onstatechange = () => this.awayEvent({ t: "audio", state: this.ctx.state as string, at: Date.now() });
+  }
+
+  // ─── Away: other apps, tabs and windows ─────────────────────────────────
+
+  /** The page went out of sight (hidden: true) or came back */
+  setAway(hidden: boolean) {
+    this.awayEvent({ t: hidden ? "hidden" : "visible", at: Date.now() });
+  }
+
+  private awayEvent(e: AwayEvent) {
+    if (this.closed) return;
+    const { state, effects } = stepAway(this.awayState, e);
+    this.awayState = state;
+    for (const fx of effects) this.awayEffect(fx);
+  }
+
+  private awayEffect(fx: AwayEffect) {
+    switch (fx) {
+      case "resume_audio":
+        return void this.ctx.resume().catch(() => undefined);
+      case "wake_ears":
+        return this.ears?.wake();
+      case "restart_mic":
+        return void this.restartMic();
+      case "drop_half_heard":
+        // What was half heard before the switch never becomes a turn; the agent says nothing about it
+        this.ears?.reset();
+        this.detector.reset();
+        this.preRoll = [];
+        this.frame = [];
+        if (this.st.phase === "listening" && this.st.heard) this.partial("");
+        return;
+      case "relearn_noise":
+        return this.detector.relearn();
+      case "rewake":
+        return void this.keepAwake();
+      case "show_paused":
+        return this.hooks.onAway?.(true);
+      case "clear_paused":
+        return this.hooks.onAway?.(false);
+    }
+  }
+
+  /** The microphone again, after the phone took it (the same graph: the tap, the recording) */
+  private async restartMic() {
+    if (this.closed || !this.node) return;
+    try {
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      if (this.closed) return void mic.getTracks().forEach((t) => t.stop());
+      this.mic?.getTracks().forEach((t) => t.stop());
+      try {
+        this.src?.disconnect();
+      } catch {
+        // already gone
+      }
+      this.mic = mic;
+      this.watchMic(mic);
+      mic.getAudioTracks().forEach((t) => (t.enabled = !this.st.muted));
+      this.src = this.ctx.createMediaStreamSource(mic);
+      this.src.connect(this.node);
+      if (this.recDest) this.src.connect(this.recDest);
+    } catch {
+      this.hooks.onError("The microphone stopped while you were away. Tap the mic or hang up and call again.");
+    }
+  }
+
+  private watchMic(mic: MediaStream) {
+    for (const t of mic.getAudioTracks()) t.onended = () => mic === this.mic && this.awayEvent({ t: "mic_ended", at: Date.now() });
+  }
+
+  /** Keeps the screen on during the call (the browser lets go of it in the background; asked again on return) */
+  private async keepAwake() {
+    if (this.closed) return;
+    try {
+      await this.wake?.release().catch(() => undefined);
+      this.wake = (await (navigator as unknown as { wakeLock?: { request: (t: "screen") => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request("screen")) ?? null;
+    } catch {
+      // The screen may sleep; the call goes on
+    }
   }
 
   // ─── Turns ──────────────────────────────────────────────────────────────
@@ -499,10 +592,12 @@ export class Call {
   async open(greeting: string, sttToken: string | null) {
     await this.ctx.resume();
     this.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    this.watchMic(this.mic);
     const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
     await this.ctx.audioWorklet.addModule(url);
     URL.revokeObjectURL(url);
     const src = this.ctx.createMediaStreamSource(this.mic);
+    this.src = src;
     this.node = new AudioWorkletNode(this.ctx, "kz-tap");
     this.node.port.onmessage = (e: MessageEvent<Float32Array>) => this.onAudio(e.data);
     // Kept running through a muted output, so the microphone is read without being heard
@@ -518,11 +613,7 @@ export class Call {
       this.recordPart();
     }
     this.listenWith(sttToken);
-    try {
-      this.wake = await (navigator as unknown as { wakeLock?: { request: (t: "screen") => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request("screen") ?? null;
-    } catch {
-      // The screen may sleep; the call goes on
-    }
+    await this.keepAwake();
     this.dispatch({ t: "ready" });
     // Picks up: the greeting, in its voice
     this.streamDone = false;
@@ -827,6 +918,7 @@ export class Call {
   close() {
     if (this.closed) return;
     this.closed = true;
+    this.ctx.onstatechange = null;
     this.watch.stop();
     // The last part of the recording is finished and handed over
     if (this.recTimer) clearTimeout(this.recTimer);

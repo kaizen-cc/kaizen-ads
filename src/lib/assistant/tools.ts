@@ -5,9 +5,9 @@ import type { Staff } from "@/lib/auth";
 import type { CallCard, CallEvent } from "@/lib/agent-call/core";
 import { CARD_TOOLS, gateTools, type LoopTool } from "@/lib/agent-call/tool-loop";
 import { askTools } from "@/lib/agent-call/ask-tools";
+import { callCardTools, emailRequestTool, showCard as showCallCard, type CardCtx } from "@/lib/agent-call/call-cards";
 import { chatTools, type ChatTool, type ToolCtx } from "@/lib/kaizen-ai/tools";
-import type { Card } from "@/lib/kaizen-ai/types";
-import { cleanMemory, safeAppPath, safeLink, saidYes, specialistOf, SPECIALISTS, ASSISTANT_KEY, FACT_TOPICS, STYLE_TOPICS } from "./core";
+import { cleanMemory, safeAppPath, safeLink, saidYes, specialistOf, SPECIALISTS, ASSISTANT_KEY, FACT_TOPICS, STYLE_TOPICS, SCREEN_PLACES, KPI_CARD_TABS, CHANNEL_SHEET_TABS, kpiCardHref, channelSheetHref } from "./core";
 import { forgetContext, myWork } from "./context";
 import { saveNotes } from "./memory";
 
@@ -54,47 +54,11 @@ async function clientNamed(db: SupabaseClient, name: unknown): Promise<{ id: str
   return hit as { id: string; name: string; slug: string };
 }
 
-const cardId = () => crypto.randomUUID().slice(0, 8);
-const showCard = (ctx: AssistantCtx, c: Omit<CallCard, "id">) => ctx.emit({ t: "card", card: { id: cardId(), ...c } });
+const showCard = (ctx: AssistantCtx, c: Omit<CallCard, "id">) => showCallCard(ctx, c);
 
 /** A gated action: the model said confirmed AND the person's own words this turn are a yes */
 const yes = (ctx: AssistantCtx, input: Record<string, unknown>) => input.confirmed === true && saidYes(ctx.said);
 const CONFIRMED = { type: "boolean", description: "True only after the person clearly said yes to this exact action on this turn" };
-
-// ─── The Kaizen AI thread a call's cards live in ────────────────────────────
-
-/** A message on this call's thread for a card tool to write into (the thread made on first use) */
-async function cardMessage(ctx: AssistantCtx, tctx: ToolCtx, label: string): Promise<string> {
-  const { admin, me } = ctx;
-  if (!ctx.state.threadId) {
-    const day = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" });
-    const { data: t, error } = await admin.from("ai_threads").insert({ profile_id: me.id, title: `Call with your assistant · ${day}`, model: "sonnet" }).select("id").single();
-    if (error || !t) throw new Error("Couldn't open a place for it in Kaizen AI.");
-    ctx.state.threadId = t.id as string;
-    await admin.from("ai_role_calls").update({ thread_id: t.id }).eq("id", ctx.callId);
-  }
-  await admin.from("ai_messages").insert({ thread_id: ctx.state.threadId, role: "user", content: clip(ctx.said, 4000) || "(on the call)" });
-  const { data: m, error } = await admin.from("ai_messages").insert({ thread_id: ctx.state.threadId, role: "assistant", content: `From our call: ${label}.` }).select("id").single();
-  if (error || !m) throw new Error("Couldn't save it to Kaizen AI.");
-  await admin.from("ai_threads").update({ last_message_at: new Date().toISOString() }).eq("id", ctx.state.threadId);
-  tctx.messageId = m.id as string;
-  tctx.cards.length = 0;
-  return m.id as string;
-}
-
-/** A card the chat tool made, as a link card on the call */
-function cardLink(ctx: AssistantCtx, c: Card): Omit<CallCard, "id"> {
-  const thread = `/ai?t=${ctx.state.threadId}`;
-  const r = c as unknown as Record<string, unknown>;
-  if (c.type === "link") {
-    const l = safeLink(r.href);
-    return { title: clip(r.title, 120), detail: clip(r.detail, 160), href: l?.href ?? thread, external: l?.external ?? false, cta: clip(r.cta, 40) || "Open" };
-  }
-  if (c.type === "brief") return { title: `Brief: ${clip(r.title, 100)}`, detail: "Open it to preview and send it to the board", href: safeAppPath(r.href) ?? thread, external: false, cta: "Open the brief" };
-  if (c.type === "plan") return { title: `Change plan for ${clip(r.client, 60)}`, detail: "Check the exact changes and confirm there", href: thread, external: false, cta: "Review the plan" };
-  if (c.type === "launch") return { title: `Launch for ${clip(r.client, 60)}`, detail: "The checklist and questions are on the card", href: thread, external: false, cta: "Open the launch" };
-  return { title: "From our call", detail: "Saved in Kaizen AI", href: thread, external: false, cta: "Open" };
-}
 
 // ─── Reports: telling the person when it's ready ────────────────────────────
 
@@ -148,6 +112,83 @@ async function watchReport(ctx: AssistantCtx, id: string, client: string) {
   });
 }
 
+// ─── Opening the exact thing ────────────────────────────────────────────────
+
+const CLIENT_TABS: Record<string, string> = { ads: "?service=meta", email: "?service=email", social: "?service=social", creative: "?service=creative", team: "?tab=team", reports: "?tab=reports", overview: "" };
+
+/**
+ * Where open_screen goes: the exact card, sheet, ticket, report, audit or sprint asked for, looked up through the
+ * person's own session (only what they may see), or a named place, or a path
+ */
+async function screenFor(ctx: AssistantCtx, input: Record<string, unknown>): Promise<{ href: string; label: string } | { note: string }> {
+  const what = String(input.what ?? "");
+  const tab = typeof input.card_tab === "string" ? input.card_tab : null;
+  const platform = input.platform === "google" ? "google" : input.platform === "tiktok" ? "tiktok" : "meta";
+  const pw = platform === "google" ? "Google" : platform === "tiktok" ? "TikTok" : "Meta";
+  const onTab = tab && tab !== "overview" ? `, ${tab} tab` : "";
+  if (typeof input.href === "string" && input.href.trim()) return { href: input.href.trim(), label: "that page" };
+  if (!what && typeof input.place === "string" && SCREEN_PLACES[input.place]) return { href: SCREEN_PLACES[input.place], label: input.place };
+  const n = Number(input.number);
+  if (what === "ticket" || what === "email_ticket") {
+    if (!Number.isFinite(n) || n <= 0) return { note: "Which ticket number?" };
+    const { data } = what === "email_ticket" ? await ctx.db.from("email_tickets").select("id").eq("number", n).is("deleted_at", null).maybeSingle() : await ctx.db.from("requests").select("id").eq("number", n).maybeSingle();
+    if (!data) return { note: `No ${what === "email_ticket" ? "email " : ""}ticket #${n} they can see.` };
+    return { href: what === "email_ticket" ? `/board/email?t=${n}` : `/board?t=${n}`, label: `ticket #${n}` };
+  }
+  if (what === "agent") {
+    const role = clip(input.role, 60).replace(/[^a-z_]/g, "");
+    if (!role) return { note: "Which agent?" };
+    return { href: `/settings?tab=agents&role=${role}`, label: `the ${role.replace(/_/g, " ")} agent` };
+  }
+  if (!input.client) return what ? { note: "Which client?" } : { note: "Where to? Name a client, a place, or what to open." };
+  let c: { id: string; name: string; slug: string };
+  try {
+    c = await clientNamed(ctx.db, input.client);
+  } catch (e) {
+    return { note: `${e instanceof Error ? e.message : "No such client."} Ask which client they meant.` };
+  }
+  const targets = async () => {
+    const { data } = await ctx.db.from("kpi_targets").select("id").eq("client_id", c.id).eq("platform", platform).eq("active", true).limit(5);
+    return ((data ?? []) as { id: string }[]).map((t) => t.id);
+  };
+  switch (what) {
+    case "kpi_card": {
+      const [id] = await targets();
+      if (!id) return { note: `${c.name} has no ${pw} account on the KPI board they can see.` };
+      return { href: kpiCardHref(id, tab), label: `${c.name}'s ${pw} KPI card${onTab}` };
+    }
+    case "email_sheet":
+    case "social_sheet": {
+      const line = what === "email_sheet" ? "email" : "social";
+      return { href: channelSheetHref(line, c.id, tab), label: `${c.name}'s ${line} sheet${onTab}` };
+    }
+    case "report": {
+      const { data } = await ctx.db.from("reports").select("id").eq("client_id", c.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      return data ? { href: `/reports/${data.id}`, label: `${c.name}'s latest report` } : { note: `${c.name} has no report yet. Offer to build one.` };
+    }
+    case "audit": {
+      const ids = await targets();
+      const { data } = ids.length ? await ctx.db.from("account_audits").select("id").in("target_id", ids).order("created_at", { ascending: false }).limit(1).maybeSingle() : { data: null };
+      return data ? { href: `/kpis/audit/${data.id}`, label: `${c.name}'s latest ${pw} audit` } : { note: `${c.name} has no ${pw} audit yet. Offer to run one.` };
+    }
+    case "email_audit": {
+      const { data } = await ctx.db.from("email_audits").select("id").eq("client_id", c.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      return data ? { href: `/kpis/email-audit/${data.id}`, label: `${c.name}'s latest email audit` } : { note: `${c.name} has no email audit yet. Offer to run one.` };
+    }
+    case "sprint": {
+      const ids = await targets();
+      const { data } = ids.length ? await ctx.db.from("optimization_sprints").select("id").in("target_id", ids).order("started_at", { ascending: false }).limit(1).maybeSingle() : { data: null };
+      return data ? { href: `/kpis/sprint/${data.id}`, label: `${c.name}'s ${pw} sprint` } : { note: `${c.name} has no ${pw} sprint.` };
+    }
+    case "email_sprint": {
+      const { data } = await ctx.db.from("email_sprints").select("id").eq("client_id", c.id).order("started_at", { ascending: false }).limit(1).maybeSingle();
+      return data ? { href: `/kpis/email-sprint/${data.id}`, label: `${c.name}'s email sprint` } : { note: `${c.name} has no email sprint.` };
+    }
+    default:
+      return { href: `/clients/${c.slug}${CLIENT_TABS[String(input.tab ?? "overview")] ?? ""}`, label: `${c.name}'s page` };
+  }
+}
+
 // ─── The tools ──────────────────────────────────────────────────────────────
 
 export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
@@ -160,23 +201,19 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     console.error("[assistant tools]", e instanceof Error ? e.message : e);
     return [] as ChatTool[];
   });
-  // Card tools: run on this call's thread, then shown as a link card
-  const cardTools: LoopTool[] = base
-    .filter((t) => CARD_TOOLS.has(t.name))
-    .map((t) => ({
-      ...t,
-      description: `${t.description} On a call: the card is saved to a Kaizen AI thread for this call and shown on the call as a link; nothing is sent or changed until they confirm it there.`,
-      run: async (input: Record<string, unknown>) => {
-        await cardMessage(ctx, tctx, t.status(input, null).replace(/…$/, ""));
-        const out = await t.run(input);
-        if (tctx.cards.length) {
-          await ctx.admin.from("ai_messages").update({ cards: tctx.cards }).eq("id", tctx.messageId);
-          for (const c of tctx.cards) showCard(ctx, cardLink(ctx, c));
-        }
-        return out;
-      },
-    }));
-  const rest = gateTools([...base.filter((t) => !CARD_TOOLS.has(t.name)), ...askTools(tctx, { roleKey: ASSISTANT_KEY, label: "assistant", callId: ctx.callId })]).map((t) => {
+  // Card tools (a brief, a plan, a launch, copy, a deck) and the Email Board request: made on this call's Kaizen AI
+  // thread, then shown as a link card to review (shared with the agents' calls, src/lib/agent-call/call-cards.ts)
+  const thread = {
+    get id() {
+      return ctx.state.threadId;
+    },
+    set id(v: string | null) {
+      ctx.state.threadId = v;
+    },
+  };
+  const cctx: CardCtx = { me: ctx.me, db: ctx.db, admin: ctx.admin, callId: ctx.callId, said: ctx.said, emit: ctx.emit, label: "your assistant", thread };
+  const cardTools: LoopTool[] = [...callCardTools(cctx, tctx, base), ...emailRequestTool(cctx, () => forgetContext(ctx.me.id))];
+  const rest = gateTools([...base.filter((t) => !CARD_TOOLS.has(t.name)), ...askTools(tctx, { roleKey: ASSISTANT_KEY, label: "assistant", callId: ctx.callId, said: ctx.said })]).map((t) => {
     const s = t.input_schema as { properties?: Record<string, unknown> };
     if (!s.properties || !("confirmed" in s.properties)) return t;
     // A gated tool: the person's own words on this turn must be a yes too
@@ -199,35 +236,30 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     },
     {
       name: "open_screen",
-      description: "Takes the person to a screen in the app while the call carries on (take me to a client's page, open the Email Board, show me my reports). Give a client by name (client, with an optional tab: overview, ads, email, social, creative, team, reports) or a place (overview, boards, creative board, email board, clients, kpis, email kpis, reports, kaizen ai, ideas, ads lab, settings, my assistant, notifications), or an exact in-app path (href: a report /reports/<id>, a ticket /board?t=<number> or /board/email?t=<number>). Use it whenever they ask to go somewhere or when showing beats telling; say in a few words what you opened.",
+      description:
+        "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, agent (an AI agent's page in Settings, by role key). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",
       input_schema: {
         type: "object",
         properties: {
+          what: { type: "string", enum: ["client", "kpi_card", "email_sheet", "social_sheet", "ticket", "email_ticket", "report", "audit", "email_audit", "sprint", "email_sprint", "agent"] },
           client: CLIENT,
-          tab: { type: "string", enum: ["overview", "ads", "email", "social", "creative", "team", "reports"] },
-          place: { type: "string", enum: ["overview", "boards", "creative board", "email board", "clients", "kpis", "email kpis", "reports", "kaizen ai", "ideas", "ads lab", "settings", "my assistant", "notifications"] },
+          tab: { type: "string", enum: ["overview", "ads", "email", "social", "creative", "team", "reports"], description: "The client page's tab (what: client)" },
+          platform: { type: "string", enum: ["meta", "google", "tiktok"], description: "The ad platform (kpi_card, audit, sprint)" },
+          card_tab: { type: "string", enum: [...new Set<string>([...KPI_CARD_TABS, ...CHANNEL_SHEET_TABS])], description: "The tab inside the card or sheet" },
+          number: { type: "integer", description: "A ticket's number" },
+          role: { type: "string", description: "An agent's role key (what: agent), e.g. email_strategist, media_buyer, creative_director" },
+          place: { type: "string", enum: Object.keys(SCREEN_PLACES) },
           href: { type: "string", description: "An in-app path starting with /" },
         },
         additionalProperties: false,
       },
       run: async (input) => {
-        const PLACES: Record<string, string> = { overview: "/pipeline", boards: "/board", "creative board": "/board", "email board": "/board/email", clients: "/clients", kpis: "/kpis", "email kpis": "/kpis?p=email", reports: "/reports", "kaizen ai": "/ai", ideas: "/ideas", "ads lab": "/lab", settings: "/settings", "my assistant": "/assistant", notifications: "/notifications" };
-        const TABS: Record<string, string> = { ads: "?service=meta", email: "?service=email", social: "?service=social", creative: "?service=creative", team: "?tab=team", reports: "?tab=reports", overview: "" };
-        let wanted = typeof input.href === "string" ? input.href : null;
-        if (!wanted && input.place) wanted = PLACES[String(input.place)] ?? null;
-        if (!wanted && input.client) {
-          // The client by name, through the person's own session (only clients they can see)
-          const name = String(input.client).trim();
-          const { data } = await ctx.db.from("clients").select("name, slug").is("archived_at", null).ilike("name", `%${name.replace(/[%_]/g, "")}%`).limit(5);
-          const list = (data ?? []) as { name: string; slug: string }[];
-          const hit = list.find((c) => c.name.toLowerCase() === name.toLowerCase()) ?? list[0];
-          if (!hit) return { opened: false, note: `No client called ${name} that they can see. Ask which client they meant.` };
-          wanted = `/clients/${hit.slug}${TABS[String(input.tab ?? "overview")] ?? ""}`;
-        }
-        const href = safeAppPath(wanted);
+        const opened = await screenFor(ctx, input);
+        if ("note" in opened) return { opened: false, note: opened.note };
+        const href = safeAppPath(opened.href);
         if (!href) return { opened: false, note: "That isn't a screen in the app." };
         ctx.emit({ t: "navigate", href });
-        return { opened: href };
+        return { opened: href, what: opened.label };
       },
     },
     {
@@ -438,29 +470,6 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
         if (o.started || o.status === "running") after(() => runAudit(ctx.admin, o.id));
         showCard(ctx, { title: `${c.name} ${input.kind === "google" ? "Google" : "Meta"} audit`, detail: o.status === "queued" ? "Queued behind your other audits" : "Running now, a few minutes", href: `/kpis/audit/${o.id}`, external: false, cta: "Open the audit" });
         return { started: true, status: o.status ?? "running" };
-      },
-    },
-    {
-      name: "create_email_request",
-      description: "Creates an Email Board ticket for a client as the person (the email team and execs only): the AI writes the brief from the idea, then the ticket starts in Copy for review. A campaign batch is up to 5 emails, a flow up to 6 messages (texts allowed). Nothing goes to the client. Ask first, confirmed: true after a yes.",
-      input_schema: {
-        type: "object",
-        properties: { client: CLIENT, kind: { type: "string", enum: ["batch", "flow"] }, idea: { type: "string" }, count: { type: "integer" }, due: { type: "string", description: "YYYY-MM-DD" }, texts: { type: "boolean" }, priority: { type: "string", enum: ["normal", "high", "urgent"] }, confirmed: CONFIRMED },
-        required: ["client", "kind", "idea"],
-        additionalProperties: false,
-      },
-      run: async (input) => {
-        if (!yes(ctx, input)) return { done: false, note: NO_YES };
-        const c = await clientNamed(ctx.db, input.client);
-        const { writeEmailBrief, createEmailTicket } = await import("@/app/(team)/board/email/new/actions");
-        const due = /^\d{4}-\d{2}-\d{2}$/.test(String(input.due ?? "")) ? String(input.due) : null;
-        const brief = await writeEmailBrief({ clientId: c.id, kind: input.kind === "flow" ? "flow" : "batch", idea: clip(input.idea, 2000), count: Number(input.count) || null, dueOn: due, texts: input.texts === true });
-        if (!brief.ok) return { done: false, error: brief.error };
-        const t = await createEmailTicket({ clientId: c.id, draft: brief.draft, priority: input.priority === "urgent" || input.priority === "high" ? input.priority : "normal", dueOn: due, suggestionId: null });
-        if (!t.ok) return { done: false, error: t.error };
-        showCard(ctx, { title: `Email #${t.number}: ${clip(brief.draft.title, 80)}`, detail: `${c.name} · Copy for review`, href: `/board/email?t=${t.number}`, external: false, cta: "Open the ticket" });
-        forgetContext(ctx.me.id);
-        return { created: true, number: t.number, title: brief.draft.title };
       },
     },
     {

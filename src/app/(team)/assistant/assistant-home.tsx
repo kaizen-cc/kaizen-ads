@@ -327,7 +327,7 @@ function YourAssistant({ voice }: { voice: string | null }) {
     void preview.current.play().catch(() => undefined);
   };
   return (
-    <section aria-label="Your assistant" className="grid gap-5 rounded-[24px] border border-line bg-surface p-5 sm:p-6">
+    <section id="make-it-yours" aria-label="Your assistant" className="grid scroll-mt-24 gap-5 rounded-[24px] border border-line bg-surface p-5 sm:p-6">
       <div>
         <h2 className="font-heading text-[18px] leading-tight">Make it yours</h2>
         <p className="mt-1 text-[13px] leading-relaxed text-muted">The voice and color of your assistant are yours alone. Nobody else&apos;s assistant changes.</p>

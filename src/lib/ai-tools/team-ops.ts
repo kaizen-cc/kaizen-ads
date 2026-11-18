@@ -16,6 +16,8 @@ import {
   memoryChunks,
   metaFindings,
   monthWindow,
+  monthSection,
+  NATIONAL_DAYS_TITLE,
   nyToday,
   onboardingItems,
   rowsText,
@@ -200,11 +202,15 @@ const monthlyMoments: AiTool = {
     if ("error" in w) return fail(w.error);
     const db = await createClient();
     const admin = createAdminClient();
-    const [{ data: rec }, { data: bible }, { data: saved }] = await Promise.all([
+    const [{ data: rec }, { data: bible }, { data: saved }, { data: library }] = await Promise.all([
       admin.from("clients").select("industry, industry_detail, vertical_id, services, services_extra, website").eq("id", c.id).maybeSingle(),
       admin.from("client_brand_bibles").select("read_this_first, markdown").eq("client_id", c.id).maybeSingle(),
       db.from("client_moments").select("name, on_date, angle, status").eq("client_id", c.id).gte("on_date", w.start).lte("on_date", w.end).order("on_date"),
+      // The fun national days by month (the Email Strategist's calendar knowledge, editable on its page)
+      admin.from("ai_knowledge").select("body").eq("active", true).ilike("title", `${NATIONAL_DAYS_TITLE}%`).limit(3),
     ]);
+    const month = Number(w.start.slice(5, 7));
+    const nationalDays = (library ?? []).map((k) => monthSection(String(k.body ?? ""), month)).filter(Boolean).join("\n");
     const { data: v } = rec?.vertical_id ? await admin.from("verticals").select("name").eq("id", rec.vertical_id).maybeSingle() : { data: null };
     const model = await import("@/lib/business-model").then((m) => m.businessModelOf(admin, c.id)).catch(() => null);
     const md = (bible?.markdown as string | null) ?? null;
@@ -217,7 +223,9 @@ const monthlyMoments: AiTool = {
       brand_bible_start: String(bible?.read_this_first ?? "").slice(0, 3500) || null,
       brand_bible_audience_location_and_calendar: bibleParts(md, /moment|season|calendar|holiday|audience|avatar|customer|location|geograph|market|offer/i, 9000) || (md ? md.slice(0, 5000) : null),
       already_saved_for_this_month: (saved ?? []).map((m) => `${m.on_date} ${m.name} (${m.status})${m.angle ? `: ${m.angle}` : ""}`),
+      national_days_this_month: nationalDays || null,
       how_to: [
+        "Offer the fun national days from national_days_this_month alongside the big holidays (National Ice Cream Day, National Cake Day...), only the ones that fit this client. Campaign ideas lean about 80 percent story and brand, 20 percent sales.",
         `Use web search to confirm the ${w.year} dates of each holiday and observance (several move each year) and to find local and industry moments for where this client sells; add ones with potential that aren't obvious, and say why.`,
         "Only moments that truly fit this business, its customers and how it sells: a roofer doesn't do Valentine's. Skip any that are already saved.",
         "Lead time: simple promo 28 days, new offer or landing page or shoot up to 56 days; say the date to start by.",

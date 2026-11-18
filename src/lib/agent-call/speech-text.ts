@@ -3,7 +3,8 @@
 // percentages, decimals, ranges, dates, times, "vs", "&" and "/", and the ad world's short forms said as letters.
 // Links and email addresses are never read out. Markdown and emojis are already gone (speakable() runs first, and
 // marks where a bare link was).
-// Names are left exactly as written. Pure: no keys, no calls.
+// Names are left as written, except the brand names the voice gets wrong, which are respelled the way they're said
+// (SAY_AS below: data, so a brand is added in one line). Pure: no keys, no calls.
 
 const ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
 const TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
@@ -108,6 +109,32 @@ function timeWords(h: string, m: string | undefined, ap: string | undefined): st
 const LETTERS = ["ROAS", "CTR", "CPM", "CPA", "KPI", "SMS", "CPC", "AOV", "ID", "URL", "AI", "OS", "CVR", "CPL", "ROI", "UGC", "LTV", "SKU", "QA", "PDF", "CRM", "SEO", "B2B", "B2C", "DM", "CTA", "IS"];
 const LETTER_RE = new RegExp(`\\b(${LETTERS.join("|")})(s)?\\b`, "g");
 
+/**
+ * Brand names the voice says wrong, respelled the way they're said (the captions keep the real spelling; only what the
+ * voice reads changes). Matched as whole words, any case, with a possessive kept ("Klaviyo's"). ElevenLabs'
+ * pronunciation dictionaries would do the same through an uploaded rules file attached to every request; a respelling
+ * works on every voice and model with nothing to keep in sync. Add a brand here when the voice gets it wrong.
+ */
+export const SAY_AS: Record<string, string> = {
+  Klaviyo: "Clay-vee-oh",
+  Cloudbeds: "Cloud beds",
+  "Customer.io": "Customer I O",
+  Gorgias: "Gor-gee-us",
+  SevenRooms: "Seven Rooms",
+  OpenTable: "Open Table",
+  WooCommerce: "Woo Commerce",
+  BigCommerce: "Big Commerce",
+};
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const SAY_AS_RE = new RegExp(`(?<![\\w.])(${Object.keys(SAY_AS).map(escapeRe).join("|")})(?!\\w|\\.\\w)`, "gi");
+const SAY_AS_KEY = new Map(Object.keys(SAY_AS).map((k) => [k.toLowerCase(), k]));
+
+/** Brand names respelled for the voice ("Klaviyo's flows" → "Clay-vee-oh's flows") */
+export function sayAs(text: string): string {
+  return text.replace(SAY_AS_RE, (m: string) => SAY_AS[SAY_AS_KEY.get(m.toLowerCase()) ?? m] ?? m);
+}
+
 /** Links and email addresses: never read out */
 const URL_RE = /\b(?:https?:\/\/|www\.)\S+|\b[\w-]+\.(?:com|io|co|net|org|ai|app|dev)(?:\/\S*)?\b/gi;
 const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/g;
@@ -118,7 +145,8 @@ export const LINK_LINE = "I've put the link on screen.";
  * numbers), ranges, percentages, dates and times, then any number left, then symbols and short forms.
  */
 export function forSpeech(input: string): string {
-  let t = ` ${input} `;
+  // Brand names first: "Customer.io" is a name, not a link
+  let t = ` ${sayAs(input)} `;
   let linked = false;
   t = t.replace(EMAIL_RE, () => {
     linked = true;

@@ -46,6 +46,10 @@ export const READ_TOOLS: ReadonlySet<string> = new Set([
   "onboarding_status",
   "weekly_task_summary",
   "read_report_sheet",
+  "monthly_moments",
+  "search_looms",
+  "read_loom",
+  "client_package",
 ]);
 
 /**

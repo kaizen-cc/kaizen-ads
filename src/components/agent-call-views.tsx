@@ -36,6 +36,8 @@ export type CallView = {
   elapsed: number;
   left: number;
   call: RefObject<Call | null>;
+  /** The phone stopped the audio while the call was in the background (it picks up on return) */
+  awayPaused?: boolean;
   onMute: () => void;
   onHangUp: () => void;
   /** Assistant calls: the specialist on the line, link cards, the upload panel */
@@ -139,8 +141,8 @@ export function Wave({ call, phase, tint, className = "h-16 w-full max-w-sm", ba
   return <canvas ref={canvas} aria-hidden className={className} />;
 }
 
-const status = (v: Pick<CallView, "muted" | "phase" | "stall">) =>
-  v.muted ? "Muted" : v.phase === "thinking" && v.stall === "slow" ? "Still working…" : v.phase === "thinking" && v.stall === "long" ? "Got it, thinking…" : PHASE_LABEL[v.phase];
+const status = (v: Pick<CallView, "muted" | "phase" | "stall" | "awayPaused">) =>
+  v.awayPaused ? "Paused while you were away" : v.muted ? "Muted" : v.phase === "thinking" && v.stall === "slow" ? "Still working…" : v.phase === "thinking" && v.stall === "long" ? "Got it, thinking…" : PHASE_LABEL[v.phase];
 
 const KeyboardIcon = ({ size = 18 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -437,7 +439,9 @@ export function FullScreenCall({ v }: { v: CallView }) {
 // ─── Computers: the huddle ──────────────────────────────────────────────────
 
 /** Docked bottom right, above the feedback bubble (which moves up with --fab-clear, so this does too) */
-const DOCK = "fixed bottom-[calc(84px+var(--fab-clear,0px))] right-6 z-[45]";
+// Above the page's sheets and drawers (z-50 to z-70), so a sheet the call opened never covers the huddle and its cards;
+// under the full screen call and the call's own dialogs
+const DOCK = "fixed bottom-[calc(84px+var(--fab-clear,0px))] right-6 z-[75]";
 
 export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; minimized: boolean; onMinimize: () => void; onExpand: () => void }) {
   const { agent, phase, muted, error, elapsed, left } = v;

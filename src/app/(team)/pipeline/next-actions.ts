@@ -31,3 +31,22 @@ export async function markAskDone(id: string): Promise<{ ok: true } | { ok: fals
   revalidatePath("/pipeline");
   return { ok: true };
 }
+
+/** One item of a checklist reminder ticked or unticked (their own session: only their own); all ticked marks it done */
+export async function tickAskItem(id: string, index: number, done: boolean): Promise<{ ok: true; allDone: boolean } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { data, error } = await db.from("agent_asks").select("checklist").eq("id", id).eq("owner_id", me.id).maybeSingle();
+  if (error || !data) return { ok: false, error: "That reminder isn't there any more." };
+  const { cleanItems, tickItem } = await import("@/lib/agent-call/ask-rules");
+  const items = tickItem(cleanItems(data.checklist), index, done);
+  const allDone = items.length > 0 && items.every((i) => i.done);
+  const { error: e } = await db
+    .from("agent_asks")
+    .update({ checklist: items, ...(allDone ? { status: "done", done_at: new Date().toISOString() } : {}) })
+    .eq("id", id)
+    .eq("owner_id", me.id);
+  if (e) return { ok: false, error: "Couldn't save that. Try again." };
+  if (allDone) revalidatePath("/pipeline");
+  return { ok: true, allDone };
+}

@@ -136,9 +136,21 @@ export function CardsStrip({ cards, onOpen, onDismiss, compact = false }: { card
             <span className="block truncate text-[13.5px] font-medium leading-snug">{c.title}</span>
             {c.detail && <span className="block truncate text-[11.5px] text-faint">{c.detail}</span>}
           </span>
-          <button type="button" onClick={() => onOpen(c)} className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-brand px-3.5 text-[12.5px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] md:min-h-8">
+          {/* A real link: an outside site opens in a new tab by itself; in the app, a plain click goes through the
+              app's router so the call stays up (a cmd or ctrl click still opens a tab) */}
+          <a
+            href={c.href}
+            target={c.external ? "_blank" : undefined}
+            rel={c.external ? "noopener noreferrer" : undefined}
+            onClick={(e) => {
+              if (c.external || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              onOpen(c);
+            }}
+            className="relative z-[1] inline-flex min-h-11 shrink-0 items-center rounded-full bg-brand px-3.5 text-[12.5px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] md:min-h-8"
+          >
             {c.cta}
-          </button>
+          </a>
           <button type="button" onClick={() => onDismiss(c.id)} aria-label={`Hide ${c.title}`} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-faint transition-colors hover:bg-surface-2 hover:text-fg">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
               <path d="M6 6l12 12M18 6L6 18" />

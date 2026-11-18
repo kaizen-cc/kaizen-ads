@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
-import { markAskDone, markBibleReviewed } from "../next-actions";
+import { markAskDone, markBibleReviewed, tickAskItem } from "../next-actions";
+import { TranscriptButton } from "@/components/assistant-call-parts";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import { initials } from "@/lib/initials";
 import type { NextForMe, NextItem } from "@/lib/next-for-me";
@@ -92,6 +93,9 @@ function shortOf(it: NextItem): { title: string; sub?: string; progress?: { done
     const v = it.title.match(/v(\S+)$/)?.[1];
     return { title: v ? `Brand Bible v${v} to review` : "Brand Bible to review" };
   }
+  // A checklist reminder: how far through it they are
+  const list = it.ask?.checklist;
+  if (list?.length) return { title: it.title, progress: { done: list.filter((i) => i.done).length, total: list.length } };
   return { title: it.title };
 }
 
@@ -460,6 +464,10 @@ function Row({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient
                 <span className="tabular text-[11px] text-ink/45">{short.progress.total ? Math.round((short.progress.done / short.progress.total) * 100) : 0}%</span>
               </span>
             )}
+            {it.ask?.checklist?.length ? <AskChecklist id={it.ask.id} items={it.ask.checklist} /> : null}
+            {it.ask?.transcriptCallId && (
+              <TranscriptButton callId={it.ask.transcriptCallId} label="Download the call's transcript" className="min-h-11 justify-self-start rounded-full text-[12.5px] text-ink/60 transition-colors hover:text-fg sm:min-h-8" />
+            )}
             {long ? (
               <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={more} title={more ? undefined : it.why} className="group/why flex min-w-0 items-start gap-1.5 text-left text-[12.5px] leading-relaxed text-ink/50 hover:text-ink/70">
                 <span className={`min-w-0 ${more ? "" : "line-clamp-1"}`}>{it.why}</span>
@@ -508,5 +516,32 @@ function Row({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient
         </div>
       </div>
     </li>
+  );
+}
+
+/** A checklist reminder's items, ticked off right here (saved at once; all ticked, it leaves the list) */
+function AskChecklist({ id, items }: { id: string; items: { text: string; done: boolean }[] }) {
+  const router = useRouter();
+  const [ticks, setTicks] = useState(() => items.map((i) => i.done));
+  const [, start] = useTransition();
+  const tick = (i: number, done: boolean) => {
+    setTicks((t) => t.map((x, k) => (k === i ? done : x)));
+    start(async () => {
+      const r = await tickAskItem(id, i, done);
+      if (!r.ok) setTicks((t) => t.map((x, k) => (k === i ? !done : x)));
+      else if (r.allDone) router.refresh();
+    });
+  };
+  return (
+    <ul className="grid gap-0.5 pt-1" aria-label="Checklist">
+      {items.map((it, i) => (
+        <li key={`${i}-${it.text}`}>
+          <label className="flex min-h-11 cursor-pointer items-start gap-2.5 rounded-[10px] px-1 py-1.5 text-[13px] leading-snug text-ink/75 transition-colors hover:bg-ink/[0.04] sm:min-h-8">
+            <input type="checkbox" checked={ticks[i] ?? false} onChange={(e) => tick(i, e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]" />
+            <span className={ticks[i] ? "text-ink/40 line-through" : ""}>{it.text}</span>
+          </label>
+        </li>
+      ))}
+    </ul>
   );
 }

@@ -69,6 +69,7 @@ Speak like a sharp colleague on the phone, in the first person ("I check…", "I
 - No markdown, no lists, no bullets, no headings, no asterisks, no emojis, no links, no code. If there are several points, say them in a sentence: "Three things. First… Then… And last…".
 - Numbers as people say them: "about twelve hundred dollars", "a two point four ROAS", "three to five days", "March fourth". Round when exact digits don't matter. Say "percent", not the symbol. Never read a table out: give the one or two numbers that answer the question and offer more.
 - Never say anything that sounds like reading a document ("as stated in my core"). Just say what you do.
+- Write names as they're spelled (Klaviyo, Cloudbeds): the voice already says them right. Never spell a name out phonetically or explain how it's said.
 - If you didn't catch something or it's vague, ask one short question.
 - Answer from your core and skills below, and from your tools for anything about clients and their numbers. If you don't know, say so plainly. Never make up a number about a client.
 - Refer to people by role, never by name, except ${firstName}, who you're talking to, and a teammate you've just asked to do something.
@@ -210,7 +211,7 @@ export async function runCallTurn(input: TurnInput) {
   const trains = canTrainAgent(me, call.role_key);
   const [book, convo, extra] = await Promise.all([loadRolePlaybook(admin, call.role_key), callContext(admin, call, firstName), turnExtras(input, text)]);
   if (!book) return emit({ t: "error", message: "Unknown agent." });
-  const tools = await agentTools({ me, db: input.db, admin, roleKey: call.role_key, label: book.role.label, callId: call.id });
+  const tools = await agentTools({ me, db: input.db, admin, roleKey: call.role_key, label: book.role.label, callId: call.id, emit, said: text });
   const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
   const out = await streamAnswer({
