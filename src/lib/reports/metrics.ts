@@ -1,6 +1,7 @@
 import "server-only";
 import { businessModel, googleHealth, googleHealthText, type GoogleHealth } from "@/lib/google-flags";
 import type { BenchmarkTarget } from "@/lib/kpi/success";
+import { conversionValue } from "@/lib/kpi/conversion-value";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { campaignIncluded, inScope, pickType, resultsOf, toDays, nyParts, type Day } from "@/lib/kpi/calc";
 import { PURCHASE_TYPES, conversionFor, conversionLabel, reportedType } from "@/lib/kpi/conversions";
@@ -578,7 +579,9 @@ export function metricsText(m: ReportMetrics) {
     line(m.main),
     ...(m.main.views6s != null ? [`TikTok video in ${m.main.label}: ${m.main.views6s.toLocaleString("en-US")} 6-second views, hook rate ${m.main.hookRate ?? "n/a"}% (6-second views over impressions); ${m.compare.label}: ${(m.compare.views6s ?? 0).toLocaleString("en-US")} 6-second views, hook rate ${m.compare.hookRate ?? "n/a"}%.`] : []),
     // Not a ROAS KPI: purchase value is context only, never the story (the client is judged on its own result)
-    ...(!m.roasKpi && m.main.revenue > 0 ? [`Purchase value Meta tracked in ${m.main.label} (not this KPI: leave ROAS out unless the buyer puts it in the report): ${money(m.main.revenue)}, ROAS ${m.main.roas ?? "n/a"}.`] : []),
+    // Google: the attributed conversion value as revenue and ROAS only when it looks real, otherwise the tracking fix, never a ROAS
+    ...(m.platform === "google" && m.main.results > 0 ? [`Google conversion value in ${m.main.label}: ${conversionValue({ spend: m.main.spend, conversions: m.main.results, value: m.main.revenue }).note}.`] : []),
+    ...(m.platform !== "google" && !m.roasKpi && m.main.revenue > 0 ? [`Purchase value Meta tracked in ${m.main.label} (not this KPI: leave ROAS out unless the buyer puts it in the report): ${money(m.main.revenue)}, ROAS ${m.main.roas ?? "n/a"}.`] : []),
     line(m.compare),
     ...(m.mtd ? [line(m.mtd)] : []),
     ...(m.mtdCompare ? [line(m.mtdCompare)] : []),

@@ -9,7 +9,7 @@ export const ROLE_FOCUS: Record<string, string> = {
   copywriter: "You lead with what copy moves: ad CTR and hook strength, and email open and click rates for subject lines (top_ads by ctr, top_emails).",
   creative_director: "You lead with creative performance: ad CTR, ROAS and cost per purchase, winners and what's wearing out (top_ads, winners_and_fatigue).",
   media_buyer: "You lead with Meta: ROAS or cost per result against the KPI target, spend and budget pacing (rank_clients on meta, account_metrics, top_ads).",
-  google_buyer: "You lead with Google: conversions, cost per conversion or ROAS against target, and spend (rank_clients on google, account_metrics).",
+  google_buyer: "You lead with Google: conversions, cost per conversion or ROAS against target, and spend (rank_clients on google, account_metrics). Quote a Google ROAS or conversion value only when a tool gives it (account_metrics google_conversion_value, rank_clients, get_client_context): never work one out yourself or from a ROAS KPI target. When the tools say conversion value is not tracked, say so plainly (likely the purchase conversion isn't passing order value, a tracking fix) and talk cost per conversion instead; by_conversion_action shows which conversion actions carry value (purchase) and which don't (leads).",
   tiktok_buyer: "You lead with TikTok's cost per result and CTR; TikTok numbers are read only, in get_client_context.",
   strategist: "You lead with each client's main KPI against target across their lines, and who is most at risk (rank_clients, get_client_context).",
   market_analyst: "You lead with what's working across clients: winning ads and angles, and trends by kind of business (top_ads, winners_and_fatigue).",

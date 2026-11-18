@@ -10,7 +10,8 @@ export type Day = {
   uniqueLinkClicks?: number;
 };
 
-export type Agg = { spend: number; results: number; value: number | null };
+/** revenue: the conversion value Google attributes (Google-capable conversions only); judge it with conversionValue() before showing it as revenue or ROAS */
+export type Agg = { spend: number; results: number; value: number | null; revenue?: number };
 /** "unset": the account runs but has no KPI target yet, so it's shown with every number but never judged */
 export type Status = "excellent" | "good" | "close" | "off" | "idle" | "setup" | "unset";
 export type Trend = "improving" | "steady" | "slipping";
@@ -86,13 +87,16 @@ export function aggregate(days: Day[], conv: Conversion, type: string | null): A
   let spend = 0;
   let results = 0;
   let revenue = 0;
+  let attributed = 0;
+  const tracksValue = conv.platforms.includes("google");
   for (const d of days) {
     spend += d.spend;
     results += resultsOf(d, conv, type);
     if (conv.roas && type) revenue += d.values[type] ?? 0;
+    if (tracksValue && type) attributed += d.values[type] ?? 0;
   }
   const value = conv.roas ? (spend ? revenue / spend : null) : results ? spend / results : null;
-  return { spend: round(spend), results: round(results, 1), value: value == null ? null : round(value) };
+  return { spend: round(spend), results: round(results, 1), value: value == null ? null : round(value), ...(tracksValue ? { revenue: round(attributed) } : {}) };
 }
 
 /** How much worse than the reference a value is: +0.2 = 20% worse. Cost: higher is worse. ROAS: lower is worse. */

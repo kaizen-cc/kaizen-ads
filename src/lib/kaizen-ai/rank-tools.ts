@@ -5,6 +5,7 @@ import { loadChannelBoard } from "@/lib/channel-kpis/load";
 import { LIVE } from "@/lib/live";
 import { isChannelOnly, lineOfTeam, teamPlatform } from "@/lib/roles";
 import { servicesOf } from "@/lib/services";
+import { conversionValue } from "@/lib/kpi/conversion-value";
 import { channelMaySee } from "./channel-access";
 import { DEFAULT_METRIC, RANK_METRICS, asPeriod, moneyWords, pctWords, periodRange, rankEntries, rankLinesFor, sumDays, vsTarget, type RankEntry, type RankLine, type RankPeriod } from "./rank-core";
 import type { ChatTool, ToolCtx } from "./tools";
@@ -157,7 +158,7 @@ async function rankAds(ctx: ToolCtx, platform: "meta" | "google", metric: string
   return targets.map((t) => {
     const s = by.get(t.id);
     const name = (many.get(t.client_id) ?? 0) > 1 && t.label ? `${t.client.name} (${t.label})` : t.client.name;
-    const w = (s ? ((period === "month" ? (s.months as Record<string, unknown>)?.[key] : (s.windows as Record<string, unknown>)?.[key]) ?? null) : null) as { spend?: number; results?: number; value?: number | null } | null;
+    const w = (s ? ((period === "month" ? (s.months as Record<string, unknown>)?.[key] : (s.windows as Record<string, unknown>)?.[key]) ?? null) : null) as { spend?: number; results?: number; value?: number | null; revenue?: number } | null;
     const spend = w ? num(w.spend) : null;
     const results = w ? num(w.results) : null;
     const line = w ? `${moneyWords(spend ?? 0)} spent, ${Math.round(results ?? 0).toLocaleString("en-US")} results ${label}` : "No numbers read yet";
@@ -167,6 +168,12 @@ async function rankAds(ctx: ToolCtx, platform: "meta" | "google", metric: string
     }
     if (metric === "spend") return { client: name, value: spend, shown: spend == null ? "no data" : moneyWords(spend), why: line };
     if (metric === "results") return { client: name, value: results, shown: results == null ? "no data" : `${Math.round(results).toLocaleString("en-US")} results`, why: line };
+    // Meta: the window's value is cost per result (or ROAS on a ROAS KPI). Google: ROAS from the attributed conversion value, only when it looks real
+    if (platform === "google") {
+      const gv = w ? conversionValue({ spend: spend ?? 0, conversions: num(w.results), value: w.revenue }) : null;
+      const none = !w ? "no data" : w.revenue == null ? "not read yet (next sync)" : gv?.tracked ? "no spend" : "value not tracked (tracking fix needed)";
+      return { client: name, value: gv?.roas ?? null, shown: gv?.roas == null ? none : `${gv.roas.toFixed(2)}x ROAS`, why: gv?.tracked && gv.revenue != null ? `${line}; ${moneyWords(gv.revenue)} conversion value` : line };
+    }
     const roas = w && w.value != null && spend ? num(w.value) / spend : null;
     return { client: name, value: roas, shown: roas == null ? "no ROAS (not a sales account)" : `${roas.toFixed(2)}x ROAS`, why: line };
   });

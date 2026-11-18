@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Section } from "@/components/ui";
 import type { ClientKpi } from "@/lib/kpi/client";
 import { STATUS, kpiValue } from "@/lib/kpi/format";
+import { conversionValue } from "@/lib/kpi/conversion-value";
 import { SUCCESS, successLine } from "@/lib/kpi/success";
 import { HealthChart, PaceBar } from "../../kpis/kpi-charts";
 import { KpiExtras } from "../../kpis/kpi-board";
@@ -21,6 +22,26 @@ function gap(k: ClientKpi) {
   if (n === 0) return "Right on target";
   const better = k.deviation < 0;
   return k.roas ? `${n}% ${better ? "above" : "below"} target` : `${n}% ${better ? "below" : "above"} target`;
+}
+
+/** Google's conversion value and ROAS over 30 days, only when the value looks like real revenue; otherwise the tracking fix */
+function GoogleValue({ k }: { k: ClientKpi }) {
+  const w = k.windows.d30;
+  if (!w || w.revenue == null) return null;
+  const v = conversionValue({ spend: w.spend, conversions: w.results, value: w.revenue });
+  return (
+    <div className="rounded-[10px] bg-surface-2/60 px-3 py-2">
+      <p className="text-[11px] text-faint">Conversion value, last 30 days</p>
+      {v.tracked ? (
+        <p className="tabular text-sm text-fg">
+          ${Math.round(v.revenue ?? 0).toLocaleString("en-US")}
+          {v.roas != null ? <span className="text-muted"> · {v.roas.toFixed(2)}x ROAS</span> : null}
+        </p>
+      ) : (
+        <p className="text-[12.5px] leading-snug text-muted">{v.note}</p>
+      )}
+    </div>
+  );
 }
 
 const change = (x: number | null) =>
@@ -126,6 +147,7 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                         </div>
                       ))}
                     </div>
+                    {k.platform === "google" && <GoogleValue k={k} />}
                     {gap(k) && <p className={`text-sm ${s.text}`}>{gap(k)} over the last 14 days.</p>}
                     <div className="grid gap-4 @xl:grid-cols-[minmax(0,1fr)_220px]">
                       <div className="grid gap-1">

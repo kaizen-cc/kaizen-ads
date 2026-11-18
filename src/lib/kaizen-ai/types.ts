@@ -54,7 +54,7 @@ export type ToolRun ={ id: string; name: string; label: string; ok: boolean | nu
 
 // ─── Rich cards a tool can return ───────────────────────────────────────────
 
-export type MetricsRow = { name: string; spend: number; results: number | null; cpr: number | null; roas: number | null; ctr: number | null; cpm: number | null; freq: number | null; clicks: number | null; impressions: number | null; note?: string | null };
+export type MetricsRow = { name: string; spend: number; results: number | null; cpr: number | null; roas: number | null; ctr: number | null; cpm: number | null; freq: number | null; clicks: number | null; impressions: number | null; note?: string | null; /** Google: the conversion value, only when it looks like real revenue */ revenue?: number | null };
 export type MetricsCard = {
   type: "metrics";
   client: string;

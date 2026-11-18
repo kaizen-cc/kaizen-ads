@@ -4,6 +4,7 @@ import type { Staff } from "@/lib/auth";
 import type { AiTool } from "@/lib/ai";
 import { conversionFor } from "@/lib/kpi/conversions";
 import { shownStatus } from "@/lib/kpi/calc";
+import { actionBreakdown, conversionValue } from "@/lib/kpi/conversion-value";
 import { extensionTools } from "./extensions";
 import { rankTools } from "./rank-tools";
 import { clampFormats, formatList, formatsFor, formatsRule } from "@/lib/creative-formats";
@@ -191,7 +192,9 @@ function gRow(name: string, r: Gaql): MetricsRow {
   const conv = num(m.conversions);
   const imps = num(m.impressions);
   const clicks = num(m.clicks);
-  return { name, spend: r2(spend) ?? 0, results: r2(conv), cpr: conv ? r2(spend / conv) : null, roas: spend && num(m.conversionsValue) ? r2(num(m.conversionsValue) / spend) : null, ctr: imps ? r2((clicks / imps) * 100) : null, cpm: imps ? r2((spend / imps) * 1000) : null, freq: null, clicks, impressions: imps };
+  // ROAS and revenue only when Google's value looks like real order value (see conversionValue)
+  const v = conversionValue({ spend, conversions: conv, value: num(m.conversionsValue) });
+  return { name, spend: r2(spend) ?? 0, results: r2(conv), cpr: conv ? r2(spend / conv) : null, roas: v.roas, revenue: v.revenue, ctr: imps ? r2((clicks / imps) * 100) : null, cpm: imps ? r2((spend / imps) * 1000) : null, freq: null, clicks, impressions: imps };
 }
 
 // ─── Copy limits ─────────────────────────────────────────────────────────────
@@ -350,6 +353,8 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
         const level = String(input.level);
         let rows: MetricsRow[] = [];
         let previous: MetricsRow | null = null;
+        // Google: the period's conversion value (real or not) and which conversion actions carry it, from the synced days
+        let googleValue: Record<string, unknown> | null = null;
         if (platform === "meta") {
           const all = await metaRows(ctx.admin, c.id, t.ad_account_id, input.compare ? shift(since, -days) : since, until);
           const now = all.filter((r) => r.date >= since);
@@ -385,9 +390,26 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
             return camp;
           };
           rows = found.map((r) => gRow(label(r), r));
+          const { data: gdays } = await ctx.admin.from("google_campaign_daily").select("spend, actions, action_values").eq("ad_account_id", String(t.ad_account_id).replace(/D/g, "")).gte("date", since).lte("date", until).range(0, 4999);
+          const gl = (gdays ?? []) as { spend: number | string; actions: Record<string, number> | null; action_values: Record<string, number> | null }[];
+          const gspend = gl.reduce((n, d) => n + (Number(d.spend) || 0), 0);
+          const gconv = gl.reduce((n, d) => n + (Number(d.actions?.conversions) || 0), 0);
+          const gval = gl.reduce((n, d) => n + (Number(d.action_values?.conversions) || 0), 0);
+          const gv = conversionValue({ spend: gspend, conversions: gconv, value: gval });
+          googleValue = {
+            conversions: Math.round(gconv * 10) / 10,
+            conversion_value: gv.tracked ? gv.revenue : null,
+            roas: gv.roas,
+            value_per_conversion: gv.perConversion,
+            status: gv.note,
+            raw_value_reported_by_google: Math.round(gval * 100) / 100,
+            by_conversion_action: actionBreakdown(gl).slice(0, 12),
+            rule: "Quote a Google ROAS or revenue only from roas / conversion_value here (or a row's roas). When status says value is not tracked, say so plainly: never work out a ROAS yourself.",
+          };
           if (level === "account") {
             const tot = rows.reduce((a, r) => ({ spend: a.spend + r.spend, results: a.results + (r.results ?? 0), clicks: a.clicks + (r.clicks ?? 0), imps: a.imps + (r.impressions ?? 0) }), { spend: 0, results: 0, clicks: 0, imps: 0 });
-            rows = [{ name: "Account", spend: r2(tot.spend) ?? 0, results: r2(tot.results), cpr: tot.results ? r2(tot.spend / tot.results) : null, roas: null, ctr: tot.imps ? r2((tot.clicks / tot.imps) * 100) : null, cpm: tot.imps ? r2((tot.spend / tot.imps) * 1000) : null, freq: null, clicks: tot.clicks, impressions: tot.imps }];
+            const totVal = conversionValue({ spend: tot.spend, conversions: tot.results, value: found.reduce((n, r) => n + num(gm(r)?.conversionsValue), 0) });
+            rows = [{ name: "Account", spend: r2(tot.spend) ?? 0, results: r2(tot.results), cpr: tot.results ? r2(tot.spend / tot.results) : null, roas: totVal.roas, revenue: totVal.revenue, ctr: tot.imps ? r2((tot.clicks / tot.imps) * 100) : null, cpm: tot.imps ? r2((tot.spend / tot.imps) * 1000) : null, freq: null, clicks: tot.clicks, impressions: tot.imps }];
           }
         }
         rows.sort((a, z) => z.spend - a.spend);
@@ -416,7 +438,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           budget_pacing: m.budget ?? (t.monthly_budget ? { budget: Number(t.monthly_budget) } : "no monthly budget set"),
           before: previous,
           rows: rows.slice(0, 150),
-          note: platform === "meta" ? "Frequency is impressions over summed daily reach (an approximation over several days). Results use the KPI's conversion where the account reports it." : "Cost from Google is in dollars here.",
+          note: platform === "meta" ? "Frequency is impressions over summed daily reach (an approximation over several days). Results use the KPI's conversion where the account reports it." : "Cost from Google is in dollars here. roas and revenue are set only where Google's conversion value looks like real order value; null means not tracked (say so), never estimate one.",
           shown_to_person: "a table of these rows is already on screen; don't repeat it in full, talk about what matters",
         };
       },

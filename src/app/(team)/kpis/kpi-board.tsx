@@ -7,6 +7,7 @@ import { ActionButton, ActionForm } from "@/components/action-form";
 import { field, label } from "@/components/ui";
 import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
 import { CONVERSIONS } from "@/lib/kpi/conversions";
+import { conversionValue } from "@/lib/kpi/conversion-value";
 import { onCard } from "@/lib/buyer-seats";
 import { STATUS, deviationTone, kpiValue, money } from "@/lib/kpi/format";
 import { freshness } from "@/lib/dates";
@@ -688,6 +689,10 @@ function Detail({ r, free, buyers, tab, setTab, onClose, onStep }: { r: KpiRow; 
       <span className="tabular text-[11px] text-faint">
         {money(a?.spend ?? 0)} · {a?.results ?? 0} {a?.results === 1 ? "result" : "results"}
       </span>
+      {r.platform === "google" && a?.revenue != null && a.results > 0 && (() => {
+        const v = conversionValue({ spend: a.spend, conversions: a.results, value: a.revenue });
+        return <span className="tabular text-[11px] text-faint">{v.tracked ? `${money(v.revenue ?? 0)} value${v.roas != null ? ` · ${v.roas.toFixed(2)}x ROAS` : ""}` : "value not tracked"}</span>;
+      })()}
     </>
   );
   const color = healthHex(healthOf(r.status));

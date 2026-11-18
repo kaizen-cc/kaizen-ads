@@ -4,6 +4,7 @@ import { shownStatus, type Agg, type Pacing, type Status, type Trend } from "./c
 import { conversionFor, conversionLabel } from "./conversions";
 import { successOf, successLine, type BenchmarkTarget, type Success, type TargetFrom } from "./success";
 import type { GoogleHealth } from "@/lib/google-flags";
+import { conversionValue, valueLine } from "./conversion-value";
 import { KPI_PLATFORMS, asKpiPlatform, platformShort, type KpiPlatform } from "./platform";
 
 // One client's KPI targets as the tracker last computed them (every 30 minutes in business hours, hourly otherwise): for the client page and for every
@@ -97,6 +98,14 @@ export const kpiOf = (a: Agg | undefined, _roas?: boolean) => a?.value ?? null;
 
 const STATUS_WORDS: Record<Status, string> = { excellent: "well ahead of target", good: "on target", close: "close to target", off: "OFF TARGET", idle: "not spending", setup: "not set up yet", unset: "no KPI target set yet (numbers only, not judged on or off target)" };
 
+/** Where the month's attributed revenue lands at the current spend pace, only when the value is real */
+function googleProjection(k: ClientKpi) {
+  const m = k.months.mtd;
+  if (!m || m.revenue == null || !k.pace) return "";
+  const v = conversionValue({ spend: m.spend, conversions: m.results, value: m.revenue });
+  return v.tracked && v.roas != null ? ` At this pace the month ends near $${Math.round(v.roas * k.pace.projected).toLocaleString("en-US")} of attributed revenue.` : "";
+}
+
 /** The KPI picture in plain lines, for the AI. */
 export function describeKpis(kpis: ClientKpi[]) {
   if (!kpis.length) return "No KPI targets set for this client yet.";
@@ -117,8 +126,13 @@ export function describeKpis(kpis: ClientKpi[]) {
         k.trend && `trend: ${k.trend}`,
         k.pace && k.budget && `budget pacing ${k.pace.status} (${Math.round(k.pace.pace * 100)}% of the $${Math.round(k.budget).toLocaleString("en-US")} month)`,
       ].filter(Boolean);
+      // Google's conversion value: real revenue and ROAS only when the value looks real, never a ROAS made of nothing
+      const gv =
+        k.platform === "google"
+          ? ` Google conversion value (revenue Google attributes): ${[valueLine("last 7 days", k.windows.d7), valueLine("last 30 days", k.windows.d30), valueLine("this month so far", k.months.mtd)].filter(Boolean).join("; ") || "not read yet (the next sync adds it)"}.${googleProjection(k)}`
+          : "";
       const flags = k.google?.flags.length ? ` Google flags: ${k.google.flags.map((f) => `${f.title} (${f.fix.toLowerCase()})`).join("; ")}.` : "";
-      return `- ${name}: ${parts.join("; ")}.${flags}`;
+      return `- ${name}: ${parts.join("; ")}.${gv}${flags}`;
     })
     .join("\n");
 }
