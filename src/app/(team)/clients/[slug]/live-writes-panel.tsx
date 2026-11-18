@@ -20,7 +20,7 @@ export type LiveWritesData = {
 /** Google shows customer IDs as 123-456-7890 */
 export const googleId = (a: string) => a.replace(/\D/g, "").replace(/^(\d{3})(\d{3})(\d{4})$/, "$1-$2-$3");
 
-const day = (at: string | null) => (at ? new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : null);
+const day = (at: string | null) => (at ? new Date(at).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" }) : null);
 
 /**
  * Live changes in this client's ad accounts, one switch per platform: an exec switches Meta and Google Ads on

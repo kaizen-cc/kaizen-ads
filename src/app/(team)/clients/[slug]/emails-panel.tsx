@@ -17,7 +17,7 @@ const KINDS: { kind: Kind; name: string; what: string }[] = [
   { kind: "live", name: "You're live", what: "Their first campaign is running" },
 ];
 
-const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const ago = (iso: string) => {
   const d = Math.floor((Date.parse(iso) - Date.parse(new Date().toISOString().slice(0, 10))) / 86_400_000);
   return d >= 0 ? "today" : d === -1 ? "yesterday" : `${-d} days ago`;
@@ -102,7 +102,7 @@ export function EmailsPanel({ clientId, slug, stage, sent }: { clientId: string;
             {busy ? "Writing it…" : shown ? "Refresh preview" : "Preview"}
           </button>
         </div>
-        <p className="text-[12.5px] text-faint">
+        <p suppressHydrationWarning className="text-[12.5px] text-faint">
           {KINDS.find((k) => k.kind === kind)?.what}.{" "}
           {last ? `Last sent ${when(last.at)} (${ago(last.at)}) to ${last.to.length} contact${last.to.length === 1 ? "" : "s"}${last.manual && last.by ? `, by ${last.by}` : ""}.` : "Not sent yet."}
         </p>

@@ -78,7 +78,7 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
               <span className="text-muted">{plain.fix}</span>
             </p>
           ) : (
-            <p className="text-[12px] text-muted">
+            <p suppressHydrationWarning className="text-[12px] text-muted">
               {conn.lastSyncedAt
                 ? `Read ${ago(conn.lastSyncedAt)}${conn.backfilled ? "" : " · the first 90 days are still being read"}`
                 : "Connected. The first read (90 days back) runs in the next few minutes."}

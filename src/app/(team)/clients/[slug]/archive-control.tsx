@@ -17,7 +17,7 @@ export function ArchiveControl({ clientId, slug, name, archived }: { clientId: s
     return (
       <div className="flex flex-wrap items-center gap-3 rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3">
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">Archived {new Date(archived.at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</p>
+          <p className="text-sm font-medium">Archived {new Date(archived.at).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" })}</p>
           <p className="text-xs text-muted">
             {archived.reason ?? "No reason given"}
             {archived.source === "track" ? " · from Kaizen Track" : archived.source === "zapier" ? " · from the offboarding form" : ""}. Everything is kept here: tickets, files,
