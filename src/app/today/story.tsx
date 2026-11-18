@@ -59,7 +59,9 @@ export function Story({
   const groups = useMemo(() => topicGroups(items).map(({ topic, items }) => ({ topic, items })), [items]);
   // Counted by client (src/lib/today-counts.ts): everything about one client in a topic is one look, the same numbers
   // the Overview shows
-  const looks = useMemo(() => countLooks(items), [items]);
+  // Live: what's been marked done or set aside here leaves the counts at once (the list of screens stays fixed)
+  const [mineForCount, setMineForCount] = useState<Record<string, string>>({});
+  const looks = useMemo(() => countLooks(items.filter((i) => isOpenMark(mineForCount[i.key] ?? (i.state === "new" ? "seen" : i.state)))), [items, mineForCount]);
   // Every screen is a place in the address (?topic= to play first, ?card= for the screen, ?item= for a brief open), so
   // the browser's back and forward move through the story like its own arrows
   const askedTopic = useParam("topic");
@@ -74,7 +76,14 @@ export function Story({
   const at = askedCard ? Math.max(0, Math.min(cards.length - 1, Number(askedCard) || 0)) : first ? lead : 0;
   // Moving to another screen leaves the client open on this one behind
   const setAt = (n: number) => pushParams({ card: String(n), pick: null, dive: null });
-  const [mine, setMine] = useState<Record<string, Mark>>(() => Object.fromEntries(items.map((i) => [i.key, i.state === "new" ? "seen" : i.state])));
+  const [mine, setMineRaw] = useState<Record<string, Mark>>(() => Object.fromEntries(items.map((i) => [i.key, i.state === "new" ? "seen" : i.state])));
+  // Every change to what's marked also updates the live counts above
+  const setMine = (f: (m: Record<string, Mark>) => Record<string, Mark>) =>
+    setMineRaw((m) => {
+      const next = f(m);
+      setMineForCount(next);
+      return next;
+    });
   const askedItem = useParam("item");
   const sheet = items.find((i) => i.key === askedItem) ?? null;
   const [picker, setPicker] = useState(false);
@@ -130,7 +139,8 @@ export function Story({
   const byTopic = groups.map((g) => [g.topic, looks.byTopic[g.topic]] as [TopicKey, { n: number; critical: number }]);
   const saved = items.filter((i) => mine[i.key] === "saved");
   const acted = items.filter((i) => mine[i.key] === "done").length;
-  const tone = card.kind === "topic" ? TIER[card.items[0].tier] : card.kind === "resolved" ? { glow: "rgba(40,180,120,0.35)", accent: "#5be3a5" } : { glow: "rgba(200,16,46,0.35)", accent: "#ff4d5e" };
+  const allClear = card.kind === "topic" && card.items.every((i) => !isOpenMark(mine[i.key]));
+  const tone = allClear || card.kind === "resolved" ? { glow: "rgba(40,180,120,0.35)", accent: "#5be3a5" } : card.kind === "topic" ? TIER[card.items[0].tier] : { glow: "rgba(200,16,46,0.35)", accent: "#ff4d5e" };
 
   // Phones: swipe left or right to move between screens, like stories (not inside a client's overview or a field)
   const swipe = useRef<{ x: number; y: number } | null>(null);
@@ -424,8 +434,23 @@ function TopicScreen({
   };
   // An old link may name an item rather than its client: open the client it belongs to
   const current = dive != null ? liveBuckets[Math.min(dive, liveBuckets.length - 1)] : (liveBuckets.find((b) => b.key === selected || b.items.some((i) => i.key === selected)) ?? null);
-  const critical = buckets.filter((b) => b.tier === "critical").length;
-  const t = TIER[list[0].tier];
+  // Live: the clients still waiting (cleared ones leave the numbers at once)
+  const critical = liveBuckets.filter((b) => b.tier === "critical").length;
+  const clear = liveBuckets.length === 0;
+  const t = clear ? { glow: "rgba(40,180,120,0.35)", accent: "#5be3a5" } : TIER[list[0].tier];
+  // Cleared the last one while looking at it: a moment to enjoy it, then on to the next topic by itself
+  const hadOpen = useRef(liveBuckets.length > 0);
+  // The latest onNext, read when the timer fires (a parent re-render must not cancel the move)
+  const nextRef = useRef(onNext);
+  useEffect(() => {
+    nextRef.current = onNext;
+  });
+  useEffect(() => {
+    if (!clear || !hadOpen.current) return;
+    hadOpen.current = false;
+    const timer = setTimeout(() => nextRef.current(), 2600);
+    return () => clearTimeout(timer);
+  }, [clear]);
   const allSaved = live.length > 0 && live.every((i) => mine[i.key] === "saved");
   const closeOverview = () => {
     setHere({ pick: null, dive: null });
@@ -446,9 +471,18 @@ function TopicScreen({
           <p className="text-sm uppercase tracking-[0.24em] text-white/50">
             {label}
             {critical ? <span style={{ color: TIER.critical.accent }}> · {critical} critical</span> : null}
+            {clear ? <span style={{ color: t.accent }}> · all clear</span> : null}
           </p>
           <h2 className="font-display text-4xl leading-[1.05] tracking-tight md:text-6xl">
-            <span style={{ color: t.accent }}>{buckets.length}</span> {lookHeadline(topic, buckets.length).replace(/^\d+\s/, "")}
+            {clear ? (
+              <>
+                <span style={{ color: t.accent }}>All clear.</span> Nothing left waiting here.
+              </>
+            ) : (
+              <>
+                <span style={{ color: t.accent }}>{liveBuckets.length}</span> {lookHeadline(topic, liveBuckets.length).replace(/^\d+\s/, "")}
+              </>
+            )}
           </h2>
           {live.length > buckets.length && <p className="text-sm text-white/50">{live.length} items in all, gathered by client so each one is a single look.</p>}
         </div>
@@ -563,14 +597,24 @@ function TopicScreen({
             />
           </div>
         ) : (
-          <div className="hidden min-h-[360px] place-items-center rounded-[28px] border border-dashed border-white/12 p-10 text-center lg:grid">
-            <div className="grid gap-2">
-              <span className="font-display text-[120px] leading-none tracking-tight opacity-90" style={{ color: t.accent }}>
-                {buckets.length}
-              </span>
-              <p className="text-sm text-white/55">Pick a client to see everything that&apos;s waiting for them and act on it, or deep dive through them one by one.</p>
+          clear ? (
+            // The whole topic handled: a green moment of done, then the next topic comes up by itself
+            <div className="grid min-h-[300px] place-items-center rounded-[28px] border border-[#5be3a5]/30 bg-[#5be3a5]/[0.06] p-10 text-center lg:min-h-[360px]" style={{ animation: "card-in .35s cubic-bezier(.2,.8,.2,1) both" }}>
+              <div className="grid gap-3">
+                <DoneBurst label="All clear" />
+                <p className="text-sm text-white/60">{buckets.length === 1 ? "That one's handled." : `All ${buckets.length} handled.`} On to the next topic…</p>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="hidden min-h-[360px] place-items-center rounded-[28px] border border-dashed border-white/12 p-10 text-center lg:grid">
+              <div className="grid gap-2">
+                <span className="font-display text-[120px] leading-none tracking-tight opacity-90" style={{ color: t.accent }}>
+                  {liveBuckets.length}
+                </span>
+                <p className="text-sm text-white/55">Pick a client to see everything that&apos;s waiting for them and act on it, or deep dive through them one by one.</p>
+              </div>
+            </div>
+          )
         )}
       </div>
     </div>
