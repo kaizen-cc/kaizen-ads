@@ -1,14 +1,14 @@
 "use client";
 
 import { useMemo } from "react";
-import { EmailBreakdown } from "@/components/email-breakdown";
 import { BandPill, ScoreBadge, ScoreChecks, WeighingDown } from "@/components/email-score-parts";
 import { HoverCard } from "@/components/hover-card";
-import { campaignRows, flowRows, scoreFromKlaviyo } from "@/lib/email-breakdown";
+import { scoreFromKlaviyo } from "@/lib/email-breakdown";
 import { pushParams, useParam } from "@/lib/url-state";
 import type { ClientKlaviyo, KlaviyoCampaignView } from "@/lib/klaviyo/store";
 import { BENCHMARKS, bestSubjects, deliverabilityByWeek, deliverabilityOutliers, filterCampaigns, pulseStatus, revenuePerRecipient, shiftDay, sortCampaigns, type CampaignFilter, type CampaignSort, type HealthFinding } from "@/lib/klaviyo/insights";
 import { CampaignPreviewCard, CampaignPreviewSheet } from "./email-preview";
+import { SegmentPerformance } from "./segment-performance";
 import { DeliverabilityScoreChart, RprChart, RevenueByDayChart } from "./email-charts";
 
 // The Email tab: the pulse of their email and SMS (Klaviyo, read only). Overview (the health tiles against the 30 days
@@ -340,7 +340,7 @@ function FlowsTab({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof mon
 
 // ─── Audience ─────────────────────────────────────────────────────────────
 
-function AudienceTab({ k }: { k: ClientKlaviyo }) {
+function AudienceTab({ k, clientId }: { k: ClientKlaviyo; clientId: string }) {
   const from30 = shiftDay(k.today, -29);
   const last = k.daily.filter((d) => d.date >= from30);
   const joined = last.some((d) => d.subscribed != null) ? last.reduce((s, d) => s + (d.subscribed ?? 0), 0) : null;
@@ -394,6 +394,7 @@ function AudienceTab({ k }: { k: ClientKlaviyo }) {
           </details>
         )}
       </section>
+      <SegmentPerformance clientId={clientId} currency={k.currency} />
     </div>
   );
 }
@@ -519,9 +520,136 @@ function ScoreSection({ k }: { k: ClientKlaviyo }) {
   );
 }
 
-function OverviewTab({ k, clientId, money }: { k: ClientKlaviyo; clientId: string; money: ReturnType<typeof moneyFn> }) {
-  const campaigns = useMemo(() => campaignRows(k.campaigns), [k.campaigns]);
-  const flows = useMemo(() => flowRows(k.flows), [k.flows]);
+/** Where a finding is dealt with: the tab of the Email service that has its detail */
+const tabFor = (id: string): { tab: EmailTabId; label: string } => {
+  if (id.startsWith("flow") || id === "welcome" || id === "abandoned") return { tab: "flows", label: "Open Flows" };
+  if (["unsub", "spam", "bounce", "deliverability"].includes(id)) return { tab: "deliverability", label: "Open Deliverability" };
+  if (id.startsWith("list") || id.includes("growth")) return { tab: "audience", label: "Open Audience" };
+  return { tab: "campaigns", label: "Open Campaigns" };
+};
+const goTo = (tab: EmailTabId) => pushParams({ tab: tab === "overview" ? null : tab });
+
+/** What needs someone, worst first, each with the tab that has the detail; what's going well sits quietly below */
+function Attention({ health }: { health: HealthFinding[] }) {
+  const status = pulseStatus(health);
+  const hot = health.filter((f) => f.tone === "bad" || f.tone === "warn").sort((a, b) => (a.tone === b.tone ? 0 : a.tone === "bad" ? -1 : 1)).slice(0, 5);
+  const good = health.filter((f) => f.tone === "good");
+  return (
+    <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-heading text-[16px]">What needs attention</h3>
+        <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] ${TONE[status.tone].soft} ${TONE[status.tone].text}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${TONE[status.tone].dot}`} />
+          {status.label}
+        </span>
+      </div>
+      {hot.length ? (
+        <ul className="grid gap-2">
+          {hot.map((f) => {
+            const to = tabFor(f.id);
+            return (
+              <li key={f.id} className="grid gap-1.5 rounded-[12px] border border-line bg-bg/40 px-3 py-2.5">
+                <span className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5">
+                  <span className={`mt-1.5 h-2 w-2 rounded-full ${TONE[f.tone].dot}`} aria-label={TONE[f.tone].label} />
+                  <span className="text-[13.5px] font-medium leading-snug">{f.title}</span>
+                  <span />
+                  <span className="text-[12px] leading-snug text-muted">
+                    {f.detail}
+                    {f.action && <span className="text-fg/80"> {f.action}</span>}
+                  </span>
+                </span>
+                <button type="button" onClick={() => goTo(to.tab)} className="inline-flex min-h-11 w-fit items-center rounded-full border border-line px-3.5 text-[12.5px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-9">
+                  {to.label} →
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="text-sm text-faint">Nothing needs attention right now.</p>
+      )}
+      {good.length > 0 && (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted">
+          <span className="text-faint">Going well</span>
+          {good.slice(0, 4).map((f) => (
+            <span key={f.id} className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-ok" />
+              {f.title}
+            </span>
+          ))}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** What moved against the 30 days before, biggest first (only what moved enough to mention) */
+function Changed({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof moneyFn> }) {
+  const { now, before } = k;
+  const rows = [
+    k.revenueMeasured ? { name: "Email revenue", now: money(now.revenue), d: relMove(now.revenue, before.revenue), size: before.revenue ? Math.abs(now.revenue - before.revenue) / before.revenue : 0 } : null,
+    k.revenueMeasured && now.revenuePerRecipient != null && before.revenuePerRecipient ? { name: "Revenue per recipient", now: money(now.revenuePerRecipient, true), d: relMove(now.revenuePerRecipient, before.revenuePerRecipient), size: Math.abs(now.revenuePerRecipient - before.revenuePerRecipient) / before.revenuePerRecipient } : null,
+    now.openRate != null && before.openRate ? { name: "Open rate", now: pct(now.openRate), d: ptsMove(now.openRate, before.openRate), size: Math.abs(now.openRate - before.openRate) / before.openRate } : null,
+    now.clickRate != null && before.clickRate ? { name: "Click rate", now: pct(now.clickRate, 2), d: ptsMove(now.clickRate, before.clickRate, true, 2), size: Math.abs(now.clickRate - before.clickRate) / before.clickRate } : null,
+    now.unsubscribeRate != null && before.unsubscribeRate ? { name: "Unsubscribe rate", now: pct(now.unsubscribeRate, 2), d: ptsMove(now.unsubscribeRate, before.unsubscribeRate, false, 2), size: Math.abs(now.unsubscribeRate - before.unsubscribeRate) / before.unsubscribeRate } : null,
+    before.campaignsSent ? { name: "Campaigns sent", now: count(now.campaignsSent), d: relMove(now.campaignsSent, before.campaignsSent), size: Math.abs(now.campaignsSent - before.campaignsSent) / before.campaignsSent } : null,
+  ]
+    .filter((r): r is NonNullable<typeof r> => r != null && r.d != null && r.d.good != null && r.size >= 0.05)
+    .sort((a, b) => b.size - a.size)
+    .slice(0, 4);
+  return (
+    <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-5">
+      <div className="grid gap-0.5">
+        <h3 className="font-heading text-[16px]">What&apos;s changed</h3>
+        <span className="text-[12px] text-faint">Last 30 days against the 30 before, what moved most.</span>
+      </div>
+      {rows.length ? (
+        <ul className="grid gap-2">
+          {rows.map((r) => (
+            <li key={r.name} className="flex items-baseline justify-between gap-3 rounded-[12px] border border-line bg-bg/40 px-3 py-2.5">
+              <span className="text-[13px]">{r.name}</span>
+              <span className="flex items-baseline gap-2">
+                <span className="tabular text-[13.5px]">{r.now}</span>
+                <span className={`tabular text-[12px] ${r.d?.good ? "text-ok" : "text-bad"}`}>{r.d?.text}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-faint">Nothing moved much: the numbers are steady against the 30 days before.</p>
+      )}
+    </section>
+  );
+}
+
+/** Links into the tabs that hold the detail, each with one line of what's there */
+function DeepDive({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof moneyFn> }) {
+  const live = k.keyFlows.filter((f) => f.state === "live").length;
+  const missing = k.keyFlows.filter((f) => f.state === "missing").length;
+  const best = [...k.campaigns].filter((c) => c.channel !== "sms" && c.revenue > 0).sort((a, b) => b.revenue - a.revenue)[0] ?? null;
+  const items: { tab: EmailTabId; title: string; line: string }[] = [
+    { tab: "campaigns", title: "Campaigns", line: best ? `${count(k.now.campaignsSent)} sent in 30 days; the best earned ${money(best.revenue)}` : `${count(k.now.campaignsSent)} sent in 30 days` },
+    { tab: "flows", title: "Flows", line: k.flowsKnown ? `${live} of ${k.keyFlows.length} key flows live${missing ? `, ${missing} missing` : ""}` : "Not measured for this provider" },
+    { tab: "audience", title: "Audiences and segments", line: k.audiences.length ? `${k.audiences.length} lists and segments, and how each performs` : "Lists, segments and how each performs" },
+    { tab: "deliverability", title: "Deliverability", line: "Bounce, spam and unsubscribes by week" },
+  ];
+  return (
+    <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+      {items.map((i) => (
+        <button key={i.tab} type="button" onClick={() => goTo(i.tab)} className="group grid min-h-11 content-start gap-1 rounded-[16px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint">
+          <span className="flex items-center justify-between gap-2 text-[14px] font-medium">
+            {i.title}
+            <span aria-hidden className="text-faint transition-transform group-hover:translate-x-0.5">→</span>
+          </span>
+          <span className="text-[12px] leading-snug text-muted">{i.line}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** A holistic glance: the score, headline numbers, revenue and deliverability over time, what changed, what needs attention, and the way into the detail (campaigns and flows have their own tabs) */
+function OverviewTab({ k, money }: { k: ClientKlaviyo; money: ReturnType<typeof moneyFn> }) {
   return (
     <div className="grid gap-5">
       <ScoreSection k={k} />
@@ -531,8 +659,11 @@ function OverviewTab({ k, clientId, money }: { k: ClientKlaviyo; clientId: strin
         {k.revenueMeasured && <RprChart k={k} money={money} />}
         <DeliverabilityScoreChart k={k} />
       </div>
-      <HealthList health={k.health} />
-      <EmailBreakdown campaigns={campaigns} flows={flows} currency={k.currency} clientId={clientId} provider={k.provider} revenueMeasured={k.revenueMeasured} />
+      <div className="grid items-start gap-5 lg:grid-cols-2">
+        <Attention health={k.health} />
+        <Changed k={k} money={money} />
+      </div>
+      <DeepDive k={k} money={money} />
     </div>
   );
 }
@@ -551,13 +682,13 @@ export function EmailTab({ k, clientId, tab }: { k: ClientKlaviyo; clientId: str
     <div className="grid gap-5">
       <Intro k={k} />
       {tab === "overview" ? (
-        <OverviewTab k={k} clientId={clientId} money={money} />
+        <OverviewTab k={k} money={money} />
       ) : tab === "campaigns" ? (
         <CampaignsTab k={k} clientId={clientId} money={money} />
       ) : tab === "flows" ? (
         <FlowsTab k={k} money={money} />
       ) : tab === "audience" ? (
-        <AudienceTab k={k} />
+        <AudienceTab k={k} clientId={clientId} />
       ) : (
         <DeliverabilityTab k={k} />
       )}

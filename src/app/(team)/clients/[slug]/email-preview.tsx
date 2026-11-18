@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import type { CampaignPreview } from "@/lib/klaviyo/store";
 import { klaviyoCampaignPreview } from "./klaviyo-actions";
+import { Layer } from "./layer";
 
 // A campaign as it was sent: the email itself (its HTML from Klaviyo, made safe on the server and shown in a sandboxed
 // frame that can't run scripts or reach the page; images load) scaled down in the hover card, or the SMS in a phone
@@ -103,40 +104,45 @@ export function CampaignPreviewSheet({ clientId, campaigns }: { clientId: string
   }, [c]);
   if (!c) return null;
   const sms = c.channel === "sms" || s?.preview?.channel === "sms";
+  // On <body> (Layer): inside the page's tab panel a fixed box is placed against the panel's animation, not the screen
   return (
-    <div className="fixed inset-0 z-[130]" role="dialog" aria-modal="true" aria-label={`Preview of ${c.name}`}>
-      <style>{`@keyframes epv-in { from { transform: translateY(24px); opacity: 0 } to { transform: none; opacity: 1 } }`}</style>
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" onClick={() => closeParams("epreview")} aria-hidden />
-      <div className="pb-safe absolute inset-x-0 bottom-0 mx-auto grid max-h-[92vh] w-full max-w-[680px] grid-rows-[auto_minmax(0,1fr)] rounded-t-[22px] border border-ink/10 bg-deep-2 text-fg shadow-[0_-24px_60px_-20px_rgba(0,0,0,0.9)] md:bottom-6 md:rounded-[22px]" style={{ animation: "epv-in .22s ease-out" }}>
-        <div className="flex items-start gap-3 border-b border-ink/10 px-4 py-3">
-          <div className="grid min-w-0 flex-1 gap-0.5">
-            <span className="text-[11px] uppercase tracking-[0.12em] text-faint">
-              {sms ? "SMS" : "Email"}
-              {c.sendTime ? ` · sent ${new Date(c.sendTime).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}
-            </span>
-            <span className="truncate text-[15px] font-medium">{sms ? c.name : (s?.preview?.subject ?? c.subject ?? c.name)}</span>
-            {!sms && (s?.preview?.previewText ?? c.previewText) && <span className="truncate text-[12.5px] text-muted">{s?.preview?.previewText ?? c.previewText}</span>}
+    <Layer>
+      <div className="fixed inset-0 z-[130] grid grid-rows-[auto_minmax(0,1fr)] bg-deep-2 text-fg" role="dialog" aria-modal="true" aria-label={`Preview of ${c.name}`} style={{ animation: "epv-in .2s ease-out" }}>
+        <style>{`@keyframes epv-in { from { transform: translateY(16px); opacity: 0 } to { transform: none; opacity: 1 } }`}</style>
+        <div className="flex items-start gap-3 border-b border-ink/10 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+          <div className="mx-auto flex w-full max-w-[760px] items-start gap-3">
+            <div className="grid min-w-0 flex-1 gap-0.5">
+              <span className="text-[11px] uppercase tracking-[0.12em] text-faint">
+                {sms ? "SMS" : "Email"}
+                {c.sendTime ? ` · sent ${new Date(c.sendTime).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}
+              </span>
+              <span className="truncate text-[15px] font-medium">{sms ? c.name : (s?.preview?.subject ?? c.subject ?? c.name)}</span>
+              {!sms && (s?.preview?.previewText ?? c.previewText) && <span className="truncate text-[12.5px] text-muted">{s?.preview?.previewText ?? c.previewText}</span>}
+            </div>
+            <button type="button" onClick={() => closeParams("epreview")} aria-label="Close preview" className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-ink/10 text-ink/70 hover:bg-ink/10">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
           </div>
-          <button type="button" onClick={() => closeParams("epreview")} aria-label="Close" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-ink/60 hover:bg-ink/10">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
-          </button>
         </div>
-        <div className="overflow-y-auto overscroll-contain p-3 md:p-4">
+        <div className="min-h-0 overflow-y-auto overscroll-contain bg-surface-2/40 px-0 pb-[env(safe-area-inset-bottom)] md:px-4 md:py-4">
           {!s ? (
-            <Skeleton h={480} />
+            <div className="mx-auto max-w-[640px] p-3">
+              <Skeleton h={480} />
+            </div>
           ) : s.error ? (
-            <p className="text-sm text-faint">{s.error}</p>
+            <p className="p-4 text-sm text-faint">{s.error}</p>
           ) : s.preview?.html ? (
-            <iframe title={`Preview of ${c.name}`} srcDoc={s.preview.html} sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" className="mx-auto block h-[72vh] w-full max-w-[640px] rounded-[10px] border-0 bg-white" />
+            // The email scrolls inside its own frame (it can't be measured from outside a sandbox), filling the screen under the header
+            <iframe title={`Preview of ${c.name}`} srcDoc={s.preview.html} sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" className="mx-auto block h-full min-h-[60vh] w-full max-w-[640px] border-0 bg-white md:rounded-[10px]" />
           ) : s.preview?.body ? (
-            <div className="py-6">
+            <div className="py-8">
               <SmsBubble text={s.preview.body} />
             </div>
           ) : null}
         </div>
       </div>
-    </div>
+    </Layer>
   );
 }

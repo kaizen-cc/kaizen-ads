@@ -49,7 +49,8 @@ const change = (x: number | null) =>
 
 const TREND = { improving: { text: "Improving", tone: "text-ok", arrow: "↘" }, steady: { text: "Steady", tone: "text-muted", arrow: "→" }, slipping: { text: "Slipping", tone: "text-bad", arrow: "↗" } } as const;
 
-export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?: Record<string, AuditSummary> | null; changes?: Record<string, AccountChange[]> | null }) {
+/** readOnly: another line's view (no editing the KPI, no audit buttons) */
+export function KpiPanel({ kpis, audits, changes, readOnly = false }: { kpis: ClientKpi[]; audits?: Record<string, AuditSummary> | null; changes?: Record<string, AccountChange[]> | null; readOnly?: boolean }) {
   const synced = kpis.map((k) => k.computedAt).filter(Boolean).sort().at(-1);
   return (
     <Section
@@ -164,9 +165,9 @@ export function KpiPanel({ kpis, audits, changes }: { kpis: ClientKpi[]; audits?
                   <p className="text-sm text-muted">{k.status === "idle" ? "Not spending right now." : k.error ?? "Waiting for its first sync."}</p>
                 )}
                 {/* The same metric boxes and campaigns as the KPI board's card: changed here or there, it's the same KPI */}
-                {k.accountId && k.status !== "setup" && <KpiExtras k={{ id: k.id, target: k.target, targetFrom: k.targetFrom, conversion: k.conversion, customAction: k.customAction, campaignMatch: k.campaignMatch, platform: k.platform, extraMetrics: k.extraMetrics }} />}
+                {!readOnly && k.accountId && k.status !== "setup" && <KpiExtras k={{ id: k.id, target: k.target, targetFrom: k.targetFrom, conversion: k.conversion, customAction: k.customAction, campaignMatch: k.campaignMatch, platform: k.platform, extraMetrics: k.extraMetrics }} />}
                 {/* TikTok is read only: its audit's moves are a checklist for TikTok Ads Manager, and there's no change history */}
-                {audits && k.accountId && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} advertiserId={k.platform === "tiktok" ? k.accountId : null} blocked={k.target == null ? { reason: "Set the KPI first" } : null} />}
+                {!readOnly && audits && k.accountId && <AuditPanel targetId={k.id} audit={audits[k.id] ?? null} platform={k.platform} advertiserId={k.platform === "tiktok" ? k.accountId : null} blocked={k.target == null ? { reason: "Set the KPI first" } : null} />}
                 {changes && k.accountId && k.platform !== "tiktok" && <ChangeLog changes={changes[k.id] ?? []} platform={k.platform} limit={30} collapsed={5} />}
               </article>
             );

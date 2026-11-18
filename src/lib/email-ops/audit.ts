@@ -5,8 +5,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AgentOffline, AiPaused, AiUnavailable, askJson } from "@/lib/ai";
 import { notLive } from "@/lib/live-guard";
 import { clientKlaviyo } from "@/lib/klaviyo/store";
+import { loadSegmentReport } from "@/lib/klaviyo/segments";
+import { segmentDigest } from "@/lib/klaviyo/segments-core";
 import { emailBrief } from "./chat";
-import { auditDigest, EMAIL_AUDIT_SCHEMA, EMAIL_AUDIT_SYSTEM, ruleFindings, type EmailAuditResult } from "./audit-core";
+import { auditDigest, moneyFor, EMAIL_AUDIT_SCHEMA, EMAIL_AUDIT_SYSTEM, ruleFindings, type EmailAuditResult } from "./audit-core";
 import { emailScoreOf } from "./score";
 import { snapshotOf } from "./sprint-core";
 
@@ -54,7 +56,8 @@ export async function runEmailAudit(admin: SupabaseClient, auditId: string) {
 
     await progress(admin, auditId, "Reading the client's context", 30);
     // The shared context only (Brand Bible, memory, the last 45 days of Slack, email and calls): never the paid-ads brief, which the email team does not see
-    const [ctx, changes] = await Promise.all([emailBrief(admin, clientId).catch(() => null), import("./changes").then((c) => c.changesBlock(admin, clientId, 30)).catch(() => "")]);
+    // Who the campaigns went to and how each segment did, with the rules' advice and what works for similar clients
+    const [ctx, changes, segments] = await Promise.all([emailBrief(admin, clientId).catch(() => null), import("./changes").then((c) => c.changesBlock(admin, clientId, 30)).catch(() => ""), loadSegmentReport(admin, clientId, { days: 90, peerDb: admin }).catch(() => null)]);
     const digest = auditDigest(name, score, k, today);
     const floor = ruleFindings(score, k.keyFlows.map((f) => ({ label: f.label, state: f.state, critical: f.id === "welcome" || f.id === "abandoned" })));
 
@@ -67,13 +70,13 @@ export async function runEmailAudit(admin: SupabaseClient, auditId: string) {
       schema: EMAIL_AUDIT_SCHEMA as unknown as Record<string, unknown>,
       maxTokens: 16000,
       onText: (t) => void progress(admin, auditId, "Writing the audit", Math.min(90, 50 + Math.round(t.length / 250))),
-      prompt: `${digest}\n\n<what_the_numbers_prove note="rule-based, from the score and the key flows">\n${floor.map((f) => `- [${f.severity}] ${f.title}: ${f.evidence.join(" ")}`).join("\n") || "(nothing under its bar)"}\n</what_the_numbers_prove>\n\n${changes ? `${changes}\n\n` : ""}${ctx?.text ?? ""}\n\nAudit ${name}'s email account today. Say in the diagnosis whether anyone has been working in the account lately, from the changes given.`,
+      prompt: `${digest}\n\n<what_the_numbers_prove note="rule-based, from the score and the key flows">\n${floor.map((f) => `- [${f.severity}] ${f.title}: ${f.evidence.join(" ")}`).join("\n") || "(nothing under its bar)"}\n</what_the_numbers_prove>\n\n${changes ? `${changes}\n\n` : ""}${segments ? `<segments note="who the campaigns went to and how each list and segment did, with advice from the rules and from similar clients">\n${segmentDigest(segments, moneyFor(k.currency))}\n</segments>\n\n` : ""}${ctx?.text ?? ""}\n\nAudit ${name}'s email account today. Say in the diagnosis whether anyone has been working in the account lately, from the changes given.`,
     });
     // The verdict's status always follows the real score, whatever the AI said
     result.verdict.status = score.band === "bad" ? "red" : score.band === "watch" ? "watch" : "good";
     await admin
       .from("email_audits")
-      .update({ status: "ready", step: "Done", progress: 100, result, score: score.score, band: score.band, inputs: { snapshot: snapshotOf(score), campaigns: k.campaigns.length, flows: k.flows.length, through: k.through }, finished_at: new Date().toISOString(), error: null })
+      .update({ status: "ready", step: "Done", progress: 100, result, score: score.score, band: score.band, inputs: { snapshot: snapshotOf(score), campaigns: k.campaigns.length, flows: k.flows.length, through: k.through, segments: segments ? { campaigns: segments.withAudiences, read: segments.segments.length, flagged: segments.segments.filter((s) => s.flags.length).length, advice: segments.advice.length } : null }, finished_at: new Date().toISOString(), error: null })
       .eq("id", auditId);
     // A red account's plan becomes its sprint straight away (today's and this week's moves), so it is followed and checked
     if (score.band === "bad") await import("./sprint").then((m) => m.autoEmailSprint(admin, auditId)).catch((e) => console.error("[email audit] auto sprint:", e instanceof Error ? e.message : e));

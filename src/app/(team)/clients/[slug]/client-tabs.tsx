@@ -7,7 +7,7 @@ import { useSearchParams } from "next/navigation";
 // (creative, what the AI knows, the team and setup) one click away. The open tab is kept in the address (?tab=), so
 // a link or a refresh lands on it.
 
-export type ClientTab = { id: string; label: string; hint?: string; count?: number | null; content: React.ReactNode };
+export type ClientTab = { id: string; label: string; hint?: string; count?: number | null; content: React.ReactNode; /** Only for people who work in this line (hidden in a read-only overview) */ action?: boolean };
 
 const read = () => (typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("tab"));
 

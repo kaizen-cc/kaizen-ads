@@ -22,6 +22,7 @@ import { pushParams, useParam } from "@/lib/url-state";
 import { ClientChat } from "../clients/[slug]/client-chat";
 import { EmailOpsSuggestions } from "../clients/[slug]/email-ops-suggestions";
 import { Layer } from "../clients/[slug]/layer";
+import { SegmentPerformance } from "../clients/[slug]/segment-performance";
 import { BoardBreakdown } from "./board-breakdown";
 import { BoardLocations } from "./board-locations";
 import { setChannelTarget } from "./channel-actions";
@@ -43,8 +44,8 @@ const AREA_LABEL: Record<string, string> = { ...EMAIL_AREA_LABEL, ...SOCIAL_AREA
 const OWNER_LABEL: Record<string, string> = { ...EMAIL_OWNER_LABEL, ...SOCIAL_OWNER_LABEL };
 const LINE_NAME: Record<OpsLine, string> = { email: "Email", social: "Social" };
 
-type Tab = "overview" | "numbers" | "campaigns" | "flows" | "actions" | "notes" | "settings";
-const TABS: Tab[] = ["overview", "numbers", "campaigns", "flows", "actions", "notes", "settings"];
+type Tab = "overview" | "numbers" | "campaigns" | "flows" | "segments" | "actions" | "notes" | "settings";
+const TABS: Tab[] = ["overview", "numbers", "campaigns", "flows", "segments", "actions", "notes", "settings"];
 type NumMetric = "revenue" | "rpr" | "open" | "click" | "orders";
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }) : "none yet");
@@ -156,6 +157,7 @@ export function EmailAccountSheet({ r, month, onClose, onStep }: { r: ChannelRow
     { id: "numbers", label: "Numbers", hint: "Every window, month and quarter against the target, and the account's numbers this month" },
     { id: "campaigns", label: "Campaigns", hint: "Every campaign sent in the last 120 days with its results" },
     { id: "flows", label: "Flows", hint: "Every flow with its last 30 and 90 days" },
+    { id: "segments", label: "Segments", hint: "Every list and segment the campaigns went to: results, the ones to rest or trim, who to include and leave out, and what works for similar clients" },
     { id: "actions", label: "Actions", count: openMoves || null, hint: "The audit, the sprint of moves and the campaign ideas" },
     { id: "notes", label: "Notes", hint: "The #1 problem, the plan and every change in the account" },
     { id: "settings", label: "Settings", hint: "The revenue target, what counts as the sale and where the numbers come from" },
@@ -239,6 +241,7 @@ export function EmailAccountSheet({ r, month, onClose, onStep }: { r: ChannelRow
               {tab === "numbers" && <Numbers r={r} sheet={sheet} loading={loading} money={money} />}
               {tab === "campaigns" && <BoardBreakdown clientId={r.clientId} currency={r.currency} provider={r.provider ?? null} revenueMeasured={money} only="campaigns" />}
               {tab === "flows" && <BoardBreakdown clientId={r.clientId} currency={r.currency} provider={r.provider ?? null} revenueMeasured={money} only="flows" />}
+              {tab === "segments" && <SegmentPerformance clientId={r.clientId} currency={r.currency} />}
               {tab === "actions" && (loading ? <Skeleton h="h-72" /> : sheet && <Actions r={r} sheet={sheet} reload={reload} />)}
               {tab === "notes" && (loading ? <Skeleton h="h-72" /> : sheet && <Notes r={r} sheet={sheet} klaviyo={klaviyo} onTab={setTab} />)}
               {tab === "settings" && <Settings r={r} month={month} klaviyo={klaviyo} />}

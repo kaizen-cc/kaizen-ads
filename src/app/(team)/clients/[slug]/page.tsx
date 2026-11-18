@@ -18,6 +18,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { loadClientCreative } from "@/lib/client-creative";
 import { ClientView } from "./client-view";
+import { actableLines } from "@/lib/client-lines";
 import { ContactChangesPanel, type RemovedContact } from "./contact-changes-panel";
 import { ClientDirection } from "@/components/direction-parts";
 import { openChanges } from "@/lib/direction-changes";
@@ -84,6 +85,10 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
 
   const t = <V,>(label: string, work: PromiseLike<V> | (() => PromiseLike<V>)) => timed(S, label, Promise.resolve(typeof work === "function" ? work() : work));
   const admin = adminConfigured() ? createAdminClient() : null;
+  // Every line's read-only overview shows to everyone on the team: the email and social teams' RLS hides the ads data, so
+  // theirs is read with the server's rights (the client was already found through RLS above, so this is scoped to a
+  // client they may open, and only reads)
+  const paidDb = channel && admin ? admin : supabase;
   const keys = [client.slack_channel_id && `slack:${client.slack_channel_id}`, client.internal_slack_channel_id && `slack:${client.internal_slack_channel_id}`, client.drive_folder_id && `drive:${client.drive_folder_id}`].filter(Boolean) as string[];
   const asked = sp.ready === "1";
   const live = !client.archived_at && ["active", "onboarding"].includes(client.status);
@@ -117,16 +122,16 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
 
   // The KPIs, and what hangs off them: audits, each account's changes, the sprints
   const kpiChainAll = async () => {
-    const kpis = await t("kpis", loadClientKpis(supabase, client.id));
+    const kpis = await t("kpis", loadClientKpis(paidDb, client.id));
     const withAccount = kpis.filter((k) => k.accountId);
     const [auditBy, changeBy, sprintList] = await Promise.all([
-      t("audits", latestAudits(supabase, kpis.map((k) => k.id))),
-      t("changes", loadChanges(supabase, withAccount.map((k) => changeKey(k.platform, k.accountId!)), 30)),
-      t("sprints", loadSprints(supabase, { targetIds: kpis.map((k) => k.id) })),
+      t("audits", latestAudits(paidDb, kpis.map((k) => k.id))),
+      t("changes", loadChanges(paidDb, withAccount.map((k) => changeKey(k.platform, k.accountId!)), 30)),
+      t("sprints", loadSprints(paidDb, { targetIds: kpis.map((k) => k.id) })),
     ]);
     return { kpis, auditBy, changeBy, sprintList };
   };
-  const kpiChain = (): ReturnType<typeof kpiChainAll> => (channel ? Promise.resolve({ kpis: [], auditBy: new Map(), changeBy: new Map(), sprintList: [] } as unknown as Awaited<ReturnType<typeof kpiChainAll>>) : kpiChainAll());
+  const kpiChain = () => kpiChainAll();
   // Every call that discussed this client, with what was promised (and the Asana tasks that cover it)
   const callChain = async () => {
     const { data: callRows } = await supabase
@@ -177,7 +182,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
 
   // The panels read with the server's rights (requests to change contacts, permissions, TikTok, email, social, Google
   // sync): started now, beside everything below, instead of one after another once it's in
-  const tiktokOn = tiktokConfigured() && !channel;
+  const tiktokOn = tiktokConfigured();
   const servicesNow = servicesOf({ services: client.services, services_extra: client.services_extra, services_removed: client.services_removed }) as string[];
   const extras = Promise.all([
     t("contact requests", contactRequestsFor(supabase, client.id)),
@@ -185,7 +190,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     tiktokOn && admin ? t("tiktok", import("@/lib/tiktok/store").then((m) => m.clientTikTok(admin, client.id)).catch(() => null)) : Promise.resolve(null),
     tiktokOn && admin ? t("tiktok prefs", Promise.resolve(admin.from("client_report_prefs").select("tiktok_separate").eq("client_id", client.id).maybeSingle()).then((r) => Boolean(r.data?.tiktok_separate))) : Promise.resolve(false),
     // Klaviyo (email and SMS, read only): nothing shows until its migration is applied
-    admin && line !== "social"
+    admin
       ? t("email", async () => {
           const [k, conn] = await Promise.all([import("@/lib/klaviyo/store"), import("@/lib/email-providers").then((m) => m.emailConnectionFlat(admin, client.id)).catch(() => undefined)]);
           if (conn === undefined) return null;
@@ -195,7 +200,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         })
       : Promise.resolve(null),
     // Organic social, for clients with the social media service (who sees it is decided once the seats are in)
-    admin && line !== "email" && servicesNow.includes("social-media")
+    admin && servicesNow.includes("social-media")
       ? t("social", async () => {
           const sm = await import("@/lib/social/store");
           const link = await sm.socialLink(admin, client.id).catch(() => undefined);
@@ -204,7 +209,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         })
       : Promise.resolve(null),
     // Google Ads sync: each account's state and, when it fails, why and the fix (null when they don't run Google)
-    admin && !channel ? t("google sync", import("@/lib/google-sync-health").then((m) => m.clientGoogleHealth(admin, client.id)).catch(() => null)) : Promise.resolve(null),
+    admin ? t("google sync", import("@/lib/google-sync-health").then((m) => m.clientGoogleHealth(admin, client.id)).catch(() => null)) : Promise.resolve(null),
   ]);
 
   // Everything the page needs, all at once
@@ -264,8 +269,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       supabase.from("meta_snapshots").select("fetched_at").eq("client_id", client.id).order("fetched_at", { ascending: false }).limit(1).maybeSingle(),
     ])),
     t("creative, fatigue, intake, market", Promise.all([
-      channel ? Promise.resolve(null) : loadClientCreative(supabase, client.id),
-      channel ? Promise.resolve(null) : loadWatchList(supabase, { clientId: client.id }),
+      loadClientCreative(paidDb, client.id),
+      loadWatchList(paidDb, { clientId: client.id }),
       supabase.from("client_intakes").select("received_at, status, summary, answers, error").eq("client_id", client.id).order("received_at", { ascending: false }).limit(1).maybeSingle(),
       channel ? Promise.resolve([] as Awaited<ReturnType<typeof loadClientMarket>>) : loadClientMarket(supabase, client.id, { limit: 200 }),
     ])),
@@ -293,7 +298,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     // Where this client's new ads go, as their buyers taught the launcher
     t("launch rules", supabase.from("launch_rules").select("id, rule, from_adset, to_adset, via, active, created_at, profiles(full_name)").eq("client_id", client.id).order("created_at", { ascending: false }).limit(30)),
     // Each platform's campaigns over the last 30 days (campaign tables are read with the server's rights)
-    admin && !channel ? t("campaigns", loadCampaigns(admin, client.id).catch(() => [])) : Promise.resolve([]),
+    admin ? t("campaigns", loadCampaigns(admin, client.id).catch(() => [])) : Promise.resolve([]),
     // Every file and link shared about them, the knowledge the agents read for them, and every report made for them
     t("docs & reports", Promise.all([
       supabase
@@ -411,7 +416,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
   const changes = Object.fromEntries(kpis.filter((k) => k.accountId).map((k) => [k.id, changeBy.get(changeKey(k.platform, k.accountId!)) ?? []]));
   // What this person may do on this client (src/lib/chat-permissions.ts): the chat and its cards offer only that
   // An audit judges the account against its KPI: none until the KPI is set
-  const targets: AuditTarget[] = kpis
+  const targets: AuditTarget[] = (channel ? [] : kpis)
     .filter((k) => k.accountId && k.target != null)
     .map((k) => {
       const a = auditBy.get(k.id);
@@ -464,9 +469,11 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     })
     .sort((a, b) => b.start.localeCompare(a.start));
   // Organic social: the social line, or anyone but the makers (a maker holding this client's social creative seat sees it)
-  const heldSocialCreative = (assignments ?? []).some((a) => a.role === "social_creative" && a.profile_id === me.id);
-  const showSocial = line === "social" || (line === null && (!isCreativeRole(me.role) || heldSocialCreative));
-  const social = showSocial ? socialAll : null;
+  const mySeats = (assignments ?? []).filter((a) => a.profile_id === me.id).map((a) => a.role as string);
+  const social = socialAll;
+  // Every line shows to everyone; only the lines this person works in (their role, extra hats, seats held here) can be acted on
+  const meRow = (staff ?? []).find((p) => p.id === me.id);
+  const acts = [...actableLines({ role: me.role, isExec: me.isExec, also_buys: meRow?.also_buys, also_social: meRow?.also_social, also_designs_email: meRow?.also_designs_email }, mySeats)];
   const docs = (docRows ?? []).map((d) => ({ id: d.id, kind: d.kind, name: d.name, url: d.url, path: d.path, mime: d.mime, bytes: d.bytes, title: d.title, summary: d.summary, status: d.status, note: d.note, via: d.via, at: d.created_at, by: (d.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
   const billingHistory = (billingLog ?? []).map((h) => ({ at: h.at as string, oldDay: (h.old_day as number | null) ?? null, newDay: (h.new_day as number | null) ?? null, source: (h.source as string | null) ?? null, note: (h.note as string | null) ?? null, by: (h.profiles as unknown as { full_name: string } | null)?.full_name ?? null }));
 
@@ -523,13 +530,14 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       campaigns={campaigns}
       tiktok={tiktokOn ? { data: tiktok, separate: tiktokSeparate } : null}
       klaviyo={klaviyo}
-      emailOps={klaviyo?.conn && klaviyo.data && line !== "social" ? <EmailOpsPanel clientId={client.id} /> : null}
+      emailOps={klaviyo?.conn && klaviyo.data && acts.includes("email") ? <EmailOpsPanel clientId={client.id} /> : null}
       social={social}
       googleSync={googleSync}
       docs={docs}
       knowledge={knowledge}
       loom={loom}
       line={line}
+      acts={acts}
       playbook={channel ? null : { items: ledger, learnings: brandBible?.learnings ?? [] }}
       // Client reports are the executives' and media buyers' only (the email and social teams get theirs on the Reports page, later)
       reports={canSeeReports(me) && !channel ? reportHistory : null}

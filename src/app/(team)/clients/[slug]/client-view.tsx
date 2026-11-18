@@ -42,7 +42,7 @@ import type { ChatTurn } from "@/lib/handoff";
 import type { AccountChange } from "@/lib/account-changes";
 import { ShotListPanel, type AssetGlance, type SavedShotList } from "./shot-list-panel";
 import { MomentsPanel, type MomentRow } from "./moments-panel";
-import { ClientSections } from "./client-sections";
+import { ClientSections, type ServiceSection } from "./client-sections";
 import { BusinessOverview, type ServiceCard } from "./business-overview";
 import { CampaignsPanel } from "./campaigns-panel";
 import { TikTokPanel } from "./tiktok-panel";
@@ -54,6 +54,7 @@ import { GoogleSyncPanel } from "@/components/platform-fields";
 import type { GoogleClientHealth } from "@/lib/google-health";
 import { emailClientState, providerName } from "@/lib/email-providers/core";
 import { emailTabs } from "./email-tabs";
+import { ALL_LINES, type LineId } from "@/lib/client-lines";
 import { socialTabs } from "./social-tabs";
 import type { ClientSocial, SocialLinkView } from "@/lib/social/store";
 import { socialSummary } from "@/lib/social/summary";
@@ -188,6 +189,8 @@ export type ClientViewProps = {
   demo?: boolean; // design preview: the refresh only plays its animation
   /** The email or organic social team's line of work: the page then leaves out everything paid ads (their panels, KPIs, creative, launches, audits) */
   line?: "email" | "social" | null;
+  /** The service lines this person works in: those stay actionable, every other line is a read-only overview */
+  acts?: LineId[];
   connections: { meta: Freshness | null; slackClient: Freshness | null; slackInternal: Freshness | null; drive: Freshness | null };
   creative?: ClientCreative | null; // tickets in motion and launched, live and paused ads
   kpis?: ClientKpi[] | null; // performance vs target; null in the design preview
@@ -243,7 +246,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, line = null, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, emailOps = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null, contactChanges = null, direction = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, line = null, acts = [...ALL_LINES], connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, emailOps = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null, contactChanges = null, direction = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -251,6 +254,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const live = isLive(client);
   // The email and social teams: their channel and the shared client context, never paid ads
   const channel = line !== null;
+  // The lines this person may act on; every other line is shown as a read-only overview
+  const ro = (l: LineId) => !acts.includes(l);
 
   // The glance: what's in motion, and what needs someone (each a link to where it's handled)
   const tab = (t: string) => `/clients/${client.slug}?tab=${t}`;
@@ -291,13 +296,13 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const googleCampaigns = (campaigns ?? []).find((c) => c.platform === "google") ?? null;
   const has = {
     // Taken off on purpose stays off, even with an account or a package still set up
-    meta: !channel && !offList.has("facebook-ads") && (bought.includes("facebook-ads") || Boolean(client.meta_ad_account_id) || metaKpis.length > 0),
-    google: !channel && !offList.has("google-ads") && (bought.includes("google-ads") || googleKpis.length > 0 || Boolean(googleCampaigns)),
+    meta: !offList.has("facebook-ads") && (bought.includes("facebook-ads") || Boolean(client.meta_ad_account_id) || metaKpis.length > 0),
+    google: !offList.has("google-ads") && (bought.includes("google-ads") || googleKpis.length > 0 || Boolean(googleCampaigns)),
     // Only once TikTok is set up; before that it stays a plain service on the overview
-    tiktok: !channel && Boolean(tiktok) && !offList.has("tiktok-ads") && (bought.includes("tiktok-ads") || tiktokKpis.length > 0 || Boolean(tiktok?.data)),
+    tiktok: Boolean(tiktok) && !offList.has("tiktok-ads") && (bought.includes("tiktok-ads") || tiktokKpis.length > 0 || Boolean(tiktok?.data)),
     // Organic social: only for clients who buy social media (servicesOf already leaves out one taken off on purpose)
     social: Boolean(social) && bought.includes("social-media"),
-    creative: !channel && !offList.has("creative") && (bought.includes("creative") || client.creative_package || images + videos > 0 || Boolean(creative?.moving.length)),
+    creative: !offList.has("creative") && (bought.includes("creative") || client.creative_package || images + videos > 0 || Boolean(creative?.moving.length)),
   };
   const tierOf = (slug: string) => {
     const id = services?.chosen[slug];
@@ -317,6 +322,9 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const creativeTone: "bad" | "warn" | null = allotmentOver(pools) ? "bad" : active && images + videos > 0 && imagesUsed + videosUsed === 0 ? "warn" : null;
 
   const reportAccounts = (kpis ?? []).filter((k) => k.accountId && (!reportable || reportable.includes(k.id))).map((k) => ({ id: k.id, label: `${k.platform === "google" ? "Google" : k.platform === "tiktok" ? "TikTok" : "Meta"}${k.label ? ` · ${k.label}` : ""}` }));
+
+  // Other lines are read-only overviews: their action tabs (strategy, policy, ideas, copy library, package) drop out
+  const gate = (list: ServiceSection[]) => list.map((s) => ((ALL_LINES as readonly string[]).includes(s.id) && ro(s.id as LineId) ? { ...s, tabs: s.tabs.filter((t) => !t.action) } : s));
 
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
@@ -377,7 +385,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
       </header>
 
       <ClientSections
-        sections={[
+        sections={gate([
           {
             id: "business",
             label: "Whole business",
@@ -971,7 +979,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       hint: "Against target, audits and sprints, change history, campaigns",
                       content: (
                         <div className="grid gap-6">
-                          {kpis && <KpiPanel kpis={metaKpis} audits={audits} changes={changes} />}
+                          {kpis && <KpiPanel kpis={metaKpis} audits={audits} changes={changes} readOnly={ro("meta")} />}
                           {metaCampaigns && <CampaignsPanel p={metaCampaigns} />}
                         </div>
                       ),
@@ -988,13 +996,13 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       ),
                     },
                     {
-                      id: "copy",
+                      id: "copy", action: true,
                       label: "Copy library",
                       hint: "Every primary text, headline and description that ran, ranked on the KPI: reuse what's proven or make variations",
                       content: <CopyLibrary clientId={client.id} slug={client.slug} />,
                     },
                     {
-                      id: "strategy",
+                      id: "strategy", action: true,
                       label: "Strategy",
                       hint: "The Meta go-to-market strategy, and where new ads go",
                       content: (
@@ -1024,7 +1032,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       id: "performance",
                       label: "Performance",
                       hint: "Against target, audits and sprints, change history",
-                      content: <div className="grid gap-6">{kpis && googleKpis.length > 0 ? <KpiPanel kpis={googleKpis} audits={audits} changes={changes} /> : <p className="text-sm text-faint">No Google KPI target yet. Set one on the KPI board and every audit and report starts from it.</p>}</div>,
+                      content: <div className="grid gap-6">{kpis && googleKpis.length > 0 ? <KpiPanel kpis={googleKpis} audits={audits} changes={changes} readOnly={ro("google")} /> : <p className="text-sm text-faint">No Google KPI target yet. Set one on the KPI board and every audit and report starts from it.</p>}</div>,
                     },
                     {
                       id: "campaigns",
@@ -1033,13 +1041,13 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       content: googleCampaigns ? <CampaignsPanel p={googleCampaigns} /> : <p className="text-sm text-faint">No Google campaign data yet.</p>,
                     },
                     {
-                      id: "copy",
+                      id: "copy", action: true,
                       label: "Copy library",
                       hint: "Every headline, description, sitelink and callout that ran, with Google's rating, ranked on the KPI (and what's proven on Meta)",
                       content: <CopyLibrary clientId={client.id} slug={client.slug} />,
                     },
                     {
-                      id: "strategy",
+                      id: "strategy", action: true,
                       label: "Strategy",
                       hint: "The Google Ads go-to-market strategy: campaigns, keywords, geo, copy and assets",
                       content: <div className="grid gap-6">{!demo ? <GtmPanel clientId={client.id} slug={client.slug} gtm={googleGtm} canReview={can.assign} readOnly={!live} platform="google" /> : <p className="text-sm text-faint">Not in the demo.</p>}</div>,
@@ -1048,13 +1056,13 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       ? []
                       : [
                     {
-                      id: "policy",
+                      id: "policy", action: true,
                       label: "Policy",
                       hint: "Disapproved and limited ads, assets and keywords: the exact trigger, Google's policy article, the landing page and the fix",
                       content: !demo ? <PolicyPanel clientId={client.id} /> : <p className="text-sm text-faint">Not in the demo.</p>,
                     },
                     {
-                      id: "ideas",
+                      id: "ideas", action: true,
                       label: googleDeploys.some((x) => x.status === "open") ? `Ideas to use · ${googleDeploys.filter((x) => x.status === "open").length}` : "Ideas to use",
                       hint: "Winners from other accounts and keyword research, made into copy, campaigns or keywords for this client: approve, edit, apply",
                       content: (
@@ -1083,7 +1091,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       hint: "Against target, the last 30 days, campaigns and top ads (read only)",
                       content: (
                         <div className="grid gap-6">
-                          {kpis && tiktokKpis.length > 0 ? <KpiPanel kpis={tiktokKpis} audits={audits} changes={null} /> : <p className="text-sm text-faint">No TikTok KPI yet. Link their TikTok ad account in Settings &gt; Sync health &gt; TikTok and a KPI card is made for it.</p>}
+                          {kpis && tiktokKpis.length > 0 ? <KpiPanel kpis={tiktokKpis} audits={audits} changes={null} readOnly={ro("tiktok")} /> : <p className="text-sm text-faint">No TikTok KPI yet. Link their TikTok ad account in Settings &gt; Sync health &gt; TikTok and a KPI card is made for it.</p>}
                           {tiktok?.data ? <TikTokPanel t={tiktok.data} /> : <p className="text-sm text-faint">No TikTok numbers yet: their ad account isn&apos;t linked, or the first pull hasn&apos;t run.</p>}
                         </div>
                       ),
@@ -1119,7 +1127,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   label: "Social",
                   tone: social?.link && (social.link.state === "failing" || (social.link.state === "missing" && social.link.error)) ? ("bad" as const) : social?.data && social.data.health.some((h) => h.tone === "bad") ? ("warn" as const) : null,
                   note: social?.data?.followersNow != null ? `${social.data.followersNow.toLocaleString("en-US")} followers` : social?.link?.state === "missing" || !social?.link ? "Link accounts" : "Facebook and Instagram",
-                  tabs: socialTabs({ data: social?.data ?? null, link: social?.link ?? null, clientId: client.id, canEdit: !demo }),
+                  tabs: socialTabs({ data: social?.data ?? null, link: social?.link ?? null, clientId: client.id, canEdit: !demo && !ro("social") }),
                 },
               ]
             : []),
@@ -1136,7 +1144,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 {!demo && live && market.length > 0 && <MarketPanel clientId={client.id} industry={client.industry ?? null} label={client.industry_detail ?? industryLabel(client.industry) ?? "their industry"} ads={market} />}
               </div>) },
                     {
-                      id: "package",
+                      id: "package", action: true,
                       label: "Package & assets",
                       hint: "The package and allotment, assets on Drive and the shot list",
                       content: (
@@ -1171,8 +1179,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         </div>
                       ),
                     },
-                    ...(has.meta || has.google ? [{ id: "copy", label: "Copy library", hint: "Our best primary texts, headlines and descriptions for this client, ranked on the KPI", content: <CopyLibrary clientId={client.id} slug={client.slug} /> }] : []),
-                    { id: "angles", label: "Angles", count: angles.filter((a) => a.status !== "archived").length || null, hint: "Angles and avatars; copy is approved once per angle", content: (<Section title="Angles & avatars" description="Copy is approved once per angle and reused for every creative on it.">
+                    ...(has.meta || has.google ? [{ id: "copy", action: true, label: "Copy library", hint: "Our best primary texts, headlines and descriptions for this client, ranked on the KPI", content: <CopyLibrary clientId={client.id} slug={client.slug} /> }] : []),
+                    { id: "angles", action: true, label: "Angles", count: angles.filter((a) => a.status !== "archived").length || null, hint: "Angles and avatars; copy is approved once per angle", content: (<Section title="Angles & avatars" description="Copy is approved once per angle and reused for every creative on it.">
             {angles.length > 0 ? (
               <ul className="grid gap-2 sm:grid-cols-2">
                 {angles.map((a) => (
@@ -1219,7 +1227,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 },
               ]
             : []),
-        ]}
+        ])}
       />
     </div>
   );
