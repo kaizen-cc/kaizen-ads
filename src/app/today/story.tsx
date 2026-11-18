@@ -112,8 +112,12 @@ export function Story({
     if (to !== at) setAt(to);
   };
   const choose = async (i: TodayItem, status: "saved" | "done" | "dismissed") => {
-    const next = demo ? (status === "saved" && mine[i.key] === "saved" ? "seen" : status) : await setItem(i.key, status, snap(i));
-    setMine((m) => ({ ...m, [i.key]: (next ?? status) as Mark }));
+    // At once on screen (Save for later on something already saved puts it back to plain seen), then the server's word
+    const optimistic: Mark = status === "saved" && mine[i.key] === "saved" ? "seen" : status;
+    setMine((m) => ({ ...m, [i.key]: optimistic }));
+    if (demo) return;
+    const next = await setItem(i.key, status, snap(i));
+    if (next && next !== optimistic) setMine((m) => ({ ...m, [i.key]: next as Mark }));
   };
   const saveAll = async (list: TodayItem[]) => {
     for (const i of list) if (mine[i.key] !== "saved") await choose(i, "saved");
@@ -630,6 +634,25 @@ function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine:
   // The same open count as the client's row (src/lib/today-counts.ts); handled or set-aside items show greyed, uncounted
   const openItems = openOf(b.items, mine);
   const [expanded, setExpanded] = useState<string | null>(openItems[0]?.key ?? null);
+  // Just marked done or set aside: a green confirmation on the item for a beat, then it slides out of the list
+  const [confirming, setConfirming] = useState<Record<string, "done" | "dismissed">>({});
+  const [gone, setGone] = useState<Set<string>>(new Set());
+  /** The next item to open after this one: the next still-open, unsaved one below it, else above, else none */
+  const nextAfter = (key: string) => {
+    const at = b.items.findIndex((x) => x.key === key);
+    const waiting = (x: TodayItem) => x.key !== key && isOpenMark(mine[x.key]) && mine[x.key] !== "saved";
+    return b.items.slice(at + 1).find(waiting)?.key ?? b.items.slice(0, at).reverse().find(waiting)?.key ?? null;
+  };
+  const mark = (i: TodayItem, s: "saved" | "done" | "dismissed") => {
+    onChoose(i, s);
+    if (s === "saved") {
+      setExpanded(nextAfter(i.key));
+      return;
+    }
+    setConfirming((c) => ({ ...c, [i.key]: s }));
+    setExpanded(nextAfter(i.key));
+    setTimeout(() => setGone((g) => new Set(g).add(i.key)), 1100);
+  };
   const single = b.items.length === 1;
   const unsaved = openItems.filter((i) => mine[i.key] !== "saved");
   return (
@@ -641,7 +664,13 @@ function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine:
         {dive && <span className="ml-auto text-xs text-white/45">{dive.at} of {dive.of}</span>}
       </div>
       {single ? (
-        <ItemBody i={b.items[0]} status={mine[b.items[0].key]} big onChoose={(s) => onChoose(b.items[0], s)} onAct={() => onAct(b.items[0])} onNext={onNext} />
+        confirming[b.items[0].key] ? (
+          <div className="relative grid min-h-[220px] place-items-center text-center" style={{ animation: "card-in .3s cubic-bezier(.2,.8,.2,1) both" }}>
+            {confirming[b.items[0].key] === "done" ? <DoneBurst label="Handled" /> : <p className="text-sm text-white/60">Set aside, not for you.</p>}
+          </div>
+        ) : (
+          <ItemBody i={b.items[0]} status={mine[b.items[0].key]} big onChoose={(s) => mark(b.items[0], s)} onAct={() => onAct(b.items[0])} onNext={onNext} />
+        )
       ) : (
         <>
           <div className="relative flex flex-wrap items-end gap-x-3 gap-y-1">
@@ -651,9 +680,29 @@ function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine:
             <span className="pb-1.5 text-sm text-white/60">{openItems.length ? `open for ${b.client}` : `handled for ${b.client}`}</span>
           </div>
           <ul className="relative grid gap-2">
-            {b.items.map((i) => {
+            {b.items.filter((i) => !gone.has(i.key) && (!confirming[i.key] ? isOpenMark(mine[i.key]) || !openItems.length : true)).map((i) => {
               const m = mine[i.key];
               const closed = m === "done" || m === "dismissed";
+              const conf = confirming[i.key];
+              if (conf)
+                // The confirmation: the item turns green (handled) or fades (not for me), then leaves
+                return (
+                  <li key={i.key} className={`overflow-hidden rounded-[18px] border px-4 py-3 ${conf === "done" ? "border-[#5be3a5]/50 bg-[#5be3a5]/[0.1]" : "border-white/10 bg-white/[0.03]"}`} style={{ animation: "card-out .35s ease .75s both" }}>
+                    <span className="flex items-center gap-3">
+                      {conf === "done" ? (
+                        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#5be3a5] text-[12px] font-bold text-black" style={{ animation: "card-in .3s cubic-bezier(.2,.8,.2,1.4) both" }}>
+                          ✓
+                        </span>
+                      ) : (
+                        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-white/15 text-[12px] text-white/70">×</span>
+                      )}
+                      <span className="grid min-w-0 gap-0.5">
+                        <span className="truncate text-[14.5px]">{i.title}</span>
+                        <span className={`text-[11px] ${conf === "done" ? "text-[#5be3a5]" : "text-white/50"}`}>{conf === "done" ? "Handled" : "Set aside, not for you"}</span>
+                      </span>
+                    </span>
+                  </li>
+                );
               const isOpen = expanded === i.key && !closed;
               const it = TIER[i.tier];
               return (
@@ -679,11 +728,7 @@ function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine:
                       <ItemBody
                         i={i}
                         status={m}
-                        onChoose={(s) => {
-                          onChoose(i, s);
-                          // On to the next open one for this client
-                          if (s !== "saved") setExpanded(openItems.find((x) => x.key !== i.key)?.key ?? null);
-                        }}
+                        onChoose={(s) => mark(i, s)}
                         onAct={() => onAct(i)}
                         onNext={null}
                       />
