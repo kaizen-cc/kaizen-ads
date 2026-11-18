@@ -295,11 +295,11 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const metaCampaigns = (campaigns ?? []).find((c) => c.platform === "meta") ?? null;
   const googleCampaigns = (campaigns ?? []).find((c) => c.platform === "google") ?? null;
   const has = {
-    // Taken off on purpose stays off, even with an account or a package still set up
-    meta: !offList.has("facebook-ads") && (bought.includes("facebook-ads") || Boolean(client.meta_ad_account_id) || metaKpis.length > 0),
-    google: !offList.has("google-ads") && (bought.includes("google-ads") || googleKpis.length > 0 || Boolean(googleCampaigns)),
-    // Only once TikTok is set up; before that it stays a plain service on the overview
-    tiktok: Boolean(tiktok) && !offList.has("tiktok-ads") && (bought.includes("tiktok-ads") || tiktokKpis.length > 0 || Boolean(tiktok?.data)),
+    // A line shows only when the client buys it: a leftover account, KPI target or campaign never brings it back
+    meta: bought.includes("facebook-ads"),
+    google: bought.includes("google-ads"),
+    // TikTok: bought, and only once TikTok is set up; before that it stays a plain service on the overview
+    tiktok: Boolean(tiktok) && bought.includes("tiktok-ads"),
     // Organic social: only for clients who buy social media (servicesOf already leaves out one taken off on purpose)
     social: Boolean(social) && bought.includes("social-media"),
     creative: !offList.has("creative") && (bought.includes("creative") || client.creative_package || images + videos > 0 || Boolean(creative?.moving.length)),

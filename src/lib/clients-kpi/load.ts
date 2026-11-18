@@ -7,6 +7,7 @@ import { atRiskClients, RISK_DAYS, RISK_PREFIX } from "@/lib/client-risk";
 import { campaignIncluded, nyParts, shownStatus, toDays, resultsOf, pickType, type Agg, type Status, type Trend } from "@/lib/kpi/calc";
 import { conversionFor } from "@/lib/kpi/conversions";
 import { dailyTable } from "@/lib/kpi/platform";
+import { servicesOf } from "@/lib/services";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { adChip, adReasons, emailReasons, scoreChip, socialReasons, worstChip, type DayNumbers, type LineKpi } from "./core";
 
@@ -66,7 +67,7 @@ export async function loadAllClientKpis(admin: SupabaseClient): Promise<AllClien
   const me = { id: "", role: "", isExec: false, isLead: false };
 
   const [targetsRes, snapsRes, auditsRes, fatigueRes, riskRes, email, social] = await Promise.all([
-    admin.from("kpi_targets").select("id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, excluded_campaigns, target, clients!inner(archived_at)").eq("active", true).is("clients.archived_at", null),
+    admin.from("kpi_targets").select("id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, excluded_campaigns, target, clients!inner(archived_at, services, services_extra, services_removed)").eq("active", true).is("clients.archived_at", null),
     admin.from("kpi_snapshots").select("target_id, status, deviation, vs_month, trend, windows, budget"),
     // The latest finished audit per account: its verdict's headline is the one reason an agent already wrote
     admin.from("account_audits").select("target_id, created_at, verdict:result->verdict").eq("status", "ready").order("created_at", { ascending: false }).limit(800),
@@ -76,7 +77,13 @@ export async function loadAllClientKpis(admin: SupabaseClient): Promise<AllClien
     loadChannelBoard(admin, "social", me, null).catch(() => null),
   ]);
 
-  const targets = ((targetsRes.data ?? []) as unknown as TargetRow[]).filter((t) => t.platform === "meta" || t.platform === "google" || t.platform === "tiktok");
+  // Only lines the client actually buys: a leftover TikTok or Google target on a client without that service shows nothing
+  const SERVICE_OF = { meta: "facebook-ads", google: "google-ads", tiktok: "tiktok-ads" } as const;
+  const buys = (t: TargetRow) => {
+    const c = (t as unknown as { clients?: { services?: string[] | null; services_extra?: string[] | null; services_removed?: string[] | null } | null }).clients;
+    return servicesOf(c ?? {}).includes(SERVICE_OF[t.platform as keyof typeof SERVICE_OF]);
+  };
+  const targets = ((targetsRes.data ?? []) as unknown as TargetRow[]).filter((t) => (t.platform === "meta" || t.platform === "google" || t.platform === "tiktok") && buys(t));
   const snapBy = new Map(((snapsRes.data ?? []) as unknown as SnapRow[]).map((s) => [s.target_id, s]));
   const auditBy = new Map<string, { headline: string; status: string }>();
   for (const a of (auditsRes.data ?? []) as unknown as { target_id: string; verdict: { status?: string; headline?: string } | null }[]) {
