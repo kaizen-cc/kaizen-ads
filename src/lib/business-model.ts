@@ -59,7 +59,7 @@ export const MODEL_GUIDE: Record<BusinessModel, Guide> = {
 };
 
 /** Their model, and a second one when they run two (a restaurant with event inquiries, a store with a showroom) */
-export async function businessModelOf(admin: SupabaseClient, clientId: string): Promise<{ model: BusinessModel; also: BusinessModel | null; why: string }> {
+export async function businessModelOf(admin: SupabaseClient, clientId: string): Promise<{ model: BusinessModel; also: BusinessModel | null; why: string; industry: string | null; sub: string | null; known: boolean }> {
   const [{ data: c }, { data: o }] = await Promise.all([
     admin.from("clients").select("industry, industry_detail, vertical_id").eq("id", clientId).maybeSingle(),
     admin.from("client_onboarding").select("business, website").eq("client_id", clientId).maybeSingle(),
@@ -73,11 +73,13 @@ export async function businessModelOf(admin: SupabaseClient, clientId: string): 
   const { trackingKind } = await import("@/lib/tracking-platforms");
   const kind = trackingKind(industry, sub, ecommerce);
   const where = [industry, sub].filter(Boolean).join(", ") || "industry not set";
-  if (kind === "orders") return { model: "restaurant", also: "lead_gen", why: `${where}: online orders and reservations, with event and catering inquiries as leads` };
-  if (kind === "bookings") return { model: "bookings", also: ecommerce ? "ecommerce" : null, why: where };
-  if (kind === "store") return { model: "ecommerce", also: said.location ? "local_service" : null, why: where };
-  if (/home|roof|hvac|plumb|electric|landscap|pest|clean|fenc|pool|remodel|contract|garage|solar|window|paint|moving|auto/.test(`${industry ?? ""} ${sub}`.toLowerCase())) return { model: "local_service", also: null, why: where };
-  return { model: "lead_gen", also: ecommerce ? "ecommerce" : null, why: where };
+  // Known when there's an industry or sub-vertical, or they told us in setup how they sell (else lead gen is a guess)
+  const facts = { industry, sub: sub || null, known: Boolean(industry || sub || said.ecommerce !== undefined || shop) };
+  if (kind === "orders") return { model: "restaurant", also: "lead_gen", why: `${where}: online orders and reservations, with event and catering inquiries as leads`, ...facts };
+  if (kind === "bookings") return { model: "bookings", also: ecommerce ? "ecommerce" : null, why: where, ...facts };
+  if (kind === "store") return { model: "ecommerce", also: said.location ? "local_service" : null, why: where, ...facts };
+  if (/home|roof|hvac|plumb|electric|landscap|pest|clean|fenc|pool|remodel|contract|garage|solar|window|paint|moving|auto/.test(`${industry ?? ""} ${sub}`.toLowerCase())) return { model: "local_service", also: null, why: where, ...facts };
+  return { model: "lead_gen", also: ecommerce ? "ecommerce" : null, why: where, ...facts };
 }
 
 /** The tailoring block every Bible, GTM and brief reads */

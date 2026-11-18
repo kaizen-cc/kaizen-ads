@@ -1,6 +1,7 @@
 import { CALL_TTS_MODEL, speakable, voiceFor } from "@/lib/agent-call/core";
 import { forSpeech } from "@/lib/agent-call/speech-text";
-import { openCall } from "@/lib/agent-call/server";
+import { openCall, type CallRow } from "@/lib/agent-call/server";
+import { callTimer } from "@/lib/agent-call/timing";
 import { specialistOf } from "@/lib/assistant/core";
 import { requireStaff } from "@/lib/auth";
 import { ConnectorError } from "@/lib/connector-http";
@@ -14,14 +15,29 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 // brought onto a call speaks in its own.
 export const maxDuration = 60;
 
+/**
+ * A call checked open a moment ago, and each agent's voice, kept briefly per server instance: every sentence of an
+ * answer is its own request, and each used to read the call (and, for a specialist, its voice) again before the voice
+ * could start.
+ */
+const OPEN = new Map<string, { at: number; call: CallRow }>();
+const OPEN_TTL_MS = 20_000;
+const VOICES = new Map<string, { at: number; id: string | null }>();
+const VOICE_TTL_MS = 300_000;
+
 export async function POST(request: Request) {
-  const me = await requireStaff();
+  const timer = callTimer();
+  const me = await timer.time("auth", requireStaff());
   if (!adminConfigured()) return Response.json({ error: "Not set up" }, { status: 503 });
   if (!elevenlabsConfigured()) return Response.json({ error: "ElevenLabs isn't connected." }, { status: 503 });
   const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown; role?: unknown; previous?: unknown } | null;
   const admin = createAdminClient();
-  const call = await openCall(admin, me, body?.callId);
+  const key = `${me.id}:${String(body?.callId ?? "")}`;
+  const kept = OPEN.get(key);
+  const call = kept && Date.now() - kept.at < OPEN_TTL_MS ? kept.call : await timer.time("open", openCall(admin, me, body?.callId));
   if (!call) return Response.json({ error: "This call has ended." }, { status: 410 });
+  if (OPEN.size > 500) OPEN.clear();
+  if (!kept || Date.now() - kept.at >= OPEN_TTL_MS) OPEN.set(key, { at: Date.now(), call });
   const text = forSpeech(speakable(String(body?.text ?? "").slice(0, 600))).slice(0, 900);
   const previous = typeof body?.previous === "string" ? forSpeech(speakable(body.previous.slice(0, 600))) : null;
   if (!text) return new Response(null, { status: 204 });
@@ -30,12 +46,22 @@ export async function POST(request: Request) {
     const role = typeof body?.role === "string" ? body.role : call.role_key;
     let voiceId = voiceFor(call.role_key, call.voice_id);
     if (role !== call.role_key && specialistOf(role)) {
-      const { data: r } = await admin.from("ai_roles").select("voice_id").eq("key", role).maybeSingle();
-      voiceId = voiceFor(role, (r?.voice_id as string | null) ?? null);
+      const v = VOICES.get(role);
+      let picked = v && Date.now() - v.at < VOICE_TTL_MS ? v.id : undefined;
+      if (picked === undefined) {
+        const { data: r } = await timer.time("voice", Promise.resolve(admin.from("ai_roles").select("voice_id").eq("key", role).maybeSingle()));
+        picked = (r?.voice_id as string | null) ?? null;
+        VOICES.set(role, { at: Date.now(), id: picked });
+      }
+      voiceId = voiceFor(role, picked);
     }
-    const speech = await speechStream({ voiceId, text, previous, model: process.env.ELEVENLABS_CALL_MODEL || CALL_TTS_MODEL, signal: request.signal });
+    const model = process.env.ELEVENLABS_CALL_MODEL || CALL_TTS_MODEL;
+    // Time to ElevenLabs' first byte (its response starts as the audio does)
+    const speech = await timer.time("tts_first_byte", speechStream({ voiceId, text, previous, model, signal: request.signal }));
+    const line = timer.line(`call=${call.id.slice(0, 8)} role=${role} model=${model} chars=${text.length}`);
+    console.log(`[agent call timing] speak ${line}`);
     void admin.rpc("ai_role_call_add", { p_id: call.id, p_chars: speech.characters }).then(({ error }) => error && console.error("[agent call] characters", error.message));
-    return new Response(speech.body, { headers: { "content-type": "audio/mpeg", "cache-control": "no-store" } });
+    return new Response(speech.body, { headers: { "content-type": "audio/mpeg", "cache-control": "no-store", "x-call-timing": line } });
   } catch (e) {
     if (request.signal.aborted) return new Response(null, { status: 499 });
     console.error("[agent call] speak", e instanceof Error ? e.message : e);

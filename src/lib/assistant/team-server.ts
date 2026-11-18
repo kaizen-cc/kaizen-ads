@@ -6,16 +6,18 @@ import { agentTools } from "@/lib/agent-call/agent-tools";
 import { showCard } from "@/lib/agent-call/call-cards";
 import { withFrame } from "@/lib/agent-call/call-extras";
 import { firstNameOf, pendingItems, type CallEvent } from "@/lib/agent-call/core";
-import { callContext, readMoment, streamAnswer, turnExtras, voiceSystem, type Answer, type CallRow, type TurnInput } from "@/lib/agent-call/server";
+import { callContext, playbookFor, readMoment, streamAnswer, turnExtras, voiceSystem, type Answer, type CallRow, type TurnInput } from "@/lib/agent-call/server";
+import { callTimer } from "@/lib/agent-call/timing";
 import type { LoopTool } from "@/lib/agent-call/tool-loop";
 import { turnTimes } from "@/lib/agent-call/transcript";
-import { loadRolePlaybook } from "@/lib/role-playbook";
 import { saidYes, specialistOf } from "./core";
 import {
   JOB_KINDS,
   MAX_HOPS,
   SPECIALIST_KEYS,
   agentsToBring,
+  asksToBringIn,
+  isExpertQuestion,
   canHandOff,
   cleanJob,
   joinLine,
@@ -66,6 +68,28 @@ const NO_YES = "Not run: say in one sentence exactly what this will do and ask; 
 const CONFIRMED = { type: "boolean", description: "True only after the person clearly said yes to this exact action on this turn" };
 /** A gated action: the model said confirmed AND the person's own words this turn are a yes (never on another agent's words) */
 const yes = (ctx: TeamCtx, input: Record<string, unknown>) => input.confirmed === true && Boolean(ctx.said) && saidYes(ctx.said);
+
+/**
+ * Bringing a specialist in needs no separate yes when the person's own words this turn asked for it ("call in the
+ * Google buyer") or asked the kind of strategy question that specialist answers: asking was the yes. (It used to
+ * need a spoken "yes" too, so an explicit ask got "Shall I?" back and took two or three tries.)
+ */
+const bringOk = (ctx: TeamCtx, key: string, input: Record<string, unknown>) => yes(ctx, input) || (Boolean(ctx.said) && (asksToBringIn(ctx.said) === key || isExpertQuestion(ctx.said)));
+
+/** Puts a specialist on the line (the person may talk to it, it's online, there's room): saved and shown */
+export async function joinSpecialist(ctx: Pick<TeamCtx, "me" | "admin" | "callId" | "emit" | "team">, key: string): Promise<{ joined: true; label: string } | { joined: false; note: string; on?: boolean }> {
+  const sp = specialistOf(key);
+  if (!sp) return { joined: false, note: "Not one of the specialists." };
+  if (!canTalkToAgent(ctx.me, sp.key)) return { joined: false, note: `The ${sp.label} isn't one they can talk to.` };
+  const { data: role } = await ctx.admin.from("ai_roles").select("key, label, icon, offline").eq("key", sp.key).maybeSingle();
+  if (!role || (role as { offline?: boolean }).offline) return { joined: false, note: `The ${sp.label} isn't online yet. Offer to help yourself.` };
+  const next = joinLine(ctx.team.line, sp.key, ctx.team.host);
+  if (next.full) return { joined: false, note: "Three specialists are on already: let one go first (dismiss_specialist)." };
+  if (!next.joined) return { joined: false, on: true, note: `The ${sp.label} is already on the call: talk to it, or hand_off to it.` };
+  ctx.team.line = next.line;
+  await Promise.all([saveLine(ctx.admin, ctx.callId, ctx.team.line), emitLine(ctx.admin, ctx.team.line, ctx.emit)]);
+  return { joined: true, label: String(role.label ?? sp.label) };
+}
 
 /** The team on a call, from its row */
 export function teamOf(call: CallRow, host: string): TeamState {
@@ -430,23 +454,16 @@ export function teamTools(ctx: TeamCtx): LoopTool[] {
     },
     {
       name: "call_in_specialist",
-      description: `Brings a specialist agent onto this call (it joins with its own voice, playbook and tools; up to three at once; the others stay on). ALWAYS ask first and say why ("There's no approved copy yet, want me to grab the Copywriter?"); only once they say yes, with confirmed: true. Specialists: ${SPECIALIST_KEYS.map((k) => `${k} (${specialistOf(k)?.label}: ${specialistOf(k)?.about})`).join("; ")}.`,
+      description: `Brings a specialist agent onto this call (it joins with its own voice, playbook and tools; up to three at once; the others stay on). When the person asks for one ("call in the Google buyer") or asks a strategy question in its area, call it straight away: no question first. When it's your idea, ask first and say why ("There's no approved copy yet, want me to grab the Copywriter?"), and call it with confirmed: true once they say yes. Specialists: ${SPECIALIST_KEYS.map((k) => `${k} (${specialistOf(k)?.label}: ${specialistOf(k)?.about})`).join("; ")}.`,
       input_schema: { type: "object", properties: { role: { type: "string", enum: SPECIALIST_KEYS }, question: { type: "string", description: "What it's brought in to do, with what it needs to know (ticket numbers, what's done)" }, confirmed: CONFIRMED }, required: ["role", "question"], additionalProperties: false },
       run: async (input) => {
         const sp = specialistOf(String(input.role));
         if (!sp) return { joined: false, note: "Not one of the specialists." };
-        if (!yes(ctx, input)) return { joined: false, note: NO_YES };
-        if (!canTalkToAgent(ctx.me, sp.key)) return { joined: false, note: `The ${sp.label} isn't one they can talk to.` };
-        const { data: role } = await ctx.admin.from("ai_roles").select("key, label, icon, offline").eq("key", sp.key).maybeSingle();
-        if (!role || (role as { offline?: boolean }).offline) return { joined: false, note: `The ${sp.label} isn't online yet. Offer to help yourself.` };
-        const next = joinLine(ctx.team.line, sp.key, ctx.team.host);
-        if (next.full) return { joined: false, note: "Three specialists are on already: let one go first (dismiss_specialist)." };
-        if (!next.joined) return { joined: false, note: `The ${sp.label} is already on the call: talk to it, or hand_off to it.` };
-        ctx.team.line = next.line;
-        await saveLine(ctx.admin, ctx.callId, ctx.team.line);
+        if (!bringOk(ctx, sp.key, input)) return { joined: false, note: NO_YES };
+        const j = await joinSpecialist(ctx, sp.key);
+        if (!j.joined) return { joined: false, note: j.note };
         ctx.team.joined.push({ role: sp.key, question: clip(input.question, 1000) });
-        await emitLine(ctx.admin, ctx.team.line, ctx.emit);
-        return { joined: true, note: `Say one short line ("Bringing in the ${role.label}.") and stop: it answers next.` };
+        return { joined: true, note: `Say one short line ("Bringing in the ${j.label}.") and stop: it answers next.` };
       },
     },
     {
@@ -485,11 +502,11 @@ export function teamTools(ctx: TeamCtx): LoopTool[] {
 // ─── What every agent on a team call reads ──────────────────────────────────
 
 /** How agents work together on a call (a specialist's rules; the host's are in its own instructions) */
-export const teamRule = (firstName: string) => `Working as a team on this call: the job below is shared by everyone on the line; read it before you speak and never repeat what's done or ask what's already known. When your part feeds another agent on the line (copy for the buyer, an angle for the brief), hand it over with hand_off: one short line out loud ("Here's the approved copy for the Media Buyer."), then stop; it picks up from there. Ask another agent a question the same way. One line each, never a long back-and-forth without ${firstName}. Record what you finish with update_job. Anything that goes live, sends or spends needs ${firstName}'s own spoken yes: ask them, never another agent. When your part is done, say so in a line; the host thanks you out (or step out yourself with dismiss_specialist). Bring someone else in only after asking ${firstName}, saying why.`;
+export const teamRule = (firstName: string) => `Working as a team on this call: the job below is shared by everyone on the line; read it before you speak and never repeat what's done or ask what's already known. When your part feeds another agent on the line (copy for the buyer, an angle for the brief), hand it over with hand_off: one short line out loud ("Here's the approved copy for the Media Buyer."), then stop; it picks up from there. Ask another agent a question the same way. One line each, never a long back-and-forth without ${firstName}. Record what you finish with update_job. Anything that goes live, sends or spends needs ${firstName}'s own spoken yes: ask them, never another agent. When your part is done, say so in a line; the host thanks you out (or step out yourself with dismiss_specialist). Bring someone else in only after asking ${firstName}, saying why, unless ${firstName} asked for them: then straight away.`;
 
 /** For an agent called directly: how it runs a job on its call, bringing in only the agents a part needs */
 export const hostRule = (firstName: string) =>
-  `Jobs on this call: when ${firstName} wants a job done (launch ads, an email request, a creative brief, an audit and sprint, a report), start_job right away; it checks what's there and returns what's missing, in order, and who does each part. Do your own parts yourself. For a part that's another agent's (copy for your launch, say), ask first and say why ("There's no approved copy for these ads yet, want me to grab the Copywriter?"), and only on a yes, call_in_specialist. When its part is done, thank it and let it go (dismiss_specialist). ${teamRule(firstName)}`;
+  `Jobs on this call: when ${firstName} wants a job done (launch ads, an email request, a creative brief, an audit and sprint, a report), start_job right away; it checks what's there and returns what's missing, in order, and who does each part. Do your own parts yourself. For a part that's another agent's (copy for your launch, say), ask first and say why ("There's no approved copy for these ads yet, want me to grab the Copywriter?"), and only on a yes, call_in_specialist; when ${firstName} asks for one by name, call it in straight away with no question. When its part is done, thank it and let it go (dismiss_specialist). ${teamRule(firstName)}`;
 
 /** Who's on the call and the job, for an agent's prompt */
 export function teamBlock(team: TeamState, self: string, firstName: string): string {
@@ -515,7 +532,13 @@ const guestNote = (firstName: string, host: string) =>
 
 const hostNote = (firstName: string) => `You're hosting this call with ${firstName}; other agents are on the line with you. Don't end the call while it's being handed around: end it only when ${firstName} says goodbye.`;
 
-export type TurnMode = { text: string; mode: "person" | "joined" | "handoff"; from?: string | null };
+export type TurnMode = {
+  text: string;
+  mode: "person" | "joined" | "handoff";
+  from?: string | null;
+  /** It was brought on for these words just now */
+  fresh?: boolean;
+};
 
 /**
  * One agent's answer on a team call: its playbook, voice and tools, the team tools, who's on and the job. `person`:
@@ -528,10 +551,16 @@ export async function specialistTurn(input: TurnInput, team: TeamState, roleKey:
   const asHost = roleKey === team.host;
   const trains = canTrainAgent(me, roleKey) && m.mode === "person";
   const said = m.mode === "person" ? m.text : "";
-  const [book, convo, extra, { data: role }] = await Promise.all([loadRolePlaybook(admin, roleKey), callContext(admin, { ...call, role_key: roleKey }, firstName), turnExtras(input, m.text), admin.from("ai_roles").select("icon").eq("key", roleKey).maybeSingle()]);
+  const timer = input.timer ?? callTimer();
+  const tag = `${roleKey}.`;
+  const [book, convo, extra] = await timer.time(
+    `${tag}context`,
+    Promise.all([timer.time(`${tag}playbook`, playbookFor(admin, roleKey)), timer.time(`${tag}history`, callContext(admin, { ...call, role_key: roleKey }, firstName)), turnExtras(input, m.text, tag)]),
+  );
   if (!book) return emit({ t: "error", message: "That agent isn't available." });
+  const role = { icon: ((book.role as { icon?: string | null }).icon ?? null) as string | null };
   const tctx: TeamCtx = { me, db: input.db, admin, callId: call.id, emit, team, self: roleKey, said };
-  const own = await agentTools({ me, db: input.db, admin, roleKey, label: book.role.label, callId: call.id, emit, said, path: input.path ?? null, screen: input.context?.screen ?? null, clientId: input.context?.clientId ?? null });
+  const own = await timer.time(`${tag}tools_build`, agentTools({ me, db: input.db, admin, roleKey, label: book.role.label, callId: call.id, emit, said, path: input.path ?? null, screen: input.context?.screen ?? null, clientId: input.context?.clientId ?? null }));
   const tools = tracked(tctx, [...own, ...teamTools(tctx)]);
   emit({ t: "speaker", role: roleKey, label: book.role.label, icon: (role?.icon as string) ?? "spark" });
   const lastWord = team.chain.length >= MAX_HOPS ? `<last_word>That's the last hand-off for now: answer, then give ${firstName} the floor with a short question.</last_word>` : "";
@@ -540,7 +569,7 @@ export async function specialistTurn(input: TurnInput, team: TeamState, roleKey:
       ? `<just_joined>You've just been brought in for this: ${m.text}\nSay hi to ${firstName} in a few words and get on with it.</just_joined>`
       : m.mode === "handoff"
         ? `<handed_to_you by="the ${labelOf(m.from ?? team.host)}">\n${m.text}\n</handed_to_you>\nPick it up from there. Say what you're doing in a line, do your part, then hand on or ask ${firstName}.`
-        : `<${firstName}_says>\n${m.text}\n</${firstName}_says>`;
+        : `${m.fresh ? `<just_joined>${firstName} asked for you just now and you've joined the call. Say hi in a couple of words, then answer what they said.</just_joined>\n` : ""}<${firstName}_says>\n${m.text}\n</${firstName}_says>`;
   const out = await streamAnswer({
     system: `${voiceSystem(book.role.label, roleKey, firstName, trains, asHost ? hostNote(firstName) : guestNote(firstName, team.host))}\n\n${asHost ? hostRule(firstName) : teamRule(firstName)}\n\n${book.text}`,
     tools: [...tools, extra.look, ...extra.connectors.tools],
@@ -549,6 +578,8 @@ export async function specialistTurn(input: TurnInput, team: TeamState, roleKey:
     signal,
     emit,
     filler: { callId: call.id, turn: input.startedAt ?? 0, said: m.mode === "person" ? m.text : "" },
+    timer,
+    tag,
   });
   await extra.connectors.settle().catch(() => undefined);
   logRun(admin, me, roleKey, out);

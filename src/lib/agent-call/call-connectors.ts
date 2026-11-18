@@ -31,18 +31,40 @@ export type CallConnectors = {
 
 export const noConnectors = (): CallConnectors => ({ servers: [], toolsets: [], betas: [], system: "", tools: [], nameOf: (k) => k, drop: () => false, settle: async () => undefined });
 
+type Found = { offered: Awaited<ReturnType<typeof offeredConnectors>>; ready: Ready[]; problems: Awaited<ReturnType<typeof readyFor>>["problems"] };
+const READY = new Map<string, { at: number; found: Promise<Found | null> }>();
+const READY_TTL_MS = 60_000;
+
+/** Their connected services that are ready to use (null: none), kept a minute per person on this server instance */
+function readyCached(admin: SupabaseClient, me: Staff): Promise<Found | null> {
+  const hit = READY.get(me.id);
+  if (hit && Date.now() - hit.at < READY_TTL_MS) return hit.found;
+  const found = (async (): Promise<Found | null> => {
+    const offered = await offeredConnectors(admin, me).catch(() => []);
+    if (!offered.length) return null;
+    const mine = await myConnections(admin, me.id).catch(() => []);
+    const usable = offered.filter((c) => mine.some((m) => m.connector_id === c.id)).map((c) => c.key);
+    if (!usable.length) return null;
+    const { ready, problems } = await readyFor(admin, me, usable).catch(() => ({ ready: [] as Ready[], problems: [] }));
+    if (!ready.length && !problems.length) return null;
+    return { offered, ready, problems };
+  })();
+  if (READY.size > 300) READY.clear();
+  READY.set(me.id, { at: Date.now(), found });
+  return found;
+}
+
+/** Read their services fresh next turn (one failed or needs reconnecting) */
+const forgetReady = (profileId: string) => READY.delete(profileId);
+
 export async function callConnectors(p: { me: Staff; admin: SupabaseClient; callId: string; text: string; turnStart: number }): Promise<CallConnectors> {
   const { me, admin, callId } = p;
-  const offered = await offeredConnectors(admin, me).catch(() => []);
-  if (!offered.length) return noConnectors();
-  const mine = await myConnections(admin, me.id).catch(() => []);
-  const usable = offered.filter((c) => mine.some((m) => m.connector_id === c.id)).map((c) => c.key);
-  if (!usable.length) return noConnectors();
-  const { ready, problems } = await readyFor(admin, me, usable).catch(() => ({ ready: [] as Ready[], problems: [] }));
-  if (!ready.length && !problems.length) return noConnectors();
-
-  // An ask waiting for their yes (before the migration that keeps it, there's none and writes aren't offered)
-  const kept = await admin.from("ai_role_calls").select("connector_ask").eq("id", callId).maybeSingle();
+  // What's connected and ready, kept a minute per person (five reads in a row and a token check, every turn, before);
+  // an ask waiting for their yes (before the migration that keeps it, there's none and writes aren't offered) is read
+  // fresh, at the same time
+  const [found, kept] = await Promise.all([readyCached(admin, me), admin.from("ai_role_calls").select("connector_ask").eq("id", callId).maybeSingle()]);
+  if (!found) return noConnectors();
+  const { offered, ready, problems } = found;
   const canAsk = !kept.error;
   const ask: ConnectorAsk | null = canAsk ? liveAsk(kept.data?.connector_ask, ready.map((r) => r.key), Date.now(), p.turnStart) : null;
   const askedTool = ask && ready.find((r) => r.key === ask.key)?.tools.some((t) => t.name === ask.tool) ? ask : null;
@@ -116,6 +138,7 @@ export async function callConnectors(p: { me: Staff; admin: SupabaseClient; call
       if (err.reconnect && c) void markReconnect(admin, me.id, c.id, msg.slice(0, 200));
     }
     live = live.filter((r) => !gone.includes(r.key));
+    forgetReady(me.id);
     const next = build();
     turn.servers = next.servers;
     turn.toolsets = next.toolsets;

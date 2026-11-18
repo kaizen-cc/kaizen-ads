@@ -607,7 +607,9 @@ export type CallEvent =
   // The agent said goodbye: the call hangs up once its last words have played
   | { t: "end" }
   // Still working (sent every few seconds while a long answer or a tool is under way, so the line stays open)
-  | { t: "ping" };
+  | { t: "ping" }
+  // Where the turn's time went (one compact line, for the hidden debug overlay)
+  | { t: "timing"; line: string };
 
 /** A link the call shows as a card: tapped, it opens in the app (the call stays up) or in a new tab */
 export type CallCard = {
@@ -718,7 +720,7 @@ export function clock(seconds: number): string {
 // ─── How every agent talks, and hanging up ──────────────────────────────────
 
 /** The firm rule for every spoken answer (calls with any agent and the assistant) */
-export const CONCISE_RULE = `Be brief. This is a firm rule. By default answer in one to three short spoken sentences. Go longer only when they ask for it ("tell me more", "walk me through it"), and even then keep it tight. Never repeat their question back, no filler ("great question", "sure thing, so"), and never close with "let me know if you need anything else".`;
+export const CONCISE_RULE = `Keep it short. This is a firm rule: they're listening, not reading. Lead with the answer in one or two short sentences. Name at most three things in any list; if there are more, say how many more ("and two more") and offer them. Stay under about sixty words unless they ask for detail or a walkthrough ("tell me more", "walk me through it", "give me all of them"), and even then keep it tight. Then, only if it helps, one short question. Never repeat their question back, no filler ("great question", "sure thing, so"), and never close with "let me know if you need anything else".`;
 
 /** How every spoken answer is written: for the ear, so the voice sounds like a person, not a document */
 export const SPOKEN_RULE = `Write for the ear. Use contractions (it's, you'll, we're, that's). Round numbers the way people say them ("about thirty thousand dollars", "just over two x", "up about twelve percent") unless the exact figure matters. Spell out what a symbol would stand for, and say short forms the way people do on a call. Never read out a link, a web address or an email address: say you've put it on screen. A natural "so" or "okay" now and then is fine; never more than one in an answer. Don't end an answer with a generic open question ("what's on your mind?", "anything else?"): end on the point, or offer the obvious next step by name.`;

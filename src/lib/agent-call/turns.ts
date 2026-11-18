@@ -328,6 +328,10 @@ export function createTranscript() {
   let partial = "";
   let inflight = 0;
   let discard = 0;
+  /** What the last turn was sent as, after a wait that ran out: a commit for it arriving late is not new words */
+  let lateFor = "";
+  let expired = false;
+  const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   const text = () => [...committed, partial].join(" ").replace(/\s+/g, " ").trim();
   return {
     /** A commit was sent */
@@ -342,12 +346,16 @@ export function createTranscript() {
     },
     /** A commit came back with its words (false: thrown away) */
     committed(t: string): boolean {
+      const expected = inflight > 0;
       inflight = Math.max(0, inflight - 1);
       partial = "";
       if (discard > 0) {
         discard--;
         return false;
       }
+      // A commit nobody is waiting on, with words the last turn already sent (its wait ran out and it went with the
+      // live words): the same sentence again, which used to come back as the person's next turn word for word
+      if (!expected && lateFor && t.trim() && lateFor.includes(norm(t))) return false;
       if (t.trim()) committed.push(t.trim());
       return true;
     },
@@ -361,6 +369,9 @@ export function createTranscript() {
     /** The turn's words, and a clean slate */
     take(): string {
       const t = text();
+      // Commits still out when the turn is taken (the wait ran out) may come back late with these same words
+      lateFor = inflight > 0 || expired ? norm(t) : "";
+      expired = false;
       committed = [];
       partial = "";
       return t;
@@ -386,6 +397,7 @@ export function createTranscript() {
     },
     /** Waited long enough: whatever didn't come back isn't coming */
     expire() {
+      if (inflight > 0) expired = true;
       inflight = 0;
       discard = 0;
     },

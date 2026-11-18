@@ -117,8 +117,42 @@ export async function elevenlabsStatus(): Promise<{ configured: boolean; reachab
 
 // ─── Voice calls with the agents ────────────────────────────────────────────
 
-/** How a call's voice is tuned (see speechStream) */
-export const CALL_VOICE_SETTINGS = { stability: 0.45, similarity_boost: 0.75, style: 0, use_speaker_boost: true, speed: 1 };
+/**
+ * How a call's voice is tuned (see speechStream). Stability 0.62: at 0.45 the same word came out differently from one
+ * sentence to the next ("dollars" said three ways on one call); a little steadier keeps it consistent and still sounds
+ * like a person, not a reader.
+ */
+export const CALL_VOICE_SETTINGS = { stability: 0.62, similarity_boost: 0.75, style: 0, use_speaker_boost: true, speed: 1 };
+
+/**
+ * A fixed seed per voice, so the same words in the same voice come out the same way every time (ElevenLabs takes a
+ * whole number up to 4294967295; FNV-1a of the voice id).
+ */
+export function voiceSeed(voiceId: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < voiceId.length; i++) {
+    h ^= voiceId.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * The sentence before, as context for the next one's flow: whole words only (a cut mid-word was read as a strange
+ * fragment), the last sentence or two, and nothing when it's too short to help.
+ */
+export function previousContext(previous: string | null | undefined, max = 300): string | null {
+  const t = String(previous ?? "").replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  let out = t;
+  if (out.length > max) {
+    const cut = out.slice(-max);
+    // From the start of a sentence inside the window, else from the first whole word
+    const sentence = cut.search(/[.!?]\s+[A-Z0-9"']/);
+    out = sentence !== -1 ? cut.slice(sentence + 1).trim() : cut.slice(cut.indexOf(" ") + 1).trim();
+  }
+  return out.split(" ").length >= 3 ? out : null;
+}
 
 /**
  * A short sentence spoken for a call, streamed as it's made (MP3, 44.1kHz at 64kbps: small and quick to start). The
@@ -126,6 +160,7 @@ export const CALL_VOICE_SETTINGS = { stability: 0.45, similarity_boost: 0.75, st
  */
 export async function speechStream(input: { voiceId: string; text: string; model: string; previous?: string | null; signal?: AbortSignal }): Promise<{ body: ReadableStream<Uint8Array>; characters: number }> {
   if (!/^[A-Za-z0-9]{8,40}$/.test(input.voiceId)) throw new ConnectorError("Pick a voice.");
+  const previous = previousContext(input.previous);
   const res = await fetch(`${BASE}/v1/text-to-speech/${encodeURIComponent(input.voiceId)}/stream?output_format=mp3_44100_64`, {
     method: "POST",
     headers: { "xi-api-key": key(), "content-type": "application/json", accept: "audio/mpeg" },
@@ -135,8 +170,13 @@ export async function speechStream(input: { voiceId: string; text: string; model
       // Natural rather than flat: a little looser stability, a touch less similarity (it brings out artifacts), no
       // added style (slower, wobblier), speaker boost on, normal speed (faster sounded clipped)
       voice_settings: CALL_VOICE_SETTINGS,
+      // The same words sound the same each time in this voice
+      seed: voiceSeed(input.voiceId),
+      // The text already comes in spoken words (forSpeech: money, numbers, dates, short forms), so the voice reads it
+      // as written rather than guessing at it again (auto, on or off; see the text to speech API reference)
+      apply_text_normalization: "off",
       // The sentence before, so sentences sent one by one keep their flow instead of each starting cold
-      ...(input.previous ? { previous_text: input.previous.slice(-400) } : {}),
+      ...(previous ? { previous_text: previous } : {}),
     }),
     signal: input.signal,
   });

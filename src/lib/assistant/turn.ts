@@ -5,13 +5,14 @@ import { CONCISE_RULE, DISTRESS_RULE, SPOKEN_RULE, END_CALL_RULE, firstNameOf } 
 import { callContext, streamAnswer, turnExtras, type CallRow, type TurnInput } from "@/lib/agent-call/server";
 import { withFrame } from "@/lib/agent-call/call-extras";
 import { turnTimes } from "@/lib/agent-call/transcript";
+import { callTimer } from "@/lib/agent-call/timing";
 import { soundsLikeChurn } from "@/lib/client-risk";
 import { asksToFileFeedback } from "@/lib/feedback-logic";
-import { ASSISTANT_KEY, ASSISTANT_LABEL, discoveryLeft, memoryForPrompt, suggestSpecialist } from "./core";
+import { ASSISTANT_KEY, ASSISTANT_LABEL, cleanMemory, discoveryLeft, memoryForPrompt, suggestSpecialist } from "./core";
 import { myContext } from "./context";
-import { loadMemory } from "./memory";
-import { labelOf, playbooksForPrompt, recognizeJob, routeTeam } from "./team";
-import { dismissFromLine, followUps, lastSpeaker, logRun, specialistTurn, teamBlock, teamOf, teamRule, teamTools, tracked, type TeamState, type TurnMode } from "./team-server";
+import { loadMemory, saveNotes } from "./memory";
+import { directSpecialist, labelOf, playbooksForPrompt, recognizeJob, routeTeam, wantsShorter } from "./team";
+import { dismissFromLine, followUps, joinSpecialist, lastSpeaker, logRun, specialistTurn, teamBlock, teamOf, teamRule, teamTools, tracked, type TeamState, type TurnMode } from "./team-server";
 import { assistantTools, type AssistantCtx } from "./tools";
 
 // One turn of a call with the person's assistant. Who answers: the assistant, or whichever specialist on the line the
@@ -33,7 +34,7 @@ How you speak:
 - Short spoken sentences. No markdown, lists, bullets, links, emojis or code. Several points go in a sentence: "Three things. First… Then… And last…".
 - Numbers as people say them ("about twelve hundred dollars", "a two point four ROAS"). Never read a table out.
 - Write names as they're spelled (Klaviyo, Cloudbeds): the voice already says them right. Never spell a name out phonetically.
-- Match how they like to talk (their style, below). Use what you remember naturally and only when it fits; never recite their memory back.
+- Match how they like to talk (their style, below). When they tell you how to talk ("keep it short", "you're rambling", "numbers first"), save it with set_style straight away, say "Got it" in a few words, and do it from then on. Use what you remember naturally and only when it fits; never recite their memory back.
 - Be a person, not a tool: when you opened with a casual question, enjoy their answer for a line (a quick reaction, a follow-up if it's fun) before getting to work. Their favorites are yours to use lightly: a reference they'd smile at, or an analogy now and then when it makes something click ("think of this flow like the third act of Heat"). At most once in a while, never forced, never during something urgent.
 - Refer to teammates by role, except ${firstName} and someone you've just asked to do something.
 
@@ -46,7 +47,7 @@ Showing things: when they ask to go somewhere ("take me to Ocean Box's page", "o
 Jobs, with the team: when they ask for a job (launch ads for a client, an email request, a creative brief, an audit and sprint, a report), recognise it and start_job right away (the client, the platform, their goal in a sentence). It checks the data and returns what's done, what's missing in order and who does each part. Then be situational, not scripted: say in a sentence where things stand and the next missing piece, do the plain parts yourself, and bring in only the specialists that piece needs, asking first and saying why ("There's no approved copy for these ads yet, want me to grab the Copywriter?"). Only on a yes, call_in_specialist; several can be on at once. Never bring anyone in for what's already done. When one specialist's work feeds another (the Copywriter's approved copy to the Media Buyer), they hand it over between them; you keep the job moving and check_job once something lands. When a specialist's part is done, thank it out by name (dismiss_specialist with its role). When nothing needed is left, finish_job and sum up in two sentences: what was made, what's live, what's left and for whom. The jobs and who does what, in order:
 ${playbooksForPrompt()}
 
-Specialists outside a job: when a question is deep in one area (Meta ads, Google ads, email strategy, email design, creative, copy, client strategy, the market, the client relationship), offer to call in that agent ("Want me to call in the Media Buyer for that?"). Only on a yes, call_in_specialist. While specialists are on, you stay on the line taking notes; ${firstName} can talk to you by saying "assistant", and to any of them by name or role. When they're done with one or say "I'll take it from here", thank it and use dismiss_specialist. Questions you can answer from their data yourself, answer yourself.
+Specialists outside a job: you don't answer strategy or expert questions yourself. When they ask one for a service line ("what flows can we build for them?", "why is this campaign off?", "what should we test?"), call_in_specialist for that line straight away (email: the Email Strategist; Meta: the Media Buyer; Google: the Google Ads Buyer; creative: the Creative Director; organic social: the Social Strategist; copy: the Copywriter; client strategy: the Strategist; the market: the Market Analyst; the relationship: the Account Manager), say one short line ("Bringing in the Email Strategist.") and stop: it answers. When they ask for a specialist ("call in the Google buyer"), that is the yes: bring it in now, never "shall I?". You keep facts, finding and opening things, their own tasks and reminders, quick numbers and routing. While specialists are on, you stay on the line taking notes; ${firstName} can talk to you by saying "assistant", and to any of them by name or role. When they're done with one or say "I'll take it from here", thank it and use dismiss_specialist. Questions you can answer from their data yourself, answer yourself.
 
 Notes: when they ask for one, however they put it ("remind me", "put that on my list", "make that an item for me today on my overview", "add a task for me", "don't let me forget"), use remind_me (a reminder on their Overview). Related things said on one call go on ONE checklist reminder (items), not one reminder each. Never make a reminder out of your own uncertainty or a decision you're unsure of: ask them instead. Never ask them to repeat a phrase or tell them the system didn't register something: if a tool says it wasn't asked, offer it in a few words and save it on their yes.
 
@@ -76,24 +77,57 @@ export async function runAssistantTurn(input: Input) {
   const text = input.text.trim().slice(0, 4000);
   if (!text) return emit({ t: "done" });
   if (!aiEnabled()) return emit({ t: "error", message: "AI isn't connected yet." });
+  const timer = input.timer ?? callTimer();
   const team = teamOf(call, ASSISTANT_KEY);
   const hostHop = (m: TurnMode) => assistantAnswer(input, team, m).then(() => undefined);
+  // A specialist they asked for, or the one whose line a strategy question is about: it joins and answers now, with
+  // no "shall I?" and without the assistant's model in between (that was a whole extra round before anyone spoke)
+  const direct = directSpecialist(text, { screen: input.context?.screen ?? null });
   if (team.line.length) {
-    const route = routeTeam(text, { host: ASSISTANT_KEY, line: team.line, last: await lastSpeaker(admin, call.id) });
+    const route = routeTeam(text, { host: ASSISTANT_KEY, line: team.line, last: await timer.time("last_speaker", lastSpeaker(admin, call.id)) });
     if (route.dismiss.length) await dismissFromLine(input, team, route.dismiss);
+    if (route.to === ASSISTANT_KEY && direct && !route.dismiss.length && (await bringIn(input, team, direct.key, text))) return;
     if (route.to !== ASSISTANT_KEY) {
       await specialistTurn({ ...input, text }, team, route.to, { text, mode: "person" });
       await followUps(input, team, hostHop);
       await admin.rpc("ai_role_call_add", { p_id: call.id, p_chars: 0, p_turns: 1, p_learned: [] });
       return emit({ t: "done" });
     }
-  }
+  } else if (direct && (await bringIn(input, team, direct.key, text))) return;
   const { ended } = await assistantAnswer(input, team, { text, mode: "person" });
   await admin.rpc("ai_role_call_add", { p_id: call.id, p_chars: 0, p_turns: 1, p_learned: [] });
   // Anyone it just brought in answers what it was brought in for, then any hand-offs between the agents
   if (!signal.aborted && !ended) await followUps(input, team, hostHop);
   if (ended) emit({ t: "end" });
   emit({ t: "done" });
+}
+
+/**
+ * A specialist joins for what the person just said and answers it (or, already on, simply answers): the assistant says
+ * one line ("Bringing in the Email Strategist."), the specialist answers from its own playbook, then any hand-offs.
+ * False when it can't join (not theirs to talk to, offline, the line is full): the assistant answers instead.
+ */
+async function bringIn(input: Input, team: TeamState, key: string, text: string): Promise<boolean> {
+  const { me, admin, call, emit, signal } = input;
+  const timer = input.timer ?? callTimer();
+  if (!team.line.includes(key)) {
+    const j = await timer.time("join", joinSpecialist({ me, admin, callId: call.id, emit, team }, key));
+    if (!j.joined) return false;
+    const line = `Bringing in the ${j.label}.`;
+    emit({ t: "speaker", role: ASSISTANT_KEY, label: ASSISTANT_LABEL, icon: "spark" });
+    emit({ t: "text", d: `${line}\n` });
+    timer.mark("first_word");
+    const at = turnTimes(input.startedAt, Date.now());
+    void admin
+      .from("ai_role_chats")
+      .insert({ role_key: ASSISTANT_KEY, role: "agent", content: line, attachments: [], changes: [], created_by: me.id, call_id: call.id, created_at: at.answered })
+      .then(({ error }) => error && console.error("[assistant call] join line", error.message));
+  }
+  await specialistTurn({ ...input, text }, team, key, { text, mode: "person", fresh: true });
+  if (!signal.aborted) await followUps(input, team, (m) => assistantAnswer(input, team, m).then(() => undefined));
+  await admin.rpc("ai_role_call_add", { p_id: call.id, p_chars: 0, p_turns: 1, p_learned: [] });
+  emit({ t: "done" });
+  return true;
 }
 
 /**
@@ -107,10 +141,19 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode): Prom
   const person = m.mode === "person";
   const said = person ? text : "";
   const firstName = firstNameOf(me.fullName);
-  const [ctxNow, memory, convo, extra] = await Promise.all([myContext(input.db, admin, me), loadMemory(admin, me.id), callContext(admin, call, firstName), turnExtras(input, text)]);
+  const timer = input.timer ?? callTimer();
+  const [ctxNow, memory, convo, extra] = await timer.time(
+    "context",
+    Promise.all([timer.time("my_day", myContext(input.db, admin, me)), timer.time("memory", loadMemory(admin, me.id)), timer.time("history", callContext(admin, call, firstName)), turnExtras(input, text)]),
+  );
+  // "Keep it short", "you're rambling": kept in their style right away, so every later call starts that way
+  if (person && wantsShorter(text)) {
+    const notes = cleanMemory({ notes: [{ kind: "style", topic: "length", body: "Keep it short: lead with the answer in a sentence or two, at most three items, then offer more." }] }, memory);
+    if (notes.length) void saveNotes(admin, me.id, notes, call.id).catch((e) => console.error("[assistant call] style", e instanceof Error ? e.message : e));
+  }
   const actx: AssistantCtx = { me, db: input.db, admin, callId: call.id, said, emit, state: { threadId: call.thread_id ?? null }, path: input.path ?? null, screen: input.context?.screen ?? null, clientId: input.context?.clientId ?? null };
   const tctx = { me, db: input.db, admin, callId: call.id, emit, team, self: ASSISTANT_KEY, said };
-  const tools = tracked(tctx, [...(await assistantTools(actx)), ...teamTools(tctx)]);
+  const tools = tracked(tctx, [...(await timer.time("tools_build", assistantTools(actx))), ...teamTools(tctx)]);
   // A job they're asking for (when none is open), or the specialist whose area this is
   const job = person && team.job?.status !== "open" ? recognizeJob(text) : null;
   const hint = person && !team.line.length && !job ? suggestSpecialist(text) : null;
@@ -144,7 +187,7 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode): Prom
         job ? `<hint>This sounds like the ${job.label.toLowerCase()} job (${job.about}). If they want it done now, start_job straight away, then say where things stand and what's missing; if they're only mentioning it, just answer.</hint>` : "",
         person && soundsLikeChurn(text) ? `<hint>This may say a client is leaving: if so, flag_client_risk now and say so in a few words.</hint>` : "",
         person && asksToFileFeedback(text) ? `<hint>They want to file feedback about the app: one line back, then submit_feedback.</hint>` : "",
-        hint ? `<hint>This sounds like the ${hint.label}'s area (${hint.about}). If it needs real depth, offer to call it in; if you can answer from the data, just answer.</hint>` : "",
+        hint ? `<hint>This sounds like the ${hint.label}'s area (${hint.about}). A strategy or expert question goes to it: call_in_specialist now, no question first; a quick fact or number you can read from the data, just answer.</hint>` : "",
         convo,
         extra.hint,
         heard,
@@ -156,6 +199,7 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode): Prom
     signal,
     emit,
     filler: { callId: call.id, turn: input.startedAt ?? 0, said },
+    timer,
   });
   await extra.connectors.settle().catch(() => undefined);
   logRun(admin, me, ASSISTANT_KEY, out);

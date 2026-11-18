@@ -14,6 +14,8 @@ import type { CallContext } from "./call-context";
 import { contextBlock, lookHint, lookTool, loadFrame, withFrame } from "./call-extras";
 import { FILLER_DELAY_MS, fillerFor, runToolLoop, type LoopMessage, type LoopTool } from "./tool-loop";
 import { turnTimes } from "./transcript";
+import { callTimer, type CallTimer } from "./timing";
+import { spokenCapFor, createLengthGuard } from "./spoken-length";
 import { routeTeam } from "@/lib/assistant/team";
 import type { TurnMode } from "@/lib/assistant/team-server";
 
@@ -198,19 +200,49 @@ export type TurnInput = {
   startedAt?: number;
   /** The screen they're on right now (a path inside the app) */
   path?: string | null;
+  /** Where the turn's time goes (logged as one line at the end of the turn) */
+  timer?: CallTimer;
 };
 
+/**
+ * An agent's playbook, kept a couple of minutes per server instance: every turn of a call (and every agent brought
+ * onto it) used to read it fresh, two round trips to the database before the model could start. A playbook changes
+ * only when a lead edits it or keeps what was learned on a review, and the next call reads the new one.
+ */
+const PLAYBOOKS = new Map<string, { at: number; book: Promise<RolePlaybook | null> }>();
+const PLAYBOOK_TTL_MS = 120_000;
+
+export function playbookFor(admin: SupabaseClient, roleKey: string): Promise<RolePlaybook | null> {
+  const hit = PLAYBOOKS.get(roleKey);
+  if (hit && Date.now() - hit.at < PLAYBOOK_TTL_MS) return hit.book;
+  const book = loadRolePlaybook(admin, roleKey).catch((e) => {
+    PLAYBOOKS.delete(roleKey);
+    throw e;
+  });
+  PLAYBOOKS.set(roleKey, { at: Date.now(), book });
+  book.then((b) => !b && PLAYBOOKS.delete(roleKey)).catch(() => undefined);
+  return book;
+}
+
 /** What every turn reads besides the agent's own playbook: where they called from, their connectors, a screenshot */
-export async function turnExtras(input: TurnInput, text: string) {
+export async function turnExtras(input: TurnInput, text: string, tag = "") {
+  const t = input.timer ?? callTimer();
   const [where0, team, connectors, frame] = await Promise.all([
-    contextBlock(input.db, input.context).catch(() => ""),
-    // The client in play: the lines it buys and who sits in each seat, so hand-offs only go to roles it has
-    import("@/lib/assistant/routing-server").then(({ clientTeamBlock }) => clientTeamBlock(input.db, input.admin, input.context?.clientId ?? null, text)).catch(() => ""),
-    callConnectors({ me: input.me, admin: input.admin, callId: input.call.id, text, turnStart: input.startedAt ?? Date.now() }).catch((e) => {
-      console.error("[agent call] connectors", e instanceof Error ? e.message : e);
-      return noConnectors();
-    }),
-    input.frame ? loadFrame(input.admin, input.me, input.call.id, input.frame).catch(() => null) : null,
+    t.time(`${tag}screen`, contextBlock(input.db, input.context).catch(() => "")),
+    // The client in play: the lines it buys, who sits in each seat (so hand-offs only go to roles it has) and how it
+    // makes money (so every idea fits the business)
+    t.time(
+      `${tag}client`,
+      import("@/lib/assistant/routing-server").then(({ clientTeamBlock }) => clientTeamBlock(input.db, input.admin, input.context?.clientId ?? null, text, { viewer: input.me.id })).catch(() => ""),
+    ),
+    t.time(
+      `${tag}connectors`,
+      callConnectors({ me: input.me, admin: input.admin, callId: input.call.id, text, turnStart: input.startedAt ?? Date.now() }).catch((e) => {
+        console.error("[agent call] connectors", e instanceof Error ? e.message : e);
+        return noConnectors();
+      }),
+    ),
+    input.frame ? t.time(`${tag}frame`, loadFrame(input.admin, input.me, input.call.id, input.frame).catch(() => null)) : null,
   ]);
   const where = [where0, team].filter(Boolean).join("\n\n");
   return { where, connectors, frame, look: lookTool(input.emit), hint: lookHint(text, Boolean(frame)) };
@@ -237,10 +269,11 @@ export async function runCallTurn(input: TurnInput) {
       return emit({ t: "done" });
     }
   }
-  const [book, convo, extra] = await Promise.all([loadRolePlaybook(admin, call.role_key), callContext(admin, call, firstName), turnExtras(input, text)]);
+  const timer = input.timer ?? callTimer();
+  const [book, convo, extra] = await timer.time("context", Promise.all([timer.time("playbook", playbookFor(admin, call.role_key)), timer.time("history", callContext(admin, call, firstName)), turnExtras(input, text)]));
   if (!book) return emit({ t: "error", message: "Unknown agent." });
   const tctx = { me, db: input.db, admin, callId: call.id, emit, team: state, self: call.role_key, said: text };
-  const tools = team.tracked(tctx, [...(await agentTools({ me, db: input.db, admin, roleKey: call.role_key, label: book.role.label, callId: call.id, emit, said: text, path: input.path ?? null, screen: input.context?.screen ?? null, clientId: input.context?.clientId ?? null })), ...team.teamTools(tctx)]);
+  const tools = team.tracked(tctx, [...(await timer.time("tools_build", agentTools({ me, db: input.db, admin, roleKey: call.role_key, label: book.role.label, callId: call.id, emit, said: text, path: input.path ?? null, screen: input.context?.screen ?? null, clientId: input.context?.clientId ?? null }))), ...team.teamTools(tctx)]);
   const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
   // With others on the line, the captions say who's speaking
   if (state.line.length) {
@@ -256,6 +289,7 @@ export async function runCallTurn(input: TurnInput) {
     emit,
     connectors: extra.connectors,
     filler: { callId: call.id, turn: input.startedAt ?? 0, said: text },
+    timer,
   });
   await extra.connectors.settle().catch(() => undefined);
   const { reply, error, used, model, effort, started } = out;
@@ -317,8 +351,15 @@ export async function streamAnswer(input: {
   connectors?: Conn | null;
   /** For the filler: the call, when the turn arrived, and what the person said this turn ("" for a hand-over) */
   filler?: { callId: string; turn: number; said: string };
+  /** Where the time goes (the model's first word, each round, each tool); `tag` names whose answer it is */
+  timer?: CallTimer;
+  tag?: string;
 }): Promise<Answer> {
-  const { signal, emit, tools } = input;
+  const { signal, emit } = input;
+  const timer = input.timer ?? callTimer();
+  const tag = input.tag ?? "";
+  // Each tool's time, by name
+  const tools: LoopTool[] = input.tools.map((t) => ({ ...t, run: (x: Record<string, unknown>) => timer.time(`${tag}tool:${t.name}`, () => Promise.resolve(t.run(x))) }));
   const fk = input.filler ?? null;
   const fillerSaid = () => Boolean(fk && FILLERS.get(fk.callId)?.turn === fk.turn);
   const noteFiller = (line: string) => {
@@ -339,10 +380,29 @@ export async function streamAnswer(input: {
   const used = { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 };
   const messages: LoopMessage[] = [{ role: "user", content: input.content }];
   const marker = endMarkerFilter();
+  // The length guard: past its cap an answer stops at the end of the sentence and offers the rest
+  const guard = createLengthGuard(spokenCapFor(fk ? fk.said : ""));
+  let firstWord = false;
   const say = (d: string) => {
     if (!d) return;
+    if (!firstWord && d.trim()) {
+      firstWord = true;
+      timer.mark(`${tag}first_word`);
+    }
     reply += d;
     emit({ t: "text", d });
+  };
+  /** The stream being read now, so the guard can stop it once the answer has said enough */
+  let current: { abort: () => void } | null = null;
+  let cut = false;
+  const sayModel = (d: string) => {
+    if (cut) return;
+    say(guard.feed(marker.feed(d)));
+    if (guard.capped && !cut) {
+      cut = true;
+      say(guard.tail);
+      current?.abort();
+    }
   };
   let roundText = "";
   // The agent's whole playbook is the same every turn: cached, so later turns read it at a tenth of the price. What
@@ -361,13 +421,25 @@ export async function streamAnswer(input: {
       output_config: { effort },
       messages: msgs as Anthropic.MessageParam[],
     };
+    // Cut at the length guard: the round ends with what was said
+    const ended = (stream: { currentMessage?: unknown }): Reply => ({
+      content: roundText.trim() ? [{ type: "text", text: roundText }] : [],
+      stop_reason: "end_turn",
+      usage: ((stream.currentMessage as { usage?: Anthropic.Usage } | undefined)?.usage ?? { input_tokens: 0, output_tokens: 0 }) as Anthropic.Usage,
+    });
     if (!withConn || !conn) {
       const stream = anthropicClient().messages.stream({ ...base, ...(last || !defs.length ? {} : { tools: defs }) } as Anthropic.MessageCreateParamsStreaming, { signal });
+      current = stream;
       stream.on("text", (d) => {
         roundText += d;
-        say(marker.feed(d));
+        sayModel(d);
       });
-      return (await stream.finalMessage()) as unknown as Reply;
+      try {
+        return (await stream.finalMessage()) as unknown as Reply;
+      } catch (e) {
+        if (cut && !signal.aborted) return ended(stream);
+        throw e;
+      }
     }
     const stream = anthropicClient().beta.messages.stream(
       {
@@ -378,9 +450,10 @@ export async function streamAnswer(input: {
       } as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming,
       { signal },
     );
+    current = stream;
     stream.on("text", (d) => {
       roundText += d;
-      say(marker.feed(d));
+      sayModel(d);
     });
     // Their service is being read (on Anthropic's side): a line so the call doesn't go quiet
     stream.on("contentBlock", (b) => {
@@ -391,7 +464,12 @@ export async function streamAnswer(input: {
       noteFiller(line);
       fillers++;
     });
-    return (await stream.finalMessage()) as unknown as Reply;
+    try {
+      return (await stream.finalMessage()) as unknown as Reply;
+    } catch (e) {
+      if (cut && !signal.aborted) return ended(stream);
+      throw e;
+    }
   };
 
   try {
@@ -408,7 +486,7 @@ export async function streamAnswer(input: {
         let retried = false;
         for (let pause = 0; ; ) {
           try {
-            res = await ask(msgs, last);
+            res = await timer.time(`${tag}model`, ask(msgs, last));
           } catch (e) {
             if (!signal.aborted && !retried && conn?.servers.length && !roundText && conn.drop(e)) {
               retried = true;
@@ -416,7 +494,7 @@ export async function streamAnswer(input: {
             }
             throw e;
           }
-          say(marker.flush());
+          if (!cut) say(guard.feed(marker.flush()));
           const u = usageFor(res.usage);
           used.input_tokens += u.input_tokens;
           used.output_tokens += u.output_tokens;

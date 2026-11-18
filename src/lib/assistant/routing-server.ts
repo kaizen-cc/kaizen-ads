@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { businessFitBlock } from "@/lib/agent-call/business-fit";
 import { servicesOf } from "@/lib/services";
 import { clientLines, routeSeat, SEAT_LABEL, teamLines, type Line, type SeatHolder } from "./seat-routing";
 import { resolveTeammate, type Teammate } from "./teammates";
@@ -73,14 +74,31 @@ export async function recipientFor(admin: SupabaseClient, input: { to: string; c
   return { ok: false, note: `No teammate called "${input.to}" on the team in the app. Ask who they meant (a name or a role) in a few words.` };
 }
 
+/** The clients a person can see (their own session decides), kept a couple of minutes per server instance */
+const VISIBLE = new Map<string, { at: number; rows: Promise<{ id: string; name: string }[]> }>();
+const BLOCKS = new Map<string, { at: number; text: Promise<string> }>();
+const KEEP_MS = 120_000;
+
+function visibleClients(db: SupabaseClient, viewer: string | null): Promise<{ id: string; name: string }[]> {
+  const hit = viewer ? VISIBLE.get(viewer) : null;
+  if (hit && Date.now() - hit.at < KEEP_MS) return hit.rows;
+  const rows = Promise.resolve(db.from("clients").select("id, name").is("archived_at", null).limit(500)).then((r) => (r.data ?? []) as { id: string; name: string }[]);
+  if (viewer) {
+    if (VISIBLE.size > 300) VISIBLE.clear();
+    VISIBLE.set(viewer, { at: Date.now(), rows });
+    rows.catch(() => VISIBLE.delete(viewer));
+  }
+  return rows;
+}
+
 /** The client a turn is about: the one the call was started from, else one named in what they said (their visible clients) */
-export async function clientInPlay(db: SupabaseClient, clientId: string | null | undefined, text: string): Promise<string | null> {
+export async function clientInPlay(db: SupabaseClient, clientId: string | null | undefined, text: string, viewer: string | null = null): Promise<string | null> {
   if (clientId) return clientId;
   const t = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
   if (t.trim().length < 3) return null;
-  const { data } = await db.from("clients").select("id, name").is("archived_at", null).limit(500);
+  const data = await visibleClients(db, viewer);
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const hits = ((data ?? []) as { id: string; name: string }[]).filter((c) => {
+  const hits = data.filter((c) => {
     const n = norm(c.name);
     if (n && t.includes(` ${n} `)) return true;
     const first = n.split(" ")[0];
@@ -89,13 +107,34 @@ export async function clientInPlay(db: SupabaseClient, clientId: string | null |
   return hits.length === 1 ? hits[0].id : null;
 }
 
-/** The client's team block for an agent's context on a call about a client (empty when none is in play) */
-export async function clientTeamBlock(db: SupabaseClient, admin: SupabaseClient, clientId: string | null | undefined, text: string): Promise<string> {
-  const id = await clientInPlay(db, clientId, text).catch(() => null);
+/**
+ * The client's block for an agent's context on a call about a client (empty when none is in play): the lines it buys
+ * and who sits in each seat (so hand-offs only go to roles it has), and what kind of business it is with the tactics
+ * that fit (so a restaurant never gets ecommerce flows). Read at once, and kept a couple of minutes per person and
+ * client, since every turn and every agent on the call reads it.
+ */
+export async function clientTeamBlock(db: SupabaseClient, admin: SupabaseClient, clientId: string | null | undefined, text: string, opts: { viewer?: string | null } = {}): Promise<string> {
+  const viewer = opts.viewer ?? null;
+  const id = await clientInPlay(db, clientId, text, viewer).catch(() => null);
   if (!id) return "";
-  // Only a client this person may see (their own session decides)
-  const { data: seen } = await db.from("clients").select("id").eq("id", id).maybeSingle();
-  if (!seen) return "";
-  const team = await clientTeam(admin, id);
-  return team ? teamLines(team.name, team.lines, team.seats) : "";
+  const key = viewer ? `${viewer}:${id}` : null;
+  const hit = key ? BLOCKS.get(key) : null;
+  if (hit && Date.now() - hit.at < KEEP_MS) return hit.text;
+  const block = (async () => {
+    const [seen, team, model] = await Promise.all([
+      // Only a client this person may see (their own session decides)
+      Promise.resolve(db.from("clients").select("id").eq("id", id).maybeSingle()).then((r) => r.data),
+      clientTeam(admin, id),
+      import("@/lib/business-model").then(({ businessModelOf }) => businessModelOf(admin, id)).catch(() => null),
+    ]);
+    if (!seen || !team) return "";
+    const business = businessFitBlock({ client: team.name, model: model?.known ? model.model : null, also: model?.known ? model.also : null, industry: model?.industry ?? null, sub: model?.sub ?? null });
+    return [teamLines(team.name, team.lines, team.seats), business].join("\n\n");
+  })();
+  if (key) {
+    if (BLOCKS.size > 500) BLOCKS.clear();
+    BLOCKS.set(key, { at: Date.now(), text: block });
+    block.catch(() => BLOCKS.delete(key));
+  }
+  return block;
 }

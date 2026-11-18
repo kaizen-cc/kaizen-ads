@@ -296,12 +296,12 @@ function DebugOverlay({ call }: { call: RefObject<Call | null> }) {
   if (!d) return null;
   const n = (x: number) => x.toFixed(4);
   return (
-    <pre className="pointer-events-none fixed left-2 top-2 z-[99] rounded-[10px] bg-black/75 px-3 py-2 font-mono text-[11px] leading-snug text-white">
+    <pre className="pointer-events-none fixed left-2 top-2 z-[99] max-w-[calc(100vw-16px)] whitespace-pre-wrap break-words rounded-[10px] bg-black/75 px-3 py-2 font-mono text-[11px] leading-snug text-white">
       {`phase ${d.phase}${d.muted ? " (muted)" : ""}  stall ${d.stall ?? "-"}
 ears ${d.ears}
 level ${n(d.level)}  noise ${n(d.noise)}  threshold ${n(d.threshold)}
 in speech ${d.speaking ? "yes" : "no"}  heard ${d.heard} chars
-commit ${d.commit ?? "-"}  asking ${d.asking ?? "-"}  queue ${d.queue}`}
+commit ${d.commit ?? "-"}  asking ${d.asking ?? "-"}  queue ${d.queue}${d.client ? `\nlast turn: ${d.client}` : ""}${d.timing ? `\nserver: ${d.timing}` : ""}${d.voice ? `\nvoice: ${d.voice}` : ""}`}
     </pre>
   );
 }

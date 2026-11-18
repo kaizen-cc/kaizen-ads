@@ -164,6 +164,21 @@ export function forSpeech(input: string): string {
     return " ";
   });
 
+  // Money written other ways, made "$" first so every amount is said the same way, with the plain word "dollars":
+  // "US$4,200", "USD 4,200", "$ 4,200", "4,200 USD", "4,200 dollars", "4.2K USD"
+  t = t.replace(/\bUS\$\s*(?=\d)/g, "$");
+  t = t.replace(/\bUSD\s*\$?\s*(?=\d)/g, "$");
+  t = t.replace(/\$\s+(?=\d)/g, "$");
+  t = t.replace(/(\$\d[\d,]*(?:\.\d+)?(?:\s*(?:k|mm|m|bn|b)\b)?)\s*(?:USD|dollars)\b/gi, "$1");
+  t = t.replace(/(?<![\w$.,])(\d[\d,]*(?:\.\d+)?)\s*(k|mm|m|bn|b|thousand|million|billion)?\s*(?:USD|US dollars|dollars|bucks)\b/gi, (_, a, s) => `$${a}${s ? s : ""}`);
+  // Per-period short forms after an amount ("/mo", "/yr", "/wk", "/day", "per mo")
+  t = t.replace(/\s*\/\s*(?:mo|mon|mth|month)\b/gi, " per month");
+  t = t.replace(/\s*\/\s*(?:yr|year)\b/gi, " per year");
+  t = t.replace(/\s*\/\s*(?:wk|week)\b/gi, " per week");
+  t = t.replace(/\s*\/\s*day\b/gi, " per day");
+  t = t.replace(/\s*\/\s*(?:hr|hour)\b/gi, " per hour");
+  t = t.replace(/\bper\s+(?:mo|mth)\b/gi, "per month");
+  t = t.replace(/\bper\s+yr\b/gi, "per year");
   // Money ranges first ("$10-$20", "$10-20k"), then money
   t = t.replace(/\$(\d[\d,]*(?:\.\d+)?)(?:\s*(k|mm|m|bn|b)\b)?\s*(?:-|–|to)\s*\$?(\d[\d,]*(?:\.\d+)?)(?:\s*(k|mm|m|bn|b|thousand|million|billion)\b)?/gi, (_, a, sa, b, sb) => `${moneyWords(a, sa ?? sb).replace(/ dollars?$/, "")} to ${moneyWords(b, sb)}`);
   t = t.replace(/\$(\d[\d,]*(?:\.\d+)?)(?:\s*(k|mm|m|bn|b|thousand|million|billion)\b)?/gi, (_, a, s) => moneyWords(a, s));

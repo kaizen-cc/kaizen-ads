@@ -22,7 +22,7 @@ export type Line = { id: number; who: "you" | "agent"; text: string; speaker?: {
 export type Speaker = { role: string; label: string; icon: string };
 
 /** What the hidden debug overlay shows (?calldebug=1) */
-export type CallDebug = { phase: string; muted: boolean; ears: string; noise: number; threshold: number; level: number; speaking: boolean; commit: number | null; asking: number | null; heard: number; stall: StallState; queue: number };
+export type CallDebug = { phase: string; muted: boolean; ears: string; noise: number; threshold: number; level: number; speaking: boolean; commit: number | null; asking: number | null; heard: number; stall: StallState; queue: number; timing: string | null; voice: string | null; client: string | null };
 
 const STT_RATE = 16000;
 /** Audio kept from just before someone starts talking over the agent, so their first words aren't lost */
@@ -428,6 +428,8 @@ export class Call {
   private wordsAt = 0;
   /** The sentence before this one in the same answer, so the voice carries on smoothly from it */
   private lastSentence = "";
+  /** Where the last turn's time went: the server's line, the first sentence's voice, and what the call itself saw */
+  private timing: { server: string | null; voice: string | null; firstText: number | null; sentAt: number; firstAudio: number | null } = { server: null, voice: null, firstText: null, sentAt: 0, firstAudio: null };
   private watch = createTurnWatchdog({ onSlow: () => this.dispatch({ t: "slow" }), onGiveUp: () => this.dispatch({ t: "failed" }) });
   private canSendNow = false;
   /** The microphone's source in the audio graph (opened again after the phone takes it away) */
@@ -737,6 +739,7 @@ export class Call {
     this.speaker = null;
     this.lastSentence = "";
     const startedAt = Date.now();
+    this.timing = { server: this.timing.server, voice: this.timing.voice, firstText: null, sentAt: startedAt, firstAudio: null };
     let buffer = "";
     const live = () => !turn.signal.aborted && isCurrent(this.st, turnNo);
     try {
@@ -761,7 +764,9 @@ export class Call {
             continue;
           }
           if (e.t !== "ping" || Date.now() - startedAt < PING_PROGRESS_MS) this.watch.progress();
-          if (e.t === "text") {
+          if (e.t === "text" && this.timing.firstText === null) this.timing.firstText = Date.now() - startedAt;
+          if (e.t === "timing") this.timing.server = e.line;
+          else if (e.t === "text") {
             buffer += e.d;
             const { ready, rest: left } = splitSpeakable(buffer);
             buffer = left;
@@ -809,7 +814,14 @@ export class Call {
     const onAbort = () => ctl.abort();
     outer?.addEventListener("abort", onAbort, { once: true });
     const audio = fetch("/api/agent-call/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text, ...(previous ? { previous } : {}), ...(speaker ? { role: speaker.role } : {}) }), signal: ctl.signal })
-      .then(async (r) => (r.ok && r.status !== 204 ? this.ctx.decodeAudioData(await r.arrayBuffer()) : null))
+      .then(async (r) => {
+        // The first voice of a turn: how long from sending the turn, and where the speak request's time went
+        if (this.timing.firstAudio === null && this.timing.sentAt) {
+          this.timing.firstAudio = Date.now() - this.timing.sentAt;
+          this.timing.voice = r.headers.get("x-call-timing");
+        }
+        return r.ok && r.status !== 204 ? this.ctx.decodeAudioData(await r.arrayBuffer()) : null;
+      })
       .catch(() => null)
       .finally(() => {
         clearTimeout(timer);
@@ -916,6 +928,9 @@ export class Call {
       heard: this.st.heard.length,
       stall: this.st.stall,
       queue: this.queue.length,
+      timing: this.timing.server,
+      voice: this.timing.voice,
+      client: this.timing.sentAt ? `first text ${this.timing.firstText ?? "-"}ms, first voice ${this.timing.firstAudio ?? "-"}ms after sending` : null,
     };
   }
 

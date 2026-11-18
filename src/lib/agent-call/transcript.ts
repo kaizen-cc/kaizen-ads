@@ -60,3 +60,21 @@ export function transcriptFileName(startedAt: string, agentLabel: string): strin
     .replace(/^-|-$/g, "");
   return `call-${who || "agent"}-${day}.txt`;
 }
+
+// ─── The same words twice ───────────────────────────────────────────────────
+
+/** Two turns this close together with the very same words are one utterance sent twice (a late transcript, a resend) */
+export const REPEAT_WINDOW_MS = 45_000;
+
+const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/**
+ * Whether a turn repeats the last one word for word within the window (a short "yes" or "okay" said twice is a real
+ * answer each time, so only lines of four words or more count).
+ */
+export function isRepeatTurn(text: string, last: { text: string; at: number } | null | undefined, now: number, windowMs = REPEAT_WINDOW_MS): boolean {
+  if (!last) return false;
+  const a = norm(text);
+  if (a.split(" ").length < 4) return false;
+  return a === norm(last.text) && now - last.at >= 0 && now - last.at <= windowMs;
+}

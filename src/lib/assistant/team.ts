@@ -4,7 +4,7 @@
 // checks found, the job's shared working state that every agent on the call reads, and how far agents may hand work
 // to each other before the person gets the floor back.
 
-import { ASSISTANT_KEY, SPECIALISTS, specialistOf } from "./core";
+import { ASSISTANT_KEY, SPECIALISTS, specialistOf, suggestSpecialist } from "./core";
 
 // ─── Who's on the line ──────────────────────────────────────────────────────
 
@@ -17,16 +17,16 @@ export const MAX_ON_LINE = 3;
  */
 const ALIASES: Record<string, { full: string[]; short?: string[] }> = {
   assistant: { full: ["assistant"] },
-  media_buyer: { full: ["media buyer", "meta buyer", "facebook buyer"], short: ["buyer"] },
-  google_buyer: { full: ["google ads buyer", "google buyer"], short: ["buyer"] },
+  media_buyer: { full: ["media buyer", "meta buyer", "meta media buyer", "facebook buyer", "facebook media buyer"], short: ["buyer"] },
+  google_buyer: { full: ["google ads buyer", "google buyer", "google media buyer", "google ads media buyer", "google ads specialist"], short: ["buyer"] },
   email_strategist: { full: ["email strategist"], short: ["strategist"] },
   email_creative: { full: ["email designer"], short: ["designer"] },
   email_builder: { full: ["email builder"], short: ["builder"] },
-  creative_director: { full: ["creative director"] },
+  creative_director: { full: ["creative director", "head of creative"] },
   copywriter: { full: ["copywriter", "copy writer"] },
   strategist: { full: ["strategist"] },
   market_analyst: { full: ["market analyst"], short: ["analyst"] },
-  social_strategist: { full: ["social strategist"], short: ["strategist"] },
+  social_strategist: { full: ["social strategist", "social media strategist", "organic strategist"], short: ["strategist"] },
   account_manager: { full: ["account manager"] },
 };
 
@@ -427,3 +427,89 @@ export function playbooksForPrompt(): string {
 
 /** Every specialist key (for tool schemas) */
 export const SPECIALIST_KEYS = SPECIALISTS.map((s) => s.key);
+
+// ─── Bringing a specialist in on the first ask ─────────────────────────────
+
+/** The specialist a phrase names in full ("the Google media buyer"), the longest name winning ("Google media buyer" over "media buyer") */
+export function specialistNamed(text: string): string | null {
+  let best: { key: string; len: number } | null = null;
+  for (const s of SPECIALISTS) {
+    for (const name of ALIASES[s.key]?.full ?? []) {
+      if (new RegExp(String.raw`\b${esc(name)}\b`, "i").test(text) && (!best || name.length > best.len)) best = { key: s.key, len: name.length };
+    }
+  }
+  return best?.key ?? null;
+}
+
+const BRING = String.raw`(?:call(?:\s+in|\s+over)?|bring(?:\s+in|\s+on)?|loop(?:\s+in)?|pull(?:\s+in)?|patch(?:\s+in)?|grab|invite|add|get|talk\s+(?:to|with)|speak\s+(?:to|with)|connect\s+(?:me|us)\s+(?:to|with)|put|have)`;
+const NOT_NOW = /\b(?:don'?t|do not|no need|not yet|never ?mind|without)\b/i;
+
+/**
+ * The specialist the person asked to bring onto the call ("can you call in the Google media buyer so we can talk
+ * about Ocean Box?", "get the Email Strategist on", "I want to talk to the copywriter"): that ask is the yes, so it
+ * joins straight away with no "shall I?". Not when they say not to, and not "get the buyer to update the client"
+ * (that's a task for a teammate).
+ */
+export function asksToBringIn(text: string): string | null {
+  if (NOT_NOW.test(text)) return null;
+  const key = specialistNamed(text);
+  if (!key) return null;
+  const names = (ALIASES[key]?.full ?? []).map(esc).join("|");
+  const bring = new RegExp(String.raw`\b${BRING}\b[^.?!]{0,24}?\b(?:the\s+|our\s+|my\s+|a\s+|your\s+)?(?:${names})\b`, "i");
+  const join = new RegExp(String.raw`\b(?:${names})\b[^.?!]{0,20}\b(?:on the (?:call|line)|join|hop on|jump in|in here)\b`, "i");
+  if (!bring.test(text) && !join.test(text)) return null;
+  const task = new RegExp(String.raw`\b(?:get|have)\b[^.?!]{0,24}?(?:${names})\s+to\s+\w`, "i");
+  if (task.test(text) && !/\b(?:on the (?:call|line)|join)\b/i.test(text)) return null;
+  return key;
+}
+
+/**
+ * A strategy or expert question for a service line ("what flows can we build for them?", "why is this campaign off?",
+ * "what should we test next?"): the specialist for that line answers it, not the assistant. The assistant keeps facts,
+ * finding things, the person's own tasks and reminders, quick numbers and routing.
+ */
+const EXPERT: RegExp[] = [
+  /\bwhat\s+(?:[\w'-]+\s+){0,3}(?:can|could|should|would)\s+(?:we|they|you)\s+(?:build|run|test|try|launch|do|change|add|fix|send|set up|make|improve|cut|scale|focus on)\b/i,
+  /\bwhy\s+(?:is|are|was|were|did|does|do|has|have)\b[^?]{0,80}\b(?:off|down|dropp?(?:ed|ing)?|low|lower|high|higher|bad|poor|worse|under ?perform\w*|struggl\w*|not\s+(?:working|converting|selling)|tank\w*|declin\w*|spik\w*|slipp\w*|fall\w*)\b/i,
+  /\bhow\s+(?:do|can|could|should|would)\s+(?:we|they|you)\s+(?:improve|fix|grow|scale|get|increase|lower|reduce|boost|turn|beat|structure|set up|approach|win)\b/i,
+  /\bwhat\s+(?:would|do)\s+you\s+(?:recommend|suggest|test|change|do|try)\b/i,
+  /\bshould\s+(?:we|they)\s+(?:test|try|launch|cut|kill|pause|scale|change|build|add|switch|move|raise|lower|increase|drop|run)\b/i,
+  /\b(?:ideas?|recommendations?|suggestions?|a (?:strategy|plan|game plan))\s+(?:for|on|to)\b/i,
+  /\bwhat(?:'s| is)\s+(?:wrong|going on|off)\s+with\b/i,
+];
+const ASSISTANT_OWN = /\b(?:today|tomorrow|my day|my list|my plate|on my overview|remind|reminder|note that|take me|open (?:the|my)|where (?:is|do i find))\b/i;
+
+export function isExpertQuestion(text: string): boolean {
+  if (ASSISTANT_OWN.test(text)) return false;
+  return EXPERT.some((r) => r.test(text));
+}
+
+/** Which specialist a screen is about ("the client page, Email tab", "the Email Board") */
+export function specialistForScreen(screen: string | null | undefined): string | null {
+  const s = String(screen ?? "").toLowerCase();
+  if (!s) return null;
+  if (/\b(?:email|klaviyo|flows?|sms)\b/.test(s)) return "email_strategist";
+  if (/\bgoogle\b/.test(s)) return "google_buyer";
+  if (/\b(?:meta|facebook|instagram ads)\b/.test(s)) return "media_buyer";
+  if (/\b(?:social|organic|posts?)\b/.test(s)) return "social_strategist";
+  if (/\b(?:creative|concepts?)\b/.test(s)) return "creative_director";
+  return null;
+}
+
+export type DirectRoute = { key: string; why: "asked" | "expert" };
+
+/**
+ * Before the assistant answers: a specialist the person asked for by name joins now; a strategy question goes to the
+ * specialist for its line (from the words, else the screen they're on). Null: the assistant answers.
+ */
+export function directSpecialist(text: string, opts: { screen?: string | null } = {}): DirectRoute | null {
+  const asked = asksToBringIn(text);
+  if (asked) return { key: asked, why: "asked" };
+  if (!isExpertQuestion(text)) return null;
+  const key = specialistNamed(text) ?? suggestSpecialist(text)?.key ?? specialistForScreen(opts.screen);
+  return key && specialistOf(key) ? { key, why: "expert" } : null;
+}
+
+/** They're telling the assistant it talks too long ("keep it short", "you're rambling") */
+export const wantsShorter = (text: string) =>
+  /\b(?:rambl\w*|too long|too much talking|talk(?:ing)? too much|keep (?:it|things|conversations?|answers?|them) (?:short|brief|tight)|shorter answers?|be (?:more )?(?:brief|concise)|get to the point)\b/i.test(text);
