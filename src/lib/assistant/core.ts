@@ -106,7 +106,7 @@ export function orderForToday<T extends DayItem>(items: readonly T[]): T[] {
 // ─── Screens and links ──────────────────────────────────────────────────────
 
 /** The places in the app the assistant may open during a call */
-const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next"];
+const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next", "/profile"];
 
 /**
  * The named places open_screen knows (each screen's own address, with its URL state where a place is a view inside a
@@ -114,12 +114,37 @@ const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/
  */
 export const SCREEN_PLACES: Record<string, string> = {
   overview: "/pipeline",
+  // The Overview's tabs (?tab=): the email and social teams have all of them, the other teams Today and My work
+  "overview clients": "/pipeline?tab=clients",
+  "overview campaign ideas": "/pipeline?tab=ideas",
+  "overview audits and sprints": "/pipeline?tab=audits",
+  "overview setup": "/pipeline?tab=setup",
+  "overview my work": "/pipeline?tab=work",
   boards: "/board",
   "creative board": "/board",
   "email board": "/board/email",
   "new email request": "/board/email/new",
+  // The team KPI boards, each tab its own address (execs and the line heads; the page checks)
+  "email team kpis": "/board/email?view=kpis&tab=design",
+  "email team kpis design": "/board/email?view=kpis&tab=design",
+  "email team kpis build": "/board/email?view=kpis&tab=build",
+  "email team kpis copy": "/board/email?view=kpis&tab=copy",
+  "email team kpis strategy": "/board/email?view=kpis&tab=strategy",
+  "creative team kpis": "/board?view=kpis&tab=design",
+  "creative team kpis design": "/board?view=kpis&tab=design",
+  "creative team kpis video": "/board?view=kpis&tab=video",
+  "creative team kpis copy": "/board?view=kpis&tab=copy",
   "new brief": "/requests/new",
   clients: "/clients",
+  // The Clients list in a meeting's order (?sort=), each line's tab narrowing it to that line's KPI
+  "clients most critical": "/clients?sort=critical",
+  "clients best performing": "/clients?sort=best",
+  "clients by name": "/clients?sort=name",
+  "clients off target": "/clients?sort=critical&kpi=off",
+  "meta clients most critical": "/clients?sort=critical&filter=facebook-ads",
+  "google clients most critical": "/clients?sort=critical&filter=google-ads",
+  "email clients most critical": "/clients?sort=critical&filter=email-marketing",
+  "social clients most critical": "/clients?sort=critical&filter=social-media",
   kpis: "/kpis",
   "meta kpis": "/kpis?p=meta",
   "google kpis": "/kpis?p=google",

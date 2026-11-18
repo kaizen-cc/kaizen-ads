@@ -1,7 +1,9 @@
 import type { WatchRow } from "@/lib/fatigue";
 import type { Production } from "@/lib/production";
 import type { CallPromise, OnboardingState, SuggestionsState } from "@/lib/suggestions";
+import Link from "next/link";
 import { buildThemes } from "./overview-topics";
+import { OverviewTabs } from "./overview-tabs";
 import { FlowStrip, PageHeader, PrimaryAction, Stats, TeamLoad, type Alert, type KpiPulseData, type Load, type PhaseKey, type PhaseStat } from "./shared";
 import { Themes } from "./themes";
 import { Topic } from "./topics";
@@ -30,10 +32,11 @@ export type LeaderData = {
 };
 
 /**
- * Leaders (Head of Creative / Meta / Google): the recap, the same themes as execs (their team in Delivery), then Next
- * for me. What waits on their review or launch is in Next for me's "Now" (it used to be a "Your queue" theme too).
+ * Leaders (Head of Creative / Meta / Google), in tabs (?tab=): Today (the recap and the same themes as execs, their team
+ * in Delivery), their line's Clients (their own accounts first, then the team's), Ideas, Audits & sprints (only what's
+ * critical or stale) and Setup, and My work (Next for me: what waits on their review or launch is in its "Now").
  */
-export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?: React.ReactNode; next?: React.ReactNode }) {
+export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?: React.ReactNode; next?: React.ReactNode; /** What Next for me holds now */ nextCount?: number; /** Their line's Clients, Ideas, Audits and Setup tabs (./ads-desk.tsx) */ desk?: import("./ads-desk").Desk | null }) {
   const working = d.stats.teamActive > 0;
   const themes = buildThemes(d, {
     production: d.production,
@@ -72,9 +75,9 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
           <>
             Head of {d.department} ·{" "}
             {d.stats.waitingOnYou ? (
-              <a href="#next" className="underline-offset-4 hover:text-fg hover:underline">
+              <Link href="/pipeline?tab=work" className="underline-offset-4 hover:text-fg hover:underline">
                 {d.stats.waitingOnYou} waiting on you
-              </a>
+              </Link>
             ) : (
               "nothing waiting on you"
             )}
@@ -82,10 +85,25 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
         }
         action={<PrimaryAction label="New request" disabled={!d.canRequest} href="/requests/new" />}
       />
-      {d.recap}
-      {d.handoffs}
-      <Themes themes={themes} />
-      {d.next}
+      <OverviewTabs
+        tabs={[
+          { id: "today", label: "Today" },
+          ...(d.desk?.tabs ?? []),
+          { id: "work", label: "My work", count: d.nextCount ?? d.stats.waitingOnYou, tone: "brand" },
+        ]}
+        panels={{
+          today: (
+            <>
+              {d.recap}
+              {d.handoffs}
+              <Themes themes={themes} />
+            </>
+          ),
+          ...(d.desk?.panels ?? {}),
+          work: d.next,
+        }}
+        follow={{ theme: "today" }}
+      />
     </div>
   );
 }

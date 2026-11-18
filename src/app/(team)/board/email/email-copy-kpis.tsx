@@ -1,8 +1,8 @@
 import Link from "next/link";
-import type { EmailCopyKpis, EmailStrategist } from "@/lib/email-kpis";
+import type { EmailCopyKpis, EmailStrategist, Workload } from "@/lib/email-kpis";
 import { HeadlineCard, KpiHeader, Meter, Section, TONES } from "../creative-kpis";
 import { LiveRefresh, Tween } from "../live-kpis";
-import { EmailActionLink, EmailLateRow, EmailResultCard, TiringFlowCard } from "./email-kpi-parts";
+import { EmailActionLink, EmailLateRow, EmailResultCard, TiringFlowCard, WorkloadList } from "./email-kpi-parts";
 
 // The email copy KPIs (execs and the Head of Email, a tab on the Email Board), built like the Copy KPIs: what to act on
 // first, how fast a ticket's copy goes from the AI's draft to approved, how often the AI's copy goes through first time
@@ -57,13 +57,15 @@ function StrategistCard({ s }: { s: EmailStrategist }) {
   );
 }
 
-export function EmailCopyKpisView({ k, switcher = false }: { k: EmailCopyKpis; switcher?: boolean }) {
+/** The Email Team KPIs' Copy tab: strategists only (`members`, by role; a designer, the Head of Email and execs never), and the whole team's workload */
+export function EmailCopyKpisView({ k: all, switcher = false, members, workload }: { k: EmailCopyKpis; switcher?: boolean; members?: string[]; workload?: Workload[] }) {
+  const k = members ? { ...all, strategists: all.strategists.filter((s) => members.includes(s.id)) } : all;
   const total = k.split.copy + k.split.design;
   const copyShare = total ? Math.round((k.split.copy / total) * 100) : 0;
   return (
     <div className="grid gap-12">
       <LiveRefresh board="email" />
-      <KpiHeader active="copy-kpis" period={k.period} base="/board/email?view=copy-kpis" switcher={switcher} board="email" />
+      <KpiHeader active="kpis" period={k.period} base="/board/email?view=kpis&tab=copy" switcher={switcher} board="email" tab="copy" />
       <section className="grid gap-5">
         <div className="max-w-2xl">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Email copy · last {k.days} days</p>
@@ -291,6 +293,12 @@ export function EmailCopyKpisView({ k, switcher = false }: { k: EmailCopyKpis; s
           </div>
         </div>
       </Section>
+
+      {workload && (
+        <Section kicker="The team" title="Workload right now" aside={<span className="text-[12px] text-faint">Everyone on the email team: open tickets and the emails in them</span>}>
+          <WorkloadList rows={workload} tab="copy" />
+        </Section>
+      )}
 
       <p className="text-[11px] text-faint">Business days. Timings from the Email Board&apos;s ticket history and the Asana email board&apos;s; client changes from the portal; results from each client&apos;s email platform, every subject line against its own account&apos;s usual open rate.</p>
     </div>

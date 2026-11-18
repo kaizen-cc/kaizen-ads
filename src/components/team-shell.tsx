@@ -5,7 +5,8 @@ import { ThemeSwitch } from "./theme-switch";
 import type { Theme } from "@/app/(team)/theme-actions";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { NotificationBell } from "./notification-bell";
 import { BriefJobsIndicator, BriefJobsRoot } from "./brief-jobs";
 import { MediaJobsIndicator, MediaJobsRoot } from "./media-jobs";
@@ -82,16 +83,25 @@ const saveContact = (v: "call" | "chat") => {
 const CALL_PATH = "M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z";
 const CHAT_PATH = "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z";
 
+const subscribeNone = () => () => undefined;
+
 /**
- * Contact my assistant: everyone's personal assistant, a call or a chat away from any page (both live above every
- * page and are one conversation). Tapping it offers Call or Chat, starting on the last one used on this device.
+ * My assistant: everyone's personal assistant, a call or a chat away from any page (both live above every page and are
+ * one conversation). Tapping it opens a small centered chooser (Call or Chat), starting on the last one used on this
+ * device. The label is short ("My Assistant", or the name they gave it) so it always fits, and wraps rather than cuts.
  */
 function AssistantButton({ size = "side", onPress }: { size?: "side" | "menu"; onPress?: () => void }) {
-  const { startAssistant, startAssistantChat, activeRole, live, talk, assistantTint: tint } = useAgentCall();
+  const { startAssistant, startAssistantChat, activeRole, live, talk, assistantTint: tint, assistantName } = useAgentCall();
   const on = live && activeRole === "assistant";
   const [open, setOpen] = useState(false);
   const [last, setLast] = useState<"call" | "chat">("call");
   const options = useRef<(HTMLButtonElement | null)[]>([]);
+  const mounted = useSyncExternalStore(
+    subscribeNone,
+    () => true,
+    () => false,
+  );
+  const who = assistantName || "My Assistant";
   const pick = (v: "call" | "chat") => {
     saveContact(v);
     setOpen(false);
@@ -110,6 +120,14 @@ function AssistantButton({ size = "side", onPress }: { size?: "side" | "menu"; o
     setOpen((o) => !o);
     requestAnimationFrame(() => options.current[l === "chat" ? 1 : 0]?.focus());
   };
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
   const choices: { key: "call" | "chat"; label: string; sub: string; d: string }[] = [
     { key: "call", label: "Call", sub: "Talk it through", d: CALL_PATH },
     { key: "chat", label: "Chat", sub: "Type, or dictate", d: CHAT_PATH },
@@ -121,20 +139,23 @@ function AssistantButton({ size = "side", onPress }: { size?: "side" | "menu"; o
         <button
           type="button"
           onClick={toggle}
-          aria-haspopup="menu"
+          aria-haspopup="dialog"
           aria-expanded={open}
-          className={`relative flex min-w-0 flex-1 items-center gap-3 text-left active:scale-[0.99] ${size === "menu" ? "min-h-12 pl-3 text-[15px]" : "py-2.5 pl-3 text-sm"}`}
+          className={`relative flex min-w-0 flex-1 items-center gap-2.5 text-left active:scale-[0.99] ${size === "menu" ? "min-h-12 pl-3" : "py-2 pl-3"}`}
         >
-          <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-[9px]" style={{ background: `${tint}22`, color: tint, boxShadow: `inset 0 0 0 1px ${tint}33` }}>
-            {on && <span aria-hidden className="absolute inset-0 animate-ping rounded-[9px] opacity-30" style={{ background: tint }} />}
+          <span className="relative grid h-8 w-8 shrink-0 place-items-center rounded-[10px]" style={{ background: `${tint}22`, color: tint, boxShadow: `inset 0 0 0 1px ${tint}33` }}>
+            {on && <span aria-hidden className="absolute inset-0 animate-ping rounded-[10px] opacity-30" style={{ background: tint }} />}
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d={on && talk === "text" ? CHAT_PATH : CALL_PATH} />
             </svg>
           </span>
-          <span className="relative min-w-0 flex-1 truncate text-fg">{on ? (talk === "text" ? "In a chat" : "On a call") : "Contact my Assistant"}</span>
+          <span className="relative grid min-w-0 flex-1 gap-0.5 leading-tight">
+            <span className={`font-medium text-fg [overflow-wrap:break-word] [text-wrap:balance] ${size === "menu" ? "text-[15px]" : "text-[13.5px]"}`}>{who}</span>
+            <span className="text-[11px] text-faint">{on ? (talk === "text" ? "In a chat" : "On a call") : "Call or chat"}</span>
+          </span>
           {on && <span aria-hidden className="relative h-2 w-2 shrink-0 rounded-full bg-ok shadow-[0_0_0_3px_var(--ok-soft)]" />}
         </button>
-        {/* Its settings: the voice, the color and what it knows, on the Assistant page */}
+        {/* Its settings: the name, voice, color and what it knows, on the Assistant page */}
         <Link
           href="/assistant#make-it-yours"
           onClick={() => onPress?.()}
@@ -148,47 +169,66 @@ function AssistantButton({ size = "side", onPress }: { size?: "side" | "menu"; o
           </svg>
         </Link>
       </div>
-      {open && (
-        <>
-          <button type="button" aria-label="Close" tabIndex={-1} onClick={() => setOpen(false)} className="fixed inset-0 z-40 cursor-default" />
-          <div
-            role="menu"
-            aria-label="Contact your assistant"
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.preventDefault();
-                setOpen(false);
-              } else if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
-                e.preventDefault();
-                const i = options.current.findIndex((b) => b === document.activeElement);
-                options.current[i === 0 ? 1 : 0]?.focus();
-              }
-            }}
-            className={`absolute left-0 right-0 z-50 grid grid-cols-2 gap-1.5 rounded-[16px] border border-line bg-surface p-1.5 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.55)] animate-[sheet-fade_.15s_ease-out] ${size === "menu" ? "top-full mt-2" : "bottom-full mb-2"}`}
-          >
-            {choices.map((c, i) => (
-              <button
-                key={c.key}
-                ref={(el) => {
-                  options.current[i] = el;
-                }}
-                type="button"
-                role="menuitem"
-                onClick={() => pick(c.key)}
-                className="group/opt relative grid min-h-[76px] content-center justify-items-start gap-1 rounded-[12px] border border-transparent px-3 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:border-faint focus-visible:bg-surface-2 focus-visible:outline-none"
-              >
-                <span className="grid h-8 w-8 place-items-center rounded-[10px]" style={{ background: `${tint}22`, color: tint }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <path d={c.d} />
+      {open &&
+        mounted &&
+        createPortal(
+          // A centered chooser over a dimmed page (a portal, so the sidebar's or the drawer's own box never moves it)
+          <div className="fixed inset-0 z-[70] grid place-items-center p-5" role="dialog" aria-modal="true" aria-label={`Contact ${who}`}>
+            <button type="button" aria-label="Close" tabIndex={-1} onClick={() => setOpen(false)} className="absolute inset-0 cursor-default bg-black/55 backdrop-blur-sm animate-[sheet-fade_.15s_ease-out]" />
+            <div
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setOpen(false);
+                } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                  e.preventDefault();
+                  const i = options.current.findIndex((b) => b === document.activeElement);
+                  options.current[i === 0 ? 1 : 0]?.focus();
+                }
+              }}
+              className="relative w-full max-w-[360px] overflow-hidden rounded-[24px] border border-line bg-surface p-5 shadow-[0_30px_80px_-24px_rgba(0,0,0,0.6)] animate-[sheet-fade_.18s_ease-out]"
+            >
+              <span aria-hidden className="pointer-events-none absolute -top-16 left-1/2 h-32 w-56 -translate-x-1/2 rounded-full opacity-25 blur-3xl" style={{ background: tint }} />
+              <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="absolute right-2 top-2 grid h-11 w-11 place-items-center rounded-full text-faint transition-colors hover:text-fg active:bg-surface-2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+              <div className="relative grid justify-items-center gap-1 pb-4 pt-1 text-center">
+                <span className="grid h-12 w-12 place-items-center rounded-[16px]" style={{ background: `${tint}22`, color: tint, boxShadow: `inset 0 0 0 1px ${tint}33` }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z" />
                   </svg>
                 </span>
-                <span className="text-[14px] font-medium text-fg">{c.label}</span>
-                <span className="text-[11.5px] leading-tight text-faint">{last === c.key ? "Last used" : c.sub}</span>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+                <p className="mt-1 font-heading text-[19px] leading-tight [overflow-wrap:break-word]">{assistantName ? `Reach ${assistantName}` : "Reach your assistant"}</p>
+                <p className="text-[13px] text-muted">How do you want to talk?</p>
+              </div>
+              <div role="group" aria-label="Contact" className="relative grid grid-cols-2 gap-2.5">
+                {choices.map((c, i) => (
+                  <button
+                    key={c.key}
+                    ref={(el) => {
+                      options.current[i] = el;
+                    }}
+                    type="button"
+                    onClick={() => pick(c.key)}
+                    className="relative grid min-h-[104px] content-center justify-items-center gap-1.5 rounded-[16px] border border-line bg-surface-2/50 px-3 py-4 text-center transition hover:border-faint hover:bg-surface-2 focus-visible:border-faint focus-visible:bg-surface-2 focus-visible:outline-none active:scale-[0.98]"
+                    style={last === c.key ? { borderColor: `${tint}88` } : undefined}
+                  >
+                    <span className="grid h-10 w-10 place-items-center rounded-[12px]" style={{ background: `${tint}22`, color: tint }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d={c.d} />
+                      </svg>
+                    </span>
+                    <span className="text-[15px] font-medium text-fg">{c.label}</span>
+                    <span className="text-[12px] leading-tight text-faint">{last === c.key ? "Last used" : c.sub}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -201,7 +241,7 @@ function Icon({ d }: { d: string }) {
   );
 }
 
-export function TeamShell({ name, roles, tier, creative = null, reports = false, channel = false, role = null, theme = null, children }: { name: string; roles: string; tier: Tier; creative?: CreativeSide; reports?: boolean; channel?: boolean; role?: string | null; theme?: Theme | null; children: React.ReactNode }) {
+export function TeamShell({ name, fullName, meId, roles, tier, creative = null, reports = false, channel = false, role = null, theme = null, children }: { name: string; fullName: string; meId: string; roles: string; tier: Tier; creative?: CreativeSide; reports?: boolean; channel?: boolean; role?: string | null; theme?: Theme | null; children: React.ReactNode }) {
   const path = usePathname();
   const view = useSearchParams().get("view");
   // The creative team doesn't get the media-buying tools; the Head of Creative gets their team's KPIs instead. Reports
@@ -306,11 +346,14 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
           {settings && link(settings)}
         </div>
         <div className="flex items-center gap-3 border-t border-line px-4 py-4">
-          <PersonAvatar name={name} size={34} />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{name}</p>
-            <p className="truncate text-xs text-faint">{roles}</p>
-          </div>
+          {/* Their profile: the picture and name open it */}
+          <Link href={`/profile/${meId}`} aria-label="Your profile" className="group/me flex min-w-0 flex-1 items-center gap-3 rounded-[10px] outline-none focus-visible:ring-2 focus-visible:ring-brand/60">
+            <PersonAvatar name={fullName} size={34} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium group-hover/me:text-brand-text">{name}</span>
+              <span className="block truncate text-xs text-faint">{roles}</span>
+            </span>
+          </Link>
           <form action="/auth/signout" method="post">
             <button className="rounded-brand px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-fg">Sign out</button>
           </form>
@@ -410,11 +453,13 @@ export function TeamShell({ name, roles, tier, creative = null, reports = false,
               )}
             </nav>
             <div className="flex items-center gap-3 border-t border-line px-5 py-4">
-              <PersonAvatar name={name} size={36} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{name}</p>
-                <p className="truncate text-xs text-faint">{roles}</p>
-              </div>
+              <Link href={`/profile/${meId}`} onClick={() => setMenu(false)} aria-label="Your profile" className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-[10px] outline-none">
+                <PersonAvatar name={fullName} size={36} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{name}</span>
+                  <span className="block truncate text-xs text-faint">{roles}</span>
+                </span>
+              </Link>
               <form action="/auth/signout" method="post">
                 <button className="min-h-10 rounded-full border border-line px-3 text-xs text-muted active:bg-surface-2">Sign out</button>
               </form>

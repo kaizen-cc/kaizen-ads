@@ -7,6 +7,7 @@ import { shownStatus } from "@/lib/kpi/calc";
 import { actionBreakdown, conversionValue } from "@/lib/kpi/conversion-value";
 import { extensionTools } from "./extensions";
 import { rankTools } from "./rank-tools";
+import { teamKpiTools } from "./team-kpi-tools";
 import { clampFormats, formatList, formatsFor, formatsRule } from "@/lib/creative-formats";
 import { can, roleWidePerms, type Who } from "@/lib/chat-permissions";
 import { isChannelOnly, lineOfTeam } from "@/lib/roles";
@@ -302,7 +303,7 @@ function socialNumbersOut(n: import("@/lib/social-score").PlatformNumbers) {
 }
 
 /** The tools the email and organic social teams get (the email one only for the email team) */
-const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "email_marketing", "organic_social", "social_score", "run_social_audit", "start_social_sprint", "search_client", "recent_calls", "read_call", "rank_clients", "top_emails", "email_detail", "top_posts"]);
+const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "team_kpis", "email_marketing", "organic_social", "social_score", "run_social_audit", "start_social_sprint", "search_client", "recent_calls", "read_call", "rank_clients", "top_emails", "email_detail", "top_posts"]);
 /** Per turn: the add-on tools loaded for this person, which the email and social teams get as well */
 const CHANNEL_EXTRA = new Set<string>(["make_deck"]);
 
@@ -1098,6 +1099,8 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
 
   // Rankings across clients: clients on a line, and single emails, ads and posts (each scoped to the person's line)
   for (const t of rankTools(ctx)) tools.push(t);
+  // The team KPI boards (Email Team KPIs, Creative Team KPIs): execs, the Head of Email and the creative leads only
+  for (const t of teamKpiTools(ctx)) tools.push(t);
 
   // The connectors in src/lib/ai-tools (Google policy checker, monthly recap deck, ElevenLabs, Higgsfield, Motion)
   const extra = await extensionTools(ctx);

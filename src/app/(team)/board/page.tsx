@@ -17,26 +17,26 @@ import { loadTaskFlags } from "@/lib/direction-changes";
 export const maxDuration = 800; // room for the AI creative review that starts at review, and for planning a launch (video uploads to Meta)
 
 export default async function Board({ searchParams }: PageProps<"/board">) {
-  const { t, view, period } = await searchParams;
+  const { t, view, period, tab: tabParam } = await searchParams;
   const [me, supabase] = await Promise.all([requireStaff(), createClient()]);
   // Boards: the email team works on the Email Board only
   if (!seesCreativeBoard(me) && seesEmailBoard(me)) redirect("/board/email");
   const lead = isExecOrLead(me);
-  // The creative team's KPIs: execs and leads only (anyone else asking for it gets the Board)
-  if (view === "kpis" && lead) {
+  // The Creative Team KPIs (execs and leads only): Design, Video and Copy, the tab in the address (?view=kpis&tab=; an
+  // older ?view=copy-kpis link is the Copy tab). Each tab shows only the people whose role belongs there, by role
+  // (never the Head of Creative, an exec or whoever is looking).
+  if ((view === "kpis" || view === "copy-kpis") && lead) {
+    const { tabOf, membersOf } = await import("@/lib/team-kpis-core");
+    const tab = tabOf("creative", view, tabParam);
+    const p = period === "30" || period === "90" ? period : "cycle";
+    const { data: people } = await supabase.from("profiles").select("id, role, is_exec").eq("is_active", true);
+    const members = [...membersOf("creative", tab, (people ?? []) as { id: string; role: string; is_exec: boolean }[], [], me.id)];
+    if (tab === "copy") {
+      const [{ cachedCopyKpis }, { CopyKpisView }] = await Promise.all([import("@/lib/board-kpis-cache"), import("./copy-kpis")]);
+      return <CopyKpisView k={await cachedCopyKpis(p)} switcher={seesEmailBoard(me)} members={members} />;
+    }
     const { cachedCreativeKpis } = await import("@/lib/board-kpis-cache");
-    const k = await cachedCreativeKpis(period === "30" || period === "90" ? period : "cycle");
-    return (
-      <CreativeKpisView k={k} canDismiss={lead} switcher={seesEmailBoard(me)} />
-    );
-  }
-  // The copy team's KPIs: execs and leads only
-  if (view === "copy-kpis" && lead) {
-    const [{ cachedCopyKpis }, { CopyKpisView }] = await Promise.all([import("@/lib/board-kpis-cache"), import("./copy-kpis")]);
-    const k = await cachedCopyKpis(period === "30" || period === "90" ? period : "cycle");
-    return (
-      <CopyKpisView k={k} switcher={seesEmailBoard(me)} />
-    );
+    return <CreativeKpisView k={await cachedCreativeKpis(p)} canDismiss={lead} switcher={seesEmailBoard(me)} tab={tab} members={members} />;
   }
   // Execs and leads: the KPI tabs worked out while they look at the Board, so switching to them is instant
   if (lead)

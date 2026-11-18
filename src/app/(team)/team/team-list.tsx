@@ -132,10 +132,13 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
 
   return (
     <li className={`grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5 px-4 py-3.5 sm:gap-y-2 sm:py-3 sm:grid-cols-[auto_1fr_200px_110px] ${p.isActive && p.joined ? "" : "opacity-55"}`}>
-      <PersonAvatar name={p.fullName} muted={!p.isActive || !p.joined} />
+      <PersonAvatar name={p.fullName} muted={!p.isActive || !p.joined} link />
       <div className="min-w-0">
         <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium sm:flex-nowrap sm:truncate">
-          {p.fullName} {isMe && <span className="text-xs font-normal text-faint">(you)</span>}
+          <Link href={`/profile/${p.id}`} className="hover:underline">
+            {p.fullName}
+          </Link>{" "}
+          {isMe && <span className="text-xs font-normal text-faint">(you)</span>}
           {p.isActive &&
             (p.joined ? (
               <span className="rounded-full bg-ok-soft px-1.5 py-px text-[10px] font-normal text-ok">Active</span>

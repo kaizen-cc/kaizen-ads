@@ -41,6 +41,7 @@ const FORMAT_LABEL = { image: "Images", video: "Videos", carousel: "Carousels" }
 const FORMAT_ONE = { image: "image", video: "video", carousel: "carousel" } as const;
 // The order they're read in: accounts off target, then what clients asked for that nobody has started, then behind on
 // creative, then the rest, and ideas from the market last
+const TIER_RANK = { critical: 0, worth: 1, nice: 2 } as const;
 const RANK: Record<SuggestionKind, number> = { kpi: 0, offer: 1, call: 1, unhappy: 1, pacing: 2, fatigue: 3, refresh: 3, flop: 3, onboarding: 4, winner: 4, lab: 4, moment: 4, pattern: 4, idea: 4, market: 5 };
 /** "1 new image · 5 variations" (and a carousel's slides): net new and variations, not one total that hides which is which */
 const countsOf = (formats: SuggestionDraft["formats"]) =>
@@ -56,7 +57,7 @@ const REASONS = ["Not the right time", "Already handled", "Client wouldn't go fo
  * Briefs the strategist suggests from the data, for execs and leads. Each one can be approved (tickets are made),
  * edited in place, declined with a reason (it learns), or talked through with the AI.
  */
-export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsState; bare?: boolean }) {
+export function SuggestedBriefs({ state, bare = false, priority = null }: { state: SuggestionsState; bare?: boolean; /** The Overview's Ideas tab: each brief's tier (src/lib/overview-desk.ts briefPriority); critical first, the rest folded under More ideas (?ideas=more) */ priority?: Record<string, { tier: "critical" | "worth" | "nice"; reason: string }> | null }) {
   const router = useRouter();
   // The suggestion open is in the address (?brief=id), so back closes it and a link opens it
   const open = useParam("brief");
@@ -80,7 +81,37 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
     });
 
   const current = state.open.find((s) => s.id === open) ?? null;
+  const more = useParam("ideas") === "more";
+  const sorted = [...state.open].sort((a, b) => (priority ? TIER_RANK[priority[a.id]?.tier ?? "worth"] - TIER_RANK[priority[b.id]?.tier ?? "worth"] : 0) || RANK[a.kind] - RANK[b.kind]);
+  const first = priority ? sorted.filter((s) => priority[s.id]?.tier === "critical") : sorted;
+  const rest = priority ? sorted.filter((s) => priority[s.id]?.tier !== "critical") : [];
   const total = state.decided30.approved + state.decided30.declined;
+
+  const card = (s: OpenSuggestion) => (
+    <div key={s.id} className="relative min-w-0">
+    <button onClick={() => pushParams({ brief: s.id })} className="group grid h-full w-full content-start gap-2.5 rounded-[14px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint">
+      <span className="flex flex-wrap items-center gap-2 pr-12">
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${KIND_TONE[s.kind]}`}>{KIND_LABEL[s.kind]}</span>
+        <span className="text-xs text-muted">{s.client}</span>
+        {priority?.[s.id] && priority[s.id].tier !== "worth" && <span className={`rounded-full px-2 py-0.5 text-[11px] ${priority[s.id].tier === "critical" ? "bg-bad-soft text-bad" : "bg-ink/[0.06] text-muted"}`}>{priority[s.id].reason}</span>}
+      </span>
+      <span className="font-heading text-[17px] leading-snug">{s.draft.title}</span>
+      <span className="line-clamp-2 text-sm text-muted">{s.signal}</span>
+      <span className="flex items-center justify-between gap-2 pt-1 text-xs text-faint">
+        <span>
+          {countsOf(s.draft.formats)}
+          {s.draft.concepts.length > 1 ? ` · ${s.draft.concepts.length} concepts, one brief each` : ""}
+        </span>
+        <span className="text-fg transition-transform group-hover:translate-x-0.5">{s.draft.summary ? "Preview →" : "Review →"}</span>
+      </span>
+    </button>
+    <span className="absolute right-3 top-3">
+      <SaveIdeaStar source={{ kind: "suggestion", id: s.id }} from={{ kicker: KIND_LABEL[s.kind], label: s.draft.title || s.signal, thumb: s.source?.thumbnail ?? null }} clientId={s.clientId} clientName={s.client} size="sm" />
+    </span>
+    {/* Its full brief being written in the background: the progress under the card, then "Brief ready · Open" */}
+    <BriefJobStatus source={{ kind: "suggestion", id: s.id }} clientId={s.clientId} className="mt-2 grid min-w-0 rounded-[14px] border border-line bg-surface px-4 py-3" />
+    </div>
+  );
 
   return (
     <section className="grid gap-4">
@@ -113,36 +144,31 @@ export function SuggestedBriefs({ state, bare = false }: { state: SuggestionsSta
         </div>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
-          {[...state.open].sort((a, b) => RANK[a.kind] - RANK[b.kind]).map((s) => (
-            <div key={s.id} className="relative min-w-0">
-            <button onClick={() => pushParams({ brief: s.id })} className="group grid h-full w-full content-start gap-2.5 rounded-[14px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint">
-              <span className="flex flex-wrap items-center gap-2 pr-12">
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${KIND_TONE[s.kind]}`}>{KIND_LABEL[s.kind]}</span>
-                <span className="text-xs text-muted">{s.client}</span>
-              </span>
-              <span className="font-heading text-[17px] leading-snug">{s.draft.title}</span>
-              <span className="line-clamp-2 text-sm text-muted">{s.signal}</span>
-              <span className="flex items-center justify-between gap-2 pt-1 text-xs text-faint">
-                <span>
-                  {countsOf(s.draft.formats)}
-                  {s.draft.concepts.length > 1 ? ` · ${s.draft.concepts.length} concepts, one brief each` : ""}
-                </span>
-                <span className="text-fg transition-transform group-hover:translate-x-0.5">{s.draft.summary ? "Preview →" : "Review →"}</span>
-              </span>
-            </button>
-            <span className="absolute right-3 top-3">
-              <SaveIdeaStar source={{ kind: "suggestion", id: s.id }} from={{ kicker: KIND_LABEL[s.kind], label: s.draft.title || s.signal, thumb: s.source?.thumbnail ?? null }} clientId={s.clientId} clientName={s.client} size="sm" />
-            </span>
-            {/* Its full brief being written in the background: the progress under the card, then "Brief ready · Open" */}
-            <BriefJobStatus source={{ kind: "suggestion", id: s.id }} clientId={s.clientId} className="mt-2 grid min-w-0 rounded-[14px] border border-line bg-surface px-4 py-3" />
-            </div>
-          ))}
+          {first.length === 0 && priority && <p className="rounded-[14px] border border-line bg-surface px-4 py-3 text-sm text-muted md:col-span-2">Nothing critical today. The rest are below when there&apos;s room for them.</p>}
+          {first.map((s) => card(s))}
           {running && (
             <div className="grid place-items-center gap-2 rounded-[14px] border border-dashed border-line p-4 text-center text-xs text-faint">
               <Dots />
               Looking for more…
             </div>
           )}
+        </div>
+      )}
+
+      {rest.length > 0 && (
+        <div className="grid gap-3">
+          <button type="button" aria-expanded={more} onClick={() => (more ? closeParams("ideas") : pushParams({ ideas: "more" }))} className="flex min-h-11 w-full items-center justify-between gap-3 rounded-[14px] border border-line bg-surface px-4 text-left hover:border-faint">
+            <span className="flex flex-wrap items-baseline gap-x-2">
+              <span className="font-heading text-[16px]">More ideas</span>
+              <span className="text-[12px] text-faint">
+                {rest.filter((s) => priority?.[s.id]?.tier !== "nice").length} worth doing · {rest.filter((s) => priority?.[s.id]?.tier === "nice").length} nice to have
+              </span>
+            </span>
+            <span aria-hidden className={`text-faint transition-transform ${more ? "rotate-180" : ""}`}>
+              ⌄
+            </span>
+          </button>
+          {more && <div className="grid max-h-[min(70vh,720px)] gap-3 overflow-y-auto overscroll-contain md:grid-cols-2">{rest.map((s) => card(s))}</div>}
         </div>
       )}
 

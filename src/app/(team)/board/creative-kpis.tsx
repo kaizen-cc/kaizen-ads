@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { PERIODS, type CreativeKpis, type Headline, type Maker, type Period } from "@/lib/creative-kpis";
+import { CREATIVE_TABS, EMAIL_TABS, TEAM_BOARD_TITLE, tabHref, type TeamBoard, type TeamTab } from "@/lib/team-kpis-core";
 import { LiveRefresh, Tween } from "./live-kpis";
 import { BoardSwitch } from "./board-switch";
 import { ActionLink, AllotmentList, CheckErrors, ClientRevisions, LateRow, PersonCard, PersonSheet, TiringCard, WinnerCard, WinnersSheet } from "./kpi-parts";
@@ -17,26 +18,25 @@ export const TONES = { TONE_TEXT, TONE_SOFT, TONE_BAR };
 const VIEWS = {
   creative: [
     ["board", "Board", "/board"],
-    ["kpis", "Creative KPIs", "/board?view=kpis"],
-    ["copy-kpis", "Copy KPIs", "/board?view=copy-kpis"],
+    ["kpis", TEAM_BOARD_TITLE.creative, "/board?view=kpis"],
   ],
   email: [
     ["board", "Board", "/board/email"],
-    ["kpis", "Email design KPIs", "/board/email?view=kpis"],
-    ["copy-kpis", "Email copy KPIs", "/board/email?view=copy-kpis"],
+    ["kpis", TEAM_BOARD_TITLE.email, "/board/email?view=kpis"],
   ],
 } as const;
 
 /** A board's views, a compact switch beside the title (execs and leads only; the page checks on the server) */
 export function BoardTabs({ active, board = "creative" }: { active: "board" | "kpis" | "copy-kpis"; board?: "creative" | "email" }) {
+  const on = active === "copy-kpis" ? "kpis" : active;
   return (
     <nav aria-label="Board views" className="inline-flex max-w-full overflow-x-auto rounded-full bg-ink/[0.06] p-1 text-[13px] [scrollbar-width:none]">
       {VIEWS[board].map(([k, label, href]) => (
         <Link
           key={k}
           href={href}
-          aria-current={active === k ? "page" : undefined}
-          className={`grid h-8 place-items-center whitespace-nowrap rounded-full px-3.5 transition-colors max-md:h-10 ${active === k ? "bg-surface text-fg shadow-[0_1px_2px_rgba(0,0,0,0.12)]" : "text-muted hover:text-fg"}`}
+          aria-current={on === k ? "page" : undefined}
+          className={`grid h-8 place-items-center whitespace-nowrap rounded-full px-3.5 transition-colors max-md:h-10 ${on === k ? "bg-surface text-fg shadow-[0_1px_2px_rgba(0,0,0,0.12)]" : "text-muted hover:text-fg"}`}
         >
           {label}
         </Link>
@@ -45,23 +45,46 @@ export function BoardTabs({ active, board = "creative" }: { active: "board" | "k
   );
 }
 
-/** The KPI tabs' header: the Board title with its views, and the period */
-export function KpiHeader({ active, period, base, switcher = false, board = "creative" }: { active: "kpis" | "copy-kpis"; period: Period; base: string; switcher?: boolean; board?: "creative" | "email" }) {
+/** The team board's tabs (Email: Design, Build, Copy, Strategy; Creative: Design, Video, Copy), each its own address */
+export function TeamTabs({ board, tab, period }: { board: TeamBoard; tab: TeamTab; period: Period }) {
+  const tabs = board === "email" ? EMAIL_TABS : CREATIVE_TABS;
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex min-w-0 flex-wrap items-center gap-3">
-        <h1 className="font-heading text-3xl">{board === "email" ? "Email Board" : "Board"}</h1>
-        {/* The Creative Board | Email Board switch stays on the KPI views too (the executives see both boards) */}
-        {switcher && <BoardSwitch active={board} />}
-        <BoardTabs active={active} board={board} />
+    <nav aria-label={`${TEAM_BOARD_TITLE[board]} tabs`} className="-mx-4 flex gap-1 overflow-x-auto border-b border-line px-4 [scrollbar-width:none] md:mx-0 md:px-0">
+      {tabs.map((t) => (
+        <Link
+          key={t.key}
+          href={tabHref(board, t.key, period)}
+          aria-current={tab === t.key ? "page" : undefined}
+          className={`relative grid h-11 shrink-0 place-items-center px-4 text-[14px] transition-colors ${tab === t.key ? "font-medium text-fg after:absolute after:inset-x-3 after:bottom-[-1px] after:h-[2px] after:rounded-full after:bg-fg" : "text-muted hover:text-fg"}`}
+        >
+          {t.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+/** The KPI tabs' header: the Board title with its views, the period, and the team's tabs */
+export function KpiHeader({ active, period, base, switcher = false, board = "creative", tab }: { active: "kpis" | "copy-kpis"; period: Period; base: string; switcher?: boolean; board?: "creative" | "email"; tab?: TeamTab }) {
+  const here = tab ? tabHref(board, tab) : base;
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <h1 className="font-heading text-3xl">{board === "email" ? "Email Board" : "Board"}</h1>
+          {/* The Creative Board | Email Board switch stays on the KPI views too (the executives see both boards) */}
+          {switcher && <BoardSwitch active={board} />}
+          <BoardTabs active={active} board={board} />
+        </div>
+        <nav aria-label="Period" className="inline-flex max-w-full overflow-x-auto rounded-full border border-line p-1 text-[12.5px] [scrollbar-width:none]">
+          {PERIODS.map((p) => (
+            <Link key={p.key} href={`${here}${p.key === "cycle" ? "" : `&period=${p.key}`}`} aria-current={period === p.key ? "true" : undefined} className={`grid h-8 place-items-center whitespace-nowrap rounded-full px-3 max-md:h-10 ${period === p.key ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
+              {p.label}
+            </Link>
+          ))}
+        </nav>
       </div>
-      <nav aria-label="Period" className="inline-flex rounded-full border border-line p-1 text-[12.5px]">
-        {PERIODS.map((p) => (
-          <Link key={p.key} href={`${base}${p.key === "cycle" ? "" : `&period=${p.key}`}`} aria-current={period === p.key ? "true" : undefined} className={`grid h-8 place-items-center whitespace-nowrap rounded-full px-3 max-md:h-10 ${period === p.key ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
-            {p.label}
-          </Link>
-        ))}
-      </nav>
+      {tab && <TeamTabs board={board} tab={tab} period={period} />}
     </div>
   );
 }
@@ -142,22 +165,46 @@ function rate(n: number, of: number) {
   return of ? `${Math.round((n / of) * 100)}%` : "—";
 }
 
-export function CreativeKpisView({ k, canDismiss, switcher = false }: { k: CreativeKpis; canDismiss: boolean; switcher?: boolean }) {
+const meanOf = (xs: (number | null)[]) => {
+  const v = xs.filter((x): x is number => x != null);
+  return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null;
+};
+
+/**
+ * The Creative Team KPIs' Design or Video tab: only the people whose role belongs there (`members`, worked out from
+ * roles on the server; the Head of Creative and execs never), and the team numbers worked out from them alone.
+ */
+export function CreativeKpisView({ k, canDismiss, switcher = false, tab = "design", members }: { k: CreativeKpis; canDismiss: boolean; switcher?: boolean; tab?: "design" | "video"; members?: string[] }) {
   const total = k.split.copy + k.split.creative;
   const copyShare = total ? Math.round((k.split.copy / total) * 100) : 0;
-  const groups = [...ROLE_ORDER.map((r) => ({ ...r, people: k.makers.filter((m) => m.roleKey === r.key) })), { key: "other", title: "Others", people: k.makers.filter((m) => !ROLE_ORDER.some((r) => r.key === m.roleKey)) }].filter((g) => g.people.length);
-  const ts = k.teamSendbacks;
+  const on = members ? new Set(members) : null;
+  const makers = on ? k.makers.filter((m) => m.profileId && on.has(m.profileId)) : k.makers;
+  const groups = [...ROLE_ORDER.map((r) => ({ ...r, people: makers.filter((m) => m.roleKey === r.key) })), { key: "other", title: "Others", people: makers.filter((m) => !ROLE_ORDER.some((r) => r.key === m.roleKey)) }].filter((g) => g.people.length);
+  const ts = on
+    ? makers.reduce(
+        (a, m) => ({
+          d45: { internal: a.d45.internal + m.sendbacks.d45.internal, client: a.d45.client + m.sendbacks.d45.client, pieces: a.d45.pieces + m.sendbacks.d45.pieces },
+          d90: { internal: a.d90.internal + m.sendbacks.d90.internal, client: a.d90.client + m.sendbacks.d90.client, pieces: a.d90.pieces + m.sendbacks.d90.pieces },
+        }),
+        { d45: { internal: 0, client: 0, pieces: 0 }, d90: { internal: 0, client: 0, pieces: 0 } },
+      )
+    : k.teamSendbacks;
+  // Someone off this tab (on the other tab, a head) never shows in its actions
+  const actions = on ? k.actions.filter((a) => !a.key.startsWith("load-") || on.has(a.key.slice(5))) : k.actions;
+  const teamAvg = on
+    ? { briefToDone: meanOf(makers.map((m) => m.briefToDone)), metDue: meanOf(makers.map((m) => m.metDue.pct)), pushedBack: meanOf(makers.map((m) => m.pushedBack.pct)), revisionTurnaround: meanOf(makers.map((m) => m.revisionTurnaround)), winners: makers.reduce((n, m) => n + m.winners.length, 0) }
+    : k.teamAvg;
   return (
     <div className="grid gap-12">
       <LiveRefresh />
-      <PersonSheet makers={k.makers as Maker[]} />
-      <WinnersSheet makers={k.makers as Maker[]} />
-      <KpiHeader active="kpis" period={k.period} base="/board?view=kpis" switcher={switcher} />
+      <PersonSheet makers={makers as Maker[]} />
+      <WinnersSheet makers={makers as Maker[]} />
+      <KpiHeader active="kpis" period={k.period} base={`/board?view=kpis&tab=${tab}`} switcher={switcher} tab={tab} />
 
       {/* How it's going */}
       <section className="grid gap-5">
         <div className="max-w-2xl">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Creative · last {k.days} days</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">{tab === "video" ? "Video" : "Design"} · last {k.days} days</p>
           <h2 className="mt-1 font-heading text-[32px] leading-[1.05] tracking-tight md:text-[40px]">How creative is going</h2>
         </div>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
@@ -165,11 +212,11 @@ export function CreativeKpisView({ k, canDismiss, switcher = false }: { k: Creat
             <HeadlineCard key={h.key} h={h} />
           ))}
         </div>
-        {k.actions.length > 0 ? (
+        {actions.length > 0 ? (
           <div className="grid gap-2 rounded-[22px] border border-line bg-surface p-2">
             <p className="px-3 pt-2 text-[12px] font-medium text-fg">Act on this first</p>
             <ul className="grid md:grid-cols-2">
-              {k.actions.map((a) => (
+              {actions.map((a) => (
                 <li key={a.key}>
                   <ActionLink href={a.href} className="group flex h-full items-start gap-3 rounded-[16px] px-3 py-3 hover:bg-ink/[0.04]">
                     <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${a.tone === "bad" ? "bg-bad" : "bg-warn"}`} />
@@ -209,11 +256,11 @@ export function CreativeKpisView({ k, canDismiss, switcher = false }: { k: Creat
             <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
               {(
                 [
-                  ["Brief → client", k.teamAvg.briefToDone == null ? "—" : `${k.teamAvg.briefToDone}d`, "team average"],
-                  ["Met due date", k.teamAvg.metDue == null ? "—" : `${k.teamAvg.metDue}%`, "team average"],
-                  ["Due dates pushed back", k.teamAvg.pushedBack == null ? "—" : `${k.teamAvg.pushedBack}%`, "of pieces held"],
-                  ["Revision back in", k.teamAvg.revisionTurnaround == null ? "—" : `${k.teamAvg.revisionTurnaround}d`, "team average"],
-                  ["Winning ads", String(k.teamAvg.winners), "credited to the team"],
+                  ["Brief → client", teamAvg.briefToDone == null ? "—" : `${teamAvg.briefToDone}d`, "team average"],
+                  ["Met due date", teamAvg.metDue == null ? "—" : `${teamAvg.metDue}%`, "team average"],
+                  ["Due dates pushed back", teamAvg.pushedBack == null ? "—" : `${teamAvg.pushedBack}%`, "of pieces held"],
+                  ["Revision back in", teamAvg.revisionTurnaround == null ? "—" : `${teamAvg.revisionTurnaround}d`, "team average"],
+                  ["Winning ads", String(teamAvg.winners), "credited to the team"],
                 ] as const
               ).map(([label, v, sub]) => (
                 <div key={label} className="grid gap-1 rounded-[18px] border border-line bg-surface px-4 py-3">
@@ -238,7 +285,7 @@ export function CreativeKpisView({ k, canDismiss, switcher = false }: { k: Creat
             <p className="text-[11.5px] text-faint">Tap a card for everything on their plate. Hover the score for how it&apos;s worked out (first pass 40%, turnaround 30%, revision turnaround 15%, nothing left sitting 15%). Errors are objective mistakes only, read from internal and client feedback.</p>
           </div>
         ) : (
-          <p className="rounded-[18px] border border-line bg-surface px-4 py-8 text-center text-[14px] text-muted">No designer, editor or copywriter passed work on in this period yet.</p>
+          <p className="rounded-[18px] border border-line bg-surface px-4 py-8 text-center text-[14px] text-muted">{tab === "video" ? "No video editor is on the team yet." : "No graphic designer is on the team yet."}</p>
         )}
       </Section>
 

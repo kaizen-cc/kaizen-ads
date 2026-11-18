@@ -11,6 +11,7 @@ import { cleanMemory, safeAppPath, safeLink, saidYes, ASSISTANT_KEY, FACT_TOPICS
 import { forgetContext, myWork } from "./context";
 import { saveNotes } from "./memory";
 import { commsTools } from "./comms-tools";
+import { profileTools } from "./profile-tools";
 import { failedOnOurSide } from "./messages";
 
 // What the assistant can do on a call, as the person and only within their rights: everything Kaizen AI's tools do
@@ -137,6 +138,16 @@ async function screenFor(ctx: AssistantCtx, input: Record<string, unknown>): Pro
     const { data } = what === "email_ticket" ? await ctx.db.from("email_tickets").select("id").eq("number", n).is("deleted_at", null).maybeSingle() : await ctx.db.from("requests").select("id").eq("number", n).maybeSingle();
     if (!data) return { note: `No ${what === "email_ticket" ? "email " : ""}ticket #${n} they can see.` };
     return { href: what === "email_ticket" ? `/board/email?t=${n}` : `/board?t=${n}`, label: `ticket #${n}` };
+  }
+  if (what === "profile") {
+    // A teammate's profile by name (profiles are staff-wide), or their own
+    const who = clip(input.person, 80).replace(/[%_,()]/g, " ").trim();
+    if (!who) return { href: `/profile/${ctx.me.id}`, label: "your profile" };
+    const { data } = await ctx.db.from("profiles").select("id, full_name, display_name").or(`full_name.ilike.%${who}%,display_name.ilike.%${who}%`).eq("is_active", true).limit(5);
+    const hits = (data ?? []) as { id: string; full_name: string }[];
+    if (!hits.length) return { note: `No teammate called ${who}.` };
+    if (hits.length > 1) return { note: `More than one teammate fits: ${hits.map((h) => h.full_name).join(", ")}. Ask which.` };
+    return { href: `/profile/${hits[0].id}`, label: `${hits[0].full_name}'s profile` };
   }
   if (what === "direction_change") {
     // A change by its id, or the client's newest open one
@@ -272,11 +283,12 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     {
       name: "open_screen",
       description:
-        "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings for email; overview, posts, actions, notes, settings for social), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, social_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, social_sprint, agent (an AI agent's page in Settings, by role key), direction_change (a client's change of direction with its flagged tasks: by id from direction_changes, or the client's newest), feedback (a report they filed: id from submit_feedback, or their own feedback list). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",
+        "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings for email; overview, posts, actions, notes, settings for social), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, social_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, social_sprint, agent (an AI agent's page in Settings, by role key), direction_change (a client's change of direction with its flagged tasks: by id from direction_changes, or the client's newest), feedback (a report they filed: id from submit_feedback, or their own feedback list), profile (a teammate's profile by name in person, or their own). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",
       input_schema: {
         type: "object",
         properties: {
-          what: { type: "string", enum: ["client", "kpi_card", "email_sheet", "social_sheet", "ticket", "email_ticket", "report", "audit", "email_audit", "social_audit", "sprint", "email_sprint", "social_sprint", "agent", "direction_change", "feedback"] },
+          what: { type: "string", enum: ["profile", "client", "kpi_card", "email_sheet", "social_sheet", "ticket", "email_ticket", "report", "audit", "email_audit", "social_audit", "sprint", "email_sprint", "social_sprint", "agent", "direction_change", "feedback"] },
+          person: { type: "string", description: "A teammate's name (what: profile); leave out for their own profile" },
           id: { type: "string", description: "A direction change's id (what: direction_change), or a feedback report's id from submit_feedback (what: feedback)" },
           client: CLIENT,
           tab: { type: "string", enum: ["overview", "ads", "email", "social", "creative", "team", "reports"], description: "The client page's tab (what: client)" },
@@ -555,7 +567,7 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     },
   ];
   const comms = commsTools({ me: ctx.me, db: ctx.db, admin: ctx.admin, callId: ctx.callId, said: () => ctx.said, emit: ctx.emit, roleKey: ASSISTANT_KEY, label: "assistant", path: ctx.path, screen: ctx.screen, clientId: ctx.clientId });
-  return carryYes(ctx, cctx, [...own, ...comms, ...cardTools, ...rest]);
+  return carryYes(ctx, cctx, [...own, ...profileTools(ctx), ...comms, ...cardTools, ...rest]);
 }
 
 /**

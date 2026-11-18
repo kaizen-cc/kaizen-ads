@@ -6,6 +6,7 @@ import { pushParams, useParam } from "@/lib/url-state";
 import type { Option } from "./assign-select";
 import { ClientGrid, type ClientCard } from "./client-grid";
 import { SERVICES, type ServiceSlug } from "@/lib/services";
+import { KPI_SORTS, LINE_LABEL, LINE_OF_SERVICE, asKpiSort, passesKpiFilter, sortClients, summarize, summaryText, type KpiSort } from "@/lib/clients-kpi/core";
 
 // The tabs: every client we're working for now, then each service line, then those missing someone, then the paused ones (counted nowhere else)
 export type Filter = "all" | ServiceSlug | "missing" | "paused";
@@ -24,10 +25,13 @@ export function ClientsBrowser({
   cards,
   slotOptions,
   canEdit,
+  defaultSort = "name",
 }: {
   cards: ClientCard[];
   slotOptions: Record<SlotRole, Option[]>;
   canEdit: boolean;
+  /** The order the list opens in: most critical first for execs, A to Z for everyone else */
+  defaultSort?: KpiSort;
 }) {
   const [q, setQ] = useState("");
   // The filter is in the address (?filter=), so back returns to the list as it was
@@ -44,9 +48,18 @@ export function ClientsBrowser({
     (!who || Object.values(c.assigned).some((o) => o?.id === who)) && (!tier || (c.pkg !== "none" && c.packageLabel === tier));
   const test = FILTERS.find((f) => f.key === filter)!.test;
   const inFilter = cards.filter(test).filter(narrow);
-  const shown = inFilter.filter((c) => !searching || c.name.toLowerCase().includes(term) || (c.kaizenId != null && String(c.kaizenId) === term.replace(/\D/g, "")));
+  // The order and the summary's filter are in the address too (?sort=, ?kpi=). A service tab judges by that line's KPI alone
+  const sort: KpiSort = asKpiSort(useParam("sort")) ?? defaultSort;
+  const only = LINE_OF_SERVICE[filter] ?? null;
+  const askedKpi = useParam("kpi");
+  const kpiFilter = askedKpi === "off" || askedKpi === "critical" ? askedKpi : null;
+  const summary = summarize(inFilter, only);
+  const ordered = sortClients(kpiFilter ? inFilter.filter((c) => passesKpiFilter(c, kpiFilter, only)) : inFilter, sort, only);
+  const shown = ordered.filter((c) => !searching || c.name.toLowerCase().includes(term) || (c.kaizenId != null && String(c.kaizenId) === term.replace(/\D/g, "")));
 
   const pick = (f: Filter) => pushParams({ filter: f === "all" ? null : f });
+  const pickSort = (k: KpiSort) => pushParams({ sort: k === defaultSort ? null : k });
+  const pickKpi = (k: "off" | "critical") => pushParams({ kpi: kpiFilter === k ? null : k });
 
   return (
     <>
@@ -115,7 +128,33 @@ export function ClientsBrowser({
             Clear filters
           </button>
         )}
+        <div role="radiogroup" aria-label="Sort clients" className="no-scrollbar -mx-4 flex w-[calc(100%+2rem)] items-center gap-1 overflow-x-auto px-4 md:mx-0 md:ml-auto md:w-auto md:overflow-visible md:px-0">
+          <span className="mr-1 shrink-0 text-xs text-faint">Sort</span>
+          {KPI_SORTS.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              role="radio"
+              aria-checked={sort === o.key}
+              onClick={() => pickSort(o.key)}
+              className={`inline-flex h-11 shrink-0 items-center whitespace-nowrap rounded-full border px-4 text-sm transition-colors md:h-9 ${sort === o.key ? "border-fg/40 bg-surface-2 text-fg" : "border-line bg-surface text-muted hover:border-faint/60 hover:text-fg"}`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {summary.judged > 0 && (
+        <div className="-mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm" aria-live="polite">
+          <SummaryLine s={summary} only={only} active={kpiFilter} onPick={pickKpi} />
+          {kpiFilter && (
+            <button type="button" onClick={() => pushParams({ kpi: null })} className="inline-flex h-11 items-center px-2 text-xs text-muted hover:text-fg md:h-8">
+              Show everyone
+            </button>
+          )}
+        </div>
+      )}
 
       {searching && (
         <p className="-mt-3 text-xs text-faint" aria-live="polite">
@@ -134,6 +173,29 @@ export function ClientsBrowser({
         <p className="rounded-[14px] border border-dashed border-line px-6 py-14 text-center text-sm text-faint">
           {filter === "paused" ? "No paused clients." : filter === "missing" ? "Every client has their full team." : "No clients here yet."}
         </p>
+      )}
+    </>
+  );
+}
+
+/** "12 clients off target across 3 lines: 5 critical", the two numbers pressable to narrow the list to them */
+function SummaryLine({ s, only, active, onPick }: { s: ReturnType<typeof summarize>; only: Parameters<typeof summarize>[1]; active: "off" | "critical" | null; onPick: (k: "off" | "critical") => void }) {
+  if (!s.offTarget) return <span className="text-muted">{summaryText(s)}</span>;
+  const n = (x: number, w: string) => `${x} ${w}${x === 1 ? "" : "s"}`;
+  const pill = (on: boolean, tone: string) => `inline-flex h-11 items-center rounded-full px-3 text-sm font-medium transition-colors md:h-8 ${on ? "bg-fg text-bg" : tone}`;
+  return (
+    <>
+      <button type="button" onClick={() => onPick("off")} aria-pressed={active === "off"} title="Show only these clients" className={pill(active === "off", "bg-bad-soft text-bad hover:brightness-110")}>
+        {n(s.offTarget, "client")} off target
+      </button>
+      <span className="text-muted">
+        across {only ? LINE_LABEL[only] : n(s.lines.length, "line")}
+        {s.critical ? ":" : ""}
+      </span>
+      {s.critical > 0 && (
+        <button type="button" onClick={() => onPick("critical")} aria-pressed={active === "critical"} title="Show only the critical ones" className={pill(active === "critical", "bg-bad-soft text-bad hover:brightness-110")}>
+          {s.critical} critical
+        </button>
       )}
     </>
   );

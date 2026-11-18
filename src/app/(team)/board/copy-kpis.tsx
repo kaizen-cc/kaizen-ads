@@ -55,13 +55,15 @@ function WriterCard({ w }: { w: Copywriter }) {
   );
 }
 
-export function CopyKpisView({ k, switcher = false }: { k: CopyKpis; switcher?: boolean }) {
+/** The Creative Team KPIs' Copy tab: copywriters only (`members`, by role; heads and execs never) */
+export function CopyKpisView({ k: all, switcher = false, members }: { k: CopyKpis; switcher?: boolean; members?: string[] }) {
+  const k = members ? { ...all, writers: all.writers.filter((w) => members.includes(w.id)) } : all;
   const total = k.split.copy + k.split.creative;
   const copyShare = total ? Math.round((k.split.copy / total) * 100) : 0;
   return (
     <div className="grid gap-12">
       <LiveRefresh />
-      <KpiHeader active="copy-kpis" period={k.period} base="/board?view=copy-kpis" switcher={switcher} />
+      <KpiHeader active="kpis" period={k.period} base="/board?view=kpis&tab=copy" switcher={switcher} tab="copy" />
       <section className="grid gap-5">
         <div className="max-w-2xl">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Copy · last {k.days} days</p>

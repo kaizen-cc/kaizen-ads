@@ -227,6 +227,8 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
     vitals: { inMotion: rows.length, turnaroundDays: turnaround, turnaroundTarget: 5, firstPassRate: firstPass, onTimeRate: onTime },
     attention: attention.slice(0, 8),
     clients: clients.slice(0, 10),
+    /** Every creative client, worst first (the Overview's Clients tab; `clients` is the first ten for the themes) */
+    allClients: clients,
     monthElapsed,
     team: team.map(asLoad),
     teamOf: (roles: TeamRole[]) => team.filter((l) => roles.includes(baseRole(l.role))).map(asLoad),

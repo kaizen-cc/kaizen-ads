@@ -378,7 +378,9 @@ export async function GET(request: Request) {
       const knowledge = await (await import("@/lib/knowledge")).keepKnowledge(admin).catch((e) => String(e));
       // Feedback on the makers' work (review and client comments, Asana comments) sorted into real errors
       const errors = await (await import("@/lib/creative-errors")).keepCreativeErrors(admin).catch((e) => String(e));
-      return Response.json({ links, issues, packages, sheets, chat, knowledge, errors });
+      // The same for email work (Asana email board and Email Board comments), each comment read once
+      const emailErrors = await (await import("@/lib/email-errors")).keepEmailErrors(admin).catch((e) => String(e));
+      return Response.json({ links, issues, packages, sheets, chat, knowledge, errors, emailErrors });
     }
     if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin));
     if (step === "learnings") return Response.json(await (await import("@/lib/learnings")).consolidateLearnings(admin));

@@ -8,6 +8,7 @@ import { CHAT_LIMIT_SECONDS, parseModeLog, stillOpen, talkModeOf, type TalkMode 
 import { currentTopic, endReasonOf, saveEndReason, summarizeCall, sweepOpenCalls } from "@/lib/agent-call/server";
 import { reviewCallSafety } from "@/lib/agent-call/safety";
 import { ASSISTANT_KEY, ASSISTANT_LABEL, assistantGreeting } from "@/lib/assistant/core";
+import { assistantNameOf } from "@/lib/assistant/name";
 import { formatTranscript, transcriptFileName } from "@/lib/agent-call/transcript";
 import { learnFromCall, loadMemory, markFollowedUp } from "@/lib/assistant/memory";
 import { writeCallNotes } from "@/lib/assistant/notes";
@@ -443,13 +444,14 @@ export async function callTranscript(callId: string): Promise<{ ok: true; name: 
   const admin = createAdminClient();
   const { data: call } = await admin.from("ai_role_calls").select("id, role_key, profile_id, started_at, ended_at").eq("id", callId).maybeSingle();
   if (!call || (call.profile_id !== me.id && !me.isExec)) return { ok: false, error: "That call isn't yours." };
-  const [{ data: rows }, { data: roles }, { data: who }] = await Promise.all([
+  const [{ data: rows }, { data: roles }, { data: who }, mineName] = await Promise.all([
     admin.from("ai_role_chats").select("role, content, role_key, created_at").eq("call_id", callId).order("created_at").limit(2000),
     admin.from("ai_roles").select("key, label"),
     call.profile_id === me.id ? Promise.resolve({ data: { full_name: me.fullName } }) : admin.from("profiles").select("full_name").eq("id", call.profile_id as string).maybeSingle(),
+    assistantNameOf(admin, call.profile_id as string),
   ]);
   const labels = Object.fromEntries((roles ?? []).map((r) => [r.key as string, r.label as string]));
-  const label = (key: string | null | undefined) => (key === ASSISTANT_KEY ? ASSISTANT_LABEL : (labels[key ?? ""] ?? "Agent"));
+  const label = (key: string | null | undefined) => (key === ASSISTANT_KEY ? (mineName || ASSISTANT_LABEL) : (labels[key ?? ""] ?? "Agent"));
   const agentLabel = label(call.role_key as string);
   const personName = firstNameOf((who?.full_name as string | null) ?? null);
   const text = formatTranscript({

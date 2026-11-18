@@ -1,6 +1,6 @@
 import { hasEveryClient, isExecOrLead, requireStaff } from "@/lib/auth";
 import { freshness, nyToday } from "@/lib/dates";
-import { SLOTS, canHold, isChannelOnly, lineOfTeam, seatNeeded, type SlotRole } from "@/lib/roles";
+import { SLOTS, canHold, isChannelOnly, lineOfTeam, seatNeeded, teamPlatform, type SlotRole } from "@/lib/roles";
 import { primaryOf } from "@/lib/buyer-seats";
 import { mayAssignSeat } from "@/lib/seat-permissions";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -10,6 +10,8 @@ import { type ClientCard } from "./client-grid";
 import { ClientsBrowser } from "./clients-browser";
 import { ArchivedList, type ArchiveLog } from "./archived-list";
 import { SERVICES, servicesOf, type ServiceSlug } from "@/lib/services";
+import { cachedClientKpis, type AllClientKpis } from "@/lib/clients-kpi/load";
+import { allowedKpiLines } from "@/lib/clients-kpi/core";
 
 type Row = {
   id: string;
@@ -48,7 +50,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     )
     .neq("status", "offboarded")
     .order("name");
-  const [{ data }, { data: staff }, { data: usage }, { data: open }, { data: snaps }, { data: archived }, { data: kpiRows }] = await Promise.all([
+  const [{ data }, { data: staff }, { data: usage }, { data: open }, { data: snaps }, { data: archived }, { data: kpiRows }, kpiAll] = await Promise.all([
     req,
     supabase.from("profiles").select("id, full_name, role, also_buys, also_social, also_designs_email, teams").eq("is_active", true).order("full_name"),
     supabase.from("client_allotment_usage").select("*"),
@@ -57,6 +59,8 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     supabase.from("clients").select("id, name, slug, archived_at, archive_reason, archive_source").not("archived_at", "is", null).order("archived_at", { ascending: false }),
     // Which ad platforms each client is set up on (Track's service list is often empty)
     supabase.from("kpi_targets").select("client_id, platform").eq("active", true),
+    // Every client's KPI per line and the reasons behind it: one shared, cached read (never per card)
+    cachedClientKpis().catch((): AllClientKpis => ({})),
   ]);
   const platforms = new Map<string, Set<string>>();
   for (const k of kpiRows ?? []) platforms.set(k.client_id as string, (platforms.get(k.client_id as string) ?? new Set()).add(k.platform as string));
@@ -112,10 +116,13 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   const ordered = [...rows].sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base", numeric: true }));
   // The Head of Meta sees the clients on Meta, the Head of Google those on Google (execs everyone)
   const line = me.role === "head_of_meta" ? "facebook-ads" : me.role === "head_of_google" ? "google-ads" : null;
+  const lines = new Set(allowedKpiLines(me, lineOfTeam(me.role), teamPlatform(me.role)));
   const cards = ordered.filter((r) => !line || servicesFor(r).includes(line)).map((r) => {
     const u = (usage ?? []).find((x) => x.client_id === r.id);
     return {
       missing: missing(r),
+      kpis: (kpiAll[r.id]?.kpis ?? []).filter((k) => lines.has(k.line)),
+      atRisk: kpiAll[r.id]?.atRisk ?? false,
       links: (["slack_channel_id", "internal_slack_channel_id", "drive_folder_id"] as const).filter((k) => !r[k]),
       services: servicesFor(r),
       pkg: channel ? "none" : pkgOf(r),
@@ -170,7 +177,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
         )}
       </header>
 
-      <ClientsBrowser cards={cards} slotOptions={slotOptions} canEdit={canEdit} />
+      <ClientsBrowser cards={cards} slotOptions={slotOptions} canEdit={canEdit} defaultSort={me.isExec ? "critical" : "name"} />
 
       <ArchivedList
         canRestore={canEdit}

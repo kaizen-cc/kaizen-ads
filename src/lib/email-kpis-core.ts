@@ -324,6 +324,57 @@ export function clientRounds(pieces: readonly Piece[], from: string, to: string)
   return { copy, design, reviewed: reviewed.size, copyBack };
 }
 
+// ─── Build ────────────────────────────────────────────────────────────────────
+
+export const BUILD_TARGET = turnaroundDays("ready_for_build");
+const BUILT: Phase[] = ["ready_to_send", "live", "done"];
+
+/** Each build finished (Ready for build moving on to send) in the window, credited to whoever held it */
+export function buildPasses(pieces: readonly Piece[], from: string, to: string): Pass[] {
+  const out: Pass[] = [];
+  for (const p of pieces)
+    for (const s of p.stints) {
+      if (s.stage !== "ready_for_build" || !s.to || !s.next || !BUILT.includes(s.next) || !inWin(s.to, from, to)) continue;
+      const days = bizDays(s.from, s.to);
+      out.push({ person: s.holder, piece: p, at: s.to, days, onTime: days <= BUILD_TARGET });
+    }
+  return out;
+}
+
+/** Builds that came back to Ready for build after leaving it (a wrong link, a broken block), against the builder who had it */
+export function buildReturns(pieces: readonly Piece[], since: string): { person: string | null; at: string; piece: Piece }[] {
+  const out: { person: string | null; at: string; piece: Piece }[] = [];
+  for (const p of pieces)
+    p.stints.forEach((s, i) => {
+      if (s.stage === "ready_for_build" || s.next !== "ready_for_build" || !s.to || s.to < since) return;
+      const built = p.stints.slice(0, i).reverse().find((x) => x.stage === "ready_for_build");
+      if (!built) return;
+      out.push({ person: built.holder, at: s.to, piece: p });
+    });
+  return out;
+}
+
+// ─── Strategy ─────────────────────────────────────────────────────────────────
+
+/** Where work waits on the strategist: copy to approve, the final look, the final check before send */
+export const STRATEGIST_STAGES: Phase[] = ["copy_review", "for_review", "ready_to_send"];
+
+/** Each finished stint in these stages in the window: business days it sat with whoever held it, against that stage's target */
+export function holdTimes(pieces: readonly Piece[], stages: readonly Phase[], from: string, to: string): { person: string | null; stage: Phase; days: number; target: number; piece: Piece }[] {
+  const out: { person: string | null; stage: Phase; days: number; target: number; piece: Piece }[] = [];
+  for (const p of pieces)
+    for (const s of p.stints) {
+      if (!stages.includes(s.stage) || !s.to || !inWin(s.to, from, to) || s.next === s.stage) continue;
+      out.push({ person: s.holder, stage: s.stage, days: bizDays(s.from, s.to), target: s.stage === "done" ? 0 : turnaroundDays(s.stage as EmailStage), piece: p });
+    }
+  return out;
+}
+
+/** A bottleneck: their stints run half again over target on average, or two or more are sitting past target right now */
+export function isBottleneck(avgOver: number | null, sittingPastTarget: number) {
+  return (avgOver != null && avgOver >= 1.5) || sittingPastTarget >= 2;
+}
+
 // ─── Results: each sent email against its own account's usual ─────────────────
 
 export type Sent = { id: string; clientId: string; name: string; subject: string | null; preview: string | null; channel: string | null; sendTime: string | null; recipients: number; openRate: number | null; clickRate: number | null; revenue: number };

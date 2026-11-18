@@ -1,5 +1,6 @@
 "use client";
 
+import { assistantTitle } from "@/lib/agent-look";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import type { CallCard, LearnedItem, UploadAsk } from "@/lib/agent-call/core";
 import type { ChatLine } from "@/lib/agent-call/chat-engine";
@@ -372,7 +373,7 @@ function HeaderButton({ label, onClick, children, className = "" }: { label: str
 export function ChatWidget({ v, minimized, phone, onMinimize, onExpand }: { v: ChatView; minimized: boolean; phone: boolean; onMinimize: () => void; onExpand: () => void }) {
   const { ref: dockRef, style: dockStyle, dragging, handle, keys } = useCallDock(phone ? "phone" : "desktop", { snap: phone && minimized });
   const [menu, setMenu] = useState(false);
-  const title = v.agent.roleKey === "assistant" ? "Your assistant" : `The ${v.agent.label}`;
+  const title = v.agent.roleKey === "assistant" ? assistantTitle(v.agent.label) : `The ${v.agent.label}`;
   const lastAgent = [...v.lines].reverse().find((l) => l.who === "agent");
   const status = v.error ?? (v.connecting ? "Opening…" : v.busy ? "Writing…" : "Chat");
 

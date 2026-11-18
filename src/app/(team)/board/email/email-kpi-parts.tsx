@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { klaviyoCampaignPreview } from "@/app/(team)/clients/[slug]/klaviyo-actions";
 import { HoverCard } from "@/components/hover-card";
 import type { Sendbacks, TaskRef } from "@/lib/creative-kpis";
-import type { Cadence, EmailMaker, EmailResult, FixItem, LateTicket, TiringFlow, Workload } from "@/lib/email-kpis";
+import type { BuildMaker, Cadence, EmailMaker, EmailResult, FixItem, LateTicket, StrategistCard, TiringFlow, Workload } from "@/lib/email-kpis";
+import type { EmailErrorItem } from "@/lib/email-errors";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { matchesClientName } from "@/lib/allotment";
 import { TaskRow } from "../kpi-parts";
@@ -37,6 +39,262 @@ function TaskList({ items, empty, max = 8 }: { items: TaskRef[]; empty: string; 
       ))}
       {items.length > max && <p className="px-2.5 pt-1 text-[11.5px] text-faint">and {items.length - max} more on their card</p>}
     </div>
+  );
+}
+
+// Each email's HTML, read once per page (the same saved preview the client page's hover card shows)
+const previews = new Map<string, Promise<string | null>>();
+function previewHtml(clientId: string, campaignId: string) {
+  const k = `${clientId}:${campaignId}`;
+  let p = previews.get(k);
+  if (!p) {
+    p = klaviyoCampaignPreview(clientId, campaignId)
+      .then((r) => (r.ok && r.preview.html && r.preview.channel !== "sms" ? r.preview.html : null))
+      .catch(() => null);
+    previews.set(k, p);
+  }
+  return p;
+}
+
+/**
+ * The top of an email as it landed: the saved picture when there is one (the Board's uploaded design or the report's
+ * drawing), otherwise the email itself in a frame that runs nothing (no scripts, no same origin), scaled to the card,
+ * read from the client's email platform when the card comes into view.
+ */
+function EmailThumb({ r }: { r: EmailResult }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [html, setHtml] = useState<string | null | undefined>(undefined);
+  const [width, setWidth] = useState(320);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (r.image && !failed) return;
+    const el = box.current;
+    if (!el) return;
+    setWidth(el.clientWidth || 320);
+    let live = true;
+    const io = new IntersectionObserver((seen) => {
+      if (!seen.some((x) => x.isIntersecting)) return;
+      io.disconnect();
+      void previewHtml(r.clientId, r.key.split(":").slice(1).join(":")).then((h) => live && setHtml(h));
+    }, { rootMargin: "300px" });
+    io.observe(el);
+    return () => {
+      live = false;
+      io.disconnect();
+    };
+  }, [r.image, r.clientId, r.key, failed]);
+  if (r.image && !failed)
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={r.image} alt={`The top of ${r.subject ?? r.name}`} loading="lazy" onError={() => setFailed(true)} className="h-full w-full object-cover object-top" />;
+  const scale = width / 600;
+  return (
+    <div ref={box} className="absolute inset-0 bg-white">
+      {html ? (
+        <iframe title={`The top of ${r.subject ?? r.name}`} srcDoc={html} sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" loading="lazy" tabIndex={-1} className="pointer-events-none block border-0" style={{ width: 600, height: 900 / Math.max(scale, 0.1), transform: `scale(${scale})`, transformOrigin: "0 0" }} />
+      ) : html === null ? (
+        <div className="grid h-full place-items-center bg-surface-2 px-6 text-center text-[12.5px] text-faint">This email&apos;s preview couldn&apos;t be read from the client&apos;s email platform.</div>
+      ) : (
+        <div className="h-full animate-pulse bg-surface-2" aria-label="Loading the email" />
+      )}
+    </div>
+  );
+}
+
+type Tone3 = "ok" | "warn" | "bad" | null;
+const TONE_TEXT3 = { ok: "text-ok", warn: "text-warn", bad: "text-bad" } as const;
+const rateText = (n: number, of: number) => (of ? `${Math.round((n / of) * 100)}%` : null);
+const rateTone = (n: number, of: number): Tone3 => {
+  if (!of) return null;
+  const r = (n / of) * 100;
+  return r <= 20 ? "ok" : r <= 40 ? "warn" : "bad";
+};
+
+/** A card's numbers: label, the number, what it counts (two across on a phone, three wider) */
+function StatGrid({ stats }: { stats: { label: string; value: string | null; sub: string; tone: Tone3 }[] }) {
+  return (
+    <dl className="grid grid-cols-2 gap-x-3 gap-y-3.5 sm:grid-cols-3">
+      {stats.map((s) => (
+        <div key={s.label} className="grid content-start gap-0.5">
+          <dt className="text-[11px] text-muted">{s.label}</dt>
+          <dd className={`tabular text-[19px] font-semibold leading-none ${s.tone ? TONE_TEXT3[s.tone] : "text-fg"}`}>{s.value ?? "—"}</dd>
+          <span className="text-[10.5px] leading-snug text-faint">{s.sub}</span>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** What's on their plate, in a list that scrolls on its own (late first); tapping a row opens it, never the card */
+function PlateBox({ items, late, label = "On their plate" }: { items: TaskRef[]; late: number; label?: string }) {
+  return (
+    <div {...stop} className="grid gap-1 rounded-[14px] bg-ink/[0.035] p-1.5">
+      <p className="flex items-baseline justify-between px-2 pt-1 text-[11.5px]">
+        <span className="font-medium text-fg">{label}</span>
+        <span className="tabular text-faint">
+          {items.length}
+          {late ? <span className="text-bad"> · {late} late</span> : null}
+        </span>
+      </p>
+      {items.length ? (
+        <div className="max-h-52 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
+          {items.map((t) => (
+            <TaskRow key={t.key} t={t} compact />
+          ))}
+        </div>
+      ) : (
+        <p className="px-2 pb-2 text-[12.5px] text-muted">Nothing open right now.</p>
+      )}
+    </div>
+  );
+}
+
+/** Real errors read from comments on someone's work, with what was said */
+function ErrorList({ items, max = 8 }: { items: EmailErrorItem[]; max?: number }) {
+  if (!items.length) return <p className="px-2.5 py-2 text-[13px] text-muted">No errors in comments on their work in the last 90 days.</p>;
+  return (
+    <div className="grid gap-1.5">
+      {items.slice(0, max).map((e) => {
+        const href = e.ticket ? `/board/email?t=${e.ticket}` : e.url;
+        const body = (
+          <>
+            <span className="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span className="rounded-full bg-bad-soft px-2 py-0.5 font-medium text-bad">{e.type ?? "Error"}</span>
+              <span className="text-faint">{[e.client, e.author, when(e.at)].filter(Boolean).join(" · ")}</span>
+            </span>
+            <span className="line-clamp-3 text-[12.5px] leading-snug text-fg">{e.quote}</span>
+            {(e.task || e.ticket) && <span className="truncate text-[11px] text-muted">{e.ticket ? `E-${e.ticket} ` : ""}{e.task ?? ""}</span>}
+          </>
+        );
+        return href ? (
+          <a key={e.id} href={href} target={e.ticket ? undefined : "_blank"} rel="noreferrer" className="grid gap-1 rounded-[12px] px-2.5 py-2 hover:bg-ink/[0.05]">
+            {body}
+          </a>
+        ) : (
+          <div key={e.id} className="grid gap-1 rounded-[12px] px-2.5 py-2">
+            {body}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function CardHead({ name, sub, right }: { name: string; sub: string; right?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-ink/[0.07] text-[13px] font-semibold text-fg">{initials(name)}</span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-heading text-[17px] leading-tight">{name}</p>
+        <p className="truncate text-[12px] text-muted">{sub}</p>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+/** An email builder: builds, turnaround, what came back, real errors, pushback, and their plate */
+export function BuildCard({ b }: { b: BuildMaker }) {
+  return (
+    <li className="grid content-start gap-4 rounded-[22px] border border-line bg-surface p-5">
+      <CardHead name={b.name} sub={`${b.role} · ${b.builds} ${b.builds === 1 ? "build" : "builds"} this period`} />
+      <StatGrid
+        stats={[
+          { label: "Turnaround", value: b.turnaround == null ? null : `${b.turnaround}d`, sub: `target ${b.turnaroundTarget}d · ${b.onTime == null ? "no builds yet" : `${b.onTime}% on time`}`, tone: b.turnaround == null ? null : b.turnaround <= b.turnaroundTarget ? "ok" : b.turnaround <= b.turnaroundTarget * 1.5 ? "warn" : "bad" },
+          { label: "Came back", value: b.returnRate == null ? null : `${b.returnRate}%`, sub: `${b.returns} of ${b.builds} builds returned`, tone: b.returnRate == null ? null : b.returnRate <= 10 ? "ok" : b.returnRate <= 25 ? "warn" : "bad" },
+          { label: "Errors", value: String(b.errors.d90), sub: `${b.errors.d45} in 45d · read from comments`, tone: b.errors.d45 >= 3 ? "bad" : b.errors.d90 ? "warn" : "ok" },
+          { label: "Pushback", value: b.pushedBack.pct == null ? null : `${b.pushedBack.pct}%`, sub: `${b.pushedBack.items.length} of ${b.pushedBack.of} tasks rescheduled, 90d`, tone: b.pushedBack.pct == null ? null : b.pushedBack.pct <= 10 ? "ok" : b.pushedBack.pct <= 25 ? "warn" : "bad" },
+        ]}
+      />
+      <PlateBox items={b.plate} late={b.late} />
+      <div className="flex flex-wrap gap-1.5">
+        <Peek label={b.errors.d90 === 1 ? "error" : "errors"} n={b.errors.d90} tone={b.errors.d45 >= 3 ? "bad" : b.errors.d90 ? "warn" : null} title={`Real errors in comments on their builds · ${b.errors.d45} in 45 days, ${b.errors.d90} in 90`}>
+          <ErrorList items={b.errors.items} />
+        </Peek>
+        <Peek label="came back" n={b.returned.length} title="Builds that came back to them">
+          <TaskList items={b.returned} empty="Nothing came back this period." />
+        </Peek>
+        <Peek label="rescheduled" n={b.pushedBack.items.length} tone={(b.pushedBack.pct ?? 0) >= 25 ? "warn" : null} title="Due dates they moved later, 90 days">
+          <TaskList items={b.pushedBack.items} empty="They haven't moved a due date later in the last 90 days." />
+        </Peek>
+      </div>
+      {b.act && <p className="rounded-[12px] bg-warn-soft px-3 py-2 text-[12.5px] leading-snug text-warn">{b.act}</p>}
+    </li>
+  );
+}
+
+const TREND = { up: { t: "▲", c: "text-ok" }, down: { t: "▼", c: "text-bad" }, flat: { t: "steady", c: "text-faint" } } as const;
+
+/** A strategist's scorecard: their accounts, how early requests come in, how long work sits with them, replies, reports */
+export function StrategistScorecard({ s }: { s: StrategistCard }) {
+  const tr = s.accounts.trend ? TREND[s.accounts.trend] : null;
+  const scoreTone: Tone3 = s.accounts.avg == null ? null : s.accounts.avg >= 80 ? "ok" : s.accounts.avg >= 60 ? "warn" : "bad";
+  return (
+    <li className="grid content-start gap-4 rounded-[22px] border border-line bg-surface p-5">
+      <CardHead
+        name={s.name}
+        sub={`${s.role} · ${s.accounts.n} ${s.accounts.n === 1 ? "account" : "accounts"}`}
+        right={
+          s.response.bottleneck ? <span className="shrink-0 rounded-full bg-bad-soft px-2.5 py-1 text-[11px] font-semibold text-bad">Bottleneck</span> : null
+        }
+      />
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-4 rounded-[16px] bg-ink/[0.035] p-3.5">
+        <div className="grid justify-items-start">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">Accounts</span>
+          <span className={`tabular font-display text-[34px] leading-none ${scoreTone ? TONE_TEXT3[scoreTone] : "text-faint"}`}>{s.accounts.avg ?? "—"}</span>
+          {tr && (
+            <span className={`tabular text-[11px] ${tr.c}`}>
+              {tr.t}
+              {s.accounts.trend !== "flat" && s.accounts.avg != null && s.accounts.before != null ? ` ${Math.abs(s.accounts.avg - s.accounts.before)}` : ""}
+              {s.accounts.since ? ` since ${when(s.accounts.since)}` : ""}
+            </span>
+          )}
+        </div>
+        <div className="grid min-w-0 gap-1 text-[12px]">
+          <span className="text-muted">Email score average · {s.accounts.scored} of {s.accounts.n} scored</span>
+          {s.accounts.lowest.map((c) => (
+            <Link key={c.slug} href={`/clients/${c.slug}?service=email`} className="flex items-baseline justify-between gap-2 hover:underline">
+              <span className="min-w-0 truncate">{c.name}</span>
+              <span className={`tabular shrink-0 ${c.score >= 80 ? "text-ok" : c.score >= 60 ? "text-warn" : "text-bad"}`}>{c.score}</span>
+            </Link>
+          ))}
+          {!s.accounts.trend && s.accounts.scored > 0 && <span className="text-[11px] text-faint">The trend shows once a few days of scores are kept.</span>}
+        </div>
+      </div>
+      <StatGrid
+        stats={[
+          { label: "Requests on time", value: s.requests.onTime == null ? null : `${s.requests.onTime}%`, sub: s.requests.of ? `${s.requests.of} with a send date${s.requests.avgShort ? ` · late ones ${s.requests.avgShort}d short` : ""}` : "no requests with a send date", tone: s.requests.onTime == null ? null : s.requests.onTime >= 80 ? "ok" : s.requests.onTime >= 60 ? "warn" : "bad" },
+          { label: "Sent back to them", value: s.response.avgDays == null ? null : `${s.response.avgDays}d`, sub: `avg with them · ${s.response.sitting} past target now`, tone: s.response.bottleneck ? "bad" : s.response.avgDays == null ? null : s.response.avgDays <= 1 ? "ok" : "warn" },
+          { label: "Slack and email", value: s.replies.medianHours == null ? null : s.replies.medianHours < 1 ? `${Math.round(s.replies.medianHours * 60)}m` : `${s.replies.medianHours}h`, sub: `median reply · ${s.replies.waiting} waiting${s.replies.escalated ? `, ${s.replies.escalated} escalated` : ""}`, tone: s.replies.escalated ? "bad" : s.replies.medianHours == null ? null : s.replies.medianHours <= 4 ? "ok" : s.replies.medianHours <= 24 ? "warn" : "bad" },
+          { label: "Reports on time", value: s.reports.rate == null ? null : `${s.reports.rate}%`, sub: `weekly and monthly · ${s.reports.onTime} on time, ${s.reports.late} late`, tone: s.reports.rate == null ? null : s.reports.rate >= 90 ? "ok" : s.reports.rate >= 70 ? "warn" : "bad" },
+        ]}
+      />
+      <PlateBox items={s.plate} late={s.plate.filter((t) => t.late).length} />
+      <div className="flex flex-wrap gap-1.5">
+        <Peek label="late requests" n={s.requests.late.length} tone={s.requests.late.length >= 3 ? "warn" : null} title="Requests that came in short of the lead a send needs">
+          <TaskList items={s.requests.late} empty="Every request came in with the full lead." />
+        </Peek>
+        <Peek label="waiting on them" n={s.response.items.length} tone={s.response.bottleneck ? "bad" : null} title="Sitting with them past the stage's target">
+          <TaskList items={s.response.items} empty="Nothing waiting on them past target." />
+        </Peek>
+        <Peek label="late reports" n={s.reports.lateItems.length} tone={s.reports.late >= 2 ? "warn" : null} title="Client reports sent late (or still not sent)">
+          {s.reports.lateItems.length ? (
+            <ul className="grid gap-1 px-2.5 py-1 text-[12.5px]">
+              {s.reports.lateItems.map((r) => (
+                <li key={`${r.client}:${r.kind}:${r.periodEnd}`} className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 truncate">
+                    {r.client} · {r.kind}
+                  </span>
+                  <span className="shrink-0 text-[11.5px] text-faint">{r.postedAt ? `sent ${when(r.postedAt)}` : "not sent"} · due {when(r.due)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="px-2.5 py-2 text-[13px] text-muted">Every report went out on time.</p>
+          )}
+        </Peek>
+      </div>
+      {s.act && <p className="rounded-[12px] bg-warn-soft px-3 py-2 text-[12.5px] leading-snug text-warn">{s.act}</p>}
+    </li>
   );
 }
 
@@ -168,44 +426,22 @@ export function EmailPersonCard({ m }: { m: EmailMaker }) {
           </span>
         </div>
 
-        <dl className="grid grid-cols-3 gap-3">
-          {(
-            [
-              ["Designed", String(m.pieces), null],
-              ["First pass", m.firstPass == null ? "—" : `${m.firstPass}%`, m.firstPass == null ? null : m.firstPass >= 70 ? "text-ok" : m.firstPass >= 50 ? "text-warn" : "text-bad"],
-              ["Met due date", m.metDue.pct == null ? "—" : `${m.metDue.pct}%`, m.metDue.pct == null ? null : m.metDue.pct >= 80 ? "text-ok" : m.metDue.pct >= 60 ? "text-warn" : "text-bad"],
-            ] as const
-          ).map(([k, v, c]) => (
-            <div key={k} className="grid gap-0.5">
-              <dt className="text-[11px] text-muted">{k}</dt>
-              <dd className={`tabular text-[20px] font-semibold leading-none ${c ?? "text-fg"}`}>{v}</dd>
-            </div>
-          ))}
-        </dl>
+        <StatGrid
+          stats={[
+            { label: "Turnaround", value: m.turnaround == null ? null : `${m.turnaround}d`, sub: `target ${m.turnaroundTarget}d · ${m.pieces} designed`, tone: m.turnaround == null ? null : m.turnaround <= m.turnaroundTarget ? "ok" : m.turnaround <= m.turnaroundTarget * 1.5 ? "warn" : "bad" },
+            { label: "Internal revisions", value: rateText(m.sendbacks.d90.internal, m.sendbacks.d90.pieces), sub: `sent back in review · ${m.sendbacks.d90.internal} of ${m.sendbacks.d90.pieces}, 90d`, tone: rateTone(m.sendbacks.d90.internal, m.sendbacks.d90.pieces) },
+            { label: "Client revisions", value: rateText(m.sendbacks.d90.client, m.sendbacks.d90.pieces), sub: `sent back by clients · ${m.sendbacks.d90.client} of ${m.sendbacks.d90.pieces}, 90d`, tone: rateTone(m.sendbacks.d90.client, m.sendbacks.d90.pieces) },
+            { label: "Revision turnaround", value: m.revisionTurnaround == null ? null : `${m.revisionTurnaround}d`, sub: "client changes back to them", tone: m.revisionTurnaround == null ? null : m.revisionTurnaround <= 1 ? "ok" : m.revisionTurnaround <= 2 ? "warn" : "bad" },
+            { label: "Errors", value: String(m.errors.d90), sub: `${m.errors.d45} in 45d · read from comments`, tone: m.errors.d45 >= 3 ? "bad" : m.errors.d90 ? "warn" : "ok" },
+            { label: "Due dates pushed", value: m.pushedBack.pct == null ? null : `${m.pushedBack.pct}%`, sub: `${m.pushedBack.items.length} of ${m.pushedBack.of} tickets held, 90d`, tone: m.pushedBack.pct == null ? null : m.pushedBack.pct <= 10 ? "ok" : m.pushedBack.pct <= 25 ? "warn" : "bad" },
+          ]}
+        />
 
-        <dl className="grid grid-cols-3 gap-3 border-t border-line pt-3">
-          <div className="grid gap-0.5">
-            <dt className="text-[11px] text-muted">Request → client</dt>
-            <dd className="tabular text-[15px] font-semibold leading-tight">{m.briefToDone == null ? "—" : `${m.briefToDone}d`}</dd>
-          </div>
-          <div className="grid gap-0.5">
-            <dt className="text-[11px] text-muted">On time</dt>
-            <dd className={`tabular text-[15px] font-semibold leading-tight ${m.onTime == null ? "" : m.onTime >= 80 ? "text-ok" : m.onTime >= 60 ? "text-warn" : "text-bad"}`}>{m.onTime == null ? "—" : `${m.onTime}%`}</dd>
-          </div>
-          <div className="grid gap-0.5">
-            <dt className="text-[11px] text-muted">Revision back in</dt>
-            <dd className={`tabular text-[15px] font-semibold leading-tight ${m.revisionTurnaround == null ? "" : m.revisionTurnaround <= 1 ? "text-ok" : m.revisionTurnaround <= 2 ? "text-warn" : "text-bad"}`}>{m.revisionTurnaround == null ? "—" : `${m.revisionTurnaround}d`}</dd>
-          </div>
-        </dl>
-
-        <div className="grid grid-cols-2 gap-3 rounded-[14px] bg-ink/[0.035] p-3">
-          <Rate label="Sent back in review" s={m.sendbacks} kind="internal" />
-          <Rate label="Sent back by clients" s={m.sendbacks} kind="client" />
-        </div>
+        <PlateBox items={m.plate} late={m.late} />
 
         <div className="flex flex-wrap gap-1.5">
-          <Peek label="on their plate" n={m.plate.length} tone={m.late ? "warn" : null} title={`On their plate · ${m.late} late · ${m.messages} emails`}>
-            <TaskList items={m.plate} empty="Nothing open right now." />
+          <Peek label={m.errors.d90 === 1 ? "error" : "errors"} n={m.errors.d90} tone={m.errors.d45 >= 3 ? "bad" : m.errors.d90 ? "warn" : null} title={`Real errors in comments on their work · ${m.errors.d45} in 45 days, ${m.errors.d90} in 90`}>
+            <ErrorList items={m.errors.items} />
           </Peek>
           <Peek label="sent back" n={m.revisions.length} title="Sent back, last 90 days">
             <TaskList items={m.revisions} empty="Nothing sent back in the last 90 days." />
@@ -356,6 +592,13 @@ export function EmailPersonSheet({ makers }: { makers: EmailMaker[] }) {
             </section>
           )}
           <section className="grid gap-2">
+            <h3 className="font-heading text-[16px]">Errors, last 90 days</h3>
+            <p className="text-[12px] text-faint">Comments on their work that point at a real mistake (a wrong link, image or price, something broken), read by the AI from Asana and the Email Board.</p>
+            <div className="rounded-[16px] border border-line bg-surface p-1.5">
+              <ErrorList items={m.errors.items} max={12} />
+            </div>
+          </section>
+          <section className="grid gap-2">
             <h3 className="font-heading text-[16px]">AI review fixes, last 90 days</h3>
             <p className="text-[12px] text-faint">Must-fix notes the AI pinned on their designs before the strategist looked: copy that doesn&apos;t match, a tap target too small, the wrong colours or logo.</p>
             <div className="rounded-[16px] border border-line bg-surface p-1.5">
@@ -485,12 +728,7 @@ export function EmailResultCard({ r, on, credit = false }: { r: EmailResult; on:
         </div>
         {on === "click" && (
           <div className="relative aspect-[2/3] max-h-[360px] w-full overflow-hidden bg-ink/[0.04]">
-            {r.image ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={r.image} alt={`The top of ${r.subject ?? r.name}`} loading="lazy" className="h-full w-full object-cover object-top" />
-            ) : (
-              <div className="grid h-full place-items-center px-6 text-center text-[12.5px] text-faint">No picture of this email yet. It shows once the client&apos;s report draws it, or once its design is on the Email Board.</div>
-            )}
+            <EmailThumb r={r} />
             <span className={`absolute left-3 top-3 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow ${win ? "bg-ok text-white" : "bg-bad text-white"}`}>{win ? "Out-clicks their usual" : "Below their usual"}</span>
           </div>
         )}
@@ -616,8 +854,9 @@ export function CadenceList({ rows, canDismiss }: { rows: Cadence[]; canDismiss:
   const found = rows.filter((r) => matchesClientName(r.name, query));
   const live = found.filter((r) => !r.dismissed);
   const dismissed = found.filter((r) => r.dismissed);
-  const critical = live.filter((r) => r.status === "none" || r.status === "behind");
-  const good = live.filter((r) => r.status === "on_track" || r.status === "ahead");
+  // A client whose platform isn't reading needs attention for that, never shown as nothing sent
+  const critical = live.filter((r) => !r.sync.ok || r.status === "none" || r.status === "behind");
+  const good = live.filter((r) => r.sync.ok && (r.status === "on_track" || r.status === "ahead"));
   const shown = filter === "all" ? live : filter === "on_track" ? good : critical;
 
   const dismiss = async (a: Cadence) => {
@@ -636,6 +875,21 @@ export function CadenceList({ rows, canDismiss }: { rows: Cadence[]; canDismiss:
   const row = (a: Cadence) => {
     const s = STATUS[a.status];
     const cap = Math.max(a.usual, a.sent, 1);
+    if (!a.sync.ok)
+      return (
+        <li key={a.id} className="grid gap-1.5 border-b border-line/70 px-4 py-3 last:border-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Link href={`/clients/${a.slug}?service=email`} className="min-w-0 truncate text-[14px] hover:underline">
+              {a.name}
+            </Link>
+            <span className="whitespace-nowrap rounded-full bg-bad-soft px-2.5 py-0.5 text-[11px] font-medium text-bad">Not syncing</span>
+          </div>
+          <p className="text-[12.5px] leading-snug text-fg">
+            {a.sync.label}: sends this cycle can&apos;t be counted{a.open ? ` · ${a.open} in the works on the Board` : ""}.
+          </p>
+          {a.sync.detail && <p className="text-[11.5px] leading-snug text-muted">{a.sync.detail}</p>}
+        </li>
+      );
     return (
       <li key={a.id} className="grid gap-2 border-b border-line/70 px-4 py-3 last:border-0">
         <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_auto] md:items-center md:gap-4">
@@ -720,35 +974,53 @@ export function CadenceList({ rows, canDismiss }: { rows: Cadence[]; canDismiss:
   );
 }
 
-/** Each designer's open tickets and emails right now: the busiest first, tap one for their plate */
-export function WorkloadList({ rows }: { rows: Workload[] }) {
+const TAB_OF_ROLE: Record<string, string> = { email_designer: "design", email_builder: "build", email_strategist: "strategy" };
+
+/**
+ * Everyone on the email team's open tickets and emails right now (designers, builders and strategists): the busiest
+ * first. Tap a designer on the Design tab for their plate; anyone else opens their own tab.
+ */
+export function WorkloadList({ rows, tab = "design" }: { rows: Workload[]; tab?: string }) {
   const max = Math.max(1, ...rows.map((r) => r.open));
   const typical = rows.length ? rows.reduce((n, r) => n + r.open, 0) / rows.length : 0;
-  if (!rows.length) return <p className="rounded-[18px] border border-line bg-surface px-4 py-6 text-center text-[14px] text-muted">Nobody designing email has work open.</p>;
+  if (!rows.length) return <p className="rounded-[18px] border border-line bg-surface px-4 py-6 text-center text-[14px] text-muted">Nobody on the email team has work open.</p>;
   return (
-    <ul className="grid rounded-[22px] border border-line bg-surface p-1.5">
+    <ul className="grid max-h-[520px] overflow-y-auto overscroll-contain rounded-[22px] border border-line bg-surface p-1.5">
       {rows.map((r) => {
         const heavy = typical && r.open >= Math.max(6, typical * 1.6);
         const tone = r.late ? "bad" : heavy ? "warn" : "ok";
+        const theirTab = TAB_OF_ROLE[r.roleKey] ?? "design";
+        const cls = "grid w-full gap-1.5 rounded-[14px] px-3 py-2.5 text-left hover:bg-ink/[0.04] max-md:min-h-11";
+        const inner = (
+          <>
+            <span className="flex items-baseline justify-between gap-3 text-[13.5px]">
+              <span className="min-w-0 truncate">
+                {r.name} <span className="text-[12px] text-faint">· {r.role}</span>
+              </span>
+              <span className="tabular shrink-0 text-[12px] text-muted">
+                {r.open} {r.open === 1 ? "ticket" : "tickets"} · {r.messages} emails{r.late ? <span className="text-bad"> · {r.late} late</span> : null}
+              </span>
+            </span>
+            <span className="relative h-1.5 overflow-hidden rounded-full bg-ink/[0.07]">
+              <span className={`absolute inset-y-0 left-0 rounded-full ${BAR[tone]}`} style={{ width: `${Math.max(3, (r.open / max) * 100)}%` }} />
+            </span>
+            <span className="text-[11px] text-faint">
+              {r.asana ? `${r.asana} still in Asana · ` : ""}
+              {r.oldest ? `oldest with them ${r.oldest} business ${r.oldest === 1 ? "day" : "days"}` : "nothing sitting"}
+            </span>
+          </>
+        );
         return (
           <li key={r.profileId}>
-            <button type="button" onClick={() => pushParams({ person: r.profileId })} className="grid w-full gap-1.5 rounded-[14px] px-3 py-2.5 text-left hover:bg-ink/[0.04] max-md:min-h-11">
-              <span className="flex items-baseline justify-between gap-3 text-[13.5px]">
-                <span className="min-w-0 truncate">
-                  {r.name} <span className="text-[12px] text-faint">· {r.role}</span>
-                </span>
-                <span className="tabular shrink-0 text-[12px] text-muted">
-                  {r.open} {r.open === 1 ? "ticket" : "tickets"} · {r.messages} emails{r.late ? <span className="text-bad"> · {r.late} late</span> : null}
-                </span>
-              </span>
-              <span className="relative h-1.5 overflow-hidden rounded-full bg-ink/[0.07]">
-                <span className={`absolute inset-y-0 left-0 rounded-full ${BAR[tone]}`} style={{ width: `${Math.max(3, (r.open / max) * 100)}%` }} />
-              </span>
-              <span className="text-[11px] text-faint">
-                {r.asana ? `${r.asana} still in Asana · ` : ""}
-                {r.oldest ? `oldest with them ${r.oldest} business ${r.oldest === 1 ? "day" : "days"}` : "nothing sitting"}
-              </span>
-            </button>
+            {theirTab === "design" && tab === "design" ? (
+              <button type="button" onClick={() => pushParams({ person: r.profileId })} className={cls}>
+                {inner}
+              </button>
+            ) : (
+              <Link href={`/board/email?view=kpis&tab=${theirTab}${theirTab === "design" ? `&person=${r.profileId}` : ""}`} className={cls}>
+                {inner}
+              </Link>
+            )}
           </li>
         );
       })}

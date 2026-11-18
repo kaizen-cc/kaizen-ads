@@ -3,6 +3,8 @@ import type { TeamRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
 import { TeamList, type Person } from "./team-list";
 import { usageOf } from "@/lib/activity";
+import { themeBreakdown } from "@/lib/profile";
+import { ThemeUse } from "./theme-use";
 
 export default async function Team() {
   const me = await requireStaff();
@@ -14,6 +16,9 @@ export default async function Team() {
 
   // Execs: when each person was last on, and how much they use it (the activity record is theirs to see)
   const usage = me.isExec ? await usageOf(supabase, profiles ?? []) : null;
+
+  // Execs: who uses light, dark or the device's setting (the choice is saved on each profile)
+  const themes = me.isExec ? themeBreakdown((await supabase.from("profiles").select("theme").eq("is_active", true).not("joined_at", "is", null)).data ?? []) : null;
 
   const clientsPer = new Map<string, Set<string>>();
   for (const a of assignments ?? []) {
@@ -45,6 +50,7 @@ export default async function Team() {
           {!me.isExec && " Only executives can change roles."}
         </p>
       </div>
+      {themes && <ThemeUse counts={themes} />}
       <TeamList people={people} canEdit={me.isExec} meId={me.id} />
     </div>
   );

@@ -20,7 +20,9 @@ function rate(n: number, of: number) {
   return of ? `${Math.round((n / of) * 100)}%` : "—";
 }
 
-export function EmailDesignKpisView({ k, canDismiss, switcher = false }: { k: EmailDesignKpis; canDismiss: boolean; switcher?: boolean }) {
+export function EmailDesignKpisView({ k: all, canDismiss, switcher = false, viewerId = null }: { k: EmailDesignKpis; canDismiss: boolean; switcher?: boolean; viewerId?: string | null }) {
+  // Only the Design tab's people (by role and seat on the server), never whoever is looking
+  const k = { ...all, makers: all.makers.filter((m) => all.members.design.includes(m.profileId) && m.profileId !== viewerId), workload: all.workload.filter((r) => r.profileId !== viewerId) };
   const total = k.split.copy + k.split.design;
   const copyShare = total ? Math.round((k.split.copy / total) * 100) : 0;
   const groups = GROUPS.map((g) => ({ ...g, people: k.makers.filter((m) => m.roleKey === g.key) })).filter((g) => g.people.length);
@@ -30,7 +32,7 @@ export function EmailDesignKpisView({ k, canDismiss, switcher = false }: { k: Em
       <LiveRefresh board="email" />
       <EmailPersonSheet makers={k.makers} />
       <EmailWinnersSheet makers={k.makers} />
-      <KpiHeader active="kpis" period={k.period} base="/board/email?view=kpis" switcher={switcher} board="email" />
+      <KpiHeader active="kpis" period={k.period} base="/board/email?view=kpis&tab=design" switcher={switcher} board="email" tab="design" />
 
       {/* How it's going */}
       <section className="grid gap-5">
@@ -128,8 +130,8 @@ export function EmailDesignKpisView({ k, canDismiss, switcher = false }: { k: Em
           <Section id="cadence" kicker="Clients" title="Sending this cycle">
             {k.cadence.length ? <CadenceList rows={k.cadence} canDismiss={canDismiss} /> : <p className="rounded-[18px] border border-line bg-surface px-4 py-6 text-center text-[14px] text-muted">No client buys email marketing.</p>}
           </Section>
-          <Section kicker="The team" title="Workload right now" aside={<span className="text-[12px] text-faint">Open tickets and the emails in them</span>}>
-            <WorkloadList rows={k.workload} />
+          <Section kicker="The team" title="Workload right now" aside={<span className="text-[12px] text-faint">Everyone on the email team: open tickets and the emails in them</span>}>
+            <WorkloadList rows={k.workload} tab="design" />
           </Section>
         </div>
 

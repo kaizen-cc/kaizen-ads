@@ -52,6 +52,7 @@ export const READ_TOOLS: ReadonlySet<string> = new Set([
   "read_loom",
   "client_package",
   "direction_changes",
+  "my_overview",
 ]);
 
 /**
@@ -138,6 +139,8 @@ const QUIET_TOOLS: ReadonlySet<string> = new Set([
   "submit_feedback",
   "dismiss_specialist",
   "look_at_screen",
+  "update_my_profile",
+  "update_assistant_settings",
 ]);
 
 /** Words of a client's name that say it was mentioned ("Crust" for Crust Pizza), not the filler words of a name */

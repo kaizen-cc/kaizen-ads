@@ -1,5 +1,6 @@
 import "server-only";
 import { ConnectorError, fetchJson, friendlyStatus, detailOf, timedFetch } from "@/lib/connector-http";
+import { mergeVoices, parseVoices, type Voice } from "@/lib/voices";
 import { clampVoiceSettings, voModelOf, type VoiceSettings, type VoModel } from "@/lib/media-models";
 
 // ElevenLabs over its REST API (https://elevenlabs.io/docs/api-reference): voices, text to speech and what's left
@@ -16,47 +17,71 @@ function key() {
   return k;
 }
 
-export type Voice = {
-  id: string;
-  name: string;
-  category: string; // premade, cloned, generated, professional
-  previewUrl: string | null;
-  labels: Record<string, string>; // accent, age, gender, use case, description
-  description: string | null;
-};
-
-type RawVoice = { voice_id: string; name: string; category?: string; preview_url?: string | null; labels?: Record<string, string> | null; description?: string | null };
-
-const toVoice = (v: RawVoice): Voice => ({
-  id: v.voice_id,
-  name: v.name,
-  category: v.category ?? "premade",
-  previewUrl: v.preview_url ?? null,
-  labels: v.labels ?? {},
-  description: v.description ?? null,
-});
+export type { Voice };
 
 // The account's voices change rarely: kept for 10 minutes per server instance
 let voiceCache: { at: number; voices: Voice[] } | null = null;
 
-/** Every voice on the account (its own clones first, then the library voices it added), up to 300 */
-export async function listVoices(opts: { search?: string; fresh?: boolean } = {}): Promise<Voice[]> {
-  if (!opts.search && !opts.fresh && voiceCache && Date.now() - voiceCache.at < 600_000) return voiceCache.voices;
+type Page = { voices?: unknown; has_more?: boolean; next_page_token?: string | null };
+
+/** One source of voices: the v2 list (every page, up to 300), optionally narrowed to a type of voice */
+async function v2Voices(opts: { search?: string; type?: string }): Promise<Voice[]> {
   const out: Voice[] = [];
   let token: string | null = null;
   for (let page = 0; page < 3; page++) {
     const q = new URLSearchParams({ page_size: "100", include_total_count: "false" });
     if (opts.search) q.set("search", opts.search);
+    if (opts.type) q.set("voice_type", opts.type);
     if (token) q.set("next_page_token", token);
-    const r: { voices?: RawVoice[]; has_more?: boolean; next_page_token?: string | null } = await fetchJson(NAME, `${BASE}/v2/voices?${q}`, { headers: { "xi-api-key": key() } }, 20_000);
-    out.push(...(r.voices ?? []).map(toVoice));
+    const r: Page = await fetchJson(NAME, `${BASE}/v2/voices?${q}`, { headers: { "xi-api-key": key() } }, 20_000);
+    out.push(...parseVoices(r));
     if (!r.has_more || !r.next_page_token) break;
     token = r.next_page_token;
   }
+  return out;
+}
+
+/**
+ * Every voice the account can speak in. Why the list used to hold one voice: the v2 list with no filter only returns the
+ * voices saved on the account (its own clones and what it added), and ElevenLabs' default voices only come back when
+ * they're asked for as their own type (voice_type=default), so an account with a single clone listed that one. Now the
+ * unfiltered list, the default voices and the older v1 list (which includes the premade voices) are read together and
+ * merged; one source failing (a key without a permission) doesn't drop the others. The account's own voices come first.
+ */
+export async function listVoices(opts: { search?: string; fresh?: boolean } = {}): Promise<Voice[]> {
+  if (!opts.search && !opts.fresh && voiceCache && Date.now() - voiceCache.at < 600_000) return voiceCache.voices;
+  const sources = await Promise.allSettled([
+    v2Voices({ search: opts.search }),
+    v2Voices({ search: opts.search, type: "default" }),
+    // The older list (every voice on the account, premade ones included), for when v2 answers thinly
+    opts.search ? Promise.resolve([] as Voice[]) : fetchJson<unknown>(NAME, `${BASE}/v1/voices`, { headers: { "xi-api-key": key() } }, 20_000).then((r) => parseVoices(r)),
+  ]);
+  const lists = sources.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+  if (!lists.length) {
+    const first = sources.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    throw first?.reason ?? new ConnectorError("Couldn't load the voices.");
+  }
+  const out = mergeVoices(lists);
   const rank = (v: Voice) => (v.category === "cloned" || v.category === "professional" ? 0 : v.category === "generated" ? 1 : 2);
   out.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   if (!opts.search) voiceCache = { at: Date.now(), voices: out };
   return out;
+}
+
+/** A page of ElevenLabs' shared voice library (featured first): voices that can be added to the account and spoken in */
+export async function listLibraryVoices(opts: { search?: string } = {}): Promise<Voice[]> {
+  const q = new URLSearchParams({ page_size: "60", sort: "trending" });
+  if (opts.search) q.set("search", opts.search);
+  else q.set("featured", "true");
+  const r = await fetchJson<unknown>(NAME, `${BASE}/v1/shared-voices?${q}`, { headers: { "xi-api-key": key() } }, 20_000);
+  return parseVoices(r, "library").filter((v) => v.ownerId);
+}
+
+/** Puts a library voice on the account (its id stays the same), so it can speak. Needs a plan that allows library voices. */
+export async function addLibraryVoice(ownerId: string, voiceId: string, name: string): Promise<void> {
+  if (!/^[A-Za-z0-9]{8,64}$/.test(ownerId) || !/^[A-Za-z0-9]{8,40}$/.test(voiceId)) throw new ConnectorError("Pick a voice.");
+  await fetchJson(NAME, `${BASE}/v1/voices/add/${encodeURIComponent(ownerId)}/${encodeURIComponent(voiceId)}`, { method: "POST", headers: { "xi-api-key": key(), "content-type": "application/json" }, body: JSON.stringify({ new_name: name.slice(0, 60) }) }, 20_000);
+  voiceCache = null;
 }
 
 export type Speech = { audio: Buffer; mime: "audio/mpeg"; characters: number; requestId: string | null };

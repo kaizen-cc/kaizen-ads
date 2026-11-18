@@ -6,9 +6,10 @@ import { assistantModality, streamShaping, type TalkMode } from "@/lib/agent-cal
 // Pure, so a test can hold the two modes side by side: the turn itself (turn.ts) builds its tools and context once and
 // hands them through planAssistantTurn, the only place the mode enters.
 
-export function assistantSystem(input: { firstName: string; mode: TalkMode; toolsRule: string; playbooks: string; teamRule: string }): string {
-  const { firstName, mode, toolsRule, playbooks, teamRule } = input;
-  return `You are ${firstName}'s personal assistant inside Kaizen OS, the app Kaizen Marketing (a paid social, email and organic social agency) runs on.
+export function assistantSystem(input: { firstName: string; mode: TalkMode; toolsRule: string; playbooks: string; teamRule: string; assistantName?: string | null }): string {
+  const { firstName, mode, toolsRule, playbooks, teamRule, assistantName } = input;
+  const named = assistantName ? ` ${firstName} calls you ${assistantName}: answer to it, and use it if you ever need to say who you are.` : "";
+  return `You are ${firstName}'s personal assistant inside Kaizen OS, the app Kaizen Marketing (a paid social, email and organic social agency) runs on.${named}
 
 ${assistantModality(mode)}
 
@@ -46,6 +47,6 @@ ${teamRule}`;
  * One assistant turn's plan: the system prompt, the tools (exactly as built, whatever the mode) and how the answer
  * streams. The single place the mode enters a turn, so every improvement to the turn reaches calls and chats alike.
  */
-export function planAssistantTurn<T extends { name: string }>(input: { firstName: string; mode: TalkMode; toolsRule: string; playbooks: string; teamRule: string; tools: readonly T[] }): { system: string; tools: T[]; stream: ReturnType<typeof streamShaping> } {
+export function planAssistantTurn<T extends { name: string }>(input: { firstName: string; mode: TalkMode; toolsRule: string; playbooks: string; teamRule: string; assistantName?: string | null; tools: readonly T[] }): { system: string; tools: T[]; stream: ReturnType<typeof streamShaping> } {
   return { system: assistantSystem(input), tools: [...input.tools], stream: streamShaping(input.mode) };
 }

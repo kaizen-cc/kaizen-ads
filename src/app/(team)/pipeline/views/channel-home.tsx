@@ -1,81 +1,98 @@
 import Link from "next/link";
-import { EmailOpsOverview } from "@/app/(team)/kpis/email-ops-overview";
-import { ChannelSpark } from "@/components/channel-spark";
-import { ChannelStatusPill, ConnectCta, Gauge, SupportChips, TONE, mainCaption, mainText, needsConnecting, paceLine, targetText } from "@/components/channel-parts";
-import { BAND_TONE, ScoreBadge, WeighingDown } from "@/components/email-score-parts";
-import { SocialWeighingDown } from "@/components/social-score-parts";
-import { PLATFORM_LABEL } from "@/lib/social-score";
-import { loadChannelBoard, riskForRow, type ChannelRow } from "@/lib/channel-kpis/load";
-import { moneyShort, orderByRisk, pctText, type Line, type Risk } from "@/lib/channel-kpis/calc";
+import { needsConnecting } from "@/components/channel-parts";
+import { loadChannelBoard, riskForRow } from "@/lib/channel-kpis/load";
+import { etToday, moneyShort, orderByRisk, pctText, type Line } from "@/lib/channel-kpis/calc";
+import { loadSuggestions } from "@/lib/email-ops/load";
+import { auditReminders, mineFirst, prioritizeIdeas } from "@/lib/overview-desk";
+import { loadBrands, loadDeskOps, owedByClient } from "@/lib/overview-desk-load";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
-import { PageHeader, SectionTitle, Stats } from "./shared";
+import { IdeaDeck } from "./campaign-ideas";
+import { ClientGroup, Reminders, SetupList, brandOf, type DeskRow } from "./channel-desk";
+import { OverviewTabs, TabCards } from "./overview-tabs";
+import { PageHeader, Stats } from "./shared";
 
 type Me = { id: string; role: TeamRole; isExec: boolean; isLead: boolean };
-type Ranked = ChannelRow & { risk: Risk };
 
-/** Messages owed on each client (the person's own, and ones escalated past a second notice), by client */
-async function owedByClient(db: Awaited<ReturnType<typeof createClient>>, me: Me): Promise<Map<string, { n: number; escalated: number }>> {
-  const out = new Map<string, { n: number; escalated: number }>();
-  try {
-    const { loadOwedReplies } = await import("@/lib/owed-replies");
-    for (const o of await loadOwedReplies(db, me, false)) {
-      if (!o.clientId) continue;
-      const x = out.get(o.clientId) ?? { n: 0, escalated: 0 };
-      x.n++;
-      if (o.status === "escalated") x.escalated++;
-      out.set(o.clientId, x);
-    }
-  } catch {
-    // Owed replies are a signal, not the page: without them clients are ordered on the rest
-  }
-  return out;
-}
+/** A client needs a look at this risk and up; under it, it's on track */
+const LOOK_AT = 30;
 
 /**
- * Overview for the email and organic social teams: their clients ordered by how likely each is to leave (off target,
- * gone quiet, owed a reply, or numbers we can't see), each with this month's main KPI against its target, then the
- * clients whose data still needs connecting. It reads nothing from the ad tables.
+ * Overview for the email and organic social teams (heads and their team), in tabs so each part stays short:
+ *   Today            the recap, the month's numbers and a card per tab with what's waiting there
+ *   Clients          the person's own accounts first, then the rest of the team's in a contained scrolling area,
+ *                    each worst first (retention risk); compact cards that open for the detail
+ *   Ideas (email)    campaign ideas, critical first, the rest folded
+ *   Audits & sprints a head: only what's critical or gone stale; a strategist: their own open ones
+ *   Setup            the clients still to connect
+ * It reads nothing from the ad tables.
  */
 export async function ChannelHome({ me, line, today, greeting, firstName, recap = null }: { me: Me; line: Line; today: string; greeting: string; firstName: string; /** Their day (the recap's way in), above their clients */ recap?: React.ReactNode }) {
   const db = await createClient();
   const [board, owed] = await Promise.all([loadChannelBoard(db, line, me), owedByClient(db, me)]);
-  const ranked: Ranked[] = orderByRisk(board.rows.map((r) => ({ ...r, risk: riskForRow(r, owed.get(r.clientId)) })));
+  const ids = board.rows.map((r) => r.clientId);
+  const head = me.isLead || me.isExec;
+  const [brands, ops, suggestions] = await Promise.all([
+    loadBrands(db, ids).catch(() => new Map()),
+    loadDeskOps(db, ids, line).catch(() => ({ audits: new Map(), sprints: new Map() })),
+    line === "email" ? loadSuggestions(db, ids, 240).catch(() => []) : Promise.resolve([]),
+  ]);
+  const ranked: DeskRow[] = orderByRisk(board.rows.map((r) => ({ ...r, risk: riskForRow(r, owed.get(r.clientId)), brand: brandOf(brands, r.clientId) })));
   const channel = line === "email" ? "Email" : "Social";
+  const day = etToday();
 
   const connecting = ranked.filter(needsConnecting);
   const live = ranked.filter((r) => !needsConnecting(r));
-  // A client needs a look when something about it is wrong; otherwise it's on track and just shown
-  const attention = live.filter((r) => r.risk.score >= 30);
-  const steady = live.filter((r) => r.risk.score < 30);
+  const { mine, team } = mineFirst(live);
+  const hurting = (rows: DeskRow[]) => rows.filter((r) => r.risk.score >= LOOK_AT);
   const off = live.filter((r) => r.status === "off").length;
   const close = live.filter((r) => r.status === "close").length;
   const good = live.filter((r) => r.status === "good" || r.status === "excellent").length;
 
   // The account score: email's, or social's overall (every platform weighted by reach)
-  const scoreOf = (r: Ranked) => r.score?.score ?? r.socialScore?.score ?? null;
+  const scoreOf = (r: DeskRow) => r.score?.score ?? r.socialScore?.score ?? null;
   const scored = live.filter((r) => scoreOf(r) != null);
   const avg = scored.length ? Math.round(scored.reduce((t, r) => t + (scoreOf(r) ?? 0), 0) / scored.length) : null;
   const mtd = live.reduce((t, r) => t + (r.line === "email" ? (r.value ?? 0) : 0), 0);
   const reach = live.reduce((t, r) => t + (r.social?.reach ?? 0), 0);
   const inter = live.reduce((t, r) => t + (r.social?.interactions ?? 0), 0);
+  const scoreTone = avg == null ? undefined : avg >= 80 ? ("ok" as const) : avg >= 60 ? ("warn" as const) : ("bad" as const);
   const stats = [
     line === "email"
-      ? { label: "Average score", value: avg ?? "n/a", hint: `${moneyShort(mtd)} attributed revenue this month`, tone: avg == null ? undefined : avg >= 80 ? ("ok" as const) : avg >= 60 ? ("warn" as const) : ("bad" as const) }
-      : { label: "Engagement this month", value: pctText(reach > 0 ? inter / reach : null), hint: `Interactions over reach, all your clients${avg != null ? ` · average social score ${avg}` : ""}`, tone: avg == null ? undefined : avg >= 80 ? ("ok" as const) : avg >= 60 ? ("warn" as const) : ("bad" as const) },
+      ? { label: "Average score", value: avg ?? "n/a", hint: `${moneyShort(mtd)} attributed revenue this month`, tone: scoreTone }
+      : { label: "Engagement this month", value: pctText(reach > 0 ? inter / reach : null), hint: `Interactions over reach, all your clients${avg != null ? ` · average social score ${avg}` : ""}`, tone: scoreTone },
     { label: line === "email" ? "Red or yellow" : "Off or close", value: off + close, hint: line === "email" ? (off ? `${off} red${close ? `, ${close} yellow` : ""}` : close ? `${close} yellow` : "None slipping") : off ? `${off} off target` : close ? `${close} close` : "None slipping", tone: off ? ("bad" as const) : close ? ("warn" as const) : ("ok" as const) },
     { label: line === "email" ? "Green" : "On target", value: good, hint: line === "email" ? "Score 80 and up" : "At or better than target", tone: good ? ("ok" as const) : undefined },
     { label: "Need connecting", value: connecting.length, hint: connecting.length ? (line === "email" ? "Klaviyo key missing or failing" : "Page or Instagram not linked") : "All reading", tone: connecting.length ? ("warn" as const) : ("ok" as const) },
   ];
 
-  const total = ranked.length;
-  const needs = attention.length + connecting.length;
-  return (
-    <div className="mx-auto grid max-w-6xl gap-8">
-      <PageHeader today={today} title={`${greeting}, ${firstName}`} subtitle={`${roleLabel(me.role)} · ${total} ${total === 1 ? "client" : "clients"} · ${needs ? `${needs} ${needs === 1 ? "needs" : "need"} a look` : total ? "all steady today" : "no clients yet"}`} />
-      {recap}
+  // Audits and sprints: a head sees only what needs a head; the strategist all of their own
+  const reminders = auditReminders(head ? ranked : ranked.filter((r) => r.mine), ops.audits, ops.sprints, day, { head });
+  const critical = reminders.filter((r) => r.level === "critical").length;
+  const byId = new Map(ranked.map((r) => [r.clientId, r]));
+  const reminderClients = new Map(ranked.map((r) => [r.clientId, { name: r.name, brand: r.brand }]));
 
-      {total === 0 ? (
+  // Campaign ideas still open, critical first
+  const ideas = prioritizeIdeas(
+    suggestions.filter((s) => (s.status === "new" || s.status === "in_motion") && byId.has(s.clientId)),
+    day,
+  ).map((s) => {
+    const c = byId.get(s.clientId)!;
+    return { id: s.id, clientName: c.name, slug: c.slug, brand: c.brand, title: s.title, idea: s.idea, why: s.why, sendOn: s.sendOn, status: s.status, tier: s.priority.tier, reason: s.priority.reason };
+  });
+  const criticalIdeas = ideas.filter((i) => i.tier === "critical");
+
+  const total = ranked.length;
+  const mineHurting = hurting(mine);
+  const teamHurting = hurting(team);
+  const needs = hurting(live).length + connecting.length;
+  const header = <PageHeader today={today} title={`${greeting}, ${firstName}`} subtitle={`${roleLabel(me.role)} · ${total} ${total === 1 ? "client" : "clients"} · ${needs ? `${needs} ${needs === 1 ? "needs" : "need"} a look` : total ? "all steady today" : "no clients yet"}`} />;
+
+  if (total === 0)
+    return (
+      <div className="mx-auto grid max-w-6xl gap-8">
+        {header}
+        {recap}
         <section className="grid justify-items-start gap-3 rounded-[18px] border border-dashed border-line p-6 md:p-8">
           <p className="font-heading text-xl">No clients yet</p>
           <p className="max-w-prose text-sm text-muted">
@@ -85,145 +102,57 @@ export async function ChannelHome({ me, line, today, greeting, firstName, recap 
             Open the clients
           </Link>
         </section>
-      ) : (
-        <>
-          <Stats items={stats} />
+      </div>
+    );
 
-          {/* Jump to a topic: the order inside each stays by risk */}
-          <nav aria-label="Jump to" className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 md:mx-0 md:px-0">
-            {[
-              ["#attention", "Needs attention", attention.length],
-              ["#connecting", "Needs connecting", connecting.length],
-              ["#steady", "On track", steady.length],
-            ]
-              .filter(([, , n]) => (n as number) > 0)
-              .map(([href, name, n]) => (
-                <a key={href as string} href={href as string} className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-full border border-line bg-surface px-4 text-sm text-muted transition-colors hover:text-fg md:h-9">
-                  {name} <span className="tabular text-xs text-faint">{n}</span>
-                </a>
-              ))}
-            <Link href={`/kpis`} className="inline-flex h-11 shrink-0 items-center rounded-full px-4 text-sm text-muted hover:text-fg md:h-9">
-              Open the {channel} board →
-            </Link>
-          </nav>
+  const names = (rows: DeskRow[]) => rows.slice(0, 3).map((r) => `${r.name}${r.risk.reasons[0] ? `: ${r.risk.reasons[0].toLowerCase()}` : ""}`);
+  const tabs = [
+    { id: "today", label: "Today" },
+    { id: "clients", label: head ? "Clients" : "My clients", count: mineHurting.length + (head ? teamHurting.length : 0), tone: mineHurting.some((r) => r.status === "off") ? ("bad" as const) : ("warn" as const) },
+    ...(line === "email" ? [{ id: "ideas", label: "Ideas", count: criticalIdeas.length, tone: "bad" as const }] : []),
+    { id: "audits", label: "Audits & sprints", count: reminders.length, tone: critical ? ("bad" as const) : ("warn" as const) },
+    { id: "setup", label: "Setup", count: connecting.length, tone: "warn" as const },
+  ];
+  const cards = [
+    {
+      tab: "clients",
+      title: head ? "Your accounts" : "My clients",
+      count: mineHurting.length,
+      tone: mineHurting.some((r) => r.status === "off") ? ("bad" as const) : ("warn" as const),
+      headline: mine.length ? (mineHurting.length ? `of your ${mine.length} need a look` : `Your ${mine.length} are steady`) : "You hold no seat yet",
+      points: names(mineHurting),
+    },
+    ...(head
+      ? [{ tab: "clients", title: "Your team's", count: teamHurting.length, tone: teamHurting.some((r) => r.status === "off") ? ("bad" as const) : ("warn" as const), headline: teamHurting.length ? `of ${team.length} team accounts need a look` : `All ${team.length} team accounts steady`, points: names(teamHurting) }]
+      : []),
+    ...(line === "email" ? [{ tab: "ideas", title: "Campaign ideas", count: criticalIdeas.length, tone: "bad" as const, headline: criticalIdeas.length ? `critical, ${ideas.length - criticalIdeas.length} more when there's room` : `Nothing urgent · ${ideas.length} open`, points: criticalIdeas.slice(0, 3).map((i) => `${i.clientName}: ${i.reason.split(" · ")[0].toLowerCase()}`) }] : []),
+    { tab: "audits", title: "Audits & sprints", count: reminders.length, tone: critical ? ("bad" as const) : ("warn" as const), headline: reminders.length ? (head ? "need you: critical or gone stale" : "open on your clients") : "Nothing needs you", points: reminders.slice(0, 3).map((r) => `${reminderClients.get(r.clientId)?.name ?? "A client"}: ${r.why.toLowerCase()}`) },
+    ...(!head || connecting.length ? [{ tab: "setup", title: "Setup", count: connecting.length, tone: "warn" as const, headline: connecting.length ? "still to connect" : "Every client reading", points: connecting.slice(0, 3).map((r) => r.name) }] : []),
+  ].slice(0, 4);
 
-          {attention.length > 0 && (
-            <section id="attention" className="grid scroll-mt-24 gap-3">
-              <SectionTitle aside="Most at risk of leaving first">Needs attention</SectionTitle>
-              <ul className="grid gap-3 md:grid-cols-2">
-                {attention.map((r) => (
-                  <Card key={r.clientId} r={r} />
-                ))}
-              </ul>
-            </section>
-          )}
+  const panels: Record<string, React.ReactNode> = {
+    today: (
+      <>
+        {recap}
+        <Stats items={stats} />
+        <TabCards cards={cards} />
+      </>
+    ),
+    clients: (
+      <>
+        {(mine.length > 0 || !head) && <ClientGroup id="mine" title={head ? "Your accounts" : "My clients"} aside="Most at risk of leaving first" rows={mine} empty="You hold no seat on a client yet." />}
+        {team.length > 0 && <ClientGroup id="team" title={head ? "Your team's accounts" : "Other clients you can see"} aside={`Worst first · ${teamHurting.length} need a look`} rows={team} contained />}
+      </>
+    ),
+    ideas: <IdeaDeck ideas={ideas} />,
+    audits: <Reminders items={reminders} line={line} clients={reminderClients} head={head} />,
+    setup: <SetupList rows={connecting} line={line} />,
+  };
 
-          {/* Email: what the audits and sprints say, and the campaign ideas waiting on someone, across these clients */}
-          <EmailOpsOverview line={line} clients={ranked.map((r) => ({ id: r.clientId, name: r.name, slug: r.slug }))} />
-
-          {connecting.length > 0 && (
-            <section id="connecting" className="grid scroll-mt-24 gap-3">
-              <SectionTitle aside={line === "email" ? "Paste the client's Klaviyo key" : "Share the Page, or pick it on their Social tab"}>Needs connecting</SectionTitle>
-              <ul className="grid gap-3 md:grid-cols-2">
-                {connecting.map((r) => (
-                  <li key={r.clientId} className="grid content-start gap-3 rounded-[18px] border border-line bg-surface p-4">
-                    <div className="flex min-w-0 items-center justify-between gap-2">
-                      <Link href={`/clients/${r.slug}?service=${r.line}`} className="min-w-0 truncate font-heading text-[16px] hover:text-brand-text">
-                        {r.name}
-                      </Link>
-                      <ChannelStatusPill status={r.status} line={r.line} />
-                    </div>
-                    <ConnectCta r={r} compact />
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          {steady.length > 0 && (
-            <section id="steady" className="grid scroll-mt-24 gap-3">
-              <SectionTitle aside="Nothing wrong">On track</SectionTitle>
-              <ul className="grid gap-3 md:grid-cols-2">
-                {steady.map((r) => (
-                  <Card key={r.clientId} r={r} />
-                ))}
-              </ul>
-            </section>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-/** One client: why it's here, this month's KPI against its target with the trend, and the ways in */
-function Card({ r }: { r: Ranked }) {
-  const tone = TONE[r.status];
-  const pace = paceLine(r);
-  const goal = r.target != null && r.series.length ? (r.line === "email" ? { from: 0, to: r.target } : { from: r.target, to: r.target }) : null;
-  const link = "inline-flex min-h-11 items-center rounded-full border border-line px-3.5 text-[12.5px] text-muted transition-colors hover:text-fg md:min-h-9";
   return (
-    <li className="relative isolate grid content-start gap-3 overflow-hidden rounded-[18px] border border-line bg-surface p-4" style={{ backgroundImage: `radial-gradient(120% 90% at 0% 0%, color-mix(in srgb, ${tone.css} 12%, transparent), transparent 55%)` }}>
-      <span aria-hidden className={`absolute inset-x-0 top-0 h-[3px] ${tone.bar}`} />
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        <div className="min-w-0">
-          <Link href={`/kpis?open=${r.clientId}`} className="block truncate font-heading text-[16px] leading-snug hover:text-brand-text">
-            {r.name}
-          </Link>
-          <p className={`mt-0.5 truncate text-xs ${r.risk.reasons.length ? "text-muted" : "text-faint"}`}>{r.risk.reasons.length ? r.risk.reasons.join(" · ") : r.team.length ? r.team.map((t) => t.name).join(" + ") : "On track"}</p>
-        </div>
-        <ChannelStatusPill status={r.status} line={r.line} />
-      </div>
-      <div className="grid gap-1.5">
-        {r.score ? (
-          <>
-            <div className="flex items-baseline gap-2">
-              <ScoreBadge r={r.score} />
-              <span className="truncate text-xs text-faint">{BAND_TONE[r.score.band].label.toLowerCase()} · {mainCaption(r)}</span>
-            </div>
-            <Gauge r={r} />
-            <WeighingDown score={r.score} limit={2} currency={r.currency} />
-          </>
-        ) : (
-          <>
-            <div className="flex items-baseline gap-2">
-              <span className={`tabular font-display text-[28px] leading-none tracking-tight ${tone.text}`}>{mainText(r)}</span>
-              {r.target != null ? <span className="tabular truncate text-xs text-faint">/ {targetText(r)}</span> : <span className="truncate text-xs text-faint">{mainCaption(r)}</span>}
-            </div>
-            <Gauge r={r} />
-            {r.target == null ? (
-              <Link href={`/kpis?open=${r.clientId}`} className="w-fit py-1 text-[11.5px] text-muted underline-offset-4 hover:text-fg hover:underline">
-                No target yet. Set the target
-              </Link>
-            ) : (
-              pace && <span className="truncate text-[11.5px] text-muted">{pace}</span>
-            )}
-            <ChannelSpark values={r.series} span={r.span} goal={goal} tone={tone.text} label={`${r.name} trend`} />
-            {r.socialScore && (
-              <div className="grid gap-1.5 border-t border-line pt-2">
-                <span className="flex flex-wrap items-baseline gap-x-2 text-xs">
-                  <span className="text-faint">Social score</span>
-                  <span className={`tabular font-heading text-[16px] ${BAND_TONE[r.socialScore.band].text}`}>{r.socialScore.score}</span>
-                  {r.socialScore.platforms.length > 1 && <span className="tabular text-faint">{r.socialScore.platforms.map((p) => `${PLATFORM_LABEL[p.platform]} ${p.score}`).join(" · ")}</span>}
-                </span>
-                <SocialWeighingDown drags={r.socialScore.weighingDown} limit={2} />
-              </div>
-            )}
-          </>
-        )}
-        <SupportChips r={r} />
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Link href={`/clients/${r.slug}?service=${r.line}`} className={link}>
-          Client
-        </Link>
-        <Link href={`/kpis?open=${r.clientId}`} className={link}>
-          {r.line === "email" ? "Email" : "Social"} board
-        </Link>
-        <Link href={`/reports?client=${r.slug}`} className={link}>
-          Reports
-        </Link>
-      </div>
-    </li>
+    <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
+      {header}
+      <OverviewTabs tabs={tabs} panels={panels} />
+    </div>
   );
 }

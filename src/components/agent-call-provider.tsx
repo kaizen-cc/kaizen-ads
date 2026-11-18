@@ -16,7 +16,7 @@ import { ASSISTANT_KEY, ASSISTANT_LABEL } from "@/lib/assistant/core";
 import type { CallNotes } from "@/lib/assistant/notes";
 import type { JobView } from "@/lib/assistant/team";
 import { createClient } from "@/lib/supabase/client";
-import { assistantTintOf } from "@/lib/agent-look";
+import { assistantTintOf, cleanAssistantName } from "@/lib/agent-look";
 import { captureFrames } from "@/lib/uploads/video-prep";
 import { AgentGlyph, RecordingNotice } from "./assistant-call-parts";
 import { FullScreenCall, FullScreenSummary, Huddle, HuddleSummary, SwitchAsk, type AgentRef, type CallView, type SummaryView } from "./agent-call-views";
@@ -50,9 +50,13 @@ type Ctx = {
   assistantTint: string;
   /** Shown straight away when they pick another (saved by the Assistant page) */
   setAssistantTint: (hex: string | null) => void;
+  /** What this person calls their assistant (null: the default, "Assistant") */
+  assistantName: string | null;
+  /** Shown straight away when they rename it (saved by the Assistant page) */
+  setAssistantName: (name: string | null) => void;
 };
 
-const CallCtx = createContext<Ctx>({ start: () => undefined, startAssistant: () => undefined, startAssistantChat: () => undefined, talk: null, activeRole: null, live: false, assistantTint: assistantTintOf(null), setAssistantTint: () => undefined });
+const CallCtx = createContext<Ctx>({ start: () => undefined, startAssistant: () => undefined, startAssistantChat: () => undefined, talk: null, activeRole: null, live: false, assistantTint: assistantTintOf(null), setAssistantTint: () => undefined, assistantName: null, setAssistantName: () => undefined });
 
 export const useAgentCall = () => useContext(CallCtx);
 
@@ -82,13 +86,13 @@ const typing = (t: EventTarget | null) => {
 };
 
 /** The assistant on a call, in its person's own color */
-const assistantRef = (tint: string, context?: AgentRef["context"]): AgentRef => ({ roleKey: ASSISTANT_KEY, label: ASSISTANT_LABEL, tint, icon: (size) => <AgentGlyph icon="spark" tint={tint} size={size} />, ...(context ? { context } : {}) });
+const assistantRef = (tint: string, name: string | null, context?: AgentRef["context"]): AgentRef => ({ roleKey: ASSISTANT_KEY, label: name || ASSISTANT_LABEL, tint, icon: (size) => <AgentGlyph icon="spark" tint={tint} size={size} />, ...(context ? { context } : {}) });
 
 /** The hidden debug overlay (?calldebug=1): the noise floor, the threshold, the listening and whose turn it is */
 const subscribeNone = () => () => undefined;
 const debugOn = () => /[?&]calldebug=1/.test(window.location.search);
 
-export function AgentCallProvider({ assistantColor = null, children }: { assistantColor?: string | null; children: React.ReactNode }) {
+export function AgentCallProvider({ assistantColor = null, assistantName: givenName = null, children }: { assistantColor?: string | null; assistantName?: string | null; children: React.ReactNode }) {
   const router = useRouter();
   const desktop = useDesktop();
   const mounted = useSyncExternalStore(
@@ -142,6 +146,13 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
   if (seenColor !== assistantColor) {
     setSeenColor(assistantColor);
     setTint(assistantTintOf(assistantColor));
+  }
+  // And the name they gave it, the same way
+  const [name, setName] = useState<string | null>(givenName);
+  const [seenName, setSeenName] = useState(givenName);
+  if (seenName !== givenName) {
+    setSeenName(givenName);
+    setName(givenName);
   }
   const shareStream = useRef<MediaStream | null>(null);
   /** The look that's waiting for the screen to be shared */
@@ -660,9 +671,9 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
     [agent, dial, toVoice],
   );
 
-  const startAssistant = useCallback(() => start(assistantRef(tint)), [start, tint]);
+  const startAssistant = useCallback(() => start(assistantRef(tint, name)), [start, tint, name]);
   const startAssistantChat = useCallback(() => {
-    const a = assistantRef(tint);
+    const a = assistantRef(tint, name);
     if (stageRef.current === "chat") return setMinimized(false);
     if (stageRef.current === "call") {
       // On a call with the assistant: it carries on as the chat; with another agent, leave it first
@@ -671,8 +682,9 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
       return setSwitchTo(a);
     }
     openChat(a);
-  }, [agent, openChat, tint, toChat]);
+  }, [agent, openChat, tint, name, toChat]);
   const setAssistantTint = useCallback((hex: string | null) => setTint(assistantTintOf(hex)), []);
+  const setAssistantName = useCallback((n: string | null) => setName(cleanAssistantName(n)), []);
 
   const leaveAndStart = () => {
     const next = switchTo;
@@ -813,12 +825,12 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
   }, [uploadAsk]);
 
   const ctx = useMemo<Ctx>(
-    () => ({ start, startAssistant, startAssistantChat, talk: stage === "call" ? "voice" : stage === "chat" ? "text" : null, activeRole: stage === "idle" ? null : (agent?.roleKey ?? null), live: stage === "call" || stage === "chat", assistantTint: tint, setAssistantTint }),
-    [start, startAssistant, startAssistantChat, stage, agent, tint, setAssistantTint],
+    () => ({ start, startAssistant, startAssistantChat, talk: stage === "call" ? "voice" : stage === "chat" ? "text" : null, activeRole: stage === "idle" ? null : (agent?.roleKey ?? null), live: stage === "call" || stage === "chat", assistantTint: tint, setAssistantTint, assistantName: name, setAssistantName }),
+    [start, startAssistant, startAssistantChat, stage, agent, tint, setAssistantTint, name, setAssistantName],
   );
 
   // The assistant always shows in its person's current color (even one picked mid-call)
-  const shown = agent?.roleKey === ASSISTANT_KEY ? assistantRef(tint, agent.context) : agent;
+  const shown = agent?.roleKey === ASSISTANT_KEY ? assistantRef(tint, name, agent.context) : agent;
   const cancelLook = useCallback(() => {
     lookWaiting.current = false;
     setShareAsk(false);

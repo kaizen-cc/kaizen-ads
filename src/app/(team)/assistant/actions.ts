@@ -4,8 +4,10 @@ import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { AUDIO_BUCKET } from "@/lib/agent-call/safety";
 import { CALL_LIMIT_SECONDS, audioPartPath, isVoiceId } from "@/lib/agent-call/core";
-import { paletteColor } from "@/lib/agent-look";
-import { elevenlabsConfigured, listVoices } from "@/lib/elevenlabs";
+import { cleanAssistantName, pickedColor } from "@/lib/agent-look";
+import { ConnectorError } from "@/lib/connector-http";
+import { mergeVoices, optionOf, type Voice, type VoiceOption } from "@/lib/voices";
+import { addLibraryVoice, elevenlabsConfigured, listLibraryVoices, listVoices } from "@/lib/elevenlabs";
 import { screenFileName } from "@/lib/agent-call/call-context";
 import { FACT_TOPICS, STYLE_TOPICS } from "@/lib/assistant/core";
 import type { CallNotes } from "@/lib/assistant/notes";
@@ -220,44 +222,59 @@ export async function addMemory(input: { kind: "fact" | "style"; topic: string; 
   return { ok: true };
 }
 
-// ─── Your assistant's voice and color ───────────────────────────────────────
+// ─── Your assistant's name, voice and color ─────────────────────────────────
 
-export type AssistantVoice = { id: string; name: string; about: string; preview: string | null };
+export type AssistantVoice = VoiceOption;
 
-/** The voices a person can give their own assistant (the same ElevenLabs list the agents pick from) */
+/**
+ * The voices a person can give their own assistant: everything usable on the account (its own voices and ElevenLabs'
+ * defaults, see listVoices) plus a page of the shared library, which is put on the account when one is picked. Grouped
+ * by the picker (groupVoices). The library failing (a plan without it) never hides the rest.
+ */
 export async function assistantVoices(): Promise<{ ok: true; voices: AssistantVoice[] } | Fail> {
   await requireStaff();
   if (!elevenlabsConfigured()) return { ok: false, error: "ElevenLabs isn't connected." };
   try {
-    const voices = await listVoices();
-    return {
-      ok: true,
-      voices: voices.map((v) => ({ id: v.id, name: v.name, about: [v.labels.gender, v.labels.accent, v.labels.age, v.labels.description ?? v.labels.descriptive].filter(Boolean).join(", "), preview: v.previewUrl })),
-    };
+    const [account, library] = await Promise.all([listVoices(), listLibraryVoices().catch(() => [] as Voice[])]);
+    return { ok: true, voices: mergeVoices([account, library]).map(optionOf) };
   } catch {
     return { ok: false, error: "Couldn't load the voices." };
   }
 }
 
 /**
- * Your assistant's voice or color (null: back to the default). Only ever the signed-in person's own row, so it never
- * changes anyone else's assistant; the voice takes effect from the next call.
+ * Your assistant's name, voice or color (null: back to the default). Only ever the signed-in person's own row, so it never
+ * changes anyone else's assistant; the voice takes effect from the next call. A library voice is put on the account first
+ * (pass its owner), so it can speak. A color can be a swatch or any hex: a very light or dark one is brought toward the
+ * middle so it reads on both themes.
  */
-export async function setAssistantLook(change: { voice?: string | null; color?: string | null }): Promise<{ ok: true } | Fail> {
+export async function setAssistantLook(change: { name?: string | null; voice?: string | null; owner?: string | null; color?: string | null }): Promise<{ ok: true; color?: string | null; name?: string | null } | Fail> {
   const me = await requireStaff();
   const update: Record<string, string | null> = {};
+  if ("name" in change) {
+    const name = cleanAssistantName(change.name);
+    if (change.name && String(change.name).trim() && !name) return { ok: false, error: "Use letters and numbers for its name." };
+    update.assistant_name = name;
+  }
   if ("voice" in change) {
-    if (change.voice !== null && !isVoiceId(change.voice)) return { ok: false, error: "Pick a voice." };
+    if (change.voice !== null && change.voice !== undefined && !isVoiceId(change.voice)) return { ok: false, error: "Pick a voice." };
+    if (change.voice && change.owner) {
+      try {
+        await addLibraryVoice(String(change.owner), change.voice, "Kaizen assistant voice");
+      } catch (e) {
+        return { ok: false, error: e instanceof ConnectorError ? e.message : "Couldn't add that voice to the account." };
+      }
+    }
     update.assistant_voice = change.voice ?? null;
   }
   if ("color" in change) {
-    const color = change.color === null ? null : paletteColor(change.color);
-    if (change.color !== null && !color) return { ok: false, error: "Pick one of the colors." };
+    const color = change.color === null || change.color === undefined ? null : pickedColor(change.color);
+    if (change.color && !color) return { ok: false, error: "Enter a color like #2a9d8f." };
     update.assistant_color = color;
   }
   if (!Object.keys(update).length) return { ok: true };
   const { error } = await createAdminClient().from("profiles").update(update).eq("id", me.id);
-  if (error) return { ok: false, error: /assistant_(voice|color)/.test(error.message) ? "Voice and color need a database update first." : "Couldn't save that. Try again." };
+  if (error) return { ok: false, error: /assistant_(voice|color|name)/.test(error.message) ? "Name, voice and color need a database update first." : "Couldn't save that. Try again." };
   revalidatePath("/assistant");
-  return { ok: true };
+  return { ok: true, color: update.assistant_color, name: update.assistant_name };
 }

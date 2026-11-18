@@ -9,6 +9,7 @@ import { conversionValue } from "@/lib/kpi/conversion-value";
 import { channelMaySee } from "./channel-access";
 import { DEFAULT_METRIC, RANK_METRICS, asPeriod, moneyWords, pctWords, periodRange, rankEntries, rankLinesFor, sumDays, vsTarget, type RankEntry, type RankLine, type RankPeriod } from "./rank-core";
 import type { ChatTool, ToolCtx } from "./tools";
+import { rankCriticalClients } from "./rank-critical";
 
 // Rankings across clients, for Kaizen AI and the agents (on calls and in their chats): which clients lead or trail on
 // a line (rank_clients), and the single emails, ads and posts that did best or worst (top_emails, email_detail,
@@ -214,15 +215,17 @@ export function rankTools(ctx: ToolCtx): ChatTool[] {
   return [
     {
       name: "rank_clients",
-      description: `Ranks the clients the person may see on one line by one number: the top or bottom few with each client's number and a one-line why. Lines and metrics: email (score: the account score, the main email KPI; attributed_revenue; revenue_pace: this month against the revenue target; revenue_per_recipient; open_rate; click_rate), social (score: engagement against its target; engagement; followers_gained), meta and google (kpi_vs_target: the 14 day KPI against target; spend; results; roas). Use it for "top three clients", "who's doing worst on email", "best ROAS this month". This person may rank: ${lines.join(", ")}.`,
+      description: `Ranks the clients the person may see on one line by one number: the top or bottom few with each client's number and a one-line why. Lines and metrics: email (score: the account score, the main email KPI; attributed_revenue; revenue_pace: this month against the revenue target; revenue_per_recipient; open_rate; click_rate), social (score: engagement against its target; engagement; followers_gained), meta and google (kpi_vs_target: the 14 day KPI against target; spend; results; roas). With line all it ranks across every line the person may see, most critical first (order top for the best), with the top reasons each is down or up; offer to show it with open_screen place "clients most critical". Use it for "top three clients", "which clients are most critical", "who's doing worst on email", "best ROAS this month". This person may rank: ${lines.join(", ")}.`,
       input_schema: {
         type: "object",
-        properties: { line: { type: "string", enum: lines }, metric: { type: "string", description: "One of the line's metrics above (default: its main KPI)" }, period: PERIOD, order: ORDER, limit: LIMIT },
+        properties: { line: { type: "string", enum: [...lines, "all"], description: "A line, or all for the clients most critical across every line (their KPI against target, the score on email and social, and the top reasons)" }, only_line: { type: "string", enum: ["meta", "google", "tiktok", "email", "social"], description: "With line all: judge by this one line only" }, metric: { type: "string", description: "One of the line's metrics above (default: its main KPI)" }, period: PERIOD, order: ORDER, limit: LIMIT },
         required: ["line"],
         additionalProperties: false,
       },
       status: (input) => `Ranking ${String(input.line ?? "")} clients…`,
       run: async (input) => {
+        // Across every line: the Clients list's own order, criticality and reasons (order bottom or none: most critical first; top: best)
+        if (input.line === "all") return rankCriticalClients(ctx, input);
         const line = lineFrom(ctx, input.line);
         const metric = RANK_METRICS[line].includes(String(input.metric ?? "")) ? String(input.metric) : DEFAULT_METRIC[line];
         const period = asPeriod(input.period);

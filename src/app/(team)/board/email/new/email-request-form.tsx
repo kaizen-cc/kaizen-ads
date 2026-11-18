@@ -30,15 +30,6 @@ export function EmailRequestForm({ clients, initialClient }: { clients: ClientOp
   const [draft, setDraft] = useState<BriefDraft | null>(null);
   const [busy, setBusy] = useState<"brief" | "create" | null>(null);
 
-  useEffect(() => {
-    if (!clientId) return;
-    let live = true;
-    suggestionsFor(clientId).then((x) => live && setIdeas(x));
-    return () => {
-      live = false;
-    };
-  }, [clientId]);
-
   const pick = (i: Idea) => {
     setKind(i.kind);
     setIdea(`${i.title}: ${i.idea}${i.why ? `\nWhy: ${i.why}` : ""}${i.subjects.length ? `\nSubject ideas: ${i.subjects.join(" / ")}` : ""}`);
@@ -47,6 +38,24 @@ export function EmailRequestForm({ clients, initialClient }: { clients: ClientOp
     if (i.sendOn) setDueOn(i.sendOn);
     setDraft(null);
   };
+  // ?idea=: opened from a campaign idea (the Overview's "Create the request"), so it starts from that idea
+  const askedIdea = useParam("idea");
+  useEffect(() => {
+    if (!clientId) return;
+    let live = true;
+    suggestionsFor(clientId).then((x) => {
+      if (!live) return;
+      setIdeas(x);
+      const hit = askedIdea ? x.find((i) => i.id === askedIdea) : null;
+      if (hit) pick(hit);
+    });
+    return () => {
+      live = false;
+    };
+    // Only when the client changes: picking the asked idea once, never again over a choice made since
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
   const write = async () => {
     if (!clientId) return;
     setBusy("brief");

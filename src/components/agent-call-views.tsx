@@ -1,5 +1,6 @@
 "use client";
 
+import { assistantTitle } from "@/lib/agent-look";
 import { useEffect, useRef, useState, useTransition, type ReactNode, type RefObject } from "react";
 import { reviewCallLearnings, undoLearning } from "@/app/(team)/settings/call-actions";
 import { field } from "@/components/ui";
@@ -391,7 +392,7 @@ export function FullScreenCall({ v }: { v: CallView }) {
           <div className="relative">{agent.icon(112)}</div>
         </div>
         <div className="text-center">
-          <p className="font-heading text-[24px] leading-tight">{agent.roleKey === "assistant" ? "Your assistant" : `The ${agent.label}`}</p>
+          <p className="font-heading text-[24px] leading-tight">{agent.roleKey === "assistant" ? assistantTitle(agent.label) : `The ${agent.label}`}</p>
           <p aria-live="polite" className="mt-1 text-sm text-muted">
             {error ? <span className="text-bad">{error}</span> : status(v)}
           </p>
@@ -490,7 +491,7 @@ const pillStatus = (v: CallView) => {
   if (v.error) return v.error;
   if (v.phase === "speaking") {
     const who = [...v.lines].reverse().find((l) => l.who === "agent")?.speaker?.label;
-    return `${who ?? (v.agent.roleKey === "assistant" ? "Assistant" : v.agent.label)} talking`;
+    return `${who ?? v.agent.label} talking`;
   }
   return status(v);
 };
@@ -585,7 +586,7 @@ export function Huddle({ v, minimized, onMinimize, onExpand, phone = false }: { 
           <div className="relative">{agent.icon(40)}</div>
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate font-heading text-[16px] leading-tight">{agent.roleKey === "assistant" ? "Your assistant" : `The ${agent.label}`}</p>
+          <p className="truncate font-heading text-[16px] leading-tight">{agent.roleKey === "assistant" ? assistantTitle(agent.label) : `The ${agent.label}`}</p>
           <p aria-live="polite" className="truncate text-[12.5px] text-muted">
             {error ? <span className="text-bad">{error}</span> : status(v)}
             <span className="text-faint">{v.ears === "browser" ? " · browser listening" : ""}</span>

@@ -98,7 +98,7 @@ describe("your assistant's voice and color", () => {
     expect(paletteColor("#123456")).toBeNull();
     expect(paletteColor("red")).toBeNull();
     expect(paletteColor(null)).toBeNull();
-    expect(assistantTintOf("#123456")).toBe(ASSISTANT_TINT);
+    expect(assistantTintOf("nope")).toBe(ASSISTANT_TINT);
     expect(assistantTintOf("#d4507a")).toBe("#d4507a");
   });
 });

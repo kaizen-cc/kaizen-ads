@@ -11,6 +11,7 @@ import { soundsLikeChurn } from "@/lib/client-risk";
 import { asksToFileFeedback } from "@/lib/feedback-logic";
 import { ASSISTANT_KEY, ASSISTANT_LABEL, cleanMemory, discoveryLeft, memoryForPrompt, suggestSpecialist } from "./core";
 import { planAssistantTurn } from "./prompt";
+import { assistantNameOf } from "./name";
 import { myContext } from "./context";
 import { loadMemory, saveNotes } from "./memory";
 import { directSpecialist, labelOf, playbooksForPrompt, recognizeJob, routeTeam, wantsShorter } from "./team";
@@ -107,9 +108,9 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode): Prom
   const said = person ? text : "";
   const firstName = firstNameOf(me.fullName);
   const timer = input.timer ?? callTimer();
-  const [ctxNow, memory, convo, extra] = await timer.time(
+  const [ctxNow, memory, convo, extra, assistantName] = await timer.time(
     "context",
-    Promise.all([timer.time("my_day", myContext(input.db, admin, me)), timer.time("memory", loadMemory(admin, me.id)), timer.time("history", callContext(admin, call, firstName)), turnExtras(input, text)]),
+    Promise.all([timer.time("my_day", myContext(input.db, admin, me)), timer.time("memory", loadMemory(admin, me.id)), timer.time("history", callContext(admin, call, firstName)), turnExtras(input, text), assistantNameOf(admin, me.id)]),
   );
   // "Keep it short", "you're rambling": kept in their style right away, so every later call starts that way
   if (person && wantsShorter(text)) {
@@ -132,13 +133,13 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode): Prom
         ? `<getting_to_know_them>This is your first call with ${firstName}. If they're happy to, get to know them before anything else: ask these one at a time, like a friendly new colleague, reacting briefly to each answer before the next: ${left.map((d) => d.ask).join("; ")}. If they'd rather get straight to work, help them and keep the questions for later calls. Thank them at the end and say how you'll use it.</getting_to_know_them>`
         : `<getting_to_know_them>Still to learn about ${firstName}: ${left.map((d) => d.ask).join("; ")}. Once, when the moment is natural (a lull, or at the end), ask one of these; never in the middle of a task.</getting_to_know_them>`
       : "";
-  emit({ t: "speaker", role: ASSISTANT_KEY, label: ASSISTANT_LABEL, icon: "spark" });
+  emit({ t: "speaker", role: ASSISTANT_KEY, label: assistantName || ASSISTANT_LABEL, icon: "spark" });
   const heard = person
     ? `<${firstName}_says>\n${text}\n</${firstName}_says>`
     : `<handed_to_you by="the ${labelOf(m.from ?? "")}">\n${text}\n</handed_to_you>\nPick it up from there in a line or two: keep the job moving, and give ${firstName} the floor with a short question.`;
   // The one place the mode (a call or a chat) enters the turn: how it talks and how the answer streams, nothing else
   const mode = talkModeOf(input.mode);
-  const plan = planAssistantTurn({ firstName, mode, toolsRule: TOOLS_RULE, playbooks: playbooksForPrompt(), teamRule: teamRule(firstName), tools: [...tools, extra.look, ...extra.connectors.tools] });
+  const plan = planAssistantTurn({ firstName, assistantName, mode, toolsRule: TOOLS_RULE, playbooks: playbooksForPrompt(), teamRule: teamRule(firstName), tools: [...tools, extra.look, ...extra.connectors.tools] });
   const out = await streamAnswer({
     system: plan.system,
     tools: plan.tools,

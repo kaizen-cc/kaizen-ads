@@ -20,6 +20,8 @@ import { LeaderView } from "./views/leader-view";
 import { PulseView } from "./views/pulse-view";
 import { PageHeader } from "./views/shared";
 import { NextSection } from "./views/next-section";
+import { OverviewTabs } from "./views/overview-tabs";
+import { adsDesk, creativeDesk } from "./views/ads-desk";
 import { loadNextForMe } from "@/lib/next-for-me";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { topicsFor } from "@/lib/today";
@@ -52,6 +54,22 @@ async function googleDeploys(db: SupabaseClient, me: Staff, clientIds: string[])
   return (await loadDeploys(db, clientIds, { open: true }).catch(() => [])).filter((d) => d.status === "open" || d.status === "approved");
 }
 
+/** A team member's line desk: a Meta or Google buyer's ad accounts, the creative team's clients; none for the rest */
+async function memberDesk(db: SupabaseClient, me: Staff) {
+  try {
+    const { worksAs } = await import("@/lib/roles");
+    if (worksAs(me.role, "media_buyer")) return await adsDesk(db, me, "meta");
+    if (worksAs(me.role, "google_buyer")) return await adsDesk(db, me, "google");
+    if (worksAs(me.role, "graphic_designer", "video_editor", "copywriter")) {
+      const h = await loadHome(db, me);
+      return await creativeDesk(db, me, h.allClients, h.monthElapsed);
+    }
+  } catch (e) {
+    console.error("[overview] member desk:", e instanceof Error ? e.message : e);
+  }
+  return null;
+}
+
 /**
  * Everyone's home: the daily recap first, then (execs and leads) the few themes of the agency, and under it all Next
  * for me, everything on the person signed in. Team members get their recap and their Next for me.
@@ -77,14 +95,25 @@ export default async function Home() {
     const [next, { data: mine }, { data: hiddenRows }] = await Promise.all([loadNextForMe(db, me), assignedQuery(), hiddenQuery()]);
     const ids = [...new Set((mine ?? []).map((m) => m.client_id as string))];
     // What works across businesses like the ones they work on: the same patterns the audits and refresh briefs build on
-    const [patterns, deploys] = await Promise.all([ids.length ? import("@/lib/patterns").then(({ loadPatterns }) => loadPatterns(db, ids)).catch(() => null) : Promise.resolve(null), googleDeploys(db, me, ids)]);
+    const [patterns, deploys, desk] = await Promise.all([ids.length ? import("@/lib/patterns").then(({ loadPatterns }) => loadPatterns(db, ids)).catch(() => null) : Promise.resolve(null), googleDeploys(db, me, ids), memberDesk(db, me)]);
     const n = next.now.length + next.decide.length;
     return (
-      <div className="mx-auto grid max-w-6xl gap-8">
+      <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
         <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${n ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : "nothing needs you right now"}`} />
-        <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
-        <HandoffCallout db={db} me={me.id} />
-        <NextSection data={next} me={me.id} deploys={deploys} patterns={patterns} />
+        {/* Tabs (?tab=): their day, their line's clients, audits and setup (buyers and the creative team), and everything on them */}
+        <OverviewTabs
+          tabs={[{ id: "today", label: "Today" }, ...(desk?.tabs ?? []), { id: "work", label: "My work", count: n, tone: "brand" }]}
+          panels={{
+            today: (
+              <>
+                <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
+                <HandoffCallout db={db} me={me.id} />
+              </>
+            ),
+            ...(desk?.panels ?? {}),
+            work: <NextSection data={next} me={me.id} deploys={deploys} patterns={patterns} />,
+          }}
+        />
       </div>
     );
   }
@@ -177,9 +206,17 @@ export default async function Home() {
   const waiting = google ? [] : h.rows.filter((r) => (creative ? r.stage === "internal_review" : r.stage === "ready_for_launch")).sort((a, b) => b.minutes_over - a.minutes_over);
   const mine = new Set<Stage>(creative ? ["requested", "in_production", "client_revision", "internal_review"] : ["client_review", "ready_for_launch"]);
   const team = h.teamOf(creative ? ["graphic_designer", "video_editor"] : google ? ["google_buyer"] : ["media_buyer"]);
+  // Their line's Clients, Ideas, Audits and Setup tabs: the heads of Meta and Google their ad accounts, the Head of
+  // Creative their clients' allotments
+  const desk = await (google || dept === "Meta" ? adsDesk(db, me, google ? "google" : "meta", suggestionsShown) : creativeDesk(db, me, h.allClients, h.monthElapsed, suggestionsShown)).catch((e) => {
+    console.error("[overview] desk:", e instanceof Error ? e.message : e);
+    return null;
+  });
   return (
     <LeaderView
       {...base}
+      desk={desk}
+      nextCount={next.now.length + next.decide.length}
       department={dept}
       reviewLabel={creative ? "Waiting for your review" : "Ready to launch"}
       stats={{

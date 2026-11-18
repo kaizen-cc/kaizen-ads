@@ -472,7 +472,7 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
   }
 
   return (
-    <TeamShell name={who.name} roles={who.role} tier={who.role === "Executive" ? "exec" : who.role.startsWith("Head") ? "lead" : "member"} reports={["Executive", "Head of Meta", "Head of Google", "Media buyer", "Google buyer"].includes(who.role)}>
+    <TeamShell name={who.name} fullName={who.name} meId="preview" roles={who.role} tier={who.role === "Executive" ? "exec" : who.role.startsWith("Head") ? "lead" : "member"} reports={["Executive", "Head of Meta", "Head of Google", "Media buyer", "Google buyer"].includes(who.role)}>
       {body}
     </TeamShell>
   );

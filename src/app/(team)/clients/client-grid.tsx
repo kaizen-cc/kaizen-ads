@@ -13,6 +13,8 @@ import { SLOTS, seatNeeded, type SlotRole } from "@/lib/roles";
 import { AssignSelect, type Option } from "./assign-select";
 import { AddServices, MissingLinks, type MissingLink } from "./link-fix";
 import { SERVICES, type ServiceSlug } from "@/lib/services";
+import type { LineKpi } from "@/lib/clients-kpi/core";
+import { KpiRow } from "./client-kpis";
 
 export type ClientCard = {
   id: string;
@@ -39,6 +41,10 @@ export type ClientCard = {
   /** team slots (for the services they have) and contacts still empty */
   missing: number;
   services: ServiceSlug[];
+  /** One KPI per line that has one (the boards' own numbers and status), with the reasons behind it */
+  kpis?: LineKpi[];
+  /** Someone said this client may leave lately: it counts toward how critical they are */
+  atRisk?: boolean;
   live: { meta: Freshness["tone"] | null; slack: Freshness["tone"] | null; drive: Freshness["tone"] | null };
   assigned: Record<SlotRole, Option | null>;
   /** The seats the signed-in person may assign on this client (empty for most people) */
@@ -233,6 +239,7 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
           <AddServices clientId={c.id} slug={c.slug} canEdit={canEdit} onAdded={(s) => setServices((now) => (now.includes(s) ? now : [...now, s]))} />
         )}
       </div>
+      {c.status !== "paused" && <KpiRow kpis={c.kpis ?? []} services={services} name={c.name} channel={c.channel} />}
       {error && <p className="relative -mt-2 text-xs text-bad">{error}</p>}
 
       {open && (
