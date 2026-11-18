@@ -1,5 +1,6 @@
 "use client";
 
+import { DocumentCardView } from "@/components/document-card";
 import { useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { ChatPlan } from "@/app/(team)/clients/[slug]/chat-plan";
@@ -37,6 +38,9 @@ export function CopyButton({ text, label = "Copy", className = "" }: { text: str
   );
 }
 
+/** Fenced blocks that are writing, not code: shown in the reading font */
+const PROSE = /^(|text|plain|plaintext|email|message|slack|sms|copy|draft|markdown|md|txt)$/i;
+
 /** A chat answer: markdown, with fenced code blocks shown as copyable blocks */
 export function ChatMarkdown({ text }: { text: string }) {
   const parts = text.split(/(```[\w-]*\n[\s\S]*?(?:```|$))/g);
@@ -51,8 +55,10 @@ export function ChatMarkdown({ text }: { text: string }) {
                 <span className="text-[11px] uppercase tracking-[0.12em] text-faint">{code[1] || "text"}</span>
                 <CopyButton text={code[2].replace(/\n$/, "")} />
               </div>
-              <pre className="overflow-x-auto px-4 py-3 text-[13px] leading-relaxed text-fg">
-                <code>{code[2].replace(/\n$/, "")}</code>
+              {/* Always wraps: drafts read on one screen, no sideways scrolling. Prose (an email, a message, plain text)
+                  reads in the normal font; real code keeps the monospace */}
+              <pre className={`whitespace-pre-wrap break-words px-4 py-3 leading-relaxed text-fg ${PROSE.test(code[1]) ? "font-sans text-[14.5px]" : "text-[13px]"}`}>
+                <code className={PROSE.test(code[1]) ? "font-sans" : undefined}>{code[2].replace(/\n$/, "")}</code>
               </pre>
             </div>
           );
@@ -385,6 +391,12 @@ export function CardView({ card }: { card: Card }) {
       return <ConfirmCardView c={card} />;
     case "email_design":
       return <EmailDesignCardView c={card} />;
+    case "document":
+      return (
+        <ul className="grid">
+          <DocumentCardView doc={card} wide={false} />
+        </ul>
+      );
     case "launch":
       return (
         <div className="grid gap-1">
