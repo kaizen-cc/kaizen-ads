@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { mapAsanaFields, pickSection, purposeText, looseName, type AsanaFieldSetting, type WantedField } from "@/lib/copy-docs/core";
+import { asanaTaskBody, mapAsanaFields, pickSection, purposeText, looseName, type AsanaFieldSetting, type WantedField } from "@/lib/copy-docs/core";
 import { approveCopyDoc, clientFacts, loadCopyDoc, type Me } from "@/lib/copy-docs/server";
 import { applyPatch, followerOf, newRun, readAsk, tasksFor, type LineConfig, type Patch, type Request, type RunState } from "./engine";
 import { lineOf } from "./lines";
@@ -229,7 +229,7 @@ export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, r
     const { custom_fields, missing } = mapAsanaFields(fields, p.fields);
     missing.forEach((m) => missingAll.add(m.name));
     const notes = [cfg.asana.description ? cfg.asana.description(p.input) : requestDescription(c, { copyUrl: approvedDoc.docUrl, hqUrl: facts.hqUrl, website: facts.website, figma: facts.figma, platform: facts.platform, requestedBy: me.fullName }), missing.length ? missing.map((m) => `${m.name}: ${m.value}`).join("\n") : "", follow.missing ?? ""].filter(Boolean).join("\n\n");
-    const base: Record<string, unknown> = { name: p.name, notes: notes.slice(0, 60000), ...(section ? { memberships: [{ project, section: section.gid }] } : { projects: [project] }), ...(Object.keys(custom_fields).length ? { custom_fields } : {}) };
+    const base: Record<string, unknown> = asanaTaskBody({ name: p.name, notes, project, custom_fields });
     const followers = [...new Set([follow.follower, ...collab.users, me.email].filter(Boolean) as string[])];
     let task: { gid: string; permalink_url?: string };
     try {
@@ -241,6 +241,8 @@ export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, r
         return { ok: false, error: `Asana refused the task${made.length ? ` after ${made.length} were made` : ""}: ${e instanceof Error ? e.message : "unknown"}` };
       }
     }
+    // Into its column (the task is already in the project, so a refusal here leaves it made, at the top)
+    if (section) await asanaWrite(`/sections/${section.gid}/addTask`, { task: task.gid }).catch(() => undefined);
     const url = task.permalink_url ?? `https://app.asana.com/0/${project}/${task.gid}`;
     made.push({ name: p.name, url, gid: task.gid, follower: follow.follower, followerMissing: follow.missing });
     if (cfg.asana.mirror === "email_asana_tasks") {

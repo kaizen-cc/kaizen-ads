@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CallCopyDoc } from "@/lib/agent-call/core";
 import { findOrCreateFolder, folderIdOf } from "@/lib/creative-drive-paths";
-import { changedLines, COPY_SCHEMA, copyDocHtml, copyDocName, EMAIL_FOLDER, folderStep, normalizeCopy, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
+import { changedLines, COPY_SCHEMA, copyDocHtml, copyDocName, EMAIL_FOLDER, folderStep, normalizeCopy, pickHeadquarters, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
 
 // Copy documents on the server: saved (each change a new version, the old ones kept), read through the person's own
 // session, revised by the AI copywriter from a note or the open comments, approved into a Google Doc in the client's
@@ -170,7 +170,7 @@ export async function reviseCopyDoc(admin: Admin, db: SupabaseClient, me: Me, id
 
 // ─── Approve: the Google Doc in the client's HQ Drive folder ────────────────
 
-export type ClientFacts = { id: string; name: string; kaizenId: number | null; website: string | null; hqFolder: string | null; hqUrl: string | null; figma: string | null; platform: string | null };
+export type ClientFacts = { id: string; name: string; kaizenId: number | null; website: string | null; hqFolder: string | null; /** Where the headquarters folder may be: the HQ link's folder, then the client's own folder ("ID - name") */ hqCandidates: string[]; hqUrl: string | null; figma: string | null; platform: string | null };
 
 /**
  * Everything we know about the client for a request: first the Account Overview sheet's tab for the line (client ID,
@@ -194,7 +194,8 @@ export async function clientFacts(admin: Admin, clientId: string, line = "email"
   const sheet = (((c.channel_sheet ?? {}) as Record<string, unknown>)[`${line}_details`] ?? {}) as Partial<Record<"clientId" | "hq" | "figma" | "website", string | null>>;
   const hqField = sheet.hq ?? fieldOf(/client\s*hq|assets/i);
   const fromLink = hqField && /drive\.google\.com/.test(hqField) ? folderIdOf(hqField) : null;
-  const hqFolder = (c.drive_folder_id ? folderIdOf(c.drive_folder_id as string) : null) ?? fromLink;
+  const clientFolder = c.drive_folder_id ? folderIdOf(c.drive_folder_id as string) : null;
+  const hqFolder = clientFolder ?? fromLink;
   let platform: string | null = null;
   try {
     const { emailConnections } = await import("@/lib/email-providers/which");
@@ -210,6 +211,7 @@ export async function clientFacts(admin: Admin, clientId: string, line = "email"
     kaizenId: sheet.clientId && /^\d+$/.test(sheet.clientId) ? Number(sheet.clientId) : ((c.kaizen_id as number | null) ?? null),
     website: sheet.website ?? (c.website as string | null) ?? fieldOf(/website/i),
     hqFolder,
+    hqCandidates: [...new Set([fromLink, clientFolder].filter((x): x is string => Boolean(x)))],
     hqUrl: hqField && /^https?:/i.test(hqField) ? hqField : hqFolder ? `https://drive.google.com/drive/folders/${hqFolder}` : hqField,
     figma: sheet.figma ?? fieldOf(/figma/i),
     platform: platform ?? fieldOf(/platform/i),
@@ -236,9 +238,24 @@ export async function approveCopyDoc(admin: Admin, db: SupabaseClient, me: Me, i
   let folder: string;
   let asPerson = false;
   try {
-    const got = await driveFor(me.email, facts.hqFolder);
+    // The line's folder lives in the client's headquarters folder ("ID - name" / "name - Headquarters"), never anywhere else
+    let hq: string | null = null;
+    let got: Awaited<ReturnType<typeof driveFor>> | null = null;
+    let refused: unknown = null;
+    for (const start of facts.hqCandidates) {
+      try {
+        got = await driveFor(me.email, start);
+        hq = pickHeadquarters({ id: start, name: await got.drive.folderName(start) }, await got.drive.listFolders(start), facts.name);
+      } catch (e) {
+        refused = e;
+        continue;
+      }
+      if (hq) break;
+    }
+    if ((!hq || !got) && refused) throw refused;
+    if (!hq || !got) return { ok: false, error: `${facts.name}'s Drive has no headquarters folder (a folder named "${facts.name} - Headquarters" inside their client folder). Add it or link it on the client page, then approve again.`, fixHref };
     asPerson = got.asPerson;
-    folder = (await findOrCreateFolder(got.drive, facts.hqFolder, folderStep(folderName))).id;
+    folder = (await findOrCreateFolder(got.drive, hq, folderStep(folderName))).id;
     made = await got.drive.createDoc(folder, copyDocName({ client: facts.name, kind: d.content.kind, shortName: d.content.shortName, sendDate: d.content.brief.sendDate }), copyDocHtml(d.content, { client: facts.name }));
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
