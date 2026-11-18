@@ -12,6 +12,7 @@ import { conceptLine } from "@/lib/allotment";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import { SuggestionSheet } from "./suggested-briefs";
 import { SaveIdeaStar } from "@/components/save-idea-star";
+import { businessDaysSince } from "@/lib/waited-days";
 
 // New and returning clients, front and center for execs and leads: where each one is (intake, first round,
 // production), with the first round one click away. Deliberately louder than everything else on Home.
@@ -88,17 +89,6 @@ export function OnboardingCallout({ state, clients, bare = false }: { state: Onb
 const WRITE_STEPS = ["Reading their intake form and client page", "Pulling the winners in their industry", "Choosing the angles", "Writing the concepts and hooks", "Fitting it to their allotment"];
 const WRITE_SECONDS = 90;
 
-/** Business days between two moments (weekends don't count), for how long something has waited. */
-function businessDaysSince(iso: string, now: number) {
-  let days = 0;
-  const d = new Date(iso);
-  const end = new Date(now);
-  while (d < end) {
-    d.setDate(d.getDate() + 1);
-    if (d <= end && d.getDay() !== 0 && d.getDay() !== 6) days++;
-  }
-  return days;
-}
 const waited = (days: number) => (days === 0 ? "today" : days === 1 ? "1 day" : `${days} days`);
 
 function ClientCard({ c, creativeView, onOpen }: { c: OnboardingCard; creativeView: boolean; onOpen: (s: OpenSuggestion) => void }) {
@@ -158,10 +148,12 @@ function ClientCard({ c, creativeView, onOpen }: { c: OnboardingCard; creativeVi
   const pct = writing ? Math.min(96, Math.round((elapsed / WRITE_SECONDS) * 100)) : 0;
   const stepNow = WRITE_STEPS[Math.min(WRITE_STEPS.length - 1, Math.floor((elapsed / WRITE_SECONDS) * WRITE_STEPS.length))];
 
-  // How long each stage has taken, or has been waiting
-  const intakeWait = businessDaysSince(c.since, now);
+  // How long each stage has taken, or has been waiting. Waits run to the clock, so like the bar they're browser only
+  // (the server's render leaves them off rather than risk a different count from the browser's)
+  const intakeWait = inBrowser ? businessDaysSince(c.since, now) : 0;
   const intakeTook = intakeIn ? businessDaysSince(c.since, Date.parse(c.intake!.at)) : 0;
   const readySince = c.firstRound?.createdAt ?? null;
+  const roundWait = inBrowser && readySince ? businessDaysSince(readySince, now) : 0;
   const n = c.round.length;
   // The creative team never sees the intake form (the account manager chases it): the first round is simply ready to write
   const writable = intakeIn || creativeView;
@@ -171,13 +163,13 @@ function ClientCard({ c, creativeView, onOpen }: { c: OnboardingCard; creativeVi
       ? null
       : intakeIn
         ? { label: "Intake form", detail: `In ${day(c.intake!.at)}`, sub: Date.parse(c.intake!.at) < Date.parse(c.since) ? "Before enrolling" : `Took ${waited(intakeTook)}`, state: "done" }
-        : { label: "Intake form", detail: "Waiting on the client", sub: `${waited(intakeWait)} so far`, state: "now", late: intakeWait > 2 },
+        : { label: "Intake form", detail: "Waiting on the client", sub: inBrowser ? `${waited(intakeWait)} so far` : undefined, state: "now", late: intakeWait > 2 },
     {
       label: "First round",
       detail: n ? `${n} ${n === 1 ? "concept" : "concepts"} ready for you` : c.inProduction.length ? "Approved" : writing ? `AI is writing it · ${pct}%` : failed ? "Couldn't write it" : writable ? "Ready to write" : "Not yet",
-      sub: c.firstRound && readySince ? `Waiting on you ${waited(businessDaysSince(readySince, now))}` : undefined,
+      sub: c.firstRound && readySince && inBrowser ? `Waiting on you ${waited(roundWait)}` : undefined,
       state: n || writing || failed ? "now" : c.inProduction.length ? "done" : writable ? "now" : "todo",
-      late: Boolean(c.firstRound && readySince && businessDaysSince(readySince, now) > 1),
+      late: Boolean(c.firstRound && readySince && roundWait > 1),
     },
     { label: "In production", detail: c.inProduction.length ? `${c.inProduction.length} ${c.inProduction.length === 1 ? "ticket" : "tickets"}` : "—", state: c.inProduction.length ? "now" : "todo" },
   ];
