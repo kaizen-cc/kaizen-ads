@@ -42,7 +42,7 @@ export function ClientNoticesPanel({ data, canEdit, toggle }: { data: ClientNoti
           </span>
           {data.by && data.at && (
             <span className="text-[12px] text-faint">
-              {on ? "Switched on" : "Switched off"} by {data.by} · {new Date(data.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+              {on ? "Switched on" : "Switched off"} by {data.by} · {new Date(data.at).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" })}
             </span>
           )}
         </div>

@@ -114,7 +114,7 @@ export function CampaignPreviewSheet({ clientId, campaigns }: { clientId: string
             <div className="grid min-w-0 flex-1 gap-0.5">
               <span className="text-[11px] uppercase tracking-[0.12em] text-faint">
                 {sms ? "SMS" : "Email"}
-                {c.sendTime ? ` · sent ${new Date(c.sendTime).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}
+                {c.sendTime ? ` · sent ${new Date(c.sendTime).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" })}` : ""}
               </span>
               <span className="truncate text-[15px] font-medium">{sms ? c.name : (s?.preview?.subject ?? c.subject ?? c.name)}</span>
               {!sms && (s?.preview?.previewText ?? c.previewText) && <span className="truncate text-[12.5px] text-muted">{s?.preview?.previewText ?? c.previewText}</span>}

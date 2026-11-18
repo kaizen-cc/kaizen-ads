@@ -34,7 +34,7 @@ export function KeywordListsPanel({ clientId, lists: initial, canAct }: { client
                     <span className="font-heading text-[16px] leading-snug">{l.name}</span>
                     <span className="text-[12px] text-faint">
                       {l.keywords.length} keyword{l.keywords.length === 1 ? "" : "s"}
-                      {searches ? ` · about ${searches.toLocaleString("en-US")} searches a month` : ""} · {new Date(l.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      {searches ? ` · about ${searches.toLocaleString("en-US")} searches a month` : ""} · {new Date(l.updatedAt).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" })}
                     </span>
                   </span>
                   {canAct && (

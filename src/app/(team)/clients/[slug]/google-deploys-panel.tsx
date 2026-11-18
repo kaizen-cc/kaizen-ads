@@ -77,7 +77,7 @@ function Item({ d, open, canAct, onChange }: { d: Deploy; open: boolean; canAct:
           <span className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-[#4285f4]/15 px-2.5 py-0.5 text-[11px] font-medium text-[#4285f4]">{KIND[d.kind]}</span>
             <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${s.cls}`}>{s.label}</span>
-            <span className="text-[11px] text-faint">{new Date(d.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+            <span className="text-[11px] text-faint">{new Date(d.createdAt).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" })}</span>
           </span>
           <span className="font-heading text-[16px] leading-snug">{d.plan?.summary ?? (d.status === "drafting" ? "Writing it for this client…" : "From a Google winner")}</span>
           <span className="line-clamp-2 text-[12.5px] text-muted">

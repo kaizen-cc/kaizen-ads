@@ -52,7 +52,7 @@ export function BillingDayPanel({ day, source, start, end, history, canEdit, sav
           <ul className="grid gap-1.5">
             {history.map((h, i) => (
               <li key={i} className="flex flex-wrap items-baseline gap-x-2 text-[13px]">
-                <span className="tabular text-faint">{new Date(h.at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                <span className="tabular text-faint">{new Date(h.at).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" })}</span>
                 <span>
                   {h.oldDay ? ordinal(h.oldDay) : "calendar month"} → <b className="font-medium">{h.newDay ? ordinal(h.newDay) : "calendar month"}</b>
                 </span>
