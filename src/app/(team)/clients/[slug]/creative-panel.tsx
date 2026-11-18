@@ -106,7 +106,7 @@ function Ads({ ads, paused, onOpen }: { ads: MetaRow[]; paused: boolean; onOpen:
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       {ads.map((a) => (
         <button key={a.id} onClick={() => onOpen(a)} className="grid gap-2 rounded-[10px] border border-line bg-bg/40 p-2 text-left transition-colors hover:border-faint">
-          <span className="relative aspect-[4/5] overflow-hidden rounded-[6px] bg-surface-2">
+          <span className="relative aspect-square overflow-hidden rounded-[6px] bg-surface-2">
             {a.thumbnail ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={a.thumbnail} alt="" className={`absolute inset-0 h-full w-full object-cover ${paused ? "opacity-60 grayscale" : ""}`} />
@@ -149,7 +149,7 @@ function AdSheet({ ad, onClose }: { ad: MetaRow; onClose: () => void }) {
             // eslint-disable-next-line @next/next/no-img-element
             <img src={ad.thumbnail} alt="" className="block w-full" />
           ) : (
-            <span className="grid aspect-[4/5] place-items-center text-xs text-[#65676b]">No preview from the ad account yet</span>
+            <span className="grid aspect-square place-items-center text-xs text-[#65676b]">No preview from the ad account yet</span>
           )}
           {ad.headline && <p className="truncate bg-[#f0f2f5] px-3 py-2.5 text-[14px] font-semibold">{ad.headline}</p>}
         </div>

@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { mergePlacements } from "@/lib/ad-placements";
 import { designsForTickets } from "@/lib/portal";
 import { BOARD_ORDER, stageInfo, type Stage } from "@/lib/stages";
 
@@ -111,9 +112,10 @@ export async function loadClientCreative(db: SupabaseClient, clientId: string): 
   return {
     moving: ((moving ?? []) as Row[]).map(toRow).sort((a, b) => order(a.stage) - order(b.stage)),
     launched: ((launched ?? []) as Row[]).map(toRow),
-    // Delivering now (and, until Meta says otherwise, anything that spent in the last sync)
-    live: ads.filter((a) => a.live !== false && a.row.spend > 0).map((a) => a.row),
-    paused: ads.filter((a) => a.live === false).map((a) => a.row),
+    // Delivering now (and, until Meta says otherwise, anything that spent in the last sync). The story and post of
+    // the same ad count as one creative.
+    live: mergePlacements(ads.filter((a) => a.live !== false && a.row.spend > 0).map((a) => a.row)),
+    paused: mergePlacements(ads.filter((a) => a.live === false).map((a) => a.row)),
     syncedAt: snap?.fetched_at ?? null,
     asana: (asana ?? []) as AsanaWork[],
   };
