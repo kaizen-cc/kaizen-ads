@@ -1,6 +1,7 @@
 "use client";
 
 import { DraftReply } from "@/components/draft-reply";
+import { LinePauseControl } from "@/components/line-pause";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -828,6 +829,11 @@ function ItemBody({ i, status, big = false, onChoose, onAct, onNext }: { i: Toda
           </button>
         )}
       </div>
+      {i.pause && i.clientId && (
+        <div className="relative">
+          <LinePauseControl clientId={i.clientId} service={i.pause.service} label="Paused: hide until..." tone="dark" onPaused={onNext ?? undefined} />
+        </div>
+      )}
     </>
   );
 }

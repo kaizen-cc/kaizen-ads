@@ -50,7 +50,7 @@ export type ProviderDef = {
   /** Checks the key against the provider and says which account it belongs to */
   check(key: string, extra: ConnectExtra): Promise<{ id: string; name: string | null; timezone: string | null; currency: string | null; region?: CioRegion }>;
   /** One read: the recent window or the full 90 days, written into the shared tables */
-  read(ctx: { admin: SupabaseClient; conn: ConnRow; key: string; window: KlaviyoWindow; step: Step }): Promise<ReadOut>;
+  read(ctx: { admin: SupabaseClient; conn: ConnRow; key: string; window: KlaviyoWindow; step: Step; /** A full read going further back than the usual 90 days (the history read) */ depth?: number }): Promise<ReadOut>;
   /** An error that means the key was refused */
   refused(e: unknown): boolean;
   costMs(w: KlaviyoWindow): number;
@@ -191,7 +191,7 @@ export async function providerRoster(admin: SupabaseClient, def: ProviderDef): P
 export type SyncResult = { client: string; ok: boolean; window?: KlaviyoWindow; campaigns?: number; flows?: number; audiences?: number; days?: number; error?: string };
 
 /** One client's read: the full window once a day (or when it never had one), the recent window otherwise; noted for Sync health */
-export async function syncProvider(admin: SupabaseClient, def: ProviderDef, clientId: string, opts: { window?: KlaviyoWindow | "auto" } = {}): Promise<SyncResult> {
+export async function syncProvider(admin: SupabaseClient, def: ProviderDef, clientId: string, opts: { window?: KlaviyoWindow | "auto"; depthDays?: number } = {}): Promise<SyncResult> {
   const name = providerName(def.id);
   const { data: row, error } = await admin.from(def.table).select("*").eq("client_id", clientId).maybeSingle();
   if (error || !row) return { client: clientId, ok: false, error: error ? `${name} isn't set up in the database yet.` : `${name} isn't connected for this client.` };
@@ -212,7 +212,7 @@ export async function syncProvider(admin: SupabaseClient, def: ProviderDef, clie
     if (window === "full") await progress(pct, label);
   };
   try {
-    const out = await def.read({ admin, conn, key, window, step });
+    const out = await def.read({ admin, conn, key, window, step, depth: opts.depthDays });
     const now = new Date().toISOString();
     await admin
       .from(def.table)

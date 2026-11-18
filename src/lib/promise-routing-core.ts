@@ -232,6 +232,9 @@ export function routeCommitment(
     const stat = wantsStatic(text) || !video;
     if (video) for (const id of holders(o.seats, "video_editor")) add(id, "client's video editor");
     if (stat) for (const id of holders(o.seats, "graphic_designer")) add(id, "client's designer");
+    // The creative leads plan and hand out the work
+    if (video) for (const id of byRole("lead_video_editor")) add(id, "lead video editor");
+    if (stat) for (const id of byRole("lead_graphic_designer")) add(id, "lead graphic designer");
     if (c.kind === "copy") for (const id of holders(o.seats, "copywriter")) add(id, "client's copywriter");
     // A promise of ad creative on a platform is also the buyer's to run, only when it can't wait
     if (o.urgent) for (const id of holders(o.seats, platform === "google" ? "google_buyer" : platform === "tiktok" ? "tiktok_buyer" : "meta_buyer").slice(0, 1)) add(id, "client's buyer");
@@ -254,12 +257,8 @@ export function routeCommitment(
   const host = (o.hostEmail ?? "").toLowerCase();
   const owner = host ? o.people.find((p) => (p.email ?? "").toLowerCase() === host && !p.isExec) : undefined;
   add(owner?.id, "made the promise");
-  // Execs only for urgent ones they were in the meeting for (they know already, so it's a reminder they asked to track)
-  if (o.urgent) {
-    const att = new Set((o.attendeeEmails ?? []).map((e) => e.toLowerCase()));
-    if (host) att.add(host);
-    for (const p of o.people) if (p.isExec && p.email && att.has(p.email.toLowerCase())) add(p.id, "was in the meeting");
-  }
+  // Execs never get the team's work items: the line heads and the people doing it do
+  for (const p of o.people) if (p.isExec) delete why[p.id];
   return { to: Object.keys(why), why };
 }
 

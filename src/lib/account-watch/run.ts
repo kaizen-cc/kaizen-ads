@@ -421,22 +421,14 @@ async function applyFindings(admin: SupabaseClient, findings: Finding[], clients
 
 type Notice = { key: string; title: string; body: string; href: string; clientId: string; kind: string; critical: boolean };
 
-/** The bell (and email by each person's settings), and for critical ones a Slack DM to those who have Slack linked */
+/** The bell, and email by each person's settings. Never Slack: the team works in Kaizen OS */
 export async function notify(admin: SupabaseClient, to: string[], n: Notice) {
   if (!to.length) return;
   await admin.from("notifications").upsert(
     to.map((id) => ({ profile_id: id, kind: n.kind, title: n.title.slice(0, 200), body: n.body.slice(0, 1000), href: n.href, client_id: n.clientId, key: n.key, priority: n.critical ? "critical" : "normal" })),
     { onConflict: "profile_id,key", ignoreDuplicates: true },
   );
-  if (!n.critical || !process.env.SLACK_BOT_TOKEN) return;
-  const { data: ppl } = await admin.from("profiles").select("slack_user_id").in("id", to).eq("is_active", true).not("joined_at", "is", null).not("slack_user_id", "is", null);
-  const base = process.env.NEXT_PUBLIC_SITE_URL || "https://ads.kaizenmarketing.agency";
-  for (const p of ppl ?? [])
-    await fetch("https://slack.com/api/chat.postMessage", {
-      method: "POST",
-      headers: { authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" },
-      body: JSON.stringify({ channel: p.slack_user_id, text: `*${n.title}*\n${n.body}\n<${base}${n.href}|Open in Kaizen OS>`, unfurl_links: false }),
-    }).catch(() => null);
+  // Team alerts stay in Kaizen OS (bell, Overview, email): no Slack DMs from the app
 }
 
 /**

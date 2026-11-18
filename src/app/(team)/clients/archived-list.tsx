@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { pushParams, useParam } from "@/lib/url-state";
 import { restoreClient } from "./[slug]/actions";
 
 export type ArchivedClient = { id: string; name: string; slug: string; at: string; reason: string | null; source: string | null };
@@ -36,9 +37,11 @@ function setAsideLine(s: ArchiveLog["setAside"]) {
  * The archive: every archived client with who archived them, when and why, and the history of archives and restores.
  * Their client page stays readable, and restoring brings back their status and the KPI targets that were tracking.
  */
-export function ArchivedList({ clients, canRestore, log, startOpen = false }: { clients: ArchivedClient[]; canRestore: boolean; log: ArchiveLog[]; startOpen?: boolean }) {
+export function ArchivedList({ clients, canRestore, log }: { clients: ArchivedClient[]; canRestore: boolean; log: ArchiveLog[] }) {
   const router = useRouter();
-  const [open, setOpen] = useState(startOpen);
+  // Open while the address says so (?view=archived, from the Status menu or a notification), so back closes it again
+  const open = useParam("view") === "archived";
+  const setOpen = (v: boolean) => pushParams({ view: v ? "archived" : null });
   const [busy, act] = useTransition();
   const [gone, setGone] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);

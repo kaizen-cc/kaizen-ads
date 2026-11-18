@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { requireStaff } from "@/lib/auth";
-import { SLACK_USER_SCOPES, slackOAuthConfigured } from "@/lib/slack-user";
+import { SLACK_READ_SCOPES, SLACK_USER_SCOPES, slackOAuthConfigured } from "@/lib/slack-user";
 import { safeNext, withParams } from "../shared";
 
 // A team member connects their own Slack, so reports can go out from them. Slack sends them back to /api/slack/callback.
@@ -19,7 +19,8 @@ export async function GET(request: Request) {
   const authorize = new URL("https://slack.com/oauth/v2/authorize");
   authorize.searchParams.set("client_id", process.env.SLACK_CLIENT_ID!);
   // Only user scopes: the bot's own scopes are untouched by this
-  authorize.searchParams.set("user_scope", SLACK_USER_SCOPES);
+  // ?read=1 also asks to read as them (their assistant searching their Slack, DMs included)
+  authorize.searchParams.set("user_scope", url.searchParams.get("read") === "1" ? `${SLACK_USER_SCOPES},${SLACK_READ_SCOPES}` : SLACK_USER_SCOPES);
   authorize.searchParams.set("redirect_uri", `${url.origin}/api/slack/callback`);
   authorize.searchParams.set("state", state);
   return Response.redirect(authorize.toString(), 302);

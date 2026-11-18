@@ -537,7 +537,7 @@ function Numbers({ r, sheet, loading, money }: { r: ChannelRow; sheet: EmailShee
         <span className={`tabular font-heading text-lg leading-tight ${g ? TONE_TEXT[g] : "text-fg"}`}>{fmt(v)}</span>
         <TargetGauge value={v} target={t} roas />
         <span className="tabular truncate text-[11px] text-faint">{sub(w)}</span>
-        {partial && <span className="text-[10.5px] text-faint">Read from {when(`${sheet!.dataFrom}T12:00:00Z`)} only</span>}
+        {partial && <span className="text-[10.5px] text-faint">{sheet!.reading ? sheet!.reading.line : `Read from ${when(`${sheet!.dataFrom}T12:00:00Z`)} only`}</span>}
       </div>
     );
   };

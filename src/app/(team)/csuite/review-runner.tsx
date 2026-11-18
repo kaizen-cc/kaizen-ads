@@ -4,10 +4,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type ReactNode } from "react";
 import { LINE_LABEL, type KpiLine } from "@/lib/clients-kpi/core";
-import { STEPS, asStep, progress, stepIndex, type ItemState, type Marks, type StepKey } from "@/lib/csuite/core";
+import { STEPS, asStep, progress, shortReason, stepIndex, type ItemState, type Marks, type StepKey } from "@/lib/csuite/core";
 import type { Meeting, Review, TodoRow } from "@/lib/csuite/load";
 import { SERVICES, type ServiceSlug } from "@/lib/services";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
+import type { BoardSwitch } from "../kpis/channel-board";
+import { KpiSwitch } from "../kpis/kpi-switch";
 import { addReviewTodo, closeReviewTodo, draftUpsellEmail, finishReview, goToStep, markReviewItem, startReview } from "./actions";
 
 // The account review, step by step: a rail of the six steps with how far each has got, the step's items with Discuss,
@@ -22,7 +24,7 @@ const svc = (s: ServiceSlug) => SERVICES.find((x) => x.slug === s)?.short ?? s;
 const TONE_DOT: Record<string, string> = { good: "bg-ok", watch: "bg-warn", bad: "bg-bad", none: "bg-faint" };
 const SEV: Record<string, string> = { critical: "bg-bad", warn: "bg-warn", info: "bg-faint" };
 
-export function ReviewRunner({ me, review, meeting, past, todos, people }: { me: string; review: Review; meeting: Meeting | null; past: Past[]; todos: TodoRow[]; people: Person[] }) {
+export function ReviewRunner({ me, review, meeting, past, todos, people, switcher }: { me: string; review: Review; meeting: Meeting | null; past: Past[]; todos: TodoRow[]; people: Person[]; switcher: BoardSwitch[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [marks, setMarks] = useState<Marks>(meeting?.items ?? {});
@@ -82,35 +84,45 @@ export function ReviewRunner({ me, review, meeting, past, todos, people }: { me:
   );
 
   return (
-    <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
+    <div className="grid gap-7">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Executives · weekly</p>
-          <h1 className="mt-1.5 font-heading text-[32px] leading-tight">Account review</h1>
-          <p className="mt-1.5 text-sm text-muted">{meeting ? `${meeting.title} · started ${new Date(meeting.started_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : "Every account, step by step: the numbers, what's critical, what to fix, what to sell, what it's worth, who does what."}</p>
+          <h1 className="font-heading text-[32px] leading-tight">KPIs</h1>
+          <p className="mt-1.5 text-sm text-muted">The weekly account review, step by step: the numbers, what&apos;s critical, what to fix, what to sell, what it&apos;s worth, who does what.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          {meeting ? (
-            <>
-              <div className="grid min-w-40 gap-1">
-                <div className="tabular flex justify-between text-xs text-muted">
-                  <span>Progress</span>
-                  <span>
-                    {prog.done} of {prog.total}
-                  </span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
-                  <div className="h-full rounded-full bg-brand transition-[width] duration-500" style={{ width: `${prog.total ? (prog.done / prog.total) * 100 : 0}%` }} />
-                </div>
-              </div>
-            </>
-          ) : (
-            <button type="button" disabled={pending} onClick={() => run(startReview)} className="inline-flex h-11 items-center rounded-full bg-fg px-5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50">
-              {pending ? "Starting…" : "Start this week's review"}
-            </button>
-          )}
+        <div className="flex w-full items-center gap-2 md:w-auto">
+          <KpiSwitch tabs={switcher} />
         </div>
       </header>
+
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 rounded-[18px] border border-line bg-surface px-4 py-3.5 md:px-5">
+        <div className="grid min-w-0 gap-0.5">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Executives · weekly</p>
+          <p className="truncate text-sm font-medium">{meeting ? meeting.title : "No review running"}</p>
+          {meeting && (
+            <p suppressHydrationWarning className="text-xs text-muted">
+              Started {new Date(meeting.started_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+            </p>
+          )}
+        </div>
+        {meeting ? (
+          <div className="grid w-full gap-1.5 sm:w-56">
+            <div className="tabular flex justify-between text-xs text-muted">
+              <span>Progress</span>
+              <span>
+                {prog.done} of {prog.total}
+              </span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
+              <div className="h-full rounded-full bg-brand transition-[width] duration-500" style={{ width: `${prog.total ? (prog.done / prog.total) * 100 : 0}%` }} />
+            </div>
+          </div>
+        ) : (
+          <button type="button" disabled={pending} onClick={() => run(startReview)} className="inline-flex h-11 items-center rounded-full bg-fg px-5 text-sm font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-50 md:h-10">
+            {pending ? "Starting…" : "Start this week's review"}
+          </button>
+        )}
+      </div>
 
       {error && <p className="rounded-xl bg-bad-soft px-4 py-3 text-sm text-bad">{error}</p>}
 
@@ -140,7 +152,7 @@ export function ReviewRunner({ me, review, meeting, past, todos, people }: { me:
         </div>
         {!meeting && <p className="rounded-xl border border-dashed border-line px-4 py-3 text-sm text-muted">Start the review to mark items as discussed or done and to assign to-dos. Everything below is live.</p>}
 
-        {step === "scorecard" && <ScorecardStep review={review} actions={actions} />}
+        {step === "scorecard" && <ScorecardStep review={review} actions={actions} onCritical={() => go("critical")} />}
         {step === "critical" && (
           <List empty="Nothing critical right now.">
             {review.criticalRows.map((c, i) => (
@@ -325,60 +337,201 @@ function TodoForm({ people, me, defaultTitle, pending, onSave }: { people: Perso
   );
 }
 
-function ScorecardStep({ review, actions }: { review: Review; actions: (key: string, ctx: { clientId?: string | null; title: string }) => ReactNode }) {
-  const s = review.scorecard;
-  const tiles = [
-    { label: "Lines on target", value: pct(s.lineRatio), note: `${s.linesOn} of ${s.linesJudged}`, tone: s.lineRatio == null ? "" : s.lineRatio >= 0.7 ? "text-ok" : s.lineRatio >= 0.5 ? "text-warn" : "text-bad" },
-    { label: "Clients on every line", value: pct(s.clientRatio), note: `${s.clientsOn} of ${s.clientsJudged}`, tone: "" },
-    { label: "In the red", value: String(s.inRed), note: "a line off target", tone: s.inRed ? "text-bad" : "text-ok" },
-    { label: "Critical", value: String(review.critical), note: "weighed by size", tone: review.critical ? "text-bad" : "text-ok" },
-  ];
+const ratioTone = (x: number | null) => (x == null ? "text-faint" : x >= 0.7 ? "text-ok" : x >= 0.5 ? "text-warn" : "text-bad");
+
+/** The success ratio as a ring: green from 70%, amber from 50%, red under */
+function Ring({ value, size = 132 }: { value: number | null; size?: number }) {
+  const stroke = 9;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const v = Math.max(0, Math.min(1, value ?? 0));
   return (
-    <div className="grid gap-4">
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-        {tiles.map((t) => (
-          <div key={t.label} className="grid gap-1 rounded-2xl border border-line bg-surface p-4">
-            <span className="text-[11px] uppercase tracking-[0.12em] text-faint">{t.label}</span>
-            <span className={`tabular font-heading text-3xl ${t.tone}`}>{t.value}</span>
-            <span className="tabular text-xs text-muted">{t.note}</span>
-          </div>
-        ))}
+    <div className="relative grid shrink-0 place-items-center" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90" aria-hidden>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth={stroke} className="text-surface-2" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${c * v} ${c}`} className={`${ratioTone(value)} transition-[stroke-dasharray] duration-700`} />
+      </svg>
+      <div className="absolute grid justify-items-center">
+        <span className="tabular font-heading text-[34px] leading-none">{pct(value)}</span>
+        <span className="mt-1 text-[10px] uppercase tracking-[0.14em] text-faint">on target</span>
       </div>
-      <ul className="grid gap-2">
-        {s.lines.map((l) => {
-          const key = `scorecard:${l.line}`;
-          const total = Math.max(1, l.on + l.close + l.off);
-          return (
-            <li key={key} className="grid gap-3 rounded-2xl border border-line bg-surface p-4 md:grid-cols-[minmax(0,1fr)_auto]">
-              <div className="grid min-w-0 gap-2">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="font-medium">{LINE_LABEL[l.line]}</span>
-                  <span className="tabular text-xs text-muted">
-                    {l.on} on · {l.close} close · {l.off} off
-                    {l.improving ? ` · ↑ ${l.improving}` : ""}
-                    {l.slipping ? ` · ↓ ${l.slipping}` : ""}
-                  </span>
-                </div>
-                <div className="flex h-2 overflow-hidden rounded-full bg-surface-2">
-                  <span className="h-full bg-ok" style={{ width: `${(l.on / total) * 100}%` }} />
-                  <span className="h-full bg-warn" style={{ width: `${(l.close / total) * 100}%` }} />
-                  <span className="h-full bg-bad" style={{ width: `${(l.off / total) * 100}%` }} />
-                </div>
-                <div className="tabular flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-                  {l.spend > 0 && <span>Spend 14d {money(l.spend)}</span>}
-                  {l.revenue > 0 && <span>Revenue 14d {money(l.revenue)}</span>}
-                  {l.pace != null && (
-                    <span className={l.pace < 0.9 || l.pace > 1.15 ? "text-warn" : "text-ok"}>
-                      {l.line === "email" ? "Revenue pacing" : "Spend pacing"} {pct(l.pace)}
+    </div>
+  );
+}
+
+const PACE_WORD: Partial<Record<KpiLine, { label: string; hint: string }>> = {
+  email: { label: "Revenue pace", hint: "The typical client: where this month's attributed revenue lands at its current rate, against the month's revenue target" },
+  creative: { label: "Delivery pace", hint: "The typical client: creative delivered this cycle, against what's due by today" },
+};
+const AD_PACE = { label: "Spend pace", hint: "The typical account: where this month's spend lands at its current daily rate, against the monthly budget" };
+
+function Stat({ label, value, note, tone = "" }: { label: string; value: string; note: string; tone?: string }) {
+  return (
+    <span className="grid content-start gap-0.5">
+      <span className="text-[11px] uppercase tracking-[0.12em] text-faint">{label}</span>
+      <span className={`tabular font-heading text-[26px] leading-tight ${tone}`}>{value}</span>
+      <span className="tabular text-xs text-muted">{note}</span>
+    </span>
+  );
+}
+
+function ScorecardStep({ review, actions, onCritical }: { review: Review; actions: (key: string, ctx: { clientId?: string | null; title: string }) => ReactNode; onCritical: () => void }) {
+  const s = review.scorecard;
+  const judged = s.lines.filter((l) => l.judged > 0);
+  const quiet = s.lines.filter((l) => !l.judged);
+  const byId = new Map(review.criticalRows.map((c) => [c.id, c]));
+
+  if (!s.linesJudged) return <p className="rounded-2xl border border-dashed border-line px-4 py-6 text-center text-sm text-faint">No KPI is judged yet, so there&apos;s no scorecard. It fills in as targets are set and accounts sync.</p>;
+
+  return (
+    <div className="grid gap-5">
+      {/* The headline: the success ratio and where the book stands */}
+      <section aria-label="Success ratio" className="grid gap-6 rounded-[22px] border border-line bg-surface p-5 md:grid-cols-[auto_minmax(0,1fr)] md:items-center md:gap-10 md:p-7">
+        <div className="flex items-center gap-5">
+          <Ring value={s.lineRatio} />
+          <div className="grid gap-1 md:hidden">
+            <p className="font-heading text-xl">Success ratio</p>
+            <p className="tabular text-xs text-muted">
+              {s.linesOn} of {s.linesJudged} KPI&apos;d lines on or better than target
+            </p>
+          </div>
+        </div>
+        <div className="grid gap-5">
+          <div className="hidden md:grid md:gap-1">
+            <p className="font-heading text-2xl">Success ratio</p>
+            <p className="tabular text-sm text-muted">
+              {s.linesOn} of {s.linesJudged} KPI&apos;d lines are on or better than target.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-4 border-t border-line pt-4 sm:grid-cols-3">
+            <Stat label="Every line on" value={pct(s.clientRatio)} note={`${s.clientsOn} of ${s.clientsJudged} clients`} tone={ratioTone(s.clientRatio)} />
+            <Link href="/clients?kpi=off" title="Open these clients" className="rounded-xl transition-opacity hover:opacity-80">
+              <Stat label="In the red" value={String(s.inRed)} note="a line off target" tone={s.inRed ? "text-bad" : "text-ok"} />
+            </Link>
+            <button type="button" onClick={onCritical} title="Go to the critical accounts" className="rounded-xl text-left transition-opacity hover:opacity-80">
+              <Stat label="Critical" value={String(review.critical)} note="weighed by business size" tone={review.critical ? "text-bad" : "text-ok"} />
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+        {/* Each line: on, close and off, where it's heading, and its pace */}
+        <section aria-label="By line" className="grid content-start gap-3">
+          <h3 className="text-[11px] uppercase tracking-[0.14em] text-faint">By line</h3>
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {judged.map((l) => {
+              const key = `scorecard:${l.line}`;
+              const total = Math.max(1, l.on + l.close + l.off);
+              const pw = PACE_WORD[l.line] ?? AD_PACE;
+              const paceOk = l.pace != null && l.pace >= 0.85 && l.pace <= 1.15;
+              const paceNote = `${pw.hint}. Read over ${l.paced}${l.paceOver ? `; ${l.paceOver} over 115%` : ""}${l.paceUnder ? `; ${l.paceUnder} under 85%` : ""}.`;
+              return (
+                <li key={key} className="grid content-start gap-3 rounded-[18px] border border-line bg-surface p-4">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="font-medium">{LINE_LABEL[l.line]}</span>
+                    <span className="tabular text-xs text-muted">
+                      <span className={`font-medium ${ratioTone(l.on / l.judged)}`}>{l.on}</span> of {l.judged} on target
                     </span>
+                  </div>
+                  <div className="flex h-2 gap-0.5 overflow-hidden rounded-full" role="img" aria-label={`${l.on} on target, ${l.close} close, ${l.off} off`}>
+                    {l.on > 0 && <span className="h-full rounded-full bg-ok" style={{ width: `${(l.on / total) * 100}%` }} />}
+                    {l.close > 0 && <span className="h-full rounded-full bg-warn" style={{ width: `${(l.close / total) * 100}%` }} />}
+                    {l.off > 0 && <span className="h-full rounded-full bg-bad" style={{ width: `${(l.off / total) * 100}%` }} />}
+                  </div>
+                  <div className="tabular flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-ok" />
+                      {l.on} on
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-warn" />
+                      {l.close} close
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-bad" />
+                      {l.off} off
+                    </span>
+                    {l.improving > 0 && <span className="text-ok">↑ {l.improving} improving</span>}
+                    {l.slipping > 0 && <span className="text-bad">↓ {l.slipping} slipping</span>}
+                  </div>
+                  {(l.spend > 0 || l.revenue > 0 || l.pace != null) && (
+                    <dl className="tabular grid grid-cols-3 gap-2 rounded-xl bg-surface-2/60 px-3 py-2.5 text-xs">
+                      {l.spend > 0 && (
+                        <div className="grid gap-0.5">
+                          <dt className="text-faint">Spend 14d</dt>
+                          <dd className="font-medium">{money(l.spend)}</dd>
+                        </div>
+                      )}
+                      {l.revenue > 0 && (
+                        <div className="grid gap-0.5">
+                          <dt className="text-faint">Revenue 14d</dt>
+                          <dd className="font-medium">{money(l.revenue)}</dd>
+                        </div>
+                      )}
+                      {l.pace != null && (
+                        <div className="grid gap-0.5" title={paceNote}>
+                          <dt className="text-faint">{pw.label}</dt>
+                          <dd className={`font-medium ${paceOk ? "text-ok" : "text-warn"}`}>{pct(l.pace)}</dd>
+                        </div>
+                      )}
+                    </dl>
                   )}
-                </div>
-              </div>
-              {actions(key, { title: `${LINE_LABEL[l.line]}: ` })}
-            </li>
-          );
-        })}
-      </ul>
+                  <div className="border-t border-line pt-3">{actions(key, { title: `${LINE_LABEL[l.line]}: ` })}</div>
+                </li>
+              );
+            })}
+          </ul>
+          {quiet.length > 0 && <p className="text-xs text-faint">Nothing to judge yet on {quiet.map((l) => LINE_LABEL[l.line]).join(", ")}.</p>}
+        </section>
+
+        {/* The accounts to look at first, one plain line each; open one for the full reasons */}
+        <section aria-label="High priority" className="grid content-start gap-3">
+          <h3 className="text-[11px] uppercase tracking-[0.14em] text-faint">High priority</h3>
+          {s.highPriority.length ? (
+            <ol className="grid divide-y divide-line overflow-hidden rounded-[18px] border border-line bg-surface">
+              {s.highPriority.map((c, i) => {
+                const row = byId.get(c.id);
+                const reasons = row?.reasons.length ? row.reasons : c.reasons;
+                return (
+                  <li key={c.id}>
+                    <details className="group">
+                      <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-2/60 [&::-webkit-details-marker]:hidden">
+                        <span className="tabular grid h-6 w-6 shrink-0 place-items-center rounded-full bg-bad-soft text-[11px] font-semibold text-bad">{i + 1}</span>
+                        <span className="grid min-w-0 flex-1 gap-0.5">
+                          <span className="truncate text-sm font-medium">{c.name}</span>
+                          {reasons[0] && (
+                            <span className="truncate text-xs text-muted" title={reasons[0]}>
+                              {shortReason(reasons[0])}
+                            </span>
+                          )}
+                        </span>
+                        <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="shrink-0 text-faint transition-transform group-open:rotate-180">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </summary>
+                      <div className="grid gap-2 px-4 pb-4 pl-[52px]">
+                        <ul className="grid gap-1.5 text-[13px] leading-relaxed text-muted">
+                          {reasons.map((r) => (
+                            <li key={r}>{r}</li>
+                          ))}
+                        </ul>
+                        {row?.slug && (
+                          <Link href={`/clients/${row.slug}`} className="inline-flex min-h-11 items-center text-xs font-medium text-brand-text hover:underline md:min-h-0">
+                            Open {c.name} →
+                          </Link>
+                        )}
+                      </div>
+                    </details>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p className="rounded-[18px] bg-ok-soft px-4 py-4 text-sm text-ok">Nothing critical right now.</p>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

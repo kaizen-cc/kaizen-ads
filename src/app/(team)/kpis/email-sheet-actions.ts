@@ -1,5 +1,6 @@
 "use server";
 
+import { after } from "next/server";
 import { requireStaff } from "@/lib/auth";
 import type { EmailAuditResult } from "@/lib/email-ops/audit-core";
 import type { SocialAuditResult } from "@/lib/social-ops/audit-core";
@@ -58,6 +59,8 @@ export type EmailSheet = {
   changes: AccountChange[];
   /** When the change history was last read, and what went wrong if it did (null: never read) */
   changesRead: { readAt: string | null; error: string | null };
+  /** The months before the stored history being read from the provider for these windows (null when nothing is) */
+  reading: { line: string; pct: number } | null;
 };
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
@@ -93,6 +96,14 @@ export async function loadEmailSheet(clientId: string): Promise<{ ok: true; shee
     .filter((x) => (x.channel ?? "email") !== "sms" && x.send_time && Date.parse(x.send_time as string) <= Date.now())
     .map((x) => ({ d: etDay(x.send_time as string), recipients: num(x.recipients), delivered: num(x.delivered), opens: num(x.opens_unique), clicks: num(x.clicks_unique) }));
 
+  // Windows that start before the stored history: the missing months are read in the background (queued once)
+  let reading: EmailSheet["reading"] = null;
+  if (adminConfigured()) {
+    const admin = createAdminClient();
+    const ask = await import("@/lib/email-history/run").then((m) => m.requestHistory(admin, clientId, { wantStart: from, asked: "kpi" })).catch(() => null);
+    if (ask?.queued) after(() => import("@/lib/email-history/run").then((m) => m.runHistory(admin, clientId, 240_000)).then(() => undefined, () => undefined));
+    if (ask?.line) reading = { line: ask.line, pct: ask.state?.pct ?? 0 };
+  }
   const a = audit.data as Record<string, unknown> | null;
   const s = sprint.data as Record<string, unknown> | null;
   return {
@@ -152,6 +163,7 @@ export async function loadEmailSheet(clientId: string): Promise<{ ok: true; shee
       suggestions,
       changes,
       changesRead: read,
+      reading,
     },
   };
 }

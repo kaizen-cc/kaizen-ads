@@ -17,6 +17,33 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 export const SLACK_USER_SCOPES = "chat:write,files:write,files:read";
 
+/**
+ * Reading as the person (their assistant searching their own Slack, DMs included): asked for when they connect with
+ * ?read=1 (/api/slack/connect?read=1). The admin adds these to the app's User Token Scopes first, once:
+ * search:read, channels:history, groups:history, im:history, mpim:history.
+ */
+export const SLACK_READ_SCOPES = "search:read,channels:history,groups:history,im:history,mpim:history";
+
+/** This person's own Slack token and what it may do (server only: never sent to the browser or the model) */
+export async function slackUserToken(profileId: string): Promise<{ token: string; scopes: string[]; slackUserId: string } | null> {
+  const { data } = await createAdminClient().from("slack_user_tokens").select("token, scopes, slack_user_id").eq("profile_id", profileId).maybeSingle();
+  if (!data?.token) return null;
+  return { token: data.token as string, scopes: String(data.scopes ?? "").split(/[\s,]+/).filter(Boolean), slackUserId: String(data.slack_user_id ?? "") };
+}
+
+/** A read-only Slack Web API call with a person's token (GET), with Slack's error kept */
+export async function slackRead<T extends { ok: boolean; error?: string }>(token: string, method: string, params: Record<string, string>): Promise<T> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(`https://slack.com/api/${method}?${new URLSearchParams(params)}`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store", signal: AbortSignal.timeout(20_000) });
+    if (res.status === 429) {
+      await new Promise((r) => setTimeout(r, Math.min(10, Number(res.headers.get("retry-after") ?? 2)) * 1000));
+      continue;
+    }
+    return (await res.json()) as T;
+  }
+  return { ok: false, error: "ratelimited" } as T;
+}
+
 export const slackOAuthConfigured = () => Boolean(process.env.SLACK_CLIENT_ID && process.env.SLACK_CLIENT_SECRET);
 
 type SlackBody = { ok: boolean; error?: string; [key: string]: unknown };
@@ -105,7 +132,13 @@ export async function postAsUser(
 }
 
 /** Post as the Kaizen app itself (its bot): a joint report, or when a person can't. Needs chat:write (files:write for a PDF). */
+/** A Slack person or direct message rather than a channel */
+export const isPersonChannel = (channel: string) => /^[UWD][A-Z0-9]{6,}$/.test(channel.trim());
+
 export async function postAsApp(args: { channel: string; text: string; pdf?: { filename: string; title: string; bytes: Uint8Array } }): Promise<PostResult> {
+  // Team members hear from Kaizen OS in Kaizen OS (bell, Overview, email), never as a Slack DM from the app. A person
+  // (U..., W...) or a direct message (D...) is refused; client channels still get their client notices.
+  if (isPersonChannel(args.channel)) return { ok: false, error: "Team messages stay in Kaizen OS." };
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) return { ok: false, error: "The Kaizen Slack app isn't connected." };
   return postWith(token, args);

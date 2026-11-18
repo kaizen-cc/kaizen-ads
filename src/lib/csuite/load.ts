@@ -134,7 +134,8 @@ export async function loadReview(db: SupabaseClient, admin: SupabaseClient): Pro
   financial.sort((a, b) => (b.monthly ?? -1) - (a.monthly ?? -1) || b.unlisted.length + b.unbilled.length - (a.unlisted.length + a.unbilled.length) || a.name.localeCompare(b.name));
 
   const items: Record<StepKey, string[]> = {
-    scorecard: card.lines.map((l) => itemKey("scorecard", l.line)),
+    // Only the lines with something to judge are items (a line with no KPI'd client yet is a quiet note, not a card)
+    scorecard: card.lines.filter((l) => l.judged > 0).map((l) => itemKey("scorecard", l.line)),
     critical: criticalRows.map((r) => r.key),
     issues: issues.slice(0, 40).map((r) => r.key),
     upsell: upsells.map((r) => r.key),

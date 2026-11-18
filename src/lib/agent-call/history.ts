@@ -1,3 +1,5 @@
+import { PASTE_CHARS, fitLines } from "@/lib/assistant/long-text";
+
 // How much of a call goes back to the agent with each turn, and how a long turn is taken. Pure: no keys, no calls.
 // A call can run thirty minutes: sending every line every turn would make each answer slower than the last, so the
 // latest lines go as they were said and anything older as a short digest of what was asked.
@@ -6,15 +8,15 @@
 export const RECENT_LINES = 24;
 /** The digest of older lines, at most this long */
 export const DIGEST_CHARS = 1800;
-/** A turn longer than this (a very long monologue) keeps its start and its end */
-export const TURN_CHARS = 20_000;
+/** A turn longer than this (a very long monologue, a whole document pasted in) keeps its start and its end */
+export const TURN_CHARS = PASTE_CHARS;
 
 /** A turn as the agent gets it: whole, unless it's truly huge (then its start and end, with a note of the cut) */
 export function longTurnText(text: string): string {
   const t = text.trim();
   if (t.length <= TURN_CHARS) return t;
-  const head = t.slice(0, 7000);
-  const tail = t.slice(t.length - (TURN_CHARS - 7000 - 60));
+  const head = t.slice(0, Math.floor(TURN_CHARS / 2));
+  const tail = t.slice(t.length - (TURN_CHARS - Math.floor(TURN_CHARS / 2) - 60));
   return `${head} [... a long middle part is left out here ...] ${tail}`;
 }
 
@@ -25,9 +27,10 @@ export type HistoryLine = { role: string; content: string; role_key?: string | n
  * person said, newest kept when it runs long) so the agent still knows what was covered. `rows` are oldest first.
  */
 export function callHistory<T extends HistoryLine>(rows: readonly T[]): { recent: T[]; digest: string | null } {
-  if (rows.length <= RECENT_LINES) return { recent: rows.slice(), digest: null };
+  // Long pastes in the recent lines stay whole while they fit; older long ones keep their start (read_pasted_text)
+  if (rows.length <= RECENT_LINES) return { recent: fitLines(rows), digest: null };
   const older = rows.slice(0, rows.length - RECENT_LINES);
-  const recent = rows.slice(rows.length - RECENT_LINES);
+  const recent = fitLines(rows.slice(rows.length - RECENT_LINES));
   const asked = older
     .filter((r) => r.role === "user")
     .map((r) => {

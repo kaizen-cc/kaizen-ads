@@ -8,7 +8,7 @@ import { loadRolePlaybook, type RolePlaybook } from "@/lib/role-playbook";
 import { TOOLS_RULE, agentTools } from "./agent-tools";
 import { CALL_LIMIT_SECONDS, DISTRESS_RULE, END_CALL_RULE, LEARNINGS_SCHEMA, endMarkerFilter, endReasonFor, stripEndMarker, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type EndReason, type LearnedItem, type Learning, type ResumeMode } from "./core";
 import { agentModality, keptLine, parseModeLog, stillOpen, streamShaping, talkModeOf, type ModeStep, type TalkMode } from "./modality";
-import { callHistory } from "./history";
+import { callHistory, longTurnText } from "./history";
 import { focusFor } from "./role-focus";
 import { callConnectors, noConnectors, type CallConnectors } from "./call-connectors";
 import type { CallContext } from "./call-context";
@@ -261,7 +261,8 @@ export async function turnExtras(input: TurnInput, text: string, tag = "") {
 
 export async function runCallTurn(input: TurnInput) {
   const { me, admin, call, signal, emit } = input;
-  const text = input.text.trim().slice(0, 4000);
+  // A long paste is taken whole (up to TURN_CHARS; only a truly huge one keeps its start and end)
+  const text = longTurnText(input.text);
   if (!text) return emit({ t: "done" });
   if (!aiEnabled()) return emit({ t: "error", message: "AI isn't connected yet." });
   const firstName = firstNameOf(me.fullName);

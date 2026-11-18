@@ -38,9 +38,9 @@ type Row = {
   contact_clients: { contact_id: string; removed_at: string | null }[];
 };
 
-export default async function Clients({ searchParams }: PageProps<"/clients">) {
+export default async function Clients() {
   const me = await requireStaff();
-  const { view } = await searchParams;
+
 
   const supabase = await createClient();
   const req = supabase
@@ -161,35 +161,28 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
   });
 
   return (
-    <div className="grid gap-7">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
+    <div className="grid gap-6">
+      <header className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
           <h1 className="font-heading text-[32px] leading-tight">Clients</h1>
           <p className="mt-1.5 text-sm text-muted">
-            {canEdit
-              ? "Every client, with their creative package and team. Assign people right on the card; changes save instantly."
-              : hasEveryClient(me)
-                ? "Every client, their creative package and who's on it."
-                : "The clients you're on."}
+            {canEdit ? "Every client, their package and their team. Assign people right on a card." : hasEveryClient(me) ? "Every client, their package and who's on it." : "The clients you're on."}
           </p>
         </div>
         {canEdit && (
-          <a href="/watch?tab=billing" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-fg md:min-h-0">
-            Account watch · Stripe check →
-          </a>
-        )}
-        {(archived?.length ?? 0) > 0 && (
-          <a href="#archived" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-fg md:min-h-0">
-            Archived <span className="text-faint">{archived!.length}</span> →
+          <a href="/watch?tab=billing" title="Account watch · Stripe check" aria-label="Account watch and Stripe check" className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line bg-surface text-muted transition-colors hover:border-faint/60 hover:text-fg md:h-9 md:w-9">
+            <svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
           </a>
         )}
       </header>
 
-      <ClientsBrowser cards={cards} slotOptions={slotOptions} canEdit={canEdit} exec={canEdit} defaultSort={me.isExec ? "critical" : "name"} />
+      <ClientsBrowser cards={cards} slotOptions={slotOptions} canEdit={canEdit} defaultSort={me.isExec ? "critical" : "name"} archived={archived?.length ?? 0} />
 
       <ArchivedList
         canRestore={canEdit}
-        startOpen={view === "archived"}
         clients={(archived ?? []).map((c) => ({ id: c.id, name: c.name, slug: c.slug, at: c.archived_at!, reason: c.archive_reason, source: c.archive_source }))}
         log={(log ?? []).map((e) => ({
           clientId: e.client_id,

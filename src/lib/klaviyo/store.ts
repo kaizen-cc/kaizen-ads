@@ -996,3 +996,117 @@ export async function setKlaviyoMetrics(admin: SupabaseClient, clientId: string,
   if (error) return { ok: false, error: /conversion_metrics/.test(error.message) ? "Ranking several metrics needs the latest database update. Pick one for now." : error.message };
   return { ok: true, reread: before[0] !== list[0].id || list.some((m) => !before.includes(m.id)) };
 }
+
+// ─── Deeper history, on demand ─────────────────────────────────────────────
+
+export type HistoryRead = { cursor: string; done: boolean; error: string | null; days: number; campaigns: number };
+
+/**
+ * Reads days before what is stored: campaigns (email and SMS) with their numbers, the flows' numbers per day, each
+ * day's totals, the store's own revenue and list movement, and every ranked conversion metric's daily revenue. It goes
+ * newest first in pieces of 45 days (Klaviyo's daily series refuse more than 60), each piece a handful of spaced
+ * Reporting API queries; it stops when the time is up and the caller picks it up from the cursor. Rows are upserted by
+ * their keys, so a piece read twice is the same rows; nothing is deleted, and the days already stored are never
+ * overwritten (a piece ends the day before what was stored).
+ */
+export async function readKlaviyoHistory(admin: SupabaseClient, clientId: string, job: { from: string; to: string; cursor: string | null }, opts: { budgetMs: number; piece: (cursor: string, pct: number, step: string) => Promise<void> }): Promise<HistoryRead> {
+  const { data: row } = await admin.from("klaviyo_connections").select("*").eq("client_id", clientId).maybeSingle();
+  if (!row) return { cursor: job.cursor ?? job.to, done: false, error: "Klaviyo is not connected for this client.", days: 0, campaigns: 0 };
+  const conn = row as ConnRow;
+  const key = keyOf(conn);
+  if (!key) return { cursor: job.cursor ?? job.to, done: false, error: "The key can not be read: replace it in Team & setup.", days: 0, campaigns: 0 };
+  const { historyWindows } = await import("@/lib/email-history/core");
+  const deadline = Date.now() + opts.budgetMs;
+  const tz = conn.timezone;
+  const nowMs = Date.now();
+  let cursor = job.cursor ?? shift(job.to, 1);
+  let daysDone = 0;
+  let campaignsDone = 0;
+  try {
+    const metricId = await metricOf(admin, conn, key);
+    const extras = metricId ? extraMetrics(conn, metricId) : [];
+    const metrics = await pulseMetrics(key).catch((e) => {
+      if (isAuth(e)) throw e;
+      return null;
+    });
+    // Every campaign since the start (one listing; the numbers are read piece by piece)
+    const since = new Date(Date.parse(`${job.from}T00:00:00Z`)).toISOString();
+    const email = await listCampaigns(key, "email", since, 80);
+    const sms = await listCampaigns(key, "sms", since, 40).catch(() => []);
+    const all = [...email, ...sms];
+    const names = new Map<string, string>();
+    const windows = historyWindows(job.from, shift(cursor, -1));
+    const span = Math.max(1, windows.length);
+    const utc = (d: string) => `${d}T00:00:00+00:00`;
+    for (const [n, w] of windows.entries()) {
+      // About two minutes a piece with the spacing; never started without the time for it
+      if (n > 0 && Date.now() + 120_000 > deadline) break;
+      const sent = all.filter((c) => c.sendTime && dayIn(c.sendTime, tz) >= w.start && dayIn(c.sendTime, tz) <= w.end);
+      // A campaign keeps earning after it goes: its numbers are read to 30 days past the piece (never past now)
+      const readTo = new Date(Math.min(nowMs - 60_000, Date.parse(`${shift(w.end, 31)}T00:00:00Z`))).toISOString().replace(/\.\d+Z$/, "+00:00");
+      let values: { id: string; stats: Stats }[] = [];
+      let series: SeriesRow[] = [];
+      let seriesOk = false;
+      let store: Map<string, DayValue> | null = null;
+      if (metricId) {
+        if (sent.length)
+          values = await campaignValues(key, metricId, { start: utc(w.start), end: readTo }).catch((e) => {
+            if (isAuth(e)) throw e;
+            return [];
+          });
+        try {
+          series = await flowSeries(key, metricId, seriesChunks(w.start, w.end, { maxDays: 45 }));
+          seriesOk = true;
+        } catch (e) {
+          if (isAuth(e)) throw e;
+        }
+        store = await metricDaily(key, metricId, w.start, w.end, tz).then(byDate).catch(() => null);
+      }
+      const subs = metrics?.subscribed ? await metricDaily(key, metrics.subscribed, w.start, w.end, tz).then(byDate).catch(() => null) : null;
+      const unsubs = metrics?.unsubscribed ? await metricDaily(key, metrics.unsubscribed, w.start, w.end, tz).then(byDate).catch(() => null) : null;
+      const byCampaign = new Map(values.map((v) => [v.id, v.stats]));
+      const now = new Date().toISOString();
+      const campaignRows = sent.map((c) => {
+        const r: Record<string, unknown> = { ...campaignRow(clientId, c, byCampaign.get(c.id) ?? emptyStats(), names, now, "klaviyo") };
+        delete r.audiences_detail;
+        return r;
+      });
+      await save(admin, "klaviyo_campaigns", campaignRows, "client_id,campaign_id");
+      if (seriesOk) {
+        await saveFlowDays(admin, clientId, series, w.start, now);
+        const days = rollupDays({ campaigns: sent.map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: byCampaign.get(c.id) ?? emptyStats() })), flows: series, tz, from: w.start, to: w.end });
+        await save(admin, "klaviyo_daily", days.map((d) => withStore(dayRow(clientId, d, now), store, subs, unsubs)), "client_id,date");
+      } else if (store || subs || unsubs) {
+        const dates: string[] = [];
+        for (let d = w.start; d <= w.end; d = shift(d, 1)) dates.push(d);
+        await save(admin, "klaviyo_daily", dates.map((date) => withStore({ client_id: clientId, date, updated_at: now }, store, subs, unsubs)), "client_id,date");
+      }
+      // The ranked metrics' own daily revenue (the primary's too once more than one is picked)
+      if (metricId && extras.length) {
+        const reads: MetricRead[] = [{ id: metricId, values: byCampaign, series: seriesOk ? series : null, flows: new Map(), store, error: null }];
+        for (const m of extras) {
+          const v = sent.length ? await campaignValues(key, m.id, { start: utc(w.start), end: readTo }).catch(() => []) : [];
+          const s = await flowSeries(key, m.id, seriesChunks(w.start, w.end, { maxDays: 45 })).catch(() => null);
+          const st = await metricDaily(key, m.id, w.start, w.end, tz).then(byDate).catch(() => null);
+          reads.push({ id: m.id, values: new Map(v.map((x) => [x.id, x.stats])), series: s, flows: new Map(), store: st, error: null });
+        }
+        for (const m of reads) {
+          const rows = metricTableRows(clientId, m, { campaigns: sent, tz, from: w.start, to: w.end, now });
+          const parts: [string, Record<string, unknown>[], string][] = [
+            ["klaviyo_campaign_metrics", rows.campaigns, "client_id,campaign_id,metric_id"],
+            ["klaviyo_metric_daily", rows.days, "client_id,metric_id,date"],
+          ];
+          for (const [table, list, conflict] of parts) for (let i = 0; i < list.length; i += 500) await admin.from(table).upsert(list.slice(i, i + 500), { onConflict: conflict });
+        }
+      }
+      cursor = w.start;
+      daysDone += Math.round((Date.parse(`${w.end}T12:00:00Z`) - Date.parse(`${w.start}T12:00:00Z`)) / 86_400_000) + 1;
+      campaignsDone += sent.length;
+      // The cursor is kept after each piece, so a stopped read goes on from here
+      await opts.piece(cursor, Math.min(95, 8 + Math.round(((n + 1) / span) * 88)), `Read back to ${w.start}`);
+    }
+    return { cursor, done: cursor <= job.from, error: null, days: daysDone, campaigns: campaignsDone };
+  } catch (e) {
+    return { cursor, done: false, error: redactKey(errText(e), key).slice(0, 240), days: daysDone, campaigns: campaignsDone };
+  }
+}

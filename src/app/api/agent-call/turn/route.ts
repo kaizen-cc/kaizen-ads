@@ -4,7 +4,7 @@ import { runAssistantTurn } from "@/lib/assistant/turn";
 import type { CallEvent } from "@/lib/agent-call/core";
 import { parseCallContext } from "@/lib/agent-call/call-context";
 import { talkModeOf } from "@/lib/agent-call/modality";
-import { longTurnText } from "@/lib/agent-call/history";
+import { PASTE_CHARS } from "@/lib/assistant/long-text";
 import { callTimer } from "@/lib/agent-call/timing";
 import { isRepeatTurn } from "@/lib/agent-call/transcript";
 import { requireStaff } from "@/lib/auth";
@@ -16,6 +16,9 @@ import { createClient } from "@/lib/supabase/server";
 // said so far is kept, and what it learned is still saved (finished after the response, see after()).
 // The assistant may keep checking on a report it started for a few minutes after the answer (after())
 export const maxDuration = 300;
+
+/** The most a single message keeps (four times what the model reads whole: read_pasted_text pages through it) */
+const STORED_CHARS = PASTE_CHARS * 4;
 
 /** The last words each call sent (this server's memory, best effort; the call's chat covers another instance) */
 const LAST_SAID = new Map<string, { text: string; at: number }>();
@@ -41,8 +44,9 @@ export async function POST(request: Request) {
   // and their last line, all at once
   const [call, db, last] = await Promise.all([timer.time("open", openCall(admin, me, body?.callId)), timer.time("session", createClient()), timer.time("last", lastSaid(admin, body?.callId).catch(() => null))]);
   if (!call) return Response.json({ error: "This call has ended." }, { status: 410 });
-  // A long monologue (two to five minutes is a few thousand words) is taken whole; only a truly huge one is cut
-  const text = longTurnText(String(body?.text ?? ""));
+  // A long monologue or a pasted document is taken whole (up to STORED_CHARS, kept whole in the conversation); each
+  // turn runner decides what the model reads (longTurnText: whole up to sixty thousand characters)
+  const text = String(body?.text ?? "").trim().slice(0, STORED_CHARS);
   // The same words again moments later (the transcriber sent a turn twice, or a resend): answered once, not twice
   if (isRepeatTurn(text, last, startedAt)) {
     console.log(`[agent call timing] call=${call.id} role=${call.role_key} repeat dropped`);

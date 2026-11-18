@@ -1,6 +1,7 @@
 import { googleAdsConfigured } from "@/lib/context/google-ads";
 import { lineOfTeam, teamPlatform } from "@/lib/roles";
 import { ChannelKpis } from "./channel-page";
+import { AccountReviewKpis } from "./review-page";
 import { orderSeats, platformOf, seatRoleFor, type SeatRow } from "@/lib/buyer-seats";
 import { clientPerms } from "@/lib/chat-permissions";
 import { requireStaff } from "@/lib/auth";
@@ -46,6 +47,8 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   const own = lineOfTeam(me.role);
   if (own) return <ChannelKpis me={me} line={own} switcher={false} />;
   if ((me.isExec || me.isLead) && (sp.p === "email" || sp.p === "social")) return <ChannelKpis me={me} line={sp.p} switcher />;
+  // The weekly account review (execs): a tab of the switch, its step in the address (?p=review&step=)
+  if (me.isExec && sp.p === "review") return <AccountReviewKpis me={me} />;
   // The Meta team sees Meta accounts and the Google team Google's; execs and everyone else see both
   const team = teamPlatform(me.role);
   // A buyer: only the accounts they're on (they own the KPI, or they're the client's buyer for that platform)
@@ -206,6 +209,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
       tiktokOn={tiktokOn}
       only={team}
       channels={me.isExec || me.isLead}
+      review={me.isExec}
       channelCounts={me.isExec || me.isLead ? await boardCounts(supabase).then((c) => ({ email: c.email, social: c.social })).catch(() => null) : null}
     />
   );

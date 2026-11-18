@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { requireStaff } from "@/lib/auth";
 import { AUDIO_BUCKET } from "@/lib/agent-call/safety";
 import { CALL_LIMIT_SECONDS, audioPartPath, isVoiceId } from "@/lib/agent-call/core";
@@ -11,7 +12,7 @@ import { addLibraryVoice, elevenlabsConfigured, listLibraryVoices, listVoices } 
 import { screenFileName } from "@/lib/agent-call/call-context";
 import { FACT_TOPICS, STYLE_TOPICS } from "@/lib/assistant/core";
 import type { CallNotes } from "@/lib/assistant/notes";
-import { describeUploads, kindOf, type CallUpload } from "@/lib/assistant/uploads";
+import { describeUploads, finishUploadTexts, kindOf, readUploadTexts, type CallUpload } from "@/lib/assistant/uploads";
 import { AI_BUCKET } from "@/lib/kaizen-ai/files";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -118,10 +119,16 @@ export async function callUploadsDone(
     purpose: kindOfUpload,
     client: client ? String(client).slice(0, 120) : null,
   }));
-  const read = kindOfUpload === "screen" ? ups.map((u) => ({ ...u, about: "a screenshot of their screen" })) : await describeUploads(got.admin, ups);
+  // A short description of each, and the whole text of every document (all pages), read side by side
+  const read =
+    kindOfUpload === "screen"
+      ? ups.map((u) => ({ ...u, about: "a screenshot of their screen" }))
+      : await Promise.all([describeUploads(got.admin, ups), readUploadTexts(got.admin, ups)]).then(([described, texts]) => described.map((d, i) => ({ ...texts[i], ...d, textPath: texts[i].textPath, chars: texts[i].chars, pages: texts[i].pages, textNote: texts[i].textNote, outline: texts[i].outline, pending: texts[i].pending })));
   const launch = kindOfUpload === "creatives" && client ? await stageForLaunch(got.admin, got.me.id, client, read).catch(() => null) : null;
   const { data: now } = await got.admin.from("ai_role_calls").select("uploads").eq("id", callId).maybeSingle();
   await got.admin.from("ai_role_calls").update({ uploads: [...((now?.uploads ?? []) as CallUpload[]), ...read].slice(-40) }).eq("id", callId);
+  // Scans typed out and long documents outlined after this returns (read_upload works on the text meanwhile)
+  if (read.some((u) => u.pending)) after(() => finishUploadTexts(createAdminClient(), callId).catch((e) => console.error("[call uploads] finish", e instanceof Error ? e.message : e)));
   return { ok: true, files: read.map((f) => ({ name: f.name, about: f.about ?? "", path: f.path })), launch };
 }
 

@@ -33,9 +33,9 @@ export function PeriodPicker({ reportId, start, end, periodKey, today, locked }:
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <label className="relative inline-flex min-w-0 items-center">
+        <label className="relative block min-w-0 max-w-full">
           <span className="sr-only">Report dates</span>
-          <span aria-hidden className="pointer-events-none absolute left-3.5 text-faint">
+          <span aria-hidden className="pointer-events-none absolute left-3.5 top-1/2 grid -translate-y-1/2 place-items-center text-faint">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="4.5" width="18" height="16" rx="2.5" />
               <path d="M3 9.5h18M8 2.5v4M16 2.5v4" />
@@ -50,7 +50,7 @@ export function PeriodPicker({ reportId, start, end, periodKey, today, locked }:
               if (key === "custom") return setCustom({ start, end });
               apply(key);
             }}
-            className="h-11 max-w-full appearance-none truncate rounded-full border border-line bg-surface py-0 pl-10 pr-9 text-sm text-fg transition-colors hover:border-faint disabled:opacity-60 md:h-9"
+            className="block h-11 w-full min-w-[15rem] max-w-full cursor-pointer appearance-none truncate rounded-full border border-line bg-surface py-0 pl-10 pr-10 text-sm text-fg transition-colors hover:border-faint focus-visible:border-faint focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 md:h-9"
           >
             {PERIOD_PRESETS.map((p) => {
               const r = p.key === "custom" ? null : resolvePeriod(p.key, today);
@@ -61,7 +61,11 @@ export function PeriodPicker({ reportId, start, end, periodKey, today, locked }:
               );
             })}
           </select>
-          <span aria-hidden className="pointer-events-none absolute right-3.5 text-[10px] text-faint">▼</span>
+          <span aria-hidden className="pointer-events-none absolute right-3.5 top-1/2 grid -translate-y-1/2 place-items-center text-faint">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </span>
         </label>
         <span className="text-xs text-faint">{pending ? "Redrawing every page…" : `vs ${rangeLabel(prev, today)}`}</span>
       </div>

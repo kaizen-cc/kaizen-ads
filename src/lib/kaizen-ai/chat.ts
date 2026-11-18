@@ -1,4 +1,5 @@
 import "server-only";
+import { googleLinksHint } from "@/lib/assistant/lookup";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
@@ -360,7 +361,7 @@ export async function runTurn(input: TurnInput): Promise<void> {
   // What this person may do (src/lib/chat-permissions.ts): on the pinned client, or by role (a buyer: on their own clients)
   const perms = client ? await permsOn(admin, me, client.id) : roleWidePerms(me);
   const allowedLine = `${permsPrompt(perms)}${!client && buyingPlatform(me) && !me.isExec && !me.role.startsWith("head_of") ? ` A buyer's changes and launches are only on clients where they're the client's ${buyingPlatform(me) === "meta" ? "Meta" : "Google"} buyer.` : ""}`;
-  system.push({ type: "text", text: [`Today is ${today} (New York). You're talking with the team's ${roleLabel(me.role)}${me.isExec ? " (an executive)" : me.isLead ? " (a lead)" : ""}.`, allowedLine, aiRuleLine, knowledge, noClientCopy].filter(Boolean).join("\n\n") });
+  system.push({ type: "text", text: [`Today is ${today} (New York). You're talking with the team's ${roleLabel(me.role)}${me.isExec ? " (an executive)" : me.isLead ? " (a lead)" : ""}.`, allowedLine, aiRuleLine, knowledge, noClientCopy, googleLinksHint(userText).replace(/<\/?hint>/g, "")].filter(Boolean).join("\n\n") });
 
   // ─── The answer, with tools on the way ───
   const { data: placeholder } = await admin.from("ai_messages").insert({ thread_id: thread.id, role: "assistant", content: "", agent_key: agent, model }).select("id").single();

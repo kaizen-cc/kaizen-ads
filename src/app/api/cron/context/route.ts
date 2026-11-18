@@ -173,7 +173,12 @@ export async function GET(request: Request) {
     if (step === "kpi") return Response.json(await refreshAllKpis(admin));
     if (step === "tiktok") return Response.json(await (await import("@/lib/tiktok/store")).syncAllTikTok(admin));
     // Klaviyo, then Brevo and Customer.io clients, on the same schedule: all three feed the same email tables
-    if (step === "klaviyo") return Response.json(await (await import("@/lib/email-providers")).syncAllEmail(admin, { budgetMs: 640_000 }));
+    if (step === "klaviyo") {
+      const synced = await (await import("@/lib/email-providers")).syncAllEmail(admin, { budgetMs: 640_000 });
+      // Months before the stored history that a report, the KPI sheet or a card asked for: read in the background, a few pieces per run
+      const history = await import("@/lib/email-history/run").then((m) => m.runHistoryJobs(admin, 200_000)).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+      return Response.json({ ...synced, history });
+    }
     if (step === "social") return Response.json(await (await import("@/lib/social/store")).syncAllSocial(admin, { budgetMs: 640_000 }));
     if (step === "meta_tokens") return Response.json(await (await import("@/lib/meta-tokens")).checkAllBusinessTokens(admin));
     if (step === "connectors") return Response.json(await (await import("@/lib/connectors/registry-sync")).syncConnectorRegistry(admin));
@@ -256,6 +261,10 @@ export async function GET(request: Request) {
           const dueKindsNow = dueKinds({ weekday, dom, hour });
           const made: Record<string, unknown> = {};
           for (const kind of dueKindsNow) made[kind] = await ch.queueChannelReports(admin, kind, date);
+          // The days after Monday: a client connected since (Brevo, Customer.io or Klaviyo) is caught up, never made twice
+          const { catchUpKind } = await import("@/lib/channel-reports/core");
+          const late = dueKindsNow.length ? null : catchUpKind({ weekday, dom, hour });
+          if (late) made[`${late}-catch-up`] = await ch.queueChannelReports(admin, late, date);
           const done = await ch.draftChannelQueued(admin, 240_000);
           const told = remindNow ? await ch.remindChannelReports(admin, date) : 0;
           return { queued: made, drafted: done, reminded: told };

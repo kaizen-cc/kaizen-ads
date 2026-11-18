@@ -3,8 +3,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { AiUnavailable, askJson } from "@/lib/ai";
 import { addresses, plainText, withoutQuotes, type GmailMessage } from "@/lib/context/google";
 import { gmailLink } from "@/lib/email-filters";
-import { postAsApp } from "@/lib/slack-user";
-import { siteUrl } from "@/lib/site";
 import {
   CONTACT_TEAM_SEATS,
   companyDomain,
@@ -271,7 +269,7 @@ async function tellTeam(admin: Admin, client: { id: string; name: string; slug: 
       to.map((profile_id) => ({ profile_id, kind: "client", title: title.slice(0, 200), body: body.slice(0, 1000), href, client_id: client.id, key: `contact-change:${requestId}`, priority: "normal" })),
       { onConflict: "profile_id,key", ignoreDuplicates: true },
     );
-  if (client.internal_slack_channel_id) await postAsApp({ channel: client.internal_slack_channel_id, text: `${title}\n${body}\n<${siteUrl()}${href}|Open their contacts>` }).catch(() => undefined);
+  // Team notes stay in Kaizen OS (no app posts in internal Slack channels)
 }
 
 // ─── The step ───────────────────────────────────────────────────────────────

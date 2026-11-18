@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Combobox } from "@/components/combobox";
 import { BoardSort } from "@/components/board-sort";
+import { BoardScrollbar } from "@/components/board-scrollbar";
 import { asanaSortFields, creativeSortFields, sortCards } from "@/lib/board-sort";
 import { useBoardSort } from "@/lib/use-board-sort";
 import { tintFor } from "@/lib/colors";
@@ -579,6 +580,7 @@ export function BoardClient({
           </div>
         </div>
       </div>
+      <BoardScrollbar scroller={scroller} />
       </div>
 
       {tickets.length === 0 && (

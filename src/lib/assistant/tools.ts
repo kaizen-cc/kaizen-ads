@@ -12,6 +12,7 @@ import { forgetContext, myWork } from "./context";
 import { saveNotes } from "./memory";
 import { commsTools } from "./comms-tools";
 import { profileTools } from "./profile-tools";
+import { lookupTools } from "./lookup-tools";
 import { failedOnOurSide } from "./messages";
 
 // What the assistant can do on a call, as the person and only within their rights: everything Kaizen AI's tools do
@@ -383,12 +384,12 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     },
     {
       name: "read_uploads",
-      description: "What was uploaded on this call: each file's name, type and a short description of what's in it (pictures, video frames and PDFs are looked at). Use after they upload.",
+      description: "What was uploaded on this call: each file's name, type, a short description of what's in it, and for documents how much was read (pages, characters: every page is kept). Use after they upload; read_upload reads a document's text itself.",
       input_schema: { type: "object", properties: {}, additionalProperties: false },
       run: async () => {
         const { data } = await ctx.admin.from("ai_role_calls").select("uploads").eq("id", ctx.callId).maybeSingle();
-        const ups = (data?.uploads ?? []) as { name: string; kind: string; purpose: string; client: string | null; about?: string }[];
-        return { files: ups.map((u) => ({ name: u.name, kind: u.kind, purpose: u.purpose, client: u.client, about: u.about ?? "(still being read)" })) };
+        const ups = (data?.uploads ?? []) as { name: string; kind: string; purpose: string; client: string | null; about?: string; pages?: number; chars?: number; textPath?: string; textNote?: string }[];
+        return { files: ups.map((u) => ({ name: u.name, kind: u.kind, purpose: u.purpose, client: u.client, about: u.about ?? "(still being read)", ...(u.textPath ? { whole_text_read: true, pages: u.pages ?? null, characters: u.chars ?? null } : {}), ...(u.textNote ? { note: u.textNote } : {}) })) };
       },
     },
     {
@@ -567,7 +568,7 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     },
   ];
   const comms = commsTools({ me: ctx.me, db: ctx.db, admin: ctx.admin, callId: ctx.callId, said: () => ctx.said, emit: ctx.emit, roleKey: ASSISTANT_KEY, label: "assistant", path: ctx.path, screen: ctx.screen, clientId: ctx.clientId });
-  return carryYes(ctx, cctx, [...own, ...profileTools(ctx), ...comms, ...cardTools, ...rest]);
+  return carryYes(ctx, cctx, [...own, ...lookupTools(ctx), ...profileTools(ctx), ...comms, ...cardTools, ...rest]);
 }
 
 /**

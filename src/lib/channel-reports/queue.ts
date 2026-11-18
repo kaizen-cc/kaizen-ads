@@ -7,6 +7,9 @@ import { channelPeriods, LINE_SERVICE, platformOfLine, type ChannelKind, type Ch
 import { coverageFor, ownersFor } from "./clients";
 import { hasNumbers } from "./data";
 import { draftChannelReport } from "./write";
+import { historyHolds } from "@/lib/email-history/core";
+import { requestHistory, runHistory } from "@/lib/email-history/run";
+import { loadPauses } from "@/lib/account-watch/pauses";
 
 // The channel reports' cadence, the same as the ads reports: every Monday a weekly for every connected client, except the
 // month's first Monday, which gets the monthly (the month just over) instead. Queued reports are drafted a few
@@ -26,11 +29,17 @@ export async function queueChannelReports(admin: SupabaseClient, kind: ChannelKi
     // Every connected client that buys the line gets both, like the ads reports (weekly Mondays, monthly the first Monday)
     const buying = all.filter((c) => servicesOf(c).includes(LINE_SERVICE[line] as never));
     if (!buying.length) continue;
+    // A service a lead paused until a date is left out until then (nothing is deleted)
+    const paused = await loadPauses(admin, LINE_SERVICE[line], today);
     const cover = await coverageFor(admin, line, buying.map((c) => c.id));
     const owners = await ownersFor(admin, line, buying.map((c) => c.id));
     const platform = platformOfLine(line);
     for (const c of buying) {
       const cv = cover.get(c.id);
+      if (paused.has(c.id)) {
+        out.skipped.push({ client: c.name, reason: `Paused until ${paused.get(c.id)!.until}` });
+        continue;
+      }
       if (cv?.state !== "connected") {
         out.skipped.push({ client: c.name, reason: cv?.what ?? "Not connected" });
         continue;
@@ -58,19 +67,37 @@ export async function queueChannelReports(admin: SupabaseClient, kind: ChannelKi
 export async function draftChannelQueued(admin: SupabaseClient, budgetMs = 240_000) {
   const until = Date.now() + budgetMs;
   let done = 0;
+  const held = new Set<string>();
+  const kick = new Set<string>();
   while (Date.now() < until - 120_000) {
     // Queued ones, and any stuck mid-draft for 20 minutes (a timeout)
     const stuck = new Date(Date.now() - 20 * 60_000).toISOString();
-    const { data } = await admin.from("reports").select("id, status, updated_at").in("platform", ["klaviyo", "social"]).or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`).order("kind", { ascending: true }).order("created_at").limit(3);
+    let q = admin.from("reports").select("id, status, updated_at, client_id, platform, period_start").in("platform", ["klaviyo", "social"]).or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`).order("kind", { ascending: true }).order("created_at").limit(3);
+    if (held.size) q = q.not("id", "in", `(${[...held].join(",")})`);
+    const { data } = await q;
     if (!data?.length) break;
     // Each one claimed before it's written, so the schedule and a page never write one twice
     const claimed: string[] = [];
     for (const r of data) {
+      // An email report asking for dates before the stored history waits while the missing months are read (queued once)
+      if (r.platform === "klaviyo") {
+        const ask = await requestHistory(admin, r.client_id as string, { wantStart: r.period_start as string, asked: "report" }).catch(() => null);
+        if (ask?.queued) kick.add(r.client_id as string);
+        if (ask?.state && historyHolds(ask.state, r.period_start as string)) {
+          held.add(r.id as string);
+          continue;
+        }
+      }
       const { data: got } = await admin.from("reports").update({ status: "drafting", updated_at: new Date().toISOString() }).eq("id", r.id).eq("status", r.status).eq("updated_at", r.updated_at).select("id").maybeSingle();
       if (got) claimed.push(r.id as string);
     }
     await Promise.all(claimed.map((id) => draftChannelReport(admin, id)));
     done += claimed.length;
+  }
+  // The missing months, read now with the time that is left (what does not finish goes on from the schedule); the held reports are written when it lands
+  for (const id of kick) {
+    const left = until - Date.now();
+    if (left > 75_000) await runHistory(admin, id, left - 15_000).catch(() => null);
   }
   return done;
 }

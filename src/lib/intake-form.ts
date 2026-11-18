@@ -201,13 +201,7 @@ async function tellTeamIntake(admin: SupabaseClient, clientId: string) {
   const lines = row.form.questions.map((q) => [q, answerOf(q, row.answers)] as const).filter(([, a]) => a);
   const summary = lines.map(([q, a]) => `${q.q}\n${a}`).join("\n\n");
 
-  // The internal channel
-  if (c.internal_slack_channel_id && process.env.SLACK_BOT_TOKEN)
-    await fetch("https://slack.com/api/chat.postMessage", {
-      method: "POST",
-      headers: { authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" },
-      body: JSON.stringify({ channel: c.internal_slack_channel_id, text: `📋 ${c.name} filled in their marketing intake in their portal (${lines.length} answers). Review it: ${link}`, unfurl_links: false }),
-    }).catch(() => null);
+  // Team notes stay in Kaizen OS (no app posts in internal Slack channels)
 
   // Meta and creative: in Kaizen OS
   const { data: assigned } = await admin.from("client_assignments").select("profile_id").eq("client_id", clientId).in("role", ["meta_buyer", "graphic_designer", "video_editor", "copywriter"]);

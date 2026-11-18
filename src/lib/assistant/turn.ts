@@ -17,6 +17,10 @@ import { loadMemory, saveNotes } from "./memory";
 import { directSpecialist, labelOf, playbooksForPrompt, recognizeJob, routeTeam, wantsShorter } from "./team";
 import { dismissFromLine, followUps, joinSpecialist, lastSpeaker, logRun, specialistTurn, teamBlock, teamOf, teamRule, teamTools, tracked, type TeamState, type TurnMode } from "./team-server";
 import { assistantTools, type AssistantCtx } from "./tools";
+import { inlineWhole } from "./long-text";
+import { googleLinksHint, lookupHint } from "./lookup";
+import { uploadText, type CallUpload } from "./uploads";
+import { longTurnText } from "@/lib/agent-call/history";
 
 // One turn of a call with the person's assistant. Who answers: the assistant, or whichever specialist on the line the
 // person is talking to (by name or role, else whoever the conversation is with). The assistant reads the person's day,
@@ -25,11 +29,24 @@ import { assistantTools, type AssistantCtx } from "./tools";
 // from its own playbook with its own tools and voice, hands work to the others on the line, and what a trainer
 // teaches it waits for review as on any call. Everyone's lines are kept on the call.
 
-/** The words of what's been uploaded on the call, for the assistant's context */
-function uploadsBlock(call: CallRow): string {
-  const ups = (call.uploads ?? []) as { name: string; kind: string; about?: string }[];
+/**
+ * What's been uploaded on the call, for the assistant's context: each file with what's in it, and the whole text of
+ * the newest documents (every page) while it fits; a longer one is listed with its outline, and read_upload reads any
+ * part of it or searches it. Nothing is cut short without saying so.
+ */
+async function uploadsBlock(admin: Input["admin"], call: CallRow): Promise<string> {
+  const ups = (call.uploads ?? []) as CallUpload[];
   if (!ups.length) return "";
-  return `<uploaded_on_this_call>\n${ups.map((u) => `- ${u.name} (${u.kind}): ${u.about ?? "still being read"}`).join("\n")}\n</uploaded_on_this_call>`;
+  const whole = inlineWhole(ups.map((u) => (u.textPath ? (u.chars ?? 0) : 0)));
+  const texts = await Promise.all(ups.map((u, i) => (whole.has(i) ? uploadText(admin, u).catch(() => null) : Promise.resolve(null))));
+  const lines = ups.map((u, i) => {
+    const size = [u.pages ? `${u.pages} pages` : "", u.chars ? `${u.chars.toLocaleString("en-US")} characters` : ""].filter(Boolean).join(", ");
+    const head = `- ${u.name} (${u.kind}${size ? `, ${size}` : ""}): ${u.about ?? "still being read"}${u.textNote ? ` [${u.textNote}]` : ""}`;
+    if (texts[i]) return `${head}\n<document name="${u.name.replace(/"/g, "'")}" whole="true">\n${texts[i]}\n</document>`;
+    if (u.textPath) return `${head}\n  Too long to show whole here; its whole text is kept: read_upload reads any part (part: 1, 2...) or searches it (search: words).${u.outline?.length ? `\n  ${u.outline.join("\n  ")}` : ""}`;
+    return head;
+  });
+  return `<uploaded_on_this_call>\n${lines.join("\n")}\n</uploaded_on_this_call>`;
 }
 
 const today = () => new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
@@ -40,7 +57,10 @@ type Input = TurnInput;
 /** A turn of an assistant call: routed to the assistant or to whichever specialist on the line it's for */
 export async function runAssistantTurn(input: Input) {
   const { admin, call, emit, signal } = input;
-  const text = input.text.trim().slice(0, 4000);
+  // Taken whole: a long paste (a document in parts) arrives as it was sent and is kept whole in the conversation; only
+  // a truly huge one reaches the model as its start and end (read_pasted_text reads it all)
+  const full = input.text.trim();
+  const text = longTurnText(full);
   if (!text) return emit({ t: "done" });
   if (!aiEnabled()) return emit({ t: "error", message: "AI isn't connected yet." });
   const timer = input.timer ?? callTimer();
@@ -60,7 +80,7 @@ export async function runAssistantTurn(input: Input) {
       return emit({ t: "done" });
     }
   } else if (direct && (await bringIn(input, team, direct.key, text))) return;
-  const { ended } = await assistantAnswer(input, team, { text, mode: "person" });
+  const { ended } = await assistantAnswer(input, team, { text, mode: "person" }, full);
   await admin.rpc("ai_role_call_add", { p_id: call.id, p_chars: 0, p_turns: 1, p_learned: [] });
   // Anyone it just brought in answers what it was brought in for, then any hand-offs between the agents
   if (!signal.aborted && !ended) await followUps(input, team, hostHop);
@@ -101,16 +121,16 @@ async function bringIn(input: Input, team: TeamState, key: string, text: string)
  * (`handoff`, where nothing gated runs: only the person's own yes does that). It reads their day, clients and private
  * memory, who's on the line and the job, and acts with their tools and the team tools.
  */
-async function assistantAnswer(input: Input, team: TeamState, m: TurnMode): Promise<{ ended: boolean }> {
+async function assistantAnswer(input: Input, team: TeamState, m: TurnMode, full?: string): Promise<{ ended: boolean }> {
   const { me, admin, call, emit, signal } = input;
   const text = m.text;
   const person = m.mode === "person";
   const said = person ? text : "";
   const firstName = firstNameOf(me.fullName);
   const timer = input.timer ?? callTimer();
-  const [ctxNow, memory, convo, extra, assistantName] = await timer.time(
+  const [ctxNow, memory, convo, extra, assistantName, uploads] = await timer.time(
     "context",
-    Promise.all([timer.time("my_day", myContext(input.db, admin, me)), timer.time("memory", loadMemory(admin, me.id)), timer.time("history", callContext(admin, call, firstName)), turnExtras(input, text), assistantNameOf(admin, me.id)]),
+    Promise.all([timer.time("my_day", myContext(input.db, admin, me)), timer.time("memory", loadMemory(admin, me.id)), timer.time("history", callContext(admin, call, firstName)), turnExtras(input, text), assistantNameOf(admin, me.id), timer.time("uploads", uploadsBlock(admin, call).catch(() => ""))]),
   );
   // "Keep it short", "you're rambling": kept in their style right away, so every later call starts that way
   if (person && wantsShorter(text)) {
@@ -152,7 +172,9 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode): Prom
         extra.where,
         mem ? `<what_you_know_about_${firstName} private="true">\n${mem}\n</what_you_know_about_${firstName}>` : "",
         discovery,
-        uploadsBlock(call),
+        uploads,
+        googleLinksHint(person ? text : ""),
+        person ? lookupHint(text) : "",
         teamBlock(team, ASSISTANT_KEY, firstName),
         job ? `<hint>This sounds like the ${job.label.toLowerCase()} job (${job.about}). If they want it done now, start_job straight away, then say where things stand and what's missing; if they're only mentioning it, just answer.</hint>` : "",
         person && soundsLikeChurn(text) ? `<hint>This may say a client is leaving: if so, flag_client_risk now and say so in a few words.</hint>` : "",
@@ -177,7 +199,7 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode): Prom
   // The person's line at when they said it, the answer after it (the transcript reads them in that order)
   const at = turnTimes(person ? input.startedAt : null, Date.now());
   await admin.from("ai_role_chats").insert([
-    ...(person ? [{ role_key: ASSISTANT_KEY, role: "user", content: text, attachments: [], changes: [], created_by: me.id, call_id: call.id, created_at: at.said }] : []),
+    ...(person ? [{ role_key: ASSISTANT_KEY, role: "user", content: full ?? text, attachments: [], changes: [], created_by: me.id, call_id: call.id, created_at: at.said }] : []),
     ...(spoken ? [{ role_key: ASSISTANT_KEY, role: "agent", content: spoken, attachments: [], changes: [], created_by: me.id, call_id: call.id, created_at: at.answered }] : []),
   ]);
   return { ended: out.ended && person };

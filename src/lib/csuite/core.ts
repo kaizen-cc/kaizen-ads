@@ -202,3 +202,24 @@ export function billingGaps(services: readonly ServiceSlug[], billed: readonly B
   const s = new Set(services);
   return { unlisted: [...b].filter((x) => !s.has(x)), unbilled: [...s].filter((x) => !b.has(x) && x !== "crm" && x !== "web-design") };
 }
+
+/**
+ * A reason short enough for one line: "Meta: Audit: Spend is up 40% while purchases fell, so..." becomes "Meta: Spend is
+ * up 40% while purchases fell". The line's name stays, "Audit:" goes, the first sentence or clause is kept and anything
+ * past `max` characters is cut at a word with an ellipsis. The full text stays one press away.
+ */
+export function shortReason(text: string, max = 72): string {
+  const m = /^([A-Z][\w ]{0,20}):\s+([\s\S]*)$/.exec(text.trim());
+  const line = m ? m[1] : null;
+  let body = (m ? m[2] : text).trim().replace(/^Audit:\s*/i, "").replace(/\s+/g, " ");
+  // The first sentence, or the part before a dash or semicolon
+  body = body.split(/(?<=[a-z0-9%)])[.;!?](?:\s|$)|\s[-–—]\s/i)[0].trim();
+  const head = line ? `${line}: ` : "";
+  const room = Math.max(24, max - head.length);
+  if (body.length > room) {
+    const cut = body.slice(0, room);
+    const at = cut.lastIndexOf(" ");
+    body = `${(at > room * 0.6 ? cut.slice(0, at) : cut).replace(/[,:;\s]+$/, "")}…`;
+  }
+  return head + body.charAt(0).toUpperCase() + body.slice(1);
+}

@@ -54,6 +54,8 @@ export type TodayItem = {
   alt?: { label: string; href: string };
   /** What setting it aside means here, when it's more than "not for me" */
   dismiss?: string;
+  /** A lead or exec may pause this client's line until a date ("Paused: hide until..."): the service's slug */
+  pause?: { service: string };
   /** A message waiting on this person: the reply drafted for them */
   reply?: { id: string; source: "slack" | "gmail"; url: string | null; draft: string | null; channel: string | null };
   state: "new" | "seen" | "saved"; // what this person has done with it so far

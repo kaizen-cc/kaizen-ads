@@ -537,9 +537,21 @@ export type LineStat = {
   /** 14 day ad spend, and revenue, across the line's clients */
   spend: number;
   revenue: number;
-  /** The spend-weighted (ads) or plain (email) pace against plan, 1 = on plan; null when nothing paces */
+  /**
+   * The typical account's pace against plan, 1 = on plan (the median, so one mistyped budget or a tiny last month can't
+   * swing it): ads, where the month's spend lands at its daily rate against the monthly budget; email, where the month's
+   * attributed revenue lands against its target; creative, delivered against what's due by today. Null when nothing paces
+   */
   pace: number | null;
+  /** How many accounts the pace is read over, and how many run well over (above 115%) or under (below 85%) plan */
+  paced: number;
+  paceOver: number;
+  paceUnder: number;
 };
+
+/** A pace worth reading: a ratio above 0 and at most 5x plan (anything wilder is a mistyped budget or target) */
+export const sanePace = (x: number | null | undefined): x is number => x != null && Number.isFinite(x) && x > 0 && x <= 5;
+
 
 export type Scorecard = {
   lines: LineStat[];
@@ -561,7 +573,7 @@ const ratioOf = (n: number, of: number) => (of ? n / of : null);
 
 /** The success ratio, per-line counts and the high-priority accounts, over the cards given (a tab passes its line) */
 export function scorecard<T extends KpiClient>(cards: readonly T[], only?: KpiLine | null, book?: Portfolio | null, n = 5): Scorecard {
-  const stat = new Map<KpiLine, LineStat & { paceW: number; paceSum: number }>();
+  const stat = new Map<KpiLine, Omit<LineStat, "pace" | "paced" | "paceOver" | "paceUnder"> & { paces: number[] }>();
   let linesOn = 0;
   let linesJudged = 0;
   let clientsOn = 0;
@@ -576,14 +588,10 @@ export function scorecard<T extends KpiClient>(cards: readonly T[], only?: KpiLi
     }
     if (judged.some((l) => l.tone === "bad")) inRed++;
     for (const l of ks) {
-      const s = stat.get(l.line) ?? { line: l.line, on: 0, close: 0, off: 0, judged: 0, improving: 0, slipping: 0, spend: 0, revenue: 0, pace: null, paceW: 0, paceSum: 0 };
+      const s = stat.get(l.line) ?? { line: l.line, on: 0, close: 0, off: 0, judged: 0, improving: 0, slipping: 0, spend: 0, revenue: 0, paces: [] };
       s.spend += l.spend ?? 0;
       s.revenue += l.revenue ?? 0;
-      if (l.pace != null && Number.isFinite(l.pace)) {
-        const w = l.spend && l.spend > 0 ? l.spend : 1;
-        s.paceW += w;
-        s.paceSum += l.pace * w;
-      }
+      if (sanePace(l.pace)) s.paces.push(l.pace);
       if (l.health != null) {
         s.judged++;
         linesJudged++;
@@ -599,8 +607,9 @@ export function scorecard<T extends KpiClient>(cards: readonly T[], only?: KpiLi
     }
   }
   const lines = KPI_LINES.filter((l) => stat.has(l)).map((l) => {
-    const { paceW, paceSum, ...s } = stat.get(l)!;
-    return { ...s, pace: paceW ? Math.round((paceSum / paceW) * 100) / 100 : null };
+    const { paces, ...s } = stat.get(l)!;
+    const mid = median(paces);
+    return { ...s, pace: mid == null ? null : Math.round(mid * 100) / 100, paced: paces.length, paceOver: paces.filter((x) => x > 1.15).length, paceUnder: paces.filter((x) => x < 0.85).length };
   });
   const highPriority = cards
     .map((c) => ({ c, v: criticalityOf(c, only, book) }))

@@ -59,6 +59,8 @@ export type StudioReport = {
   joint?: JointInfo | null;
   status: string;
   periodLabel: string;
+  /** Email: the months before the stored history being read from the provider ("Reading Mar to Aug history from Klaviyo..."), with how far along (0 to 100) */
+  reading?: { line: string; pct: number } | null;
   message: string;
   /** What the message was written from (reportBasis); a report edited since gets its message brought up to date */
   messageBasis: string | null;
@@ -1800,8 +1802,17 @@ export function ReportStudio({
                     <span className="h-1.5 w-24 overflow-hidden rounded-full bg-surface-2">
                       <span className="block h-full w-1/2 animate-[ai-sweep_1.4s_ease-in-out_infinite] rounded-full bg-brand" />
                     </span>
-                    <p className="font-heading text-lg">Writing the report…</p>
-                    <p className="max-w-md text-sm text-muted">Reading the numbers, the work behind them and how you write. It checks itself before it shows here, usually within a minute.</p>
+                    <p className="font-heading text-lg">{report.reading ? report.reading.line : "Writing the report…"}</p>
+                    {report.reading ? (
+                      <>
+                        <span className="h-1.5 w-48 max-w-full overflow-hidden rounded-full bg-surface-2" role="progressbar" aria-valuenow={report.reading.pct} aria-valuemin={0} aria-valuemax={100}>
+                          <span className="block h-full rounded-full bg-brand transition-all" style={{ width: `${Math.max(4, report.reading.pct)}%` }} />
+                        </span>
+                        <p className="max-w-md text-sm text-muted">The dates reach back before what we have stored, so the earlier months are read from the account first, a few at a time. The report is written as soon as they are in; you can leave this page.</p>
+                      </>
+                    ) : (
+                      <p className="max-w-md text-sm text-muted">Reading the numbers, the work behind them and how you write. It checks itself before it shows here, usually within a minute.</p>
+                    )}
                   </>
                 )}
               </div>

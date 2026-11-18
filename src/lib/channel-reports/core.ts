@@ -891,3 +891,14 @@ export function numbersAsk(note: RefreshNote): string {
   const lines = note.changes.map((c) => `- ${c.label}: was ${c.was}, now ${c.now}`).join("\n");
   return `The report's numbers were refreshed from the source after this was written. What moved:\n${lines}\nThe <numbers> given now are the right ones. Bring the message and the sections up to date with them: change only the figures, and the statements that depend on them (percent changes, "up" or "down", a highlight, a takeaway or a bullet that quotes them). Keep everything else exactly as it is, the owner's own wording and edits included. Don't say the numbers were refreshed or revised. Leave lesson empty.`;
 }
+
+/**
+ * The report Monday's run made (or would have) this week, for the days after it: a client connected since then (Brevo,
+ * Customer.io or Klaviyo alike) is caught up the next morning instead of waiting a week. Monday itself is dueKinds.
+ */
+export function catchUpKind(p: { weekday: string; dom: number; hour: number }): ChannelKind | null {
+  const since = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(p.weekday);
+  if (since <= 0 || p.hour < 5) return null;
+  const monday = p.dom - since;
+  return monday >= 1 && monday <= 7 ? "monthly" : "weekly";
+}

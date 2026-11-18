@@ -87,6 +87,8 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const sentNow = r.status === "posted" || (r.kind === "built" && bundle?.status === "sent");
   // Meta and TikTok in one report (weekly or monthly): the Meta report this TikTok part goes out with, or the TikTok part
   // riding on this one (with its message, which goes out under the Meta one)
+  // While the months before the stored history are read from the provider, the report says so (and how far along)
+  const reading = r.platform === "klaviyo" && ["queued", "drafting"].includes(r.status) && adminConfigured() ? await import("@/lib/email-history/run").then((m) => m.readingFor(createAdminClient(), r.client_id as string, r.period_start as string)).catch(() => null) : null;
   const joinedTo = (r as { joined_to?: string | null }).joined_to ?? null;
   type Rider = { id: string; platform: string; status: string; message: string | null };
   const [{ data: goesWith }, { data: riders }] = await Promise.all([
@@ -147,6 +149,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           joint,
           status: r.status,
           periodLabel,
+          reading,
           message: r.message ?? "",
           messageBasis: (r.message_basis as string | null) ?? null,
           sections: (r.sections as Sections | null) ?? null,

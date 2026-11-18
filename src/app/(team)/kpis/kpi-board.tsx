@@ -1938,6 +1938,7 @@ export function KpiBoard({
   only = null,
   channels = false,
   channelCounts = null,
+  review = false,
 }: {
   rows: KpiRow[];
   buyers: Person[];
@@ -1962,6 +1963,8 @@ export function KpiBoard({
   channels?: boolean;
   /** How many clients the Email and Social boards show, beside their tabs like the ad platforms' counts */
   channelCounts?: { email: number; social: number } | null;
+  /** Execs: the weekly account review sits at the end of the switch (its own page, /kpis?p=review) */
+  review?: boolean;
 }) {
   // Where you are on the board lives in the address (platform, buyer, filters, the open account and its tab): back and
   // forward walk through it, and a link lands on the same view. Changes go through the History API, so nothing reloads
@@ -2056,24 +2059,32 @@ export function KpiBoard({
           </p>
         </div>
         <div className="flex w-full items-center gap-2 md:w-auto">
-          <div className="flex flex-1 rounded-full border border-line bg-surface p-1 md:inline-flex md:flex-none">
-            {platforms.map((p) => (
-              <button
-                key={p}
-                onClick={() => setPlatform(p)}
-                className={`h-10 flex-1 rounded-full px-3 text-sm transition-colors md:h-8 md:flex-none md:px-4 ${platform === p ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
-              >
-                {platformLabel(p)} <span className="tabular opacity-60">{rows.filter((r) => r.platform === p).length}</span>
-              </button>
-            ))}
-            {channels &&
-              (["email", "social"] as const).map((c) => (
-                <Link key={c} href={`/kpis?p=${c}`} prefetch className="inline-flex h-10 flex-1 items-center justify-center gap-1 rounded-full px-3 text-sm text-muted transition-colors hover:text-fg md:h-8 md:flex-none md:px-4">
-                  {c === "email" ? "Email" : "Social"}
-                  {channelCounts && <span className="tabular opacity-60">{channelCounts[c]}</span>}
-                </Link>
+          <nav aria-label="KPI board" className="no-scrollbar flex min-w-0 flex-1 overflow-x-auto md:flex-none">
+            <div className="flex min-w-full shrink-0 rounded-full border border-line bg-surface p-1 md:min-w-0">
+              {platforms.map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPlatform(p)}
+                  className={`h-10 flex-1 shrink-0 whitespace-nowrap rounded-full px-3 text-sm transition-colors md:h-8 md:flex-none md:px-4 ${platform === p ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
+                >
+                  {platformLabel(p)} <span className="tabular opacity-60">{rows.filter((r) => r.platform === p).length}</span>
+                </button>
               ))}
-          </div>
+              {channels &&
+                (["email", "social"] as const).map((c) => (
+                  <Link key={c} href={`/kpis?p=${c}`} prefetch className="inline-flex h-10 flex-1 shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-3 text-sm text-muted transition-colors hover:text-fg md:h-8 md:flex-none md:px-4">
+                    {c === "email" ? "Email" : "Social"}
+                    {channelCounts && <span className="tabular opacity-60">{channelCounts[c]}</span>}
+                  </Link>
+                ))}
+              {review && (
+                <Link href="/kpis?p=review" prefetch className="inline-flex h-10 flex-1 shrink-0 items-center justify-center whitespace-nowrap rounded-full px-3 text-sm text-muted transition-colors hover:text-fg md:h-8 md:flex-none md:px-4">
+                  <span className="md:hidden">Review</span>
+                  <span className="hidden md:inline">Account review</span>
+                </Link>
+              )}
+            </div>
+          </nav>
           <button onClick={() => setAdding((a) => !a)} className="h-12 shrink-0 rounded-[8px] bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover md:h-10">
             Add KPI
           </button>

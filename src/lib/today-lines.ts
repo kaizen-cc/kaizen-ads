@@ -8,6 +8,7 @@ import { activeSprints, latestAudits, loadSuggestions } from "@/lib/email-ops/lo
 import { locationPropsOf } from "@/lib/klaviyo/locations";
 import { isLive } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
+import { PAUSE_SERVICE } from "@/lib/account-watch/pauses-core";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import {
   contactIsMine,
@@ -105,6 +106,8 @@ async function lineItems(db: SupabaseClient, me: Staff, s: LineScope, today: str
   const ctx = { dayOfMonth, board: opensBoard(me, s.line) };
   for (const r of rows) (s.line === "email" ? emailRowItems(r, ctx) : socialRowItems(r, ctx)).forEach(keep);
 
+  // A lead or exec may pause the line for a client right from the item ("Paused: hide until...")
+  const pausable = me.isExec || me.isLead;
   const ids = rows.map((r) => r.clientId);
   const inScope = new Set(ids);
   for (const r of reports) {
@@ -135,7 +138,7 @@ async function lineItems(db: SupabaseClient, me: Staff, s: LineScope, today: str
     const [audits, sprints] = await Promise.all([latestAudits(db, ids, "social").catch(() => new Map<string, never>()), activeSprints(db, ids, "social").catch(() => new Map<string, never>())]);
     for (const r of rows) emailOpsItems({ clientId: r.clientId, name: r.name, slug: r.slug }, audits.get(r.clientId) ?? null, sprints.get(r.clientId) ?? null, new Date(), "social").forEach(keep);
   }
-  return out;
+  return pausable ? out.map((d) => (d.clientId && !d.pause ? { ...d, pause: { service: PAUSE_SERVICE[s.line] } } : d)) : out;
 }
 
 /** Clients' requests to change who gets our emails, waiting on us to confirm, for the people who look after them */

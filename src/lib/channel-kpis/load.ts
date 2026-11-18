@@ -12,6 +12,7 @@ import { partialSyncWarning } from "@/lib/klaviyo/core";
 import { emailClientState } from "@/lib/email-providers/core";
 import { emailConnections, type EmailConn } from "@/lib/email-providers/which";
 import { servicesOf } from "@/lib/services";
+import { loadPauses } from "@/lib/account-watch/pauses";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import {
   SERVICE,
@@ -78,7 +79,9 @@ export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me, o
   let q = db.from("clients").select("id, name, slug, status, kaizen_id, services, services_extra, services_removed, channel_sheet").is("archived_at", null).in("status", [...LIVE]);
   if (only) q = q.in("id", only);
   const { data: all } = await q.order("name");
-  const clients = (all ?? []).filter((c) => (servicesOf(c as Parameters<typeof servicesOf>[0]) as string[]).includes(SERVICE[line]));
+  // A line a lead paused until a date (the account watch's pauses) is left out until then; nothing is deleted
+  const paused = await loadPauses(db, SERVICE[line], etToday());
+  const clients = (all ?? []).filter((c) => (servicesOf(c as Parameters<typeof servicesOf>[0]) as string[]).includes(SERVICE[line]) && !paused.has(c.id as string));
   const ids = clients.map((c) => c.id as string);
   if (!ids.length) return { line, month, rows: [], targetsReady: true };
 

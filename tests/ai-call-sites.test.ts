@@ -170,7 +170,7 @@ const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/lib/agent-call/safety.ts": { labels: ["call safety review"], why: "reads a call's transcript for concerning content after it ends; a classifier" },
   "src/lib/assistant/memory.ts": { labels: ["assistant memory"], why: "picks what a person said about themselves for their private memory; extraction, never shared knowledge" },
   "src/lib/assistant/notes.ts": { labels: ["assistant call notes"], why: "summarises a call with a person's assistant once it ends" },
-  "src/lib/assistant/uploads.ts": { labels: ["call upload read"], why: "describes files uploaded during a call; extraction" },
+  "src/lib/assistant/uploads.ts": { labels: ["call upload read", "upload scan read", "upload part summary"], why: "describes files uploaded during a call, types out scans and outlines long files; extraction" },
   "src/app/(team)/ai/actions.ts": { labels: ["claude import client match"], why: "sorts a person's imported chats across every client; a classifier" },
   "src/lib/ai-router.ts": { labels: [""], why: "routes a message to a model level; a classifier" },
   "src/lib/asana.ts": { labels: ["asana allotment count"], why: "counts units across many tickets at once" },

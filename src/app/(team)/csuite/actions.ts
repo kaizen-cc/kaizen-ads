@@ -24,7 +24,7 @@ export async function startReview(): Promise<{ ok: true; id: string } | { ok: fa
     const { loadReview } = await import("@/lib/csuite/load");
     const review = await loadReview(db, createAdminClient()).catch(() => null);
     const r = await startMeeting(db, me, review);
-    revalidatePath("/csuite");
+    revalidatePath("/kpis");
     return { ok: true, id: r.id };
   } catch (e) {
     return fail(e);
@@ -56,7 +56,7 @@ export async function addReviewTodo(input: { meetingId: string | null; title: st
     const { me, db } = await exec();
     await addTodo(db, createAdminClient(), me, input);
     if (input.itemKey && input.meetingId) await markItem(db, input.meetingId, input.itemKey, "discuss", `Assigned: ${input.title}`);
-    revalidatePath("/csuite");
+    revalidatePath("/kpis");
     return { ok: true };
   } catch (e) {
     return fail(e);
@@ -67,7 +67,7 @@ export async function closeReviewTodo(id: string, status: "open" | "done" | "dis
   try {
     await requireStaff();
     await setTodoStatus(await createClient(), id, status);
-    revalidatePath("/csuite");
+    revalidatePath("/kpis");
     revalidatePath("/pipeline");
     return { ok: true };
   } catch (e) {
@@ -79,7 +79,7 @@ export async function finishReview(meetingId: string, notes: string | null): Pro
   try {
     const { db } = await exec();
     await endMeeting(db, meetingId, notes);
-    revalidatePath("/csuite");
+    revalidatePath("/kpis");
     return { ok: true };
   } catch (e) {
     return fail(e);

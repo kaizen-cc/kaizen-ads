@@ -73,10 +73,10 @@ describe("routing", () => {
     const r = routeCommitment({ kind: "creative", what: "1 video + 5 statics" }, base);
     expect([...r.to].sort()).toEqual(["des", "hoc", "vid"]);
   });
-  it("urgent creative adds the buyer and the execs who were in the meeting", () => {
+  it("urgent creative adds the buyer, never the execs (even ones in the meeting)", () => {
     const r = routeCommitment({ kind: "creative", what: "5 statics" }, { ...base, urgent: true });
     expect(r.to).toContain("buyer");
-    expect(r.to).toContain("ex1");
+    expect(r.to).not.toContain("ex1");
     expect(r.to).not.toContain("ex2");
     expect(r.to).not.toContain("hog");
   });

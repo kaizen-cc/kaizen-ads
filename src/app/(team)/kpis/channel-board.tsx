@@ -17,6 +17,7 @@ import { SocialWeighingDown } from "@/components/social-score-parts";
 import { PLATFORM_LABEL } from "@/lib/social-score";
 import { boardTotals, hasPlatform, parsePlatform, platformsOf, scoreFor } from "@/lib/social/split";
 import { closeParams, pushParams, replaceParams } from "@/lib/url-state";
+import { KpiSwitch } from "./kpi-switch";
 
 // The Email and Social KPI boards: every client of the line against this month's target, worst first. One board for both
 // lines (the main number and the supporting numbers differ). Where you are (filters, the open client) lives in the
@@ -151,14 +152,7 @@ export function ChannelBoard({ line, rows: given, month, switcher, initialWho, l
             prefetched as soon as the board shows, so switching opens a page that is already loaded */}
         {switcher && (
           <div className="flex w-full items-center gap-2 md:w-auto">
-            <nav aria-label="KPI board" className="flex flex-1 rounded-full border border-line bg-surface p-1 md:inline-flex md:flex-none">
-              {switcher.map((s) => (
-                <Link key={s.id} href={s.href} prefetch aria-current={s.active ? "page" : undefined} className={`inline-flex h-10 flex-1 items-center justify-center gap-1 rounded-full px-3 text-sm transition-colors md:h-8 md:flex-none md:px-4 ${s.active ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>
-                  {s.label}
-                  {s.count != null && <span className="tabular opacity-60">{s.count}</span>}
-                </Link>
-              ))}
-            </nav>
+            <KpiSwitch tabs={switcher} />
             <Link href="/kpis?p=meta&add=new" className="inline-flex h-12 shrink-0 items-center rounded-[8px] bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover md:h-10">
               Add KPI
             </Link>

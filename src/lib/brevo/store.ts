@@ -16,19 +16,20 @@ import { brevoAttribution, brevoCampaignContent, getBrevoAccount, listBrevoAudie
 
 const SOURCE = "brevo";
 
-async function read({ admin, conn, key, window, step }: Parameters<ProviderDef["read"]>[0]): Promise<ReadOut> {
+async function read({ admin, conn, key, window, step, depth }: Parameters<ProviderDef["read"]>[0]): Promise<ReadOut> {
   const clientId = conn.client_id;
   const full = window === "full";
   const tz = conn.timezone;
   const today = dayIn(new Date().toISOString(), tz);
-  const from = full ? shift(today, -(BACKFILL_DAYS - 1)) : shift(today, -6);
-  const since = new Date(Date.parse(`${shift(today, full ? -120 : -8)}T00:00:00Z`)).toISOString();
+  const depthDays = depth ?? BACKFILL_DAYS;
+  const from = full ? shift(today, -(depthDays - 1)) : shift(today, -6);
+  const since = new Date(Date.parse(`${shift(today, full ? -(depthDays + 30) : -8)}T00:00:00Z`)).toISOString();
   const now = new Date().toISOString();
 
   await step(10, "Reading the campaigns");
-  const email = await listBrevoCampaigns(key, "email", since, full ? 8 : 1);
+  const email = await listBrevoCampaigns(key, "email", since, full ? Math.max(8, Math.ceil(depthDays / 12)) : 1);
   // SMS is optional on a Brevo plan: a refusal there never stops the email read
-  const sms = await listBrevoCampaigns(key, "sms", since, full ? 4 : 1).catch(() => []);
+  const sms = await listBrevoCampaigns(key, "sms", since, full ? Math.max(4, Math.ceil(depthDays / 60)) : 1).catch(() => []);
   const sent = [...email, ...sms].filter((c) => c.sendTime);
 
   await step(40, "Reading what each campaign earned");

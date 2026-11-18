@@ -132,13 +132,13 @@ export function emailRowItems(r: ChannelRow, ctx: RowCtx): (TodayDraft & { kind:
       kind: "email-connect",
       key: `email-connect:${r.clientId}`,
       score: failing ? 76 : 60,
-      stat: { value: failing ? "Failing" : "Not set up", label: failing ? `reading ${source}` : "no email numbers yet" },
-      title: failing ? `${r.name}'s email numbers stopped coming in` : `${r.name} has no email provider connected`,
+      stat: { value: failing ? "Failing" : "Not connected", label: failing ? `reading ${source}` : "no email numbers yet" },
+      title: failing ? `${r.name}'s email numbers stopped coming in` : `${r.name}: Klaviyo isn't connected`,
       story: failing
         ? `${r.problem?.message ?? `${source} refused the last read.`} Until it's fixed the score, the board and their report can't see what's happening.${r.problem?.fix ? ` ${r.problem.fix}` : ""}`
-        : "They buy Email Marketing, but nothing is connected, so there's no score, no board and no report for them. Paste their Klaviyo, Brevo or Customer.io key in Team & setup.",
-      why: failing ? "We can't see their numbers" : "Not measured yet",
-      action: { label: failing ? "Fix the connection" : "Connect it", href: `/clients/${r.slug}?tab=team` },
+        : `No Klaviyo, Brevo or Customer.io key is saved for them, so there's no score, no board and no report. ${r.canConnect ? "Paste the client's read-only key on their page, in Team & setup." : "Ask the head of email or an exec to paste the client's read-only key on their page, in Team & setup."}`,
+      why: failing ? "We can't see their numbers" : "No email provider connected",
+      action: { label: failing ? "Fix the connection" : r.canConnect ? "Connect Klaviyo" : "Open the client", href: `/clients/${r.slug}?tab=team` },
       alt: { label: "Email board", href: h.main },
     });
     return out;

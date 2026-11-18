@@ -117,13 +117,13 @@ export const SCREEN_PLACES: Record<string, string> = {
   // Emails drafted for the person to send to clients, on their Overview
   "emails ready to send": "/pipeline#emails-ready",
   // The executives' weekly account review, each step its own address
-  "account review": "/csuite",
-  "account review scorecard": "/csuite?step=scorecard",
-  "account review critical accounts": "/csuite?step=critical",
-  "account review issues": "/csuite?step=issues",
-  "account review upsells": "/csuite?step=upsell",
-  "account review financial": "/csuite?step=financial",
-  "account review to-dos": "/csuite?step=todos",
+  "account review": "/kpis?p=review",
+  "account review scorecard": "/kpis?p=review&step=scorecard",
+  "account review critical accounts": "/kpis?p=review&step=critical",
+  "account review issues": "/kpis?p=review&step=issues",
+  "account review upsells": "/kpis?p=review&step=upsell",
+  "account review financial": "/kpis?p=review&step=financial",
+  "account review to-dos": "/kpis?p=review&step=todos",
   // The Overview's tabs (?tab=): the email and social teams have all of them, the other teams Today and My work
   "overview clients": "/pipeline?tab=clients",
   "overview campaign ideas": "/pipeline?tab=ideas",

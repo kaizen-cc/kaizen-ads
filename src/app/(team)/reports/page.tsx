@@ -220,11 +220,15 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   // Ads platforms with something on the page, then the lines this person is on (always, so a client can be built for)
   const platforms = (["meta", "google", "tiktok", "klaviyo", "social"] as const).filter((x) => (x === "klaviyo" ? lines.includes("email") : x === "social" ? lines.includes("social") : pool.some((r) => plat(r) === x) || reach.some((b) => bundlePlats(b).includes(x))));
   const wp: Plat = platforms.length > 1 ? (platforms.find((x) => x === pick("wp")) ?? platforms[0]) : (platforms[0] ?? "meta");
+  // Email and social: only the seats that report (an email strategist, the social seats), never a designer or a builder, even
+  // when an older report was drafted for one (the head of email's view too)
+  const reporters = new Set(seatRows.filter((s) => isChan(wp) && REPORT_SEATS[lineOfPlatform(wp as "klaviyo" | "social")].includes(s.role)).map((s) => s.profile_id));
+  const eligible = (id: string) => !isChan(wp) || id === me.id || reporters.has(id);
   const people = (list: Row[], bundles: typeof reach) =>
     [
       ...new Map([
-        ...list.filter((r) => plat(r) === wp && r.owner_id).map((r) => [r.owner_id!, r.owner_id === me.id ? "You" : (r.profiles?.full_name ?? "Buyer")] as const),
-        ...bundles.flatMap((b) => b.reports.filter((p) => plat(p) === wp && p.owner_id).map((p) => [p.owner_id!, p.owner_id === me.id ? "You" : (p.profiles?.full_name ?? "Buyer")] as const)),
+        ...list.filter((r) => plat(r) === wp && r.owner_id && eligible(r.owner_id)).map((r) => [r.owner_id!, r.owner_id === me.id ? "You" : (r.profiles?.full_name ?? "Buyer")] as const),
+        ...bundles.flatMap((b) => b.reports.filter((p) => plat(p) === wp && p.owner_id && eligible(p.owner_id)).map((p) => [p.owner_id!, p.owner_id === me.id ? "You" : (p.profiles?.full_name ?? "Buyer")] as const)),
         // The secondary buyers on those accounts
         ...[...list.map((r) => r.client_id), ...bundles.map((b) => b.client_id)].flatMap((c) => coSeats(c, wp).map((s) => [s.profile_id, s.profile_id === me.id ? "You" : (s.profiles?.full_name ?? "Buyer")] as const)),
       ]).entries(),

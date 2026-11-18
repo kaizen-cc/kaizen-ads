@@ -20,6 +20,7 @@ import type { EmailShadow } from "@/lib/asana-email";
 import type { EmailTicket } from "@/lib/email-board";
 import { EMAIL_BOARD_ORDER, EMAIL_PHASE_LABEL, emailHealth, emailStageInfo, handle, messageStatus, MESSAGE_STATUS_LABEL, type EmailKind, type EmailPhase, type EmailStage, type Health } from "@/lib/email-board-core";
 import { ClientTag } from "../ticket-card";
+import { BoardScrollbar } from "@/components/board-scrollbar";
 import { migrateEmailAsana, moveEmailAsana } from "./actions";
 import { EmailMoveDialog, EmailTicketSheet, KindBadge } from "./email-ticket-sheet";
 
@@ -268,6 +269,7 @@ export function EmailBoardClient({ tickets: initial, clients, people, shadows, m
   const filtersOn = Boolean(q || client || personParam || kind || priority);
 
   const scroller = useRef<HTMLDivElement>(null);
+  const pan = useRef<{ x: number; left: number } | null>(null);
   const [active, setActive] = useState(0);
   const measure = () => {
     const el = scroller.current;
@@ -387,7 +389,23 @@ export function EmailBoardClient({ tickets: initial, clients, people, shadows, m
             ))}
           </div>
         </div>
-        <div ref={scroller} onScroll={measure} className="board-scroll -mx-4 snap-x snap-mandatory scroll-px-4 overflow-x-auto px-4 pb-4 md:-mx-10 md:snap-none md:scroll-px-0 md:px-10">
+        <div
+          ref={scroller}
+          onScroll={measure}
+          onPointerDown={(e) => {
+            // Drag the board from empty space (a mouse; cards and buttons keep their clicks). A touch swipes it natively.
+            if (e.pointerType !== "mouse" || e.button !== 0 || (e.target as HTMLElement).closest("button, a, input, select, textarea, [role=button], article, [draggable=true]")) return;
+            pan.current = { x: e.clientX, left: scroller.current!.scrollLeft };
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+          }}
+          onPointerMove={(e) => {
+            const p = pan.current;
+            if (p) scroller.current!.scrollLeft = p.left - (e.clientX - p.x);
+          }}
+          onPointerUp={() => (pan.current = null)}
+          onPointerCancel={() => (pan.current = null)}
+          className="board-scroll -mx-4 snap-x snap-mandatory scroll-px-4 overflow-x-auto px-4 pb-4 md:-mx-10 md:cursor-grab md:snap-none md:scroll-px-0 md:px-10 md:active:cursor-grabbing"
+        >
           <div style={{ "--board-w": `${EMAIL_BOARD_ORDER.length * COL + (EMAIL_BOARD_ORDER.length - 1) * GAP}px` } as CSSProperties} className="grid w-max gap-3 md:w-[var(--board-w)]">
             <div className="hidden gap-3 md:flex">
               {BANDS.map((b) => (
@@ -471,6 +489,7 @@ export function EmailBoardClient({ tickets: initial, clients, people, shadows, m
             </div>
           </div>
         </div>
+        <BoardScrollbar scroller={scroller} />
       </div>
 
       {tickets.length === 0 && !shadows.length && (

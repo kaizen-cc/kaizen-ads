@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { criticality, creativeChip, diagnose, packageWeight, portfolioOf, scorecard, sizeWeight, sortClients, toneOf, type DayNumbers, type LineKpi } from "@/lib/clients-kpi/core";
 import { foldMatch, foldText } from "@/lib/search-fold";
-import { askedAbout, billingGaps, mark, progress, upsellsFor, type UpsellInput } from "@/lib/csuite/core";
+import { askedAbout, billingGaps, mark, progress, shortReason, upsellsFor, type UpsellInput } from "@/lib/csuite/core";
 import { cleanDraftText, composeLinks, draftKey, parseDraftItems, pickOwner } from "@/lib/email-drafts/core";
 
 const line = (l: LineKpi["line"], health: number | null, extra: Partial<LineKpi> = {}): LineKpi => ({ line: l, label: l, shown: String(health), tone: toneOf(health), health, spend: null, reasons: [], href: "/kpis", ...extra });
@@ -53,6 +53,31 @@ describe("the scorecard", () => {
     expect(s.inRed).toBe(1);
     expect(s.lines.find((l) => l.line === "meta")).toMatchObject({ on: 1, off: 1, improving: 1, slipping: 1 });
     expect(s.highPriority.map((h) => h.name)).toEqual(["B"]);
+  });
+  it("reads pace as the typical account, so a mistyped budget can't swing the line", () => {
+    const cards = [client("A", [line("meta", 90, { pace: 0.95, spend: 100 })]), client("B", [line("meta", 80, { pace: 1.05, spend: 200 })]), client("C", [line("meta", 70, { pace: 1.0, spend: 50 })]), client("Typo", [line("meta", 60, { pace: 82, spend: 90_000 })])];
+    const meta = scorecard(cards).lines.find((l) => l.line === "meta")!;
+    expect(meta.pace).toBe(1);
+    expect(meta.paced).toBe(3);
+    expect(meta).toMatchObject({ paceOver: 0, paceUnder: 0 });
+  });
+  it("leaves pace out when nothing paces", () => {
+    expect(scorecard([client("A", [line("tiktok", null)])]).lines[0]).toMatchObject({ judged: 0, pace: null, paced: 0 });
+  });
+});
+
+describe("a high-priority reason on one line", () => {
+  it("drops the Audit prefix and keeps the first sentence", () => {
+    expect(shortReason("Meta: Audit: Spend rose 40% while purchases fell. The new campaign is eating the budget and needs cutting back")).toBe("Meta: Spend rose 40% while purchases fell");
+  });
+  it("cuts a long clause at a word", () => {
+    const r = shortReason("Email: revenue per recipient is well under the bar across every campaign sent in the last thirty days and the flows too", 60);
+    expect(r.length).toBeLessThanOrEqual(61);
+    expect(r.endsWith("…")).toBe(true);
+    expect(r.startsWith("Email: Revenue per recipient")).toBe(true);
+  });
+  it("leaves a short reason alone", () => {
+    expect(shortReason("Google: Spend is pacing 30% under budget")).toBe("Google: Spend is pacing 30% under budget");
   });
 });
 

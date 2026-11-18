@@ -80,6 +80,11 @@ export async function markForRegenerate(admin: SupabaseClient, ids: string[], by
 export async function regenerateNow(admin: SupabaseClient, id: string) {
   const { data } = await admin.from("reports").select("target_id, platform").eq("id", id).maybeSingle();
   // An email or social report is written by the channel writer from its synced tables (no account to pull from)
+  if (data?.platform === "klaviyo" && (await (await import("@/lib/email-history/run")).holdForHistory(admin, id).catch(() => false))) {
+    // Its dates reach before the stored history: the missing months are read first, then it is written (the queue holds it)
+    await (await import("@/lib/channel-reports/queue")).draftChannelQueued(admin, 200_000);
+    return;
+  }
   if (data?.platform === "klaviyo" || data?.platform === "social") return (await import("@/lib/channel-reports/write")).draftChannelReport(admin, id);
   await freshen(admin, (data?.target_id as string | undefined) ?? null);
   await draftReport(admin, id);

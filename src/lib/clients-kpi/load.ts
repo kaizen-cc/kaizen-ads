@@ -125,7 +125,8 @@ export async function loadAllClientKpis(admin: SupabaseClient): Promise<AllClien
       // For the executive summary and business size: the tracked value, where the account is heading, its budget pace
       revenue: d14?.revenue ?? null,
       trend: snap?.trend ?? null,
-      pace: snap?.budget?.pace ?? null,
+      // A budget under $20 a month is a typo (a "k" lost from the sheet), not a budget: no pace from it
+      pace: Number((snap?.budget as { budget?: number } | null)?.budget ?? 0) >= 20 ? (snap?.budget?.pace ?? null) : null,
     };
     const k = `${t.client_id}:${t.platform}`;
     (chips.get(k) ?? chips.set(k, []).get(k)!).push(chip);
@@ -147,7 +148,7 @@ export async function loadAllClientKpis(admin: SupabaseClient): Promise<AllClien
     const extra = {
       revenue: r.revenueMeasured === false ? null : r.prev != null ? (r.prev * 14) / 30 : (r.value ?? null),
       trend: r.projected != null && r.prev ? (r.projected >= r.prev * 1.05 ? "improving" : r.projected <= r.prev * 0.95 ? "slipping" : "steady") : null,
-      pace: r.projected != null && goal ? Math.round((r.projected / goal) * 100) / 100 : null,
+      pace: r.projected != null && goal && goal >= 50 ? Math.round((r.projected / goal) * 100) / 100 : null,
     } as const;
     slot(r.clientId).kpis.push({
       ...extra,

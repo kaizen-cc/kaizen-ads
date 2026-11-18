@@ -2,6 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { KlaviyoLocations } from "@/components/klaviyo-locations";
+import { LinePauseControl } from "@/components/line-pause";
+import { EmailHistory } from "./email-history";
 import { KlaviyoMetricPicker } from "@/components/klaviyo-metric-picker";
 import { CustomerioExtras, ProviderChoice } from "@/components/klaviyo-key-inline";
 import { useState, useTransition } from "react";
@@ -113,6 +115,8 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
           )}
           {provider === "klaviyo" && <KlaviyoMetricPicker clientId={clientId} current={conn.conversionMetrics ?? []} fallback={conn.conversionMetric ?? null} canPick={canEdit} />}
           {provider === "klaviyo" && <KlaviyoLocations clientId={clientId} />}
+          <EmailHistory clientId={clientId} />
+          <LinePauseControl clientId={clientId} service="email-marketing" label="Pause email for this client" />
           <div className="flex flex-wrap gap-x-4 gap-y-1 pt-0.5">
             <button
               type="button"

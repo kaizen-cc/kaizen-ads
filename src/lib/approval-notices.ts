@@ -222,9 +222,7 @@ export async function runApprovalNotices(admin: Admin, now = new Date()) {
           const count = done.reduce((n, w) => n + Math.max(1, pieces.get(w.requestId)?.length ?? 1), 0);
           const told = await tellClient(admin, c, "auto_approved", count);
           const channels = [...told.channels, "team"];
-          // The team: their internal channel, and the people on it
-          const list = done.map((w) => `#${w.number} ${w.title}`).join(", ");
-          if (c.internal_slack_channel_id) await postAsApp({ channel: c.internal_slack_channel_id, text: `${c.name}: ${done.length === 1 ? "1 ticket was" : `${done.length} tickets were`} approved automatically after 48 business hours with the client (they opted in): ${list}. Ready to launch.` }).catch(() => undefined);
+          // The team hears in Kaizen OS (no app posts in internal Slack channels)
           const to = [...new Set([...chasers((seats ?? []).filter((s) => s.client_id === clientId), execs), ...mine.filter((r) => done.some((w) => w.requestId === r.id)).map((r) => r.buyer_id).filter(Boolean)])] as string[];
           if (to.length)
             await admin.from("notifications").upsert(

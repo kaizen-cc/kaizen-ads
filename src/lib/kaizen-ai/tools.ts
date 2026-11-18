@@ -64,6 +64,9 @@ export async function channelMaySeeClient(ctx: Pick<ToolCtx, "me" | "admin">, cl
   return channelMaySee({ id: ctx.me.id, role: ctx.me.role }, { archived: Boolean(c.archived_at), services: servicesOf(c), seatHolders: (seats ?? []).map((a) => String(a.profile_id)) });
 }
 
+/** The client named in a tool's input (or the thread's), if the person can see it: for tools kept in other files */
+export const clientNamedForTools = (ctx: ToolCtx, input: Record<string, unknown>) => clientOf(ctx, input);
+
 /** The client the tool is about, if the person can see it (their own session decides) */
 async function clientOf(ctx: ToolCtx, input: Record<string, unknown>): Promise<ClientRow> {
   const asked = String(input.client ?? "").trim();
@@ -304,7 +307,7 @@ function socialNumbersOut(n: import("@/lib/social-score").PlatformNumbers) {
 }
 
 /** The tools the email and organic social teams get (the email one only for the email team) */
-const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "team_kpis", "email_marketing", "organic_social", "social_score", "run_social_audit", "start_social_sprint", "search_client", "recent_calls", "read_call", "rank_clients", "top_emails", "email_detail", "top_posts"]);
+const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "team_kpis", "email_marketing", "organic_social", "social_score", "run_social_audit", "start_social_sprint", "search_client", "recent_calls", "read_call", "rank_clients", "top_emails", "email_detail", "top_posts", "search_my_kaizen_ai", "read_my_kaizen_ai", "read_google_file"]);
 /** Per turn: the add-on tools loaded for this person, which the email and social teams get as well */
 const CHANNEL_EXTRA = new Set<string>(["make_deck"]);
 
@@ -1097,6 +1100,10 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     const label: Record<string, string> = { search_client: "Searching Slack, email, Drive and calls…", recent_calls: "Reading the recent calls…", read_call: "Reading the call…", earlier_reports: "Reading earlier reports…" };
     for (const t of reused) if (label[t.name]) tools.push({ ...t, description: `${t.description} (Only for the client this thread is pinned to.)`, status: () => label[t.name] });
   }
+
+  // Their own Kaizen AI and imported Claude chats, Google files opened as them, and a client's records by name
+  const { myTools } = await import("./my-tools");
+  for (const t of myTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
 
   // Rankings across clients: clients on a line, and single emails, ads and posts (each scoped to the person's line)
   for (const t of rankTools(ctx)) tools.push(t);

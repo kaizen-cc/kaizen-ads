@@ -32,21 +32,22 @@ async function readSends(c: Cio, sends: CioSend[], sinceIso: string) {
   return out;
 }
 
-async function read({ admin, conn, key, window, step }: Parameters<ProviderDef["read"]>[0]): Promise<ReadOut> {
+async function read({ admin, conn, key, window, step, depth }: Parameters<ProviderDef["read"]>[0]): Promise<ReadOut> {
   const c = ctx(conn, key);
   const clientId = conn.client_id;
   const full = window === "full";
   const tz = conn.timezone;
   const today = dayIn(new Date().toISOString(), tz);
-  const from = full ? shift(today, -(BACKFILL_DAYS - 1)) : shift(today, -6);
+  const depthDays = depth ?? BACKFILL_DAYS;
+  const from = full ? shift(today, -(depthDays - 1)) : shift(today, -6);
   const from30 = shift(today, -29);
   // The automations' daily numbers start far enough back for the 30 days (and the 90 on a full read)
   const seriesFrom = full ? from : shift(today, -30);
-  const sinceIso = new Date(Date.parse(`${shift(today, full ? -120 : -8)}T00:00:00Z`)).toISOString();
+  const sinceIso = new Date(Date.parse(`${shift(today, full ? -(depthDays + 30) : -8)}T00:00:00Z`)).toISOString();
   const now = new Date().toISOString();
 
   await step(8, "Reading the sends");
-  const newsletters = await listNewsletters(c, sinceIso, full ? 6 : 1);
+  const newsletters = await listNewsletters(c, sinceIso, full ? Math.max(6, Math.ceil(depthDays / 15)) : 1);
   const broadcasts = await listBroadcasts(c).catch(() => []);
   const sends = await readSends(c, [...newsletters, ...broadcasts], sinceIso);
 

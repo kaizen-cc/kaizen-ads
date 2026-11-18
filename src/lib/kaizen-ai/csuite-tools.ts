@@ -48,7 +48,7 @@ export function csuiteTools(ctx: ToolCtx): ChatTool[] {
                     : step === "financial"
                       ? { billing_from_stripe: review.billingKnown, clients: review.financial.slice(0, 25).map((f) => ({ key: f.key, client: f.name, monthly_billed: f.monthly, services: f.services, package: f.packageLabel, billed_not_listed: f.unlisted.length ? f.unlisted : undefined, listed_not_billed: f.unbilled.length ? f.unbilled : undefined })) }
                       : { todos: (await meetingTodos(ctx.db, meeting?.id ?? null)).map((t) => ({ title: t.title, who: t.assignee?.name, due: t.due_on, status: t.status, client: t.client?.name })) };
-          return { meeting: meeting ? { id: meeting.id, title: meeting.title } : null, step: STEPS.find((x) => x.key === step)!.title, progress: `${p.done} of ${p.total} items done`, ...body, href: `/csuite?step=${step}`, next_step: STEPS[STEPS.findIndex((x) => x.key === step) + 1]?.key ?? null };
+          return { meeting: meeting ? { id: meeting.id, title: meeting.title } : null, step: STEPS.find((x) => x.key === step)!.title, progress: `${p.done} of ${p.total} items done`, ...body, href: `/kpis?p=review&step=${step}`, next_step: STEPS[STEPS.findIndex((x) => x.key === step) + 1]?.key ?? null };
         },
       },
       {
@@ -96,7 +96,7 @@ export function csuiteTools(ctx: ToolCtx): ChatTool[] {
           const { loadReview } = await import("@/lib/csuite/load");
           const r = await loadReview(ctx.db, ctx.admin);
           const n = Math.min(30, Math.max(1, Number(input.limit) || 12));
-          return { upsells: r.upsells.slice(0, n).map((u) => ({ client: u.client, service: u.service, offer: u.offer, why: u.why.slice(0, 3) })), href: "/csuite?step=upsell" };
+          return { upsells: r.upsells.slice(0, n).map((u) => ({ client: u.client, service: u.service, offer: u.offer, why: u.why.slice(0, 3) })), href: "/kpis?p=review&step=upsell" };
         },
       },
     );
