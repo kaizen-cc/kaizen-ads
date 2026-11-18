@@ -1,5 +1,6 @@
 import "server-only";
 import type { Staff } from "@/lib/auth";
+import { clientNamed } from "@/lib/client-named";
 import { channelMaySee } from "@/lib/kaizen-ai/channel-access";
 import { loadSegmentReport } from "@/lib/klaviyo/segments";
 import { PATTERN_LABEL, segmentDigest } from "@/lib/klaviyo/segments-core";
@@ -26,10 +27,11 @@ const segmentPerformance: AiTool = {
     type Row = { id: string; name: string; slug: string };
     let row = null as Row | null;
     if (asked) {
-      const safe = asked.replace(/[%_,()]/g, " ").trim();
-      const { data } = await db.from("clients").select("id, name, slug").or(`slug.eq.${safe.toLowerCase().replace(/\s+/g, "-")},name.ilike.%${safe}%`).limit(5);
-      row = ((data ?? []).find((c) => c.name.toLowerCase() === asked.toLowerCase() || c.slug === asked.toLowerCase()) ?? (data ?? [])[0] ?? null) as Row | null;
-      if (!row) return { ok: false, error: `No client called "${asked}" that you can see.` };
+      try {
+        row = await clientNamed(db, asked);
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : `No client called "${asked}" that you can see.` };
+      }
     } else if (chat?.clientId) {
       const { data } = await db.from("clients").select("id, name, slug").eq("id", chat.clientId).maybeSingle();
       row = (data as Row | null) ?? null;

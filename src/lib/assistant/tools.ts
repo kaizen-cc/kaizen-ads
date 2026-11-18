@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { clientNamed as sharedClientNamed } from "@/lib/client-named";
 import { after } from "next/server";
 import type { Staff } from "@/lib/auth";
 import type { CallCard, CallEvent } from "@/lib/agent-call/core";
@@ -51,13 +52,7 @@ const NO_YES = "Not run: say in one sentence exactly what this will do and ask; 
 
 /** The client named, if this person may see it (their own session decides) */
 async function clientNamed(db: SupabaseClient, name: unknown): Promise<{ id: string; name: string; slug: string }> {
-  const asked = clip(name, 120);
-  if (!asked) throw new Error("Which client?");
-  const safe = asked.replace(/[%_,()]/g, " ").trim();
-  const { data } = await db.from("clients").select("id, name, slug").is("archived_at", null).ilike("name", `%${safe}%`).limit(5);
-  const hit = (data ?? []).find((c) => String(c.name).toLowerCase() === asked.toLowerCase()) ?? (data ?? [])[0];
-  if (!hit) throw new Error(`No client called "${asked}" that you can see.`);
-  return hit as { id: string; name: string; slug: string };
+  return sharedClientNamed(db, clip(name, 120));
 }
 
 const showCard = (ctx: AssistantCtx, c: Omit<CallCard, "id">) => showCallCard(ctx, c);

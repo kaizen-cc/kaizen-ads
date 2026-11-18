@@ -82,7 +82,7 @@ export const SOCIAL_LINE: LineConfig = {
   trigger: /\b(?:(?:create|make|build|plan|do|need|write|draft|set up|put together)\b[^.?!]{0,40}\b(?:organic (?:social )?(?:posts?|content|carousels?|reels?|videos?)|social (?:media )?(?:posts?|content|carousels?)|(?:instagram|facebook|tiktok) (?:posts?|carousels?|reels?)|(?:carousel|single image|reel|video) posts?|content for the week)|organic social (?:request|content)\b)/i,
   context: [
     "organic_social and top_posts (engagement, followers and what their best posts did)",
-    "social_score (how the account grades and where it's weak)",
+    "social_score and kpi_board line social (how the account grades and where it's weak, as the Social KPI board shows it)",
     "the content calendar and what's already scheduled or requested (organic_social, open Asana tasks)",
     "the client's rules in the Brand Bible and client memory (voice, never-say, claims)",
     "get_client_context and search_client (the latest Slack, Gmail and call notes, recent conversations)",
@@ -97,7 +97,7 @@ export const SOCIAL_LINE: LineConfig = {
       `Draft every post into ONE preview document (create_copy_doc, kind: social, an entry per post: its name, then one section per slide headed with the slide's name, the body the on-image headline then the supporting line on the next line; design notes "Visual: ..." one per slide in order; brief.goal the concept, brief.send_date the posting date), then ask what they think in a line and hand_off to the ${cfg.lead.replace(/_/g, " ")} for its notes. A ${k.label.toLowerCase()} post is ${k.key === "carousel" ? "5 to 10 slides" : k.key === "video" ? "a few beats (hook, body, close)" : "one frame"}.`,
   },
   asana: {
-    project: { gid: SOCIAL_PROJECT_GID },
+    project: { env: "ASANA_SOCIAL_PROJECT_GID", setting: "asana_social_project", gid: SOCIAL_PROJECT_GID },
     section: "Creative Brief",
     taskName: (t) => socialTaskName(t),
     fields: (t) => [

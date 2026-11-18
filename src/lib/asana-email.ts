@@ -1,13 +1,14 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { asana, asanaAll, asanaWrite } from "@/lib/asana";
+import { resolveAsanaProject, type ProjectSource } from "@/lib/asana-project";
 import { emailStageForColumn, EMAIL_BOARD_ORDER, isDoneColumn, ownerFor, pickEmailProject, type EmailKind, type EmailStage } from "@/lib/email-board-core";
 import { cleanTitle, normalizePriority, type PriorityLevel } from "@/lib/task-title";
 import { mapAttachments, mapSubtasks, readList, type AsanaAttachment, type AsanaSubtask } from "@/lib/asana-context";
 
 // Asana's email board, mirrored while the email team moves over to Kaizen (the creative board's mirror, for email).
-// The project is ASANA_EMAIL_PROJECT_GID, else the app setting asana_email_project ({"gid": "..."}), else the one the
-// last sync found, else the workspace's project named like "Email" (see pickEmailProject). Every sync reads the open
+// The project is ASANA_EMAIL_PROJECT_GID, else the app setting asana_email_project ({"gid": "..."}), else the
+// workspace's project named like "Email" (see pickEmailProject), else the one the last sync found. Every sync reads the open
 // tasks (and ones finished since last month began), keeps each in the Email Board stage its column maps to, and reads
 // each changed task's history (column moves, reassignments, due dates) and comments. Open tasks show as outline cards
 // on the Email Board; dragging one moves it in Asana; migrating one makes a Kaizen ticket that keeps its history and
@@ -15,23 +16,11 @@ import { mapAttachments, mapSubtasks, readList, type AsanaAttachment, type Asana
 
 type Admin = SupabaseClient;
 
+/** Where the email board lives (shared with the deliverable flow's email requests, src/lib/asana-project.ts) */
+export const EMAIL_PROJECT_SOURCE: ProjectSource = { env: "ASANA_EMAIL_PROJECT_GID", setting: "asana_email_project", pick: pickEmailProject, syncSource: "asana_email" };
+
 export async function emailProjectGid(admin: Admin): Promise<string | null> {
-  if (process.env.ASANA_EMAIL_PROJECT_GID) return process.env.ASANA_EMAIL_PROJECT_GID;
-  const [{ data: setting }, { data: state }] = await Promise.all([
-    admin.from("app_settings").select("value").eq("key", "asana_email_project").maybeSingle(),
-    admin.from("sync_state").select("last_result").eq("source", "asana_email").maybeSingle(),
-  ]);
-  const set = (setting?.value as { gid?: string } | null)?.gid;
-  if (set) return set;
-  const known = (state?.last_result as { project?: string } | null)?.project;
-  if (known) return known;
-  const { data: spaces } = await asana<{ gid: string }[]>("/workspaces");
-  for (const w of spaces) {
-    const projects = await asanaAll<{ gid: string; name: string }>("/projects", { workspace: w.gid, archived: "false", opt_fields: "name" });
-    const hit = pickEmailProject(projects);
-    if (hit) return hit.gid;
-  }
-  return null;
+  return (await resolveAsanaProject(admin, EMAIL_PROJECT_SOURCE))?.gid ?? null;
 }
 
 type Task = {

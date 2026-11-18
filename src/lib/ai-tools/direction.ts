@@ -1,4 +1,5 @@
 import "server-only";
+import { clientNamed as sharedClientNamed } from "@/lib/client-named";
 import type { Staff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -12,11 +13,12 @@ import { str, type AiTool } from "./types";
 
 async function clientNamed(asked: string | null): Promise<{ id: string; name: string } | { error: string }> {
   if (!asked) return { error: "Which client?" };
-  const db = await createClient();
-  const safe = asked.replace(/[%_,()]/g, " ").trim();
-  const { data } = await db.from("clients").select("id, name").is("archived_at", null).ilike("name", `%${safe}%`).limit(5);
-  const hit = (data ?? []).find((c) => String(c.name).toLowerCase() === asked.toLowerCase()) ?? (data ?? [])[0];
-  return hit ? { id: hit.id as string, name: hit.name as string } : { error: `No client called "${asked}" that you can see.` };
+  try {
+    const hit = await sharedClientNamed(await createClient(), asked);
+    return { id: hit.id, name: hit.name };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : `No client called "${asked}" that you can see.` };
+  }
 }
 
 const listChanges: AiTool = {

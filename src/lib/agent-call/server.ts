@@ -13,10 +13,10 @@ import { focusFor } from "./role-focus";
 import { callConnectors, noConnectors, type CallConnectors } from "./call-connectors";
 import type { CallContext } from "./call-context";
 import { contextBlock, lookHint, lookTool, loadFrame, withFrame } from "./call-extras";
-import { FILLER_DELAY_MS, fillerFor, runToolLoop, type LoopMessage, type LoopTool } from "./tool-loop";
+import { FILLER_DELAY_MS, checkInDue, checkInLine, fillerFor, progressPct, runToolLoop, soundsUnfinished, stepLabel, type LoopMessage, type LoopTool } from "./tool-loop";
 import { turnTimes } from "./transcript";
 import { callTimer, type CallTimer } from "./timing";
-import { spokenCapFor, createLengthGuard } from "./spoken-length";
+import { nextCapFor, createLengthGuard } from "./spoken-length";
 import { routeTeam } from "@/lib/assistant/team";
 import type { TurnMode } from "@/lib/assistant/team-server";
 
@@ -186,7 +186,8 @@ export async function readMoment(book: RolePlaybook, text: string, reply: string
 }
 
 /** The most rounds of lookups in one turn before the agent answers with what it has */
-const MAX_TOOL_ROUNDS = 5;
+/** Rounds of tools in one answer: a multi-step job (context, brainstorm, the copy, the requests) finishes within the turn */
+const MAX_TOOL_ROUNDS = 14;
 
 /**
  * One turn of the call: the agent answers what the person said, streamed as it's written, looking things up with the
@@ -354,6 +355,12 @@ type Reply = { content: unknown[]; stop_reason: string | null; usage: Anthropic.
  * most one filler per turn, however many agents answer in it
  */
 const FILLERS = new Map<string, { line: string; turn: number }>();
+/** Whether the last answer on each call was cut by the length guard (the next one never is: never twice in a row) */
+const CUTS = new Map<string, boolean>();
+/** The last check-in said on each call, so the next is never the same line */
+const CHECK_INS = new Map<string, string>();
+/** Past the cap, how much more a round may write silently before it's stopped (a preamble to a tool call is short) */
+const SILENT_OVERFLOW_CHARS = 600;
 
 export async function streamAnswer(input: {
   system: string;
@@ -397,9 +404,13 @@ export async function streamAnswer(input: {
   const used = { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0 };
   const messages: LoopMessage[] = [{ role: "user", content: input.content }];
   const marker = endMarkerFilter();
-  // The length guard: past its cap an answer stops at the end of the sentence and offers the rest
-  const guard = createLengthGuard(shaping.lengthGuard ? spokenCapFor(fk ? fk.said : "") : Number.MAX_SAFE_INTEGER);
+  // The length guard: past its cap a round's answer stops at the end of the sentence and offers the rest. A fresh guard
+  // each round (what was said before a lookup doesn't count against the answer), never twice in a row on a call
+  const capOf = () => (shaping.lengthGuard ? nextCapFor(fk ? fk.said : "", Boolean(fk && CUTS.get(fk.callId))) : Number.MAX_SAFE_INTEGER);
+  let guard = createLengthGuard(capOf());
+  let wasCut = false;
   let firstWord = false;
+  let lastSpoke = Date.now();
   const say = (d: string) => {
     if (!d) return;
     if (!firstWord && d.trim()) {
@@ -407,20 +418,44 @@ export async function streamAnswer(input: {
       timer.mark(`${tag}first_word`);
     }
     reply += d;
+    lastSpoke = Date.now();
     emit({ t: "text", d });
   };
-  /** The stream being read now, so the guard can stop it once the answer has said enough */
+  /** The stream being read now, so the guard can stop a monologue once it has said enough */
   let current: { abort: () => void } | null = null;
   let cut = false;
+  let overflow = 0;
   const sayModel = (d: string) => {
-    if (cut) return;
-    say(guard.feed(marker.feed(d)));
-    if (guard.capped && !cut) {
-      cut = true;
-      say(guard.tail);
-      current?.abort();
+    if (cut) {
+      // Past the cap: nothing more is said, but the round reads on (it may be heading for a lookup); a monologue is stopped
+      overflow += d.length;
+      if (overflow > SILENT_OVERFLOW_CHARS) current?.abort();
+      return;
     }
+    say(guard.feed(marker.feed(d)));
+    if (guard.capped && !cut) cut = true;
   };
+
+  // Long work: the step bar (the call's and the chat's), and on a call a short check-in when it's been quiet a while
+  const done: string[] = [];
+  let step: string | null = null;
+  const showProgress = (next: string | null) => {
+    step = next;
+    emit({ t: "progress", progress: next ? { step: next, done: done.slice(-6), pct: progressPct(done.length), who: tag ? tag.replace(/:$/, "") : null } : null });
+  };
+  let checkIns = 0;
+  const lastCheckIn = () => (fk ? (CHECK_INS.get(fk.callId) ?? null) : null);
+  const ticker = shaping.filler
+    ? setInterval(() => {
+        if (signal.aborted || !step || !checkInDue(Date.now() - lastSpoke, checkIns)) return;
+        const line = checkInLine(lastCheckIn(), Date.now() / 1000 + checkIns);
+        if (fk) CHECK_INS.set(fk.callId, line);
+        checkIns++;
+        lastSpoke = Date.now();
+        // Its own sentence, said by whoever is working; not kept as part of the answer
+        emit({ t: "text", d: `${reply && !/[\n.!?]\s*$/.test(reply) ? "\n" : ""}${line}\n` });
+      }, 400)
+    : null;
   let roundText = "";
   // The agent's whole playbook is the same every turn: cached, so later turns read it at a tenth of the price. What
   // their connectors are comes after it, uncached (it changes when they connect something)
@@ -497,6 +532,9 @@ export async function streamAnswer(input: {
       signal,
       step: async (msgs, last) => {
         roundText = "";
+        guard = createLengthGuard(capOf());
+        cut = false;
+        overflow = 0;
         let res: Reply | null = null;
         // A connector the API couldn't reach or sign in to: the round again without it (once). A long run of connector
         // calls pauses (pause_turn): sent back as it is to carry on, a few times at most
@@ -525,12 +563,22 @@ export async function streamAnswer(input: {
           break;
         }
         if (res.stop_reason === "refusal") error = "refusal";
-        return { content: res.content as { type: string }[], stop: marker.ended ? "end_turn" : res.stop_reason };
+        const stop = marker.ended ? "end_turn" : res.stop_reason;
+        // Cut and the round is the answer: offer the rest. Cut ahead of a lookup: the work goes on, nothing is offered
+        if (cut && stop !== "tool_use") {
+          wasCut = true;
+          say(guard.tail);
+        }
+        return { content: res.content as { type: string }[], stop };
       },
+      // Said it's working on it and stopped: the work carries on in this turn instead of waiting for them to speak
+      unfinished: (content) => !marker.ended && !signal.aborted && soundsUnfinished(content.filter((b) => b.type === "text").map((b) => b.text ?? "").join(" ")),
       // While lookups run: the line the agent said, or (only when the tools are slow, about a second and a half) one
       // said for it, so the call never goes quiet. Once per turn, never the same line twice in a row, naming the
       // client only when this turn is about it. A line break ends it, so the answer that follows is its own sentence
       onTools: (calls) => {
+        if (step) done.push(step);
+        showProgress(stepLabel(tools.find((t) => t.name === calls[0]?.name), calls[0]?.input ?? {}, null));
         if (roundText.trim()) say("\n");
         if (!shaping.filler || roundText.trim() || fillers > 0 || fillerSaid()) return;
         const line = fillerFor(calls, { said: fk ? fk.said : undefined, last: fk ? (FILLERS.get(fk.callId)?.line ?? null) : null, seed: Date.now() });
@@ -555,6 +603,12 @@ export async function streamAnswer(input: {
       console.error("[agent call] turn", error);
       emit({ t: "error", message: aiBusy(e) ? "I'm a bit busy right now. Try me again in a moment." : e instanceof AiUnavailable ? e.message : "Sorry, I lost my train of thought. Say that again?" });
     }
+  }
+  if (ticker) clearInterval(ticker);
+  if (step) showProgress(null);
+  if (fk && shaping.lengthGuard) {
+    if (CUTS.size > 500) CUTS.clear();
+    CUTS.set(fk.callId, wasCut);
   }
   return { reply: stripEndMarker(reply).text, ended: marker.ended, error, used, model, effort, started };
 }

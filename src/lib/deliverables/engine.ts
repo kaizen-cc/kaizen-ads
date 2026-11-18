@@ -71,8 +71,11 @@ export type LineConfig = {
   collaborators?: string[];
   prompts?: LinePrompts;
   asana: {
-    /** Where the project is found: a fixed gid, an env var, an app setting ({ gid }), else a project named like this */
-    project: { gid?: string; env?: string; setting?: string; nameLike?: RegExp };
+    /**
+     * Where the project is found (src/lib/asana-project.ts, the order the mirror uses): the env var, the app setting
+     * ({ gid }), a project named like this, the mirror's last synced project (sync_state source), then the fixed gid
+     */
+    project: { gid?: string; env?: string; setting?: string; nameLike?: RegExp; syncSource?: string };
     /** The column new requests land in (matched by name) */
     section: string;
     taskName: (t: TaskInput) => string;

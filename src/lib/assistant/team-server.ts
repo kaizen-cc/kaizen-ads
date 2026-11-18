@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { clientNamed as sharedClientNamed } from "@/lib/client-named";
 import { canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
 import type { Staff } from "@/lib/auth";
 import { agentTools } from "@/lib/agent-call/agent-tools";
@@ -125,13 +126,7 @@ const emitJob = (ctx: Pick<TeamCtx, "emit" | "team">) => ctx.emit({ t: "job", jo
 
 /** The client named, if this person may see it (their own session decides) */
 async function clientNamed(db: SupabaseClient, name: unknown): Promise<{ id: string; name: string; slug: string }> {
-  const asked = clip(name, 120);
-  if (!asked) throw new Error("Which client?");
-  const safe = asked.replace(/[%_,()]/g, " ").trim();
-  const { data } = await db.from("clients").select("id, name, slug").is("archived_at", null).ilike("name", `%${safe}%`).limit(5);
-  const hit = (data ?? []).find((c) => String(c.name).toLowerCase() === asked.toLowerCase()) ?? (data ?? [])[0];
-  if (!hit) throw new Error(`No client called "${asked}" that you can see.`);
-  return hit as { id: string; name: string; slug: string };
+  return sharedClientNamed(db, clip(name, 120));
 }
 
 // ─── What's missing: the checks ─────────────────────────────────────────────

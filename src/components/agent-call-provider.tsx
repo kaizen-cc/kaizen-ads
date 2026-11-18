@@ -8,7 +8,7 @@ import { assistantCallNotes, audioUploadSlot, callUploadSlots, callUploadsDone, 
 import { lookPlan } from "@/lib/agent-call/call-context";
 import { openPlan } from "@/lib/agent-call/open-link";
 import { canShareScreen, grabFrame, startScreenShare, stopScreenShare } from "@/lib/agent-call/screen-share";
-import { CALL_LIMIT_SECONDS, type CallCard, type EndTrigger, type LearnedItem, type StallState, type UploadAsk } from "@/lib/agent-call/core";
+import { CALL_LIMIT_SECONDS, type CallCard, type CallProgress, type EndTrigger, type LearnedItem, type StallState, type UploadAsk } from "@/lib/agent-call/core";
 import { ChatSession, type ChatLine } from "@/lib/agent-call/chat-engine";
 import type { TalkMode } from "@/lib/agent-call/modality";
 import { Call, chime, type Line, type Phase, type Speaker } from "@/lib/agent-call/engine";
@@ -126,6 +126,8 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
   const [switchTo, setSwitchTo] = useState<AgentRef | null>(null);
   const [team, setTeam] = useState<Speaker[]>([]);
   const [job, setJob] = useState<JobView | null>(null);
+  /** What the agent is working on right now (a step bar while it works) */
+  const [progress, setProgress] = useState<CallProgress | null>(null);
   /** Other agents joined or a job ran on this call (its notes are written, as on the assistant's calls) */
   const teamed = useRef(false);
   const [cards, setCards] = useState<CallCard[]>([]);
@@ -431,6 +433,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
           setJob(j);
           if (j) teamed.current = true;
         },
+        onProgress: setProgress,
         onNavigate: openHref,
         // A draft card is replaced by its newer self (sent, saved as a Gmail draft); a link card by the same link
         onCard: (card) => setCards((cur) => [...cur.filter((x) => (card.draft ? x.draft?.id !== card.draft.id : x.href !== card.href || Boolean(x.draft))), card].slice(-6)),
@@ -523,6 +526,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
             setJob(j);
             if (j) teamed.current = true;
           },
+          onProgress: setProgress,
           onNavigate: openHref,
           onCard: (card) => setCards((cur) => [...cur.filter((x) => (card.draft ? x.draft?.id !== card.draft.id : x.href !== card.href || Boolean(x.draft))), card].slice(-6)),
           onUpload: (ask) => {
@@ -890,6 +894,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
         debug,
         team,
         job,
+        progress,
         cards,
         uploadAsk,
         uploading,
@@ -929,6 +934,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
           learned,
           team,
           job,
+          progress,
           cards,
           uploadAsk,
           uploading,

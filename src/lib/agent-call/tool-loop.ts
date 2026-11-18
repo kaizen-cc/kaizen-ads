@@ -23,6 +23,7 @@ export const READ_TOOLS: ReadonlySet<string> = new Set([
   "account_metrics",
   "winners_and_fatigue",
   "email_marketing",
+  "kpi_board",
   "organic_social",
   "social_score",
   "what_changed",
@@ -177,8 +178,8 @@ export function fillerFor(calls: readonly { name: string; input: Record<string, 
   const whose = client ? `${client}${/s$/i.test(client) ? "'" : "'s"}` : null;
   const what = names.has("rank_clients")
     ? "the rankings"
-    : names.has("email_marketing")
-      ? `${whose ?? "the"} email numbers`
+    : names.has("email_marketing") || names.has("kpi_board")
+      ? `${whose ?? "the"} ${names.has("kpi_board") ? "KPI board" : "email numbers"}`
       : names.has("organic_social")
         ? `${whose ?? "the"} social numbers`
         : names.has("account_metrics") || names.has("winners_and_fatigue")
@@ -196,6 +197,54 @@ export function fillerFor(calls: readonly { name: string; input: Record<string, 
   const fresh = lines.filter((l) => l !== o.last);
   return fresh[seed % fresh.length];
 }
+
+// ─── Long work: voiced check-ins, the progress steps, and never stopping halfway ─────────────────────────────────
+
+/** After this long with nothing said while an agent works, it says a short check-in */
+export const CHECK_IN_FIRST_MS = 3000;
+/** Then one every this long while the work goes on */
+export const CHECK_IN_EVERY_MS = 4500;
+
+const CHECK_INS = ["Still working on it.", "Almost there.", "Pulling the last of it together.", "Bear with me, nearly done.", "Still on it.", "Just finishing this up.", "Give me a moment more.", "Nearly there."];
+
+/** Whether a check-in is due: `quietMs` since anything was said, `said` check-ins so far this turn */
+export const checkInDue = (quietMs: number, said: number) => quietMs >= (said === 0 ? CHECK_IN_FIRST_MS : CHECK_IN_EVERY_MS);
+
+/** A short varied check-in, never the same as the last one */
+export function checkInLine(last: string | null, seed: number): string {
+  const fresh = CHECK_INS.filter((l) => l !== last);
+  return fresh[Math.abs(Math.floor(seed)) % fresh.length];
+}
+
+/** What a step is called on the progress bar: the tool's own status line, else a plain one from its name */
+export function stepLabel(tool: Pick<LoopTool, "name" | "status"> | undefined, input: Record<string, unknown>, client: string | null = null): string {
+  const own = tool?.status?.(input, client);
+  if (own && own !== "Working on it…") return own.replace(/…$/, "");
+  const name = tool?.name ?? "";
+  if (/context|brief|memory|bible|rules/.test(name)) return "Reading brand rules and context";
+  if (/email|klaviyo/.test(name)) return "Reading the email numbers";
+  if (/social|post/.test(name)) return "Reading the social numbers";
+  if (/copy_doc/.test(name)) return "Writing the copy";
+  if (/request/.test(name)) return "Creating the request";
+  return "Working on it";
+}
+
+/** A rough share done after `done` steps (the total isn't known up front): climbs quickly, never reaches 100 until the answer */
+export const progressPct = (done: number) => Math.min(92, Math.round(100 * (1 - Math.pow(0.62, Math.max(0, done)))));
+
+/**
+ * The model said it's working on something and stopped without doing it ("On it, give me a sec.", "Let me pull that
+ * together."): that's not an answer, so the turn carries on instead of handing back and waiting for them to speak.
+ */
+export function soundsUnfinished(text: string): boolean {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (!t || t.length > 260 || /\?\s*$/.test(t)) return false;
+  const last = t.split(/(?<=[.!])\s+/).filter(Boolean).at(-1) ?? t;
+  return /\b(?:(?:i'?m|i am|we'?re|still) (?:working on|pulling|getting|grabbing|putting|writing|building|drafting|checking|looking)|let me (?:pull|get|grab|put|write|build|draft|check|look|start|work)|(?:give|bear with) me (?:a|one) (?:sec|second|moment|minute)|one (?:sec|second|moment)|on it\b|working on (?:it|that|those|them)|hang on|(?:i'?ll|i will) (?:pull|get|grab|put|write|build|draft|start|do|have) (?:that|it|those|them|this)?)/i.test(last);
+}
+
+/** What the model is told when it stopped halfway: carry on in this turn */
+export const CARRY_ON = "(Carry on now, in this same turn: do the work you just said you're doing with your tools, then give the result. Don't say you're working on it again.)";
 
 /** A tool's answer as the model reads it: text, cut when it's very long */
 export function resultText(out: unknown, max = 40_000): string {
@@ -224,13 +273,25 @@ export async function runToolLoop(opts: {
   afterTools?: (round: number) => void;
   signal?: AbortSignal;
   maxResultChars?: number;
-}): Promise<{ runs: ToolRun[]; rounds: number; stop: string | null; content: Block[] }> {
+  /**
+   * Whether a round that ended without tools stopped halfway (said it's working and handed back): it's sent back with
+   * CARRY_ON so the work finishes in this turn. At most twice a turn. Off unless given.
+   */
+  unfinished?: (content: Block[]) => boolean;
+}): Promise<{ runs: ToolRun[]; rounds: number; stop: string | null; content: Block[]; nudged: number }> {
   const runs: ToolRun[] = [];
   let last: { content: Block[]; stop: string | null } = { content: [], stop: null };
   let round = 0;
+  let nudged = 0;
   for (; round < Math.max(1, opts.maxRounds); round++) {
     const final = round === Math.max(1, opts.maxRounds) - 1;
     last = await opts.step(opts.messages, final, round);
+    if (last.stop === "end_turn" && !final && !opts.signal?.aborted && nudged < 2 && opts.unfinished?.(last.content)) {
+      nudged++;
+      opts.messages.push({ role: "assistant", content: last.content });
+      opts.messages.push({ role: "user", content: CARRY_ON });
+      continue;
+    }
     if (last.stop !== "tool_use" || final || opts.signal?.aborted) break;
     const calls = last.content.filter((b) => b.type === "tool_use" && b.id && b.name).map((b) => ({ id: b.id as string, name: b.name as string, input: (b.input ?? {}) as Record<string, unknown> }));
     if (!calls.length) break;
@@ -259,5 +320,5 @@ export async function runToolLoop(opts: {
     opts.messages.push({ role: "user", content: results });
     if (opts.signal?.aborted) break;
   }
-  return { runs, rounds: round + 1, stop: last.stop, content: last.content };
+  return { runs, rounds: round + 1, stop: last.stop, content: last.content, nudged };
 }

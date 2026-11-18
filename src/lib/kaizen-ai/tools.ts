@@ -1,4 +1,5 @@
 import "server-only";
+import { ClientNameError, clientNamed } from "@/lib/client-named";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import type { AiTool } from "@/lib/ai";
@@ -76,11 +77,12 @@ async function clientOf(ctx: ToolCtx, input: Record<string, unknown>): Promise<C
   const asked = String(input.client ?? "").trim();
   let q = ctx.db.from("clients").select("id, name, slug").is("archived_at", null);
   if (asked) {
-    const safe = asked.replace(/[%_,()]/g, " ").trim();
-    const { data } = await ctx.db.from("clients").select("id, name, slug").or(`slug.eq.${safe.toLowerCase().replace(/\s+/g, "-")},name.ilike.%${safe}%`).limit(5);
-    const exact = (data ?? []).find((c) => c.name.toLowerCase() === asked.toLowerCase() || c.slug === asked.toLowerCase());
-    const hit = exact ?? (data ?? [])[0];
-    if (!hit) throw new Error(`No client called "${asked}" that you can see. Use list_clients to find the right name.`);
+    let hit: ClientRow;
+    try {
+      hit = (await clientNamed(ctx.db, asked)) as ClientRow;
+    } catch (e) {
+      throw new Error(e instanceof ClientNameError && e.choices.length ? e.message : `No client called "${asked}" that you can see. Use list_clients to find the right name.`);
+    }
     if (!(await channelMaySeeClient(ctx, hit.id))) throw new Error(`No client called "${asked}" that you can see. Use list_clients to find the right name.`);
     names.set(hit.id, hit.name);
     return hit as ClientRow;
@@ -311,7 +313,7 @@ function socialNumbersOut(n: import("@/lib/social-score").PlatformNumbers) {
 }
 
 /** The tools the email and organic social teams get (the email one only for the email team) */
-const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "team_kpis", "email_marketing", "organic_social", "social_score", "run_social_audit", "start_social_sprint", "search_client", "recent_calls", "read_call", "rank_clients", "top_emails", "email_detail", "top_posts", "search_my_kaizen_ai", "read_my_kaizen_ai", "read_google_file"]);
+const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "team_kpis", "email_marketing", "kpi_board", "organic_social", "social_score", "run_social_audit", "start_social_sprint", "search_client", "recent_calls", "read_call", "rank_clients", "top_emails", "email_detail", "top_posts", "search_my_kaizen_ai", "read_my_kaizen_ai", "read_google_file"]);
 /** Per turn: the add-on tools loaded for this person, which the email and social teams get as well */
 const CHANNEL_EXTRA = new Set<string>(["make_deck"]);
 
@@ -531,6 +533,8 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
         const k = await clientKlaviyo(ctx.admin, c.id).catch(() => null);
         if (!k) return { client: c.name, connected: false, note: "No email numbers for this client: it isn't connected (a lead or exec connects it in the client's Team & setup), or the first sync hasn't run." };
         const best = topAndBottom(k);
+        // The same score the Email KPI board shows (with deliverability), so it's never "not on file" when the board has it
+        const score = await (await import("@/lib/email-score-load")).loadEmailScore(ctx.admin, c.id).catch(() => null);
         const pct = (x: number | null) => (x == null ? null : Math.round(x * 1000) / 10);
         const n = Math.min(40, Math.max(1, Number(input.campaigns) || 10));
         const since = DAY.test(String(input.since ?? "")) ? String(input.since) : null;
@@ -570,8 +574,26 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           key_flows: k.keyFlows.map((f) => ({ flow: f.label, state: f.state, matched: f.flows.map((x) => x.name) })),
           best_campaigns_90d: best.top.map((x) => ({ sent: x.sendTime?.slice(0, 10) ?? null, subject: x.subject ?? x.name, channel: x.channel, recipients: x.recipients, open_rate_pct: pct(x.openRate), revenue: r2(x.revenue) })),
           weakest_campaigns_90d: best.bottom.map((x) => ({ sent: x.sendTime?.slice(0, 10) ?? null, subject: x.subject ?? x.name, recipients: x.recipients, open_rate_pct: pct(x.openRate), click_rate_pct: pct(x.clickRate), revenue: r2(x.revenue) })),
+          email_score: score
+            ? { score: Math.round(score.score), band: score.band === "good" ? "green" : score.band === "watch" ? "yellow" : "red", checks: score.checks.map((x) => ({ check: x.label, value: x.value, bar: x.bar, met: x.met })), deliverability: score.deliverability ? { score: Math.round(score.deliverability.score), parts: score.deliverability.parts.map((p) => ({ part: p.label, rate_pct: Math.round(p.rate * 10000) / 100, grade: p.grade })) } : null, more: "kpi_board has the whole Email KPI board (pace, cycle, segments)." }
+            : null,
           read_only: `Nothing can be sent, edited or scheduled in ${k.providerName} from Kaizen OS.`,
         };
+      },
+    },
+    {
+      name: "kpi_board",
+      description:
+        "One client's KPI board exactly as the board shows it (the boards' own loaders). line email: the email score (0 to 100) and every check against its bar (revenue pace, share of store revenue, revenue per recipient, deliverability with its parts: open, click, bounce, unsubscribe and spam rates graded, campaign and flow open and click rates), the month's revenue against the target, pace and projection, the month's campaign and flow revenue, orders, list change, the sending cycle (sent this cycle against last cycle, in the works) and the segments (which to rest or trim, who to include and exclude). line social: the social account score, its checks and each platform's score, engagement against the target, reach, followers, posts. line ads: the Meta, Google and TikTok board lines (KPI against target, pace, trend, why). Use it whenever someone asks about a client's score, deliverability, pace, RPR, rates, cadence or segments, before saying anything isn't on file.",
+      input_schema: { type: "object", properties: { client: CLIENT, line: { type: "string", enum: ["email", "social", "ads"], description: "Which board (default email)" } }, additionalProperties: false },
+      status: (input, client) => `Reading ${nameFor(ctx, input) ?? client ?? "the client"}'s KPI board…`,
+      run: async (input) => {
+        const c = await clientOf(ctx, input);
+        const line = input.line === "social" || input.line === "ads" ? input.line : "email";
+        // The email and social teams read their own line's board
+        if (isChannelOnly(ctx.me.role) && line !== lineOfTeam(ctx.me.role)) return { client: c.name, note: `The ${line} board isn't one your team reads.` };
+        const { kpiBoardFor } = await import("@/lib/channel-kpis/agent-view");
+        return { client: c.name, line, ...(await kpiBoardFor(ctx.db, ctx.admin, ctx.me, c.id, line)) };
       },
     },
     {

@@ -1,6 +1,7 @@
 import "server-only";
 import { emailWritingKind } from "@/lib/copy-docs/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { clientNamedOrNull } from "@/lib/client-named";
 import type { Staff } from "@/lib/auth";
 import type { CallDraft, CallEvent } from "@/lib/agent-call/core";
 import { firstNameOf } from "@/lib/agent-call/core";
@@ -47,13 +48,7 @@ const CONFIRMED = { type: "boolean", description: "True only after the person cl
 const OPEN = ["watching", "nudged", "escalated"];
 
 async function clientNamed(db: SupabaseClient, name: unknown): Promise<{ id: string; name: string; slug: string } | null> {
-  const asked = clip(name, 120);
-  if (!asked) return null;
-  const safe = asked.replace(/[%_,()]/g, " ").trim();
-  const { data } = await db.from("clients").select("id, name, slug").is("archived_at", null).ilike("name", `%${safe}%`).limit(5);
-  const hit = (data ?? []).find((c) => String(c.name).toLowerCase() === asked.toLowerCase()) ?? (data ?? [])[0];
-  if (!hit) throw new Error(`No client called "${asked}" that you can see.`);
-  return hit as { id: string; name: string; slug: string };
+  return clientNamedOrNull(db, clip(name, 120));
 }
 
 /** The client a tool means: the one named, else the one the call is about */

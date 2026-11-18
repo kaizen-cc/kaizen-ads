@@ -21,7 +21,8 @@ export const EMAIL_LINE: LineConfig = {
   ],
   trigger: /\b(?:(?:create|make|build|plan|do|need|write|draft|set up|put together)\b[^.?!]{0,40}\b(?:email\s+)?(?:campaigns?|flows?|newsletters?|blasts?|email copy|emails?\s+for|sms|welcome series|abandon\w* (?:cart|checkout))|copy for (?:an?|the|their) (?:campaign|email|newsletter|flow))\b/i,
   context: [
-    "email_marketing (their KPIs, recent campaigns and flows, segments and how each performs)",
+    "kpi_board (the Email KPI board as it shows: the email score and every check incl. deliverability, revenue pace, RPR, campaign and flow rates, the sending cycle, segments; it is also in the context pull as kpi_board)",
+    "email_marketing (recent campaigns and flows, lists and how each performs)",
     "top_emails and email_detail (what worked for them)",
     "get_client_context and search_client (the latest Slack, Gmail and call notes)",
     "recent_calls and read_call (what was promised on calls)",
@@ -30,7 +31,7 @@ export const EMAIL_LINE: LineConfig = {
   brainstorm: "Use your knowledge's rule for which segments to include and exclude, check the calendar and the allotment, and keep each topic to one line.",
   doc: { template: "copy", folder: "Email Marketing" },
   asana: {
-    project: { env: "ASANA_EMAIL_PROJECT_GID", setting: "asana_email_project", nameLike: /email/i },
+    project: { env: "ASANA_EMAIL_PROJECT_GID", setting: "asana_email_project", nameLike: /email/i, syncSource: "asana_email" },
     section: "Email Requests",
     taskName: (t: TaskInput) => asanaTaskName({ client: t.client.name, kind: t.kind.key as CopyKind, shortName: t.shortName, count: t.count }),
     fields: (t: TaskInput) => [

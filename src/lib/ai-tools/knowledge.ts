@@ -1,4 +1,5 @@
 import "server-only";
+import { clientNamed as sharedClientNamed } from "@/lib/client-named";
 import type { Staff } from "@/lib/auth";
 import { clientPackage, packageBlock } from "@/lib/client-package";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -56,11 +57,12 @@ async function visibleClients(): Promise<Map<string, string>> {
 
 async function clientId(asked: string | null): Promise<{ id: string; name: string } | { error: string } | null> {
   if (!asked) return null;
-  const db = await createClient();
-  const safe = asked.replace(/[%_,()]/g, " ").trim();
-  const { data } = await db.from("clients").select("id, name").is("archived_at", null).ilike("name", `%${safe}%`).limit(5);
-  const hit = (data ?? []).find((c) => String(c.name).toLowerCase() === asked.toLowerCase()) ?? (data ?? [])[0];
-  return hit ? { id: hit.id as string, name: hit.name as string } : { error: `No client called "${asked}" that you can see.` };
+  try {
+    const hit = await sharedClientNamed(await createClient(), asked);
+    return { id: hit.id, name: hit.name };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : `No client called "${asked}" that you can see.` };
+  }
 }
 
 const searchLooms: AiTool = {

@@ -1,4 +1,5 @@
 import "server-only";
+import { clientNamed } from "@/lib/client-named";
 import type { Staff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -47,9 +48,12 @@ const pauseWatched: AiTool = {
     const db = await createClient();
     const name = str(input.client);
     if (!name) return { ok: false, error: "Which client?" };
-    const { data: c } = await db.from("clients").select("id, name").ilike("name", `%${name.replace(/[%_]/g, "")}%`).is("archived_at", null).limit(2);
-    if (!c?.length) return { ok: false, error: `No client called ${name}.` };
-    if (c.length > 1) return { ok: false, error: `More than one client matches ${name}: ${c.map((x) => x.name).join(", ")}.` };
+    let c: { id: string; name: string }[];
+    try {
+      c = [await clientNamed(db, name)];
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : `No client called ${name}.` };
+    }
     const { pauseService } = await import("@/lib/account-watch/act");
     return pauseService(createAdminClient(), user, { clientId: c[0].id as string, service: str(input.service) ?? "", until: str(input.until) ?? "", reason: str(input.reason) ?? "" });
   },

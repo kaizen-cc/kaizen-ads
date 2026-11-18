@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { clientNamed as sharedClientNamed } from "@/lib/client-named";
 import type { Staff } from "@/lib/auth";
 import type { CallEvent } from "@/lib/agent-call/core";
 import type { LoopTool } from "@/lib/agent-call/tool-loop";
@@ -34,16 +35,17 @@ const NO_YES = "Not run: say in one sentence exactly what this will do and ask; 
 /** The person approving the copy in their own words */
 const APPROVES = /\b(?:approve[ds]?|looks? (?:good|great)|love (?:it|them|this)|perfect|ship it|good to go|that works|all good|yes)\b/i;
 
+/** A Headquarters folder link the person pasted (when the client's couldn't be found) */
+const HQ_FOLDER = { type: "string", description: "The client's Headquarters folder link, only when the person pasted it after you asked" };
+const ASK_HQ = "Say you couldn't find their Headquarters folder and ask them to paste its link; when they do, run this again with hq_folder (their yes to the request still stands).";
+
+/** They pasted the Headquarters link we asked for: that answer carries on the yes they already gave */
+const gaveHq = (said: string, input: Record<string, unknown>) => typeof input.hq_folder === "string" && /drive\.google\.com\/\S*folders\//i.test(said);
+
 const asMe = (me: Staff) => ({ id: me.id, fullName: me.fullName, email: me.email ?? null });
 
 async function clientNamed(db: SupabaseClient, name: unknown): Promise<{ id: string; name: string; slug: string }> {
-  const asked = clip(name, 120);
-  if (!asked) throw new Error("Which client?");
-  const safe = asked.replace(/[%_,()]/g, " ").trim();
-  const { data } = await db.from("clients").select("id, name, slug").is("archived_at", null).ilike("name", `%${safe}%`).limit(5);
-  const hit = (data ?? []).find((c) => String(c.name).toLowerCase() === asked.toLowerCase()) ?? (data ?? [])[0];
-  if (!hit) throw new Error(`No client called "${asked}" that you can see.`);
-  return hit as { id: string; name: string; slug: string };
+  return sharedClientNamed(db, clip(name, 120));
 }
 
 const topicsOf = (v: unknown): Topic[] =>
@@ -161,7 +163,11 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
         required: ["kind", "title", "emails"],
         additionalProperties: false,
       },
-      status: (input) => (input.copy_doc_id ? "Revising the copy…" : "Writing the copy…"),
+      status: (input) => {
+        const n = Array.isArray(input.emails) ? input.emails.length : 0;
+        const what = input.kind === "social" ? "post" : input.kind === "creative" ? "concept" : input.kind === "sms" ? "text" : "email";
+        return `${input.copy_doc_id ? "Revising" : "Writing"} ${n > 1 ? `${n} ${what}s` : `the ${what}`} into the doc…`;
+      },
       run: async (input) => {
         const { saveCopyDoc, copyCard, loadCopyDoc } = await import("@/lib/copy-docs/server");
         const { currentRun, patchRun } = await import("./server");
@@ -192,13 +198,13 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
     {
       name: "approve_copy_doc",
       description: "Approves a copy document on its own (outside the deliverable flow): a Google Doc of it in the client's headquarters Drive folder under Email Marketing (made when missing), as the person. Returns the Doc link. Ask first; confirmed: true only on their yes.",
-      input_schema: { type: "object", properties: { copy_doc_id: { type: "string" }, confirmed: CONFIRMED }, required: ["copy_doc_id"], additionalProperties: false },
+      input_schema: { type: "object", properties: { copy_doc_id: { type: "string" }, hq_folder: HQ_FOLDER, confirmed: CONFIRMED }, required: ["copy_doc_id"], additionalProperties: false },
       status: () => "Putting it in their Drive…",
       run: async (input) => {
-        if (input.confirmed !== true || !saidYes(ctx.said())) return { done: false, note: NO_YES };
+        if (input.confirmed !== true || !(saidYes(ctx.said()) || gaveHq(ctx.said(), input))) return { done: false, note: NO_YES };
         const { approveCopyDoc } = await import("@/lib/copy-docs/server");
-        const r = await approveCopyDoc(ctx.admin, ctx.db, asMe(ctx.me), clip(input.copy_doc_id, 40));
-        if (!r.ok) return { done: false, error: r.error };
+        const r = await approveCopyDoc(ctx.admin, ctx.db, asMe(ctx.me), clip(input.copy_doc_id, 40), { hqLink: typeof input.hq_folder === "string" ? input.hq_folder : null });
+        if (!r.ok) return { done: false, error: r.error, ...(r.askForLink ? { note: ASK_HQ } : {}) };
         card({ title: "Approved copy (Google Doc)", detail: `In ${r.folder}`, href: r.docUrl, external: true, cta: "Open the Doc" });
         return { approved: true, doc: r.docUrl, made_as: r.asPerson ? "them" : "the shared Drive user", note: "The Doc's card is on screen." };
       },
@@ -210,11 +216,11 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
       {
         name: cfg.tools.request,
         description: `Creates the ${cfg.label.toLowerCase()} request for approved copy. where: asana (now) or kaizen (Kaizen OS requests are coming soon: say so). Asana: makes the Google Doc in the client's HQ Drive (${cfg.doc.folder}) if it isn't there, then the task${cfg.kinds.some((k) => k.split === "per_item") ? "s (one per campaign; a flow is one task with its email count)" : ""} in the ${cfg.asana.section} column with the fields filled, no assignee or due date (the strategists set those), the client's ${cfg.followerSeat.replace(/_/g, " ")} following. Link cards show. Only after both approved and you asked; confirmed: true on their yes.`,
-        input_schema: { type: "object", properties: { where: { type: "string", enum: ["asana", "kaizen"] }, copy_doc_id: { type: "string" }, priority: { type: "string", enum: ["urgent", "high", "normal", "low"] }, confirmed: CONFIRMED }, required: ["where"], additionalProperties: false },
+        input_schema: { type: "object", properties: { where: { type: "string", enum: ["asana", "kaizen"] }, copy_doc_id: { type: "string" }, priority: { type: "string", enum: ["urgent", "high", "normal", "low"] }, hq_folder: HQ_FOLDER, confirmed: CONFIRMED }, required: ["where"], additionalProperties: false },
         status: () => "Creating the request…",
         run: async (input) => {
           if (input.where === "kaizen" && !cfg.kaizenRequests) return { created: false, note: "Kaizen OS requests are coming soon: for now it goes to Asana. Offer Asana." };
-          if (input.confirmed !== true || !saidYes(ctx.said())) return { created: false, note: NO_YES };
+          if (input.confirmed !== true || !(saidYes(ctx.said()) || gaveHq(ctx.said(), input))) return { created: false, note: NO_YES };
           const { currentRun, patchRun, createRequests, startRun } = await import("./server");
           const { canRequest } = await import("./engine");
           let run = ctx.callId ? await currentRun(ctx.admin, ctx.callId, cfg.line) : null;
@@ -237,8 +243,8 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
             if (!v.ok) return { created: false, note: v.reason };
           }
           if (!canRequest(run.state)) return { created: false, note: "Not yet: the person and the lead both approve the latest version, then the lead asks. Read next from deliverable status." };
-          const r = await createRequests(ctx.admin, ctx.db, asMe(ctx.me), run, { urgency: typeof input.priority === "string" ? (input.priority as "urgent") : undefined });
-          if (!r.ok) return { created: false, error: r.error };
+          const r = await createRequests(ctx.admin, ctx.db, asMe(ctx.me), run, { urgency: typeof input.priority === "string" ? (input.priority as "urgent") : undefined, hqLink: typeof input.hq_folder === "string" ? input.hq_folder : null, onStep: (step, i, n) => ctx.emit?.({ t: "progress", progress: { step, done: [], pct: Math.round((100 * i) / n) } }) });
+          if (!r.ok) return { created: false, error: r.error, ...(r.askForLink ? { note: ASK_HQ } : {}) };
           await patchRun(ctx.admin, run, { requests: r.tasks });
           if (r.doc) card({ title: "The copy (Google Doc)", detail: `${run.state.client?.name ?? ""} · ${cfg.doc.folder}`, href: r.doc, external: true, cta: "Open the Doc" });
           for (const t of r.tasks) card({ title: t.name, detail: `Asana · ${cfg.asana.section}${t.followerMissing ? ` · ${t.followerMissing}` : ""}`, href: t.url, external: true, cta: "Open in Asana" });

@@ -672,8 +672,13 @@ export type CallEvent =
   | { t: "switch"; to: "voice" | "text" }
   // Still working (sent every few seconds while a long answer or a tool is under way, so the line stays open)
   | { t: "ping" }
+  // What the agent is working on now (a step bar on the call and the chat), or null once the answer comes
+  | { t: "progress"; progress: CallProgress | null }
   // Where the turn's time went (one compact line, for the hidden debug overlay)
   | { t: "timing"; line: string };
+
+/** Long work on a call or in the chat: the step under way ("Writing the copy"), the steps done, and a rough share done */
+export type CallProgress = { step: string; done: string[]; pct: number; who?: string | null };
 
 /** A link the call shows as a card: tapped, it opens in the app (the call stays up) or in a new tab */
 export type CallCard = {

@@ -2,14 +2,14 @@
 
 import { assistantTitle } from "@/lib/agent-look";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
-import type { CallCard, LearnedItem, UploadAsk } from "@/lib/agent-call/core";
+import type { CallCard, CallProgress, LearnedItem, UploadAsk } from "@/lib/agent-call/core";
 import type { ChatLine } from "@/lib/agent-call/chat-engine";
 import type { Speaker } from "@/lib/agent-call/engine";
 import { tintOf } from "@/lib/agent-look";
 import type { JobView } from "@/lib/assistant/team";
 import { useCallDock } from "@/lib/use-call-dock";
 import { useDictation } from "@/lib/use-dictation";
-import { AgentGlyph, CardsStrip, JobStrip, RecordedMark, ShareAsk, SharingBar, TeamChips, TranscriptButton, UploadPanel } from "./assistant-call-parts";
+import { AgentGlyph, CardsStrip, JobStrip, WorkingBar, RecordedMark, ShareAsk, SharingBar, TeamChips, TranscriptButton, UploadPanel } from "./assistant-call-parts";
 import type { AgentRef } from "./agent-call-views";
 
 // The chat with the assistant: the same conversation and the same window as the call's huddle (dragged anywhere,
@@ -30,6 +30,8 @@ export type ChatView = {
   learned: LearnedItem[];
   team: Speaker[];
   job: JobView | null;
+  /** What the agent is working on right now: a status line with a step bar, not a message */
+  progress?: CallProgress | null;
   cards: CallCard[];
   uploadAsk: UploadAsk | null;
   uploading: string | null;
@@ -332,11 +334,12 @@ function Thread({ v }: { v: ChatView }) {
 
 function Extras({ v, compact }: { v: ChatView; compact: boolean }) {
   const sc = v.screen;
-  if (!v.cards.length && !v.uploadAsk && !sc.asked && !sc.sharing && !v.job && !v.team.length) return null;
+  if (!v.cards.length && !v.uploadAsk && !sc.asked && !sc.sharing && !v.job && !v.team.length && !v.progress) return null;
   const speaking = [...v.lines].reverse().find((l) => l.who === "agent" && l.streaming)?.speaker?.role ?? null;
   return (
     <div className="grid max-h-[40vh] gap-2 overflow-y-auto border-t border-line px-4 py-2.5">
       <TeamChips team={v.team} speaking={speaking} />
+      {v.progress && <WorkingBar p={v.progress} />}
       {v.job && <JobStrip job={v.job} />}
       {sc.sharing && <SharingBar onStop={sc.onStop} looking={sc.looking} />}
       {sc.asked && !sc.sharing && <ShareAsk agent="your assistant" onShare={sc.onShare} onCancel={sc.onCancel} />}

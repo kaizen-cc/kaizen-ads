@@ -320,6 +320,19 @@ export function pickSection(sections: readonly { gid: string; name: string }[], 
   return sections.find((s) => looseName(s.name) === w) ?? sections.find((s) => looseName(s.name).startsWith(w)) ?? sections.find((s) => /ready\s*for\s*design|^design/i.test(s.name.trim())) ?? null;
 }
 
+/**
+ * The column new requests go in, by name only ("Email Requests", "email requests", "1 - Email Requests", "Email
+ * Requests 📥"): the same name, then one starting with it, then one holding it. Never a guess at another column: with
+ * none, the error names the columns the project has.
+ */
+export function requestSection(sections: readonly { gid: string; name: string }[], want: string): { ok: true; section: { gid: string; name: string } } | { ok: false; error: string } {
+  const w = looseName(want);
+  const hit = sections.find((s) => looseName(s.name) === w) ?? sections.find((s) => looseName(s.name).startsWith(w)) ?? (w.length >= 5 ? sections.find((s) => looseName(s.name).includes(w)) : undefined);
+  if (hit) return { ok: true, section: hit };
+  const names = sections.map((s) => s.name.trim()).filter(Boolean);
+  return { ok: false, error: `The Asana project has no "${want}" column${names.length ? ` (its columns: ${names.slice(0, 15).join(", ")})` : " (it has no columns)"}. Add the column, or say which one to use.` };
+}
+
 // ─── The Google Doc ───────────────────────────────────────────────────────────────────────────────────────────────
 
 export const EMAIL_FOLDER = "Email Marketing";

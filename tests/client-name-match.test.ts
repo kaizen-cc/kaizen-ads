@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchClientName, sameWord, scoreClient, skeleton, splitName } from "@/lib/client-name-match";
+import { matchClientName, pickClientByName, sameWord, scoreClient, skeleton, splitName } from "@/lib/client-name-match";
 
 const clients = [
   { id: "glen", name: "Crust Pizza - Gleannloch Farms" },
@@ -87,5 +87,33 @@ describe("a one-word brand written as two words", () => {
   });
   it("leaves a short one alone", () => {
     expect(matchClientName("Box Themes for Q4", [{ id: "x", name: "BoxTh", website: null }]).sure).toBeNull();
+  });
+});
+
+describe("a client asked for by name (the tools' shared resolver)", () => {
+  const list = [
+    { id: "1", name: "Ocean & Acre" },
+    { id: "2", name: "OceanBox" },
+    { id: "3", name: "Crust Pizza - Gleannloch Farms" },
+    { id: "4", name: "Crust Pizza - Tomball" },
+    { id: "5", name: "Sierra Dreams" },
+  ];
+  it("'Ocean Box' is OceanBox (spaces, punctuation and case ignored), never Ocean & Acre", () => {
+    expect(pickClientByName("Ocean Box", list).hit?.id).toBe("2");
+    expect(pickClientByName("oceanbox", list).hit?.id).toBe("2");
+    expect(pickClientByName("Ocean-Box", list).hit?.id).toBe("2");
+    expect(pickClientByName("Ocean and Acre", list).hit?.id).toBe("1");
+  });
+  it("asks only when two are genuinely as close", () => {
+    const r = pickClientByName("Ocean", list);
+    expect(r.hit).toBeNull();
+    expect(r.close.map((c) => c.id).sort()).toEqual(["1", "2"]);
+    expect(pickClientByName("Crust Pizza", list).close).toHaveLength(2);
+  });
+  it("a location alone or a misspelling still finds the one", () => {
+    expect(pickClientByName("Tomball", list).hit?.id).toBe("4");
+    expect(pickClientByName("Glenlock", list).hit?.id).toBe("3");
+    expect(pickClientByName("sierra dream", list).hit?.id).toBe("5");
+    expect(pickClientByName("Nobody Here", list)).toEqual({ hit: null, close: [] });
   });
 });

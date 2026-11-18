@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { clientNamed } from "@/lib/client-named";
 import { after } from "next/server";
 import { requireStaff } from "@/lib/auth";
 import { AUDIO_BUCKET } from "@/lib/agent-call/safety";
@@ -141,8 +142,7 @@ async function stageForLaunch(admin: ReturnType<typeof createAdminClient>, profi
   const db = await createClient();
   const name = client.replace(/[%_,()]/g, " ").trim();
   if (!name) return null;
-  const exact = await db.from("clients").select("id").ilike("name", name).limit(1).maybeSingle();
-  const row = exact.data ?? (await db.from("clients").select("id").ilike("name", `%${name}%`).limit(1).maybeSingle()).data;
+  const row = await clientNamed(db, name).catch(() => null);
   if (!row) return null;
   const { openRunFor } = await import("@/lib/launch-sheet/runs");
   const run = await openRunFor(admin, row.id as string, profileId);

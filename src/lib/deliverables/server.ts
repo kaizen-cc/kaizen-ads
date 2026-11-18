@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { mapAsanaFields, pickSection, purposeText, looseName, type AsanaFieldSetting, type WantedField } from "@/lib/copy-docs/core";
+import { mapAsanaFields, pickSection, purposeText, looseName, requestSection, type AsanaFieldSetting, type WantedField } from "@/lib/copy-docs/core";
 import { approveCopyDoc, clientFacts, loadCopyDoc, type Me } from "@/lib/copy-docs/server";
 import { applyPatch, followerOf, newRun, readAsk, tasksFor, type LineConfig, type Patch, type Request, type RunState } from "./engine";
 import { lineOf } from "./lines";
@@ -72,7 +72,7 @@ export async function writerMayJoin(admin: Admin, callId: string, role: string) 
 /** What the lead reads before brainstorming: the account brief, what's pending (calls, open requests), the client's rules */
 export async function freshContext(admin: Admin, cfg: LineConfig, clientId: string) {
   const since = new Date(Date.now() - 60 * 86_400_000).toISOString();
-  const [brief, promises, tickets, mirror, notes] = await Promise.all([
+  const [brief, promises, tickets, mirror, notes, board] = await Promise.all([
     cfg.line === "email" ? import("@/lib/email-ops/chat").then((m) => m.emailBrief(admin, clientId)).catch(() => null) : Promise.resolve(null),
     admin.from("call_commitments").select("kind, what, due_at, status").eq("client_id", clientId).in("status", ["open", "briefed"]).gte("created_at", since).order("due_at").limit(15),
     cfg.line === "email" ? admin.from("email_tickets").select("number, kind, title, stage, due_on").eq("client_id", clientId).is("deleted_at", null).neq("stage", "live").limit(15) : Promise.resolve({ data: [] }),
@@ -82,8 +82,11 @@ export async function freshContext(admin: Admin, cfg: LineConfig, clientId: stri
         ? admin.from("asana_tasks").select("name, section, due_on").eq("client_id", clientId).eq("open", true).limit(15)
         : Promise.resolve({ data: [] }),
     admin.from("client_memory").select("kind, body, dated, created_at").eq("client_id", clientId).order("created_at", { ascending: false }).limit(12),
+    // The line's KPI board as the board shows it (the email score with deliverability, pace, RPR, rates, the cycle, segments)
+    cfg.line === "email" || cfg.line === "social" ? boardFor(admin, cfg.line, clientId) : Promise.resolve(null),
   ]);
   return {
+    kpi_board: board,
     account: brief?.text?.slice(0, 14000) ?? null,
     promised_on_calls: (promises.data ?? []).map((p) => ({ kind: p.kind, what: p.what, due: String(p.due_at ?? "").slice(0, 10), status: p.status })),
     open_on_the_board: (tickets.data ?? []).map((t) => ({ number: t.number, kind: t.kind, title: t.title, stage: t.stage, due: t.due_on })),
@@ -93,26 +96,29 @@ export async function freshContext(admin: Admin, cfg: LineConfig, clientId: stri
   };
 }
 
+/** The KPI board's view of the client (read with the server's rights, as the lead's own tools already reach this client) */
+async function boardFor(admin: Admin, line: "email" | "social", clientId: string) {
+  try {
+    const { kpiBoardFor } = await import("@/lib/channel-kpis/agent-view");
+    return await kpiBoardFor(admin, admin, { id: "", role: "exec", isExec: true, isLead: true }, clientId, line, { cycle: false });
+  } catch {
+    return null;
+  }
+}
+
 // ─── The Asana project, its columns and fields ─────────────────────────────
 
-async function projectFor(admin: Admin, cfg: LineConfig): Promise<string | null> {
+/** The line's project, found the way the Email Board's mirror finds its own (src/lib/asana-project.ts); null when nothing names one */
+export async function projectFor(admin: Admin, cfg: LineConfig): Promise<string | null> {
+  const { resolveAsanaProject, pickByName } = await import("@/lib/asana-project");
+  if (cfg.line === "email") return (await resolveAsanaProject(admin, (await import("@/lib/asana-email")).EMAIL_PROJECT_SOURCE))?.gid ?? null;
   const p = cfg.asana.project;
-  if (p.gid) return p.gid;
-  if (p.env && process.env[p.env]) return process.env[p.env]!;
-  if (cfg.line === "email") return (await import("@/lib/asana-email")).emailProjectGid(admin);
-  if (p.setting) {
-    const { data } = await admin.from("app_settings").select("value").eq("key", p.setting).maybeSingle();
-    const gid = (data?.value as { gid?: string } | null)?.gid;
-    if (gid) return gid;
-  }
-  if (!p.nameLike) return null;
-  const { asana, asanaAll } = await import("@/lib/asana");
-  for (const w of (await asana<{ gid: string }[]>("/workspaces")).data) {
-    const hit = (await asanaAll<{ gid: string; name: string }>("/projects", { workspace: w.gid, archived: "false", opt_fields: "name" })).find((x) => p.nameLike!.test(x.name));
-    if (hit) return hit.gid;
-  }
-  return null;
+  return (await resolveAsanaProject(admin, { env: p.env, setting: p.setting, pick: p.nameLike ? pickByName(p.nameLike) : undefined, syncSource: p.syncSource, fixed: p.gid }))?.gid ?? null;
 }
+
+/** Said when no project is found: what to set, so it's fixed once */
+const noProject = (cfg: LineConfig) =>
+  `No Asana project is set for ${cfg.label.toLowerCase()} requests, so nothing was sent. An admin sets it in app_settings (${cfg.asana.project.setting ?? "the line's setting"} = {"gid": "<project id>"})${cfg.asana.project.env ? ` or ${cfg.asana.project.env}` : ""}.`;
 
 type Setting = { custom_field: { gid: string; name: string; resource_subtype: string; enum_options?: { gid: string; name: string; enabled?: boolean }[] } };
 async function projectFields(project: string): Promise<AsanaFieldSetting[]> {
@@ -172,31 +178,34 @@ async function socialLinks(admin: Admin, clientId: string, facts: { hqUrl: strin
   ];
 }
 
-export type RequestsResult = { ok: true; doc: string; tasks: Request[]; fieldsMissing: string[]; followerMissing: string | null } | { ok: false; error: string; fixHref?: string };
+export type RequestsResult = { ok: true; doc: string; tasks: Request[]; fieldsMissing: string[]; followerMissing: string | null } | { ok: false; error: string; fixHref?: string; askForLink?: boolean };
 
 /**
  * The requests for an approved run: the Google Doc (made now if it isn't), then one task per item or one for the
  * document, in the line's project and column, fields by name, no assignee or due date, the strategist following.
  */
-export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, run: Run, opts: { urgency?: "urgent" | "high" | "normal" | "low" } = {}): Promise<RequestsResult> {
+export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, run: Run, opts: { urgency?: "urgent" | "high" | "normal" | "low"; /** A Headquarters folder link the person pasted */ hqLink?: string | null; /** Each step as it starts, for the progress bar ("Building the doc", "Creating task 2 of 3") */ onStep?: (step: string, i: number, n: number) => void } = {}): Promise<RequestsResult> {
   const { cfg, state } = run;
   if (!state.docId) return { ok: false, error: "There's no copy yet." };
   if (state.requests.length) return { ok: true, doc: "", tasks: state.requests, fieldsMissing: [], followerMissing: state.requests[0]?.followerMissing ?? null };
-  const approvedDoc = await approveCopyDoc(admin, db, me, state.docId, { folder: cfg.doc.folder, line: cfg.line });
+  opts.onStep?.("Building the Google Doc", 0, 3);
+  const approvedDoc = await approveCopyDoc(admin, db, me, state.docId, { folder: cfg.doc.folder, line: cfg.line, hqLink: opts.hqLink ?? null });
   if (!approvedDoc.ok) return approvedDoc;
   const d = await loadCopyDoc(db, state.docId);
   if (!d || !d.clientId) return { ok: false, error: "That copy isn't one you can request." };
   const { asanaConfigured, asana, asanaWrite } = await import("@/lib/asana");
   if (!asanaConfigured()) return { ok: false, error: "Asana isn't connected (ASANA_TOKEN)." };
+  opts.onStep?.("Finding the Asana project and column", 1, 3);
   const project = await projectFor(admin, cfg);
-  if (!project) return { ok: false, error: `No Asana project found for ${cfg.label} requests.` };
+  if (!project) return { ok: false, error: noProject(cfg) };
   const [facts, sections, fields, follow] = await Promise.all([
     clientFacts(admin, d.clientId, cfg.line),
-    asana<{ gid: string; name: string }[]>(`/projects/${project}/sections`, { opt_fields: "name" }).then((r) => r.data),
+    asana<{ gid: string; name: string }[]>(`/projects/${project}/sections`, { opt_fields: "name" }).then((r) => r.data).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e)))),
     projectFields(project),
     strategistFollower(admin, cfg, d.clientId),
   ]);
-  const section = pickSection(sections, cfg.asana.section);
+  // The Headquarters the Doc went in, when the client had no HQ link stored
+  if (approvedDoc.hqUrl && !facts.hqLinks.length) facts.hqUrl = approvedDoc.hqUrl;
   const urgency = opts.urgency ?? "normal";
   const c = d.content;
   const collab = await collaboratorsOf(admin, cfg);
@@ -216,6 +225,10 @@ export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, r
       return { ok: false, error: `Asana refused the request: ${e instanceof Error ? e.message : "unknown"}` };
     }
   }
+  if (sections instanceof Error) return { ok: false, error: `Asana wouldn't open the ${cfg.label.toLowerCase()} requests project (${project}): ${sections.message.slice(0, 160)}. Check the project id in ${cfg.asana.project.setting ?? "the setting"}.` };
+  const column = requestSection(sections, cfg.asana.section);
+  if (!column.ok) return { ok: false, error: column.error };
+  const section = column.section;
   const links = cfg.line === "social" ? await socialLinks(admin, d.clientId, facts) : [];
   const isDay = (x: unknown): x is string => typeof x === "string" && /^d{4}-d{2}-d{2}$/.test(x);
   const items = c.emails.map((e, i) => ({
@@ -225,11 +238,13 @@ export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, r
   const { requestDescription } = await import("@/lib/copy-docs/core");
   const missingAll = new Set<string>();
   const made: Request[] = [];
-  for (const p of planned) {
+  for (const [i, p] of planned.entries()) {
+    opts.onStep?.(planned.length > 1 ? `Creating task ${i + 1} of ${planned.length} in Asana` : "Creating the Asana task", 2 + i / planned.length, 3);
     const { custom_fields, missing } = mapAsanaFields(fields, p.fields);
     missing.forEach((m) => missingAll.add(m.name));
     const notes = [cfg.asana.description ? cfg.asana.description(p.input) : requestDescription(c, { copyUrl: approvedDoc.docUrl, hqUrl: facts.hqUrl, website: facts.website, figma: facts.figma, platform: facts.platform, requestedBy: me.fullName }), missing.length ? missing.map((m) => `${m.name}: ${m.value}`).join("\n") : "", follow.missing ?? ""].filter(Boolean).join("\n\n");
-    const base: Record<string, unknown> = { name: p.name, notes: notes.slice(0, 60000), ...(section ? { memberships: [{ project, section: section.gid }] } : { projects: [project] }), ...(Object.keys(custom_fields).length ? { custom_fields } : {}) };
+    // Always in the project (projects), then moved into the column: never a task without its project
+    const base: Record<string, unknown> = { name: p.name, notes: notes.slice(0, 60000), projects: [project], ...(Object.keys(custom_fields).length ? { custom_fields } : {}) };
     const followers = [...new Set([follow.follower, ...collab.users, me.email].filter(Boolean) as string[])];
     let task: { gid: string; permalink_url?: string };
     try {
@@ -241,6 +256,7 @@ export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, r
         return { ok: false, error: `Asana refused the task${made.length ? ` after ${made.length} were made` : ""}: ${e instanceof Error ? e.message : "unknown"}` };
       }
     }
+    await asanaWrite(`/sections/${section.gid}/addTask`, { task: task.gid }).catch((e) => console.error("[deliverables] column", e instanceof Error ? e.message : e));
     const url = task.permalink_url ?? `https://app.asana.com/0/${project}/${task.gid}`;
     made.push({ name: p.name, url, gid: task.gid, follower: follow.follower, followerMissing: follow.missing });
     if (cfg.asana.mirror === "email_asana_tasks") {
@@ -250,8 +266,8 @@ export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, r
         gid: task.gid,
         name: p.name,
         notes: notes.slice(0, 20000),
-        section: section?.name ?? cfg.asana.section,
-        stage: emailStageForColumn(section?.name ?? cfg.asana.section) ?? "copy_review",
+        section: section.name,
+        stage: emailStageForColumn(section.name) ?? "copy_review",
         client_id: d.clientId,
         kind: p.input.kind.key === "flow" ? "flow" : "batch",
         priority: urgency === "urgent" || urgency === "high" ? urgency : null,
@@ -274,7 +290,7 @@ export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, r
 export async function updateRequest(admin: Admin, cfg: LineConfig, gid: string, change: { fields?: WantedField[]; description?: string; append?: boolean; section?: string; name?: string }) {
   const { asana, asanaUpdate, asanaWrite } = await import("@/lib/asana");
   const project = await projectFor(admin, cfg);
-  if (!project) return { ok: false as const, error: "No Asana project for these requests." };
+  if (!project) return { ok: false as const, error: noProject(cfg) };
   const data: Record<string, unknown> = {};
   let missing: string[] = [];
   if (change.fields?.length) {

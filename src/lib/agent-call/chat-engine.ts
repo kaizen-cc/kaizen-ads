@@ -1,4 +1,4 @@
-import type { CallCard, CallEvent, LearnedItem, UploadAsk } from "./core";
+import type { CallCard, CallEvent, CallProgress, LearnedItem, UploadAsk } from "./core";
 import type { CallContext } from "./call-context";
 import type { Speaker } from "./engine";
 import type { JobView } from "@/lib/assistant/team";
@@ -19,6 +19,8 @@ export type ChatHooks = {
   onLearned?: (items: LearnedItem[]) => void;
   onTeam?: (line: Speaker[]) => void;
   onJob?: (job: JobView | null) => void;
+  /** What the agent is working on now: a status line with a step bar, not a message (null: done) */
+  onProgress?: (p: CallProgress | null) => void;
   onNavigate?: (href: string) => void;
   onCard?: (c: CallCard) => void;
   onUpload?: (ask: UploadAsk) => void;
@@ -157,6 +159,7 @@ export class ChatSession {
           } else if (e.t === "learned") this.hooks.onLearned?.(e.items);
           else if (e.t === "team") this.hooks.onTeam?.(e.line);
           else if (e.t === "job") this.hooks.onJob?.(e.job);
+          else if (e.t === "progress") this.hooks.onProgress?.(e.progress);
           else if (e.t === "navigate") this.hooks.onNavigate?.(e.href);
           else if (e.t === "card") this.hooks.onCard?.(e.card);
           else if (e.t === "upload") this.hooks.onUpload?.(e.ask);
@@ -171,6 +174,7 @@ export class ChatSession {
       }
     } finally {
       if (stall) clearTimeout(stall);
+      this.hooks.onProgress?.(null);
       finish();
       if (this.turn === turn) this.turn = null;
     }

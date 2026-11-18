@@ -5,7 +5,7 @@ import { CopyDocCardView } from "./copy-doc-card";
 import { useRef, useState } from "react";
 import { callTranscript, saveCallDraft } from "@/app/(team)/settings/call-actions";
 import { openCallDraftInGmail } from "@/app/(team)/assistant/document-actions";
-import type { CallCard, UploadAsk } from "@/lib/agent-call/core";
+import type { CallCard, CallProgress, UploadAsk } from "@/lib/agent-call/core";
 import type { Speaker } from "@/lib/agent-call/engine";
 import { tintOf } from "@/lib/agent-look";
 import type { CallNotes } from "@/lib/assistant/notes";
@@ -69,6 +69,41 @@ export function TeamChips({ team, speaking, center = false }: { team: Speaker[];
 }
 
 /** The job the agents are working on: what, for whom, and each step done or still to do */
+/**
+ * While an agent works through a long job (reading brand rules, writing the emails, building the doc): the step under
+ * way, a bar that fills as steps finish, and the last steps done. Gone once the answer comes. A status, not a message.
+ */
+export function WorkingBar({ p }: { p: CallProgress }) {
+  const pct = Math.max(6, Math.min(100, Math.round(p.pct)));
+  return (
+    <section role="status" aria-live="polite" className="rounded-[16px] border border-line bg-surface p-3 shadow-sm" aria-label="Working">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="min-w-0 truncate text-[13.5px] font-medium leading-snug">
+          <span aria-hidden className="mr-2 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand align-middle motion-reduce:animate-none" />
+          {p.step}
+          <span className="text-faint">…</span>
+        </p>
+        <span className="shrink-0 text-[11.5px] tabular-nums text-faint">{pct}%</span>
+      </div>
+      <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-surface-2" aria-hidden>
+        <div className="h-full rounded-full bg-brand/70 transition-[width] duration-700 ease-out" style={{ width: `${pct}%` }} />
+      </div>
+      {p.done.length > 0 && (
+        <ol className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+          {p.done.slice(-3).map((s, i) => (
+            <li key={`${s}-${i}`} className="inline-flex items-center gap-1.5 text-[11.5px] text-muted">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="text-ok">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              <span>{s}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 export function JobStrip({ job }: { job: JobView }) {
   const needed = job.steps.filter((s) => !s.optional);
   const done = needed.filter((s) => s.done).length;

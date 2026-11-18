@@ -120,3 +120,59 @@ export function matchClientName<C extends NamedClient>(text: string, clients: C[
   const sure = top && top.s >= 3 && scored.filter((x) => x.s >= 3).length === 1 ? top.c : top && top.s === 4 && scored.filter((x) => x.s === 4).length === 1 ? top.c : null;
   return { sure, maybe: scored.slice(0, 8).map((x) => x.c) };
 }
+
+// ─── A client asked for by name (the assistant's, the agents' and Kaizen AI's tools) ─────────────────────────────
+
+/** Case, spaces, punctuation and "&"/"and" don't matter ("Ocean Box" = "OceanBox" = "ocean-box") */
+export const compactName = (s: string) =>
+  String(s ?? "")
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]/g, "");
+
+export type NamePick<C> = { hit: C | null; close: C[] };
+
+/**
+ * The client someone named, from the clients they can see, in order: the exact name, the same name ignoring spaces,
+ * punctuation and case ("Ocean Box" is OceanBox, never Ocean & Acre), the brand or location of a "Brand - Location"
+ * client, a name it starts, then every word matching (spelled however). Ambiguous only when two are genuinely as
+ * close; then `close` holds them to ask between, best first.
+ */
+export function pickClientByName<C extends { name: string }>(asked: string, clients: readonly C[]): NamePick<C> {
+  const a = String(asked ?? "").trim();
+  const k = compactName(a);
+  if (!k) return { hit: null, close: [] };
+  const one = (xs: C[]): NamePick<C> | null => (xs.length === 1 ? { hit: xs[0], close: [] } : xs.length > 1 ? { hit: null, close: xs.slice(0, 5) } : null);
+  const exact = clients.filter((c) => c.name.trim().toLowerCase() === a.toLowerCase());
+  if (exact.length === 1) return { hit: exact[0], close: [] };
+  const tiers: ((c: C) => boolean)[] = [
+    (c) => compactName(c.name) === k,
+    (c) => {
+      const { brand, location } = splitName(c.name);
+      return compactName(brand) === k || (location !== "" && compactName(location) === k);
+    },
+    (c) => k.length >= 3 && compactName(c.name).startsWith(k),
+  ];
+  for (const t of tiers) {
+    const r = one(clients.filter(t));
+    if (r) return r;
+  }
+  // Every word they said is a word of the name (plural, misspelled), the closest cover of the name first
+  const asked_ = words(a).filter((w) => !STOP.has(w.t)).map((w) => w.t);
+  if (!asked_.length) return { hit: null, close: [] };
+  const scored = clients
+    .map((c) => {
+      const ws = words(c.name).filter((w) => !STOP.has(w.t)).map((w) => w.t);
+      const joined = ws.join("");
+      const all = asked_.every((w) => ws.some((x) => sameWord(x, w)) || (w.length >= 4 && joined.includes(w)));
+      const cover = ws.length ? ws.filter((x) => asked_.some((w) => sameWord(x, w))).length / ws.length : 0;
+      return { c, all, cover };
+    })
+    .filter((x) => x.all)
+    .sort((x, y) => y.cover - x.cover);
+  if (!scored.length) return { hit: null, close: [] };
+  const top = scored[0];
+  const near = scored.filter((x) => top.cover - x.cover < 0.2);
+  return near.length === 1 ? { hit: top.c, close: [] } : { hit: null, close: near.slice(0, 5).map((x) => x.c) };
+}

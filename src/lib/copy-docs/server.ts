@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CallCopyDoc } from "@/lib/agent-call/core";
 import { findOrCreateFolder, folderIdOf } from "@/lib/creative-drive-paths";
-import { changedLines, COPY_SCHEMA, copyDocHtml, copyDocName, EMAIL_FOLDER, folderStep, normalizeCopy, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
+import { changedLines, COPY_SCHEMA, copyDocHtml, copyDocName, EMAIL_FOLDER, normalizeCopy, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
 
 // Copy documents on the server: saved (each change a new version, the old ones kept), read through the person's own
 // session, revised by the AI copywriter from a note or the open comments, approved into a Google Doc in the client's
@@ -170,7 +170,21 @@ export async function reviseCopyDoc(admin: Admin, db: SupabaseClient, me: Me, id
 
 // ─── Approve: the Google Doc in the client's HQ Drive folder ────────────────
 
-export type ClientFacts = { id: string; name: string; kaizenId: number | null; website: string | null; hqFolder: string | null; hqUrl: string | null; figma: string | null; platform: string | null };
+export type ClientFacts = {
+  id: string;
+  name: string;
+  kaizenId: number | null;
+  website: string | null;
+  /** The HQ folder as stored (the account sheet's link, else the client's folder): checked in Drive before anything is put there */
+  hqFolder: string | null;
+  hqUrl: string | null;
+  /** The stored HQ links, best first (this line's sheet tab, the other lines' tabs, the mirror's last tasks) */
+  hqLinks: string[];
+  /** The client's own folder (clients.drive_folder_id) */
+  clientFolder: string | null;
+  figma: string | null;
+  platform: string | null;
+};
 
 /**
  * Everything we know about the client for a request: first the Account Overview sheet's tab for the line (client ID,
@@ -191,10 +205,14 @@ export async function clientFacts(admin: Admin, clientId: string, line = "email"
     }
     return null;
   };
-  const sheet = (((c.channel_sheet ?? {}) as Record<string, unknown>)[`${line}_details`] ?? {}) as Partial<Record<"clientId" | "hq" | "figma" | "website", string | null>>;
+  const tabs = (c.channel_sheet ?? {}) as Record<string, unknown>;
+  const sheet = (tabs[`${line}_details`] ?? {}) as Partial<Record<"clientId" | "hq" | "figma" | "website", string | null>>;
   const hqField = sheet.hq ?? fieldOf(/client\s*hq|assets/i);
-  const fromLink = hqField && /drive\.google\.com/.test(hqField) ? folderIdOf(hqField) : null;
-  const hqFolder = (c.drive_folder_id ? folderIdOf(c.drive_folder_id as string) : null) ?? fromLink;
+  const isDrive = (v: unknown): v is string => typeof v === "string" && /drive\.google\.com/.test(v);
+  // The HQ links we hold, this line's first: the account sheet's Email and Organic tabs, then the mirror's last tasks
+  const hqLinks = [...new Set([sheet.hq, ...["email", "social"].map((l) => ((tabs[`${l}_details`] ?? {}) as { hq?: string | null }).hq), fieldOf(/client\s*hq|assets/i)].filter(isDrive))];
+  const clientFolder = c.drive_folder_id ? folderIdOf(c.drive_folder_id as string) : null;
+  const hqFolder = (hqLinks[0] ? folderIdOf(hqLinks[0]) : null) ?? clientFolder;
   let platform: string | null = null;
   try {
     const { emailConnections } = await import("@/lib/email-providers/which");
@@ -210,19 +228,23 @@ export async function clientFacts(admin: Admin, clientId: string, line = "email"
     kaizenId: sheet.clientId && /^\d+$/.test(sheet.clientId) ? Number(sheet.clientId) : ((c.kaizen_id as number | null) ?? null),
     website: sheet.website ?? (c.website as string | null) ?? fieldOf(/website/i),
     hqFolder,
-    hqUrl: hqField && /^https?:/i.test(hqField) ? hqField : hqFolder ? `https://drive.google.com/drive/folders/${hqFolder}` : hqField,
+    hqUrl: hqField && /^https?:/i.test(hqField) ? hqField : (hqLinks[0] ?? hqField ?? null),
+    hqLinks,
+    clientFolder,
     figma: sheet.figma ?? fieldOf(/figma/i),
     platform: platform ?? fieldOf(/platform/i),
   };
 }
 
-export type ApproveResult = { ok: true; docUrl: string; folder: string; asPerson: boolean; already: boolean } | { ok: false; error: string; fixHref?: string };
+export type ApproveResult = { ok: true; docUrl: string; folder: string; asPerson: boolean; already: boolean; hqUrl?: string } | { ok: false; error: string; fixHref?: string; askForLink?: boolean };
 
 /**
- * Approves the copy: a Google Doc of it in the client's HQ Drive folder, inside "Email Marketing" (found whatever its
- * case or numbering, made when missing), made as the person approving. Approved again after a change: a new Doc.
+ * Approves the copy: a Google Doc of it in the client's Headquarters folder, inside "Email Marketing" (or the line's
+ * folder; found whatever its case or numbering, made when missing), made as the person approving. The Headquarters is
+ * found, never made (src/lib/copy-docs/hq-path.ts): a pasted link, the stored HQ links, the client's folder, then the
+ * Clients root; when none leads there, it asks for the link. Approved again after a change: a new Doc.
  */
-export async function approveCopyDoc(admin: Admin, db: SupabaseClient, me: Me, id: string, opts: { folder?: string; line?: string } = {}): Promise<ApproveResult> {
+export async function approveCopyDoc(admin: Admin, db: SupabaseClient, me: Me, id: string, opts: { folder?: string; line?: string; hqLink?: string | null } = {}): Promise<ApproveResult> {
   const folderName = opts.folder ?? EMAIL_FOLDER;
   const d = await loadCopyDoc(db, id);
   if (!d) return { ok: false, error: "That copy isn't one you can approve." };
@@ -230,22 +252,44 @@ export async function approveCopyDoc(admin: Admin, db: SupabaseClient, me: Me, i
   if (!d.clientId) return { ok: false, error: "This copy has no client, so there's no Drive folder to put it in." };
   const facts = await clientFacts(admin, d.clientId, opts.line);
   const fixHref = d.clientSlug ? `/clients/${d.clientSlug}` : undefined;
-  if (!facts.hqFolder) return { ok: false, error: `${facts.name} has no headquarters Drive folder yet. Add it on the client page, then approve again.`, fixHref };
   const { driveFor } = await import("./drive");
+  const { findHq, lineFolderStep } = await import("./hq-path");
+  const root = process.env.GOOGLE_SHARED_DRIVE_ID ?? null;
+  const pasted = opts.hqLink && /drive\.google\.com|^[\w-]{20,}$/.test(opts.hqLink.trim()) ? opts.hqLink.trim() : null;
+  const probe = [pasted, ...facts.hqLinks, facts.clientFolder, root].map((x) => (x ? folderIdOf(x) : null)).find(Boolean) ?? null;
+  const ask = `paste the link to ${facts.name}'s Headquarters folder and I'll put it there.`;
+  if (!probe) return { ok: false, error: `I don't know where ${facts.name}'s Headquarters folder is in Drive: ${ask}`, fixHref, askForLink: true };
   let made: { id: string; url: string };
   let folder: string;
   let asPerson = false;
+  let hqId: string;
   try {
-    const got = await driveFor(me.email, facts.hqFolder);
+    const look = await driveFor(me.email, probe);
+    const hq = await findHq(look.drive, { client: { name: facts.name, kaizenId: facts.kaizenId }, pasted, stored: facts.hqLinks, clientFolder: facts.clientFolder, root });
+    if (!hq.ok) return { ok: false, error: hq.error, fixHref, askForLink: true };
+    hqId = hq.id;
+    // Written as whoever can open the Headquarters itself (the person when Google allows, else the Drive user)
+    const got = await driveFor(me.email, hq.id);
     asPerson = got.asPerson;
-    folder = (await findOrCreateFolder(got.drive, facts.hqFolder, folderStep(folderName))).id;
+    folder = (await findOrCreateFolder(got.drive, hq.id, lineFolderStep(opts.line, folderName))).id;
     made = await got.drive.createDoc(folder, copyDocName({ client: facts.name, kind: d.content.kind, shortName: d.content.shortName, sendDate: d.content.brief.sendDate }), copyDocHtml(d.content, { client: facts.name }));
+    // A pasted Headquarters link is kept on the client's sheet tab for the line, only where it had none
+    if (hq.via === "pasted" && !facts.hqLinks.length) await rememberHq(admin, d.clientId, opts.line ?? "email", `https://drive.google.com/drive/folders/${hq.id}`).catch(() => undefined);
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
     if (/not connected/i.test(m)) return { ok: false, error: "Drive isn't connected yet: an admin needs to add the Google service account (with the Drive scope allowed for domain-wide delegation)." };
-    if (/\b(?:401|403|404)\b|unauthorized_client|not found|forbidden/i.test(m)) return { ok: false, error: `Google won't let Kaizen OS open ${facts.name}'s headquarters folder. Share it with the Drive user, or check the folder on the client page.`, fixHref };
+    if (/\b(?:401|403|404)\b|unauthorized_client|not found|forbidden/i.test(m)) return { ok: false, error: `Google won't let Kaizen OS open ${facts.name}'s Headquarters folder. Share it with the Drive user, or ${ask}`, fixHref, askForLink: true };
     return { ok: false, error: `Drive had a problem: ${m.slice(0, 160)}` };
   }
   await admin.from("copy_docs").update({ status: "approved", approved_by: me.id, approved_at: new Date().toISOString(), doc_id: made.id, doc_url: made.url, folder_id: folder, updated_at: new Date().toISOString() }).eq("id", id);
-  return { ok: true, docUrl: made.url, folder: folderName, asPerson, already: false };
+  return { ok: true, docUrl: made.url, folder: folderName, asPerson, already: false, hqUrl: `https://drive.google.com/drive/folders/${hqId}` };
+}
+
+/** Keeps a Headquarters link given on a call on the client's account sheet tab for the line (only when it had none) */
+async function rememberHq(admin: Admin, clientId: string, line: string, url: string) {
+  const { data } = await admin.from("clients").select("channel_sheet").eq("id", clientId).maybeSingle();
+  const tabs = (data?.channel_sheet ?? {}) as Record<string, Record<string, unknown>>;
+  const key = `${line}_details`;
+  if (tabs[key]?.hq) return;
+  await admin.from("clients").update({ channel_sheet: { ...tabs, [key]: { ...(tabs[key] ?? {}), hq: url } } }).eq("id", clientId);
 }

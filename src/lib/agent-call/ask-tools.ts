@@ -1,4 +1,5 @@
 import "server-only";
+import { clientNamedOrNull } from "@/lib/client-named";
 import { firstNameOf } from "./core";
 import { askedForNote, cleanItems, mergeItems, titleProblem, type CheckItem } from "./ask-rules";
 import { OWNER_SEAT } from "./role-focus";
@@ -40,13 +41,7 @@ const missingColumn = (e: { message?: string } | null) => Boolean(e && /checklis
 export function askTools(ctx: ToolCtx, agent: { roleKey: string; label: string; callId: string | null; said?: string | null }): ChatTool[] {
   /** The client named, if the person may see it (their own session decides) */
   const clientNamed = async (name: unknown) => {
-    const asked = clip(name, 120);
-    if (!asked) return null;
-    const safe = asked.replace(/[%_,()]/g, " ").trim();
-    const { data } = await ctx.db.from("clients").select("id, name, slug").is("archived_at", null).ilike("name", `%${safe}%`).limit(5);
-    const hit = (data ?? []).find((c) => String(c.name).toLowerCase() === asked.toLowerCase()) ?? (data ?? [])[0];
-    if (!hit) throw new Error(`No client called "${asked}" that you can see.`);
-    return hit as { id: string; name: string; slug: string };
+    return clientNamedOrNull(ctx.db, clip(name, 120));
   };
   const save = async (row: { kind: "reminder" | "task"; owner: string; client: { id: string } | null; title: string; detail: string; due: string | null; checklist?: CheckItem[]; withTranscript?: boolean }) => {
     const base = { kind: row.kind, owner_id: row.owner, asked_by: ctx.me.id, role_key: agent.roleKey, call_id: agent.callId, client_id: row.client?.id ?? null, title: row.title, detail: row.detail, due_on: row.due };

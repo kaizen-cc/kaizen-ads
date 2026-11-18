@@ -1,4 +1,5 @@
 import "server-only";
+import { clientNamed } from "@/lib/client-named";
 import type { ChatTool, ToolCtx } from "./tools";
 import { STEPS, asStep, progress, type ItemState } from "@/lib/csuite/core";
 import { DRAFT_KINDS, type DraftKind } from "@/lib/email-drafts/core";
@@ -75,9 +76,11 @@ export function csuiteTools(ctx: ToolCtx): ChatTool[] {
           if ("error" in who) return { done: false, note: who.error };
           let clientId: string | null = null;
           if (input.client) {
-            const safe = clip(input.client, 80).replace(/[%_,()]/g, " ").trim();
-            const { data } = await ctx.db.from("clients").select("id").ilike("name", `%${safe}%`).is("archived_at", null).limit(1).maybeSingle();
-            clientId = (data?.id as string | undefined) ?? null;
+            try {
+              clientId = (await clientNamed(ctx.db, clip(input.client, 80))).id;
+            } catch (e) {
+              return { done: false, note: e instanceof Error ? e.message : "Which client?" };
+            }
           }
           const m = await openMeeting(ctx.db);
           const due = /^\d{4}-\d{2}-\d{2}$/.test(String(input.due ?? "")) ? String(input.due) : new Date(Date.now() + 7 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });

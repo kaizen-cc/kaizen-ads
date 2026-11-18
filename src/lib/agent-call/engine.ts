@@ -1,4 +1,4 @@
-import { downsample, createTurnDetector, createTurnWatchdog, rms, splitSpeakable, toPcm16, type CallCard, type CallEvent, type LearnedItem, type StallState, type UploadAsk } from "./core";
+import { downsample, createTurnDetector, createTurnWatchdog, rms, splitSpeakable, toPcm16, type CallCard, type CallEvent, type CallProgress, type LearnedItem, type StallState, type UploadAsk } from "./core";
 import { canSend, createTranscript, hasFloor, initialTurns, isCurrent, shouldCheckpoint, shownPhase, stepTurns, wordsStalled, type TurnEffect, type TurnInput, type TurnState } from "./turns";
 import type { CallContext } from "./call-context";
 import { initialAway, stepAway, type AwayEffect, type AwayEvent, type AwayState } from "./away";
@@ -349,6 +349,8 @@ export type Hooks = {
   onTeam?: (line: Speaker[]) => void;
   /** The job the call is working on, and its steps (null: none) */
   onJob?: (job: JobView | null) => void;
+  /** What the agent is working on now, a step bar while it works (null: done) */
+  onProgress?: (p: CallProgress | null) => void;
   /** Open a screen in the app; the call carries on */
   onNavigate?: (href: string) => void;
   /** A link card on the call */
@@ -785,6 +787,7 @@ export class Call {
             this.lastSentence = "";
           } else if (e.t === "team") this.hooks.onTeam?.(e.line);
           else if (e.t === "job") this.hooks.onJob?.(e.job);
+          else if (e.t === "progress") this.hooks.onProgress?.(e.progress);
           else if (e.t === "navigate") this.hooks.onNavigate?.(e.href);
           else if (e.t === "card") this.hooks.onCard?.(e.card);
           else if (e.t === "upload") this.hooks.onUpload?.(e.ask);
@@ -794,6 +797,7 @@ export class Call {
         }
       }
       if (live() && buffer.trim()) this.say(buffer.trim(), turnNo);
+      this.hooks.onProgress?.(null);
     } catch {
       if (!live()) return;
       this.say("Sorry, I lost the line for a second. Could you say that again?", turnNo);
