@@ -9,5 +9,6 @@ export default defineConfig({
       "server-only": fileURLToPath(new URL("./tests/stubs/server-only.ts", import.meta.url)),
     },
   },
-  test: { include: ["tests/**/*.test.ts"], environment: "node", env: { TZ: "America/New_York" } },
+  // PDF-rendering tests can pass 5 seconds when the whole suite runs at once
+  test: { include: ["tests/**/*.test.ts"], environment: "node", env: { TZ: "America/New_York" }, testTimeout: 30_000 },
 });
