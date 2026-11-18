@@ -62,7 +62,8 @@ function nyNow() {
  * - asana: every 5 minutes, mirroring open tasks on Asana's Creative board while the team moves over
  * - email_ops: every hour 6am to 9pm: email accounts in the red audit themselves (and the strategist is told), each email sprint
  *   whose next check is due re-measures the score, and on weekdays 7am to 10am each client's campaign suggestions are
- *   refreshed weekly (src/lib/email-ops)
+ *   refreshed weekly (src/lib/email-ops); the same run audits red social accounts and checks social sprints
+ *   (src/lib/social-ops)
  * - sprints: every hour, checking each optimization sprint whose next check is due (daily, or the follow-up date it set)
  * - verticals: every hour (the taxonomy weekly, new clients placed, benchmarks researched a few at a time)
  * - gtm: every hour (a Meta go-to-market strategy for newly onboarded clients once the intake form, call notes and website are in)
@@ -315,7 +316,10 @@ export async function GET(request: Request) {
       const audits = await part(async () => (await import("@/lib/email-ops/auto-audits")).autoEmailAudits(admin, 420_000));
       const sprints = await part(async () => (await import("@/lib/email-ops/sprint")).checkDueEmailSprints(admin));
       const suggestions = !["Sat", "Sun"].includes(weekday) && hour >= 7 && hour <= 10 ? await part(async () => (await import("@/lib/email-ops/suggestions")).refreshSuggestions(admin, 240_000)) : { skipped: "weekday mornings only" };
-      return Response.json({ audits, sprints, suggestions });
+      // The social line, the same way: red social accounts audit themselves, each social sprint's due check runs
+      const socialAudits = await part(async () => (await import("@/lib/social-ops/auto-audits")).autoSocialAudits(admin, 300_000));
+      const socialSprints = await part(async () => (await import("@/lib/social-ops/sprint")).checkDueSocialSprints(admin));
+      return Response.json({ audits, sprints, suggestions, socialAudits, socialSprints });
     }
     if (step === "sprints") return Response.json(await (await import("@/lib/sprints")).checkDueSprints(admin));
     if (step === "launches") {

@@ -20,8 +20,8 @@ export const ROLE_SKILLS: Record<string, readonly string[]> = {
   strategist: ["suggest", "strategist", "gtm", "brandbible", "lab"],
   market_analyst: ["market", "winners", "industry", "verticals"],
   account_manager: ["briefing", "calls"],
-  // Organic social: a core only for now (its skills are written once the social team's playbook is), on calls and in its chat
-  social_strategist: [],
+  // Organic social: the social audit (and its sprint checks) and the client desk; its playbook skills come with the social team's
+  social_strategist: ["social_audit", "social_desk"],
 };
 
 /** The role agents that ship offline (parked): no AI path calls their skills until an exec brings the role online */

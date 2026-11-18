@@ -27,7 +27,10 @@ export type LineKind =
   | "social-target"
   | "social-drop"
   | "social-quiet"
-  | "social-connect";
+  | "social-connect"
+  | "social-score"
+  | "social-audit"
+  | "social-sprint";
 
 /** Which seats each kind of item needs (a seat holder sees a kind only when they hold one of these on the client) */
 export const KIND_SEATS: Record<LineKind, readonly string[]> = {
@@ -44,6 +47,9 @@ export const KIND_SEATS: Record<LineKind, readonly string[]> = {
   "social-drop": ["social_manager"],
   "social-quiet": ["social_manager", "social_creative"],
   "social-connect": ["social_manager"],
+  "social-score": ["social_manager"],
+  "social-audit": ["social_manager"],
+  "social-sprint": ["social_manager", "social_creative"],
 };
 
 /** The seats that look after who gets our emails on a client (a client's request to change it waits on one of them) */
@@ -208,6 +214,25 @@ export function socialRowItems(r: ChannelRow, ctx: RowCtx): (TodayDraft & { kind
     });
     return out;
   }
+  if (r.socialScore && r.socialScore.band !== "good") {
+    const sc = r.socialScore;
+    const red = sc.band === "bad";
+    const label = (p: string) => (p === "instagram" ? "Instagram" : p === "facebook" ? "Facebook" : "TikTok");
+    const drag = sc.weighingDown.slice(0, 2).map((c) => `${label(c.platform)} ${c.label.toLowerCase()}`);
+    out.push({
+      ...b,
+      kind: "social-score",
+      key: `social-score:${r.clientId}`,
+      score: red ? clamp(68 + (60 - sc.score) / 3, 68, 88) : clamp(52 + (80 - sc.score) / 3, 52, 60),
+      stat: { value: String(sc.score), label: red ? "social score, in the red" : "social score, yellow" },
+      title: `${r.name}'s social accounts are ${red ? "in the red" : "slipping"}`,
+      story: `Their social score is ${sc.score} out of 100${sc.platforms.length > 1 ? ` (${sc.platforms.map((p) => `${label(p.platform)} ${p.score}`).join(", ")})` : ""}.${drag.length ? ` ${drag.join(" and ")} ${drag.length === 1 ? "is" : "are"} costing the most.` : ""}${red ? " A red account audits itself and opens a sprint; the moves still need doing." : ""}`,
+      why: red ? "A red social account is a client at risk" : "Heading the wrong way",
+      evidence: drag.length ? [`Biggest drag: ${drag[0]}`] : [],
+      action: { label: "Open on the Social board", href: h.main },
+      alt: { label: "Client page", href: h.client },
+    });
+  }
   if (r.status === "off" || r.status === "close") {
     const off = r.status === "off";
     const gap = r.ratio != null ? 1 - r.ratio : null;
@@ -259,22 +284,24 @@ export type AuditIn = { id: string; status: "running" | "ready" | "failed"; scor
 export type SprintIn = { id: string; moves: number; done: number; nextCheckAt: string; score: number | null; baseline: number | null };
 
 /** An email client's audit and sprint: an audit whose moves nobody started, one that didn't finish, a sprint whose moves aren't happening */
-export function emailOpsItems(c: { clientId: string; name: string; slug: string }, audit: AuditIn | null, sprint: SprintIn | null, now = new Date()): (TodayDraft & { kind: LineKind })[] {
+export function emailOpsItems(c: { clientId: string; name: string; slug: string }, audit: AuditIn | null, sprint: SprintIn | null, now = new Date(), line: Line = "email"): (TodayDraft & { kind: LineKind })[] {
   const out: (TodayDraft & { kind: LineKind })[] = [];
-  const b = { topic: "email" as const, client: c.name, clientSlug: c.slug, clientId: c.clientId, evidence: [] as string[] };
+  // The social line's audits and sprints read the same way (src/lib/social-ops): only the words and links differ
+  const w = line === "social" ? { name: "social", page: `/clients/${c.slug}?service=social`, account: "the accounts", rerun: "the client's sheet on the Social board" } : { name: "email", page: `/clients/${c.slug}?service=email`, account: "the account", rerun: "the client's Email tab" };
+  const b = { topic: line, client: c.name, clientSlug: c.slug, clientId: c.clientId, evidence: [] as string[] };
   const days = (iso: string) => Math.floor((now.getTime() - Date.parse(iso)) / 86_400_000);
   if (sprint && sprint.moves > 0 && sprint.done < sprint.moves && Date.parse(sprint.nextCheckAt) <= now.getTime()) {
     out.push({
       ...b,
-      kind: "email-sprint",
-      key: `email-sprint:${sprint.id}`,
+      kind: `${line}-sprint` as LineKind,
+      key: `${line}-sprint:${sprint.id}`,
       score: sprint.done === 0 ? 68 : 60,
       stat: { value: `${sprint.done}/${sprint.moves}`, label: "sprint moves done" },
-      title: `${c.name}'s email sprint is due a check with moves still open`,
+      title: `${c.name}'s ${w.name} sprint is due a check with moves still open`,
       story: `${sprint.done} of ${sprint.moves} moves are done and the check was due ${day(sprint.nextCheckAt)}.${sprint.baseline != null && sprint.score != null ? ` The score went from ${sprint.baseline} to ${sprint.score}.` : ""} The score only moves when the moves happen.`,
       why: sprint.done === 0 ? "No sprint move has happened" : "Moves not happening",
-      action: { label: "Open the sprint", href: `/kpis/email-sprint/${sprint.id}` },
-      alt: { label: "Client page", href: `/clients/${c.slug}?service=email` },
+      action: { label: "Open the sprint", href: `/kpis/${line}-sprint/${sprint.id}` },
+      alt: { label: "Client page", href: w.page },
     });
     return out;
   }
@@ -282,28 +309,28 @@ export function emailOpsItems(c: { clientId: string; name: string; slug: string 
   if (audit.status === "failed" && days(audit.createdAt) <= 14)
     out.push({
       ...b,
-      kind: "email-audit",
-      key: `email-audit:${audit.id}`,
+      kind: `${line}-audit` as LineKind,
+      key: `${line}-audit:${audit.id}`,
       score: 56,
       stat: { value: "Failed", label: `audit from ${day(audit.createdAt)}` },
-      title: `${c.name}'s email audit didn't finish`,
-      story: "Run it again from the client's Email tab. Until it finishes there's no plan for the account.",
-      why: "No plan for the account",
-      action: { label: "Open the audit", href: `/kpis/email-audit/${audit.id}` },
-      alt: { label: "Client page", href: `/clients/${c.slug}?service=email` },
+      title: `${c.name}'s ${w.name} audit didn't finish`,
+      story: `Run it again from ${w.rerun}. Until it finishes there's no plan for ${w.account}.`,
+      why: `No plan for ${w.account}`,
+      action: { label: "Open the audit", href: `/kpis/${line}-audit/${audit.id}` },
+      alt: { label: "Client page", href: w.page },
     });
   else if (audit.status === "ready" && audit.band && audit.band !== "good" && audit.actions > 0 && audit.done === 0 && days(audit.createdAt) >= 2)
     out.push({
       ...b,
-      kind: "email-audit",
-      key: `email-audit:${audit.id}`,
+      kind: `${line}-audit` as LineKind,
+      key: `${line}-audit:${audit.id}`,
       score: audit.band === "bad" ? 70 : 58,
       stat: { value: String(days(audit.createdAt)), label: "days since the audit, no move started" },
-      title: `${c.name}'s email audit is waiting on its first move`,
+      title: `${c.name}'s ${w.name} audit is waiting on its first move`,
       story: `${audit.headline ? `${audit.headline} ` : ""}${audit.actions} ${audit.actions === 1 ? "move" : "moves"} in the plan, none ticked yet. Start a sprint to put them in motion.`,
       why: audit.band === "bad" ? "A red account with a plan nobody started" : "A plan nobody started",
-      action: { label: "Open the audit", href: `/kpis/email-audit/${audit.id}` },
-      alt: { label: "Client page", href: `/clients/${c.slug}?service=email` },
+      action: { label: "Open the audit", href: `/kpis/${line}-audit/${audit.id}` },
+      alt: { label: "Client page", href: w.page },
     });
   return out;
 }

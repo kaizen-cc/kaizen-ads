@@ -1,6 +1,7 @@
 import type { ConversionMetric, MonthRevenue, RevenueTarget } from "@/lib/email-metrics";
 import type { EmailProvider } from "@/lib/email-providers/core";
 import type { EmailScoreResult } from "@/lib/email-score-calc";
+import type { SocialAccountScore } from "@/lib/social-score";
 import type { ChannelStatus, Line, Month } from "./calc";
 
 // The shapes the Email and Social boards and the Overview pass around (types only, so a browser file can import them).
@@ -108,6 +109,8 @@ export type ChannelRow = {
   social: SocialSupport | null;
   /** Email: the account score (the main KPI; status is its band). Null for social, or when nothing is read yet */
   score: EmailScoreResult | null;
+  /** Social: the account score (0 to 100, every platform and the overall weighted by reach); null for email or nothing read */
+  socialScore?: SocialAccountScore | null;
 };
 
 export type ChannelBoard = { line: Line; month: Month; rows: ChannelRow[]; targetsReady: boolean };

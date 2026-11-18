@@ -22,6 +22,7 @@ export const READ_TOOLS: ReadonlySet<string> = new Set([
   "winners_and_fatigue",
   "email_marketing",
   "organic_social",
+  "social_score",
   "what_changed",
   "get_copy_library",
   "rank_clients",

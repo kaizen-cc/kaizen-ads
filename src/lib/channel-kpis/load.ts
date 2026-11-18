@@ -4,6 +4,7 @@ import { LIVE } from "@/lib/live";
 import type { EmailBand } from "@/lib/email-score";
 import type { EmailScoreResult } from "@/lib/email-score-calc";
 import { loadEmailScores } from "@/lib/email-score-load";
+import { loadSocialScores, type SocialAccountScore } from "@/lib/social-score-load";
 import { conversionMetricsOf, monthRevenue, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
 import { socialClientState, plainSocialError } from "@/lib/social/core";
 import { partialSyncWarning } from "@/lib/klaviyo/core";
@@ -267,7 +268,7 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
   const from = basis === "month" ? month.start : shiftDay(month.today, -29);
   // Last month for the comparison, and 36 days back so the 7 day rate has its window on the oldest day charted
   const earliest = [month.prevStart, shiftDay(month.today, -36)].sort()[0];
-  const [links, days, posts] = await Promise.all([
+  const [links, days, posts, scores] = await Promise.all([
     db.from("social_accounts").select("client_id, page_id, ig_id, page_name, ig_username, last_synced_at, last_error, missing_permissions").in("client_id", ids).then((r) => r.data ?? []),
     readAll<Record<string, unknown>>((a, b) =>
       db.from("social_daily").select("client_id, platform, account_id, date, followers, follows_gained, follows_lost, reach, views, interactions").in("client_id", ids).gte("date", earliest).order("client_id").order("platform").order("date").range(a, b),
@@ -275,6 +276,8 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
     readAll<Record<string, unknown>>((a, b) =>
       db.from("social_posts").select("client_id, platform, account_id, post_id, caption, permalink, posted_at, interactions").in("client_id", ids).gte("posted_at", `${shiftDay(month.today, -45)}T00:00:00Z`).order("client_id").order("post_id").range(a, b),
     ),
+    // The account score (every platform and the overall), read through the same session as the rest
+    loadSocialScores(db, ids, month.today).catch(() => new Map<string, SocialAccountScore>()),
   ]);
   const linkBy = new Map(links.map((l) => [l.client_id as string, l]));
   const daysBy = groupBy(days, (d) => d.client_id as string);
@@ -349,6 +352,7 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
       email: null,
       social,
       score: null,
+      socialScore: readable ? (scores.get(id) ?? null) : null,
     };
   });
 }

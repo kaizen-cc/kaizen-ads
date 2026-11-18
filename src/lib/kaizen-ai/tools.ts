@@ -281,8 +281,28 @@ const csvCell = (v: unknown) => {
 
 // ─── The tools ───────────────────────────────────────────────────────────────
 
+/** One platform's last 30 days for a tool's answer (whole numbers, the rate in percent) */
+function socialNumbersOut(n: import("@/lib/social-score").PlatformNumbers) {
+  return {
+    followers: n.followers,
+    net_followers_30d: n.netFollowers,
+    reach_30d: n.reach,
+    reach_30d_before: n.reachBefore,
+    impressions_30d: n.views,
+    interactions_30d: n.interactions,
+    engagement_rate_pct: n.rate != null ? Math.round(n.rate * 1000) / 10 : null,
+    profile_visits_30d: n.profileViews,
+    posts_30d: n.posts,
+    posts_this_month: n.postsThisMonth,
+    video_posts_30d: n.videoPosts,
+    saves_30d: n.saves,
+    shares_30d: n.shares,
+    last_post: n.lastPostAt?.slice(0, 10) ?? null,
+  };
+}
+
 /** The tools the email and organic social teams get (the email one only for the email team) */
-const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "email_marketing", "organic_social", "search_client", "recent_calls", "read_call", "rank_clients", "top_emails", "email_detail", "top_posts"]);
+const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "email_marketing", "organic_social", "social_score", "run_social_audit", "start_social_sprint", "search_client", "recent_calls", "read_call", "rank_clients", "top_emails", "email_detail", "top_posts"]);
 /** Per turn: the add-on tools loaded for this person, which the email and social teams get as well */
 const CHANNEL_EXTRA = new Set<string>(["make_deck"]);
 
@@ -555,6 +575,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           client: CLIENT,
           days: { type: "integer", minimum: 7, maximum: 90, description: "The period in days, through today (default 30). The comparison period before it is given when it fits in 90 days." },
           top_posts: { type: "integer", minimum: 1, maximum: 10, description: "How many top and weakest posts (default 3)" },
+          platform: { type: "string", enum: ["all", "instagram", "facebook", "tiktok"], description: "One platform's numbers alone (default all: every platform side by side, plus the totals)" },
         },
         additionalProperties: false,
       },
@@ -586,7 +607,71 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
             { title: "Posts", detail: `${r.posts_in_period} (${r.posts_per_week} a week)` },
           ],
         });
-        return { client: c.name, connected: true, ...r, read_only: "Nothing can be posted, edited or scheduled from Kaizen OS." };
+        // Every platform on its own, last 30 days (the Social board's numbers and the score per platform)
+        const score = await (await import("@/lib/social-score-load")).loadSocialScore(ctx.admin, c.id).catch(() => null);
+        const pick = ["instagram", "facebook", "tiktok"].includes(String(input.platform)) ? String(input.platform) : "all";
+        const per_platform = (score?.platforms ?? [])
+          .filter((p) => pick === "all" || p.platform === pick)
+          .map((p) => ({ platform: p.platform, score: p.score, band: p.band, ...socialNumbersOut(p.numbers) }));
+        return { client: c.name, connected: true, ...r, per_platform_last_30_days: per_platform, read_only: "Nothing can be posted, edited or scheduled from Kaizen OS." };
+      },
+    },
+    {
+      name: "social_score",
+      description:
+        "A client's organic social account score (0 to 100; green from 80, yellow from 60, red under 60): the overall, weighted by each platform's reach, and each platform's own (Instagram, Facebook, TikTok when read), with the eight checks against their bars (engagement rate against the client's target, 30 points; follower growth, 15; reach against the 30 days before, 15; posts against the package, 15; saves and shares per reach, 10; video share, 3.75; video against static, 3.75; profile visits per reach, 7.5) and what is weighing it down most, per platform, in points. The same score the Social board, the Overview, the audits and the reports use. Use it for 'how is X's social', 'why is the score low', 'what should we fix first'.",
+      input_schema: { type: "object", properties: { client: CLIENT, platform: { type: "string", enum: ["all", "instagram", "facebook", "tiktok"] } }, additionalProperties: false },
+      status: (input, client) => `Scoring ${nameFor(ctx, input) ?? client ?? "the client"}'s social…`,
+      run: async (input) => {
+        const c = await clientOf(ctx, input);
+        const score = await (await import("@/lib/social-score-load")).loadSocialScore(ctx.admin, c.id).catch(() => null);
+        if (!score) return { client: c.name, scored: false, note: "No social numbers yet: the Page or Instagram account isn't linked, or the first read hasn't finished." };
+        const { socialCheckText, PLATFORM_LABEL } = await import("@/lib/social-score");
+        const pick = ["instagram", "facebook", "tiktok"].includes(String(input.platform)) ? String(input.platform) : "all";
+        const check = (k: { label: string; unit: "pct" | "change" | "ratio"; value: number | null; bar: number; met: boolean; weight: number; points: number }) => ({ check: k.label, value: socialCheckText(k.unit, k.value), bar: socialCheckText(k.unit, k.bar), met: k.met, points: `${Math.round(k.points * 10) / 10} of ${k.weight}` });
+        const platforms = score.platforms.filter((p) => pick === "all" || p.platform === pick);
+        card({ type: "list", title: `${c.name} · social score ${score.score}`, items: score.platforms.map((p) => ({ title: PLATFORM_LABEL[p.platform], detail: `${p.score} · engagement ${p.numbers.rate != null ? `${(p.numbers.rate * 100).toFixed(1)}%` : "n/a"}` })) });
+        return {
+          client: c.name,
+          overall: { score: score.score, band: score.band, weighted_by: "each platform's reach" },
+          platforms: platforms.map((p) => ({ platform: p.platform, score: p.score, band: p.band, checks: p.checks.map(check), ...socialNumbersOut(p.numbers) })),
+          weighing_down: score.weighingDown.filter((d) => pick === "all" || d.platform === pick).slice(0, 6).map((d) => ({ platform: d.platform, check: d.label, value: socialCheckText(d.unit, d.value), bar: socialCheckText(d.unit, d.bar), costs_points: Math.max(1, Math.round(d.cost)) })),
+          posting_promise: score.promised.fromPackage ? `${score.promised.perMonth} posts a month per platform, from the package` : `No package says; ${score.promised.perMonth} a month per platform is the default bar`,
+          window: score.window,
+        };
+      },
+    },
+    {
+      name: "run_social_audit",
+      description: "Runs the organic social audit for a client as the person (the Social Strategist reads every platform against the social score: profile, content mix and cadence against the package, engagement quality, growth, top and bottom posts, hooks, formats, posting times) and writes the plan the team ticks off. A red account's audit opens its sprint by itself. One at a time per client; it takes a few minutes and uses AI credits.",
+      input_schema: { type: "object", properties: { client: CLIENT }, additionalProperties: false },
+      status: (input, client) => `Starting ${nameFor(ctx, input) ?? client ?? "the client"}'s social audit…`,
+      run: async (input) => {
+        const c = await clientOf(ctx, input);
+        const { requestSocialAudit, runSocialAudit } = await import("@/lib/social-ops/audit");
+        const out = await requestSocialAudit(ctx.db, ctx.admin, c.id, ctx.me.id);
+        if ("error" in out) return { client: c.name, started: false, error: out.error };
+        if (out.running) {
+          const { after } = await import("next/server");
+          after(() => runSocialAudit(ctx.admin, out.id));
+        }
+        card({ type: "list", title: `${c.name} · social audit`, items: [{ title: "Running now", detail: `/kpis/social-audit/${out.id}` }] });
+        return { client: c.name, started: true, audit: `/kpis/social-audit/${out.id}`, note: "It runs for a few minutes; the audit page fills in when it's done." };
+      },
+    },
+    {
+      name: "start_social_sprint",
+      description: "Opens a social sprint from the client's latest finished social audit as the person: every move on its plan, or one move by its number (1 first). The sprint re-measures the social score every few days and reads what went up. One live sprint per client.",
+      input_schema: { type: "object", properties: { client: CLIENT, move: { type: "integer", minimum: 1 } }, additionalProperties: false },
+      status: (input, client) => `Opening ${nameFor(ctx, input) ?? client ?? "the client"}'s social sprint…`,
+      run: async (input) => {
+        const c = await clientOf(ctx, input);
+        const { data: a } = await ctx.db.from("social_audits").select("id").eq("client_id", c.id).eq("status", "ready").order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (!a) return { client: c.name, started: false, error: "No finished social audit yet: run one first." };
+        const only = Number.isInteger(input.move) ? Number(input.move) - 1 : undefined;
+        const id = await (await import("@/lib/social-ops/sprint")).openSocialSprint(ctx.admin, a.id as string, ctx.me.id, only);
+        if (!id) return { client: c.name, started: false, error: "That audit has no moves to follow." };
+        return { client: c.name, started: true, sprint: `/kpis/social-sprint/${id}` };
       },
     },
     {
@@ -1031,7 +1116,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
 export function toolsFor<T extends { name: string; input_schema?: unknown }>(me: Who, tools: T[]): T[] {
   // The email and social teams: client lookup, shared context, calls and their own channel. Every other tool reads ad
   // data with the server's rights, so none of them are offered
-  if (isChannelOnly(me.role)) return tools.filter((t) => (CHANNEL_TOOLS.has(t.name) || CHANNEL_EXTRA.has(t.name)) && !(["email_marketing", "top_emails", "email_detail"].includes(t.name) && lineOfTeam(me.role) !== "email") && !(["organic_social", "top_posts"].includes(t.name) && lineOfTeam(me.role) !== "social"));
+  if (isChannelOnly(me.role)) return tools.filter((t) => (CHANNEL_TOOLS.has(t.name) || CHANNEL_EXTRA.has(t.name)) && !(["email_marketing", "top_emails", "email_detail"].includes(t.name) && lineOfTeam(me.role) !== "email") && !(["organic_social", "social_score", "run_social_audit", "start_social_sprint", "top_posts"].includes(t.name) && lineOfTeam(me.role) !== "social"));
   const p = roleWidePerms(me);
   const changeOn = (["meta", "google"] as const).filter((x) => p.change[x]);
   const drop = new Set<string>();

@@ -3,6 +3,7 @@ import { openCall, runCallTurn } from "@/lib/agent-call/server";
 import { runAssistantTurn } from "@/lib/assistant/turn";
 import type { CallEvent } from "@/lib/agent-call/core";
 import { parseCallContext } from "@/lib/agent-call/call-context";
+import { talkModeOf } from "@/lib/agent-call/modality";
 import { longTurnText } from "@/lib/agent-call/history";
 import { callTimer } from "@/lib/agent-call/timing";
 import { isRepeatTurn } from "@/lib/agent-call/transcript";
@@ -10,7 +11,7 @@ import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
-// One turn of a voice call with an agent: what the person said in, the agent's answer out as it's written (one JSON
+// One turn of a conversation with an agent (a voice call or a typed chat, the same pipeline): what the person said in, the agent's answer out as it's written (one JSON
 // event per line), then anything it learned. Talking over the agent aborts the request, which stops the model; what it
 // said so far is kept, and what it learned is still saved (finished after the response, see after()).
 // The assistant may keep checking on a report it started for a few minutes after the answer (after())
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
   const me = await timer.time("auth", requireStaff());
   if (!adminConfigured()) return Response.json({ error: "Not set up" }, { status: 503 });
   // With the turn: where they called from (a client, a report, a Kaizen AI thread) and, on a look, the screenshot
-  const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown; context?: unknown; frame?: unknown; path?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown; context?: unknown; frame?: unknown; path?: unknown; mode?: unknown } | null;
   const admin = createAdminClient();
   // The call, the person's own session (the tools read what they may see; taken here, while the request is still open)
   // and their last line, all at once
@@ -52,6 +53,8 @@ export async function POST(request: Request) {
   const frame = typeof body?.frame === "string" ? body.frame.slice(0, 300) : null;
   // The screen they're on right now (a path inside the app), for feedback filed from the call
   const path = typeof body?.path === "string" && body.path.startsWith("/") && !body.path.startsWith("//") ? body.path.slice(0, 500) : null;
+  // A call or a chat: the same turn, written to be spoken or to be read (modality.ts)
+  const mode = talkModeOf(body?.mode ?? call.mode);
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
@@ -67,7 +70,7 @@ export async function POST(request: Request) {
       // A line every few seconds while the answer is being worked out (tools, a long think), so nothing in between
       // closes a quiet stream and the call knows it's still working
       const ping = setInterval(() => emit({ t: "ping" }), 5000);
-      const work = (call.role_key === "assistant" ? runAssistantTurn : runCallTurn)({ me, admin, db, call, text, signal: request.signal, emit, context, frame, startedAt, path, timer })
+      const work = (call.role_key === "assistant" ? runAssistantTurn : runCallTurn)({ me, admin, db, call, text, signal: request.signal, emit, context, frame, startedAt, path, timer, mode })
         .then(() => {
           // Answered: the same words again in a moment are a repeat (a turn that failed may be said again)
           if (request.signal.aborted) return;

@@ -63,7 +63,7 @@ export const CALL_ROLES: Record<string, { label: string; icon: string }> = {
 };
 
 /** The agent for a client's line or service tab: Media Buyer for ads, Email Strategist for email, and so on */
-export function roleForService(service: string | null | undefined, opts: { desk?: "email" | null; platform?: "meta" | "google" | null; line?: "email" | "social" | null } = {}): string {
+export function roleForService(service: string | null | undefined, opts: { desk?: "email" | "social" | null; platform?: "meta" | "google" | null; line?: "email" | "social" | null } = {}): string {
   const s = (service ?? "").toLowerCase();
   if (s === "google") return "google_buyer";
   if (s === "meta" || s === "tiktok") return "media_buyer";
@@ -71,7 +71,7 @@ export function roleForService(service: string | null | undefined, opts: { desk?
   if (s === "social") return "social_strategist";
   if (s === "creative") return "creative_director";
   if (opts.desk === "email" || opts.line === "email") return "email_strategist";
-  if (opts.line === "social") return "social_strategist";
+  if (opts.desk === "social" || opts.line === "social") return "social_strategist";
   if (opts.platform === "google") return "google_buyer";
   return "media_buyer";
 }

@@ -64,8 +64,10 @@ export function firstNameOf(fullName: string | null | undefined): string {
 
 // ─── Picking up where you left off ──────────────────────────────────────────
 
-/** Called back within this many minutes of the last thing said: the same conversation carries on (a cut-off) */
-export const RESUME_CONTINUE_MINUTES = 10;
+/** Back within this many minutes of a call that ended abnormally (a drop, a closed tab): the same conversation carries on (a cut-off) */
+export const RESUME_CONTINUE_MINUTES = 15;
+/** Back within this many minutes of a conversation they ended themselves (hung up, said bye, closed the chat): "hey again" */
+export const RESUME_AGAIN_MINUTES = 10;
 /** Called again within this many hours the same day: "Hey again", remembering what was said */
 export const RESUME_SOON_HOURS = 4;
 /** The day a call falls on is New York's (where the team works), so a late call isn't "tomorrow" in UTC */
@@ -76,10 +78,42 @@ export const CALL_TIME_ZONE = "America/New_York";
  * happened), "soon" (a few hours later the same day: hey again), "later_today" (the morning's call, now the end of the
  * day: pick up or something new) or "fresh" (another day, or nothing was said last time).
  */
-export type ResumeMode = "continue" | "soon" | "later_today" | "fresh";
+export type ResumeMode = "continue" | "again" | "soon" | "later_today" | "fresh";
 
-/** The last call with the agent: when it was last talked in and how many turns it had */
-export type PreviousCall = { startedAt: string; endedAt: string | null; lastTurnAt: string | null; turns: number };
+/**
+ * How a conversation ended: the person hung up (the button), the agent ended it on a goodbye (or the person's last
+ * words were a parting line), the person closed the chat, or abnormally (a dropped connection, a closed tab, a crash,
+ * no end event at all). Only `dropped` is a cut-off worth apologising for.
+ */
+export type EndReason = "hangup" | "goodbye" | "chat_closed" | "dropped";
+export const END_REASONS: readonly EndReason[] = ["hangup", "goodbye", "chat_closed", "dropped"];
+export const isEndReason = (v: unknown): v is EndReason => typeof v === "string" && (END_REASONS as readonly string[]).includes(v);
+
+/** What closed it: the red button, the agent's goodbye (its end marker), the chat's close, or nothing deliberate */
+export type EndTrigger = "button" | "agent_end" | "chat_close" | "limit" | "unload" | "sweep" | "error" | null | undefined;
+
+/** A parting line ("ok bye", "thanks, that's all", "talk later"): said last, the end was on purpose even with no button */
+const PARTING = /\b(?:bye|goodbye|good night|see (?:you|ya)|talk (?:to you )?(?:later|soon|tomorrow)|catch you later|that'?s (?:all|it)(?: for (?:now|today))?|i'?m (?:done|all set)|have a good (?:one|day|night|evening|weekend))\b/i;
+export const soundsLikeParting = (text: string | null | undefined) => PARTING.test(String(text ?? "").trim());
+
+/**
+ * Why a conversation ended, from what closed it and its last lines. A button or chat close is deliberate; the agent's
+ * end marker is a goodbye; anything else (the tab closed, the line dropped, the sweep found it open) is a drop, unless
+ * the last words either side said were a parting line (they said bye, then closed the tab).
+ */
+export function endReasonFor(input: { trigger: EndTrigger; lastUser?: string | null; lastAgent?: string | null }): EndReason {
+  if (input.trigger === "button") return "hangup";
+  if (input.trigger === "agent_end") return "goodbye";
+  if (input.trigger === "chat_close") return "chat_closed";
+  if (soundsLikeParting(input.lastUser) || soundsLikeParting(input.lastAgent)) return "goodbye";
+  return "dropped";
+}
+
+/** Ended on purpose (no apology for a cut-off when they come back) */
+export const deliberateEnd = (reason: EndReason | null | undefined) => reason === "hangup" || reason === "goodbye" || reason === "chat_closed";
+
+/** The last call with the agent: when it was last talked in, how many turns it had and how it ended (null: unknown, as a drop) */
+export type PreviousCall = { startedAt: string; endedAt: string | null; lastTurnAt: string | null; turns: number; endReason?: EndReason | null };
 
 const dayIn = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: CALL_TIME_ZONE });
 
@@ -93,7 +127,10 @@ export function resumeModeFor(prev: PreviousCall | null, now: Date = new Date())
   const at = lastAliveAt(prev);
   if (!Number.isFinite(at)) return "fresh";
   const gap = now.getTime() - at;
-  if (gap <= RESUME_CONTINUE_MINUTES * 60_000) return "continue";
+  // Ended on purpose a moment ago: hey again, no apology and no assuming the topic carries on
+  if (deliberateEnd(prev.endReason)) {
+    if (gap <= RESUME_AGAIN_MINUTES * 60_000) return "again";
+  } else if (gap <= RESUME_CONTINUE_MINUTES * 60_000) return "continue";
   if (dayIn(new Date(at)) !== dayIn(now)) return "fresh";
   if (gap <= RESUME_SOON_HOURS * 3_600_000) return "soon";
   return "later_today";
@@ -120,6 +157,11 @@ const GREETINGS: Record<ResumeMode, { withTopic: string[]; plain: string[] }> = 
     withTopic: ["Sorry {name}, we got cut off. You were asking about {topic}.", "Sorry about that, {name}, we got cut off. We were on {topic}.", "{name}, sorry, the line dropped. You were asking about {topic}."],
     plain: ["Sorry {name}, we got cut off. Where were we?", "Sorry about that, {name}, the line dropped. Go ahead."],
   },
+  // Back a few minutes after ending it themselves: casual, and the topic only when something was left unfinished
+  again: {
+    withTopic: ["Hey again, {name}! What's up? We can finish {topic} if you like.", "{name}, hey again! Something new, or back to {topic}?", "Oh hey again, {name}. What's up? Still need {topic}?"],
+    plain: ["Hey again, {name}! What's up?", "{name}! Back already. What's up?", "Oh hey again, {name}. What can I do?", "Hey again! What's up, {name}?"],
+  },
   soon: {
     withTopic: ["Hey again, {name}! Good to hear from you so soon. More on {topic}, or something else?", "{name}, hey again! Back so soon. What's up?"],
     plain: ["Hey again, {name}! Good to hear from you so soon. What's up?", "{name}, hey again! Back so soon. What can I do?"],
@@ -143,6 +185,26 @@ export function greetingFor(fullName: string | null | undefined, roleLabel: stri
   const line = list[Math.abs(Math.trunc(seed)) % list.length];
   const out = line.replace("{name}", name).replace("{label}", roleLabel).replace("{topic}", t ?? "");
   return out.charAt(0).toUpperCase() + out.slice(1);
+}
+
+/**
+ * The agent's first line after the conversation moves between chat and a call (the same conversation, no fresh
+ * greeting): "Picking up where we left off: the Crust report."
+ */
+export function handoverLine(topic: string | null | undefined): string {
+  const t = topicPhrase(topic);
+  return t ? `Picking up where we left off: ${t}.` : "Picking up where we left off. Go ahead.";
+}
+
+/**
+ * Whether the last conversation left something open (a job still running, or the agent's last line was a question or
+ * an offer): only then does a quick "hey again" mention the topic.
+ */
+export function leftUnfinished(input: { jobOpen?: boolean; lastAgent?: string | null }): boolean {
+  if (input.jobOpen) return true;
+  const last = String(input.lastAgent ?? "").trim();
+  if (!last || soundsLikeParting(last)) return false;
+  return /\?\s*$/.test(last) || /\b(?:shall i|want me to|should i|do you want)\b/i.test(last);
 }
 
 /** A number from a string (a call's id), to pick a greeting with */
@@ -606,6 +668,8 @@ export type CallEvent =
   | { t: "look" }
   // The agent said goodbye: the call hangs up once its last words have played
   | { t: "end" }
+  // Carry the same conversation on in the other way (they asked to switch to a chat, or to a call)
+  | { t: "switch"; to: "voice" | "text" }
   // Still working (sent every few seconds while a long answer or a tool is under way, so the line stays open)
   | { t: "ping" }
   // Where the turn's time went (one compact line, for the hidden debug overlay)

@@ -143,7 +143,7 @@ describe("a connector action waits for a spoken yes", () => {
 
 describe("the Social Strategist", () => {
   it("is a role agent on its own line, trained by the Head of Organic Social", () => {
-    expect(ROLE_SKILLS.social_strategist).toEqual([]);
+    expect(ROLE_SKILLS.social_strategist).toEqual(["social_audit", "social_desk"]);
     expect(lineOfRole("social_strategist")).toBe("social");
     expect(canTrainAgent({ role: "head_of_social", isExec: false }, "social_strategist")).toBe(true);
     expect(canTrainAgent({ role: "social_media_manager", isExec: false }, "social_strategist")).toBe(false);

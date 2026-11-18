@@ -40,7 +40,7 @@ describe("how a call follows the last one", () => {
   });
 
   it("says hey again a few hours later the same day", () => {
-    expect(resumeModeFor(prev("2026-11-17T15:45:00-05:00"), now)).toBe("soon");
+    expect(resumeModeFor(prev("2026-11-17T15:40:00-05:00"), now)).toBe("soon");
     expect(resumeModeFor(prev(new Date(now.getTime() - RESUME_SOON_HOURS * 3_600_000).toISOString()), now)).toBe("soon");
   });
 

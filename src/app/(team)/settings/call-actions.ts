@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
-import { CALL_LIMIT_SECONDS, assistantVoiceFor, decide, firstNameOf, greetingFor, isVoiceId, pendingOf, resumeModeFor, seedOf, statusOf, voiceFor, type Decision, type LearnedItem, type ResumeMode } from "@/lib/agent-call/core";
-import { summarizeCall, sweepOpenCalls } from "@/lib/agent-call/server";
+import { CALL_LIMIT_SECONDS, assistantVoiceFor, decide, firstNameOf, greetingFor, handoverLine, isEndReason, isVoiceId, leftUnfinished, pendingOf, resumeModeFor, seedOf, statusOf, voiceFor, type Decision, type EndTrigger, type LearnedItem, type ResumeMode } from "@/lib/agent-call/core";
+import { CHAT_LIMIT_SECONDS, parseModeLog, stillOpen, talkModeOf, type TalkMode } from "@/lib/agent-call/modality";
+import { currentTopic, endReasonOf, saveEndReason, summarizeCall, sweepOpenCalls } from "@/lib/agent-call/server";
 import { reviewCallSafety } from "@/lib/agent-call/safety";
 import { ASSISTANT_KEY, ASSISTANT_LABEL, assistantGreeting } from "@/lib/assistant/core";
 import { formatTranscript, transcriptFileName } from "@/lib/agent-call/transcript";
@@ -28,43 +29,73 @@ import { chatWithAgent } from "./actions";
 type Fail = { ok: false; error: string; needsNotice?: boolean };
 const NOT_YOURS: Fail = { ok: false, error: "Only an executive or the head of this agent's line can change what it knows." };
 
-export type StartedCall = { ok: true; callId: string; greeting: string; sttToken: string | null; limitSeconds: number; startedAt: string; mode: ResumeMode; canTeach: boolean };
+export type StartedCall = { ok: true; callId: string; greeting: string; sttToken: string | null; limitSeconds: number; startedAt: string; mode: ResumeMode; canTeach: boolean; talk: TalkMode };
 
-/** Pick up: the call's row, the greeting (kept in the chat as the agent's first line) and a speech to text token */
-export async function startCall(roleKey: string): Promise<StartedCall | Fail> {
+/** The last conversation with an agent, as the greeting reads it (how it ended, whether something was left open) */
+async function lastConversation(admin: ReturnType<typeof createAdminClient>, profileId: string, roleKey: string) {
+  const pick = (cols: string) => admin.from("ai_role_calls").select(cols).eq("profile_id", profileId).eq("role_key", roleKey).order("started_at", { ascending: false }).limit(1).maybeSingle();
+  let res = (await pick("id, started_at, ended_at, last_turn_at, turns, topic, end_reason, job")) as unknown as { data: Record<string, unknown> | null; error: unknown };
+  // Before the chat migration: no end reason (a drop, as before)
+  if (res.error) res = (await pick("id, started_at, ended_at, last_turn_at, turns, topic")) as unknown as { data: Record<string, unknown> | null; error: unknown };
+  return res.data;
+}
+
+/**
+ * Pick up: the conversation's row, the greeting (kept as the agent's first line) and, for a call, a speech to text
+ * token. `talk`: a voice call (the default) or a typed chat with the assistant; both are the same conversation and
+ * turn pipeline, and either can move to the other (switchCallMode).
+ */
+export async function startCall(roleKey: string, opts: { talk?: TalkMode } = {}): Promise<StartedCall | Fail> {
   const me = await requireStaff();
+  const talk = talkModeOf(opts.talk);
   if (!canTalkToAgent(me, roleKey)) return { ok: false, error: "That isn't one of the agents." };
   if (!aiEnabled()) return { ok: false, error: "AI isn't connected yet." };
-  if (!elevenlabsConfigured()) return { ok: false, error: "Calls need ElevenLabs: an exec adds ELEVENLABS_API_KEY in Vercel." };
+  if (talk === "voice" && !elevenlabsConfigured()) return { ok: false, error: "Calls need ElevenLabs: an exec adds ELEVENLABS_API_KEY in Vercel." };
   const admin = createAdminClient();
-  // The one-time notice that calls are recorded and may be reviewed, before the first call of any kind
-  if (!(await noticeAcked(admin, me.id))) return { ok: false, error: "Calls with Kaizen's AI are recorded and may be reviewed for safety and compliance.", needsNotice: true };
+  // The one-time notice that conversations with Kaizen's AI are recorded and may be reviewed, before the first of any kind
+  if (!(await noticeAcked(admin, me.id))) return { ok: false, error: "Calls and chats with Kaizen's AI are recorded and may be reviewed for safety and compliance.", needsNotice: true };
   const { data: role } = await admin.from("ai_roles").select("*").eq("key", roleKey).maybeSingle();
   if (!role) return { ok: false, error: "Unknown agent." };
-  // A call of theirs never hung up (a closed tab, a dropped line) is closed first; what it heard stays for review
+  // A conversation of theirs never ended (a closed tab, a dropped line) is closed first, with how it ended (a drop,
+  // unless its last words were a goodbye); what it heard stays for review
   const swept = await sweepOpenCalls(admin, { profileId: me.id }).catch(() => ({ closed: [] as string[] }));
   for (const id of swept.closed) after(() => summarizeCall(admin, id));
-  // How this call follows their last one with this agent
-  const { data: prev } = await admin.from("ai_role_calls").select("id, started_at, ended_at, last_turn_at, turns, topic").eq("profile_id", me.id).eq("role_key", roleKey).order("started_at", { ascending: false }).limit(1).maybeSingle();
-  const mode = prev ? resumeModeFor({ startedAt: prev.started_at as string, endedAt: (prev.ended_at as string | null) ?? null, lastTurnAt: (prev.last_turn_at as string | null) ?? null, turns: Number(prev.turns ?? 0) }) : "fresh";
-  // ElevenLabs' realtime speech to text when it hands out a token; the browser's own listening otherwise
-  const sttToken = await realtimeSttToken(CALL_LIMIT_SECONDS + 60).catch((e) => {
-    console.error("[agent call] speech token", e instanceof Error ? e.message : e);
-    return null;
-  });
+  // How this one follows their last one with this agent: a cut-off, a quick "hey again" after they ended it, a few
+  // hours later, later the same day, or a fresh start
+  const prev = await lastConversation(admin, me.id, roleKey);
+  const endReason = isEndReason(prev?.end_reason) ? prev.end_reason : null;
+  const mode = prev ? resumeModeFor({ startedAt: prev.started_at as string, endedAt: (prev.ended_at as string | null) ?? null, lastTurnAt: (prev.last_turn_at as string | null) ?? null, turns: Number(prev.turns ?? 0), endReason }) : "fresh";
+  // ElevenLabs' realtime speech to text when it hands out a token (a call); the browser's own listening otherwise
+  const sttToken =
+    talk === "voice"
+      ? await realtimeSttToken(CALL_LIMIT_SECONDS + 60).catch((e) => {
+          console.error("[agent call] speech token", e instanceof Error ? e.message : e);
+          return null;
+        })
+      : null;
   const roleVoice = (role as { voice_id?: string | null }).voice_id;
   // The assistant speaks in the voice its person picked (theirs alone), else the assistant's voice for everyone
   const personal = roleKey === ASSISTANT_KEY ? await personalVoice(admin, me.id) : null;
-  const row = { role_key: roleKey, profile_id: me.id, voice_id: roleKey === ASSISTANT_KEY ? assistantVoiceFor(personal, roleVoice) : voiceFor(roleKey, roleVoice), stt: sttToken ? "scribe" : "browser" };
+  const row = { role_key: roleKey, profile_id: me.id, voice_id: roleKey === ASSISTANT_KEY ? assistantVoiceFor(personal, roleVoice) : voiceFor(roleKey, roleVoice), stt: talk === "text" ? null : sttToken ? "scribe" : "browser" };
+  const resumed = { resumed_from: mode === "fresh" ? null : ((prev?.id as string | undefined) ?? null) };
   let { data: call, error } = await admin
     .from("ai_role_calls")
-    .insert({ ...row, resumed_from: mode === "fresh" ? null : (prev?.id ?? null), resume_mode: mode })
+    .insert({ ...row, ...resumed, resume_mode: mode, mode: talk, mode_log: [{ mode: talk, at: new Date().toISOString() }] })
     .select("id, started_at")
     .single();
+  // Before the chat migration: no mode, and "again" reads as a quick call back
+  if (error) ({ data: call, error } = await admin.from("ai_role_calls").insert({ ...row, ...resumed, resume_mode: mode === "again" ? "soon" : mode }).select("id, started_at").single());
   // Before the review migration: a plain call
   if (error) ({ data: call, error } = await admin.from("ai_role_calls").insert(row).select("id, started_at").single());
   if (error || !call) return { ok: false, error: error?.message ?? "Couldn't start the call." };
-  let greeting = greetingFor(me.fullName, role.label as string, mode, (prev?.topic as string | null) ?? null, seedOf(call.id as string));
+  // Back a moment after ending it themselves: the topic only when something was left open (a job running, a question)
+  let topic = (prev?.topic as string | null) ?? null;
+  if (mode === "again" && prev) {
+    const { data: lastAgent } = await admin.from("ai_role_chats").select("content").eq("call_id", prev.id as string).neq("role", "user").order("created_at", { ascending: false }).limit(1).maybeSingle();
+    const job = prev.job as { status?: string } | null | undefined;
+    if (!leftUnfinished({ jobOpen: job?.status === "open", lastAgent: (lastAgent?.content as string | null) ?? null })) topic = null;
+  }
+  let greeting = greetingFor(me.fullName, role.label as string, mode, topic, seedOf(call.id as string));
   // The assistant: a hello that remembers them (a birthday, how the trip went), unless the line just dropped
   if (roleKey === ASSISTANT_KEY && mode !== "continue") {
     const memory = await loadMemory(admin, me.id);
@@ -74,7 +105,90 @@ export async function startCall(roleKey: string): Promise<StartedCall | Fail> {
     if (hello.followed) await markFollowedUp(admin, me.id, hello.followed);
   }
   await admin.from("ai_role_chats").insert({ role_key: roleKey, role: "agent", content: greeting, attachments: [], changes: [], created_by: me.id, call_id: call.id });
-  return { ok: true, callId: call.id as string, greeting, sttToken, limitSeconds: CALL_LIMIT_SECONDS, startedAt: call.started_at as string, mode, canTeach: canTrainAgent(me, roleKey) };
+  return { ok: true, callId: call.id as string, greeting, sttToken, limitSeconds: talk === "text" ? CHAT_LIMIT_SECONDS : CALL_LIMIT_SECONDS, startedAt: call.started_at as string, mode, canTeach: canTrainAgent(me, roleKey), talk };
+}
+
+// ─── One conversation, a call or a chat ─────────────────────────────────────
+
+/** A line of the conversation as the chat window shows it */
+export type ThreadLine = { who: "you" | "agent"; text: string; at: string; speaker: { role: string; label: string; icon: string } | null };
+
+/** The conversation's lines, oldest first (the newest `limit`), with who said each */
+async function threadLines(admin: ReturnType<typeof createAdminClient>, callId: string, limit = 120): Promise<ThreadLine[]> {
+  const [{ data: rows }, { data: roles }] = await Promise.all([
+    admin.from("ai_role_chats").select("role, content, role_key, created_at").eq("call_id", callId).order("created_at", { ascending: false }).limit(limit),
+    admin.from("ai_roles").select("key, label, icon"),
+  ]);
+  const of = new Map((roles ?? []).map((r) => [r.key as string, { label: r.label as string, icon: ((r.icon as string | null) ?? "spark") as string }]));
+  return ((rows ?? []) as { role: string; content: string; role_key: string | null; created_at: string }[])
+    .slice()
+    .reverse()
+    .map((r) => {
+      const key = r.role_key ?? ASSISTANT_KEY;
+      const who = r.role === "user" ? ("you" as const) : ("agent" as const);
+      const speaker = who === "agent" ? { role: key, label: key === ASSISTANT_KEY ? ASSISTANT_LABEL : (of.get(key)?.label ?? "Agent"), icon: key === ASSISTANT_KEY ? "spark" : (of.get(key)?.icon ?? "spark") } : null;
+      return { who, text: String(r.content ?? ""), at: r.created_at, speaker };
+    });
+}
+
+export type OpenedChat = { ok: true; callId: string; startedAt: string; lines: ThreadLine[]; earlier: ThreadLine[]; resumed: boolean; canTeach: boolean };
+
+/**
+ * Chat with the assistant: their chat still open (a reload, another tab) picks up with its lines; otherwise a new
+ * conversation starts (its greeting follows the same rules as a call's), with the last few lines of the one before
+ * shown above it.
+ */
+export async function openAssistantChat(): Promise<OpenedChat | Fail> {
+  const me = await requireStaff();
+  const admin = createAdminClient();
+  const { data: open, error } = await admin.from("ai_role_calls").select("id, started_at, last_turn_at, mode, mode_log").eq("profile_id", me.id).eq("role_key", ASSISTANT_KEY).is("ended_at", null).eq("mode", "text").order("started_at", { ascending: false }).limit(1).maybeSingle();
+  if (!error && open && stillOpen({ mode: "text", startedAt: open.started_at as string, lastTurnAt: (open.last_turn_at as string | null) ?? null, log: parseModeLog(open.mode_log), callLimitSeconds: CALL_LIMIT_SECONDS })) {
+    return { ok: true, callId: open.id as string, startedAt: open.started_at as string, lines: await threadLines(admin, open.id as string), earlier: [], resumed: true, canTeach: canTrainAgent(me, ASSISTANT_KEY) };
+  }
+  const r = await startCall(ASSISTANT_KEY, { talk: "text" });
+  if (!r.ok) return r;
+  const { data: row } = await admin.from("ai_role_calls").select("resumed_from").eq("id", r.callId).maybeSingle();
+  const before = (row?.resumed_from as string | null) ?? null;
+  const [lines, earlier] = await Promise.all([threadLines(admin, r.callId), before ? threadLines(admin, before, 12) : Promise.resolve([] as ThreadLine[])]);
+  return { ok: true, callId: r.callId, startedAt: r.startedAt, lines, earlier, resumed: false, canTeach: r.canTeach };
+}
+
+export type SwitchedCall = { ok: true; line: string; sttToken: string | null; limitSeconds: number; since: string; lines: ThreadLine[] };
+
+/**
+ * The same conversation carries on in the other mode ("Call" in the chat, "Switch to chat" on a call, or the
+ * assistant's switch_mode): the mode and when it moved are kept on the conversation, and the agent picks up with one
+ * line ("Picking up where we left off: the Crust report."), never a fresh greeting. A call gets its speech to text
+ * token, and its thirty minutes count from now.
+ */
+export async function switchCallMode(callId: string, to: TalkMode): Promise<SwitchedCall | Fail> {
+  const me = await requireStaff();
+  if (!/^[0-9a-f-]{36}$/.test(callId)) return { ok: false, error: "That conversation isn't there." };
+  const talk = talkModeOf(to);
+  if (talk === "voice" && !elevenlabsConfigured()) return { ok: false, error: "Calls need ElevenLabs: an exec adds ELEVENLABS_API_KEY in Vercel." };
+  const admin = createAdminClient();
+  const { data: call, error } = await admin.from("ai_role_calls").select("id, profile_id, role_key, ended_at, mode, mode_log").eq("id", callId).maybeSingle();
+  if (error) return { ok: false, error: "Switching needs the latest update. Try again in a moment." };
+  if (!call || call.profile_id !== me.id || call.ended_at || !canTalkToAgent(me, call.role_key as string)) return { ok: false, error: "This conversation has ended." };
+  const since = new Date().toISOString();
+  const log = [...parseModeLog(call.mode_log), { mode: talk, at: since }].slice(-200);
+  const [sttToken, topic] = await Promise.all([
+    talk === "voice"
+      ? realtimeSttToken(CALL_LIMIT_SECONDS + 60).catch((e) => {
+          console.error("[agent call] speech token", e instanceof Error ? e.message : e);
+          return null;
+        })
+      : Promise.resolve(null),
+    currentTopic(admin, callId).catch(() => null),
+  ]);
+  const { error: e } = await admin
+    .from("ai_role_calls")
+    .update({ mode: talk, mode_log: log, ...(talk === "voice" ? { stt: sttToken ? "scribe" : "browser" } : {}) })
+    .eq("id", callId);
+  if (e) return { ok: false, error: "Couldn't switch. Try again." };
+  const line = handoverLine(topic);
+  await admin.from("ai_role_chats").insert({ role_key: call.role_key, role: "agent", content: line, attachments: [], changes: [], created_by: me.id, call_id: callId });
+  return { ok: true, line, sttToken, limitSeconds: talk === "voice" ? CALL_LIMIT_SECONDS : CHAT_LIMIT_SECONDS, since, lines: talk === "text" ? await threadLines(admin, callId) : [] };
 }
 
 /** The voice a person picked for their own assistant (null before the migration, or when they haven't) */
@@ -99,14 +213,28 @@ export async function renewSttToken(callId: string): Promise<{ ok: true; token: 
   }
 }
 
-export type EndedCall = { ok: true; seconds: number; learned: LearnedItem[]; canReview: boolean; skills: Record<string, string> };
+/** A short speech to text token for dictating into the chat (the mic in the chat's input; replies stay text) */
+export async function dictationToken(callId: string): Promise<{ ok: true; token: string } | Fail> {
+  const me = await requireStaff();
+  if (!/^[0-9a-f-]{36}$/.test(callId)) return { ok: false, error: "That conversation isn't there." };
+  if (!elevenlabsConfigured()) return { ok: false, error: "Dictation needs ElevenLabs." };
+  const { data: call } = await createAdminClient().from("ai_role_calls").select("profile_id, role_key, ended_at").eq("id", callId).maybeSingle();
+  if (!call || call.profile_id !== me.id || call.ended_at || !canTalkToAgent(me, call.role_key as string)) return { ok: false, error: "This conversation has ended." };
+  try {
+    return { ok: true, token: await realtimeSttToken(10 * 60) };
+  } catch {
+    return { ok: false, error: "Couldn't start dictation." };
+  }
+}
+
+export type EndedCall ={ ok: true; seconds: number; learned: LearnedItem[]; canReview: boolean; skills: Record<string, string> };
 
 /**
  * Hang up: the call is closed, its cost logged with the other AI runs (ElevenLabs characters and seconds listened),
  * a short summary written after it (for later calls today), and what it heard comes back for the review. Nothing
  * heard is written yet. Safe to call twice.
  */
-export async function endCall(callId: string): Promise<EndedCall | Fail> {
+export async function endCall(callId: string, how: EndTrigger = null): Promise<EndedCall | Fail> {
   const me = await requireStaff();
   const admin = createAdminClient();
   const { data: call } = await admin.from("ai_role_calls").select("id, role_key, profile_id, stt, started_at, ended_at, tts_characters, learned").eq("id", callId).maybeSingle();
@@ -136,6 +264,9 @@ export async function endCall(callId: string): Promise<EndedCall | Fail> {
       actor: "person",
     });
     after(() => summarizeCall(admin, callId));
+    // How it ended (hung up, a goodbye, the chat closed, or a drop), for how the next one greets them
+    // (kept now, not after: a call back a moment later reads it)
+    await saveEndReason(admin, callId, await endReasonOf(admin, callId, how).catch(() => "dropped" as const));
     // The assistant's notes and what it learned about the person (their private memory), then every call's safety review
     if (call.role_key === ASSISTANT_KEY) {
       after(() => writeCallNotes(admin, callId).then(() => undefined));

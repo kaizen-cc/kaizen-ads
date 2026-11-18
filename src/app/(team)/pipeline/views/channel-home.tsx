@@ -3,6 +3,8 @@ import { EmailOpsOverview } from "@/app/(team)/kpis/email-ops-overview";
 import { ChannelSpark } from "@/components/channel-spark";
 import { ChannelStatusPill, ConnectCta, Gauge, SupportChips, TONE, mainCaption, mainText, needsConnecting, paceLine, targetText } from "@/components/channel-parts";
 import { BAND_TONE, ScoreBadge, WeighingDown } from "@/components/email-score-parts";
+import { SocialWeighingDown } from "@/components/social-score-parts";
+import { PLATFORM_LABEL } from "@/lib/social-score";
 import { loadChannelBoard, riskForRow, type ChannelRow } from "@/lib/channel-kpis/load";
 import { moneyShort, orderByRisk, pctText, type Line, type Risk } from "@/lib/channel-kpis/calc";
 import { roleLabel, type TeamRole } from "@/lib/roles";
@@ -50,15 +52,17 @@ export async function ChannelHome({ me, line, today, greeting, firstName, recap 
   const close = live.filter((r) => r.status === "close").length;
   const good = live.filter((r) => r.status === "good" || r.status === "excellent").length;
 
-  const scored = live.filter((r) => r.score);
-  const avg = scored.length ? Math.round(scored.reduce((t, r) => t + (r.score?.score ?? 0), 0) / scored.length) : null;
+  // The account score: email's, or social's overall (every platform weighted by reach)
+  const scoreOf = (r: Ranked) => r.score?.score ?? r.socialScore?.score ?? null;
+  const scored = live.filter((r) => scoreOf(r) != null);
+  const avg = scored.length ? Math.round(scored.reduce((t, r) => t + (scoreOf(r) ?? 0), 0) / scored.length) : null;
   const mtd = live.reduce((t, r) => t + (r.line === "email" ? (r.value ?? 0) : 0), 0);
   const reach = live.reduce((t, r) => t + (r.social?.reach ?? 0), 0);
   const inter = live.reduce((t, r) => t + (r.social?.interactions ?? 0), 0);
   const stats = [
     line === "email"
       ? { label: "Average score", value: avg ?? "n/a", hint: `${moneyShort(mtd)} attributed revenue this month`, tone: avg == null ? undefined : avg >= 80 ? ("ok" as const) : avg >= 60 ? ("warn" as const) : ("bad" as const) }
-      : { label: "Engagement this month", value: pctText(reach > 0 ? inter / reach : null), hint: "Interactions over reach, all your clients" },
+      : { label: "Engagement this month", value: pctText(reach > 0 ? inter / reach : null), hint: `Interactions over reach, all your clients${avg != null ? ` · average social score ${avg}` : ""}`, tone: avg == null ? undefined : avg >= 80 ? ("ok" as const) : avg >= 60 ? ("warn" as const) : ("bad" as const) },
     { label: line === "email" ? "Red or yellow" : "Off or close", value: off + close, hint: line === "email" ? (off ? `${off} red${close ? `, ${close} yellow` : ""}` : close ? `${close} yellow` : "None slipping") : off ? `${off} off target` : close ? `${close} close` : "None slipping", tone: off ? ("bad" as const) : close ? ("warn" as const) : ("ok" as const) },
     { label: line === "email" ? "Green" : "On target", value: good, hint: line === "email" ? "Score 80 and up" : "At or better than target", tone: good ? ("ok" as const) : undefined },
     { label: "Need connecting", value: connecting.length, hint: connecting.length ? (line === "email" ? "Klaviyo key missing or failing" : "Page or Instagram not linked") : "All reading", tone: connecting.length ? ("warn" as const) : ("ok" as const) },
@@ -115,7 +119,7 @@ export async function ChannelHome({ me, line, today, greeting, firstName, recap 
           )}
 
           {/* Email: what the audits and sprints say, and the campaign ideas waiting on someone, across these clients */}
-          {line === "email" && <EmailOpsOverview clients={ranked.map((r) => ({ id: r.clientId, name: r.name, slug: r.slug }))} />}
+          <EmailOpsOverview line={line} clients={ranked.map((r) => ({ id: r.clientId, name: r.name, slug: r.slug }))} />
 
           {connecting.length > 0 && (
             <section id="connecting" className="grid scroll-mt-24 gap-3">
@@ -195,6 +199,16 @@ function Card({ r }: { r: Ranked }) {
               pace && <span className="truncate text-[11.5px] text-muted">{pace}</span>
             )}
             <ChannelSpark values={r.series} span={r.span} goal={goal} tone={tone.text} label={`${r.name} trend`} />
+            {r.socialScore && (
+              <div className="grid gap-1.5 border-t border-line pt-2">
+                <span className="flex flex-wrap items-baseline gap-x-2 text-xs">
+                  <span className="text-faint">Social score</span>
+                  <span className={`tabular font-heading text-[16px] ${BAND_TONE[r.socialScore.band].text}`}>{r.socialScore.score}</span>
+                  {r.socialScore.platforms.length > 1 && <span className="tabular text-faint">{r.socialScore.platforms.map((p) => `${PLATFORM_LABEL[p.platform]} ${p.score}`).join(" · ")}</span>}
+                </span>
+                <SocialWeighingDown drags={r.socialScore.weighingDown} limit={2} />
+              </div>
+            )}
           </>
         )}
         <SupportChips r={r} />

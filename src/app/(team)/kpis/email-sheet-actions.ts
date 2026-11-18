@@ -2,6 +2,7 @@
 
 import { requireStaff } from "@/lib/auth";
 import type { EmailAuditResult } from "@/lib/email-ops/audit-core";
+import type { SocialAuditResult } from "@/lib/social-ops/audit-core";
 import { changeReadState, loadAccountChanges, type AccountChange } from "@/lib/email-ops/changes";
 import { loadSuggestions } from "@/lib/email-ops/load";
 import { earliestDay, type EmailDay, type SentCampaign } from "@/lib/email-ops/windows";
@@ -24,7 +25,8 @@ export type SheetAudit = {
   auto: boolean;
   by: string | null;
   error: string | null;
-  result: EmailAuditResult | null;
+  /** The email audit's result, or the social audit's on the Social sheet (the same shape, social's areas and owners) */
+  result: EmailAuditResult | SocialAuditResult | null;
   done: Record<string, { by: string; at: string }>;
 };
 

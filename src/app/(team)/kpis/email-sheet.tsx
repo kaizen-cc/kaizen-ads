@@ -12,7 +12,8 @@ import { field, label as labelCls } from "@/components/ui";
 import { moneyShort, pctText, type Month } from "@/lib/channel-kpis/calc";
 import type { ChannelRow } from "@/lib/channel-kpis/types";
 import { freshness } from "@/lib/dates";
-import { AREA_LABEL, OWNER_LABEL, type EmailAction } from "@/lib/email-ops/audit-core";
+import { AREA_LABEL as EMAIL_AREA_LABEL, OWNER_LABEL as EMAIL_OWNER_LABEL, type EmailAction } from "@/lib/email-ops/audit-core";
+import { SOCIAL_AREA_LABEL, SOCIAL_OWNER_LABEL } from "@/lib/social-ops/audit-core";
 import { activeDays, agoShort, changeText, lastManual } from "@/lib/email-ops/changes-core";
 import { CALENDAR, ROLLING, WINDOW_LABEL, daysInMonth, gapOf, gapTone, momentum, trendSeries, windowNumbers, type TrendMetric, type WindowNumbers } from "@/lib/email-ops/windows";
 import { EMAIL_CHECKS } from "@/lib/email-score";
@@ -25,7 +26,7 @@ import { BoardBreakdown } from "./board-breakdown";
 import { BoardLocations } from "./board-locations";
 import { setChannelTarget } from "./channel-actions";
 import { EmailActionCard, RunEmailAudit, SprintControls, SprintMove } from "./email-ops-parts";
-import { startEmailSprint } from "./email-ops-actions";
+import { startEmailSprint, type OpsLine } from "./email-ops-actions";
 import { loadEmailSheet, type EmailSheet, type SheetAudit, type SheetSprint } from "./email-sheet-actions";
 import { EmailTrendChart } from "./email-trend-chart";
 import { TargetGauge } from "./kpi-charts";
@@ -35,6 +36,12 @@ import { TargetGauge } from "./kpi-charts";
 // numbers, the campaigns, the flows, the audit and its sprint, the notes and change history, and the settings. The tab
 // and the views inside it live in the address, so the browser's back walks through them. What the board doesn't carry
 // (the days behind each window, the audit, the sprint, the change history) is read when the sheet opens.
+
+// The audit card, the sprint panel and the sprint strip are shared with the Social sheet (social-sheet.tsx): `line` picks
+// the email or the social audit and sprint
+const AREA_LABEL: Record<string, string> = { ...EMAIL_AREA_LABEL, ...SOCIAL_AREA_LABEL };
+const OWNER_LABEL: Record<string, string> = { ...EMAIL_OWNER_LABEL, ...SOCIAL_OWNER_LABEL };
+const LINE_NAME: Record<OpsLine, string> = { email: "Email", social: "Social" };
 
 type Tab = "overview" | "numbers" | "campaigns" | "flows" | "actions" | "notes" | "settings";
 const TABS: Tab[] = ["overview", "numbers", "campaigns", "flows", "actions", "notes", "settings"];
@@ -410,7 +417,7 @@ function NextMove({ r, sheet, loading, onTab }: { r: ChannelRow; sheet: EmailShe
             <span className="font-heading text-[17px] leading-snug">{next?.title ?? firstAction!.title}</span>
             {(next?.impact ?? firstAction?.impact) && <span className="line-clamp-2 text-sm leading-relaxed text-ok">{next?.impact ?? firstAction?.impact}</span>}
             <span className="text-[11px] text-faint">
-              {OWNER_LABEL[(next?.owner ?? firstAction?.owner) as keyof typeof OWNER_LABEL] ?? "Email strategist"}
+              {OWNER_LABEL[next?.owner ?? firstAction?.owner ?? ""] ?? "Email strategist"}
               {sheet.sprint ? " · on the sprint" : res ? " · from the audit" : ""}
               {a?.status === "ready" ? ` · audited ${when(a.createdAt)}${a.auto ? ", by itself" : ""}` : ""}
             </span>
@@ -451,7 +458,7 @@ function NextMove({ r, sheet, loading, onTab }: { r: ChannelRow; sheet: EmailShe
 }
 
 /** The sprint on this account: how far, the score since it began, and what the last check said */
-function SprintStrip({ s, onOpen }: { s: SheetSprint; onOpen: () => void }) {
+export function SprintStrip({ s, onOpen }: { s: SheetSprint; onOpen: () => void }) {
   const done = s.moves.filter((m) => m.status === "done").length;
   const total = s.moves.filter((m) => m.status !== "skipped").length;
   const check = s.checks[0];
@@ -710,7 +717,7 @@ function Actions({ r, sheet, reload }: { r: ChannelRow; sheet: EmailSheet; reloa
 }
 
 /** The latest audit: what it found, its state while it runs, and a way to run a new one without leaving the sheet */
-function AuditCard({ r, a, reload }: { r: ChannelRow; a: SheetAudit | null; reload: () => Promise<void> }) {
+export function AuditCard({ r, a, reload, line = "email" }: { r: Pick<ChannelRow, "clientId">; a: SheetAudit | null; reload: () => Promise<void>; line?: OpsLine }) {
   const res = a?.status === "ready" ? a.result : null;
   const band = a?.band ? BAND_TONE[a.band] : null;
   return (
@@ -718,7 +725,7 @@ function AuditCard({ r, a, reload }: { r: ChannelRow; a: SheetAudit | null; relo
       {band && <span aria-hidden className="pointer-events-none absolute -right-24 -top-28 -z-10 h-64 w-64 rounded-full opacity-20 blur-[90px]" style={{ background: band.css }} />}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid min-w-0 gap-1">
-          <Eyebrow>Email audit{a ? ` · ${when(a.createdAt)}${a.auto ? " · ran itself" : a.by ? ` · ${a.by}` : ""}` : ""}</Eyebrow>
+          <Eyebrow>{LINE_NAME[line]} audit{a ? ` · ${when(a.createdAt)}${a.auto ? " · ran itself" : a.by ? ` · ${a.by}` : ""}` : ""}</Eyebrow>
           <h2 className="font-heading text-[19px] leading-snug md:text-[22px]">{res ? res.verdict.headline : a?.status === "running" ? "Reading the account" : a?.status === "failed" ? "The last audit didn't finish" : "No audit yet"}</h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -727,7 +734,7 @@ function AuditCard({ r, a, reload }: { r: ChannelRow; a: SheetAudit | null; relo
               {band.label} · {a.score}
             </span>
           )}
-          {a?.status !== "running" && <RunEmailAudit clientId={r.clientId} label={a ? "Run a new audit" : "Run the audit"} quiet={Boolean(res)} onStarted={() => reload()} />}
+          {a?.status !== "running" && <RunEmailAudit clientId={r.clientId} line={line} label={a ? "Run a new audit" : "Run the audit"} quiet={Boolean(res)} onStarted={() => reload()} />}
         </div>
       </div>
       {a?.status === "running" && (
@@ -743,7 +750,7 @@ function AuditCard({ r, a, reload }: { r: ChannelRow; a: SheetAudit | null; relo
         </div>
       )}
       {a?.status === "failed" && <p className="text-sm text-bad">{a.error ?? "Something went wrong reading the account."}</p>}
-      {!a && <p className="text-sm text-muted">The Email Strategist reads the account against the score, its last 90 days, the change history and the client&apos;s context, and writes why it&apos;s where it is and the moves to make.</p>}
+      {!a && <p className="text-sm text-muted">{line === "social" ? "The Social Strategist reads every platform against the social score, the posts, their hooks, formats and posting times, and the client's context, and writes why it's where it is and the moves to make." : <>The Email Strategist reads the account against the score, its last 90 days, the change history and the client&apos;s context, and writes why it&apos;s where it is and the moves to make.</>}</p>}
       {res && (
         <>
           <p className="max-w-3xl text-[14.5px] leading-relaxed text-muted">{res.verdict.summary}</p>
@@ -757,7 +764,7 @@ function AuditCard({ r, a, reload }: { r: ChannelRow; a: SheetAudit | null; relo
               ))}
             </div>
           )}
-          <Link href={`/kpis/email-audit/${a!.id}`} className="inline-flex min-h-11 w-fit items-center text-xs text-muted underline-offset-4 hover:text-fg hover:underline md:min-h-0">
+          <Link href={`/kpis/${line}-audit/${a!.id}`} className="inline-flex min-h-11 w-fit items-center text-xs text-muted underline-offset-4 hover:text-fg hover:underline md:min-h-0">
             The whole audit: why, every cause, tests and questions for the client →
           </Link>
         </>
@@ -767,7 +774,7 @@ function AuditCard({ r, a, reload }: { r: ChannelRow; a: SheetAudit | null; relo
 }
 
 /** Follow the audit as a sprint, staying in the sheet */
-function FollowHere({ auditId, reload }: { auditId: string; reload: () => Promise<void> }) {
+export function FollowHere({ auditId, reload, line = "email" }: { auditId: string; reload: () => Promise<void>; line?: OpsLine }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   return (
@@ -779,7 +786,7 @@ function FollowHere({ auditId, reload }: { auditId: string; reload: () => Promis
         onClick={() =>
           start(async () => {
             setError(null);
-            const res = await startEmailSprint(auditId);
+            const res = await startEmailSprint(auditId, undefined, line);
             if (!res.ok) return setError(res.error);
             await reload();
           })
@@ -793,7 +800,7 @@ function FollowHere({ auditId, reload }: { auditId: string; reload: () => Promis
 }
 
 /** The live sprint: where it stands, what the last check saw, and each move to set (saved on change) */
-function SprintPanel({ s, replaced, reload }: { s: SheetSprint; replaced: boolean; reload: () => Promise<void> }) {
+export function SprintPanel({ s, replaced, reload, line = "email" }: { s: SheetSprint; replaced: boolean; reload: () => Promise<void>; line?: OpsLine }) {
   const done = s.moves.filter((m) => m.status === "done").length;
   const total = s.moves.filter((m) => m.status !== "skipped").length;
   const check = s.checks[0];
@@ -818,7 +825,7 @@ function SprintPanel({ s, replaced, reload }: { s: SheetSprint; replaced: boolea
               {v && <span className={`rounded-full px-2 py-0.5 text-[11px] ${v.tone}`}>{v.label}</span>}
             </p>
           </div>
-          <SprintControls sprintId={s.id} active />
+          <SprintControls sprintId={s.id} active line={line} />
         </div>
         <div className="h-1 overflow-hidden rounded-full bg-line">
           <div className="h-full rounded-full bg-ok" style={{ width: `${total ? (done / total) * 100 : 0}%` }} />
@@ -832,13 +839,13 @@ function SprintPanel({ s, replaced, reload }: { s: SheetSprint; replaced: boolea
           </p>
         )}
         {replaced && <p className="text-[12px] text-warn">A newer audit is ready. This sprint follows the older one until it&apos;s closed or the new audit is followed.</p>}
-        <Link href={`/kpis/email-sprint/${s.id}`} className="inline-flex min-h-11 w-fit items-center text-xs text-muted underline-offset-4 hover:text-fg hover:underline md:min-h-0">
+        <Link href={`/kpis/${line}-sprint/${s.id}`} className="inline-flex min-h-11 w-fit items-center text-xs text-muted underline-offset-4 hover:text-fg hover:underline md:min-h-0">
           Open the sprint with every check →
         </Link>
       </div>
       <div className="grid gap-3">
         {moves.map((m) => (
-          <SprintMove key={`${m.id}:${m.status}:${m.aiNote ?? ""}`} id={m.id} title={m.title} owner={m.owner} steps={m.steps} why={m.why} impact={m.impact} status={m.status} note={m.note} aiNote={m.aiNote} onChange={reload} compact />
+          <SprintMove key={`${m.id}:${m.status}:${m.aiNote ?? ""}`} line={line} id={m.id} title={m.title} owner={m.owner} steps={m.steps} why={m.why} impact={m.impact} status={m.status} note={m.note} aiNote={m.aiNote} onChange={reload} compact />
         ))}
       </div>
     </section>

@@ -211,6 +211,14 @@ async function screenFor(ctx: AssistantCtx, input: Record<string, unknown>): Pro
       const { data } = await ctx.db.from("email_sprints").select("id").eq("client_id", c.id).order("started_at", { ascending: false }).limit(1).maybeSingle();
       return data ? { href: `/kpis/email-sprint/${data.id}`, label: `${c.name}'s email sprint` } : { note: `${c.name} has no email sprint.` };
     }
+    case "social_audit": {
+      const { data } = await ctx.db.from("social_audits").select("id").eq("client_id", c.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      return data ? { href: `/kpis/social-audit/${data.id}`, label: `${c.name}'s latest social audit` } : { note: `${c.name} has no social audit yet. Offer to run one.` };
+    }
+    case "social_sprint": {
+      const { data } = await ctx.db.from("social_sprints").select("id").eq("client_id", c.id).order("started_at", { ascending: false }).limit(1).maybeSingle();
+      return data ? { href: `/kpis/social-sprint/${data.id}`, label: `${c.name}'s social sprint` } : { note: `${c.name} has no social sprint.` };
+    }
     default:
       return { href: `/clients/${c.slug}${CLIENT_TABS[String(input.tab ?? "overview")] ?? ""}`, label: `${c.name}'s page` };
   }
@@ -264,11 +272,11 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     {
       name: "open_screen",
       description:
-        "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, agent (an AI agent's page in Settings, by role key), direction_change (a client's change of direction with its flagged tasks: by id from direction_changes, or the client's newest), feedback (a report they filed: id from submit_feedback, or their own feedback list). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",
+        "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings for email; overview, posts, actions, notes, settings for social), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, social_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, social_sprint, agent (an AI agent's page in Settings, by role key), direction_change (a client's change of direction with its flagged tasks: by id from direction_changes, or the client's newest), feedback (a report they filed: id from submit_feedback, or their own feedback list). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",
       input_schema: {
         type: "object",
         properties: {
-          what: { type: "string", enum: ["client", "kpi_card", "email_sheet", "social_sheet", "ticket", "email_ticket", "report", "audit", "email_audit", "sprint", "email_sprint", "agent", "direction_change", "feedback"] },
+          what: { type: "string", enum: ["client", "kpi_card", "email_sheet", "social_sheet", "ticket", "email_ticket", "report", "audit", "email_audit", "social_audit", "sprint", "email_sprint", "social_sprint", "agent", "direction_change", "feedback"] },
           id: { type: "string", description: "A direction change's id (what: direction_change), or a feedback report's id from submit_feedback (what: feedback)" },
           client: CLIENT,
           tab: { type: "string", enum: ["overview", "ads", "email", "social", "creative", "team", "reports"], description: "The client page's tab (what: client)" },
@@ -340,6 +348,16 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
         if (!l) return { shown: false, note: "That link can't be shown on a call." };
         showCard(ctx, { title: clip(input.title, 120), detail: clip(input.detail, 160), href: l.href, external: l.external, cta: clip(input.cta, 40) || "Open" });
         return { shown: true };
+      },
+    },
+    {
+      name: "switch_mode",
+      description: "Moves this same conversation between a voice call and the typed chat window when they ask ('let's move to chat', 'I'll type', 'call me instead', 'let's talk'). Say one short line first ('Sure, moving us to chat.'); nothing is lost and you carry on where you were.",
+      input_schema: { type: "object", properties: { to: { type: "string", enum: ["voice", "text"], description: "voice: a call; text: the chat window" } }, required: ["to"], additionalProperties: false },
+      run: async (input) => {
+        const to = input.to === "text" ? "text" : "voice";
+        ctx.emit({ t: "switch", to });
+        return { switching: to, note: "It switches once your line is out. Don't greet again afterwards." };
       },
     },
     {
@@ -446,11 +464,19 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     },
     {
       name: "run_audit",
-      description: "Runs an account audit as the person: Meta or Google (the KPI audit, on the client's ad account with a KPI) or email (the email account audit). The audit's own checks apply (their clients, one at a time per account). It takes a few minutes and uses AI credits: ask first, confirmed: true after a yes.",
-      input_schema: { type: "object", properties: { client: CLIENT, kind: { type: "string", enum: ["meta", "google", "email"] }, confirmed: CONFIRMED }, required: ["client", "kind"], additionalProperties: false },
+      description: "Runs an account audit as the person: Meta or Google (the KPI audit, on the client's ad account with a KPI), email (the email account audit) or social (the organic social audit: every platform against the social score, posts, hooks, formats, posting times). The audit's own checks apply (their clients, one at a time per account). It takes a few minutes and uses AI credits: ask first, confirmed: true after a yes.",
+      input_schema: { type: "object", properties: { client: CLIENT, kind: { type: "string", enum: ["meta", "google", "email", "social"] }, confirmed: CONFIRMED }, required: ["client", "kind"], additionalProperties: false },
       run: async (input) => {
         if (!yes(ctx, input)) return { done: false, note: NO_YES };
         const c = await clientNamed(ctx.db, input.client);
+        if (input.kind === "social") {
+          const { requestSocialAudit, runSocialAudit } = await import("@/lib/social-ops/audit");
+          const out = await requestSocialAudit(ctx.db, ctx.admin, c.id, ctx.me.id);
+          if ("error" in out) return { done: false, error: out.error };
+          if (out.running) after(() => runSocialAudit(ctx.admin, out.id));
+          showCard(ctx, { title: `${c.name} social audit`, detail: "Running now, a few minutes", href: `/kpis/social-audit/${out.id}`, external: false, cta: "Open the audit" });
+          return { started: true };
+        }
         if (input.kind === "email") {
           const [{ requestEmailAudit, runEmailAudit }] = await Promise.all([import("@/lib/email-ops/audit")]);
           const out = await requestEmailAudit(ctx.db, ctx.admin, c.id, ctx.me.id);
@@ -469,6 +495,24 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
         if (o.started || o.status === "running") after(() => runAudit(ctx.admin, o.id));
         showCard(ctx, { title: `${c.name} ${input.kind === "google" ? "Google" : "Meta"} audit`, detail: o.status === "queued" ? "Queued behind your other audits" : "Running now, a few minutes", href: `/kpis/audit/${o.id}`, external: false, cta: "Open the audit" });
         return { started: true, status: o.status ?? "running" };
+      },
+    },
+    {
+      name: "start_sprint",
+      description: "Opens a sprint as the person from a client's latest finished email or social audit: every move on the audit's plan (or one move by its number in the plan, 1 first), followed and re-measured against the score every few days. One live sprint per client and line (a newer audit's sprint replaces an older one). Ask first, confirmed: true after a yes.",
+      input_schema: { type: "object", properties: { client: CLIENT, line: { type: "string", enum: ["email", "social"] }, move: { type: "integer", minimum: 1, description: "Only this move of the plan (optional)" }, confirmed: CONFIRMED }, required: ["client", "line"], additionalProperties: false },
+      run: async (input) => {
+        if (!yes(ctx, input)) return { done: false, note: NO_YES };
+        const c = await clientNamed(ctx.db, input.client);
+        const line = input.line === "social" ? "social" : "email";
+        // The person's own session reads the audit: only a client they can see
+        const { data: a } = await ctx.db.from(`${line}_audits`).select("id").eq("client_id", c.id).eq("status", "ready").order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (!a) return { done: false, error: `${c.name} has no finished ${line} audit. Offer to run one first.` };
+        const only = Number.isInteger(input.move) ? Number(input.move) - 1 : undefined;
+        const id = line === "social" ? await (await import("@/lib/social-ops/sprint")).openSocialSprint(ctx.admin, a.id as string, ctx.me.id, only) : await (await import("@/lib/email-ops/sprint")).openEmailSprint(ctx.admin, a.id as string, ctx.me.id, only);
+        if (!id) return { done: false, error: "That audit has no moves to follow." };
+        showCard(ctx, { title: `${c.name} ${line} sprint`, detail: only != null ? `Move ${only + 1} added` : "Every move on the plan", href: `/kpis/${line}-sprint/${id}`, external: false, cta: "Open the sprint" });
+        return { started: true, sprint: `/kpis/${line}-sprint/${id}` };
       },
     },
     {

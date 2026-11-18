@@ -38,21 +38,22 @@ const toAudit = (a: Row): AuditCard => {
 };
 
 /** The latest audit of each client given (clients with none are absent) */
-export async function latestAudits(db: SupabaseClient, clientIds: string[]): Promise<Map<string, AuditCard>> {
+export async function latestAudits(db: SupabaseClient, clientIds: string[], line: "email" | "social" = "email"): Promise<Map<string, AuditCard>> {
   const out = new Map<string, AuditCard>();
   if (!clientIds.length) return out;
-  const { data } = await db.from("email_audits").select("id, client_id, status, score, band, result, done, auto, error, created_at").in("client_id", clientIds).order("created_at", { ascending: false }).limit(Math.max(50, clientIds.length * 3));
+  // The social audits keep the same shape in their own table (src/lib/social-ops)
+  const { data } = await db.from(`${line}_audits`).select("id, client_id, status, score, band, result, done, auto, error, created_at").in("client_id", clientIds).order("created_at", { ascending: false }).limit(Math.max(50, clientIds.length * 3));
   for (const a of (data ?? []) as Row[]) if (!out.has(a.client_id as string)) out.set(a.client_id as string, toAudit(a));
   return out;
 }
 
 /** The live sprint of each client given */
-export async function activeSprints(db: SupabaseClient, clientIds: string[]): Promise<Map<string, SprintCard>> {
+export async function activeSprints(db: SupabaseClient, clientIds: string[], line: "email" | "social" = "email"): Promise<Map<string, SprintCard>> {
   const out = new Map<string, SprintCard>();
   if (!clientIds.length) return out;
-  const { data } = await db.from("email_sprints").select("id, client_id, audit_id, baseline, latest, next_check_at, email_sprint_actions(status)").in("client_id", clientIds).eq("status", "active");
+  const { data } = await db.from(`${line}_sprints`).select(`id, client_id, audit_id, baseline, latest, next_check_at, ${line}_sprint_actions(status)`).in("client_id", clientIds).eq("status", "active");
   for (const s of (data ?? []) as Row[]) {
-    const acts = (s.email_sprint_actions ?? []) as { status: string }[];
+    const acts = (s[`${line}_sprint_actions`] ?? []) as { status: string }[];
     out.set(s.client_id as string, {
       id: s.id as string,
       auditId: (s.audit_id as string | null) ?? null,

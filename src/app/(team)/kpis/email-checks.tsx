@@ -1,17 +1,23 @@
 import type { ScoreSnapshot } from "@/lib/email-ops/sprint-core";
+import { socialCheckText, type SocialUnit } from "@/lib/social-score";
 
-// The seven checks of the email score as a small, quiet grid: each value against its bar, met or not. Server-rendered,
+// The checks of the email score (and the social score's) as a small, quiet grid: each value against its bar, met or not. Server-rendered,
 // shared by the audit page and the sprint page (the score board has its own, richer one).
 
-const show = (c: ScoreSnapshot["checks"][number]) => {
+// A social snapshot's checks carry their unit (pct, change, ratio): those read the social way
+type Check = ScoreSnapshot["checks"][number] & { unit?: string };
+const social = (c: Check): c is Check & { unit: SocialUnit } => c.unit === "change" || c.unit === "ratio" || c.unit === "pct";
+
+const show = (c: Check) => {
   if (c.value == null) return "n/a";
+  if (social(c)) return socialCheckText(c.unit, c.value);
   if (c.key === "deliverability") return String(Math.round(c.value));
   if (c.key === "rpr") return `$${c.value.toFixed(3)}`;
   return `${(c.value * 100).toFixed(c.bar < 0.02 ? 2 : 1)}%`;
 };
-const bar = (c: ScoreSnapshot["checks"][number]) => (c.key === "deliverability" ? String(c.bar) : c.key === "rpr" ? `$${c.bar.toFixed(2)}` : `${(c.bar * 100).toFixed(c.bar < 0.02 ? 1 : 0)}%`);
+const bar = (c: Check) => (social(c) ? socialCheckText(c.unit, c.bar) : c.key === "deliverability" ? String(c.bar) : c.key === "rpr" ? `$${c.bar.toFixed(2)}` : `${(c.bar * 100).toFixed(c.bar < 0.02 ? 1 : 0)}%`);
 
-export function EmailChecks({ checks }: { checks: ScoreSnapshot["checks"] }) {
+export function EmailChecks({ checks }: { checks: Check[] }) {
   return (
     <ul className="grid grid-cols-1 gap-px overflow-hidden rounded-[16px] border border-line bg-line sm:grid-cols-2 lg:grid-cols-4">
       {checks.map((c) => (

@@ -5,7 +5,7 @@ import { ThemeSwitch } from "./theme-switch";
 import type { Theme } from "@/app/(team)/theme-actions";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NotificationBell } from "./notification-bell";
 import { BriefJobsIndicator, BriefJobsRoot } from "./brief-jobs";
 import { MediaJobsIndicator, MediaJobsRoot } from "./media-jobs";
@@ -62,43 +62,133 @@ const SETTINGS: Item = { href: "/settings", label: "Settings", icon: "M12 15a3 3
 // Everyone: what they've sent from the feedback bubble; execs also see everyone's, grouped and prioritized
 const FEEDBACK: Item = { href: "/feedback", label: "Feedback", icon: "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12zM9 11h.01M12 11h.01M15 11h.01" };
 
-/** Call my assistant: everyone's personal assistant, a call away from any page (the call lives above every page) */
+/** The last way they contacted their assistant on this device (the chooser starts there) */
+const CONTACT_KEY = "kz:assistant-contact";
+const readContact = (): "call" | "chat" => {
+  try {
+    return localStorage.getItem(CONTACT_KEY) === "chat" ? "chat" : "call";
+  } catch {
+    return "call";
+  }
+};
+const saveContact = (v: "call" | "chat") => {
+  try {
+    localStorage.setItem(CONTACT_KEY, v);
+  } catch {
+    /* private window: not remembered */
+  }
+};
+
+const CALL_PATH = "M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z";
+const CHAT_PATH = "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z";
+
+/**
+ * Contact my assistant: everyone's personal assistant, a call or a chat away from any page (both live above every
+ * page and are one conversation). Tapping it offers Call or Chat, starting on the last one used on this device.
+ */
 function AssistantButton({ size = "side", onPress }: { size?: "side" | "menu"; onPress?: () => void }) {
-  const { startAssistant, activeRole, live, assistantTint: tint } = useAgentCall();
+  const { startAssistant, startAssistantChat, activeRole, live, talk, assistantTint: tint } = useAgentCall();
   const on = live && activeRole === "assistant";
+  const [open, setOpen] = useState(false);
+  const [last, setLast] = useState<"call" | "chat">("call");
+  const options = useRef<(HTMLButtonElement | null)[]>([]);
+  const pick = (v: "call" | "chat") => {
+    saveContact(v);
+    setOpen(false);
+    onPress?.();
+    if (v === "chat") startAssistantChat();
+    else startAssistant();
+  };
+  const toggle = () => {
+    // On already: back to it, no question
+    if (on) {
+      onPress?.();
+      return talk === "text" ? startAssistantChat() : startAssistant();
+    }
+    const l = readContact();
+    setLast(l);
+    setOpen((o) => !o);
+    requestAnimationFrame(() => options.current[l === "chat" ? 1 : 0]?.focus());
+  };
+  const choices: { key: "call" | "chat"; label: string; sub: string; d: string }[] = [
+    { key: "call", label: "Call", sub: "Talk it through", d: CALL_PATH },
+    { key: "chat", label: "Chat", sub: "Type, or dictate", d: CHAT_PATH },
+  ];
   return (
-    <div className="group relative flex w-full min-w-0 items-stretch overflow-hidden rounded-[12px] border border-line bg-surface-2/40 transition-colors hover:border-faint">
-      <span aria-hidden className="pointer-events-none absolute -left-6 -top-8 h-16 w-24 rounded-full opacity-25 blur-2xl transition-opacity group-hover:opacity-40" style={{ background: tint }} />
-      <button
-        type="button"
-        onClick={() => {
-          onPress?.();
-          startAssistant();
-        }}
-        className={`relative flex min-w-0 flex-1 items-center gap-3 text-left active:scale-[0.99] ${size === "menu" ? "min-h-12 pl-3 text-[15px]" : "py-2.5 pl-3 text-sm"}`}
-      >
-        <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-[9px]" style={{ background: `${tint}22`, color: tint, boxShadow: `inset 0 0 0 1px ${tint}33` }}>
-          {on && <span aria-hidden className="absolute inset-0 animate-ping rounded-[9px] opacity-30" style={{ background: tint }} />}
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" />
+    <div className="relative w-full min-w-0">
+      <div className="group relative flex w-full min-w-0 items-stretch overflow-hidden rounded-[12px] border border-line bg-surface-2/40 transition-colors hover:border-faint">
+        <span aria-hidden className="pointer-events-none absolute -left-6 -top-8 h-16 w-24 rounded-full opacity-25 blur-2xl transition-opacity group-hover:opacity-40" style={{ background: tint }} />
+        <button
+          type="button"
+          onClick={toggle}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          className={`relative flex min-w-0 flex-1 items-center gap-3 text-left active:scale-[0.99] ${size === "menu" ? "min-h-12 pl-3 text-[15px]" : "py-2.5 pl-3 text-sm"}`}
+        >
+          <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-[9px]" style={{ background: `${tint}22`, color: tint, boxShadow: `inset 0 0 0 1px ${tint}33` }}>
+            {on && <span aria-hidden className="absolute inset-0 animate-ping rounded-[9px] opacity-30" style={{ background: tint }} />}
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d={on && talk === "text" ? CHAT_PATH : CALL_PATH} />
+            </svg>
+          </span>
+          <span className="relative min-w-0 flex-1 truncate text-fg">{on ? (talk === "text" ? "In a chat" : "On a call") : "Contact my Assistant"}</span>
+          {on && <span aria-hidden className="relative h-2 w-2 shrink-0 rounded-full bg-ok shadow-[0_0_0_3px_var(--ok-soft)]" />}
+        </button>
+        {/* Its settings: the voice, the color and what it knows, on the Assistant page */}
+        <Link
+          href="/assistant#make-it-yours"
+          onClick={() => onPress?.()}
+          aria-label="Your assistant's settings"
+          title="Your assistant's settings"
+          className={`relative grid shrink-0 place-items-center text-faint transition-colors hover:text-fg ${size === "menu" ? "w-12" : "w-10"}`}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
           </svg>
-        </span>
-        <span className="relative min-w-0 flex-1 truncate text-fg">{on ? "On a call" : "Call my assistant"}</span>
-        {on && <span aria-hidden className="relative h-2 w-2 shrink-0 rounded-full bg-ok shadow-[0_0_0_3px_var(--ok-soft)]" />}
-      </button>
-      {/* Its settings: the voice, the color and what it knows, on the Assistant page */}
-      <Link
-        href="/assistant#make-it-yours"
-        onClick={() => onPress?.()}
-        aria-label="Your assistant's settings"
-        title="Your assistant's settings"
-        className={`relative grid shrink-0 place-items-center text-faint transition-colors hover:text-fg ${size === "menu" ? "w-12" : "w-10"}`}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
-        </svg>
-      </Link>
+        </Link>
+      </div>
+      {open && (
+        <>
+          <button type="button" aria-label="Close" tabIndex={-1} onClick={() => setOpen(false)} className="fixed inset-0 z-40 cursor-default" />
+          <div
+            role="menu"
+            aria-label="Contact your assistant"
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setOpen(false);
+              } else if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                e.preventDefault();
+                const i = options.current.findIndex((b) => b === document.activeElement);
+                options.current[i === 0 ? 1 : 0]?.focus();
+              }
+            }}
+            className={`absolute left-0 right-0 z-50 grid grid-cols-2 gap-1.5 rounded-[16px] border border-line bg-surface p-1.5 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.55)] animate-[sheet-fade_.15s_ease-out] ${size === "menu" ? "top-full mt-2" : "bottom-full mb-2"}`}
+          >
+            {choices.map((c, i) => (
+              <button
+                key={c.key}
+                ref={(el) => {
+                  options.current[i] = el;
+                }}
+                type="button"
+                role="menuitem"
+                onClick={() => pick(c.key)}
+                className="group/opt relative grid min-h-[76px] content-center justify-items-start gap-1 rounded-[12px] border border-transparent px-3 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:border-faint focus-visible:bg-surface-2 focus-visible:outline-none"
+              >
+                <span className="grid h-8 w-8 place-items-center rounded-[10px]" style={{ background: `${tint}22`, color: tint }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d={c.d} />
+                  </svg>
+                </span>
+                <span className="text-[14px] font-medium text-fg">{c.label}</span>
+                <span className="text-[11.5px] leading-tight text-faint">{last === c.key ? "Last used" : c.sub}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

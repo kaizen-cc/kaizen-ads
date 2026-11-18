@@ -130,6 +130,11 @@ async function lineItems(db: SupabaseClient, me: Staff, s: LineScope, today: str
       if (gaps.has(r.clientId)) keep(locationItem(c));
     }
   }
+  if (s.line === "social" && ids.length) {
+    // The social audits and sprints, read the email way (src/lib/social-ops); quietly none before their migration
+    const [audits, sprints] = await Promise.all([latestAudits(db, ids, "social").catch(() => new Map<string, never>()), activeSprints(db, ids, "social").catch(() => new Map<string, never>())]);
+    for (const r of rows) emailOpsItems({ clientId: r.clientId, name: r.name, slug: r.slug }, audits.get(r.clientId) ?? null, sprints.get(r.clientId) ?? null, new Date(), "social").forEach(keep);
+  }
   return out;
 }
 

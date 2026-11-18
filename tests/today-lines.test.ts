@@ -177,6 +177,27 @@ describe("email and social items", () => {
     expect(emailOpsItems(c, audit, { ...sprint, nextCheckAt: "2026-11-20T12:00:00Z" }, now)).toEqual([]);
   });
 
+  it("reads the social audits and sprints the same way, with social links", () => {
+    const now = new Date("2026-11-17T15:00:00Z");
+    const c = { clientId: "c1", name: "Acme", slug: "acme" };
+    const audit = { id: "a1", status: "ready" as const, score: 41, band: "bad" as const, headline: "Posting stalled.", createdAt: "2026-11-10T12:00:00Z", actions: 6, done: 0 };
+    const [a] = emailOpsItems(c, audit, null, now, "social");
+    expect([a.kind, a.key, a.topic, a.action?.href]).toEqual(["social-audit", "social-audit:a1", "social", "/kpis/social-audit/a1"]);
+    const sprint = { id: "s1", moves: 5, done: 0, nextCheckAt: "2026-11-16T12:00:00Z", score: 44, baseline: 41 };
+    const [s] = emailOpsItems(c, audit, sprint, now, "social");
+    expect([s.kind, s.action?.href, s.title]).toEqual(["social-sprint", "/kpis/social-sprint/s1", "Acme's social sprint is due a check with moves still open"]);
+  });
+
+  it("brings up a red or yellow social score, naming the platform that drags it", () => {
+    const ctx = { dayOfMonth: 17, board: true };
+    const drag = { key: "engagement" as const, label: "Engagement rate", value: 0.01, bar: 0.035, weight: 30, points: 8.6, met: false, unit: "pct" as const, platform: "instagram" as const, cost: 21 };
+    const socialScore = { score: 48, band: "bad" as const, platforms: [], checks: [], weighingDown: [drag], unmeasured: [], promised: { perMonth: 12, fromPackage: false }, window: { from: "2026-10-19", to: "2026-11-17" } };
+    const items = socialRowItems(row({ line: "social", socialScore }), ctx);
+    expect(items.map((i) => i.kind)).toEqual(["social-score"]);
+    expect(items[0].story).toContain("Instagram engagement rate");
+    expect(socialRowItems(row({ line: "social", socialScore: { ...socialScore, score: 85, band: "good" } }), ctx)).toEqual([]);
+  });
+
   it("gathers a client's campaign ideas into one calm item", () => {
     const c = { clientId: "c1", name: "Acme", slug: "acme" };
     const i = ideaItem(c, [

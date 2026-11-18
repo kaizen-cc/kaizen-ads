@@ -35,6 +35,8 @@ const CHANGE_STARTER = "Pause the ads that spent with no results this week";
 const STARTERS = ["Summarize where this account stands", "What should we test next, and why?", "What has the client told us lately?", CHANGE_STARTER, "Launch a new ad group in Google Ads"];
 // The email desk's starters: the questions the email team asks of a client's Klaviyo account
 const EMAIL_STARTERS = ["Summarize where this email account stands", "What is weighing the score down?", "Which subject lines work for this list?", "What should we send next, and why?", "What has the client told us lately?"];
+// The social desk's starters: the questions the social team asks of a client's Instagram and Facebook
+const SOCIAL_STARTERS = ["Summarize where these social accounts stand", "What is weighing the social score down?", "Which posts and hooks work best, and why?", "What should we post next week?", "When should we be posting?"];
 const LAUNCH_STARTERS = { google: "Launch a new ad group in Google Ads", meta: "Launch ads on Meta from a launch sheet" } as const;
 const LAUNCH_DRAFT = { google: "Launch in Google Ads: ", meta: "Launch on Meta (I'm sharing the launch sheet): " } as const;
 const MAX_FILE = 50 * 1024 * 1024;
@@ -128,15 +130,15 @@ export function ClientChat({
   scope?: ChatScope | null;
   /** What this person may do on this client (src/lib/chat-permissions.ts): the chat only offers what's theirs */
   perms?: ClientPerms;
-  /** "email": the email team's desk (starters about the Klaviyo account; answers from the email agents) */
-  desk?: "email" | null;
+  /** "email": the email team's desk (starters about the Klaviyo account; answers from the email agents); "social": the social team's (the Social Strategist) */
+  desk?: "email" | "social" | null;
   /** The email or organic social team's line (the client page): their line's agent takes the call */
   line?: "email" | "social" | null;
 }) {
   const router = useRouter();
   // Starters: only the ones this person may act on (a change, a launch on their own platform)
   const mayChange = perms.change.meta || perms.change.google;
-  const starters = desk === "email" ? EMAIL_STARTERS : (scope && perms.launch[scope.platform] ? [LAUNCH_STARTERS[scope.platform], ...STARTERS.filter((x) => x !== LAUNCH_STARTERS.google)] : STARTERS).filter(
+  const starters = desk === "email" ? EMAIL_STARTERS : desk === "social" ? SOCIAL_STARTERS : (scope && perms.launch[scope.platform] ? [LAUNCH_STARTERS[scope.platform], ...STARTERS.filter((x) => x !== LAUNCH_STARTERS.google)] : STARTERS).filter(
     (s) => (s !== CHANGE_STARTER || mayChange) && (s !== LAUNCH_STARTERS.google || perms.launch.google) && (s !== LAUNCH_STARTERS.meta || perms.launch.meta),
   );
   const canLaunchHere = Boolean(scope && perms.launch[scope.platform]);
@@ -144,7 +146,7 @@ export function ClientChat({
   // The call reaches the agent for what's in view: the service tab on the client page, the KPI card's platform
   const service = useParam("service");
   const callRole = roleForService(variant === "floating" ? service : null, { desk, platform: scope?.platform ?? null, line });
-  const callContext = { screen: variant === "inline" ? (desk === "email" ? "the email KPI board" : "the KPI board") : `${client}'s client page${service ? `, ${service} tab` : ""}`, clientId, client };
+  const callContext = { screen: variant === "inline" ? (desk === "email" ? "the email KPI board" : desk === "social" ? "the social KPI board" : "the KPI board") : `${client}'s client page${service ? `, ${service} tab` : ""}`, clientId, client };
   // On the client page the open chat is in the address (?chat=1), so back closes it and a link opens it. The inline
   // button sits on cards that can share a page, so it keeps its own.
   const floating = variant === "floating";
@@ -376,6 +378,8 @@ export function ClientChat({
         <div className="relative mx-4 mb-3 grid gap-2 rounded-[14px] md:mx-5 border border-ink/[0.07] bg-ink/[0.03] p-3">
           {desk === "email" ? (
             <p className="text-xs text-ink/50">Email audits, the sprint that follows them and campaign ideas are on this client&apos;s Email tab, under Audit and ideas.</p>
+          ) : desk === "social" ? (
+            <p className="text-xs text-ink/50">Social audits and the sprint that follows them are on this client&apos;s sheet on the Social KPI board, under Actions.</p>
           ) : targets.length === 0 ? (
             <p className="text-xs text-ink/50">An audit needs a KPI with an ad account. Set one on the KPI board.</p>
           ) : (

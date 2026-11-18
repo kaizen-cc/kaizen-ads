@@ -3,13 +3,18 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useOptimistic, useState, useTransition } from "react";
 import type { EmailAction } from "@/lib/email-ops/audit-core";
-import { OWNER_LABEL } from "@/lib/email-ops/audit-core";
-import { checkEmailSprintNow, closeEmailSprint, setEmailActionStatus, startEmailSprint, tickEmailAuditAction } from "./email-ops-actions";
+import { OWNER_LABEL as EMAIL_OWNER_LABEL } from "@/lib/email-ops/audit-core";
+import { SOCIAL_OWNER_LABEL, type SocialAction } from "@/lib/social-ops/audit-core";
+import { PLATFORM_LABEL } from "@/lib/social-score";
+import { checkEmailSprintNow, closeEmailSprint, setEmailActionStatus, startEmailSprint, tickEmailAuditAction, type OpsLine } from "./email-ops-actions";
 
-// The buttons and cards behind the email audit page, the sprint page and the client page's Audit and ideas tab.
+// The buttons and cards behind the email and social audit pages, their sprint pages, the KPI sheets and the client page's
+// Audit and ideas tab. `line` picks the email or the social audit and sprint (email by default).
+
+const OWNER_LABEL: Record<string, string> = { ...EMAIL_OWNER_LABEL, ...SOCIAL_OWNER_LABEL };
 
 /** Starts an audit of the client's Klaviyo account and opens it (it fills in while it runs) */
-export function RunEmailAudit({ clientId, label = "Run an audit", quiet = false, onStarted }: { clientId: string; label?: string; quiet?: boolean; /** Stay where you are (the KPI sheet follows it there) instead of opening the audit page */ onStarted?: (auditId: string) => Promise<unknown> | void }) {
+export function RunEmailAudit({ clientId, label = "Run an audit", quiet = false, onStarted, line = "email" }: { clientId: string; label?: string; quiet?: boolean; /** Stay where you are (the KPI sheet follows it there) instead of opening the audit page */ onStarted?: (auditId: string) => Promise<unknown> | void; line?: OpsLine }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -22,11 +27,11 @@ export function RunEmailAudit({ clientId, label = "Run an audit", quiet = false,
         onClick={() =>
           start(async () => {
             setError(null);
-            const res = await fetch("/api/email-ops/audit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId }) });
+            const res = await fetch(`/api/${line}-ops/audit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientId }) });
             const out = (await res.json().catch(() => ({ error: "Couldn't start the audit." }))) as { id?: string; error?: string };
             if (!out.id) return setError(out.error ?? "Couldn't start the audit.");
             if (onStarted) await onStarted(out.id);
-            else router.push(`/kpis/email-audit/${out.id}`);
+            else router.push(`/kpis/${line}-audit/${out.id}`);
           })
         }
         className={`min-h-11 rounded-full px-4 text-[13px] font-medium transition-colors disabled:opacity-60 md:min-h-9 ${quiet ? "border border-line text-muted hover:text-fg" : "bg-fg text-bg"}`}
@@ -48,7 +53,7 @@ export function WatchAudit() {
 }
 
 /** Follows the whole audit as a sprint (or opens the sprint that is already on) */
-export function FollowAudit({ auditId, label = "Follow it as a sprint" }: { auditId: string; label?: string }) {
+export function FollowAudit({ auditId, label = "Follow it as a sprint", line = "email" }: { auditId: string; label?: string; line?: OpsLine }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -60,9 +65,9 @@ export function FollowAudit({ auditId, label = "Follow it as a sprint" }: { audi
         disabled={pending}
         onClick={() =>
           start(async () => {
-            const r = await startEmailSprint(auditId);
+            const r = await startEmailSprint(auditId, undefined, line);
             if (!r.ok) return setError(r.error);
-            router.push(`/kpis/email-sprint/${r.sprintId}`);
+            router.push(`/kpis/${line}-sprint/${r.sprintId}`);
           })
         }
         className="min-h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-60 md:min-h-9"
@@ -74,7 +79,7 @@ export function FollowAudit({ auditId, label = "Follow it as a sprint" }: { audi
 }
 
 /** One action in the audit's plan: tick it off when it is done (everyone sees who and when), or add just this one to the sprint */
-export function EmailActionCard({ auditId, index, action, areaLabel, done, listed, onChange }: { auditId: string; index: number; action: EmailAction; areaLabel: string; done: { by: string; at: string } | null; listed: string | null; /** Called after a change, inside it, so a view that loaded the audit itself reads it again before the tick settles */ onChange?: () => Promise<unknown> }) {
+export function EmailActionCard({ auditId, index, action, areaLabel, done, listed, onChange, line = "email" }: { auditId: string; index: number; action: EmailAction | SocialAction; areaLabel: string; done: { by: string; at: string } | null; listed: string | null; /** Called after a change, inside it, so a view that loaded the audit itself reads it again before the tick settles */ onChange?: () => Promise<unknown>; line?: OpsLine }) {
   const router = useRouter();
   const [adding, startAdd] = useTransition();
   const [, start] = useTransition();
@@ -83,7 +88,7 @@ export function EmailActionCard({ auditId, index, action, areaLabel, done, liste
   const toggle = () =>
     start(async () => {
       setChecked(!checked);
-      await tickEmailAuditAction(auditId, index, !checked);
+      await tickEmailAuditAction(auditId, index, !checked, line);
       await onChange?.();
       router.refresh();
     });
@@ -108,6 +113,7 @@ export function EmailActionCard({ auditId, index, action, areaLabel, done, liste
           <p className={`font-heading leading-snug ${checked ? "text-muted line-through decoration-faint" : ""}`}>{action.title}</p>
           <div className="flex flex-wrap gap-1.5 text-[11px]">
             <span className="rounded-full bg-bg px-2 py-0.5 text-fg">{OWNER_LABEL[action.owner] ?? action.owner}</span>
+            {"platform" in action && action.platform !== "all" && <span className="rounded-full border border-line px-2 py-0.5 text-muted">{PLATFORM_LABEL[action.platform] ?? action.platform}</span>}
             <span className="rounded-full border border-line px-2 py-0.5 text-muted">{areaLabel}</span>
             <span className="rounded-full border border-line px-2 py-0.5 text-muted">{action.effort} effort</span>
           </div>
@@ -142,7 +148,7 @@ export function EmailActionCard({ auditId, index, action, areaLabel, done, liste
                 disabled={adding}
                 onClick={() =>
                   startAdd(async () => {
-                    await startEmailSprint(auditId, index);
+                    await startEmailSprint(auditId, index, line);
                     await onChange?.();
                     router.refresh();
                   })
@@ -167,7 +173,7 @@ const STATUS: { value: "todo" | "doing" | "done" | "skipped"; label: string }[] 
 ];
 
 /** One sprint move: set where it stands (saved on change) and leave a note the next check reads */
-export function SprintMove({ id, title, owner, steps, why, impact, status, note, aiNote, onChange, compact = false }: { id: string; title: string; owner: string | null; steps: string[]; why: string | null; impact: string | null; status: "todo" | "doing" | "done" | "skipped"; note: string | null; aiNote: string | null; onChange?: () => Promise<unknown>; /** Steps folded away until asked for (the KPI sheet) */ compact?: boolean }) {
+export function SprintMove({ id, title, owner, steps, why, impact, status, note, aiNote, onChange, compact = false, line = "email" }: { id: string; title: string; owner: string | null; steps: string[]; why: string | null; impact: string | null; status: "todo" | "doing" | "done" | "skipped"; note: string | null; aiNote: string | null; onChange?: () => Promise<unknown>; /** Steps folded away until asked for (the KPI sheet) */ compact?: boolean; line?: OpsLine }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [current, setCurrent] = useState(status);
@@ -176,7 +182,7 @@ export function SprintMove({ id, title, owner, steps, why, impact, status, note,
   const save = (s: typeof status, n?: string) =>
     start(async () => {
       setCurrent(s);
-      await setEmailActionStatus(id, s, n);
+      await setEmailActionStatus(id, s, n, line);
       await onChange?.();
       router.refresh();
     });
@@ -186,7 +192,7 @@ export function SprintMove({ id, title, owner, steps, why, impact, status, note,
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid min-w-0 gap-1">
           <p className={`font-heading leading-snug ${finished ? "text-muted line-through decoration-faint" : ""}`}>{title}</p>
-          {owner && <p className="text-[11.5px] text-faint">{OWNER_LABEL[owner as keyof typeof OWNER_LABEL] ?? owner}</p>}
+          {owner && <p className="text-[11.5px] text-faint">{OWNER_LABEL[owner] ?? owner}</p>}
         </div>
         <div role="radiogroup" aria-label="Where this move stands" className="flex overflow-hidden rounded-full border border-line text-[12px]">
           {STATUS.map((o) => (
@@ -225,7 +231,7 @@ export function SprintMove({ id, title, owner, steps, why, impact, status, note,
 }
 
 /** Look now instead of waiting for the next check, and close the sprint when it is over */
-export function SprintControls({ sprintId, active }: { sprintId: string; active: boolean }) {
+export function SprintControls({ sprintId, active, line = "email" }: { sprintId: string; active: boolean; line?: OpsLine }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [note, setNote] = useState<string | null>(null);
@@ -238,7 +244,7 @@ export function SprintControls({ sprintId, active }: { sprintId: string; active:
         disabled={pending}
         onClick={() =>
           start(async () => {
-            const r = await checkEmailSprintNow(sprintId);
+            const r = await checkEmailSprintNow(sprintId, line);
             setNote(r.ok ? "Measuring now. The check shows here in a minute." : r.error);
             setTimeout(() => router.refresh(), 6000);
           })
@@ -252,7 +258,7 @@ export function SprintControls({ sprintId, active }: { sprintId: string; active:
         disabled={pending}
         onClick={() =>
           start(async () => {
-            const r = await closeEmailSprint(sprintId, "done", "Closed by the team");
+            const r = await closeEmailSprint(sprintId, "done", "Closed by the team", line);
             if (r.ok) router.refresh();
             else setNote(r.error);
           })

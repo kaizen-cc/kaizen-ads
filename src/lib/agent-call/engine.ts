@@ -24,7 +24,7 @@ export type Speaker = { role: string; label: string; icon: string };
 /** What the hidden debug overlay shows (?calldebug=1) */
 export type CallDebug = { phase: string; muted: boolean; ears: string; noise: number; threshold: number; level: number; speaking: boolean; commit: number | null; asking: number | null; heard: number; stall: StallState; queue: number; timing: string | null; voice: string | null; client: string | null };
 
-const STT_RATE = 16000;
+export const STT_RATE = 16000;
 /** Audio kept from just before someone starts talking over the agent, so their first words aren't lost */
 const PRE_ROLL_SAMPLES = STT_RATE / 2;
 /** How much audio goes to speech to text in one message (100ms) */
@@ -36,7 +36,7 @@ const SPEAK_TIMEOUT_MS = 15_000;
 /** Keep-alive pings count as progress for the stall watch only this long into a turn */
 const PING_PROGRESS_MS = 45_000;
 
-const WORKLET = `class KzTap extends AudioWorkletProcessor { process(inputs) { const ch = inputs[0] && inputs[0][0]; if (ch) this.port.postMessage(ch.slice(0)); return true; } } registerProcessor("kz-tap", KzTap);`;
+export const WORKLET = `class KzTap extends AudioWorkletProcessor { process(inputs) { const ch = inputs[0] && inputs[0][0]; if (ch) this.port.postMessage(ch.slice(0)); return true; } } registerProcessor("kz-tap", KzTap);`;
 
 const b64 = (bytes: Uint8Array) => {
   let s = "";
@@ -47,7 +47,7 @@ const b64 = (bytes: Uint8Array) => {
 // ─── Listening ──────────────────────────────────────────────────────────────
 
 /** What turns speech into text for the call: ElevenLabs realtime, or the browser's own */
-interface Ears {
+export interface Ears {
   readonly kind: "scribe" | "browser";
   /** Where the connection stands, for the debug overlay */
   readonly state: string;
@@ -64,7 +64,7 @@ interface Ears {
   close(): void;
 }
 
-type SpeechRec = {
+export type SpeechRec = {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
@@ -75,7 +75,7 @@ type SpeechRec = {
   stop(): void;
 };
 
-function browserSpeech(): (new () => SpeechRec) | null {
+export function browserSpeech(): (new () => SpeechRec) | null {
   const w = window as unknown as { SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec };
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
@@ -86,7 +86,7 @@ function browserSpeech(): (new () => SpeechRec) | null {
  * dropped connection gets a new token and reconnects (backing off, and only falling back to the browser's own
  * listening after several failures in a row), keeping the words heard so far.
  */
-function scribeEars(token: string, opts: { onPartial: (t: string) => void; onLost: () => void; renew: () => Promise<string | null> }): Ears {
+export function scribeEars(token: string, opts: { onPartial: (t: string) => void; onLost: () => void; renew: () => Promise<string | null> }): Ears {
   const words = createTranscript();
   let pending: number[] = [];
   let waiting: (() => void) | null = null;
@@ -239,7 +239,7 @@ function scribeEars(token: string, opts: { onPartial: (t: string) => void; onLos
  * stops on its own every minute or so: what was heard before it stopped is kept for the turn (it used to be lost).
  * It listens with its own microphone, so muting stops it.
  */
-function browserEars(Rec: new () => SpeechRec, opts: { onPartial: (t: string) => void }): Ears {
+export function browserEars(Rec: new () => SpeechRec, opts: { onPartial: (t: string) => void }): Ears {
   const rec = new Rec();
   rec.continuous = true;
   rec.interimResults = true;
@@ -359,6 +359,8 @@ export type Hooks = {
   onLook?: () => void;
   /** The agent said goodbye and its last words have played: hang up */
   onEnd?: () => void;
+  /** The agent moved the conversation to the chat (or back to a call) and its last words have played */
+  onSwitch?: (to: "voice" | "text") => void;
   /** The phone stopped the call's audio while the page was in the background (true), or it's back (false) */
   onAway?: (paused: boolean) => void;
   /** A finished part of the call's recording (both sides), to upload */
@@ -415,6 +417,8 @@ export class Call {
   private speaker: Speaker | null = null;
   /** The agent said goodbye: hang up once the queue has played */
   private ending = false;
+  /** The agent is moving the conversation to the chat: once the queue has played */
+  private switching: "voice" | "text" | null = null;
   private recorder: MediaRecorder | null = null;
   private recDest: MediaStreamAudioDestinationNode | null = null;
   private recTimer: ReturnType<typeof setTimeout> | null = null;
@@ -743,7 +747,7 @@ export class Call {
     let buffer = "";
     const live = () => !turn.signal.aborted && isCurrent(this.st, turnNo);
     try {
-      const res = await fetch("/api/agent-call/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text: said, path: `${window.location.pathname}${window.location.search}`.slice(0, 500), ...(this.context ? { context: this.context } : {}), ...(frame ? { frame } : {}) }), signal: turn.signal });
+      const res = await fetch("/api/agent-call/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, mode: "voice", text: said, path: `${window.location.pathname}${window.location.search}`.slice(0, 500), ...(this.context ? { context: this.context } : {}), ...(frame ? { frame } : {}) }), signal: turn.signal });
       if (res.status === 410) return this.hooks.onError("The call has ended.");
       if (!res.ok || !res.body) throw new Error(String(res.status));
       const reader = res.body.getReader();
@@ -786,6 +790,7 @@ export class Call {
           else if (e.t === "upload") this.hooks.onUpload?.(e.ask);
           else if (e.t === "look") this.hooks.onLook?.();
           else if (e.t === "end") this.ending = true;
+          else if (e.t === "switch") this.switching = e.to;
         }
       }
       if (live() && buffer.trim()) this.say(buffer.trim(), turnNo);
@@ -839,6 +844,12 @@ export class Call {
       if (this.streamDone && this.ending) {
         this.ending = false;
         this.hooks.onEnd?.();
+        return;
+      }
+      if (this.streamDone && this.switching) {
+        const to = this.switching;
+        this.switching = null;
+        this.hooks.onSwitch?.(to);
         return;
       }
       if (this.streamDone) this.dispatch({ t: "idle" });

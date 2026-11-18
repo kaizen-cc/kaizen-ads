@@ -6,6 +6,7 @@ import { agentTools } from "@/lib/agent-call/agent-tools";
 import { showCard } from "@/lib/agent-call/call-cards";
 import { withFrame } from "@/lib/agent-call/call-extras";
 import { firstNameOf, pendingItems, type CallEvent } from "@/lib/agent-call/core";
+import { keptLine, talkModeOf } from "@/lib/agent-call/modality";
 import { callContext, playbookFor, readMoment, streamAnswer, turnExtras, voiceSystem, type Answer, type CallRow, type TurnInput } from "@/lib/agent-call/server";
 import { callTimer } from "@/lib/agent-call/timing";
 import type { LoopTool } from "@/lib/agent-call/tool-loop";
@@ -518,7 +519,6 @@ export function teamBlock(team: TeamState, self: string, firstName: string): str
 // ─── A specialist's turn ────────────────────────────────────────────────────
 
 const today = () => new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
-const spokenOf = (reply: string, aborted: boolean) => (reply.replace(/\n+/g, " ").trim() ? `${reply.replace(/\n+/g, " ").trim()}${aborted ? "…" : ""}` : "");
 
 export function logRun(admin: SupabaseClient, me: Staff, roleKey: string, out: Answer) {
   void admin
@@ -553,6 +553,7 @@ export async function specialistTurn(input: TurnInput, team: TeamState, roleKey:
   const said = m.mode === "person" ? m.text : "";
   const timer = input.timer ?? callTimer();
   const tag = `${roleKey}.`;
+  const mode = talkModeOf(input.mode);
   const [book, convo, extra] = await timer.time(
     `${tag}context`,
     Promise.all([timer.time(`${tag}playbook`, playbookFor(admin, roleKey)), timer.time(`${tag}history`, callContext(admin, { ...call, role_key: roleKey }, firstName)), turnExtras(input, m.text, tag)]),
@@ -571,7 +572,7 @@ export async function specialistTurn(input: TurnInput, team: TeamState, roleKey:
         ? `<handed_to_you by="the ${labelOf(m.from ?? team.host)}">\n${m.text}\n</handed_to_you>\nPick it up from there. Say what you're doing in a line, do your part, then hand on or ask ${firstName}.`
         : `${m.fresh ? `<just_joined>${firstName} asked for you just now and you've joined the call. Say hi in a couple of words, then answer what they said.</just_joined>\n` : ""}<${firstName}_says>\n${m.text}\n</${firstName}_says>`;
   const out = await streamAnswer({
-    system: `${voiceSystem(book.role.label, roleKey, firstName, trains, asHost ? hostNote(firstName) : guestNote(firstName, team.host))}\n\n${asHost ? hostRule(firstName) : teamRule(firstName)}\n\n${book.text}`,
+    system: `${voiceSystem(book.role.label, roleKey, firstName, trains, asHost ? hostNote(firstName) : guestNote(firstName, team.host), mode)}\n\n${asHost ? hostRule(firstName) : teamRule(firstName)}\n\n${book.text}`,
     tools: [...tools, extra.look, ...extra.connectors.tools],
     connectors: extra.connectors,
     content: withFrame([`Today is ${today()} (New York).`, extra.where, teamBlock(team, roleKey, firstName), convo, extra.hint, lastWord, prompt].filter(Boolean).join("\n\n"), extra.frame),
@@ -580,10 +581,11 @@ export async function specialistTurn(input: TurnInput, team: TeamState, roleKey:
     filler: { callId: call.id, turn: input.startedAt ?? 0, said: m.mode === "person" ? m.text : "" },
     timer,
     tag,
+    mode,
   });
   await extra.connectors.settle().catch(() => undefined);
   logRun(admin, me, roleKey, out);
-  const spoken = spokenOf(out.reply, signal.aborted);
+  const spoken = keptLine(out.reply, signal.aborted, mode);
   // The person's line at when they said it, the answer after it (the transcript reads them in that order)
   const at = turnTimes(m.mode === "person" ? input.startedAt : null, Date.now());
   await admin.from("ai_role_chats").insert([

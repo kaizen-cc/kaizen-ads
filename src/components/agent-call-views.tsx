@@ -55,6 +55,8 @@ export type CallView = {
   onCloseUpload?: () => void;
   /** Phones: shrink the call to its pill (to see a screen it opened) */
   onMinimize?: () => void;
+  /** The assistant's calls: carry the same conversation on in the chat */
+  onToChat?: () => void;
   /** Computers: sharing the screen for a look (whether it can, it is, it's asked, a look is being taken) */
   screen?: { can: boolean; sharing: boolean; asked: boolean; looking: boolean; onShare: () => void; onStop: () => void; onCancel: () => void };
   /** Send what's been heard now (and whether there's anything to send), or a typed turn */
@@ -152,6 +154,12 @@ const KeyboardIcon = ({ size = 18 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <rect x="2.5" y="6" width="19" height="12" rx="2.5" />
     <path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M7.5 14h9" />
+  </svg>
+);
+
+const ChatIcon = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />
   </svg>
 );
 
@@ -421,7 +429,12 @@ export function FullScreenCall({ v }: { v: CallView }) {
         <SendBar v={v} compact={false} />
       </div>
 
-      <footer className="relative flex items-center justify-center gap-10 px-5 pb-6 pt-3">
+      <footer className={`relative flex items-center justify-center px-5 pb-6 pt-3 ${v.onToChat ? "gap-7" : "gap-10"}`}>
+        {v.onToChat && (
+          <button type="button" onClick={v.onToChat} aria-label="Switch to chat" title="Switch to chat" className="grid h-16 w-16 place-items-center rounded-full border border-line bg-surface text-fg transition hover:border-faint active:scale-95">
+            <ChatIcon size={22} />
+          </button>
+        )}
         <button
           type="button"
           onClick={v.onMute}
@@ -657,6 +670,11 @@ export function Huddle({ v, minimized, onMinimize, onExpand, phone = false }: { 
               className={`grid h-11 w-11 place-items-center rounded-full border transition active:scale-95 ${v.screen.sharing ? "border-bad/40 bg-bad/10 text-bad" : "border-line bg-surface text-fg hover:border-faint"}`}
             >
               <ScreenIcon size={18} />
+            </button>
+          )}
+          {v.onToChat && (
+            <button type="button" onClick={v.onToChat} aria-label="Switch to chat" title="Switch to chat (the same conversation, typed)" className="grid h-11 w-11 place-items-center rounded-full border border-line bg-surface text-fg transition hover:border-faint active:scale-95">
+              <ChatIcon size={18} />
             </button>
           )}
           {muteButton(false)}

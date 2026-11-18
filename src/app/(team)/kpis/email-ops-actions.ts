@@ -6,9 +6,18 @@ import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
-// Email audits, sprints and campaign suggestions: what the email team does from the audit page, the sprint page and the
-// client page. Each action first reads the row through the person's own session (RLS: they can only see their clients),
-// then writes with the server's rights. Nothing here deletes anything, and nothing touches Klaviyo.
+// Email and social audits and sprints, and email campaign suggestions: what the email and social teams do from the audit
+// page, the sprint page, the KPI sheet and the client page. The audit and sprint actions take the line (email by default;
+// social's tables have the same shapes under social_*). Each action first reads the row through the person's own session
+// (RLS: they can only see their clients), then writes with the server's rights. Nothing here deletes anything, and
+// nothing touches Klaviyo, Instagram or Facebook.
+
+export type OpsLine = "email" | "social";
+const lineOf = (line: unknown): OpsLine => (line === "social" ? "social" : "email");
+const sprintLib = async (line: OpsLine) =>
+  line === "social"
+    ? import("@/lib/social-ops/sprint").then((m) => ({ open: m.openSocialSprint, check: m.checkSocialSprint }))
+    : import("@/lib/email-ops/sprint").then((m) => ({ open: m.openEmailSprint, check: m.checkEmailSprint }));
 
 type R<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 const fail = (e: unknown, fallback: string) => ({ ok: false as const, error: e instanceof Error ? e.message : fallback });
@@ -18,33 +27,35 @@ const refresh = () => {
 };
 
 /** Ticks an audit's action off (or back on), with who and when */
-export async function tickEmailAuditAction(auditId: string, index: number, done: boolean): Promise<R> {
+export async function tickEmailAuditAction(auditId: string, index: number, done: boolean, opsLine: OpsLine = "email"): Promise<R> {
   const me = await requireStaff();
+  const line = lineOf(opsLine);
   const supabase = await createClient();
-  const { data: a } = await supabase.from("email_audits").select("done").eq("id", auditId).maybeSingle();
+  const { data: a } = await supabase.from(`${line}_audits`).select("done").eq("id", auditId).maybeSingle();
   if (!a) return { ok: false, error: "Audit not found." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
   const next = { ...((a.done ?? {}) as Record<string, unknown>) };
   if (done) next[String(index)] = { by: me.fullName, at: new Date().toISOString() };
   else delete next[String(index)];
-  const { error } = await createAdminClient().from("email_audits").update({ done: next }).eq("id", auditId);
+  const { error } = await createAdminClient().from(`${line}_audits`).update({ done: next }).eq("id", auditId);
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/kpis/email-audit/${auditId}`);
+  revalidatePath(`/kpis/${line}-audit/${auditId}`);
   return { ok: true };
 }
 
 /** "Add to my action list" (one move) or "Follow this audit" (every move): opens the client's sprint */
-export async function startEmailSprint(auditId: string, only?: number): Promise<R<{ sprintId: string }>> {
+export async function startEmailSprint(auditId: string, only?: number, opsLine: OpsLine = "email"): Promise<R<{ sprintId: string }>> {
   const me = await requireStaff();
+  const line = lineOf(opsLine);
   const supabase = await createClient();
-  const { data: a } = await supabase.from("email_audits").select("id").eq("id", auditId).maybeSingle();
+  const { data: a } = await supabase.from(`${line}_audits`).select("id").eq("id", auditId).maybeSingle();
   if (!a) return { ok: false, error: "You don't work on this client." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
   try {
-    const { openEmailSprint } = await import("@/lib/email-ops/sprint");
-    const id = await openEmailSprint(createAdminClient(), auditId, me.id, only);
+    const { open } = await sprintLib(line);
+    const id = await open(createAdminClient(), auditId, me.id, only);
     if (!id) return { ok: false, error: "The audit isn't finished." };
-    revalidatePath(`/kpis/email-audit/${auditId}`);
+    revalidatePath(`/kpis/${line}-audit/${auditId}`);
     refresh();
     return { ok: true, sprintId: id };
   } catch (e) {
@@ -53,45 +64,49 @@ export async function startEmailSprint(auditId: string, only?: number): Promise<
 }
 
 /** Marks a sprint move todo, doing, done or skipped, with a note the next check reads */
-export async function setEmailActionStatus(actionId: string, status: "todo" | "doing" | "done" | "skipped", note?: string): Promise<R> {
+export async function setEmailActionStatus(actionId: string, status: "todo" | "doing" | "done" | "skipped", note?: string, opsLine: OpsLine = "email"): Promise<R> {
   const me = await requireStaff();
+  const line = lineOf(opsLine);
+  if (!["todo", "doing", "done", "skipped"].includes(status)) return { ok: false, error: "Unknown status." };
   const supabase = await createClient();
-  const { data } = await supabase.from("email_sprint_actions").select("id, sprint_id").eq("id", actionId).maybeSingle();
+  const { data } = await supabase.from(`${line}_sprint_actions`).select("id, sprint_id").eq("id", actionId).maybeSingle();
   if (!data) return { ok: false, error: "You don't work on this client." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
   const { error } = await createAdminClient()
-    .from("email_sprint_actions")
+    .from(`${line}_sprint_actions`)
     .update({ status, ...(note !== undefined ? { note: note.trim().slice(0, 1000) || null } : {}), done_by: status === "done" ? me.id : null, done_at: status === "done" ? new Date().toISOString() : null })
     .eq("id", actionId);
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/kpis/email-sprint/${data.sprint_id}`);
+  revalidatePath(`/kpis/${line}-sprint/${data.sprint_id}`);
   refresh();
   return { ok: true };
 }
 
 /** Re-measure now instead of waiting for the next scheduled check (runs after the reply) */
-export async function checkEmailSprintNow(sprintId: string): Promise<R> {
+export async function checkEmailSprintNow(sprintId: string, opsLine: OpsLine = "email"): Promise<R> {
   await requireStaff();
-  const { data } = await (await createClient()).from("email_sprints").select("id").eq("id", sprintId).maybeSingle();
+  const line = lineOf(opsLine);
+  const { data } = await (await createClient()).from(`${line}_sprints`).select("id").eq("id", sprintId).maybeSingle();
   if (!data) return { ok: false, error: "You don't work on this client." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
   const admin = createAdminClient();
   after(async () => {
-    const { checkEmailSprint } = await import("@/lib/email-ops/sprint");
-    await checkEmailSprint(admin, sprintId).catch((e) => console.error("[email sprint] check failed:", e instanceof Error ? e.message : e));
+    const { check } = await sprintLib(line);
+    await check(admin, sprintId).catch((e) => console.error(`[${line} sprint] check failed:`, e instanceof Error ? e.message : e));
   });
   return { ok: true };
 }
 
 /** Close the sprint: done (it worked) or closed (stopped for another reason) */
-export async function closeEmailSprint(sprintId: string, status: "done" | "closed", note: string): Promise<R> {
+export async function closeEmailSprint(sprintId: string, status: "done" | "closed", note: string, opsLine: OpsLine = "email"): Promise<R> {
   await requireStaff();
-  const { data } = await (await createClient()).from("email_sprints").select("id").eq("id", sprintId).maybeSingle();
+  const line = lineOf(opsLine);
+  const { data } = await (await createClient()).from(`${line}_sprints`).select("id").eq("id", sprintId).maybeSingle();
   if (!data) return { ok: false, error: "You don't work on this client." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
-  const { error } = await createAdminClient().from("email_sprints").update({ status, closed_at: new Date().toISOString(), close_note: note.trim().slice(0, 500) || null }).eq("id", sprintId);
+  const { error } = await createAdminClient().from(`${line}_sprints`).update({ status, closed_at: new Date().toISOString(), close_note: note.trim().slice(0, 500) || null }).eq("id", sprintId);
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/kpis/email-sprint/${sprintId}`);
+  revalidatePath(`/kpis/${line}-sprint/${sprintId}`);
   refresh();
   return { ok: true };
 }

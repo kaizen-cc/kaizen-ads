@@ -3,12 +3,14 @@
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { ackCallNotice, endCall, startCall } from "@/app/(team)/settings/call-actions";
+import { ackCallNotice, endCall, openAssistantChat, startCall, switchCallMode, type ThreadLine } from "@/app/(team)/settings/call-actions";
 import { assistantCallNotes, audioUploadSlot, callUploadSlots, callUploadsDone, screenFrameSaved, screenFrameSlot } from "@/app/(team)/assistant/actions";
 import { lookPlan } from "@/lib/agent-call/call-context";
 import { openPlan } from "@/lib/agent-call/open-link";
 import { canShareScreen, grabFrame, startScreenShare, stopScreenShare } from "@/lib/agent-call/screen-share";
-import { CALL_LIMIT_SECONDS, type CallCard, type LearnedItem, type StallState, type UploadAsk } from "@/lib/agent-call/core";
+import { CALL_LIMIT_SECONDS, type CallCard, type EndTrigger, type LearnedItem, type StallState, type UploadAsk } from "@/lib/agent-call/core";
+import { ChatSession, type ChatLine } from "@/lib/agent-call/chat-engine";
+import type { TalkMode } from "@/lib/agent-call/modality";
 import { Call, chime, type Line, type Phase, type Speaker } from "@/lib/agent-call/engine";
 import { ASSISTANT_KEY, ASSISTANT_LABEL } from "@/lib/assistant/core";
 import type { CallNotes } from "@/lib/assistant/notes";
@@ -18,6 +20,7 @@ import { assistantTintOf } from "@/lib/agent-look";
 import { captureFrames } from "@/lib/uploads/video-prep";
 import { AgentGlyph, RecordingNotice } from "./assistant-call-parts";
 import { FullScreenCall, FullScreenSummary, Huddle, HuddleSummary, SwitchAsk, type AgentRef, type CallView, type SummaryView } from "./agent-call-views";
+import { ChatWidget, type ChatView } from "./assistant-chat-views";
 
 // A call with an AI agent lives here, above every page (like uploads do), so it survives moving around the app: the
 // microphone, the audio, the listening connection and the turn loop belong to this provider, not to the page that
@@ -33,8 +36,12 @@ import { FullScreenCall, FullScreenSummary, Huddle, HuddleSummary, SwitchAsk, ty
 type Ctx = {
   /** Start a call with an agent (call it from the click itself: browsers only play sound after a tap). `agent.context`: where it's started from */
   start: (agent: AgentRef) => void;
-  /** Call my assistant (from the side menu) */
+  /** Call my assistant (from the side menu); a chat that's open carries on as the call */
   startAssistant: () => void;
+  /** Chat with my assistant: the same conversation and pipeline as a call, typed; a call that's on carries on as the chat */
+  startAssistantChat: () => void;
+  /** Whether the conversation going now is a call or a chat */
+  talk: TalkMode | null;
   /** The agent on the line (or whose summary is open), if any */
   activeRole: string | null;
   /** A call is being set up or running */
@@ -45,7 +52,7 @@ type Ctx = {
   setAssistantTint: (hex: string | null) => void;
 };
 
-const CallCtx = createContext<Ctx>({ start: () => undefined, startAssistant: () => undefined, activeRole: null, live: false, assistantTint: assistantTintOf(null), setAssistantTint: () => undefined });
+const CallCtx = createContext<Ctx>({ start: () => undefined, startAssistant: () => undefined, startAssistantChat: () => undefined, talk: null, activeRole: null, live: false, assistantTint: assistantTintOf(null), setAssistantTint: () => undefined });
 
 export const useAgentCall = () => useContext(CallCtx);
 
@@ -63,7 +70,10 @@ const useDesktop = () =>
     () => false,
   );
 
-type Stage = "idle" | "call" | "summary";
+type Stage = "idle" | "call" | "chat" | "summary";
+
+/** The conversation's lines from the server, as the chat shows them (ids from `from` up) */
+const chatLinesOf = (rows: ThreadLine[], from = 0): ChatLine[] => rows.map((l, i) => ({ id: from + i + 1, who: l.who, text: l.text, speaker: l.speaker }));
 
 const typing = (t: EventTarget | null) => {
   const el = t as HTMLElement | null;
@@ -118,6 +128,13 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
   const [stall, setStall] = useState<StallState>(null);
   const [liveId, setLiveId] = useState<string | null>(null);
   const [canSend, setCanSend] = useState(false);
+  // The chat: its lines (and the last few of the conversation before), an answer being written, opening or moving over
+  const [chatLines, setChatLines] = useState<ChatLine[]>([]);
+  const [earlier, setEarlier] = useState<ChatLine[]>([]);
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatConnecting, setChatConnecting] = useState(false);
+  const [noticeTalk, setNoticeTalk] = useState<TalkMode>("voice");
+  const [switchTalk, setSwitchTalk] = useState<TalkMode>("voice");
   const debug = useSyncExternalStore(subscribeNone, debugOn, () => false);
   // Their own assistant color: from their profile, changed at once when they pick another
   const [tint, setTint] = useState(() => assistantTintOf(assistantColor));
@@ -137,6 +154,8 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
     () => false,
   );
   const call = useRef<Call | null>(null);
+  const chat = useRef<ChatSession | null>(null);
+  const chatLinesRef = useRef<ChatLine[]>([]);
   const callId = useRef<string | null>(null);
   const startedRef = useRef<number | null>(null);
   const stageRef = useRef<Stage>("idle");
@@ -146,7 +165,8 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
   useEffect(() => {
     stageRef.current = stage;
     desktopRef.current = desktop;
-  }, [stage, desktop]);
+    chatLinesRef.current = chatLines;
+  }, [stage, desktop, chatLines]);
 
   const elapsed = startedAt ? Math.max(0, (now - startedAt) / 1000) : 0;
   const left = CALL_LIMIT_SECONDS - elapsed;
@@ -171,11 +191,20 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
     setLooking(false);
   }, []);
 
-  /** Ends the call. `quiet` skips the wrap-up (leaving one call to start another) */
+  /**
+   * Ends the call or the chat. `quiet` skips the wrap-up (leaving one to start another). `how`: what ended it (the
+   * button, the agent's goodbye, the chat's close, the time limit), kept so the next one greets them right
+   */
   const hangUp = useCallback(
-    async (quiet = false) => {
+    async (quiet = false, how?: EndTrigger) => {
       const id = callId.current;
+      const wasChat = stageRef.current === "chat";
+      const trigger: EndTrigger = how ?? (wasChat ? "chat_close" : "button");
       stopShare();
+      chat.current?.close();
+      chat.current = null;
+      setChatBusy(false);
+      setChatConnecting(false);
       const spent = startedRef.current ? (Date.now() - startedRef.current) / 1000 : 0;
       const wasAssistant = agent?.roleKey === ASSISTANT_KEY;
       const wasTeam = teamed.current;
@@ -189,17 +218,17 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
         setStage("idle");
         return;
       }
-      chime("end");
+      if (!wasChat) chime("end");
       if (quiet) {
         setStage("idle");
-        void endCall(id).then(() => router.refresh());
+        void endCall(id, trigger).then(() => router.refresh());
         return;
       }
       setStage("summary");
       setSummary(null);
       setLastCall(id);
       setNotes(null);
-      const r = await endCall(id);
+      const r = await endCall(id, trigger);
       if (r.ok) {
         setLearned(r.learned);
         setSummary({ seconds: r.seconds, canReview: r.canReview, skills: r.skills });
@@ -221,7 +250,7 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
     const t = setInterval(() => {
       const n = Date.now();
       setNow(n);
-      if ((n - startedAt) / 1000 >= CALL_LIMIT_SECONDS) void hangUpRef.current();
+      if ((n - startedAt) / 1000 >= CALL_LIMIT_SECONDS) void hangUpRef.current(false, "limit");
     }, 1000);
     return () => clearInterval(t);
   }, [stage, startedAt]);
@@ -230,8 +259,9 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
   useEffect(
     () => () => {
       const id = callId.current;
-      if (id && call.current) void endCall(id);
+      if (id && (call.current || chat.current)) void endCall(id, "unload");
       call.current?.close();
+      chat.current?.close();
     },
     [],
   );
@@ -261,7 +291,7 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
   }, [stage]);
 
   // Phones: the call takes the whole screen (unless minimised to its pill), and the page behind doesn't scroll
-  const fullScreen = !desktop && stage !== "idle" && !(stage === "call" && minimized);
+  const fullScreen = !desktop && stage !== "idle" && !((stage === "call" || stage === "chat") && minimized);
   useEffect(() => {
     if (!fullScreen) return;
     const was = document.body.style.overflow;
@@ -325,12 +355,20 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
     [router],
   );
 
+  /** The same conversation moved to the other mode (the agent's switch_mode, or the buttons) */
+  const switchRef = useRef<(to: TalkMode) => void>(() => undefined);
+
+  /**
+   * Starts a call. `carry`: the conversation going on in the chat continues as this call (same conversation, its
+   * lines kept, the agent picks up where it was instead of greeting), and what's on screen with it (cards, the job,
+   * who's on) stays.
+   */
   const dial = useCallback(
-    (a: AgentRef, before?: Promise<unknown>) => {
+    (a: AgentRef, before?: Promise<unknown>, carry?: { callId: string; lines: Line[] }) => {
       setAgent(a);
       setError(null);
-      setLines([]);
-      setLearned([]);
+      setLines(carry?.lines ?? []);
+      if (!carry) setLearned([]);
       setPartial("");
       setMuted(false);
       mutedRef.current = false;
@@ -340,15 +378,17 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
       setLastCall(null);
       setMinimized(false);
       setStartedAt(null);
-      setTeam([]);
-      setJob(null);
-      teamed.current = false;
-      setCards([]);
-      setUploadAsk(null);
+      if (!carry) {
+        setTeam([]);
+        setJob(null);
+        teamed.current = false;
+        setCards([]);
+        setUploadAsk(null);
+        stopShare();
+      }
       setNotes(null);
       setStall(null);
       setCanSend(false);
-      stopShare();
       setStage("call");
       if (!navigator.mediaDevices?.getUserMedia) {
         setError("This browser can't use the microphone here.");
@@ -381,7 +421,8 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
           setMinimized(false);
         },
         onLook: () => lookRef.current(),
-        onEnd: () => void hangUpRef.current(),
+        onEnd: () => void hangUpRef.current(false, "agent_end"),
+        onSwitch: (to) => switchRef.current(to),
         onAway: (paused) => setAwayPaused(paused),
         onAudioPart: (part) => {
           if (id) void uploadAudio(id, part);
@@ -392,18 +433,21 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
       call.current = c;
       void (async () => {
         await before;
-        const r = await startCall(a.roleKey);
+        const r = carry
+          ? await switchCallMode(carry.callId, "voice").then((x) => (x.ok ? { ok: true as const, callId: carry.callId, greeting: x.line, sttToken: x.sttToken } : x))
+          : await startCall(a.roleKey);
         // Left before it picked up
         if (call.current !== c) {
-          if (r.ok) void endCall(r.callId);
+          if (r.ok && !carry) void endCall(r.callId, "button");
           return;
         }
         if (!r.ok) {
           c.close();
           call.current = null;
           // The first call: the recording notice comes first
-          if (r.needsNotice) {
+          if ("needsNotice" in r && r.needsNotice) {
             setStage("idle");
+            setNoticeTalk("voice");
             setNotice(a);
             return;
           }
@@ -426,30 +470,208 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
           setError(denied ? "Allow the microphone to talk to the agent." : "Couldn't start the call. Try again.");
           c.close();
           call.current = null;
-          void endCall(r.callId);
-          callId.current = null;
+          // A chat moved over stays open (it can be picked up again in the chat); a new call is closed
+          if (!carry) {
+            void endCall(r.callId, "error");
+            callId.current = null;
+          }
         }
       })();
     },
     [openHref, uploadAudio, stopShare],
   );
 
+  /** The chat with the assistant: its window, then its conversation (the open one picked up, else a new one) */
+  const makeChat = useCallback(
+    (firstId: number) =>
+      new ChatSession(
+        {
+          onLine: (l) =>
+            setChatLines((cur) => {
+              const i = cur.findIndex((x) => x.id === l.id);
+              if (i < 0) return [...cur, l].slice(-200);
+              const next = cur.slice();
+              next[i] = l;
+              return next;
+            }),
+          onBusy: setChatBusy,
+          onError: setError,
+          onLearned: (items) => setLearned((cur) => [...cur, ...items]),
+          onTeam: (l) => {
+            setTeam(l);
+            if (l.length) teamed.current = true;
+          },
+          onJob: (j) => {
+            setJob(j);
+            if (j) teamed.current = true;
+          },
+          onNavigate: openHref,
+          onCard: (card) => setCards((cur) => [...cur.filter((x) => (card.draft ? x.draft?.id !== card.draft.id : x.href !== card.href || Boolean(x.draft))), card].slice(-6)),
+          onUpload: (ask) => {
+            setUploadAsk(ask);
+            setMinimized(false);
+          },
+          onLook: () => lookRef.current(),
+          onEnd: () => void hangUpRef.current(false, "agent_end"),
+          onSwitch: (to) => switchRef.current(to),
+        },
+        firstId,
+      ),
+    [openHref],
+  );
+
+  /** The chat being opened or moved to (a later one makes an earlier one's answer stale) */
+  const chatToken = useRef<object | null>(null);
+  const openChat = useCallback(
+    (a: AgentRef, before?: Promise<unknown>) => {
+      call.current?.close();
+      call.current = null;
+      chat.current?.close();
+      chat.current = null;
+      setAgent(a);
+      setError(null);
+      setChatLines([]);
+      setEarlier([]);
+      setLearned([]);
+      setLines([]);
+      setTeam([]);
+      setJob(null);
+      teamed.current = false;
+      setCards([]);
+      setUploadAsk(null);
+      setNotes(null);
+      setSummary(null);
+      setLastCall(null);
+      setMinimized(false);
+      setChatBusy(false);
+      setChatConnecting(true);
+      stopShare();
+      setStage("chat");
+      const token = {};
+      chatToken.current = token;
+      void (async () => {
+        await before;
+        const r = await openAssistantChat();
+        if (chatToken.current !== token || stageRef.current !== "chat") {
+          if (r.ok && !r.resumed) void endCall(r.callId, "chat_close");
+          return;
+        }
+        setChatConnecting(false);
+        if (!r.ok) {
+          if (r.needsNotice) {
+            setStage("idle");
+            setNoticeTalk("text");
+            setNotice(a);
+            return;
+          }
+          setError(r.error);
+          return;
+        }
+        const shown = chatLinesOf(r.lines);
+        setChatLines(shown);
+        setEarlier(chatLinesOf(r.earlier, -1000));
+        const s = makeChat(shown.length);
+        s.callId = r.callId;
+        s.context = a.context ?? null;
+        chat.current = s;
+        callId.current = r.callId;
+        setLiveId(r.callId);
+        startedRef.current = Date.parse(r.startedAt) || Date.now();
+      })();
+    },
+    [makeChat, stopShare],
+  );
+
+  /** A call carries on as the chat: the same conversation, its lines, and the agent picks up where it was */
+  const toChat = useCallback(() => {
+    const id = callId.current;
+    const a = agent;
+    if (!id || !a) return;
+    call.current?.close();
+    call.current = null;
+    setPhase("connecting");
+    setPartial("");
+    setMinimized(false);
+    setChatBusy(false);
+    setChatConnecting(true);
+    setEarlier([]);
+    setChatLines(lines.map((l, i) => ({ id: i + 1, who: l.who, text: l.text, speaker: l.speaker ?? null })));
+    setStage("chat");
+    const token = {};
+    chatToken.current = token;
+    void (async () => {
+      const r = await switchCallMode(id, "text");
+      if (chatToken.current !== token) return;
+      setChatConnecting(false);
+      if (!r.ok) return setError(r.error);
+      const shown = chatLinesOf(r.lines);
+      setChatLines(shown);
+      const s = makeChat(shown.length);
+      s.callId = id;
+      s.context = a.context ?? null;
+      chat.current = s;
+    })();
+  }, [agent, lines, makeChat]);
+
+  const chatSend = useCallback((text: string) => chat.current?.send(text), []);
+  const chatStop = useCallback(() => chat.current?.stop(), []);
+
+  /** The chat carries on as a call (from the tap itself: browsers only play sound after one) */
+  const toVoice = useCallback(() => {
+    const id = callId.current;
+    const a = agent;
+    if (!id || !a || chatConnecting) return;
+    chat.current?.close();
+    chat.current = null;
+    chatToken.current = null;
+    setChatBusy(false);
+    // The chat so far shows as the call's transcript (ids below the call's own)
+    const carried: Line[] = chatLinesRef.current
+      .filter((l) => !l.note && l.text.trim())
+      .slice(-30)
+      .map((l, i, all) => ({ id: i - all.length - 1, who: l.who, text: l.text, ...(l.speaker ? { speaker: l.speaker } : {}) }));
+    dial(a, undefined, { callId: id, lines: carried });
+  }, [agent, chatConnecting, dial]);
+
+  useEffect(() => {
+    switchRef.current = (to) => {
+      if (to === "text" && stageRef.current === "call") toChat();
+      // The agent asked to move to a call: on a computer that can start now; a phone needs the tap (the Call button)
+      else if (to === "voice" && stageRef.current === "chat") toVoice();
+    };
+  }, [toChat, toVoice]);
+
   const start = useCallback(
     (a: AgentRef) => {
-      if (stageRef.current === "call") {
-        // One call at a time: on the same agent it just opens the call again (now about where it was pressed)
+      if (stageRef.current === "call" || stageRef.current === "chat") {
+        // One conversation at a time: on the same agent it just opens it again (now about where it was pressed)
         if (agent?.roleKey === a.roleKey) {
           if (a.context && call.current) call.current.context = a.context;
+          if (a.context && chat.current) chat.current.context = a.context;
+          // Calling the assistant while chatting with it: the chat carries on as the call
+          if (stageRef.current === "chat") return toVoice();
           return setMinimized(false);
         }
+        setSwitchTalk("voice");
         return setSwitchTo(a);
       }
       dial(a);
     },
-    [agent, dial],
+    [agent, dial, toVoice],
   );
 
   const startAssistant = useCallback(() => start(assistantRef(tint)), [start, tint]);
+  const startAssistantChat = useCallback(() => {
+    const a = assistantRef(tint);
+    if (stageRef.current === "chat") return setMinimized(false);
+    if (stageRef.current === "call") {
+      // On a call with the assistant: it carries on as the chat; with another agent, leave it first
+      if (agent?.roleKey === ASSISTANT_KEY) return toChat();
+      setSwitchTalk("text");
+      return setSwitchTo(a);
+    }
+    openChat(a);
+  }, [agent, openChat, tint, toChat]);
   const setAssistantTint = useCallback((hex: string | null) => setTint(assistantTintOf(hex)), []);
 
   const leaveAndStart = () => {
@@ -457,7 +679,8 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
     setSwitchTo(null);
     if (!next) return;
     void hangUp(true);
-    dial(next);
+    if (switchTalk === "text") openChat(next);
+    else dial(next);
   };
 
   /** The notice read: saved, and the call starts on this same tap */
@@ -465,7 +688,8 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
     const a = notice;
     setNotice(null);
     if (!a) return;
-    dial(a, ackCallNotice());
+    if (noticeTalk === "text") openChat(a, ackCallNotice());
+    else dial(a, ackCallNotice());
   };
 
   /** A still of the shared screen: up with the call's files, then sent to the agent as a turn with the picture */
@@ -486,7 +710,7 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
       const { error } = await createClient().storage.from("ai-files").uploadToSignedUrl(slot.path, slot.token, blob, { contentType: "image/jpeg" });
       if (error) throw new Error("The screenshot didn't upload.");
       await screenFrameSaved(id, slot.path, blob.size);
-      call.current?.inject("(Here's my screen right now. Take a look at what I asked about.)", "Shared my screen", slot.path);
+      (chat.current ?? call.current)?.inject("(Here's my screen right now. Take a look at what I asked about.)", "Shared my screen", slot.path);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't take a look.");
     } finally {
@@ -512,7 +736,7 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
       }
     } catch {
       // The picker was closed: a look that waited on it is told, so the agent doesn't wait on a picture
-      if (lookWaiting.current) call.current?.inject("(I didn't share my screen.)", "Didn't share the screen");
+      if (lookWaiting.current) (chat.current ?? call.current)?.inject("(I didn't share my screen.)", "Didn't share the screen");
       lookWaiting.current = false;
     }
   }, [sendFrame, stopShare]);
@@ -575,12 +799,12 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
       // A screenshot for a look (phones): the agent sees the picture with the turn
       if (ask?.purpose === "screen") {
         const shot = done.files.find((f, i) => files[i]?.type.startsWith("image/")) ?? done.files[0];
-        call.current?.inject("(Here's a screenshot of my screen. Take a look at what I asked about.)", "Uploaded a screenshot", shot?.path ?? null);
+        (chat.current ?? call.current)?.inject("(Here's a screenshot of my screen. Take a look at what I asked about.)", "Uploaded a screenshot", shot?.path ?? null);
         return;
       }
       const names = done.files.map((f) => f.name).join(", ");
       const staged = done.launch ? " They're also staged with the launch in progress." : "";
-      call.current?.inject(`(I just uploaded ${done.files.length === 1 ? "a file" : `${done.files.length} files`} on the call: ${names}. Confirm you got them and say briefly what they are.${staged})`, `Uploaded ${done.files.length === 1 ? names : `${done.files.length} files`}`);
+      (chat.current ?? call.current)?.inject(`(I just uploaded ${done.files.length === 1 ? "a file" : `${done.files.length} files`} on the call: ${names}. Confirm you got them and say briefly what they are.${staged})`, `Uploaded ${done.files.length === 1 ? names : `${done.files.length} files`}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "The upload didn't go through.");
     } finally {
@@ -588,10 +812,19 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
     }
   }, [uploadAsk]);
 
-  const ctx = useMemo<Ctx>(() => ({ start, startAssistant, activeRole: stage === "idle" ? null : (agent?.roleKey ?? null), live: stage === "call", assistantTint: tint, setAssistantTint }), [start, startAssistant, stage, agent, tint, setAssistantTint]);
+  const ctx = useMemo<Ctx>(
+    () => ({ start, startAssistant, startAssistantChat, talk: stage === "call" ? "voice" : stage === "chat" ? "text" : null, activeRole: stage === "idle" ? null : (agent?.roleKey ?? null), live: stage === "call" || stage === "chat", assistantTint: tint, setAssistantTint }),
+    [start, startAssistant, startAssistantChat, stage, agent, tint, setAssistantTint],
+  );
 
   // The assistant always shows in its person's current color (even one picked mid-call)
   const shown = agent?.roleKey === ASSISTANT_KEY ? assistantRef(tint, agent.context) : agent;
+  const cancelLook = useCallback(() => {
+    lookWaiting.current = false;
+    setShareAsk(false);
+  }, []);
+  // Sharing the screen for a look, the same on a call and in the chat
+  const screenControls = { can: canShare && desktop, sharing, asked: shareAsk, looking, onShare: () => void share(), onStop: stopShare, onCancel: cancelLook };
   const view: CallView | null = shown
     ? {
         agent: shown,
@@ -625,18 +858,8 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
         onUpload: (files) => void uploadFiles(files),
         onCloseUpload: () => setUploadAsk(null),
         onMinimize: () => setMinimized(true),
-        screen: {
-          can: canShare && desktop,
-          sharing,
-          asked: shareAsk,
-          looking,
-          onShare: () => void share(),
-          onStop: stopShare,
-          onCancel: () => {
-            lookWaiting.current = false;
-            setShareAsk(false);
-          },
-        },
+        onToChat: shown.roleKey === ASSISTANT_KEY ? toChat : undefined,
+        screen: screenControls,
       }
     : null;
   const sum: SummaryView | null = shown
@@ -654,8 +877,39 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
       }
     : null;
 
+  const chatView: ChatView | null =
+    shown && stage === "chat"
+      ? {
+          agent: shown,
+          lines: chatLines,
+          earlier,
+          busy: chatBusy,
+          connecting: chatConnecting,
+          error,
+          learned,
+          team,
+          job,
+          cards,
+          uploadAsk,
+          uploading,
+          callId: liveId,
+          screen: screenControls,
+          onSend: chatSend,
+          onStop: chatStop,
+          onClose: () => void hangUp(false, "chat_close"),
+          onCall: () => toVoice(),
+          onLink: openHref,
+          onOpenCard: (c) => (c.external ? window.open(c.href, "_blank", "noopener,noreferrer") : openHref(c.href)),
+          onDismissCard: (cid) => setCards((cur) => cur.filter((x) => x.id !== cid)),
+          onUpload: (files) => void uploadFiles(files),
+          onCloseUpload: () => setUploadAsk(null),
+        }
+      : null;
+
   const screen =
-    view && sum && stage === "call" ? (
+    stage === "chat" && shown ? (
+      <ChatWidget v={chatView as ChatView} minimized={minimized} phone={!desktop} onMinimize={() => setMinimized(true)} onExpand={() => setMinimized(false)} />
+    ) : view && sum && stage === "call" ? (
       desktop || minimized ? (
         <Huddle v={view} minimized={minimized} phone={!desktop} onMinimize={() => setMinimized(true)} onExpand={() => setMinimized(false)} />
       ) : (

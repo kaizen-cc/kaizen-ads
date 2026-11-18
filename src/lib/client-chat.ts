@@ -325,10 +325,13 @@ export async function askAboutClient(
   goDeep = false,
   files: { path: string; name: string; mime: string; bytes: number }[] = [],
   scope: { platform: "meta" | "google"; targetId?: string | null } | null = null,
-  /** "email": the email team's desk: answers as the Email Strategist from the Klaviyo data and the email score, no ad account actions */
-  desk: "email" | null = null,
+  /** "email": the email team's desk (the Email Strategist, from the Klaviyo data and the email score); "social": the social
+   * team's desk (the Social Strategist, from every platform's numbers and the social score). Neither touches an ad account. */
+  desk: "email" | "social" | null = null,
 ) {
-  const email = desk === "email";
+  const social = desk === "social";
+  // `email` below means "a channel desk" (no ad account reads or actions); the email-only parts check `desk` itself
+  const email = desk === "email" || social;
   const q = question.trim().slice(0, 3000);
   const links = [...new Set(q.match(URL_RE) ?? [])].slice(0, 4);
   // A launch from a sheet waiting on this person: their message goes to the Media Buyer in that conversation (unless
@@ -348,7 +351,7 @@ export async function askAboutClient(
     const { after } = await import("next/server");
     after(() => warm);
   }
-  const ceiling = await getAgent(email ? "email_desk" : "strategist");
+  const ceiling = await getAgent(social ? "social_desk" : email ? "email_desk" : "strategist");
   // The shared files and links go into the client's document history first, then they're read
   const docs = await addDocs(admin, clientId, profileId, "chat", files, links);
   const reads: DocRead[] = await Promise.all(docs.map((d) => readDoc(admin, d).catch((e) => ({ id: d.id, label: d.name, text: null, pdf: null, image: null, note: e instanceof Error ? e.message : "Couldn't read it" }))));
@@ -364,7 +367,7 @@ export async function askAboutClient(
     email ? Promise.resolve({ text: "", latest: null }) : recentLaunches(admin, clientId, profileId).catch(() => ({ text: "", latest: null })),
   ]);
   // The email desk reads the Klaviyo account, the email score, the audit, the sprint and the open ideas
-  const emailData = email ? await (await import("@/lib/email-ops/chat")).emailDeskBlock(admin, clientId).catch(() => "") : "";
+  const emailData = social ? await (await import("@/lib/social-ops/chat")).socialDeskBlock(admin, clientId).catch(() => "") : email ? await (await import("@/lib/email-ops/chat")).emailDeskBlock(admin, clientId).catch(() => "") : "";
   const recent = launches.latest;
   const scorecard = campaigns
     ? `\n\n<campaigns_scorecard note="last 30 days; each campaign judged on its own result; ones marked left out are run by the client and don't count toward the KPI">\n${campaigns}\n</campaigns_scorecard>`
@@ -398,10 +401,10 @@ export async function askAboutClient(
     : "";
 
   const out = await askJson<{ answer: string; docs: { n: number; title: string; summary: string }[]; actions: Action[]; change?: { wanted: boolean; platform: string; instruction: string }; launch?: { wanted: boolean; platform: string; request: string } }>({
-    agent: email ? "email_desk" : "strategist",
-    label: `${email ? "email desk" : "client desk"} (${level}${docs.length ? `, ${docs.length} shared` : ""})`,
+    agent: social ? "social_desk" : email ? "email_desk" : "strategist",
+    label: `${social ? "social desk" : email ? "email desk" : "client desk"} (${level}${docs.length ? `, ${docs.length} shared` : ""})`,
     clientId,
-    system: (email ? (await import("@/lib/email-ops/chat")).emailDeskSystem(SYSTEM) : `${SYSTEM}\n\n${permsPrompt(perms)}`) + (email ? "" : tiktokConfigured() ? `\nTikTok: you can read and discuss its numbers when they're given, but launches and changes in TikTok aren't connected. Asked to change or launch anything on TikTok, set no change or launch and answer: "${READ_ONLY_TEXT}"` : "") + (scope ? `\nThis chat was opened from the client's ${scope.platform === "google" ? "Google Ads" : "Meta"} KPI card: a launch or change they don't name a platform for is on ${scope.platform === "google" ? "Google Ads" : "Meta"}.` : "") + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
+    system: (social ? (await import("@/lib/social-ops/chat")).socialDeskSystem(SYSTEM) : email ? (await import("@/lib/email-ops/chat")).emailDeskSystem(SYSTEM) : `${SYSTEM}\n\n${permsPrompt(perms)}`) + (email ? "" : tiktokConfigured() ? `\nTikTok: you can read and discuss its numbers when they're given, but launches and changes in TikTok aren't connected. Asked to change or launch anything on TikTok, set no change or launch and answer: "${READ_ONLY_TEXT}"` : "") + (scope ? `\nThis chat was opened from the client's ${scope.platform === "google" ? "Google Ads" : "Meta"} KPI card: a launch or change they don't name a platform for is on ${scope.platform === "google" ? "Google Ads" : "Meta"}.` : "") + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
     schema: SCHEMA,
     maxTokens: level === "deep" || docs.length ? 16000 : 8000,
     override: { model, effort: route.effort },

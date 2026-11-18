@@ -6,7 +6,8 @@ import { AiUnavailable, MODEL_IDS, aiBusy, aiEnabled, anthropicClient, askJson, 
 import type { Staff } from "@/lib/auth";
 import { loadRolePlaybook, type RolePlaybook } from "@/lib/role-playbook";
 import { TOOLS_RULE, agentTools } from "./agent-tools";
-import { CALL_LIMIT_SECONDS, CONCISE_RULE, DISTRESS_RULE, SPOKEN_RULE, END_CALL_RULE, LEARNINGS_SCHEMA, endMarkerFilter, stripEndMarker, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type LearnedItem, type Learning, type ResumeMode } from "./core";
+import { CALL_LIMIT_SECONDS, DISTRESS_RULE, END_CALL_RULE, LEARNINGS_SCHEMA, endMarkerFilter, endReasonFor, stripEndMarker, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type EndReason, type LearnedItem, type Learning, type ResumeMode } from "./core";
+import { agentModality, keptLine, parseModeLog, stillOpen, streamShaping, talkModeOf, type ModeStep, type TalkMode } from "./modality";
 import { callHistory } from "./history";
 import { focusFor } from "./role-focus";
 import { callConnectors, noConnectors, type CallConnectors } from "./call-connectors";
@@ -43,16 +44,22 @@ export type CallRow = {
   job?: unknown;
   uploads?: unknown[];
   thread_id?: string | null;
+  /** How the conversation is going now (a call or a chat) and when it moved between them */
+  mode?: TalkMode | null;
+  mode_log?: ModeStep[] | null;
 };
 
 const CALL_COLUMNS = "id, role_key, profile_id, voice_id, stt, started_at, ended_at, learned, resumed_from, resume_mode";
 const ASSISTANT_COLUMNS = `${CALL_COLUMNS}, guest_role, uploads, thread_id`;
 const TEAM_COLUMNS = `${ASSISTANT_COLUMNS}, guest_roles, job`;
+const CHAT_COLUMNS = `${TEAM_COLUMNS}, mode, mode_log, last_turn_at`;
 
 /** The call when it's this person's, still open and inside its time (a minute's grace for the last answer) */
 export async function openCall(admin: SupabaseClient, me: Staff, callId: unknown): Promise<CallRow | null> {
   if (typeof callId !== "string" || !/^[0-9a-f-]{36}$/.test(callId)) return null;
-  let first: { data: unknown; error: unknown } = await admin.from("ai_role_calls").select(TEAM_COLUMNS).eq("id", callId).maybeSingle();
+  // Before the chat migration: every conversation is a call
+  let first: { data: unknown; error: unknown } = await admin.from("ai_role_calls").select(CHAT_COLUMNS).eq("id", callId).maybeSingle();
+  if (first.error) first = await admin.from("ai_role_calls").select(TEAM_COLUMNS).eq("id", callId).maybeSingle();
   // Before the team migration: one specialist at a time, no job
   if (first.error) first = await admin.from("ai_role_calls").select(ASSISTANT_COLUMNS).eq("id", callId).maybeSingle();
   let data = first.data as Record<string, unknown> | null;
@@ -64,34 +71,29 @@ export async function openCall(admin: SupabaseClient, me: Staff, callId: unknown
   }
   if (!data || data.profile_id !== me.id || data.ended_at) return null;
   if (!canTalkToAgent(me, data.role_key as string)) return null;
-  if (Date.now() - new Date(data.started_at as string).getTime() > (CALL_LIMIT_SECONDS + 60) * 1000) return null;
-  return data as unknown as CallRow;
+  // A call within its thirty minutes (from when it became a call), a chat while it's in use
+  const mode = talkModeOf(data.mode);
+  const log = parseModeLog(data.mode_log);
+  if (!stillOpen({ mode, startedAt: data.started_at as string, lastTurnAt: (data.last_turn_at as string | null) ?? null, log, callLimitSeconds: CALL_LIMIT_SECONDS })) return null;
+  return { ...(data as unknown as CallRow), mode, mode_log: log };
 }
 
 /** The spoken-call instructions for an agent (`conference`: it was called into a call with the person's assistant) */
-export const voiceSystem = (label: string, roleKey: string, firstName: string, trains: boolean, conference = "") => `You are the ${label}, one of the AI agents inside Kaizen OS, the app Kaizen Marketing (a paid social, email and organic social agency) uses for creative requests, approvals, launches, reports and KPIs. ${firstName}, from the team, has called you. You're on a live voice call: everything you write is spoken aloud by a text to speech voice as you write it.
+export const voiceSystem = (label: string, roleKey: string, firstName: string, trains: boolean, conference = "", mode: TalkMode = "voice") => `You are the ${label}, one of the AI agents inside Kaizen OS, the app Kaizen Marketing (a paid social, email and organic social agency) uses for creative requests, approvals, launches, reports and KPIs. ${firstName}, from the team, is talking with you.
 
-${CONCISE_RULE}
+${agentModality(mode)}
 
-${SPOKEN_RULE}
-
-Speak like a sharp colleague on the phone, in the first person ("I check…", "In my briefs I…"):
-- Short spoken sentences, one to three by default.
-- No markdown, no lists, no bullets, no headings, no asterisks, no emojis, no links, no code. If there are several points, say them in a sentence: "Three things. First… Then… And last…".
-- Numbers as people say them: "about twelve hundred dollars", "a two point four ROAS", "three to five days", "March fourth". Round when exact digits don't matter. Say "percent", not the symbol. Never read a table out: give the one or two numbers that answer the question and offer more.
-- Never say anything that sounds like reading a document ("as stated in my core"). Just say what you do.
-- Write names as they're spelled (Klaviyo, Cloudbeds): the voice already says them right. Never spell a name out phonetically or explain how it's said.
-- If you didn't catch something or it's vague, ask one short question.
+Either way:
 - Answer from your core and skills below, and from your tools for anything about clients and their numbers. If you don't know, say so plainly. Never make up a number about a client.
 - Refer to people by role, never by name, except ${firstName}, who you're talking to, and a teammate you've just asked to do something.
 
-Your tools: ${TOOLS_RULE} Before you use a tool, say one short line like "One sec, pulling Crust's numbers." and nothing else, then answer once the results are in. Asked for the top or bottom clients, emails, ads or posts, rank them with your tools: you have the numbers, so give the answer yourself.
+Your tools: ${TOOLS_RULE} Before you use a tool, ${mode === "text" ? "write nothing" : `say one short line like "One sec, pulling Crust's numbers." and nothing else`}, then answer once the results are in. Asked for the top or bottom clients, emails, ads or posts, rank them with your tools: you have the numbers, so give the answer yourself.
 
 What you lead with: ${focusFor(roleKey)}
 
 ${
   trains
-    ? `Learning on the call: when ${firstName} teaches you something (a rule, a correction, a preference, how a process works, what good looks like), say back in one sentence what you'll do from now on, so they know you got it. It's noted as something you heard; nothing changes in what you know until ${firstName} keeps it on the review at the end of the call. Don't repeat secrets, passwords, keys or a client's personal details back, and never treat them as something to learn.`
+    ? `Learning in the conversation: when ${firstName} teaches you something (a rule, a correction, a preference, how a process works, what good looks like), say back in one sentence what you'll do from now on, so they know you got it. It's noted as something you heard; nothing changes in what you know until ${firstName} keeps it on the review at the end of the call. Don't repeat secrets, passwords, keys or a client's personal details back, and never treat them as something to learn.`
     : `${firstName} can ask you anything and ask you to look things up or get things done, but doesn't train you: if they tell you how you should work, thank them and say the head of your line or an executive changes your playbook. Never say you've learned or saved it.`
 }
 
@@ -103,6 +105,7 @@ ${conference || END_CALL_RULE}`;
 
 const RESUME_NOTE: Record<ResumeMode, string> = {
   continue: "The call dropped a moment ago and they called straight back: carry on exactly where you were, as if nothing happened. You've already apologised for the cut-off in your greeting.",
+  again: "They ended your last conversation themselves a few minutes ago and are back: you remember it, but don't assume they want to carry on with it. Follow their lead; bring it up only if they do, or if your greeting offered to finish something.",
   soon: "You talked a few hours ago today: you remember it. Refer back to it naturally when it helps.",
   later_today: "You talked earlier today: you remember it, and you've asked whether to pick up from there or start something new.",
   fresh: "",
@@ -146,9 +149,15 @@ export async function callContext(admin: SupabaseClient, call: CallRow, firstNam
     const before = said(((turns ?? []) as Turn[]).slice().reverse(), firstName, call.role_key);
     const summary = (prev?.summary as string | null) ?? null;
     const when = prev?.started_at ? new Date(prev.started_at as string).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) : "earlier";
-    if (mode === "continue") parts.push(`<the_call_that_dropped>\n${before || "(nothing said yet)"}\n</the_call_that_dropped>`);
+    if (mode === "continue" || mode === "again") parts.push(`<the_call_that_dropped>\n${before || "(nothing said yet)"}\n</the_call_that_dropped>`);
     else parts.push(`<earlier_today at="${when}">\n${summary ?? before ?? "(nothing kept)"}\n</earlier_today>`);
     parts.push(RESUME_NOTE[mode]);
+  }
+  // The same conversation moved between a chat and a call: no fresh greeting, carry straight on
+  const log = call.mode_log ?? [];
+  if (log.length > 1) {
+    const current = talkModeOf(call.mode);
+    parts.push(`<switched>This conversation started as a ${log[0].mode === "text" ? "typed chat" : "voice call"} and is now a ${current === "text" ? "typed chat" : "voice call"}. It's the same conversation: carry on exactly where it was, never greet again or ask what they need from scratch.</switched>`);
   }
   parts.push(`<this_call>\n${history.digest ? `${history.digest}\n\n` : ""}${said(now, firstName, call.role_key) || "(the call just started)"}\n</this_call>`);
   return parts.join("\n\n");
@@ -202,6 +211,8 @@ export type TurnInput = {
   path?: string | null;
   /** Where the turn's time goes (logged as one line at the end of the turn) */
   timer?: CallTimer;
+  /** A call (spoken) or a chat (typed and read): the same turn, only how it talks and streams differs (modality.ts) */
+  mode?: TalkMode;
 };
 
 /**
@@ -270,6 +281,7 @@ export async function runCallTurn(input: TurnInput) {
     }
   }
   const timer = input.timer ?? callTimer();
+  const mode = talkModeOf(input.mode);
   const [book, convo, extra] = await timer.time("context", Promise.all([timer.time("playbook", playbookFor(admin, call.role_key)), timer.time("history", callContext(admin, call, firstName)), turnExtras(input, text)]));
   if (!book) return emit({ t: "error", message: "Unknown agent." });
   const tctx = { me, db: input.db, admin, callId: call.id, emit, team: state, self: call.role_key, said: text };
@@ -282,8 +294,9 @@ export async function runCallTurn(input: TurnInput) {
   }
 
   const out = await streamAnswer({
-    system: `${voiceSystem(book.role.label, call.role_key, firstName, trains)}\n\n${team.hostRule(firstName)}\n\n${book.text}`,
+    system: `${voiceSystem(book.role.label, call.role_key, firstName, trains, "", mode)}\n\n${team.hostRule(firstName)}\n\n${book.text}`,
     tools: [...tools, extra.look, ...extra.connectors.tools],
+    mode,
     content: withFrame([`Today is ${today} (New York).`, extra.where, team.teamBlock(state, call.role_key, firstName), convo, extra.hint, `<${firstName}_says>\n${text}\n</${firstName}_says>`].filter(Boolean).join("\n\n"), extra.frame),
     signal,
     emit,
@@ -299,7 +312,7 @@ export async function runCallTurn(input: TurnInput) {
     .then(({ error: e }) => e && console.error("[agent call] log run", e.message));
 
   // Kept in the agent's chat (what was cut short by talking over it ends with an ellipsis)
-  const spoken = reply.replace(/\n+/g, " ").trim() ? `${reply.replace(/\n+/g, " ").trim()}${signal.aborted ? "…" : ""}` : "";
+  const spoken = keptLine(reply, signal.aborted, mode);
   // The person's line at when they said it, the answer after it (the transcript reads them in that order)
   const at = turnTimes(input.startedAt, Date.now());
   await admin.from("ai_role_chats").insert([
@@ -354,13 +367,16 @@ export async function streamAnswer(input: {
   /** Where the time goes (the model's first word, each round, each tool); `tag` names whose answer it is */
   timer?: CallTimer;
   tag?: string;
+  /** A chat: no spoken fillers and no length guard (it's read, see modality.ts) */
+  mode?: TalkMode;
 }): Promise<Answer> {
   const { signal, emit } = input;
+  const shaping = streamShaping(talkModeOf(input.mode));
   const timer = input.timer ?? callTimer();
   const tag = input.tag ?? "";
   // Each tool's time, by name
   const tools: LoopTool[] = input.tools.map((t) => ({ ...t, run: (x: Record<string, unknown>) => timer.time(`${tag}tool:${t.name}`, () => Promise.resolve(t.run(x))) }));
-  const fk = input.filler ?? null;
+  const fk = shaping.filler ? (input.filler ?? null) : null;
   const fillerSaid = () => Boolean(fk && FILLERS.get(fk.callId)?.turn === fk.turn);
   const noteFiller = (line: string) => {
     if (!fk) return;
@@ -381,7 +397,7 @@ export async function streamAnswer(input: {
   const messages: LoopMessage[] = [{ role: "user", content: input.content }];
   const marker = endMarkerFilter();
   // The length guard: past its cap an answer stops at the end of the sentence and offers the rest
-  const guard = createLengthGuard(spokenCapFor(fk ? fk.said : ""));
+  const guard = createLengthGuard(shaping.lengthGuard ? spokenCapFor(fk ? fk.said : "") : Number.MAX_SAFE_INTEGER);
   let firstWord = false;
   const say = (d: string) => {
     if (!d) return;
@@ -458,7 +474,7 @@ export async function streamAnswer(input: {
     // Their service is being read (on Anthropic's side): a line so the call doesn't go quiet
     stream.on("contentBlock", (b) => {
       const block = b as unknown as { type: string; server_name?: string };
-      if (block.type !== "mcp_tool_use" || roundText.trim() || fillers > 0 || fillerSaid()) return;
+      if (!shaping.filler || block.type !== "mcp_tool_use" || roundText.trim() || fillers > 0 || fillerSaid()) return;
       const line = `One sec, checking your ${conn.nameOf(String(block.server_name ?? ""))}.`;
       say(`${line}\n`);
       noteFiller(line);
@@ -515,7 +531,7 @@ export async function streamAnswer(input: {
       // client only when this turn is about it. A line break ends it, so the answer that follows is its own sentence
       onTools: (calls) => {
         if (roundText.trim()) say("\n");
-        if (roundText.trim() || fillers > 0 || fillerSaid()) return;
+        if (!shaping.filler || roundText.trim() || fillers > 0 || fillerSaid()) return;
         const line = fillerFor(calls, { said: fk ? fk.said : undefined, last: fk ? (FILLERS.get(fk.callId)?.line ?? null) : null, seed: Date.now() });
         if (!line) return;
         fillerTimer = setTimeout(() => {
@@ -581,6 +597,30 @@ export async function summarizeCall(admin: SupabaseClient, callId: string): Prom
   }
 }
 
+/**
+ * What the conversation is about right now, as a short phrase ("the Crust report"), for the line that picks it up in
+ * the other mode. A cheap model with a short wait: on a slow answer it's left out ("Picking up where we left off.").
+ */
+export async function currentTopic(admin: SupabaseClient, callId: string, waitMs = 2500): Promise<string | null> {
+  const { data: rows } = await admin.from("ai_role_chats").select("role, content").eq("call_id", callId).order("created_at", { ascending: false }).limit(8);
+  const turns = ((rows ?? []) as Turn[]).slice().reverse();
+  if (!turns.some((t) => t.role === "user")) return null;
+  const ask = askJson<{ summary: string; topic: string }>({
+    agent: "coach",
+    label: "agent call topic",
+    bare: true,
+    noSample: true,
+    override: { model: "haiku", effort: "low" },
+    system: "You read the latest lines of a conversation between a member of a marketing agency's team and one of its AI agents, and name what it's about right now. Plain words, no names of people, no secrets or personal details.",
+    schema: SUMMARY_SCHEMA,
+    maxTokens: 400,
+    prompt: `<conversation>\n${said(turns, "They")}\n</conversation>`,
+  })
+    .then((out) => parseTopic(out))
+    .catch(() => null);
+  return Promise.race([ask, new Promise<null>((r) => setTimeout(() => r(null), waitMs))]);
+}
+
 // ─── Calls never hung up ────────────────────────────────────────────────────
 
 /**
@@ -588,24 +628,51 @@ export async function summarizeCall(admin: SupabaseClient, callId: string): Prom
  * they heard left pending for review (it shows in the person's Overview), a call that heard nothing marked reviewed.
  * `profileId`: every open call of that person (they're starting another); else every call past its time.
  */
-export async function sweepOpenCalls(admin: SupabaseClient, opts: { profileId?: string } = {}): Promise<{ closed: string[] }> {
-  let q = admin.from("ai_role_calls").select("id, started_at, last_turn_at, learned").is("ended_at", null).limit(200);
-  if (opts.profileId) q = q.eq("profile_id", opts.profileId);
-  else q = q.lt("started_at", new Date(Date.now() - (CALL_LIMIT_SECONDS + 120) * 1000).toISOString());
-  const { data, error } = await q;
-  if (error) return { closed: [] };
+export async function sweepOpenCalls(admin: SupabaseClient, opts: { profileId?: string; keep?: string | null } = {}): Promise<{ closed: string[] }> {
+  const query = (cols: string) => {
+    let q = admin.from("ai_role_calls").select(cols).is("ended_at", null).limit(200);
+    if (opts.profileId) q = q.eq("profile_id", opts.profileId);
+    else q = q.lt("started_at", new Date(Date.now() - (CALL_LIMIT_SECONDS + 120) * 1000).toISOString());
+    return q;
+  };
+  // Before the chat migration: no mode (every one a call)
+  let res = (await query("id, started_at, last_turn_at, learned, mode, mode_log")) as unknown as { data: Record<string, unknown>[] | null; error: unknown };
+  if (res.error) res = (await query("id, started_at, last_turn_at, learned")) as unknown as { data: Record<string, unknown>[] | null; error: unknown };
+  if (res.error) return { closed: [] };
   const closed: string[] = [];
-  for (const c of data ?? []) {
+  for (const c of res.data ?? []) {
+    if (opts.keep && c.id === opts.keep) continue;
+    const mode = talkModeOf(c.mode);
+    // A chat still in use isn't swept by the clock (only when its person starts something else)
+    if (!opts.profileId && mode === "text" && stillOpen({ mode, startedAt: c.started_at as string, lastTurnAt: (c.last_turn_at as string | null) ?? null, log: parseModeLog(c.mode_log), callLimitSeconds: CALL_LIMIT_SECONDS })) continue;
     const start = Date.parse(c.started_at as string);
     const last = c.last_turn_at ? Date.parse(c.last_turn_at as string) : start;
-    const end = new Date(Math.min(Math.max(last, start), start + CALL_LIMIT_SECONDS * 1000, Date.now())).toISOString();
+    const cap = mode === "text" ? Number.MAX_SAFE_INTEGER : start + CALL_LIMIT_SECONDS * 1000;
+    const end = new Date(Math.min(Math.max(last, start), cap, Date.now())).toISOString();
     const pending = pendingOf((c.learned ?? []) as LearnedItem[]).length;
     const { error: e } = await admin
       .from("ai_role_calls")
       .update({ ended_at: end, ...(pending ? {} : { reviewed_at: new Date().toISOString() }) })
       .eq("id", c.id)
       .is("ended_at", null);
-    if (!e) closed.push(c.id as string);
+    if (e) continue;
+    closed.push(c.id as string);
+    // Nobody ended it: a drop, unless the last words were a goodbye (they said bye, then closed the tab)
+    await saveEndReason(admin, c.id as string, await endReasonOf(admin, c.id as string, "sweep").catch((): EndReason => "dropped"));
   }
   return { closed };
+}
+
+/** How a conversation ended, from what closed it and its last lines (core.ts endReasonFor) */
+export async function endReasonOf(admin: SupabaseClient, callId: string, trigger: Parameters<typeof endReasonFor>[0]["trigger"]): Promise<EndReason> {
+  if (trigger === "button" || trigger === "agent_end" || trigger === "chat_close") return endReasonFor({ trigger });
+  const { data } = await admin.from("ai_role_chats").select("role, content").eq("call_id", callId).order("created_at", { ascending: false }).limit(4);
+  const rows = (data ?? []) as { role: string; content: string }[];
+  return endReasonFor({ trigger, lastUser: rows.find((r) => r.role === "user")?.content ?? null, lastAgent: rows.find((r) => r.role !== "user")?.content ?? null });
+}
+
+/** Kept on the conversation (before the chat migration there's nowhere to keep it: the greeting treats it as a drop) */
+export async function saveEndReason(admin: SupabaseClient, callId: string, reason: EndReason): Promise<void> {
+  const { error } = await admin.from("ai_role_calls").update({ end_reason: reason }).eq("id", callId);
+  if (error && !/end_reason/.test(error.message)) console.error("[agent call] end reason", error.message);
 }

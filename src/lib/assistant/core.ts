@@ -151,7 +151,7 @@ export const SCREEN_PLACES: Record<string, string> = {
 
 /** A card's tabs on the ads KPI board, and on the Email and Social sheets */
 export const KPI_CARD_TABS = ["overview", "numbers", "actions", "policy", "creative", "notes", "settings"] as const;
-export const CHANNEL_SHEET_TABS = ["overview", "numbers", "campaigns", "flows", "actions", "notes", "settings"] as const;
+export const CHANNEL_SHEET_TABS = ["overview", "numbers", "campaigns", "flows", "posts", "actions", "notes", "settings"] as const;
 
 /** One account's card on the ads KPI board, open on a tab (?target= opens it, with everyone's accounts showing) */
 export function kpiCardHref(targetId: string, tab?: string | null): string {
@@ -322,7 +322,7 @@ export function assistantGreeting(input: {
   today: string;
   seed?: number;
   /** How this call follows the last one (the same timing the agents' calls use) */
-  mode?: "continue" | "soon" | "later_today" | "fresh";
+  mode?: "continue" | "again" | "soon" | "later_today" | "fresh";
   /** The agents' timing hello for that mode ("Hey again! Good to hear from you so soon"), used for soon and later today */
   timed?: string | null;
   /** The hour in New York, for a hello that fits the time of day */
@@ -334,6 +334,8 @@ export function assistantGreeting(input: {
   if (birthday) return { text: `Happy birthday, ${name}! I hope it's a good one. What can I take off your plate today?`, followed: null };
   // Called back a few hours later, or again late in the day: the same hellos the agents use, so it feels like one person
   if ((input.mode === "soon" || input.mode === "later_today") && input.timed && memory.length) return { text: input.timed, followed: null };
+  // Back a few minutes after ending it themselves: a casual "hey again", never a fresh hello or a getting-to-know-you
+  if (input.mode === "again" && input.timed) return { text: input.timed, followed: null };
   const due = memory
     .filter((m) => m.kind === "fact" && m.follow_up_on && m.follow_up_on <= today && !m.followed_up_at)
     .sort((a, b) => String(b.follow_up_on).localeCompare(String(a.follow_up_on)))[0];
