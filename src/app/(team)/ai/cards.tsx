@@ -2,6 +2,8 @@
 
 import { DocumentCardView } from "@/components/document-card";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { CopyDocCardView } from "@/components/copy-doc-card";
 import { Markdown } from "@/components/markdown";
 import { ChatPlan } from "@/app/(team)/clients/[slug]/chat-plan";
 import { LaunchCard } from "@/app/(team)/clients/[slug]/launch-card";
@@ -391,6 +393,8 @@ export function CardView({ card }: { card: Card }) {
       return <ConfirmCardView c={card} />;
     case "email_design":
       return <EmailDesignCardView c={card} />;
+    case "copy_doc":
+      return <CopyDocInThread card={card} />;
     case "document":
       return (
         <ul className="grid">
@@ -407,4 +411,14 @@ export function CardView({ card }: { card: Card }) {
     default:
       return null;
   }
+}
+
+/** A deliverable's copy document in the thread: read it here, Open takes it full screen to comment on lines and approve */
+function CopyDocInThread({ card }: { card: Extract<Card, { type: "copy_doc" }> }) {
+  const router = useRouter();
+  return (
+    <ul className="grid">
+      <CopyDocCardView card={{ id: card.copy.id, title: card.copy.title, detail: card.detail, href: card.copy.href, external: false, cta: "Open", copy: card.copy }} onOpen={(c) => router.push(c.href)} wide={false} />
+    </ul>
+  );
 }

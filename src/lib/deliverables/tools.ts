@@ -24,6 +24,8 @@ export type DeliverableCtx = {
   emit?: (e: CallEvent) => void;
   /** Who's using the tools: "assistant" or a specialist's role key */
   roleKey: string;
+  /** Kaizen AI chat: one thread where the lead and the writer speak in turn, so a call names who is speaking (`as`) instead of being one fixed agent */
+  persona?: boolean;
 };
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -77,6 +79,7 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
           topics: { type: "array", items: { type: "object", properties: { title: { type: "string" }, angle: { type: "string" }, offer: { type: "string" }, include: { type: "array", items: { type: "string" } }, exclude: { type: "array", items: { type: "string" } }, send: { type: "string" } }, required: ["title"] } },
           agreed: { type: "boolean", description: "The person agreed the topics" },
           by: { type: "string", enum: ["person", "lead"] },
+          ...(ctx.persona ? { as: { type: "string", description: "Who is speaking now: the line's lead role key (to approve as the lead) or the writer's (copywriter). Say it when you speak as that specialist in the thread." } } : {}),
         },
         required: ["action"],
         additionalProperties: false,
@@ -126,7 +129,7 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
           }
         } else if (action === "approve") {
           if (input.by === "lead") {
-            if (ctx.roleKey !== run.cfg.lead) return { updated: false, note: `Only the ${run.cfg.lead.replace(/_/g, " ")} approves as the lead.` };
+            if ((ctx.persona && typeof input.as === "string" ? input.as : ctx.roleKey) !== run.cfg.lead) return { updated: false, note: `Only the ${run.cfg.lead.replace(/_/g, " ")} approves as the lead.` };
             patch.approve = "lead";
           } else {
             if (!APPROVES.test(ctx.said())) return { updated: false, note: "They haven't approved it in their own words this turn. Ask what they think." };

@@ -34,6 +34,10 @@ export type ToolCtx = {
   files: Attachment[]; // attached to the newest message
   /** "<client id>|<platform>" whose copy context is already in the system prompt (so write_ad_copy doesn't send it again) */
   copyContextFor?: string | null;
+  /** The Kaizen AI thread (the deliverable flow keeps one run per thread), what the person typed this turn, and who answers */
+  threadId?: string;
+  said?: string;
+  agent?: string;
 };
 
 /** A tool plus the line shown while it runs */
@@ -1115,6 +1119,14 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   const { documentTools, DOCUMENT_TOOLS } = await import("./document-tools");
   for (const t of documentTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
   for (const n of DOCUMENT_TOOLS) CHANNEL_EXTRA.add(n);
+
+  // The conversational deliverable flow (email, creative, social): the same tools and staged flow as the assistant; one
+  // run per thread, writes only on the person's typed yes, copy documents as cards in the thread
+  if (ctx.threadId) {
+    const { deliverableChatTools, DELIVERABLE_TOOL_NAMES } = await import("@/lib/deliverables/kaizen");
+    for (const t of await deliverableChatTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+    for (const n of DELIVERABLE_TOOL_NAMES) CHANNEL_EXTRA.add(n);
+  }
 
   // The connectors in src/lib/ai-tools (Google policy checker, monthly recap deck, ElevenLabs, Higgsfield, Motion)
   const extra = await extensionTools(ctx);

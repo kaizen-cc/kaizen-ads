@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { channelSeatsOf, isBlankName, sheetRows, splitNames } from "@/lib/account-sheet-channels-core";
+import { channelSeatsOf, isBlankName, sheetRows, socialDetailsBrief, socialDetailsOf, splitNames } from "@/lib/account-sheet-channels-core";
 
 describe("sheetRows", () => {
   it("finds the header row and reads the rows under it", () => {
@@ -45,5 +45,36 @@ describe("matching", () => {
   it("ignores accents and broken formulas", () => {
     expect(matchKey("Café Diario")).toBe(matchKey("Cafe Diario"));
     expect(isBlankName("#REF!")).toBe(true);
+  });
+});
+
+describe("socialDetailsOf (the Organic Social tab)", () => {
+  const tab = [
+    ["Account Overview"],
+    ["client name", "SOCIAL MEDIA CALENDAR", "Ad Creative Folder", "Client Headquarters Link", "Website", "Instagram Handle", "Strategist Assigned", "Graphic Designer", "Posting Cadence", "Notes"],
+    ["Tejas Brewery", "https://docs.google.com/spreadsheets/d/abc", "https://drive.google.com/drive/folders/zzz", "https://drive.google.com/drive/folders/hq1", "tejas.com", "@tejasbrew", "Camila", "Hillary", "4 posts a week", "Loves local events"],
+  ];
+  const row = sheetRows(tab)[0];
+  it("finds the header row whatever the case and keeps the quick links under the keys the deliverable line reads", () => {
+    const d = socialDetailsOf(row);
+    expect(d.calendar).toBe("https://docs.google.com/spreadsheets/d/abc");
+    expect(d.creativeFolder).toBe("https://drive.google.com/drive/folders/zzz");
+    expect(d.hq).toBe("https://drive.google.com/drive/folders/hq1");
+    expect(d.website).toBe("tejas.com");
+    expect(d.handles).toBe("@tejasbrew");
+    expect(d.cadence).toBe("4 posts a week");
+    expect(d.team).toEqual({ "Strategist Assigned": "Camila", "Graphic Designer": "Hillary" });
+  });
+  it("keeps every column as key and value and drops blanks", () => {
+    const d = socialDetailsOf({ ...row, Empty: "", Gone: "#N/A" });
+    expect(d.all.Notes).toBe("Loves local events");
+    expect(d.all.Empty).toBeUndefined();
+    expect(d.all.Gone).toBeUndefined();
+  });
+  it("writes a brief for agents with the extra columns too", () => {
+    const text = socialDetailsBrief(socialDetailsOf(row));
+    expect(text).toContain("Social Media Calendar: https://docs.google.com/spreadsheets/d/abc");
+    expect(text).toContain("Notes: Loves local events");
+    expect(socialDetailsBrief(null)).toBe("");
   });
 });

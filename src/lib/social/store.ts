@@ -6,6 +6,7 @@ import { servicesOf } from "@/lib/services";
 import { clientsWithLine } from "@/lib/service-gate";
 import { tracker } from "@/lib/progress";
 import { runBounded } from "@/lib/bounded";
+import { socialDetailsBrief, type SocialDetails } from "@/lib/account-sheet-channels-core";
 import { fbPosts, fbPostsInsights, fbProfile, fbSeries, igDayTotals, igMedia, igPostsInsights, igProfile, igSeries, pageAccessToken, pageInstagram, pageName, promotePages, SocialReadError, systemPages, type SocialCtx } from "./api";
 import { cleanError, matchPage, pickSocialWindow, plainSocialError, shiftDay, socialClientState, socialCostMs, SOCIAL_BACKFILL_DAYS, withIgInsights, type PageRef, type Platform, type SocialClientState, type SocialPlainError, type SocialPost, type SocialWindow } from "./core";
 import { combineFollowers, dailyTotal, platformFollowers, rateSeries, type DayPoint, type RatePoint } from "./charts";
@@ -454,6 +455,8 @@ export type ClientSocial = {
   health: HealthFinding[];
   /** Part of the last read that failed or isn't given by Meta any more, in plain words */
   warning: string | null;
+  /** The Account Overview sheet's Organic Social tab for this client (links, handles, people, cadence) */
+  sheet: Partial<SocialDetails> | null;
 };
 
 const PLATFORMS: Platform[] = ["instagram", "facebook"];
@@ -477,11 +480,12 @@ function combineWindows(ws: Window[]): Window {
 export async function clientSocial(db: SupabaseClient, clientId: string): Promise<ClientSocial | null> {
   const today = etToday();
   const from90 = shiftDay(today, -(SOCIAL_BACKFILL_DAYS - 1));
-  const [{ data: allDays, error }, { data: allPosts }, { data: link }, { data: memo }] = await Promise.all([
+  const [{ data: allDays, error }, { data: allPosts }, { data: link }, { data: memo }, { data: sheetRow }] = await Promise.all([
     db.from("social_daily").select("*").eq("client_id", clientId).gte("date", shiftDay(today, -(SOCIAL_BACKFILL_DAYS + 30))).order("date"),
     db.from("social_posts").select("*").eq("client_id", clientId).order("posted_at", { ascending: false, nullsFirst: false }).limit(240),
     db.from("social_accounts").select("page_name, ig_username, page_id, ig_id").eq("client_id", clientId).maybeSingle(),
     db.from("sync_state").select("last_result").eq("source", memoSource(clientId)).maybeSingle(),
+    db.from("clients").select("channel_sheet").eq("id", clientId).maybeSingle(),
   ]);
   // Only the linked accounts' rows (a Page or Instagram account picked before keeps its history, unread)
   const current = (r: { platform: string; account_id?: string | null }) => r.account_id === (r.platform === "facebook" ? link?.page_id : link?.ig_id);
@@ -539,6 +543,7 @@ export async function clientSocial(db: SupabaseClient, clientId: string): Promis
     posts: rated,
     health: socialHealth({ today, platforms }),
     warning: warnParts.length ? warnParts.join(" · ").slice(0, 400) : null,
+    sheet: (((sheetRow?.channel_sheet ?? {}) as Record<string, unknown>).social_details as Partial<SocialDetails> | undefined) ?? null,
   };
 }
 
@@ -547,8 +552,11 @@ const p1 = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 /** The social context every agent reads (empty when the client has no social numbers) */
 export async function socialBrief(db: SupabaseClient, clientId: string): Promise<string> {
-  const d = await clientSocial(db, clientId).catch(() => null);
-  if (!d) return "";
+  const [d, sheet] = await Promise.all([
+    clientSocial(db, clientId).catch(() => null),
+    db.from("clients").select("channel_sheet").eq("id", clientId).maybeSingle().then((r) => socialDetailsBrief(((r.data?.channel_sheet ?? {}) as Record<string, unknown>).social_details as Parameters<typeof socialDetailsBrief>[0]), () => ""),
+  ]);
+  if (!d) return sheet;
   const lines = [`Organic social (Facebook and Instagram, read only; data through ${d.through ?? "n/a"}):`];
   for (const p of d.platforms) {
     const g = p.growth;

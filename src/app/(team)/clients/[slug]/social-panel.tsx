@@ -47,6 +47,44 @@ function Alert({ link }: { link: SocialLinkView | null }) {
   );
 }
 
+/** The account sheet's Organic Social tab: quick links, handles, cadence and who is on the account */
+function SheetCard({ sheet }: { sheet: ClientSocial["sheet"] }) {
+  if (!sheet) return null;
+  const links = [
+    ["Social Media Calendar", sheet.calendar],
+    ["Ad Creative Folder", sheet.creativeFolder],
+    ["Client Headquarters", sheet.hq],
+    ["Website", sheet.website],
+  ].filter((l): l is [string, string] => Boolean(l[1]));
+  const facts = [...(sheet.handles ? [["Handles", sheet.handles]] : []), ...(sheet.cadence ? [["Cadence", sheet.cadence]] : []), ...Object.entries(sheet.team ?? {})];
+  if (!links.length && !facts.length) return null;
+  const href = (u: string) => (/^https?:\/\//i.test(u) ? u : `https://${u}`);
+  return (
+    <div className="grid gap-2 rounded-[14px] border border-line bg-surface px-3.5 py-3 text-[13px]">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-muted">From the account sheet</span>
+      {links.length > 0 && (
+        <span className="flex flex-wrap gap-1.5">
+          {links.map(([label, url]) => (
+            <a key={label} href={href(url)} target="_blank" rel="noreferrer" className="rounded-full bg-surface-2 px-3 py-1.5 text-fg">
+              {label}
+            </a>
+          ))}
+        </span>
+      )}
+      {facts.length > 0 && (
+        <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
+          {facts.map(([k, v]) => (
+            <div key={k} className="flex gap-2">
+              <dt className="text-muted">{k}</dt>
+              <dd className="min-w-0 break-words text-fg">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
+
 function Intro({ data, link, clientId, canEdit }: { data: ClientSocial | null; link: SocialLinkView | null; clientId: string; canEdit: boolean }) {
   return (
     <div className="grid gap-3">
@@ -57,6 +95,7 @@ function Intro({ data, link, clientId, canEdit }: { data: ClientSocial | null; l
         <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] text-muted">Read only</span>
       </div>
       <Alert link={link} />
+      <SheetCard sheet={data?.sheet ?? null} />
       {data?.warning && !link?.error && <p className="rounded-[12px] border border-warn/40 bg-warn-soft px-3 py-2 text-[12.5px] text-fg/90">{data.warning}</p>}
       <SocialLink clientId={clientId} link={link} canEdit={canEdit} openByDefault={canEdit && (!link || link.state === "missing")} />
     </div>

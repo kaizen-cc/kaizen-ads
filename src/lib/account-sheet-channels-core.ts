@@ -73,3 +73,64 @@ export function sheetDetailsOf(r: Record<string, string>): SheetDetails {
     website: pick(/website|site|url|domain/i, link),
   };
 }
+
+/** What the Organic Social tab holds for one client (stored as channel_sheet.social_details). Every column is kept in `all` so agents can read it. */
+export type SocialDetails = SheetDetails & {
+  /** Social Media Calendar link */
+  calendar: string | null;
+  /** Ad Creative Folder link */
+  creativeFolder: string | null;
+  /** Handles / accounts, as written */
+  handles: string | null;
+  /** Posting cadence or package, as written */
+  cadence: string | null;
+  /** Who's on the account, as written: { "Social strategist": "Camila", "Designer": "Hillary" } */
+  team: Record<string, string>;
+  /** Every non-blank column, header to value */
+  all: Record<string, string>;
+};
+
+/** The Organic Social tab's row: the quick links, handles, people and cadence by column name (any case), plus every column as key/value */
+export function socialDetailsOf(r: Record<string, string>): SocialDetails {
+  const base = sheetDetailsOf(r);
+  const cols = Object.entries(r).filter(([, v]) => !isBlankName(String(v ?? "")));
+  const all = Object.fromEntries(cols.map(([k, v]) => [k, v.trim()]));
+  const pick = (re: RegExp, ok: (v: string) => boolean = () => true) => cols.find(([k, v]) => re.test(k) && ok(v.trim()))?.[1].trim() ?? null;
+  const link = (v: string) => /^https?:\/\//i.test(v) || /\.[a-z]{2,}(\/|$)/i.test(v);
+  const team: Record<string, string> = {};
+  for (const [k, v] of cols) if (/strategist|manager|designer|editor|copywriter|\bsmm\b|community|creator|videograph|photograph/i.test(k) && !link(v)) team[k] = v.trim();
+  return {
+    ...base,
+    calendar: pick(/calendar/i, link),
+    creativeFolder: pick(/(?:ad\s*)?creative\s*(?:folder|drive|link|assets)|ad\s*creative/i, link),
+    // The HQ link is the one named "Headquarters"/"HQ", not the creative folder or the calendar
+    hq: pick(/\bhq\b|headquarters/i, link) ?? base.hq,
+    handles: pick(/handles?|accounts?|instagram|facebook|\big\b|\bfb\b|tiktok|social\s*(?:media\s*)?(?:links?|profiles?)/i),
+    cadence: pick(/cadence|package|frequency|posts?\s*(?:per|\/|a)\s*(?:week|month)|posting|deliverables|plan/i),
+    team,
+    all,
+  };
+}
+
+/** The plain-words lines of a client's Organic Social tab for an agent's context (empty when nothing is stored) */
+export function socialDetailsBrief(d: Partial<SocialDetails> | null | undefined): string {
+  if (!d) return "";
+  const lines: string[] = [];
+  const add = (label: string, v: unknown) => {
+    if (typeof v === "string" && v.trim()) lines.push(`- ${label}: ${v.trim()}`);
+  };
+  add("Social Media Calendar", d.calendar);
+  add("Ad Creative Folder", d.creativeFolder);
+  add("Client Headquarters", d.hq);
+  add("Website", d.website);
+  add("Handles", d.handles);
+  add("Cadence or package", d.cadence);
+  for (const [k, v] of Object.entries(d.team ?? {})) add(k, v);
+  const shown = new Set(["calendar", "creativeFolder", "hq", "website", "handles", "cadence"]);
+  const known = new Set(Object.values(d).filter((v): v is string => typeof v === "string"));
+  for (const [k, v] of Object.entries(d.all ?? {})) {
+    if (/^client\s*name$/i.test(k) || known.has(v) || (d.team ?? {})[k] || shown.has(k)) continue;
+    add(k, v);
+  }
+  return lines.length ? `Account sheet, Organic Social tab:\n${lines.join("\n")}` : "";
+}

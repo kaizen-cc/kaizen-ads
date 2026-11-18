@@ -368,7 +368,7 @@ export async function runTurn(input: TurnInput): Promise<void> {
   const messageId = (placeholder?.id as string | undefined) ?? crypto.randomUUID();
   const userFiles = (rows.at(-1)?.attachments ?? []) as Attachment[];
   const cards: Card[] = [];
-  const tools = await chatTools({ me, db, admin, clientId: client?.id ?? null, messageId, cards, files: userFiles, copyContextFor: copyCtx && client ? `${client.id}|${copyPlatform}` : null });
+  const tools = await chatTools({ me, db, admin, clientId: client?.id ?? null, messageId, cards, files: userFiles, threadId: thread.id, said: userText, agent, copyContextFor: copyCtx && client ? `${client.id}|${copyPlatform}` : null });
   const runs: ToolRun[] = [];
   // The person's own connectors (MCP) switched on in this thread: servers, toolsets and what the model is told
   const conn = await connectorTurn({ me, admin, threadId: thread.id, initial: created ? input.connectors : undefined, approve: input.approve, text: userText, rows, cards, runs, emit });
