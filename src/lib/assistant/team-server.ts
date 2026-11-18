@@ -8,6 +8,7 @@ import { withFrame } from "@/lib/agent-call/call-extras";
 import { firstNameOf, pendingItems, type CallEvent } from "@/lib/agent-call/core";
 import { callContext, readMoment, streamAnswer, turnExtras, voiceSystem, type Answer, type CallRow, type TurnInput } from "@/lib/agent-call/server";
 import type { LoopTool } from "@/lib/agent-call/tool-loop";
+import { turnTimes } from "@/lib/agent-call/transcript";
 import { loadRolePlaybook } from "@/lib/role-playbook";
 import { saidYes, specialistOf } from "./core";
 import {
@@ -530,7 +531,7 @@ export async function specialistTurn(input: TurnInput, team: TeamState, roleKey:
   const [book, convo, extra, { data: role }] = await Promise.all([loadRolePlaybook(admin, roleKey), callContext(admin, { ...call, role_key: roleKey }, firstName), turnExtras(input, m.text), admin.from("ai_roles").select("icon").eq("key", roleKey).maybeSingle()]);
   if (!book) return emit({ t: "error", message: "That agent isn't available." });
   const tctx: TeamCtx = { me, db: input.db, admin, callId: call.id, emit, team, self: roleKey, said };
-  const own = await agentTools({ me, db: input.db, admin, roleKey, label: book.role.label, callId: call.id, emit, said });
+  const own = await agentTools({ me, db: input.db, admin, roleKey, label: book.role.label, callId: call.id, emit, said, path: input.path ?? null, screen: input.context?.screen ?? null, clientId: input.context?.clientId ?? null });
   const tools = tracked(tctx, [...own, ...teamTools(tctx)]);
   emit({ t: "speaker", role: roleKey, label: book.role.label, icon: (role?.icon as string) ?? "spark" });
   const lastWord = team.chain.length >= MAX_HOPS ? `<last_word>That's the last hand-off for now: answer, then give ${firstName} the floor with a short question.</last_word>` : "";
@@ -547,13 +548,16 @@ export async function specialistTurn(input: TurnInput, team: TeamState, roleKey:
     content: withFrame([`Today is ${today()} (New York).`, extra.where, teamBlock(team, roleKey, firstName), convo, extra.hint, lastWord, prompt].filter(Boolean).join("\n\n"), extra.frame),
     signal,
     emit,
+    filler: { callId: call.id, turn: input.startedAt ?? 0, said: m.mode === "person" ? m.text : "" },
   });
   await extra.connectors.settle().catch(() => undefined);
   logRun(admin, me, roleKey, out);
   const spoken = spokenOf(out.reply, signal.aborted);
+  // The person's line at when they said it, the answer after it (the transcript reads them in that order)
+  const at = turnTimes(m.mode === "person" ? input.startedAt : null, Date.now());
   await admin.from("ai_role_chats").insert([
-    ...(m.mode === "person" ? [{ role_key: roleKey, role: "user", content: m.text, attachments: [], changes: [], created_by: me.id, call_id: call.id }] : []),
-    ...(spoken ? [{ role_key: roleKey, role: "agent", content: spoken, attachments: [], changes: [], created_by: me.id, call_id: call.id }] : []),
+    ...(m.mode === "person" ? [{ role_key: roleKey, role: "user", content: m.text, attachments: [], changes: [], created_by: me.id, call_id: call.id, created_at: at.said }] : []),
+    ...(spoken ? [{ role_key: roleKey, role: "agent", content: spoken, attachments: [], changes: [], created_by: me.id, call_id: call.id, created_at: at.answered }] : []),
   ]);
   if (out.ended && asHost && m.mode === "person") emit({ t: "end" });
   // Only a trainer of this agent teaches it, and only from what they said to it

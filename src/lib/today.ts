@@ -183,11 +183,24 @@ export function forCreative<T extends { key: string; score: number }>(items: T[]
   return items.map((d) => (CREATIVE_ACTIONABLE.has(d.key.split(":")[0]) ? d : { ...d, score: Math.min(d.score, 59) }));
 }
 
+/** Clients someone said are probably leaving (a dated risk note in the client's memory, lately): their work climbs */
+async function atRiskNow(db: SupabaseClient): Promise<Set<string>> {
+  const { RISK_DAYS, RISK_PREFIX, atRiskClients } = await import("@/lib/client-risk");
+  const { data } = await db
+    .from("client_memory")
+    .select("client_id, body, created_at")
+    .eq("status", "active")
+    .like("body", `${RISK_PREFIX} (said%`)
+    .gte("created_at", new Date(Date.now() - RISK_DAYS * 86_400_000).toISOString())
+    .limit(200);
+  return atRiskClients((data ?? []) as { client_id: string; body: string; created_at: string }[]);
+}
+
 /** Every item for this person right now, scored. */
 async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   // The ads side and the email and social lines, read side by side, then ordered by how likely each client is to leave
-  const [ads, lines] = await Promise.all([gatherAll(db, me), import("@/lib/today-lines").then(({ gatherLines }) => gatherLines(db, me)).catch(() => [] as Draft[])]);
-  const out = byRetention([...ads, ...lines]);
+  const [ads, lines, risky] = await Promise.all([gatherAll(db, me), import("@/lib/today-lines").then(({ gatherLines }) => gatherLines(db, me)).catch(() => [] as Draft[]), atRiskNow(db).catch(() => new Set<string>())]);
+  const out = byRetention([...ads, ...lines], risky);
   return isCreativeRole(me.role) ? forCreative(out) : out;
 }
 

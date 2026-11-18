@@ -740,7 +740,7 @@ export class Call {
     let buffer = "";
     const live = () => !turn.signal.aborted && isCurrent(this.st, turnNo);
     try {
-      const res = await fetch("/api/agent-call/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text: said, ...(this.context ? { context: this.context } : {}), ...(frame ? { frame } : {}) }), signal: turn.signal });
+      const res = await fetch("/api/agent-call/turn", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text: said, path: `${window.location.pathname}${window.location.search}`.slice(0, 500), ...(this.context ? { context: this.context } : {}), ...(frame ? { frame } : {}) }), signal: turn.signal });
       if (res.status === 410) return this.hooks.onError("The call has ended.");
       if (!res.ok || !res.body) throw new Error(String(res.status));
       const reader = res.body.getReader();

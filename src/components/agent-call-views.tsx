@@ -9,6 +9,7 @@ import type { CallCard, UploadAsk } from "@/lib/agent-call/core";
 import type { CallNotes } from "@/lib/assistant/notes";
 import type { JobView } from "@/lib/assistant/team";
 import type { CallContext } from "@/lib/agent-call/call-context";
+import { useCallDock } from "@/lib/use-call-dock";
 import { CardsStrip, JobStrip, NotesBlock, RecordedMark, ScreenIcon, ShareAsk, SharingBar, TeamChips, TranscriptButton, UploadPanel } from "./assistant-call-parts";
 
 // The two ways a call is shown. On phones it takes the whole screen; on computers it is a huddle: a small panel
@@ -319,7 +320,7 @@ function CallExtras({ v, compact }: { v: CallView; compact: boolean }) {
       {sc?.sharing && <SharingBar onStop={sc.onStop} looking={sc.looking} />}
       {sc?.asked && !sc.sharing && <ShareAsk agent={v.agent.roleKey === "assistant" ? "your assistant" : `the ${v.agent.label}`} onShare={sc.onShare} onCancel={sc.onCancel} />}
       {v.uploadAsk && v.onUpload && <UploadPanel ask={v.uploadAsk} busy={v.uploading ?? null} onFiles={v.onUpload} onClose={() => v.onCloseUpload?.()} />}
-      {cards.length > 0 && v.onOpenCard && <CardsStrip cards={cards} compact={compact} onOpen={v.onOpenCard} onDismiss={(id) => v.onDismissCard?.(id)} />}
+      {cards.length > 0 && v.onOpenCard && <CardsStrip cards={cards} compact={compact} onOpen={v.onOpenCard} onDismiss={(id) => v.onDismissCard?.(id)} callId={v.callId ?? null} onApprove={v.onType ? () => v.onType?.("Yes, send it.") : undefined} />}
     </div>
   );
 }
@@ -447,9 +448,45 @@ export function FullScreenCall({ v }: { v: CallView }) {
 // under the full screen call and the call's own dialogs
 const DOCK = "fixed bottom-[calc(84px+var(--fab-clear,0px))] right-6 z-[75]";
 
-export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; minimized: boolean; onMinimize: () => void; onExpand: () => void }) {
+/** The grip that moves the call: drag it, or focus it and use the arrow keys (Home puts it back) */
+type Dock = ReturnType<typeof useCallDock>;
+function Grip({ handle, keys, small = false }: { handle: Dock["handle"]; keys: Dock["keys"]; small?: boolean }) {
+  return (
+    <button
+      type="button"
+      aria-label="Move the call: drag it, or use the arrow keys (Home puts it back)"
+      title="Drag to move (arrow keys too)"
+      {...handle}
+      {...keys}
+      className={`grid shrink-0 cursor-grab touch-none place-items-center rounded-full text-faint transition-colors hover:bg-surface-2 hover:text-fg active:cursor-grabbing ${small ? "h-8 w-6" : "h-8 w-7"}`}
+    >
+      <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden>
+        <circle cx="2.5" cy="3" r="1.4" />
+        <circle cx="7.5" cy="3" r="1.4" />
+        <circle cx="2.5" cy="8" r="1.4" />
+        <circle cx="7.5" cy="8" r="1.4" />
+        <circle cx="2.5" cy="13" r="1.4" />
+        <circle cx="7.5" cy="13" r="1.4" />
+      </svg>
+    </button>
+  );
+}
+
+/** Who's talking or what the call is doing, in a few words, for the collapsed pill */
+const pillStatus = (v: CallView) => {
+  if (v.error) return v.error;
+  if (v.phase === "speaking") {
+    const who = [...v.lines].reverse().find((l) => l.who === "agent")?.speaker?.label;
+    return `${who ?? (v.agent.roleKey === "assistant" ? "Assistant" : v.agent.label)} talking`;
+  }
+  return status(v);
+};
+
+export function Huddle({ v, minimized, onMinimize, onExpand, phone = false }: { v: CallView; minimized: boolean; onMinimize: () => void; onExpand: () => void; phone?: boolean }) {
   const { agent, phase, muted, error, elapsed, left } = v;
   const [full, setFull] = useState(false);
+  // Moved anywhere on screen and remembered per device; on phones the pill snaps to the nearer side
+  const { ref: dockRef, style: dockStyle, dragging, handle, keys } = useCallDock(phone ? "phone" : "desktop", { snap: phone && minimized });
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (full) scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
@@ -483,16 +520,34 @@ export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; mi
 
   if (minimized)
     return (
-      <div role="region" aria-label={`Huddle with the ${agent.label}`} className={`${DOCK} flex items-center gap-2 rounded-full border border-line bg-surface/95 py-1.5 pl-1.5 pr-2 shadow-[0_14px_36px_-14px_rgba(0,0,0,0.6)] backdrop-blur animate-[sheet-up_.22s_cubic-bezier(.2,.8,.2,1)]`}>
-        <button type="button" onClick={onExpand} aria-label="Open the huddle" title="Open the huddle" className="flex items-center gap-2.5 rounded-full pr-1 transition-opacity hover:opacity-85">
+      <div
+        ref={dockRef}
+        style={dockStyle}
+        role="region"
+        aria-label={`Call with the ${agent.label}, collapsed`}
+        className={`${DOCK} flex max-w-[calc(100vw-24px)] items-center gap-1.5 rounded-full border border-line bg-surface/95 py-1.5 pl-1 pr-2 shadow-[0_14px_36px_-14px_rgba(0,0,0,0.6)] backdrop-blur ${dragging ? "select-none" : "animate-[sheet-up_.22s_cubic-bezier(.2,.8,.2,1)]"}`}
+      >
+        <Grip handle={handle} keys={keys} small />
+        {/* The pill itself drags too (a tap still opens it) */}
+        <button type="button" onClick={onExpand} {...handle} aria-label="Open the call" title="Open the call" className="flex min-h-11 min-w-0 touch-none items-center gap-2 rounded-full pr-1 transition-opacity hover:opacity-85 md:min-h-0">
           <span className="relative grid place-items-center">
             {phase === "speaking" && <span aria-hidden className="absolute inset-[-3px] animate-ping rounded-[14px] opacity-25" style={{ background: agent.tint }} />}
             <span className="relative">{agent.icon(32)}</span>
           </span>
-          <span className={`tabular text-xs ${left < 120 ? "text-warn" : "text-muted"}`}>{clock(elapsed)}</span>
-          <Wave call={v.call} phase={phase} tint={agent.tint} className="h-6 w-14" bars={14} />
+          <span className="grid min-w-0 text-left leading-tight">
+            <span aria-live="polite" className={`max-w-[9.5rem] truncate text-[12px] ${error ? "text-bad" : "text-fg"}`}>
+              {pillStatus(v)}
+            </span>
+            <span className={`tabular text-[11px] ${left < 120 ? "text-warn" : "text-muted"}`}>{clock(elapsed)}</span>
+          </span>
+          <Wave call={v.call} phase={phase} tint={agent.tint} className="hidden h-6 w-12 sm:block" bars={12} />
         </button>
         {muteButton(true)}
+        <button type="button" onClick={onExpand} aria-label="Expand the call" title="Expand" className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-fg">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+          </svg>
+        </button>
         {leaveButton(true)}
       </div>
     );
@@ -500,9 +555,17 @@ export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; mi
   const lastYou = [...v.lines].reverse().find((l) => l.who === "you");
   const lastAgent = [...v.lines].reverse().find((l) => l.who === "agent");
   return (
-    <div role="region" aria-label={`Huddle with the ${agent.label}`} className={`${DOCK} w-[360px] max-w-[calc(100vw-48px)] overflow-hidden rounded-[20px] border border-line bg-surface shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65)] animate-[sheet-up_.26s_cubic-bezier(.2,.8,.2,1)]`}>
+    <div
+      ref={dockRef}
+      style={dockStyle}
+      role="region"
+      aria-label={`Huddle with the ${agent.label}`}
+      className={`${DOCK} w-[360px] max-w-[calc(100vw-48px)] overflow-hidden rounded-[20px] border border-line bg-surface shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65)] ${dragging ? "select-none" : "animate-[sheet-up_.26s_cubic-bezier(.2,.8,.2,1)]"}`}
+    >
       <span aria-hidden className="pointer-events-none absolute -top-16 left-1/2 h-32 w-48 -translate-x-1/2 rounded-full opacity-20 blur-3xl" style={{ background: agent.tint }} />
-      <div className="relative flex items-center gap-3 px-4 pb-2 pt-3.5">
+      {/* The header is the handle: drag it anywhere (the grip moves it by keyboard) */}
+      <div className="relative flex touch-none items-center gap-3 py-2 pb-2 pl-2 pr-4 pt-3.5" {...handle}>
+        <Grip handle={handle} keys={keys} />
         <div className="relative grid place-items-center">
           {phase === "speaking" && <span aria-hidden className="absolute inset-[-4px] animate-ping rounded-[16px] opacity-20" style={{ background: agent.tint }} />}
           {phase === "listening" && !muted && <span aria-hidden className="absolute inset-[-3px] rounded-[16px] border-2 border-brand/40" />}

@@ -610,7 +610,19 @@ export type CallEvent =
   | { t: "ping" };
 
 /** A link the call shows as a card: tapped, it opens in the app (the call stays up) or in a new tab */
-export type CallCard = { id: string; title: string; detail: string; href: string; external: boolean; cta: string };
+export type CallCard = {
+  id: string;
+  title: string;
+  detail: string;
+  href: string;
+  external: boolean;
+  cta: string;
+  /** A message drafted as the person (a Slack reply or an email): edited and approved on the card, or copied */
+  draft?: CallDraft;
+};
+
+/** A drafted message on the call: where it goes, its words, and what became of it */
+export type CallDraft = { id: string; channel: "slack" | "email"; where: string; text: string; subject?: string | null; to?: string | null; status: "draft" | "sent" | "gmail_draft" | "copy" };
 
 /** What the assistant asked to be uploaded: launch creatives, files for it to read, or a screenshot to look at */
 export type UploadAsk = { purpose: "creatives" | "files" | "screen"; client: string | null; note: string };

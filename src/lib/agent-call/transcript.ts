@@ -15,11 +15,37 @@ export function stamp(at: string, startedAt: string): string {
   return pad(clock(s));
 }
 
+/**
+ * Lines in the order they were said: by time, and on the same instant the person's line before the answer to it
+ * (a turn's two lines used to be saved together, both stamped when the answer finished). Ties otherwise keep their order.
+ */
+export function orderLines<T extends Pick<TranscriptLine, "at" | "who">>(lines: readonly T[]): T[] {
+  return lines
+    .map((l, i) => ({ l, i, t: Date.parse(l.at) }))
+    .sort((a, b) => {
+      const ta = Number.isFinite(a.t) ? a.t : 0;
+      const tb = Number.isFinite(b.t) ? b.t : 0;
+      if (ta !== tb) return ta - tb;
+      if (a.l.who !== b.l.who) return a.l.who === "user" ? -1 : 1;
+      return a.i - b.i;
+    })
+    .map((x) => x.l);
+}
+
+/**
+ * When a turn's lines are kept: the person's at the moment the turn arrived (when they said it), the answer when it
+ * finished, always after the person's line (never the same instant, so nothing sorts the answer first)
+ */
+export function turnTimes(heardAt: number | null | undefined, answeredAt: number): { said: string; answered: string } {
+  const said = Math.min(typeof heardAt === "number" && Number.isFinite(heardAt) ? heardAt : answeredAt - 1, answeredAt - 1);
+  return { said: new Date(said).toISOString(), answered: new Date(Math.max(answeredAt, said + 1)).toISOString() };
+}
+
 export function formatTranscript(input: { startedAt: string; endedAt?: string | null; agentLabel: string; personName: string; lines: TranscriptLine[] }): string {
   const day = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(input.startedAt));
   const length = input.endedAt ? ` (${clock((Date.parse(input.endedAt) - Date.parse(input.startedAt)) / 1000)})` : "";
   const head = [`Call with the ${input.agentLabel}`, `${day} New York time${length}`, `${input.personName} and the ${input.agentLabel}`, ""];
-  const body = input.lines
+  const body = orderLines(input.lines)
     .filter((l) => l.text.trim())
     .map((l) => `[${stamp(l.at, input.startedAt)}] ${l.who === "user" ? input.personName : (l.speaker ?? input.agentLabel)}: ${l.text.replace(/\s+/g, " ").trim()}`);
   return [...head, ...(body.length ? body : ["(Nothing was said on this call.)"]), ""].join("\n");

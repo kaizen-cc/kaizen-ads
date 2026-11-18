@@ -12,7 +12,8 @@ import { focusFor } from "./role-focus";
 import { callConnectors, noConnectors, type CallConnectors } from "./call-connectors";
 import type { CallContext } from "./call-context";
 import { contextBlock, lookHint, lookTool, loadFrame, withFrame } from "./call-extras";
-import { fillerFor, runToolLoop, type LoopMessage, type LoopTool } from "./tool-loop";
+import { FILLER_DELAY_MS, fillerFor, runToolLoop, type LoopMessage, type LoopTool } from "./tool-loop";
+import { turnTimes } from "./transcript";
 import { routeTeam } from "@/lib/assistant/team";
 import type { TurnMode } from "@/lib/assistant/team-server";
 
@@ -195,18 +196,23 @@ export type TurnInput = {
   frame?: string | null;
   /** When the turn arrived (an ask for a yes must be older than this) */
   startedAt?: number;
+  /** The screen they're on right now (a path inside the app) */
+  path?: string | null;
 };
 
 /** What every turn reads besides the agent's own playbook: where they called from, their connectors, a screenshot */
 export async function turnExtras(input: TurnInput, text: string) {
-  const [where, connectors, frame] = await Promise.all([
+  const [where0, team, connectors, frame] = await Promise.all([
     contextBlock(input.db, input.context).catch(() => ""),
+    // The client in play: the lines it buys and who sits in each seat, so hand-offs only go to roles it has
+    import("@/lib/assistant/routing-server").then(({ clientTeamBlock }) => clientTeamBlock(input.db, input.admin, input.context?.clientId ?? null, text)).catch(() => ""),
     callConnectors({ me: input.me, admin: input.admin, callId: input.call.id, text, turnStart: input.startedAt ?? Date.now() }).catch((e) => {
       console.error("[agent call] connectors", e instanceof Error ? e.message : e);
       return noConnectors();
     }),
     input.frame ? loadFrame(input.admin, input.me, input.call.id, input.frame).catch(() => null) : null,
   ]);
+  const where = [where0, team].filter(Boolean).join("\n\n");
   return { where, connectors, frame, look: lookTool(input.emit), hint: lookHint(text, Boolean(frame)) };
 }
 
@@ -234,7 +240,7 @@ export async function runCallTurn(input: TurnInput) {
   const [book, convo, extra] = await Promise.all([loadRolePlaybook(admin, call.role_key), callContext(admin, call, firstName), turnExtras(input, text)]);
   if (!book) return emit({ t: "error", message: "Unknown agent." });
   const tctx = { me, db: input.db, admin, callId: call.id, emit, team: state, self: call.role_key, said: text };
-  const tools = team.tracked(tctx, [...(await agentTools({ me, db: input.db, admin, roleKey: call.role_key, label: book.role.label, callId: call.id, emit, said: text })), ...team.teamTools(tctx)]);
+  const tools = team.tracked(tctx, [...(await agentTools({ me, db: input.db, admin, roleKey: call.role_key, label: book.role.label, callId: call.id, emit, said: text, path: input.path ?? null, screen: input.context?.screen ?? null, clientId: input.context?.clientId ?? null })), ...team.teamTools(tctx)]);
   const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
   // With others on the line, the captions say who's speaking
   if (state.line.length) {
@@ -249,6 +255,7 @@ export async function runCallTurn(input: TurnInput) {
     signal,
     emit,
     connectors: extra.connectors,
+    filler: { callId: call.id, turn: input.startedAt ?? 0, said: text },
   });
   await extra.connectors.settle().catch(() => undefined);
   const { reply, error, used, model, effort, started } = out;
@@ -259,9 +266,11 @@ export async function runCallTurn(input: TurnInput) {
 
   // Kept in the agent's chat (what was cut short by talking over it ends with an ellipsis)
   const spoken = reply.replace(/\n+/g, " ").trim() ? `${reply.replace(/\n+/g, " ").trim()}${signal.aborted ? "…" : ""}` : "";
+  // The person's line at when they said it, the answer after it (the transcript reads them in that order)
+  const at = turnTimes(input.startedAt, Date.now());
   await admin.from("ai_role_chats").insert([
-    { role_key: call.role_key, role: "user", content: text, attachments: [], changes: [], created_by: me.id, call_id: call.id },
-    ...(spoken ? [{ role_key: call.role_key, role: "agent", content: spoken, attachments: [], changes: [], created_by: me.id, call_id: call.id }] : []),
+    { role_key: call.role_key, role: "user", content: text, attachments: [], changes: [], created_by: me.id, call_id: call.id, created_at: at.said },
+    ...(spoken ? [{ role_key: call.role_key, role: "agent", content: spoken, attachments: [], changes: [], created_by: me.id, call_id: call.id, created_at: at.answered }] : []),
   ]);
   // Anyone it just brought in answers now, then any hand-offs between the agents on the line
   if (!signal.aborted && !out.ended) await team.followUps(input, state, hostHop);
@@ -292,8 +301,32 @@ type Reply = { content: unknown[]; stop_reason: string | null; usage: Anthropic.
  * screenshot (image blocks first). With the person's connectors, the request goes through the MCP connector (a beta):
  * their services' tools run on Anthropic's side within the answer.
  */
-export async function streamAnswer(input: { system: string; tools: readonly LoopTool[]; content: string | unknown[]; signal: AbortSignal; emit: (e: CallEvent) => void; maxRounds?: number; connectors?: Conn | null }): Promise<Answer> {
+/**
+ * The last filler said on each call (in this server's memory, best effort): never the same line twice in a row, and at
+ * most one filler per turn, however many agents answer in it
+ */
+const FILLERS = new Map<string, { line: string; turn: number }>();
+
+export async function streamAnswer(input: {
+  system: string;
+  tools: readonly LoopTool[];
+  content: string | unknown[];
+  signal: AbortSignal;
+  emit: (e: CallEvent) => void;
+  maxRounds?: number;
+  connectors?: Conn | null;
+  /** For the filler: the call, when the turn arrived, and what the person said this turn ("" for a hand-over) */
+  filler?: { callId: string; turn: number; said: string };
+}): Promise<Answer> {
   const { signal, emit, tools } = input;
+  const fk = input.filler ?? null;
+  const fillerSaid = () => Boolean(fk && FILLERS.get(fk.callId)?.turn === fk.turn);
+  const noteFiller = (line: string) => {
+    if (!fk) return;
+    if (FILLERS.size > 500) FILLERS.clear();
+    FILLERS.set(fk.callId, { line, turn: fk.turn });
+  };
+  let fillerTimer: ReturnType<typeof setTimeout> | null = null;
   const conn = input.connectors ?? null;
   const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
   if (defs.length) (defs[defs.length - 1] as Anthropic.Tool).cache_control = { type: "ephemeral" };
@@ -352,8 +385,10 @@ export async function streamAnswer(input: { system: string; tools: readonly Loop
     // Their service is being read (on Anthropic's side): a line so the call doesn't go quiet
     stream.on("contentBlock", (b) => {
       const block = b as unknown as { type: string; server_name?: string };
-      if (block.type !== "mcp_tool_use" || roundText.trim() || fillers > 0) return;
-      say(`One sec, checking your ${conn.nameOf(String(block.server_name ?? ""))}.\n`);
+      if (block.type !== "mcp_tool_use" || roundText.trim() || fillers > 0 || fillerSaid()) return;
+      const line = `One sec, checking your ${conn.nameOf(String(block.server_name ?? ""))}.`;
+      say(`${line}\n`);
+      noteFiller(line);
       fillers++;
     });
     return (await stream.finalMessage()) as unknown as Reply;
@@ -397,17 +432,29 @@ export async function streamAnswer(input: { system: string; tools: readonly Loop
         if (res.stop_reason === "refusal") error = "refusal";
         return { content: res.content as { type: string }[], stop: marker.ended ? "end_turn" : res.stop_reason };
       },
-      // While lookups run: the line the agent said, or one said for it, so the call never goes quiet. A line break
-      // ends it, so the answer that follows is spoken as its own sentence
+      // While lookups run: the line the agent said, or (only when the tools are slow, about a second and a half) one
+      // said for it, so the call never goes quiet. Once per turn, never the same line twice in a row, naming the
+      // client only when this turn is about it. A line break ends it, so the answer that follows is its own sentence
       onTools: (calls) => {
-        if (!roundText.trim() && fillers === 0) {
-          say(fillerFor(calls, Date.now()));
+        if (roundText.trim()) say("\n");
+        if (roundText.trim() || fillers > 0 || fillerSaid()) return;
+        const line = fillerFor(calls, { said: fk ? fk.said : undefined, last: fk ? (FILLERS.get(fk.callId)?.line ?? null) : null, seed: Date.now() });
+        if (!line) return;
+        fillerTimer = setTimeout(() => {
+          fillerTimer = null;
+          if (signal.aborted || fillers > 0 || fillerSaid()) return;
+          say(`${line}\n`);
+          noteFiller(line);
           fillers++;
-        }
-        say("\n");
+        }, FILLER_DELAY_MS);
+      },
+      afterTools: () => {
+        if (fillerTimer) clearTimeout(fillerTimer);
+        fillerTimer = null;
       },
     });
   } catch (e) {
+    if (fillerTimer) clearTimeout(fillerTimer);
     if (!signal.aborted) {
       error = (e instanceof Error ? e.message : String(e)).slice(0, 300);
       console.error("[agent call] turn", error);

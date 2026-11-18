@@ -49,7 +49,11 @@ describe("text for the voice", () => {
   it("percentages, decimals, ranges and multipliers", () => {
     expect(say("CTR is up 12.5%.")).toBe("C T R is up twelve point five percent.");
     expect(say("Give it 3-5 days.")).toBe("Give it three to five days.");
-    expect(say("A 2.4x ROAS.")).toBe("A two point four x R O A S.");
+    expect(say("A 2.4x ROAS.")).toBe("A two point four x Roh-as.");
+    // ROAS is one word ("roh-as"), never spelled out, in any case and with a possessive
+    expect(say("ROAS is 3.1 and the roas target's 2.")).toBe("Roh-as is three point one and the Roh-as target's two.");
+    expect(say("The ROAS's trend.")).toBe("The Roh-as's trend.");
+    expect(say("ROAS")).not.toMatch(/R O A S/);
     expect(say("We got 12k impressions.")).toBe("We got twelve thousand impressions.");
     expect(say("Conversion moved 2-3%.")).toBe("Conversion moved two to three percent.");
   });

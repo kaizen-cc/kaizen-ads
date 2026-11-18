@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   const me = await requireStaff();
   if (!adminConfigured()) return Response.json({ error: "Not set up" }, { status: 503 });
   // With the turn: where they called from (a client, a report, a Kaizen AI thread) and, on a look, the screenshot
-  const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown; context?: unknown; frame?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { callId?: unknown; text?: unknown; context?: unknown; frame?: unknown; path?: unknown } | null;
   const admin = createAdminClient();
   const call = await openCall(admin, me, body?.callId);
   // The person's own session: the tools read what they may see (taken here, while the request is still open)
@@ -29,6 +29,8 @@ export async function POST(request: Request) {
   const text = longTurnText(String(body?.text ?? ""));
   const context = parseCallContext(body?.context);
   const frame = typeof body?.frame === "string" ? body.frame.slice(0, 300) : null;
+  // The screen they're on right now (a path inside the app), for feedback filed from the call
+  const path = typeof body?.path === "string" && body.path.startsWith("/") && !body.path.startsWith("//") ? body.path.slice(0, 500) : null;
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
@@ -44,7 +46,7 @@ export async function POST(request: Request) {
       // A line every few seconds while the answer is being worked out (tools, a long think), so nothing in between
       // closes a quiet stream and the call knows it's still working
       const ping = setInterval(() => emit({ t: "ping" }), 5000);
-      const work = (call.role_key === "assistant" ? runAssistantTurn : runCallTurn)({ me, admin, db, call, text, signal: request.signal, emit, context, frame, startedAt })
+      const work = (call.role_key === "assistant" ? runAssistantTurn : runCallTurn)({ me, admin, db, call, text, signal: request.signal, emit, context, frame, startedAt, path })
         .catch((e) => {
           console.error("[agent call] turn", e instanceof Error ? e.message : e);
           emit({ t: "error", message: "Sorry, something went wrong on my side. Say that again?" });

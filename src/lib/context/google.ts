@@ -29,6 +29,21 @@ function tokenFor(subject: string, scope: string) {
 /** A Gmail read token for one person's mailbox (watching for messages they owe a reply). */
 export const gmailToken = (mailbox: string) => tokenFor(mailbox, GMAIL_SCOPE);
 
+/**
+ * Writing as someone (the assistant replying in their thread, on their spoken yes): gmail.send to send, gmail.compose
+ * to leave a draft. Each works only once that scope is added to the service account's domain-wide delegation in the
+ * Admin console; until then the token request fails and the caller falls back (a draft, then copy).
+ */
+export const gmailSendToken = (mailbox: string) => tokenFor(mailbox, "https://www.googleapis.com/auth/gmail.send");
+export const gmailComposeToken = (mailbox: string) => tokenFor(mailbox, "https://www.googleapis.com/auth/gmail.compose");
+
+/** A POST to a Google API (Gmail send or draft), with its error in words */
+export async function googlePost<T>(token: string, url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
+  if (!res.ok) throw new Error(`Google ${new URL(url).pathname}: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  return res.json() as Promise<T>;
+}
+
 /** A Drive read token as someone in the Workspace (their own Drive: Gemini meeting notes). */
 export const googleDriveToken = (user: string) => tokenFor(user, DRIVE_SCOPE);
 

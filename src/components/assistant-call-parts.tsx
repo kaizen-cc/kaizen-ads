@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { callTranscript } from "@/app/(team)/settings/call-actions";
+import { callTranscript, saveCallDraft } from "@/app/(team)/settings/call-actions";
 import type { CallCard, UploadAsk } from "@/lib/agent-call/core";
 import type { Speaker } from "@/lib/agent-call/engine";
 import { tintOf } from "@/lib/agent-look";
@@ -173,12 +173,92 @@ export function SharingBar({ onStop, looking }: { onStop: () => void; looking: b
   );
 }
 
-/** Link cards the agent showed: in the app (the call stays up) or a new tab */
-export function CardsStrip({ cards, onOpen, onDismiss, compact = false }: { cards: CallCard[]; onOpen: (c: CallCard) => void; onDismiss: (id: string) => void; compact?: boolean }) {
+/**
+ * A message drafted as the person (a Slack reply or an email): edit it right here, Approve (which says yes on the call,
+ * so the agent sends it as them), or copy it. After sending it shows what happened (sent, a Gmail draft, or copy).
+ */
+function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft: NonNullable<CallCard["draft"]> }; callId: string | null; onApprove?: (text: string) => void; onDismiss: (id: string) => void }) {
+  const d = c.draft;
+  const [text, setText] = useState(d.text);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const open = d.status === "draft" || d.status === "copy";
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setErr("Couldn't copy: select the text and copy it.");
+    }
+  };
+  const approve = async () => {
+    if (!onApprove || !callId) return;
+    setBusy(true);
+    setErr(null);
+    const r = text.trim() !== d.text.trim() ? await saveCallDraft(callId, d.id, text) : { ok: true as const };
+    setBusy(false);
+    if (!r.ok) return setErr(r.error);
+    onApprove(text);
+  };
+  return (
+    <li className="grid gap-2 rounded-[14px] border border-line bg-surface p-3 shadow-sm sm:col-span-2" aria-label={c.title}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className={`text-[11px] uppercase tracking-[0.14em] ${d.status === "sent" ? "text-ok" : "text-brand-text"}`}>{c.title}</p>
+          <p className="truncate text-[12.5px] text-muted">
+            {d.where}
+            {d.subject ? ` · ${d.subject}` : ""}
+          </p>
+        </div>
+        <button type="button" onClick={() => onDismiss(c.id)} aria-label={`Hide ${c.title}`} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-faint transition-colors hover:bg-surface-2 hover:text-fg">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+      <label className="sr-only" htmlFor={`draft-${d.id}`}>
+        The message
+      </label>
+      <textarea
+        id={`draft-${d.id}`}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        readOnly={!open}
+        rows={Math.min(8, Math.max(3, text.split("\n").length + 1))}
+        className="w-full resize-y rounded-[12px] border border-line bg-surface-2/40 px-3 py-2 text-[16px] leading-snug text-fg outline-none focus:border-faint md:text-[13.5px]"
+      />
+      {d.status === "gmail_draft" && <p className="text-[12px] text-muted">It&apos;s in your Gmail drafts, in the thread: one click to send it there.</p>}
+      {d.status === "copy" && <p className="text-[12px] text-muted">It can&apos;t go out as you from here yet: copy it and send it yourself.</p>}
+      {err && (
+        <p role="alert" className="text-[12px] text-bad">
+          {err}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <button type="button" onClick={copy} className="inline-flex min-h-11 items-center rounded-full px-4 text-[13px] text-muted transition-colors hover:bg-surface-2 hover:text-fg md:min-h-9">
+          {copied ? "Copied" : "Copy"}
+        </button>
+        {d.status === "draft" && onApprove && (
+          <button type="button" disabled={busy || !text.trim()} onClick={approve} className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] disabled:opacity-50 md:min-h-9">
+            Approve and send
+          </button>
+        )}
+      </div>
+    </li>
+  );
+}
+
+/** Link cards the agent showed: in the app (the call stays up) or a new tab; drafted messages to edit and approve */
+export function CardsStrip({ cards, onOpen, onDismiss, compact = false, callId = null, onApprove }: { cards: CallCard[]; onOpen: (c: CallCard) => void; onDismiss: (id: string) => void; compact?: boolean; callId?: string | null; onApprove?: (text: string) => void }) {
   if (!cards.length) return null;
   return (
     <ul className={`grid gap-2 ${compact ? "" : "sm:grid-cols-2"}`} aria-label="Shared on the call">
-      {cards.map((c) => (
+      {cards.map((c) =>
+        c.draft ? (
+          <DraftCard key={c.id} c={c as CallCard & { draft: NonNullable<CallCard["draft"]> }} callId={callId} onApprove={onApprove} onDismiss={onDismiss} />
+        ) : (
         <li key={c.id} className="group relative flex items-center gap-3 rounded-[14px] border border-line bg-surface p-2.5 pr-2 shadow-sm">
           <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-brand-soft text-brand-text">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -210,7 +290,8 @@ export function CardsStrip({ cards, onOpen, onDismiss, compact = false }: { card
             </svg>
           </button>
         </li>
-      ))}
+        ),
+      )}
     </ul>
   );
 }

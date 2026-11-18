@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
 import { markAskDone, markBibleReviewed, tickAskItem } from "../next-actions";
+import { approveFeedback, commentFeedback } from "@/app/(team)/feedback/actions";
 import { TranscriptButton } from "@/components/assistant-call-parts";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import { initials } from "@/lib/initials";
@@ -77,6 +78,7 @@ const KIND: Record<NextItem["kind"], string> = {
   "call-learnings": "From your call",
   ask: "Asked via an agent",
   direction: "Client changed direction",
+  feedback: "Ask from the team",
 };
 
 /** The short title a row leads with, plus a sprint's progress (done of total) when it has one. */
@@ -173,7 +175,7 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
       ) : (
         <>
           {shown.map((s, i) => (
-            <Group key={s.key} s={s} index={i} items={itemsOf(s.key)} open={!closed.includes(s.key)} onToggle={() => toggle(s.key)} onBrief={(b) => pushParams({ todo: b.id })} onReviewed={(it) => (it.ask ? done(it) : review(it))} />
+            <Group key={s.key} s={s} index={i} items={itemsOf(s.key)} open={!closed.includes(s.key)} onToggle={() => toggle(s.key)} onBrief={(b) => pushParams({ todo: b.id })} onReviewed={(it) => (it.ask ? done(it) : it.feedback ? setReviewed((r) => [...r, it.id]) : review(it))} />
           ))}
           {clear.length > 0 && (
             <p className="flex min-h-11 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-full border border-ink/[0.07] px-4 py-2 text-[13px] text-ink/55" style={{ animation: `next-in .45s ${0.06 * shown.length}s cubic-bezier(.2,.8,.2,1) both` }}>
@@ -466,6 +468,7 @@ function Row({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient
               </span>
             )}
             {it.ask?.checklist?.length ? <AskChecklist id={it.ask.id} items={it.ask.checklist} /> : null}
+            {it.feedback && <OwnerAskActions groupId={it.feedback.groupId} onApproved={() => onReviewed(it)} />}
             {it.ask?.transcriptCallId && (
               <TranscriptButton callId={it.ask.transcriptCallId} label="Download the call's transcript" className="min-h-11 justify-self-start rounded-full text-[12.5px] text-ink/60 transition-colors hover:text-fg sm:min-h-8" />
             )}
@@ -517,6 +520,80 @@ function Row({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient
         </div>
       </div>
     </li>
+  );
+}
+
+/**
+ * The owner's answer to an Ask from the team, right on the Overview: Approve sends it to be built (it leaves the list),
+ * Comment asks the people who asked a question or gives a next step (it stays until it's decided)
+ */
+function OwnerAskActions({ groupId, onApproved }: { groupId: string; onApproved: () => void }) {
+  const router = useRouter();
+  const [commenting, setCommenting] = useState(false);
+  const [text, setText] = useState("");
+  const [state, setState] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+  const [busy, start] = useTransition();
+  const approve = () =>
+    start(async () => {
+      setState(null);
+      const r = await approveFeedback(groupId, "");
+      if ("error" in r) return setState({ tone: "bad", text: r.error });
+      onApproved();
+      router.refresh();
+    });
+  const comment = () =>
+    start(async () => {
+      if (!text.trim()) return;
+      const r = await commentFeedback(groupId, text);
+      if ("error" in r) return setState({ tone: "bad", text: r.error });
+      setText("");
+      setCommenting(false);
+      setState({ tone: "ok", text: r.notified ? "Comment sent to the people who asked." : "Comment saved on the Ask." });
+    });
+  return (
+    <div className="grid gap-2 pt-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy} onClick={approve} className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-brand px-4 text-[13px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] disabled:opacity-50 sm:min-h-9">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M5 12.5 10 17 19 7.5" />
+          </svg>
+          Approve to build
+        </button>
+        <button type="button" disabled={busy} onClick={() => setCommenting((c) => !c)} aria-expanded={commenting} className="inline-flex min-h-11 items-center rounded-full border border-ink/15 px-4 text-[13px] text-ink/80 transition-colors hover:border-ink/30 hover:text-fg disabled:opacity-50 sm:min-h-9">
+          Comment
+        </button>
+      </div>
+      {commenting && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            comment();
+          }}
+          className="flex flex-col gap-2 sm:flex-row sm:items-center"
+        >
+          <label className="sr-only" htmlFor={`ask-comment-${groupId}`}>
+            Your comment for the people who asked
+          </label>
+          <input
+            id={`ask-comment-${groupId}`}
+            autoFocus
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setCommenting(false)}
+            placeholder="A question or a next step for them"
+            className="min-h-11 min-w-0 flex-1 rounded-full border border-ink/15 bg-transparent px-4 text-[16px] text-fg outline-none placeholder:text-ink/40 focus:border-ink/35 sm:min-h-9 sm:text-[13.5px]"
+          />
+          <button type="submit" disabled={busy || !text.trim()} className="inline-flex min-h-11 items-center justify-center rounded-full bg-fg px-4 text-[13px] font-medium text-bg transition hover:bg-ink/85 disabled:opacity-40 sm:min-h-9">
+            Send
+          </button>
+        </form>
+      )}
+      {state && (
+        <p role="status" className={`text-[12.5px] ${state.tone === "bad" ? "text-bad" : "text-ink/55"}`}>
+          {state.text}
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -330,3 +330,14 @@ export async function callTranscript(callId: string): Promise<{ ok: true; name: 
   });
   return { ok: true, name: transcriptFileName(call.started_at as string, agentLabel), text };
 }
+
+/** A message drafted on the call, edited on its card before it's approved (only on the person's own call) */
+export async function saveCallDraft(callId: string, draftId: string, text: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!/^[0-9a-f-]{36}$/.test(callId) || !text.trim()) return { ok: false, error: "That draft isn't there." };
+  const admin = createAdminClient();
+  const { data: call } = await admin.from("ai_role_calls").select("profile_id").eq("id", callId).maybeSingle();
+  if (!call || call.profile_id !== me.id) return { ok: false, error: "That call isn't yours." };
+  const { editDraft } = await import("@/lib/assistant/handoff-server");
+  return (await editDraft(admin, callId, draftId.slice(0, 40), text)) ? { ok: true } : { ok: false, error: "That draft was already sent or isn't there." };
+}

@@ -10,6 +10,8 @@ import { chatTools, type ChatTool, type ToolCtx } from "@/lib/kaizen-ai/tools";
 import { cleanMemory, safeAppPath, safeLink, saidYes, ASSISTANT_KEY, FACT_TOPICS, STYLE_TOPICS, SCREEN_PLACES, KPI_CARD_TABS, CHANNEL_SHEET_TABS, kpiCardHref, channelSheetHref } from "./core";
 import { forgetContext, myWork } from "./context";
 import { saveNotes } from "./memory";
+import { commsTools } from "./comms-tools";
+import { failedOnOurSide } from "./messages";
 
 // What the assistant can do on a call, as the person and only within their rights: everything Kaizen AI's tools do
 // for them (each checks the client and their permissions again), plus opening screens, link cards, asking for files,
@@ -34,6 +36,10 @@ export type AssistantCtx = {
   said: string;
   emit: (e: CallEvent) => void;
   state: CallState;
+  /** The screen they're on (a path), where they called from, and the client the call is about */
+  path?: string | null;
+  screen?: string | null;
+  clientId?: string | null;
 };
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -149,6 +155,13 @@ async function screenFor(ctx: AssistantCtx, input: Record<string, unknown>): Pro
     const c = data.clients as unknown as { name: string; slug: string };
     return { href: `/clients/${c.slug}?direction=${data.id}`, label: `${c.name}'s change of direction` };
   }
+  if (what === "feedback") {
+    // A report they filed (by its id from submit_feedback): its group once it's been read, else their own list
+    const id = clip(input.id, 40);
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return { href: "/feedback?tab=mine", label: "your feedback" };
+    const { data } = await ctx.db.from("app_feedback").select("group_id").eq("id", id).maybeSingle();
+    return data?.group_id ? { href: `/feedback?g=${data.group_id}`, label: "that feedback" } : { href: "/feedback?tab=mine", label: "your feedback" };
+  }
   if (what === "agent") {
     const role = clip(input.role, 60).replace(/[^a-z_]/g, "");
     if (!role) return { note: "Which agent?" };
@@ -251,12 +264,12 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     {
       name: "open_screen",
       description:
-        "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, agent (an AI agent's page in Settings, by role key), direction_change (a client's change of direction with its flagged tasks: by id from direction_changes, or the client's newest). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",
+        "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, agent (an AI agent's page in Settings, by role key), direction_change (a client's change of direction with its flagged tasks: by id from direction_changes, or the client's newest), feedback (a report they filed: id from submit_feedback, or their own feedback list). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",
       input_schema: {
         type: "object",
         properties: {
-          what: { type: "string", enum: ["client", "kpi_card", "email_sheet", "social_sheet", "ticket", "email_ticket", "report", "audit", "email_audit", "sprint", "email_sprint", "agent", "direction_change"] },
-          id: { type: "string", description: "A direction change's id (what: direction_change)" },
+          what: { type: "string", enum: ["client", "kpi_card", "email_sheet", "social_sheet", "ticket", "email_ticket", "report", "audit", "email_audit", "sprint", "email_sprint", "agent", "direction_change", "feedback"] },
+          id: { type: "string", description: "A direction change's id (what: direction_change), or a feedback report's id from submit_feedback (what: feedback)" },
           client: CLIENT,
           tab: { type: "string", enum: ["overview", "ads", "email", "social", "creative", "team", "reports"], description: "The client page's tab (what: client)" },
           platform: { type: "string", enum: ["meta", "google", "tiktok"], description: "The ad platform (kpi_card, audit, sprint)" },
@@ -497,7 +510,45 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
       },
     },
   ];
-  return [...own, ...cardTools, ...rest];
+  const comms = commsTools({ me: ctx.me, db: ctx.db, admin: ctx.admin, callId: ctx.callId, said: () => ctx.said, emit: ctx.emit, roleKey: ASSISTANT_KEY, label: "assistant", path: ctx.path, screen: ctx.screen, clientId: ctx.clientId });
+  return carryYes(ctx, cctx, [...own, ...comms, ...cardTools, ...rest]);
+}
+
+/**
+ * One spoken yes is enough: when an action they said yes to fails for a reason they didn't cause (an error on our
+ * side, a send that didn't go through), its next try on this call within a few minutes runs on that same yes instead
+ * of asking again. Gated tools only (those with `confirmed`).
+ */
+async function carryYes(ctx: AssistantCtx, cctx: CardCtx, tools: LoopTool[]): Promise<LoopTool[]> {
+  const { carriedYes, carryYes: remember, dropYes } = await import("./handoff-server");
+  const carried = await carriedYes(ctx.admin, ctx.callId).catch(() => new Set<string>());
+  return tools.map((t) => {
+    const s = t.input_schema as { properties?: Record<string, unknown> };
+    if (!s.properties || !("confirmed" in s.properties)) return t;
+    return {
+      ...t,
+      run: async (input: Record<string, unknown>) => {
+        const spoken = saidYes(ctx.said);
+        const carry = input.confirmed === true && !spoken && carried.has(t.name);
+        const had = { said: ctx.said, card: cctx.said };
+        if (carry) ctx.said = cctx.said = "yes";
+        const yesd = input.confirmed === true && (spoken || carry);
+        try {
+          const out = await t.run(input);
+          if (yesd) await (failedOnOurSide(out) ? remember(ctx.admin, ctx.callId, t.name) : carry ? dropYes(ctx.admin, ctx.callId, t.name) : Promise.resolve()).catch(() => undefined);
+          return out;
+        } catch (e) {
+          if (yesd) await remember(ctx.admin, ctx.callId, t.name).catch(() => undefined);
+          throw e;
+        } finally {
+          if (carry) {
+            ctx.said = had.said;
+            cctx.said = had.card;
+          }
+        }
+      },
+    };
+  });
 }
 
 /** The cron's pass: reports the assistant started in the last day that haven't been told about yet */

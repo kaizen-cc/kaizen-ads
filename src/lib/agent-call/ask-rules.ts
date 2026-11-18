@@ -6,9 +6,16 @@
 
 export type CheckItem = { text: string; done: boolean };
 
-/** Words that ask for a reminder or a task ("remind me", "put it on my list", "make it a task", "send me…") */
-const ASKS = /\b(remind|reminder|to-?do|checklist|task|tasks|note (?:it|that|this) down|jot (?:it|that) down|put (?:it|that|this|them) (?:on|in)|add (?:it|that|this|them) to|on my list|my list|don'?t let me forget|follow[- ]?up|send me|set (?:it|that|one) (?:for|up)|make sure|have (?:the|them|him|her)|ask (?:the|them|him|her)|get (?:the|someone)|assign)\b/i;
-const YES = /^\s*(yes|yeah|yep|yup|sure|please|ok(?:ay)?|do it|go ahead|sounds good|perfect|that works|absolutely|definitely)\b/i;
+/**
+ * Words that ask for a reminder or a task, the way people actually say it ("remind me", "put it on my list", "make that
+ * an item for me today on my overview", "add a task for me", "don't let me forget", "I need to remember to…"). Generous
+ * on purpose: nobody should have to repeat a magic phrase.
+ */
+const ASKS =
+  /\b(remind|reminder|reminders|to-?do|to do list|checklist|task|tasks|item|items|note (?:it|that|this) down|jot (?:it|that|this) down|write (?:it|that|this) down|put (?:it|that|this|them|one)\b|add (?:it|that|this|them|one)\b|add (?:a|an|another)\b|on my (?:list|overview|plate|day|calendar|radar)|(?:my|the) (?:list|overview|day)|for me (?:today|tomorrow|later|on)|don'?t (?:let me )?forget|(?:i|we) (?:need|have|got|gotta) to remember|need to remember|so i remember|keep (?:it|that|this) (?:on|in)|keep track|track (?:it|that|this)|flag (?:it|that|this) for me|save (?:it|that|this) for (?:me|later)|follow[- ]?up|send me|set (?:it|that|one) (?:for|up)|make sure|have (?:the|them|him|her)|ask (?:the|them|him|her)|get (?:the|someone)|assign|make (?:it|that|this) (?:a|an|one)|make (?:a|an) (?:note|item|task|reminder))\b/i;
+const YES = /^\s*(?:(?:um+|uh+|oh|well|so|and|right)[,\s]+)?(yes|yeah|yep|yup|ya|sure|please|ok(?:ay)?|alright|all right|do it|go ahead|go for it|sounds good|sounds great|perfect|great|fine|that'?s fine|that(?:'d| would)? be (?:fine|great|good|perfect)|that works|works for me|absolutely|definitely|correct|exactly|right|cool)\b/i;
+/** A correction of who or when, after the agent proposed something ("it should be on the Meta buyer", "no, tomorrow") */
+const CORRECTION = /\b(it should (?:be|go)|should (?:be|go) (?:on|to)|send it to|give it to|put it on|make it (?:for|on)|(?:no|actually),? (?:the|it'?s|make it|for|on|to))\b/i;
 const NO = /^\s*(no|nope|nah|don'?t|not now|never ?mind|cancel|skip)\b/i;
 
 /**
@@ -18,6 +25,7 @@ const NO = /^\s*(no|nope|nah|don'?t|not now|never ?mind|cancel|skip)\b/i;
 export function askedForNote(said: string | null | undefined): boolean {
   const t = String(said ?? "").trim();
   if (!t) return true;
+  if (CORRECTION.test(t) || /\bdon'?t (?:let me )?forget\b/i.test(t)) return true;
   if (NO.test(t)) return false;
   return ASKS.test(t) || YES.test(t);
 }

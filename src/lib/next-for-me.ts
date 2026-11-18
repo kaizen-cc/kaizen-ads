@@ -9,7 +9,7 @@ import { formatsFor } from "@/lib/creative-formats";
 import { isCreativeRole } from "@/lib/roles";
 import { seatKeys, type SeatRow } from "@/lib/buyer-seats";
 import { loadBiblesToReview } from "@/lib/bible-review";
-import { askItem, callReviewItem, type AskRow } from "@/lib/agent-call/next-items";
+import { askItem, callReviewItem, ownerAskItem, type AskRow, type OwnerAsk } from "@/lib/agent-call/next-items";
 
 // Everything that's on one person, in one list: what to do now, what to decide, what to keep an eye on, and what's
 // coming. Pulled from the tickets, the briefs the AI wrote, the KPI tracker, the fatigue watcher and onboarding, and
@@ -17,7 +17,7 @@ import { askItem, callReviewItem, type AskRow } from "@/lib/agent-call/next-item
 
 export type NextItem = {
   id: string;
-  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint" | "task" | "bible" | "call-learnings" | "ask" | "direction";
+  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint" | "task" | "bible" | "call-learnings" | "ask" | "direction" | "feedback";
   tone: "bad" | "warn" | "brand" | "ok";
   client: string;
   title: string;
@@ -32,6 +32,8 @@ export type NextItem = {
   bible?: { clientId: string; version: string };
   /** A reminder or task asked of an agent: marked done from the list (a checklist's items ticked one by one; the call's transcript to download when it was asked for) */
   ask?: { id: string; checklist?: { text: string; done: boolean }[]; transcriptCallId?: string };
+  /** The owner (execs): a feature request from the team, approved or commented on from the list */
+  feedback?: { groupId: string };
 };
 
 export type NextForMe = {
@@ -313,6 +315,9 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     (bucket === "now" ? now : coming).push(item);
   }
 
+  // ─── The owner (execs): feature requests from the team waiting for a yes or a comment, until they're handled ───
+  if (me.isExec) for (const g of await loadOwnerAsks(db).catch(() => [])) decide.push(ownerAskItem(g));
+
   // Cleared by this person (from the assistant: "that's done", "dismiss it", "not mine"): marked next:<id> for them
   // only, it stays for everyone else
   const { data: cleared } = await db.from("daily_items").select("key").eq("profile_id", me.id).like("key", "next:%").in("status", ["done", "dismissed"]);
@@ -330,6 +335,19 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     coming: kept(coming),
     stats: { onMe: h.mine.length, late: h.mine.filter((r) => r.minutes_over > 0).length, dueToday: h.dueToday, toDecide: decide.length },
   };
+}
+
+/** Feature requests (Asks) still waiting on the owner: new, not approved to build, planned or turned down */
+async function loadOwnerAsks(db: SupabaseClient): Promise<OwnerAsk[]> {
+  const { awaitsOwner } = await import("@/lib/feedback-logic");
+  const { data } = await db.from("app_feedback_groups").select("id, title, summary, people, status, scope, lane, first_reported_at, created_at").eq("status", "new").eq("scope", "feature").order("priority", { ascending: false }).limit(20);
+  const rows = ((data ?? []) as { id: string; title: string; summary: string | null; people: number | null; status: string; scope: string; lane: string; first_reported_at: string | null; created_at: string }[]).filter(awaitsOwner);
+  if (!rows.length) return [];
+  // Who asked first, by name (the Overview credits them)
+  const { data: firsts } = await db.from("app_feedback").select("group_id, created_at, author:profiles!app_feedback_profile_id_fkey(full_name)").in("group_id", rows.map((r) => r.id)).order("created_at");
+  const by = new Map<string, string>();
+  for (const f of (firsts ?? []) as unknown as { group_id: string; author: { full_name: string } | null }[]) if (!by.has(f.group_id) && f.author?.full_name) by.set(f.group_id, f.author.full_name);
+  return rows.map((r) => ({ id: r.id, title: r.title, summary: r.summary, people: r.people ?? 1, createdAt: r.first_reported_at ?? r.created_at, by: by.get(r.id) ?? null }));
 }
 
 /** Open reminders and tasks for this person from conversations with the agents (none before its migration) */

@@ -455,9 +455,11 @@ const CALM = ["brief:", "email-idea:"];
  * The day ordered by how likely each client is to leave: a client in trouble on more than one front (an ad account off
  * target and a red email account, a promise late and a quiet feed) is a bigger risk than either alone, so each of its
  * pressing items climbs a little (3 points for each other front, up to 6). Ideas stay where they are. Sorted most
- * pressing first. Pure: the same items in, the same order out.
+ * pressing first. A client someone said is probably leaving (`atRisk`, by client id: a risk note in its memory,
+ * lib/client-risk.ts) counts as one more front, and each of its pressing items climbs 8 more. Pure: the same items
+ * in, the same order out.
  */
-export function byRetention<T extends Pick<TodayDraft, "key" | "topic" | "score" | "client" | "clientId">>(items: T[]): T[] {
+export function byRetention<T extends Pick<TodayDraft, "key" | "topic" | "score" | "client" | "clientId">>(items: T[], atRisk: ReadonlySet<string> = new Set()): T[] {
   const who = (i: T) => i.clientId ?? (i.client ?? "").trim().toLowerCase();
   const fronts = new Map<string, Set<string>>();
   for (const i of items) {
@@ -467,9 +469,10 @@ export function byRetention<T extends Pick<TodayDraft, "key" | "topic" | "score"
   }
   return items
     .map((i) => {
-      const n = fronts.get(who(i))?.size ?? 0;
+      const risky = Boolean(i.clientId && atRisk.has(i.clientId));
+      const n = (fronts.get(who(i))?.size ?? 0) + (risky ? 1 : 0);
       if (n < 2 || i.score < 60 || CALM.some((k) => i.key.startsWith(k))) return i;
-      return { ...i, score: Math.min(98, i.score + Math.min(6, 3 * (n - 1))) };
+      return { ...i, score: Math.min(98, i.score + Math.min(6, 3 * (n - 1)) + (risky ? 8 : 0)) };
     })
     .sort((a, b) => b.score - a.score);
 }

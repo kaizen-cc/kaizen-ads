@@ -60,7 +60,7 @@ export function routeTurn(text: string, guest: string | null): Route {
   return { to: "guest", dismiss: false };
 }
 
-const YES = /\b(?:yes|yeah|yep|yup|sure|go ahead|do it|go for it|please do|confirm(?:ed)?|absolutely|correct|that'?s right|send it|launch it|ship it|approved?|okay,? do|ok,? do|sounds good,? do)\b/i;
+const YES = /\b(?:yes|yeah|yep|yup|sure|go ahead|do it|go for it|please do|confirm(?:ed)?|absolutely|correct|that'?s right|send it|launch it|ship it|approved?|okay,? do|ok,? do|sounds good,? do|that(?:'d| would)? be (?:fine|great|good|perfect)|that'?s fine|that works|works for me|sounds (?:good|great|perfect)|perfect|let'?s do it)\b/i;
 const NO = /\b(?:no|nope|don'?t|do not|wait|hold on|stop|cancel|not yet|never ?mind)\b/i;
 
 /**

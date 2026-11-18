@@ -76,7 +76,7 @@ export const CARD_TOOLS: ReadonlySet<string> = new Set([
  * words are the yes, so these run when asked. They only reach the team (a reminder, a task on someone's Overview),
  * never a client.
  */
-export const ASKED_ACTIONS: ReadonlySet<string> = new Set(["remind_me", "ask_teammate"]);
+export const ASKED_ACTIONS: ReadonlySet<string> = new Set(["remind_me", "ask_teammate", "send_to_teammate", "draft_message", "flag_client_risk", "submit_feedback"]);
 
 const CONFIRM_NOTE = "This makes, sends or spends something: say in one sentence what it will do and ask first; call it with confirmed: true only after the person clearly says yes to this exact run.";
 
@@ -113,10 +113,61 @@ export function gateTools<T extends LoopTool>(tools: readonly T[]): T[] {
   return out;
 }
 
-/** A spoken line while lookups run, so the call never goes quiet ("One sec, pulling Crust Pizza's numbers.") */
-export function fillerFor(calls: readonly { name: string; input: Record<string, unknown> }[], seed = 0): string {
-  const client = calls.map((c) => String(c.input.client ?? "").trim()).find(Boolean) ?? null;
-  const names = new Set(calls.map((c) => c.name));
+/** How long tools run before a filler is said: a quick tool answers before anyone notices the pause */
+export const FILLER_DELAY_MS = 1500;
+
+/**
+ * Tools that fetch nothing to speak of (a reminder, a screen opened, a card shown, a note saved, a message sent to a
+ * teammate): never a "pulling…" line, and they're quick, so usually no filler at all
+ */
+const QUIET_TOOLS: ReadonlySet<string> = new Set([
+  "remind_me",
+  "ask_teammate",
+  "send_to_teammate",
+  "open_screen",
+  "show_link",
+  "clear_my_item",
+  "remember",
+  "set_style",
+  "forget",
+  "ask_for_files",
+  "read_uploads",
+  "draft_message",
+  "flag_client_risk",
+  "submit_feedback",
+  "dismiss_specialist",
+  "look_at_screen",
+]);
+
+/** Words of a client's name that say it was mentioned ("Crust" for Crust Pizza), not the filler words of a name */
+const NAME_FILLER = new Set(["the", "and", "co", "inc", "llc", "ltd", "company", "group", "shop", "store", "studio", "brand", "brands", "of"]);
+
+/** Whether what they said this turn is about this client (any distinctive word of its name, any case) */
+export function mentionsClient(said: string, client: string): boolean {
+  const s = ` ${said.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  const words = client
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(" ")
+    .filter((w) => w.length >= 3 && !NAME_FILLER.has(w));
+  return words.some((w) => s.includes(` ${w} `) || s.includes(` ${w}s `) || s.includes(` ${w.replace(/s$/, "")} `));
+}
+
+/**
+ * A spoken line while slow lookups run, so the call never goes quiet ("One sec, pulling Crust Pizza's numbers."), or
+ * null when no line fits (only quick tools that fetch nothing). The client is named only when this turn's words are
+ * about it (a stale name from an earlier turn is worse than none); handed-over turns (said "") name none. Never the
+ * same line twice in a row (`last`); varied by `seed`. Pass `said` undefined to name the client from the tool alone.
+ */
+export function fillerFor(calls: readonly { name: string; input: Record<string, unknown> }[], opts: number | { said?: string | null; last?: string | null; seed?: number } = 0): string | null {
+  const o = typeof opts === "number" ? { seed: opts } : opts;
+  const seed = Math.abs(o.seed ?? 0);
+  const loud = calls.filter((c) => !QUIET_TOOLS.has(c.name));
+  if (!loud.length) return null;
+  const named = loud.map((c) => String(c.input.client ?? "").trim()).find(Boolean) ?? null;
+  const client = named && (o.said === undefined || (o.said !== null && mentionsClient(o.said, named))) ? named : null;
+  const names = new Set(loud.map((c) => c.name));
+  const reads = loud.some((c) => READ_TOOLS.has(c.name));
   const whose = client ? `${client}${/s$/i.test(client) ? "'" : "'s"}` : null;
   const what = names.has("rank_clients")
     ? "the rankings"
@@ -128,11 +179,16 @@ export function fillerFor(calls: readonly { name: string; input: Record<string, 
           ? `${whose ?? "the"} numbers`
           : names.has("what_changed")
             ? `what's changed${client ? ` on ${client}` : ""}`
-            : client
+            : reads && client
               ? `what we have on ${client}`
-              : "that up";
-  const lines = [`One sec, pulling ${what}.`, `Give me a second, I'm pulling ${what}.`, `Let me check. Pulling ${what} now.`];
-  return lines[Math.abs(seed) % lines.length];
+              : reads
+                ? "that up"
+                : null;
+  const lines = what
+    ? [`One sec, pulling ${what}.`, `Give me a second, I'm pulling ${what}.`, `Pulling ${what} now.`, `Hang on, grabbing ${what}.`, `Just a moment, getting ${what}.`]
+    : ["On it, one moment.", "Working on that now.", "Give me a second.", "Doing that now.", "Bear with me a moment."];
+  const fresh = lines.filter((l) => l !== o.last);
+  return fresh[seed % fresh.length];
 }
 
 /** A tool's answer as the model reads it: text, cut when it's very long */
@@ -158,6 +214,8 @@ export async function runToolLoop(opts: {
   step: (messages: LoopMessage[], last: boolean, round: number) => Promise<{ content: Block[]; stop: string | null }>;
   /** Told before a round's tools run (for a spoken filler or a status line) */
   onTools?: (calls: { name: string; input: Record<string, unknown> }[], round: number) => void;
+  /** Told once a round's tools have all finished (a filler waiting on a slow tool is dropped here) */
+  afterTools?: (round: number) => void;
   signal?: AbortSignal;
   maxResultChars?: number;
 }): Promise<{ runs: ToolRun[]; rounds: number; stop: string | null; content: Block[] }> {
@@ -191,6 +249,7 @@ export async function runToolLoop(opts: {
         }
       }),
     );
+    opts.afterTools?.(round);
     opts.messages.push({ role: "user", content: results });
     if (opts.signal?.aborted) break;
   }

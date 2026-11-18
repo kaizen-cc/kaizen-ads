@@ -4,6 +4,9 @@ import { TOOLS_RULE } from "@/lib/agent-call/agent-tools";
 import { CONCISE_RULE, DISTRESS_RULE, SPOKEN_RULE, END_CALL_RULE, firstNameOf } from "@/lib/agent-call/core";
 import { callContext, streamAnswer, turnExtras, type CallRow, type TurnInput } from "@/lib/agent-call/server";
 import { withFrame } from "@/lib/agent-call/call-extras";
+import { turnTimes } from "@/lib/agent-call/transcript";
+import { soundsLikeChurn } from "@/lib/client-risk";
+import { asksToFileFeedback } from "@/lib/feedback-logic";
 import { ASSISTANT_KEY, ASSISTANT_LABEL, discoveryLeft, memoryForPrompt, suggestSpecialist } from "./core";
 import { myContext } from "./context";
 import { loadMemory } from "./memory";
@@ -45,7 +48,9 @@ ${playbooksForPrompt()}
 
 Specialists outside a job: when a question is deep in one area (Meta ads, Google ads, email strategy, email design, creative, copy, client strategy, the market, the client relationship), offer to call in that agent ("Want me to call in the Media Buyer for that?"). Only on a yes, call_in_specialist. While specialists are on, you stay on the line taking notes; ${firstName} can talk to you by saying "assistant", and to any of them by name or role. When they're done with one or say "I'll take it from here", thank it and use dismiss_specialist. Questions you can answer from their data yourself, answer yourself.
 
-Notes: only when they ask for one in so many words ("remind me", "put that on my list", "make it a task", "make sure the strategist does it"), use remind_me (a reminder on their Overview) or ask_teammate (a task for the right teammate). Related things said on one call go on ONE checklist reminder (items), not one reminder each. Never make a reminder out of your own uncertainty or a decision you're unsure of: ask them instead. Facts they share about themselves (a birthday, family, a trip, preferences) go to remember, privately; never note anything about health, beliefs or money troubles, and never mine their email or Slack for personal details.
+Notes: when they ask for one, however they put it ("remind me", "put that on my list", "make that an item for me today on my overview", "add a task for me", "don't let me forget"), use remind_me (a reminder on their Overview). Related things said on one call go on ONE checklist reminder (items), not one reminder each. Never make a reminder out of your own uncertainty or a decision you're unsure of: ask them instead. Never ask them to repeat a phrase or tell them the system didn't register something: if a tool says it wasn't asked, offer it in a few words and save it on their yes.
+
+The team and their messages: "ask Rahul for an update", "tell the head of email", "let Dana know" is send_to_teammate (a task, an ask or an FYI to anyone on the team by name or role; names come through speech imperfectly, so pass the name as heard). Their ask, a yes to a send you proposed, or a correction of who it goes to is enough: one yes, never twice. If something they said yes to fails on our side, fix it and run it again without asking again. Offered two options and they say "yes": go with the one they named, or ask once in a few words which. "Reply as me in that thread", "draft a Slack message", "write an email to…" is draft_message (shown on screen to edit), then send_message only on their yes after you read it back or said it's on screen. "Submit feedback", "report a bug", "I have an idea for…" is submit_feedback: one line back ("Got it: … Filing it."), file it, say where it went. When they say a client is probably leaving or canceling, flag_client_risk straight away and say so in a few words, then carry on. Facts they share about themselves (a birthday, family, a trip, preferences) go to remember, privately; never note anything about health, beliefs or money troubles, and never mine their email or Slack for personal details.
 
 ${DISTRESS_RULE}
 
@@ -103,7 +108,7 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode): Prom
   const said = person ? text : "";
   const firstName = firstNameOf(me.fullName);
   const [ctxNow, memory, convo, extra] = await Promise.all([myContext(input.db, admin, me), loadMemory(admin, me.id), callContext(admin, call, firstName), turnExtras(input, text)]);
-  const actx: AssistantCtx = { me, db: input.db, admin, callId: call.id, said, emit, state: { threadId: call.thread_id ?? null } };
+  const actx: AssistantCtx = { me, db: input.db, admin, callId: call.id, said, emit, state: { threadId: call.thread_id ?? null }, path: input.path ?? null, screen: input.context?.screen ?? null, clientId: input.context?.clientId ?? null };
   const tctx = { me, db: input.db, admin, callId: call.id, emit, team, self: ASSISTANT_KEY, said };
   const tools = tracked(tctx, [...(await assistantTools(actx)), ...teamTools(tctx)]);
   // A job they're asking for (when none is open), or the specialist whose area this is
@@ -137,6 +142,8 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode): Prom
         uploadsBlock(call),
         teamBlock(team, ASSISTANT_KEY, firstName),
         job ? `<hint>This sounds like the ${job.label.toLowerCase()} job (${job.about}). If they want it done now, start_job straight away, then say where things stand and what's missing; if they're only mentioning it, just answer.</hint>` : "",
+        person && soundsLikeChurn(text) ? `<hint>This may say a client is leaving: if so, flag_client_risk now and say so in a few words.</hint>` : "",
+        person && asksToFileFeedback(text) ? `<hint>They want to file feedback about the app: one line back, then submit_feedback.</hint>` : "",
         hint ? `<hint>This sounds like the ${hint.label}'s area (${hint.about}). If it needs real depth, offer to call it in; if you can answer from the data, just answer.</hint>` : "",
         convo,
         extra.hint,
@@ -148,13 +155,16 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode): Prom
     ),
     signal,
     emit,
+    filler: { callId: call.id, turn: input.startedAt ?? 0, said },
   });
   await extra.connectors.settle().catch(() => undefined);
   logRun(admin, me, ASSISTANT_KEY, out);
   const spoken = spokenOf(out.reply, signal.aborted);
+  // The person's line at when they said it, the answer after it (the transcript reads them in that order)
+  const at = turnTimes(person ? input.startedAt : null, Date.now());
   await admin.from("ai_role_chats").insert([
-    ...(person ? [{ role_key: ASSISTANT_KEY, role: "user", content: text, attachments: [], changes: [], created_by: me.id, call_id: call.id }] : []),
-    ...(spoken ? [{ role_key: ASSISTANT_KEY, role: "agent", content: spoken, attachments: [], changes: [], created_by: me.id, call_id: call.id }] : []),
+    ...(person ? [{ role_key: ASSISTANT_KEY, role: "user", content: text, attachments: [], changes: [], created_by: me.id, call_id: call.id, created_at: at.said }] : []),
+    ...(spoken ? [{ role_key: ASSISTANT_KEY, role: "agent", content: spoken, attachments: [], changes: [], created_by: me.id, call_id: call.id, created_at: at.answered }] : []),
   ]);
   return { ended: out.ended && person };
 }

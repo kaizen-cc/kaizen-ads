@@ -43,6 +43,27 @@ export function callReviewItem(r: { callId: string; roleKey: string; roleLabel: 
   };
 }
 
+/** A feature request (an Ask) from the team, waiting on the owner to approve or comment on */
+export type OwnerAsk = { id: string; title: string; summary: string | null; people: number; createdAt: string; by: string | null };
+
+/** The owner's row for an Ask: approve or comment right on the Overview, or open it on the Feedback page */
+export function ownerAskItem(g: OwnerAsk, now = new Date()): NextItem {
+  const who = g.by ? `From ${firstNameOf(g.by)}` : "From the team";
+  const more = g.people > 1 ? ` and ${g.people - 1} more` : "";
+  return {
+    id: `fb-${g.id}`,
+    kind: "feedback",
+    tone: "brand",
+    client: "Kaizen OS",
+    title: g.title,
+    why: `${who}${more}${g.summary ? `: ${g.summary}` : ""}`,
+    when: `Asked ${dayWord(g.createdAt, now)}`,
+    href: `/feedback?section=asks&g=${encodeURIComponent(g.id)}`,
+    action: "Open it",
+    feedback: { groupId: g.id },
+  };
+}
+
 export type AskRow = { id: string; kind: "reminder" | "task"; title: string; detail: string; due_on: string | null; created_at: string; asked_by: string; askerName: string | null; roleLabel: string | null; client: { name: string; slug: string } | null; checklist?: unknown; call_id?: string | null; with_transcript?: boolean | null };
 
 /**

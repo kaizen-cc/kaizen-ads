@@ -29,7 +29,8 @@ const SEAT_WORDS: Record<string, string> = {
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-const NOT_ASKED = "Not saved: they didn't ask for a reminder or a task. Only make one when they ask in so many words (or say yes when you offer one). If you're unsure about something, ask them on the call instead.";
+const NOT_ASKED =
+  "Not saved yet: what they just said didn't read as asking for a reminder or a task. If they did mean one, offer it in a few words (\"Want me to put that on your list for today?\") and save it on their yes. Never tell them the system didn't register it, and never ask them to repeat a phrase.";
 /** Words that add to the list already made on this call ("also add…", "put that on there too") */
 const ADDS = /\b(add|also|include|another|too|as well|on there|on the list)\b/i;
 
@@ -129,14 +130,15 @@ export function askTools(ctx: ToolCtx, agent: { roleKey: string; label: string; 
     },
     {
       name: "ask_teammate",
-      description: `Asks the right teammate to get something done on a client, only when the person asks you to make sure it happens ("make sure that gets done", "have the strategist do it"): the title is a clear action for that teammate, never your own uncertainty. It goes on that teammate's Overview, Next for me, credited "From ${firstNameOf(ctx.me.fullName)} via the ${agent.label}", with the context. The owner is the client's holder of the seat for that work (primary first); leave seat out to use this agent's usual owner. Nothing is sent to the client. Then confirm with the owner's first name ("Done, I've asked Dana to …").`,
+      description: `When they name the person ("ask Dana", "tell the head of email"), use send_to_teammate instead. Asks the right teammate to get something done on a client, when the person asks you to make sure it happens ("make sure that gets done", "have the strategist do it"), or says yes to a hand-off you proposed, or corrects who it goes to ("it should be on the Meta buyer": that IS the ask, send it with what you'd drafted): the title is a clear action for that teammate, never your own uncertainty. It goes on that teammate's Overview, Next for me, credited "From ${firstNameOf(ctx.me.fullName)} via the ${agent.label}", with the context. The owner is the client's holder of the seat for that work on a line the client buys (see client_team), primary first; "the buyer" or "the strategist" means your own line's seat; an empty seat goes to the next owner on that line (say who). Never offer or route to a role on a line the client doesn't buy. Nothing is sent to the client. Then confirm with the owner's first name ("Done, I've asked Dana to …").`,
       input_schema: {
         type: "object",
         properties: {
           client: { type: "string", description: "The client's name" },
           what: { type: "string", description: "What needs doing, as a short line" },
           context: { type: "string", description: "What was said: why, numbers, anything the owner needs (one to three sentences)" },
-          seat: { type: "string", enum: SEATS, description: "Whose job it is on the client (coordinator = the account manager)" },
+          seat: { type: "string", enum: SEATS, description: "Whose job it is on the client (coordinator = the account manager); only a seat on a line the client buys" },
+          to: { type: "string", description: "Who, as they said it (\"the Meta media buyer\", \"the strategist\", \"the account lead\"): routed through the client's lines and seats, your own line by default" },
           due: { type: "string", description: "YYYY-MM-DD, if a date was said" },
         },
         required: ["client", "what"],
@@ -144,27 +146,26 @@ export function askTools(ctx: ToolCtx, agent: { roleKey: string; label: string; 
       },
       status: (input) => `Asking the team on ${clip(input.client, 60) || "the client"}…`,
       run: async (input) => {
-        if (!askedForNote(agent.said)) return { done: false, note: NOT_ASKED };
+        // Their ask, or their yes (or correction) to a hand-off you proposed, is enough: no phrase to repeat
         const client = await clientNamed(input.client);
         if (!client) throw new Error("Which client is it for?");
         const title = clip(input.what, 160);
         const problem = titleProblem(title);
         if (problem) return { done: false, note: problem };
-        const seat = SEATS.includes(String(input.seat)) ? String(input.seat) : (OWNER_SEAT[agent.roleKey] ?? "coordinator");
-        const { data: seats } = await ctx.admin.from("client_assignments").select("profile_id, is_primary, created_at, profiles(full_name, is_active)").eq("client_id", client.id).eq("role", seat);
-        type Seat = { profile_id: string; is_primary: boolean | null; created_at: string | null; profiles: { full_name: string; is_active: boolean } | null };
-        const holders = ((seats ?? []) as unknown as Seat[]).filter((s) => s.profiles?.is_active !== false).sort((a, b) => Number(b.is_primary !== false) - Number(a.is_primary !== false) || String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
-        const owner = holders[0];
-        if (!owner) return { done: false, note: `${client.name} has no ${SEAT_WORDS[seat] ?? seat} in the app. Say so, and offer a reminder for the person instead (remind_me).` };
+        const { clientTeam, recipientFor } = await import("@/lib/assistant/routing-server");
+        const team = await clientTeam(ctx.admin, client.id);
+        const seatWord = SEATS.includes(String(input.seat)) ? (SEAT_WORDS[String(input.seat)] ?? "") : "";
+        const words = clip(input.to, 120) || seatWord || (OWNER_SEAT[agent.roleKey] ? (SEAT_WORDS[OWNER_SEAT[agent.roleKey]] ?? "") : "account manager");
+        const r = await recipientFor(ctx.admin, { to: words, client: team, agentRole: agent.roleKey, exclude: ctx.me.id });
+        if (!r.ok) return { done: false, note: r.note, options: r.options };
         const due = DAY.test(String(input.due ?? "")) ? String(input.due) : null;
-        const id = await save({ kind: "task", owner: owner.profile_id, client, title, detail: clip(input.context, 800), due });
+        const id = await save({ kind: "task", owner: r.to.id, client, title, detail: clip(input.context, 800), due });
         const from = firstNameOf(ctx.me.fullName);
-        if (owner.profile_id !== ctx.me.id)
-          await ctx.admin
-            .from("notifications")
-            .upsert({ profile_id: owner.profile_id, kind: "agent", title: `${client.name}: ${title}`, body: `From ${from} via the ${agent.label}${input.context ? `: ${clip(input.context, 400)}` : ""}`, href: "/pipeline#next", key: `agent-ask:${id}`, priority: "normal", read_at: null }, { onConflict: "profile_id,key" })
-            .then(({ error }) => error && console.error("[agent ask] notice", error.message));
-        return { done: true, asked: firstNameOf(owner.profiles?.full_name), seat: SEAT_WORDS[seat] ?? seat, client: client.name, due };
+        if (r.to.id !== ctx.me.id) {
+          const { tellTeammate } = await import("@/lib/assistant/handoff-server");
+          await tellTeammate(ctx.admin, { ownerId: r.to.id, askId: id, title: `${client.name}: ${title}`, body: `From ${from} via the ${agent.label}${input.context ? `: ${clip(input.context, 400)}` : ""}` });
+        }
+        return { done: true, asked: firstNameOf(r.to.name), client: client.name, due, routed: r.to.why ?? undefined, note: r.to.why ? "Say who you sent it to and why in a few words." : undefined };
       },
     },
   ];

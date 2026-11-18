@@ -106,7 +106,7 @@ function timeWords(h: string, m: string | undefined, ap: string | undefined): st
 }
 
 /** Short forms said letter by letter (and their plurals: "KPIs" → "K P Is") */
-const LETTERS = ["ROAS", "CTR", "CPM", "CPA", "KPI", "SMS", "CPC", "AOV", "ID", "URL", "AI", "OS", "CVR", "CPL", "ROI", "UGC", "LTV", "SKU", "QA", "PDF", "CRM", "SEO", "B2B", "B2C", "DM", "CTA", "IS"];
+const LETTERS = ["CTR", "CPM", "CPA", "KPI", "SMS", "CPC", "AOV", "ID", "URL", "AI", "OS", "CVR", "CPL", "ROI", "UGC", "LTV", "SKU", "QA", "PDF", "CRM", "SEO", "B2B", "B2C", "DM", "CTA", "IS"];
 const LETTER_RE = new RegExp(`\\b(${LETTERS.join("|")})(s)?\\b`, "g");
 
 /**
@@ -116,6 +116,8 @@ const LETTER_RE = new RegExp(`\\b(${LETTERS.join("|")})(s)?\\b`, "g");
  * works on every voice and model with nothing to keep in sync. Add a brand here when the voice gets it wrong.
  */
 export const SAY_AS: Record<string, string> = {
+  // Said as one word in the ad world ("roh-as"), never spelled out
+  ROAS: "Roh-as",
   Klaviyo: "Clay-vee-oh",
   Cloudbeds: "Cloud beds",
   "Customer.io": "Customer I O",

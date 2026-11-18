@@ -374,7 +374,8 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
           if (j) teamed.current = true;
         },
         onNavigate: openHref,
-        onCard: (card) => setCards((cur) => [...cur.filter((x) => x.href !== card.href), card].slice(-6)),
+        // A draft card is replaced by its newer self (sent, saved as a Gmail draft); a link card by the same link
+        onCard: (card) => setCards((cur) => [...cur.filter((x) => (card.draft ? x.draft?.id !== card.draft.id : x.href !== card.href || Boolean(x.draft))), card].slice(-6)),
         onUpload: (ask) => {
           setUploadAsk(ask);
           setMinimized(false);
@@ -656,7 +657,7 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
   const screen =
     view && sum && stage === "call" ? (
       desktop || minimized ? (
-        <Huddle v={view} minimized={minimized} onMinimize={() => setMinimized(true)} onExpand={() => setMinimized(false)} />
+        <Huddle v={view} minimized={minimized} phone={!desktop} onMinimize={() => setMinimized(true)} onExpand={() => setMinimized(false)} />
       ) : (
         <FullScreenCall v={view} />
       )

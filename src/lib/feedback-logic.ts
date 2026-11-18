@@ -378,3 +378,43 @@ export function addToRoadmap(md: string, line: string): string {
   if (out[out.length - 1] !== "") out.push("");
   return out.join(eol);
 }
+
+// ─── Feedback said on a call or in an agent's chat ──────────────────────────
+
+/** Words that say what someone is filing: a bug ("broken", "doesn't work", "an error") or an idea ("it'd be great if") */
+const BUG_WORDS = /\b(bug|broken|break(?:s|ing)?|crash\w*|error|fail\w*|doesn'?t work|does not work|didn'?t work|not working|stopped working|won'?t (?:load|open|save|send)|can'?t (?:load|open|save|send|see|find)|wrong|missing|stuck|glitch\w*|freez\w*|slow|blank|disappear\w*)\b/i;
+const IDEA_WORDS = /\b(idea|feature|would be (?:great|nice|cool|good)|it'?d be (?:great|nice|cool|good)|could (?:we|you|it) (?:add|have|make)|wish (?:it|we|i) could|add (?:a|an)|request|suggest\w*|improve\w*|it should|should be able to|want (?:it|the app) to|can we (?:add|have|get))\b/i;
+const CONFUSING_WORDS = /\b(confus\w*|unclear|hard to (?:find|understand|tell)|don'?t understand|doesn'?t make sense|where (?:is|do i))\b/i;
+
+/**
+ * What kind of feedback someone is filing from what they said: a bug, an idea, or something confusing. When they
+ * name it ("report a bug", "I have an idea") that wins; otherwise the words decide, a bug when unsure.
+ */
+export function spokenFeedbackType(text: string): FeedbackType {
+  const t = text.toLowerCase();
+  if (/\b(report (?:a |this )?bug|it'?s a bug|that'?s a bug|found a bug)\b/.test(t)) return "bug";
+  if (/\b(i have an idea|idea for|feature request|request a feature)\b/.test(t)) return "idea";
+  if (CONFUSING_WORDS.test(t) && !BUG_WORDS.test(t)) return "confusing";
+  if (IDEA_WORDS.test(t) && !BUG_WORDS.test(t)) return "idea";
+  return "bug";
+}
+
+/** Whether what someone said asks to file feedback ("submit feedback", "report a bug", "I have an idea for…") */
+export const asksToFileFeedback = (text: string | null | undefined) =>
+  /\b(submit (?:some )?feedback|(?:leave|give|send|file|log) (?:some )?feedback|feedback (?:on|about|for)|report (?:a |this |that )?(?:bug|issue|problem)|file (?:a |this |that )?(?:bug|issue)|log (?:a |this |that )?(?:bug|issue)|i have an idea|an idea for|feature request|request a feature|suggest (?:a|an) (?:feature|idea))\b/i.test(String(text ?? ""));
+
+/**
+ * Where feedback goes once filed, the same loop as the in-app form: a bug or something confusing goes to the fix
+ * pipeline ("fix"); an idea is an Ask for the owner to approve or comment on ("owner"). As a chat's mode: a bug is
+ * "Report this" (error), an idea "Ask for this" (cant).
+ */
+export function feedbackPath(type: FeedbackType): { path: "fix" | "owner"; mode: "error" | "cant"; says: string } {
+  return type === "idea"
+    ? { path: "owner", mode: "cant", says: "It goes to the owner to approve or comment on; you'll hear what they decide." }
+    : { path: "fix", mode: "error", says: "It goes straight to the fix pipeline; you'll hear when it's being fixed and when it's live." };
+}
+
+/** An Ask waiting on the owner (a feature request not yet decided): what the Overview lists until it's handled */
+export function awaitsOwner(g: { status: string; scope: string; lane: string }): boolean {
+  return g.status === "new" && g.scope === "feature" && g.lane !== "build";
+}
