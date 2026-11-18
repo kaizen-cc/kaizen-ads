@@ -52,7 +52,7 @@ export function brevoErrorText(status: number, json: unknown): string {
   const message = str(obj(json).message);
   // Brevo's "block unknown IP addresses" security setting refuses calls from our servers (their addresses change)
   if (status === 401 && /\bip\b|ip address|unrecogni[sz]ed/i.test(message ?? "")) return "Brevo blocked the call because of the account's IP security. In their Brevo account: Security › Authorised IPs, turn off blocking unknown IP addresses for the API, then Sync now.";
-  if (status === 401) return "Brevo refused this key. Check it was copied whole and hasn't been deleted.";
+  if (status === 401) return `Brevo refused this key${message ? ` ("${message.slice(0, 160)}")` : ""}. Check it's an API key (not an SMTP or MCP key), copied whole from the client's own Brevo account, and still active.`;
   if (status === 403) return `Brevo says this key can't read that${message ? ` (${message})` : ""}. Create a new API key and paste it here.`;
   if (status === 429) return "Brevo is rate limiting this account right now. It's tried again on the next sync.";
   if (status === 400) return `Brevo couldn't answer: ${message ?? "bad request"}`;
