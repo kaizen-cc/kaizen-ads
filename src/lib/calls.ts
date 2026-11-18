@@ -432,14 +432,16 @@ async function collectCallsRun(admin: SupabaseClient, budgetMs: number, t: Track
   // The same promise said on several calls (or by both note-takers on one) becomes one, with all its context
   const { groupPromises, settleGroups } = await import("@/lib/promise-groups");
   const grouped = await groupPromises(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+  // Each promise to the people who act on it, after the re-check dropped what is not ads work and before anything is briefed (the same meeting recorded twice is merged first); also the backfill for the last day and a half
+  const routed = await import("@/lib/promise-routing").then((m) => m.routePromises(admin, { budgetMs: Math.max(60_000, deadline - Date.now()) })).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
   t.tick("Checking which promises are covered by a request");
   const covered = await sweepCovered(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
   t.tick("Watching open promises");
   const watched = await watchCommitments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
   await settleGroups(admin).catch(() => 0);
   t.tick(null);
-  await setCursor(admin, "calls", started, { found: found.length, saved, read, waiting: Math.max(0, (waiting ?? []).length - read), errors, watched, covered, rechecked, grouped });
-  return { found: found.length, saved, read, errors, watched, covered, grouped };
+  await setCursor(admin, "calls", started, { found: found.length, saved, read, waiting: Math.max(0, (waiting ?? []).length - read), errors, watched, covered, rechecked, grouped, routed });
+  return { found: found.length, saved, read, errors, watched, covered, grouped, routed };
 }
 
 // ─── Watch what was promised ───────────────────────────────────────────────

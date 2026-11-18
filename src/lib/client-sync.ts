@@ -92,6 +92,8 @@ export async function mirrorTrack(admin: SupabaseClient) {
     }
   }
   await billingDays(admin, track).catch((e) => console.error("[track] billing days", e));
+  // What Stripe bills each client for (the account watch's billed-but-idle check and the Stripe mapping check)
+  await (await import("@/lib/account-watch/billing")).syncBilledServices(admin, track).catch((e) => console.error("[track] billed services", e));
   await admin.from("sync_state").upsert({ source: "track-status", cursor_at: now, last_run_at: now, last_result: Object.fromEntries(((theirs ?? []) as TrackClient[]).map((t) => [t.id, t.status])) });
   return out;
 }

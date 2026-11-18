@@ -10,7 +10,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { KpiBoard, type KpiRow } from "./kpi-board";
 import { latestAudits } from "@/lib/audit-summary";
-import { changeKey, loadChanges } from "@/lib/account-changes";
+import { changeKey, loadChanges, teamNamer } from "@/lib/account-changes";
 import { loadSprints } from "@/lib/sprints";
 import { successOf, type BenchmarkTarget } from "@/lib/kpi/success";
 import type { GoogleHealth } from "@/lib/google-flags";
@@ -78,9 +78,11 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   const snapBy = new Map((snaps ?? []).map((s) => [s.target_id as string, s as unknown as Snap]));
   const activityBy = new Map((activity ?? []).map((x) => [x.ad_account_id as string, x]));
   // The sprints, and each account's last 10 changes for its change history, together
-  const [sprintList, changes] = await Promise.all([
+  const [sprintList, changes, nameOf] = await Promise.all([
     loadSprints(supabase, { targetIds: (targets ?? []).map((t) => t.id) }),
     loadChanges(supabase, (targets ?? []).filter((t) => t.ad_account_id).map((t) => changeKey(t.platform, String(t.ad_account_id))), 10),
+    // Change-history names as the team member they are (aliases on profiles)
+    teamNamer(supabase),
   ]);
   const sprints = new Map(sprintList.map((x) => [x.targetId, x.sprint]));
   const seated = new Set((seats ?? []).map((a) => `${a.client_id}:${platformOf(a.role)}`));
@@ -151,7 +153,7 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
           const x = t.ad_account_id ? activityBy.get(t.platform === "google" ? String(t.ad_account_id).replace(/\D/g, "") : String(t.ad_account_id).replace(/^act_/, "")) : undefined;
           if (!x) return null;
           const c = x.last_change as { at: string; who: string | null; what: string; object: string | null } | null;
-          return { at: x.last_change_at, who: c?.who ?? null, what: c?.what ?? null, object: c?.object ?? null, checkedAt: x.checked_at, error: x.error };
+          return { at: x.last_change_at, who: nameOf(c?.who ?? null).name ?? null, what: c?.what ?? null, object: c?.object ?? null, checkedAt: x.checked_at, error: x.error };
         })(),
       };
     })

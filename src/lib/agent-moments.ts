@@ -119,6 +119,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   ],
   industry: [{ title: "Sorts clients into industries from everything on their page", where: "Clients · Winners · Market", trigger: "auto", when: "Hourly for new or thinly-read clients, and at 12pm and 6pm", labels: ["client industries"] }],
   calls: [
+    { title: "Drafts the emails a client needs from recent calls, notes, promises, Slack and email (a promise kept, a follow-up, a correction, an offer, a report), from the person responsible; never sends", where: "Overview · Emails ready to send, Account review · Upsell", trigger: "auto", when: "Once a day per person on their Overview, on Look for more, and when the assistant drafts in bulk", labels: ["client email drafts", "client email draft"] },
     { title: "Reads Gemini and Fireflies notes per client: what was said, decided and promised", where: "Client page · Calls", trigger: "auto", when: "Every 30 minutes in business hours", labels: ["read a call"] },
     { title: "Checks whether a promise has been covered by a request", where: "Overview · Waiting on us", trigger: "auto", when: "After every request, and with every call sync", labels: ["commitments covered"] },
     { title: "Re-checks each promise against the whole call: paid ads, or another Kaizen service", where: "Overview · Waiting on us", trigger: "auto", when: "With every call sync, once per promise", labels: ["recheck call promises"] },

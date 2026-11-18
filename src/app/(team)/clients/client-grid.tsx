@@ -45,6 +45,8 @@ export type ClientCard = {
   kpis?: LineKpi[];
   /** Someone said this client may leave lately: it counts toward how critical they are */
   atRisk?: boolean;
+  /** The account watch's open flags (billed but idle, neglected, spend), critical first: the first shows as a chip */
+  watch?: { title: string; critical: boolean }[];
   live: { meta: Freshness["tone"] | null; slack: Freshness["tone"] | null; drive: Freshness["tone"] | null };
   assigned: Record<SlotRole, Option | null>;
   /** The seats the signed-in person may assign on this client (empty for most people) */
@@ -202,6 +204,17 @@ function Card({ c, open, slotOptions, canEdit }: { c: ClientCard; open: boolean;
             {c.missing > 0 && <span className="normal-case text-warn">· {c.missing} to fill</span>}
             <MissingLinks clientId={c.id} slug={c.slug} missing={c.links} canEdit={canEdit} />
           </p>
+          {c.watch && c.watch.length > 0 && (
+            <Link
+              href={`/watch?client=${c.slug}`}
+              title={c.watch.map((w) => w.title).join(" · ")}
+              className={`mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${c.watch[0].critical ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn"}`}
+            >
+              <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.watch[0].critical ? "bg-bad" : "bg-warn"}`} />
+              <span className="truncate">{c.watch[0].title}</span>
+              {c.watch.length > 1 && <span className="shrink-0 opacity-70">+{c.watch.length - 1}</span>}
+            </Link>
+          )}
         </div>
         <button
           type="button"

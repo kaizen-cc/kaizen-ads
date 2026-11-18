@@ -8,6 +8,7 @@ import { actionBreakdown, conversionValue } from "@/lib/kpi/conversion-value";
 import { extensionTools } from "./extensions";
 import { rankTools } from "./rank-tools";
 import { teamKpiTools } from "./team-kpi-tools";
+import { csuiteTools } from "./csuite-tools";
 import { clampFormats, formatList, formatsFor, formatsRule } from "@/lib/creative-formats";
 import { can, roleWidePerms, type Who } from "@/lib/chat-permissions";
 import { isChannelOnly, lineOfTeam } from "@/lib/roles";
@@ -1101,6 +1102,8 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   for (const t of rankTools(ctx)) tools.push(t);
   // The team KPI boards (Email Team KPIs, Creative Team KPIs): execs, the Head of Email and the creative leads only
   for (const t of teamKpiTools(ctx)) tools.push(t);
+  // The executives' account review (run step by step on a call) and client emails drafted from conversations
+  for (const t of csuiteTools(ctx)) tools.push(t);
 
   // The connectors in src/lib/ai-tools (Google policy checker, monthly recap deck, ElevenLabs, Higgsfield, Motion)
   const extra = await extensionTools(ctx);

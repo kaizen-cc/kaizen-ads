@@ -5,6 +5,7 @@ import { requireStaff } from "@/lib/auth";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
 import { ProfileView } from "./profile-view";
+import { PlatformAliases } from "./platform-aliases";
 
 export const metadata: Metadata = { title: "Profile" };
 
@@ -21,6 +22,8 @@ export default async function ProfilePage({ params }: PageProps<"/profile/[id]">
   if (!base.data) notFound();
   // The profile fields are read on their own, so the page opens before the profiles migration
   const { data: more } = await db.from("profiles").select("display_name, title, bio, start_date, slack_user_id").eq("id", id).maybeSingle();
+  // Names in ad platforms, read on their own too (before the account watch migration they're simply not there)
+  const { data: aliasRow } = await db.from("profiles").select("platform_aliases").eq("id", id).maybeSingle();
   const p = base.data;
   const mine = p.id === me.id;
   return (
@@ -44,6 +47,7 @@ export default async function ProfilePage({ params }: PageProps<"/profile/[id]">
           startDate: (more?.start_date as string | null | undefined) ?? null,
         }}
       />
+      <PlatformAliases profileId={p.id} initial={((aliasRow?.platform_aliases as string[] | null | undefined) ?? [])} canEdit={mine || me.isExec || me.isLead} />
     </div>
   );
 }

@@ -339,6 +339,8 @@ export async function GET(request: Request) {
       return Response.json({ ...queue, relayout, adCreatives });
     }
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
+    // The account watch: billed but idle, neglected or overtouched accounts, spend anomalies, creative behind, unknown people
+    if (step === "watch") return Response.json(await (await import("@/lib/account-watch/run")).runAccountWatch(admin));
     if (step === "bibles") return Response.json(await (await import("@/lib/brand-bible")).autoBibles(admin, 3));
     if (step === "presentations") {
       const presentations = await (await import("@/lib/presentation")).keepPresentations(admin);

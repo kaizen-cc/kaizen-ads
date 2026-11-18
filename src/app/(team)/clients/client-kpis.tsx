@@ -148,7 +148,7 @@ function Chip({ k, name }: { k: LineKpi; name: string }) {
 }
 
 /** The services a line stands for, for the neutral note when a client is on it with no KPI yet */
-const SERVICE_OF_LINE: Partial<Record<KpiLine, ServiceSlug>> = { meta: "facebook-ads", google: "google-ads", tiktok: "tiktok-ads", email: "email-marketing", social: "social-media" };
+const SERVICE_OF_LINE: Partial<Record<KpiLine, ServiceSlug>> = { meta: "facebook-ads", google: "google-ads", tiktok: "tiktok-ads", email: "email-marketing", social: "social-media", creative: "creative" };
 
 /** The KPI row of a card: a chip per line with a KPI, and a quiet note for a line they're on that has none yet */
 export function KpiRow({ kpis, services, name, channel }: { kpis: LineKpi[]; services: ServiceSlug[]; name: string; channel: "email" | "social" | null }) {
@@ -158,7 +158,7 @@ export function KpiRow({ kpis, services, name, channel }: { kpis: LineKpi[]; ser
     .map((s) => LINE_OF_SERVICE[s])
     .filter((l): l is KpiLine => Boolean(l) && !have.has(l as KpiLine) && (!channel || l === channel) && !(l === "tiktok"));
   if (!kpis.length && !bare.length) return null;
-  const order: KpiLine[] = ["meta", "google", "tiktok", "email", "social"];
+  const order: KpiLine[] = ["meta", "google", "tiktok", "email", "social", "creative"];
   const sorted = [...kpis].sort((a, b) => order.indexOf(a.line) - order.indexOf(b.line));
   return (
     <div className="relative flex flex-wrap gap-1.5" aria-label="KPIs">

@@ -219,10 +219,10 @@ describe("reasons", () => {
 
 describe("which lines a person sees", () => {
   it("follows the boards: execs and leads all, a channel team its own line, a buyer their platform", () => {
-    expect(allowedKpiLines({ isExec: true }, null, null)).toHaveLength(5);
+    expect(allowedKpiLines({ isExec: true }, null, null)).toHaveLength(6);
     expect(allowedKpiLines({}, "email", null)).toEqual(["email"]);
     expect(allowedKpiLines({}, null, "google")).toEqual(["google"]);
-    expect(allowedKpiLines({}, null, null)).toEqual(["meta", "google", "tiktok"]);
+    expect(allowedKpiLines({}, null, null)).toEqual(["meta", "google", "tiktok", "creative"]);
   });
   it("scoreChip says why there's no number", () => {
     expect(scoreChip({ line: "email", score: null, band: null, reasons: [], href: "/k", note: "Email · not connected" })).toMatchObject({ tone: "none", health: null });

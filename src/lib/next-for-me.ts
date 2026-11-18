@@ -8,6 +8,7 @@ import { loadCallPromises, loadOnboarding, loadSuggestions, type OpenSuggestion 
 import { formatsFor } from "@/lib/creative-formats";
 import { isCreativeRole } from "@/lib/roles";
 import { seatKeys, type SeatRow } from "@/lib/buyer-seats";
+import { briefLabel } from "@/lib/promise-routing-core";
 import { loadBiblesToReview } from "@/lib/bible-review";
 import { askItem, callReviewItem, ownerAskItem, type AskRow, type OwnerAsk } from "@/lib/agent-call/next-items";
 
@@ -34,6 +35,8 @@ export type NextItem = {
   ask?: { id: string; checklist?: { text: string; done: boolean }[]; transcriptCallId?: string };
   /** The owner (execs): a feature request from the team, approved or commented on from the list */
   feedback?: { groupId: string };
+  /** A brief or call promise this person can hand to a teammate (Delegate): the ref ties the task back to the item */
+  delegate?: { ref: string; clientId: string | null; title: string };
 };
 
 export type NextForMe = {
@@ -234,7 +237,14 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
   for (const p of promises ?? []) {
     if (!p.suggestion) continue;
     if (!myClients.has(p.suggestion.clientId) && !me.isLead) continue;
-    decide.push({ id: `p-${p.commitmentId}`, kind: "promise", tone: "warn", client: p.client, title: p.what, why: `Promised on "${p.callTitle}" and not started`, when: `Due ${new Date(p.dueAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}`, action: "Open the brief", suggestion: p.suggestion });
+    // "Brief ready: Sierra Dreams BFCM close (1 video, 5 images)": written from the call at once, one tap to send; due within two days is urgent
+    const soon = Date.parse(p.dueAt) - Date.now() <= 48 * 3_600_000;
+    decide.push({ id: `p-${p.commitmentId}`, kind: "promise", tone: soon ? "bad" : "warn", client: p.client, title: `Brief ready: ${briefLabel({ client: p.client, what: p.group?.title ?? p.what })}`, why: `Promised on "${p.callTitle}" and not started`, when: `Due ${new Date(p.dueAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}`, action: "Review and send", suggestion: p.suggestion, delegate: { ref: `promise:${p.commitmentId}`, clientId: p.suggestion.clientId, title: `Brief ready: ${briefLabel({ client: p.client, what: p.group?.title ?? p.what })}` } });
+  }
+  // Launches, changes and strategy promised on a call and routed to me (the buyer): with the time they're due
+  for (const p of await import("@/lib/promise-routing").then((m) => m.loadRoutedPromises(db, me.id)).catch(() => [])) {
+    const due = new Date(p.dueAt);
+    now.push({ id: `rp-${p.id}`, kind: "promise", tone: p.urgent ? "bad" : "warn", client: p.client, title: p.title, why: `Promised on "${p.callTitle}"${p.why ? `: ${p.why}` : ""}`, when: `Due ${due.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}`, href: `/clients/${p.clientSlug}`, action: "Open client", delegate: { ref: `promise:${p.id}`, clientId: p.clientId, title: p.title } });
   }
   for (const s of suggestions?.open ?? []) {
     if (!myClients.has(s.clientId)) continue;
@@ -322,7 +332,21 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
   // only, it stays for everyone else
   const { data: cleared } = await db.from("daily_items").select("key").eq("profile_id", me.id).like("key", "next:%").in("status", ["done", "dismissed"]);
   const gone = new Set((cleared ?? []).map((c) => String(c.key).slice(5)));
-  const kept = (xs: NextItem[]) => xs.filter((x) => !gone.has(x.id));
+  // Items I handed to a teammate: "Delegated to <name>" until they mark it done, then gone
+  const delegated = await import("@/lib/delegate")
+    .then((m) => m.loadDelegations(db, me.id, [...now, ...decide].map((x) => x.delegate?.ref).filter((r): r is string => Boolean(r))))
+    .catch(() => null);
+  const kept = (xs: NextItem[]) =>
+    xs.filter((x) => {
+      if (gone.has(x.id)) return false;
+      const d = delegated?.(x.delegate?.ref);
+      if (d?.hide) return false;
+      if (d?.label) {
+        x.chip = { label: d.label, tone: "ok" };
+        x.delegate = undefined;
+      }
+      return true;
+    });
 
   const rank = { bad: 0, warn: 1, brand: 2, ok: 3 } as const;
   const sort = (xs: NextItem[]) => kept(xs).sort((a, b) => rank[a.tone] - rank[b.tone]);

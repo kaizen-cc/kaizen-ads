@@ -9,7 +9,7 @@ import { conversionFor } from "@/lib/kpi/conversions";
 import { dailyTable } from "@/lib/kpi/platform";
 import { servicesOf } from "@/lib/services";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
-import { adChip, adReasons, emailReasons, scoreChip, socialReasons, worstChip, type DayNumbers, type LineKpi } from "./core";
+import { adChip, adReasons, creativeChip, emailReasons, scoreChip, socialReasons, worstChip, type DayNumbers, type LineKpi } from "./core";
 
 // What the Clients list shows under each card, for every client in one go: the KPI of each line (the boards' own
 // numbers and status), and the reasons behind it from stored data. One batched query per table for all clients, never
@@ -120,22 +120,38 @@ export async function loadAllClientKpis(admin: SupabaseClient): Promise<AllClien
     const deviation = num(snap?.deviation);
     const days = t.ad_account_id ? dayNumbers(t, daysBy.get(`${t.platform}:${t.ad_account_id}`) ?? []) : [];
     const reasons = adReasons({ status, deviation, trend: snap?.trend ?? null, vsMonth: num(snap?.vs_month), budget: snap?.budget ?? null, roas: Boolean(conv.roas), audit: auditBy.get(t.id) ?? null, tiredAds: t.platform === "meta" ? (tired.get(t.client_id) ?? 0) : 0, days, today });
-    const chip = adChip({ line: t.platform as "meta" | "google" | "tiktok", conversion: t.conversion, roas: Boolean(conv.roas), target, status, deviation, d14, href: `/kpis?target=${t.id}`, reasons });
+    const chip: LineKpi = {
+      ...adChip({ line: t.platform as "meta" | "google" | "tiktok", conversion: t.conversion, roas: Boolean(conv.roas), target, status, deviation, d14, href: `/kpis?target=${t.id}`, reasons }),
+      // For the executive summary and business size: the tracked value, where the account is heading, its budget pace
+      revenue: d14?.revenue ?? null,
+      trend: snap?.trend ?? null,
+      pace: snap?.budget?.pace ?? null,
+    };
     const k = `${t.client_id}:${t.platform}`;
     (chips.get(k) ?? chips.set(k, []).get(k)!).push(chip);
   }
   for (const [k, list] of chips) {
     const [clientId] = k.split(":");
     const w = worstChip(list);
-    if (w) slot(clientId).kpis.push(w);
+    // The worst account is shown, but the line's money is every account's (a client's size counts all of it)
+    if (w) slot(clientId).kpis.push({ ...w, spend: list.some((x) => x.spend != null) ? list.reduce((s, x) => s + (x.spend ?? 0), 0) : null, revenue: list.reduce((s, x) => s + (x.revenue ?? 0), 0) || null });
   }
 
   // Email and social: the boards' own rows (score, band and checks)
   for (const r of email?.rows ?? []) {
     const href = `/kpis?p=email&open=${r.clientId}`;
     const s = r.score;
-    slot(r.clientId).kpis.push(
-      scoreChip({
+    // Email's money: last month's attributed revenue scaled to 14 days (this month so far when there's no last month),
+    // and the month's pace against its target
+    const goal = r.revenueTarget?.target ?? r.target ?? null;
+    const extra = {
+      revenue: r.revenueMeasured === false ? null : r.prev != null ? (r.prev * 14) / 30 : (r.value ?? null),
+      trend: r.projected != null && r.prev ? (r.projected >= r.prev * 1.05 ? "improving" : r.projected <= r.prev * 0.95 ? "slipping" : "steady") : null,
+      pace: r.projected != null && goal ? Math.round((r.projected / goal) * 100) / 100 : null,
+    } as const;
+    slot(r.clientId).kpis.push({
+      ...extra,
+      ...scoreChip({
         line: "email",
         score: s ? s.score : null,
         band: s ? s.band : null,
@@ -143,7 +159,7 @@ export async function loadAllClientKpis(admin: SupabaseClient): Promise<AllClien
         href,
         note: r.data === "missing" ? "Email · not connected" : r.data === "failing" ? "Email · data failing" : "Email · not read yet",
       }),
-    );
+    });
   }
   for (const r of social?.rows ?? []) {
     const href = `/kpis?p=social&open=${r.clientId}`;
@@ -159,7 +175,44 @@ export async function loadAllClientKpis(admin: SupabaseClient): Promise<AllClien
       }),
     );
   }
+  await creativeChips(admin, slot, today).catch((e) => console.error("[clients kpi] creative", e instanceof Error ? e.message : e));
   return out;
+}
+
+/**
+ * The Creative chip for every client that buys creative: this cycle's allotment delivered against the pace it needs by
+ * today (the same usage the client page header and the Head of Creative's pace read), the oldest open request and the
+ * last delivery. One query per table for every client.
+ */
+async function creativeChips(admin: SupabaseClient, slot: (id: string) => ClientKpis, today: string) {
+  const [clientsRes, usageRes, openRes, doneRes] = await Promise.all([
+    admin.from("clients").select("id, slug, services, services_extra, services_removed").is("archived_at", null),
+    admin.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used, period_start, period_end"),
+    admin.from("requests").select("client_id, created_at").neq("stage", "launched").is("completed_at", null).is("deleted_at", null).order("created_at", { ascending: true }).limit(3000),
+    admin.from("requests").select("client_id, completed_at").not("completed_at", "is", null).is("deleted_at", null).gte("completed_at", new Date(Date.now() - 120 * 86_400_000).toISOString()).order("completed_at", { ascending: false }).limit(3000),
+  ]);
+  const usage = new Map(((usageRes.data ?? []) as { client_id: string; images_per_month: number | null; videos_per_month: number | null; images_used: number | null; videos_used: number | null; period_start: string | null; period_end: string | null }[]).map((u) => [u.client_id, u]));
+  const oldest = new Map<string, string>();
+  for (const r of (openRes.data ?? []) as { client_id: string; created_at: string }[]) if (!oldest.has(r.client_id)) oldest.set(r.client_id, r.created_at);
+  const last = new Map<string, string>();
+  for (const r of (doneRes.data ?? []) as { client_id: string; completed_at: string }[]) if (!last.has(r.client_id)) last.set(r.client_id, r.completed_at);
+  const nyDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  for (const c of (clientsRes.data ?? []) as { id: string; slug: string; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null }[]) {
+    if (!servicesOf(c).includes("creative")) continue;
+    const u = usage.get(c.id);
+    if (!u) continue;
+    const opened = oldest.get(c.id);
+    const chip = creativeChip({
+      images: { cap: u.images_per_month, used: Number(u.images_used) || 0 },
+      videos: { cap: u.videos_per_month, used: Number(u.videos_used) || 0 },
+      cycle: u.period_start && u.period_end ? { start: u.period_start, end: u.period_end } : null,
+      today,
+      oldestOpenDays: opened ? Math.max(0, Math.floor((Date.now() - Date.parse(opened)) / 86_400_000)) : null,
+      lastDelivered: last.has(c.id) ? nyDay(last.get(c.id)!) : null,
+      href: `/clients/${c.slug}?service=creative`,
+    });
+    if (chip) slot(c.id).kpis.push(chip);
+  }
 }
 
 /** Shared for every viewer and kept three minutes with the Board's KPI tabs (cleared with them) */

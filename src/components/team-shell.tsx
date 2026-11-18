@@ -44,6 +44,8 @@ const GROUPS: { title: string; items: Item[] }[] = [
       // The creative team's own KPIs (the Creative KPI tab on the Board), one tap away for the Head of Creative
       { href: "/board?view=kpis", label: "Team KPIs", icon: I.kpis, creativeLead: true },
       { href: "/clients", label: "Clients", icon: I.clients },
+      // The executives' weekly full-account review, run step by step
+      { href: "/csuite", label: "Account review", icon: I.kpis, tiers: ["exec"] },
       { href: "/kpis", label: "KPIs", icon: I.kpis, buyer: true },
       { href: "/reports", label: "Reports", icon: I.reports, reports: true },
       { href: "/ai", label: "Kaizen AI", icon: I.ai },

@@ -6,7 +6,9 @@ import { pushParams, useParam } from "@/lib/url-state";
 import type { Option } from "./assign-select";
 import { ClientGrid, type ClientCard } from "./client-grid";
 import { SERVICES, type ServiceSlug } from "@/lib/services";
-import { KPI_SORTS, LINE_LABEL, LINE_OF_SERVICE, asKpiSort, passesKpiFilter, sortClients, summarize, summaryText, type KpiSort } from "@/lib/clients-kpi/core";
+import { KPI_SORTS, LINE_LABEL, LINE_OF_SERVICE, asKpiSort, passesKpiFilter, portfolioOf, scorecard, sortClients, summarize, summaryText, type KpiSort } from "@/lib/clients-kpi/core";
+import { foldMatch } from "@/lib/search-fold";
+import { ExecSummary } from "./exec-summary";
 
 // The tabs: every client we're working for now, then each service line, then those missing someone, then the paused ones (counted nowhere else)
 export type Filter = "all" | ServiceSlug | "missing" | "paused";
@@ -26,18 +28,21 @@ export function ClientsBrowser({
   slotOptions,
   canEdit,
   defaultSort = "name",
+  exec = false,
 }: {
   cards: ClientCard[];
   slotOptions: Record<SlotRole, Option[]>;
   canEdit: boolean;
   /** The order the list opens in: most critical first for execs, A to Z for everyone else */
   defaultSort?: KpiSort;
+  /** Execs and leads: the executive summary at the top (success ratio, the red, each line, high priority) */
+  exec?: boolean;
 }) {
   const [q, setQ] = useState("");
   // The filter is in the address (?filter=), so back returns to the list as it was
   const asked = useParam("filter");
   const filter: Filter = FILTERS.find((f) => f.key === asked)?.key ?? "all";
-  const term = q.trim().toLowerCase();
+  const term = q.trim();
   const searching = term.length >= 2;
   // Narrow by service, by who's on the account, and by creative package tier (each in the address too)
   const who = useParam("who");
@@ -53,9 +58,13 @@ export function ClientsBrowser({
   const only = LINE_OF_SERVICE[filter] ?? null;
   const askedKpi = useParam("kpi");
   const kpiFilter = askedKpi === "off" || askedKpi === "critical" ? askedKpi : null;
-  const summary = summarize(inFilter, only);
-  const ordered = sortClients(kpiFilter ? inFilter.filter((c) => passesKpiFilter(c, kpiFilter, only)) : inFilter, sort, only);
-  const shown = ordered.filter((c) => !searching || c.name.toLowerCase().includes(term) || (c.kaizenId != null && String(c.kaizenId) === term.replace(/\D/g, "")));
+  // Business size is judged against every client we work for now (the book), so a tab doesn't change who counts as big
+  const book = portfolioOf(cards.filter(live), only);
+  const summary = summarize(inFilter, only, book);
+  const ordered = sortClients(kpiFilter ? inFilter.filter((c) => passesKpiFilter(c, kpiFilter, only, book)) : inFilter, sort, only, book);
+  // Accents, case and punctuation don't matter ("cafe" finds "Café Diario")
+  const shown = ordered.filter((c) => !searching || foldMatch(c.name, term) || (c.kaizenId != null && String(c.kaizenId) === term.replace(/\D/g, "")));
+  const card = exec ? scorecard(inFilter, only, book) : null;
 
   const pick = (f: Filter) => pushParams({ filter: f === "all" ? null : f });
   const pickSort = (k: KpiSort) => pushParams({ sort: k === defaultSort ? null : k });
@@ -63,6 +72,7 @@ export function ClientsBrowser({
 
   return (
     <>
+      {card && <ExecSummary card={card} critical={summary.critical} slugs={Object.fromEntries(cards.map((c) => [c.id, c.slug]))} line={only} active={kpiFilter} onPick={pickKpi} />}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <nav className="no-scrollbar -mx-4 flex w-[calc(100%+2rem)] items-center gap-1.5 overflow-x-auto px-4 md:mx-0 md:w-auto md:flex-wrap md:overflow-visible md:px-0">
           {FILTERS.map((f) => {

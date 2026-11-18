@@ -16,6 +16,7 @@ import { loadCallPromises, loadOnboarding, loadSuggestions } from "@/lib/suggest
 import { formatsFor } from "@/lib/creative-formats";
 import { loadWatchList } from "@/lib/fatigue";
 import { HandoffCallout } from "@/components/handoff-callout";
+import { WatchCallout } from "./views/watch-panel";
 import { LeaderView } from "./views/leader-view";
 import { PulseView } from "./views/pulse-view";
 import { PageHeader } from "./views/shared";
@@ -26,6 +27,7 @@ import { loadNextForMe } from "@/lib/next-for-me";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { topicsFor } from "@/lib/today";
 import { todaySnapshot } from "@/lib/today-snapshot";
+import { MyDesk } from "./views/my-desk";
 
 const department = (me: Staff) => (me.role === "head_of_creative" ? "Creative" : me.role === "head_of_google" ? "Google" : "Meta");
 
@@ -41,6 +43,10 @@ function Recap({ db, me, hidden }: { db: SupabaseClient; me: Staff; hidden: Hidd
     <>
       <Suspense fallback={<TodayHeroSkeleton />}>
         <TodayHero db={db} me={me} />
+      </Suspense>
+      {/* Emails drafted for them to send to clients, and to-dos from the account review */}
+      <Suspense fallback={null}>
+        <MyDesk db={db} me={me} />
       </Suspense>
       <HiddenLog items={hidden.map((r) => ({ key: r.key, how: r.how as "done" | "dismissed", label: r.label, href: r.href, at: r.hidden_at }))} />
     </>
@@ -194,7 +200,7 @@ export default async function Home() {
   const nextSection = <NextSection data={next} me={me.id} deploys={deploys} />;
 
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestionsShown} fatigue={fatigueShown} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} owed={owed} patterns={patterns} looks={looks} handoffs={<HandoffCallout db={db} me={me.id} />} recap={recap} next={nextSection} />;
+    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestionsShown} fatigue={fatigueShown} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} owed={owed} patterns={patterns} looks={looks} handoffs={<><WatchCallout db={db} me={me} /><HandoffCallout db={db} me={me.id} /></>} recap={recap} next={nextSection} />;
   }
 
   // Leaders (Head of Creative / Meta / Google)

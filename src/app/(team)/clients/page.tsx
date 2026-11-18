@@ -62,6 +62,8 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
     // Every client's KPI per line and the reasons behind it: one shared, cached read (never per card)
     cachedClientKpis().catch((): AllClientKpis => ({})),
   ]);
+  // The account watch's open flags per client (billed but idle in red, then neglect and spend): one read, never per card
+  const watchBy = await (await import("@/lib/account-watch/load")).watchChips(supabase).catch(() => ({}) as Record<string, { title: string; critical: boolean }[]>);
   const platforms = new Map<string, Set<string>>();
   for (const k of kpiRows ?? []) platforms.set(k.client_id as string, (platforms.get(k.client_id as string) ?? new Set()).add(k.platform as string));
   // What each client is on: what they buy, or what's set up for them
@@ -123,6 +125,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
       missing: missing(r),
       kpis: (kpiAll[r.id]?.kpis ?? []).filter((k) => lines.has(k.line)),
       atRisk: kpiAll[r.id]?.atRisk ?? false,
+      watch: watchBy[r.id] ?? [],
       links: (["slack_channel_id", "internal_slack_channel_id", "drive_folder_id"] as const).filter((k) => !r[k]),
       services: servicesFor(r),
       pkg: channel ? "none" : pkgOf(r),
@@ -170,6 +173,11 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
                 : "The clients you're on."}
           </p>
         </div>
+        {canEdit && (
+          <a href="/watch?tab=billing" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-fg md:min-h-0">
+            Account watch · Stripe check →
+          </a>
+        )}
         {(archived?.length ?? 0) > 0 && (
           <a href="#archived" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-fg md:min-h-0">
             Archived <span className="text-faint">{archived!.length}</span> →
@@ -177,7 +185,7 @@ export default async function Clients({ searchParams }: PageProps<"/clients">) {
         )}
       </header>
 
-      <ClientsBrowser cards={cards} slotOptions={slotOptions} canEdit={canEdit} defaultSort={me.isExec ? "critical" : "name"} />
+      <ClientsBrowser cards={cards} slotOptions={slotOptions} canEdit={canEdit} exec={canEdit} defaultSort={me.isExec ? "critical" : "name"} />
 
       <ArchivedList
         canRestore={canEdit}

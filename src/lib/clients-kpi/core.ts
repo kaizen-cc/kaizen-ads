@@ -10,12 +10,12 @@ import type { Status } from "@/lib/kpi/calc";
 // number (from what's already stored: the score's checks, the latest audit, the synced days). Pure, so the list, the
 // assistant and the tests all say the same thing. Nothing here calls an AI or the network.
 
-export type KpiLine = "meta" | "google" | "tiktok" | "email" | "social";
-export const KPI_LINES: readonly KpiLine[] = ["meta", "google", "tiktok", "email", "social"];
-export const LINE_LABEL: Record<KpiLine, string> = { meta: "Meta", google: "Google", tiktok: "TikTok", email: "Email", social: "Social" };
+export type KpiLine = "meta" | "google" | "tiktok" | "email" | "social" | "creative";
+export const KPI_LINES: readonly KpiLine[] = ["meta", "google", "tiktok", "email", "social", "creative"];
+export const LINE_LABEL: Record<KpiLine, string> = { meta: "Meta", google: "Google", tiktok: "TikTok", email: "Email", social: "Social", creative: "Creative" };
 
 /** The service tab each line belongs to (a tab narrows sorting to that line's KPI only) */
-export const LINE_OF_SERVICE: Record<string, KpiLine | undefined> = { "facebook-ads": "meta", "google-ads": "google", "tiktok-ads": "tiktok", "email-marketing": "email", "social-media": "social" };
+export const LINE_OF_SERVICE: Record<string, KpiLine | undefined> = { "facebook-ads": "meta", "google-ads": "google", "tiktok-ads": "tiktok", "email-marketing": "email", "social-media": "social", creative: "creative" };
 
 export type Tone = "good" | "watch" | "bad" | "none";
 export type Reason = { text: string; tone: "down" | "up" | "info" };
@@ -36,6 +36,14 @@ export type LineKpi = {
   reasons: Reason[];
   /** The KPI card (or sheet) this number lives on */
   href: string;
+  /** The client's revenue on this line over about 14 days (an ad account's tracked value, email's attributed revenue), for business size */
+  revenue?: number | null;
+  /** Which way the line is heading (the snapshot's last 3 days against its 14, email's pace against last month) */
+  trend?: "improving" | "steady" | "slipping" | null;
+  /** Pacing, 1 = on plan: ad spend against the month's budget, email revenue against the month's target, creative delivered against what's due by today */
+  pace?: number | null;
+  /** How much this line counts in the client's criticality (creative: its package size); 1 when unset */
+  weight?: number | null;
 };
 
 export const GOOD_FROM = 80;
@@ -99,20 +107,73 @@ export type CriticalityInput = {
   only?: KpiLine | null;
   /** Someone said this client is probably leaving (a recent risk note in their memory) */
   atRisk?: boolean;
+  /**
+   * How big the business is against the rest of the book (sizeWeight): a 100% swing on a tiny account matters less than
+   * 10% on a big one. Omit and the money on the line lifts it a little instead (up to 20% at $50k in 14 days).
+   */
+  size?: number | null;
 };
+
+// ─── Business size ──────────────────────────────────────────────────────────
+
+/** The typical client across the book: the median 14 day spend and revenue of those that have any */
+export type Portfolio = { spend: number | null; revenue: number | null };
+
+/** A client's money on the lines that count: 14 day ad spend and revenue (ad value, email revenue) */
+export function clientSize(lines: readonly LineKpi[], only?: KpiLine | null): { spend: number; revenue: number } {
+  const ks = lines.filter((l) => !only || l.line === only);
+  return { spend: ks.reduce((s, l) => s + (l.spend ?? 0), 0), revenue: ks.reduce((s, l) => s + (l.revenue ?? 0), 0) };
+}
+
+const median = (xs: number[]): number | null => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+/** The typical client of these (what "big" and "small" are measured against) */
+export function portfolioOf(cards: readonly { kpis?: LineKpi[] }[], only?: KpiLine | null): Portfolio {
+  const sizes = cards.map((c) => clientSize(c.kpis ?? [], only));
+  return { spend: median(sizes.map((s) => s.spend).filter((x) => x > 0)), revenue: median(sizes.map((s) => s.revenue).filter((x) => x > 0)) };
+}
+
+export const SIZE_MIN = 0.25;
+export const SIZE_MAX = 3;
+
+/**
+ * How much a client's trouble counts for its size: the square root of how many typical clients it is (by spend or by
+ * revenue, whichever is bigger), from a quarter for a tiny account to three times for the biggest. A typical client is
+ * 1; a client with no money read at all is treated as typical (never hidden for lack of data).
+ */
+export function sizeWeight(size: { spend: number; revenue: number }, p: Portfolio | null | undefined): number {
+  if (!p) return 1;
+  const rel = Math.max(p.spend && size.spend > 0 ? size.spend / p.spend : 0, p.revenue && size.revenue > 0 ? size.revenue / p.revenue : 0);
+  if (!(rel > 0)) return 1;
+  return Math.round(Math.min(SIZE_MAX, Math.max(SIZE_MIN, Math.sqrt(rel))) * 100) / 100;
+}
+
+/** The size weight of a client, ready for criticality (undefined when there's no book to compare with) */
+const sizeOf = (lines: readonly LineKpi[], only: KpiLine | null | undefined, p: Portfolio | null | undefined) => (p ? sizeWeight(clientSize(lines, only), p) : undefined);
 
 /**
  * The client's criticality across lines: the worst line's severity, plus 30% of the rest (two lines off is worse than
- * one), lifted by retention risk (a recent "they may cancel" note adds 30%) and by the money on the line (up to 20%
- * at $50k spent in 14 days). Null when none of the lines can be judged, so those clients sort last.
+ * one). Inside a client, a line carrying a small share of its spend counts less than the one carrying most of it.
+ * Lifted by retention risk (a recent "they may cancel" note adds 30%) and scaled by the business's size against the book
+ * (sizeWeight), so a small account far off sits below a big one slightly off. Null when none of the lines can be
+ * judged, so those clients sort last.
  */
 export function criticality(lines: readonly LineKpi[], opts: CriticalityInput = {}): number | null {
   const judged = lines.filter((l) => l.health != null && (!opts.only || l.line === opts.only));
   if (!judged.length) return null;
-  const sev = judged.map((l) => severity(l.health)).sort((a, b) => b - a);
-  const base = sev[0] + 0.3 * sev.slice(1).reduce((s, x) => s + x, 0);
   const spend = judged.reduce((s, l) => s + (l.spend ?? 0), 0);
-  const weight = 1 + (opts.atRisk && sev[0] > 0 ? 0.3 : 0) + Math.min(0.2, (spend / 50_000) * 0.2);
+  const spenders = judged.filter((l) => (l.spend ?? 0) > 0).length;
+  // A line's share of the client's spend: an average share counts in full, a sliver of it half
+  const share = (l: LineKpi) => (spenders >= 2 && spend > 0 && l.spend != null ? 0.5 + 0.5 * Math.min(1, (l.spend / spend) * spenders) : 1);
+  const sev = judged.map((l) => severity(l.health) * share(l) * (l.weight ?? 1)).sort((a, b) => b - a);
+  const base = sev[0] + 0.3 * sev.slice(1).reduce((s, x) => s + x, 0);
+  const risk = opts.atRisk && sev[0] > 0 ? 0.3 : 0;
+  const weight = opts.size != null ? (1 + risk) * opts.size : 1 + risk + Math.min(0.2, (spend / 50_000) * 0.2);
   return Math.round(base * weight * 10) / 10;
 }
 
@@ -141,9 +202,9 @@ const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompar
  * with no KPI data are always last (by name). `only`: the line a service tab is on, so the sort looks at that line's
  * KPI alone.
  */
-export function sortClients<T extends KpiClient>(cards: readonly T[], sort: KpiSort, only?: KpiLine | null): T[] {
+export function sortClients<T extends KpiClient>(cards: readonly T[], sort: KpiSort, only?: KpiLine | null, book?: Portfolio | null): T[] {
   if (sort === "name") return [...cards].sort(byName);
-  const keyed = cards.map((c) => ({ c, v: sort === "critical" ? criticality(c.kpis ?? [], { only, atRisk: c.atRisk }) : overallHealth(c.kpis ?? [], only) }));
+  const keyed = cards.map((c) => ({ c, v: sort === "critical" ? criticalityOf(c, only, book) : overallHealth(c.kpis ?? [], only) }));
   return keyed
     .sort((a, b) => {
       if (a.v == null && b.v == null) return byName(a.c, b.c);
@@ -154,10 +215,13 @@ export function sortClients<T extends KpiClient>(cards: readonly T[], sort: KpiS
     .map((x) => x.c);
 }
 
+/** A client's criticality as the list ranks it: its lines, its risk flag and its size against the book */
+export const criticalityOf = (c: KpiClient, only?: KpiLine | null, book?: Portfolio | null) => criticality(c.kpis ?? [], { only, atRisk: c.atRisk, size: sizeOf(c.kpis ?? [], only, book) });
+
 export type KpiSummary = { offTarget: number; critical: number; lines: KpiLine[]; judged: number };
 
 /** "N clients off target across M lines: K critical", counted over what's on screen (a tab counts its line alone) */
-export function summarize(cards: readonly KpiClient[], only?: KpiLine | null): KpiSummary {
+export function summarize(cards: readonly KpiClient[], only?: KpiLine | null, book?: Portfolio | null): KpiSummary {
   const lines = new Set<KpiLine>();
   let offTarget = 0;
   let critical = 0;
@@ -170,7 +234,7 @@ export function summarize(cards: readonly KpiClient[], only?: KpiLine | null): K
       offTarget++;
       for (const l of bad) lines.add(l.line);
     }
-    const crit = criticality(c.kpis ?? [], { only, atRisk: c.atRisk });
+    const crit = criticalityOf(c, only, book);
     if (crit != null && crit >= CRITICAL_FROM) critical++;
   }
   return { offTarget, critical, lines: KPI_LINES.filter((l) => lines.has(l)), judged };
@@ -185,9 +249,9 @@ export function summaryText(s: KpiSummary): string {
 }
 
 /** Whether a client passes the summary's filter: off target on a line, or critical */
-export function passesKpiFilter(c: KpiClient, kind: "off" | "critical", only?: KpiLine | null): boolean {
+export function passesKpiFilter(c: KpiClient, kind: "off" | "critical", only?: KpiLine | null, book?: Portfolio | null): boolean {
   if (kind === "off") return (c.kpis ?? []).some((l) => l.tone === "bad" && (!only || l.line === only));
-  const v = criticality(c.kpis ?? [], { only, atRisk: c.atRisk });
+  const v = criticalityOf(c, only, book);
   return v != null && v >= CRITICAL_FROM;
 }
 
@@ -301,6 +365,9 @@ export function adReasons(s: AdSignals, n = 3): Reason[] {
   const data = dataReasons(s.days, s.today, s.roas);
   if (judgedDown) {
     if (s.audit && (s.audit.status === "off" || s.audit.status === "at_risk")) out.push({ tone: "down", text: `Audit: ${s.audit.headline}` });
+    // The core issue (CPM, click-through or conversion rate) and its fix, from the diagnosis tree
+    const core = s.roas ? null : diagnose(s.days, s.today);
+    if (core) out.push({ tone: "down", text: core.text });
     out.push(...data.filter((r) => r.tone === "down"));
     if (s.tiredAds > 0) out.push({ tone: "down", text: `${s.tiredAds} ${s.tiredAds === 1 ? "ad is" : "ads are"} wearing out (frequency up, click-through down)` });
     if (s.trend === "slipping") out.push({ tone: "down", text: "The last 3 days are worse than the 14 day average" });
@@ -378,7 +445,7 @@ export function allowedKpiLines(me: { isExec?: boolean | null; isLead?: boolean 
   if (me.isExec || me.isLead) return [...KPI_LINES];
   if (channel) return [channel];
   if (adsPlatform) return [adsPlatform];
-  return ["meta", "google", "tiktok"];
+  return ["meta", "google", "tiktok", "creative"];
 }
 
 /**
@@ -398,4 +465,221 @@ export function topReasons(kpis: readonly LineKpi[], n = 3, dir: "down" | "up" =
     }
   }
   return out;
+}
+
+// ─── Diagnosis: the core issue ──────────────────────────────────────────────
+
+export type CoreIssue = "cpm" | "ctr" | "cvr";
+export type Diagnosis = {
+  issue: CoreIssue;
+  /** How much each part moved on the 14 days before (positive = worse for cost per result) */
+  worse: Record<CoreIssue, number>;
+  /** Conversion rate is the issue and click-through held: the traffic is fine, so the fix is on the site */
+  trafficGood: boolean | null;
+  /** One line: the core issue and what to do about it */
+  text: string;
+};
+
+/** Any part has to be at least this much worse to be called the core issue */
+export const CORE_FROM = 0.1;
+
+/**
+ * The diagnosis tree the strategist and media buyer follow: cost per result is CPM / (CTR x conversion rate), so a
+ * worse result comes from one of those three. Find the one that moved most on the 14 days before, then:
+ * - conversion rate: first confirm the traffic (click-through, landing page view rate, audience); if the traffic is good,
+ *   the fix is a website or landing page update
+ * - click-through too low with weak engagement: a competitive analysis of what's working for competitors, and make those
+ * - CPM: audience size, frequency, seasonality and creative quality
+ * Null when there aren't two windows to compare or nothing moved enough.
+ */
+export function diagnose(days: readonly DayNumbers[], today: string): Diagnosis | null {
+  if (!days.length) return null;
+  const to = shiftDay(today, -1);
+  const mid = shiftDay(to, -14);
+  const from = shiftDay(mid, -14);
+  const a = sumWin(days.filter((d) => d.date > mid && d.date <= to));
+  const b = sumWin(days.filter((d) => d.date > from && d.date <= mid));
+  if (a.spend <= 0 || b.spend <= 0 || !a.impressions || !b.impressions || !b.linkClicks || !b.results) return null;
+  const ratio = (now: number, before: number) => (before > 0 ? now / before : 1);
+  const cpm = ratio(a.spend / a.impressions, b.spend / b.impressions);
+  const ctr = ratio(a.linkClicks / a.impressions, b.linkClicks / b.impressions);
+  const cvr = a.linkClicks ? ratio(a.results / a.linkClicks, b.results / b.linkClicks) : 0;
+  // Worse, as a share: CPM up 20% is 0.2; click-through or conversion rate down 20% is 0.2
+  const worse: Record<CoreIssue, number> = { cpm: cpm - 1, ctr: 1 - ctr, cvr: 1 - cvr };
+  const [issue, by] = (Object.entries(worse) as [CoreIssue, number][]).sort((x, y) => y[1] - x[1])[0];
+  if (by < CORE_FROM) return null;
+  const pc = `${Math.round(by * 100)}%`;
+  const ctrHolds = worse.ctr < CORE_FROM;
+  if (issue === "cvr") {
+    return {
+      issue,
+      worse,
+      trafficGood: ctrHolds,
+      text: ctrHolds
+        ? `Core issue: conversion rate down ${pc} while click-through holds. The traffic looks good, so the fix is a website or landing page update`
+        : `Core issue: conversion rate down ${pc}, with click-through down too. Confirm traffic quality first (click-through, landing page view rate, audience)`,
+    };
+  }
+  if (issue === "ctr") return { issue, worse, trafficGood: null, text: `Core issue: click-through down ${pc} (weak engagement). Run a competitive analysis of what's working for competitors and make those` };
+  return { issue, worse, trafficGood: null, text: `Core issue: CPM up ${pc}. Look at audience size, frequency, seasonality and creative quality` };
+}
+
+// ─── The executive summary ──────────────────────────────────────────────────
+
+export type LineStat = {
+  line: KpiLine;
+  on: number;
+  close: number;
+  off: number;
+  judged: number;
+  improving: number;
+  slipping: number;
+  /** 14 day ad spend, and revenue, across the line's clients */
+  spend: number;
+  revenue: number;
+  /** The spend-weighted (ads) or plain (email) pace against plan, 1 = on plan; null when nothing paces */
+  pace: number | null;
+};
+
+export type Scorecard = {
+  lines: LineStat[];
+  /** KPI'd lines on or better than target, of all the judged lines */
+  linesOn: number;
+  linesJudged: number;
+  lineRatio: number | null;
+  /** Clients with every judged line on or better than target, of the clients with a judged line */
+  clientsOn: number;
+  clientsJudged: number;
+  clientRatio: number | null;
+  /** Clients with at least one line off target */
+  inRed: number;
+  /** The most critical first (at or over CRITICAL_FROM), with their top reasons */
+  highPriority: { id: string; name: string; criticality: number; reasons: string[] }[];
+};
+
+const ratioOf = (n: number, of: number) => (of ? n / of : null);
+
+/** The success ratio, per-line counts and the high-priority accounts, over the cards given (a tab passes its line) */
+export function scorecard<T extends KpiClient>(cards: readonly T[], only?: KpiLine | null, book?: Portfolio | null, n = 5): Scorecard {
+  const stat = new Map<KpiLine, LineStat & { paceW: number; paceSum: number }>();
+  let linesOn = 0;
+  let linesJudged = 0;
+  let clientsOn = 0;
+  let clientsJudged = 0;
+  let inRed = 0;
+  for (const c of cards) {
+    const ks = (c.kpis ?? []).filter((l) => !only || l.line === only);
+    const judged = ks.filter((l) => l.health != null);
+    if (judged.length) {
+      clientsJudged++;
+      if (judged.every((l) => l.tone === "good")) clientsOn++;
+    }
+    if (judged.some((l) => l.tone === "bad")) inRed++;
+    for (const l of ks) {
+      const s = stat.get(l.line) ?? { line: l.line, on: 0, close: 0, off: 0, judged: 0, improving: 0, slipping: 0, spend: 0, revenue: 0, pace: null, paceW: 0, paceSum: 0 };
+      s.spend += l.spend ?? 0;
+      s.revenue += l.revenue ?? 0;
+      if (l.pace != null && Number.isFinite(l.pace)) {
+        const w = l.spend && l.spend > 0 ? l.spend : 1;
+        s.paceW += w;
+        s.paceSum += l.pace * w;
+      }
+      if (l.health != null) {
+        s.judged++;
+        linesJudged++;
+        if (l.tone === "good") {
+          s.on++;
+          linesOn++;
+        } else if (l.tone === "watch") s.close++;
+        else s.off++;
+        if (l.trend === "improving") s.improving++;
+        if (l.trend === "slipping") s.slipping++;
+      }
+      stat.set(l.line, s);
+    }
+  }
+  const lines = KPI_LINES.filter((l) => stat.has(l)).map((l) => {
+    const { paceW, paceSum, ...s } = stat.get(l)!;
+    return { ...s, pace: paceW ? Math.round((paceSum / paceW) * 100) / 100 : null };
+  });
+  const highPriority = cards
+    .map((c) => ({ c, v: criticalityOf(c, only, book) }))
+    .filter((x): x is { c: T; v: number } => x.v != null && x.v >= CRITICAL_FROM)
+    .sort((a, b) => b.v - a.v || byName(a.c, b.c))
+    .slice(0, n)
+    .map(({ c, v }) => ({ id: c.id, name: c.name, criticality: v, reasons: topReasons((c.kpis ?? []).filter((k) => !only || k.line === only), 2) }));
+  return { lines, linesOn, linesJudged, lineRatio: ratioOf(linesOn, linesJudged), clientsOn, clientsJudged, clientRatio: ratioOf(clientsOn, clientsJudged), inRed, highPriority };
+}
+
+// ─── The creative chip ──────────────────────────────────────────────────────
+
+export type CreativeChipInput = {
+  /** This cycle's allotment and what's been delivered against it, per pool (a pool with no cap is left out) */
+  images: { cap: number | null; used: number };
+  videos: { cap: number | null; used: number };
+  /** The billing cycle (YYYY-MM-DD, end = the day it resets); the calendar month when not known */
+  cycle: { start: string; end: string } | null;
+  today: string;
+  /** Days the oldest open request has been waiting, null when none is open */
+  oldestOpenDays: number | null;
+  /** The last day creative was delivered (YYYY-MM-DD), null when never */
+  lastDelivered: string | null;
+  href: string;
+};
+
+const dayMs = (d: string) => Date.parse(`${d}T12:00:00Z`);
+const daysBetween = (a: string, b: string) => Math.round((dayMs(b) - dayMs(a)) / 86_400_000);
+const shortDay = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** A package's weight in criticality: a typical 6-piece package is 1, a small one a little less, a big one up to 1.5 */
+export const packageWeight = (cap: number) => Math.round(Math.min(1.5, Math.max(0.5, Math.sqrt(Math.max(1, cap) / 6))) * 100) / 100;
+
+/**
+ * The Creative chip: this cycle's deliveries against the pace the allotment needs by today. Green on pace, yellow a
+ * little behind, red well behind with few days left; over the allotment is amber "over" and not judged (it isn't a
+ * problem to fix on the account). Its weight in criticality follows the package size.
+ */
+export function creativeChip(i: CreativeChipInput): LineKpi | null {
+  const caps = [i.images, i.videos].filter((p) => p.cap != null && p.cap > 0) as { cap: number; used: number }[];
+  if (!caps.length) return null;
+  const cap = caps.reduce((s, p) => s + p.cap, 0);
+  const used = caps.reduce((s, p) => s + Math.max(0, p.used), 0);
+  const start = i.cycle?.start ?? `${i.today.slice(0, 8)}01`;
+  const end = i.cycle?.end ?? (() => {
+    const d = new Date(`${i.today.slice(0, 8)}01T12:00:00Z`);
+    d.setUTCMonth(d.getUTCMonth() + 1);
+    return d.toISOString().slice(0, 10);
+  })();
+  const length = Math.max(1, daysBetween(start, end));
+  const elapsed = Math.max(0, Math.min(1, daysBetween(start, i.today) / length));
+  const daysLeft = Math.max(0, daysBetween(i.today, end));
+  const expected = cap * elapsed;
+  const pace = expected > 0 ? Math.round((used / expected) * 100) / 100 : null;
+  const reasons: Reason[] = [];
+  const base = { line: "creative" as const, label: "Creative", spend: null, href: i.href, weight: packageWeight(cap), trend: null, pace };
+  const facts: Reason[] = [
+    { tone: "info", text: `${daysLeft} ${daysLeft === 1 ? "day" : "days"} left in the cycle (resets ${shortDay(end)})` },
+    ...(i.oldestOpenDays != null && i.oldestOpenDays >= 1 ? [{ tone: (i.oldestOpenDays >= 10 ? "down" : "info") as Reason["tone"], text: `Oldest open request has waited ${i.oldestOpenDays} ${i.oldestOpenDays === 1 ? "day" : "days"}` }] : []),
+    { tone: "info", text: i.lastDelivered ? `Last delivery ${shortDay(i.lastDelivered)} (${daysBetween(i.lastDelivered, i.today)} days ago)` : "Nothing delivered yet" },
+  ];
+  if (used > cap) {
+    return { ...base, shown: `Creative · ${used}/${cap} over`, tone: "watch", health: null, reasons: [{ tone: "info" as const, text: `${used - cap} over the ${cap} in the package this cycle` }, ...facts].slice(0, 4) };
+  }
+  // Early in the cycle (under a piece due) everyone is on pace
+  const deficit = expected - used;
+  let health: number;
+  let word: string;
+  if (deficit < 1 || (pace != null && pace >= 0.85)) {
+    health = Math.round(80 + 20 * Math.min(1, pace == null ? 1 : Math.max(0, pace - 0.85) / 0.15));
+    word = "on pace";
+  } else if ((pace ?? 0) >= 0.5 || daysLeft > 10) {
+    health = Math.round(60 + 19 * Math.min(1, Math.max(0, ((pace ?? 0) - 0.3) / 0.55)));
+    word = "behind";
+  } else {
+    // Well behind with few days left: the fewer days and the bigger the gap, the worse
+    health = Math.round(59 * Math.max(0, pace ?? 0) * Math.min(1, daysLeft / 10 + 0.3));
+    word = "well behind";
+  }
+  reasons.push({ tone: word === "on pace" ? "up" : "down", text: `${used} delivered against ${Math.floor(expected)} due by today (${cap} this cycle)` });
+  return { ...base, shown: `Creative · ${used}/${cap} ${word}`, tone: toneOf(health), health, reasons: [...reasons, ...facts].slice(0, 4) };
 }

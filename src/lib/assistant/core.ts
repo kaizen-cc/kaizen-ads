@@ -106,7 +106,7 @@ export function orderForToday<T extends DayItem>(items: readonly T[]): T[] {
 // ─── Screens and links ──────────────────────────────────────────────────────
 
 /** The places in the app the assistant may open during a call */
-const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next", "/profile"];
+const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next", "/profile", "/watch", "/csuite"];
 
 /**
  * The named places open_screen knows (each screen's own address, with its URL state where a place is a view inside a
@@ -114,12 +114,32 @@ const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/
  */
 export const SCREEN_PLACES: Record<string, string> = {
   overview: "/pipeline",
+  // Emails drafted for the person to send to clients, on their Overview
+  "emails ready to send": "/pipeline#emails-ready",
+  // The executives' weekly account review, each step its own address
+  "account review": "/csuite",
+  "account review scorecard": "/csuite?step=scorecard",
+  "account review critical accounts": "/csuite?step=critical",
+  "account review issues": "/csuite?step=issues",
+  "account review upsells": "/csuite?step=upsell",
+  "account review financial": "/csuite?step=financial",
+  "account review to-dos": "/csuite?step=todos",
   // The Overview's tabs (?tab=): the email and social teams have all of them, the other teams Today and My work
   "overview clients": "/pipeline?tab=clients",
   "overview campaign ideas": "/pipeline?tab=ideas",
   "overview audits and sprints": "/pipeline?tab=audits",
   "overview setup": "/pipeline?tab=setup",
   "overview my work": "/pipeline?tab=work",
+  "overview watch": "/pipeline?tab=watch",
+  // The account watch, each tab its own address
+  "account watch": "/watch",
+  "account watch idle": "/watch",
+  "account watch accounts": "/watch?tab=accounts",
+  "account watch creative": "/watch?tab=creative",
+  "account watch people": "/watch?tab=people",
+  "account watch billing": "/watch?tab=billing",
+  "stripe check": "/watch?tab=billing",
+  "account watch paused": "/watch?tab=paused",
   boards: "/board",
   "creative board": "/board",
   "email board": "/board/email",

@@ -1,5 +1,5 @@
 import "server-only";
-import { allowedKpiLines, CRITICAL_FROM, criticality, KPI_LINES, LINE_LABEL, overallHealth, sortClients, summarize, summaryText, topReasons, type KpiLine } from "@/lib/clients-kpi/core";
+import { allowedKpiLines, CRITICAL_FROM, criticalityOf, portfolioOf, KPI_LINES, LINE_LABEL, overallHealth, sortClients, summarize, summaryText, topReasons, type KpiLine } from "@/lib/clients-kpi/core";
 import { cachedClientKpis, loadAllClientKpis, type AllClientKpis } from "@/lib/clients-kpi/load";
 import { LIVE } from "@/lib/live";
 import { lineOfTeam, teamPlatform } from "@/lib/roles";
@@ -9,7 +9,7 @@ import type { ToolCtx } from "./tools";
 // how it's doing on each line and the top reasons, the same numbers, order and reasons as the Clients list. Read only,
 // from stored data; never runs an AI.
 
-const LINE_TAB: Record<KpiLine, string> = { meta: "facebook-ads", google: "google-ads", tiktok: "tiktok-ads", email: "email-marketing", social: "social-media" };
+const LINE_TAB: Record<KpiLine, string> = { meta: "facebook-ads", google: "google-ads", tiktok: "tiktok-ads", email: "email-marketing", social: "social-media", creative: "creative" };
 
 export async function rankCriticalClients(ctx: ToolCtx, input: Record<string, unknown>) {
   const lines = allowedKpiLines(ctx.me, lineOfTeam(ctx.me.role), teamPlatform(ctx.me.role));
@@ -25,9 +25,11 @@ export async function rankCriticalClients(ctx: ToolCtx, input: Record<string, un
   ]);
   const cards = ((data ?? []) as { id: string; name: string; slug: string }[]).map((c) => ({ ...c, kpis: (all[c.id]?.kpis ?? []).filter((k) => lines.includes(k.line)), atRisk: all[c.id]?.atRisk ?? false }));
   const judged = cards.filter((c) => c.kpis.some((k) => k.health != null && (!only || k.line === only)));
-  const sorted = sortClients(judged, best ? "best" : "critical", only);
+  // Business size against the book: a small account far off ranks below a big one slightly off (the list's own order)
+  const book = portfolioOf(cards, only);
+  const sorted = sortClients(judged, best ? "best" : "critical", only, book);
   const n = Math.min(25, Math.max(1, Math.trunc(Number(input.limit)) || 5));
-  const sum = summarize(cards, only);
+  const sum = summarize(cards, only, book);
   return {
     order: best ? "best performing first" : "most critical first",
     ...(only ? { line: LINE_LABEL[only] } : {}),
@@ -37,7 +39,7 @@ export async function rankCriticalClients(ctx: ToolCtx, input: Record<string, un
     clients_judged: judged.length,
     left_out_without_a_kpi: cards.length - judged.length,
     ranking: sorted.slice(0, n).map((c, i) => {
-      const crit = criticality(c.kpis, { only, atRisk: c.atRisk });
+      const crit = criticalityOf(c, only, book);
       return {
         rank: i + 1,
         client: c.name,

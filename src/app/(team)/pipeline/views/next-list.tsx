@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
 import { markAskDone, markBibleReviewed, tickAskItem } from "../next-actions";
+import { delegateNextItem, delegateOptions } from "@/app/(team)/delegate-actions";
 import { approveFeedback, commentFeedback } from "@/app/(team)/feedback/actions";
 import { TranscriptButton } from "@/components/assistant-call-parts";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
@@ -511,6 +512,7 @@ function Row({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient
               Mark reviewed
             </button>
           )}
+          {it.delegate && <DelegateButton item={it} delegate={it.delegate} />}
           {action}
           {it.suggestion && (
             <span className="flex justify-center sm:hidden">
@@ -621,5 +623,67 @@ function AskChecklist({ id, items }: { id: string; items: { text: string; done: 
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Hands a brief or a promise from a call to a teammate: pick who (the people under your role, the client's seats
+ * first), an optional note and due date. It lands on their Next for me, their bell and Slack, credited to you; this
+ * item then reads "Delegated to ..." and clears when they mark it done.
+ */
+function DelegateButton({ item, delegate }: { item: NextItem; delegate: NonNullable<NextItem["delegate"]> }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [people, setPeople] = useState<{ id: string; name: string; role: string; onClient: boolean }[] | null>(null);
+  const [to, setTo] = useState("");
+  const [note, setNote] = useState("");
+  const [due, setDue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const show = () => {
+    setOpen((o) => !o);
+    if (!people) delegateOptions(delegate.clientId).then(setPeople).catch(() => setPeople([]));
+  };
+  const send = () =>
+    start(async () => {
+      const r = await delegateNextItem({ ref: delegate.ref, clientId: delegate.clientId, title: delegate.title, to, note, due });
+      if (!r.ok) return setError(r.error);
+      setOpen(false);
+      router.refresh();
+    });
+  return (
+    <span className="relative flex flex-col sm:inline-flex">
+      <button type="button" onClick={show} aria-expanded={open} className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full px-4 text-[13px] text-ink/60 transition-colors hover:bg-ink/[0.06] hover:text-fg sm:min-h-9">
+        Delegate
+      </button>
+      {open && (
+        <div className="z-20 mt-2 grid w-full gap-2 rounded-2xl border border-ink/15 bg-deep p-3 shadow-xl sm:absolute sm:right-0 sm:top-full sm:w-72">
+          <label className="grid gap-1 text-[12px] text-ink/60">
+            Who
+            <select value={to} onChange={(e) => setTo(e.target.value)} className="h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[14px] text-fg sm:h-9">
+              <option value="">{people ? "Pick a teammate" : "Loading..."}</option>
+              {(people ?? []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.onClient ? " (on this client)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="grid gap-1 text-[12px] text-ink/60">
+            Note (optional)
+            <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} className="h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[14px] text-fg sm:h-9" />
+          </label>
+          <label className="grid gap-1 text-[12px] text-ink/60">
+            Due (optional)
+            <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className="h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[14px] text-fg sm:h-9" />
+          </label>
+          {error && <p className="text-[12px] text-[var(--bad)]">{error}</p>}
+          <button type="button" disabled={!to || pending} onClick={send} className="h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 sm:h-9">
+            {pending ? "Sending..." : `Hand it over: ${item.client}`}
+          </button>
+        </div>
+      )}
+    </span>
   );
 }
