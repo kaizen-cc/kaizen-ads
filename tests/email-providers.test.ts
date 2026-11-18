@@ -119,6 +119,7 @@ describe("Brevo answers", () => {
   it("reads a campaign's content and error texts", () => {
     expect(parseBrevoCampaignContent({ subject: "S", previewText: "P", htmlContent: "<p>x</p>" })).toEqual({ subject: "S", previewText: "P", html: "<p>x</p>" });
     expect(brevoErrorText(401, {})).toMatch(/refused/);
+    expect(brevoErrorText(401, { code: "unauthorized", message: "We have detected you are using an unrecognised IP address 1.2.3.4" })).toMatch(/Authorised IPs/);
     expect(brevoErrorText(400, { code: "invalid_parameter", message: "bad dates" })).toMatch(/bad dates/);
   });
 });
