@@ -35,6 +35,10 @@
       "schedule": "35 * * * *"
     },
     {
+      "path": "/api/cron/context?step=watch",
+      "schedule": "15 13 * * *"
+    },
+    {
       "path": "/api/cron/context?step=email_ops",
       "schedule": "40 * * * *"
     },
