@@ -269,6 +269,7 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
   email_copy: [
     { title: "Writes subject line options for each suggested campaign, in the client's voice", where: "Client page · Email · Audit and ideas", trigger: "auto", when: "With each batch of campaign suggestions", labels: ["email subject line options"] },
     { title: "Writes every message's copy on an Email Board ticket (subject, preview text, body and buttons, or the text message) for the strategist to approve", where: "Email Board · Copy for review", trigger: "auto", when: "The moment a ticket is made, and on Rewrite with a note", labels: ["email board copy"] },
+    { title: "Revises campaign or flow copy in its document view from a note or the comments on its lines, as the next version", where: "A copy document (from a call or the assistant's chat)", trigger: "click", when: "When someone asks for a change or applies the comments", labels: ["copy doc revision"] },
   ],
   email_design_brief: [
     { title: "Designs finished HTML emails from the copy on the client's brand (Brand Bible, logo and colour, past emails, attached references), in one or several layouts", where: "Kaizen AI · email design studio", trigger: "click", when: "When someone on the email team asks Kaizen AI for an email design or layout options", labels: ["email design"] },

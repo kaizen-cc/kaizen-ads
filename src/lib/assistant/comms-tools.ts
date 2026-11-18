@@ -1,4 +1,5 @@
 import "server-only";
+import { emailWritingKind } from "@/lib/copy-docs/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import type { CallDraft, CallEvent } from "@/lib/agent-call/core";
@@ -263,7 +264,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
     },
     {
       name: "draft_message",
-      description: `Drafts a Slack reply or an email as ${from}, in their voice: a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). A document goes with an email: make it first (create_document), then pass its document_id in attach (the card offers Open in Gmail with the PDF attached, and the PDF to download). After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes.`,
+      description: `Drafts a Slack reply or an email as ${from}, in their voice (a message to a person; campaign, flow or SMS copy for the email team is never this: that's create_copy_doc): a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). A document goes with an email: make it first (create_document), then pass its document_id in attach (the card offers Open in Gmail with the PDF attached, and the PDF to download). After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes.`,
       input_schema: {
         type: "object",
         properties: {
@@ -282,6 +283,9 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
       },
       status: () => "Drafting it…",
       run: async (input) => {
+        // Campaign, flow or SMS copy is a document for the email team, never an email to a contact
+        const asked = emailWritingKind(ctx.said());
+        if (asked && asked !== "message" && !input.thread) return { drafted: false, note: "That's campaign copy for the email team, not a message to anyone: don't address a contact. Run the deliverable flow (the Email Strategist leads, the Copywriter writes it with create_copy_doc)." };
         const channel = input.channel === "email" ? "email" : "slack";
         const client = await clientOf(ctx, input.client);
         let text = body(input.text, 4000);

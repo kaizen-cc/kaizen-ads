@@ -2,12 +2,13 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readTab } from "@/lib/account-sheet";
 import { setPrimarySeat } from "@/lib/buyer-seats";
-import { channelSeatsOf, isBlankName, matchKey, sheetRows, splitNames, type ChannelTab } from "@/lib/account-sheet-channels-core";
+import { channelSeatsOf, isBlankName, matchKey, sheetDetailsOf, sheetRows, splitNames, type ChannelTab } from "@/lib/account-sheet-channels-core";
 
 // The Email and Organic Social tabs of the Account Overview sheet: who's on each client for that line. The sheet is
 // where the teams keep it, so it's the source of truth, the same way the Meta and Google tabs set the media buyers: the
 // person a column names becomes that client's seat (Strategist, Designer, Builder on Email; Strategist, Graphic Designer,
-// Video Editor on Organic Social). A blank cell never takes anyone off; a name that isn't on the team is reported.
+// Video Editor on Organic Social). A blank cell never takes anyone off; a name that isn't on the team is reported. The
+// row's account details (client ID, HQ assets link, Figma, website) are kept too ({line}_details), for the requests.
 
 /** A seat as the boards name it (the second name is a second person on the seat: the Video Editor beside the designer) */
 const SEAT_NAME: Record<string, [string, string]> = {
@@ -66,7 +67,7 @@ export async function syncChannelTabs(admin: SupabaseClient, tok: string, titles
       // The names as the sheet has them, for the boards (who's on it even before they're in the app)
       const named = channelSeatsOf(line, r).map((s) => ({ seat: SEAT_NAME[s.role][s.primary ? 0 : 1], names: splitNames(s.value).filter((x) => !isBlankName(x)) }));
       const { data: cur } = await admin.from("clients").select("channel_sheet").eq("id", client.id).maybeSingle();
-      await admin.from("clients").update({ channel_sheet: { ...((cur?.channel_sheet ?? {}) as Record<string, unknown>), [line]: named } }).eq("id", client.id);
+      await admin.from("clients").update({ channel_sheet: { ...((cur?.channel_sheet ?? {}) as Record<string, unknown>), [line]: named, [`${line}_details`]: sheetDetailsOf(r) } }).eq("id", client.id);
       for (const seat of channelSeatsOf(line, r)) {
         const names = splitNames(seat.value).filter((x) => !isBlankName(x));
         for (const [i, who] of names.entries()) {

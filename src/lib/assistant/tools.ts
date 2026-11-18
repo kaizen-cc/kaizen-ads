@@ -5,7 +5,8 @@ import type { Staff } from "@/lib/auth";
 import type { CallCard, CallEvent } from "@/lib/agent-call/core";
 import { CARD_TOOLS, gateTools, type LoopTool } from "@/lib/agent-call/tool-loop";
 import { askTools } from "@/lib/agent-call/ask-tools";
-import { callCardTools, emailRequestTool, showCard as showCallCard, type CardCtx } from "@/lib/agent-call/call-cards";
+import { callCardTools, showCard as showCallCard, type CardCtx } from "@/lib/agent-call/call-cards";
+import { deliverableTools } from "@/lib/deliverables/tools";
 import { chatTools, type ChatTool, type ToolCtx } from "@/lib/kaizen-ai/tools";
 import { cleanMemory, safeAppPath, safeLink, saidYes, ASSISTANT_KEY, FACT_TOPICS, STYLE_TOPICS, SCREEN_PLACES, KPI_CARD_TABS, CHANNEL_SHEET_TABS, kpiCardHref, channelSheetHref } from "./core";
 import { forgetContext, myWork } from "./context";
@@ -174,6 +175,21 @@ async function screenFor(ctx: AssistantCtx, input: Record<string, unknown>): Pro
     const { data } = await ctx.db.from("app_feedback").select("group_id").eq("id", id).maybeSingle();
     return data?.group_id ? { href: `/feedback?g=${data.group_id}`, label: "that feedback" } : { href: "/feedback?tab=mine", label: "your feedback" };
   }
+  if (what === "copy_doc") {
+    // A copy document by its id (from create_copy_doc), or the client's newest one
+    const id = clip(input.id, 40);
+    let q = ctx.db.from("copy_docs").select("id, title");
+    if (/^[0-9a-f-]{36}$/i.test(id)) q = q.eq("id", id);
+    else if (input.client) {
+      try {
+        q = q.eq("client_id", (await clientNamed(ctx.db, input.client)).id);
+      } catch (e) {
+        return { note: `${e instanceof Error ? e.message : "No such client."} Ask which client they meant.` };
+      }
+    } else return { note: "Which copy (its id from create_copy_doc) or which client?" };
+    const { data } = await q.order("updated_at", { ascending: false }).limit(1).maybeSingle();
+    return data ? { href: `/copy/${data.id}`, label: `the copy "${data.title}"` } : { note: "No copy document there they can see." };
+  }
   if (what === "agent") {
     const role = clip(input.role, 60).replace(/[^a-z_]/g, "");
     if (!role) return { note: "Which agent?" };
@@ -248,8 +264,9 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     console.error("[assistant tools]", e instanceof Error ? e.message : e);
     return [] as ChatTool[];
   });
-  // Card tools (a brief, a plan, a launch, copy, a deck) and the Email Board request: made on this call's Kaizen AI
-  // thread, then shown as a link card to review (shared with the agents' calls, src/lib/agent-call/call-cards.ts)
+  // Card tools (a brief, a plan, a launch, copy, a deck): made on this call's Kaizen AI thread, then shown as a link card
+  // to review (shared with the agents' calls, src/lib/agent-call/call-cards.ts); and the deliverable flow (campaign copy
+  // into a preview document, approved into a Google Doc, requested in Asana: src/lib/deliverables)
   const thread = {
     get id() {
       return ctx.state.threadId;
@@ -259,7 +276,7 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     },
   };
   const cctx: CardCtx = { me: ctx.me, db: ctx.db, admin: ctx.admin, callId: ctx.callId, said: ctx.said, emit: ctx.emit, label: "your assistant", thread };
-  const cardTools: LoopTool[] = [...callCardTools(cctx, tctx, base), ...emailRequestTool(cctx, () => forgetContext(ctx.me.id))];
+  const cardTools: LoopTool[] = [...callCardTools(cctx, tctx, base), ...deliverableTools({ me: ctx.me, db: ctx.db, admin: ctx.admin, callId: ctx.callId, said: () => ctx.said, emit: ctx.emit, roleKey: ASSISTANT_KEY })];
   const rest = gateTools([...base.filter((t) => !CARD_TOOLS.has(t.name)), ...askTools(tctx, { roleKey: ASSISTANT_KEY, label: "assistant", callId: ctx.callId, said: ctx.said })]).map((t) => {
     const s = t.input_schema as { properties?: Record<string, unknown> };
     if (!s.properties || !("confirmed" in s.properties)) return t;
@@ -304,13 +321,13 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     {
       name: "open_screen",
       description:
-        "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings for email; overview, posts, actions, notes, settings for social), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, social_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, social_sprint, agent (an AI agent's page in Settings, by role key), direction_change (a client's change of direction with its flagged tasks: by id from direction_changes, or the client's newest), feedback (a report they filed: id from submit_feedback, or their own feedback list), profile (a teammate's profile by name in person, or their own). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",
+        "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings for email; overview, posts, actions, notes, settings for social), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, social_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, social_sprint, agent (an AI agent's page in Settings, by role key), direction_change (a client's change of direction with its flagged tasks: by id from direction_changes, or the client's newest), copy_doc (campaign or flow copy in its full document view to comment on lines and approve: id from create_copy_doc, or the client's newest), feedback (a report they filed: id from submit_feedback, or their own feedback list), profile (a teammate's profile by name in person, or their own). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",
       input_schema: {
         type: "object",
         properties: {
-          what: { type: "string", enum: ["profile", "client", "kpi_card", "email_sheet", "social_sheet", "ticket", "email_ticket", "report", "audit", "email_audit", "social_audit", "sprint", "email_sprint", "social_sprint", "agent", "direction_change", "feedback"] },
+          what: { type: "string", enum: ["profile", "client", "kpi_card", "email_sheet", "social_sheet", "ticket", "email_ticket", "report", "audit", "email_audit", "social_audit", "sprint", "email_sprint", "social_sprint", "agent", "direction_change", "feedback", "copy_doc"] },
           person: { type: "string", description: "A teammate's name (what: profile); leave out for their own profile" },
-          id: { type: "string", description: "A direction change's id (what: direction_change), or a feedback report's id from submit_feedback (what: feedback)" },
+          id: { type: "string", description: "A direction change's id (what: direction_change), a feedback report's id from submit_feedback (what: feedback), or a copy document's id (what: copy_doc)" },
           client: CLIENT,
           tab: { type: "string", enum: ["overview", "ads", "email", "social", "creative", "team", "reports"], description: "The client page's tab (what: client)" },
           platform: { type: "string", enum: ["meta", "google", "tiktok"], description: "The ad platform (kpi_card, audit, sprint)" },

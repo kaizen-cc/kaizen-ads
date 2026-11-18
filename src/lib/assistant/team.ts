@@ -5,6 +5,8 @@
 // to each other before the person gets the floor back.
 
 import { ASSISTANT_KEY, SPECIALISTS, specialistOf, suggestSpecialist } from "./core";
+import { emailWritingKind } from "@/lib/copy-docs/core";
+import { lineForAsk } from "@/lib/deliverables/lines";
 
 // ─── Who's on the line ──────────────────────────────────────────────────────
 
@@ -162,11 +164,12 @@ export const PLAYBOOKS: readonly Playbook[] = [
   {
     kind: "email_request",
     label: "Email request",
-    about: "an Email Board ticket for a campaign batch or a flow",
+    about: "campaigns or a flow, from topics to approved copy to the Asana request",
     words: /\b(email (?:request|batch|campaign|flow)s?|request (?:an |some |a few )?emails?|(?:new|another) (?:email|campaign) batch|set up (?:a |the )?flow|emails? for (?:the |their )?\w+ (?:sale|launch|week|day))\b/i,
     steps: [
-      { key: "idea", label: "The idea and angle", agent: "email_strategist", ask: "Want the Email Strategist on to shape the idea first?", how: "Pick the angle from the client's calendar, what's worked in their emails and the season; say it in two sentences." },
-      { key: "request", label: "Email Board ticket", agent: "email_strategist", ask: "Ready to put the request on the Email Board?", how: "create_email_request after a spoken yes: it writes the brief and starts the ticket in Copy for review." },
+      { key: "idea", label: "Type, count and topics agreed", agent: "email_strategist", ask: "Want the Email Strategist on to shape the campaigns?", how: "The deliverable flow (deliverable action: start): ask the type and how many only if missing, pull fresh context, brainstorm topics, segments and send dates with them, record them agreed." },
+      { key: "copy", label: "Copy drafted and approved", agent: "copywriter", ask: "The topics are set. Want the Copywriter to draft them?", how: "create_copy_doc: one preview document for the batch, a section per email; the strategist reviews, the person approves." },
+      { key: "request", label: "Requested in Asana", agent: "email_strategist", ask: "Create this in Asana?", how: "create_email_request where: asana after a spoken yes: the Google Doc in their HQ Drive, then the Asana task(s) in Email Requests (Kaizen OS requests are coming soon)." },
       { key: "design", label: "Design direction", agent: "email_creative", optional: true, ask: "Want the Email Designer's take on the layout?", how: "A line or two of design direction, noted on the job." },
     ],
   },
@@ -311,7 +314,7 @@ export function launchFacts(found: LaunchFound): Record<string, boolean> {
 
 // ─── The job's working state ────────────────────────────────────────────────
 
-export type Artifact = { kind: "copy" | "brief" | "ticket" | "email_ticket" | "launch" | "launch_run" | "report" | "audit" | "plan" | "files" | "other"; id: string; label: string; by: string; href: string | null };
+export type Artifact = { kind: "copy" | "copy_doc" | "asana_request" | "brief" | "ticket" | "email_ticket" | "launch" | "launch_run" | "report" | "audit" | "plan" | "files" | "other"; id: string; label: string; by: string; href: string | null };
 export type JobNote = { by: string; text: string };
 
 /** What the call is working on: every agent on the line reads it, so nothing is asked or said twice */
@@ -496,15 +499,19 @@ export function specialistForScreen(screen: string | null | undefined): string |
   return null;
 }
 
-export type DirectRoute = { key: string; why: "asked" | "expert" };
+export type DirectRoute = { key: string; why: "asked" | "expert" | "deliverable" };
 
 /**
- * Before the assistant answers: a specialist the person asked for by name joins now; a strategy question goes to the
+ * Before the assistant answers: a specialist the person asked for by name joins now; a deliverable to make with them
+ * (campaigns, a flow) goes to the line's lead strategist, who runs the flow; a strategy question goes to the
  * specialist for its line (from the words, else the screen they're on). Null: the assistant answers.
  */
 export function directSpecialist(text: string, opts: { screen?: string | null } = {}): DirectRoute | null {
   const asked = asksToBringIn(text);
   if (asked) return { key: asked, why: "asked" };
+  // Making a deliverable with them ("I need to create campaigns for Candy Cloud"): the line's lead strategist runs it
+  const flow = lineForAsk(text);
+  if (flow && specialistOf(flow.lead) && emailWritingKind(text) !== "message") return { key: flow.lead, why: "deliverable" };
   if (!isExpertQuestion(text)) return null;
   const key = specialistNamed(text) ?? suggestSpecialist(text)?.key ?? specialistForScreen(opts.screen);
   return key && specialistOf(key) ? { key, why: "expert" } : null;

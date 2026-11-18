@@ -3,7 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { chatTools, type ChatTool, type ToolCtx } from "@/lib/kaizen-ai/tools";
 import { askTools } from "./ask-tools";
-import { callCardTools, emailRequestTool } from "./call-cards";
+import { callCardTools } from "./call-cards";
+import { deliverableTools } from "@/lib/deliverables/tools";
 import type { CallEvent } from "./core";
 import { gateTools } from "./tool-loop";
 import { commsTools } from "@/lib/assistant/comms-tools";
@@ -38,11 +39,13 @@ export async function agentTools(input: {
   // The team and their messages, feedback and a client at risk: the same tools the assistant has
   const comms = commsTools({ me: input.me, db: input.db, admin: input.admin, callId: input.callId, said: () => input.said ?? "", emit: input.emit, roleKey: input.roleKey, label: input.label, path: input.path ?? null, screen: input.screen ?? null, clientId: input.clientId ?? null });
   const gated = gateTools([...base, ...askTools(ctx, { roleKey: input.roleKey, label: input.label, callId: input.callId, said: input.said ?? null }), ...comms]);
-  if (!input.callId || !input.emit) return gated;
+  // The deliverable flow (strategist leads, writer drafts, requests on a yes): they check the person's yes themselves
+  const flow = deliverableTools({ me: input.me, db: input.db, admin: input.admin, callId: input.callId, said: () => input.said ?? "", emit: input.emit, roleKey: input.roleKey }).map((t) => ({ ...t, status: t.status ?? (() => "Working on it…") }));
+  if (!input.callId || !input.emit) return [...gated, ...flow];
   const cctx = { me: input.me, db: input.db, admin: input.admin, callId: input.callId, said: input.said ?? "", emit: input.emit, label: `the ${input.label}`, thread: { id: null as string | null } };
   const status = (name: string) => (i: Record<string, unknown>, c: string | null) => base.find((t) => t.name === name)?.status(i, c) ?? "Working on it…";
-  const cards = [...callCardTools(cctx, ctx, base), ...emailRequestTool(cctx)].map((t) => ({ ...t, status: t.status ?? status(t.name) }));
-  return [...gated, ...cards];
+  const cards = callCardTools(cctx, ctx, base).map((t) => ({ ...t, status: t.status ?? status(t.name) }));
+  return [...gated, ...cards, ...flow];
 }
 
 /** What every agent is told about its tools (on a call and in its chat) */

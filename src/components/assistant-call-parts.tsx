@@ -1,6 +1,7 @@
 "use client";
 
 import { DocumentCardView } from "./document-card";
+import { CopyDocCardView } from "./copy-doc-card";
 import { useRef, useState } from "react";
 import { callTranscript, saveCallDraft } from "@/app/(team)/settings/call-actions";
 import { openCallDraftInGmail } from "@/app/(team)/assistant/document-actions";
@@ -294,7 +295,9 @@ export function CardsStrip({ cards, onOpen, onDismiss, compact = false, callId =
   return (
     <ul className={`grid gap-2 ${compact ? "" : "sm:grid-cols-2"}`} aria-label="Shared on the call">
       {cards.map((c) =>
-        c.document ? (
+        c.copy ? (
+          <CopyDocCardView key={c.id} card={c as CallCard & { copy: NonNullable<CallCard["copy"]> }} onOpen={onOpen} onDismiss={() => onDismiss(c.id)} wide={!compact} />
+        ) : c.document ? (
           <DocumentCardView key={c.id} doc={c.document} onDismiss={() => onDismiss(c.id)} wide={!compact} />
         ) : c.draft ? (
           <DraftCard key={c.id} c={c as CallCard & { draft: NonNullable<CallCard["draft"]> }} callId={callId} onApprove={onApprove} onDismiss={onDismiss} />

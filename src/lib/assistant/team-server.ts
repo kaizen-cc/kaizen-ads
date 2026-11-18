@@ -194,7 +194,7 @@ async function readFacts(ctx: TeamCtx, job: Job): Promise<{ facts: Record<string
       return launchFound(ctx, job);
     case "email_request": {
       const { data } = await ctx.db.from("email_tickets").select("number, title, stage").eq("client_id", job.client.id).is("deleted_at", null).gte("created_at", since(14)).order("created_at", { ascending: false }).limit(5);
-      return { facts: { request: has("email_ticket") }, seen: { recent_email_tickets: ((data ?? []) as { number: number; title: string; stage: string }[]).map((t) => `#${t.number} ${t.title} (${String(t.stage).replace(/_/g, " ")})`) } };
+      return { facts: { copy: has("copy_doc"), request: has("asana_request") || has("email_ticket") }, seen: { recent_email_tickets: ((data ?? []) as { number: number; title: string; stage: string }[]).map((t) => `#${t.number} ${t.title} (${String(t.stage).replace(/_/g, " ")})`) } };
     }
     case "creative_brief": {
       const { data } = await ctx.db.from("requests").select("number, title, stage").eq("client_id", job.client.id).is("deleted_at", null).gte("created_at", since(14)).order("created_at", { ascending: false }).limit(5);
@@ -357,8 +357,10 @@ function trackOf(name: string, input: Record<string, unknown>, out: Record<strin
       return ok("shown") ? { artifact: { kind: "copy", id: `card-${Date.now().toString(36)}`, label: `Ad copy (${input.platform === "google" ? "Google" : "Meta"})${ok("all_within_limits") ? "" : ", with fixes to make"}`, href: null } } : null;
     case "create_brief":
       return ok("shown") ? { done: ["brief"], artifact: { kind: "brief", id: `brief-${Date.now().toString(36)}`, label: `Brief: ${clip(input.title, 80)}`, href: null } } : null;
+    case "create_copy_doc":
+      return ok("made") ? { artifact: { kind: "copy_doc", id: String(out.copy_doc_id), label: `Copy: ${clip(input.title, 80)}`, href: `/copy/${out.copy_doc_id}` } } : null;
     case "create_email_request":
-      return ok("created") ? { done: ["request"], artifact: { kind: "email_ticket", id: String(out.number), label: `Email #${out.number}: ${clip(out.title, 80)}`, href: `/board/email?t=${out.number}` } } : null;
+      return ok("created") ? { done: ["copy", "request"], artifact: { kind: "asana_request", id: String((out.tasks as { gid: string }[] | undefined)?.[0]?.gid ?? Date.now().toString(36)), label: "Requested in Asana", href: null } } : null;
     case "launch_sheet":
       return ok("started") ? { artifact: { kind: "launch_run", id: String(out.launchId), label: "Launch from the sheet", href: null } } : null;
     case "confirm_launch":
@@ -460,10 +462,16 @@ export function teamTools(ctx: TeamCtx): LoopTool[] {
       run: async (input) => {
         const sp = specialistOf(String(input.role));
         if (!sp) return { joined: false, note: "Not one of the specialists." };
-        if (!bringOk(ctx, sp.key, input)) return { joined: false, note: NO_YES };
+        // The writer joins on the lead's word once the person agreed the topics (that agreement was the yes)
+        const agreed = !bringOk(ctx, sp.key, input) && (await import("@/lib/deliverables/server").then((m) => m.writerMayJoin(ctx.admin, ctx.callId, sp.key)).catch(() => false));
+        if (!bringOk(ctx, sp.key, input) && !agreed) return { joined: false, note: NO_YES };
         const j = await joinSpecialist(ctx, sp.key);
         if (!j.joined) return { joined: false, note: j.note };
         ctx.team.joined.push({ role: sp.key, question: clip(input.question, 1000) });
+        if (agreed) await import("@/lib/deliverables/server").then(async (m) => {
+          const run = await m.currentRun(ctx.admin, ctx.callId);
+          if (run) await m.patchRun(ctx.admin, run, { writerJoined: true });
+        }).catch(() => undefined);
         return { joined: true, note: `Say one short line ("Bringing in the ${j.label}.") and stop: it answers next.` };
       },
     },

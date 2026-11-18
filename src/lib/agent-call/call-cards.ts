@@ -3,16 +3,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import type { ChatTool, ToolCtx } from "@/lib/kaizen-ai/tools";
 import type { Card } from "@/lib/kaizen-ai/types";
-import { safeAppPath, safeLink, saidYes } from "@/lib/assistant/core";
-import { seesEmailBoard } from "@/lib/roles";
+import { safeAppPath, safeLink } from "@/lib/assistant/core";
 import type { CallCard, CallEvent } from "./core";
 import { CARD_TOOLS, type LoopTool } from "./tool-loop";
 
 // Card tools on a call, for the assistant and every agent alike: a brief, a change plan, a launch, copy or a deck is
 // made exactly as in Kaizen AI's chat, saved on a Kaizen AI thread for this call (made on first use and kept on the
 // call's row, so every turn uses the same one), and shown on the call as a link card to review it there. Nothing is
-// sent or changed until it's confirmed on the card. Plus the Email Board request (the email team and execs), which
-// makes a ticket in Copy for review after a spoken yes, ending in a link card to the ticket.
+// sent or changed until it's confirmed on the card. Email requests are the deliverable flow's (src/lib/deliverables).
 
 export type CardCtx = {
   me: Staff;
@@ -31,8 +29,6 @@ export type CardCtx = {
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const cardId = () => crypto.randomUUID().slice(0, 8);
 export const showCard = (ctx: Pick<CardCtx, "emit">, c: Omit<CallCard, "id">) => ctx.emit({ t: "card", card: { id: cardId(), ...c } });
-const NO_YES = "Not run: say in one sentence exactly what this will do and ask; run it again with confirmed: true only once they clearly say yes.";
-const CONFIRMED = { type: "boolean", description: "True only after the person clearly said yes to this exact action on this turn" };
 
 /** The call's thread: the one already on its row, or a new one */
 async function threadOf(ctx: CardCtx): Promise<string> {
@@ -89,47 +85,4 @@ export function callCardTools(ctx: CardCtx, tctx: ToolCtx, base: readonly ChatTo
         return out;
       },
     }));
-}
-
-/** The client named, if this person may see it (their own session decides) */
-async function clientNamed(db: SupabaseClient, name: unknown): Promise<{ id: string; name: string; slug: string }> {
-  const asked = clip(name, 120);
-  if (!asked) throw new Error("Which client?");
-  const safe = asked.replace(/[%_,()]/g, " ").trim();
-  const { data } = await db.from("clients").select("id, name, slug").is("archived_at", null).ilike("name", `%${safe}%`).limit(5);
-  const hit = (data ?? []).find((c) => String(c.name).toLowerCase() === asked.toLowerCase()) ?? (data ?? [])[0];
-  if (!hit) throw new Error(`No client called "${asked}" that you can see.`);
-  return hit as { id: string; name: string; slug: string };
-}
-
-/** The Email Board request, for the email team and execs (others don't get it) */
-export function emailRequestTool(ctx: CardCtx, after?: () => void): LoopTool[] {
-  if (!seesEmailBoard(ctx.me)) return [];
-  return [
-    {
-      name: "create_email_request",
-      description:
-        "Creates an Email Board ticket for a client as the person (the email team and execs only): the AI writes the brief from the idea, then the ticket starts in Copy for review and a link card to it shows on the call. A campaign batch is up to 5 emails, a flow up to 6 messages (texts allowed). Nothing goes to the client. Ask first, confirmed: true after a yes.",
-      input_schema: {
-        type: "object",
-        properties: { client: { type: "string", description: "The client's name" }, kind: { type: "string", enum: ["batch", "flow"] }, idea: { type: "string" }, count: { type: "integer" }, due: { type: "string", description: "YYYY-MM-DD" }, texts: { type: "boolean" }, priority: { type: "string", enum: ["normal", "high", "urgent"] }, confirmed: CONFIRMED },
-        required: ["client", "kind", "idea"],
-        additionalProperties: false,
-      },
-      status: (input) => `Writing the email request for ${clip(input.client, 60) || "the client"}…`,
-      run: async (input) => {
-        if (input.confirmed !== true || !saidYes(ctx.said)) return { done: false, note: NO_YES };
-        const c = await clientNamed(ctx.db, input.client);
-        const { writeEmailBrief, createEmailTicket } = await import("@/app/(team)/board/email/new/actions");
-        const due = /^\d{4}-\d{2}-\d{2}$/.test(String(input.due ?? "")) ? String(input.due) : null;
-        const brief = await writeEmailBrief({ clientId: c.id, kind: input.kind === "flow" ? "flow" : "batch", idea: clip(input.idea, 2000), count: Number(input.count) || null, dueOn: due, texts: input.texts === true });
-        if (!brief.ok) return { done: false, error: brief.error };
-        const t = await createEmailTicket({ clientId: c.id, draft: brief.draft, priority: input.priority === "urgent" || input.priority === "high" ? input.priority : "normal", dueOn: due, suggestionId: null });
-        if (!t.ok) return { done: false, error: t.error };
-        showCard(ctx, { title: `Email #${t.number}: ${clip(brief.draft.title, 80)}`, detail: `${c.name} · Copy for review`, href: `/board/email?t=${t.number}`, external: false, cta: "Review the ticket" });
-        after?.();
-        return { created: true, number: t.number, title: brief.draft.title, note: "The ticket's card is on screen. Say it's in Copy for review." };
-      },
-    },
-  ];
 }

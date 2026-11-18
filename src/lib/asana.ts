@@ -50,6 +50,21 @@ export async function asanaWrite<T>(path: string, data: Record<string, unknown>)
   throw new Error("Asana: rate limited");
 }
 
+/** A change to something in Asana (PUT): a task's name, notes, fields. Never a delete. */
+export async function asanaUpdate<T>(path: string, data: Record<string, unknown>): Promise<T> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(`${API}${path}`, { method: "PUT", headers: { Authorization: `Bearer ${process.env.ASANA_TOKEN}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ data }), cache: "no-store" });
+    if (res.status === 429) {
+      await new Promise((r) => setTimeout(r, Number(res.headers.get("retry-after") ?? 5) * 1000));
+      continue;
+    }
+    const body = (await res.json()) as { data: T; errors?: { message: string }[] };
+    if (!res.ok) throw new Error(`Asana: ${body.errors?.[0]?.message ?? res.status}`);
+    return body.data;
+  }
+  throw new Error("Asana: rate limited");
+}
+
 /**
  * A task for someone on a team that isn't in Kaizen OS yet, assigned by their email. In a project when one is given,
  * otherwise in the workspace (it lands in their My Tasks). Someone Asana doesn't know by that email: the task is made

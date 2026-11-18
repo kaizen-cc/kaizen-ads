@@ -687,6 +687,22 @@ export type CallCard = {
   draft?: CallDraft;
   /** A Kaizen document (create_document): open, download, or edit its text and draw it again */
   document?: CallDocument;
+  /** Campaign, flow or SMS copy (create_copy_doc): read it, open the document view, approve it */
+  copy?: CallCopyDoc;
+};
+
+/** Copy written for the email team, shown on the call or chat as a document card */
+export type CallCopyDoc = {
+  id: string;
+  kind: "campaign" | "flow" | "sms";
+  title: string;
+  client: string | null;
+  version: number;
+  status: "draft" | "approved" | "requested";
+  href: string;
+  emails: { name: string; subject: string; preview: string; sections: { heading: string; body: string }[]; cta: string | null; designNotes: string[] }[];
+  docUrl: string | null;
+  asanaUrl: string | null;
 };
 
 /** A Kaizen-branded PDF shown on the call or chat */

@@ -59,3 +59,17 @@ export function channelSeatsOf(line: ChannelTab, r: Record<string, string>): { r
   }
   return out;
 }
+
+/** A row's account details beyond the people: the client's ID, HQ (assets) link, Figma board and website, by column name */
+export type SheetDetails = { clientId: string | null; hq: string | null; figma: string | null; website: string | null };
+export function sheetDetailsOf(r: Record<string, string>): SheetDetails {
+  const cols = Object.entries(r).filter(([, v]) => !isBlankName(String(v ?? "")));
+  const pick = (re: RegExp, ok: (v: string) => boolean = () => true) => cols.find(([k, v]) => re.test(k) && ok(v.trim()))?.[1].trim() ?? null;
+  const link = (v: string) => /^https?:\/\//i.test(v) || /\.[a-z]{2,}(\/|$)/i.test(v);
+  return {
+    clientId: pick(/client\s*(?:id|#)|kaizen\s*id|^id$/i, (v) => /^\d{1,6}$/.test(v)),
+    hq: pick(/\bhq\b|headquarters|assets|drive/i, link),
+    figma: pick(/figma/i, link),
+    website: pick(/website|site|url|domain/i, link),
+  };
+}
