@@ -14,7 +14,7 @@ import { can, roleWidePerms, type Who } from "@/lib/chat-permissions";
 import { isChannelOnly, lineOfTeam } from "@/lib/roles";
 import { channelMaySee } from "./channel-access";
 import { servicesOf } from "@/lib/services";
-import { subjectPatterns, weeklyListChange } from "./email-insights";
+import { kpiBoardEmail, subjectPatterns, weeklyListChange } from "./email-insights";
 import { SLIDE_KINDS, cleanSlides, clip } from "./deck-core";
 import type { Attachment, BriefCard, Card, CopyCard, CopyField, MetricsCard, MetricsRow } from "./types";
 
@@ -513,7 +513,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     {
       name: "email_marketing",
       description:
-        "A client's email and SMS from their email provider (Klaviyo, Brevo or Customer.io; read only, synced daily; Brevo has no automations and Customer.io no revenue unless a purchase event is named, which the answer says): the last 30 days' attributed revenue against the 30 before, open and click rates, recent campaigns (subject line, audience, recipients, open and click rate, revenue), flows by revenue (30 and 90 days) and list sizes, plus the health pulse: share of the store's revenue (Klaviyo's Placed Order), revenue per recipient, cadence, unsubscribe and spam rates, list growth, the key flows' coverage (welcome, abandoned checkout or cart, browse, post-purchase, winback), red/amber/green health findings with what to do, and the best and weakest campaigns. Use it for email performance, what subject lines and offers their list answers, and how much of the business email carries. Nothing can be sent, edited or scheduled in Klaviyo from here.",
+        "A client's email and SMS from their email provider (Klaviyo, Brevo or Customer.io; read only, synced daily; Brevo has no automations and Customer.io no revenue unless a purchase event is named, which the answer says): the last 30 days' attributed revenue against the 30 before, open and click rates, recent campaigns (subject line, audience, recipients, open and click rate, revenue), flows by revenue (30 and 90 days) and list sizes, plus the email KPI board's numbers (kpi_board: the email score, its eight checks against their bars, and the deliverability score 0 to 100 with its parts; the deliverability score lives on the board, not in Klaviyo's data, so read it there before judging list health or a whole-list send) and the health pulse: share of the store's revenue (Klaviyo's Placed Order), revenue per recipient, cadence, unsubscribe and spam rates, list growth, the key flows' coverage (welcome, abandoned checkout or cart, browse, post-purchase, winback), red/amber/green health findings with what to do, and the best and weakest campaigns. Use it for email performance, what subject lines and offers their list answers, and how much of the business email carries. Nothing can be sent, edited or scheduled in Klaviyo from here.",
       input_schema: {
         type: "object",
         properties: {
@@ -528,7 +528,8 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       run: async (input) => {
         const c = await clientOf(ctx, input);
         const { clientKlaviyo, topAndBottom } = await import("@/lib/klaviyo/store");
-        const k = await clientKlaviyo(ctx.admin, c.id).catch(() => null);
+        const { loadEmailScore } = await import("@/lib/email-score-load");
+        const [k, board] = await Promise.all([clientKlaviyo(ctx.admin, c.id).catch(() => null), loadEmailScore(ctx.admin, c.id).catch(() => null)]);
         if (!k) return { client: c.name, connected: false, note: "No email numbers for this client: it isn't connected (a lead or exec connects it in the client's Team & setup), or the first sync hasn't run." };
         const best = topAndBottom(k);
         const pct = (x: number | null) => (x == null ? null : Math.round(x * 1000) / 10);
@@ -548,6 +549,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           ...(k.revenueMeasured ? {} : { revenue_note: `${k.providerName} reports no revenue for this client: revenue, orders and the checks built on them are not measured. Never quote them as zero.` }),
           ...(k.flowsKnown ? {} : { flows_note: `${k.providerName}'s API doesn't list automations: flows are not measured here, not missing.` }),
           account: k.account,
+          kpi_board: kpiBoardEmail(board),
           currency: k.currency ?? "USD",
           data_through: k.through,
           last_30_days: { revenue: r2(k.now.revenue), campaign_revenue: r2(k.now.campaignRevenue), flow_revenue: r2(k.now.flowRevenue), campaigns_sent: k.now.campaignsSent, messages: k.now.sends, open_rate_pct: pct(k.now.openRate), click_rate_pct: pct(k.now.clickRate) },
