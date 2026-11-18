@@ -1,5 +1,4 @@
 import type { Move } from "@/lib/reports/weekly-core";
-import type { EmailScoreResult } from "@/lib/email-score-calc";
 import { lastFullWeek, monthSoFar, previousPeriod, rangeLabel, shiftDay, type Range } from "@/lib/reports/period";
 import { monthProgress, paceStatus, projectMonthEnd } from "@/lib/reports/mtd-core";
 import { BENCHMARKS, deliverabilityOutliers, pulseWindow, type CampaignLite, type DailyRow as EmailDay, type FlowLite, type KeyFlow, type PulseWindow } from "@/lib/klaviyo/insights";
@@ -7,7 +6,6 @@ import { postRate, withRates, windowOf, type DailyRow as SocialDay, type PostVie
 import type { Platform as SocialPlatformKey, PostFormat, SocialPost } from "@/lib/social/core";
 import type { RefreshNote } from "@/lib/reports/refresh-core";
 import { fillPriorFollowers, priorFollowersOver } from "./social-followers";
-import type { SocialReportScore } from "./social-report";
 import { emailDetail, type EmailDetail, type FlowDay, type Pair, type Upcoming } from "./email-detail";
 import { locationChecks, type LocationBreakdown } from "@/lib/klaviyo/locations";
 import type { RevenueSources } from "./email-sources";
@@ -141,9 +139,6 @@ export type EmailFlow = { id: string; name: string; status: string | null; trigg
 export type DeliverabilityFlag = { tone: "bad" | "warn"; text: string };
 export type TrendPoint = { label: string; start: string; end: string; value: number; extra?: number };
 
-/** The email account score as the report keeps it: read when the numbers were gathered, over the 30 days to that day (not the report's own dates) */
-export type EmailScoreSnapshot = Pick<EmailScoreResult, "score" | "band" | "checks" | "weighingDown" | "unmeasured" | "window">;
-export const scoreSnapshot = (r: EmailScoreResult): EmailScoreSnapshot => ({ score: r.score, band: r.band, checks: r.checks, weighingDown: r.weighingDown, unmeasured: r.unmeasured, window: r.window });
 
 /**
  * A weekly's month to date: the month's first day through the report's last day against the same days of the month before,
@@ -186,8 +181,6 @@ export type EmailMetrics = {
   gaps: string[];
   through: string | null;
   refreshNote?: RefreshNote;
-  /** The account score (older stored reports have none) */
-  score?: EmailScoreSnapshot | null;
   /** A weekly's month to date (older stored reports and monthlies have none) */
   mtd?: EmailMtd | null;
   /** Orders, the daily split, each campaign and flow for the period, deliverability and subscribers (older stored reports have none) */
@@ -421,8 +414,8 @@ export type SocialMetrics = {
   insightsRead: boolean;
   /** A weekly's month to date (older stored reports and monthlies have none) */
   mtd?: SocialMtd | null;
-  /** The account's social score over the 30 days to the period's end (older stored reports have none) */
-  score?: SocialReportScore | null;
+  /** The engagement target this account's rates are held to (its own, else Kaizen's 5%); older stored reports have none */
+  engagementTarget?: number | null;
   refreshNote?: RefreshNote;
   stated?: StatedMark;
 };
@@ -640,7 +633,6 @@ export function emailSupport(m: EmailMetrics): { label: string; value: string }[
     return mv ? ` (${mv.up ? "+" : "-"}${mv.pct})` : "";
   };
   return [
-    ...(m.score ? [{ label: "Email health score", value: `${m.score.score} of 100` }] : []),
     { label: "Open rate", value: `${pct(now.openRate)}${chg(now.openRate, before.openRate)}` },
     { label: "Click rate", value: `${pct(now.clickRate, 2)}${chg(now.clickRate, before.clickRate)}` },
     { label: "Unsubscribes", value: pct(now.unsubscribeRate, 2) },

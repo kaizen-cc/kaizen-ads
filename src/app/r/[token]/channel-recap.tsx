@@ -1,8 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
-import { BAND_TONE, ScoreBadge, ScoreChecks, WeighingDown } from "@/components/email-score-parts";
 import { int, metricsSupport, money, pct, signed, socialName, takeawaysFor, postRateText, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
 import { tileViews, type ChannelLayout, type TileView } from "@/lib/channel-reports/layout";
-import { cardCampaigns, cardStats, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, RPR_BAR, shareText, type CardStat } from "@/lib/channel-reports/email-cards";
+import { cardCampaigns, cardStats, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, shareText, type CardStat } from "@/lib/channel-reports/email-cards";
 import { RATE_BARS, type Grade, type MessageRow } from "@/lib/channel-reports/email-detail";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
 import type { Sections } from "@/lib/reports/write";
@@ -101,7 +100,6 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
 }
 
 function EmailBody({ m, shots }: { m: EmailMetrics; shots: Record<string, string> }) {
-  const sc = m.score && m.score.unmeasured.length < m.score.checks.length ? m.score : null;
   const sides = !m.sources && m.byMetric && m.byMetric.length > 1 ? m.byMetric : null;
   const src = m.sources ?? null;
   return (
@@ -147,19 +145,6 @@ function EmailBody({ m, shots }: { m: EmailMetrics; shots: Record<string, string
                 </p>
               </div>
             ))}
-          </div>
-        </Block>
-      )}
-      {sc && (
-        <Block title="Email health score">
-          <div className="grid gap-5 rounded-xl border border-line bg-surface p-5 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_minmax(0,1fr)]">
-            <div className="grid content-start gap-2">
-              <ScoreBadge r={sc} size="lg" />
-              <span className={`text-sm font-medium ${BAND_TONE[sc.band].text}`}>{BAND_TONE[sc.band].word}</span>
-              <p className="text-[12px] text-faint">Seven checks, last 30 days. Green from 80, yellow from 60.</p>
-            </div>
-            <ScoreChecks score={sc} currency={m.currency} />
-            <WeighingDown score={sc} limit={3} currency={m.currency} />
           </div>
         </Block>
       )}
@@ -320,8 +305,7 @@ function CampaignCards({ m, shots }: { m: EmailMetrics; shots: Record<string, st
   return (
     <Block title={`Campaigns · ${count} sent`}>
       <p className="-mt-2 mb-4 text-[13px] text-muted">
-        Graded against Kaizen&apos;s bars: open {pct(RATE_BARS.campaign.open, 0)}, click {pct(RATE_BARS.campaign.click, 0)}
-        {measured ? `, ${money(RPR_BAR, m.currency)} per recipient` : ""}.
+        Graded against Kaizen&apos;s bars: open {pct(RATE_BARS.campaign.open, 0)}, click {pct(RATE_BARS.campaign.click, 0)}.
       </p>
       <div className="grid gap-4 lg:grid-cols-2">
         {rows.map((r) => {

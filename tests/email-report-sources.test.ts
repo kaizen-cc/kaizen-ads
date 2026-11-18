@@ -198,13 +198,14 @@ describe("revenue per recipient", () => {
   const days = range("2026-11-02", "2026-11-15").map((date) => ({ date, revenue: date >= "2026-11-09" ? 300 : 200, campaignRevenue: 100, flowRevenue: 200, smsRevenue: 0, sends: 1000, campaignsSent: 0, storeRevenue: null, storeOrders: null, subscribed: null, unsubscribed: null }));
   const m: EmailMetrics = emailMetrics({ kind: "weekly", main, compare, today: "2026-11-17", days, campaigns: [camp("a", "2026-11-10T15:00:00Z", { revenue: 300 }), camp("old", "2026-11-04T15:00:00Z", { revenue: 100 })], flows: [], keyFlows: [], profiles: null, currency: "USD", account: null });
 
-  it("leads the headline numbers against the period before, graded against the $0.15 bar", () => {
+  it("leads the headline numbers against the period before, as a plain number with no internal bar or grade", () => {
     const t = tileView(m, "rpr")!;
     // $2,100 over 7,000 sends against $1,400 over 7,000
     expect(t.value).toBe("$0.30");
     expect(t.before).toBe("$0.20");
     expect(t.move).toMatchObject({ up: true, pct: "50.0%", tone: "good" });
-    expect(t.badge).toBe("good");
+    expect(t.badge ?? null).toBeNull();
+    expect(t.sub ?? "").not.toMatch(/bar|0\.15/i);
   });
 
   it("is on the campaign and automated email blocks, with the period before", () => {

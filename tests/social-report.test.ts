@@ -4,15 +4,14 @@ import { describe, expect, it } from "vitest";
 import { ChannelDocument } from "@/lib/channel-reports/channel-doc";
 import { socialMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
 import { followerView, priorFollowersOver } from "@/lib/channel-reports/social-followers";
-import { captionText, followerChangeText, mtdCells, pdfText, reportScoreOf, socialInsights, socialScoreText } from "@/lib/channel-reports/social-report";
-import { socialAccountScore } from "@/lib/social-score";
+import { captionText, followerChangeText, mtdCells, pdfText, socialInsights, socialScoreText } from "@/lib/channel-reports/social-report";
 import type { DailyRow } from "@/lib/social/insights";
 import type { SocialPost } from "@/lib/social/core";
 import type { Sections } from "@/lib/reports/write";
 
 // The organic social report: followers compared over the same platforms (Mama Betty's Nov 9 to 15 report read "20,474,
 // up 220.8% vs 6,383" because Instagram had no follower count the week before), captions cut between words, emoji the
-// PDF fonts can't draw left out, the score in the client's words, and the PDF drawing.
+// PDF fonts can't draw left out, and the PDF drawing. The internal social score never reaches the client.
 
 const range = (a: string, b: string) => {
   const out: string[] = [];
@@ -97,32 +96,13 @@ describe("text the PDF fonts can draw", () => {
   });
 });
 
-describe("the social score in the client's words", () => {
-  const sc = socialAccountScore({ days: days(), posts: [post("a", "2026-11-13"), post("b", "2026-11-03", { format: "image", reach: 900, interactions: 20 })], today: "2026-11-15" })!;
-  const r = reportScoreOf(sc);
-
-  it("keeps the score, its band, every platform and the 5% target", () => {
-    expect(r.score).toBe(sc.score);
-    expect(r.engagementBar).toBe(0.05);
-    expect(r.platforms.map((p) => p.platform).sort()).toEqual(["facebook", "instagram"]);
-  });
-
-  it("says what lifts it and what weighs it down plainly (no signs, no jargon)", () => {
-    const all = [...r.lifting, ...r.weighing, ...r.platforms.flatMap((p) => [...p.lifting, ...p.weighing])].map((x) => x.text);
-    expect(all.length).toBeGreaterThan(0);
-    for (const t of all) {
-      expect(t).not.toMatch(/ -\d|—|bar\b|points/);
-      expect(t).not.toMatch(/\d\.0%/);
-    }
-  });
-
-  it("gives the writer the target, the net follower change and the score", () => {
+describe("what the writer gets", () => {
+  it("gives the writer the target and the net follower change, never the internal score", () => {
     const m = socialMetrics({ kind: "weekly", main, compare, days: days(), posts: [post("a", "2026-11-13")], names: {} });
-    m.score = r;
-    const lines = socialScoreText(m).join("\n");
+    const lines = socialScoreText(m).join(" | ");
     expect(lines).toMatch(/Engagement target: 5%/);
     expect(lines).toMatch(/net \+\d+/);
-    expect(lines).toMatch(new RegExp(`Social score .*: ${r.score} of 100`));
+    expect(lines).not.toMatch(/score/i);
   });
 });
 
@@ -144,11 +124,11 @@ describe("the social PDF", () => {
     expect(cards.some((c) => /5% target/.test(c.title))).toBe(true);
   });
 
-  it("draws with the score, one post or three, and for a stored report without a score", async () => {
+  it("draws with one post or three, and for a stored report that still carries a score", async () => {
     const posts = [post("a", "2026-11-13", { caption: "Come celebrate 🎉 with us" }), post("b", "2026-11-11", { format: "image" }), post("c", "2026-11-10", { platform: "facebook", format: "reel" })];
     const draw = async (m: SocialMetrics) => renderToBuffer(createElement(ChannelDocument, { input: { client: "Mama Betty's", metrics: m, sections }, images: {} }) as unknown as Parameters<typeof renderToBuffer>[0]);
-    const withScore = socialMetrics({ kind: "weekly", main, compare, days: days(), posts, names: { instagram: "@mama.bettys", facebook: "Mama Betty's" } });
-    withScore.score = reportScoreOf(socialAccountScore({ days: days(), posts, today: "2026-11-15" })!);
+    const withScore: SocialMetrics = socialMetrics({ kind: "weekly", main, compare, days: days(), posts, names: { instagram: "@mama.bettys", facebook: "Mama Betty's" } });
+    (withScore as unknown as Record<string, unknown>).score = { score: 71, band: "watch", lifting: [], weighing: [], platforms: [] };
     expect((await draw(withScore)).subarray(0, 4).toString()).toBe("%PDF");
     const one = socialMetrics({ kind: "monthly", main: { start: "2026-10-01", end: "2026-10-31", label: "October 2026" }, compare: { start: "2026-09-01", end: "2026-09-30", label: "September 2026" }, days: days(), posts: [post("a", "2026-10-13")], names: {} });
     expect((await draw(one)).length).toBeGreaterThan(1000);

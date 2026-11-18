@@ -1,4 +1,3 @@
-import { EMAIL_CHECKS } from "@/lib/email-score";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
 import { int, pct } from "./core";
 import { wholeMoney } from "./email-message";
@@ -12,8 +11,6 @@ import { grade, RATE_BARS, rprOf, type Grade, type MessageRow } from "./email-de
 /** How many campaigns get a card with the email's picture; the rest stay in the table under them */
 export const CARD_LIMIT = 6;
 
-/** Kaizen's revenue per recipient bar (src/lib/email-score.ts) */
-export const RPR_BAR = EMAIL_CHECKS.find((c) => c.key === "rpr")?.bar ?? 0.15;
 
 /** The campaigns that get a card: every one when there are a few, else the best by revenue, shown in send order */
 export function cardCampaigns<T extends Pick<MessageRow, "id" | "revenue" | "date">>(rows: T[], limit = CARD_LIMIT): T[] {
@@ -100,7 +97,7 @@ export function cardStats(r: Pick<MessageRow, "channel" | "recipients" | "openRa
   out.push(
     { key: "orders", label: "Orders", value: int(r.orders), sub: r.orderRate != null ? `${pct(r.orderRate, 2)} ordered` : null },
     { key: "revenue", label: "Revenue", value: wholeMoney(r.revenue, currency), strong: true },
-    { key: "rpr", label: "Revenue per recipient", value: rpr == null ? "–" : rprMoney(rpr, currency), grade: grade(rpr, RPR_BAR), gauge: gaugeOf(rpr, RPR_BAR), sub: `Bar ${rprMoney(RPR_BAR, currency)}` },
+    { key: "rpr", label: "Revenue per recipient", value: rpr == null ? "–" : rprMoney(rpr, currency), sub: "Over every email and text sent" },
   );
   return out;
 }

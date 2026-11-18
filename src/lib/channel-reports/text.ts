@@ -1,4 +1,3 @@
-import { checkText, pointsLost } from "@/lib/email-score-calc";
 import { emailSupport, int, money, pct, priorWordOf, signed, socialName, socialSupport, targetSub, type EmailMetrics, type SocialMetrics } from "./core";
 import { grade, RATE_BARS, type MessageRow, type Pair } from "./email-detail";
 import { periodWords, socialHappenedBullets, whatHappenedBullets } from "./email-message";
@@ -6,7 +5,7 @@ import { socialScoreText } from "./social-report";
 import { locationText } from "@/lib/klaviyo/locations";
 import { channelMtdText } from "./mtd";
 import { sourcesText } from "./email-sources";
-import { campaignPicks, RPR_BAR } from "./email-cards";
+import { campaignPicks } from "./email-cards";
 
 // A channel report's numbers as the text the writer and the QA read: every figure the report may quote, with its dates and
 // what it is compared with, in one place so what the AI says and what the PDF draws can never differ.
@@ -29,17 +28,11 @@ export function emailText(m: EmailMetrics): string {
     line("Unsubscribe rate", pct(now.unsubscribeRate, 2), pct(before.unsubscribeRate, 2)),
     line("Spam complaint rate", pct(now.spamRate, 3), pct(before.spamRate, 3)),
     line("Bounce rate", pct(now.bounceRate, 2), pct(before.bounceRate, 2)),
-    line("Revenue per recipient (revenue over every email and text sent, campaigns and automated; Kaizen's bar is " + money(RPR_BAR, c) + "; in the client's message say \"revenue for each email sent\", never RPR)", money(now.revenuePerRecipient, c), money(before.revenuePerRecipient, c)),
+    line("Revenue per recipient (revenue over every email and text sent, campaigns and automated; in the client's message say \"revenue for each email sent\", never RPR)", money(now.revenuePerRecipient, c), money(before.revenuePerRecipient, c)),
     ...(now.share != null ? [`- Email's share of the store's revenue: ${pct(now.share, 0)}`] : []),
     `- List: ${m.list.net != null ? `${signed(m.list.net)} net new subscribers (${int(m.list.subscribed)} joined, ${int(m.list.unsubscribed)} left)` : "no list movement read"}${m.list.profiles != null ? `; ${int(m.list.profiles)} profiles in the main list` : ""}`,
   ];
   out.push(...channelMtdText(m));
-  if (m.score) {
-    const sc = m.score;
-    out.push(`Email health score (Kaizen's own 0 to 100 score of the account, read over the 30 days to ${sc.window.to}, not the report's own dates; green from 80, yellow from 60, red under 60): ${sc.score} of 100, ${sc.band === "good" ? "green" : sc.band === "watch" ? "yellow" : "red"}. Seven checks against healthy bars:`);
-    for (const k of sc.checks) out.push(`- ${k.label}: ${k.value == null ? "nothing to measure" : checkText(k.unit, k.value, c, k.bar)} against a bar of ${checkText(k.unit, k.bar, c)} (${k.value == null ? "not counted" : k.met ? "met" : `short, costing about ${pointsLost(k)} points`})`);
-    out.push(sc.weighingDown.length ? `Weighing the score down, biggest first: ${sc.weighingDown.slice(0, 3).map((k) => k.label).join("; ")}.` : "Every check is at or over its bar.");
-  }
   if (m.target) out.push(`- Target (${m.target.label}): ${targetSub(m.target, c) ?? "set, no progress yet"}${m.target.actual != null ? `; actual ${m.target.unit === "money" ? money(m.target.actual, c) : m.target.unit === "percent" ? pct(m.target.actual) : int(m.target.actual)}` : ""}`);
   if (m.sources) out.push(sourcesText(m.sources, (n) => money(n, c), priorWordOf(m.kind)));
   else if (m.byMetric?.length) {
@@ -98,7 +91,7 @@ function detailText(m: EmailMetrics): string {
   }
   if (d.deliverability) {
     const v = d.deliverability;
-    out.push(`Deliverability (campaign email): bounce ${was(v.bounce, (x) => pct(x, 2))}, spam complaints ${was(v.spam, (x) => pct(x, 3))}, unsubscribes ${was(v.unsub, (x) => pct(x, 2))}; Kaizen's deliverability score ${v.score.now ?? "n/a"} of 100 (before: ${v.score.before ?? "n/a"}).`);
+    out.push(`Deliverability (campaign email): bounce ${was(v.bounce, (x) => pct(x, 2))}, spam complaints ${was(v.spam, (x) => pct(x, 3))}, unsubscribes ${was(v.unsub, (x) => pct(x, 2))}.`);
   }
   if (m.flags.length) out.push(`Deliverability flags:\n${m.flags.map((f) => `- [${f.tone === "bad" ? "red" : "amber"}] ${f.text}`).join("\n")}`);
   if (d.subscribers) {

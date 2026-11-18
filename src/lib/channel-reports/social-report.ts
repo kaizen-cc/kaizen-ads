@@ -1,119 +1,21 @@
 import type { Move } from "@/lib/reports/weekly-core";
 import type { Sections } from "@/lib/reports/write";
-import { DEFAULT_ENGAGEMENT_BAR, PLATFORM_LABEL, socialCheckText, type SocialAccountScore, type SocialBand, type SocialCheck, type SocialCheckKey, type SocialPlatform } from "@/lib/social-score";
+import { DEFAULT_ENGAGEMENT_BAR } from "@/lib/social-score";
 import { int, moveOf, pct, signed, type SocialMetrics, type SocialPostLite } from "./core";
 import { followerView, type FollowerView } from "./social-followers";
 
 // The organic social report's views, pure so the PDF (social-doc.tsx), the tests and the writer read the same thing:
-// the social score in the client's words (what lifts it, what weighs it down), the follower comparison over the same
+// the engagement target, the follower comparison over the same
 // platforms, the month to date as one row, captions that are safe for the PDF's fonts and cut between words, and the
 // insight cards with what we'll do next.
 
-// ─── The social score, for the client ──────────────────────────────────────
+// ─── The engagement target ─────────────────────────────────────────────────
+// The social score (Kaizen's own account health, social-score.ts) is internal: the KPI board, Overview and audits read it.
+// A client's report never draws or quotes it; the only thing it keeps from that read is the engagement target.
 
-export type ScoreReason = { key: SocialCheckKey; text: string; platform?: SocialPlatform | null };
-export type PlatformScoreLite = { platform: SocialPlatform; score: number; band: SocialBand; lifting: ScoreReason[]; weighing: ScoreReason[] };
-/** The account's social score as the report keeps it (kept on the report's metrics, so a sent report never changes) */
-export type SocialReportScore = {
-  score: number;
-  band: SocialBand;
-  /** The client's engagement target, or Kaizen's 5% */
-  engagementBar: number;
-  /** The 30 days the score reads (ending on the report's last day) */
-  window: { from: string; to: string };
-  platforms: PlatformScoreLite[];
-  lifting: ScoreReason[];
-  weighing: ScoreReason[];
-};
-
-const tidy = (t: string) => t.replace(/\.0%$/, "%");
-const v = (c: SocialCheck) => tidy(socialCheckText(c.unit, c.value));
-const bar = (c: SocialCheck) => tidy(socialCheckText(c.unit, c.bar));
-/** A reach change as words: "up 12%", "down 3%", "flat" */
-const reachMove = (x: number | null) => {
-  if (x == null) return "flat";
-  const d = Math.round((x - 1) * 100);
-  return d === 0 ? "flat" : `${d > 0 ? "up" : "down"} ${Math.abs(d)}%`;
-};
-
-/** A check that's met, in the client's words */
-export function liftText(c: SocialCheck): string {
-  switch (c.key) {
-    case "engagement":
-      return `Engagement at ${v(c)}, at or above the ${bar(c)} target`;
-    case "growth":
-      return `Followers up ${v(c)} over 30 days`;
-    case "reach":
-      return `Reach ${reachMove(c.value)} on the 30 days before`;
-    case "cadence":
-      return "Posting on pace with the plan";
-    case "quality":
-      return "Plenty of saves and shares for the reach";
-    case "videoShare":
-      return `Reels and video are ${v(c)} of posts`;
-    case "videoLift":
-      return "Video engaging better than still posts";
-    case "profile":
-      return "Lots of people visiting the profile";
-  }
-}
-
-/** A check under its bar, in the client's words */
-export function dragText(c: SocialCheck): string {
-  switch (c.key) {
-    case "engagement":
-      return `Engagement at ${v(c)}, under the ${bar(c)} target`;
-    case "growth":
-      return c.value != null && c.value < 0 ? `Followers down ${socialCheckText("pct", Math.abs(c.value))} over 30 days` : `Followers up ${v(c)} in 30 days, short of ${bar(c)}`;
-    case "reach":
-      return `Reach ${reachMove(c.value)} on the 30 days before`;
-    case "cadence":
-      return "Fewer posts so far this month than the plan";
-    case "quality":
-      return "Few saves and shares for the reach";
-    case "videoShare":
-      return `Reels and video only ${v(c)} of posts`;
-    case "videoLift":
-      return "Video engaging less than still posts";
-    case "profile":
-      return "Few profile visits for the reach";
-  }
-}
-
-/** The account's score as the report keeps it: the overall, each platform's, and the reasons either way (biggest first) */
-export function reportScoreOf(a: SocialAccountScore): SocialReportScore {
-  const measured = (cs: SocialCheck[]) => cs.filter((c) => c.value != null);
-  const lifts = (cs: SocialCheck[]) => measured(cs).filter((c) => c.met).sort((x, y) => y.weight - x.weight);
-  const drags = (cs: SocialCheck[]) => measured(cs).filter((c) => !c.met).sort((x, y) => y.weight - y.points - (x.weight - x.points));
-  const engagement = a.checks.find((c) => c.key === "engagement");
-  // The account's own reasons first; when the blend has none (one platform's strength averaged away), each platform's, named
-  const overall = (own: SocialCheck[], per: (p: SocialAccountScore["platforms"][number]) => SocialCheck[], say: (c: SocialCheck) => string): ScoreReason[] => {
-    const out: ScoreReason[] = own.slice(0, 3).map((c) => ({ key: c.key, text: say(c) }));
-    if (out.length) return out;
-    return a.platforms
-      .flatMap((p) => per(p).slice(0, 2).map((c) => ({ key: c.key, text: `${PLATFORM_LABEL[p.platform]}: ${say(c).charAt(0).toLowerCase()}${say(c).slice(1)}`, platform: p.platform })))
-      .slice(0, 3);
-  };
-  return {
-    score: a.score,
-    band: a.band,
-    engagementBar: engagement?.bar ?? DEFAULT_ENGAGEMENT_BAR,
-    window: a.window,
-    platforms: a.platforms
-      .filter((p) => p.unmeasured.length < p.checks.length)
-      .map((p) => ({ platform: p.platform, score: p.score, band: p.band, lifting: lifts(p.checks).slice(0, 2).map((c) => ({ key: c.key, text: liftText(c) })), weighing: drags(p.checks).slice(0, 2).map((c) => ({ key: c.key, text: dragText(c) })) })),
-    lifting: overall(lifts(a.checks), (p) => lifts(p.checks), liftText),
-    weighing: overall(drags(a.checks), (p) => drags(p.checks), dragText),
-  };
-}
-
-export const SCORE_HEX: Record<SocialBand, string> = { good: "#087a5e", watch: "#b7791f", bad: "#c23e4c" };
-export const SCORE_BG: Record<SocialBand, string> = { good: "#e1f5ec", watch: "#fdf1dc", bad: "#ffeaec" };
-export const SCORE_WORD: Record<SocialBand, string> = { good: "Healthy", watch: "Watch", bad: "Needs work" };
-
-/** The engagement target the report holds every rate against: the client's own when the score or the target has one, else Kaizen's 5% */
+/** The engagement target the report holds every rate against: the client's own when it has one, else Kaizen's 5% */
 export function engagementBarOf(m: SocialMetrics): number {
-  if (m.score?.engagementBar) return m.score.engagementBar;
+  if (m.engagementTarget) return m.engagementTarget;
   const t = m.target;
   if (t && /engagement|rate/i.test(t.metric) && t.target > 0 && t.target < 1) return t.target;
   return DEFAULT_ENGAGEMENT_BAR;
@@ -279,19 +181,12 @@ export const postKey = (p: { platform: string; id: string }) => `${p.platform}:$
 /** The frame each post picture is drawn in: near square (16:15) when three posts share a row, else Instagram's 4:5 portrait */
 export const postFrame = (count: number) => (count >= 3 ? { w: 480, h: 450 } : { w: 480, h: 600 });
 
-/** The engagement target, the follower change over the same platforms and the social score, as lines for the writer */
+/** The engagement target and the follower change over the same platforms, as lines for the writer (never the internal social score) */
 export function socialScoreText(m: SocialMetrics): string[] {
   const f = followersOf(m);
   const target = engagementBarOf(m);
-  const out = [
-    `Engagement target: ${pct(target, 0)} (${m.score?.engagementBar && m.score.engagementBar !== DEFAULT_ENGAGEMENT_BAR ? "the client's own" : "Kaizen's standard"}); quote every engagement rate against it.`,
+  return [
+    `Engagement target: ${pct(target, 0)} (${m.engagementTarget && m.engagementTarget !== DEFAULT_ENGAGEMENT_BAR ? "the client's own" : "Kaizen's standard"}); quote every engagement rate against it.`,
     `Followers across the platforms: ${int(f.total)}, net ${followerChangeText(f)} in the period${f.prior != null ? ` (from ${int(f.prior)})` : ""}. Say follower growth as the net change, never as a percent jump in the total.`,
   ];
-  const sc = m.score;
-  if (sc) {
-    out.push(`Social score (Kaizen's account health, last 30 days to ${sc.window.to}): ${sc.score} of 100 (${SCORE_WORD[sc.band]}); ${sc.platforms.map((p) => `${PLATFORM_LABEL[p.platform]} ${p.score}`).join(", ")}.`);
-    if (sc.lifting.length) out.push(`Lifting it: ${sc.lifting.map((r) => r.text).join("; ")}.`);
-    if (sc.weighing.length) out.push(`Weighing it down: ${sc.weighing.map((r) => r.text).join("; ")}.`);
-  }
-  return out;
 }

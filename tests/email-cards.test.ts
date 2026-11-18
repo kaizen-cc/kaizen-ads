@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardCampaigns, cardStats, heat, klaviyoCampaignUrl, locationNamer, locationViews, RPR_BAR, shareText, tint } from "@/lib/channel-reports/email-cards";
+import { cardCampaigns, cardStats, heat, klaviyoCampaignUrl, locationNamer, locationViews, shareText, tint } from "@/lib/channel-reports/email-cards";
 import { locationBreakdown } from "@/lib/klaviyo/locations";
 
 // The email report's campaign cards and location visuals: the brand stripped from location names, the cards picked,
@@ -25,14 +25,15 @@ describe("campaign cards", () => {
     const many = ["a", "b", "c", "d", "e", "f", "g", "h"].map((id, i) => row(id, [5, 80, 1, 60, 2, 70, 90, 3][i], `2026-11-0${i + 1}`));
     expect(cardCampaigns(many, 3).map((r) => r.id)).toEqual(["b", "f", "g"]);
   });
-  it("grades open, click and revenue per recipient against the bars", () => {
+  it("grades open and click against the bars and leaves revenue per recipient ungraded", () => {
     const stats = cardStats({ channel: "email", recipients: 1000, openRate: 0.42, clickRate: 0.008, orders: 10, orderRate: 0.01, revenue: 100 }, "USD");
     const by = Object.fromEntries(stats.map((x) => [x.key, x]));
     expect(by.open.grade).toBe("good");
     expect(by.click.grade).toBe("fair");
     expect(by.rpr.value).toBe("$0.10");
-    expect(by.rpr.grade).toBe("poor");
-    expect(RPR_BAR).toBe(0.15);
+    expect(by.rpr.grade ?? null).toBeNull();
+    expect(by.rpr.gauge ?? null).toBeNull();
+    expect(by.rpr.sub ?? "").not.toMatch(/bar|0\.15/i);
     expect(by.open.gauge?.mark).toBeCloseTo(0.625);
   });
   it("leaves revenue out when the provider reports none", () => {

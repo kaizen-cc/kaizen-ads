@@ -2,12 +2,11 @@ import "server-only";
 import { providerHasFlows, providerName } from "@/lib/email-providers/core";
 import { emailConnection } from "@/lib/email-providers/which";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { loadEmailScore } from "@/lib/email-score-load";
 import { keyFlowCoverage, shiftDay, type CampaignLite, type DailyRow as EmailDay, type FlowLite } from "@/lib/klaviyo/insights";
 import type { DailyRow as SocialDay } from "@/lib/social/insights";
 import type { Platform, PostFormat, SocialPost } from "@/lib/social/core";
 import { upcomingItems, type FlowDay, type Upcoming } from "./email-detail";
-import { scoreSnapshot, campaignsIn, channelPeriods, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type MetricSide, type SocialMetrics, type TargetRow, type Window } from "./core";
+import { campaignsIn, channelPeriods, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type MetricSide, type SocialMetrics, type TargetRow, type Window } from "./core";
 import { conversionMetricsOf, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
 import { monthSoFar } from "@/lib/reports/period";
 import { locationBreakdown, type LocationBreakdown, type LocationRow } from "@/lib/klaviyo/locations";
@@ -214,9 +213,6 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
   }
   // Order systems email earns through that nobody ranked yet (the sync's weekly check), for the QA
   if (m.revenueMeasured !== false) m.unrankedSources = await unrankedSources(admin, clientId, ranked.map((x) => x.id)).catch(() => []);
-  // The account score, as of now (its own 30 days), so the report can say what is lifting it and what is weighing it down
-  const sc = await loadEmailScore(admin, clientId).catch(() => null);
-  if (sc) m.score = scoreSnapshot(sc);
   return m;
 }
 
@@ -323,7 +319,7 @@ export async function loadSocialMetrics(admin: SupabaseClient, clientId: string,
   const row = await readTarget(admin, clientId, "social");
   m.target = targetLine("social", row, { kind, main, rate: m.now.rate, followers: m.now.followers, reach: m.now.reach });
   if (m.mtd) m.mtd.target = targetLine("social", row, { kind: "monthly", main: m.mtd.window, rate: m.mtd.now.rate, followers: m.mtd.now.followers, reach: m.mtd.now.reach });
-  m.score = await (await import("./social-score-report")).socialReportScore(admin, clientId, main.end);
+  m.engagementTarget = await (await import("./social-score-report")).socialEngagementTarget(admin, clientId, main.end);
   return m;
 }
 

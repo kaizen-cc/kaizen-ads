@@ -12,7 +12,7 @@ import { wholeMoney } from "./email-message";
 import { channelBars, grade, RATE_BARS, rprOf, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
 import type { RevenueSource } from "./email-sources";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
-import { campaignPicks, cardCampaigns, cardStats, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, RPR_BAR, shareText, tint, type CardStat } from "./email-cards";
+import { campaignPicks, cardCampaigns, cardStats, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, shareText, tint, type CardStat } from "./email-cards";
 import { SocialBody } from "./social-doc";
 
 // A channel client report as a PDF, in the same design as the ads report (weekly-doc.tsx): the client's logo beside
@@ -211,10 +211,6 @@ function Glance({ m, layout, hot }: { m: EmailMetrics | SocialMetrics; layout?: 
   );
 }
 
-const BAND_HEX = { good: "#087a5e", watch: "#b7791f", bad: "#c23e4c" } as const;
-const BAND_WORD = { good: "Healthy", watch: "Watch", bad: "At risk" } as const;
-const scoreHex = (n: number) => (n >= 80 ? BAND_HEX.good : n >= 60 ? BAND_HEX.watch : BAND_HEX.bad);
-
 /** The split of revenue between campaigns and automated emails, as a bar */
 function SplitBox({ m, w, h }: { m: EmailMetrics; w: number; h: number }) {
   const total = m.now.campaignRevenue + m.now.flowRevenue;
@@ -242,29 +238,7 @@ function SplitBox({ m, w, h }: { m: EmailMetrics; w: number; h: number }) {
   );
 }
 
-/** Kaizen's account score with its band */
-function ScoreBox({ m, w, h }: { m: EmailMetrics; w: number; h: number }) {
-  const sc = m.score && m.score.unmeasured.length < m.score.checks.length ? m.score : null;
-  return (
-    <View style={{ width: w, height: h, paddingHorizontal: 10, paddingVertical: 9 }}>
-      <Text style={label}>Email score</Text>
-      {sc ? (
-        <>
-          <View style={{ flexDirection: "row", alignItems: "flex-end", height: 26, marginTop: 4 }}>
-            <Text style={{ fontSize: 22, fontFamily: "Helvetica-Bold", color: BAND_HEX[sc.band], lineHeight: 1 }}>{sc.score}</Text>
-            <Text style={{ fontSize: 7, color: FAINT, marginLeft: 3, marginBottom: 2 }}>of 100</Text>
-          </View>
-          <Text style={{ fontSize: 7, fontFamily: "Helvetica-Bold", color: BAND_HEX[sc.band], marginTop: 3 }}>{BAND_WORD[sc.band]}</Text>
-          <Text style={{ fontSize: 6.2, color: MUTED, marginTop: 2, maxLines: 2 }}>Kaizen&apos;s account score, last 30 days</Text>
-        </>
-      ) : (
-        <Text style={{ fontSize: 7, color: FAINT, marginTop: 10 }}>Not scored yet</Text>
-      )}
-    </View>
-  );
-}
-
-/** The tiles picked for the report, in one card: each a number with its move (or the split, or the score), each one click in the preview */
+/** The tiles picked for the report, in one card: each a number with its move (or the split), each one click in the preview */
 function Tiles({ m, tiles, hot, height }: { m: EmailMetrics | SocialMetrics; tiles: TileView[]; hot: HotOf; height: number }) {
   const w = (INNER - 2 - (tiles.length - 1)) / Math.max(1, tiles.length);
   const prior = priorWord(m);
@@ -276,8 +250,6 @@ function Tiles({ m, tiles, hot, height }: { m: EmailMetrics | SocialMetrics; til
           <View style={{ width: w, height }}>
             {t.kind === "split" && m.platform === "klaviyo" ? (
               <SplitBox m={m} w={w} h={height} />
-            ) : t.kind === "score" && m.platform === "klaviyo" ? (
-              <ScoreBox m={m} w={w} h={height} />
             ) : (
               <Stat title={t.label} value={t.value} mv={t.move} before={t.before} prior={prior} sub={t.sub} width={w} height={height} badge={t.badge ?? null} max={tiles.length > 4 ? 16 : 20} />
             )}
@@ -349,7 +321,7 @@ function ChannelMtd({ m, look }: { m: EmailMetrics | SocialMetrics; look: Look }
   );
 }
 
-/** Email: the tiles picked (revenue from email and SMS, orders, the split and the email score unless changed) */
+/** Email: the tiles picked (revenue from email and SMS, orders, and the split unless changed) */
 function EmailGlance({ m, layout, hot }: { m: EmailMetrics; layout?: ChannelLayout | null; hot: HotOf }) {
   return (
     <View style={s.section} wrap={false}>
@@ -631,7 +603,7 @@ function PerfCells({ p, bars, prior, kind, currency, measured = true }: { p: Per
       {withRpr && p.rpr ? (
         <>
           <Rule />
-          <Stat title="Revenue per recipient" value={centsMoney(p.rpr.now, currency)} mv={moveOf(p.rpr.now, p.rpr.before)} before={centsMoney(p.rpr.before, currency)} prior={prior} width={w} height={62} max={15} badge={kind === "campaign" ? grade(p.rpr.now, RPR_BAR) : null} />
+          <Stat title="Revenue per recipient" value={centsMoney(p.rpr.now, currency)} mv={moveOf(p.rpr.now, p.rpr.before)} before={centsMoney(p.rpr.before, currency)} prior={prior} width={w} height={62} max={15} />
         </>
       ) : null}
     </StatRow>
@@ -869,7 +841,7 @@ function CampaignPerformance({ m, keys, hot, images, look }: { m: EmailMetrics; 
     );
   const measured = m.revenueMeasured !== false;
   const total = d.campaigns.reduce((a, r) => a + r.revenue, 0);
-  const bars = `open ${pct(RATE_BARS.campaign.open, 0)}, click ${pct(RATE_BARS.campaign.click, 0)}${measured ? `, ${centsMoney(RPR_BAR, m.currency)} per recipient` : ""}`;
+  const bars = `open ${pct(RATE_BARS.campaign.open, 0)}, click ${pct(RATE_BARS.campaign.click, 0)}`;
   const picks = campaignPicks(d.campaigns, { currency: m.currency, revenueMeasured: measured });
   if (picks) {
     // Several campaigns: the best and the lowest as cards with why, then every campaign in one compact table
@@ -951,22 +923,12 @@ const health = (rate: number | null, b: { warn: number; bad: number }) => (rate 
 
 function Deliverability({ m, width }: { m: EmailMetrics; width: number }) {
   const dl = m.detail!.deliverability!;
-  const score = dl.score.now;
   return (
     <View style={[s.panel, { width, paddingVertical: 11 }]}>
       <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 8, height: 30 }}>
         <View style={{ flexShrink: 1 }}>
-          <Text style={label}>Deliverability score</Text>
+          <Text style={label}>Deliverability</Text>
           <Text style={{ fontSize: 6.2, color: MUTED, marginTop: 3, maxLines: 2 }}>Campaign email to {int(dl.recipients.now)} recipients</Text>
-        </View>
-        <View style={{ alignItems: "flex-end" }}>
-          <View style={{ flexDirection: "row", alignItems: "flex-end" }}>
-            <Text style={{ fontSize: 20, fontFamily: "Helvetica-Bold", color: score == null ? FAINT : scoreHex(score), lineHeight: 1 }}>{score ?? "–"}</Text>
-            <Text style={{ fontSize: 6.4, color: FAINT, marginLeft: 3, marginBottom: 2 }}>of 100</Text>
-          </View>
-          <View style={{ marginTop: 3 }}>
-            <Chip mv={moveOf(score, dl.score.before)} />
-          </View>
         </View>
       </View>
       <KeyLine name="Bounce rate" value={pct(dl.bounce.now, 2)} note={`healthy < ${pct(BENCHMARKS.bounce.warn, 0)}`} mv={moveOf(dl.bounce.now, dl.bounce.before, "down")} color={health(dl.bounce.now, BENCHMARKS.bounce)} />
@@ -1113,7 +1075,7 @@ function LegacyListHealth({ m }: { m: EmailMetrics }) {
   );
 }
 
-// Social: drawn by social-doc.tsx (the score, the glance, the month to date, the takeaways, the chart, the platforms and the posts)
+// Social: drawn by social-doc.tsx (the glance, the month to date, the takeaways, the chart, the platforms and the posts)
 
 // ─── Both ──────────────────────────────────────────────────────────────────
 

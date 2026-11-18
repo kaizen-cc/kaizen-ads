@@ -1,10 +1,6 @@
 import type { Move } from "@/lib/reports/weekly-core";
 import { int, money, moveOf, pct, signed, targetSub, type ChannelPlatform, type EmailMetrics, type SocialMetrics } from "./core";
 import { grade, RATE_BARS, type Grade } from "./email-detail";
-import { EMAIL_CHECKS } from "@/lib/email-score";
-
-/** Kaizen's revenue per recipient bar, the email score's (src/lib/email-score.ts) */
-const RPR_TILE_BAR = EMAIL_CHECKS.find((c) => c.key === "rpr")?.bar ?? 0.15;
 
 // What an email or social report shows, picked the way an ads report's tiles and columns are: the tiles at the top of
 // the PDF (swap one for another, add, remove) and the columns of its tables. Kept on the report (reports.layout) and
@@ -14,12 +10,12 @@ type Metrics = EmailMetrics | SocialMetrics;
 
 export type ChannelLayout = { tiles?: string[]; columns?: string[]; notes?: boolean };
 
-/** One tile as the PDF draws it: a number with its move, or the email's two special boxes (the split, the score) */
-export type TileView = { key: string; kind: "stat" | "split" | "score"; label: string; value: string; sub: string | null; before?: string; move: Move; badge?: Grade | null };
+/** One tile as the PDF draws it: a number with its move, or the email's split box */
+export type TileView = { key: string; kind: "stat" | "split"; label: string; value: string; sub: string | null; before?: string; move: Move; badge?: Grade | null };
 
 export const MAX_TILES = 6;
 
-const EMAIL_TILES = ["revenue", "orders", "split", "score", "campaignRevenue", "flowRevenue", "aov", "recipients", "openRate", "clickRate", "orderRate", "subscribers", "sms", "rpr"] as const;
+const EMAIL_TILES = ["revenue", "orders", "split", "campaignRevenue", "flowRevenue", "aov", "recipients", "openRate", "clickRate", "orderRate", "subscribers", "sms", "rpr"] as const;
 const SOCIAL_TILES = ["followers", "reach", "views", "rate", "interactions", "posts", "profileViews", "engaged", "gained"] as const;
 
 const EMAIL_COLUMNS = ["date", "channel", "status", "recipients", "open", "click", "orders", "orderRate", "revenue", "rpr"] as const;
@@ -31,7 +27,7 @@ const COLUMN_LABEL: Record<string, string> = { date: "Sent", channel: "Type", st
 export function tileOptions(m: Metrics): string[] {
   if (m.platform === "social") return [...SOCIAL_TILES];
   if (!m.detail) return ["revenue", "campaignRevenue", "flowRevenue", "subscribers", "openRate", "clickRate", "sms", "rpr"];
-  return EMAIL_TILES.filter((k) => k !== "score" || Boolean(m.score));
+  return [...EMAIL_TILES];
 }
 
 /** The tiles a report starts with: what the team's own report leads with */
@@ -39,7 +35,7 @@ export function defaultTiles(m: Metrics): string[] {
   if (m.platform === "social") return ["followers", "reach", "views", "rate"];
   if (!m.detail) return ["revenue", "campaignRevenue", "flowRevenue", "subscribers"];
   // Revenue per recipient leads with revenue when revenue is tracked (the email team's headline numbers)
-  return m.revenueMeasured === false ? ["revenue", "orders", "split", "score"] : ["revenue", "orders", "rpr", "split", "score"];
+  return m.revenueMeasured === false ? ["revenue", "orders", "split"] : ["revenue", "orders", "rpr", "split"];
 }
 
 /** The tiles on the page: the ones picked (still offered for this report), else the defaults */
@@ -126,10 +122,6 @@ export function tileView(m: Metrics, key: string): TileView | null {
       const camp = total > 0 ? Math.round((now.campaignRevenue / total) * 100) : null;
       return { key, kind: "split", label: "Campaigns vs automated", value: camp == null ? "–" : `${camp}% / ${100 - camp}%`, sub: null, move: null };
     }
-    case "score": {
-      const sc = m.score && m.score.unmeasured.length < m.score.checks.length ? m.score : null;
-      return { key, kind: "score", label: "Email score", value: sc ? String(sc.score) : "–", sub: sc ? "Kaizen's account score, last 30 days" : "Not scored yet", move: null };
-    }
     case "campaignRevenue":
       return tile(key, "Campaign revenue", money(now.campaignRevenue, c), `${int(now.campaignsSent)} ${now.campaignsSent === 1 ? "campaign" : "campaigns"} sent`, money(before.campaignRevenue, c), moveOf(now.campaignRevenue, before.campaignRevenue));
     case "flowRevenue":
@@ -161,7 +153,7 @@ export function tileView(m: Metrics, key: string): TileView | null {
     case "sms":
       return tile(key, "SMS revenue", money(now.smsRevenue, c), "Within the revenue from email & SMS", money(before.smsRevenue, c), moveOf(now.smsRevenue, before.smsRevenue));
     case "rpr":
-      return tile(key, "Revenue per recipient", now.revenuePerRecipient != null ? cents(now.revenuePerRecipient, c) : "–", `Kaizen's bar ${cents(RPR_TILE_BAR, c)} · every email and text sent`, before.revenuePerRecipient != null ? cents(before.revenuePerRecipient, c) : "–", moveOf(now.revenuePerRecipient, before.revenuePerRecipient), grade(now.revenuePerRecipient, RPR_TILE_BAR));
+      return tile(key, "Revenue per recipient", now.revenuePerRecipient != null ? cents(now.revenuePerRecipient, c) : "–", "Every email and text sent", before.revenuePerRecipient != null ? cents(before.revenuePerRecipient, c) : "–", moveOf(now.revenuePerRecipient, before.revenuePerRecipient));
     default:
       return null;
   }

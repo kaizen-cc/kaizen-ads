@@ -1,14 +1,17 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { DEFAULT_ENGAGEMENT_BAR } from "@/lib/social-score";
 import { loadSocialScores } from "@/lib/social-score-load";
-import { reportScoreOf, type SocialReportScore } from "./social-report";
 
-/** The client's social score over the 30 days to a report's last day, as the report keeps it (null when nothing is scored; never throws) */
-export async function socialReportScore(admin: SupabaseClient, clientId: string, end: string): Promise<SocialReportScore | null> {
+/**
+ * The engagement target a client's report holds its rates to (its own when it has one, else Kaizen's 5%). The score itself
+ * is read here only to find that target and is never kept on a report: it is internal. Never throws.
+ */
+export async function socialEngagementTarget(admin: SupabaseClient, clientId: string, end: string): Promise<number> {
   try {
     const got = (await loadSocialScores(admin, [clientId], end)).get(clientId);
-    return got ? reportScoreOf(got) : null;
+    return got?.checks.find((c) => c.key === "engagement")?.bar ?? DEFAULT_ENGAGEMENT_BAR;
   } catch {
-    return null;
+    return DEFAULT_ENGAGEMENT_BAR;
   }
 }
