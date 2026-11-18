@@ -329,6 +329,32 @@ export const isEmailFolder = (name: string) => looseName(name) === looseName(EMA
 export const folderStep = (folder: string) => ({ key: folder, match: (n: string) => looseName(n) === looseName(folder), name: () => folder });
 export const emailFolderStep = folderStep(EMAIL_FOLDER);
 
+/** "OceanBox - Headquarters", "Acme HQ": a client's headquarters folder by its name */
+export const isHeadquarters = (name: string) => /headquarters|(?:^|[^a-z])hq(?:[^a-z]|$)/i.test(String(name ?? ""));
+
+/**
+ * The client's headquarters folder, where the line's folder goes: the folder itself when it's named like one, else
+ * the one inside it (the clients folder holds "123 - Acme", which holds "Acme - Headquarters"), the one with the
+ * client's name first. Null when there's none: nothing is ever made outside it.
+ */
+export function pickHeadquarters(folder: { id: string; name: string }, inside: readonly { id: string; name: string }[], client?: string | null): string | null {
+  if (isHeadquarters(folder.name)) return folder.id;
+  const hqs = inside.filter((f) => isHeadquarters(f.name));
+  const named = client ? hqs.find((f) => looseName(f.name).includes(looseName(client))) : undefined;
+  return (named ?? hqs[0])?.id ?? null;
+}
+
+/**
+ * A new Asana task's body: always in the project (Asana refuses a task without one), placed in its column after it's
+ * made (addTask), never by memberships alone.
+ */
+export const asanaTaskBody = (p: { name: string; notes: string; project: string; custom_fields?: Record<string, unknown> }) => ({
+  name: p.name,
+  notes: p.notes.slice(0, 60000),
+  projects: [p.project],
+  ...(p.custom_fields && Object.keys(p.custom_fields).length ? { custom_fields: p.custom_fields } : {}),
+});
+
 /** The Google Doc's name: "Candy Cloud - Email Campaign - Scratch to Win - Nov 23" */
 export function copyDocName(p: { client: string; kind: CopyKind; shortName: string; sendDate: string | null }) {
   const when = p.sendDate && DAY.test(p.sendDate) ? ` - ${at(p.sendDate).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}` : "";

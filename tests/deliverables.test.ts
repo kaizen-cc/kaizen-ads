@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { applyPatch, approved, canBringWriter, canRequest, followerOf, newRun, nextStep, readAsk, tasksFor, type RunState } from "@/lib/deliverables/engine";
 import { EMAIL_LINE } from "@/lib/deliverables/lines/email";
 import { lineForAsk } from "@/lib/deliverables/lines";
-import { asanaTaskName, changedLines, copyDocHtml, emailFolderStep, emailWritingKind, folderStep, looseName, mapAsanaFields, normalizeCopy, pickOption, pickSection, urgencyFor, type AsanaFieldSetting } from "@/lib/copy-docs/core";
+import { asanaTaskBody, asanaTaskName, changedLines, isHeadquarters, pickHeadquarters, copyDocHtml, emailFolderStep, emailWritingKind, folderStep, looseName, mapAsanaFields, normalizeCopy, pickOption, pickSection, urgencyFor, type AsanaFieldSetting } from "@/lib/copy-docs/core";
 import { findOrCreateFolder } from "@/lib/creative-drive-paths";
 import { directSpecialist } from "@/lib/assistant/team";
 import { sheetDetailsOf } from "@/lib/account-sheet-channels-core";
@@ -214,6 +214,27 @@ describe("the Google Doc's folder", () => {
     expect(f.made).toEqual(["Email Marketing"]);
     expect(folderStep("Social Media").match("02 - social media")).toBe(true);
     expect(looseName("40 - Email Marketing")).toBe("emailmarketing");
+  });
+
+  it("goes in the client's Headquarters folder, never their top folder", () => {
+    // clients / "412 - OceanBox" / "OceanBox - Headquarters" / Email Marketing
+    const inside = [{ id: "ads", name: "Ad Creatives" }, { id: "hq", name: "OceanBox - Headquarters" }];
+    expect(pickHeadquarters({ id: "top", name: "412 - OceanBox" }, inside, "OceanBox")).toBe("hq");
+    expect(pickHeadquarters({ id: "hq", name: "OceanBox - Headquarters" }, [{ id: "e", name: "Email Marketing" }], "OceanBox")).toBe("hq");
+    expect(pickHeadquarters({ id: "top", name: "412 - OceanBox" }, [{ id: "old", name: "Old HQ" }, { id: "hq", name: "OceanBox Headquarters" }], "OceanBox")).toBe("hq");
+    expect(pickHeadquarters({ id: "top", name: "412 - OceanBox" }, [{ id: "ads", name: "Ad Creatives" }], "OceanBox")).toBeNull();
+    expect(isHeadquarters("Acme HQ")).toBe(true);
+    expect(isHeadquarters("Archive")).toBe(false);
+  });
+});
+
+describe("the Asana task", () => {
+  it("always names its project (Asana refuses a task without one)", () => {
+    const b = asanaTaskBody({ name: "OceanBox - Email Campaign - Gift the Box", notes: "x", project: "120", custom_fields: { f1: "1" } });
+    expect(b.projects).toEqual(["120"]);
+    expect(b).not.toHaveProperty("memberships");
+    expect(b.custom_fields).toEqual({ f1: "1" });
+    expect(asanaTaskBody({ name: "n", notes: "x", project: "120", custom_fields: {} })).not.toHaveProperty("custom_fields");
   });
 });
 
