@@ -54,6 +54,8 @@ function nyNow() {
  * - sheet: 12pm and 5pm, the Account Overview sheet (buyer, budget and KPI target per account, and the team's notes)
  * - remind: 11am and 3pm on weekdays, a nudge for anyone who hasn't been through their daily recap
  * - notify: every 10 minutes, critical notifications still unread are emailed
+ * - direction: every 30 minutes on weekdays 8am to 6pm, new client messages (Slack, email, the portal chat, read calls)
+ *   checked for a change of direction against each client's open work (src/lib/direction-changes.ts)
  * - approvals: every 15 minutes on weekdays 8am to 6pm, creative with the client: the Slack post and email, reminders at
  *   24 and 48 business hours, customer success's queue, and auto-approval for clients who opted in
  * - docs: every 30 minutes, new and edited Google Docs and Slides across the Workspace, read for the client they're about
@@ -103,6 +105,7 @@ function due(step: string | null) {
   if (step === "ledger") return hour >= 5 && hour <= 22; // hourly (vercel.json): each client's playbook, oldest first
   if (step === "owed") return !["Sat", "Sun"].includes(weekday) && hour >= 8 && hour <= 19; // every 15 minutes (vercel.json): unanswered messages, nudged then escalated
   if (step === "approvals") return businessHours; // every 15 minutes (vercel.json), weekdays 8am to 6pm: creative with the client posted, reminded at 24 and 48 business hours, chased or auto-approved
+  if (step === "direction") return businessHours; // every 30 minutes (vercel.json), weekdays 8am to 6pm: a client changing direction, caught against their open work
   if (step === "launches") return true; // every 5 minutes (vercel.json): launch what reached Ready to launch, complete what was turned on
 
   if (step === "market") return hour === 8;
@@ -389,6 +392,7 @@ export async function GET(request: Request) {
       const calls = await (await import("@/lib/agent-call/server")).sweepOpenCalls(admin).catch((e) => ({ error: String(e) }));
       return Response.json({ ...(await (await import("@/lib/owed-replies")).runOwedReplies(admin)), calls });
     }
+    if (step === "direction") return Response.json(await (await import("@/lib/direction-changes")).runDirectionChanges(admin));
     if (step === "approvals") return Response.json(await (await import("@/lib/approval-notices")).runApprovalNotices(admin));
     if (step === "market") return Response.json(await syncMarket(admin));
     if (step === "clients")

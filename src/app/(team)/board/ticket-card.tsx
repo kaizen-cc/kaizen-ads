@@ -7,6 +7,7 @@ import { businessDuration, FORMAT_LABEL, health, type Health } from "@/lib/stage
 import type { Ticket } from "./types";
 import { prefetchMedia } from "./media-cache";
 import { DuePill } from "@/components/due-pill";
+import { DirectionChip } from "@/components/direction-parts";
 
 const STAMP: Record<Health, string> = {
   ok: "bg-ok-soft text-ok",
@@ -135,6 +136,7 @@ export function TicketCard({
           {ticket.format === "carousel" && ticket.cards ? <span>{ticket.cards} cards each</span> : null}
         </p>
       )}
+      <DirectionChip kind="creative" refId={ticket.id} />
       {ticket.parentNumber && <p className="-mt-1 text-xs text-ok">Client-approved part of #{ticket.parentNumber}</p>}
       {ticket.clientProgress && <p className="-mt-1 text-xs text-ok">{ticket.clientProgress}</p>}
       {ticket.migration && (

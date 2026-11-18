@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { PriorityBadge } from "@/components/priority-badge";
+import { DirectionBanner } from "@/components/direction-parts";
 import { useFabClear } from "@/components/fab-clear";
 import { closeParams, closeThen, pushParams, useParam } from "@/lib/url-state";
 import { filesFromDrop } from "@/lib/uploads/media";
@@ -522,6 +523,7 @@ export function TicketDrawer({
           </div>
 
           <h2 className="line-clamp-2 font-heading text-[22px] leading-tight max-md:text-[20px] max-md:[overflow-wrap:anywhere]">{ticket.title}</h2>
+          <DirectionBanner kind="creative" refId={ticket.id} />
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2.5 py-1 font-medium text-fg">

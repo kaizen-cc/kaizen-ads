@@ -4,6 +4,7 @@ import { AiProgress, AiProgressButton } from "@/components/ai-progress";
 
 import { useRouter } from "next/navigation";
 import { PromisesStrip } from "./promises-strip";
+import { DirectionHeadsUp } from "@/components/direction-parts";
 import { ClientPicker, StartPage, forgetStart, prefetchStart, rememberClient, seedStart, type PreviewItem } from "./start-flow";
 import { QuickBriefSheet, useQuickPreview } from "@/components/quick-brief-sheet";
 import { ReadyToSend, MAKER, TURNAROUND, plural, type ReadyHandle } from "./ready-to-send";
@@ -679,6 +680,9 @@ export function RequestForm({
             </div>
 
             {step === 0 && <ClientPicker clients={clients} allotments={allotments} onPick={pickClient} />}
+
+            {/* The client changed direction and tasks were flagged: adapt them rather than ask again (never a block) */}
+            {step >= 1 && draft.clientId && !demo && <DirectionHeadsUp key={draft.clientId} clientId={draft.clientId} />}
 
             {step === 1 && draft.clientId && client && (
               talking ? (

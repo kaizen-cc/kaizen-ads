@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DuePill } from "@/components/due-pill";
+import { DirectionBanner } from "@/components/direction-parts";
 import { EmailDesignCanvas, type Box, type CanvasPin } from "@/components/email-design-canvas";
 import { toast } from "@/components/toasts";
 import { createClient } from "@/lib/supabase/client";
@@ -694,6 +695,7 @@ export function EmailTicketSheet({ number, people, onClose, onChanged }: { numbe
             </header>
 
             <div className="grid gap-5 px-4 py-5 md:px-7">
+              <DirectionBanner kind="email" refId={t.id} />
               <div className="flex flex-wrap items-center gap-2">
                 <NextStep d={d} onDone={changed} />
               </div>

@@ -9,6 +9,8 @@ import { createClient } from "@/lib/supabase/server";
 import { BoardSwitch } from "../board-switch";
 import { BoardTabs } from "../creative-kpis";
 import { EmailBoardClient } from "./email-board-client";
+import { DirectionFlagsProvider } from "@/components/direction-parts";
+import { loadTaskFlags } from "@/lib/direction-changes";
 
 // The AI review of a design runs after an upload, and the copy after a ticket is made
 export const maxDuration = 300;
@@ -39,17 +41,20 @@ export default async function EmailBoard({ searchParams }: PageProps<"/board/ema
       await Promise.all([cachedEmailDesignKpis("cycle"), cachedEmailCopyKpis("cycle")]).catch(() => null);
     });
   const asked = typeof t === "string" && /^\d+$/.test(t) ? Number(t) : null;
-  const [tickets, { data: clientRows }, { data: people }, shadows] = await Promise.all([
+  const [tickets, { data: clientRows }, { data: people }, shadows, flags] = await Promise.all([
     loadEmailBoard(db, { number: asked }),
     db.from("clients").select("id, name, slug, services, services_extra, services_removed").is("archived_at", null).in("status", ["active", "onboarding"]).order("name"),
     db.from("profiles").select("id, full_name, role, is_exec").eq("is_active", true).order("full_name"),
     loadEmailShadows(db).catch(() => []),
+    // A client changed direction: the open tasks it touches are flagged on their cards
+    loadTaskFlags(db).catch(() => ({})),
   ]);
   const clients = (clientRows ?? []).filter((c) => (servicesOf(c) as string[]).includes("email-marketing") || tickets.some((x) => x.clientId === c.id)).map((c) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string }));
   const team = (people ?? []).filter((p) => p.is_exec || ["head_of_email", "email_strategist", "email_designer", "email_builder"].includes(p.role as string)).map((p) => ({ id: p.id as string, name: p.full_name as string, role: roleLabel(p.role as TeamRole) }));
   // The strategists, designers and builders open the board on their own work; the Head of Email and execs on everyone's
   const mine = !me.isExec && me.role !== "head_of_email";
   return (
+    <DirectionFlagsProvider flags={flags}>
     <EmailBoardClient
       tickets={tickets}
       clients={clients}
@@ -65,5 +70,6 @@ export default async function EmailBoard({ searchParams }: PageProps<"/board/ema
         ) : null
       }
     />
+    </DirectionFlagsProvider>
   );
 }

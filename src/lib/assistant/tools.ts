@@ -132,6 +132,23 @@ async function screenFor(ctx: AssistantCtx, input: Record<string, unknown>): Pro
     if (!data) return { note: `No ${what === "email_ticket" ? "email " : ""}ticket #${n} they can see.` };
     return { href: what === "email_ticket" ? `/board/email?t=${n}` : `/board?t=${n}`, label: `ticket #${n}` };
   }
+  if (what === "direction_change") {
+    // A change by its id, or the client's newest open one
+    const id = clip(input.id, 40);
+    let q = ctx.db.from("client_direction_changes").select("id, clients(name, slug)");
+    if (/^[0-9a-f-]{36}$/i.test(id)) q = q.eq("id", id);
+    else if (input.client) {
+      try {
+        q = q.eq("client_id", (await clientNamed(ctx.db, input.client)).id).eq("status", "open");
+      } catch (e) {
+        return { note: `${e instanceof Error ? e.message : "No such client."} Ask which client they meant.` };
+      }
+    } else return { note: "Which client, or which change (its id from direction_changes)?" };
+    const { data } = await q.order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (!data) return { note: "No open direction change there they can see." };
+    const c = data.clients as unknown as { name: string; slug: string };
+    return { href: `/clients/${c.slug}?direction=${data.id}`, label: `${c.name}'s change of direction` };
+  }
   if (what === "agent") {
     const role = clip(input.role, 60).replace(/[^a-z_]/g, "");
     if (!role) return { note: "Which agent?" };
@@ -234,11 +251,12 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     {
       name: "open_screen",
       description:
-        "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, agent (an AI agent's page in Settings, by role key). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",
+        "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, agent (an AI agent's page in Settings, by role key), direction_change (a client's change of direction with its flagged tasks: by id from direction_changes, or the client's newest). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",
       input_schema: {
         type: "object",
         properties: {
-          what: { type: "string", enum: ["client", "kpi_card", "email_sheet", "social_sheet", "ticket", "email_ticket", "report", "audit", "email_audit", "sprint", "email_sprint", "agent"] },
+          what: { type: "string", enum: ["client", "kpi_card", "email_sheet", "social_sheet", "ticket", "email_ticket", "report", "audit", "email_audit", "sprint", "email_sprint", "agent", "direction_change"] },
+          id: { type: "string", description: "A direction change's id (what: direction_change)" },
           client: CLIENT,
           tab: { type: "string", enum: ["overview", "ads", "email", "social", "creative", "team", "reports"], description: "The client page's tab (what: client)" },
           platform: { type: "string", enum: ["meta", "google", "tiktok"], description: "The ad platform (kpi_card, audit, sprint)" },

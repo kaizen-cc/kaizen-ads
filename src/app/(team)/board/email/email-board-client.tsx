@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Combobox } from "@/components/combobox";
 import { DuePill } from "@/components/due-pill";
+import { DirectionBanner, DirectionChip } from "@/components/direction-parts";
 import { PersonAvatar } from "@/components/person-avatar";
 import { PriorityBadge } from "@/components/priority-badge";
 import { toast } from "@/components/toasts";
@@ -74,6 +75,7 @@ function EmailCard({ t, onOpen, onDragStart, onDragEnd, dragging }: { t: EmailTi
         <span className="tabular mr-1.5 text-faint">{handle(t.number)}</span>
         {t.title}
       </p>
+      <DirectionChip kind="email" refId={t.id} />
       <div className="-mt-0.5 flex items-center justify-between gap-2">
         <MessageDots t={t} />
         {t.clientRounds > 0 && <span className={`rounded-full px-1.5 py-px text-xs ${t.clientRounds >= 2 ? "bg-warn-soft text-warn" : "bg-brand-soft text-brand-text"}`}>client round {t.clientRounds}</span>}
@@ -112,6 +114,7 @@ function ShadowCard({ s, onOpen, onDragStart, onDragEnd, dragging }: { s: EmailS
         <span className="text-[11px] text-faint">Asana</span>
       </div>
       <p className="line-clamp-2 text-sm leading-snug text-fg/80">{s.title}</p>
+      <DirectionChip kind="asana_email" refId={s.gid} />
       <div className="flex items-center justify-between gap-2 text-xs">
         <span className="truncate">{s.assignee ?? "Unassigned"}</span>
         {s.dueOn && <DuePill due={s.dueOn} />}
@@ -134,6 +137,9 @@ function ShadowSheet({ s, canMove, onClose }: { s: EmailShadow; canMove: boolean
           <button type="button" onClick={onClose} aria-label="Close" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg">
             ✕
           </button>
+        </div>
+        <div className="mt-4">
+          <DirectionBanner kind="asana_email" refId={s.gid} />
         </div>
         {s.notes && <p className="mt-4 whitespace-pre-wrap rounded-[14px] bg-surface p-3 text-sm leading-relaxed text-fg/80">{s.notes.slice(0, 3000)}</p>}
         {s.comments.length > 0 && (

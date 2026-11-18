@@ -10,6 +10,8 @@ import { toTicket, type BoardRow } from "./to-ticket";
 import { clientProgress } from "@/lib/partial-approval";
 import { timed } from "@/lib/perf";
 import { BoardTabs, CreativeKpisView } from "./creative-kpis";
+import { DirectionFlagsProvider } from "@/components/direction-parts";
+import { loadTaskFlags } from "@/lib/direction-changes";
 
 // Writing a video script with the AI can take a minute
 export const maxDuration = 800; // room for the AI creative review that starts at review, and for planning a launch (video uploads to Meta)
@@ -54,10 +56,12 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).order("full_name"),
     // Open Asana tasks not migrated yet: outline cards in their column while the team moves over
     loadShadows(supabase).catch(() => []),
+    // A client changed direction: the open tasks it touches are flagged on their cards
+    loadTaskFlags(supabase).catch(() => ({})),
     // Tickets migrated from Asana past production: do they have their creative and copy yet?
     supabase.from("asana_tasks").select("request_id, url").not("request_id", "is", null),
   ]);
-  const [{ data: moving }, { data: one }, { data: clients }, { data: people }, shadows, { data: migrated }] = await timed("board", "tickets", first);
+  const [{ data: moving }, { data: one }, { data: clients }, { data: people }, shadows, flags, { data: migrated }] = await timed("board", "tickets", first);
   const migratedIds = (migrated ?? []).map((m) => m.request_id as string);
   const PAST_PRODUCTION = ["internal_review", "copy", "copy_review", "ready_for_client", "client_review", "client_revision", "ready_for_launch"];
   const PAST_COPY = ["copy_review", "ready_for_client", "client_review", "ready_for_launch"];
@@ -116,5 +120,5 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
       }
     />
   );
-  return board;
+  return <DirectionFlagsProvider flags={flags}>{board}</DirectionFlagsProvider>;
 }

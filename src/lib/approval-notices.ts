@@ -170,8 +170,11 @@ export async function runApprovalNotices(admin: Admin, now = new Date()) {
     .is("deleted_at", null)
     .eq("clients.portal_live", true);
   if (error) throw new Error(error.message);
-  const rows = (reqs ?? []) as unknown as ReqRow[];
-  const out = { clients: 0, posted: 0, reminded24: 0, reminded48: 0, escalated: 0, autoApproved: 0, errors: [] as string[] };
+  // The client changed direction and this ticket was flagged: no reminder and no auto-approval of work they said to
+  // change, until the team sends it back, keeps it or stops it (src/lib/direction-changes.ts)
+  const held = await import("@/lib/direction-changes").then(({ heldRequestIds }) => heldRequestIds(admin)).catch(() => new Set<string>());
+  const rows = ((reqs ?? []) as unknown as ReqRow[]).filter((r) => !held.has(r.id));
+  const out = { clients: 0, posted: 0, reminded24: 0, reminded48: 0, escalated: 0, autoApproved: 0, held: held.size, errors: [] as string[] };
   if (!rows.length) return out;
 
   // A run that died mid-send leaves its claims: after half an hour they're let go, so the next run tries again

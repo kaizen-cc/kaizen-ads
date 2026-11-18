@@ -76,6 +76,7 @@ const KIND: Record<NextItem["kind"], string> = {
   bible: "Brand Bible",
   "call-learnings": "From your call",
   ask: "Asked via an agent",
+  direction: "Client changed direction",
 };
 
 /** The short title a row leads with, plus a sprint's progress (done of total) when it has one. */

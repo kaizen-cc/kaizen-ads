@@ -182,6 +182,7 @@ const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/lib/chat-changes.ts": { labels: ["chat team change"], why: "maps a request to a seat and a person from a list" },
   "src/lib/client-docs.ts": { labels: ["client document"], why: "summarises one file; extraction" },
   "src/lib/contact-changes.ts": { labels: ["contact change read"], why: "reads one email for who to add to or take off the list; extraction" },
+  "src/lib/direction-changes.ts": { labels: ["direction prefilter"], why: "a cheap first look across a client's new messages: could any be a change of direction (a classifier); the real read passes the client" },
   "src/lib/creative-errors.ts": { labels: ["creative error check"], why: "classifies review feedback across all clients" },
   "src/lib/feedback.ts": { labels: ["feedback triage"], why: "classifies the team's feedback about the app and matches repeats; no client is the subject" },
   "src/lib/google-playbooks.ts": { labels: ["google playbook"], why: "cross-client playbook per sub-vertical" },

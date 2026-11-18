@@ -17,7 +17,7 @@ import { askItem, callReviewItem, type AskRow } from "@/lib/agent-call/next-item
 
 export type NextItem = {
   id: string;
-  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint" | "task" | "bible" | "call-learnings" | "ask";
+  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint" | "task" | "bible" | "call-learnings" | "ask" | "direction";
   tone: "bad" | "warn" | "brand" | "ok";
   client: string;
   title: string;
@@ -291,6 +291,23 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     loadAsks(db, me.id),
   ]);
   for (const r of reviews) decide.push(callReviewItem(r));
+
+  // ─── A client changed direction on work in progress: the people told, until every flagged task is acted on ───
+  const changes = await import("@/lib/direction-changes").then(({ openChanges }) => openChanges(db, { notified: me.id })).catch(() => []);
+  for (const c of changes) {
+    if (!c.pending) continue;
+    decide.push({
+      id: `dc-${c.id}`,
+      kind: "direction",
+      tone: c.withClient ? "bad" : "warn",
+      client: c.client,
+      title: `${c.client} changed direction: ${c.pending === 1 ? "1 task" : `${c.pending} tasks`} to adapt`,
+      why: c.summary,
+      when: `Said ${ago(c.saidAt ?? c.createdAt) === "today" ? "today" : `${ago(c.saidAt ?? c.createdAt)} ago`}`,
+      href: c.href,
+      action: "Review the tasks",
+    });
+  }
   for (const a of asks) {
     const { item, bucket } = askItem(a, me.id);
     (bucket === "now" ? now : coming).push(item);

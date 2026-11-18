@@ -238,10 +238,12 @@ export type ClientViewProps = {
   patterns?: React.ReactNode;
   /** Under the contacts: changes their emails asked for (to confirm, or to undo) and the people taken off */
   contactChanges?: React.ReactNode;
+  /** The client changing direction: open changes and a way to log one (src/components/direction-parts.tsx) */
+  direction?: React.ReactNode;
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, line = null, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, emailOps = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null, contactChanges = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, line = null, connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, emailOps = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null, contactChanges = null, direction = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -336,6 +338,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             {can.assign && !demo && !client.archived_at && <ArchiveControl clientId={client.id} slug={client.slug} name={client.name} archived={null} />}
           </span>
         </div>
+        {!demo && direction}
         {readiness && live && !demo && <ReadinessCheck clientId={client.id} slug={client.slug} name={client.name} initial={readiness.initial} team={team} autoOpen={readiness.autoOpen} stamp={readiness.stamp} />}
         {!client.archived_at && !live && (
           <p className="rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3 text-sm">

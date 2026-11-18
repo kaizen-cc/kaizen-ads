@@ -6,6 +6,7 @@ import type { ShadowTicket } from "@/lib/asana";
 import { PriorityBadge } from "@/components/priority-badge";
 import { stageInfo } from "@/lib/stages";
 import { DuePill } from "@/components/due-pill";
+import { DirectionBanner, DirectionChip } from "@/components/direction-parts";
 
 const day = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
@@ -43,6 +44,7 @@ export function ShadowCard({
         <PriorityBadge priority={s.priority} size="md" />
       </span>
       <span className="line-clamp-3 text-[15px] font-medium leading-snug text-fg">{s.title}</span>
+      <DirectionChip kind="asana_creative" refId={s.gid} />
       {s.section && s.section.trim().toLowerCase() !== stageInfo(s.stage).label.toLowerCase() && <span className="text-[13px] text-faint">Asana: {s.section}</span>}
       <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-muted">
         <span className="truncate">{s.clientName ?? (s.clientRef ? `Client ${s.clientRef}` : "Client not matched")}</span>
@@ -85,6 +87,8 @@ export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMi
             ×
           </button>
         </div>
+
+        <DirectionBanner kind="asana_creative" refId={s.gid} />
 
         <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-[12px] border border-line bg-line text-sm max-md:[overflow-wrap:anywhere]">
           {[

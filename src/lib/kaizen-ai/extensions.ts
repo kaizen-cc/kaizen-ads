@@ -17,6 +17,7 @@ const MODULES: { key: string; label: string; load: () => Promise<{ tools: Shared
   { key: "team-ops", label: "Team tools", load: () => import("@/lib/ai-tools/team-ops") },
   { key: "email-design", label: "Email design", load: () => import("@/lib/ai-tools/email-design") },
   { key: "knowledge", label: "Team knowledge", load: () => import("@/lib/ai-tools/knowledge") },
+  { key: "direction", label: "Direction changes", load: () => import("@/lib/ai-tools/direction") },
 ];
 
 function wrap(t: SharedTool, label: string, ctx: ToolCtx): ChatTool {

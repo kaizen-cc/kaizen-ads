@@ -50,6 +50,10 @@
       "schedule": "10,25,40,55 * * * *"
     },
     {
+      "path": "/api/cron/context?step=direction",
+      "schedule": "12,42 * * * 1-5"
+    },
+    {
       "path": "/api/cron/context?step=approvals",
       "schedule": "2,17,32,47 * * * 1-5"
     },

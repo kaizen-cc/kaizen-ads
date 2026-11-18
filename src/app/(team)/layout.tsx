@@ -5,6 +5,7 @@ import { Toaster } from "@/components/toasts";
 import { AuditWatcher } from "@/components/audit-watcher";
 import { ActivityTracker } from "@/components/activity-tracker";
 import { FeedbackBubble } from "@/components/feedback-bubble";
+import { DirectionSheet } from "@/components/direction-sheet";
 import { Suspense } from "react";
 import { requireStaff } from "@/lib/auth";
 import { canSeeReports, isChannelOnly, isCreativeRole, roleLabel } from "@/lib/roles";
@@ -32,6 +33,10 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
       <ActivityTracker />
       <Suspense fallback={null}>
         <FeedbackBubble />
+      </Suspense>
+      {/* A client changed direction: the sheet opens over any page (?direction=<id>) */}
+      <Suspense fallback={null}>
+        <DirectionSheet />
       </Suspense>
       </AgentCallProvider>
     </UploadProvider>

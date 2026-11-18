@@ -50,6 +50,7 @@ export const READ_TOOLS: ReadonlySet<string> = new Set([
   "search_looms",
   "read_loom",
   "client_package",
+  "direction_changes",
 ]);
 
 /**

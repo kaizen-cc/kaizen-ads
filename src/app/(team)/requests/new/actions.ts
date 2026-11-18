@@ -123,6 +123,12 @@ const overlapScore = (a: Set<string>, b: Set<string>) => {
   return n / Math.min(a.size, b.size);
 };
 
+/** Tasks flagged after the client changed direction (to adapt, not to request again), for the review */
+async function flaggedFor(clientId: string) {
+  const { headsUpFor } = await import("@/lib/direction-changes");
+  return headsUpFor(await createClient(), clientId).catch(() => null);
+}
+
 /** This client's tickets from the last 120 days that look closest to the draft (the AI decides which really match). */
 async function candidates(clientId: string, draft: Draft) {
   const supabase = await createClient();
@@ -224,7 +230,7 @@ export async function reviewRequest(draft: Draft): Promise<ReviewResult> {
   const ctx = await loadContext(draft.clientId);
   if (!ctx) return { ok: false, error: "Pick a client first." };
   try {
-    const [{ sources }, recent, refs] = await Promise.all([getAgent("review"), candidates(draft.clientId!, draft), readReferences(refLinks(draft.refs))]);
+    const [{ sources }, recent, refs, flagged] = await Promise.all([getAgent("review"), candidates(draft.clientId!, draft), readReferences(refLinks(draft.refs)), flaggedFor(draft.clientId!)]);
     const review = await askJson<Review>({
       agent: "review",
       label: "review",
@@ -246,7 +252,17 @@ ${
     .join("\n") || "None."
 }
 </recent_tickets_that_look_similar>
-
+${
+  flagged
+    ? `
+<flagged_after_a_change_of_direction>
+The client changed direction ("${flagged.summary}") and these open tasks were flagged to be adapted (sent back or updated), not redone:
+${flagged.titles.map((t) => `- ${t}`).join("\n")}
+If this request asks for the same thing as one of them, add an issue (warn, field "brief"): say which task and that adapting it is cheaper than a new request.
+</flagged_after_a_change_of_direction>
+`
+    : ""
+}
 Review this request before it goes to the creative team.
 
 issues: flag only real problems:

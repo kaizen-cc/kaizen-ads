@@ -225,7 +225,7 @@ const monthlyMoments: AiTool = {
       already_saved_for_this_month: (saved ?? []).map((m) => `${m.on_date} ${m.name} (${m.status})${m.angle ? `: ${m.angle}` : ""}`),
       national_days_this_month: nationalDays || null,
       how_to: [
-        "Offer the fun national days from national_days_this_month alongside the big holidays (National Ice Cream Day, National Cake Day...), only the ones that fit this client. Campaign ideas lean about 80 percent story and brand, 20 percent sales.",
+        "Offer the fun national days from national_days_this_month alongside the big holidays (National Ice Cream Day, National Cake Day...), only the ones that fit this client. Campaign ideas lean about 80 percent story and product, 20 percent sales.",
         `Use web search to confirm the ${w.year} dates of each holiday and observance (several move each year) and to find local and industry moments for where this client sells; add ones with potential that aren't obvious, and say why.`,
         "Only moments that truly fit this business, its customers and how it sells: a roofer doesn't do Valentine's. Skip any that are already saved.",
         "Lead time: simple promo 28 days, new offer or landing page or shoot up to 56 days; say the date to start by.",
