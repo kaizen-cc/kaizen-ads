@@ -1,4 +1,5 @@
 import "server-only";
+import { onService, hasLine } from "@/lib/service-gate";
 import { allotmentLine, allotmentPools, cycleElapsed, usageCounts } from "@/lib/allotment";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
@@ -105,10 +106,13 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
     db.from("request_events").select("request_id, kind, to_stage, data, actor_id, created_at").gte("created_at", since30).in("kind", ["review", "stage"]).limit(5000),
     db.from("copy_sets").select("request_id, approved_by, approved_at").gte("approved_at", since7),
     // Paused and archived clients aren't owed creative, so they're never flagged for it
-    db.from("clients").select("id").is("archived_at", null).in("status", LIVE),
+    db.from("clients").select("id, services, services_extra, services_removed").is("archived_at", null).in("status", LIVE),
   ]);
-  const liveIds = new Set((liveRows ?? []).map((c) => c.id as string));
-  const usage = (usageAll ?? []).filter((u) => liveIds.has(u.client_id as string));
+  // And only clients that buy creative are owed an allotment (src/lib/service-gate.ts)
+  const liveIds = new Set((liveRows ?? []).filter((c) => hasLine(c, "creative")).map((c) => c.id as string));
+  // ...and never one whose creative is paused until a date (watch_pauses 'creative', a seasonal pause)
+  const creativePaused = await import("@/lib/account-watch/pauses").then((m) => m.loadPauses(db, "creative", nyToday())).catch(() => new Map<string, unknown>());
+  const usage = (usageAll ?? []).filter((u) => liveIds.has(u.client_id as string) && !creativePaused.has(u.client_id as string));
   const rows = (open ?? []) as Row[];
   const roleOf = new Map((people ?? []).map((p) => [p.id, p.role as TeamRole]));
 
@@ -292,14 +296,15 @@ export const workedOn = (worked: Map<string, { at: string; who: string | null }>
  */
 export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?: string; platform?: "meta" | "google" }): Promise<KpiPulse | null> {
   const { owner, platform } = typeof opts === "string" ? { owner: opts, platform: undefined } : (opts ?? {});
-  let q = db.from("kpi_targets").select("id, client_id, label, platform, ad_account_id, owner_id, target, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
+  let q = db.from("kpi_targets").select("id, client_id, label, platform, ad_account_id, owner_id, target, clients!inner(name, slug, archived_at, status, services, services_extra, services_removed)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
   // Someone's accounts: the ones they own, and the ones they're a secondary buyer on (that client, that platform)
   const co = owner ? await secondarySeatKeys(db, owner) : new Set<string>();
   const coClients = [...new Set([...co].map((k) => k.split(":")[0]))];
   if (owner) q = coClients.length ? q.or(`owner_id.eq.${owner},client_id.in.(${coClients.join(",")})`) : q.eq("owner_id", owner);
   if (platform) q = q.eq("platform", platform);
   const [{ data: found }, { data: snaps }] = await Promise.all([q, db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget, computed_at")]);
-  const targets = (found ?? []).filter((t) => !owner || t.owner_id === owner || co.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`));
+  // Only the lines the client buys (src/lib/service-gate.ts)
+  const targets = (found ?? []).filter((t) => onService(t) && (!owner || t.owner_id === owner || co.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`)));
   if (!targets?.length) return null;
   const snapBy = new Map((snaps ?? []).map((x) => [x.target_id as string, x]));
   const counts = { excellent: 0, good: 0, close: 0, off: 0, idle: 0, setup: 0, unset: 0 };

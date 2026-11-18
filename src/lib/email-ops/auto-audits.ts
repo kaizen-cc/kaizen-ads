@@ -2,6 +2,7 @@ import "server-only";
 import { activeEmailClients } from "@/lib/email-providers/which";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
+import { clientsWithLine } from "@/lib/service-gate";
 import { auditTouched, requestEmailAudit, runEmailAudit } from "./audit";
 import { needsAutoAudit, type EmailAuditResult, type LastAudit } from "./audit-core";
 import { emailTeamFor, whoHears } from "./people";
@@ -27,9 +28,11 @@ async function lastAudit(admin: SupabaseClient, clientId: string): Promise<LastA
 
 /** The connected clients that are red and due an audit, lowest score first */
 async function due(admin: SupabaseClient, until: number): Promise<Due[]> {
+  // Only clients that buy email marketing (src/lib/service-gate.ts): a connected account on a removed service isn't audited
   const conns = await activeEmailClients(admin, LIVE);
+  const buying = await clientsWithLine(admin, "email", conns.map((c) => c.client_id));
   const out: Due[] = [];
-  for (const c of conns) {
+  for (const c of conns.filter((x) => buying.has(x.client_id))) {
     if (Date.now() > until) break;
     const score = await emailScoreOf(admin, c.client_id).catch(() => null);
     if (!score) continue;

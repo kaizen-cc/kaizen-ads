@@ -1,4 +1,5 @@
 import "server-only";
+import { onService } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DeskAudit, DeskSprint } from "@/lib/overview-desk";
 
@@ -117,10 +118,11 @@ const VERDICT_WORSE: Record<string, string> = { worse: "The last check says it's
 export async function loadAdsDesk(db: SupabaseClient, me: { id: string }, platform: "meta" | "google"): Promise<{ rows: AdsDeskRow[]; audits: Map<string, DeskAudit>; sprints: Map<string, DeskSprint> }> {
   const [{ LIVE }, { shownStatus }, { conversionFor }, { secondarySeatKeys }] = await Promise.all([import("@/lib/live"), import("@/lib/kpi/calc"), import("@/lib/kpi/conversions"), import("@/lib/buyer-seats")]);
   const [{ data: found }, seats] = await Promise.all([
-    db.from("kpi_targets").select("id, client_id, label, platform, ad_account_id, owner_id, owner_name, conversion, target, clients!inner(name, slug, archived_at, status)").eq("active", true).eq("platform", platform).is("clients.archived_at", null).in("clients.status", [...LIVE]),
+    db.from("kpi_targets").select("id, client_id, label, platform, ad_account_id, owner_id, owner_name, conversion, target, clients!inner(name, slug, archived_at, status, services, services_extra, services_removed)").eq("active", true).eq("platform", platform).is("clients.archived_at", null).in("clients.status", [...LIVE]),
     secondarySeatKeys(db, me.id).catch(() => new Set<string>()),
   ]);
-  const targets = (found ?? []) as Row[];
+  // Only the lines the client buys (src/lib/service-gate.ts)
+  const targets = ((found ?? []) as Row[]).filter((t) => onService(t as { platform?: string; clients?: unknown }));
   const ids = targets.map((t) => t.id as string);
   const audits = new Map<string, DeskAudit>();
   const sprints = new Map<string, DeskSprint>();

@@ -5,6 +5,7 @@ import { loadChannelBoard } from "@/lib/channel-kpis/load";
 import { LIVE } from "@/lib/live";
 import { isChannelOnly, lineOfTeam, teamPlatform } from "@/lib/roles";
 import { servicesOf } from "@/lib/services";
+import { onService } from "@/lib/service-gate";
 import { conversionValue } from "@/lib/kpi/conversion-value";
 import { channelMaySee } from "./channel-access";
 import { DEFAULT_METRIC, RANK_METRICS, asPeriod, moneyWords, pctWords, periodRange, rankEntries, rankLinesFor, sumDays, vsTarget, type RankEntry, type RankLine, type RankPeriod } from "./rank-core";
@@ -64,18 +65,19 @@ type Target = { id: string; client_id: string; label: string | null; conversion:
 async function adTargets(ctx: ToolCtx, platform: "meta" | "google"): Promise<Target[]> {
   const { data } = await ctx.db
     .from("kpi_targets")
-    .select("id, client_id, platform, label, conversion, target, owner_id, clients!inner(id, name, slug, archived_at)")
+    .select("id, client_id, platform, label, conversion, target, owner_id, clients!inner(id, name, slug, archived_at, services, services_extra, services_removed)")
     .eq("active", true)
     .eq("platform", platform)
     .is("clients.archived_at", null);
-  let rows = (data ?? []) as unknown as (Omit<Target, "client"> & { owner_id: string | null; clients: Client })[];
+  // Only the lines the client buys (src/lib/service-gate.ts): a removed service is never ranked or called off target
+  let rows = ((data ?? []) as unknown as (Omit<Target, "client"> & { platform: string; owner_id: string | null; clients: Client })[]).filter(onService);
   const team = teamPlatform(ctx.me.role);
   if (team && !ctx.me.isExec && !ctx.me.isLead) {
     const { data: seats } = await ctx.db.from("client_assignments").select("client_id").eq("profile_id", ctx.me.id).in("role", SEAT_ROLES[platform]);
     const seated = new Set((seats ?? []).map((s) => s.client_id as string));
     rows = rows.filter((t) => t.owner_id === ctx.me.id || seated.has(t.client_id));
   }
-  return rows.map((t) => ({ id: t.id, client_id: t.client_id, label: t.label, conversion: t.conversion, target: t.target == null ? null : Number(t.target), client: t.clients }));
+  return rows.map((t) => ({ id: t.id, client_id: t.client_id, label: t.label, conversion: t.conversion, target: t.target == null ? null : Number(t.target), client: { id: t.clients.id, name: t.clients.name, slug: t.clients.slug } as Client }));
 }
 
 // ─── rank_clients ─────────────────────────────────────────────────────────

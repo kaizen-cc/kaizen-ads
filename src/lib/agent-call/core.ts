@@ -685,10 +685,18 @@ export type CallCard = {
   cta: string;
   /** A message drafted as the person (a Slack reply or an email): edited and approved on the card, or copied */
   draft?: CallDraft;
+  /** A Kaizen document (create_document): open, download, or edit its text and draw it again */
+  document?: CallDocument;
 };
 
+/** A Kaizen-branded PDF shown on the call or chat */
+export type CallDocument = { id: string; kind: "sow" | "proposal" | "handoff" | "one_pager"; title: string; client: string | null; version: number; href: string; download: string; placeholders: string[] };
+
+/** A file attached to a drafted email (a document's PDF) */
+export type CallAttachment = { documentId: string; name: string; download: string };
+
 /** A drafted message on the call: where it goes, its words, and what became of it */
-export type CallDraft = { id: string; channel: "slack" | "email"; where: string; text: string; subject?: string | null; to?: string | null; status: "draft" | "sent" | "gmail_draft" | "copy" };
+export type CallDraft = { id: string; channel: "slack" | "email"; where: string; text: string; subject?: string | null; to?: string | null; status: "draft" | "sent" | "gmail_draft" | "copy"; attachments?: CallAttachment[]; compose?: string | null };
 
 /** What the assistant asked to be uploaded: launch creatives, files for it to read, or a screenshot to look at */
 export type UploadAsk = { purpose: "creatives" | "files" | "screen"; client: string | null; note: string };

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { ackCallNotice, endCall, openAssistantChat, startCall, switchCallMode, type ThreadLine } from "@/app/(team)/settings/call-actions";
+import { ackCallNotice, endCall, openAssistantChat, startCall, switchCallMode, takeChatHeadsUps, type ChatHeadsUp, type ThreadLine } from "@/app/(team)/settings/call-actions";
 import { assistantCallNotes, audioUploadSlot, callUploadSlots, callUploadsDone, screenFrameSaved, screenFrameSlot } from "@/app/(team)/assistant/actions";
 import { lookPlan } from "@/lib/agent-call/call-context";
 import { openPlan } from "@/lib/agent-call/open-link";
@@ -40,6 +40,10 @@ type Ctx = {
   startAssistant: () => void;
   /** Chat with my assistant: the same conversation and pipeline as a call, typed; a call that's on carries on as the chat */
   startAssistantChat: () => void;
+  /** Answer the assistant's ring: a call that opens with the heads-up (call it from the tap itself) */
+  answerHeadsUp: (id: string) => void;
+  /** New heads-ups while the chat is open: written into it straight away */
+  pullHeadsUps: () => void;
   /** Whether the conversation going now is a call or a chat */
   talk: TalkMode | null;
   /** The agent on the line (or whose summary is open), if any */
@@ -56,7 +60,7 @@ type Ctx = {
   setAssistantName: (name: string | null) => void;
 };
 
-const CallCtx = createContext<Ctx>({ start: () => undefined, startAssistant: () => undefined, startAssistantChat: () => undefined, talk: null, activeRole: null, live: false, assistantTint: assistantTintOf(null), setAssistantTint: () => undefined, assistantName: null, setAssistantName: () => undefined });
+const CallCtx = createContext<Ctx>({ start: () => undefined, startAssistant: () => undefined, startAssistantChat: () => undefined, answerHeadsUp: () => undefined, pullHeadsUps: () => undefined, talk: null, activeRole: null, live: false, assistantTint: assistantTintOf(null), setAssistantTint: () => undefined, assistantName: null, setAssistantName: () => undefined });
 
 export const useAgentCall = () => useContext(CallCtx);
 
@@ -78,6 +82,9 @@ type Stage = "idle" | "call" | "chat" | "summary";
 
 /** The conversation's lines from the server, as the chat shows them (ids from `from` up) */
 const chatLinesOf = (rows: ThreadLine[], from = 0): ChatLine[] => rows.map((l, i) => ({ id: from + i + 1, who: l.who, text: l.text, speaker: l.speaker }));
+
+/** An urgent heads-up in the chat: a card to open the item */
+const headsUpCard = (h: ChatHeadsUp): CallCard => ({ id: `heads-up-${h.id}`, title: h.title, detail: "Urgent, on your board", href: h.href ?? "/pipeline", external: false, cta: "Open it" });
 
 const typing = (t: EventTarget | null) => {
   const el = t as HTMLElement | null;
@@ -375,7 +382,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
    * who's on) stays.
    */
   const dial = useCallback(
-    (a: AgentRef, before?: Promise<unknown>, carry?: { callId: string; lines: Line[] }) => {
+    (a: AgentRef, before?: Promise<unknown>, carry?: { callId: string; lines: Line[] }, headsUp?: string) => {
       setAgent(a);
       setError(null);
       setLines(carry?.lines ?? []);
@@ -446,7 +453,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
         await before;
         const r = carry
           ? await switchCallMode(carry.callId, "voice").then((x) => (x.ok ? { ok: true as const, callId: carry.callId, greeting: x.line, sttToken: x.sttToken } : x))
-          : await startCall(a.roleKey);
+          : await startCall(a.roleKey, headsUp ? { headsUp } : {});
         // Left before it picked up
         if (call.current !== c) {
           if (r.ok && !carry) void endCall(r.callId, "button");
@@ -580,6 +587,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
         }
         const shown = chatLinesOf(r.lines);
         setChatLines(shown);
+        if (r.headsUps?.length) setCards(r.headsUps.map(headsUpCard));
         setEarlier(chatLinesOf(r.earlier, -1000));
         const s = makeChat(shown.length);
         s.callId = r.callId;
@@ -683,6 +691,26 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
     }
     openChat(a);
   }, [agent, openChat, tint, name, toChat]);
+  /** The ring answered: the assistant's call, opening with the heads-up (a call already on is left as it is) */
+  const answerHeadsUp = useCallback(
+    (id: string) => {
+      if (stageRef.current === "call" || stageRef.current === "chat") return;
+      dial(assistantRef(tint, name), undefined, undefined, id);
+    },
+    [dial, tint, name],
+  );
+  /** Heads-ups that came while the chat is open: their lines and cards appear in it */
+  const pullHeadsUps = useCallback(() => {
+    const id = callId.current;
+    if (stageRef.current !== "chat" || !id) return;
+    void takeChatHeadsUps(id).then((r) => {
+      if (!r.ok || !r.headsUps.length || callId.current !== id) return;
+      const base = 1_000_000 + (Date.now() % 1_000_000);
+      setChatLines((cur) => [...cur, ...chatLinesOf(r.lines, base)].slice(-200));
+      setCards((cur) => [...cur.filter((c) => !r.headsUps.some((h) => c.id === `heads-up-${h.id}`)), ...r.headsUps.map(headsUpCard)].slice(-6));
+      setMinimized(false);
+    });
+  }, []);
   const setAssistantTint = useCallback((hex: string | null) => setTint(assistantTintOf(hex)), []);
   const setAssistantName = useCallback((n: string | null) => setName(cleanAssistantName(n)), []);
 
@@ -825,8 +853,8 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
   }, [uploadAsk]);
 
   const ctx = useMemo<Ctx>(
-    () => ({ start, startAssistant, startAssistantChat, talk: stage === "call" ? "voice" : stage === "chat" ? "text" : null, activeRole: stage === "idle" ? null : (agent?.roleKey ?? null), live: stage === "call" || stage === "chat", assistantTint: tint, setAssistantTint, assistantName: name, setAssistantName }),
-    [start, startAssistant, startAssistantChat, stage, agent, tint, setAssistantTint, name, setAssistantName],
+    () => ({ start, startAssistant, startAssistantChat, answerHeadsUp, pullHeadsUps, talk: stage === "call" ? "voice" : stage === "chat" ? "text" : null, activeRole: stage === "idle" ? null : (agent?.roleKey ?? null), live: stage === "call" || stage === "chat", assistantTint: tint, setAssistantTint, assistantName: name, setAssistantName }),
+    [start, startAssistant, startAssistantChat, answerHeadsUp, pullHeadsUps, stage, agent, tint, setAssistantTint, name, setAssistantName],
   );
 
   // The assistant always shows in its person's current color (even one picked mid-call)

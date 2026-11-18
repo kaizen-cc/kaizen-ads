@@ -1,5 +1,6 @@
 import type { Move } from "@/lib/reports/weekly-core";
 import { paceStatus, type PaceStatus } from "@/lib/reports/mtd-core";
+import { basisLabel } from "@/lib/social/rate";
 import { int, money, moveOf, pct, signed, type EmailMetrics, type MtdFrame, type SocialMetrics } from "./core";
 
 // A weekly email or social report's month to date, as one view the PDF draws and the writer reads: the month so far
@@ -80,7 +81,7 @@ export function socialMtdView(m: SocialMetrics): ChannelMtdView | null {
   const row = (label: string, a: number | null, b: number | null, f: (n: number | null) => string, better: "up" | "down" | "none" = "up"): MtdRow => ({ label, value: f(a), before: f(b), move: moveOf(a, b, better) });
   const rows: MtdRow[] = [
     row("Posts published", now.posts, before.posts, int),
-    ...(m.insightsRead ? [row("Reach", now.reach, before.reach, int), row("Views", now.views, before.views, int), row("Engagement rate", now.rate, before.rate, (n) => pct(n)), row("Interactions", now.interactions, before.interactions, int)] : [row("Views", now.views, before.views, int)]),
+    ...(m.insightsRead ? [row("Reach", now.reach, before.reach, int), row("Views", now.views, before.views, int), row(`Engagement rate${basisLabel(now.rateBasis ?? "reach", now.reachFrom) ? ` (${basisLabel(now.rateBasis ?? "reach", now.reachFrom)})` : ""}`, now.rate, before.rate, (n) => pct(n)), row("Interactions", now.interactions, before.interactions, int)] : [row("Views", now.views, before.views, int)]),
     row("Follower change", now.followerChange, before.followerChange, signed),
   ];
   const range = x.window.label;

@@ -1,4 +1,5 @@
 import "server-only";
+import { hasLine, type ServiceFields } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptionKey, seal, unseal } from "@/lib/meta-token-core";
 import { LIVE } from "@/lib/live";
@@ -690,7 +691,7 @@ export async function syncAllKlaviyo(admin: SupabaseClient, opts: { budgetMs?: n
   if (!(await klaviyoReady(admin))) return { skipped: "Klaviyo migration not applied" };
   const deadline = Date.now() + (opts.budgetMs ?? 600_000);
   const [{ data }, { data: memos }, { data: ranked }] = await Promise.all([
-    admin.from("klaviyo_connections").select("client_id, last_synced_at, clients!inner(name, status, archived_at)").eq("status", "active"),
+    admin.from("klaviyo_connections").select("client_id, last_synced_at, clients!inner(name, status, archived_at, services, services_extra, services_removed)").eq("status", "active"),
     admin.from("sync_state").select("source, last_run_at, last_result").like("source", "klaviyo:%"),
     // Read apart, so the run goes on before the ranked metrics migration is applied
     admin.from("klaviyo_connections").select("client_id, conversion_metric_id, conversion_metrics").eq("status", "active"),
@@ -700,7 +701,8 @@ export async function syncAllKlaviyo(admin: SupabaseClient, opts: { budgetMs?: n
   const memo = new Map((memos ?? []).map((x) => [String(x.source).slice("klaviyo:".length), x as { last_run_at: string | null; last_result: SyncMemo | null }]));
   const recently = new Date(Date.now() - 10 * 60_000).toISOString();
   const plan = ((data ?? []) as unknown as Row[])
-    .filter((r) => r.clients && !r.clients.archived_at && (LIVE as readonly string[]).includes(r.clients.status))
+    // Live clients that buy email marketing (src/lib/service-gate.ts): a removed service isn't read; adding it back catches up
+    .filter((r) => r.clients && !r.clients.archived_at && (LIVE as readonly string[]).includes(r.clients.status) && hasLine(r.clients as ServiceFields, "email"))
     .map((r) => {
       const m = memo.get(r.client_id);
       const lastRun = m?.last_run_at ?? null;

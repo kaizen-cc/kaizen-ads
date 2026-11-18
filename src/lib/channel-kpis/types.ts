@@ -2,6 +2,7 @@ import type { ConversionMetric, MonthRevenue, RevenueTarget } from "@/lib/email-
 import type { EmailProvider } from "@/lib/email-providers/core";
 import type { EmailScoreResult } from "@/lib/email-score-calc";
 import type { SocialAccountScore } from "@/lib/social-score";
+import type { RateBasis } from "@/lib/social/rate";
 import type { ChannelStatus, Line, Month } from "./calc";
 
 // The shapes the Email and Social boards and the Overview pass around (types only, so a browser file can import them).
@@ -24,6 +25,12 @@ export type EmailSupport = {
 };
 
 export type SocialSupport = {
+  /** What the main rate is over: reach (the standard), else views, else followers per post (when Meta gave neither); null with no rate */
+  rateBasis?: RateBasis | null;
+  /** Where the reach came from: Meta's account insights, or the posts added up */
+  reachFrom?: "meta" | "posts" | null;
+  /** Why a number is missing or filled in ("Meta didn't report reach for this period"), in plain words; empty when nothing needs saying */
+  rateNotes?: string[];
   followers: number | null;
   /** Follows gained less lost over the window, null when Meta gave none */
   followersChange: number | null;

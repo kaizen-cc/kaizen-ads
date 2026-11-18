@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { metaConfigured } from "@/lib/context/meta";
 import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
+import { clientsWithLine } from "@/lib/service-gate";
 import { tracker } from "@/lib/progress";
 import { runBounded } from "@/lib/bounded";
 import { fbPosts, fbPostsInsights, fbProfile, fbSeries, igDayTotals, igMedia, igPostsInsights, igProfile, igSeries, pageAccessToken, pageInstagram, pageName, promotePages, SocialReadError, systemPages, type SocialCtx } from "./api";
@@ -394,12 +395,14 @@ export async function syncAllSocial(admin: SupabaseClient, opts: { budgetMs?: nu
   if (!(await socialReady(admin))) return { skipped: "Social migration not applied" };
   if (!metaConfigured()) return { skipped: "Meta isn't connected" };
   const deadline = Date.now() + (opts.budgetMs ?? 600_000);
-  const roster = await socialRoster(admin);
+  // Only clients that buy social media (src/lib/service-gate.ts): a linked Page on a client without it isn't read
+  const [roster, buying] = await Promise.all([socialRoster(admin), clientsWithLine(admin, "social")]);
   const [{ data: memos }] = await Promise.all([admin.from("sync_state").select("source, last_run_at, last_result").like("source", "social:%")]);
   const memo = new Map((memos ?? []).map((x) => [String(x.source).slice("social:".length), x as { last_run_at: string | null; last_result: Memo | null }]));
   const recently = new Date(Date.now() - 10 * 60_000).toISOString();
   const looked = new Date(Date.now() - 6 * 3_600_000).toISOString();
   const plan = (roster ?? [])
+    .filter((r) => buying.has(r.id))
     .map((r) => {
       const m = memo.get(r.id);
       return { id: r.id, name: r.name, lastRun: m?.last_run_at ?? null, missing: r.state === "missing", window: pickSocialWindow({ lastFullAt: m?.last_result?.fullAt ?? null }) };

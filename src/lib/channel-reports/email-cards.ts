@@ -1,7 +1,7 @@
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
 import { int, pct } from "./core";
 import { wholeMoney } from "./email-message";
-import { grade, RATE_BARS, rprOf, type Grade, type MessageRow } from "./email-detail";
+import { rprOf, type Grade, type MessageRow } from "./email-detail";
 
 // What the email report's campaign cards and location visuals show, worked out once so the PDF (channel-doc.tsx) and the
 // live page the client opens (/r/<token>) say the same thing. Pure: no database, no network.
@@ -72,6 +72,14 @@ export function shotCampaigns<T extends PickRow & Pick<MessageRow, "date">>(rows
   return [...rows.filter((r) => ids.has(r.id)), ...cardCampaigns(rows).filter((r) => !ids.has(r.id))];
 }
 
+/** The campaigns whose email is drawn for a report: the engagement report's best and lowest by click to open, else shotCampaigns' */
+export function cardShotIds(m: { template?: string; engagement?: { picks: { best: { id: string }; lowest: { id: string } } | null } | null; currency: string | null; revenueMeasured?: boolean; detail?: { campaigns: (PickRow & Pick<MessageRow, "date">)[] } | null }): string[] {
+  const picks = m.template === "engagement" ? m.engagement?.picks : null;
+  if (picks) return [picks.best.id, picks.lowest.id];
+  if (!m.detail) return [];
+  return shotCampaigns(m.detail.campaigns, { currency: m.currency, revenueMeasured: m.revenueMeasured !== false }).filter((c) => c.channel !== "sms").map((c) => c.id);
+}
+
 /** The campaign's own report in Klaviyo (only for a report whose numbers come from Klaviyo) */
 export const klaviyoCampaignUrl = (id: string) => `https://www.klaviyo.com/campaign/${encodeURIComponent(id)}/reports`;
 export const fromKlaviyo = (source: string | null | undefined) => !source || source === "Klaviyo";
@@ -79,20 +87,15 @@ export const fromKlaviyo = (source: string | null | undefined) => !source || sou
 /** One number on a card: its value, an optional line under it, and how it stands against Kaizen's bar */
 export type CardStat = { key: string; label: string; value: string; sub?: string | null; grade?: Grade | null; /** 0..1 along the gauge, and where the bar sits on it */ gauge?: { fill: number; mark: number } | null; strong?: boolean };
 
-/** The gauge runs to 1.6 times the bar, so the bar sits a little past the middle and a strong number still has room */
-const SPAN = 1.6;
-const gaugeOf = (v: number | null | undefined, target: number) => (v == null || !Number.isFinite(v) ? null : { fill: Math.max(0, Math.min(1, v / (target * SPAN))), mark: 1 / SPAN });
-
-/** A campaign card's numbers: recipients, open and click rate, orders, revenue and revenue per recipient (rates graded against the bars) */
+/** A campaign card's numbers: recipients, open and click rate, orders, revenue and revenue per recipient (never graded against Kaizen's internal bars: those are for the team) */
 export function cardStats(r: Pick<MessageRow, "channel" | "recipients" | "openRate" | "clickRate" | "orders" | "orderRate" | "revenue">, currency: string | null, revenueMeasured = true): CardStat[] {
   const sms = r.channel === "sms";
   const rpr = r.recipients > 0 ? r.revenue / r.recipients : null;
-  const bars = RATE_BARS.campaign;
   // A text has no open rate: its card reads recipients, clicks and orders, never an email's open gauge
   const out: CardStat[] = [
     { key: "recipients", label: sms ? "Texts sent" : "Recipients", value: int(r.recipients) },
-    ...(sms ? [] : [{ key: "open", label: "Open rate", value: pct(r.openRate, 1), grade: grade(r.openRate, bars.open), gauge: gaugeOf(r.openRate, bars.open), sub: `Bar ${pct(bars.open, 0)}` } satisfies CardStat]),
-    { key: "click", label: "Click rate", value: pct(r.clickRate, 2), grade: grade(r.clickRate, bars.click), gauge: gaugeOf(r.clickRate, bars.click), sub: `Bar ${pct(bars.click, 0)}` },
+    ...(sms ? [] : [{ key: "open", label: "Open rate", value: pct(r.openRate, 1) } satisfies CardStat]),
+    { key: "click", label: "Click rate", value: pct(r.clickRate, 2) },
   ];
   if (!revenueMeasured) return out;
   out.push(

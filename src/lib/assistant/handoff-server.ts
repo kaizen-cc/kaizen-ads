@@ -39,6 +39,10 @@ export type Draft = {
   text: string;
   client: string | null;
   owedId?: string | null;
+  /** Kaizen documents attached to an email (their PDFs go with it) */
+  attachments?: { documentId: string; name: string }[];
+  /** The client email draft it's also kept as (Overview's "Emails ready to send") */
+  clientDraftId?: string | null;
   sent?: "slack" | "gmail" | "gmail_draft" | null;
   at: string;
 };

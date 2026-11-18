@@ -3,6 +3,8 @@ import type { Sections } from "@/lib/reports/write";
 import { DEFAULT_ENGAGEMENT_BAR } from "@/lib/social-score";
 import { int, moveOf, pct, signed, type SocialMetrics, type SocialPostLite } from "./core";
 import { followerView, type FollowerView } from "./social-followers";
+import { basisLabel, NOT_REPORTED } from "@/lib/social/rate";
+import { teamFindingsOf } from "./social-notes";
 
 // The organic social report's views, pure so the PDF (social-doc.tsx), the tests and the writer read the same thing:
 // the engagement target, the follower comparison over the same
@@ -77,6 +79,12 @@ export function followerChangeText(f: FollowerView): string {
   return `${signed(f.change)}${g}`;
 }
 
+/**
+ * The small label on a rate that isn't the standard one ("by views", "by followers", "by post reach"); null for the reach rate.
+ * The engagement target is set on reach, so only a reach rate is held to it.
+ */
+export const rateLabelOf = (n: { rateBasis?: "reach" | "views" | "followers" | null; reachFrom?: "meta" | "posts" | null }): string | null => basisLabel(n.rateBasis ?? "reach", n.reachFrom);
+
 /** An engagement rate against the target: how far it is, as "0.9 pts under" or "1.2 pts over" */
 export function againstBar(rate: number | null | undefined, target: number): { met: boolean; text: string } | null {
   if (rate == null || !Number.isFinite(rate)) return null;
@@ -98,15 +106,16 @@ export function mtdCells(m: SocialMetrics): MtdCell[] {
   if (!x) return [];
   const { now, before } = x;
   const target = engagementBarOf(m);
-  const vs = againstBar(now.rate, target);
+  const basisNote = rateLabelOf(now);
+  const vs = basisNote ? null : againstBar(now.rate, target);
   const cell = (key: string, label: string, a: number | null, b: number | null, f: (n: number | null) => string, better: "up" | "down" | "none" = "up"): MtdCell => ({ key, label, value: f(a), before: f(b), move: moveOf(a, b, better) });
   return [
     cell("posts", "Posts", now.posts, before.posts, int, "none"),
     ...(m.insightsRead
       ? [
-          cell("reach", "Reach", now.reach, before.reach, int),
+          { ...cell("reach", "Reach", now.reach, before.reach, int), note: now.reach == null ? NOT_REPORTED.reach : now.reachFrom === "posts" ? "from the posts" : null },
           cell("views", "Views", now.views, before.views, int),
-          { ...cell("rate", "Engagement", now.rate, before.rate, (n) => pct(n)), note: vs ? `${pct(target, 0)} target · ${vs.text}` : null, tone: vs ? (vs.met ? ("good" as const) : ("bad" as const)) : null },
+          { ...cell("rate", "Engagement", now.rate, before.rate, (n) => pct(n)), note: basisNote ?? (vs ? `${pct(target, 0)} target · ${vs.text}` : null), tone: vs ? (vs.met ? ("good" as const) : ("bad" as const)) : null },
           cell("interactions", "Interactions", now.interactions, before.interactions, int),
         ]
       : [cell("views", "Views", now.views, before.views, int)]),
@@ -123,7 +132,7 @@ export const FORMAT_WORD: Record<string, string> = { image: "Photo", carousel: "
 
 // ─── Insight cards ─────────────────────────────────────────────────────────
 
-export type Insight = { title: string; text: string; next: string | null; tone: "good" | "bad" | "neutral" };
+export type Insight = { title: string; text: string; next: string | null; tone: "good" | "bad" | "neutral"; /** The strategist's own note on this card (the team's words, shown as such) */ teamNote?: string | null };
 
 const rel = (a: number | null | undefined, b: number | null | undefined) => (a != null && b != null && b > 0 ? (a - b) / b : null);
 const pctWord = (x: number) => `${Math.abs(x * 100).toFixed(1)}%`;
@@ -133,7 +142,13 @@ const toneOfRel = (x: number | null): Insight["tone"] => (x == null || Math.abs(
  * Three or four cards: the writer's own (with its "what we'll do next" line) when it wrote them, else worked out from the
  * numbers. A written card without a next line keeps its words and gets none: a plan is never invented for it.
  */
+/** The cards as drawn: the writer's or worked out from the numbers, each with the strategist's note on it when they wrote one */
 export function socialInsights(m: SocialMetrics, sections: Sections): Insight[] {
+  const notes = teamFindingsOf(sections).cards;
+  return baseInsights(m, sections).map((t, i) => (notes[i] ? { ...t, teamNote: notes[i] } : t));
+}
+
+function baseInsights(m: SocialMetrics, sections: Sections): Insight[] {
   type Written = { title?: string; text?: string; next?: string };
   const own = ((sections.takeaways ?? []) as Written[]).filter((t) => t.title?.trim() && t.text?.trim()).slice(0, 4);
   if (own.length >= 3) return own.map((t) => ({ title: pdfText(t.title), text: pdfText(t.text), next: t.next?.trim() ? pdfText(t.next) : null, tone: "neutral" }));
@@ -149,10 +164,12 @@ export function socialInsights(m: SocialMetrics, sections: Sections): Insight[] 
       tone: toneOfRel(reach),
     });
   if (m.insightsRead && m.now.rate != null) {
-    const vs = againstBar(m.now.rate, target);
+    const basisNote = rateLabelOf(m.now);
+    const vs = basisNote ? null : againstBar(m.now.rate, target);
+    const over = m.now.rateBasis === "views" ? `${int(m.now.views)} views` : m.now.rateBasis === "followers" ? `${int(m.now.followers)} followers, per post` : `${int(m.now.reach)} reached`;
     out.push({
-      title: `Engagement ${pct(m.now.rate)} vs ${pct(target, 0)} target`,
-      text: `${int(m.now.interactions)} likes, comments, shares and saves on ${int(m.now.reach)} reached${m.before.rate != null ? `, against ${pct(m.before.rate)} in ${m.compare.label}` : ""}.`,
+      title: basisNote ? `Engagement ${pct(m.now.rate)} ${basisNote}` : `Engagement ${pct(m.now.rate)} vs ${pct(target, 0)} target`,
+      text: `${int(m.now.interactions)} likes, comments, shares and saves on ${over}${m.before.rate != null ? `, against ${pct(m.before.rate)} in ${m.compare.label}` : ""}.`,
       next: vs?.met ? "We'll keep leaning into what people are responding to." : "We'll test stronger hooks and more interactive posts to lift it.",
       tone: vs ? (vs.met ? "good" : "bad") : "neutral",
     });
@@ -186,7 +203,7 @@ export function socialScoreText(m: SocialMetrics): string[] {
   const f = followersOf(m);
   const target = engagementBarOf(m);
   return [
-    `Engagement target: ${pct(target, 0)} (${m.engagementTarget && m.engagementTarget !== DEFAULT_ENGAGEMENT_BAR ? "the client's own" : "Kaizen's standard"}); quote every engagement rate against it.`,
+    `Engagement target: ${pct(target, 0)} (${m.engagementTarget && m.engagementTarget !== DEFAULT_ENGAGEMENT_BAR ? "the client's own" : "Kaizen's standard"}); quote a reach-based engagement rate against it. A rate marked "by views", "by followers" or "by post reach" is on another basis: say which, and never compare it with the target or with a reach-based rate.`,
     `Followers across the platforms: ${int(f.total)}, net ${followerChangeText(f)} in the period${f.prior != null ? ` (from ${int(f.prior)})` : ""}. Say follower growth as the net change, never as a percent jump in the total.`,
   ];
 }

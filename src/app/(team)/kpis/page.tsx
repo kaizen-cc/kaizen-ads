@@ -18,6 +18,7 @@ import type { GoogleHealth } from "@/lib/google-flags";
 import { boardCounts } from "@/lib/kpi/board-counts";
 import { asKpiPlatform } from "@/lib/kpi/platform";
 import { tiktokConfigured } from "@/lib/tiktok/core";
+import { onService } from "@/lib/service-gate";
 
 // Pulling one client's numbers from Meta on demand can take a minute; an audit runs a few minutes after the click
 export const maxDuration = 800;
@@ -56,9 +57,11 @@ export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   const [{ data: targets }, { data: snaps }, { data: buyers }, { data: clients }, auditBy, { data: activity }, { data: seats }, { data: allSeats }] = await Promise.all([
     supabase
       .from("kpi_targets")
-      .select("id, client_id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, source, owner_id, owner_name, extra_metrics, sheet, clients!inner(name, slug, status, kaizen_id), profiles!kpi_targets_owner_id_fkey(full_name)")
+      .select("id, client_id, platform, ad_account_id, label, conversion, custom_action, campaign_match, target, monthly_budget, budget_note, source, owner_id, owner_name, extra_metrics, sheet, clients!inner(name, slug, status, kaizen_id, services, services_extra, services_removed), profiles!kpi_targets_owner_id_fkey(full_name)")
       .eq("active", true)
-      .is("clients.archived_at", null),
+      .is("clients.archived_at", null)
+      // Only the lines the client buys (src/lib/service-gate.ts): a removed service has no card until it's added back
+      .then((r) => ({ ...r, data: (r.data ?? []).filter(onService) })),
     supabase.from("kpi_snapshots").select("*"),
     supabase.from("profiles").select("id, full_name, role").eq("is_active", true).or("role.in.(media_buyer,head_of_meta),also_buys.eq.true").order("full_name"),
     supabase.from("clients").select("id, name").neq("status", "offboarded").order("name"),

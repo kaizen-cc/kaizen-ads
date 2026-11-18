@@ -1,8 +1,11 @@
 // The email and organic social KPI boards, as plain functions (no database, no browser) so they're tested on their own.
 //   email   main KPI: Klaviyo-attributed revenue this month, paced to month end, against a monthly target
-//   social  main KPI: engagement rate (interactions / reach) this month against a target rate
+//   social  main KPI: engagement rate (interactions / reach) this month against a target rate. When Meta gives no reach the rate
+//           is read over views, then over followers per post (src/lib/social/rate.ts): each basis has its own bar, so a rate is
+//           only ever held to a bar of its own kind.
 // The bands are the ads board's (src/lib/kpi/calc.ts): 20% better than target is "Crushing it", at target "On target",
 // up to 15% under "Close", further under "Off target".
+import { barFor, type RateBasis } from "@/lib/social/rate";
 
 export type Line = "email" | "social";
 export type ChannelStatus = "excellent" | "good" | "close" | "off" | "unset" | "setup" | "early";
@@ -82,10 +85,15 @@ export const engagement = (interactions: number | null | undefined, reach: numbe
 /** Which window the rate is read over: the month so far, or the last 30 days while the month is too young to say */
 export const socialBasis = (m: Pick<Month, "dayOfMonth">): "month" | "last30" => (m.dayOfMonth > 7 ? "month" : "last30");
 
-export function judgeSocial(input: { readable: boolean; target: number | null; rate: number | null }): SocialJudged {
+/**
+ * A social client's status. The client's target is set on reach, so it only judges a reach rate; a rate over views or followers
+ * is judged against that basis's own bar (FALLBACK_BARS), never against the reach target.
+ */
+export function judgeSocial(input: { readable: boolean; target: number | null; rate: number | null; basis?: RateBasis | null }): SocialJudged {
   if (!input.readable || input.rate == null) return { status: "setup", ratio: null };
-  if (input.target == null || input.target <= 0) return { status: "unset", ratio: null };
-  const ratio = ratioOf(input.rate, input.target);
+  const own = input.basis === "views" || input.basis === "followers";
+  if (!own && (input.target == null || input.target <= 0)) return { status: "unset", ratio: null };
+  const ratio = ratioOf(input.rate, own ? barFor(input.basis, null) : input.target);
   return { status: bandOf(ratio) ?? "unset", ratio };
 }
 
@@ -161,7 +169,7 @@ export function cumulative(days: { date: string; value: number }[], start: strin
 }
 
 /** Engagement rate per day over the 7 days up to it (a quiet day doesn't jump to zero); null while the window has no reach */
-export function rollingRate(days: { date: string; interactions: number | null; reach: number | null }[], from: string, to: string, window = 7): (number | null)[] {
+export function rollingRate(days: { date: string; interactions: number | null; reach: number | null; views?: number | null }[], from: string, to: string, window = 7, over: "reach" | "views" = "reach"): (number | null)[] {
   const out: (number | null)[] = [];
   for (let d = from; d <= to; d = shiftDay(d, 1)) {
     const lo = shiftDay(d, -(window - 1));
@@ -170,7 +178,7 @@ export function rollingRate(days: { date: string; interactions: number | null; r
     for (const x of days) {
       if (x.date >= lo && x.date <= d) {
         i += x.interactions ?? 0;
-        r += x.reach ?? 0;
+        r += (over === "views" ? x.views : x.reach) ?? 0;
       }
     }
     out.push(r > 0 ? i / r : null);

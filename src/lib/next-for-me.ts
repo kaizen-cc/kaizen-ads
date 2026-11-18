@@ -10,7 +10,8 @@ import { isCreativeRole } from "@/lib/roles";
 import { seatKeys, type SeatRow } from "@/lib/buyer-seats";
 import { briefLabel } from "@/lib/promise-routing-core";
 import { loadBiblesToReview } from "@/lib/bible-review";
-import { askItem, callReviewItem, ownerAskItem, type AskRow, type OwnerAsk } from "@/lib/agent-call/next-items";
+import type { AskGroup } from "@/lib/agent-call/ask-groups";
+import { callReviewItem, ownerAskItem, type AskRow, type OwnerAsk } from "@/lib/agent-call/next-items";
 
 // Everything that's on one person, in one list: what to do now, what to decide, what to keep an eye on, and what's
 // coming. Pulled from the tickets, the briefs the AI wrote, the KPI tracker, the fatigue watcher and onboarding, and
@@ -18,7 +19,7 @@ import { askItem, callReviewItem, ownerAskItem, type AskRow, type OwnerAsk } fro
 
 export type NextItem = {
   id: string;
-  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint" | "task" | "bible" | "call-learnings" | "ask" | "direction" | "feedback";
+  kind: "ticket" | "review" | "launch" | "brief" | "promise" | "first_round" | "refresh" | "kpi" | "fatigue" | "intake" | "client" | "sprint" | "task" | "bible" | "call-learnings" | "ask" | "direction" | "feedback" | "allotment";
   tone: "bad" | "warn" | "brand" | "ok";
   client: string;
   title: string;
@@ -33,10 +34,14 @@ export type NextItem = {
   bible?: { clientId: string; version: string };
   /** A reminder or task asked of an agent: marked done from the list (a checklist's items ticked one by one; the call's transcript to download when it was asked for) */
   ask?: { id: string; checklist?: { text: string; done: boolean }[]; transcriptCallId?: string };
+  /** Follow-ups from the agents gathered into one card per client: ticked off one by one, or all done at once */
+  askGroup?: AskGroup;
   /** The owner (execs): a feature request from the team, approved or commented on from the list */
   feedback?: { groupId: string };
   /** A brief or call promise this person can hand to a teammate (Delegate): the ref ties the task back to the item */
   delegate?: { ref: string; clientId: string | null; title: string };
+  /** A creative gap (an allotment short this cycle, an account needing fresh creative): Suggest briefs opens the strategist's preview for it; the action (Create brief) opens the request form for that client and format */
+  briefIdea?: import("@/lib/creative-allotments").BriefIdea;
 };
 
 export type NextForMe = {
@@ -297,6 +302,9 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     (w.severity === "tired" && w.briefId ? decide : watch).push(item);
   }
 
+  // ─── Creative allotments: this cycle's gaps in my slice (src/lib/creative-allotments.ts), and accounts needing fresh creative ───
+  for (const x of await import("@/lib/creative-allotments-next").then((m) => m.allotmentNextItems(db, me)).catch(() => [])) (x.bucket === "now" ? now : watch).push(x.item);
+
   // ─── From the AI agents: calls with learnings to keep or toss, and reminders and tasks asked of an agent ───
   const [reviews, asks] = await Promise.all([
     import("@/lib/agent-call/reviews").then(async ({ loadCallReviews }) => loadCallReviews((await import("@/lib/supabase/admin")).createAdminClient(), me)).catch(() => []),
@@ -320,10 +328,10 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
       action: "Review the tasks",
     });
   }
-  for (const a of asks) {
-    const { item, bucket } = askItem(a, me.id);
-    (bucket === "now" ? now : coming).push(item);
-  }
+  // One card per client (a call's follow-ups ticked off inside it), not a row for every follow-up
+  const { askRowsFor } = await import("@/lib/agent-call/ask-groups");
+  const { data: named } = await db.from("profiles").select("assistant_name").eq("id", me.id).maybeSingle();
+  for (const { item, bucket } of askRowsFor(asks, me.id, new Date(), (named?.assistant_name as string | null | undefined) ?? null)) (bucket === "now" ? now : coming).push(item);
 
   // ─── The owner (execs): feature requests from the team waiting for a yes or a comment, until they're handled ───
   if (me.isExec) for (const g of await loadOwnerAsks(db).catch(() => [])) decide.push(ownerAskItem(g));
@@ -375,13 +383,13 @@ async function loadOwnerAsks(db: SupabaseClient): Promise<OwnerAsk[]> {
 }
 
 /** Open reminders and tasks for this person from conversations with the agents (none before its migration) */
-async function loadAsks(db: SupabaseClient, me: string): Promise<AskRow[]> {
-  const cols = "id, kind, title, detail, due_on, created_at, asked_by, call_id, profiles:asked_by(full_name), ai_roles(label), clients(name, slug)";
-  const read = (extra: string) => db.from("agent_asks").select(`${cols}${extra}`).eq("owner_id", me).eq("status", "open").order("created_at", { ascending: false }).limit(40);
+async function loadAsks(db: SupabaseClient, me: string): Promise<(AskRow & { roleKey: string | null })[]> {
+  const cols = "id, kind, title, detail, due_on, created_at, asked_by, call_id, role_key, profiles:asked_by(full_name), ai_roles(label), clients(id, name, slug)";
+  const read = (extra: string) => db.from("agent_asks").select(`${cols}${extra}`).eq("owner_id", me).eq("status", "open").order("created_at", { ascending: false }).limit(80);
   // The checklist and transcript came with their own migration: before it, read without them
   let { data, error } = await read(", checklist, with_transcript");
   if (error) ({ data, error } = await read(""));
   if (error) return [];
-  type Row = Omit<AskRow, "askerName" | "roleLabel" | "client"> & { profiles: { full_name: string } | null; ai_roles: { label: string } | null; clients: { name: string; slug: string } | null };
-  return ((data ?? []) as unknown as Row[]).map((r) => ({ id: r.id, kind: r.kind, title: r.title, detail: r.detail, due_on: r.due_on, created_at: r.created_at, asked_by: r.asked_by, askerName: r.profiles?.full_name ?? null, roleLabel: r.ai_roles?.label ?? null, client: r.clients, checklist: r.checklist ?? [], call_id: r.call_id ?? null, with_transcript: r.with_transcript ?? false }));
+  type Row = Omit<AskRow, "askerName" | "roleLabel" | "client"> & { profiles: { full_name: string } | null; ai_roles: { label: string } | null; clients: { id: string; name: string; slug: string } | null; role_key?: string | null };
+  return ((data ?? []) as unknown as Row[]).map((r) => ({ id: r.id, kind: r.kind, title: r.title, detail: r.detail, due_on: r.due_on, created_at: r.created_at, asked_by: r.asked_by, askerName: r.profiles?.full_name ?? null, roleLabel: r.ai_roles?.label ?? null, client: r.clients, checklist: r.checklist ?? [], roleKey: r.role_key ?? null, call_id: r.call_id ?? null, with_transcript: r.with_transcript ?? false }));
 }

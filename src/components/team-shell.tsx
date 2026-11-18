@@ -1,5 +1,6 @@
 "use client";
 
+import { useUnreadHeadsUps } from "@/lib/assistant/heads-up-store";
 import Image from "next/image";
 import { ThemeSwitch } from "./theme-switch";
 import type { Theme } from "@/app/(team)/theme-actions";
@@ -103,6 +104,8 @@ function AssistantButton({ size = "side", onPress }: { size?: "side" | "menu"; o
     () => false,
   );
   const who = assistantName || "My Assistant";
+  // Urgent heads-ups waiting unread in the chat (a missed ring, or while they were away)
+  const unread = useUnreadHeadsUps();
   const pick = (v: "call" | "chat") => {
     saveContact(v);
     setOpen(false);
@@ -152,9 +155,14 @@ function AssistantButton({ size = "side", onPress }: { size?: "side" | "menu"; o
           </span>
           <span className="relative grid min-w-0 flex-1 gap-0.5 leading-tight">
             <span className={`font-medium text-fg [overflow-wrap:break-word] [text-wrap:balance] ${size === "menu" ? "text-[15px]" : "text-[13.5px]"}`}>{who}</span>
-            <span className="text-[11px] text-faint">{on ? (talk === "text" ? "In a chat" : "On a call") : "Call or chat"}</span>
+            <span className={`text-[11px] ${unread && !on ? "font-medium text-brand-text" : "text-faint"}`}>{on ? (talk === "text" ? "In a chat" : "On a call") : unread ? `${unread} urgent in your chat` : "Call or chat"}</span>
           </span>
           {on && <span aria-hidden className="relative h-2 w-2 shrink-0 rounded-full bg-ok shadow-[0_0_0_3px_var(--ok-soft)]" />}
+          {!on && unread > 0 && (
+            <span aria-label={`${unread} unread`} className="relative grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-brand px-1.5 text-[11px] font-semibold tabular-nums text-white">
+              {unread}
+            </span>
+          )}
         </button>
         {/* Its settings: the name, voice, color and what it knows, on the Assistant page */}
         <Link

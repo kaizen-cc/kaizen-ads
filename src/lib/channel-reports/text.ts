@@ -1,7 +1,8 @@
-import { emailSupport, int, money, pct, priorWordOf, signed, socialName, socialSupport, targetSub, type EmailMetrics, type SocialMetrics } from "./core";
-import { grade, RATE_BARS, type MessageRow, type Pair } from "./email-detail";
+import { emailSupport, isEngagement, int, money, pct, priorWordOf, signed, socialName, socialSupport, targetSub, type EmailMetrics, type SocialMetrics } from "./core";
+import type { MessageRow, Pair } from "./email-detail";
+import { engagementText } from "./email-engagement";
 import { periodWords, socialHappenedBullets, whatHappenedBullets } from "./email-message";
-import { socialScoreText } from "./social-report";
+import { rateLabelOf, socialScoreText } from "./social-report";
 import { locationText } from "@/lib/klaviyo/locations";
 import { channelMtdText } from "./mtd";
 import { sourcesText } from "./email-sources";
@@ -17,6 +18,17 @@ const line = (label: string, now: string, before: string, extra = "") => `- ${la
 export function emailText(m: EmailMetrics): string {
   const c = m.currency;
   const { now, before } = m;
+  if (isEngagement(m))
+    return [
+      `Email marketing (${m.source ?? "Klaviyo"}${m.account ? `, account ${m.account}` : ""}). Period: ${m.main.label} (${m.main.start} to ${m.main.end}), compared with ${m.compare.label} (${m.compare.start} to ${m.compare.end}).`,
+      `The message's What happened bullets, exactly (period ${periodWords(m.main)}):`,
+      ...whatHappenedBullets(m).map((b) => `- ${b}`),
+      engagementText(m.engagement, m.compare.label),
+      m.upcoming?.length
+        ? `Coming up (dated; "idea" means suggested, not confirmed: only list an idea if the work log or what was said confirms it):\n${m.upcoming.map((u) => `- ${u.date}: ${u.title} [${u.source === "klaviyo" ? "scheduled" : u.source === "planned" ? "planned by the team" : "idea"}]`).join("\n")}`
+        : "Coming up: nothing dated is scheduled or planned; take Coming up only from the work log and what was said, never invent it.",
+      ...(m.gaps.length ? [`Days with no data: ${m.gaps.join(", ")}`] : []),
+    ].join("\n");
   const out: string[] = [
     `Email marketing (${m.source ?? "Klaviyo"}${m.account ? `, account ${m.account}` : ""}). Period: ${m.main.label} (${m.main.start} to ${m.main.end}), compared with ${m.compare.label} (${m.compare.start} to ${m.compare.end}). ${m.revenueMeasured === false ? `${m.source ?? "This source"} reports no revenue for this client: never quote revenue, orders or order rates, and leave them out.` : m.source ? `Revenue is what ${m.source} reports for email and SMS, never the store's total revenue.` : "Revenue is what Klaviyo attributes to email through its Placed Order metric, never the store's total revenue."}${now.estimated ? " The daily rows were short, so revenue is added up from the campaigns sent and the flows' own totals." : ""}`,
     line("Attributed revenue", money(now.revenue, c), money(before.revenue, c)),
@@ -79,7 +91,7 @@ function detailText(m: EmailMetrics): string {
     `The message's What happened bullets, exactly (period ${periodWords(m.main)}):`,
     ...whatHappenedBullets(m).map((b) => `- ${b}`),
     `- Orders before: ${int(d.orders.before)}`,
-    `Campaign performance (${d.campaign.sent.now ?? 0} sent; before: ${d.campaign.sent.before ?? 0}): recipients ${was(d.campaign.recipients, int)}; open rate ${was(d.campaign.open, (x) => pct(x))} (${grade(d.campaign.open.now, RATE_BARS.campaign.open) ?? "n/a"} against Kaizen's ${pct(RATE_BARS.campaign.open, 0)} bar); click rate ${was(d.campaign.click, (x) => pct(x, 2))} (${grade(d.campaign.click.now, RATE_BARS.campaign.click) ?? "n/a"} against ${pct(RATE_BARS.campaign.click, 0)}); placed order rate ${was(d.campaign.orderRate, (x) => pct(x, 2))}.`,
+    `Campaign performance (${d.campaign.sent.now ?? 0} sent; before: ${d.campaign.sent.before ?? 0}): recipients ${was(d.campaign.recipients, int)}; open rate ${was(d.campaign.open, (x) => pct(x))}; click rate ${was(d.campaign.click, (x) => pct(x, 2))}; placed order rate ${was(d.campaign.orderRate, (x) => pct(x, 2))}.`,
     ...(d.campaign.rpr ? [`Campaign revenue per recipient: ${was(d.campaign.rpr, (x) => money(x, c))}.`] : []),
     `Every campaign sent in the period, by date:`,
     ...d.campaigns.map((r) => `- ${r.date} ${r.channel === "sms" ? "SMS" : "email"} "${r.name}": ${row(r, c)}${audienceFact(r)}${r.channel === "sms" && r.smsBody ? ` [text: ${r.smsBody.replace(/\s+/g, " ").slice(0, 200)}]` : ""}`),
@@ -93,7 +105,7 @@ function detailText(m: EmailMetrics): string {
     out.push(`Attribution split (email campaigns, automated emails${lg.sms ? ", SMS campaigns, automated texts" : ""}): ${lg.rows.map((x) => `${x.label} ${money(x.revenue, c)}${x.share != null ? ` (${Math.round(x.share * 100)}%)` : ""}${x.before != null ? `, before ${money(x.before, c)}` : ""}`).join("; ")}; total ${money(lg.total, c)}.`);
   }
   if (d.flow) {
-    out.push(`Automated emails (flows) for the period's own dates (call them automated emails in the client's message, never flows): ${d.flow.sent.now ?? 0} sent; recipients ${was(d.flow.recipients, int)}; open rate ${was(d.flow.open, (x) => pct(x))} (${grade(d.flow.open.now, RATE_BARS.flow.open) ?? "n/a"} against ${pct(RATE_BARS.flow.open, 0)}); click rate ${was(d.flow.click, (x) => pct(x, 2))} (${grade(d.flow.click.now, RATE_BARS.flow.click) ?? "n/a"} against ${pct(RATE_BARS.flow.click, 1)}); placed order rate ${was(d.flow.orderRate, (x) => pct(x, 2))}; revenue ${was(d.flow.revenue, (x) => money(x, c))}${d.flow.rpr ? `; revenue per recipient ${was(d.flow.rpr, (x) => money(x, c))}` : ""}.`);
+    out.push(`Automated emails (flows) for the period's own dates (call them automated emails in the client's message, never flows): ${d.flow.sent.now ?? 0} sent; recipients ${was(d.flow.recipients, int)}; open rate ${was(d.flow.open, (x) => pct(x))}; click rate ${was(d.flow.click, (x) => pct(x, 2))}; placed order rate ${was(d.flow.orderRate, (x) => pct(x, 2))}; revenue ${was(d.flow.revenue, (x) => money(x, c))}${d.flow.rpr ? `; revenue per recipient ${was(d.flow.rpr, (x) => money(x, c))}` : ""}.`);
     out.push(`Each automated email that sent, best revenue first:`);
     for (const r of d.flows) out.push(`- "${r.name}" (${r.status ?? "status unknown"}): ${row(r, c)}${r.prevRevenue != null ? `, revenue before ${money(r.prevRevenue, c)}${r.prevRpr != null ? `, per recipient before ${money(r.prevRpr, c)}` : ""}` : ", did not send in the period before"}`);
     if (d.flowsOther) out.push(`- ${d.flowsOther.name} together: ${row(d.flowsOther, c)}`);
@@ -125,13 +137,13 @@ function detailText(m: EmailMetrics): string {
 export function socialText(m: SocialMetrics): string {
   const { now, before } = m;
   const out: string[] = [
-    `Organic social (Facebook Page and Instagram account, read from Meta). Period: ${m.main.label} (${m.main.start} to ${m.main.end}), compared with ${m.compare.label} (${m.compare.start} to ${m.compare.end}). Engagement rate is interactions over reach.${m.insightsRead ? "" : " Meta gave no reach or interaction numbers for this account, so don't quote an engagement rate."}`,
+    `Organic social (Facebook Page and Instagram account, read from Meta). Period: ${m.main.label} (${m.main.start} to ${m.main.end}), compared with ${m.compare.label} (${m.compare.start} to ${m.compare.end}). Engagement rate is interactions over reach; when Meta gave no reach it is interactions over views, and with neither it is interactions per post over followers (the line says which: "by views", "by followers"). Never compare rates on different bases.${m.insightsRead ? "" : " Meta gave no reach, views or interaction numbers for this account, so don't quote an engagement rate."}${now.reach == null ? " Meta didn't report reach for this period: say so, never write a reach of zero." : ""}`,
     line("Followers (all platforms)", int(now.followers), int(before.followers)),
     line("Follower change in the period", signed(now.followerChange), signed(before.followerChange)),
     line("Reach", int(now.reach), int(before.reach)),
     line("Views", int(now.views), int(before.views)),
     line("Interactions (likes, comments, shares, saves)", int(now.interactions), int(before.interactions)),
-    line("Engagement rate", m.insightsRead ? pct(now.rate) : "not available", pct(before.rate)),
+    line(`Engagement rate${rateLabelOf(now) ? ` (${rateLabelOf(now)})` : ""}`, m.insightsRead ? pct(now.rate) : "not available", pct(before.rate)),
     line("Profile visits", int(now.profileViews), int(before.profileViews)),
     line("Accounts engaged", int(now.engaged), int(before.engaged)),
     line("Posts published", int(now.posts), int(before.posts)),

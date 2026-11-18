@@ -1,4 +1,5 @@
 import "server-only";
+import { onService } from "@/lib/service-gate";
 import { portalUrl } from "@/lib/site";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { nyParts } from "@/lib/kpi/calc";
@@ -36,11 +37,12 @@ type TargetRow = { id: string; client_id: string; platform: string; owner_id: st
 /** Live accounts with an owner and spend in the window (from the KPI snapshot). */
 async function liveTargets(admin: SupabaseClient, window: "d7" | "d30") {
   const [{ data: targets }, { data: snaps }] = await Promise.all([
-    admin.from("kpi_targets").select("id, client_id, platform, owner_id, ad_account_id, clients!inner(status, archived_at, internal)").eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null).eq("clients.internal", false),
+    admin.from("kpi_targets").select("id, client_id, platform, owner_id, ad_account_id, clients!inner(status, archived_at, internal, services, services_extra, services_removed)").eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null).eq("clients.internal", false),
     admin.from("kpi_snapshots").select("target_id, windows"),
   ]);
   const spent = new Map((snaps ?? []).map((s) => [s.target_id as string, Number((s.windows as Record<string, { spend?: number }> | null)?.[window]?.spend ?? 0)]));
-  return ((targets ?? []) as unknown as TargetRow[]).filter((t) => (LIVE as readonly string[]).includes(t.clients.status) && (spent.get(t.id) ?? 0) > 0);
+  // Only the lines the client buys (src/lib/service-gate.ts): no report for a removed service
+  return ((targets ?? []) as unknown as TargetRow[]).filter((t) => (LIVE as readonly string[]).includes(t.clients.status) && onService(t) && (spent.get(t.id) ?? 0) > 0);
 }
 
 /** Queues this week's (or this month's) reports that don't exist yet (one client's, with onlyClient). Safe to run again. */
@@ -114,9 +116,11 @@ export async function draftQueued(admin: SupabaseClient, budgetMs = 600_000, opt
   while (Date.now() < until - 150_000) {
     // Queued ones, and any stuck mid-draft for 20 minutes (a timeout), monthly first (they're critical)
     const stuck = new Date(Date.now() - 20 * 60_000).toISOString();
-    let q = admin.from("reports").select("id, status, updated_at, target_id, regenerated_at").in("platform", ["meta", "google", "tiktok"]).or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`);
+    let q = admin.from("reports").select("id, status, updated_at, target_id, regenerated_at, platform, clients(services, services_extra, services_removed)").in("platform", ["meta", "google", "tiktok"]).or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`);
     if (opts.regenerated) q = q.gte("regenerated_at", new Date(Date.now() - 6 * 3_600_000).toISOString());
-    const { data } = await q.order("kind", { ascending: true }).order("created_at").limit(opts.regenerated ? 2 : 3);
+    const { data: found } = await q.order("kind", { ascending: true }).order("created_at").limit(60);
+    // A queued report on a line the client no longer buys waits, kept, until the service is back (src/lib/service-gate.ts)
+    const data = (found ?? []).filter((r) => onService({ platform: r.platform as string, clients: r.clients ?? null })).slice(0, opts.regenerated ? 2 : 3);
     if (!data?.length) break;
     // Each one claimed before it's written, so the schedule and a batch started from the page never write one twice
     const claimed: typeof data = [];
@@ -527,7 +531,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
 
 /** Reminders: weekly reports not posted by Monday afternoon; monthly parts not submitted as the 5th nears (Slack-free: in the app and by email via notifications). */
 export async function remindReports(admin: SupabaseClient, today = nyParts(new Date()).date) {
-  const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, status, clients(name)").in("status", ["draft", "failed"]).in("platform", ["meta", "google", "tiktok"]).is("joined_to", null).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
+  const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, status, clients(name, services, services_extra, services_removed)").in("status", ["draft", "failed"]).in("platform", ["meta", "google", "tiktok"]).is("joined_to", null).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10)).then((r) => ({ ...r, data: (r.data ?? []).filter((x) => onService({ platform: x.platform as string, clients: x.clients ?? null })) }));
   const day = Number(today.slice(8, 10));
   let n = 0;
   // The report's owner, with the client's secondary buyers on that platform copied in

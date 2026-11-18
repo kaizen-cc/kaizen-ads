@@ -1,6 +1,7 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
+import { BOARD_KPIS_TAG } from "@/lib/board-kpis-cache";
 import { after } from "next/server";
 import { backInCycle } from "@/lib/reactivate";
 import { clientReadiness, type Readiness } from "@/lib/readiness";
@@ -186,6 +187,10 @@ export async function setClientService(clientId: string, slug: string, service: 
   // Running ads now: its KPI card is on the board straight away, numbers showing, waiting for its KPI
   if (!error && on && (service === "facebook-ads" || service === "google-ads")) {
     await (await import("@/lib/kpi/ensure")).ensureKpiCards(admin, clientId).catch(() => 0);
+  }
+  // Every screen the service gate decides (src/lib/service-gate.ts) shows the change now, not after its cache expires
+  if (!error) {
+    revalidateTag(BOARD_KPIS_TAG, "max");
     revalidatePath("/kpis");
   }
   return done(slug, error);

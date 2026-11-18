@@ -1,4 +1,5 @@
 import { BAND_TONE } from "@/components/email-score-parts";
+import { basisLabel } from "@/lib/social/rate";
 import { PLATFORM_LABEL, socialCheckText, type SocialCheck, type SocialCheckKey, type SocialDrag } from "@/lib/social-score";
 
 // How the social account score looks everywhere (the Social board, its sheet, the Overview): the checks against their
@@ -9,7 +10,7 @@ export { BAND_TONE };
 
 /** Why each check is in the score and what moves it: the sheet's "why" under each check */
 export const CHECK_WHY: Record<SocialCheckKey, { what: string; moves: string }> = {
-  engagement: { what: "Interactions (likes, comments, shares, saves) over reach, the last 30 days, against the client's own target.", moves: "Stronger hooks in the first line and the first second, posts that ask for a reply or a save, and more of the formats this account's best posts use." },
+  engagement: { what: "Interactions (likes, comments, shares, saves) over reach, the last 30 days, against the client's own target. With no reach from Meta it is over views, then per post over followers, each against its own bar (3% and 1%), so rates on different bases are never compared.", moves: "Stronger hooks in the first line and the first second, posts that ask for a reply or a save, and more of the formats this account's best posts use." },
   growth: { what: "Net new followers over the 30 days, as a share of where the account started.", moves: "Reels that reach beyond the followers, a reason to follow in the bio and captions, collaborations and shares." },
   reach: { what: "The 30 days' reach against the 30 before (holding level meets the bar).", moves: "Posting steadily, Reels and video (the platforms push them to non-followers), and topics that already earned reach." },
   cadence: { what: "Posts published this month against what the package promises for the month so far.", moves: "A content calendar a week ahead, batching creative, and approvals that don't wait on the client." },
@@ -31,7 +32,10 @@ export function SocialChecks({ checks, why = false }: { checks: SocialCheck[]; w
             <span className={`${tone} text-[13px]`} aria-label={!measured ? "No data" : c.met ? "Met" : "Under the bar"}>
               {!measured ? "-" : c.met ? "✓" : "✗"}
             </span>
-            <span className="min-w-0 truncate text-fg">{c.label}</span>
+            <span className="min-w-0 truncate text-fg">
+              {c.label}
+              {c.key === "engagement" && basisLabel(c.basis) ? <span className="text-faint"> · {basisLabel(c.basis)}</span> : null}
+            </span>
             <span className="tabular text-right">
               <span className={tone}>{socialCheckText(c.unit, c.value)}</span>
               <span className="text-faint"> / bar {socialCheckText(c.unit, c.bar)}</span>

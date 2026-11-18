@@ -285,3 +285,17 @@ export async function setAssistantLook(change: { name?: string | null; voice?: s
   revalidatePath("/assistant");
   return { ok: true, color: update.assistant_color, name: update.assistant_name };
 }
+
+// ─── When something's urgent ────────────────────────────────────────────────
+
+/** Their ring settings: ring me (the default) or chat only, and quiet hours (no ring then; the chat still gets it) */
+export async function setRingPrefs(input: { mode: "ring" | "chat"; quietStart: string | null; quietEnd: string | null; tz?: string | null }): Promise<{ ok: true } | Fail> {
+  const me = await requireStaff();
+  const { cleanPrefs } = await import("@/lib/assistant/ring-core");
+  const p = cleanPrefs({ mode: input.mode, quietStart: input.quietStart, quietEnd: input.quietEnd, tz: input.tz ?? undefined });
+  const db = await createClient();
+  const { error } = await db.from("assistant_ring_prefs").upsert({ profile_id: me.id, mode: p.mode, quiet_start: p.quietStart, quiet_end: p.quietEnd, tz: p.tz, updated_at: new Date().toISOString() });
+  if (error) return { ok: false, error: "It didn't save. Try again." };
+  revalidatePath("/assistant");
+  return { ok: true };
+}

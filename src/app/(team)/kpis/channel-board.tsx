@@ -7,6 +7,7 @@ import { ChannelSpark } from "@/components/channel-spark";
 import { ChannelStatusPill, Gauge, SupportChips, TONE, mainCaption, mainText, needsConnecting, num, paceLine, targetText } from "@/components/channel-parts";
 import { BAND_TONE, ScoreBadge, WeighingDown, checkText, pointsLost } from "@/components/email-score-parts";
 import { freshness } from "@/lib/dates";
+import { basisLabel } from "@/lib/social/rate";
 import { moneyShort, pctText, STATUS_LABEL, type ChannelStatus, type Month } from "@/lib/channel-kpis/calc";
 import type { ChannelRow } from "@/lib/channel-kpis/types";
 import { EmailRevenueChart, RevenuePace } from "@/components/email-revenue-chart";
@@ -529,7 +530,7 @@ function Card({ r, reading, active, onOpen }: { r: ChannelRow; reading: ReadStat
                       <span key={p.platform} className="tabular inline-flex h-6 items-center gap-1.5 rounded-full border border-line px-2 text-[11px]">
                         <span className="text-faint">{PLATFORM_LABEL[p.platform]}</span>
                         <span className={BAND_TONE[p.band].text}>{p.score}</span>
-                        <span className="text-faint">· {pctText(p.numbers.rate)}</span>
+                        <span className="text-faint">· {pctText(p.numbers.rate)}{basisLabel(p.numbers.rateBasis) ? ` ${basisLabel(p.numbers.rateBasis)}` : ""}</span>
                       </span>
                     ))}
                   </span>

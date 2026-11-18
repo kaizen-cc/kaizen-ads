@@ -1,6 +1,7 @@
 import type { WatchRow } from "@/lib/fatigue";
 import type { Production } from "@/lib/production";
 import type { CallPromise, OnboardingState, SuggestionsState } from "@/lib/suggestions";
+import Link from "next/link";
 import { buildThemes } from "./overview-topics";
 import { FlowStrip, PageHeader, Stats, TeamLoad, type Alert, type ClientPulse, type KpiPulseData, type Load, type PhaseKey, type PhaseStat } from "./shared";
 import { Themes } from "./themes";
@@ -32,6 +33,8 @@ export type PulseData = {
   suggestions?: SuggestionsState | null;
   patterns?: import("./overview-topics").SharedTopics["patterns"];
   looks?: import("./overview-topics").SharedTopics["looks"];
+  /** An exec with a focus: what's outside it, under a quiet "Everything else" (never in the counts) */
+  elsewhere?: import("./overview-topics").SharedTopics | null;
   handoffs?: React.ReactNode;
   recap?: React.ReactNode;
   /** Next for me: everything on the exec themselves, under the themes */
@@ -76,11 +79,37 @@ export function PulseView(d: PulseData) {
       ),
     },
   });
-  const urgent = themes.filter((t) => t.count && (t.tone === "bad" || t.tone === "brand" || t.tone === "warn")).length;
+  // Outside their focus: every panel the other themes would show, in one quiet place, with the recap's own list
+  if (d.elsewhere) {
+    const rest = buildThemes(d.elsewhere, {});
+    themes.push({
+      id: "elsewhere",
+      title: "Everything else",
+      tone: "quiet",
+      count: 0,
+      quiet: true,
+      headline: "Outside your focus, for when you want it",
+      points: [],
+      content: (
+        <>
+          <Link href="/today?topic=elsewhere" className="flex min-h-11 w-fit items-center rounded-full border border-ink/12 px-4 py-1.5 text-sm text-ink/75 hover:border-ink/30 hover:text-fg md:min-h-0 md:px-3 md:text-xs">
+            In your recap: everything else →
+          </Link>
+          {rest.map((t) => (
+            <div key={t.id} className="contents">
+              {t.content}
+            </div>
+          ))}
+        </>
+      ),
+    });
+  }
+  const shown = themes.filter((t) => !t.quiet);
+  const urgent = shown.filter((t) => t.count && (t.tone === "bad" || t.tone === "brand" || t.tone === "warn")).length;
 
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
-      <PageHeader today={d.today} title={`${d.greeting}, ${d.firstName}`} subtitle={urgent ? `${urgent} of ${themes.length} areas need you today · open one to act on it` : "All steady today"} />
+      <PageHeader today={d.today} title={`${d.greeting}, ${d.firstName}`} subtitle={urgent ? `${urgent} of ${shown.length} areas need you today · open one to act on it` : "All steady today"} />
       {d.recap}
       {d.handoffs}
       <Themes themes={themes} />

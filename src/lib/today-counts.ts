@@ -6,7 +6,9 @@ import type { Tier, TodayItem, TopicKey } from "@/lib/today";
 // gather as one "Team" row. A client's row is as urgent as its most urgent item. Pure: no database, no server-only.
 
 export const TIER_ORDER: Tier[] = ["critical", "high", "normal"];
-export const TOPIC_KEYS: TopicKey[] = ["mine", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments"];
+export const TOPIC_KEYS: TopicKey[] = ["fire", "mine", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments", "elsewhere"];
+/** An exec's "Everything else": outside their focus, shown last and left out of every total */
+export const QUIET_TOPIC: TopicKey = "elsewhere";
 const RANK: Record<Tier, number> = { critical: 2, high: 1, normal: 0 };
 
 type Countable = Pick<TodayItem, "client" | "tier" | "score" | "topic">;
@@ -39,7 +41,7 @@ export function topicGroups<T extends Countable>(items: T[]): { topic: TopicKey;
       const sorted = [...list].sort((a, b) => b.score - a.score);
       return { topic, items: sorted, buckets: bucketsOf(sorted) };
     })
-    .sort((a, b) => b.items[0].score - a.items[0].score);
+    .sort((a, b) => Number(a.topic === QUIET_TOPIC) - Number(b.topic === QUIET_TOPIC) || b.items[0].score - a.items[0].score);
 }
 
 export type Looks = {
@@ -58,6 +60,11 @@ export function countLooks(items: Countable[]): Looks {
   let total = 0;
   for (const g of topicGroups(items)) {
     for (const b of g.buckets) {
+      // Everything else has its own count, never in the totals
+      if (g.topic === QUIET_TOPIC) {
+        byTopic[g.topic].n++;
+        continue;
+      }
       total++;
       byTier[b.tier]++;
       byTopic[g.topic].n++;
@@ -90,6 +97,10 @@ const s = (n: number, one: string, many: string) => (n === 1 ? one : many);
 /** What a topic's recap screen says, in one line, for n client rows. */
 export function lookHeadline(topic: TopicKey, n: number): string {
   switch (topic) {
+    case "fire":
+      return `${n} ${s(n, "client is", "clients are")} on fire`;
+    case "elsewhere":
+      return `${n} ${s(n, "client", "clients")} outside your focus, when you want them`;
     case "mine":
       return `${n} ${s(n, "thing is", "things are")} on you today`;
     case "promises":
@@ -116,6 +127,10 @@ export function lookHeadline(topic: TopicKey, n: number): string {
 /** The same number, short, for a chip on the Overview: reads the same as the recap's headline. */
 export function lookChip(topic: TopicKey, n: number): string {
   switch (topic) {
+    case "fire":
+      return `${n} on fire`;
+    case "elsewhere":
+      return `${n} everything else`;
     case "mine":
       return `${n} on you today`;
     case "promises":

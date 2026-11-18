@@ -5,7 +5,9 @@ import type { Sections } from "@/lib/reports/write";
 import type { Move } from "@/lib/reports/weekly-core";
 import { int, moveOf, pct, priorWordOf, signed, socialName, type SocialMetrics, type SocialPostLite } from "./core";
 import { columnKeys, tileViews, type ChannelLayout, type TileView } from "./layout";
-import { againstBar, bestPostOf, captionText, engagementBarOf, followerChangeText, followersOf, FORMAT_WORD, mtdCells, pdfText, postKey, postFrame, socialInsights, trendRates, type Insight, type MtdCell } from "./social-report";
+import { barFor, basisSentence } from "@/lib/social/rate";
+import { overrideNote, teamFindingsOf } from "./social-notes";
+import { againstBar, bestPostOf, captionText, engagementBarOf, followerChangeText, followersOf, FORMAT_WORD, mtdCells, pdfText, postKey, postFrame, rateLabelOf, socialInsights, trendRates, type Insight, type MtdCell } from "./social-report";
 
 // The organic social report's pages, drawn under the shared masthead and hero (channel-doc.tsx), in the house style of
 // the ads and email reports (weekly-doc.tsx's kit). Two full pages, laid out on purpose:
@@ -150,9 +152,12 @@ function Glance({ m, layout, hot }: { m: SocialMetrics; layout?: ChannelLayout |
             );
           }
           if (t.key === "rate") {
-            const vs = againstBar(m.insightsRead ? m.now.rate : null, target);
+            // A rate on another basis (by views, by followers) is not held to the reach target: it is labeled, and drawn against its own bar
+            const basisNote = rateLabelOf(m.now);
+            const vs = basisNote ? null : againstBar(m.insightsRead ? m.now.rate : null, target);
+            const bar = basisNote ? barFor(m.now.rateBasis, null) : target;
             const hex = vs ? (vs.met ? GOOD.fg : BAD.fg) : INK;
-            const fill = m.now.rate != null ? Math.min(1, m.now.rate / (target * 1.6)) : 0;
+            const fill = m.now.rate != null ? Math.min(1, m.now.rate / (bar * 1.6)) : 0;
             const mark = 1 / 1.6;
             return (
               <Fragment key={t.key}>
@@ -166,7 +171,7 @@ function Glance({ m, layout, hot }: { m: SocialMetrics; layout?: ChannelLayout |
                     <View style={{ width: `${fill * 100}%`, height: 5, borderRadius: 2.5, backgroundColor: hex }} />
                     <View style={{ position: "absolute", left: `${mark * 100}%`, top: -2, width: 1.5, height: 9, backgroundColor: INK }} />
                   </View>
-                  <Text style={{ fontSize: 6, color: MUTED, marginTop: 4, maxLines: 1 }}>{vs ? `${pct(target, 0)} target · ${vs.text}` : `${pct(target, 0)} target`}</Text>
+                  <Text style={{ fontSize: 6, color: MUTED, marginTop: 4, maxLines: 1 }}>{basisNote ? `${basisNote} · ${basisSentence(m.now.rateBasis, m.now.reachFrom).toLowerCase()}` : vs ? `${pct(target, 0)} target · ${vs.text}` : `${pct(target, 0)} target`}</Text>
                 </TileShell>
               </Fragment>
             );
@@ -262,6 +267,12 @@ function Insights({ items, look, hot }: { items: Insight[]; look: Look; hot: Hot
                     <Hot href={hot(`text/takeaway-${i}-text`)} />
                   </View>
                 </View>
+                {t.teamNote ? (
+                  <View style={{ marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: "#edf1f4" }}>
+                    <Text style={{ fontSize: 6, fontFamily: "Helvetica-Bold", color: MUTED, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 2 }}>Team note</Text>
+                    <Text style={{ fontSize: 7.6, color: INK, lineHeight: 1.4 }}>{pdfText(t.teamNote)}</Text>
+                  </View>
+                ) : null}
                 {t.next ? (
                   <View style={{ flexDirection: "row", alignItems: "flex-start", marginTop: 8, paddingTop: 6, borderTopWidth: 1, borderTopColor: "#edf1f4" }}>
                     <Text style={{ fontSize: 6, fontFamily: "Helvetica-Bold", color: look.primary, textTransform: "uppercase", letterSpacing: 0.6, marginRight: 5, marginTop: 1 }}>Next</Text>
@@ -274,6 +285,33 @@ function Insights({ items, look, hot }: { items: Insight[]; look: Look; hot: Hot
         </View>
       ))}
     />
+  );
+}
+
+// ─── The team's own notes (and figures it entered where Meta gave none), labeled as the team's, never as written by the app ─
+
+function TeamNotes({ m, sections, look, whiteLabel }: { m: SocialMetrics; sections: Sections; look: Look; whiteLabel?: boolean }) {
+  const notes = teamFindingsOf(sections).notes;
+  const entered = m.overrides ?? [];
+  if (!notes && !entered.length) return null;
+  return (
+    <View style={s.section} wrap={false}>
+      <Head title="Team notes" sub="Written by our team" />
+      <View style={{ backgroundColor: "#ffffff", borderWidth: 1, borderColor: LINE, borderRadius: 10, paddingVertical: 11, paddingHorizontal: 12, borderLeftWidth: 3, borderLeftColor: look.primary }}>
+        {notes
+          ? notes.split(/\n{2,}/).map((para, i) => (
+              <Text key={i} style={{ fontSize: 8.4, color: INK, lineHeight: 1.5, marginTop: i ? 5 : 0 }}>
+                {pdfText(para)}
+              </Text>
+            ))
+          : null}
+        {entered.map((o) => (
+          <Text key={o.key} style={{ fontSize: 6.6, color: MUTED, marginTop: notes ? 6 : 0 }}>
+            {pdfText(overrideNote(o, { whiteLabel }))}
+          </Text>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -417,7 +455,8 @@ function PlatformCell({ title, value, children, width, color, hot }: { title: st
  */
 function PlatformCard({ p, m, width, cols, keys, hot }: { p: PlatformRow; m: SocialMetrics; width: number; cols: number; keys: string[]; hot: HotOf }) {
   const target = engagementBarOf(m);
-  const vs = againstBar(m.insightsRead ? p.now.rate : null, target);
+  const basisNote = rateLabelOf(p.now);
+  const vs = basisNote ? null : againstBar(m.insightsRead ? p.now.rate : null, target);
   const best = bestPostOf(m, p.platform);
   const cw = (width - 26) / cols;
   const col = (...ks: string[]) => {
@@ -436,7 +475,7 @@ function PlatformCard({ p, m, width, cols, keys, hot }: { p: PlatformRow; m: Soc
       <Chip mv={moveOf(p.now.views, p.before.views)} />
     </PlatformCell>,
     picked("rate") && <PlatformCell key="e" title="Engagement" value={m.insightsRead ? pct(p.now.rate) : "–"} width={cw} color={vs ? (vs.met ? GOOD.fg : BAD.fg) : INK} hot={col("rate")}>
-      <Text style={{ fontSize: 6.2, color: MUTED, maxLines: 1 }}>{vs ? `${pct(target, 0)} target · ${vs.text}` : `${pct(target, 0)} target`}</Text>
+      <Text style={{ fontSize: 6.2, color: MUTED, maxLines: 1 }}>{basisNote ?? (vs ? `${pct(target, 0)} target · ${vs.text}` : `${pct(target, 0)} target`)}</Text>
     </PlatformCell>,
     <PlatformCell key="i" title="Interactions" value={int(p.now.interactions)} width={cw}>
       <Chip mv={moveOf(p.now.interactions, p.before.interactions)} />
@@ -719,13 +758,14 @@ function TopPosts({ m, images, look }: { m: SocialMetrics; images: Images; look:
  * to date and the takeaways first, then the chart, the platforms and the posts. Cards are never split; sections break
  * between their cards, so pages fill without big gaps.
  */
-export function SocialBody({ m, images, look, layout, hot, sections }: { m: SocialMetrics; images: Images; look: Look; layout?: ChannelLayout | null; hot: HotOf; sections: Sections }) {
+export function SocialBody({ m, images, look, layout, hot, sections, whiteLabel }: { m: SocialMetrics; images: Images; look: Look; layout?: ChannelLayout | null; hot: HotOf; sections: Sections; whiteLabel?: boolean }) {
   const items = socialInsights(m, sections);
   return (
     <>
       <Glance m={m} layout={layout} hot={hot} />
       <MonthToDate m={m} />
       <Insights items={items} look={look} hot={hot} />
+      <TeamNotes m={m} sections={sections} look={look} whiteLabel={whiteLabel} />
       <ContentMix m={m} look={look} />
       <Trend m={m} look={look} />
       <Platforms m={m} keys={columnKeys("social", layout)} hot={hot} />

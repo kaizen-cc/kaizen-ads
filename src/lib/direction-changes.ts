@@ -283,6 +283,8 @@ export async function notifyChange(admin: Db, changeId: string, skip: string | n
     to.map((profile_id) => ({ profile_id, kind: "direction", title: title.slice(0, 200), body: body.slice(0, 1000), href, client_id: ch.client_id, key: `direction:${changeId}`, priority: critical ? "critical" : "normal" })),
     { onConflict: "profile_id,key", ignoreDuplicates: true },
   );
+  // The client saying they're leaving or furious with it: every exec hears it's on fire
+  await import("@/lib/exec-focus/server").then(({ raiseFire }) => raiseFire(admin, { clientId: ch.client_id as string, client: client.name, href, body, signal: { kind: "client_message", text: `${ch.summary ?? ""} ${ch.quote ?? ""}`, fromClient: true } })).catch(() => false);
   try {
     const { slackConnection, postAsApp } = await import("@/lib/slack-user");
     const { siteUrl } = await import("@/lib/site");

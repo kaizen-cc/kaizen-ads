@@ -1,4 +1,5 @@
 import "server-only";
+import { clientsWithLine } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { providerName } from "@/lib/email-providers/core";
 import { emailConnection } from "@/lib/email-providers/which";
@@ -127,8 +128,10 @@ export async function runHistoryJobs(admin: SupabaseClient, budgetMs = 240_000):
       return s && (s.status === "queued" || (s.status === "running" && !historyBusy(s)));
     })
     .map((r) => String(r.source).slice("email-history:".length));
+  // Only clients that buy email marketing (src/lib/service-gate.ts): the job waits, kept, until the service is back
+  const buying = await clientsWithLine(admin, "email", ids);
   let ran = 0;
-  for (const id of ids) {
+  for (const id of ids.filter((x) => buying.has(x))) {
     const left = until - Date.now();
     if (left < 60_000) break;
     const r = await runHistory(admin, id, left - 15_000).catch(() => ({ ran: false }));

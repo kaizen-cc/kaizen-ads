@@ -36,6 +36,7 @@ import { ReportThis } from "@/components/report-this";
 import { messageKey } from "@/lib/chat-report";
 import { CallButton } from "@/components/call-button";
 import { roleForReport } from "@/lib/agent-call/call-context";
+import { SocialTeamPanel } from "./social-team-panel";
 import { channelNoteText, takeawaysFor as channelTakeaways, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
 import type { ChannelPdfInput } from "@/lib/channel-reports/channel-doc";
 import { columnKeys, columnLabel, columnOptions, MAX_TILES, swapChannelTile, tileKeys, tileLabel, tileOptions, type ChannelLayout } from "@/lib/channel-reports/layout";
@@ -928,6 +929,7 @@ export function ReportStudio({
             </div>
           </form>
         )}
+        {m.platform === "social" && <SocialTeamPanel m={m} sections={sections} setSections={setSections} me={slack.me} />}
       </div>
     ) : null;
     return { fields, save, addBelow, move, shownLayout: layout, hotMenu, tools, leftOutList: null as React.ReactNode };

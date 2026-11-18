@@ -27,7 +27,7 @@ export async function MyDesk({ db, me }: { db: SupabaseClient; me: Staff }) {
       {todos.length > 0 && <ReviewTodos todos={todos.map((t) => ({ id: t.id, title: t.title, due: t.due_on, client: t.client?.name ?? null }))} />}
       {drafts.length > 0 && (
         <EmailsReady
-          drafts={drafts.map((d) => ({ id: d.id, client: d.clients?.name ?? "A client", kind: d.kind, subject: d.subject, body: d.body, to: d.to_emails ?? [], reason: d.reason, opened: d.status === "opened" }))}
+          drafts={drafts.map((d) => ({ id: d.id, client: d.clients?.name ?? "A client", kind: d.kind, subject: d.subject, body: d.body, to: d.to_emails ?? [], reason: d.reason, opened: d.status === "opened", files: (d.attachments ?? []).map((f) => ({ id: f.document_id, name: f.name })) }))}
         />
       )}
     </div>

@@ -10,6 +10,8 @@ import type { CallNotes } from "@/lib/assistant/notes";
 import { pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { addMemory, deleteMemory, updateMemory, type MemoryItem } from "./actions";
 import { MakeItYours } from "./make-it-yours";
+import { RingSettings } from "./ring-settings";
+import type { RingPrefs } from "@/lib/assistant/ring-core";
 
 // Your assistant's page: the call button, its voice and color (yours alone), the notes from your calls (with their
 // transcripts), and "What I know about you" (only you see it: view, edit, delete one thing or everything). The tab
@@ -20,7 +22,7 @@ export type PastCall = { id: string; startedAt: string; seconds: number; topic: 
 const TOPIC_WORDS: Record<string, string> = { birthday: "Birthday", family: "Family", trip: "Trips", preference: "Preferences", work: "Work", hobby: "Hobbies", other: "Other", length: "Length", humor: "Humor", numbers: "Numbers or story", pace: "Pace" };
 const when = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 
-export function AssistantHome({ name, memory, calls, voice, assistantName }: { name: string; memory: MemoryItem[]; calls: PastCall[]; voice: string | null; assistantName: string | null }) {
+export function AssistantHome({ name, memory, calls, voice, assistantName, ringPrefs }: { name: string; memory: MemoryItem[]; calls: PastCall[]; voice: string | null; assistantName: string | null; ringPrefs: RingPrefs }) {
   const { startAssistant, activeRole, live, assistantTint: ASSISTANT_COLOR } = useAgentCall();
   const tab = useParam("tab") === "memory" ? "memory" : "calls";
   const on = live && activeRole === "assistant";
@@ -49,6 +51,8 @@ export function AssistantHome({ name, memory, calls, voice, assistantName }: { n
       </section>
 
       <MakeItYours voice={voice} assistantName={assistantName} />
+
+      <RingSettings prefs={ringPrefs} />
 
       <div role="tablist" aria-label="Your assistant" className="flex gap-1 rounded-full border border-line bg-surface p-1 sm:self-start">
         {(["calls", "memory"] as const).map((t) => (

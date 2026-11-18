@@ -9,6 +9,9 @@ import type { SuggestionsState } from "@/lib/suggestions";
 import { DeskGroup, Reminders, brandOf, type DeskCardData } from "./channel-desk";
 import { SuggestedBriefs } from "./suggested-briefs";
 import { watchTab } from "./watch-panel";
+import { AllotmentGapsPanel } from "./allotment-gaps";
+import { nextBucket } from "@/lib/creative-allotments";
+import { loadAllotmentDesk } from "@/lib/creative-allotments-load";
 
 // The Overview's tabs for the ads lines (Meta, Google) and the creative line, the email and social Overview's pattern:
 //   Clients           the person's own accounts first, then the rest of their team's in a contained scrolling area,
@@ -155,7 +158,13 @@ type CreativeClient = { clientId: string; name: string; slug: string; tone: stri
 /** The creative line: each client's allotment against where they should be by now, their own first */
 export async function creativeDesk(db: SupabaseClient, me: Me, clients: CreativeClient[], monthElapsed: number, suggestions?: SuggestionsState | null): Promise<Desk> {
   const head = me.isLead || me.isExec;
-  const [seats, brands, watch] = await Promise.all([mySeatClients(db, me).catch(() => new Set<string>()), loadBrands(db, clients.map((c) => c.clientId)).catch(() => new Map()), watchTab(db, me)]);
+  const [seats, brands, watch, gaps] = await Promise.all([
+    mySeatClients(db, me).catch(() => new Set<string>()),
+    loadBrands(db, clients.map((c) => c.clientId)).catch(() => new Map()),
+    watchTab(db, me),
+    // Their slice of this cycle's allotment gaps (src/lib/creative-allotments.ts), most urgent first
+    loadAllotmentDesk(db, me).catch(() => null),
+  ]);
   const rows = clients.map((c) => ({ ...c, mine: seats.has(c.clientId), risk: creativeRisk(c) })).filter((c) => head || c.mine);
   const { mine, team } = mineFirst(rows);
   const card = (c: (typeof rows)[number]): DeskCardData => {
@@ -183,7 +192,7 @@ export async function creativeDesk(db: SupabaseClient, me: Me, clients: Creative
   const ideas = head ? ideasPanel(suggestions, riskOf) : null;
   return {
     tabs: [
-      { id: "clients", label: head ? "Clients" : "My clients", count: hurting(mine) + (head ? hurting(team) : 0), tone: rows.some((r) => r.tone === "bad") ? "bad" : "warn" },
+      { id: "clients", label: head ? "Clients" : "My clients", count: hurting(mine) + (head ? hurting(team) : 0) + (gaps?.gaps.filter((g) => nextBucket(g) === "now").length ?? 0), tone: rows.some((r) => r.tone === "bad") ? "bad" : "warn" },
       ...(ideas ? [{ id: "ideas", label: "Ideas", count: ideas.critical, tone: "bad" as const }] : []),
       watch.tab,
     ],
@@ -191,6 +200,7 @@ export async function creativeDesk(db: SupabaseClient, me: Me, clients: Creative
       watch: watch.panel,
       clients: (
         <>
+          {gaps && <AllotmentGapsPanel data={gaps} />}
           {(mine.length > 0 || !head) && <DeskGroup id="mine" title={head ? "Your clients" : "My clients"} aside="Furthest behind first" cards={mine.map(card)} empty="You hold no seat on a creative client yet." />}
           {team.length > 0 && <DeskGroup id="team" title="Your team's clients" aside={`Furthest behind first · ${hurting(team)} need a look`} cards={team.map(card)} contained />}
         </>

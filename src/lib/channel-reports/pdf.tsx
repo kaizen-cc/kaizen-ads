@@ -2,7 +2,7 @@ import "server-only";
 import { renderToBuffer } from "@react-pdf/renderer";
 import sharp from "sharp";
 import { ChannelDocument, shotKey, type ChannelImages, type ChannelPdfInput } from "./channel-doc";
-import { shotCampaigns } from "./email-cards";
+import { cardShotIds } from "./email-cards";
 
 // A channel report as a PDF on the server: its document (channel-doc.tsx) with each email's and post's picture fetched and
 // made a small JPEG (one that fails is left out, never holding the report up), and the client's logo and colour beside
@@ -33,7 +33,7 @@ async function picture(url: string | null, size = 320, tall = false): Promise<st
 async function emailShots(input: ChannelPdfInput): Promise<ChannelImages> {
   const m = input.metrics;
   if (m.platform !== "klaviyo" || !m.detail) return {};
-  const ids = shotCampaigns(m.detail.campaigns, { currency: m.currency, revenueMeasured: m.revenueMeasured !== false }).filter((c) => c.channel !== "sms").map((c) => c.id);
+  const ids = cardShotIds(m);
   if (!ids.length) return {};
   const out: ChannelImages = {};
   const { adminConfigured, createAdminClient } = await import("@/lib/supabase/admin");

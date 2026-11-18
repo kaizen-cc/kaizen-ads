@@ -21,7 +21,7 @@ export const MAX_JSON_BYTES = 480_000_000;
 export const MAX_MANIFEST_BYTES = 2_000_000;
 
 export type ExportFiles = { conversations: unknown[]; projects: unknown[]; users: unknown[] | null };
-export type FileSummary = { name: string; chats: number; people: number; projects: number };
+export type FileSummary = { name: string; chats: number; people: number; projects: number; /** A few of the files inside a ZIP (to say what was there when nothing was found) */ inside?: string[] };
 /** Other people's chats and projects left out while reading (never parsed or kept), and whose they were */
 export type Skipped = { chats: number; projects: number; accounts: string[] };
 export type ExportRead = ExportFiles & { files: FileSummary[]; skipped: Skipped };
@@ -38,12 +38,24 @@ export type ReadOptions = {
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : null);
 
-/** A file inside a ZIP worth reading: JSON or JSON Lines whose name mentions conversations, users or projects */
-export function isWantedEntry(path: string) {
+/** Whether a path inside the export (or the ZIP it's in) is about projects: projects-000.zip, a projects/ folder */
+const inProjects = (path: string, zipName = "") => /(^|[^a-z])projects?([^a-z]|$)/i.test(`${zipName}/${path}`) && !/design|memor/i.test(zipName);
+
+/**
+ * A file inside a ZIP worth reading: JSON or JSON Lines whose name mentions conversations, users or projects, or any
+ * JSON in a projects part or folder (a newer export can keep one file per project, named by its id).
+ */
+export function isWantedEntry(path: string, zipName = "") {
   const name = path.split("/").pop()?.toLowerCase() ?? "";
   if (!/\.(json|jsonl|ndjson)$/.test(name)) return false;
   if (/memor|design/.test(name)) return false;
-  return /conversation|users|members|accounts|projects/.test(name);
+  return /conversation|users|members|accounts|projects/.test(name) || inProjects(path, zipName);
+}
+
+/** A project's knowledge doc kept as its own file in a projects part or folder (Markdown, text, CSV, HTML) */
+export function isProjectDocEntry(path: string, zipName = "") {
+  const name = path.split("/").pop()?.toLowerCase() ?? "";
+  return /\.(md|markdown|txt|text|csv|tsv|html?|xml|ya?ml)$/.test(name) && inProjects(path, zipName);
 }
 
 /** JSON, or JSON Lines (one object per line) */
@@ -64,31 +76,103 @@ export function parseJsonOrLines(text: string, name: string): unknown {
 const KEYS = ["conversations", "users", "members", "accounts", "projects", "data", "items", "results"];
 
 function objectsIn(raw: unknown): Obj[] {
-  if (Array.isArray(raw)) return raw.map(obj).filter((o): o is Obj => Boolean(o));
+  if (Array.isArray(raw)) return raw.flatMap((x) => (Array.isArray(x) ? objectsIn(x) : obj(x) ? [unwrap(obj(x)!)] : []));
   const o = obj(raw);
   if (!o) return [];
   const out: Obj[] = [];
   for (const k of KEYS) if (Array.isArray(o[k])) out.push(...objectsIn(o[k]));
-  // One object on its own (a single conversation or user)
-  return out.length ? out : [o];
+  // One object on its own (a single conversation, project or user)
+  return out.length ? out : [unwrap(o)];
+}
+
+/** { project: {...}, docs: [...] } (one project per file, its docs beside it): the project, with its docs */
+function unwrap(o: Obj): Obj {
+  const inner = obj(o.project);
+  if (!inner || o.uuid || o.id || o.chat_messages) return o;
+  const docs = Array.isArray(inner.docs) ? inner.docs : Array.isArray(o.docs) ? o.docs : Array.isArray(o.knowledge) ? o.knowledge : undefined;
+  return { ...inner, ...(docs ? { docs } : {}) };
 }
 
 /** A project: knowledge docs, a prompt_template (even an empty one), or a named thing with a project's flags and no email */
-function looksLikeProject(o: Obj) {
+function looksLikeProject(o: Obj, inProjectsPart = false) {
   if (Array.isArray(o.docs) || "prompt_template" in o) return true;
   if (typeof o.email_address === "string" || typeof o.email === "string") return false;
-  return typeof o.name === "string" && ("is_private" in o || "is_starter_project" in o || "is_shared" in o);
+  if (typeof o.name !== "string") return false;
+  // In a projects part, anything with an id and a name is one of them
+  return "is_private" in o || "is_starter_project" in o || "is_shared" in o || (inProjectsPart && Boolean(o.uuid || o.id));
 }
 
-/** What a parsed file holds, told by content: chats have chat_messages, projects docs or a prompt_template, people an email */
-export function classifyExportJson(raw: unknown): ExportFiles {
+/**
+ * What a parsed file holds, told by content: chats have chat_messages, projects docs or a prompt_template, people an
+ * email. In a projects part (projects-000.zip, a projects/ folder) a named thing with an id is a project too.
+ */
+export function classifyExportJson(raw: unknown, inProjectsPart = false): ExportFiles {
   const out: ExportFiles = { conversations: [], projects: [], users: [] };
   for (const o of objectsIn(raw)) {
     if (Array.isArray(o.chat_messages) || (Array.isArray(o.messages) && (o.uuid || o.id))) out.conversations.push(o);
-    else if (looksLikeProject(o)) out.projects.push(o);
+    else if (looksLikeProject(o, inProjectsPart)) out.projects.push(o);
     else if (typeof o.email_address === "string" || (typeof o.email === "string" && (o.uuid || o.id))) out.users!.push(o);
   }
   return out;
+}
+
+const docText = (d: unknown) => {
+  const x = obj(d);
+  return x ? String(x.content ?? x.text ?? x.extracted_content ?? "") : "";
+};
+const docName = (d: unknown) => {
+  const x = obj(d);
+  return x ? String(x.filename ?? x.file_name ?? x.name ?? x.title ?? "") : "";
+};
+const filled = (v: unknown) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && !v.length);
+
+/**
+ * Two copies of one project (light_metadata's projects.json often has just its name; the projects part has its docs
+ * and instructions): every field either has, and the docs of both, each once (the copy with text wins)
+ */
+export function mergeProject(a: unknown, b: unknown): unknown {
+  const x = obj(a);
+  const y = obj(b);
+  if (!x || !y) return a ?? b;
+  const out: Obj = { ...x };
+  for (const [k, v] of Object.entries(y)) if (!filled(out[k]) && filled(v)) out[k] = v;
+  const docs = new Map<string, unknown>();
+  for (const d of [...(Array.isArray(x.docs) ? x.docs : []), ...(Array.isArray(y.docs) ? y.docs : [])]) {
+    const key = String(obj(d)?.uuid ?? docName(d)) || `#${docs.size}`;
+    if (!docs.has(key) || (!docText(docs.get(key)).trim() && docText(d).trim())) docs.set(key, d);
+  }
+  if (docs.size) out.docs = [...docs.values()];
+  return out;
+}
+
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+/**
+ * Knowledge docs kept as their own files (projects/<project id or name>/docs/brief.md) put on the project whose id or
+ * name is in their path. A file named prompt_template, instructions or custom_instructions is the project's
+ * instructions when it has none. Docs no project claims are left out.
+ */
+export function attachProjectFiles(projects: unknown[], files: { path: string; text: string }[]): unknown[] {
+  if (!files.length) return projects;
+  const list = projects.map((p) => ({ ...(obj(p) ?? {}) }) as Obj);
+  for (const f of files) {
+    const segs = f.path.split("/").slice(0, -1);
+    const p =
+      list.find((x) => idOf(x) && f.path.includes(idOf(x))) ??
+      list.find((x) => typeof x.name === "string" && slug(x.name) && segs.some((s) => slug(s) === slug(String(x.name))));
+    if (!p || !f.text.trim()) continue;
+    const name = f.path.split("/").pop() ?? f.path;
+    if (/^(prompt_template|instructions|custom_instructions|system_prompt)\./i.test(name)) {
+      if (!String(p.prompt_template ?? "").trim()) p.prompt_template = f.text;
+      continue;
+    }
+    const docs = Array.isArray(p.docs) ? [...p.docs] : [];
+    const at = docs.findIndex((d) => docName(d) === name);
+    if (at < 0) docs.push({ filename: name, content: f.text });
+    else if (!docText(docs[at]).trim()) docs[at] = { ...(obj(docs[at]) ?? {}), filename: name, content: f.text };
+    p.docs = docs;
+  }
+  return list;
 }
 
 const idOf = (o: unknown) => {
@@ -120,8 +204,16 @@ export function mergeExport(parts: ExportFiles[]): ExportFiles {
     }
     return [...seen.values(), ...rest];
   };
+  // Projects: copies of one (in light_metadata and in the projects part) merged into one with everything either had
+  const projects = new Map<string, unknown>();
+  const looseProjects: unknown[] = [];
+  for (const p of parts.flatMap((x) => x.projects)) {
+    const id = idOf(p);
+    if (!id) looseProjects.push(p);
+    else projects.set(id, projects.has(id) ? mergeProject(projects.get(id), p) : p);
+  }
   const users = parts.flatMap((p) => p.users ?? []);
-  return { conversations: [...convs.values(), ...loose], projects: once(parts.flatMap((p) => p.projects)), users: users.length ? once(users) : null };
+  return { conversations: [...convs.values(), ...loose], projects: [...projects.values(), ...looseProjects], users: users.length ? once(users) : null };
 }
 
 /** The manifest, when this small JSON is Claude's export manifest */
@@ -478,6 +570,12 @@ type Item = {
   where: string;
   /** 0 who's who, 1 projects, 2 chats and the rest: read in that order */
   rank: number;
+  /** In a projects part or folder (anything named there with an id is a project) */
+  projectsPart: boolean;
+  /** A project's knowledge doc kept as its own file (its text, attached to its project at the end) */
+  doc: boolean;
+  /** Its path inside the ZIP (or its name) */
+  path: string;
   size: number;
   /** Bytes read from the file for it (its compressed size in a ZIP) */
   cost: number;
@@ -485,7 +583,9 @@ type Item = {
   open: (onData: (bytes: Uint8Array) => void, onRead: (n: number) => void) => Promise<void>;
 };
 
-const rankOf = (name: string, fileName: string) => (/users|members|accounts/i.test(name) || /light_metadata/i.test(fileName) ? 0 : /projects/i.test(name) ? 1 : 2);
+const rankOf = (name: string, fileName: string, path = name) => (/users|members|accounts/i.test(name) || /light_metadata/i.test(fileName) ? 0 : /projects/i.test(name) || (inProjects(path, fileName) && !/conversation/i.test(name)) ? 1 : 2);
+/** The biggest knowledge doc file read on its own */
+const MAX_DOC_FILE_BYTES = 20_000_000;
 
 function join(chunks: Uint8Array[], name: string) {
   const total = chunks.reduce((n, c) => n + c.length, 0);
@@ -508,17 +608,22 @@ function join(chunks: Uint8Array[], name: string) {
 export async function readClaudeExportFiles(files: File[], opts: ReadOptions = {}): Promise<ExportRead> {
   const streamOver = opts.streamOver ?? STREAM_OVER_BYTES;
   const items: Item[] = [];
+  const inside: (string[] | undefined)[] = [];
   for (const [fileIndex, file] of files.entries()) {
     if (file.size > MAX_FILE_BYTES) throw new Error(`${file.name} is over 4 GB. Export again, or drop just the JSON files from inside it.`);
     if (/\.zip$/i.test(file.name)) {
       const entries = await zipDirectory(file);
+      if (entries) inside[fileIndex] = entries.map((e) => e.name).slice(0, 8);
       if (!entries) throw new Error(`${file.name} isn't a complete ZIP. Download it again.`);
-      for (const e of entries.filter((x) => isWantedEntry(x.name))) {
+      for (const e of entries) {
+        const data = isWantedEntry(e.name, file.name);
+        const doc = !data && isProjectDocEntry(e.name, file.name) && e.size <= MAX_DOC_FILE_BYTES;
+        if (!data && !doc) continue;
         const name = e.name.split("/").pop() ?? e.name;
-        items.push({ fileIndex, name, where: `${name} in ${file.name}`, rank: rankOf(name, file.name), size: e.size, cost: e.compressedSize, loose: false, open: (onData, onRead) => streamEntry(file, e, onData, onRead) });
+        items.push({ fileIndex, name, path: e.name, where: `${name} in ${file.name}`, rank: doc ? 1 : rankOf(name, file.name, e.name), projectsPart: inProjects(e.name, file.name), doc, size: e.size, cost: e.compressedSize, loose: false, open: (onData, onRead) => streamEntry(file, e, onData, onRead) });
       }
     } else {
-      items.push({ fileIndex, name: file.name, where: file.name, rank: rankOf(file.name, file.name), size: file.size, cost: file.size, loose: true, open: (onData, onRead) => pump(file, onData, onRead) });
+      items.push({ fileIndex, name: file.name, path: file.name, where: file.name, rank: rankOf(file.name, file.name), projectsPart: /projects/i.test(file.name), doc: false, size: file.size, cost: file.size, loose: true, open: (onData, onRead) => pump(file, onData, onRead) });
     }
   }
   // Who's who first, then projects, then the chats (stable: otherwise in the order given)
@@ -526,6 +631,7 @@ export async function readClaudeExportFiles(files: File[], opts: ReadOptions = {
 
   const gate = new OwnerGate(opts.email ?? null);
   const perFile: ExportFiles[][] = files.map(() => []);
+  const docFiles: { path: string; text: string }[] = [];
   const manifests = new Set<number>();
   const fileTotals = files.map((_, i) => items.filter((it) => it.fileIndex === i).reduce((n, it) => n + it.cost, 0));
   const fileDone = files.map(() => 0);
@@ -553,6 +659,13 @@ export async function readClaudeExportFiles(files: File[], opts: ReadOptions = {
       tell(it.fileIndex);
     };
     const found: ExportFiles = { conversations: [], projects: [], users: [] };
+    if (it.doc) {
+      const chunks: Uint8Array[] = [];
+      await it.open((b) => chunks.push(b.slice()), onRead);
+      docFiles.push({ path: it.path, text: join(chunks, it.where) });
+      tell(it.fileIndex, true);
+      continue;
+    }
     if (it.size <= streamOver) {
       // Small: read whole, as it always was
       const chunks: Uint8Array[] = [];
@@ -562,7 +675,7 @@ export async function readClaudeExportFiles(files: File[], opts: ReadOptions = {
         manifests.add(it.fileIndex);
         continue;
       }
-      const kept = gate.keep(classifyExportJson(raw));
+      const kept = gate.keep(classifyExportJson(raw, it.projectsPart));
       found.conversations.push(...kept.conversations);
       found.projects.push(...kept.projects);
       found.users!.push(...(kept.users ?? []));
@@ -576,7 +689,7 @@ export async function readClaudeExportFiles(files: File[], opts: ReadOptions = {
         } catch {
           throw new Error(`${it.where} isn't readable JSON. Download that file again.`);
         }
-        const kept = gate.keep(classifyExportJson(raw));
+        const kept = gate.keep(classifyExportJson(raw, it.projectsPart));
         for (const c of kept.conversations) found.conversations.push(c);
         for (const p of kept.projects) found.projects.push(p);
         for (const u of kept.users ?? []) found.users!.push(u);
@@ -601,8 +714,9 @@ export async function readClaudeExportFiles(files: File[], opts: ReadOptions = {
   for (const [i, file] of files.entries()) {
     if (manifests.has(i)) continue;
     const merged = mergeExport(perFile[i]);
-    summary.push({ name: file.name, chats: merged.conversations.length, people: merged.users?.length ?? 0, projects: merged.projects.length });
+    summary.push({ name: file.name, chats: merged.conversations.length, people: merged.users?.length ?? 0, projects: merged.projects.length, ...(inside[i] ? { inside: inside[i] } : {}) });
     parts.push(merged);
   }
-  return { ...mergeExport(parts), files: summary, skipped: gate.skipped() };
+  const all = mergeExport(parts);
+  return { ...all, projects: attachProjectFiles(all.projects, docFiles), files: summary, skipped: gate.skipped() };
 }

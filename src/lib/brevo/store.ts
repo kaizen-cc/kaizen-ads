@@ -5,14 +5,17 @@ import { sanitizeEmailHtml } from "../klaviyo/insights";
 import { campaignRow, dayRow, errText, save, shift } from "../klaviyo/store";
 import { ProviderError, brevoKeyProblem, redactSecret } from "../email-providers/core";
 import { keyOfConn, type ConnRow, type ProviderDef, type ReadOut } from "../email-providers/runner";
-import { BREVO_ATTRIBUTION_BATCH } from "./core";
-import { brevoAttribution, brevoCampaignContent, getBrevoAccount, listBrevoAudiences, listBrevoCampaigns } from "./api";
+import { BREVO_ATTRIBUTION_BATCH, newContactsByDay } from "./core";
+import { brevoAttribution, brevoCampaignContent, brevoContactsSince, brevoLinkStats, getBrevoAccount, listBrevoAudiences, listBrevoCampaigns } from "./api";
 
 // Brevo as a source for the shared email tables. campaigns -> klaviyo_campaigns (source 'brevo'), lists and segments ->
 // klaviyo_audiences, the daily totals -> klaviyo_daily from each campaign's send day. Brevo's public API v3 has no
 // endpoint that lists automation workflows (checked against the API index at developers.brevo.com), so klaviyo_flows
 // gets no Brevo rows and the flow checks stay unmeasured. Revenue comes from the ecommerce attribution endpoint; when it
 // answers with an error (no store connected to Brevo) revenue_read is false and revenue checks stay unmeasured.
+// For the engagement report (a client whose revenue can't be read) the read also keeps each email's total clicks and
+// clicks per link (klaviyo_campaigns.clicks_total and link_clicks) and the contacts created each day (klaviyo_daily.subscribed);
+// none of it ever stops the read, and before the 20261118 migration the extra columns are simply left out.
 
 const SOURCE = "brevo";
 
@@ -27,7 +30,8 @@ async function read({ admin, conn, key, window, step, depth }: Parameters<Provid
   const now = new Date().toISOString();
 
   await step(10, "Reading the campaigns");
-  const email = await listBrevoCampaigns(key, "email", since, full ? Math.max(8, Math.ceil(depthDays / 12)) : 1);
+  const clickTotals = new Map<string, number>();
+  const email = await listBrevoCampaigns(key, "email", since, full ? Math.max(8, Math.ceil(depthDays / 12)) : 1, clickTotals);
   // SMS is optional on a Brevo plan: a refusal there never stops the email read
   const sms = await listBrevoCampaigns(key, "sms", since, full ? Math.max(4, Math.ceil(depthDays / 60)) : 1).catch(() => []);
   const sent = [...email, ...sms].filter((c) => c.sendTime);
@@ -51,6 +55,12 @@ async function read({ admin, conn, key, window, step, depth }: Parameters<Provid
     }
   }
 
+  // What people clicked: clicks per link for the newest campaigns (one or two calls), never failing the read
+  await step(50, "Reading which links were clicked");
+  const links = sent.some((c) => c.channel !== "sms") ? await brevoLinkStats(key, since, full ? 2 : 1).catch(() => new Map<string, Record<string, number>>()) : new Map<string, Record<string, number>>();
+  // New contacts each day (created since each day's start, a day minus the next): the last three weeks on a full read, a week on a recent one
+  const joined = await contactsByDay(key, today, full ? 21 : 7).catch(() => null);
+
   let audiences: Awaited<ReturnType<typeof listBrevoAudiences>> = [];
   let audiencesOk = false;
   if (full) {
@@ -73,9 +83,10 @@ async function read({ admin, conn, key, window, step, depth }: Parameters<Provid
     return { ...(c.stats ?? emptyStats()), conversions: a?.orders ?? 0, revenue: a?.revenue ?? 0 };
   };
   const rows = sent.map((c) => campaignRow(clientId, c, statsOf(c), names, now, SOURCE));
-  await save(admin, "klaviyo_campaigns", rows, "client_id,campaign_id");
+  await saveWithClicks(admin, rows, (id) => ({ clicks_total: clickTotals.get(id) ?? null, link_clicks: links.get(id) ?? null }));
   const days = rollupDays({ campaigns: sent.map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: statsOf(c) })), flows: [], tz, from, to: today });
   await save(admin, "klaviyo_daily", days.map((d) => dayRow(clientId, d, now, SOURCE)), "client_id,date");
+  if (joined) for (const [date, count] of joined) if (date >= from) await admin.from("klaviyo_daily").update({ subscribed: count }).eq("client_id", clientId).eq("date", date);
   if (full && audiencesOk) {
     await save(
       admin,
@@ -89,6 +100,27 @@ async function read({ admin, conn, key, window, step, depth }: Parameters<Provid
     if (audiences.length) await admin.from("klaviyo_audiences").delete().eq("client_id", clientId).lt("updated_at", now);
   }
   return { revenueRead, campaigns: rows.length, flows: 0, audiences: audiences.length, days: days.length, seriesError: null, storeError: null };
+}
+
+/** Contacts created each day of the last `n` days (to today), from the count created since each day's start */
+async function contactsByDay(key: string, today: string, n: number): Promise<Map<string, number>> {
+  const counts: { date: string; since: number }[] = [];
+  for (let i = n; i >= 0; i--) {
+    const date = shift(today, -i);
+    // The day's start in New York (the reports' day), close enough for a daily count
+    counts.push({ date, since: await brevoContactsSince(key, new Date(`${date}T05:00:00Z`).toISOString()) });
+  }
+  counts.push({ date: shift(today, 1), since: 0 });
+  return newContactsByDay(counts);
+}
+
+/** The campaigns saved with their total clicks and clicks per link; without those columns (migration not applied) saved as before */
+async function saveWithClicks(admin: SupabaseClient, rows: Record<string, unknown>[], extra: (id: string) => { clicks_total: number | null; link_clicks: Record<string, number> | null }) {
+  const full = rows.map((r) => ({ ...r, ...extra(String(r.campaign_id)) }));
+  for (let i = 0; i < full.length; i += 500) {
+    const { error } = await admin.from("klaviyo_campaigns").upsert(full.slice(i, i + 500), { onConflict: "client_id,campaign_id" });
+    if (error) return save(admin, "klaviyo_campaigns", rows, "client_id,campaign_id");
+  }
 }
 
 export const BREVO: ProviderDef = {

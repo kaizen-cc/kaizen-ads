@@ -5,17 +5,20 @@ import { scrubAgency, scrubSections } from "@/lib/reports/white-label";
 import type { Sections } from "@/lib/reports/write";
 import type { Move } from "@/lib/reports/weekly-core";
 import { BENCHMARKS } from "@/lib/klaviyo/insights";
-import { cadenceWord, channelName, fitFont, int, metricsSupport, money, moveOf, pct, priorWordOf, shortMoney, signed, takeawaysFor, type EmailMetrics, type SocialMetrics } from "./core";
+import { cadenceWord, channelName, fitFont, int, isEngagement, metricsSupport, money, moveOf, pct, priorWordOf, shortMoney, signed, takeawaysFor, type EmailMetrics, type SocialMetrics } from "./core";
 import { channelMtdView, MTD_STATUS_WORD, type ChannelMtdView } from "./mtd";
 import { columnKeys, tileViews, type ChannelLayout, type TileView } from "./layout";
 import { wholeMoney } from "./email-message";
 import { splitDay, splitLegend, splitOfDays, splitTotal, SPLIT_HEX } from "./email-split";
 import { audienceLines } from "@/lib/klaviyo/audiences";
-import { grade, RATE_BARS, rprOf, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
+import { rprOf, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
 import type { RevenueSource } from "./email-sources";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
 import { campaignPicks, cardCampaigns, cardStats, flowCardViews, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, shareText, tint, type CardStat, type FlowCardView } from "./email-cards";
 import { SocialBody } from "./social-doc";
+import { withTeamFindings } from "./social-notes";
+import { EngagementBody } from "./engagement-doc";
+import { measuresShort } from "./email-engagement";
 
 // A channel client report as a PDF, in the same design as the ads report (weekly-doc.tsx): the client's logo beside
 // Kaizen's, the hero band with the period, the period at a glance, and three takeaways. Email reads like the overview the
@@ -99,7 +102,7 @@ function Hero({ input, look }: { input: ChannelPdfInput; look: Look }) {
         <View style={{ maxWidth: 300 }}>
           <Text style={[s.eyebrow, { color: look.heroSoft }]}>{word ? `${word} ` : ""}{m.platform === "klaviyo" ? "Email Marketing" : "Organic Social"} Report</Text>
           <Text style={[s.h1, long ? { fontSize: 20 } : {}]}>{input.client.length <= 11 ? `${input.client} Performance\nOverview` : `${input.client}\nPerformance Overview`}</Text>
-          <Text style={s.heroSub}>{m.platform === "klaviyo" ? "Revenue, campaigns, automated emails & list health" : "Audience growth, reach & what resonated"}</Text>
+          <Text style={s.heroSub}>{m.platform === "klaviyo" ? (isEngagement(m) ? "Reach, engagement, clicks to your site & list health" : "Revenue, campaigns, automated emails & list health") : "Audience growth, reach & what resonated"}</Text>
         </View>
         <View>
           <Text style={s.periodSmall}>Reporting period</Text>
@@ -583,8 +586,8 @@ function ConversionSummary({ m }: { m: EmailMetrics }) {
 
 // ─── Campaign and flow performance ─────────────────────────────────────────
 
-/** Recipients, open, click and placed order rate for the period, each graded against Kaizen's bar where it has one */
-function PerfCells({ p, bars, prior, kind, currency, measured = true }: { p: PerfBlock; bars: { open: number; click: number }; prior: string; kind: "campaign" | "flow"; currency: string | null; measured?: boolean }) {
+/** Recipients, open, click and placed order rate for the period, each against the period before (never graded against Kaizen's internal bars) */
+function PerfCells({ p, prior, kind, currency, measured = true }: { p: PerfBlock; prior: string; kind: "campaign" | "flow"; currency: string | null; measured?: boolean }) {
   const withRpr = measured && p.rpr != null;
   const w = (INNER - 2 - (withRpr ? 4 : 3)) / (withRpr ? 5 : 4);
   const rate = (x: Pair, digits: number, better: "up" | "down" = "up") => ({ value: pct(x.now, digits), mv: moveOf(x.now, x.before, better), before: pct(x.before, digits) });
@@ -595,9 +598,9 @@ function PerfCells({ p, bars, prior, kind, currency, measured = true }: { p: Per
     <StatRow height={62}>
       <Stat title={kind === "campaign" ? "Recipients" : "Recipients"} value={int(p.recipients.now)} mv={moveOf(p.recipients.now, p.recipients.before, "none")} before={int(p.recipients.before)} prior={prior} width={w} height={62} max={15} />
       <Rule />
-      <Stat title="Open rate" value={open.value} mv={open.mv} before={open.before} prior={prior} width={w} height={62} max={15} badge={grade(p.open.now, bars.open)} />
+      <Stat title="Open rate" value={open.value} mv={open.mv} before={open.before} prior={prior} width={w} height={62} max={15} />
       <Rule />
-      <Stat title="Click rate" value={click.value} mv={click.mv} before={click.before} prior={prior} width={w} height={62} max={15} badge={grade(p.click.now, bars.click)} />
+      <Stat title="Click rate" value={click.value} mv={click.mv} before={click.before} prior={prior} width={w} height={62} max={15} />
       <Rule />
       <Stat title="Placed order rate" value={order.value} mv={order.mv} before={order.before} prior={prior} width={w} height={62} max={15} />
       {withRpr && p.rpr ? (
@@ -869,7 +872,6 @@ function CampaignPerformance({ m, keys, hot, images, look }: { m: EmailMetrics; 
     );
   const measured = m.revenueMeasured !== false;
   const total = d.campaigns.reduce((a, r) => a + r.revenue, 0);
-  const bars = `open ${pct(RATE_BARS.campaign.open, 0)}, click ${pct(RATE_BARS.campaign.click, 0)}`;
   const picks = campaignPicks(d.campaigns, { currency: m.currency, revenueMeasured: measured });
   if (picks) {
     // Several campaigns: the best and the lowest as cards with why, then every campaign in one compact table
@@ -878,8 +880,8 @@ function CampaignPerformance({ m, keys, hot, images, look }: { m: EmailMetrics; 
     return (
       <View style={s.section}>
         <View wrap={false} minPresenceAhead={120}>
-          <Head title="Campaign performance" sub={`${n} campaigns sent · the best and the lowest by ${by}, each with why, then every campaign · graded against Kaizen's bars: ${bars}`} />
-          <PerfCells p={d.campaign} bars={RATE_BARS.campaign} prior={prior} kind="campaign" currency={m.currency} measured={measured} />
+          <Head title="Campaign performance" sub={`${n} campaigns sent · the best and the lowest by ${by}, each with why, then every campaign`} />
+          <PerfCells p={d.campaign} prior={prior} kind="campaign" currency={m.currency} measured={measured} />
         </View>
         <CampaignCard r={picks.best.row} m={m} pic={images[shotKey(picks.best.row.id)]} total={total} look={look} pick={{ tone: "best", why: picks.best.why }} />
         <CampaignCard r={picks.lowest.row} m={m} pic={images[shotKey(picks.lowest.row.id)]} total={total} look={look} pick={{ tone: "lowest", why: picks.lowest.why }} />
@@ -901,8 +903,8 @@ function CampaignPerformance({ m, keys, hot, images, look }: { m: EmailMetrics; 
     <View style={s.section}>
       {/* The heading and the totals stay together, and never sit alone at the foot of a page */}
       <View wrap={false} minPresenceAhead={120}>
-        <Head title="Campaign performance" sub={`${n} ${n === 1 ? "campaign" : "campaigns"} sent · graded against Kaizen's bars: ${bars}`} />
-        <PerfCells p={d.campaign} bars={RATE_BARS.campaign} prior={prior} kind="campaign" currency={m.currency} measured={measured} />
+        <Head title="Campaign performance" sub={`${n} ${n === 1 ? "campaign" : "campaigns"} sent · against the ${prior} before`} />
+        <PerfCells p={d.campaign} prior={prior} kind="campaign" currency={m.currency} measured={measured} />
       </View>
       {cards.map(card)}
       {shown.length ? (
@@ -940,7 +942,6 @@ function FlowCard({ v, m, w, look }: { v: FlowCardView; m: EmailMetrics; w: numb
   const r = v.row;
   const c = m.currency;
   const measured = m.revenueMeasured !== false;
-  const bars = RATE_BARS.flow;
   const rev = wholeMoney(r.revenue, c);
   const mv = measured && r.prevRevenue != null ? moveOf(r.revenue, r.prevRevenue) : null;
   const status = r.status ? r.status.charAt(0).toUpperCase() + r.status.slice(1).toLowerCase() : null;
@@ -969,8 +970,8 @@ function FlowCard({ v, m, w, look }: { v: FlowCardView; m: EmailMetrics; w: numb
       </View>
       <View style={{ flexDirection: "row", marginTop: 6, height: 26 }}>
         {measured ? <FlowMini label="Revenue per recipient" value={centsMoney(v.rpr, c)} mv={moveOf(v.rpr, r.prevRpr)} /> : <FlowMini label="Recipients" value={int(r.recipients)} />}
-        <FlowMini label="Open rate" value={pct(r.openRate, 1)} g={grade(r.openRate, bars.open)} />
-        <FlowMini label="Click rate" value={pct(r.clickRate, 2)} g={grade(r.clickRate, bars.click)} />
+        <FlowMini label="Open rate" value={pct(r.openRate, 1)} />
+        <FlowMini label="Click rate" value={pct(r.clickRate, 2)} />
         {measured ? <FlowMini label="Orders" value={int(r.orders)} sub={`${int(r.recipients)} recipients`} /> : null}
       </View>
       {measured && v.share != null ? (
@@ -999,8 +1000,8 @@ function FlowPerformance({ m, look }: { m: EmailMetrics; look: Look }) {
   return (
     <View style={s.section}>
       <View wrap={false}>
-        <Head title="Automated email performance" sub={`${sent} ${sent === 1 ? "flow" : "flows"} sent · graded against Kaizen's bars: open ${pct(RATE_BARS.flow.open, 0)}, click ${pct(RATE_BARS.flow.click, 1)}`} />
-        <PerfCells p={d.flow} bars={RATE_BARS.flow} prior={prior} kind="flow" currency={m.currency} measured={m.revenueMeasured !== false} />
+        <Head title="Automated email performance" sub={`${sent} ${sent === 1 ? "automated email" : "automated emails"} sent · against the ${prior} before`} />
+        <PerfCells p={d.flow} prior={prior} kind="flow" currency={m.currency} measured={m.revenueMeasured !== false} />
         {first ? (
           <View style={{ marginTop: GAP }}>
             <FlowCard v={first} m={m} w={INNER} look={look} />
@@ -1299,7 +1300,9 @@ function Footer({ input }: { input: ChannelPdfInput }) {
         <Text style={[s.footText, { maxWidth: 250 }]}>
           {input.whiteLabel ? `Prepared for ${input.client}` : `Prepared for ${input.client} · Kaizen`} | Data: {src}, synced daily
         </Text>
-        <Text style={[s.footText, { textAlign: "right", flex: 1 }]}>{input.metrics.platform === "klaviyo" ? (input.metrics.revenueMeasured === false ? "Rates are of delivered email" : `Revenue and orders are attributed by ${input.metrics.source ?? "Klaviyo"} · rates are of delivered email · order rate is orders over recipients`) : "Engagement rate is interactions over reach"}</Text>
+        {isEngagement(input.metrics) ? (
+          <Text style={[s.footText, { textAlign: "right", flex: 1 }]}>{measuresShort((input.metrics as EmailMetrics).engagement!, (input.metrics as EmailMetrics).source ?? null)}</Text>
+        ) : <Text style={[s.footText, { textAlign: "right", flex: 1 }]}>{input.metrics.platform === "klaviyo" ? (input.metrics.revenueMeasured === false ? "Rates are of delivered email" : `Revenue and orders are attributed by ${input.metrics.source ?? "Klaviyo"} · rates are of delivered email · order rate is orders over recipients`) : "Engagement rate is interactions over reach"}</Text>}
       </View>
       <Text style={s.pageNumber} fixed render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
     </>
@@ -1630,7 +1633,9 @@ function cleaned(input: ChannelPdfInput): ChannelPdfInput {
   return { ...input, dashboard: null, brand: input.brand ? { ...input.brand, agencyLogo: null } : input.brand, sections: scrubSections(input.sections), extras: input.extras ? scrubAgency(input.extras) : input.extras };
 }
 
-function EmailBody({ m, images, look, layout, hot }: { m: EmailMetrics; images: ChannelImages; look: Look; layout?: ChannelLayout | null; hot: HotOf }) {
+function EmailBody({ m, images, look, layout, hot, sections }: { m: EmailMetrics; images: ChannelImages; look: Look; layout?: ChannelLayout | null; hot: HotOf; sections: Sections }) {
+  // No readable revenue: the engagement report (reach, clicks, what people clicked, the list, against the usual)
+  if (isEngagement(m)) return <EngagementBody m={m} images={images} look={look} hot={hot} sections={sections} />;
   if (!m.detail)
     return (
       <>
@@ -1660,7 +1665,8 @@ function EmailBody({ m, images, look, layout, hot }: { m: EmailMetrics; images: 
 export function ChannelDocument({ input: asked, images }: { input: ChannelPdfInput; images: ChannelImages }) {
   const input = cleaned(asked);
   const look = lookFor(input);
-  const m = input.metrics;
+  // A social report's numbers carry the figures the strategist entered where Meta gave none
+  const m = input.metrics.platform === "social" ? withTeamFindings(input.metrics, input.sections) : input.metrics;
   const hot = hotOf(input);
   const by = input.whiteLabel ? input.client : AGENCY;
   const title = `${input.client} · ${[cadenceWord(m.kind), channelName(m.platform).toLowerCase()].filter(Boolean).join(" ")} report · ${m.main.label}`;
@@ -1671,9 +1677,9 @@ export function ChannelDocument({ input: asked, images }: { input: ChannelPdfInp
         <Masthead input={input} look={look} />
         <Hero input={input} look={look} />
         {m.platform === "klaviyo" ? (
-          <EmailBody m={m} images={images} look={look} layout={input.layout} hot={hot} />
+          <EmailBody m={m} images={images} look={look} layout={input.layout} hot={hot} sections={input.sections} />
         ) : (
-          <SocialBody m={m} images={images} look={look} layout={input.layout} hot={hot} sections={input.sections} />
+          <SocialBody m={m} images={images} look={look} layout={input.layout} hot={hot} sections={input.sections} whiteLabel={input.whiteLabel} />
         )}
         {/* The detailed email report ends on the numbers: what the team learned travels in the message; social draws its own (social-doc.tsx) */}
         {m.platform === "social" || m.detail ? null : <Takeaways m={m} sections={input.sections} look={look} hot={hot} />}

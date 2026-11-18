@@ -13,7 +13,7 @@ import { cleanJob, jobForPrompt, playbookOf } from "./team";
 export type CallNotes = {
   summary: string;
   decisions: string[];
-  followUps: { what: string; due: string | null }[];
+  followUps: { what: string; due: string | null; client?: string | null }[];
   /** What each agent on the line did (only when more than one agent spoke) */
   agents?: { label: string; did: string[] }[];
   /** What the job made on the call (briefs, copy, tickets, launches, reports), from its record */
@@ -36,7 +36,7 @@ const SCHEMA = {
     },
     follow_ups: {
       type: "array",
-      items: { type: "object", additionalProperties: false, required: ["what", "due"], properties: { what: { type: "string" }, due: { type: "string", description: "YYYY-MM-DD if a day was said, else empty" } } },
+      items: { type: "object", additionalProperties: false, required: ["what", "due", "client"], properties: { what: { type: "string" }, due: { type: "string", description: "YYYY-MM-DD if a day was said, else empty" }, client: { type: "string", description: "The client it is about, by name, or empty when it is about no client" } } },
       description: "What the person still has to do or check after the call (not what was already done, not reminders already set on the call)",
     },
   },
@@ -61,7 +61,7 @@ export async function writeCallNotes(admin: SupabaseClient, callId: string): Pro
   // Reminders already set on the call aren't follow-ups again
   const { data: asks } = await admin.from("agent_asks").select("title").eq("call_id", callId);
   try {
-    const out = await askJson<{ summary: string; topic: string; decisions: string[]; by_agent?: { agent: string; did: string[] }[]; follow_ups: { what: string; due: string }[] }>({
+    const out = await askJson<{ summary: string; topic: string; decisions: string[]; by_agent?: { agent: string; did: string[] }[]; follow_ups: { what: string; due: string; client?: string }[] }>({
       agent: "coach",
       label: "assistant call notes",
       bare: true,
@@ -76,7 +76,7 @@ export async function writeCallNotes(admin: SupabaseClient, callId: string): Pro
     const notes: CallNotes = {
       summary: clip(out.summary, 1200),
       decisions: (out.decisions ?? []).map((d) => clip(d, 200)).filter(Boolean).slice(0, 8),
-      followUps: (out.follow_ups ?? []).map((f) => ({ what: clip(f.what, 160), due: /^\d{4}-\d{2}-\d{2}$/.test(String(f.due)) ? f.due : null })).filter((f) => f.what).slice(0, 6),
+      followUps: (out.follow_ups ?? []).map((f) => ({ what: clip(f.what, 160), due: /^\d{4}-\d{2}-\d{2}$/.test(String(f.due)) ? f.due : null, client: clip(f.client, 120) || null })).filter((f) => f.what).slice(0, 6),
       agents:
         speakers.size > 1
           ? (out.by_agent ?? [])
@@ -89,13 +89,37 @@ export async function writeCallNotes(admin: SupabaseClient, callId: string): Pro
     };
     const topic = parseTopic(out);
     await admin.from("ai_role_calls").update({ notes, summary: notes.summary || null, ...(topic ? { topic } : {}) }).eq("id", callId);
-    if (notes.followUps.length)
-      await admin.from("agent_asks").insert(
-        notes.followUps.map((f) => ({ kind: "reminder", owner_id: call.profile_id, asked_by: call.profile_id, role_key: call.role_key, call_id: callId, title: f.what, detail: call.role_key === "assistant" ? "A follow-up from your call with your assistant" : "A follow-up from your call with the agents", due_on: f.due })),
-      );
+    if (notes.followUps.length) await saveFollowUps(admin, { callId, profileId: call.profile_id as string, roleKey: call.role_key as string, followUps: notes.followUps });
     return notes;
   } catch (e) {
     console.error("[assistant notes]", e instanceof Error ? e.message : e);
     return null;
+  }
+}
+
+/**
+ * The call's follow-ups as reminders on the person's Overview: ONE per client (a checklist, its items ticked off one
+ * by one, with the call's transcript to open) and one for everything about no client, never a row for each
+ */
+async function saveFollowUps(admin: SupabaseClient, c: { callId: string; profileId: string; roleKey: string; followUps: CallNotes["followUps"] }) {
+  const { data: clients } = await admin.from("clients").select("id, name").is("archived_at", null).limit(500);
+  const known = (clients ?? []) as { id: string; name: string }[];
+  const find = (name: string | null | undefined) => {
+    const n = String(name ?? "").trim().toLowerCase();
+    if (!n) return null;
+    return known.find((k) => k.name.toLowerCase() === n) ?? known.find((k) => n.length > 2 && (k.name.toLowerCase().includes(n) || n.includes(k.name.toLowerCase()))) ?? null;
+  };
+  const { followUpReminders } = await import("@/lib/agent-call/ask-groups");
+  const reminders = followUpReminders(
+    c.followUps.map((f) => {
+      const k = find(f.client);
+      return { what: f.what, due: f.due, clientId: k?.id ?? null, client: k?.name ?? null };
+    }),
+  );
+  for (const r of reminders) {
+    const base = { kind: "reminder", owner_id: c.profileId, asked_by: c.profileId, role_key: c.roleKey, call_id: c.callId, client_id: r.clientId, title: r.title, detail: "", due_on: r.due };
+    const { error } = await admin.from("agent_asks").insert({ ...base, checklist: r.checklist, with_transcript: true });
+    // Before the checklist's migration: the items go in the detail instead
+    if (error) await admin.from("agent_asks").insert({ ...base, detail: r.checklist.map((i) => `- ${i.text}`).join("\n").slice(0, 2000) });
   }
 }

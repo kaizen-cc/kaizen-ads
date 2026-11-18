@@ -188,26 +188,44 @@ export async function uploadSlots(files: { name: string; mime: string; bytes: nu
 export type ClaudeImport = { id: string; fileName: string | null; conversations: number; created: number; skipped: number; threads: number; status: string; createdAt: string };
 
 /** What the person already imported (Claude conversation ids, so they're skipped) and their imports */
-export async function claudeImportState(): Promise<{ imported: string[]; projects: string[]; imports: ClaudeImport[] }> {
+export async function claudeImportState(): Promise<{ imported: string[]; counts: Record<string, number>; projects: string[]; imports: ClaudeImport[] }> {
   const me = await requireStaff();
   const db = await createClient();
   const { data: imps } = await db.from("ai_imports").select("id, file_name, conversations, created, skipped, status, created_at").eq("profile_id", me.id).order("created_at", { ascending: false }).limit(20);
-  // Page by page (a read returns at most 1,000 rows)
-  const rows: { source_id: string; import_id: string | null }[] = [];
+  // Page by page (a read returns at most 1,000 rows), with how many messages each has (a chat that has more in the
+  // export, cut off before or continued in Claude since, is offered again and only its missing messages are added)
+  const rows: { source_id: string; import_id: string | null; ai_messages?: { count: number }[] }[] = [];
   for (let from = 0; from < 50_000; from += 1000) {
-    const { data } = await db.from("ai_threads").select("source_id, import_id").eq("profile_id", me.id).eq("source", "claude").eq("source_complete", true).order("id").range(from, from + 999);
-    rows.push(...((data ?? []) as typeof rows));
+    const { data } = await db.from("ai_threads").select("source_id, import_id, ai_messages(count)").eq("profile_id", me.id).eq("source", "claude").eq("source_complete", true).order("id").range(from, from + 999);
+    rows.push(...((data ?? []) as unknown as typeof rows));
     if ((data?.length ?? 0) < 1000) break;
   }
+  const counts: Record<string, number> = {};
+  for (const r of rows) counts[String(r.source_id)] = Number(r.ai_messages?.[0]?.count) || 0;
   const per = new Map<string, number>();
   for (const r of rows) if (r.import_id) per.set(r.import_id as string, (per.get(r.import_id as string) ?? 0) + 1);
   // Claude projects already made into Kaizen AI projects (none before the projects migration is applied)
   const { data: projs } = await db.from("ai_projects").select("source_id").eq("created_by", me.id).eq("source", "claude").limit(2000);
   return {
     imported: rows.map((r) => String(r.source_id)),
+    counts,
     projects: (projs ?? []).map((p) => String(p.source_id)),
     imports: (imps ?? []).filter((i) => i.file_name !== NO_IMPORT).map((i) => ({ id: i.id as string, fileName: (i.file_name as string | null) ?? null, conversations: Number(i.conversations) || 0, created: Number(i.created) || 0, skipped: Number(i.skipped) || 0, threads: per.get(i.id as string) ?? 0, status: String(i.status), createdAt: String(i.created_at) })),
   };
+}
+
+/**
+ * The Claude projects the person's imported chats were in that never came over as Kaizen AI projects (imports before
+ * the projects fix kept each chat's project id but not the project): how many, and how many chats sit in them. Their
+ * name, instructions and docs are only in the export, so Kaizen AI asks them to import it again (nothing is lost:
+ * chats already in are kept, only what's missing is added).
+ */
+export async function claudeProjectsToBring(): Promise<{ projects: number; chats: number }> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const { data, error } = await db.from("ai_threads").select("source_project").eq("profile_id", me.id).eq("source", "claude").not("source_project", "is", null).is("project_id", null).limit(5000);
+  if (error || !data?.length) return { projects: 0, chats: 0 };
+  return { projects: new Set(data.map((r) => String(r.source_project))).size, chats: data.length };
 }
 
 /** The marker an "I don't have Claude chats" leaves (an empty, finished import), so Kaizen AI stops asking */

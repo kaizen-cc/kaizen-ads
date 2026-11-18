@@ -119,7 +119,10 @@ export type EmailDesignCard = {
     shareUrl: string | null;
   }[];
 };
-export type Card = MetricsCard | CopyCard | BriefCard | LinkCard | PlanCard | ListCard | LaunchCardRef | ConnectCard | ConnectorConfirmCard | EmailDesignCard;
+/** A Kaizen-branded PDF (create_document): open it, download it, or edit its text and draw it again */
+export type DocumentCard = { type: "document"; id: string; kind: "sow" | "proposal" | "handoff" | "one_pager"; title: string; client: string | null; version: number; href: string; download: string; placeholders: string[] };
+
+export type Card = MetricsCard | CopyCard | BriefCard | LinkCard | PlanCard | ListCard | LaunchCardRef | ConnectCard | ConnectorConfirmCard | EmailDesignCard | DocumentCard;
 
 export type ChatMessage = {
   id: string;

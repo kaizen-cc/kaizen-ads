@@ -19,6 +19,9 @@ import { HandoffCallout } from "@/components/handoff-callout";
 import { WatchCallout } from "./views/watch-panel";
 import { LeaderView } from "./views/leader-view";
 import { PulseView } from "./views/pulse-view";
+import type { SharedTopics } from "./views/overview-topics";
+import { lineInFocus, type FocusLine } from "@/lib/exec-focus/core";
+import { loadExecFocus } from "@/lib/exec-focus/server";
 import { PageHeader } from "./views/shared";
 import { NextSection } from "./views/next-section";
 import { OverviewTabs } from "./views/overview-tabs";
@@ -182,14 +185,10 @@ export default async function Home() {
   // The heads of Meta and Google see the clients on their line being onboarded, not every new client
   if (onboarding && lines.length === 1) {
     const ids = onboarding.clients.map((c) => c.clientId);
-    const [{ data: cs }, { data: ks }] = ids.length
-      ? await Promise.all([db.from("clients").select("id, services, services_extra, services_removed, meta_ad_account_id").in("id", ids), db.from("kpi_targets").select("client_id").eq("platform", lines[0]).in("client_id", ids)])
-      : [{ data: [] }, { data: [] }];
+    const { data: cs } = ids.length ? await db.from("clients").select("id, services, services_extra, services_removed").in("id", ids) : { data: [] };
     const slug = lines[0] === "google" ? "google-ads" : "facebook-ads";
-    const on = new Set([
-      ...(ks ?? []).map((k) => k.client_id as string),
-      ...(cs ?? []).filter((c) => servicesOf(c).includes(slug) || (lines[0] === "meta" && c.meta_ad_account_id && !(c.services_removed ?? []).includes(slug))).map((c) => c.id as string),
-    ]);
+    // The client's services decide (src/lib/service-gate.ts), never a leftover KPI card or a linked ad account
+    const on = new Set((cs ?? []).filter((c) => servicesOf(c).includes(slug)).map((c) => c.id as string));
     onboarding.clients = onboarding.clients.filter((c) => on.has(c.clientId));
   }
   const patterns = patternState ? { state: patternState, canBrief: true, canRefresh: me.isExec } : null;
@@ -200,7 +199,56 @@ export default async function Home() {
   const nextSection = <NextSection data={next} me={me.id} deploys={deploys} />;
 
   if (me.isExec) {
-    return <PulseView {...base} vitals={h.vitals} attention={h.attention} phases={h.phases} clients={h.clients} team={h.team} monthElapsed={h.monthElapsed} kpis={kpis} production={production} suggestions={suggestionsShown} fatigue={fatigueShown} onboarding={onboarding} clientOptions={clientOptions} callPromises={callPromises} owed={owed} patterns={patterns} looks={looks} handoffs={<><WatchCallout db={db} me={me} /><HandoffCallout db={db} me={me.id} /></>} recap={recap} next={nextSection} />;
+    // Their focus lines up front; the rest under a quiet "Everything else", out of the counts (no focus set: everything)
+    const focus = await loadExecFocus(db, me.id);
+    const on = (l: FocusLine) => !focus.length || lineInFocus(l, focus);
+    const kpiOn = kpiLines.map((k, i) => (k && on(lines[i]) ? k : null)).filter((k): k is KpiPulse => Boolean(k));
+    const kpiOff = kpiLines.map((k, i) => (k && !on(lines[i]) ? k : null)).filter((k): k is KpiPulse => Boolean(k));
+    const creative = on("creative");
+    const perf = on("creative_performance");
+    const lined = Boolean(focus.length);
+    const elsewhere: SharedTopics | null = lined
+      ? {
+          attention: creative ? [] : h.attention,
+          kpis: kpiOff,
+          fatigue: perf ? null : fatigueShown,
+          suggestions: creative ? null : suggestionsShown,
+          patterns: perf ? null : patterns,
+          clients: creative ? undefined : h.clients,
+          monthElapsed: h.monthElapsed,
+          clientOptions,
+        }
+      : null;
+    return (
+      <PulseView
+        {...base}
+        vitals={h.vitals}
+        attention={creative ? h.attention : []}
+        phases={h.phases}
+        clients={creative ? h.clients : []}
+        team={h.team}
+        monthElapsed={h.monthElapsed}
+        kpis={kpiOn}
+        production={creative ? production : null}
+        suggestions={creative ? suggestionsShown : null}
+        fatigue={perf ? fatigueShown : null}
+        onboarding={onboarding}
+        clientOptions={clientOptions}
+        callPromises={callPromises}
+        owed={owed}
+        patterns={perf ? patterns : null}
+        looks={looks}
+        elsewhere={elsewhere}
+        handoffs={
+          <>
+            <WatchCallout db={db} me={me} />
+            <HandoffCallout db={db} me={me.id} />
+          </>
+        }
+        recap={recap}
+        next={nextSection}
+      />
+    );
   }
 
   // Leaders (Head of Creative / Meta / Google)

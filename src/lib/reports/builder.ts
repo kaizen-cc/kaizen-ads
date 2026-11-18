@@ -1,4 +1,5 @@
 import "server-only";
+import { onService } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { isExecOrLead, type Staff } from "@/lib/auth";
@@ -67,8 +68,9 @@ export async function buildReport(admin: SupabaseClient, db: SupabaseClient, me:
   // One range per report (several made reports hard to read): only the first is used
   ranges = ranges.slice(0, 1);
   if (!platforms.length) throw new Error("Pick at least one service.");
-  const { data: found } = await admin.from("kpi_targets").select("id, client_id, platform, owner_id").eq("client_id", clientId).eq("active", true).not("ad_account_id", "is", null).in("platform", platforms);
-  const targets = found ?? [];
+  const { data: found } = await admin.from("kpi_targets").select("id, client_id, platform, owner_id, clients(services, services_extra, services_removed)").eq("client_id", clientId).eq("active", true).not("ad_account_id", "is", null).in("platform", platforms);
+  // Only the lines the client buys (src/lib/service-gate.ts)
+  const targets = (found ?? []).filter((t) => onService({ platform: t.platform as string, clients: t.clients ?? null }));
   if (!targets.length) throw new Error("No ad account with a KPI for those services. Set one on the KPI board.");
   // Anyone on one of the client's accounts can build it (and ask the other buyer for their part)
   let allowed = isExecOrLead(me);

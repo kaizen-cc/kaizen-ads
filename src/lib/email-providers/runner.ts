@@ -1,4 +1,5 @@
 import "server-only";
+import { hasLine, type ServiceFields } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptionKey, seal, unseal } from "@/lib/meta-token-core";
 import { LIVE } from "@/lib/live";
@@ -240,14 +241,15 @@ export async function syncAllProvider(admin: SupabaseClient, def: ProviderDef, o
   if (!(await providerReady(admin, def))) return { skipped: `${providerName(def.id)} migration not applied` };
   const deadline = Date.now() + (opts.budgetMs ?? 600_000);
   const [{ data }, { data: memos }] = await Promise.all([
-    admin.from(def.table).select("client_id, last_synced_at, clients!inner(name, status, archived_at)").eq("status", "active"),
+    admin.from(def.table).select("client_id, last_synced_at, clients!inner(name, status, archived_at, services, services_extra, services_removed)").eq("status", "active"),
     admin.from("sync_state").select("source, last_run_at, last_result").like("source", "klaviyo:%"),
   ]);
   type Row = { client_id: string; last_synced_at: string | null; clients: { name: string; status: string; archived_at: string | null } | null };
   const memo = new Map((memos ?? []).map((x) => [String(x.source).slice("klaviyo:".length), x as { last_run_at: string | null; last_result: SyncMemo | null }]));
   const recently = new Date(Date.now() - 10 * 60_000).toISOString();
   const plan = ((data ?? []) as unknown as Row[])
-    .filter((r) => r.clients && !r.clients.archived_at && (LIVE as readonly string[]).includes(r.clients.status))
+    // Live clients that buy email marketing (src/lib/service-gate.ts): a removed service isn't read; adding it back catches up
+    .filter((r) => r.clients && !r.clients.archived_at && (LIVE as readonly string[]).includes(r.clients.status) && hasLine(r.clients as ServiceFields, "email"))
     .map((r) => {
       const m = memo.get(r.client_id);
       return { id: r.client_id, name: r.clients!.name, lastRun: m?.last_run_at ?? null, window: pickKlaviyoWindow({ lastFullAt: m ? (m.last_result?.fullAt ?? null) : r.last_synced_at }) };

@@ -4,6 +4,7 @@ import { AgentCallProvider } from "@/components/agent-call-provider";
 import { Toaster } from "@/components/toasts";
 import { AuditWatcher } from "@/components/audit-watcher";
 import { ActivityTracker } from "@/components/activity-tracker";
+import { AssistantRinger } from "@/components/assistant-ringer";
 import { FeedbackBubble } from "@/components/feedback-bubble";
 import { DirectionSheet } from "@/components/direction-sheet";
 import { Suspense } from "react";
@@ -47,6 +48,8 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
       <Toaster />
       <AuditWatcher />
       <ActivityTracker />
+      {/* Urgent items: their assistant rings them in the app (or leaves it in the chat) */}
+      <AssistantRinger />
       <Suspense fallback={null}>
         <FeedbackBubble />
       </Suspense>

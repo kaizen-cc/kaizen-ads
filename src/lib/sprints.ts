@@ -1,4 +1,5 @@
 import "server-only";
+import { onService } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { agentOffline, askJson } from "@/lib/ai";
 import type { AuditResult } from "@/lib/audit";
@@ -453,13 +454,15 @@ ${snapshot.text}
 
 /** The scheduled step: every active sprint whose check is due, a few at a time. */
 export async function checkDueSprints(admin: SupabaseClient, deadline = Date.now() + 600_000) {
-  const { data } = await admin.from("optimization_sprints").select("id, kpi_targets(target)").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(25);
+  const { data } = await admin.from("optimization_sprints").select("id, kpi_targets(target, platform), clients(services, services_extra, services_removed)").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(25);
   let checked = 0;
   const errors: string[] = [];
   for (const s of data ?? []) {
     if (Date.now() > deadline) break;
-    // No KPI set on the account (any more): nothing to judge the sprint by, so it waits until there is one
-    if ((s.kpi_targets as unknown as { target: number | null } | null)?.target == null) {
+    const k = s.kpi_targets as unknown as { target: number | null; platform: string } | null;
+    // No KPI set on the account (any more): nothing to judge the sprint by, so it waits until there is one. The same
+    // when the client no longer buys that line (src/lib/service-gate.ts): it waits, kept, until the service is back
+    if (k?.target == null || !onService({ platform: k.platform, clients: s.clients ?? null })) {
       await admin.from("optimization_sprints").update({ next_check_at: new Date(Date.now() + 24 * 3_600_000).toISOString() }).eq("id", s.id);
       continue;
     }
@@ -480,16 +483,18 @@ export type SprintSummary = { id: string; buyer: string | null; buyerId: string 
 
 /** Active sprints by KPI, for the board and Next for me. */
 export async function loadSprints(db: SupabaseClient, opts: { targetIds?: string[]; personId?: string } = {}) {
-  let q = db.from("optimization_sprints").select("id, target_id, client_id, buyer_id, watcher_ids, started_at, last_check_at, next_check_at, profiles!optimization_sprints_buyer_id_fkey(full_name), clients(name, slug), kpi_targets(label)").eq("status", "active");
+  let q = db.from("optimization_sprints").select("id, target_id, client_id, buyer_id, watcher_ids, started_at, last_check_at, next_check_at, profiles!optimization_sprints_buyer_id_fkey(full_name), clients(name, slug, services, services_extra, services_removed), kpi_targets(label, platform)").eq("status", "active");
   if (opts.targetIds) q = q.in("target_id", opts.targetIds);
   if (opts.personId) q = q.or(`buyer_id.eq.${opts.personId},watcher_ids.cs.{${opts.personId}}`);
-  const { data: sprints } = await q;
-  const ids = (sprints ?? []).map((s) => s.id);
+  const { data: all } = await q;
+  // Only the lines the client buys (src/lib/service-gate.ts): a removed service's sprint is kept, not shown
+  const sprints = (all ?? []).filter((s) => onService({ platform: (s.kpi_targets as unknown as { platform?: string } | null)?.platform ?? null, clients: s.clients ?? null }));
+  const ids = sprints.map((s) => s.id);
   const [{ data: actions }, { data: checks }] = await Promise.all([
     ids.length ? db.from("sprint_actions").select("id, sprint_id, status, title, when, sort_order").in("sprint_id", ids).order("sort_order") : Promise.resolve({ data: [] }),
     ids.length ? db.from("sprint_checks").select("sprint_id, verdict, message, created_at").in("sprint_id", ids).order("created_at", { ascending: false }).limit(500) : Promise.resolve({ data: [] }),
   ]);
-  return (sprints ?? []).map((s) => {
+  return sprints.map((s) => {
     const mine = (actions ?? []).filter((a) => a.sprint_id === s.id && a.status !== "skipped");
     const last = (checks ?? []).find((c) => c.sprint_id === s.id);
     return {

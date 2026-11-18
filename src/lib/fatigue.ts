@@ -1,4 +1,5 @@
 import "server-only";
+import { onService } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { totals, type InsightRow, type MetaAd } from "@/lib/context/meta";
 import { LIVE } from "@/lib/live";
@@ -130,12 +131,13 @@ export function detect(clientId: string, rows: { date: string; ad_id: string; ad
  * and ads no longer flagged are marked recovered.
  */
 export async function runFatigue(admin: SupabaseClient, clientIds?: string[]) {
-  let q = admin.from("clients").select("id").eq("creative_package", true).is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null);
+  let q = admin.from("clients").select("id, services, services_extra, services_removed").eq("creative_package", true).is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null);
   if (clientIds?.length) q = q.in("id", clientIds);
   const { data: clients } = await q;
   const from = ymd(Date.now() - 29 * DAY);
   let flagged = 0;
-  for (const c of clients ?? []) {
+  // Only clients that buy Meta (src/lib/service-gate.ts)
+  for (const c of (clients ?? []).filter((x) => onService({ platform: "meta", clients: x }))) {
     const rows: Parameters<typeof detect>[1] = [];
     // Paged: busy accounts have thousands of ad-days in four weeks
     for (let page = 0; page < 20; page++) {
@@ -278,12 +280,14 @@ export async function loadWatchList(db: SupabaseClient, opts: { clientId?: strin
   }
   let q = db
     .from("ad_fatigue")
-    .select("client_id, ad_id, ad_name, headline, thumbnail, severity, state, signals, series, first_flagged_at, request_numbers, clients!inner(name, slug, status)")
+    .select("client_id, ad_id, ad_name, headline, thumbnail, severity, state, signals, series, first_flagged_at, request_numbers, clients!inner(name, slug, status, services, services_extra, services_removed)")
     .in("state", ["open", "refreshing"])
     .is("clients.archived_at", null)
     .in("clients.status", LIVE);
   if (ids) q = q.in("client_id", ids);
-  const { data } = await q.limit(200);
+  const { data: all } = await q.limit(200);
+  // Meta ad fatigue only for clients that buy Meta (src/lib/service-gate.ts)
+  const data = (all ?? []).filter((r) => onService({ platform: "meta", clients: r.clients }));
   const clientIds = [...new Set((data ?? []).map((r) => r.client_id as string))];
   const { data: briefs } = clientIds.length
     ? await db.from("creative_suggestions").select("id, client_id, source").eq("kind", "refresh").eq("status", "open").in("client_id", clientIds)

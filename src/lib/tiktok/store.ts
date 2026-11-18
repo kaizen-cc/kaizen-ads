@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptionKey, last4, NO_KEY, redactTokens, seal, unseal } from "@/lib/meta-token-core";
 import { matchClientName } from "@/lib/client-name-match";
 import { LIVE } from "@/lib/live";
+import { onService } from "@/lib/service-gate";
 import { nyParts } from "@/lib/kpi/calc";
 import { orderSeats, type SeatRow } from "@/lib/buyer-seats";
 import { adDiagnosis, adGroups, advertiserInfo, advertisersOf, ads as listAds, exchangeCode, imageUrls, pixelEventStats, pixelList, report, TikTokError, videoCovers } from "./api";
@@ -335,10 +336,11 @@ export async function syncAllTikTok(admin: SupabaseClient, budgetMs = 600_000) {
   }
   const linked = await autoLink(admin).catch(() => [] as string[]);
   const adopted = await adoptTikTokTargets(admin).catch(() => 0);
-  const { data: advs } = await admin.from("tiktok_advertisers").select("advertiser_id, client_id, clients!inner(status, archived_at)").not("client_id", "is", null).is("clients.archived_at", null).in("clients.status", LIVE);
+  const { data: advs } = await admin.from("tiktok_advertisers").select("advertiser_id, client_id, clients!inner(status, archived_at, services, services_extra, services_removed)").not("client_id", "is", null).is("clients.archived_at", null).in("clients.status", LIVE);
   let synced = 0;
   let deferred = 0;
-  for (const a of advs ?? []) {
+  // Only clients that buy TikTok Ads (src/lib/service-gate.ts); adding it back catches up on the next run
+  for (const a of (advs ?? []).filter((x) => onService({ platform: "tiktok", clients: x.clients }))) {
     if (Date.now() > deadline) {
       deferred++;
       continue;
@@ -362,7 +364,7 @@ export async function syncAllTikTok(admin: SupabaseClient, budgetMs = 600_000) {
 export async function adoptTikTokTargets(admin: SupabaseClient): Promise<number> {
   if (!tiktokConfigured()) return 0;
   const [{ data: advs }, { data: targets }] = await Promise.all([
-    admin.from("tiktok_advertisers").select("advertiser_id, client_id").not("client_id", "is", null),
+    admin.from("tiktok_advertisers").select("advertiser_id, client_id, clients(services, services_extra, services_removed)").not("client_id", "is", null),
     admin.from("kpi_targets").select("client_id, ad_account_id").eq("platform", "tiktok"),
   ]);
   const has = new Set((targets ?? []).map((t) => `${t.client_id}:${t.ad_account_id ?? ""}`));
@@ -370,6 +372,8 @@ export async function adoptTikTokTargets(admin: SupabaseClient): Promise<number>
   let n = 0;
   for (const a of advs ?? []) {
     if (has.has(`${a.client_id}:${a.advertiser_id}`) || clientHas.has(a.client_id as string)) continue;
+    // No card for a client that doesn't buy TikTok Ads (src/lib/service-gate.ts)
+    if (!onService({ platform: "tiktok", clients: a.clients ?? null })) continue;
     const r = await linkAdvertiser(admin, String(a.advertiser_id), a.client_id as string, null);
     if (r.ok) {
       n++;

@@ -6,10 +6,12 @@ import { postRate, withRates, windowOf, type DailyRow as SocialDay, type PostVie
 import type { Platform as SocialPlatformKey, PostFormat, SocialPost } from "@/lib/social/core";
 import type { RefreshNote } from "@/lib/reports/refresh-core";
 import { fillPriorFollowers, priorFollowersOver } from "./social-followers";
+import { basisLabel, basisSentence, combineParts, engagementChain, NOT_REPORTED, postSums, type RateBasis, type RateParts, type Source } from "@/lib/social/rate";
 import type { CampaignAudiences } from "@/lib/klaviyo/audiences";
 import { emailDetail, type EmailDetail, type FlowDay, type Pair, type Upcoming } from "./email-detail";
 import { locationChecks, type LocationBreakdown } from "@/lib/klaviyo/locations";
 import type { RevenueSources } from "./email-sources";
+import { emailEngagement, emailTemplateFor, engagementKeyLines, type CampaignExtra, type Engagement, type EmailTemplate } from "./email-engagement";
 
 // Email (Klaviyo) and organic social reports as plain functions, free of server code and the database so they are tested:
 // which reports exist (platform, line, cadence), the report's dates (the month just over against the month before, or the
@@ -200,6 +202,10 @@ export type EmailMetrics = {
   sources?: RevenueSources | null;
   /** Order metrics on the account that email earns through but the team hasn't ranked yet (the sync's weekly check, last 30 days) */
   unrankedSources?: UnrankedSource[];
+  /** Which report this is: the revenue report, or the engagement report for a client whose revenue isn't readable (older reports: revenue) */
+  template?: EmailTemplate;
+  /** The engagement report's numbers (only on the engagement template) */
+  engagement?: Engagement | null;
 };
 
 /** An order metric the sync found carrying revenue attributed to email, not among the ranked conversion metrics */
@@ -240,6 +246,14 @@ export type EmailInput = {
   smsBodies?: Record<string, string>;
   /** The lists and segments each campaign went to and left out, by campaign id */
   audiences?: Record<string, CampaignAudiences>;
+  /** Total clicks and clicks per link, by campaign id, when the source gives them */
+  extras?: Record<string, CampaignExtra>;
+  /** The main list's name (the one the period's campaigns went to) */
+  listName?: string | null;
+  /** The first day the account's numbers cover */
+  since?: string | null;
+  /** False for a Klaviyo account with no conversion metric to read revenue on */
+  hasConversionMetric?: boolean | null;
 };
 
 /** Campaigns that reached someone in the window (a scheduled, cancelled or test one with no recipients doesn't count) */
@@ -332,8 +346,29 @@ export function emailMetrics(i: EmailInput): EmailMetrics {
     detail: emailDetail({ main: i.main, compare: i.compare, days: i.days, campaigns: i.campaigns, flowDays: i.flowDays ?? null, flows: i.flows, sizes: i.sizes ?? [], smsBodies: i.smsBodies, audiences: i.audiences }),
     upcoming: i.upcoming ?? [],
   };
+  // No readable revenue: the engagement report, built on reach, clicks and the list against the account's usual
+  const trail = { start: shiftDay(i.main.end, -55), end: i.main.end };
+  const trailSent = campaignsIn(i.campaigns, trail.start, trail.end);
+  const trailDays = i.days.filter((d) => d.date >= trail.start && d.date <= trail.end);
+  const template = emailTemplateFor({
+    source: i.source ?? null,
+    revenueMeasured: i.revenueMeasured !== false,
+    hasConversionMetric: i.hasConversionMetric ?? null,
+    revenue: sum(trailSent, (c) => c.revenue) + sum(trailDays, (d) => d.revenue),
+    orders: sum(trailSent, (c) => c.conversions) + sum(trailDays, (d) => d.conversions ?? 0),
+    sends: trailSent.length,
+  });
+  if (template === "engagement") {
+    m.template = "engagement";
+    m.revenueMeasured = false;
+    m.target = null;
+    m.engagement = emailEngagement({ kind: i.kind, main: i.main, compare: i.compare, campaigns: i.campaigns, extras: i.extras, days: i.days, sizes: i.sizes ?? [], listName: i.listName ?? null, profiles: i.profiles, since: i.since ?? null, source: i.source ?? null });
+  }
   return m;
 }
+
+/** Whether a report is the engagement email report (revenue not readable) */
+export const isEngagement = (m: { platform: string; template?: EmailTemplate; engagement?: Engagement | null }): m is EmailMetrics & { engagement: Engagement } => m.platform === "klaviyo" && m.template === "engagement" && Boolean(m.engagement);
 
 /** The month to date of an email report ending on `end`: its numbers (worked out by `win`, the same as the main period's), the same days last month, and where revenue lands */
 function emailMtdOf(end: string, win: (w: Window) => PulseWindow): EmailMtd {
@@ -378,6 +413,12 @@ export type SocialNumbers = {
   profileViews: number | null;
   rate: number | null;
   posts: number;
+  /** What the rate is over (reach, else views, else followers); absent on older stored reports, which are reach */
+  rateBasis?: RateBasis | null;
+  /** Where the reach came from: Meta's account insights, or the posts added up when Meta gave none for the account */
+  reachFrom?: Source | null;
+  /** Each basis's numbers, so platforms add up exactly and a "before" is read on the basis "now" used */
+  rateParts?: RateParts;
 };
 export type SocialPostLite = {
   id: string;
@@ -421,6 +462,8 @@ export type SocialMetrics = {
   mtd?: SocialMtd | null;
   /** The engagement target this account's rates are held to (its own, else Kaizen's 5%); older stored reports have none */
   engagementTarget?: number | null;
+  /** Figures the team entered by hand for the period where Meta gave none (applied by social-notes.ts when the report is drawn) */
+  overrides?: { key: "reach" | "views" | "interactions" | "followers"; value: number; by: string; at: string; why?: string }[];
   refreshNote?: RefreshNote;
   stated?: StatedMark;
 };
@@ -458,25 +501,27 @@ export function followerChangeOver(rows: SocialDay[], platform: SocialPlatformKe
   return { start, end, change: null };
 }
 
-function numbersFor(rows: SocialDay[], posts: PostView[], platform: SocialPlatformKey | null, win: Range, current: number | null): SocialNumbers {
+function numbersFor(rows: SocialDay[], posts: PostView[], platform: SocialPlatformKey | null, win: Range, current: number | null, only?: RateBasis | null): SocialNumbers {
   const mine = platform ? rows.filter((r) => r.platform === platform) : rows;
   const w: SocialWindow = windowOf(mine, win.start, win.end);
   const inWin = posts.filter((p) => p.postedAt && etDay(p.postedAt) >= win.start && etDay(p.postedAt) <= win.end && (!platform || p.platform === platform));
-  if (platform) {
-    const f = followerChangeOver(rows, platform, win);
-    return { followers: f.end ?? current, followersStart: f.start, followerChange: f.change, gained: w.gained, lost: w.lost, reach: w.reach, views: w.views, interactions: w.interactions, engaged: w.engaged, profileViews: w.profileViews, rate: w.rate, posts: inWin.length };
-  }
-  return { followers: null, followersStart: null, followerChange: null, gained: w.gained, lost: w.lost, reach: w.reach, views: w.views, interactions: w.interactions, engaged: w.engaged, profileViews: w.profileViews, rate: w.rate, posts: inWin.length };
+  const f = platform ? followerChangeOver(rows, platform, win) : null;
+  const followers = f ? (f.end ?? current) : null;
+  // The rate down the chain (reach, else views, else followers), with the posts' own numbers filling what Meta left out
+  const r = engagementChain({ interactions: w.interactions, reach: w.reach, views: w.views, followers, posts: inWin.length, fromPosts: postSums(inWin) }, { only: only ?? null });
+  const rateFields = { reach: r.reach, views: r.views, interactions: r.interactions, rate: r.rate, rateBasis: r.basis, reachFrom: r.reachFrom, rateParts: r.parts };
+  return { followers, followersStart: f?.start ?? null, followerChange: f?.change ?? null, gained: w.gained, lost: w.lost, engaged: w.engaged, profileViews: w.profileViews, posts: inWin.length, ...rateFields };
 }
 
 /** Both platforms added up (a platform that gives nothing for a number leaves it out of the total, and says null when none does) */
-export function combineNumbers(list: SocialNumbers[]): SocialNumbers {
+export function combineNumbers(list: SocialNumbers[], only?: RateBasis | null): SocialNumbers {
   const add = (k: keyof SocialNumbers) => {
     const xs = list.map((n) => n[k]).filter((x): x is number => typeof x === "number");
     return xs.length ? xs.reduce((a, b) => a + b, 0) : null;
   };
   const reach = add("reach");
   const interactions = add("interactions");
+  const c = combineParts(list.map((n) => n.rateParts ?? legacyParts(n)), { only });
   return {
     followers: add("followers"),
     followersStart: list.every((n) => n.followersStart != null) && list.length ? add("followersStart") : null,
@@ -488,9 +533,17 @@ export function combineNumbers(list: SocialNumbers[]): SocialNumbers {
     interactions,
     engaged: add("engaged"),
     profileViews: add("profileViews"),
-    rate: reach && interactions != null ? interactions / reach : null,
+    rate: c.rate,
     posts: list.reduce((a, n) => a + n.posts, 0),
+    rateBasis: c.basis,
+    reachFrom: list.some((n) => n.reachFrom === "posts") ? "posts" : "meta",
+    rateParts: c.parts,
   };
+}
+
+/** A stored report's numbers from before the chain: reach is the only basis it had */
+function legacyParts(n: SocialNumbers): RateParts {
+  return n.reach && n.interactions != null ? { reach: { top: n.interactions, den: n.reach } } : {};
 }
 
 const clip = (s: string | null, n: number) => (s ? s.replace(/\s+/g, " ").trim().slice(0, n) : null);
@@ -501,10 +554,14 @@ export function socialMetrics(i: SocialInput): SocialMetrics {
   for (const p of platforms) latest[p] = followersOn(i.days, p, i.main.end) ?? i.current?.[p] ?? null;
   const rated = withRates(i.posts, latest);
   // A platform with no follower count for the period before gets it from this period's (followers less the net change)
-  const per: SocialPlatformNumbers[] = platforms.map((p) => fillPriorFollowers({ platform: p, name: i.names[p] ?? null, now: numbersFor(i.days, rated, p, i.main, latest[p] ?? null), before: numbersFor(i.days, rated, p, i.compare, followersOn(i.days, p, i.compare.end)) }));
+  // A period before is read on the basis the period itself used (like with like)
+  const per: SocialPlatformNumbers[] = platforms.map((p) => {
+    const nowN = numbersFor(i.days, rated, p, i.main, latest[p] ?? null);
+    return fillPriorFollowers({ platform: p, name: i.names[p] ?? null, now: nowN, before: numbersFor(i.days, rated, p, i.compare, followersOn(i.days, p, i.compare.end), nowN.rateBasis) });
+  });
   const now = combineNumbers(per.map((p) => p.now));
   // Followers before are added up over the same platforms as now's, or not at all (never two platforms against one)
-  const before = { ...combineNumbers(per.map((p) => p.before)), followers: priorFollowersOver(per.map((p) => p.now), per.map((p) => p.before)) };
+  const before = { ...combineNumbers(per.map((p) => p.before), now.rateBasis), followers: priorFollowersOver(per.map((p) => p.now), per.map((p) => p.before)) };
   const inMain = rated.filter((p) => p.postedAt && etDay(p.postedAt) >= i.main.start && etDay(p.postedAt) <= i.main.end);
   const best = [...inMain]
     .sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || (b.interactions ?? -1) - (a.interactions ?? -1) || (b.reach ?? -1) - (a.reach ?? -1))
@@ -534,7 +591,7 @@ export function socialMetrics(i: SocialInput): SocialMetrics {
     target: i.target ?? null,
     gaps,
     through,
-    insightsRead: now.reach != null,
+    insightsRead: now.reach != null || now.rate != null,
     ...(i.kind === "weekly" ? { mtd: socialMtdOf(i.main.end, i.days, rated, platforms, latest) } : {}),
   };
 }
@@ -543,9 +600,9 @@ export function socialMetrics(i: SocialInput): SocialMetrics {
 function socialMtdOf(end: string, days: SocialDay[], rated: PostView[], platforms: readonly SocialPlatformKey[], latest: Partial<Record<SocialPlatformKey, number | null>>): SocialMtd {
   const f = mtdFrame(end);
   const nows = platforms.map((p) => numbersFor(days, rated, p, f.window, latest[p] ?? null));
-  const befores = platforms.map((p) => numbersFor(days, rated, p, f.compare, followersOn(days, p, f.compare.end)));
+  const befores = platforms.map((p, k) => numbersFor(days, rated, p, f.compare, followersOn(days, p, f.compare.end), nows[k].rateBasis));
   const now = combineNumbers(nows);
-  const before = { ...combineNumbers(befores), followers: priorFollowersOver(nows, befores) };
+  const before = { ...combineNumbers(befores, now.rateBasis), followers: priorFollowersOver(nows, befores) };
   return { ...f, now, before, projectedReach: now.reach != null ? round(projectMonthEnd(now.reach, end)) : null };
 }
 
@@ -646,6 +703,17 @@ export function emailSupport(m: EmailMetrics): { label: string; value: string }[
   ];
 }
 
+/** The engagement rate's small print: what it is over ("By views: interactions over views"), and the client's target only while it is on the reach basis the target was set on */
+export function rateSub(m: SocialMetrics, target: string | null): string {
+  const b = m.now.rateBasis ?? "reach";
+  const label = basisLabel(b, m.now.reachFrom);
+  if (label) return `${label[0].toUpperCase()}${label.slice(1)}: ${basisSentence(b, m.now.reachFrom).toLowerCase()}`;
+  return target ?? basisSentence(b, m.now.reachFrom);
+}
+
+/** The reach tile's small print: the usual line, or that Meta gave no reach (never a bare zero) */
+export const reachSub = (m: SocialMetrics, target: string | null): string => (m.now.reach == null ? NOT_REPORTED.reach : m.now.reachFrom === "posts" ? "Added up from the posts: Meta gave none for the account" : (target ?? "Accounts that saw a post or a story"));
+
 export function socialTiles(m: SocialMetrics): ChannelTile[] {
   const { now, before } = m;
   const t = m.target;
@@ -654,9 +722,9 @@ export function socialTiles(m: SocialMetrics): ChannelTile[] {
   const reachTarget = t && /reach/i.test(t.metric) ? targetSub(t) : null;
   return [
     { label: "Followers", value: int(now.followers), sub: followerTarget ?? (now.followerChange != null ? `${signed(now.followerChange)} in the period` : null), before: int(before.followers), move: moveOf(now.followers, before.followers) },
-    { label: "Reach", value: int(now.reach), sub: reachTarget ?? "Accounts that saw a post or a story", before: int(before.reach), move: moveOf(now.reach, before.reach) },
+    { label: "Reach", value: int(now.reach), sub: reachSub(m, reachTarget), before: int(before.reach), move: moveOf(now.reach, before.reach) },
     { label: "Views", value: int(now.views), sub: null, before: int(before.views), move: moveOf(now.views, before.views) },
-    { label: "Engagement rate", value: m.insightsRead ? pct(now.rate) : "–", sub: rateTarget ?? "Interactions over reach", before: pct(before.rate), move: moveOf(now.rate, before.rate) },
+    { label: "Engagement rate", value: m.insightsRead ? pct(now.rate) : "–", sub: rateSub(m, rateTarget), before: pct(before.rate), move: moveOf(now.rate, before.rate) },
   ];
 }
 
@@ -677,6 +745,7 @@ export const metricsSupport = (m: EmailMetrics | SocialMetrics) => (m.platform =
 /** The lines the email carries (subject-line numbers, one per line), each against the period before */
 export function keyLines(m: EmailMetrics | SocialMetrics): string[] {
   const vs = (mv: Move) => (mv ? `, ${mv.up ? "up" : "down"} ${mv.pct} vs ${m.compare.label}` : "");
+  if (isEngagement(m)) return engagementKeyLines(m.engagement, m.compare.label);
   const out = metricsTiles(m)
     .filter((t) => t.value !== "–")
     .map((t) => `${t.label}: ${t.value}${vs(t.move)}`);
@@ -706,6 +775,20 @@ export function takeawaysFor(m: EmailMetrics | SocialMetrics, written?: Takeaway
   const own = (written ?? []).filter((t) => t.title?.trim() && t.text?.trim()).slice(0, 3);
   if (own.length === 3) return own;
   const out: Takeaway[] = [];
+  if (isEngagement(m)) {
+    const e = m.engagement;
+    const word = (x: { word: string | null; vsUsual: number | null }) => (x.word === "above" ? `${Math.round((x.vsUsual ?? 0) * 100)}% above your usual` : x.word === "below" ? `${Math.round(Math.abs(x.vsUsual ?? 0) * 100)}% below your usual` : x.word ? "in line with your usual" : null);
+    const r = rel(e.clicks.now, e.clicks.before);
+    out.push({ title: e.clicks.word === "below" ? "Clicks were below usual" : e.clicks.word === "above" ? "Clicks beat your usual" : "Clicks to your site", text: `${e.clicks.basis === "total" ? `Email sent ${int(e.clicks.now)} clicks to your site` : `${int(e.clicks.now)} people clicked through to your site`}${r != null ? ` (${plus(r)} vs ${m.compare.label})` : ""}${word(e.clicks) ? `, ${word(e.clicks)}` : ""}.` });
+    const top = e.links?.rows[0];
+    if (top) out.push({ title: `${top.label} drew the most clicks`, text: `${int(top.clicks)} clicks, ${Math.round(top.share * 100)}% of every link clicked.` });
+    const best = e.picks ? e.campaigns.find((c) => c.id === e.picks!.best.id) : null;
+    if (best) out.push({ title: "Best email", text: `"${best.subject ?? best.name}": ${e.picks!.best.why}` });
+    const rr = rel(e.reached.now, e.reached.before);
+    out.push({ title: e.reached.word === "above" ? "Reach beat your usual" : e.reached.word === "below" ? "Reach was below usual" : "Who email reached", text: `${e.sends.now} ${e.sends.now === 1 ? "email" : "emails"} reached ${int(e.reached.now)} people${rr != null ? ` (${plus(rr)} vs ${m.compare.label})` : ""}${word(e.reached) ? `, ${word(e.reached)}` : ""}.` });
+    if (e.list.size != null) out.push({ title: "Your list", text: `${int(e.list.size)} contacts, ${int(e.list.unsubscribes)} unsubscribed in ${m.main.label}.` });
+    return [...own, ...out].slice(0, 3);
+  }
   if (m.platform === "klaviyo") {
     const c = m.currency;
     const r = rel(m.now.revenue, m.before.revenue);
@@ -758,7 +841,9 @@ export function dataFlags(m: EmailMetrics | SocialMetrics): DataFlag[] {
     if (now.posts === 0) add("alert", "Nothing was published in the period.", "If posting paused, the report should say so and when it resumes.");
     if (now.followerChange != null && now.followerChange < 0) add("alert", `The account lost ${Math.abs(now.followerChange)} followers in the period.`, "Say what the team makes of it and what changes.");
     if (before.reach && now.reach != null && now.reach < before.reach * 0.6) add("alert", `Reach fell from ${int(before.reach)} to ${int(now.reach)}.`, "Make sure the report explains why and what is being done about it.");
-    if (!m.insightsRead) add("check", "Meta gave no reach or interaction numbers for this account, so the engagement rate is left out.", "Check the account's permissions on the client's Social tab.");
+    if (!m.insightsRead) add("check", "Meta gave no reach, views or interaction numbers for this account, so the engagement rate is left out.", "Check the account's permissions on the client's Social tab, or enter the numbers by hand in the studio's Team notes.");
+    else if (now.rateBasis && now.rateBasis !== "reach") add("check", `Meta didn't report reach for this period, so the engagement rate is ${now.rateBasis === "views" ? "over views" : "per post over followers"}.`, "Say the rate is on that basis; it isn't compared with the reach-based target.");
+    else if (now.reach == null) add("check", NOT_REPORTED.reach + ".", "Don't quote a reach for it, or enter the number by hand in the studio's Team notes.");
     if (m.target && m.target.progress != null && m.target.progress < 0.7) add("check", `${m.target.label} is at ${Math.round(m.target.progress * 100)}% of its target.`, "Say where it stands and the plan to close it.");
   }
   return out;

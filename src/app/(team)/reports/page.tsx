@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { onService } from "@/lib/service-gate";
 import Link from "next/link";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -103,7 +104,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const { data: slots } = admin && seatClientIds.length ? await admin.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("client_id", seatClientIds).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer", ...REPORT_SEATS.email, ...REPORT_SEATS.social]) : { data: [] };
   const [{ data: allTargets }, { data: built }] = admin && clientIds.length
     ? await Promise.all([
-        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line ? [line] : ["meta", "google"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
+        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id, services, services_extra, services_removed), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line ? [line] : ["meta", "google"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
         admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, sent_at, clients(name), reports(id, platform, status, owner_id, viewed_at, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).gte("created_at", daysAgo(60)).order("created_at", { ascending: false }).limit(150),
       ])
     : [{ data: [] }, { data: [] }];
@@ -116,7 +117,8 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
     isChan(platform) ? seatRows.filter((s) => s.client_id === clientId && REPORT_SEATS[lineOfPlatform(platform as "klaviyo" | "social")].includes(s.role)) : seatRows.filter((s) => s.client_id === clientId && s.role === buyerRole(platform) && s.is_primary === false);
   const isMine = (clientId: string, p: { owner_id: string | null; platform: string }) => p.owner_id === me.id || coSeats(clientId, p.platform).some((s) => s.profile_id === me.id);
   const byClient = new Map<string, BuilderClient>();
-  for (const t of (allTargets ?? []) as unknown as { client_id: string; platform: "meta" | "google" | "tiktok"; owner_id: string | null; clients: { name: string; slug: string; slack_channel_id: string | null }; profiles: { full_name: string } | null }[]) {
+  // Only the lines the client buys (src/lib/service-gate.ts): the builder never suggests a removed service
+  for (const t of ((allTargets ?? []) as unknown as { client_id: string; platform: "meta" | "google" | "tiktok"; owner_id: string | null; clients: { name: string; slug: string; slack_channel_id: string | null }; profiles: { full_name: string } | null }[]).filter(onService)) {
     const c = byClient.get(t.client_id) ?? { id: t.client_id, name: t.clients.name, slug: t.clients.slug, hasChannel: Boolean(t.clients.slack_channel_id), services: [] };
     if (c.services.some((x) => x.platform === t.platform)) continue;
     const slot = primaryOf(seatRows, buyerRole(t.platform), t.client_id);

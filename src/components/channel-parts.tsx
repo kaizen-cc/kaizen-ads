@@ -4,6 +4,7 @@ import { KlaviyoKeyInline } from "@/components/klaviyo-key-inline";
 import { STATUS_LABEL, gapWords, moneyShort, pctText, type ChannelStatus } from "@/lib/channel-kpis/calc";
 import type { ChannelRow } from "@/lib/channel-kpis/types";
 import { providerName } from "@/lib/email-providers/core";
+import { basisLabel } from "@/lib/social/rate";
 
 // The pieces the Email and Social boards and the email and social Overview share: the status colors, how the main
 // number reads, and what to do when the data isn't connected. Server-safe (no hooks), theme tokens only.
@@ -40,7 +41,9 @@ export function targetText(r: ChannelRow): string | null {
 /** What the main number is a number of, in a few words */
 export function mainCaption(r: ChannelRow): string {
   if (r.line === "email") return "account score";
-  return r.basis === "month" ? "engagement this month" : "engagement, last 30 days";
+  // A rate over views or followers (Meta gave no reach) says so, small: it is never compared with a reach rate
+  const by = basisLabel(r.social?.rateBasis, r.social?.reachFrom);
+  return `${r.basis === "month" ? "engagement this month" : "engagement, last 30 days"}${by ? `, ${by}` : ""}`;
 }
 
 /** One line on where it's heading: the pace for email, the gap for social */
@@ -137,7 +140,7 @@ export function SupportChips({ r }: { r: ChannelRow }) {
       : r.social
         ? [
             ["Followers", signed(r.social.followersChange)],
-            ["Reach", num(r.social.reach)],
+            ["Reach", r.social.reach == null ? "Not reported" : num(r.social.reach)],
             ["Posts", String(r.social.posts)],
           ]
         : [];

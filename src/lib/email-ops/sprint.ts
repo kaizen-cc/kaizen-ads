@@ -1,4 +1,5 @@
 import "server-only";
+import { hasLine, type ServiceFields } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import type { EmailAuditResult } from "./audit-core";
@@ -169,9 +170,14 @@ async function historyKnown(admin: SupabaseClient, clientId: string): Promise<bo
 
 /** The scheduled step: every sprint whose next check is due */
 export async function checkDueEmailSprints(admin: SupabaseClient, limit = 12) {
-  const { data } = await admin.from("email_sprints").select("id").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(limit);
+  const { data } = await admin.from("email_sprints").select("id, clients(services, services_extra, services_removed)").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(limit);
   let checked = 0;
   for (const s of data ?? []) {
+    // A client that no longer buys email marketing (src/lib/service-gate.ts): the sprint is kept and waits a day, unchecked
+    if (!hasLine((Array.isArray(s.clients) ? s.clients[0] : s.clients) as ServiceFields | null, "email")) {
+      await admin.from("email_sprints").update({ next_check_at: new Date(Date.now() + 86_400_000).toISOString() }).eq("id", s.id);
+      continue;
+    }
     await checkEmailSprint(admin, s.id as string).catch((e) => console.error("[email sprint] check failed:", e instanceof Error ? e.message : e));
     checked++;
   }

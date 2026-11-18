@@ -9,6 +9,7 @@ import { BAND_TONE, ScoreBadge } from "@/components/email-score-parts";
 import { CHECK_WHY, SocialChecks, SocialWeighingDown } from "@/components/social-score-parts";
 import { field, label as labelCls } from "@/components/ui";
 import { pctText, shiftDay, type Month } from "@/lib/channel-kpis/calc";
+import { barFor, basisLabel, basisSentence } from "@/lib/social/rate";
 import type { ChannelRow } from "@/lib/channel-kpis/types";
 import { freshness } from "@/lib/dates";
 import { SOCIAL_AREA_LABEL, type SocialAuditResult } from "@/lib/social-ops/audit-core";
@@ -224,6 +225,7 @@ function Overview({ r, sheet, loading, pick, onTab }: { r: ChannelRow; sheet: So
   const today = sheet?.today ?? null;
   const series = sheet && today ? platformRate(sheet.days, pick, shiftDay(today, -29), today) : pick === "all" ? r.series : [];
   const target = r.target;
+  const rateBasis = n?.rateBasis ?? r.social?.rateBasis ?? null;
   const tone = shown ? BAND_TONE[shown.band].text : TONE[r.status].text;
   const vsBefore = n?.reach != null && n.reachBefore ? n.reach / n.reachBefore - 1 : null;
   const a = sheet?.audit ?? null;
@@ -242,10 +244,16 @@ function Overview({ r, sheet, loading, pick, onTab }: { r: ChannelRow; sheet: So
               <Eyebrow>Engagement, last 30 days{pick === "all" ? "" : ` · ${PLATFORM_LABEL[pick]}`}</Eyebrow>
               <p className="text-sm text-muted">The rate over the 7 days up to each day{target != null ? ", with the target as the dashed line" : ""}</p>
             </div>
-            <span className={`tabular font-heading text-[26px] leading-none ${tone}`}>{pctText(n?.rate ?? r.value)}</span>
+            <span className={`tabular font-heading text-[26px] leading-none ${tone}`}>
+              {pctText(n?.rate ?? r.value)}
+              {basisLabel(rateBasis, r.social?.reachFrom) ? <span title={basisSentence(rateBasis, r.social?.reachFrom)} className="ml-1.5 align-middle font-sans text-[11px] font-normal text-faint">{basisLabel(rateBasis, r.social?.reachFrom)}</span> : null}
+            </span>
           </div>
           {loading && pick !== "all" ? <div className="h-28 animate-pulse rounded-[12px] bg-surface-2" /> : <ChannelSpark values={series} span={30} goal={target != null ? { from: target, to: target } : null} tone={tone} tall label={`${r.name} engagement trend`} />}
-          <p className="text-[11px] text-faint">{target != null ? `Target ${pctText(target)}${r.targetBy ? `, set by ${r.targetBy}` : ""}.` : "No target yet: set one in Settings and the engagement check scores against it (3.5% until then)."}</p>
+          <p className="text-[11px] text-faint">{rateBasis === "views" || rateBasis === "followers" ? `Meta gave no reach, so this rate is ${rateBasis === "views" ? "over views" : "per post over followers"} and is held to its own ${pctText(barFor(rateBasis, null), 0)} bar, never to the reach target.` : target != null ? `Target ${pctText(target)}${r.targetBy ? `, set by ${r.targetBy}` : ""}.` : "No target yet: set one in Settings and the engagement check scores against it (3.5% until then)."}</p>
+          {(r.social?.rateNotes ?? []).filter((x) => pick === "all" && !/^Engagement is /.test(x)).map((x) => (
+            <p key={x} className="text-[11px] text-warn">{x}</p>
+          ))}
         </section>
         <section className="grid content-start gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
           <Eyebrow>The score{pick === "all" ? ", every platform by reach" : ` · ${PLATFORM_LABEL[pick]}`}</Eyebrow>

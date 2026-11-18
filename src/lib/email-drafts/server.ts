@@ -29,6 +29,8 @@ export type EmailDraftRow = {
   gmail_draft_id: string | null;
   created_at: string;
   clients?: { name: string; slug: string } | null;
+  /** Kaizen documents that go with it (a Scope of Work PDF) */
+  attachments?: { document_id: string; name: string }[] | null;
 };
 
 const SYSTEM = `You write emails from a Kaizen Marketing team member to one of the agency's clients. Kaizen's voice: warm, plain, confident and short; a real person writing, never a template. First name greeting, two to five short paragraphs, one clear next step, signed with the sender's first name. Never use em dashes. Never mention internal scores, criticality, ratings or anything about how the team judges the account. Never promise what the notes don't support; never invent numbers, dates or names. Refer to people by their role on the team ("your media buyer"), not by name, unless the sender is that person.`;
@@ -189,7 +191,11 @@ export async function draftBulk(admin: SupabaseClient, me: Pick<Staff, "id" | "f
 
 /** This person's drafts waiting to go out, newest first */
 export async function myDrafts(db: SupabaseClient, profileId: string, limit = 20): Promise<EmailDraftRow[]> {
-  const { data } = await db.from("client_email_drafts").select("id, client_id, owner_id, kind, subject, body, to_emails, reason, source_kind, status, gmail_draft_id, created_at, clients(name, slug)").eq("owner_id", profileId).in("status", ["ready", "opened"]).order("created_at", { ascending: false }).limit(limit);
+  const cols = "id, client_id, owner_id, kind, subject, body, to_emails, reason, source_kind, status, gmail_draft_id, created_at, clients(name, slug)";
+  const q = (c: string) => db.from("client_email_drafts").select(c).eq("owner_id", profileId).in("status", ["ready", "opened"]).order("created_at", { ascending: false }).limit(limit);
+  let { data, error } = await q(`${cols}, attachments`);
+  // Before the attachments column
+  if (error) ({ data, error } = await q(cols));
   return (data ?? []) as unknown as EmailDraftRow[];
 }
 
@@ -198,14 +204,21 @@ export async function myDrafts(db: SupabaseClient, profileId: string, limit = 20
  * compose link. Marks it opened. Never sends.
  */
 export async function openDraft(admin: SupabaseClient, me: Pick<Staff, "id" | "email" | "fullName">, id: string): Promise<{ ok: true; where: "gmail" | "link"; href: string } | { ok: false; error: string }> {
-  const { data: d } = await admin.from("client_email_drafts").select("id, owner_id, subject, body, to_emails, gmail_draft_id").eq("id", id).maybeSingle();
+  let { data: d } = await admin.from("client_email_drafts").select("id, owner_id, subject, body, to_emails, gmail_draft_id, attachments").eq("id", id).maybeSingle();
+  // Before the attachments column
+  if (!d) ({ data: d } = await admin.from("client_email_drafts").select("id, owner_id, subject, body, to_emails, gmail_draft_id").eq("id", id).maybeSingle());
   if (!d || d.owner_id !== me.id) return { ok: false, error: "That draft isn't yours." };
-  const links = composeLinks({ to: (d.to_emails as string[]) ?? [], subject: d.subject as string, body: d.body as string });
+  // Files on it (a Scope of Work PDF): attached in Gmail; named at the bottom of a prefilled compose otherwise
+  const { attachNote, mailFiles } = await import("@/lib/documents/attach");
+  const files = (((d as { attachments?: unknown }).attachments ?? []) as { document_id?: string; name?: string }[]).filter((f) => f.document_id).map((f) => ({ documentId: String(f.document_id), name: String(f.name ?? "Kaizen document.pdf") }));
+  const links = composeLinks({ to: (d.to_emails as string[]) ?? [], subject: d.subject as string, body: `${d.body as string}${attachNote(files)}` });
   const { gmailComposeToken, googleConfigured, googlePost } = await import("@/lib/context/google");
   if (googleConfigured()) {
     try {
       const { rawEmail } = await import("@/lib/assistant/messages");
-      const raw = rawEmail({ from: `${me.fullName} <${me.email}>`, to: ((d.to_emails as string[]) ?? []).join(", "), subject: d.subject as string, body: d.body as string });
+      const { attached, missing } = await mailFiles(admin, files);
+      if (missing.length) throw new Error(`files missing: ${missing.join(", ")}`);
+      const raw = rawEmail({ from: `${me.fullName} <${me.email}>`, to: ((d.to_emails as string[]) ?? []).join(", "), subject: d.subject as string, body: d.body as string, attachments: attached });
       const token = await gmailComposeToken(me.email);
       const made = await googlePost<{ id: string; message?: { id: string } }>(token, "https://gmail.googleapis.com/gmail/v1/users/me/drafts", { message: { raw } });
       await admin.from("client_email_drafts").update({ status: "opened", gmail_draft_id: made.id, updated_at: new Date().toISOString() }).eq("id", id);

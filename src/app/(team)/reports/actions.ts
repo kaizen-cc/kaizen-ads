@@ -18,6 +18,7 @@ import type { ManualLine } from "@/lib/reports/manual";
 import { saveManual } from "@/lib/reports/manual-save";
 import type { DriveSave } from "@/lib/reports/drive-save-core";
 import type { ChannelLayout } from "@/lib/channel-reports/layout";
+import { tidyTeamFindings } from "@/lib/channel-reports/social-notes";
 import type { UploadedFile } from "@/lib/reports/upload-csv";
 import { appendLog, canBringBack, isSkipReason, latestSkip, skipEntry, unskipEntry, type LogEntry } from "@/lib/reports/skip-log";
 
@@ -67,7 +68,13 @@ export async function saveReport(id: string, patch: { message?: string; extras?:
     update.message_basis = reportBasis(patch.sections ?? cur?.sections, patch.extras ?? cur?.extras);
   }
   if (patch.extras !== undefined) update.extras = patch.extras.slice(0, 6000);
-  if (patch.sections !== undefined) update.sections = patch.sections;
+  if (patch.sections !== undefined) {
+    // An organic social report's team notes and entered figures are cleaned, and each figure is stamped with who entered it and when
+    if (ok.r.platform === "social") {
+      const { data: was } = await createAdminClient().from("reports").select("sections").eq("id", id).single();
+      update.sections = tidyTeamFindings((was?.sections as Sections | null) ?? null, patch.sections, ok.me.fullName, new Date().toISOString());
+    } else update.sections = patch.sections;
+  }
   await createAdminClient().from("reports").update(update).eq("id", id);
   done(id);
   return { ok: true };

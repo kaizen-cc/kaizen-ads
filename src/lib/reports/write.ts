@@ -27,7 +27,21 @@ import type { UploadedFile } from "./upload-csv";
  */
 export type Story = { title: string; metric: MetricKey; grain: "week" | "month"; periods: number; see: string; why: string; next: string; points?: TrendPoint[] };
 /** takeaways: the weekly PDF's three cards (a short claim, then the numbers behind it), written from the numbers alone */
-export type Sections = { headline: string; summary: string; did: string[]; doing: string[]; next: string[]; highlights: string[]; stories?: Story[]; takeaways?: Takeaway[] };
+export type Sections = {
+  headline: string;
+  summary: string;
+  did: string[];
+  doing: string[];
+  next: string[];
+  highlights: string[];
+  stories?: Story[];
+  takeaways?: Takeaway[];
+  /** Organic social: the strategist's own notes on the report, printed as the team's notes (never written by the AI), and one per takeaway card by position */
+  teamNotes?: string;
+  cardNotes?: string[];
+  /** Organic social: figures the strategist entered for the period when Meta didn't report them, with who and when (see social-notes.ts) */
+  overrides?: import("@/lib/channel-reports/social-notes").MetricOverride[];
+};
 export type QaFlag = { severity: "fix" | "check" | "alert"; issue: string; where: string; suggestion: string };
 export type Qa = { verdict: "clean" | "check" | "fix"; flags: QaFlag[]; checkedAt: string };
 /** pulled: what the AI looked up for this answer (shown under it); data: what came back, kept so the QA can check it */

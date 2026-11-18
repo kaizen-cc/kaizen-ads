@@ -38,6 +38,7 @@ import { listKnowledge } from "@/lib/knowledge";
 import { AGENT_MOMENTS, momentOf } from "@/lib/agent-moments";
 import Team from "../team/page";
 import { ReportCc } from "./report-cc";
+import { ExecFocus } from "./exec-focus";
 import { ErrorButtons } from "./error-buttons";
 import { DeletedTicketRow, type DeletedTicket } from "./deleted-ticket";
 import { STAGES } from "@/lib/stages";
@@ -1049,6 +1050,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
       {tab === "team" && (
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6">
           {me.isExec && <ReportCc />}
+          {me.isExec && <ExecFocus me={me.id} />}
           <Team />
         </div>
       )}

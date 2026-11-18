@@ -44,7 +44,7 @@ export async function loadSocialScores(db: SupabaseClient, clientIds: string[], 
       db.from("social_daily").select("client_id, platform, account_id, date, followers, follows_gained, follows_lost, reach, views, interactions, profile_views").in("client_id", clientIds).gte("date", since).lte("date", today).order("client_id").order("platform").order("date").range(a, b),
     ),
     readAll<Record<string, unknown>>((a, b) =>
-      db.from("social_posts").select("client_id, platform, account_id, post_id, format, caption, permalink, posted_at, reach, interactions, saves, shares").in("client_id", clientIds).gte("posted_at", `${shiftDay(today, -45)}T00:00:00Z`).order("client_id").order("post_id").range(a, b),
+      db.from("social_posts").select("client_id, platform, account_id, post_id, format, caption, permalink, posted_at, reach, views, interactions, likes, comments, saves, shares").in("client_id", clientIds).gte("posted_at", `${shiftDay(today, -45)}T00:00:00Z`).order("client_id").order("post_id").range(a, b),
     ),
     db.from("channel_targets").select("client_id, target").eq("line", "social").in("client_id", clientIds).then((r) => new Map((r.error ? [] : (r.data ?? [])).map((t) => [t.client_id as string, t.target == null ? null : Number(t.target)]))),
     packagePromises(db, clientIds).catch(() => new Map<string, number | null>()),
@@ -69,7 +69,7 @@ export async function loadSocialScores(db: SupabaseClient, clientIds: string[], 
   for (const p of posts) {
     if (!current(p)) continue;
     const k = p.client_id as string;
-    const row: SocialPostRow = { platform: p.platform as string, postedAt: (p.posted_at as string | null) ?? null, format: (p.format as string | null) ?? null, reach: n(p.reach), interactions: n(p.interactions), saves: n(p.saves), shares: n(p.shares), caption: (p.caption as string | null) ?? null, permalink: (p.permalink as string | null) ?? null };
+    const row: SocialPostRow = { platform: p.platform as string, postedAt: (p.posted_at as string | null) ?? null, format: (p.format as string | null) ?? null, reach: n(p.reach), views: n(p.views), likes: n(p.likes), comments: n(p.comments), interactions: n(p.interactions), saves: n(p.saves), shares: n(p.shares), caption: (p.caption as string | null) ?? null, permalink: (p.permalink as string | null) ?? null };
     postBy.set(k, [...(postBy.get(k) ?? []), row]);
   }
   for (const id of clientIds) {

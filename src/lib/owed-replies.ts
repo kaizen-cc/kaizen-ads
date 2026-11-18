@@ -622,6 +622,8 @@ export async function runOwedReplies(admin: Admin) {
     });
     tally.nudged++;
     drafts.push(o.id as string);
+    // A client saying they're leaving, furious, or escalating a missed deadline: every exec hears it's on fire
+    if (o.client_id) await import("@/lib/exec-focus/server").then(({ raiseFire }) => raiseFire(admin, { clientId: o.client_id as string, href: o.url, body: `${gist ?? gistOf(o)}, ${whereOf(o)}.`, signal: { kind: "client_message", text: String(o.body ?? ""), fromClient: !o.from_team } })).catch(() => false);
   }
 
   // Ones that went out without the AI's read (it was down): read now, and dropped quietly if nothing's owed

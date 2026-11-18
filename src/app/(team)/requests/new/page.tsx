@@ -29,7 +29,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
         <p className="mt-3 text-[14px] leading-relaxed text-fg/60">{briefing.reason}</p>
       </div>
     );
-  const { client, from, brief, asana, ai, card, audit, business, idea, draft, copyline } = await searchParams;
+  const { client, from, brief, asana, ai, card, audit, business, idea, draft, copyline, format } = await searchParams;
   const supabase = await createClient();
   const [{ data: rows }, { data: usage }, { data: angles }, { data: assignments }] = await Promise.all([
     supabase.from("clients").select("id, name, slug, status, creative_package").is("archived_at", null).in("status", LIVE).order("name"),
@@ -75,12 +75,15 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   // Arriving with ?client=: the briefs already written start being read here and stream to the page as a promise (never
   // waited on, so the page itself is never held); the heavier sections are asked for by the page (stored data, no AI)
   const initialStart = initialClient && !restart ? { clientId: initialClient, core: startCore(supabase, initialClient, formatsFor(me), me.id).catch(() => null) } : null;
+  // "Create brief" from a creative gap (?format=video): the form opens for that client with that format picked
+  const asked = typeof format === "string" && (["image", "video", "carousel"] as const).find((f) => f === format && allowed.has(f));
+  const prefill = !restart && initialClient && asked ? { formats: { [asked]: { new: 1, variations: 0 } } } : null;
 
   return (
     <div className="mx-auto max-w-6xl">
       <RequestForm
         key={written ? `draft-${draft}-${written.draft.origin?.writtenAt ?? ""}` : "new"}
-        initialDraft={restart?.draft ?? null}
+        initialDraft={restart?.draft ?? prefill}
         startAtReview={Boolean(restart) && (brief === "same" || Boolean(written))}
         initialPromise={written?.promise ?? null}
         clients={clients}

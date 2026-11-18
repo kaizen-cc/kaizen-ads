@@ -1111,6 +1111,10 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   for (const t of teamKpiTools(ctx)) tools.push(t);
   // The executives' account review (run step by step on a call) and client emails drafted from conversations
   for (const t of csuiteTools(ctx)) tools.push(t);
+  // Branded documents (a Scope of Work, a proposal, a handoff): the packages, the client's wins, and the PDF itself
+  const { documentTools, DOCUMENT_TOOLS } = await import("./document-tools");
+  for (const t of documentTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  for (const n of DOCUMENT_TOOLS) CHANNEL_EXTRA.add(n);
 
   // The connectors in src/lib/ai-tools (Google policy checker, monthly recap deck, ElevenLabs, Higgsfield, Motion)
   const extra = await extensionTools(ctx);

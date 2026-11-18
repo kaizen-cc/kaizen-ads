@@ -44,6 +44,13 @@ export function wholeMoney(n: number | null | undefined, currency: string | null
 /** The four bullets under What happened, always in this order */
 export function whatHappenedBullets(m: EmailMetrics): string[] {
   const c = m.currency;
+  // The engagement report (no revenue to read): who it reached, who engaged, the clicks it sent, and the list
+  const e = m.template === "engagement" ? m.engagement : null;
+  if (e) {
+    const n = (x: number | null) => (x == null ? "n/a" : Math.round(x).toLocaleString("en-US"));
+    const list = e.list.net != null ? `List: ${e.list.net > 0 ? "+" : ""}${n(e.list.net)}${e.list.size != null ? ` (${n(e.list.size)} contacts)` : ""}` : e.list.size != null ? `List: ${n(e.list.size)} contacts, ${n(e.list.unsubscribes)} unsubscribed` : `Unsubscribed: ${n(e.list.unsubscribes)}`;
+    return [`People reached: ${n(e.reached.now)}`, `Opens: ${n(e.opens.now)}, ${n(e.clickers.now)} people clicked`, `Clicks to your website: ${n(e.clicks.now)}`, list];
+  }
   const orders = m.detail?.orders.now;
   return [
     `Revenue from email and SMS: ${wholeMoney(m.now.revenue, c)}`,

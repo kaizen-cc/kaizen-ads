@@ -226,7 +226,9 @@ export async function GET(request: Request) {
       // Also: the safety review of ended calls (and their audio's retention), and reports the assistant is watching
       const safety = await (await import("@/lib/agent-call/safety")).sweepCallSafety(admin).catch((e) => ({ error: String(e) }));
       const watches = await (await import("@/lib/assistant/tools")).sweepReportWatches(admin).catch((e) => ({ error: String(e) }));
-      return Response.json({ ...(await (await import("@/lib/notifications")).emailNotifications(admin)), safety, watches });
+      // Urgent heads-ups for people not in the app: into their assistant chat, unread (the app rings the others)
+      const headsUps = await (await import("@/lib/assistant/heads-up-server")).sweepHeadsUps(admin).catch((e) => ({ error: String(e) }));
+      return Response.json({ ...(await (await import("@/lib/notifications")).emailNotifications(admin)), safety, watches, headsUps });
     }
     if (step === "feedback") {
       const { feedbackDigest, runFeedback } = await import("@/lib/feedback");

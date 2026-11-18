@@ -13,8 +13,10 @@ import { channelMetricsText } from "./text";
 import { channelTitle, emailMessageFlags, withTitle } from "./email-message";
 import { applyStated, type Stated } from "./stated";
 import { channelReportTools, channelToolsLine } from "./tools";
-import { shotCampaigns } from "./email-cards";
+import { cardShotIds } from "./email-cards";
+import { ENGAGEMENT_DRAFT_SCHEMA, ENGAGEMENT_REVISE_SCHEMA, ENGAGEMENT_RULES, ENGAGEMENT_TAKEAWAY_RULES, engagementTemplate } from "./engagement-write";
 import { SOCIAL_DRAFT_SCHEMA, SOCIAL_REVISE_SCHEMA, SOCIAL_TAKEAWAY_RULES } from "./social-write";
+import { carryTeamFindings, teamFindingsPrompt, withTeamFindings } from "./social-notes";
 
 // Writing a channel client report (email or organic social): the numbers (data.ts), the work behind them, the owner's own
 // voice, what this client likes in a report, and the client's Brand Bible and context. The same arc as the ads reports:
@@ -79,6 +81,8 @@ function forSource(text: string, m: unknown): string {
   const x = (m ?? null) as { source?: string; revenueMeasured?: boolean } | null;
   const name = x?.source;
   const named = name && name !== "Klaviyo" ? text.split("Klaviyo").join(name) : text;
+  // The engagement report (no readable revenue): its own rules, and takeaways that carry what we'll do next
+  if (engagementTemplate(m)) return `${named.replace(TAKEAWAY_RULES, ENGAGEMENT_TAKEAWAY_RULES)}\n${ENGAGEMENT_RULES}\nWhere the message structure above mentions revenue, orders or order rates, use reach, clicks and what people clicked instead.`;
   return x?.revenueMeasured === false ? `${named}
 This client's ${name ?? "email"} reports no revenue: never write revenue, orders, order rates or revenue targets; build the report on sends, opens, clicks, list growth and what we did.` : named;
 }
@@ -159,7 +163,9 @@ async function clientBlock(admin: SupabaseClient, clientId: string) {
   return `<client_context note="the Brand Bible, strategy and what is remembered about the client: informs the report, never quoted as internal">\n${contextBlock(ctx, undefined, { allotment: false }).slice(0, 14_000)}\n</client_context>`;
 }
 
-function sourcesBlock(c: Ctx, m: Metrics, work: string, voice: string, client = "") {
+function sourcesBlock(c: Ctx, metrics: Metrics, work: string, voice: string, client = "") {
+  // A social report's numbers include the figures the strategist entered where Meta gave none, and its team notes are given to the writer
+  const m = metrics.platform === "social" ? withTeamFindings(metrics, c.r.sections) : metrics;
   const lastNext = (c.last?.sections as Sections | null)?.next ?? [];
   return [
     `<client>${c.client}</client>`,
@@ -168,6 +174,7 @@ function sourcesBlock(c: Ctx, m: Metrics, work: string, voice: string, client = 
     `<numbers>\n${channelMetricsText(m)}\n</numbers>`,
     `<work_log period="${c.r.period_start} to ${c.r.period_end}">\n${work}\n</work_log>`,
     lastNext.length ? `<what_the_last_report_said_was_next>\n${lastNext.map((x) => `- ${x}`).join("\n")}\n</what_the_last_report_said_was_next>` : "",
+    m.platform === "social" ? teamFindingsPrompt(c.r.sections) : "",
     c.r.extras ? `<added_by_the_owner>\n${c.r.extras}\n</added_by_the_owner>` : "",
     c.prefs.length ? `<what_this_client_wants_in_a_report>\n${c.prefs.map((p) => `- ${p}`).join("\n")}\n</what_this_client_wants_in_a_report>` : "",
     pulledBlock(c.r.chat),
@@ -231,7 +238,7 @@ export async function qaChannelReport(admin: SupabaseClient, reportId: string): 
 /** Draws and saves the top of each card campaign's email (never failing the draft, and never more than a minute) */
 async function warmShots(admin: SupabaseClient, clientId: string, m: Metrics): Promise<void> {
   if (m.platform !== "klaviyo" || !m.detail) return;
-  const ids = shotCampaigns(m.detail.campaigns, { currency: m.currency, revenueMeasured: m.revenueMeasured !== false }).filter((x) => x.channel !== "sms").map((x) => x.id);
+  const ids = cardShotIds(m);
   if (!ids.length) return;
   const { ensureEmailShots } = await import("./email-shots");
   await Promise.race([ensureEmailShots(admin, clientId, ids, { fetch: true, budgetMs: 50_000 }).catch(() => null), new Promise((done) => setTimeout(done, 60_000))]);
@@ -261,11 +268,11 @@ export async function draftChannelReport(admin: SupabaseClient, reportId: string
       label: `${KIND_WORD(c.r.kind)} ${line} report`,
       clientId: c.r.client_id,
       system: forSource(writerSystem(c.r.kind, c.r.platform, c.whiteLabel), metrics),
-      schema: c.r.platform === "social" ? SOCIAL_DRAFT_SCHEMA : DRAFT_SCHEMA,
+      schema: c.r.platform === "social" ? SOCIAL_DRAFT_SCHEMA : engagementTemplate(metrics) ? ENGAGEMENT_DRAFT_SCHEMA : DRAFT_SCHEMA,
       maxTokens: 12000,
       prompt: `${sourcesBlock(c, metrics, work.text, voice, client)}\n\nWrite the ${KIND_WORD(c.r.kind)} ${channelName(c.r.platform).toLowerCase()} report for ${metrics.main.label}.`,
     });
-    out.sections = plain(out.sections);
+    out.sections = carryTeamFindings(c.r.sections, plain(out.sections));
     out.message = noEmDashes(out.message);
     // The backstop: a white label client's report never names the agency, whatever the AI wrote
     if (c.whiteLabel) {
@@ -307,7 +314,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
     label: "revise channel report",
     clientId: c.r.client_id,
     system: `${forSource(writerSystem(c.r.kind, c.r.platform, c.whiteLabel), c.r.metrics)}\n\n${REVISE_SYSTEM}\n${PERIOD_RULE}\n\n${channelToolsLine(c.r.platform)}`,
-    schema: c.r.platform === "social" ? SOCIAL_REVISE_SCHEMA : REVISE_SCHEMA,
+    schema: c.r.platform === "social" ? SOCIAL_REVISE_SCHEMA : engagementTemplate(c.r.metrics) ? ENGAGEMENT_REVISE_SCHEMA : REVISE_SCHEMA,
     tools,
     maxRounds: 6,
     maxTokens: 16000,
@@ -323,7 +330,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
     ...(opts.echo === false ? [] : [{ role: "user" as const, text: ask.trim(), at: now, by }]),
     { role: "assistant" as const, text: out.reply, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
   ].slice(-40);
-  out.sections = plain(out.sections);
+  out.sections = carryTeamFindings(c.r.sections, plain(out.sections));
   out.message = noEmDashes(out.message);
   if (c.whiteLabel) {
     out.message = forClient(out.message, true);

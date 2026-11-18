@@ -4,6 +4,7 @@ import { runAudit } from "@/lib/audit";
 import { inPlatform } from "@/lib/in-platform";
 import { withCoBuyers } from "@/lib/buyer-seats";
 import { tiktokConfigured } from "@/lib/tiktok/core";
+import { onService } from "@/lib/service-gate";
 
 // Accounts in the red get audited without anyone asking: when a KPI is off target and has no audit yet, or its last
 // audit is three days old and nobody has started on it (no action ticked, no change made from it, no sprint move
@@ -37,7 +38,7 @@ async function due(admin: SupabaseClient) {
   if (!dev.size) return [];
   const { data: targets } = await admin
     .from("kpi_targets")
-    .select("id, client_id, platform, owner_id, label, clients!inner(name, status, archived_at)")
+    .select("id, client_id, platform, owner_id, label, clients!inner(name, status, archived_at, services, services_extra, services_removed)")
     .eq("active", true)
     // TikTok too once it is set up (its audit is a checklist for TikTok Ads Manager)
     .in("platform", tiktokConfigured() ? ["meta", "google", "tiktok"] : ["meta", "google"])
@@ -49,7 +50,8 @@ async function due(admin: SupabaseClient) {
     .in("id", [...dev.keys()]);
   const out: Off[] = [];
   const stale = Date.now() - REFRESH_DAYS * 86_400_000;
-  for (const t of (targets ?? []) as unknown as Off[]) {
+  // Only the lines the client buys (src/lib/service-gate.ts): a removed service is never audited
+  for (const t of ((targets ?? []) as unknown as Off[]).filter(onService)) {
     const { data: last } = await admin.from("account_audits").select("id, status, created_at, done").eq("target_id", t.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (last) {
       const at = Date.parse(last.created_at as string);

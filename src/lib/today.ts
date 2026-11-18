@@ -1,4 +1,5 @@
 import "server-only";
+import { onService } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { allotmentLine, allotmentPools } from "@/lib/allotment";
@@ -21,8 +22,9 @@ import { byRetention } from "@/lib/today-lines-core";
 // item they saw that someone else has since acted on comes back once as "taken care of", with who and what.
 
 export type Tier = "critical" | "high" | "normal";
-export type TopicKey = "mine" | "promises" | "onboarding" | "accounts" | "email" | "social" | "work" | "briefs" | "ads" | "allotments";
+export type TopicKey = "fire" | "mine" | "promises" | "onboarding" | "accounts" | "email" | "social" | "work" | "briefs" | "ads" | "allotments" | "elsewhere";
 export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
+  fire: { label: "On fire", blurb: "Clients we could lose, across every team" },
   mine: { label: "Your work", blurb: "Tickets and tasks on you" },
   promises: { label: "Waiting on us", blurb: "Promised, said yes to, or not answered" },
   onboarding: { label: "New clients", blurb: "First impressions" },
@@ -33,6 +35,8 @@ export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   briefs: { label: "Ideas", blurb: "Briefs the strategist suggests" },
   ads: { label: "Ads", blurb: "Ads ready for a refresh" },
   allotments: { label: "Allotments", blurb: "Clients behind on creative" },
+  // An exec's day: what's outside their focus, quiet and uncounted, for when they want it
+  elsewhere: { label: "Everything else", blurb: "Outside your focus, when you want it" },
 };
 
 export type TodayItem = {
@@ -58,6 +62,8 @@ export type TodayItem = {
   pause?: { service: string };
   /** A message waiting on this person: the reply drafted for them */
   reply?: { id: string; source: "slack" | "gmail"; url: string | null; draft: string | null; channel: string | null };
+  /** Under "Everything else" (an exec's day, outside their focus): the topic it came from */
+  from?: TopicKey;
   state: "new" | "seen" | "saved"; // what this person has done with it so far
   carried: boolean; // came up on an earlier day and is still open
   image?: string | null;
@@ -411,14 +417,15 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   // Accounts off target, weighted by how far off, how much is spent and how important the account is
   // Each service line on its own, for the people on it: execs both, the Head of Meta Meta, the Head of Google Google,
   // a buyer only the accounts they own (and the ones they're a secondary buyer on)
-  let kq = db.from("kpi_targets").select("id, label, platform, ad_account_id, conversion, target, monthly_budget, sheet, owner_id, client_id, clients!inner(name, slug, archived_at, status)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
+  let kq = db.from("kpi_targets").select("id, label, platform, ad_account_id, conversion, target, monthly_budget, sheet, owner_id, client_id, clients!inner(name, slug, archived_at, status, services, services_extra, services_removed)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
   const co = !manager && topics.has("accounts") ? await secondarySeatKeys(db, me.id) : new Set<string>();
   const coClients = [...new Set([...co].map((k) => k.split(":")[0]))];
   if (!manager) kq = coClients.length ? kq.or(`owner_id.eq.${me.id},client_id.in.(${coClients.join(",")})`) : kq.eq("owner_id", me.id);
   else if (me.role === "head_of_meta") kq = kq.eq("platform", "meta");
   else if (me.role === "head_of_google") kq = kq.eq("platform", "google");
   const { data: found } = topics.has("accounts") ? await kq : { data: [] };
-  const targets = (found ?? []).filter((t) => manager || t.owner_id === me.id || co.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`));
+  // Only the lines the client buys (src/lib/service-gate.ts)
+  const targets = (found ?? []).filter((t) => onService(t) && (manager || t.owner_id === me.id || co.has(`${t.client_id}:${t.platform === "google" ? "google" : "meta"}`)));
   const ids = (targets ?? []).map((t) => t.id as string);
   const [{ data: snaps }, worked] = await Promise.all([
     ids.length ? db.from("kpi_snapshots").select("target_id, status, deviation, windows, budget").in("target_id", ids) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
@@ -602,10 +609,51 @@ async function whatHappened(db: SupabaseClient, keys: { key: string; snapshot: {
   return out;
 }
 
+/** A client on fire today, as the first thing on an exec's day */
+async function fireItems(db: SupabaseClient, me: Staff): Promise<Draft[]> {
+  const day = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const { data, error } = await db.from("notifications").select("key, title, body, href, client_id, clients(name, slug)").eq("profile_id", me.id).like("key", `fire:%:${day}`).limit(20);
+  if (error) return [];
+  return (data ?? []).map((n) => {
+    const c = n.clients as unknown as { name: string; slug: string } | null;
+    const title = String(n.title ?? "");
+    return {
+      key: n.key as string,
+      topic: "fire" as const,
+      score: 99,
+      client: c?.name ?? "Client",
+      clientSlug: c?.slug ?? "",
+      clientId: (n.client_id as string | null) ?? null,
+      stat: { value: "On fire", label: "every exec was told" },
+      title,
+      story: String(n.body ?? "") || title,
+      why: title.replace(/^.*? is on fire: /, ""),
+      evidence: [],
+      action: { label: "Open it", href: (n.href as string | null) ?? (c?.slug ? `/clients/${c.slug}` : "/pipeline") },
+    };
+  });
+}
+
+/**
+ * An exec's day: clients on fire first, then their focus lines and anything on them; the rest moves to the quiet
+ * "Everything else" (uncounted). An exec with no focus set sees everything, as before.
+ */
+async function forExec(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<Draft[]> {
+  const { loadExecFocus, linesByClient, onFireToday } = await import("@/lib/exec-focus/server");
+  const { splitForExec } = await import("@/lib/exec-focus/core");
+  const [focus, fire, onFire] = await Promise.all([loadExecFocus(db, me.id), fireItems(db, me).catch(() => []), onFireToday(db).catch(() => new Set<string>())]);
+  if (!focus.length) return [...fire, ...drafts];
+  const clientLines = await linesByClient(db, drafts.map((d) => d.clientId ?? "")).catch(() => new Map());
+  const { mine, elsewhere } = splitForExec(drafts, focus, { onFire, clientLines });
+  // A client on fire leads: their other items climb with them
+  const lead = mine.map((d) => (d.clientId && onFire.has(d.clientId) ? { ...d, score: Math.max(d.score, 90) } : d));
+  return [...fire, ...lead, ...elsewhere.map((d) => ({ ...d, topic: "elsewhere" as const, from: d.topic }))];
+}
+
 /** Today's recap for this person: open items most critical first (with what they've done with each), and what got resolved. */
 export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
   const [all, { data: mine }, { data: hiddenRows }] = await Promise.all([
-    gather(db, me),
+    gather(db, me).then((d) => (me.isExec ? forExec(db, me, d) : d)),
     db.from("daily_items").select("key, status, snapshot, first_seen_at").eq("profile_id", me.id),
     db.from("hidden_items").select("key").eq("profile_id", me.id),
   ]);

@@ -1,7 +1,9 @@
 "use client";
 
+import { DocumentCardView } from "./document-card";
 import { useRef, useState } from "react";
 import { callTranscript, saveCallDraft } from "@/app/(team)/settings/call-actions";
+import { openCallDraftInGmail } from "@/app/(team)/assistant/document-actions";
 import type { CallCard, UploadAsk } from "@/lib/agent-call/core";
 import type { Speaker } from "@/lib/agent-call/engine";
 import { tintOf } from "@/lib/agent-look";
@@ -193,6 +195,24 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
       setErr("Couldn't copy: select the text and copy it.");
     }
   };
+  const [opened, setOpened] = useState<string | null>(null);
+  /** Into their Gmail as a draft with the PDF attached, or a prefilled compose that names the PDF to attach */
+  const openGmail = async () => {
+    if (!callId) return d.compose && window.open(d.compose, "_blank", "noopener");
+    const tab = window.open("about:blank", "_blank");
+    setBusy(true);
+    setErr(null);
+    const saved = text.trim() !== d.text.trim() ? await saveCallDraft(callId, d.id, text) : { ok: true as const };
+    const r = saved.ok ? await openCallDraftInGmail(callId, d.id) : { ok: false as const, error: saved.error };
+    setBusy(false);
+    if (!r.ok) {
+      tab?.close();
+      return setErr(r.error);
+    }
+    if (tab) tab.location.href = r.href;
+    else window.open(r.href, "_blank", "noopener");
+    setOpened(r.where === "gmail" ? "It's in your Gmail drafts with the PDF attached." : d.attachments?.length ? "Opened a new email: download the PDF here and attach it before sending." : "Opened a new email in Gmail.");
+  };
   const approve = async () => {
     if (!onApprove || !callId) return;
     setBusy(true);
@@ -229,7 +249,20 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
         rows={Math.min(8, Math.max(3, text.split("\n").length + 1))}
         className="w-full resize-y rounded-[12px] border border-line bg-surface-2/40 px-3 py-2 text-[16px] leading-snug text-fg outline-none focus:border-faint md:text-[13.5px]"
       />
-      {d.status === "gmail_draft" && <p className="text-[12px] text-muted">It&apos;s in your Gmail drafts, in the thread: one click to send it there.</p>}
+      {d.attachments && d.attachments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5" aria-label="Attached">
+          {d.attachments.map((f) => (
+            <a key={f.documentId} href={f.download} className="inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-full border border-line bg-surface-2/40 px-3 text-[12px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-8" title="Download the PDF">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />
+              </svg>
+              <span className="truncate">{f.name}</span>
+            </a>
+          ))}
+        </div>
+      )}
+      {opened && <p className="text-[12px] text-muted">{opened}</p>}
+      {d.status === "gmail_draft" && <p className="text-[12px] text-muted">It&apos;s in your Gmail drafts{d.attachments?.length ? ", with the PDF attached" : ", in the thread"}: one click to send it there.</p>}
       {d.status === "copy" && <p className="text-[12px] text-muted">It can&apos;t go out as you from here yet: copy it and send it yourself.</p>}
       {err && (
         <p role="alert" className="text-[12px] text-bad">
@@ -240,6 +273,11 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
         <button type="button" onClick={copy} className="inline-flex min-h-11 items-center rounded-full px-4 text-[13px] text-muted transition-colors hover:bg-surface-2 hover:text-fg md:min-h-9">
           {copied ? "Copied" : "Copy"}
         </button>
+        {d.channel === "email" && open && (
+          <button type="button" disabled={busy} onClick={openGmail} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg disabled:opacity-50 md:min-h-9">
+            Open in Gmail
+          </button>
+        )}
         {d.status === "draft" && onApprove && (
           <button type="button" disabled={busy || !text.trim()} onClick={approve} className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] disabled:opacity-50 md:min-h-9">
             Approve and send
@@ -256,7 +294,9 @@ export function CardsStrip({ cards, onOpen, onDismiss, compact = false, callId =
   return (
     <ul className={`grid gap-2 ${compact ? "" : "sm:grid-cols-2"}`} aria-label="Shared on the call">
       {cards.map((c) =>
-        c.draft ? (
+        c.document ? (
+          <DocumentCardView key={c.id} doc={c.document} onDismiss={() => onDismiss(c.id)} wide={!compact} />
+        ) : c.draft ? (
           <DraftCard key={c.id} c={c as CallCard & { draft: NonNullable<CallCard["draft"]> }} callId={callId} onApprove={onApprove} onDismiss={onDismiss} />
         ) : (
         <li key={c.id} className="group relative flex items-center gap-3 rounded-[14px] border border-line bg-surface p-2.5 pr-2 shadow-sm">

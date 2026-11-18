@@ -15,6 +15,8 @@ export type Theme = {
   headline: string;
   points: string[];
   content: React.ReactNode;
+  /** A quiet place (an exec's "Everything else"): a small line under the cards, never counted */
+  quiet?: boolean;
 };
 
 const TONE: Record<TopicTone, { accent: string; glow: string }> = {
@@ -47,7 +49,7 @@ export function Themes({ themes }: { themes: Theme[] }) {
           </button>
           <div className="grid min-w-0 flex-1 md:flex-none">
             <h2 className="font-display text-3xl tracking-tight md:text-4xl">
-              <span style={{ color: t.accent }}>{current.count}</span> {current.title}
+              {!current.quiet && <span style={{ color: t.accent }}>{current.count}</span>} {current.title}
             </h2>
             <p className="text-sm text-ink/55">{current.headline}</p>
           </div>
@@ -57,7 +59,7 @@ export function Themes({ themes }: { themes: Theme[] }) {
               .filter((x) => x.id !== current.id)
               .map((x) => (
                 <button key={x.id} type="button" onClick={() => choose(x.id)} className="min-h-11 shrink-0 whitespace-nowrap rounded-full border border-ink/10 px-4 py-1.5 text-sm text-ink/60 hover:border-ink/25 hover:text-fg md:min-h-0 md:shrink md:whitespace-normal md:px-3 md:text-xs">
-                  {x.title} <span className="tabular" style={{ color: TONE[x.tone].accent }}>{x.count}</span>
+                  {x.title} {!x.quiet && <span className="tabular" style={{ color: TONE[x.tone].accent }}>{x.count}</span>}
                 </button>
               ))}
           </nav>
@@ -70,9 +72,11 @@ export function Themes({ themes }: { themes: Theme[] }) {
     );
   }
 
+  const quiet = themes.filter((x) => x.quiet);
   return (
-    <div className="grid gap-3 md:grid-cols-2">
-      {themes.map((x, i) => {
+    <div className="grid gap-3">
+      <div className="grid gap-3 md:grid-cols-2">
+      {themes.filter((x) => !x.quiet).map((x, i) => {
         const t = TONE[x.tone];
         const calm = x.count === 0;
         return (
@@ -110,6 +114,16 @@ export function Themes({ themes }: { themes: Theme[] }) {
           </button>
         );
       })}
+      </div>
+      {/* Quiet places (an exec's "Everything else"): one small line under the cards, no number */}
+      {quiet.map((x) => (
+        <button key={x.id} type="button" onClick={() => choose(x.id)} className="flex min-h-11 w-full items-center justify-between gap-3 rounded-[18px] border border-ink/[0.07] px-5 py-3 text-left text-sm text-ink/60 transition-colors hover:border-ink/15 hover:text-fg">
+          <span>
+            {x.title} <span className="text-ink/40">· {x.headline}</span>
+          </span>
+          <span aria-hidden>→</span>
+        </button>
+      ))}
     </div>
   );
 }

@@ -10,7 +10,7 @@ import { closeReviewTodo } from "../../csuite/actions";
 // "Emails ready to send": each drafted email with who it's to, why it was drafted, and Open draft (into their Gmail, or
 // a prefilled compose), Edit (a sheet, in the address so back closes it), Dismiss. Never sends anything.
 
-type Draft = { id: string; client: string; kind: string; subject: string; body: string; to: string[]; reason: string | null; opened: boolean };
+type Draft = { id: string; client: string; kind: string; subject: string; body: string; to: string[]; reason: string | null; opened: boolean; files?: { id: string; name: string }[] };
 
 export function EmailsReady({ drafts }: { drafts: Draft[] }) {
   const router = useRouter();
@@ -65,6 +65,19 @@ export function EmailsReady({ drafts }: { drafts: Draft[] }) {
               </div>
               <p className="truncate text-sm font-medium">{d.subject}</p>
               {d.reason && <p className="line-clamp-1 text-xs text-muted">{d.reason}</p>}
+              {/* Files that go with it: attached when it opens in Gmail; download one to attach it by hand otherwise */}
+              {d.files?.length ? (
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {d.files.map((f) => (
+                    <a key={f.id} href={`/api/documents/${f.id}?download=1`} className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 text-[11.5px] text-muted transition-colors hover:border-faint hover:text-fg md:min-h-7">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M21.4 11.1 12.2 20.3a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />
+                      </svg>
+                      <span className="truncate">{f.name}</span>
+                    </a>
+                  ))}
+                </div>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-1.5">
               <button type="button" disabled={pending} onClick={() => open(d)} className="inline-flex h-11 items-center rounded-full bg-fg px-3.5 text-xs font-medium text-bg disabled:opacity-50 md:h-8">

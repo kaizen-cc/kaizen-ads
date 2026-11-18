@@ -48,7 +48,7 @@ describe("Claude's export manifest", () => {
     expect(looksLikeManifestName("conversations.json")).toBe(false);
   });
 
-  it("lists the chat parts in order, who's who as needed, projects as optional, and the rest as not needed", () => {
+  it("lists the chat parts in order, who's who and projects as needed, and the rest as not needed", () => {
     const m = parseManifest(sample)!;
     expect(m.createdAt).toBe("2026-10-27T19:34:10.884Z");
     expect(m.expiresAt).toBe("2026-10-28T19:34:10.884Z");
@@ -57,7 +57,7 @@ describe("Claude's export manifest", () => {
       ["conversations-001.zip", "Your chats, part 2 of 3", true],
       ["conversations-002.zip", "Your chats, part 3 of 3", true],
       ["light_metadata-000.zip", "Who's who (needed to keep only your chats)", true],
-      ["projects-000.zip", "Projects (optional)", false],
+      ["projects-000.zip", "Your projects (their instructions and docs)", true],
     ]);
     expect(m.files.filter((f) => f.role === "other").map((f) => f.filename)).toEqual(["artifact_data-000.zip", "design_chats-000.zip", "frames-000.zip", "memories-000.zip"]);
     expect(m.files.find((f) => f.filename === "conversations-001.zip")!.url).toBe(link(7));
@@ -66,7 +66,8 @@ describe("Claude's export manifest", () => {
   it("says which needed files are still missing, counting a browser's renamed second download", () => {
     const m = parseManifest(sample)!;
     expect(missingFiles(m, ["conversations-000.zip", "conversations-002.zip", "projects-000.zip"]).map((f) => f.filename)).toEqual(["conversations-001.zip", "light_metadata-000.zip"]);
-    expect(missingFiles(m, ["conversations-000.zip", "conversations-001 (1).zip", "Conversations-002.ZIP", "light_metadata-000.zip"])).toEqual([]);
+    expect(missingFiles(m, ["conversations-000.zip", "conversations-001 (1).zip", "Conversations-002.ZIP", "light_metadata-000.zip"]).map((f) => f.filename)).toEqual(["projects-000.zip"]);
+    expect(missingFiles(m, ["conversations-000.zip", "conversations-001 (1).zip", "Conversations-002.ZIP", "light_metadata-000.zip", "projects-000.zip"])).toEqual([]);
     expect(sameFile("C:\\fakepath\\light_metadata-000 (2).zip", "light_metadata-000.zip")).toBe(true);
     expect(sameFile("conversations-0001.zip", "conversations-001.zip")).toBe(false);
   });

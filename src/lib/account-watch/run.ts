@@ -1,7 +1,10 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { servicesOf, type ServiceSlug } from "@/lib/services";
+import { hasLine } from "@/lib/service-gate";
 import { cycleElapsed } from "@/lib/allotment";
+import { lineOf } from "@/lib/exec-focus/core";
+import { fireSweep, raiseFire } from "@/lib/exec-focus/server";
 import {
   LINE_LABEL,
   LINE_SERVICE,
@@ -275,7 +278,10 @@ export async function runAccountWatch(admin: SupabaseClient, now = new Date()) {
   // ─── 3. Creative behind pace, or quiet ────────────────────────────────────
   for (const u of usageRows ?? []) {
     const c = byClient.get(u.client_id as string);
-    if (!c || !c.creative_package || (c.creative_package_until && c.creative_package_until < today)) continue;
+    // The creative line only for clients that buy it (src/lib/service-gate.ts)
+    if (!c || !c.creative_package || (c.creative_package_until && c.creative_package_until < today) || !hasLine(c, "creative")) continue;
+    // Creative paused until a date (a seasonal pause): neither behind nor quiet
+    if (pauses.has(`${c.id}:creative`)) continue;
     const to = uniq([...heads("creative"), ...seatsOf(c.id, SEATS.creative)]);
     const cap = Number(u.images_per_month ?? 0) + Number(u.videos_per_month ?? 0);
     const used = Number(u.images_used ?? 0) + Number(u.videos_used ?? 0);
@@ -334,7 +340,8 @@ export async function runAccountWatch(admin: SupabaseClient, now = new Date()) {
     if (!x.who || isAutomated(x.who) || ours(x.who)) continue;
     const clientId = clientOfAccount.get(x.ad_account_id);
     const c = clientId ? byClient.get(clientId) : undefined;
-    if (!c) continue;
+    // Only accounts on a line the client buys (src/lib/service-gate.ts)
+    if (!c || !hasLine(c, x.platform === "google" ? "google" : x.platform === "tiktok" ? "tiktok" : "meta")) continue;
     const key = normName(x.who);
     const p = placed.get(key);
     if (p && (p.status === "partner" || p.client_id === c.id)) continue;
@@ -369,7 +376,9 @@ export async function runAccountWatch(admin: SupabaseClient, now = new Date()) {
 
   const seeded = await seedAliases(admin, active).catch((e) => ({ error: String(e) }));
   const applied = await applyFindings(admin, findings, clients, pauses, now);
-  return { today, findings: findings.length, ...applied, seeded };
+  // The fire rules that need numbers: the main KPI far off for a week on a top-spend or at-risk client, tracking broken
+  const fire = await fireSweep(admin).catch((e) => ({ error: String(e) }));
+  return { today, findings: findings.length, ...applied, seeded, fire };
 }
 
 // ─── Flags, notifications and Slack ─────────────────────────────────────────
@@ -396,6 +405,9 @@ async function applyFindings(admin: SupabaseClient, findings: Finding[], clients
       await notify(admin, f.to, { key: `watch:${flag.id}`, title: `${c?.name ?? "A client"}: ${f.title}`, body: f.body, href: f.href, clientId: f.client_id, kind: f.line === "creative" ? "client" : "kpi", critical: f.severity === "critical" });
       await admin.from("watch_flags").update({ notified_at: at }).eq("id", flag.id);
       notified++;
+      // Billed for a line that's gone idle, spend stopped on a big account: every exec hears the client is on fire
+      const avg = Number((f.detail as { average?: number }).average ?? 0);
+      await raiseFire(admin, { clientId: f.client_id, client: c?.name ?? null, href: f.href, body: f.body, line: lineOf(f.line), signal: { kind: "watch", watchKind: f.kind, severity: f.severity, billed: Boolean((f.detail as { billed?: boolean }).billed), spend30: avg * 30, line: f.line } }).catch(() => false);
     }
     if (f.escalate && f.escalate.to.length && !flag.escalated_at) {
       await notify(admin, f.escalate.to, { key: `watch:${flag.id}:head`, title: f.escalate.title, body: f.body, href: f.href, clientId: f.client_id, kind: "kpi", critical: true });

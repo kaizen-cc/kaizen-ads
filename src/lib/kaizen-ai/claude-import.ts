@@ -8,10 +8,16 @@ import { sharingOf, type ImportedSharing } from "./projects";
 // Pure, so it runs in the browser on the person's own file and is tested with fixtures.
 
 export const IMPORT_SOURCE = "claude";
-/** The most kept from one message, one attached file, and a project's docs (the rest is cut with a note) */
-export const MAX_MESSAGE_CHARS = 100_000;
-export const MAX_FILE_CHARS = 100_000;
+/** The most kept from one message, one attached file or artifact, and a thread's notes (the rest is cut with a note) */
+export const MAX_MESSAGE_CHARS = 400_000;
+export const MAX_FILE_CHARS = 400_000;
 export const MAX_NOTES_CHARS = 300_000;
+/** The most text kept from one message's attachments and artifacts together (a request must stay under 4.5 MB) */
+export const MAX_MESSAGE_FILES_CHARS = 1_200_000;
+/** The most text kept from one project's knowledge docs together */
+export const MAX_PROJECT_DOCS_CHARS = 2_000_000;
+/** What a project made from a chat's Claude project id alone says (its name, instructions and docs weren't in the files) */
+export const STUB_PROJECT_NOTE = "Made from your Claude chats. Import your Claude export again with its projects file (projects-000.zip, or projects.json) to bring this project's name, instructions and docs.";
 /** What one import request carries (well under the host's 4.5 MB request limit) */
 export const MAX_BATCH_CHARS = 2_500_000;
 
@@ -41,9 +47,11 @@ export type ImportedProject = {
   creator: string | null;
   /** How it was shared in Claude, when the export says (private when it doesn't) */
   sharing: ImportedSharing;
+  /** Known only from the chats that were in it (the export's projects file wasn't among the files) */
+  stub?: boolean;
 };
 /** What a Kaizen AI project is made from, sent with a project's import item */
-export type ImportProjectPayload = { name: string; description: string; instructions: string; docs: { name: string; text: string }[]; sharing: ImportedSharing; chatUuids: string[] };
+export type ImportProjectPayload = { name: string; description: string; instructions: string; docs: { name: string; text: string }[]; sharing: ImportedSharing; chatUuids: string[]; stub?: boolean };
 /** The most kept from a project's custom instructions */
 export const MAX_INSTRUCTIONS_CHARS = 40_000;
 
@@ -72,14 +80,44 @@ export function messageText(m: Obj): string {
   return text;
 }
 
+/**
+ * What Claude made in a message: artifacts (the artifacts tool's create or rewrite, with their title and full text)
+ * and files it wrote (create_file's path and text). An artifact's update (a find-and-replace) has no full text and is
+ * left out; a later rewrite carries it whole.
+ */
+export function messageArtifacts(m: Obj): ImportedFile[] {
+  const out: ImportedFile[] = [];
+  const content = Array.isArray(m.content) ? (m.content as unknown[]).map(obj).filter((b): b is Obj => Boolean(b)) : [];
+  for (const b of content) {
+    if (b.type !== "tool_use") continue;
+    const input = obj(b.input) ?? {};
+    const name = str(b.name);
+    if (name === "artifacts" && str(input.content).trim() && str(input.command) !== "update") {
+      const title = str(input.title).trim() || str(input.id).trim() || "Artifact";
+      out.push({ name: `Artifact: ${title}`.slice(0, 200), text: str(input.content) });
+    } else if ((name === "create_file" || name === "write_file") && (str(input.file_text) || str(input.content)).trim()) {
+      const path = str(input.path) || str(input.file_path) || "file";
+      out.push({ name: `File: ${path.split(/[/\\]/).pop() || path}`.slice(0, 200), text: str(input.file_text) || str(input.content) });
+    }
+  }
+  return out;
+}
+
 function messageFiles(m: Obj): ImportedFile[] {
   const out: ImportedFile[] = [];
   const seen = new Set<string>();
+  let room = MAX_MESSAGE_FILES_CHARS;
+  const keep = (text: string): string | null => {
+    if (!text) return null;
+    if (room <= 0) return "…(cut: this message's files were too long to import)";
+    const kept = cut(text, Math.min(MAX_FILE_CHARS, room));
+    room -= kept.length;
+    return kept;
+  };
   for (const a of (Array.isArray(m.attachments) ? m.attachments : []).map(obj)) {
     if (!a) continue;
     const name = str(a.file_name) || str(a.name) || "attachment";
-    const text = str(a.extracted_content);
-    out.push({ name: name.slice(0, 200), text: text ? cut(text, MAX_FILE_CHARS) : null });
+    out.push({ name: name.slice(0, 200), text: keep(str(a.extracted_content) || str(a.content)) });
     seen.add(name);
   }
   for (const f of (Array.isArray(m.files) ? m.files : []).map(obj)) {
@@ -89,6 +127,7 @@ function messageFiles(m: Obj): ImportedFile[] {
     out.push({ name: name.slice(0, 200), text: null });
     seen.add(name);
   }
+  for (const f of messageArtifacts(m)) out.push({ name: f.name, text: keep(f.text ?? "") });
   return out;
 }
 
@@ -96,18 +135,31 @@ function messageFiles(m: Obj): ImportedFile[] {
  * The messages in the order they were said. When messages were edited into branches (newer exports give each a
  * parent), only the branch the conversation ended on: from its last message back to the first.
  */
-function mainBranch(list: Obj[], leaf: string | null): Obj[] {
+export function mainBranch(list: Obj[], leaf: string | null): Obj[] {
   const byId = new Map(list.filter((m) => str(m.uuid)).map((m) => [str(m.uuid), m]));
   const parented = list.filter((m) => byId.has(str(m.parent_message_uuid))).length;
   if (parented < Math.max(1, list.length - 1) * 0.6) return list;
-  const end = (leaf && byId.get(leaf)) || [...list].sort((a, b) => str(a.created_at).localeCompare(str(b.created_at))).at(-1)!;
+  const at = (m: Obj) => Date.parse(str(m.created_at)) || 0;
+  // The leaf Claude says it ended on; else the newest message nothing follows
+  const parents = new Set(list.map((m) => str(m.parent_message_uuid)).filter(Boolean));
+  const newest = (xs: Obj[]) => xs.reduce<Obj | undefined>((best, m) => (!best || at(m) >= at(best) ? m : best), undefined);
+  const end = (leaf && byId.get(leaf)) || newest(list.filter((m) => !parents.has(str(m.uuid)))) || newest(list)!;
   const chain: Obj[] = [];
   const seen = new Set<string>();
   for (let m: Obj | undefined = end; m && !seen.has(str(m.uuid)); m = byId.get(str(m.parent_message_uuid))) {
     seen.add(str(m.uuid));
     chain.unshift(m);
   }
-  return chain.length ? chain : list;
+  if (!chain.length) return list;
+  // A link missing from the export (the first message's parent is neither the root nor in the file): what was said
+  // before it is kept too, in order, so the start of a long chat is never lost
+  const parent = str(chain[0].parent_message_uuid);
+  if (parent && !/^0{8}-0{4}-/.test(parent) && !byId.has(parent)) {
+    const first = at(chain[0]);
+    const before = list.filter((m) => !seen.has(str(m.uuid)) && at(m) < first).sort((a, b) => at(a) - at(b));
+    return [...before, ...chain];
+  }
+  return chain;
 }
 
 function titleFrom(c: Obj, messages: ImportedMessage[]) {
@@ -178,17 +230,20 @@ export function parseConversations(raw: unknown, now = new Date().toISOString())
  */
 export function parseProjects(raw: unknown): ImportedProject[] {
   const list = Array.isArray(raw) ? raw : Array.isArray(obj(raw)?.projects) ? (obj(raw)!.projects as unknown[]) : [];
+  const seen = new Set<string>();
   return list.flatMap((x) => {
     const p = obj(x);
     const uuid = p ? str(p.uuid) || str(p.id) : "";
-    if (!p || !uuid) return [];
-    let room = MAX_NOTES_CHARS;
-    const docs = (Array.isArray(p.docs) ? p.docs : []).map(obj).flatMap((d) => {
-      const text = d ? str(d.content).trim() : "";
+    if (!p || !uuid || seen.has(uuid)) return [];
+    seen.add(uuid);
+    let room = MAX_PROJECT_DOCS_CHARS;
+    const docList = Array.isArray(p.docs) ? p.docs : Array.isArray(p.knowledge) ? p.knowledge : Array.isArray(p.files) ? p.files : [];
+    const docs = docList.map(obj).flatMap((d) => {
+      const text = d ? (str(d.content) || str(d.text) || str(d.extracted_content)).trim() : "";
       if (!d || !text || room <= 0) return [];
       const kept = cut(text, room);
       room -= kept.length;
-      return [{ name: (str(d.filename) || str(d.name) || str(d.title) || "Document").slice(0, 200), text: kept }];
+      return [{ name: (str(d.filename) || str(d.file_name) || str(d.name) || str(d.title) || "Document").slice(0, 200), text: kept }];
     });
     const settings = obj(p.settings) ?? {};
     const instructions = [p.prompt_template, p.custom_instructions, p.instructions, p.system_prompt, settings.prompt_template, settings.custom_instructions].map(str).find((s) => s.trim()) ?? "";
@@ -204,6 +259,38 @@ export function parseProjects(raw: unknown): ImportedProject[] {
       },
     ];
   });
+}
+
+/**
+ * The Claude projects chats were in that aren't among the export's projects (its projects file wasn't dropped, or
+ * didn't list them): each made from its chats alone and named after its newest chat, so the chats still land
+ * together. Importing again with the projects file fills in the real name, instructions and docs.
+ */
+export function stubProjects(convs: Pick<ImportedConversation, "title" | "updatedAt" | "projectUuid">[], projects: Pick<ImportedProject, "uuid">[]): ImportedProject[] {
+  const known = new Set(projects.map((p) => p.uuid));
+  const newest = new Map<string, { title: string; at: string }>();
+  for (const c of convs) {
+    if (!c.projectUuid || known.has(c.projectUuid)) continue;
+    const had = newest.get(c.projectUuid);
+    if (!had || c.updatedAt > had.at) newest.set(c.projectUuid, { title: c.title, at: c.updatedAt });
+  }
+  return [...newest].map(([uuid, c]) => ({
+    uuid,
+    name: `Claude project: ${c.title}`.slice(0, 100),
+    description: STUB_PROJECT_NOTE,
+    instructions: "",
+    docs: [],
+    creator: null,
+    sharing: { visibility: "private", everyoneCanEdit: false, people: [] },
+    stub: true,
+  }));
+}
+
+/** What's in an import, in a line: "244 chats, 12 projects, 3 had attachments" */
+export function importSummary(convs: Pick<ImportedConversation, "messages">[], projects: number) {
+  const withFiles = convs.filter((c) => c.messages.some((m) => m.files.length)).length;
+  const n = (k: number, one: string, many: string) => `${k.toLocaleString("en-US")} ${k === 1 ? one : many}`;
+  return [n(convs.length, "chat", "chats"), n(projects, "project", "projects"), withFiles ? `${withFiles} had attachments` : ""].filter(Boolean).join(", ");
 }
 
 /** The ones not imported yet (by Claude's conversation id, per person) */
@@ -279,7 +366,7 @@ export function projectItem(p: ImportedProject, chatUuids: string[], clientId: s
     part: 0,
     last: true,
     account: p.creator,
-    project: { name: p.name, description: p.description, instructions: p.instructions, docs: p.docs, sharing: p.sharing, chatUuids: chatUuids.slice(0, 5000) },
+    project: { name: p.name, description: p.description, instructions: p.instructions, docs: p.docs, sharing: p.sharing, chatUuids: chatUuids.slice(0, 5000), ...(p.stub ? { stub: true } : {}) },
   };
 }
 

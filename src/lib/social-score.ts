@@ -1,4 +1,5 @@
 import { emailBand, type EmailBand } from "./email-score";
+import { barFor, engagementChain, postSums, type RateBasis, type RateParts } from "./social/rate";
 
 // The organic social account score (0 to 100): how healthy a client's Instagram, Facebook (and TikTok, once its organic
 // numbers are read) accounts are, from eight checks the social team runs. Pure, so the board, the Overview, the recap,
@@ -8,6 +9,10 @@ import { emailBand, type EmailBand } from "./email-score";
 // the score moves smoothly. Engagement against the client's own target weighs most. A check with nothing to measure (no
 // saves read, no video posted, no profile visits given) is left out and the rest scaled to 100, exactly like email.
 // Bands are email's: green from 80, yellow from 60, red under 60.
+//
+// Engagement is interactions over reach. When Meta gives no reach it is over views, then per post over followers (src/lib/social/rate.ts);
+// a rate is only ever held to a bar of its own kind: the client's target (else 5%) for reach, 3% for views, 1% for followers, so
+// numbers on different bases are never compared. The check says which basis it used.
 //
 // Bars were set from the live accounts in Nov 2026 (median engagement 4.5% on Instagram, 6.6% on Facebook; follower
 // growth about 1% a month; saves and shares about 0.5% of reach; profile visits about 4% of reach; a third to a half of
@@ -40,19 +45,19 @@ export type SocialBand = EmailBand;
 export const socialBand = emailBand;
 
 export type SocialInputs = Record<SocialCheckKey, number | null>;
-export type SocialCheck = { key: SocialCheckKey; label: string; value: number | null; bar: number; weight: number; points: number; met: boolean; unit: SocialUnit };
+export type SocialCheck = { key: SocialCheckKey; label: string; value: number | null; bar: number; weight: number; points: number; met: boolean; unit: SocialUnit; /** Engagement only: what the rate is over (null: the standard, reach) */ basis?: RateBasis | null };
 export type SocialScore = { score: number; band: SocialBand; checks: SocialCheck[]; weighingDown: SocialCheck[]; unmeasured: SocialCheckKey[] };
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
 /** The score of one platform. `engagementBar`: the client's engagement target (the default bar without one). */
-export function socialScore(i: Partial<SocialInputs>, opts: { engagementBar?: number | null } = {}): SocialScore {
+export function socialScore(i: Partial<SocialInputs>, opts: { engagementBar?: number | null; engagementBasis?: RateBasis | null } = {}): SocialScore {
   const checks: SocialCheck[] = SOCIAL_CHECKS.map((c) => {
-    const bar = c.key === "engagement" && opts.engagementBar != null && opts.engagementBar > 0 ? opts.engagementBar : c.bar;
+    const bar = c.key === "engagement" ? barFor(opts.engagementBasis, opts.engagementBar ?? c.bar) : c.bar;
     const raw = i[c.key];
     const value = raw == null || !Number.isFinite(raw) ? null : raw;
     const share = value === null ? null : clamp01(value / bar);
-    return { key: c.key, label: c.label, value, bar, weight: c.weight, unit: c.unit, points: share === null ? 0 : share * c.weight, met: value !== null && value >= bar };
+    return { key: c.key, label: c.label, value, bar, weight: c.weight, unit: c.unit, points: share === null ? 0 : share * c.weight, met: value !== null && value >= bar, ...(c.key === "engagement" ? { basis: opts.engagementBasis ?? null } : {}) };
   });
   const measured = checks.filter((c) => c.value !== null);
   const possible = measured.reduce((n, c) => n + c.weight, 0);
@@ -65,7 +70,7 @@ export function socialScore(i: Partial<SocialInputs>, opts: { engagementBar?: nu
 // ─── From the synced rows to the inputs ────────────────────────────────────
 
 export type SocialDayRow = { platform: string; date: string; followers: number | null; gained: number | null; lost: number | null; reach: number | null; interactions: number | null; profileViews: number | null; views?: number | null };
-export type SocialPostRow = { platform: string; postedAt: string | null; format: string | null; reach: number | null; interactions: number | null; saves: number | null; shares: number | null; caption?: string | null; permalink?: string | null };
+export type SocialPostRow = { platform: string; postedAt: string | null; format: string | null; reach: number | null; interactions: number | null; saves: number | null; shares: number | null; caption?: string | null; permalink?: string | null; views?: number | null; likes?: number | null; comments?: number | null };
 
 const shift = (day: string, n: number) => new Date(Date.parse(`${day}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const nyDay = (iso: string) => (iso.length === 10 ? iso : new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/New_York" }));
@@ -83,6 +88,10 @@ export type PlatformNumbers = {
   views: number | null;
   interactions: number | null;
   rate: number | null;
+  /** What the rate is over: reach (the standard), views, or followers per post; null with no rate */
+  rateBasis: RateBasis | null;
+  /** Each basis's numbers, so platforms and accounts add up exactly */
+  rateParts: RateParts;
   profileViews: number | null;
   posts: number;
   postsThisMonth: number;
@@ -144,8 +153,10 @@ export function platformInputs(d: { platform: SocialPlatform; days: SocialDayRow
   const stills = withReach.filter((p) => !isVideo(p.format));
   const vr = vids.length ? rateOf(vids) : null;
   const sr = stills.length ? rateOf(stills) : null;
+  // The rate down the chain: reach, else views, else followers per post; the posts' own numbers fill what Meta left out
+  const chain = engagementChain({ interactions, reach, views: sumOf(now.map((x) => x.views ?? null)), followers: latest?.followers ?? null, posts: recent.length, fromPosts: postSums(recent) });
   const inputs: SocialInputs = {
-    engagement: reach != null && reach > 0 && interactions != null ? interactions / reach : null,
+    engagement: chain.rate,
     growth,
     reach: reach != null && reachBefore != null && reachBefore > 0 ? reach / reachBefore : null,
     cadence,
@@ -165,6 +176,8 @@ export function platformInputs(d: { platform: SocialPlatform; days: SocialDayRow
       views: sumOf(now.map((x) => x.views ?? null)),
       interactions,
       rate: inputs.engagement,
+      rateBasis: chain.basis,
+      rateParts: chain.parts,
       profileViews,
       posts: recent.length,
       postsThisMonth: thisMonth,
@@ -215,7 +228,7 @@ export function socialAccountScore(d: { days: SocialDayRow[]; posts: SocialPostR
   if (!list.length) return null;
   const platforms: PlatformScore[] = list.map((platform) => {
     const { inputs, numbers } = platformInputs({ platform, days: d.days, posts: d.posts, today: d.today, promisedPerMonth: d.promisedPerMonth });
-    return { ...socialScore(inputs, { engagementBar: d.engagementTarget }), platform, inputs, numbers };
+    return { ...socialScore(inputs, { engagementBar: d.engagementTarget, engagementBasis: numbers.rateBasis }), platform, inputs, numbers };
   });
   const scored = platforms.filter((p) => p.unmeasured.length < p.checks.length);
   if (!scored.length) return null;
@@ -226,8 +239,11 @@ export function socialAccountScore(d: { days: SocialDayRow[]; posts: SocialPostR
     const ww = parts.reduce((n, x) => n + x.w, 0) || parts.length;
     const value = parts.length ? parts.reduce((n, x) => n + x.c.value! * (x.w || 1), 0) / ww : null;
     const bar = parts[0]?.c.bar ?? c.bar;
+    // Platforms on different bases hold different bars: a blended engagement is met only when each platform met its own
+    const mixed = c.key === "engagement" && new Set(parts.map((x) => x.c.bar)).size > 1;
+    const basis = c.key === "engagement" ? (new Set(parts.map((x) => x.c.basis ?? null)).size === 1 ? (parts[0]?.c.basis ?? null) : null) : undefined;
     const points = parts.length ? parts.reduce((n, x) => n + x.c.points * (x.w || 1), 0) / ww : 0;
-    return { key: c.key, label: c.label, value, bar, weight: c.weight, unit: c.unit, points, met: value != null && value >= bar };
+    return { key: c.key, label: c.label, value, bar, weight: c.weight, unit: c.unit, points, met: value != null && (mixed ? parts.every((x) => x.c.met) : value >= bar), ...(basis !== undefined ? { basis } : {}) };
   });
   const possible = checks.filter((c) => c.value != null).reduce((n, c) => n + c.weight, 0);
   const weighingDown: SocialDrag[] = scored

@@ -9,6 +9,7 @@ import { benchmarkTarget, benchmarksFor } from "./benchmark";
 import { CONVERSION_FIELDS, META_READ_FROM, conversionFor, foldConversions } from "./conversions";
 import { businessModel, googleHealth } from "@/lib/google-flags";
 import { LIVE } from "@/lib/live";
+import { hasLine, lineOfPlatform, linesOf, SERVICE_FIELDS, type ServiceLine } from "@/lib/service-gate";
 import { orderSeats, type SeatRow } from "@/lib/buyer-seats";
 import { dailyTable } from "./platform";
 import { tiktokConfigured, tiktokMissing } from "@/lib/tiktok/core";
@@ -267,7 +268,7 @@ export async function adoptNewAccounts(admin: SupabaseClient) {
   let linked: string[] = [];
   if (metaConfigured()) linked = (await linkAdAccounts(admin).catch(() => null))?.linked ?? [];
   const [{ data: clients }, { data: targets }, { data: buyers }] = await Promise.all([
-    admin.from("clients").select("id, meta_ad_account_id").is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null),
+    admin.from("clients").select(`id, meta_ad_account_id, ${SERVICE_FIELDS}`).is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null),
     admin.from("kpi_targets").select("client_id").eq("platform", "meta"),
     admin.from("client_assignments").select("client_id, profile_id, role, is_primary, created_at").eq("role", "meta_buyer"),
   ]);
@@ -275,7 +276,8 @@ export async function adoptNewAccounts(admin: SupabaseClient) {
   // The new KPI card is the primary Meta buyer's (primaries last, so they win)
   const buyer = new Map(orderSeats((buyers ?? []) as SeatRow[]).reverse().map((b) => [b.client_id, b.profile_id]));
   const fresh = (clients ?? [])
-    .filter((c) => !has.has(c.id))
+    // Only clients that buy Meta (src/lib/service-gate.ts)
+    .filter((c) => !has.has(c.id) && hasLine(c, "meta"))
     .map((c) => ({ client_id: c.id, platform: "meta", ad_account_id: c.meta_ad_account_id, conversion: "purchases", owner_id: buyer.get(c.id) ?? null }));
   if (fresh.length) await admin.from("kpi_targets").insert(fresh);
   return { linked, added: fresh.length };
@@ -348,10 +350,11 @@ export async function refreshGoogleKpis(admin: SupabaseClient, budgetMs = 600_00
   try {
     const [{ data }, { data: live }] = await Promise.all([
       admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true).eq("platform", "google"),
-      admin.from("clients").select("id").is("archived_at", null).in("status", LIVE),
+      admin.from("clients").select(`id, ${SERVICE_FIELDS}`).is("archived_at", null).in("status", LIVE),
     ]);
-    const on = new Set((live ?? []).map((c) => c.id as string));
-    const targets = ((data ?? []) as Target[]).filter((x) => on.has((x as unknown as { client_id: string }).client_id));
+    // Live clients that buy Google Ads only (src/lib/service-gate.ts); the next run after it's added back catches up
+    const on = new Map((live ?? []).map((c) => [c.id as string, linesOf(c)]));
+    const targets = ((data ?? []) as Target[]).filter((x) => on.get((x as unknown as { client_id: string }).client_id)?.has("google"));
     const results = (await refreshTargets(admin, targets, true, Date.now() + budgetMs, t)) ?? [];
     const errors = results.filter((r) => "error" in r && r.error).map((r) => `${r.account}: ${(r as { error: string }).error}`);
     const deferred = results.filter((r) => "deferred" in r).length;
@@ -369,11 +372,15 @@ async function refreshAll(admin: SupabaseClient, budgetMs: number, t: Tracker) {
   if (tiktokConfigured()) await (await import("@/lib/tiktok/store")).adoptTikTokTargets(admin).catch(() => 0);
   const [{ data }, { data: archived }] = await Promise.all([
     admin.from("kpi_targets").select(TARGET_FIELDS).eq("active", true),
-    admin.from("clients").select("id").is("archived_at", null).in("status", LIVE),
+    admin.from("clients").select(`id, ${SERVICE_FIELDS}`).is("archived_at", null).in("status", LIVE),
   ]);
-  // Live clients only: paused and archived accounts aren't pulled until they're reactivated
-  const on = new Set((archived ?? []).map((c) => c.id as string));
-  const live = ((data ?? []) as Target[]).filter((t) => on.has((t as unknown as { client_id: string }).client_id));
+  // Live clients only: paused and archived accounts aren't pulled until they're reactivated. And only the lines the
+  // client buys (src/lib/service-gate.ts): a removed service's accounts aren't pulled; adding it back catches up
+  const on = new Map((archived ?? []).map((c) => [c.id as string, linesOf(c)]));
+  const live = ((data ?? []) as Target[]).filter((t) => {
+    const x = t as unknown as { client_id: string; platform: string };
+    return on.get(x.client_id)?.has(lineOfPlatform(x.platform) as ServiceLine) ?? false;
+  });
   const results = await refreshTargets(admin, live, true, Date.now() + budgetMs, t);
   const out = {
     ...adopted,

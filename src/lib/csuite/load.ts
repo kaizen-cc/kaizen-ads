@@ -4,6 +4,7 @@ import { criticalityOf, portfolioOf, scorecard, summarize, topReasons, CRITICAL_
 import { cachedClientKpis, loadAllClientKpis, type AllClientKpis } from "@/lib/clients-kpi/load";
 import { LIVE } from "@/lib/live";
 import { SERVICES, servicesOf, type ServiceSlug } from "@/lib/services";
+import { onService } from "@/lib/service-gate";
 import { billedTotal, billingGaps, itemKey, upsellBook, type BilledLine, type Marks, type StepKey, type Upsell, type UpsellInput } from "./core";
 
 // Everything the weekly account review shows, read once: the scorecard, the critical accounts with their reasons, the
@@ -51,7 +52,7 @@ export async function loadReview(db: SupabaseClient, admin: SupabaseClient): Pro
     // The account watch's open flags, when it's running (read through the session; nothing when the table isn't there)
     db.from("watch_flags").select("id, kind, client_id, line, title, body, severity, opened_at").is("resolved_at", null).order("opened_at", { ascending: false }).limit(200),
     db.from("clients").select("id, billed_services, billed_synced_at").is("archived_at", null),
-    admin.from("kpi_snapshots").select("windows, kpi_targets!inner(client_id, active)").eq("kpi_targets.active", true),
+    admin.from("kpi_snapshots").select("windows, kpi_targets!inner(client_id, active, platform, clients(services, services_extra, services_removed))").eq("kpi_targets.active", true),
   ]);
   const clients: ReviewClient[] = ((rows ?? []) as unknown as { id: string; name: string; slug: string; industry: string | null; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null; creative_package: boolean; creative_packages: { label: string } | null }[]).map((c) => ({
     id: c.id,
@@ -93,9 +94,10 @@ export async function loadReview(db: SupabaseClient, admin: SupabaseClient): Pro
 
   // Upsells: spend growth from the snapshots (14 days against the 16 before them, scaled), and what clients said
   const spend = new Map<string, { d14: number; d30: number }>();
-  for (const s of (snaps.data ?? []) as unknown as { windows: Record<string, { spend?: number }> | null; kpi_targets: { client_id: string } }[]) {
+  for (const s of (snaps.data ?? []) as unknown as { windows: Record<string, { spend?: number }> | null; kpi_targets: { client_id: string; platform: string; clients: unknown } }[]) {
     const id = s.kpi_targets?.client_id;
-    if (!id) continue;
+    // Only the lines the client buys count (src/lib/service-gate.ts)
+    if (!id || !onService(s.kpi_targets)) continue;
     const cur = spend.get(id) ?? { d14: 0, d30: 0 };
     spend.set(id, { d14: cur.d14 + (num(s.windows?.d14?.spend) ?? 0), d30: cur.d30 + (num(s.windows?.d30?.spend) ?? 0) });
   }

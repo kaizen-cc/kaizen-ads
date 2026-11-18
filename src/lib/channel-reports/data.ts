@@ -12,6 +12,7 @@ import { monthSoFar } from "@/lib/reports/period";
 import { locationBreakdown, type LocationBreakdown, type LocationRow } from "@/lib/klaviyo/locations";
 import { mirroredOverlap, revenueSources } from "./email-sources";
 import { campaignPicks } from "./email-cards";
+import type { CampaignExtra } from "./email-engagement";
 import { parseAudiencesJson, type CampaignAudiences } from "@/lib/klaviyo/audiences";
 
 // What a channel report reads: the numbers the client page already shows (klaviyo_* and social_* tables, filled by the
@@ -60,10 +61,11 @@ async function emailImages(admin: SupabaseClient, clientId: string, ids: string[
   // The best three with no saved preview: read once (cached by the call), never holding the report up for long
   const missing = ids.filter((id) => !have.has(id) || !have.get(id)).slice(0, 3);
   if (missing.length) {
-    const { campaignPreview } = await import("@/lib/klaviyo/store");
+    // Whichever provider the client is on (Klaviyo, Brevo): read once, cached by the call
+    const { emailPreview } = await import("@/lib/email-providers");
     await Promise.all(
       missing.map(async (id) => {
-        const got = await within(9_000, campaignPreview(admin, clientId, id).catch(() => null), null);
+        const got = await within(9_000, emailPreview(admin, clientId, id).catch(() => null), null);
         if (got && got.ok) out.set(id, heroImage(got.preview.html));
       }),
     );
@@ -115,19 +117,39 @@ async function readUpcoming(admin: SupabaseClient, clientId: string, after: stri
   return upcomingItems([...scheduled, ...planned], after);
 }
 
+/** Total clicks and clicks per link a campaign row carries when the sync stored them (columns from 20261118 on; none before) */
+export function campaignExtras(rows: Record<string, unknown>[]): Record<string, CampaignExtra> {
+  const out: Record<string, CampaignExtra> = {};
+  for (const r of rows) {
+    const total = r.clicks_total == null ? null : Number(r.clicks_total);
+    const raw = r.link_clicks;
+    const links = raw && typeof raw === "object" && !Array.isArray(raw) ? Object.fromEntries(Object.entries(raw as Record<string, unknown>).map(([k, v]) => [k, Number(v)]).filter(([, v]) => Number.isFinite(v as number) && (v as number) > 0)) : null;
+    if (total != null && Number.isFinite(total) || links) out[String(r.campaign_id)] = { clicksTotal: total != null && Number.isFinite(total) ? total : null, links: links && Object.keys(links).length ? (links as Record<string, number>) : null };
+  }
+  return out;
+}
+
+/** Whether a Klaviyo connection has the metric revenue is read on (an older database without the column: assumed yes) */
+async function hasConversionMetric(admin: SupabaseClient, clientId: string): Promise<boolean | null> {
+  const { data, error } = await admin.from("klaviyo_connections").select("conversion_metric_id").eq("client_id", clientId).maybeSingle();
+  if (error || !data) return null;
+  return Boolean((data as { conversion_metric_id?: string | null }).conversion_metric_id);
+}
+
 /** The email report's numbers for a client over given dates (null when Klaviyo has nothing for the client) */
 export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, kind: ChannelKind, main: Window, compare: Window, opts: { images?: boolean } = {}): Promise<EmailMetrics | null> {
   const today = todayET();
   // The trend's eight weeks and the comparison both reach back: the earliest day any of them needs
   const back = reachBack(kind, main, compare);
-  const from = [back, shiftDay(main.end, -55)].sort()[0];
+  // The engagement report (no readable revenue) also reads the eight weeks before the period: the account's usual
+  const from = [back, shiftDay(main.end, -55), shiftDay(main.start, -56)].sort()[0];
   const [{ data: days, error }, { data: camps }, { data: flows }, { data: auds }, { data: conn }, { data: snaps }] = await Promise.all([
     admin.from("klaviyo_daily").select("*").eq("client_id", clientId).gte("date", from).lte("date", today).order("date"),
-    admin.from("klaviyo_campaigns").select("*").eq("client_id", clientId).not("send_time", "is", null).gte("send_time", `${shiftDay(back, -1)}T00:00:00Z`).order("send_time", { ascending: false }).limit(600),
+    admin.from("klaviyo_campaigns").select("*").eq("client_id", clientId).not("send_time", "is", null).gte("send_time", `${shiftDay(from, -1)}T00:00:00Z`).order("send_time", { ascending: false }).limit(600),
     admin.from("klaviyo_flows").select("*").eq("client_id", clientId).order("revenue_30", { ascending: false }).limit(200),
-    admin.from("klaviyo_audiences").select("audience_id, kind, name, profile_count").eq("client_id", clientId).eq("kind", "list").order("profile_count", { ascending: false, nullsFirst: false }).limit(10),
+    admin.from("klaviyo_audiences").select("audience_id, kind, name, profile_count").eq("client_id", clientId).eq("kind", "list").order("profile_count", { ascending: false, nullsFirst: false }).limit(30),
     emailConnection(admin, clientId).then((c) => ({ data: c ? { account_name: c.account, currency: c.currency, provider: c.provider, revenue: c.revenueRead } : null })),
-    admin.from("klaviyo_audience_sizes").select("audience_id, date, profile_count").eq("client_id", clientId).gte("date", shiftDay(main.end, -45)).order("date"),
+    admin.from("klaviyo_audience_sizes").select("audience_id, date, profile_count").eq("client_id", clientId).gte("date", from).order("date"),
   ]);
   if (error || (!days?.length && !camps?.length && !flows?.length)) return null;
   const dailyRows: EmailDay[] = (days ?? []).map((d) => ({
@@ -178,12 +200,25 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     clickRate90: numOrNull(f.click_rate_90),
   }));
   // The main list's size, with its growth over the period when the snapshots reach it
-  const top = (auds ?? [])[0];
+  // The main list: the largest, or for a client with no readable revenue the one the period's campaigns went to most
+  // (the engaged list they actually mail, not an old import sitting beside it)
+  const sentTo = new Map<string, number>();
+  for (const c of campaignsIn(campaigns, main.start, main.end)) {
+    const row = (camps ?? []).find((x) => x.campaign_id === c.id);
+    for (const a of Array.isArray(row?.audiences) ? (row.audiences as string[]) : []) sentTo.set(a, (sentTo.get(a) ?? 0) + c.recipients);
+  }
+  const lists = auds ?? [];
+  const reach = (a: (typeof lists)[number]) => sentTo.get(String(a.name ?? "")) ?? sentTo.get(String(a.audience_id)) ?? 0;
+  const mailed = [...lists].filter((a) => reach(a) > 0).sort((a, b) => reach(b) - reach(a))[0];
+  const top = (conn && !conn.revenue && mailed) || lists[0];
   const hist = (snaps ?? []).filter((s) => s.audience_id === top?.audience_id).map((s) => ({ date: s.date as string, profiles: Number(s.profile_count) }));
   const inPeriod = campaignsIn(campaigns, main.start, main.end);
   // The best few by revenue, and the best and lowest by revenue per recipient (the report's two campaign cards)
   const picks = campaignPicks(inPeriod.map((c) => ({ ...c, orders: c.conversions, channel: c.channel === "sms" ? ("sms" as const) : ("email" as const) })), { currency: null, revenueMeasured: conn ? conn.revenue : true });
-  const sentIds = [...new Set([...(picks ? [picks.best.row.id, picks.lowest.row.id] : []), ...[...inPeriod].sort((a, b) => b.revenue - a.revenue).slice(0, 6).map((c) => c.id)])];
+  // With no readable revenue the cards are the best and the lowest by click to open: their emails are read too
+  const byCtor = conn && !conn.revenue ? inPeriod.filter((c) => c.channel !== "sms" && c.opensUnique > 0 && c.delivered >= 50).sort((a, b) => b.clicksUnique / b.opensUnique - a.clicksUnique / a.opensUnique) : [];
+  const ctorIds = byCtor.length >= 2 ? [byCtor[0].id, byCtor.at(-1)!.id] : [];
+  const sentIds = [...new Set([...ctorIds, ...(picks ? [picks.best.row.id, picks.lowest.row.id] : []), ...[...inPeriod].sort((a, b) => b.revenue - a.revenue).slice(0, 6).map((c) => c.id)])];
   // A text has no picture to draw: its words go in a message bubble instead
   const textIds = new Set(inPeriod.filter((c) => c.channel === "sms").map((c) => c.id));
   const audiences: Record<string, CampaignAudiences> = {};
@@ -218,6 +253,10 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     upcoming,
     smsBodies,
     audiences,
+    extras: campaignExtras(camps ?? []),
+    listName: (top?.name as string | null) ?? null,
+    since: dailyRows[0]?.date ?? null,
+    hasConversionMetric: (conn?.provider ?? "klaviyo") === "klaviyo" ? await hasConversionMetric(admin, clientId) : null,
   });
   // The target the board paces against: last month + 10% by itself, a higher one typed on the board wins
   const row = m.revenueMeasured === false ? null : await emailTarget(admin, clientId, main);
@@ -347,8 +386,10 @@ export async function loadSocialMetrics(admin: SupabaseClient, clientId: string,
   const posts: SocialPost[] = postRows.map((p) => ({ id: p.post_id as string, platform: p.platform as Platform, format: ((p.format as string | null) ?? "image") as PostFormat, caption: (p.caption as string | null) ?? null, permalink: (p.permalink as string | null) ?? null, thumbnail: (p.thumbnail_url as string | null) ?? null, postedAt: (p.posted_at as string | null) ?? null, likes: numOrNull(p.likes), comments: numOrNull(p.comments), shares: numOrNull(p.shares), saves: numOrNull(p.saves), reach: numOrNull(p.reach), views: numOrNull(p.views), interactions: numOrNull(p.interactions), insightsOk: Boolean(p.insights_ok) }));
   const m = socialMetrics({ kind, main, compare, days, posts, names: { instagram: (link?.ig_username as string | null) ? `@${link!.ig_username}` : null, facebook: (link?.page_name as string | null) ?? null } });
   const row = await readTarget(admin, clientId, "social");
-  m.target = targetLine("social", row, { kind, main, rate: m.now.rate, followers: m.now.followers, reach: m.now.reach });
-  if (m.mtd) m.mtd.target = targetLine("social", row, { kind: "monthly", main: m.mtd.window, rate: m.mtd.now.rate, followers: m.mtd.now.followers, reach: m.mtd.now.reach });
+  // The client's engagement target was set on reach: a rate over views or followers is never held to it
+  const onReach = (n: { rate: number | null; rateBasis?: string | null }) => (n.rateBasis && n.rateBasis !== "reach" ? null : n.rate);
+  m.target = targetLine("social", row, { kind, main, rate: onReach(m.now), followers: m.now.followers, reach: m.now.reach });
+  if (m.mtd) m.mtd.target = targetLine("social", row, { kind: "monthly", main: m.mtd.window, rate: onReach(m.mtd.now), followers: m.mtd.now.followers, reach: m.mtd.now.reach });
   m.engagementTarget = await (await import("./social-score-report")).socialEngagementTarget(admin, clientId, main.end);
   return m;
 }

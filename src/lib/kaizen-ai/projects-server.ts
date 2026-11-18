@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { officeText } from "@/lib/client-docs";
-import { MAX_INSTRUCTIONS_CHARS, MAX_NOTES_CHARS, type ImportItem } from "./claude-import";
+import { MAX_INSTRUCTIONS_CHARS, MAX_PROJECT_DOCS_CHARS, STUB_PROJECT_NOTE, type ImportItem } from "./claude-import";
 import { AI_BUCKET } from "./files";
 import { fitKnowledge, isVisibility, projectBlock, type MemberRole, type ProjectVisibility } from "./projects";
 
@@ -89,16 +89,45 @@ export async function importProject(
   importId: string,
   it: ImportItem,
   clientId: string | null,
-): Promise<{ status: "created" | "skipped" | "failed"; projectId?: string; error?: string }> {
+): Promise<{ status: "created" | "filled" | "skipped" | "failed"; projectId?: string; error?: string }> {
   const sid = clean(it.uuid, 120).replace(/^project:/, "");
   const p = it.project;
   if (!sid || !p) return { status: "failed", error: "Not a project." };
-  const { data: had, error: readErr } = await admin.from("ai_projects").select("id, visibility, created_by").eq("created_by", me.id).eq("source", "claude").eq("source_id", sid).maybeSingle();
+  const { data: had, error: readErr } = await admin.from("ai_projects").select("id, visibility, created_by, name, description, instructions").eq("created_by", me.id).eq("source", "claude").eq("source_id", sid).maybeSingle();
   if (readErr) return { status: "skipped", error: "Projects aren't set up yet." };
   let projectId = had?.id as string | undefined;
   let visibility: ProjectVisibility = isVisibility(had?.visibility) ? had.visibility : "private";
   let people: string[] = [];
   let created = false;
+  let filled = false;
+  const docRows = (pid: string, skip: Set<string>) => {
+    let room = MAX_PROJECT_DOCS_CHARS;
+    return (Array.isArray(p.docs) ? p.docs : []).slice(0, 300).flatMap((d) => {
+      const name = clean(d?.name, 200) || "Document";
+      const text = clean(d?.text, Math.min(room, MAX_DOC_CHARS));
+      room -= text.length;
+      if (!text || skip.has(name)) return [];
+      skip.add(name);
+      return [{ project_id: pid, kind: "text", name, text, chars: text.length, added_by: me.id, source_id: "claude" }];
+    });
+  };
+  if (projectId && !p.stub) {
+    // Imported before (or made from its chats alone, before the projects file came): what's missing is filled in,
+    // nothing anyone changed since is overwritten
+    const wasStub = String(had?.description ?? "") === STUB_PROJECT_NOTE;
+    const patch: Record<string, string> = {};
+    if (wasStub && clean(p.name, 120).trim()) patch.name = clean(p.name, 120).trim();
+    if ((wasStub || !String(had?.description ?? "").trim()) && p.description !== undefined) patch.description = clean(p.description, 4000);
+    if (!String(had?.instructions ?? "").trim() && clean(p.instructions, 10).trim()) patch.instructions = clean(p.instructions, MAX_INSTRUCTIONS_CHARS + 100);
+    if (Object.keys(patch).length) {
+      await admin.from("ai_projects").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", projectId);
+      filled = true;
+    }
+    const { data: haveDocs } = await admin.from("ai_project_docs").select("name").eq("project_id", projectId).limit(1000);
+    const docs = docRows(projectId, new Set((haveDocs ?? []).map((d) => String(d.name))));
+    for (let i = 0; i < docs.length; i += 50) await admin.from("ai_project_docs").insert(docs.slice(i, i + 50));
+    if (docs.length) filled = true;
+  }
   if (!projectId) {
     const sharing = p.sharing ?? { visibility: "private", everyoneCanEdit: false, people: [] };
     const emails = [...new Set((Array.isArray(sharing.people) ? sharing.people : []).map((x) => (typeof x?.email === "string" ? x.email.trim().toLowerCase() : "")).filter(Boolean))].slice(0, 200);
@@ -116,7 +145,7 @@ export async function importProject(
       .insert({
         created_by: me.id,
         name: clean(p.name, 120).trim() || "Claude project",
-        description: clean(p.description, 4000),
+        description: p.stub ? STUB_PROJECT_NOTE : clean(p.description, 4000),
         instructions: clean(p.instructions, MAX_INSTRUCTIONS_CHARS + 100),
         client_id: clientId,
         visibility,
@@ -132,12 +161,7 @@ export async function importProject(
     created = true;
     if (members.size) await admin.from("ai_project_members").insert([...members].map(([profile_id, role]) => ({ project_id: projectId, profile_id, role, added_by: me.id })));
     people = [...members.keys()];
-    let room = MAX_NOTES_CHARS;
-    const docs = (Array.isArray(p.docs) ? p.docs : []).slice(0, 200).flatMap((d) => {
-      const text = clean(d?.text, Math.min(room, MAX_DOC_CHARS));
-      room -= text.length;
-      return text ? [{ project_id: projectId, kind: "text", name: clean(d?.name, 200) || "Document", text, chars: text.length, added_by: me.id, source_id: "claude" }] : [];
-    });
+    const docs = docRows(projectId, new Set());
     for (let i = 0; i < docs.length; i += 50) await admin.from("ai_project_docs").insert(docs.slice(i, i + 50));
   } else {
     const { data: m } = await admin.from("ai_project_members").select("profile_id").eq("project_id", projectId);
@@ -154,7 +178,7 @@ export async function importProject(
   let others = admin.from("ai_threads").update({ project_id: projectId }).eq("source_project", sid).is("project_id", null).neq("profile_id", me.id);
   if (visibility !== "everyone") others = others.in("profile_id", visibility === "people" ? people : []);
   if (visibility === "everyone" || (visibility === "people" && people.length)) await others;
-  return { status: created ? "created" : "skipped", projectId };
+  return { status: created ? "created" : filled ? "filled" : "skipped", projectId };
 }
 
 /** The Kaizen AI projects for the Claude projects these chats were in: the person's own first, else one they can see */

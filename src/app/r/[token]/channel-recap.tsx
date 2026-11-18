@@ -1,13 +1,16 @@
 import type { CSSProperties, ReactNode } from "react";
-import { int, metricsSupport, money, moveOf, pct, signed, socialName, takeawaysFor, postRateText, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
+import { int, isEngagement, metricsSupport, money, moveOf, pct, signed, socialName, takeawaysFor, postRateText, type EmailMetrics, type SocialMetrics } from "@/lib/channel-reports/core";
+import { rateLabelOf, socialInsights } from "@/lib/channel-reports/social-report";
+import { overrideNote, teamFindingsOf, withTeamFindings } from "@/lib/channel-reports/social-notes";
 import { splitDay, splitLegend, splitOfDays, splitTotal, SPLIT_HEX, SPLIT_ORDER } from "@/lib/channel-reports/email-split";
 import { audienceLines } from "@/lib/klaviyo/audiences";
 import { tileViews, type ChannelLayout, type TileView } from "@/lib/channel-reports/layout";
 import { cardCampaigns, cardStats, flowCardViews, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, rprMoney, shareText, type CardStat, type FlowCardView } from "@/lib/channel-reports/email-cards";
-import { grade, RATE_BARS, type Grade, type MessageRow } from "@/lib/channel-reports/email-detail";
+import type { MessageRow } from "@/lib/channel-reports/email-detail";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
 import type { Sections } from "@/lib/reports/write";
 import { AdImage } from "./ad-image";
+import { EngagementRecap } from "./engagement-recap";
 
 // The live email or social report a client opens from the link in Slack or email: no sign-in, the token is the key, and only a
 // report that went to the client opens. Always light, the same look as the ads recap beside it.
@@ -20,10 +23,14 @@ type Shared = { client: string; whiteLabel: boolean; label: string; title: strin
 const tone = (t: TileView["move"]) => (!t ? "text-faint" : t.tone === "good" ? "text-ok" : t.tone === "bad" ? "text-bad" : "text-muted");
 
 export function ChannelRecap({ r }: { r: Shared }) {
-  const m = r.metrics;
+  // A social report's numbers carry the figures the strategist entered where Meta gave none
+  const m = r.metrics.platform === "social" ? withTeamFindings(r.metrics, r.sections) : r.metrics;
   // The tiles chosen in the studio, the same ones the PDF draws
   const tiles = tileViews(m, r.layout);
-  const takeaways = takeawaysFor(m, r.sections.takeaways);
+  // Social reads the same cards the PDF draws (with what we'll do next, and the strategist's note on a card)
+  const takeaways: { title: string; text: string; next?: string | null; teamNote?: string | null }[] = m.platform === "social" ? socialInsights(m, r.sections) : takeawaysFor(m, r.sections.takeaways);
+  const teamNotes = m.platform === "social" ? teamFindingsOf(r.sections).notes : "";
+  const entered = m.platform === "social" ? (m.overrides ?? []) : [];
   return (
     <div style={r.whiteLabel ? NEUTRAL : LIGHT} className="min-h-screen overflow-x-clip bg-bg pb-[env(safe-area-inset-bottom)] text-fg">
       <header className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-8 sm:pt-8 print:pt-0">
@@ -46,42 +53,73 @@ export function ChannelRecap({ r }: { r: Shared }) {
       </section>
 
       <main className="mx-auto grid max-w-5xl gap-14 px-4 pb-20 sm:px-8">
-        <div className={`grid grid-cols-2 gap-3 ${tiles.length > 4 ? "lg:grid-cols-3" : "lg:grid-cols-4"}`}>
-          {tiles.map((t) => (
-            <div key={t.key} className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 sm:p-5">
-              <p className="text-[11px] tracking-[0.08em] text-muted uppercase">{t.label}</p>
-              <p className="mt-2 font-heading text-[22px] tracking-tight tabular-nums [overflow-wrap:anywhere] sm:text-3xl">{t.value}</p>
-              {t.sub && <p className="mt-1 text-[13px] text-muted">{t.sub}</p>}
-              {t.kind === "split" ? (
-                <p className="mt-3 text-[13px] text-muted">Campaigns / automated emails</p>
-              ) : t.kind === "stat" ? (
-                <p className={`mt-3 text-[13px] font-medium ${tone(t.move)}`}>{t.move ? `${t.move.up ? "+" : "-"}${t.move.pct} vs ${m.compare.label}` : "No comparison"}</p>
-              ) : null}
-            </div>
-          ))}
-        </div>
-        <ul className="flex flex-wrap gap-x-8 gap-y-2 text-[13px] text-muted">
-          {metricsSupport(m).map((x) => (
-            <li key={x.label}>
-              {x.label} <span className="font-medium text-fg tabular-nums">{x.value}</span>
-            </li>
-          ))}
-        </ul>
-
-        {m.platform === "klaviyo" ? <EmailBody m={m} shots={r.shots ?? {}} /> : <SocialBody m={m} />}
-
-        {takeaways.length > 0 && (
-          <Block title="Key takeaways">
-            <div className="grid gap-4 sm:grid-cols-3">
-              {takeaways.map((t, i) => (
-                <div key={i} className="rounded-xl border border-line bg-surface p-5">
-                  <div className="mb-3 h-[3px] w-6 bg-brand" />
-                  <p className="font-heading text-base">{t.title}</p>
-                  <p className="mt-2 text-[14px] leading-relaxed text-muted">{t.text}</p>
+        {isEngagement(m) ? (
+          // No readable revenue: the engagement report (reach, clicks, what people clicked, the list, against the usual)
+          <EngagementRecap m={m} sections={r.sections} shots={r.shots ?? {}} />
+        ) : (
+          <>
+            <div className={`grid grid-cols-2 gap-3 ${tiles.length > 4 ? "lg:grid-cols-3" : "lg:grid-cols-4"}`}>
+              {tiles.map((t) => (
+                <div key={t.key} className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 sm:p-5">
+                  <p className="text-[11px] tracking-[0.08em] text-muted uppercase">{t.label}</p>
+                  <p className="mt-2 font-heading text-[22px] tracking-tight tabular-nums [overflow-wrap:anywhere] sm:text-3xl">{t.value}</p>
+                  {t.sub && <p className="mt-1 text-[13px] text-muted">{t.sub}</p>}
+                  {t.kind === "split" ? (
+                    <p className="mt-3 text-[13px] text-muted">Campaigns / automated emails</p>
+                  ) : t.kind === "stat" ? (
+                    <p className={`mt-3 text-[13px] font-medium ${tone(t.move)}`}>{t.move ? `${t.move.up ? "+" : "-"}${t.move.pct} vs ${m.compare.label}` : "No comparison"}</p>
+                  ) : null}
                 </div>
               ))}
             </div>
-          </Block>
+            <ul className="flex flex-wrap gap-x-8 gap-y-2 text-[13px] text-muted">
+              {metricsSupport(m).map((x) => (
+                <li key={x.label}>
+                  {x.label} <span className="font-medium text-fg tabular-nums">{x.value}</span>
+                </li>
+              ))}
+            </ul>
+
+            {m.platform === "klaviyo" ? <EmailBody m={m} shots={r.shots ?? {}} /> : <SocialBody m={m} />}
+
+            {takeaways.length > 0 && (
+              <Block title="Key takeaways">
+                <div className="grid gap-4 sm:grid-cols-3">
+                  {takeaways.map((t, i) => (
+                    <div key={i} className="rounded-xl border border-line bg-surface p-5">
+                      <div className="mb-3 h-[3px] w-6 bg-brand" />
+                      <p className="font-heading text-base">{t.title}</p>
+                      <p className="mt-2 text-[14px] leading-relaxed text-muted">{t.text}</p>
+                      {t.teamNote ? (
+                        <p className="mt-3 border-t border-line pt-3 text-[13px] leading-relaxed text-fg">
+                          <span className="mr-1.5 text-[10px] font-medium tracking-[0.1em] text-faint uppercase">Team note</span>
+                          {t.teamNote}
+                        </p>
+                      ) : null}
+                      {t.next ? (
+                        <p className="mt-3 border-t border-line pt-3 text-[13px] leading-relaxed text-fg">
+                          <span className="mr-1.5 text-[10px] font-medium tracking-[0.1em] text-brand-text uppercase">Next</span>
+                          {t.next}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </Block>
+            )}
+            {teamNotes || entered.length ? (
+              <Block title="Team notes">
+                <div className="rounded-xl border border-line border-l-[3px] border-l-brand bg-surface p-5">
+                  {teamNotes ? <p className="whitespace-pre-line text-[15px] leading-relaxed text-fg [overflow-wrap:anywhere]">{teamNotes}</p> : null}
+                  {entered.map((o) => (
+                    <p key={o.key} className={`text-[12.5px] text-muted ${teamNotes ? "mt-3" : ""}`}>
+                      {overrideNote(o, { whiteLabel: r.whiteLabel })}
+                    </p>
+                  ))}
+                </div>
+              </Block>
+            ) : null}
+          </>
         )}
       </main>
 
@@ -224,7 +262,10 @@ function SocialBody({ m }: { m: SocialMetrics }) {
                   </div>
                   <div>
                     <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Engagement</dt>
-                    <dd>{m.insightsRead ? pct(p.now.rate) : "–"}</dd>
+                    <dd>
+                      {m.insightsRead ? pct(p.now.rate) : "–"}
+                      {rateLabelOf(p.now) ? <span className="ml-1 text-[11px] font-normal text-faint">{rateLabelOf(p.now)}</span> : null}
+                    </dd>
                   </div>
                 </dl>
               </div>
@@ -306,9 +347,6 @@ function cardRows(m: EmailMetrics): { rows: CardRow[]; all: CardRow[] } {
   return { rows: cardCampaigns(all), all };
 }
 
-const GRADE_PILL: Record<Grade, string> = { good: "bg-ok-soft text-ok", fair: "bg-warn-soft text-warn", poor: "bg-bad-soft text-bad" };
-const GRADE_BAR: Record<Grade, string> = { good: "bg-ok", fair: "bg-warn", poor: "bg-bad" };
-const GRADE_WORD: Record<Grade, string> = { good: "Good", fair: "Fair", poor: "Poor" };
 const dayText = (d: string | null) => (d ? new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }) : null);
 const columnNote = (col: LocationMetricBreakdown["columns"][number]) => (col.sendDay ? dayText(col.sendDay) : col.id === "flows" ? "Automated" : col.id === "other" ? "Added up" : "Before these dates");
 
@@ -318,20 +356,13 @@ function StatCell({ x }: { x: CardStat }) {
       <p className="truncate text-[10px] tracking-[0.08em] text-faint uppercase">{x.label}</p>
       <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className={`font-heading tracking-tight tabular-nums ${x.strong ? "text-xl" : "text-lg"}`}>{x.value}</span>
-        {x.grade && <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase ${GRADE_PILL[x.grade]}`}>{GRADE_WORD[x.grade]}</span>}
       </p>
-      {x.gauge && (
-        <div className="relative mt-2 h-1 rounded-full bg-surface-2">
-          <div className={`h-1 rounded-full ${x.grade ? GRADE_BAR[x.grade] : "bg-fg"}`} style={{ width: `${Math.max(2, x.gauge.fill * 100)}%` }} />
-          <div className="absolute -top-0.5 h-2 w-px bg-fg/50" style={{ left: `${x.gauge.mark * 100}%` }} />
-        </div>
-      )}
       {x.sub && <p className="mt-1 truncate text-[12px] text-faint tabular-nums">{x.sub}</p>}
     </div>
   );
 }
 
-/** Each campaign as its email (the top half, opening the campaign in Klaviyo) beside its numbers against Kaizen's bars */
+/** Each campaign as its email (the top half, opening the campaign in Klaviyo) beside its numbers */
 function CampaignCards({ m, shots }: { m: EmailMetrics; shots: Record<string, string> }) {
   const { rows, all } = cardRows(m);
   if (!all.length) return null;
@@ -343,9 +374,6 @@ function CampaignCards({ m, shots }: { m: EmailMetrics; shots: Record<string, st
   const count = m.detail ? all.length : m.campaignsTotal;
   return (
     <Block title={`Campaigns · ${count} sent`}>
-      <p className="-mt-2 mb-4 text-[13px] text-muted">
-        Graded against Kaizen&apos;s bars: open {pct(RATE_BARS.campaign.open, 0)}, click {pct(RATE_BARS.campaign.click, 0)}.
-      </p>
       <div className="grid gap-4 lg:grid-cols-2">
         {rows.map((r) => {
           const href = link ? klaviyoCampaignUrl(r.id) : null;
@@ -497,9 +525,8 @@ function FlowCard({ v, m }: { v: FlowCardView; m: EmailMetrics }) {
   const r = v.row;
   const c = m.currency;
   const measured = m.revenueMeasured !== false;
-  const bars = RATE_BARS.flow;
   const mv = measured && r.prevRevenue != null ? moveOf(r.revenue, r.prevRevenue) : null;
-  const rate = (x: number | null, g: Grade | null, digits: number) => <span className={g === "poor" ? "text-bad" : g === "fair" ? "text-warn" : g === "good" ? "text-ok" : ""}>{pct(x, digits)}</span>;
+  const rate = (x: number | null, digits: number) => <span>{pct(x, digits)}</span>;
   return (
     <article className={`flex min-w-0 flex-col rounded-xl border bg-surface p-4 sm:p-5 ${v.top ? "border-brand bg-brand-soft sm:col-span-2" : "border-line"}`}>
       <div className="flex items-start justify-between gap-3">
@@ -523,11 +550,11 @@ function FlowCard({ v, m }: { v: FlowCardView; m: EmailMetrics }) {
         )}
         <div>
           <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Open rate</dt>
-          <dd className="mt-0.5 font-medium">{rate(r.openRate, grade(r.openRate, bars.open), 1)}</dd>
+          <dd className="mt-0.5 font-medium">{rate(r.openRate, 1)}</dd>
         </div>
         <div>
           <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Click rate</dt>
-          <dd className="mt-0.5 font-medium">{rate(r.clickRate, grade(r.clickRate, bars.click), 2)}</dd>
+          <dd className="mt-0.5 font-medium">{rate(r.clickRate, 2)}</dd>
         </div>
         <div>
           <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">{measured ? "Orders" : "Recipients"}</dt>
@@ -554,9 +581,6 @@ function FlowCards({ m }: { m: EmailMetrics }) {
   const measured = m.revenueMeasured !== false;
   return (
     <Block title={`Automated emails · ${d.flow?.sent.now ?? view.cards.length} sent`}>
-      <p className="-mt-2 mb-4 text-[13px] text-muted">
-        Graded against Kaizen&apos;s bars: open {pct(RATE_BARS.flow.open, 0)}, click {pct(RATE_BARS.flow.click, 1)}.
-      </p>
       <div className="grid gap-3 sm:grid-cols-2">
         {view.cards.map((v) => (
           <FlowCard key={v.row.id} v={v} m={m} />

@@ -1,6 +1,6 @@
 import type { Move } from "@/lib/reports/weekly-core";
-import { int, money, moveOf, pct, signed, targetSub, type ChannelPlatform, type EmailMetrics, type SocialMetrics } from "./core";
-import { grade, RATE_BARS, type Grade } from "./email-detail";
+import { int, money, moveOf, pct, rateSub, reachSub, signed, targetSub, type ChannelPlatform, type EmailMetrics, type SocialMetrics } from "./core";
+import type { Grade } from "./email-detail";
 
 // What an email or social report shows, picked the way an ads report's tiles and columns are: the tiles at the top of
 // the PDF (swap one for another, add, remove) and the columns of its tables. Kept on the report (reports.layout) and
@@ -84,11 +84,11 @@ export function tileView(m: Metrics, key: string): TileView | null {
       case "followers":
         return tile(key, "Followers", int(now.followers), sub(/follower/i) ?? (now.followerChange != null ? `${signed(now.followerChange)} in the period` : null), int(before.followers), moveOf(now.followers, before.followers));
       case "reach":
-        return tile(key, "Reach", int(now.reach), sub(/reach/i) ?? "Accounts that saw a post or a story", int(before.reach), moveOf(now.reach, before.reach));
+        return tile(key, "Reach", int(now.reach), reachSub(m, sub(/reach/i)), int(before.reach), moveOf(now.reach, before.reach));
       case "views":
         return tile(key, "Views", int(now.views), null, int(before.views), moveOf(now.views, before.views));
       case "rate":
-        return tile(key, "Engagement rate", m.insightsRead ? pct(now.rate) : "–", sub(/engagement|rate/i) ?? "Interactions over reach", pct(before.rate), moveOf(now.rate, before.rate));
+        return tile(key, "Engagement rate", m.insightsRead ? pct(now.rate) : "–", rateSub(m, sub(/engagement|rate/i)), pct(before.rate), moveOf(now.rate, before.rate));
       case "interactions":
         return tile(key, "Interactions", int(now.interactions), "Likes, comments, shares and saves", int(before.interactions), moveOf(now.interactions, before.interactions));
       case "posts":
@@ -137,10 +137,10 @@ export function tileView(m: Metrics, key: string): TileView | null {
       return tile(key, "Campaign recipients", int(d.campaign.recipients.now), null, int(d.campaign.recipients.before), moveOf(d.campaign.recipients.now, d.campaign.recipients.before, "none"));
     case "openRate":
       if (!d) return tile(key, "Open rate", pct(now.openRate), null, pct(before.openRate), moveOf(now.openRate, before.openRate));
-      return tile(key, "Campaign open rate", pct(d.campaign.open.now), null, pct(d.campaign.open.before), moveOf(d.campaign.open.now, d.campaign.open.before), grade(d.campaign.open.now, RATE_BARS.campaign.open));
+      return tile(key, "Campaign open rate", pct(d.campaign.open.now), null, pct(d.campaign.open.before), moveOf(d.campaign.open.now, d.campaign.open.before));
     case "clickRate":
       if (!d) return tile(key, "Click rate", pct(now.clickRate, 2), null, pct(before.clickRate, 2), moveOf(now.clickRate, before.clickRate));
-      return tile(key, "Campaign click rate", pct(d.campaign.click.now, 2), null, pct(d.campaign.click.before, 2), moveOf(d.campaign.click.now, d.campaign.click.before), grade(d.campaign.click.now, RATE_BARS.campaign.click));
+      return tile(key, "Campaign click rate", pct(d.campaign.click.now, 2), null, pct(d.campaign.click.before, 2), moveOf(d.campaign.click.now, d.campaign.click.before));
     case "orderRate":
       if (!d) return null;
       return tile(key, "Campaign order rate", pct(d.campaign.orderRate.now, 2), null, pct(d.campaign.orderRate.before, 2), moveOf(d.campaign.orderRate.now, d.campaign.orderRate.before));

@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
+import { onService } from "@/lib/service-gate";
 import { reportListeners } from "@/lib/reports/access";
 import { channelPeriods, LINE_SERVICE, platformOfLine, type ChannelKind, type ChannelLine } from "./core";
 import { coverageFor, ownersFor } from "./clients";
@@ -72,13 +73,18 @@ export async function draftChannelQueued(admin: SupabaseClient, budgetMs = 240_0
   while (Date.now() < until - 120_000) {
     // Queued ones, and any stuck mid-draft for 20 minutes (a timeout)
     const stuck = new Date(Date.now() - 20 * 60_000).toISOString();
-    let q = admin.from("reports").select("id, status, updated_at, client_id, platform, period_start").in("platform", ["klaviyo", "social"]).or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`).order("kind", { ascending: true }).order("created_at").limit(3);
+    let q = admin.from("reports").select("id, status, updated_at, client_id, platform, period_start, clients(services, services_extra, services_removed)").in("platform", ["klaviyo", "social"]).or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`).order("kind", { ascending: true }).order("created_at").limit(3);
     if (held.size) q = q.not("id", "in", `(${[...held].join(",")})`);
     const { data } = await q;
     if (!data?.length) break;
     // Each one claimed before it's written, so the schedule and a page never write one twice
     const claimed: string[] = [];
     for (const r of data) {
+      // A line the client no longer buys (src/lib/service-gate.ts): the report waits, kept, until the service is back
+      if (!onService({ platform: r.platform === "klaviyo" ? "email" : "social", clients: r.clients ?? null })) {
+        held.add(r.id as string);
+        continue;
+      }
       // An email report asking for dates before the stored history waits while the missing months are read (queued once)
       if (r.platform === "klaviyo") {
         const ask = await requestHistory(admin, r.client_id as string, { wantStart: r.period_start as string, asked: "report" }).catch(() => null);
@@ -104,8 +110,9 @@ export async function draftChannelQueued(admin: SupabaseClient, budgetMs = 240_0
 
 /** A nudge to the owner of a channel report nobody has sent, on the ads reports' schedule (Monday afternoon, Tuesday morning): a monthly by the 5th */
 export async function remindChannelReports(admin: SupabaseClient, today: string) {
-  const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, clients(name)").in("platform", ["klaviyo", "social"]).in("status", ["draft", "failed"]).not("owner_id", "is", null).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
-  const rows = (data ?? []) as unknown as { id: string; kind: string; owner_id: string; client_id: string; clients: { name: string } }[];
+  const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, clients(name, services, services_extra, services_removed)").in("platform", ["klaviyo", "social"]).in("status", ["draft", "failed"]).not("owner_id", "is", null).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
+  // Only the lines the client buys (src/lib/service-gate.ts)
+  const rows = (data ?? []).filter((r) => onService({ platform: r.platform === "klaviyo" ? "email" : "social", clients: r.clients ?? null })) as unknown as { id: string; kind: string; owner_id: string; client_id: string; clients: { name: string } }[];
   const day = Number(today.slice(8, 10));
   const told = await reportListeners(admin, rows.map((r) => r.owner_id));
   let n = 0;

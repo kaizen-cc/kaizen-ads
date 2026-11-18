@@ -11,7 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 // in parts: the first creates the thread, the rest add to it, the last marks it complete (an interrupted one is redone).
 export const maxDuration = 120;
 
-type Result = { uuid: string; status: "created" | "appended" | "skipped" | "failed"; threadId?: string; error?: string };
+type Result = { uuid: string; status: "created" | "appended" | "filled" | "skipped" | "failed"; threadId?: string; error?: string; added?: number };
 
 const UUID = /^[0-9a-f-]{36}$/;
 const clean = (s: unknown, n: number) => (typeof s === "string" ? s.slice(0, n) : "");
@@ -46,7 +46,13 @@ export async function POST(request: Request) {
   const { data: existingRows } = sourceIds.length
     ? await admin.from("ai_threads").select("id, source_id, source_complete, import_id").eq("profile_id", me.id).eq("source", IMPORT_SOURCE).in("source_id", sourceIds)
     : { data: [] };
-  const existing = new Map((existingRows ?? []).map((r) => [r.source_id as string, r as { id: string; source_complete: boolean; import_id: string | null }]));
+  type Had = { id: string; source_complete: boolean; import_id: string | null; source_project?: string | null; project_id?: string | null };
+  const existing = new Map((existingRows ?? []).map((r) => [r.source_id as string, r as Had]));
+  // The projects columns, when the migration is in (read apart so an older database still imports)
+  if (existingRows?.length) {
+    const { data: links, error: linkErr } = await admin.from("ai_threads").select("id, source_project, project_id").in("id", existingRows.map((r) => r.id as string));
+    if (!linkErr) for (const l of links ?? []) for (const h of existing.values()) if (h.id === l.id) Object.assign(h, { source_project: l.source_project ?? null, project_id: l.project_id ?? null });
+  }
 
   const results: Result[] = [];
   let created = 0;
@@ -78,15 +84,20 @@ export async function POST(request: Request) {
     }
     try {
       const had = existing.get(sid);
+      const claudeProject = withProjects && typeof it.projectUuid === "string" && it.projectUuid ? it.projectUuid.slice(0, 100) : null;
       let threadId: string;
-      if ((Number(it.part) || 0) === 0) {
-        if (had?.source_complete) {
-          skipped++;
-          results.push({ uuid: it.uuid, status: "skipped", threadId: had.id });
-          continue;
+      // Already here (imported before, or an earlier part of this one): only what's missing is added, never a copy
+      let have: Set<number> | null = null;
+      if (had) {
+        threadId = had.id;
+        have = await messageTimes(admin, threadId);
+        // A chat imported before its project came over: put inside it now
+        if (claudeProject && (!had.source_project || !had.project_id)) {
+          const link = { source_project: claudeProject, ...(!had.project_id && inProject.get(claudeProject) ? { project_id: inProject.get(claudeProject) } : {}) };
+          await admin.from("ai_threads").update(link).eq("id", threadId);
+          Object.assign(had, link);
         }
-        // Started before and cut off: redone from the start
-        if (had) await admin.from("ai_threads").delete().eq("id", had.id).eq("profile_id", me.id);
+      } else {
         const createdAt = isoOr(it.createdAt, now);
         const updatedAt = isoOr(it.updatedAt, createdAt);
         let room = MAX_NOTES_CHARS;
@@ -109,7 +120,7 @@ export async function POST(request: Request) {
             import_id: imp.id,
             source_complete: false,
             notes,
-            ...(withProjects && typeof it.projectUuid === "string" && it.projectUuid ? { source_project: it.projectUuid.slice(0, 100), project_id: inProject.get(it.projectUuid.slice(0, 100)) ?? null } : {}),
+            ...(claudeProject ? { source_project: claudeProject, project_id: inProject.get(claudeProject) ?? null } : {}),
             last_message_at: updatedAt,
             created_at: createdAt,
             updated_at: now,
@@ -118,16 +129,10 @@ export async function POST(request: Request) {
           .single();
         if (error || !t) throw new Error(error?.message ?? "Couldn't create the thread");
         threadId = t.id as string;
-        existing.set(sid, { id: threadId, source_complete: false, import_id: imp.id as string });
+        existing.set(sid, { id: threadId, source_complete: false, import_id: imp.id as string, source_project: claudeProject, project_id: claudeProject ? (inProject.get(claudeProject) ?? null) : null });
         created++;
-      } else {
-        if (!had || had.source_complete || had.import_id !== imp.id) {
-          results.push({ uuid: it.uuid, status: "skipped" });
-          continue;
-        }
-        threadId = had.id;
       }
-      const rows = (Array.isArray(it.messages) ? it.messages : []).slice(0, 5000).flatMap((m) => {
+      const all = (Array.isArray(it.messages) ? it.messages : []).slice(0, 5000).flatMap((m) => {
         const role = m?.role === "assistant" ? "assistant" : m?.role === "user" ? "user" : null;
         if (!role) return [];
         const attachments: Attachment[] = (Array.isArray(m.files) ? m.files : []).slice(0, 20).map((f) => {
@@ -139,12 +144,23 @@ export async function POST(request: Request) {
         if (!content && !attachments.length) return [];
         return [{ thread_id: threadId, role, content, attachments, created_at: isoOr(m.at, now), ...(role === "assistant" ? { model: "claude" } : {}) }];
       });
+      // Each message is known by its original time (kept unique and in order by the reader)
+      const rows = have ? all.filter((r) => !have.has(Date.parse(r.created_at))) : all;
       for (let i = 0; i < rows.length; i += 200) {
         const { error } = await admin.from("ai_messages").insert(rows.slice(i, i + 200));
         if (error) throw new Error(error.message);
       }
-      if (it.last) await admin.from("ai_threads").update({ source_complete: true }).eq("id", threadId);
-      results.push({ uuid: it.uuid, status: Number(it.part) > 0 ? "appended" : "created", threadId });
+      if (it.last && !had?.source_complete) {
+        await admin.from("ai_threads").update({ source_complete: true }).eq("id", threadId);
+        if (had) had.source_complete = true;
+      }
+      if (had && rows.length) {
+        const newest = rows.reduce((a, r) => (r.created_at > a ? r.created_at : a), "");
+        await admin.from("ai_threads").update({ last_message_at: newest }).eq("id", threadId).lt("last_message_at", newest);
+      }
+      if (had && Number(it.part) === 0 && !rows.length) skipped++;
+      const status: Result["status"] = !had ? "created" : rows.length ? (Number(it.part) > 0 ? "appended" : "filled") : "skipped";
+      results.push({ uuid: it.uuid, status, threadId, ...(rows.length ? { added: rows.length } : {}) });
     } catch (e) {
       console.error("[kaizen ai import]", e instanceof Error ? e.message : e);
       results.push({ uuid: it.uuid, status: "failed", error: "Couldn't import this one." });
@@ -152,6 +168,18 @@ export async function POST(request: Request) {
   }
   if (created || skipped) await admin.from("ai_imports").update({ created: (Number(imp.created) || 0) + created, skipped: (Number(imp.skipped) || 0) + skipped }).eq("id", imp.id);
   return Response.json({ results });
+}
+
+/** The original times of a thread's messages (page by page: a read returns at most 1,000 rows) */
+async function messageTimes(admin: ReturnType<typeof createAdminClient>, threadId: string) {
+  const out = new Set<number>();
+  for (let from = 0; from < 50_000; from += 1000) {
+    const { data, error } = await admin.from("ai_messages").select("created_at").eq("thread_id", threadId).order("created_at").range(from, from + 999);
+    if (error) throw new Error(error.message);
+    for (const r of data ?? []) out.add(Date.parse(String(r.created_at)));
+    if ((data?.length ?? 0) < 1000) break;
+  }
+  return out;
 }
 
 function sourceId(it: ImportItem) {

@@ -3,7 +3,7 @@ import { cardCampaigns, cardStats, heat, klaviyoCampaignUrl, locationNamer, loca
 import { locationBreakdown } from "@/lib/klaviyo/locations";
 
 // The email report's campaign cards and location visuals: the brand stripped from location names, the cards picked,
-// each number graded against Kaizen's bars, and the shading.
+// each number shown plain (never graded against Kaizen's internal bars: those are the team's), and the shading.
 
 describe("location names", () => {
   it("drops the brand every location starts with, written either way", () => {
@@ -25,16 +25,19 @@ describe("campaign cards", () => {
     const many = ["a", "b", "c", "d", "e", "f", "g", "h"].map((id, i) => row(id, [5, 80, 1, 60, 2, 70, 90, 3][i], `2026-11-0${i + 1}`));
     expect(cardCampaigns(many, 3).map((r) => r.id)).toEqual(["b", "f", "g"]);
   });
-  it("grades open and click against the bars and leaves revenue per recipient ungraded", () => {
+  it("never grades a number against Kaizen's bars on the client's card", () => {
     const stats = cardStats({ channel: "email", recipients: 1000, openRate: 0.42, clickRate: 0.008, orders: 10, orderRate: 0.01, revenue: 100 }, "USD");
     const by = Object.fromEntries(stats.map((x) => [x.key, x]));
-    expect(by.open.grade).toBe("good");
-    expect(by.click.grade).toBe("fair");
+    for (const x of stats) {
+      expect(x.grade ?? null).toBeNull();
+      expect(x.gauge ?? null).toBeNull();
+      expect(x.sub ?? "").not.toMatch(/bar|0.15/i);
+    }
+    expect(by.open.value).toBe("42.0%");
     expect(by.rpr.value).toBe("$0.10");
     expect(by.rpr.grade ?? null).toBeNull();
     expect(by.rpr.gauge ?? null).toBeNull();
     expect(by.rpr.sub ?? "").not.toMatch(/bar|0\.15/i);
-    expect(by.open.gauge?.mark).toBeCloseTo(0.625);
   });
   it("leaves revenue out when the provider reports none", () => {
     expect(cardStats({ channel: "sms", recipients: 10, openRate: null, clickRate: 0.1, orders: 0, orderRate: null, revenue: 0 }, "USD", false).map((x) => x.key)).toEqual(["recipients", "click"]);

@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 import type { Resolved, Tier, TodayItem, TopicKey } from "@/lib/today";
-import { bucketsOf, countLooks, isOpenMark, lookHeadline, openOf, rowStat, topicGroups, TIER_ORDER, type Bucket } from "@/lib/today-counts";
+import { bucketsOf, countLooks, isOpenMark, lookHeadline, openOf, QUIET_TOPIC, rowStat, topicGroups, TIER_ORDER, type Bucket } from "@/lib/today-counts";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { acknowledge, setItem } from "./actions";
 import { DoneBurst } from "@/components/done-burst";
@@ -57,7 +57,9 @@ export function Story({
   const [items] = useState(itemsAtStart);
   const [resolved] = useState(resolvedAtStart);
   // Topics, most critical first (the most urgent item in each decides), each with its items most urgent first
-  const groups = useMemo(() => topicGroups(items).map(({ topic, items }) => ({ topic, items })), [items]);
+  const allGroups = useMemo(() => topicGroups(items).map(({ topic, items }) => ({ topic, items })), [items]);
+  // An exec's "Everything else" isn't played through or counted: it opens only when they pick it
+  const groups = useMemo(() => allGroups.filter((g) => g.topic !== QUIET_TOPIC), [allGroups]);
   // Counted by client (src/lib/today-counts.ts): everything about one client in a topic is one look, the same numbers
   // the Overview shows
   // Live: what's been marked done or set aside here leaves the counts at once (the list of screens stays fixed)
@@ -68,9 +70,9 @@ export function Story({
   const askedTopic = useParam("topic");
   const first = askedTopic && askedTopic in topics ? (askedTopic as TopicKey) : null;
   const cards: Card[] = useMemo(() => {
-    const ordered = first ? [...groups.filter((g) => g.topic === first), ...groups.filter((g) => g.topic !== first)] : groups;
+    const ordered = first ? [...allGroups.filter((g) => g.topic === first), ...groups.filter((g) => g.topic !== first)] : groups;
     return [{ kind: "intro" }, ...(score ? [{ kind: "score" as const }] : []), ...(resolved.length ? [{ kind: "resolved" as const, rs: resolved }] : []), ...ordered.map((g) => ({ kind: "topic" as const, ...g })), { kind: "end" }];
-  }, [groups, resolved, first, score]);
+  }, [groups, allGroups, resolved, first, score]);
   // Where the topics start: after the intro, the scorecard and what teammates took care of
   const lead = 1 + (score ? 1 : 0) + (resolved.length ? 1 : 0);
   const askedCard = useParam("card");
@@ -144,7 +146,7 @@ export function Story({
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const byTopic = groups.map((g) => [g.topic, looks.byTopic[g.topic]] as [TopicKey, { n: number; critical: number }]);
+  const byTopic = allGroups.map((g) => [g.topic, looks.byTopic[g.topic]] as [TopicKey, { n: number; critical: number }]);
   const saved = items.filter((i) => mine[i.key] === "saved");
   const acted = items.filter((i) => mine[i.key] === "done").length;
   const allClear = card.kind === "topic" && card.items.every((i) => !isOpenMark(mine[i.key]));

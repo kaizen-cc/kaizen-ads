@@ -68,7 +68,7 @@ export default async function EmailBoard({ searchParams }: PageProps<"/board/ema
       await Promise.all([cachedEmailDesignKpis("cycle"), cachedEmailCopyKpis("cycle")]).catch(() => null);
     });
   const asked = typeof t === "string" && /^\d+$/.test(t) ? Number(t) : null;
-  const [tickets, { data: clientRows }, { data: people }, shadows, flags] = await Promise.all([
+  const [allTickets, { data: clientRows }, { data: people }, shadows, flags] = await Promise.all([
     loadEmailBoard(db, { number: asked }),
     db.from("clients").select("id, name, slug, services, services_extra, services_removed").is("archived_at", null).in("status", ["active", "onboarding"]).order("name"),
     db.from("profiles").select("id, full_name, role, is_exec").eq("is_active", true).order("full_name"),
@@ -76,6 +76,10 @@ export default async function EmailBoard({ searchParams }: PageProps<"/board/ema
     // A client changed direction: the open tasks it touches are flagged on their cards
     loadTaskFlags(db).catch(() => ({})),
   ]);
+  // Only clients that buy email marketing (src/lib/service-gate.ts): a removed service's tickets are kept, not shown
+  // (one opened by its number still opens)
+  const emailClients = new Set((clientRows ?? []).filter((c) => (servicesOf(c) as string[]).includes("email-marketing")).map((c) => c.id as string));
+  const tickets = allTickets.filter((x) => emailClients.has(x.clientId) || (asked != null && x.number === asked));
   const clients = (clientRows ?? []).filter((c) => (servicesOf(c) as string[]).includes("email-marketing") || tickets.some((x) => x.clientId === c.id)).map((c) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string }));
   const team = (people ?? []).filter((p) => p.is_exec || ["head_of_email", "email_strategist", "email_designer", "email_builder"].includes(p.role as string)).map((p) => ({ id: p.id as string, name: p.full_name as string, role: roleLabel(p.role as TeamRole) }));
   // The strategists, designers and builders open the board on their own work; the Head of Email and execs on everyone's

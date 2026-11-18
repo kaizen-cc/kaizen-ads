@@ -54,7 +54,8 @@ export function parseManifest(raw: unknown): Manifest | null {
       return { ...f, required: true, label: chats.length > 1 ? `Your chats, part ${i + 1} of ${chats.length}` : "Your chats" };
     }
     if (f.role === "people") return { ...f, required: true, label: "Who's who (needed to keep only your chats)" };
-    if (f.role === "projects") return { ...f, required: false, label: "Projects (optional)" };
+    // Asked for: without it, chats from a Claude project come over without the project's name, instructions and docs
+    if (f.role === "projects") return { ...f, required: true, label: "Your projects (their instructions and docs)" };
     return { ...f, required: false, label: humanize(f.category) };
   });
   const order: Record<ManifestRole, number> = { chats: 0, people: 1, projects: 2, other: 3 };

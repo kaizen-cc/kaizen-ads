@@ -50,3 +50,30 @@ export async function tickAskItem(id: string, index: number, done: boolean): Pro
   if (allDone) revalidatePath("/pipeline");
   return { ok: true, allDone };
 }
+
+/** One line of a follow-ups card ticked or unticked: a checklist item, or a plain reminder or task as its own line */
+export async function tickAskGroupItem(id: string, index: number | null, done: boolean): Promise<{ ok: true; allDone: boolean } | { ok: false; error: string }> {
+  if (index !== null) return tickAskItem(id, index, done);
+  const me = await requireStaff();
+  const db = await createClient();
+  const { error } = await db
+    .from("agent_asks")
+    .update(done ? { status: "done", done_at: new Date().toISOString() } : { status: "open", done_at: null })
+    .eq("id", id)
+    .eq("owner_id", me.id);
+  if (error) return { ok: false, error: "Couldn't save that. Try again." };
+  return { ok: true, allDone: false };
+}
+
+/** Every follow-up on a card done at once (their own session: only their own) */
+export async function markAsksDone(ids: string[]): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const list = ids.map(String).slice(0, 60);
+  if (!list.length) return { ok: true };
+  const { error } = await db.from("agent_asks").update({ status: "done", done_at: new Date().toISOString() }).in("id", list).eq("owner_id", me.id);
+  if (error) return { ok: false, error: "Couldn't mark them done. Try again." };
+  await db.from("notifications").update({ read_at: new Date().toISOString() }).eq("profile_id", me.id).in("key", list.map((i) => `agent-ask:${i}`)).is("read_at", null);
+  revalidatePath("/pipeline");
+  return { ok: true };
+}

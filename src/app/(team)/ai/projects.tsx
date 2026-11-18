@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { CONNECTORS, KNOWLEDGE_FULL_CHARS, VISIBILITY_LABEL, canDeleteProject, canEditProject, connectorKey, connectorLabel, type MemberRole, type ProjectDetail, type ProjectSummary, type ProjectVisibility } from "@/lib/kaizen-ai/projects";
 import { kindOf, type Thread } from "@/lib/kaizen-ai/types";
-import { teammates, uploadSlots } from "./actions";
+import { claudeProjectsToBring, teammates, uploadSlots } from "./actions";
 import { addProjectFiles, addProjectText, createProject, deleteProject, listProjects, loadProject, myConnectorKeys, readProjectDoc, removeProjectDoc, shareProject, updateProject } from "./project-actions";
 
 // Kaizen AI projects, like Claude's: the list (search, new project), and a project's page (its instructions and
@@ -114,6 +114,7 @@ export function ProjectsHome({ clients, onMenu }: { clients: ClientOpt[]; onMenu
             <h1 className="font-heading text-[28px] leading-tight tracking-tight text-fg md:text-[34px]">Projects</h1>
             <p className="max-w-[560px] text-[14px] text-muted">A place for related chats, with instructions and knowledge every chat in it reads. Make one for a client, a campaign or a way of working, and share it with the team.</p>
           </div>
+          <ClaudeProjectsPrompt />
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex min-h-11 min-w-[220px] flex-1 items-center gap-2 rounded-full border border-line bg-surface px-4 text-faint focus-within:border-brand/40">
               <Icon d={P.search} size={16} />
@@ -175,6 +176,39 @@ export function ProjectsHome({ clients, onMenu }: { clients: ClientOpt[]; onMenu
       </div>
       {creating ? <NewProject clients={clients} onClose={() => closeParams("pnew")} onCreated={(id) => replaceParams({ pnew: null, projects: null, p: id })} /> : null}
     </section>
+  );
+}
+
+/**
+ * Chats imported from Claude whose projects never came over (imports before projects were read from the export kept
+ * each chat's project but not the project): asks for the export again. Nothing is lost or doubled: chats already in
+ * stay, the projects are made and the chats put inside them.
+ */
+export function ClaudeProjectsPrompt({ compact = false }: { compact?: boolean }) {
+  const [left, setLeft] = useState<{ projects: number; chats: number } | null>(null);
+  useEffect(() => {
+    void claudeProjectsToBring()
+      .then(setLeft)
+      .catch(() => setLeft(null));
+  }, []);
+  if (!left?.projects) return null;
+  return (
+    <div className={`flex flex-wrap items-center gap-3 rounded-[20px] border border-brand/25 bg-brand-soft/30 ${compact ? "mt-4 px-3 py-2.5" : "px-4 py-3.5"}`}>
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[12px] bg-surface text-brand-text shadow-sm">
+        <Icon d={P.folder} size={18} />
+      </span>
+      <span className="grid min-w-0 flex-1 gap-0.5">
+        <span className="text-[14px] font-semibold text-fg">
+          {left.projects === 1 ? "1 Claude project" : `${left.projects} Claude projects`} didn&rsquo;t come over
+        </span>
+        <span className="text-[12.5px] leading-relaxed text-muted">
+          {left.chats === 1 ? "1 imported chat was" : `${left.chats} imported chats were`} in {left.projects === 1 ? "it" : "them"}. Upload your Claude export again (with projects-000.zip) to bring in the projects, their instructions and docs. Nothing is lost or doubled.
+        </span>
+      </span>
+      <button type="button" onClick={() => pushParams({ import: "1" })} className={`${primary} shrink-0`}>
+        Re-import to bring in projects
+      </button>
+    </div>
   );
 }
 

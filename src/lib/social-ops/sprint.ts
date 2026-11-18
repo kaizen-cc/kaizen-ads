@@ -1,4 +1,5 @@
 import "server-only";
+import { hasLine, type ServiceFields } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { loadSocialScore } from "@/lib/social-score-load";
@@ -148,10 +149,15 @@ export async function checkSocialSprint(admin: SupabaseClient, sprintId: string)
 
 /** The scheduled step: every social sprint whose next check is due */
 export async function checkDueSocialSprints(admin: SupabaseClient, limit = 12) {
-  const { data, error } = await admin.from("social_sprints").select("id").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(limit);
+  const { data, error } = await admin.from("social_sprints").select("id, clients(services, services_extra, services_removed)").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(limit);
   if (error) return { skipped: "Social ops migration not applied" };
   let checked = 0;
   for (const s of data ?? []) {
+    // A client that no longer buys social media (src/lib/service-gate.ts): the sprint is kept and waits a day, unchecked
+    if (!hasLine((Array.isArray(s.clients) ? s.clients[0] : s.clients) as ServiceFields | null, "social")) {
+      await admin.from("social_sprints").update({ next_check_at: new Date(Date.now() + 86_400_000).toISOString() }).eq("id", s.id);
+      continue;
+    }
     await checkSocialSprint(admin, s.id as string).catch((e) => console.error("[social sprint] check failed:", e instanceof Error ? e.message : e));
     checked++;
   }

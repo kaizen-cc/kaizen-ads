@@ -123,6 +123,59 @@ export function parseBrevoCampaigns(json: unknown, channel: "email" | "sms"): Br
     .filter((c): c is BrevoCampaign => c !== null);
 }
 
+/**
+ * Total clicks per email campaign (globalStats.clickers: every click, where uniqueClicks counts each person once), from
+ * the same GET /v3/emailCampaigns?statistics=globalStats answer. Keyed by campaign id; campaigns without stats are left out.
+ */
+export function parseBrevoClickTotals(json: unknown): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const raw of arr(obj(json).campaigns)) {
+    const c = obj(raw);
+    const id = str(c.id);
+    const g = obj(obj(c.statistics).globalStats);
+    if (id && g.clickers != null) out.set(id, n(g.clickers));
+  }
+  return out;
+}
+
+/**
+ * Clicks per link per campaign from GET /v3/emailCampaigns?statistics=linksStats: statistics.linksStats is an object of
+ * link -> clicks (some accounts nest it by list id: those are added up). Keyed by campaign id; a campaign with no clicked
+ * links is left out. Only http(s), tel, mailto and sms links count; anything else (a merge tag) is dropped.
+ */
+export function parseBrevoLinkStats(json: unknown): Map<string, Record<string, number>> {
+  const out = new Map<string, Record<string, number>>();
+  const isLink = (k: string) => /^(https?:\/\/|tel:|mailto:|sms:)/i.test(k.trim());
+  for (const raw of arr(obj(json).campaigns)) {
+    const c = obj(raw);
+    const id = str(c.id);
+    const stats = obj(obj(c.statistics).linksStats);
+    if (!id) continue;
+    const links: Record<string, number> = {};
+    const add = (url: string, v: unknown) => {
+      const x = n(v);
+      if (x > 0 && isLink(url)) links[url.trim()] = (links[url.trim()] ?? 0) + x;
+    };
+    for (const [k, v] of Object.entries(stats)) {
+      if (v && typeof v === "object" && !Array.isArray(v)) for (const [u, x] of Object.entries(v as Obj)) add(u, x);
+      else add(k, v);
+    }
+    if (Object.keys(links).length) out.set(id, links);
+  }
+  return out;
+}
+
+/** GET /v3/contacts?limit=1&createdSince=: how many contacts were created since then (the answer's count) */
+export const BREVO_CONTACTS = "/v3/contacts";
+
+/** New contacts per day from the counts created since each day's start: day d is count(d) - count(d + 1) */
+export function newContactsByDay(counts: { date: string; since: number }[]): Map<string, number> {
+  const sorted = [...counts].sort((a, b) => a.date.localeCompare(b.date));
+  const out = new Map<string, number>();
+  for (let i = 0; i < sorted.length - 1; i++) out.set(sorted[i].date, Math.max(0, sorted[i].since - sorted[i + 1].since));
+  return out;
+}
+
 /** GET /v3/contacts/lists and /v3/contacts/segments in the shared audience shape (segments carry no count) */
 export function parseBrevoAudiences(json: unknown, kind: "list" | "segment"): { id: string; kind: "list" | "segment"; name: string; profileCount: number | null; updated: string | null }[] {
   const rows = arr(obj(json)[kind === "list" ? "lists" : "segments"]);

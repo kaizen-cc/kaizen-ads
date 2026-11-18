@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
-import { markAskDone, markBibleReviewed, tickAskItem } from "../next-actions";
+import { markAsksDone, markAskDone, markBibleReviewed, tickAskGroupItem, tickAskItem } from "../next-actions";
 import { delegateNextItem, delegateOptions } from "@/app/(team)/delegate-actions";
 import { approveFeedback, commentFeedback } from "@/app/(team)/feedback/actions";
 import { TranscriptButton } from "@/components/assistant-call-parts";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import { initials } from "@/lib/initials";
+import type { AskGroup } from "@/lib/agent-call/ask-groups";
 import type { NextForMe, NextItem } from "@/lib/next-for-me";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "./suggested-briefs";
+import { SuggestBriefsButton } from "@/components/allotment-brief-actions";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 import { bucketKey } from "@/lib/today-counts";
 
@@ -77,9 +79,10 @@ const KIND: Record<NextItem["kind"], string> = {
   task: "Plan task",
   bible: "Brand Bible",
   "call-learnings": "From your call",
-  ask: "Asked via an agent",
+  ask: "Reminder",
   direction: "Client changed direction",
   feedback: "Ask from the team",
+  allotment: "Creative",
 };
 
 /** The short title a row leads with, plus a sprint's progress (done of total) when it has one. */
@@ -176,7 +179,7 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
       ) : (
         <>
           {shown.map((s, i) => (
-            <Group key={s.key} s={s} index={i} items={itemsOf(s.key)} open={!closed.includes(s.key)} onToggle={() => toggle(s.key)} onBrief={(b) => pushParams({ todo: b.id })} onReviewed={(it) => (it.ask ? done(it) : it.feedback ? setReviewed((r) => [...r, it.id]) : review(it))} />
+            <Group key={s.key} s={s} index={i} items={itemsOf(s.key)} open={!closed.includes(s.key)} onToggle={() => toggle(s.key)} onBrief={(b) => pushParams({ todo: b.id })} onReviewed={(it) => (it.ask ? done(it) : it.feedback || it.askGroup ? setReviewed((r) => [...r, it.id]) : review(it))} />
           ))}
           {clear.length > 0 && (
             <p className="flex min-h-11 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-full border border-ink/[0.07] px-4 py-2 text-[13px] text-ink/55" style={{ animation: `next-in .45s ${0.06 * shown.length}s cubic-bezier(.2,.8,.2,1) both` }}>
@@ -318,7 +321,11 @@ function ClientChip({ name, size = 40 }: { name: string; size?: number }) {
 /** Gathered by client the way the daily recap gathers them (src/lib/today-counts.ts), so a client is one row here too. */
 function byClient(items: NextItem[]): [string, NextItem[]][] {
   const m = new Map<string, NextItem[]>();
-  for (const it of items) m.set(bucketKey(it), [...(m.get(bucketKey(it)) ?? []), it]);
+  for (const it of items) {
+    // A follow-ups card is its own row: it already gathers its client
+    const k = it.askGroup ? it.id : bucketKey(it);
+    m.set(k, [...(m.get(k) ?? []), it]);
+  }
   return [...m.values()].map((its) => [its[0].client, its]);
 }
 
@@ -399,6 +406,11 @@ function Group({ s, index, items, open, onToggle, ...h }: { s: (typeof SECTIONS)
 }
 
 function Row({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient: boolean } & Handlers) {
+  if (it.askGroup) return <AskGroupCard it={it} group={it.askGroup} onDone={() => onReviewed(it)} />;
+  return <PlainRow it={it} showClient={showClient} onBrief={onBrief} onReviewed={onReviewed} />;
+}
+
+function PlainRow({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient: boolean } & Handlers) {
   const [more, setMore] = useState(false);
   const short = shortOf(it);
   const tone = whenTone(it);
@@ -513,6 +525,7 @@ function Row({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient
             </button>
           )}
           {it.delegate && <DelegateButton item={it} delegate={it.delegate} />}
+          {it.briefIdea && <SuggestBriefsButton idea={it.briefIdea} />}
           {action}
           {it.suggestion && (
             <span className="flex justify-center sm:hidden">
@@ -524,6 +537,117 @@ function Row({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient
     </li>
   );
 }
+
+/** The client's logo (the one their reports carry), their initials until it loads or when they have none */
+function ClientLogo({ id, name, size = 40 }: { id: string | null; name: string; size?: number }) {
+  const [broken, setBroken] = useState(false);
+  if (!id || broken) return <ClientChip name={name} size={size} />;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={`/api/clients/${id}/logo`} alt="" width={size} height={size} onError={() => setBroken(true)} style={{ width: size, height: size }} className="shrink-0 rounded-[12px] bg-ink/[0.06] object-contain p-1" />
+  );
+}
+
+/**
+ * Follow-ups from the agents as one compact card per client: the logo and name, how many and how far through, where
+ * they came from said once. Opens to the lines, ticked off right here (saved at once); Mark all done clears the card.
+ */
+function AskGroupCard({ it, group, onDone }: { it: NextItem; group: AskGroup; onDone: () => void }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [ticks, setTicks] = useState(() => group.items.map((i) => i.done));
+  const [, start] = useTransition();
+  const done = ticks.filter(Boolean).length;
+  const total = group.items.length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const late = it.tone === "bad";
+  const tick = (n: number, v: boolean) => {
+    const line = group.items[n];
+    const next = ticks.map((x, k) => (k === n ? v : x));
+    setTicks(next);
+    start(async () => {
+      const r = await tickAskGroupItem(line.askId, line.index, v);
+      if (!r.ok) setTicks((t) => t.map((x, k) => (k === n ? !v : x)));
+      else if (next.every(Boolean)) {
+        onDone();
+        router.refresh();
+      }
+    });
+  };
+  const all = () => {
+    setTicks(group.items.map(() => true));
+    start(async () => {
+      const r = await markAsksDone(group.askIds);
+      if (!r.ok) setTicks(group.items.map((i) => i.done));
+      else {
+        onDone();
+        router.refresh();
+      }
+    });
+  };
+  const btn = "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full px-4 text-[13px] transition-colors sm:min-h-9";
+  return (
+    <li className="relative">
+      {late && <span aria-hidden className="absolute inset-y-3 left-0 w-[3px] rounded-r-full bg-[var(--bad)]" />}
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex min-h-16 w-full items-center gap-3 px-4 py-3.5 text-left md:px-5">
+        <ClientLogo id={group.client?.id ?? null} name={it.client} />
+        <span className="grid min-w-0 flex-1 gap-0.5">
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate text-[15px] font-semibold text-fg">{it.client}</span>
+            <span className="tabular rounded-full bg-ink/[0.06] px-2 py-0.5 text-[11px] text-ink/60">{total === 1 ? "1 follow-up" : `${total} follow-ups`}</span>
+            {it.when && <span className={`tabular shrink-0 rounded-full px-2 py-0.5 text-[11px] ${late ? CHIP.bad : CHIP.calm}`}>{it.when}</span>}
+          </span>
+          <span className="truncate text-[12.5px] text-ink/50">{group.source}</span>
+          <span className="flex items-center gap-2 pt-0.5" aria-label={`${done} of ${total} done`}>
+            <span className="h-1.5 w-28 overflow-hidden rounded-full bg-ink/10">
+              <span className="block h-full rounded-full bg-[#5be3a5] transition-[width] duration-500" style={{ width: `${total ? Math.max(4, pct) : 0}%` }} />
+            </span>
+            <span className="tabular text-[11px] text-ink/45">
+              {done} of {total} done
+            </span>
+          </span>
+        </span>
+        <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink/45">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform duration-300 ${open ? "" : "-rotate-90"}`}>
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </span>
+      </button>
+      {open && (
+        <div className="grid gap-2 px-4 pb-4 sm:pl-[68px] md:px-5 md:pl-[72px]">
+          <ul className="grid gap-0.5" aria-label="Follow-ups">
+            {group.items.map((line, n) => (
+              <li key={`${line.askId}-${n}`}>
+                <label className="flex min-h-11 cursor-pointer items-start gap-2.5 rounded-[10px] px-1 py-1.5 text-[13px] leading-snug text-ink/75 transition-colors hover:bg-ink/[0.04] sm:min-h-8">
+                  <input type="checkbox" checked={ticks[n] ?? false} onChange={(e) => tick(n, e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]" />
+                  <span className="grid min-w-0 gap-0.5">
+                    <span className={ticks[n] ? "text-ink/40 line-through" : ""}>{line.text}</span>
+                    {line.note && <span className="text-[12px] text-ink/45">{line.note}</span>}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center">
+            <button type="button" onClick={all} className={`${btn} text-ink/60 hover:bg-ink/[0.06] hover:text-fg`}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M5 12.5 10 17 19 7.5" />
+              </svg>
+              Mark all done
+            </button>
+            {group.transcriptCallId && <TranscriptButton callId={group.transcriptCallId} label="Call transcript" className="min-h-11 justify-self-start rounded-full text-[12.5px] text-ink/60 transition-colors hover:text-fg sm:min-h-8" />}
+            {it.href && (
+              <Link href={it.href} className={`${btn} border border-ink/15 bg-ink/[0.04] text-ink/85 hover:border-ink/30 hover:bg-ink/[0.08] hover:text-fg sm:ml-auto`}>
+                {it.action} <span aria-hidden>→</span>
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+    </li>
+  );
+}
+
 
 /**
  * The owner's answer to an Ask from the team, right on the Overview: Approve sends it to be built (it leaves the list),

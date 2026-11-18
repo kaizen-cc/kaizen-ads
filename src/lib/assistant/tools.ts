@@ -270,15 +270,35 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
   const own: LoopTool[] = [
     {
       name: "my_work",
-      description: "Everything on the person right now, in order: critical first, then simple to complex (their recap, Next for me, tickets on both boards, reports waiting, replies they owe, reminders, unread notifications). Use for 'what do I need to do today' and to go past the first items in your context.",
-      input_schema: { type: "object", properties: { only: { type: "string", enum: ["all", "critical", "tickets", "reports", "replies", "reminders", "notifications"] }, limit: { type: "integer" } }, additionalProperties: false },
+      description: "Everything on the person right now, in order: critical first, then simple to complex (their recap, Next for me, tickets on both boards, reports waiting, replies they owe, reminders, unread notifications). Use for 'what do I need to do today' and to go past the first items in your context. For an exec, what's outside their focus is left out unless they ask for everything else (only: everything_else).",
+      input_schema: { type: "object", properties: { only: { type: "string", enum: ["all", "critical", "tickets", "reports", "replies", "reminders", "notifications", "everything_else"] }, limit: { type: "integer" } }, additionalProperties: false },
       run: async (input) => {
         const items = await myWork(ctx.db, ctx.me);
         const only = String(input.only ?? "all");
         const pick = items.filter((i) =>
-          only === "critical" ? i.tier === "critical" : only === "tickets" ? i.source === "ticket" || i.source === "email_ticket" : only === "reports" ? i.source === "report" : only === "replies" ? i.source === "owed" : only === "reminders" ? i.source === "ask" : only === "notifications" ? i.source === "notification" : true,
+          only === "everything_else" ? i.kind === "elsewhere" : i.kind === "elsewhere" ? false : only === "critical" ? i.tier === "critical" : only === "tickets" ? i.source === "ticket" || i.source === "email_ticket" : only === "reports" ? i.source === "report" : only === "replies" ? i.source === "owed" : only === "reminders" ? i.source === "ask" : only === "notifications" ? i.source === "notification" : true,
         );
         return { count: pick.length, items: pick.slice(0, Math.min(40, Number(input.limit) || 20)).map((i) => ({ id: i.id, tier: i.tier, client: i.client, title: i.title, why: i.why, open: i.href })) };
+      },
+    },
+    {
+      name: "creative_allotments",
+      description: "This billing cycle's creative allotment gaps in the person's slice (head of creative and execs every client; the lead graphic designer images and carousels, the lead video editor video, across clients; a designer or editor their own clients), most urgent first: what's missing, when each resets, what's due this week to stay on pace, and (for the head of creative) this week's load against a usual week. Also accounts off target that need fresh creative. Paused clients and paused creative never show. To brief one, open its create link with open_screen (href).",
+      input_schema: { type: "object", properties: { client: CLIENT }, additionalProperties: false },
+      run: async (input) => {
+        const { loadAllotmentDesk } = await import("@/lib/creative-allotments-load");
+        const { createBriefHref, POOL_FORMAT } = await import("@/lib/creative-allotments");
+        const d = await loadAllotmentDesk(ctx.db, ctx.me);
+        const want = String(input.client ?? "").toLowerCase().trim();
+        const gaps = d.gaps.filter((g) => !want || g.client.toLowerCase().includes(want));
+        if (!d.gaps.length && !d.fresh.length) return { note: "No allotment gaps in their slice (or no creative allotments they see)." };
+        return {
+          gaps: gaps.filter((g) => g.missing > 0).slice(0, 25).map((g) => ({ client: g.client, pool: g.pool, line: g.line, detail: g.detail, pace: g.pace, resets_on: g.resetsOn, create: createBriefHref(g.slug, POOL_FORMAT[g.pool]) })),
+          briefed: gaps.filter((g) => !g.missing).length,
+          this_week: d.load?.map((w) => w.line) ?? null,
+          needs_fresh_creative: d.fresh.map((f) => ({ client: f.client, why: f.why, create: createBriefHref(f.slug, null) })),
+          overview: "/pipeline?tab=clients#allotments",
+        };
       },
     },
     {
@@ -329,6 +349,9 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
             if (id.startsWith("recap-")) {
               const { setItem } = await import("@/app/today/actions");
               await setItem(id.slice(6), status, { topic: it?.kind ?? "work", client: it?.client ?? "", title: label, clientId: null });
+            } else if (id.startsWith("ag-")) {
+              // A client's follow-ups gathered on one line: all of them
+              await ctx.db.from("agent_asks").update({ status, done_at: new Date().toISOString() }).in("id", id.slice(3).split(",").slice(0, 60)).eq("owner_id", ctx.me.id);
             } else if (id.startsWith("a-") || id.startsWith("next-ask-")) {
               const askId = id.startsWith("a-") ? id.slice(2) : id.slice(9);
               await ctx.db.from("agent_asks").update({ status, done_at: new Date().toISOString() }).eq("id", askId).eq("owner_id", ctx.me.id);
@@ -336,6 +359,8 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
               const { setItem, dismissOwed } = await import("@/app/today/actions");
               if (status === "done") await setItem(`owed:${id.slice(2)}`, "done", { topic: "promises", client: it?.client ?? "", title: label, clientId: null });
               else await dismissOwed(id.slice(2));
+            } else if (id.startsWith("h-")) {
+              await ctx.admin.from("assistant_heads_ups").update({ done_at: new Date().toISOString(), later: false }).eq("profile_id", ctx.me.id).eq("id", id.slice(2));
             } else if (id.startsWith("n-")) {
               await ctx.db.from("notifications").update({ read_at: new Date().toISOString() }).eq("profile_id", ctx.me.id).eq("id", id.slice(2));
             } else if (id.startsWith("next-")) {
@@ -361,6 +386,33 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
         if (!l) return { shown: false, note: "That link can't be shown on a call." };
         showCard(ctx, { title: clip(input.title, 120), detail: clip(input.detail, 160), href: l.href, external: l.external, cta: clip(input.cta, 40) || "Open" });
         return { shown: true };
+      },
+    },
+    {
+      name: "keep_for_later",
+      description: "When you called them about something urgent (your opening heads-up) and they say they'll look later: it stays at the top of their list (my_work, their day) until it's done. Say so in a few words and carry on. When they say yes instead, open it with open_screen (its link is in the heads-up).",
+      input_schema: { type: "object", properties: {}, additionalProperties: false },
+      run: async () => {
+        const { keepForLater } = await import("./heads-up-server");
+        const h = await keepForLater(ctx.admin, ctx.me.id).catch(() => null);
+        forgetContext(ctx.me.id);
+        return h ? { kept: true, items: h.items.map((i) => i.title) } : { kept: false, note: "There's no heads-up from the last couple of hours to keep." };
+      },
+    },
+    {
+      name: "urgent_call_settings",
+      description: "How you reach them about urgent items, when they ask ('don't call me, just message me', 'no calls after 9pm', 'you can ring me again'): ring (you ring them in the app for ten seconds; missed ones wait in the chat) or chat (no ring, urgent things wait in the chat), and quiet hours when you never ring (HH:MM, their time zone). Leave a field out to keep it; quiet: false clears quiet hours. Without changes it says what's set.",
+      input_schema: { type: "object", properties: { mode: { type: "string", enum: ["ring", "chat"] }, quiet_start: { type: "string", description: "HH:MM" }, quiet_end: { type: "string", description: "HH:MM" }, quiet: { type: "boolean" } }, additionalProperties: false },
+      run: async (input) => {
+        const [{ ringPrefs }, { cleanPrefs }] = await Promise.all([import("./heads-up-server"), import("./ring-core")]);
+        const had = await ringPrefs(ctx.admin, ctx.me.id);
+        const changing = input.mode != null || input.quiet_start != null || input.quiet_end != null || input.quiet != null;
+        if (!changing) return { mode: had.mode, quiet_hours: had.quietStart && had.quietEnd ? `${had.quietStart} to ${had.quietEnd} (${had.tz})` : "none", settings: "/assistant#ring-title" };
+        const off = input.quiet === false;
+        const next = cleanPrefs({ mode: input.mode ?? had.mode, quietStart: off ? null : (input.quiet_start ?? had.quietStart), quietEnd: off ? null : (input.quiet_end ?? had.quietEnd), tz: had.tz });
+        const { error } = await ctx.db.from("assistant_ring_prefs").upsert({ profile_id: ctx.me.id, mode: next.mode, quiet_start: next.quietStart, quiet_end: next.quietEnd, tz: next.tz, updated_at: new Date().toISOString() });
+        if (error) return { saved: false, error: "It didn't save on our side. Try again." };
+        return { saved: true, mode: next.mode, quiet_hours: next.quietStart && next.quietEnd ? `${next.quietStart} to ${next.quietEnd}` : "none" };
       },
     },
     {
@@ -568,7 +620,24 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
     },
   ];
   const comms = commsTools({ me: ctx.me, db: ctx.db, admin: ctx.admin, callId: ctx.callId, said: () => ctx.said, emit: ctx.emit, roleKey: ASSISTANT_KEY, label: "assistant", path: ctx.path, screen: ctx.screen, clientId: ctx.clientId });
-  return carryYes(ctx, cctx, [...own, ...lookupTools(ctx), ...profileTools(ctx), ...comms, ...cardTools, ...rest]);
+  // A document made here shows as its own card on the call or in the chat: Open, Download, Edit its text
+  const docCards = (t: LoopTool): LoopTool =>
+    t.name !== "create_document"
+      ? t
+      : {
+          ...t,
+          run: async (input: Record<string, unknown>) => {
+            const before = tctx.cards.length;
+            const out = await t.run(input);
+            for (const c of tctx.cards.slice(before)) {
+              if (c.type !== "document") continue;
+              const document = { id: c.id, kind: c.kind, title: c.title, client: c.client, version: c.version, href: c.href, download: c.download, placeholders: c.placeholders };
+              ctx.emit({ t: "card", card: { id: `doc-${c.id}`, title: c.title, detail: c.client ?? "", href: c.href, external: true, cta: "Open", document } });
+            }
+            return out;
+          },
+        };
+  return carryYes(ctx, cctx, [...own, ...lookupTools(ctx), ...profileTools(ctx), ...comms, ...cardTools, ...rest.map(docCards)]);
 }
 
 /**

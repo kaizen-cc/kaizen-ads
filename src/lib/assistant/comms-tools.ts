@@ -10,6 +10,8 @@ import { saidYes } from "./core";
 import { clientTeam, recipientFor } from "./routing-server";
 import { carriedYes, getDraft, latestDraft, putDraft, tellTeammate, type Draft } from "./handoff-server";
 import { addressOf, reSubject, rawEmail, replyTo, slackPlace } from "./messages";
+import { attachNote, draftFiles, fileViews, mailFiles } from "@/lib/documents/attach";
+import { composeLinks } from "@/lib/email-drafts/core";
 import { teammateTitle, type TeammateKind } from "./teammates";
 
 // What the assistant and every agent can do for the person with the team and their messages, on a call or in a chat:
@@ -181,9 +183,39 @@ function showDraft(ctx: CommsCtx, d: Draft, status: CallDraft["status"], href = 
       href,
       external: false,
       cta: "Open",
-      draft: { id: d.id, channel: d.channel, where, text: d.text, subject: d.email?.subject ?? null, to: d.email?.to ?? null, status },
+      draft: {
+        id: d.id,
+        channel: d.channel,
+        where,
+        text: d.text,
+        subject: d.email?.subject ?? null,
+        to: d.email?.to ?? null,
+        status,
+        attachments: fileViews(d.attachments),
+        // Without Gmail access: a prefilled compose, with a line saying which PDF to attach
+        compose: d.email ? composeLinks({ to: [addressOf(d.email.to)], subject: d.email.subject, body: `${d.text}${attachNote(d.attachments ?? [])}` }).gmail : null,
+      },
     },
   });
+}
+
+/**
+ * A new email to a client, kept with their email drafts as well (Overview's "Emails ready to send"), with its files,
+ * so it can be opened into Gmail later. One per draft on the call. Never sent from here.
+ */
+async function keepClientDraft(ctx: CommsCtx, clientId: string, d: Draft): Promise<string | null> {
+  if (!d.email) return null;
+  const files = (d.attachments ?? []).map((f) => ({ document_id: f.documentId, name: f.name }));
+  const row = { client_id: clientId, owner_id: ctx.me.id, created_by: ctx.me.id, kind: "other", subject: d.email.subject.slice(0, 200), body: d.text.slice(0, 8000), to_emails: [addressOf(d.email.to)], reason: "Drafted with your assistant", source_kind: "assistant", source_id: ctx.callId, source_key: `assistant:${ctx.callId ?? "chat"}:${d.id}`, attachments: files };
+  const { data, error } = await ctx.admin.from("client_email_drafts").upsert(row, { onConflict: "source_key" }).select("id").single();
+  if (error) {
+    // Before the attachments column: kept without the files
+    const { attachments: _files, ...plain } = row;
+    void _files;
+    const again = await ctx.admin.from("client_email_drafts").upsert(plain, { onConflict: "source_key" }).select("id").single();
+    return (again.data?.id as string | undefined) ?? null;
+  }
+  return (data?.id as string | undefined) ?? null;
 }
 
 // ─── The tools ──────────────────────────────────────────────────────────────
@@ -231,7 +263,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
     },
     {
       name: "draft_message",
-      description: `Drafts a Slack reply or an email as ${from}, in their voice: a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes.`,
+      description: `Drafts a Slack reply or an email as ${from}, in their voice: a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). A document goes with an email: make it first (create_document), then pass its document_id in attach (the card offers Open in Gmail with the PDF attached, and the PDF to download). After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes.`,
       input_schema: {
         type: "object",
         properties: {
@@ -243,6 +275,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           text: { type: "string", description: "The message, as it will be sent" },
           to: { type: "string", description: "A new email's address (not a reply)" },
           subject: { type: "string", description: "A new email's subject" },
+          attach: { type: "array", items: { type: "string" }, description: "An email only: document_id(s) from create_document whose PDF goes with it" },
         },
         required: ["channel"],
         additionalProperties: false,
@@ -282,10 +315,24 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
             d = { kind: "draft", id, done: true, channel, email: { mailbox: pick.email!.mailbox, threadId: pick.email!.threadId, to: last?.to ?? pick.who, subject: last?.subject ?? reSubject(pick.email!.subject), inReplyTo: last?.inReplyTo ?? null, references: last?.references ?? null }, text, client: pick.client, owedId: pick.owedId, at: new Date().toISOString() };
           }
         }
-        if (!ctx.callId) return { drafted: true, text: d.text, where: d.slack?.where ?? d.email?.to, note: "Show the text so they can copy it; sending as them works on a call." };
+        // Files go with an email only: the documents they may see, by id
+        const files = channel === "email" && input.attach ? await draftFiles(ctx.db, input.attach) : [];
+        if (files.length) d.attachments = files;
+        const askedFiles = Array.isArray(input.attach) ? input.attach.length : input.attach ? 1 : 0;
+        // A new email to a client is also kept with their email drafts (Overview's "Emails ready to send"), files and all
+        if (fresh && client) d.clientDraftId = await keepClientDraft(ctx, client.id, d).catch(() => null);
+        if (!ctx.callId) return { drafted: true, text: d.text, where: d.slack?.where ?? d.email?.to, attached: files.map((f) => f.name), note: "Show the text so they can copy it; sending as them works on a call." };
         await putDraft(ctx.admin, ctx.callId, d);
         showDraft(ctx, d, "draft");
-        return { drafted: true, draft_id: d.id, where: d.slack?.where ?? `email to ${d.email?.to}`, text: d.text, note: "It's on screen to edit. Read it back in a sentence or two, then ask if you should send it. Send only on their yes (send_message)." };
+        return {
+          drafted: true,
+          draft_id: d.id,
+          where: d.slack?.where ?? `email to ${d.email?.to}`,
+          text: d.text,
+          ...(files.length ? { attached: files.map((f) => f.name) } : {}),
+          ...(askedFiles > files.length ? { not_attached: askedFiles - files.length, why: "Those documents weren't found or aren't theirs to attach. Make the document first (create_document) and attach its document_id." } : {}),
+          note: "It's on screen to edit (with Open in Gmail and the PDF to download). Read it back in a sentence or two, then ask if you should send it. Send only on their yes (send_message).",
+        };
       },
     },
     {
@@ -322,12 +369,15 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           showDraft(ctx, d, "copy");
           return { sent: false, fallback: "copy", note: "Google isn't connected, so it can't send: the draft is on screen with a copy button." };
         }
-        const raw = rawEmail({ from: `${ctx.me.fullName} <${e.mailbox}>`, to: e.to, cc: e.cc ?? null, subject: e.subject, body: d.text, inReplyTo: e.inReplyTo ?? null, references: e.references ?? null });
+        const { attached, missing } = await mailFiles(ctx.admin, d.attachments ?? []);
+        if (missing.length) return { sent: false, error: `The file${missing.length === 1 ? "" : "s"} ${missing.join(", ")} couldn't be read, so nothing went out. Make the document again and attach it.` };
+        const raw = rawEmail({ from: `${ctx.me.fullName} <${e.mailbox}>`, to: e.to, cc: e.cc ?? null, subject: e.subject, body: d.text, inReplyTo: e.inReplyTo ?? null, references: e.references ?? null, attachments: attached });
         const msg = { raw, ...(e.threadId ? { threadId: e.threadId } : {}) };
         try {
           const token = await gmailSendToken(e.mailbox);
           await googlePost(token, "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", msg);
           await putDraft(ctx.admin, ctx.callId, { ...d, sent: "gmail" });
+          if (d.clientDraftId) await ctx.admin.from("client_email_drafts").update({ status: "sent", updated_at: new Date().toISOString() }).eq("id", d.clientDraftId).eq("owner_id", ctx.me.id);
           showDraft(ctx, { ...d, sent: "gmail" }, "sent");
           if (d.owedId) await ctx.admin.from("owed_replies").update({ status: "answered", answered_at: new Date().toISOString() }).eq("id", d.owedId).eq("target_id", ctx.me.id);
           return { sent: true, where: `email to ${addressOf(e.to)}` };
@@ -335,8 +385,9 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           console.error("[send_message] gmail send", sendErr instanceof Error ? sendErr.message : sendErr);
           try {
             const token = await gmailComposeToken(e.mailbox);
-            await googlePost(token, "https://gmail.googleapis.com/gmail/v1/users/me/drafts", { message: msg });
+            const made = await googlePost<{ id: string }>(token, "https://gmail.googleapis.com/gmail/v1/users/me/drafts", { message: msg });
             await putDraft(ctx.admin, ctx.callId, { ...d, sent: "gmail_draft" });
+            if (d.clientDraftId) await ctx.admin.from("client_email_drafts").update({ status: "opened", gmail_draft_id: made.id, updated_at: new Date().toISOString() }).eq("id", d.clientDraftId).eq("owner_id", ctx.me.id);
             showDraft(ctx, { ...d, sent: "gmail_draft" }, "gmail_draft");
             return { sent: false, fallback: "gmail_draft", note: "Sending email as them isn't switched on, so it's saved as a draft in their Gmail, in the thread: say so in a sentence (one click to send there)." };
           } catch (draftErr) {
@@ -361,6 +412,8 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         const note = riskNote(clip(input.why, 600), day);
         const { error } = await ctx.db.from("client_memory").insert({ client_id: client.id, kind: "note", body: note, source: "team", created_by: ctx.me.id });
         if (error) return { noted: false, error: "It didn't save. Try again." };
+        // A client probably leaving is on fire: every exec hears, once today
+        await import("@/lib/exec-focus/server").then(({ raiseFireAsAdmin }) => raiseFireAsAdmin({ clientId: client.id, client: client.name, signal: { kind: "risk_flag" }, body: note })).catch(() => undefined);
         return { noted: true, client: client.name, note: "Say it in a few words: noted, flagged as at risk, their work moves up." };
       },
     },

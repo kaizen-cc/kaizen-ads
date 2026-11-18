@@ -46,7 +46,7 @@ async function lastConversation(admin: ReturnType<typeof createAdminClient>, pro
  * token. `talk`: a voice call (the default) or a typed chat with the assistant; both are the same conversation and
  * turn pipeline, and either can move to the other (switchCallMode).
  */
-export async function startCall(roleKey: string, opts: { talk?: TalkMode } = {}): Promise<StartedCall | Fail> {
+export async function startCall(roleKey: string, opts: { talk?: TalkMode; headsUp?: string | null } = {}): Promise<StartedCall | Fail> {
   const me = await requireStaff();
   const talk = talkModeOf(opts.talk);
   if (!canTalkToAgent(me, roleKey)) return { ok: false, error: "That isn't one of the agents." };
@@ -105,6 +105,15 @@ export async function startCall(roleKey: string, opts: { talk?: TalkMode } = {})
     greeting = hello.text;
     if (hello.followed) await markFollowedUp(admin, me.id, hello.followed);
   }
+  // Answering the assistant's ring: the call opens with the heads-up itself ("Hey Santi! Heads up, I just put...")
+  if (roleKey === ASSISTANT_KEY && opts.headsUp && /^[0-9a-f-]{36}$/i.test(opts.headsUp)) {
+    const { headsUpFor } = await import("@/lib/assistant/heads-up-server");
+    const h = await headsUpFor(admin, me.id, opts.headsUp).catch(() => null);
+    if (h) {
+      greeting = h.line;
+      (await import("@/lib/assistant/context")).forgetContext(me.id);
+    }
+  }
   await admin.from("ai_role_chats").insert({ role_key: roleKey, role: "agent", content: greeting, attachments: [], changes: [], created_by: me.id, call_id: call.id });
   return { ok: true, callId: call.id as string, greeting, sttToken, limitSeconds: talk === "text" ? CHAT_LIMIT_SECONDS : CALL_LIMIT_SECONDS, startedAt: call.started_at as string, mode, canTeach: canTrainAgent(me, roleKey), talk };
 }
@@ -132,7 +141,35 @@ async function threadLines(admin: ReturnType<typeof createAdminClient>, callId: 
     });
 }
 
-export type OpenedChat = { ok: true; callId: string; startedAt: string; lines: ThreadLine[]; earlier: ThreadLine[]; resumed: boolean; canTeach: boolean };
+export type OpenedChat = { ok: true; callId: string; startedAt: string; lines: ThreadLine[]; earlier: ThreadLine[]; resumed: boolean; canTeach: boolean; headsUps: ChatHeadsUp[] };
+
+/** An urgent heads-up waiting in the chat: its words are a line of the conversation; its link is a card to open it */
+export type ChatHeadsUp = { id: string; href: string | null; title: string };
+
+/**
+ * The urgent heads-ups waiting for them (a missed or declined ring, or while they were away): written into the
+ * conversation as the assistant's lines, so the agent knows what it said, and marked read.
+ */
+async function headsUpsIntoChat(admin: ReturnType<typeof createAdminClient>, profileId: string, callId: string): Promise<ChatHeadsUp[]> {
+  const { unreadHeadsUps, markHeadsUpsRead } = await import("@/lib/assistant/heads-up-server");
+  const list = await unreadHeadsUps(admin, profileId).catch(() => []);
+  if (!list.length) return [];
+  await admin.from("ai_role_chats").insert(list.map((h) => ({ role_key: ASSISTANT_KEY, role: "agent", content: h.chat, attachments: [], changes: [], created_by: profileId, call_id: callId })));
+  await markHeadsUpsRead(admin, profileId, list.map((h) => h.id));
+  return list.map((h) => ({ id: h.id, href: h.href, title: h.items.length > 1 ? `${h.items.length} urgent items` : (h.items[0]?.title ?? "Something urgent") }));
+}
+
+/** New heads-ups while the chat is open: into this conversation, as above (the chat window shows them straight away) */
+export async function takeChatHeadsUps(callId: string): Promise<{ ok: true; lines: ThreadLine[]; headsUps: ChatHeadsUp[] } | Fail> {
+  const me = await requireStaff();
+  const admin = createAdminClient();
+  const { data: call } = await admin.from("ai_role_calls").select("profile_id").eq("id", callId).maybeSingle();
+  if (!call || call.profile_id !== me.id) return { ok: false, error: "That isn't your conversation." };
+  const headsUps = await headsUpsIntoChat(admin, me.id, callId);
+  if (!headsUps.length) return { ok: true, lines: [], headsUps };
+  const lines = await threadLines(admin, callId, headsUps.length);
+  return { ok: true, lines, headsUps };
+}
 
 /**
  * Chat with the assistant: their chat still open (a reload, another tab) picks up with its lines; otherwise a new
@@ -144,14 +181,16 @@ export async function openAssistantChat(): Promise<OpenedChat | Fail> {
   const admin = createAdminClient();
   const { data: open, error } = await admin.from("ai_role_calls").select("id, started_at, last_turn_at, mode, mode_log").eq("profile_id", me.id).eq("role_key", ASSISTANT_KEY).is("ended_at", null).eq("mode", "text").order("started_at", { ascending: false }).limit(1).maybeSingle();
   if (!error && open && stillOpen({ mode: "text", startedAt: open.started_at as string, lastTurnAt: (open.last_turn_at as string | null) ?? null, log: parseModeLog(open.mode_log), callLimitSeconds: CALL_LIMIT_SECONDS })) {
-    return { ok: true, callId: open.id as string, startedAt: open.started_at as string, lines: await threadLines(admin, open.id as string), earlier: [], resumed: true, canTeach: canTrainAgent(me, ASSISTANT_KEY) };
+    const headsUps = await headsUpsIntoChat(admin, me.id, open.id as string);
+    return { ok: true, callId: open.id as string, startedAt: open.started_at as string, lines: await threadLines(admin, open.id as string), earlier: [], resumed: true, canTeach: canTrainAgent(me, ASSISTANT_KEY), headsUps };
   }
   const r = await startCall(ASSISTANT_KEY, { talk: "text" });
   if (!r.ok) return r;
   const { data: row } = await admin.from("ai_role_calls").select("resumed_from").eq("id", r.callId).maybeSingle();
   const before = (row?.resumed_from as string | null) ?? null;
+  const headsUps = await headsUpsIntoChat(admin, me.id, r.callId);
   const [lines, earlier] = await Promise.all([threadLines(admin, r.callId), before ? threadLines(admin, before, 12) : Promise.resolve([] as ThreadLine[])]);
-  return { ok: true, callId: r.callId, startedAt: r.startedAt, lines, earlier, resumed: false, canTeach: r.canTeach };
+  return { ok: true, callId: r.callId, startedAt: r.startedAt, lines, earlier, resumed: false, canTeach: r.canTeach, headsUps };
 }
 
 export type SwitchedCall = { ok: true; line: string; sttToken: string | null; limitSeconds: number; since: string; lines: ThreadLine[] };

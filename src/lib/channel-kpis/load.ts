@@ -8,6 +8,7 @@ import { loadSocialScores, type SocialAccountScore } from "@/lib/social-score-lo
 import { DEFAULT_ENGAGEMENT_BAR } from "@/lib/social-score";
 import { conversionMetricsOf, monthRevenue, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
 import { socialClientState, plainSocialError } from "@/lib/social/core";
+import { combineParts, engagementChain, postSums, rateNotes, type RateBasis, type RateParts } from "@/lib/social/rate";
 import { partialSyncWarning } from "@/lib/klaviyo/core";
 import { emailClientState } from "@/lib/email-providers/core";
 import { emailConnections, type EmailConn } from "@/lib/email-providers/which";
@@ -18,7 +19,6 @@ import {
   SERVICE,
   cumulative,
   daysSince,
-  engagement,
   etToday,
   judgeEmail,
   judgeSocial,
@@ -279,7 +279,7 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
       db.from("social_daily").select("client_id, platform, account_id, date, followers, follows_gained, follows_lost, reach, views, interactions").in("client_id", ids).gte("date", earliest).order("client_id").order("platform").order("date").range(a, b),
     ),
     readAll<Record<string, unknown>>((a, b) =>
-      db.from("social_posts").select("client_id, platform, account_id, post_id, caption, permalink, posted_at, interactions").in("client_id", ids).gte("posted_at", `${shiftDay(month.today, -45)}T00:00:00Z`).order("client_id").order("post_id").range(a, b),
+      db.from("social_posts").select("client_id, platform, account_id, post_id, caption, permalink, posted_at, interactions, reach, views, likes, comments, shares, saves").in("client_id", ids).gte("posted_at", `${[earliest, shiftDay(month.today, -45)].sort()[0]}T00:00:00Z`).order("client_id").order("post_id").range(a, b),
     ),
     // The account score (every platform and the overall), read through the same session as the rest
     loadSocialScores(db, ids, month.today).catch(() => new Map<string, SocialAccountScore>()),
@@ -308,13 +308,34 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
       return any ? s : null;
     };
     const now = win(from, month.today);
-    const reach = total(now, "reach");
-    const interactions = total(now, "interactions");
-    const rate = engagement(interactions, reach);
     const prevRows = win(month.prevStart, month.prevEnd);
-    const prevRate = engagement(total(prevRows, "interactions"), total(prevRows, "reach"));
+    const ps = (postsBy.get(id) ?? []).filter(current);
+    const postDay = (p: Record<string, unknown>) => (p.posted_at ? etDay(p.posted_at as string) : "");
+    const inWin = ps.filter((p) => postDay(p) >= from);
+    // The rate down the chain (src/lib/social/rate.ts): reach, else views, else per post over followers; the posts' own numbers fill what Meta left out
+    const followersOf = (p: string, upTo: string) => [...mine].reverse().find((d) => d.platform === p && d.followers != null && (d.date as string) <= upTo)?.followers;
+    const rateOver = (rows: Record<string, unknown>[], lo: string, hi: string, upTo: string, only?: RateBasis | null) => {
+      const reads = (["instagram", "facebook"] as const)
+        .filter((p) => rows.some((d) => d.platform === p) || ps.some((x) => x.platform === p))
+        .map((p) => {
+          const mineRows = rows.filter((d) => d.platform === p);
+          const inRange = ps.filter((x) => x.platform === p && postDay(x) >= lo && postDay(x) <= hi);
+          const asPost = (x: Record<string, unknown>) => ({ reach: x.reach == null ? null : num(x.reach), views: x.views == null ? null : num(x.views), interactions: x.interactions == null ? null : num(x.interactions), likes: x.likes == null ? null : num(x.likes), comments: x.comments == null ? null : num(x.comments), shares: x.shares == null ? null : num(x.shares), saves: x.saves == null ? null : num(x.saves) });
+          const f = followersOf(p, upTo);
+          return engagementChain({ interactions: total(mineRows, "interactions"), reach: total(mineRows, "reach"), views: total(mineRows, "views"), followers: f == null ? null : Number(f), posts: inRange.length, fromPosts: postSums(inRange.map(asPost)) }, { only: only ?? null });
+        });
+      const sum = (k: "reach" | "views" | "interactions") => (reads.some((x) => x[k] != null) ? reads.reduce((n, x) => n + (x[k] ?? 0), 0) : null);
+      const c = combineParts(reads.map((x) => x.parts as RateParts), { only: only ?? null });
+      return { rate: c.rate, basis: c.basis, reach: sum("reach"), views: sum("views"), interactions: sum("interactions"), reachFrom: reads.some((x) => x.reachFrom === "posts") ? ("posts" as const) : reads.some((x) => x.reachFrom === "meta") ? ("meta" as const) : null };
+    };
+    const read = rateOver(now, from, month.today, month.today);
+    const reach = read.reach;
+    const interactions = read.interactions;
+    const rate = read.rate;
+    // Last month is read on the basis this month used, so the two are like with like
+    const prevRate = rateOver(prevRows, month.prevStart, month.prevEnd, month.prevEnd, read.basis).rate;
     const readable = st.state !== "missing" && st.state !== "failing" && st.state !== "pending";
-    const j = judgeSocial({ readable, target: b.target, rate });
+    const j = judgeSocial({ readable, target: b.target, rate, basis: read.basis });
     // The account's colour is its social score (engagement is one part of it), like email
     const sc = readable ? (scores.get(id) ?? null) : null;
     // Followers now: each platform's latest count, added up
@@ -322,16 +343,17 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
     const f = (["instagram", "facebook"] as const).map(latest).filter((x) => x != null).map(Number);
     const gained = total(now, "follows_gained");
     const lost = total(now, "follows_lost");
-    const ps = (postsBy.get(id) ?? []).filter(current);
-    const inWin = ps.filter((p) => p.posted_at && etDay(p.posted_at as string) >= from);
     const top = [...inWin].sort((x, y) => num(y.interactions) - num(x.interactions))[0];
     const lastPostAt = ps.map((p) => p.posted_at as string | null).filter((x): x is string => Boolean(x)).sort().at(-1) ?? null;
     const social: SocialSupport = {
       followers: f.length ? f.reduce((s, x) => s + x, 0) : null,
       followersChange: gained == null && lost == null ? null : (gained ?? 0) - (lost ?? 0),
       reach,
-      views: total(now, "views"),
+      views: read.views,
       interactions,
+      rateBasis: read.basis,
+      reachFrom: read.reachFrom,
+      rateNotes: rateNotes({ basis: read.basis, reach: read.reach, reachFrom: read.reachFrom, interactions: read.interactions }),
       posts: inWin.length,
       topPost: top && num(top.interactions) > 0 ? { caption: (top.caption as string | null) ?? null, permalink: (top.permalink as string | null) ?? null, interactions: num(top.interactions), platform: top.platform as string } : null,
       lastPostAt,
@@ -342,7 +364,7 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
     return {
       ...b,
       data: st.state as DataState,
-      problem: stateErr ? { message: stateErr.message, fix: stateErr.fix } : noInsights ? { message: "Meta isn't giving reach for this account yet", fix: "The first read can take a day. If it stays empty, check the Page and Instagram account are shared with Kaizen's Business Manager." } : null,
+      problem: stateErr ? { message: stateErr.message, fix: stateErr.fix } : noInsights ? { message: "Meta isn't giving reach, views or interactions for this account yet", fix: "The first read can take a day. If it stays empty, check the Page and Instagram account are shared with Kaizen's Business Manager." } : null,
       warning: null,
       lastSyncedAt: (link?.last_synced_at as string | null) ?? null,
       account: link ? ([link.page_name, link.ig_username ? `@${link.ig_username}` : null].filter(Boolean).join(" · ") || null) : null,
@@ -353,7 +375,7 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
       projected: null,
       prev: prevRate,
       basis,
-      series: readable ? rollingRate(sumByDate(mine), shiftDay(month.today, -29), month.today) : [],
+      series: readable ? rollingRate(sumByDate(mine), shiftDay(month.today, -29), month.today, 7, read.basis === "views" ? "views" : "reach") : [],
       span: 30,
       quietDays: readable ? (daysSince(lastPostAt, month.today) ?? 45) : null,
       email: null,
@@ -365,11 +387,12 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
 }
 
 /** Both platforms' days added up per date (a day with no number from either stays null) */
-function sumByDate(rows: Record<string, unknown>[]): { date: string; interactions: number | null; reach: number | null }[] {
-  const by = new Map<string, { date: string; interactions: number | null; reach: number | null }>();
+function sumByDate(rows: Record<string, unknown>[]): { date: string; interactions: number | null; reach: number | null; views: number | null }[] {
+  const by = new Map<string, { date: string; interactions: number | null; reach: number | null; views: number | null }>();
   for (const d of rows) {
     const k = d.date as string;
-    const x = by.get(k) ?? { date: k, interactions: null, reach: null };
+    const x = by.get(k) ?? { date: k, interactions: null, reach: null, views: null };
+    if (d.views != null) x.views = (x.views ?? 0) + num(d.views);
     if (d.interactions != null) x.interactions = (x.interactions ?? 0) + num(d.interactions);
     if (d.reach != null) x.reach = (x.reach ?? 0) + num(d.reach);
     by.set(k, x);

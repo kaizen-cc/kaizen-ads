@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { batches, notImported, ownChats, parseConversations, parseProjects, partsOf, projectItem, suggestClient, type ImportedConversation, type ImportedProject, type ImportItem } from "@/lib/kaizen-ai/claude-import";
+import { batches, importSummary, ownChats, parseConversations, parseProjects, partsOf, projectItem, stubProjects, suggestClient, type ImportedConversation, type ImportedProject, type ImportItem } from "@/lib/kaizen-ai/claude-import";
 import { linksExpired, missingFiles, sameFile, wantedFiles, type Manifest, type ManifestFile } from "@/lib/kaizen-ai/claude-export-manifest";
 import { readClaudeExportFiles, readManifest } from "@/lib/kaizen-ai/claude-import-file";
 import { closeParams, pushParams, replaceParams, useParam } from "@/lib/url-state";
@@ -12,7 +12,7 @@ import { claudeImportState, deleteClaudeImport, finishClaudeImport, matchImportC
 // batches, while they keep using Kaizen AI. Their file is read in the browser; only what they pick is sent.
 
 type ClientOpt = { id: string; name: string; slug: string };
-export type ImportJob = { importId: string; total: number; done: number; created: number; skipped: number; failed: number; running: boolean; error: string | null; firstThread: string | null };
+export type ImportJob = { importId: string; total: number; done: number; created: number; skipped: number; failed: number; running: boolean; error: string | null; firstThread: string | null; /** What was sent: "244 chats, 12 projects, 3 had attachments" */ summary?: string | null; /** Chats imported before that got their missing messages */ updated?: number };
 
 const CLAUDE_EXPORT_URL = "https://claude.ai/settings/data-privacy-controls";
 /** Where an org's owner exports (owners don't get the personal Export data button) */
@@ -26,7 +26,7 @@ export function useClaudeImport(onProgress: () => void) {
   const [job, setJob] = useState<ImportJob | null>(null);
   const running = useRef(false);
   const start = useCallback(
-    async (fileName: string, items: ImportItem[], conversations: number, sourceAccount: string | null = null) => {
+    async (fileName: string, items: ImportItem[], conversations: number, sourceAccount: string | null = null, summary: string | null = null) => {
       if (running.current) return;
       const s = await startClaudeImport(fileName, conversations);
       if (!s.ok) {
@@ -35,7 +35,7 @@ export function useClaudeImport(onProgress: () => void) {
       }
       running.current = true;
       const total = items.filter((i) => i.last).length;
-      let state: ImportJob = { importId: s.id, total, done: 0, created: 0, skipped: 0, failed: 0, running: true, error: null, firstThread: null };
+      let state: ImportJob = { importId: s.id, total, done: 0, created: 0, skipped: 0, failed: 0, running: true, error: null, firstThread: null, summary, updated: 0 };
       setJob(state);
       let sinceRefresh = 0;
       for (const batch of batches(items)) {
@@ -58,14 +58,16 @@ export function useClaudeImport(onProgress: () => void) {
           let created = 0;
           let skipped = 0;
           let failed = 0;
+          let updated = 0;
           for (const it of finals) {
             const r = byUuid.get(it.uuid);
             if (!r || r.status === "failed") failed++;
             else if (r.status === "skipped" && it.part === 0) skipped++;
+            else if (r.status === "filled") updated++;
             else created++;
           }
           const first = state.firstThread ?? res.results.find((r) => r.threadId && r.status !== "skipped")?.threadId ?? null;
-          state = { ...state, done: state.done + finals.length, created: state.created + created, skipped: state.skipped + skipped, failed: state.failed + failed, firstThread: first };
+          state = { ...state, done: state.done + finals.length, created: state.created + created, skipped: state.skipped + skipped, failed: state.failed + failed, updated: (state.updated ?? 0) + updated, firstThread: first };
         }
         setJob(state);
         if (++sinceRefresh >= 4) {
@@ -92,7 +94,10 @@ export function useClaudeImport(onProgress: () => void) {
   return { job, start, clear: () => setJob((j) => (j?.running ? j : null)) };
 }
 
-type Step = { at: "drop" } | { at: "reading"; pct: number; label?: string } | { at: "preview"; fileName: string; convs: ImportedConversation[]; projects: ImportedProject[]; projectChats: Record<string, string[]>; already: number; account: string | null; notice: string | null };
+type Step =
+  | { at: "drop" }
+  | { at: "reading"; pct: number; label?: string }
+  | { at: "preview"; fileName: string; convs: ImportedConversation[]; projects: ImportedProject[]; projectChats: Record<string, string[]>; already: number; updates: number; existingProjects: string[]; account: string | null; notice: string | null };
 type Problem = { text: string; emails?: string[] };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -101,11 +106,11 @@ const listOf = (names: string[]) => (names.length <= 1 ? (names[0] ?? "") : `${n
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const linkClass = "font-medium text-brand-text underline decoration-brand/30 underline-offset-2 hover:decoration-brand";
 
-export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpenThread, onChanged }: { clients: ClientOpt[]; /** Their Kaizen email: an organization's export is narrowed to the member with this email */ email: string; job: ImportJob | null; onStart: (fileName: string, items: ImportItem[], conversations: number, sourceAccount: string | null) => void; onClose: () => void; onOpenThread: (id: string) => void; onChanged: () => void }) {
+export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpenThread, onChanged }: { clients: ClientOpt[]; /** Their Kaizen email: an organization's export is narrowed to the member with this email */ email: string; job: ImportJob | null; onStart: (fileName: string, items: ImportItem[], conversations: number, sourceAccount: string | null, summary: string | null) => void; onClose: () => void; onOpenThread: (id: string) => void; onChanged: () => void }) {
   const [step, setStep] = useState<Step>({ at: "drop" });
   const [error, setProblem] = useState<Problem | null>(null);
   const setError = (e: string | Problem | null) => setProblem(typeof e === "string" ? { text: e } : e);
-  const [state, setState] = useState<{ imported: string[]; projects: string[]; imports: ClaudeImport[] } | null>(null);
+  const [state, setState] = useState<{ imported: string[]; counts?: Record<string, number>; projects: string[]; imports: ClaudeImport[] } | null>(null);
   const [drag, setDrag] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   // Claude's export manifest: its links live only here, in memory on this device (never in the address or sent anywhere)
@@ -163,20 +168,34 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
       const all = parseConversations(own.conversations);
       if (!all.length) throw new Error(own.kind === "org" ? "You don't have any chats in this export." : `No chats with messages in ${listOf(names)}.`);
       const st = state ?? (await claudeImportState());
-      const convs = notImported(all, st.imported);
-      // Projects not yet made into Kaizen AI projects (by Claude's project id, per person)
-      const projects = notImported(parseProjects(own.projects), st.projects ?? []);
+      // New chats, and ones imported before that have more in the export now (cut off before, or continued in
+      // Claude since): only their missing messages are added
+      const counts = st.counts ?? {};
+      const convs = all.filter((c) => !(c.uuid in counts) || c.messages.length > counts[c.uuid]);
+      const updates = convs.filter((c) => c.uuid in counts).length;
+      // Every project: new ones are made, ones already here get what's missing and their chats put inside them.
+      // Chats from a Claude project the files don't describe still land together, in a project made from them.
+      const found = parseProjects(own.projects);
+      const stubs = stubProjects(all, found).filter((p) => !(st.projects ?? []).includes(p.uuid));
+      const projects = [...found, ...stubs];
       // Every chat each project holds, imported before or now: they're all put inside it
       const projectChats: Record<string, string[]> = {};
       for (const c of all) if (c.projectUuid) (projectChats[c.projectUuid] ??= []).push(c.uuid);
+      const projectsFile = raw.files.find((f) => /project/i.test(f.name));
       const notes = [
         own.kind === "org" ? `This is your organization's export: only your own ${plural(all.length, "chat is", "chats are")} shown; the other ${plural(own.otherPeople, "person's", "people's")} chats are skipped and never leave your browser.` : "",
         own.skippedProjects ? `${plural(own.skippedProjects, "project", "projects")} made by other people ${own.skippedProjects === 1 ? "was" : "were"} left out.` : "",
-        !raw.projects.length && !own.skippedProjects ? "No projects were found in these files. Claude projects are in projects.json: if you have some, drop the ZIP that holds it too (the light_metadata one in a newer export)." : "",
+        stubs.length
+          ? projectsFile && !projectsFile.projects
+            ? `${projectsFile.name} didn't have projects in a shape Kaizen AI knows${projectsFile.inside?.length ? ` (it holds ${listOf(projectsFile.inside.slice(0, 4))})` : ""}. Your ${plural(stubs.length, "project's", "projects'")} chats are grouped into ${plural(stubs.length, "project", "projects")} named after their newest chat; tell us so we can bring the names, instructions and docs too.`
+            : `Your chats were in ${plural(stubs.length, "Claude project", "Claude projects")} not described in these files. They're grouped into projects named after their newest chat. To bring the projects' names, instructions and docs, add projects-000.zip (or projects.json) and import again: nothing is doubled.`
+          : !found.length && !own.skippedProjects
+            ? "No projects were found in these files. If you have Claude projects, add projects-000.zip (or projects.json from an older export) too."
+            : "",
       ].filter(Boolean);
       const notice = notes.length ? notes.join(" ") : null;
       const fileName = names.length > 1 ? `${names[0]} + ${names.length - 1} more` : (names[0] ?? "Claude export");
-      setStep({ at: "preview", fileName, convs, projects, projectChats, already: all.length - convs.length, account: own.account, notice });
+      setStep({ at: "preview", fileName, convs, projects, projectChats, already: all.length - convs.length, updates, existingProjects: st.projects ?? [], account: own.account, notice });
     } catch (e) {
       setStep({ at: "drop" });
       setError(e instanceof Error ? e.message : "Couldn't read those files.");
@@ -237,8 +256,8 @@ export function ClaudeImportSheet({ clients, email, job, onStart, onClose, onOpe
               step={step}
               clients={clients}
               onBack={() => setStep({ at: "drop" })}
-              onStart={(items, n) => {
-                onStart(step.fileName, items, n, step.account);
+              onStart={(items, n, summary) => {
+                onStart(step.fileName, items, n, step.account, summary);
                 setStep({ at: "drop" });
                 setManifest(null);
                 if (stepParam) replaceParams({ importstep: null });
@@ -611,8 +630,10 @@ function JobCard({ job, onOpenThread }: { job: ImportJob; onOpenThread: (id: str
           <span className="h-1.5 overflow-hidden rounded-full bg-ink/[0.08]">
             <span className={`block h-full rounded-full transition-[width] ${job.failed && !job.running ? "bg-warn" : "bg-brand"}`} style={{ width: `${pct}%` }} />
           </span>
+          {job.summary ? <p className="text-[13px] text-fg/90">{job.summary}</p> : null}
           <p className="text-[12.5px] text-muted">
             {job.created} imported
+            {job.updated ? ` · ${job.updated} brought up to date` : ""}
             {job.skipped ? ` · ${job.skipped} already here` : ""}
             {job.failed ? ` · ${job.failed} didn't come over (import again to retry them)` : ""}
             {job.running ? " · you can close this and keep chatting" : ""}
@@ -667,7 +688,7 @@ function PastImports({ imports, onChanged }: { imports: ClaudeImport[]; onChange
   );
 }
 
-function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at: "preview" }>; clients: ClientOpt[]; onBack: () => void; onStart: (items: ImportItem[], conversations: number) => void }) {
+function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at: "preview" }>; clients: ClientOpt[]; onBack: () => void; onStart: (items: ImportItem[], conversations: number, summary: string) => void }) {
   const { convs, projects, already, notice } = step;
   // Suggested clients, worked out once
   const suggested = useMemo(() => new Map(convs.map((c) => [c.uuid, suggestClient(c, clients)?.id ?? null])), [convs, clients]);
@@ -736,7 +757,7 @@ function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at:
         .filter((c) => picked.has(c.uuid))
         .flatMap((c) => partsOf({ uuid: c.uuid, kind: "chat", title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt, clientId: clientOf(c.uuid), notes: [], account: c.account, projectUuid: c.projectUuid }, c.messages)),
     ];
-    if (items.length) onStart(items, n + np);
+    if (items.length) onStart(items, n + np, importSummary(convs.filter((c) => picked.has(c.uuid)), np));
   };
 
   return (
@@ -744,8 +765,9 @@ function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at:
       <div className="sticky top-0 z-10 grid gap-3 border-b border-line/70 bg-surface px-5 py-3">
         <div className="flex flex-wrap items-baseline gap-x-2 text-[13px] text-muted">
           <span className="font-medium text-fg">
-            {convs.length} {convs.length === 1 ? "chat" : "chats"} to import
+            {importSummary(convs, projects.length)}
           </span>
+          {step.updates ? <span>· {step.updates} imported before, missing messages added</span> : null}
           {already ? <span>· {already} already imported, skipped</span> : null}
           {matched ? <span>· {matched} matched to a client</span> : null}
           {ai.left > 0 && <span className="animate-pulse">· matching the rest…</span>}
@@ -784,7 +806,8 @@ function Preview({ step, clients, onBack, onStart }: { step: Extract<Step, { at:
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-faint">Projects, with their instructions, knowledge and chats</p>
           {projects.map((p) => {
             const chats = step.projectChats[p.uuid]?.length ?? 0;
-            const bits = [p.instructions ? "instructions" : "", p.docs.length ? plural(p.docs.length, "doc", "docs") : "", chats ? plural(chats, "chat", "chats") : "", p.sharing.visibility === "everyone" ? "shared with everyone" : p.sharing.visibility === "people" ? "shared with people" : "private"].filter(Boolean);
+            const here = step.existingProjects.includes(p.uuid);
+            const bits = [p.stub ? "made from its chats" : "", here ? "already here: fills in what's missing" : "", p.instructions ? "instructions" : "", p.docs.length ? plural(p.docs.length, "doc", "docs") : "", chats ? plural(chats, "chat", "chats") : "", p.sharing.visibility === "everyone" ? "shared with everyone" : p.sharing.visibility === "people" ? "shared with people" : "private"].filter(Boolean);
             return (
               <label key={p.uuid} className="flex min-h-12 cursor-pointer items-center gap-3 rounded-[12px] px-2 hover:bg-ink/[0.03]">
                 <input type="checkbox" checked={picked.has(`project:${p.uuid}`)} onChange={() => toggle(`project:${p.uuid}`)} className="h-4 w-4 shrink-0 accent-[var(--brand)]" />

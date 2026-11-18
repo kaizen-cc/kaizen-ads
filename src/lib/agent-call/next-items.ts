@@ -64,7 +64,7 @@ export function ownerAskItem(g: OwnerAsk, now = new Date()): NextItem {
   };
 }
 
-export type AskRow = { id: string; kind: "reminder" | "task"; title: string; detail: string; due_on: string | null; created_at: string; asked_by: string; askerName: string | null; roleLabel: string | null; client: { name: string; slug: string } | null; checklist?: unknown; call_id?: string | null; with_transcript?: boolean | null };
+export type AskRow = { id: string; kind: "reminder" | "task"; title: string; detail: string; due_on: string | null; created_at: string; asked_by: string; askerName: string | null; roleLabel: string | null; client: { id?: string; name: string; slug: string } | null; checklist?: unknown; call_id?: string | null; with_transcript?: boolean | null };
 
 /**
  * A reminder or a task from a conversation with an agent: on the person it's for, credited to who asked and which

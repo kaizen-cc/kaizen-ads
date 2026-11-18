@@ -13,7 +13,7 @@ import { deleteImportedThread, deleteTemplate, listTemplates, listThreads, loadT
 import { ClaudeImportSheet, useClaudeImport, type ImportJob } from "./claude-import";
 import { CardView, ChatMarkdown, CopyButton, ToolChips } from "./cards";
 import { moveThreadToProject, threadProjects } from "./project-actions";
-import { MoveToProject, ProjectView, ProjectsHome, useProject } from "./projects";
+import { ClaudeProjectsPrompt, MoveToProject, ProjectView, ProjectsHome, useProject } from "./projects";
 
 type ProjectRef = { id: string; name: string };
 import { ConnectorsMenu, RUN_EVENT, type RunDetail } from "./connectors-ui";
@@ -475,6 +475,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
             ) : !thread && !messages.length && !live ? (
               <Empty first={me.first} line={lineOfTeam(me.role)} on={on} groups={groups} quickIds={quickIds} templates={templates} client={client} homeAgent={homeAgent.label} onUse={applyPrompt} onImport={() => pushParams({ import: "1" })} />
             ) : null}
+            {!thread && !messages.length && !live && !gate && !loading ? <ClaudeProjectsPrompt compact /> : null}
             {thread?.source ? <ImportedBanner thread={thread} earlier={extra.earlier} notes={extra.notes} mine={!readOnly} onDelete={() => void removeImported(thread.id)} /> : null}
             {loading && !messages.length ? <p className="py-10 text-center text-[13px] text-faint">Opening the thread…</p> : null}
             {messages.map((m) =>
@@ -551,7 +552,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
           clients={clients}
           email={me.email}
           job={claude.job}
-          onStart={(name, items, n, account) => void claude.start(name, items, n, account)}
+          onStart={(name, items, n, account, summary) => void claude.start(name, items, n, account, summary)}
           onClose={() => {
             closeParams("import", "importstep");
             claude.clear();

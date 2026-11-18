@@ -1,7 +1,7 @@
 import "server-only";
 import { ProviderError } from "../email-providers/core";
 import { providerGet } from "../email-providers/http";
-import { attributionQuery, BREVO_ACCOUNT, BREVO_ATTRIBUTION, BREVO_BASE, BREVO_EMAIL_CAMPAIGN, BREVO_EMAIL_CAMPAIGNS, BREVO_LISTS, BREVO_PAGE, BREVO_SEGMENTS, BREVO_SMS_CAMPAIGNS, brevoCount, brevoErrorText, brevoRange, parseAttribution, parseBrevoAccount, parseBrevoAudiences, parseBrevoCampaignContent, parseBrevoCampaigns, type Attribution, type BrevoAccount, type BrevoCampaign } from "./core";
+import { attributionQuery, BREVO_ACCOUNT, BREVO_ATTRIBUTION, BREVO_BASE, BREVO_EMAIL_CAMPAIGN, BREVO_EMAIL_CAMPAIGNS, BREVO_LISTS, BREVO_PAGE, BREVO_SEGMENTS, BREVO_SMS_CAMPAIGNS, BREVO_CONTACTS, brevoCount, parseBrevoClickTotals, parseBrevoLinkStats, brevoErrorText, brevoRange, parseAttribution, parseBrevoAccount, parseBrevoAudiences, parseBrevoCampaignContent, parseBrevoCampaigns, type Attribution, type BrevoAccount, type BrevoCampaign } from "./core";
 
 // Brevo's REST API v3, read only (GET calls). The key travels in the `api-key` header. Calls wait and retry on 429 and
 // 5xx; the key never reaches an error, a log or the database in plain text.
@@ -15,7 +15,7 @@ export async function getBrevoAccount(key: string): Promise<BrevoAccount> {
 }
 
 /** Campaigns of one channel sent since `since` (ISO), newest first; pages follow the answer's own count */
-export async function listBrevoCampaigns(key: string, channel: "email" | "sms", since: string, pages = 8): Promise<BrevoCampaign[]> {
+export async function listBrevoCampaigns(key: string, channel: "email" | "sms", since: string, pages = 8, clickTotals?: Map<string, number>): Promise<BrevoCampaign[]> {
   const out: BrevoCampaign[] = [];
   const range = brevoRange(since);
   const size = channel === "email" ? BREVO_PAGE : 100;
@@ -28,9 +28,30 @@ export async function listBrevoCampaigns(key: string, channel: "email" | "sms", 
     const json = await get(key, `${channel === "email" ? BREVO_EMAIL_CAMPAIGNS : BREVO_SMS_CAMPAIGNS}?${q}`);
     const rows = parseBrevoCampaigns(json, channel);
     out.push(...rows);
+    // Every click (not only each person once), from the same answer
+    if (clickTotals && channel === "email") for (const [id, x] of parseBrevoClickTotals(json)) clickTotals.set(id, x);
     if (!rows.length || (i + 1) * size >= brevoCount(json)) break;
   }
   return out;
+}
+
+/** Clicks per link for the email campaigns sent since `since` (statistics=linksStats), newest first, a page or a few */
+export async function brevoLinkStats(key: string, since: string, pages = 1): Promise<Map<string, Record<string, number>>> {
+  const out = new Map<string, Record<string, number>>();
+  const range = brevoRange(since);
+  for (let i = 0; i < pages; i++) {
+    const q = new URLSearchParams({ limit: String(BREVO_PAGE), offset: String(i * BREVO_PAGE), sort: "desc", startDate: range.startDate, endDate: range.endDate, statistics: "linksStats", excludeHtmlContent: "true", status: "sent" });
+    const json = await get(key, `${BREVO_EMAIL_CAMPAIGNS}?${q}`);
+    for (const [id, links] of parseBrevoLinkStats(json)) out.set(id, links);
+    if ((i + 1) * BREVO_PAGE >= brevoCount(json)) break;
+  }
+  return out;
+}
+
+/** How many contacts were created since this moment (ISO): one light call on the contacts endpoint (its own, higher limit) */
+export async function brevoContactsSince(key: string, iso: string): Promise<number> {
+  const q = new URLSearchParams({ limit: "1", offset: "0", createdSince: iso });
+  return brevoCount(await get(key, `${BREVO_CONTACTS}?${q}`));
 }
 
 /** Lists (with their subscriber counts) or segments, every page */

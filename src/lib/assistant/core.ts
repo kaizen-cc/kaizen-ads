@@ -191,6 +191,8 @@ export const SCREEN_PLACES: Record<string, string> = {
   "settings deleted": "/settings?tab=deleted",
   "my assistant": "/assistant",
   "assistant settings": "/assistant#make-it-yours",
+  // Ring me or chat only, and quiet hours, for urgent heads-ups
+  "urgent call settings": "/assistant#ring-title",
   "what my assistant knows": "/assistant?tab=memory",
 };
 

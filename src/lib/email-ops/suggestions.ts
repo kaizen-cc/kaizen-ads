@@ -1,4 +1,5 @@
 import "server-only";
+import { clientsWithLine } from "@/lib/service-gate";
 import { activeEmailClients } from "@/lib/email-providers/which";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
@@ -89,7 +90,10 @@ async function subjectOptions(admin: SupabaseClient, clientId: string, name: str
 /** The scheduled step: a few connected clients whose suggestions are a week old (or never written), oldest first */
 export async function refreshSuggestions(admin: SupabaseClient, budgetMs = 500_000) {
   const until = Date.now() + budgetMs;
-  const ids = (await activeEmailClients(admin, LIVE)).map((c) => c.client_id);
+  const conn = (await activeEmailClients(admin, LIVE)).map((c) => c.client_id);
+  // Only clients that buy email marketing (src/lib/service-gate.ts)
+  const buying = await clientsWithLine(admin, "email", conn);
+  const ids = conn.filter((id) => buying.has(id));
   if (!ids.length) return { due: 0, ran: 0 };
   const { data: state } = await admin.from("email_ops_state").select("client_id, suggestions_at").in("client_id", ids);
   const at = new Map((state ?? []).map((s) => [s.client_id as string, (s.suggestions_at as string | null) ?? ""]));

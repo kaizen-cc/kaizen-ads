@@ -1,5 +1,6 @@
 import { rollingRate } from "@/lib/channel-kpis/calc";
 import { SOCIAL_PLATFORMS, type PlatformNumbers, type SocialAccountScore, type SocialPlatform } from "@/lib/social-score";
+import { combineParts } from "@/lib/social/rate";
 
 // Organic social split by platform: the Social board's platform filter and overview, and the Social sheet's platform
 // pills (All, Instagram, Facebook, TikTok once it's read). The sync already keeps a row per platform per day and per post
@@ -33,6 +34,8 @@ export function totalNumbers(list: PlatformNumbers[]): PlatformNumbers | null {
   if (!list.length) return null;
   const reach = add(list.map((p) => p.reach));
   const interactions = add(list.map((p) => p.interactions));
+  // The rate down the chain, added up exactly (reach, else views, else followers per post)
+  const combined = combineParts(list.map((p) => p.rateParts ?? {}));
   return {
     platform: list[0].platform,
     followers: add(list.map((p) => p.followers)),
@@ -41,7 +44,9 @@ export function totalNumbers(list: PlatformNumbers[]): PlatformNumbers | null {
     reachBefore: add(list.map((p) => p.reachBefore)),
     views: add(list.map((p) => p.views)),
     interactions,
-    rate: reach != null && reach > 0 && interactions != null ? interactions / reach : null,
+    rate: combined.rate,
+    rateBasis: combined.basis,
+    rateParts: combined.parts,
     profileViews: add(list.map((p) => p.profileViews)),
     posts: list.reduce((n, p) => n + p.posts, 0),
     postsThisMonth: list.reduce((n, p) => n + p.postsThisMonth, 0),
