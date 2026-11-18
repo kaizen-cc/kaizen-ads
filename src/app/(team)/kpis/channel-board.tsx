@@ -177,17 +177,17 @@ export function ChannelBoard({ line, rows: given, month, switcher, initialWho, l
       ) : (
         <>
           {/* Where things stand */}
-          <div className={`grid grid-cols-2 gap-3 ${email ? "xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.6fr)]" : "xl:grid-cols-[repeat(5,minmax(0,1fr))_minmax(0,1.6fr)]"}`}>
-            {(email ? EMAIL_TILES.map((t) => t.status) : TILES).map((t) => {
+          <div className={`grid grid-cols-2 gap-3 ${email || line === "social" ? "xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.6fr)]" : "xl:grid-cols-[repeat(5,minmax(0,1fr))_minmax(0,1.6fr)]"}`}>
+            {(email || line === "social" ? EMAIL_TILES.map((t) => t.status) : TILES).map((t) => {
               const on = status === t;
               const n = count(t);
               const band = EMAIL_TILES.find((x) => x.status === t);
               return (
                 <button key={t} onClick={() => go({ status: on ? null : t })} className={`group relative grid min-w-0 content-start gap-1 overflow-hidden rounded-[14px] border bg-surface p-3.5 text-left transition-colors md:p-4 ${on ? "border-fg/40" : "border-line hover:border-faint/60"}`}>
                   <span aria-hidden className={`absolute inset-x-0 top-0 h-0.5 ${TONE[t].bar}`} />
-                  <span className="text-xs text-muted">{email && band ? BAND_TONE[band.band].label : STATUS_LABEL[t]}</span>
+                  <span className="text-xs text-muted">{(email || line === "social") && band ? BAND_TONE[band.band].label : STATUS_LABEL[t]}</span>
                   <span className={`tabular font-heading text-[30px] leading-none ${n ? TONE[t].text : "text-faint"}`}>{n}</span>
-                  <span className="text-[11px] text-faint">{email && band ? band.hint : TILE_HINT[t]}</span>
+                  <span className="text-[11px] text-faint">{(email || line === "social") && band ? band.hint : TILE_HINT[t]}</span>
                 </button>
               );
             })}
@@ -413,14 +413,14 @@ function ScoreHover({ r }: { r: ChannelRow }) {
 }
 
 /** The social score with its biggest drags on hover (per platform), like the email card's */
-function SocialScoreHover({ r }: { r: ChannelRow }) {
+function SocialScoreHover({ r, big = false }: { r: ChannelRow; big?: boolean }) {
   const s = r.socialScore;
   if (!s) return null;
   return (
-    <span className="group/score relative inline-flex shrink-0 items-baseline gap-1">
-      <span className={`tabular font-heading text-[18px] leading-none ${BAND_TONE[s.band].text}`}>{s.score}</span>
-      <span className="text-[10.5px] text-faint">score</span>
-      <span aria-hidden className="pointer-events-none invisible absolute right-0 top-full z-30 mt-2 w-[min(19rem,78vw)] translate-y-1 rounded-[14px] border border-line bg-surface-2 p-3 text-left opacity-0 shadow-xl transition-all duration-150 group-hover/score:visible group-hover/score:translate-y-0 group-hover/score:opacity-100">
+    <span className="group/score relative inline-flex shrink-0 items-baseline gap-1.5">
+      <span className={`tabular leading-none ${big ? "font-display text-[30px] tracking-tight" : "font-heading text-[18px]"} ${BAND_TONE[s.band].text}`}>{s.score}</span>
+      <span className={`${big ? "text-xs" : "text-[10.5px]"} text-faint`}>{big ? "social score" : "score"}</span>
+      <span aria-hidden className={`pointer-events-none invisible absolute ${big ? "left-0" : "right-0"} top-full z-30 mt-2 w-[min(19rem,78vw)] translate-y-1 rounded-[14px] border border-line bg-surface-2 p-3 text-left opacity-0 shadow-xl transition-all duration-150 group-hover/score:visible group-hover/score:translate-y-0 group-hover/score:opacity-100`}>
         {s.weighingDown.length ? <SocialWeighingDown drags={s.weighingDown} limit={4} /> : <span className="block text-[13px] font-medium text-ok">This account is crushing it!</span>}
       </span>
     </span>
@@ -501,15 +501,28 @@ function Card({ r, reading, active, onOpen }: { r: ChannelRow; reading: ReadStat
               </>
             ) : (
               <>
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="flex min-w-0 items-baseline gap-2">
-                    <span className={`tabular font-display text-[30px] leading-none tracking-tight ${tone.text}`}>{mainText(r)}</span>
-                    {r.target != null ? <span className="tabular truncate text-xs text-faint">/ {targetText(r)}</span> : <span className="truncate text-xs text-faint">{mainCaption(r)}</span>}
-                  </span>
-                  {r.socialScore && <SocialScoreHover r={r} />}
-                </div>
-                <Gauge r={r} />
-                {r.target == null ? <span className="text-[11.5px] text-muted">No target yet · open to set it</span> : pace && <span className="truncate text-[11.5px] text-muted">{pace}</span>}
+                {r.line === "social" ? (
+                  // Social: the score is the headline and the card's colour; engagement against the 5% target is one part of it
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      {r.socialScore ? <SocialScoreHover r={r} big /> : <span className="text-xs text-faint">No score yet</span>}
+                    </span>
+                    <span className="tabular truncate text-xs text-muted">
+                      <span className={r.value != null && r.target != null && r.value >= r.target ? "text-ok" : "text-fg"}>{mainText(r)}</span> engagement <span className="text-faint">/ {targetText(r)}</span>
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="flex min-w-0 items-baseline gap-2">
+                        <span className={`tabular font-display text-[30px] leading-none tracking-tight ${tone.text}`}>{mainText(r)}</span>
+                        {r.target != null ? <span className="tabular truncate text-xs text-faint">/ {targetText(r)}</span> : <span className="truncate text-xs text-faint">{mainCaption(r)}</span>}
+                      </span>
+                    </div>
+                    <Gauge r={r} />
+                  </>
+                )}
+                {r.line !== "social" && (r.target == null ? <span className="text-[11.5px] text-muted">No target yet · open to set it</span> : pace && <span className="truncate text-[11.5px] text-muted">{pace}</span>)}
                 <ChannelSpark values={r.series} span={r.span} goal={goal} tone={tone.text} label={`${r.name} trend`} />
               </>
             )}

@@ -5,6 +5,7 @@ import type { EmailBand } from "@/lib/email-score";
 import type { EmailScoreResult } from "@/lib/email-score-calc";
 import { loadEmailScores } from "@/lib/email-score-load";
 import { loadSocialScores, type SocialAccountScore } from "@/lib/social-score-load";
+import { DEFAULT_ENGAGEMENT_BAR } from "@/lib/social-score";
 import { conversionMetricsOf, monthRevenue, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
 import { socialClientState, plainSocialError } from "@/lib/social/core";
 import { partialSyncWarning } from "@/lib/klaviyo/core";
@@ -99,7 +100,8 @@ export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me, o
       name: c.name as string,
       slug: c.slug as string,
       kaizenId: (c.kaizen_id as number | null) ?? null,
-      target: t?.target == null ? null : Number(t.target),
+      // Social: Kaizen's 5% engagement target unless the client has its own
+      target: t?.target == null ? (line === "social" ? DEFAULT_ENGAGEMENT_BAR : null) : Number(t.target),
       targetManual: t?.target == null ? null : Number(t.target),
       targetNote: (t?.notes as string | null) ?? null,
       targetBy: ((t?.profiles as unknown as { full_name: string } | null)?.full_name ?? null) as string | null,
@@ -117,7 +119,7 @@ export async function loadChannelBoard(db: SupabaseClient, line: Line, me: Me, o
   };
 
   const rows = line === "email" ? await emailRows(db, clients, ids, month, base) : await socialRows(db, clients, ids, month, base);
-  return { line, month, rows: line === "email" ? worstScoreFirst(rows) : orderForBoard(rows), targetsReady: !targetsRes.error };
+  return { line, month, rows: line === "email" || line === "social" ? worstScoreFirst(rows) : orderForBoard(rows), targetsReady: !targetsRes.error };
 }
 
 type Base = Pick<ChannelRow, "line" | "clientId" | "name" | "slug" | "kaizenId" | "target" | "targetManual" | "targetNote" | "targetBy" | "targetAt" | "canEdit" | "canConnect" | "mine" | "team">;
@@ -310,6 +312,8 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
     const prevRate = engagement(total(prevRows, "interactions"), total(prevRows, "reach"));
     const readable = st.state !== "missing" && st.state !== "failing" && st.state !== "pending";
     const j = judgeSocial({ readable, target: b.target, rate });
+    // The account's colour is its social score (engagement is one part of it), like email
+    const sc = readable ? (scores.get(id) ?? null) : null;
     // Followers now: each platform's latest count, added up
     const latest = (p: string) => [...mine].reverse().find((d) => d.platform === p && d.followers != null)?.followers;
     const f = (["instagram", "facebook"] as const).map(latest).filter((x) => x != null).map(Number);
@@ -340,7 +344,7 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
       lastSyncedAt: (link?.last_synced_at as string | null) ?? null,
       account: link ? ([link.page_name, link.ig_username ? `@${link.ig_username}` : null].filter(Boolean).join(" · ") || null) : null,
       currency: null,
-      status: j.status,
+      status: sc ? BAND_STATUS[sc.band] : j.status,
       ratio: j.ratio,
       value: rate,
       projected: null,
@@ -352,7 +356,7 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
       email: null,
       social,
       score: null,
-      socialScore: readable ? (scores.get(id) ?? null) : null,
+      socialScore: sc,
     };
   });
 }
@@ -383,7 +387,8 @@ function groupBy<T>(xs: T[], key: (x: T) => string): Map<string, T[]> {
 
 /** Email boards read worst score first; accounts with no score yet (not connected) after the scored ones */
 function worstScoreFirst(rows: ChannelRow[]): ChannelRow[] {
-  return [...rows].sort((a, b) => (a.score?.score ?? 1000) - (b.score?.score ?? 1000) || a.name.localeCompare(b.name));
+  const of = (r: ChannelRow) => r.score?.score ?? r.socialScore?.score ?? 1000;
+  return [...rows].sort((a, b) => of(a) - of(b) || a.name.localeCompare(b.name));
 }
 
 /** A row's retention risk, with the owed replies on its client folded in */

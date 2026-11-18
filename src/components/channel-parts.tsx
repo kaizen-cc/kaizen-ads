@@ -23,7 +23,7 @@ export const TONE: Record<ChannelStatus, { text: string; pill: string; bar: stri
 export const EMAIL_STATUS_LABEL: Partial<Record<ChannelStatus, string>> = { good: BAND_TONE.good.word, close: BAND_TONE.watch.word, off: BAND_TONE.bad.word };
 
 export function ChannelStatusPill({ status, line }: { status: ChannelStatus; line?: "email" | "social" }) {
-  const label = (line === "email" && EMAIL_STATUS_LABEL[status]) || STATUS_LABEL[status];
+  const label = ((line === "email" || line === "social") && EMAIL_STATUS_LABEL[status]) || STATUS_LABEL[status];
   return <span className={`inline-flex h-6 items-center whitespace-nowrap rounded-full px-2.5 text-[11px] font-medium ${TONE[status].pill}`}>{label}</span>;
 }
 

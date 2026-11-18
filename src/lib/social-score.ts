@@ -20,8 +20,8 @@ export const PLATFORM_LABEL: Record<SocialPlatform, string> = { instagram: "Inst
 export type SocialCheckKey = "engagement" | "growth" | "reach" | "cadence" | "quality" | "videoShare" | "videoLift" | "profile";
 export type SocialUnit = "pct" | "change" | "ratio";
 
-/** Engagement's bar when the client has no target set yet (the board asks for one) */
-export const DEFAULT_ENGAGEMENT_BAR = 0.035;
+/** Kaizen's engagement target for every social account (at least 5% of reach engages); a client's own target overrides it */
+export const DEFAULT_ENGAGEMENT_BAR = 0.05;
 /** Posts a month when the client's package doesn't say (three a week), per platform */
 export const DEFAULT_POSTS_PER_MONTH = 12;
 

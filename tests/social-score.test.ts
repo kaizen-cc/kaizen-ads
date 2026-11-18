@@ -61,8 +61,8 @@ describe("the social score's checks", () => {
   it("drops a check with nothing to measure and scales the rest to 100", () => {
     const s = socialScore({ ...full, quality: null, videoLift: null, engagement: 0.025 });
     expect(s.unmeasured).toEqual(["quality", "videoLift"]);
-    // 30 weight at 0.025/0.035 of its points, out of 86.25 measured
-    expect(s.score).toBe(Math.round(((86.25 - 30 + 30 * (0.025 / 0.035)) / 86.25) * 100));
+    // 30 weight at 0.025/0.05 of its points, out of 86.25 measured
+    expect(s.score).toBe(Math.round(((86.25 - 30 + 30 * (0.025 / 0.05)) / 86.25) * 100));
     expect(socialScore(none).score).toBe(0);
   });
 
