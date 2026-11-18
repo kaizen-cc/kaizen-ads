@@ -259,3 +259,26 @@ export function restOfAsk(text: string, matched: string) {
   const filler = /\b(hey|hi|ok|okay|thanks|thank|can|could|would|you|please|pls|change|update|set|move|switch|use|make|redo|regenerate|refresh|rerun|re-run|pull|show|run|it|this|that|the|a|report|reports|dates?|range|period|timeframe|time|frame|to|for|from|of|instead|me|all|every|slides?|pages?|numbers|data|with|weekly|week|and|cover|covering|should|be|is|i|want|need|fresh|new|on|in|so|just|only|over|whole|entire|now|again|it's|its|also|too|then)\b/gi;
   return text.replace(matched, " ").replace(filler, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
+
+const monthName = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+const lastDayOf = (day: string) => {
+  const d = new Date(`${monthStart(day)}T12:00:00Z`);
+  d.setUTCMonth(d.getUTCMonth() + 1);
+  d.setUTCDate(0);
+  return d.toISOString().slice(0, 10);
+};
+
+/**
+ * The month so far up to a day (the report's last day), against the same days of the month before (capped at that month's
+ * length). Every weekly report, ads or channel, reads its month to date from here.
+ */
+export function monthSoFar(end: string): { mtd: Range & { label: string }; mtdCompare: Range & { label: string } } {
+  const mStart = monthStart(end);
+  const n = daysIn({ start: mStart, end });
+  const lmStart = monthStart(shiftDay(mStart, -1));
+  const lmEnd = shiftDay(lmStart, Math.min(n, daysIn({ start: lmStart, end: lastDayOf(lmStart) })) - 1);
+  return {
+    mtd: { start: mStart, end, label: `${monthName(mStart)} 1 – ${fmt(end)}` },
+    mtdCompare: { start: lmStart, end: lmEnd, label: `${monthName(lmStart)} 1 – ${fmt(lmEnd)}` },
+  };
+}

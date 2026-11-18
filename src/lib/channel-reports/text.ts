@@ -3,6 +3,7 @@ import { emailSupport, int, money, pct, signed, socialName, socialSupport, targe
 import { grade, RATE_BARS, type MessageRow, type Pair } from "./email-detail";
 import { periodWords, socialHappenedBullets, whatHappenedBullets } from "./email-message";
 import { locationText } from "@/lib/klaviyo/locations";
+import { channelMtdText } from "./mtd";
 
 // A channel report's numbers as the text the writer and the QA read: every figure the report may quote, with its dates and
 // what it is compared with, in one place so what the AI says and what the PDF draws can never differ.
@@ -29,6 +30,7 @@ export function emailText(m: EmailMetrics): string {
     ...(now.share != null ? [`- Email's share of the store's revenue: ${pct(now.share, 0)}`] : []),
     `- List: ${m.list.net != null ? `${signed(m.list.net)} net new subscribers (${int(m.list.subscribed)} joined, ${int(m.list.unsubscribed)} left)` : "no list movement read"}${m.list.profiles != null ? `; ${int(m.list.profiles)} profiles in the main list` : ""}`,
   ];
+  out.push(...channelMtdText(m));
   if (m.score) {
     const sc = m.score;
     out.push(`Email health score (Kaizen's own 0 to 100 score of the account, read over the 30 days to ${sc.window.to}, not the report's own dates; green from 80, yellow from 60, red under 60): ${sc.score} of 100, ${sc.band === "good" ? "green" : sc.band === "watch" ? "yellow" : "red"}. Seven checks against healthy bars:`);
@@ -122,6 +124,7 @@ export function socialText(m: SocialMetrics): string {
     `The message's What happened bullets, exactly (period ${periodWords(m.main)}):`,
     ...socialHappenedBullets(m).map((x) => `- ${x}`),
   ];
+  out.push(...channelMtdText(m));
   if (m.target) out.push(`- Target (${m.target.label}): ${targetSub(m.target) ?? "set, no progress yet"}`);
   for (const p of m.platforms) out.push(`${socialName(p.platform)}${p.name ? ` (${p.name})` : ""}: ${int(p.now.followers)} followers (${signed(p.now.followerChange)}), reach ${int(p.now.reach)} (before ${int(p.before.reach)}), views ${int(p.now.views)}, interactions ${int(p.now.interactions)}, ${p.now.rate != null ? `engagement ${pct(p.now.rate)}` : "no engagement rate"}, ${int(p.now.posts)} posts`);
   if (m.formats.length) out.push(`Posts by format: ${m.formats.map((f) => `${f.count} ${f.format}`).join(", ")}`);

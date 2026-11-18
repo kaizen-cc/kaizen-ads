@@ -9,9 +9,10 @@ import { accountRows, goalsFor } from "@/lib/kpi/sync";
 import { actionLabel } from "@/lib/kpi/explore";
 import { metricNumber, type MetricKey } from "./format";
 import type { Diagnosis, Opportunity } from "./diagnose";
-import { lastFullWeek, previousPeriod } from "./period";
+import { lastFullWeek, monthSoFar, previousPeriod } from "./period";
 import { asKpiPlatform, type KpiPlatform } from "@/lib/kpi/platform";
 import { weekLabel, type GoogleUnit, type WeekPoint } from "./weekly-core";
+import { adsMtdText } from "./mtd-core";
 import { manualText, type ManualApplied } from "./manual";
 import { covers, fileRows, mergeRows, pickUpload, type FileRow, type UploadedFile } from "./upload-csv";
 import type { RefreshNote } from "./refresh-core";
@@ -157,18 +158,6 @@ export function periodsFor(kind: "weekly" | "monthly" | "custom", today: string,
   }
   // A weekly: the last full week, Monday to Sunday (on a Monday, the seven days that just ended)
   return periodsFor("weekly", today, lastFullWeek(today));
-}
-
-/** The month so far up to a day, against the same days of the month before */
-function monthSoFar(end: string) {
-  const mStart = monthStart(end);
-  const n = span(mStart, end);
-  const lmStart = monthStart(prevMonth(mStart));
-  const lmEnd = shift(lmStart, Math.min(n, span(lmStart, lastDay(lmStart))) - 1);
-  return {
-    mtd: { start: mStart, end, label: `${monthName(mStart)} 1 – ${fmt(end)}` },
-    mtdCompare: { start: lmStart, end: lmEnd, label: `${monthName(lmStart)} 1 – ${fmt(lmEnd)}` },
-  };
 }
 
 type Row = Awaited<ReturnType<typeof accountRows>>[number] & { impressions?: number | string | null };
@@ -585,6 +574,7 @@ export function metricsText(m: ReportMetrics) {
     line(m.compare),
     ...(m.mtd ? [line(m.mtd)] : []),
     ...(m.mtdCompare ? [line(m.mtdCompare)] : []),
+    ...adsMtdText(m),
     "Campaigns (main period, by spend):",
     ...m.campaigns.slice(0, 15).map((c) => `- ${c.name}: ${money(c.spend)}, ${c.results} ${c.result ? `${c.result.toLowerCase()} (what it's optimized for)` : "results"}, ${money(c.costPerResult)} each${m.roasKpi && c.roas ? `, ROAS ${c.roas}` : ""}, CTR ${c.ctr ?? "—"}%`),
     ...(m.topAds.length ? ["Top ads (main period):", ...m.topAds.map((a, i) => `${i + 1}. ${a.name} (${a.campaign ?? "?"}): ${a.results} results at ${money(a.costPerResult)}, ${money(a.spend)} spent, ${a.clicks} link clicks, CTR ${a.ctr ?? "—"}%${a.link ? `, preview ${a.link}` : ""}`)] : []),

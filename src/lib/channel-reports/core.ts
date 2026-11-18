@@ -1,6 +1,7 @@
 import type { Move } from "@/lib/reports/weekly-core";
 import type { EmailScoreResult } from "@/lib/email-score-calc";
-import { lastFullWeek, previousPeriod, rangeLabel, shiftDay, type Range } from "@/lib/reports/period";
+import { lastFullWeek, monthSoFar, previousPeriod, rangeLabel, shiftDay, type Range } from "@/lib/reports/period";
+import { monthProgress, paceStatus, projectMonthEnd } from "@/lib/reports/mtd-core";
 import { BENCHMARKS, deliverabilityOutliers, pulseWindow, type CampaignLite, type DailyRow as EmailDay, type FlowLite, type KeyFlow, type PulseWindow } from "@/lib/klaviyo/insights";
 import { postRate, withRates, windowOf, type DailyRow as SocialDay, type PostView, type Window as SocialWindow } from "@/lib/social/insights";
 import type { Platform as SocialPlatformKey, PostFormat, SocialPost } from "@/lib/social/core";
@@ -141,6 +142,20 @@ export type TrendPoint = { label: string; start: string; end: string; value: num
 export type EmailScoreSnapshot = Pick<EmailScoreResult, "score" | "band" | "checks" | "weighingDown" | "unmeasured" | "window">;
 export const scoreSnapshot = (r: EmailScoreResult): EmailScoreSnapshot => ({ score: r.score, band: r.band, checks: r.checks, weighingDown: r.weighingDown, unmeasured: r.unmeasured, window: r.window });
 
+/**
+ * A weekly's month to date: the month's first day through the report's last day against the same days of the month before,
+ * and how far through the month that is. `target` is the line's monthly target (the whole month's, not a weekly share).
+ */
+export type MtdFrame = { window: Window; compare: Window; elapsed: number; daysInMonth: number; pctElapsed: number; early: boolean; target: TargetLine | null };
+export type EmailMtd = MtdFrame & { now: PulseWindow; before: PulseWindow; /** Attributed revenue by month end at this daily rate */ projectedRevenue: number };
+export type SocialMtd = MtdFrame & { now: SocialNumbers; before: SocialNumbers; /** Reach by month end at this daily rate (null when Meta gave none) */ projectedReach: number | null };
+
+const mtdFrame = (end: string): MtdFrame => {
+  const { mtd, mtdCompare } = monthSoFar(end);
+  const { elapsed, daysInMonth, pctElapsed, early } = monthProgress(end);
+  return { window: mtd, compare: mtdCompare, elapsed, daysInMonth, pctElapsed, early, target: null };
+};
+
 export type EmailMetrics = {
   platform: "klaviyo";
   /** The email provider the numbers come from, by name (older reports have none: Klaviyo) */
@@ -170,6 +185,8 @@ export type EmailMetrics = {
   refreshNote?: RefreshNote;
   /** The account score (older stored reports have none) */
   score?: EmailScoreSnapshot | null;
+  /** A weekly's month to date (older stored reports and monthlies have none) */
+  mtd?: EmailMtd | null;
   /** Orders, the daily split, each campaign and flow for the period, deliverability and subscribers (older stored reports have none) */
   detail?: EmailDetail | null;
   /** Dated campaigns after the period: scheduled in Klaviyo or planned by the team */
@@ -303,10 +320,18 @@ export function emailMetrics(i: EmailInput): EmailMetrics {
     target: i.target ?? null,
     gaps,
     through,
+    ...(i.kind === "weekly" ? { mtd: emailMtdOf(i.main.end, win) } : {}),
     detail: emailDetail({ main: i.main, compare: i.compare, days: i.days, campaigns: i.campaigns, flowDays: i.flowDays ?? null, flows: i.flows, sizes: i.sizes ?? [] }),
     upcoming: i.upcoming ?? [],
   };
   return m;
+}
+
+/** The month to date of an email report ending on `end`: its numbers (worked out by `win`, the same as the main period's), the same days last month, and where revenue lands */
+function emailMtdOf(end: string, win: (w: Window) => PulseWindow): EmailMtd {
+  const f = mtdFrame(end);
+  const now = win(f.window);
+  return { ...f, now, before: win(f.compare), projectedRevenue: round(projectMonthEnd(now.revenue, end)) };
 }
 
 /** Deliverability in plain words: campaigns over the healthy lines on bounces, spam or unsubscribes, and the period's rates */
@@ -384,6 +409,8 @@ export type SocialMetrics = {
   through: string | null;
   /** Whether Meta gave reach and interactions at all (when it didn't, the engagement rate is left out, never shown as 0) */
   insightsRead: boolean;
+  /** A weekly's month to date (older stored reports and monthlies have none) */
+  mtd?: SocialMtd | null;
   refreshNote?: RefreshNote;
   stated?: StatedMark;
 };
@@ -496,7 +523,16 @@ export function socialMetrics(i: SocialInput): SocialMetrics {
     gaps,
     through,
     insightsRead: now.reach != null,
+    ...(i.kind === "weekly" ? { mtd: socialMtdOf(i.main.end, i.days, rated, platforms, latest) } : {}),
   };
+}
+
+/** The month to date of a social report ending on `end`: each linked platform worked out over the month so far and the same days last month, added up */
+function socialMtdOf(end: string, days: SocialDay[], rated: PostView[], platforms: readonly SocialPlatformKey[], latest: Partial<Record<SocialPlatformKey, number | null>>): SocialMtd {
+  const f = mtdFrame(end);
+  const now = combineNumbers(platforms.map((p) => numbersFor(days, rated, p, f.window, latest[p] ?? null)));
+  const before = combineNumbers(platforms.map((p) => numbersFor(days, rated, p, f.compare, followersOn(days, p, f.compare.end))));
+  return { ...f, now, before, projectedReach: now.reach != null ? round(projectMonthEnd(now.reach, end)) : null };
 }
 
 // ─── Targets ───────────────────────────────────────────────────────────────
@@ -682,6 +718,11 @@ export function dataFlags(m: EmailMetrics | SocialMetrics): DataFlag[] {
     for (const f of m.flags.filter((x) => x.tone === "bad")) add("alert", f.text, "Say what is being done about deliverability.");
     const missing = m.keyFlows.filter((k) => k.state === "missing").map((k) => k.label);
     if (missing.length) add("check", `Key flows missing: ${missing.join(", ")}.`, "Mention them in what's next only if the team has planned them.");
+    if (m.mtd && m.revenueMeasured !== false) {
+      const t = m.mtd.target;
+      if (!t) add("check", "No monthly revenue target is set, so the Month to date section shows revenue and a projection but can't judge pacing.", "Set the email revenue target on the KPI board so every weekly report shows pacing against it.");
+      else if (paceStatus(m.mtd.projectedRevenue, t.target, m.mtd.window.end) === "under") add("check", `Month to date revenue (${money(m.mtd.now.revenue, m.currency)}) is pacing behind the month's ${money(t.target, m.currency)} target: on track for ${money(m.mtd.projectedRevenue, m.currency)}.`, "Say where the month stands against the target and the plan to close the gap.");
+    }
     if (m.target && m.target.progress != null && m.target.progress < 0.7) add("check", `Revenue is at ${Math.round(m.target.progress * 100)}% of its target.`, "Say where it stands against the target and the plan to close it.");
     if (m.locations === null && now.campaignsSent > 0) add("alert", "This client is broken down by location, but no orders with a location were read for the campaigns in the period.", "Check the location property on the client's Klaviyo card and Sync health before sending; the report's location section is left out.");
     for (const t of locationChecks(m.locations ?? null, m.locationAttributed ?? {}, m.currency)) add("check", t, "Check the location property picked on the Klaviyo card, or say in the report that some orders carry no location.");

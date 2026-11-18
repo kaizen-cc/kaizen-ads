@@ -6,6 +6,7 @@ import type { Sections } from "@/lib/reports/write";
 import type { Move } from "@/lib/reports/weekly-core";
 import { BENCHMARKS } from "@/lib/klaviyo/insights";
 import { cadenceWord, channelName, fitFont, int, metricsSupport, money, moveOf, pct, postRateText, priorWordOf, shortMoney, signed, socialName, takeawaysFor, type EmailMetrics, type SocialMetrics, type TrendPoint } from "./core";
+import { channelMtdView, MTD_STATUS_WORD, type ChannelMtdView } from "./mtd";
 import { columnKeys, tileViews, type ChannelLayout, type TileView } from "./layout";
 import { wholeMoney } from "./email-message";
 import { grade, RATE_BARS, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
@@ -278,6 +279,66 @@ function Tiles({ m, tiles, hot, height }: { m: EmailMetrics | SocialMetrics; til
         </Fragment>
       ))}
     </StatRow>
+  );
+}
+
+/**
+ * Month to date, right under the week's headline numbers: the month so far against the same days last month and, when
+ * the line has a monthly target, how it paces against it (a bar of how much is done against how much of the month has
+ * gone, and where the month lands at this rate). Weekly reports only.
+ */
+function ChannelMtd({ m, look }: { m: EmailMetrics | SocialMetrics; look: Look }) {
+  const v: ChannelMtdView | null = channelMtdView(m);
+  if (!v) return null;
+  const tone = v.status === "on" || v.status === "over" ? GOOD : v.status === "under" ? AMBER : { fg: "#5f6f80", bg: "#eef2f5" };
+  const sub = `${v.range} · vs the same days last month`;
+  return (
+    <View style={s.section} wrap={false}>
+      <Head title="Month to date" sub={sub} />
+      <View style={s.panel}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: 10 }}>
+          <View>
+            <Text style={label}>{v.headline.label}</Text>
+            <Text style={{ fontSize: 21, fontFamily: "Helvetica-Bold", letterSpacing: -0.5, marginTop: 5 }}>{v.headline.value}</Text>
+          </View>
+          <View style={{ alignItems: "flex-end" }}>
+            <View style={{ height: 13, borderRadius: 4, paddingHorizontal: 6, backgroundColor: tone.bg, justifyContent: "center" }}>
+              <Text style={{ fontSize: 7, fontFamily: "Helvetica-Bold", color: tone.fg }}>{MTD_STATUS_WORD[v.status]}</Text>
+            </View>
+            <Text style={[s.baseline, { marginTop: 4 }]}>{v.pace ? `of ${v.pace.target} monthly target` : v.projected ? `${v.projected.label} ${v.projected.value}` : `Day ${v.elapsed} of ${v.daysInMonth}`}</Text>
+          </View>
+        </View>
+        {v.pace ? (
+          <View style={{ marginTop: 11 }}>
+            <View style={[s.barTrack, { backgroundColor: "#eaeff3", height: 8 }]}>
+              <View style={{ width: `${v.pace.pctDone}%`, height: 8, backgroundColor: look.primary, borderRadius: 4 }} />
+              <View style={{ position: "absolute", top: 0, bottom: 0, left: `${Math.min(100, v.pace.pctElapsed)}%`, width: 1.5, backgroundColor: INK }} />
+            </View>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
+              <Text style={s.baseline}>{Math.round(v.pace.pctDone)}% of target reached · on track for {v.pace.projected}</Text>
+              <Text style={s.baseline}>{Math.round(v.pace.pctElapsed)}% of the month gone (day {v.elapsed} of {v.daysInMonth})</Text>
+            </View>
+          </View>
+        ) : null}
+        <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 11, paddingTop: 9, borderTopWidth: 1, borderTopColor: LINE, rowGap: 9 }}>
+          {v.rows.map((r) => (
+            <View key={r.label} style={{ width: `${100 / Math.min(4, v.rows.length)}%`, paddingRight: 8 }}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Text style={{ fontSize: 9.5, fontFamily: "Helvetica-Bold" }}>{r.value}</Text>
+                {r.move && (r.move.tone !== "flat" || r.move.pct !== "0.0%") ? (
+                  <View style={{ flexDirection: "row", alignItems: "center", marginLeft: 4 }}>
+                    <Arrow up={r.move.up} color={toneOf(r.move).fg} />
+                    <Text style={{ fontSize: 5.8, fontFamily: "Helvetica-Bold", color: toneOf(r.move).fg, marginLeft: 2 }}>{r.move.pct}</Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={{ fontSize: 5.4, color: MUTED, marginTop: 1.5, textTransform: "uppercase", letterSpacing: 0.2 }}>{r.label}</Text>
+            </View>
+          ))}
+        </View>
+        <Text style={s.note}>{v.note}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -1399,6 +1460,7 @@ function EmailBody({ m, images, look, layout, hot }: { m: EmailMetrics; images: 
     return (
       <>
         <Glance m={m} layout={layout} hot={hot} />
+        <ChannelMtd m={m} look={look} />
         <LegacyCampaigns m={m} images={images} />
         <LegacyFlows m={m} />
         <LegacyListHealth m={m} />
@@ -1409,6 +1471,7 @@ function EmailBody({ m, images, look, layout, hot }: { m: EmailMetrics; images: 
   return (
     <>
       <EmailGlance m={m} layout={layout} hot={hot} />
+      <ChannelMtd m={m} look={look} />
       <ConversionSummary m={m} look={look} />
       <CampaignPerformance m={m} keys={keys} hot={hot} images={images} look={look} />
       <FlowPerformance m={m} keys={keys} hot={hot} />
@@ -1436,6 +1499,7 @@ export function ChannelDocument({ input: asked, images }: { input: ChannelPdfInp
         ) : (
           <>
             <Glance m={m} layout={input.layout} hot={hot} />
+            <ChannelMtd m={m} look={look} />
             <Trend m={m} look={look} />
             <Platforms m={m} keys={columnKeys("social", input.layout)} hot={hot} />
             <TopPosts m={m} images={images} look={look} />

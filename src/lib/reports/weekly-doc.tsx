@@ -8,6 +8,7 @@ import { manualCaption, platformConversion } from "./manual";
 import { hue, paletteFor, parseHex, saturation } from "./brand";
 import { campaignTable, type CampaignColumnKey } from "./campaign-table";
 import { barMetric, barsRead, move, sayable, scoreHead, chartWeeks, costLabel, niceMax, scoreColumns, scoreValue, scorecardRows, shortLabel, supportKeys, takeawaysFor, weeklyTile, weeklyTileKeys, weeklyValue, type Move, type ScoreRow, type Takeaway } from "./weekly-core";
+import { adsMtd, TARGET_WORD, type PaceStatus } from "./mtd-core";
 import { goalCostLabel, goalLines, type GoalLine } from "./goal-split";
 
 // Every client report (weekly, monthly, built), after the hand-made report the team loved: a co-branded header (the
@@ -410,6 +411,79 @@ function Glance({ input, part, cad }: { input: WeeklyInput; part: WeeklyPart; ca
             </View>
           );
         })}
+      </View>
+    </View>
+  );
+}
+
+const AMBER = { fg: "#946200", bg: "#fff1d1" };
+const paceTone = (st: PaceStatus) => (st === "on" ? GOOD : st === "over" ? BAD : st === "under" ? AMBER : FLAT);
+
+/**
+ * Month to date, right under the week's headline numbers: the month's spend against its budget as a pacing bar (how much
+ * of the budget is used against how much of the month has gone), where the month lands at this pace, and the month's
+ * results and their cost against the KPI and against the same days last month. Weekly reports only; the budget is set
+ * by month, so this is where it is read. No budget: spend and the projection, and a plain "No monthly budget set".
+ */
+function MonthToDate({ part, cad, look }: { part: WeeklyPart; cad: Cadence; look: Look }) {
+  if (cad.word === "Monthly") return null;
+  const x = adsMtd(part.metrics);
+  if (!x) return null;
+  const { pace: p, period, compare } = x;
+  const tone = paceTone(p.status);
+  const used = p.pctUsed == null ? null : Math.min(100, p.pctUsed);
+  const roasLead = x.basis === "roas";
+  const lead = roasLead ? x.roas : period.costPerResult;
+  const leadBefore = roasLead ? x.compareRoas : (compare?.costPerResult ?? null);
+  const leadMove = move(roasLead ? "roas" : "cost_per_result", lead, leadBefore);
+  const resMove = compare ? move("results", period.results, compare.results) : null;
+  const spendMove = compare ? move("spend", period.spend, compare.spend) : null;
+  const month = part.metrics.mtd!.label.split(" ")[0];
+  return (
+    <View style={s.section} wrap={false}>
+      <View style={s.head}>
+        <Text style={s.h2}>Month to date</Text>
+        <Text style={s.sub}>
+          {part.metrics.mtd!.label}
+          {x.compareLabel && compare ? ` · vs the same days last month` : ""}
+        </Text>
+      </View>
+      <View style={s.panel}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: 10 }}>
+          <View>
+            <Text style={s.tileLabel}>{month} ad spend</Text>
+            <Text style={[s.tileValue, { fontSize: 21, marginBottom: 0 }]}>{money(p.spend)}</Text>
+          </View>
+          <View style={{ alignItems: "flex-end" }}>
+            <View style={[s.chip, { backgroundColor: tone.bg }]}>
+              <Text style={[s.chipText, { color: tone.fg }]}>{p.label}</Text>
+            </View>
+            <Text style={[s.baseline, { marginTop: 4 }]}>{p.budget ? `of ${money(p.budget)} monthly budget` : "Set a monthly budget to track pacing"}</Text>
+          </View>
+        </View>
+        {used != null ? (
+          <View style={{ marginTop: 11 }}>
+            <View style={[s.barTrack, { backgroundColor: "#eaeff3", height: 8 }]}>
+              <View style={{ width: `${used}%`, height: 8, backgroundColor: p.status === "over" ? BAD.fg : look.primary, borderRadius: 4 }} />
+              <View style={{ position: "absolute", top: 0, bottom: 0, left: `${Math.min(100, p.pctElapsed)}%`, width: 1.5, backgroundColor: INK }} />
+            </View>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 4 }}>
+              <Text style={s.baseline}>{Math.round(p.pctUsed ?? 0)}% of budget used</Text>
+              <Text style={s.baseline}>{Math.round(p.pctElapsed)}% of the month gone (day {p.elapsed} of {p.daysInMonth})</Text>
+            </View>
+          </View>
+        ) : null}
+        <View style={{ flexDirection: "row", gap: 16, marginTop: 11, paddingTop: 10, borderTopWidth: 1, borderTopColor: LINE }}>
+          <GoalStat value={money(p.projected)} label={p.budget && p.projectedPct != null ? `Projected month end (${Math.round(p.projectedPct)}% of budget)` : "Projected month end"} />
+          <GoalStat value={count(period.results)} label={part.metrics.conversion} mv={resMove} />
+          <GoalStat value={roasLead ? multiple(lead) : money(lead)} label={roasLead ? "ROAS" : costLabel(part.metrics)} mv={leadMove} />
+          {compare ? <GoalStat value={money(period.spend)} label="Spend" mv={spendMove} /> : null}
+        </View>
+        <Text style={s.note}>
+          {p.note}
+          {x.vsTarget && x.target != null ? ` ${roasLead ? `${multiple(lead)} against the ${multiple(x.target)} target` : `${money(lead)} per result against the ${money(x.target)} target`}: ${TARGET_WORD[x.vsTarget]}.` : ""}
+          {compare ? ` Same days last month: ${money(compare.spend)} spent, ${count(compare.results)} ${part.metrics.conversion.toLowerCase()}${compare.costPerResult != null ? ` at ${money(compare.costPerResult)}` : ""}.` : ""}
+        </Text>
       </View>
     </View>
   );
@@ -1052,6 +1126,7 @@ export function WeeklyReport({ input, images }: { input: WeeklyInput; images: (s
             <Hero input={input} part={part} look={look} cad={cad} joint={joint} />
             {joint && i === 0 ? <Account input={input} look={look} /> : null}
             <Glance input={input} part={part} cad={cad} />
+            <MonthToDate part={part} cad={cad} look={look} />
             <GoalBreakdown part={part} cad={cad} />
             <Trend part={part} look={look} />
             <CampaignPerformance input={input} part={part} />

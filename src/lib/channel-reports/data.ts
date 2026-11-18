@@ -9,6 +9,7 @@ import type { Platform, PostFormat, SocialPost } from "@/lib/social/core";
 import { upcomingItems, type FlowDay, type Upcoming } from "./email-detail";
 import { scoreSnapshot, campaignsIn, channelPeriods, emailMetrics, heroImage, platformOfLine, socialMetrics, targetLine, windowsFor, type ChannelKind, type ChannelLine, type EmailMetrics, type MetricSide, type SocialMetrics, type TargetRow, type Window } from "./core";
 import { conversionMetricsOf, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
+import { monthSoFar } from "@/lib/reports/period";
 import { locationBreakdown, type LocationBreakdown } from "@/lib/klaviyo/locations";
 
 // What a channel report reads: the numbers the client page already shows (klaviyo_* and social_* tables, filled by the
@@ -19,6 +20,8 @@ import { locationBreakdown, type LocationBreakdown } from "@/lib/klaviyo/locatio
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const numOrNull = (v: unknown) => (v == null ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 const within = <T,>(ms: number, p: Promise<T>, fallback: T): Promise<T> => Promise.race([p, new Promise<T>((done) => setTimeout(() => done(fallback), ms))]);
+/** The earliest day a report needs: its comparison's first day, or (a weekly) the same days last month's first, whichever is earlier */
+const reachBack = (kind: ChannelKind, main: Window, compare: Window) => (kind === "weekly" ? [compare.start, monthSoFar(main.end).mtdCompare.start].sort()[0] : compare.start);
 const todayET = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
 /** The team's target for a client's line, when the targets table exists and has one (an older database has none: no target, no error) */
@@ -95,10 +98,11 @@ async function readUpcoming(admin: SupabaseClient, clientId: string, after: stri
 export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, kind: ChannelKind, main: Window, compare: Window, opts: { images?: boolean } = {}): Promise<EmailMetrics | null> {
   const today = todayET();
   // The trend's eight weeks and the comparison both reach back: the earliest day any of them needs
-  const from = [compare.start, shiftDay(main.end, -55)].sort()[0];
+  const back = reachBack(kind, main, compare);
+  const from = [back, shiftDay(main.end, -55)].sort()[0];
   const [{ data: days, error }, { data: camps }, { data: flows }, { data: auds }, { data: conn }, { data: snaps }] = await Promise.all([
     admin.from("klaviyo_daily").select("*").eq("client_id", clientId).gte("date", from).lte("date", today).order("date"),
-    admin.from("klaviyo_campaigns").select("*").eq("client_id", clientId).not("send_time", "is", null).gte("send_time", `${shiftDay(compare.start, -1)}T00:00:00Z`).order("send_time", { ascending: false }).limit(600),
+    admin.from("klaviyo_campaigns").select("*").eq("client_id", clientId).not("send_time", "is", null).gte("send_time", `${shiftDay(back, -1)}T00:00:00Z`).order("send_time", { ascending: false }).limit(600),
     admin.from("klaviyo_flows").select("*").eq("client_id", clientId).order("revenue_30", { ascending: false }).limit(200),
     admin.from("klaviyo_audiences").select("audience_id, kind, name, profile_count").eq("client_id", clientId).eq("kind", "list").order("profile_count", { ascending: false, nullsFirst: false }).limit(10),
     emailConnection(admin, clientId).then((c) => ({ data: c ? { account_name: c.account, currency: c.currency, provider: c.provider, revenue: c.revenueRead } : null })),
@@ -185,7 +189,10 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     upcoming,
   });
   // The target the board paces against: last month + 10% by itself, a higher one typed on the board wins
-  m.target = m.revenueMeasured === false ? null : targetLine("email", await emailTarget(admin, clientId, main), { kind, main, revenue: m.now.revenue });
+  const row = m.revenueMeasured === false ? null : await emailTarget(admin, clientId, main);
+  m.target = row ? targetLine("email", row, { kind, main, revenue: m.now.revenue }) : null;
+  // The month to date counts against the whole month's target, not a weekly share of it
+  if (m.mtd) m.mtd.target = row ? targetLine("email", row, { kind: "monthly", main: m.mtd.window, revenue: m.mtd.now.revenue }) : null;
   // Several metrics counting as the sale: each one's numbers side by side, primary first
   const ranked = await rankedMetrics(admin, clientId);
   if (ranked.length > 1) m.byMetric = await metricSides(admin, clientId, ranked, main, compare).catch(() => null);
@@ -276,10 +283,11 @@ async function locationsFor(admin: SupabaseClient, clientId: string, main: Windo
 /** The social report's numbers for a client over given dates (null when nothing was read from the linked accounts) */
 export async function loadSocialMetrics(admin: SupabaseClient, clientId: string, kind: ChannelKind, main: Window, compare: Window): Promise<SocialMetrics | null> {
   const today = todayET();
-  const from = [shiftDay(compare.start, -1), shiftDay(main.end, -55)].sort()[0];
+  const back = reachBack(kind, main, compare);
+  const from = [shiftDay(back, -1), shiftDay(main.end, -55)].sort()[0];
   const [{ data: allDays, error }, { data: allPosts }, { data: link }] = await Promise.all([
     admin.from("social_daily").select("*").eq("client_id", clientId).gte("date", from).lte("date", today).order("date"),
-    admin.from("social_posts").select("*").eq("client_id", clientId).gte("posted_at", `${shiftDay(compare.start, -1)}T00:00:00Z`).order("posted_at", { ascending: false, nullsFirst: false }).limit(600),
+    admin.from("social_posts").select("*").eq("client_id", clientId).gte("posted_at", `${shiftDay(back, -1)}T00:00:00Z`).order("posted_at", { ascending: false, nullsFirst: false }).limit(600),
     admin.from("social_accounts").select("page_name, ig_username, page_id, ig_id").eq("client_id", clientId).maybeSingle(),
   ]);
   // Only the linked accounts' rows (a Page picked before keeps its history, unread)
@@ -290,7 +298,9 @@ export async function loadSocialMetrics(admin: SupabaseClient, clientId: string,
   const days: SocialDay[] = dayRows.map((d) => ({ platform: d.platform as Platform, date: d.date as string, followers: numOrNull(d.followers), gained: numOrNull(d.follows_gained), lost: numOrNull(d.follows_lost), reach: numOrNull(d.reach), views: numOrNull(d.views), profileViews: numOrNull(d.profile_views), engaged: numOrNull(d.accounts_engaged), interactions: numOrNull(d.interactions) }));
   const posts: SocialPost[] = postRows.map((p) => ({ id: p.post_id as string, platform: p.platform as Platform, format: ((p.format as string | null) ?? "image") as PostFormat, caption: (p.caption as string | null) ?? null, permalink: (p.permalink as string | null) ?? null, thumbnail: (p.thumbnail_url as string | null) ?? null, postedAt: (p.posted_at as string | null) ?? null, likes: numOrNull(p.likes), comments: numOrNull(p.comments), shares: numOrNull(p.shares), saves: numOrNull(p.saves), reach: numOrNull(p.reach), views: numOrNull(p.views), interactions: numOrNull(p.interactions), insightsOk: Boolean(p.insights_ok) }));
   const m = socialMetrics({ kind, main, compare, days, posts, names: { instagram: (link?.ig_username as string | null) ? `@${link!.ig_username}` : null, facebook: (link?.page_name as string | null) ?? null } });
-  m.target = targetLine("social", await readTarget(admin, clientId, "social"), { kind, main, rate: m.now.rate, followers: m.now.followers, reach: m.now.reach });
+  const row = await readTarget(admin, clientId, "social");
+  m.target = targetLine("social", row, { kind, main, rate: m.now.rate, followers: m.now.followers, reach: m.now.reach });
+  if (m.mtd) m.mtd.target = targetLine("social", row, { kind: "monthly", main: m.mtd.window, rate: m.mtd.now.rate, followers: m.mtd.now.followers, reach: m.mtd.now.reach });
   return m;
 }
 
