@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { asana, asanaAll, asanaWrite } from "@/lib/asana";
 import { emailStageForColumn, EMAIL_BOARD_ORDER, isDoneColumn, ownerFor, pickEmailProject, type EmailKind, type EmailStage } from "@/lib/email-board-core";
 import { cleanTitle, normalizePriority, type PriorityLevel } from "@/lib/task-title";
+import { mapAttachments, mapSubtasks, readList, type AsanaAttachment, type AsanaSubtask } from "@/lib/asana-context";
 
 // Asana's email board, mirrored while the email team moves over to Kaizen (the creative board's mirror, for email).
 // The project is ASANA_EMAIL_PROJECT_GID, else the app setting asana_email_project ({"gid": "..."}), else the one the
@@ -41,6 +42,8 @@ type Task = {
   completed_at: string | null;
   assignee: { name: string; email?: string } | null;
   due_on: string | null;
+  start_on?: string | null;
+  created_by?: { name: string } | null;
   permalink_url: string;
   created_at: string;
   modified_at: string;
@@ -69,7 +72,7 @@ export async function syncAsanaEmail(admin: Admin) {
   try {
     const tasks = await asanaAll<Task>(`/projects/${project}/tasks`, {
       completed_since: monthStart(-1),
-      opt_fields: "name,notes,completed,completed_at,assignee.name,assignee.email,due_on,permalink_url,created_at,modified_at,memberships.project.gid,memberships.section.name,custom_fields.name,custom_fields.display_value",
+      opt_fields: "name,notes,completed,completed_at,assignee.name,assignee.email,due_on,start_on,created_by.name,permalink_url,created_at,modified_at,memberships.project.gid,memberships.section.name,custom_fields.name,custom_fields.display_value",
     });
     const [{ data: clients }, { data: people }, { data: mirror }] = await Promise.all([
       admin.from("clients").select("id, name, kaizen_id").is("archived_at", null),
@@ -107,6 +110,8 @@ export async function syncAsanaEmail(admin: Admin) {
         assignee_email: email,
         profile_id: profile?.id ?? null,
         due_on: task.due_on,
+        start_on: task.start_on ?? null,
+        created_by_name: task.created_by?.name ?? null,
         url: task.permalink_url,
         fields,
         moves: moves.slice(-30),
@@ -131,8 +136,9 @@ export async function syncAsanaEmail(admin: Admin) {
 
 /** Each changed task's history and comments from its Asana stories, a batch per sync */
 async function readHistory(admin: Admin, max = 60) {
-  const { data } = await admin.from("email_asana_tasks").select("gid, asana_modified_at, history_read_at").order("asana_modified_at", { ascending: false }).limit(1000);
-  const todo = (data ?? []).filter((t) => !t.history_read_at || (t.asana_modified_at && t.asana_modified_at > t.history_read_at)).slice(0, max);
+  const { data } = await admin.from("email_asana_tasks").select("gid, asana_modified_at, history_read_at, details_read_at").order("asana_modified_at", { ascending: false }).limit(1000);
+  // Also the ones whose attachments and subtasks were never read (rows mirrored before they were kept)
+  const todo = (data ?? []).filter((t) => !t.history_read_at || !t.details_read_at || (t.asana_modified_at && t.asana_modified_at > t.history_read_at)).slice(0, max);
   type Story = { created_at: string; resource_subtype: string; created_by: { name: string } | null; old_section?: { name: string } | null; new_section?: { name: string } | null; assignee?: { name: string } | null; text?: string; old_dates?: { due_on?: string | null } | null; new_dates?: { due_on?: string | null } | null };
   for (const t of todo) {
     try {
@@ -146,7 +152,16 @@ async function readHistory(admin: Admin, max = 60) {
         return [];
       });
       const comments: EmailTaskComment[] = stories.filter((s) => s.resource_subtype === "comment_added" && s.text?.trim()).map((s) => ({ at: s.created_at, by: s.created_by?.name ?? null, text: s.text!.trim().slice(0, 4000) }));
-      await admin.from("email_asana_tasks").update({ history: history.slice(-200), comments: comments.slice(-100), history_read_at: new Date().toISOString() }).eq("gid", t.gid);
+      // Attachments (name and Asana link: the download link expires in minutes) and subtasks; a hiccup on either leaves what was kept
+      const [files, subs] = await Promise.all([
+        asanaAll<Record<string, unknown>>(`/tasks/${t.gid}/attachments`, { opt_fields: "name,permanent_url,view_url,host,size,created_at,resource_subtype" }).then(mapAttachments).catch(() => null),
+        asanaAll<Record<string, unknown>>(`/tasks/${t.gid}/subtasks`, { opt_fields: "name,completed,assignee.name,due_on,permalink_url" }).then(mapSubtasks).catch(() => null),
+      ]);
+      const now = new Date().toISOString();
+      await admin
+        .from("email_asana_tasks")
+        .update({ history: history.slice(-200), comments: comments.slice(-100), history_read_at: now, ...(files ? { attachments: files } : {}), ...(subs ? { subtasks: subs } : {}), ...(files && subs ? { details_read_at: now } : {}) })
+        .eq("gid", t.gid);
     } catch {
       // A task deleted in Asana, or a hiccup: tried again next run
     }
@@ -172,19 +187,24 @@ export type EmailShadow = {
   notes: string | null;
   comments: EmailTaskComment[];
   history: EmailHistory[];
+  fields: Record<string, string>;
+  startOn: string | null;
+  createdBy: string | null;
+  createdAt: string | null;
+  modifiedAt: string | null;
+  attachments: AsanaAttachment[];
+  subtasks: AsanaSubtask[];
 };
 
 /** The open Asana email tasks not migrated yet, for the Email Board's outline cards (the reader's own rights) */
 export async function loadEmailShadows(db: SupabaseClient): Promise<EmailShadow[]> {
-  const { data } = await db
-    .from("email_asana_tasks")
-    .select("gid, name, stage, section, client_id, kind, priority, assignee_name, profile_id, due_on, url, notes, comments, history, clients(name, slug)")
-    .eq("open", true)
-    .is("ticket_id", null)
-    .not("stage", "is", null)
-    .order("asana_created_at", { ascending: false })
-    .limit(400);
-  return (data ?? []).map((r) => {
+  const base = "gid, name, stage, section, client_id, kind, priority, assignee_name, profile_id, due_on, url, notes, fields, comments, history, asana_created_at, asana_modified_at, clients(name, slug)";
+  const query = (cols: string) => db.from("email_asana_tasks").select(cols).eq("open", true).is("ticket_id", null).not("stage", "is", null).order("asana_created_at", { ascending: false }).limit(400);
+  let res = await query(`${base}, start_on, created_by_name, attachments, subtasks`);
+  // Before the columns for the attachments and subtasks exist, the board still loads
+  if (res.error) res = await query(base);
+  const rows = (res.data ?? []) as unknown as Record<string, unknown>[];
+  return rows.map((r) => {
     const c = r.clients as unknown as { name: string; slug: string } | null;
     return {
       gid: r.gid as string,
@@ -202,8 +222,15 @@ export async function loadEmailShadows(db: SupabaseClient): Promise<EmailShadow[
       dueOn: (r.due_on as string | null) ?? null,
       url: (r.url as string | null) ?? null,
       notes: (r.notes as string | null) ?? null,
-      comments: (r.comments ?? []) as EmailTaskComment[],
-      history: (r.history ?? []) as EmailHistory[],
+      comments: readList<EmailTaskComment>(r.comments),
+      history: readList<EmailHistory>(r.history),
+      fields: (r.fields ?? {}) as Record<string, string>,
+      startOn: (r.start_on as string | null) ?? null,
+      createdBy: (r.created_by_name as string | null) ?? null,
+      createdAt: (r.asana_created_at as string | null) ?? null,
+      modifiedAt: (r.asana_modified_at as string | null) ?? null,
+      attachments: readList<AsanaAttachment>(r.attachments),
+      subtasks: readList<AsanaSubtask>(r.subtasks),
     };
   });
 }

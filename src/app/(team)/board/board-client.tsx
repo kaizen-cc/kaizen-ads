@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Combobox } from "@/components/combobox";
+import { BoardSort } from "@/components/board-sort";
+import { asanaSortFields, creativeSortFields, sortCards } from "@/lib/board-sort";
+import { useBoardSort } from "@/lib/use-board-sort";
 import { tintFor } from "@/lib/colors";
 import { closeParams, pushParams, replaceParams } from "@/lib/url-state";
 import { toast } from "@/components/toasts";
@@ -124,6 +127,7 @@ export function BoardClient({
   const only = (params.get("only") as Health | null) ?? null;
   // High or Urgent only (Kaizen tickets and the Asana outlines, both read as one set)
   const priority = ((p) => (p === "high" || p === "urgent" ? p : null))(params.get("priority"));
+  const sort = useBoardSort("creative");
   const openNumber = params.get("t");
   // A ticket dropped on another column waits in the move dialog (?move=number&to=stage) until it's confirmed
   const moveNumber = params.get("move");
@@ -177,8 +181,10 @@ export function BoardClient({
     for (const x of filtered) m.get(x.stage)?.push(x);
     for (const list of m.values())
       list.sort((a, b) => HEALTH_RANK[health(a.minutesOver, a.stage)] - HEALTH_RANK[health(b.minutesOver, b.stage)] || b.minutesOver - a.minutesOver || b.minutesInStage - a.minutesInStage);
+    // A picked sort orders each column (the default is the most overdue first)
+    if (sort.key) for (const [s, list] of m) m.set(s, sortCards(list, sort.key, sort.dir, creativeSortFields));
     return m;
-  }, [filtered]);
+  }, [filtered, sort.key, sort.dir]);
 
   // Completed tickets opened from the log (they're off the board), read-only
   const [completedOpened, setCompletedOpened] = useState<Ticket[]>([]);
@@ -202,8 +208,9 @@ export function BoardClient({
       if (t && !x.title.toLowerCase().includes(t) && !(x.clientName ?? "").toLowerCase().includes(t)) continue;
       m.set(x.stage, [...(m.get(x.stage) ?? []), x]);
     }
+    if (sort.key) for (const [s, list] of m) m.set(s, sortCards(list, sort.key, sort.dir, asanaSortFields));
     return m;
-  }, [shadows, shadowMoved, q, client, person, format, only, priority]);
+  }, [shadows, shadowMoved, q, client, person, format, only, priority, sort.key, sort.dir]);
   const selectedClient = clients.find((c) => c.slug === client) ?? null;
 
   // Getting around a board wider than the screen: a visible scrollbar, the phase labels and arrows jump along it, and
@@ -345,6 +352,7 @@ export function BoardClient({
           // You first, so your own work is one tap away from anyone else's
           options={[...people.filter((p) => p.id === me?.id).map((p) => ({ value: p.id, label: `You (${p.name.split(" ")[0]})`, hint: p.role })), ...people.filter((p) => p.id !== me?.id).map((p) => ({ value: p.id, label: p.name, hint: p.role }))]}
         />
+        <BoardSort sortKey={sort.key} dir={sort.dir} onChange={sort.set} />
         <div className="flex w-full rounded-full border border-line bg-surface p-0.5 text-sm md:w-auto">
           {([null, "image", "video", "carousel"] as const).map((f) => (
             <button

@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Combobox } from "@/components/combobox";
+import { BoardSort } from "@/components/board-sort";
+import { asanaSortFields, emailSortFields, sortCards } from "@/lib/board-sort";
+import { useBoardSort } from "@/lib/use-board-sort";
+import { AsanaContext } from "@/components/asana-context";
 import { DuePill } from "@/components/due-pill";
 import { DirectionBanner, DirectionChip } from "@/components/direction-parts";
 import { PersonAvatar } from "@/components/person-avatar";
@@ -20,6 +24,7 @@ import { migrateEmailAsana, moveEmailAsana } from "./actions";
 import { EmailMoveDialog, EmailTicketSheet, KindBadge } from "./email-ticket-sheet";
 
 type Person = { id: string; name: string; role: string };
+const day = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 type ClientOption = { id: string; name: string; slug: string };
 
 const COL = 288;
@@ -127,7 +132,7 @@ function ShadowSheet({ s, canMove, onClose }: { s: EmailShadow; canMove: boolean
   const [busy, setBusy] = useState(false);
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm md:items-center" onClick={onClose}>
-      <div className="max-h-[88vh] w-full overflow-y-auto rounded-t-[22px] border border-line bg-bg p-5 pb-[calc(20px+env(safe-area-inset-bottom))] md:max-w-xl md:rounded-[22px]" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[88vh] w-full overflow-y-auto rounded-t-[22px] border border-line bg-bg p-5 pb-[calc(20px+env(safe-area-inset-bottom))] md:max-w-2xl md:rounded-[22px]" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3">
           <div className="grid gap-1.5">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Still in Asana · {s.section ?? "no column"}</span>
@@ -141,18 +146,28 @@ function ShadowSheet({ s, canMove, onClose }: { s: EmailShadow; canMove: boolean
         <div className="mt-4">
           <DirectionBanner kind="asana_email" refId={s.gid} />
         </div>
-        {s.notes && <p className="mt-4 whitespace-pre-wrap rounded-[14px] bg-surface p-3 text-sm leading-relaxed text-fg/80">{s.notes.slice(0, 3000)}</p>}
-        {s.comments.length > 0 && (
-          <div className="mt-4 grid gap-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-faint">Comments in Asana</p>
-            {s.comments.slice(-6).map((c, i) => (
-              <p key={i} className="rounded-[12px] border border-line p-2.5 text-sm">
-                <span className="text-muted">{c.by ?? "Someone"}: </span>
-                {c.text.slice(0, 600)}
-              </p>
-            ))}
-          </div>
-        )}
+        <dl className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-[12px] border border-line bg-line text-sm max-md:[overflow-wrap:anywhere]">
+          {(
+            [
+              ["Asana column", s.section ?? "None"],
+              ["Email Board stage", emailStageInfo(s.stage).label],
+              ["Assigned", s.assignee ?? "Nobody"],
+              ["Due", s.dueOn ? day(s.dueOn) : "None"],
+              ["Start", s.startOn ? day(s.startOn) : "None"],
+              ["Created by", s.createdBy ?? "Unknown"],
+              ["Created", s.createdAt ? day(s.createdAt.slice(0, 10)) : "Unknown"],
+              ["Last modified", s.modifiedAt ? day(s.modifiedAt.slice(0, 10)) : "Unknown"],
+            ] as const
+          ).map(([k, v]) => (
+            <div key={k} className="grid gap-0.5 bg-surface px-4 py-3">
+              <dt className="text-[11px] text-faint">{k}</dt>
+              <dd>{v}</dd>
+            </div>
+          ))}
+        </dl>
+        <div className="mt-5">
+          <AsanaContext notes={s.notes} fields={s.fields} subtasks={s.subtasks} attachments={s.attachments} comments={s.comments} history={s.history} />
+        </div>
         <div className="mt-5 flex flex-wrap gap-2">
           {canMove && (
             <button
@@ -205,6 +220,7 @@ export function EmailBoardClient({ tickets: initial, clients, people, shadows, m
   const pickPerson = (v: string | null) => pushParams({ person: me.mine ? (v === me.id ? null : (v ?? "all")) : v });
   const kind = (params.get("kind") as EmailKind | null) ?? null;
   const priority = ((p) => (p === "high" || p === "urgent" ? p : null))(params.get("priority"));
+  const sort = useBoardSort("email");
   const openNumber = params.get("t");
   const moveNumber = params.get("move");
   const moveTo = params.get("to") as EmailStage | null;
@@ -223,8 +239,9 @@ export function EmailBoardClient({ tickets: initial, clients, people, shadows, m
     const m = new Map<EmailStage, EmailTicket[]>(EMAIL_BOARD_ORDER.map((s) => [s, []]));
     for (const x of filtered) m.get(x.stage)?.push(x);
     for (const list of m.values()) list.sort((a, b) => RANK[emailHealth(a.minutesOver, a.stage)] - RANK[emailHealth(b.minutesOver, b.stage)] || b.minutesOver - a.minutesOver || b.minutesInStage - a.minutesInStage);
+    if (sort.key) for (const [s, list] of m) m.set(s, sortCards(list, sort.key, sort.dir, emailSortFields));
     return m;
-  }, [filtered]);
+  }, [filtered, sort.key, sort.dir]);
   const shadowsBy = useMemo(() => {
     const t = q.trim().toLowerCase();
     const m = new Map<EmailStage, EmailShadow[]>();
@@ -234,8 +251,9 @@ export function EmailBoardClient({ tickets: initial, clients, people, shadows, m
       if (t && !x.title.toLowerCase().includes(t) && !(x.clientName ?? "").toLowerCase().includes(t)) continue;
       m.set(x.stage, [...(m.get(x.stage) ?? []), x]);
     }
+    if (sort.key) for (const [s, list] of m) m.set(s, sortCards(list, sort.key, sort.dir, asanaSortFields));
     return m;
-  }, [shadows, shadowMoved, q, client, person, kind, priority]);
+  }, [shadows, shadowMoved, q, client, person, kind, priority, sort.key, sort.dir]);
   const counts = useMemo(() => {
     const c = { ok: 0, warn: 0, bad: 0 };
     for (const x of tickets) if (!client || x.clientSlug === client) c[emailHealth(x.minutesOver, x.stage)]++;
@@ -325,6 +343,7 @@ export function EmailBoardClient({ tickets: initial, clients, people, shadows, m
           onChange={pickPerson}
           options={[...people.filter((p) => p.id === me.id).map((p) => ({ value: p.id, label: `You (${p.name.split(" ")[0]})`, hint: p.role })), ...people.filter((p) => p.id !== me.id).map((p) => ({ value: p.id, label: p.name, hint: p.role }))]}
         />
+        <BoardSort sortKey={sort.key} dir={sort.dir} onChange={sort.set} />
         <div className="flex w-full rounded-full border border-line bg-surface p-0.5 text-sm md:w-auto">
           {([null, "batch", "flow"] as const).map((k) => (
             <button key={k ?? "all"} type="button" onClick={() => pushParams({ kind: k })} className={`h-10 flex-1 rounded-full px-3 md:h-auto md:flex-initial md:py-1 ${kind === k ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}>

@@ -7,6 +7,7 @@ import { PriorityBadge } from "@/components/priority-badge";
 import { stageInfo } from "@/lib/stages";
 import { DuePill } from "@/components/due-pill";
 import { DirectionBanner, DirectionChip } from "@/components/direction-parts";
+import { AsanaContext } from "@/components/asana-context";
 
 const day = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
@@ -62,7 +63,6 @@ export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMi
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
   }, [onClose]);
-  const fields = Object.entries(s.fields);
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-[2px]" onClick={onClose}>
       <aside
@@ -97,6 +97,9 @@ export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMi
             ["Client", s.clientName ?? (s.clientRef ? `Client ID ${s.clientRef} (not matched)` : "Not matched")],
             ["Assigned", s.assignee ?? "Nobody"],
             ["Due", s.dueOn ? day(s.dueOn) : "—"],
+            ["Start", s.startOn ? day(s.startOn) : "—"],
+            ["Created by", s.createdBy ?? "—"],
+            ["Last modified", s.modifiedAt ? day(s.modifiedAt.slice(0, 10)) : "—"],
             ["Format", s.format ?? "—"],
           ].map(([k, v]) => (
             <div key={k} className="grid gap-0.5 bg-surface px-4 py-3">
@@ -121,26 +124,8 @@ export function ShadowSheet({ s, canMigrate, onClose }: { s: ShadowTicket; canMi
           )}
         </div>
 
-        {s.notes && (
-          <div className="grid gap-2">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-faint">The request in Asana</p>
-            <p className="whitespace-pre-wrap rounded-[12px] border border-line bg-surface p-4 text-[13px] leading-relaxed text-muted">{s.notes}</p>
-          </div>
-        )}
-        {fields.length > 0 && (
-          <div className="grid gap-2">
-            <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Asana fields</p>
-            <dl className="grid gap-1 text-[13px]">
-              {fields.map(([k, v]) => (
-                <div key={k} className="grid grid-cols-[110px_minmax(0,1fr)] gap-3 max-md:[overflow-wrap:anywhere] md:grid-cols-[140px_minmax(0,1fr)]">
-                  <dt className="text-faint">{k}</dt>
-                  <dd className="text-muted">{v}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        )}
-        {s.moves.length > 0 && (
+        <AsanaContext notes={s.notes} fields={s.fields} subtasks={s.subtasks} attachments={s.attachments} comments={s.comments} history={s.history} />
+        {s.history.length === 0 && s.moves.length > 0 && (
           <div className="grid gap-2">
             <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Moves seen in Asana</p>
             <ul className="grid gap-1 text-xs text-muted">

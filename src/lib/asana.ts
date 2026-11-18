@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Stage } from "@/lib/stages";
 import { cleanTitle, normalizePriority, type PriorityLevel } from "@/lib/task-title";
+import { mapAttachments, mapSubtasks, readList, type AsanaAttachment, type AsanaSubtask } from "@/lib/asana-context";
 
 // Asana's Creative board, mirrored while the team moves over to Kaizen OS. Every few minutes the open tasks are read
 // (column, assignee, due date, Client ID, priority, description) and kept as "shadow" tickets in the matching stage.
@@ -144,6 +145,8 @@ type AsanaTask = {
   completed_at: string | null;
   assignee: { name: string; email?: string } | null;
   due_on: string | null;
+  start_on?: string | null;
+  created_by?: { name: string } | null;
   permalink_url: string;
   created_at: string;
   modified_at: string;
@@ -239,8 +242,9 @@ export type TaskComment = { at: string; by: string | null; text: string };
  * tasks not read yet or changed since, a batch per sync, so the full history fills in over a few runs.
  */
 async function readHistory(admin: SupabaseClient, max = 60) {
-  const { data } = await admin.from("asana_tasks").select("gid, asana_modified_at, history_read_at").order("asana_modified_at", { ascending: false }).limit(1000);
-  const todo = (data ?? []).filter((t) => !t.history_read_at || (t.asana_modified_at && t.asana_modified_at > t.history_read_at)).slice(0, max);
+  const { data } = await admin.from("asana_tasks").select("gid, asana_modified_at, history_read_at, details_read_at").order("asana_modified_at", { ascending: false }).limit(1000);
+  // Also the ones whose attachments and subtasks were never read (rows mirrored before they were kept)
+  const todo = (data ?? []).filter((t) => !t.history_read_at || !t.details_read_at || (t.asana_modified_at && t.asana_modified_at > t.history_read_at)).slice(0, max);
   type Story = { created_at: string; resource_subtype: string; created_by: { name: string } | null; old_section?: { name: string } | null; new_section?: { name: string } | null; assignee?: { name: string } | null; text?: string; old_dates?: { due_on?: string | null } | null; new_dates?: { due_on?: string | null } | null };
   for (const t of todo) {
     try {
@@ -254,7 +258,16 @@ async function readHistory(admin: SupabaseClient, max = 60) {
         return [];
       });
       const comments: TaskComment[] = stories.filter((s) => s.resource_subtype === "comment_added" && s.text?.trim()).map((s) => ({ at: s.created_at, by: s.created_by?.name ?? null, text: s.text!.trim().slice(0, 2000) }));
-      await admin.from("asana_tasks").update({ history: history.slice(-200), comments: comments.slice(-60), history_read_at: new Date().toISOString() }).eq("gid", t.gid);
+      // Attachments (name and Asana link: the download link expires in minutes) and subtasks; a hiccup on either leaves what was kept
+      const [files, subs] = await Promise.all([
+        all<Record<string, unknown>>(`/tasks/${t.gid}/attachments`, { opt_fields: "name,permanent_url,view_url,host,size,created_at,resource_subtype" }).then(mapAttachments).catch(() => null),
+        all<Record<string, unknown>>(`/tasks/${t.gid}/subtasks`, { opt_fields: "name,completed,assignee.name,due_on,permalink_url" }).then(mapSubtasks).catch(() => null),
+      ]);
+      const now = new Date().toISOString();
+      await admin
+        .from("asana_tasks")
+        .update({ history: history.slice(-200), comments: comments.slice(-60), history_read_at: now, ...(files ? { attachments: files } : {}), ...(subs ? { subtasks: subs } : {}), ...(files && subs ? { details_read_at: now } : {}) })
+        .eq("gid", t.gid);
     } catch {
       // A task deleted in Asana, or a hiccup: tried again next run
     }
@@ -272,7 +285,7 @@ export async function syncAsana(admin: SupabaseClient) {
     const tasks = await all<AsanaTask>(`/projects/${project}/tasks`, {
       // Open tasks, and ones completed since last month began (they count against this month's allotment)
       completed_since: monthStart(-1),
-      opt_fields: "name,notes,completed,completed_at,assignee.name,assignee.email,due_on,permalink_url,created_at,modified_at,memberships.project.gid,memberships.section.name,custom_fields.name,custom_fields.display_value",
+      opt_fields: "name,notes,completed,completed_at,assignee.name,assignee.email,due_on,start_on,created_by.name,permalink_url,created_at,modified_at,memberships.project.gid,memberships.section.name,custom_fields.name,custom_fields.display_value",
     });
     t.total(tasks.length);
     const [{ data: clients }, { data: people }, { data: mirror }] = await Promise.all([
@@ -334,6 +347,8 @@ export async function syncAsana(admin: SupabaseClient) {
         assignee_email: email,
         profile_id: profile?.id ?? null,
         due_on: task.due_on,
+        start_on: task.start_on ?? null,
+        created_by_name: task.created_by?.name ?? null,
         url: task.permalink_url,
         fields,
         moves: moves.slice(-30),
@@ -387,42 +402,55 @@ export type ShadowTicket = {
   fields: Record<string, string>;
   moves: { from: string | null; to: string | null; at: string }[];
   createdAt: string | null;
+  modifiedAt: string | null;
+  startOn: string | null;
+  createdBy: string | null;
+  comments: TaskComment[];
+  history: HistoryEvent[];
+  attachments: AsanaAttachment[];
+  subtasks: AsanaSubtask[];
 };
 
 /** The open Asana tasks not yet migrated, for the board. */
 export async function loadShadows(db: SupabaseClient): Promise<ShadowTicket[]> {
-  const { data } = await db
-    .from("asana_tasks")
-    .select("gid, name, stage, section, client_id, client_ref, platform, format, priority, assignee_name, profile_id, due_on, url, notes, fields, moves, asana_created_at, clients(name, slug)")
-    .eq("open", true)
-    .is("request_id", null)
-    .not("stage", "is", null)
-    .order("asana_created_at", { ascending: false })
-    .limit(500);
-  return (data ?? []).map((r) => {
+  const base = "gid, name, stage, section, client_id, client_ref, platform, format, priority, assignee_name, profile_id, due_on, url, notes, fields, moves, comments, history, asana_created_at, asana_modified_at, clients(name, slug)";
+  const query = (cols: string) => db.from("asana_tasks").select(cols).eq("open", true).is("request_id", null).not("stage", "is", null).order("asana_created_at", { ascending: false }).limit(500);
+  let res = await query(`${base}, start_on, created_by_name, attachments, subtasks`);
+  // Before the columns for the attachments and subtasks exist, the board still loads
+  if (res.error) res = await query(base);
+  const data = (res.data ?? []) as unknown as Record<string, unknown>[];
+  return data.map((r) => {
     const c = r.clients as unknown as { name: string; slug: string } | null;
+    const name = r.name as string;
     return {
-      gid: r.gid,
-      name: r.name,
-      title: cleanTitle(r.name).title,
+      gid: r.gid as string,
+      name,
+      title: cleanTitle(name).title,
       stage: r.stage as Stage,
-      section: r.section,
-      clientId: r.client_id,
+      section: r.section as string | null,
+      clientId: r.client_id as string | null,
       clientName: c?.name ?? null,
       clientSlug: c?.slug ?? null,
-      clientRef: r.client_ref,
-      platform: r.platform,
-      format: r.format,
+      clientRef: r.client_ref as string | null,
+      platform: r.platform as string | null,
+      format: r.format as string | null,
       // Rows mirrored before the priority was normalized carry Asana's own words: read them the same way
-      priority: normalizePriority(r.priority, r.name),
-      assignee: r.assignee_name,
-      profileId: r.profile_id,
-      dueOn: r.due_on,
-      url: r.url,
-      notes: r.notes,
+      priority: normalizePriority(r.priority as string | null, name),
+      assignee: r.assignee_name as string | null,
+      profileId: r.profile_id as string | null,
+      dueOn: r.due_on as string | null,
+      url: r.url as string,
+      notes: r.notes as string | null,
       fields: (r.fields ?? {}) as Record<string, string>,
-      moves: (r.moves ?? []) as ShadowTicket["moves"],
-      createdAt: r.asana_created_at,
+      moves: readList<ShadowTicket["moves"][number]>(r.moves),
+      createdAt: (r.asana_created_at as string | null) ?? null,
+      modifiedAt: (r.asana_modified_at as string | null) ?? null,
+      startOn: (r.start_on as string | null) ?? null,
+      createdBy: (r.created_by_name as string | null) ?? null,
+      comments: readList<TaskComment>(r.comments),
+      history: readList<HistoryEvent>(r.history),
+      attachments: readList<AsanaAttachment>(r.attachments),
+      subtasks: readList<AsanaSubtask>(r.subtasks),
     };
   });
 }
