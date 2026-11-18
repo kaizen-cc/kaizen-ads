@@ -3,6 +3,8 @@
 // finished talking (or is talking over the agent), turning microphone audio into what speech to text takes, and
 // checking what the agent learned before it's saved.
 
+import type { JobView } from "@/lib/assistant/team";
+
 /** The longest a call runs, in seconds; the screen shows the time left and hangs up at the end */
 export const CALL_LIMIT_SECONDS = 30 * 60;
 
@@ -590,8 +592,10 @@ export type CallEvent =
   | { t: "error"; message: string }
   // Who speaks the text that follows (the assistant, or the specialist it called in)
   | { t: "speaker"; role: string; label: string; icon: string }
-  // A specialist joined the call, or left it (role null)
-  | { t: "guest"; role: string | null; label: string | null; icon: string | null }
+  // Who else is on the call besides the host (specialists joining or leaving): the whole line each time
+  | { t: "team"; line: { role: string; label: string; icon: string }[] }
+  // The job the call is working on (launching ads, an email request…) and its steps, or null when there's none
+  | { t: "job"; job: JobView | null }
   // Open a screen in the app while the call carries on
   | { t: "navigate"; href: string }
   // A link card on the call ("take a look"): in the app or a new tab

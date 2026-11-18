@@ -7,8 +7,9 @@ import { CALL_LIMIT_SECONDS, clock, keyOf, statusOf, type LearnedItem, type Stal
 import type { Call, CallDebug, Line, Phase, Speaker } from "@/lib/agent-call/engine";
 import type { CallCard, UploadAsk } from "@/lib/agent-call/core";
 import type { CallNotes } from "@/lib/assistant/notes";
+import type { JobView } from "@/lib/assistant/team";
 import type { CallContext } from "@/lib/agent-call/call-context";
-import { CardsStrip, GuestChip, NotesBlock, RecordedMark, ScreenIcon, ShareAsk, SharingBar, TranscriptButton, UploadPanel } from "./assistant-call-parts";
+import { CardsStrip, JobStrip, NotesBlock, RecordedMark, ScreenIcon, ShareAsk, SharingBar, TeamChips, TranscriptButton, UploadPanel } from "./assistant-call-parts";
 
 // The two ways a call is shown. On phones it takes the whole screen; on computers it is a huddle: a small panel
 // docked bottom right that stays while you move around the app, and shrinks to a pill. Both read the same state,
@@ -41,7 +42,9 @@ export type CallView = {
   onMute: () => void;
   onHangUp: () => void;
   /** Assistant calls: the specialist on the line, link cards, the upload panel */
-  guest?: Speaker | null;
+  team?: Speaker[];
+  /** The job the agents are working on (launching ads, an email request…) */
+  job?: JobView | null;
   cards?: CallCard[];
   uploadAsk?: UploadAsk | null;
   uploading?: string | null;
@@ -303,15 +306,16 @@ commit ${d.commit ?? "-"}  asking ${d.asking ?? "-"}  queue ${d.queue}`}
 }
 
 /** Whose line it is, when a specialist is (or was) on the call: captions show who's speaking */
-const speakerOf = (l: Line, v: CallView) => (l.who === "agent" && l.speaker && (v.guest || l.speaker.role !== v.agent.roleKey) ? l.speaker.label : null);
+const speakerOf = (l: Line, v: CallView) => (l.who === "agent" && l.speaker && ((v.team ?? []).length > 0 || l.speaker.role !== v.agent.roleKey) ? l.speaker.label : null);
 
-/** The specialist, link cards and the upload panel (assistant calls), under the captions */
+/** The job, link cards and the upload panel, under the captions */
 function CallExtras({ v, compact }: { v: CallView; compact: boolean }) {
   const cards = v.cards ?? [];
   const sc = v.screen;
-  if (!cards.length && !v.uploadAsk && !sc?.asked && !sc?.sharing) return null;
+  if (!cards.length && !v.uploadAsk && !sc?.asked && !sc?.sharing && !v.job) return null;
   return (
     <div className="grid gap-2.5">
+      {v.job && <JobStrip job={v.job} />}
       {sc?.sharing && <SharingBar onStop={sc.onStop} looking={sc.looking} />}
       {sc?.asked && !sc.sharing && <ShareAsk agent={v.agent.roleKey === "assistant" ? "your assistant" : `the ${v.agent.label}`} onShare={sc.onShare} onCancel={sc.onCancel} />}
       {v.uploadAsk && v.onUpload && <UploadPanel ask={v.uploadAsk} busy={v.uploading ?? null} onFiles={v.onUpload} onClose={() => v.onCloseUpload?.()} />}
@@ -382,9 +386,9 @@ export function FullScreenCall({ v }: { v: CallView }) {
           <p aria-live="polite" className="mt-1 text-sm text-muted">
             {error ? <span className="text-bad">{error}</span> : status(v)}
           </p>
-          {v.guest && (
-            <div className="mt-2 flex justify-center">
-              <GuestChip guest={v.guest} speaking={phase === "speaking" && [...lines].reverse().find((l) => l.who === "agent")?.speaker?.role === v.guest.role} />
+          {(v.team ?? []).length > 0 && (
+            <div className="mt-2.5">
+              <TeamChips team={v.team ?? []} center speaking={phase === "speaking" ? ([...lines].reverse().find((l) => l.who === "agent")?.speaker?.role ?? null) : null} />
             </div>
           )}
         </div>
@@ -556,9 +560,9 @@ export function Huddle({ v, minimized, onMinimize, onExpand }: { v: CallView; mi
         )}
       </div>
 
-      {(v.guest || (v.cards ?? []).length > 0 || v.uploadAsk || v.screen?.asked || v.screen?.sharing) && (
+      {((v.team ?? []).length > 0 || v.job || (v.cards ?? []).length > 0 || v.uploadAsk || v.screen?.asked || v.screen?.sharing) && (
         <div className="relative grid max-h-[46vh] gap-2 overflow-y-auto px-4 pb-1 pt-2">
-          {v.guest && <GuestChip guest={v.guest} speaking={phase === "speaking" && lastAgent?.speaker?.role === v.guest.role} />}
+          <TeamChips team={v.team ?? []} speaking={phase === "speaking" ? (lastAgent?.speaker?.role ?? null) : null} />
           <CallExtras v={v} compact />
         </div>
       )}

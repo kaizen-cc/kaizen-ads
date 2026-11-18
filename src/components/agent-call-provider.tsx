@@ -12,6 +12,7 @@ import { CALL_LIMIT_SECONDS, type CallCard, type LearnedItem, type StallState, t
 import { Call, chime, type Line, type Phase, type Speaker } from "@/lib/agent-call/engine";
 import { ASSISTANT_KEY, ASSISTANT_LABEL } from "@/lib/assistant/core";
 import type { CallNotes } from "@/lib/assistant/notes";
+import type { JobView } from "@/lib/assistant/team";
 import { createClient } from "@/lib/supabase/client";
 import { assistantTintOf } from "@/lib/agent-look";
 import { captureFrames } from "@/lib/uploads/video-prep";
@@ -102,7 +103,10 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
   /** The phone stopped the call's audio while it was in the background: shown until it's back */
   const [awayPaused, setAwayPaused] = useState(false);
   const [switchTo, setSwitchTo] = useState<AgentRef | null>(null);
-  const [guest, setGuest] = useState<Speaker | null>(null);
+  const [team, setTeam] = useState<Speaker[]>([]);
+  const [job, setJob] = useState<JobView | null>(null);
+  /** Other agents joined or a job ran on this call (its notes are written, as on the assistant's calls) */
+  const teamed = useRef(false);
   const [cards, setCards] = useState<CallCard[]>([]);
   const [uploadAsk, setUploadAsk] = useState<UploadAsk | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
@@ -174,6 +178,7 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
       stopShare();
       const spent = startedRef.current ? (Date.now() - startedRef.current) / 1000 : 0;
       const wasAssistant = agent?.roleKey === ASSISTANT_KEY;
+      const wasTeam = teamed.current;
       call.current?.close();
       call.current = null;
       callId.current = null;
@@ -199,7 +204,8 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
         setLearned(r.learned);
         setSummary({ seconds: r.seconds, canReview: r.canReview, skills: r.skills });
       } else setSummary({ seconds: spent, canReview: false, skills: {} });
-      if (wasAssistant) void fetchNotes(id);
+      // The notes are written for the assistant's calls and any call where agents worked a job together
+      if (wasAssistant || wasTeam) void fetchNotes(id);
       router.refresh();
     },
     [router, agent, fetchNotes, stopShare],
@@ -334,7 +340,9 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
       setLastCall(null);
       setMinimized(false);
       setStartedAt(null);
-      setGuest(null);
+      setTeam([]);
+      setJob(null);
+      teamed.current = false;
       setCards([]);
       setUploadAsk(null);
       setNotes(null);
@@ -357,7 +365,14 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
         onEars: setEars,
         onStall: setStall,
         onCanSend: setCanSend,
-        onGuest: setGuest,
+        onTeam: (l) => {
+          setTeam(l);
+          if (l.length) teamed.current = true;
+        },
+        onJob: (j) => {
+          setJob(j);
+          if (j) teamed.current = true;
+        },
         onNavigate: openHref,
         onCard: (card) => setCards((cur) => [...cur.filter((x) => x.href !== card.href), card].slice(-6)),
         onUpload: (ask) => {
@@ -599,7 +614,8 @@ export function AgentCallProvider({ assistantColor = null, children }: { assista
         onRetry: () => call.current?.retry(),
         callId: liveId,
         debug,
-        guest,
+        team,
+        job,
         cards,
         uploadAsk,
         uploading,

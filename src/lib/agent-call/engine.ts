@@ -3,6 +3,7 @@ import { canSend, createTranscript, hasFloor, initialTurns, isCurrent, shouldChe
 import type { CallContext } from "./call-context";
 import { initialAway, stepAway, type AwayEffect, type AwayEvent, type AwayState } from "./away";
 import { AUDIO_PART_SECONDS } from "@/lib/assistant/core";
+import type { JobView } from "@/lib/assistant/team";
 import { renewSttToken } from "@/app/(team)/settings/call-actions";
 
 // The live call itself: the microphone, turn taking, listening, the agent's answers and its voice. It knows nothing
@@ -344,8 +345,10 @@ export type Hooks = {
   onStall?: (s: StallState) => void;
   /** Whether Send has something to send */
   onCanSend?: (can: boolean) => void;
-  /** A specialist joined (or left: null) */
-  onGuest?: (g: Speaker | null) => void;
+  /** Who else is on the line (specialists joining or leaving) */
+  onTeam?: (line: Speaker[]) => void;
+  /** The job the call is working on, and its steps (null: none) */
+  onJob?: (job: JobView | null) => void;
   /** Open a screen in the app; the call carries on */
   onNavigate?: (href: string) => void;
   /** A link card on the call */
@@ -771,7 +774,8 @@ export class Call {
             buffer = "";
             this.speaker = { role: e.role, label: e.label, icon: e.icon };
             this.lastSentence = "";
-          } else if (e.t === "guest") this.hooks.onGuest?.(e.role ? { role: e.role, label: e.label ?? "", icon: e.icon ?? "spark" } : null);
+          } else if (e.t === "team") this.hooks.onTeam?.(e.line);
+          else if (e.t === "job") this.hooks.onJob?.(e.job);
           else if (e.t === "navigate") this.hooks.onNavigate?.(e.href);
           else if (e.t === "card") this.hooks.onCard?.(e.card);
           else if (e.t === "upload") this.hooks.onUpload?.(e.ask);

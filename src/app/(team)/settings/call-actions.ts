@@ -140,7 +140,8 @@ export async function endCall(callId: string): Promise<EndedCall | Fail> {
     if (call.role_key === ASSISTANT_KEY) {
       after(() => writeCallNotes(admin, callId).then(() => undefined));
       after(() => learnFromCall(admin, callId).then(() => undefined));
-    }
+      // A call with an agent where others joined or a job ran: its notes too (who did what, what was made)
+    } else after(() => writeCallNotes(admin, callId).then(() => undefined));
     // A little later, so the last part of the recording has landed before the review decides whether to keep it
     after(async () => {
       await new Promise((r) => setTimeout(r, 20_000));
@@ -149,7 +150,9 @@ export async function endCall(callId: string): Promise<EndedCall | Fail> {
     revalidatePath("/settings");
   }
   // On an assistant call, what was heard belongs to the specialists it called in
-  const roles = call.role_key === ASSISTANT_KEY ? [...new Set(learned.map((l) => l.role).filter((r): r is string => Boolean(r)))] : [call.role_key as string];
+  // (and on a call with an agent, what the specialists it brought in heard is theirs)
+  const taught = [...new Set(learned.map((l) => l.role).filter((r): r is string => Boolean(r)))];
+  const roles = call.role_key === ASSISTANT_KEY ? taught : [...new Set([call.role_key as string, ...taught])];
   const { data: skillRows } = roles.length ? await admin.from("ai_agents").select("key, label").in("role_key", roles) : { data: [] };
   const skills = Object.fromEntries((skillRows ?? []).map((k) => [k.key as string, k.label as string]));
   return { ok: true, seconds, learned, canReview: roles.some((r) => canTrainAgent(me, r)), skills };

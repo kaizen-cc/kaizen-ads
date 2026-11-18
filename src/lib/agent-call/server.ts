@@ -13,6 +13,8 @@ import { callConnectors, noConnectors, type CallConnectors } from "./call-connec
 import type { CallContext } from "./call-context";
 import { contextBlock, lookHint, lookTool, loadFrame, withFrame } from "./call-extras";
 import { fillerFor, runToolLoop, type LoopMessage, type LoopTool } from "./tool-loop";
+import { routeTeam } from "@/lib/assistant/team";
+import type { TurnMode } from "@/lib/assistant/team-server";
 
 // A voice call with one of the AI agents, on the server: the call's row (who, which agent, how long, what it cost and
 // what it heard), each turn (the agent's answer streamed from Claude as it's written, from the same playbook its chat
@@ -31,19 +33,25 @@ export type CallRow = {
   learned: LearnedItem[];
   resumed_from?: string | null;
   resume_mode?: ResumeMode | null;
-  /** Assistant calls: the specialist on the line, files uploaded on the call, and the Kaizen AI thread its cards live in */
+  /** The specialists on the line (guest_roles; guest_role is the first, kept from when only one could be on), files
+   *  uploaded on the call, the Kaizen AI thread its cards live in, and the job the agents are working on */
   guest_role?: string | null;
+  guest_roles?: string[] | null;
+  job?: unknown;
   uploads?: unknown[];
   thread_id?: string | null;
 };
 
 const CALL_COLUMNS = "id, role_key, profile_id, voice_id, stt, started_at, ended_at, learned, resumed_from, resume_mode";
 const ASSISTANT_COLUMNS = `${CALL_COLUMNS}, guest_role, uploads, thread_id`;
+const TEAM_COLUMNS = `${ASSISTANT_COLUMNS}, guest_roles, job`;
 
 /** The call when it's this person's, still open and inside its time (a minute's grace for the last answer) */
 export async function openCall(admin: SupabaseClient, me: Staff, callId: unknown): Promise<CallRow | null> {
   if (typeof callId !== "string" || !/^[0-9a-f-]{36}$/.test(callId)) return null;
-  const first = await admin.from("ai_role_calls").select(ASSISTANT_COLUMNS).eq("id", callId).maybeSingle();
+  let first: { data: unknown; error: unknown } = await admin.from("ai_role_calls").select(TEAM_COLUMNS).eq("id", callId).maybeSingle();
+  // Before the team migration: one specialist at a time, no job
+  if (first.error) first = await admin.from("ai_role_calls").select(ASSISTANT_COLUMNS).eq("id", callId).maybeSingle();
   let data = first.data as Record<string, unknown> | null;
   // Before the assistant migration (or the review one): the columns they add aren't there yet
   if (first.error) {
@@ -209,15 +217,35 @@ export async function runCallTurn(input: TurnInput) {
   if (!aiEnabled()) return emit({ t: "error", message: "AI isn't connected yet." });
   const firstName = firstNameOf(me.fullName);
   const trains = canTrainAgent(me, call.role_key);
+  // Other agents may be on the line (this agent brought them in): the turn goes to whoever it's for
+  const team = await import("@/lib/assistant/team-server");
+  const state = team.teamOf(call, call.role_key);
+  const hostHop = (m: TurnMode) => team.specialistTurn(input, state, call.role_key, m);
+  if (state.line.length) {
+    const route = routeTeam(text, { host: call.role_key, line: state.line, last: await team.lastSpeaker(admin, call.id) });
+    if (route.dismiss.length) await team.dismissFromLine(input, state, route.dismiss);
+    if (route.to !== call.role_key) {
+      await team.specialistTurn({ ...input, text }, state, route.to, { text, mode: "person" });
+      await team.followUps(input, state, hostHop);
+      await admin.rpc("ai_role_call_add", { p_id: call.id, p_chars: 0, p_turns: 1, p_learned: [] });
+      return emit({ t: "done" });
+    }
+  }
   const [book, convo, extra] = await Promise.all([loadRolePlaybook(admin, call.role_key), callContext(admin, call, firstName), turnExtras(input, text)]);
   if (!book) return emit({ t: "error", message: "Unknown agent." });
-  const tools = await agentTools({ me, db: input.db, admin, roleKey: call.role_key, label: book.role.label, callId: call.id, emit, said: text });
+  const tctx = { me, db: input.db, admin, callId: call.id, emit, team: state, self: call.role_key, said: text };
+  const tools = team.tracked(tctx, [...(await agentTools({ me, db: input.db, admin, roleKey: call.role_key, label: book.role.label, callId: call.id, emit, said: text })), ...team.teamTools(tctx)]);
   const today = new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  // With others on the line, the captions say who's speaking
+  if (state.line.length) {
+    const { data: role } = await admin.from("ai_roles").select("icon").eq("key", call.role_key).maybeSingle();
+    emit({ t: "speaker", role: call.role_key, label: book.role.label, icon: (role?.icon as string) ?? "spark" });
+  }
 
   const out = await streamAnswer({
-    system: `${voiceSystem(book.role.label, call.role_key, firstName, trains)}\n\n${book.text}`,
+    system: `${voiceSystem(book.role.label, call.role_key, firstName, trains)}\n\n${team.hostRule(firstName)}\n\n${book.text}`,
     tools: [...tools, extra.look, ...extra.connectors.tools],
-    content: withFrame([`Today is ${today} (New York).`, extra.where, convo, extra.hint, `<${firstName}_says>\n${text}\n</${firstName}_says>`].filter(Boolean).join("\n\n"), extra.frame),
+    content: withFrame([`Today is ${today} (New York).`, extra.where, team.teamBlock(state, call.role_key, firstName), convo, extra.hint, `<${firstName}_says>\n${text}\n</${firstName}_says>`].filter(Boolean).join("\n\n"), extra.frame),
     signal,
     emit,
     connectors: extra.connectors,
@@ -235,6 +263,8 @@ export async function runCallTurn(input: TurnInput) {
     { role_key: call.role_key, role: "user", content: text, attachments: [], changes: [], created_by: me.id, call_id: call.id },
     ...(spoken ? [{ role_key: call.role_key, role: "agent", content: spoken, attachments: [], changes: [], created_by: me.id, call_id: call.id }] : []),
   ]);
+  // Anyone it just brought in answers now, then any hand-offs between the agents on the line
+  if (!signal.aborted && !out.ended) await team.followUps(input, state, hostHop);
 
   // The topic and what they taught, read after the answer (so it never slows the voice down). Only someone who trains
   // this agent teaches it: for anyone else nothing is captured. Held as pending until kept or tossed on the review.

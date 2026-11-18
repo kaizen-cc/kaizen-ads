@@ -10,7 +10,8 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 // One sentence of a call spoken in the agent's voice: ElevenLabs' low-latency model, streamed straight back to the
 // browser as MP3. The key stays here; the characters it cost are added to the call. The sentence is put into spoken
 // words first (money, dates, short forms; links never read out), with the sentence before it for a smooth flow. On
-// an assistant call the assistant speaks in the voice its person picked (set on the call when it starts).
+// an assistant call the assistant speaks in the voice its person picked (set on the call when it starts); every agent
+// brought onto a call speaks in its own.
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
@@ -25,10 +26,10 @@ export async function POST(request: Request) {
   const previous = typeof body?.previous === "string" ? forSpeech(speakable(body.previous.slice(0, 600))) : null;
   if (!text) return new Response(null, { status: 204 });
   try {
-    // On an assistant call a specialist it called in speaks in its own voice
+    // A specialist brought onto the call (by the assistant, or by the agent called directly) speaks in its own voice
     const role = typeof body?.role === "string" ? body.role : call.role_key;
     let voiceId = voiceFor(call.role_key, call.voice_id);
-    if (role !== call.role_key && call.role_key === "assistant" && specialistOf(role)) {
+    if (role !== call.role_key && specialistOf(role)) {
       const { data: r } = await admin.from("ai_roles").select("voice_id").eq("key", role).maybeSingle();
       voiceId = voiceFor(role, (r?.voice_id as string | null) ?? null);
     }

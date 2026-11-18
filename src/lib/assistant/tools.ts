@@ -7,23 +7,20 @@ import { CARD_TOOLS, gateTools, type LoopTool } from "@/lib/agent-call/tool-loop
 import { askTools } from "@/lib/agent-call/ask-tools";
 import { callCardTools, emailRequestTool, showCard as showCallCard, type CardCtx } from "@/lib/agent-call/call-cards";
 import { chatTools, type ChatTool, type ToolCtx } from "@/lib/kaizen-ai/tools";
-import { cleanMemory, safeAppPath, safeLink, saidYes, specialistOf, SPECIALISTS, ASSISTANT_KEY, FACT_TOPICS, STYLE_TOPICS, SCREEN_PLACES, KPI_CARD_TABS, CHANNEL_SHEET_TABS, kpiCardHref, channelSheetHref } from "./core";
+import { cleanMemory, safeAppPath, safeLink, saidYes, ASSISTANT_KEY, FACT_TOPICS, STYLE_TOPICS, SCREEN_PLACES, KPI_CARD_TABS, CHANNEL_SHEET_TABS, kpiCardHref, channelSheetHref } from "./core";
 import { forgetContext, myWork } from "./context";
 import { saveNotes } from "./memory";
 
 // What the assistant can do on a call, as the person and only within their rights: everything Kaizen AI's tools do
 // for them (each checks the client and their permissions again), plus opening screens, link cards, asking for files,
-// their day, reports, audits, requests and tickets, their private memory, and calling a specialist in. Anything that
+// their day, reports, audits, requests and tickets, and their private memory (bringing specialists in and working a job
+// together are the team tools, src/lib/assistant/team-server.ts). Anything that
 // sends to a client, spends money or credits, or goes live needs a spoken yes on that very turn (the model's
 // confirmed flag AND the person's own words), so it can't run on a guess. Cards the chat tools make (a brief, a change
 // plan, a launch) are saved to a Kaizen AI thread for this call, where they're confirmed exactly as in the chat, and
 // shown on the call as link cards.
 
 export type CallState = {
-  /** The specialist on the line (changed by call_in_specialist and dismiss_specialist) */
-  guest: string | null;
-  /** What the specialist was called in to answer (it answers it at once) */
-  guestQuestion: string | null;
   /** The Kaizen AI thread this call's cards live in */
   threadId: string | null;
 };
@@ -374,35 +371,6 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
         if (!about) return { done: false, note: "What should I forget?" };
         const { data } = await ctx.admin.from("assistant_memory").delete().eq("profile_id", ctx.me.id).ilike("body", `%${about}%`).select("id");
         return { forgot: data?.length ?? 0 };
-      },
-    },
-    {
-      name: "call_in_specialist",
-      description: `Brings a specialist agent onto this call (it joins with its own voice, playbook and tools; you stay on and take notes). ALWAYS ask first ("Want me to call in the Media Buyer for that?") and only call this once they say yes, with confirmed: true. Specialists: ${SPECIALISTS.map((s) => `${s.key} (${s.label}: ${s.about})`).join("; ")}.`,
-      input_schema: { type: "object", properties: { role: { type: "string", enum: SPECIALISTS.map((s) => s.key) }, question: { type: "string", description: "What they want the specialist to answer, in their words" }, confirmed: CONFIRMED }, required: ["role", "question"], additionalProperties: false },
-      run: async (input) => {
-        const sp = specialistOf(String(input.role));
-        if (!sp) return { joined: false, note: "Not one of the specialists." };
-        if (!yes(ctx, input)) return { joined: false, note: NO_YES };
-        const { data: role } = await ctx.admin.from("ai_roles").select("key, label, icon, offline").eq("key", sp.key).maybeSingle();
-        if (!role || (role as { offline?: boolean }).offline) return { joined: false, note: `The ${sp.label} isn't online yet. Offer to help yourself.` };
-        await ctx.admin.from("ai_role_calls").update({ guest_role: sp.key }).eq("id", ctx.callId);
-        ctx.state.guest = sp.key;
-        ctx.state.guestQuestion = clip(input.question, 1000);
-        ctx.emit({ t: "guest", role: sp.key, label: role.label as string, icon: (role.icon as string) ?? "spark" });
-        return { joined: true, note: `Say one short line ("Bringing in the ${role.label}.") and stop: they answer next.` };
-      },
-    },
-    {
-      name: "dismiss_specialist",
-      description: "Lets the specialist go when they're done with it or they ask you to take it from here. Thank it in a few words.",
-      input_schema: { type: "object", properties: {}, additionalProperties: false },
-      run: async () => {
-        if (!ctx.state.guest) return { note: "Nobody else is on the call." };
-        await ctx.admin.from("ai_role_calls").update({ guest_role: null }).eq("id", ctx.callId);
-        ctx.state.guest = null;
-        ctx.emit({ t: "guest", role: null, label: null, icon: null });
-        return { left: true };
       },
     },
     {

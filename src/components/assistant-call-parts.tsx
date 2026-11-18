@@ -6,8 +6,9 @@ import type { CallCard, UploadAsk } from "@/lib/agent-call/core";
 import type { Speaker } from "@/lib/agent-call/engine";
 import { tintOf } from "@/lib/agent-look";
 import type { CallNotes } from "@/lib/assistant/notes";
+import type { JobView } from "@/lib/assistant/team";
 
-// The pieces a call shows beyond talking: an agent's icon, the specialist on the line, link cards ("take a look"),
+// The pieces a call shows beyond talking: an agent's icon, the specialists on the line and the job they're working on, link cards ("take a look"),
 // the upload panel when the assistant asks for files, the assistant's notes after the call, and the one-time notice
 // that calls are recorded, and sharing the screen for a look (the ask to share, and the bar while it's shared). Used
 // by both the phone's full screen and the computer's huddle. And the button that downloads a call's transcript.
@@ -39,18 +40,70 @@ export function AgentGlyph({ icon, size = 40, tint }: { icon: string; size?: num
   );
 }
 
-/** The specialist on the line with the assistant */
-export function GuestChip({ guest, speaking }: { guest: Speaker; speaking: boolean }) {
+/** The specialists on the line with the host: each one's glyph and role, the one speaking lit up */
+export function TeamChips({ team, speaking, center = false }: { team: Speaker[]; speaking: string | null; center?: boolean }) {
+  if (!team.length) return null;
   return (
-    <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-line bg-surface-2/70 py-1 pl-1 pr-3 text-[12.5px] text-muted">
-      <span className="relative">
-        {speaking && <span aria-hidden className="absolute inset-[-3px] animate-ping rounded-[12px] opacity-25" style={{ background: tintOf(guest.icon) }} />}
-        <AgentGlyph icon={guest.icon} size={22} />
-      </span>
-      <span className="truncate">
-        The {guest.label} is on the call
-      </span>
-    </span>
+    <ul className={`flex flex-wrap gap-1.5 ${center ? "justify-center" : ""}`} aria-label="Also on the call">
+      {team.map((g) => {
+        const on = speaking === g.role;
+        return (
+          <li
+            key={g.role}
+            className={`inline-flex max-w-full items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-[12.5px] transition-colors ${on ? "border-faint bg-surface text-fg" : "border-line bg-surface-2/70 text-muted"}`}
+            aria-current={on ? "true" : undefined}
+          >
+            <span className="relative">
+              {on && <span aria-hidden className="absolute inset-[-3px] animate-ping rounded-[12px] opacity-25" style={{ background: tintOf(g.icon) }} />}
+              <AgentGlyph icon={g.icon} size={22} />
+            </span>
+            <span className="truncate">{g.label}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** The job the agents are working on: what, for whom, and each step done or still to do */
+export function JobStrip({ job }: { job: JobView }) {
+  const needed = job.steps.filter((s) => !s.optional);
+  const done = needed.filter((s) => s.done).length;
+  const next = job.steps.find((s) => !s.done && !s.optional);
+  return (
+    <section className="rounded-[16px] border border-line bg-surface p-3 shadow-sm" aria-label={`${job.label} progress`}>
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="min-w-0 truncate text-[13.5px] font-medium leading-snug">
+          {job.label}
+          {job.client && <span className="text-muted"> · {job.client}</span>}
+          {job.platform && <span className="text-faint"> · {job.platform === "google" ? "Google" : "Meta"}</span>}
+        </p>
+        <span className={`shrink-0 text-[11.5px] tabular-nums ${job.status === "done" ? "text-ok" : "text-faint"}`}>{job.status === "done" ? "Done" : job.status === "dropped" ? "Stopped" : `${done} of ${needed.length}`}</span>
+      </div>
+      <div className="mt-2.5 flex gap-1" aria-hidden>
+        {needed.map((s) => (
+          <span key={s.key} className={`h-1 flex-1 rounded-full transition-colors duration-500 ${s.done ? "bg-ok" : s === next ? "bg-brand/60" : "bg-surface-2"}`} />
+        ))}
+      </div>
+      <ol className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+        {job.steps.map((s) => (
+          <li key={s.key} className={`inline-flex items-center gap-1.5 text-[11.5px] ${s.done ? "text-muted" : s === next ? "text-fg" : "text-faint"}`}>
+            {s.done ? (
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="text-ok">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+            ) : (
+              <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${s === next ? "bg-brand" : "bg-line"}`} />
+            )}
+            <span>
+              {s.label}
+              {s.optional && !s.done && <span className="text-faint"> (optional)</span>}
+              <span className="sr-only">{s.done ? ", done" : s === next ? ", next" : ", to do"}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
@@ -238,6 +291,42 @@ export function NotesBlock({ notes }: { notes: CallNotes | null | "none" }) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+      {(notes.made ?? []).length > 0 && (
+        <div className="grid gap-1.5">
+          <p className="text-[12.5px] font-medium">{notes.job ? `Made for ${notes.job.label.toLowerCase()}${notes.job.client ? ` · ${notes.job.client}` : ""}` : "Made on the call"}</p>
+          <ul className="grid gap-1">
+            {(notes.made ?? []).map((m, i) => (
+              <li key={`${m.label}-${i}`} className="flex gap-2 text-[13px] leading-snug text-muted">
+                <span aria-hidden className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
+                {m.href ? (
+                  <a href={m.href} className="underline decoration-line underline-offset-2 transition-colors hover:text-fg hover:decoration-faint">
+                    {m.label}
+                  </a>
+                ) : (
+                  m.label
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {(notes.agents ?? []).length > 0 && (
+        <div className="grid gap-2">
+          <p className="text-[12.5px] font-medium">Who did what</p>
+          {(notes.agents ?? []).map((a) => (
+            <div key={a.label} className="grid gap-0.5">
+              <p className="text-[11px] uppercase tracking-[0.14em] text-faint">{a.label}</p>
+              <ul className="grid gap-0.5">
+                {a.did.map((d) => (
+                  <li key={d} className="text-[13px] leading-snug text-muted">
+                    {d}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       )}
       {notes.followUps.length > 0 && (
