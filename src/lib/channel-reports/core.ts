@@ -6,8 +6,11 @@ import { BENCHMARKS, deliverabilityOutliers, pulseWindow, type CampaignLite, typ
 import { postRate, withRates, windowOf, type DailyRow as SocialDay, type PostView, type Window as SocialWindow } from "@/lib/social/insights";
 import type { Platform as SocialPlatformKey, PostFormat, SocialPost } from "@/lib/social/core";
 import type { RefreshNote } from "@/lib/reports/refresh-core";
+import { fillPriorFollowers, priorFollowersOver } from "./social-followers";
+import type { SocialReportScore } from "./social-report";
 import { emailDetail, type EmailDetail, type FlowDay, type Pair, type Upcoming } from "./email-detail";
 import { locationChecks, type LocationBreakdown } from "@/lib/klaviyo/locations";
+import type { RevenueSources } from "./email-sources";
 
 // Email (Klaviyo) and organic social reports as plain functions, free of server code and the database so they are tested:
 // which reports exist (platform, line, cadence), the report's dates (the month just over against the month before, or the
@@ -199,10 +202,17 @@ export type EmailMetrics = {
   locations?: LocationBreakdown | null;
   /** What Klaviyo attributes to the same campaigns per metric, for the QA's check that the locations add up */
   locationAttributed?: Record<string, number>;
+  /** Two or more order systems Klaviyo credits email through (Toast and a custom POS): each one and the combined, each order once */
+  sources?: RevenueSources | null;
+  /** Order metrics on the account that email earns through but the team hasn't ranked yet (the sync's weekly check, last 30 days) */
+  unrankedSources?: UnrankedSource[];
 };
 
+/** An order metric the sync found carrying revenue attributed to email, not among the ranked conversion metrics */
+export type UnrankedSource = { id: string; name: string; integration: string | null; revenue: number; orders: number };
+
 /** One ranked conversion metric's numbers for the period and the one before: attributed revenue and conversions, and the store's own total */
-export type MetricSide = { id: string; name: string; revenue: Pair; conversions: Pair; store: Pair };
+export type MetricSide = { id: string; name: string; revenue: Pair; conversions: Pair; store: Pair; campaignRevenue?: Pair; flowRevenue?: Pair };
 
 /** Which numbers on a report were stated by its owner, and where they read them */
 export type StatedMark = { source: string; keys: string[] };
@@ -411,6 +421,8 @@ export type SocialMetrics = {
   insightsRead: boolean;
   /** A weekly's month to date (older stored reports and monthlies have none) */
   mtd?: SocialMtd | null;
+  /** The account's social score over the 30 days to the period's end (older stored reports have none) */
+  score?: SocialReportScore | null;
   refreshNote?: RefreshNote;
   stated?: StatedMark;
 };
@@ -490,9 +502,11 @@ export function socialMetrics(i: SocialInput): SocialMetrics {
   const latest: Partial<Record<SocialPlatformKey, number | null>> = {};
   for (const p of platforms) latest[p] = followersOn(i.days, p, i.main.end) ?? i.current?.[p] ?? null;
   const rated = withRates(i.posts, latest);
-  const per: SocialPlatformNumbers[] = platforms.map((p) => ({ platform: p, name: i.names[p] ?? null, now: numbersFor(i.days, rated, p, i.main, latest[p] ?? null), before: numbersFor(i.days, rated, p, i.compare, followersOn(i.days, p, i.compare.end)) }));
+  // A platform with no follower count for the period before gets it from this period's (followers less the net change)
+  const per: SocialPlatformNumbers[] = platforms.map((p) => fillPriorFollowers({ platform: p, name: i.names[p] ?? null, now: numbersFor(i.days, rated, p, i.main, latest[p] ?? null), before: numbersFor(i.days, rated, p, i.compare, followersOn(i.days, p, i.compare.end)) }));
   const now = combineNumbers(per.map((p) => p.now));
-  const before = combineNumbers(per.map((p) => p.before));
+  // Followers before are added up over the same platforms as now's, or not at all (never two platforms against one)
+  const before = { ...combineNumbers(per.map((p) => p.before)), followers: priorFollowersOver(per.map((p) => p.now), per.map((p) => p.before)) };
   const inMain = rated.filter((p) => p.postedAt && etDay(p.postedAt) >= i.main.start && etDay(p.postedAt) <= i.main.end);
   const best = [...inMain]
     .sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || (b.interactions ?? -1) - (a.interactions ?? -1) || (b.reach ?? -1) - (a.reach ?? -1))
@@ -530,8 +544,10 @@ export function socialMetrics(i: SocialInput): SocialMetrics {
 /** The month to date of a social report ending on `end`: each linked platform worked out over the month so far and the same days last month, added up */
 function socialMtdOf(end: string, days: SocialDay[], rated: PostView[], platforms: readonly SocialPlatformKey[], latest: Partial<Record<SocialPlatformKey, number | null>>): SocialMtd {
   const f = mtdFrame(end);
-  const now = combineNumbers(platforms.map((p) => numbersFor(days, rated, p, f.window, latest[p] ?? null)));
-  const before = combineNumbers(platforms.map((p) => numbersFor(days, rated, p, f.compare, followersOn(days, p, f.compare.end))));
+  const nows = platforms.map((p) => numbersFor(days, rated, p, f.window, latest[p] ?? null));
+  const befores = platforms.map((p) => numbersFor(days, rated, p, f.compare, followersOn(days, p, f.compare.end)));
+  const now = combineNumbers(nows);
+  const before = { ...combineNumbers(befores), followers: priorFollowersOver(nows, befores) };
   return { ...f, now, before, projectedReach: now.reach != null ? round(projectMonthEnd(now.reach, end)) : null };
 }
 
@@ -628,7 +644,7 @@ export function emailSupport(m: EmailMetrics): { label: string; value: string }[
     { label: "Open rate", value: `${pct(now.openRate)}${chg(now.openRate, before.openRate)}` },
     { label: "Click rate", value: `${pct(now.clickRate, 2)}${chg(now.clickRate, before.clickRate)}` },
     { label: "Unsubscribes", value: pct(now.unsubscribeRate, 2) },
-    { label: "Revenue per email sent", value: now.revenuePerRecipient != null ? money(now.revenuePerRecipient, m.currency) : "–" },
+    { label: "Revenue per recipient", value: now.revenuePerRecipient != null ? `${money(now.revenuePerRecipient, m.currency)}${chg(now.revenuePerRecipient, before.revenuePerRecipient)}` : "–" },
     { label: "Emails sent", value: int(now.sends) },
   ];
 }
@@ -663,9 +679,22 @@ export const metricsSupport = (m: EmailMetrics | SocialMetrics) => (m.platform =
 
 /** The lines the email carries (subject-line numbers, one per line), each against the period before */
 export function keyLines(m: EmailMetrics | SocialMetrics): string[] {
-  return metricsTiles(m)
+  const vs = (mv: Move) => (mv ? `, ${mv.up ? "up" : "down"} ${mv.pct} vs ${m.compare.label}` : "");
+  const out = metricsTiles(m)
     .filter((t) => t.value !== "–")
-    .map((t) => `${t.label}: ${t.value}${t.move ? `, ${t.move.up ? "up" : "down"} ${t.move.pct} vs ${m.compare.label}` : ""}`);
+    .map((t) => `${t.label}: ${t.value}${vs(t.move)}`);
+  if (m.platform !== "klaviyo") return out;
+  const c = m.currency;
+  // A client with two order systems: each one and the combined, so the summary never reads one as the whole
+  if (m.sources) {
+    out.push(`By source: ${m.sources.sources.map((x) => `${x.name} ${money(x.revenue.now, c)}`).join(", ")}`);
+    out.push(`All sources combined: ${money(m.sources.combined.revenue.now, c)}${vs(moveOf(m.sources.combined.revenue.now, m.sources.combined.revenue.before))}`);
+  }
+  // Texts, when they earned a real part of the period's revenue (a tenth or more) or went out at all with no revenue tracked
+  const sms = m.detail?.channels?.sms;
+  if (sms && (sms.sends.now ?? 0) > 0 && (m.revenueMeasured === false || (m.now.revenue > 0 && (sms.revenue.now ?? 0) / m.now.revenue >= 0.1)))
+    out.push(m.revenueMeasured === false ? `SMS: ${int(sms.sends.now)} texts sent` : `SMS: ${money(sms.revenue.now, c)} from ${int(sms.sends.now)} texts${vs(moveOf(sms.revenue.now, sms.revenue.before))}`);
+  return out;
 }
 
 // ─── Takeaways ─────────────────────────────────────────────────────────────
@@ -726,6 +755,7 @@ export function dataFlags(m: EmailMetrics | SocialMetrics): DataFlag[] {
     if (m.target && m.target.progress != null && m.target.progress < 0.7) add("check", `Revenue is at ${Math.round(m.target.progress * 100)}% of its target.`, "Say where it stands against the target and the plan to close it.");
     if (m.locations === null && now.campaignsSent > 0) add("alert", "This client is broken down by location, but no orders with a location were read for the campaigns in the period.", "Check the location property on the client's Klaviyo card and Sync health before sending; the report's location section is left out.");
     for (const t of locationChecks(m.locations ?? null, m.locationAttributed ?? {}, m.currency)) add("check", t, "Check the location property picked on the Klaviyo card, or say in the report that some orders carry no location.");
+    for (const u of m.unrankedSources ?? []) if (u.revenue > 0) add("check", `${u.name}${u.integration ? ` (${u.integration})` : ""} carries ${money(u.revenue, m.currency)} from ${int(u.orders)} orders that Klaviyo credits to email over the last 30 days, but it isn't counted in this report.`, "If it's a second order system (a custom POS next to Toast), add it on the client's Klaviyo card under Counts as the sale, and its location property if the client is multi-location; the report then shows each source and the combined total.");
   } else {
     const { now, before } = m;
     if (now.posts === 0) add("alert", "Nothing was published in the period.", "If posting paused, the report should say so and when it resumes.");
@@ -756,6 +786,7 @@ export function quotedLines(m: EmailMetrics | SocialMetrics): Line[] {
       { key: "net", label: "Net new subscribers", kind: "count", value: finite(m.list.net) },
       { key: "prevRevenue", label: "Revenue in the period before", kind: "money", value: finite(m.before.revenue) },
       ...(m.locations ? [{ key: "locations", label: "Revenue by location (every metric summed)", kind: "money" as const, value: finite(m.locations.combined.revenue) }] : []),
+      ...(m.sources ? [{ key: "sources", label: "All revenue sources combined", kind: "money" as const, value: finite(m.sources.combined.revenue.now) }] : []),
     ];
   }
   return [

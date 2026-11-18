@@ -139,10 +139,10 @@ export async function chooseKlaviyoMetric(clientId: string, metricId: string, na
  * Saved on every change; the 90 days are read again only when a new primary or a metric not read before needs it (a
  * reorder below the primary or a removal just changes the weights). Says whether a read started.
  */
-export async function chooseKlaviyoMetrics(clientId: string, metrics: { id: string; name: string; integration: string | null }[]): Promise<{ ok: true; reading: boolean } | { ok: false; error: string }> {
+export async function chooseKlaviyoMetrics(clientId: string, metrics: { id: string; name: string; integration: string | null; revenueSource?: boolean }[]): Promise<{ ok: true; reading: boolean } | { ok: false; error: string }> {
   const l = await mine(clientId, true);
   if ("error" in l) return { ok: false, error: l.error! };
-  const list = (Array.isArray(metrics) ? metrics : []).slice(0, 4).map((m) => ({ id: String(m?.id ?? "").slice(0, 64), name: String(m?.name ?? "").slice(0, 120), integration: m?.integration ? String(m.integration).slice(0, 80) : null }));
+  const list = (Array.isArray(metrics) ? metrics : []).slice(0, 4).map((m) => ({ id: String(m?.id ?? "").slice(0, 64), name: String(m?.name ?? "").slice(0, 120), integration: m?.integration ? String(m.integration).slice(0, 80) : null, ...(typeof m?.revenueSource === "boolean" ? { revenueSource: m.revenueSource } : {}) }));
   const r = await setKlaviyoMetrics(l.admin, clientId, list, l.me.id);
   if (!r.ok) return r;
   const admin = l.admin;

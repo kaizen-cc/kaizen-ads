@@ -1,9 +1,12 @@
 import { checkText, pointsLost } from "@/lib/email-score-calc";
-import { emailSupport, int, money, pct, signed, socialName, socialSupport, targetSub, type EmailMetrics, type SocialMetrics } from "./core";
+import { emailSupport, int, money, pct, priorWordOf, signed, socialName, socialSupport, targetSub, type EmailMetrics, type SocialMetrics } from "./core";
 import { grade, RATE_BARS, type MessageRow, type Pair } from "./email-detail";
 import { periodWords, socialHappenedBullets, whatHappenedBullets } from "./email-message";
+import { socialScoreText } from "./social-report";
 import { locationText } from "@/lib/klaviyo/locations";
 import { channelMtdText } from "./mtd";
+import { sourcesText } from "./email-sources";
+import { campaignPicks, RPR_BAR } from "./email-cards";
 
 // A channel report's numbers as the text the writer and the QA read: every figure the report may quote, with its dates and
 // what it is compared with, in one place so what the AI says and what the PDF draws can never differ.
@@ -26,7 +29,7 @@ export function emailText(m: EmailMetrics): string {
     line("Unsubscribe rate", pct(now.unsubscribeRate, 2), pct(before.unsubscribeRate, 2)),
     line("Spam complaint rate", pct(now.spamRate, 3), pct(before.spamRate, 3)),
     line("Bounce rate", pct(now.bounceRate, 2), pct(before.bounceRate, 2)),
-    line("Revenue per message sent", money(now.revenuePerRecipient, c), money(before.revenuePerRecipient, c)),
+    line("Revenue per recipient (revenue over every email and text sent, campaigns and automated; Kaizen's bar is " + money(RPR_BAR, c) + "; in the client's message say \"revenue for each email sent\", never RPR)", money(now.revenuePerRecipient, c), money(before.revenuePerRecipient, c)),
     ...(now.share != null ? [`- Email's share of the store's revenue: ${pct(now.share, 0)}`] : []),
     `- List: ${m.list.net != null ? `${signed(m.list.net)} net new subscribers (${int(m.list.subscribed)} joined, ${int(m.list.unsubscribed)} left)` : "no list movement read"}${m.list.profiles != null ? `; ${int(m.list.profiles)} profiles in the main list` : ""}`,
   ];
@@ -38,7 +41,8 @@ export function emailText(m: EmailMetrics): string {
     out.push(sc.weighingDown.length ? `Weighing the score down, biggest first: ${sc.weighingDown.slice(0, 3).map((k) => k.label).join("; ")}.` : "Every check is at or over its bar.");
   }
   if (m.target) out.push(`- Target (${m.target.label}): ${targetSub(m.target, c) ?? "set, no progress yet"}${m.target.actual != null ? `; actual ${m.target.unit === "money" ? money(m.target.actual, c) : m.target.unit === "percent" ? pct(m.target.actual) : int(m.target.actual)}` : ""}`);
-  if (m.byMetric?.length) {
+  if (m.sources) out.push(sourcesText(m.sources, (n) => money(n, c), priorWordOf(m.kind)));
+  else if (m.byMetric?.length) {
     out.push(`Each metric that counts as the sale, side by side (primary first; the revenue above is the primary's):`);
     for (const x of m.byMetric) out.push(line(`${x.name}: attributed revenue`, money(x.revenue.now, c), money(x.revenue.before, c), `; conversions ${int(x.conversions.now)} (before: ${int(x.conversions.before)})${x.store.now != null ? `; the store's own total ${money(x.store.now, c)}` : ""}`));
   }
@@ -64,7 +68,7 @@ export function emailText(m: EmailMetrics): string {
 }
 
 const was = (p: Pair, f: (x: number | null) => string) => `${f(p.now)} (before: ${f(p.before)})`;
-const row = (r: MessageRow, c: string | null) => `${int(r.recipients)} recipients, ${r.openRate != null ? `${pct(r.openRate)} opened, ` : ""}${pct(r.clickRate, 2)} clicked, ${int(r.orders)} orders (${pct(r.orderRate, 2)} of recipients ordered), ${money(r.revenue, c)} revenue${r.orders ? `, average order ${money(r.revenue / r.orders, c)}` : ""}`;
+const row = (r: MessageRow, c: string | null) => `${int(r.recipients)} recipients, ${r.openRate != null ? `${pct(r.openRate)} opened, ` : ""}${pct(r.clickRate, 2)} clicked, ${int(r.orders)} orders (${pct(r.orderRate, 2)} of recipients ordered), ${money(r.revenue, c)} revenue${r.recipients > 0 ? `, ${money(r.revenue / r.recipients, c)} per recipient` : ""}${r.orders ? `, average order ${money(r.revenue / r.orders, c)}` : ""}`;
 
 /** The detail the PDF draws, as the writer reads it: every campaign and the flows for the report's own dates, and what's coming up */
 function detailText(m: EmailMetrics): string {
@@ -75,11 +79,16 @@ function detailText(m: EmailMetrics): string {
     ...whatHappenedBullets(m).map((b) => `- ${b}`),
     `- Orders before: ${int(d.orders.before)}`,
     `Campaign performance (${d.campaign.sent.now ?? 0} sent; before: ${d.campaign.sent.before ?? 0}): recipients ${was(d.campaign.recipients, int)}; open rate ${was(d.campaign.open, (x) => pct(x))} (${grade(d.campaign.open.now, RATE_BARS.campaign.open) ?? "n/a"} against Kaizen's ${pct(RATE_BARS.campaign.open, 0)} bar); click rate ${was(d.campaign.click, (x) => pct(x, 2))} (${grade(d.campaign.click.now, RATE_BARS.campaign.click) ?? "n/a"} against ${pct(RATE_BARS.campaign.click, 0)}); placed order rate ${was(d.campaign.orderRate, (x) => pct(x, 2))}.`,
+    ...(d.campaign.rpr ? [`Campaign revenue per recipient: ${was(d.campaign.rpr, (x) => money(x, c))}.`] : []),
     `Every campaign sent in the period, by date:`,
     ...d.campaigns.map((r) => `- ${r.date} ${r.channel === "sms" ? "SMS" : "email"} "${r.name}": ${row(r, c)}`),
   ];
+  const picks = campaignPicks(d.campaigns, { currency: c, revenueMeasured: m.revenueMeasured !== false });
+  if (picks) out.push(`The report's campaign section shows the best and the lowest performer by ${picks.basis === "rpr" ? "revenue per recipient" : "click rate (revenue isn't tracked)"}: best "${picks.best.row.name}" (${picks.best.why}); lowest "${picks.lowest.row.name}" (${picks.lowest.why})`);
+  const ch = d.channels;
+  if (ch) out.push(`Email against SMS (texts went out; mention SMS in the message when it earned a real part of the revenue or changed from the period before): email ${was(ch.email.revenue, (x) => money(x, c))} from ${was(ch.email.sends, int)} sends; SMS ${was(ch.sms.revenue, (x) => money(x, c))} from ${was(ch.sms.sends, int)} texts across ${was(ch.sms.campaigns, int)} SMS campaigns (automated texts' revenue is in the SMS revenue, their sends in email's).`);
   if (d.flow) {
-    out.push(`Automated emails (flows) for the period's own dates (call them automated emails in the client's message, never flows): ${d.flow.sent.now ?? 0} sent; recipients ${was(d.flow.recipients, int)}; open rate ${was(d.flow.open, (x) => pct(x))} (${grade(d.flow.open.now, RATE_BARS.flow.open) ?? "n/a"} against ${pct(RATE_BARS.flow.open, 0)}); click rate ${was(d.flow.click, (x) => pct(x, 2))} (${grade(d.flow.click.now, RATE_BARS.flow.click) ?? "n/a"} against ${pct(RATE_BARS.flow.click, 1)}); placed order rate ${was(d.flow.orderRate, (x) => pct(x, 2))}; revenue ${was(d.flow.revenue, (x) => money(x, c))}.`);
+    out.push(`Automated emails (flows) for the period's own dates (call them automated emails in the client's message, never flows): ${d.flow.sent.now ?? 0} sent; recipients ${was(d.flow.recipients, int)}; open rate ${was(d.flow.open, (x) => pct(x))} (${grade(d.flow.open.now, RATE_BARS.flow.open) ?? "n/a"} against ${pct(RATE_BARS.flow.open, 0)}); click rate ${was(d.flow.click, (x) => pct(x, 2))} (${grade(d.flow.click.now, RATE_BARS.flow.click) ?? "n/a"} against ${pct(RATE_BARS.flow.click, 1)}); placed order rate ${was(d.flow.orderRate, (x) => pct(x, 2))}; revenue ${was(d.flow.revenue, (x) => money(x, c))}${d.flow.rpr ? `; revenue per recipient ${was(d.flow.rpr, (x) => money(x, c))}` : ""}.`);
     out.push(`Each automated email that sent, best revenue first:`);
     for (const r of d.flows) out.push(`- "${r.name}" (${r.status ?? "status unknown"}): ${row(r, c)}`);
     if (d.flowsOther) out.push(`- ${d.flowsOther.name} together: ${row(d.flowsOther, c)}`);
@@ -126,6 +135,7 @@ export function socialText(m: SocialMetrics): string {
   ];
   out.push(...channelMtdText(m));
   if (m.target) out.push(`- Target (${m.target.label}): ${targetSub(m.target) ?? "set, no progress yet"}`);
+  out.push(...socialScoreText(m));
   for (const p of m.platforms) out.push(`${socialName(p.platform)}${p.name ? ` (${p.name})` : ""}: ${int(p.now.followers)} followers (${signed(p.now.followerChange)}), reach ${int(p.now.reach)} (before ${int(p.before.reach)}), views ${int(p.now.views)}, interactions ${int(p.now.interactions)}, ${p.now.rate != null ? `engagement ${pct(p.now.rate)}` : "no engagement rate"}, ${int(p.now.posts)} posts`);
   if (m.formats.length) out.push(`Posts by format: ${m.formats.map((f) => `${f.count} ${f.format}`).join(", ")}`);
   out.push(`Top posts of the period (${m.postsTotal} published, best ${m.posts.length} by engagement):`);

@@ -102,9 +102,38 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
 
 function EmailBody({ m, shots }: { m: EmailMetrics; shots: Record<string, string> }) {
   const sc = m.score && m.score.unmeasured.length < m.score.checks.length ? m.score : null;
-  const sides = m.byMetric && m.byMetric.length > 1 ? m.byMetric : null;
+  const sides = !m.sources && m.byMetric && m.byMetric.length > 1 ? m.byMetric : null;
+  const src = m.sources ?? null;
   return (
     <>
+      {src && (
+        <Block title="Revenue by source">
+          <div className="grid gap-3 sm:grid-cols-3">
+            {src.sources.map((x) => (
+              <div key={x.id} className="rounded-xl border border-line bg-surface p-5">
+                <p className="text-[11px] tracking-[0.08em] text-faint uppercase">{x.share != null ? `${Math.round(x.share * 100)}% of the total` : "Source"}</p>
+                <p className="mt-1 font-heading text-base [overflow-wrap:anywhere]">{x.name}</p>
+                <p className="mt-2 font-heading text-2xl tabular-nums">{money(x.revenue.now, m.currency)}</p>
+                <p className="mt-1 text-[13px] text-muted tabular-nums">
+                  {int(x.orders.now)} orders{x.revenue.before != null ? ` · ${money(x.revenue.before, m.currency)} the period before` : ""}
+                </p>
+                {x.campaignRevenue != null && x.flowRevenue != null && (
+                  <p className="mt-1 text-[13px] text-muted tabular-nums">
+                    Campaigns {money(x.campaignRevenue, m.currency)} · automated {money(x.flowRevenue, m.currency)}
+                  </p>
+                )}
+                {x.locations.length > 0 && <p className="mt-2 text-[12px] text-faint [overflow-wrap:anywhere]">Top: {x.locations.slice(0, 3).map((l) => `${l.location} ${money(l.revenue, m.currency)}`).join(", ")}</p>}
+              </div>
+            ))}
+            <div className="rounded-xl border border-line bg-surface-2 p-5">
+              <p className="text-[11px] tracking-[0.08em] text-faint uppercase">Combined</p>
+              <p className="mt-3 font-heading text-2xl tabular-nums">{money(src.combined.revenue.now, m.currency)}</p>
+              <p className="mt-1 text-[13px] text-muted tabular-nums">{int(src.combined.orders.now)} orders, each counted once</p>
+              <p className="mt-2 text-[12px] text-faint">{src.note}</p>
+            </div>
+          </div>
+        </Block>
+      )}
       {sides && (
         <Block title="By what counts as a sale">
           <div className="grid gap-3 sm:grid-cols-2">

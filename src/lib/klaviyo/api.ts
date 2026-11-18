@@ -302,3 +302,20 @@ export async function locationAggregate(key: string, metricId: string, prop: str
   }
   return pages;
 }
+
+/**
+ * One metric's orders credited to email over [from, to]: a metric aggregate grouped by the attributed message (the
+ * Events-tier limits, not the Reporting API's), its pages for parseAttributedTotal. Reads only.
+ */
+export async function attributedPages(key: string, metricId: string, from: string, to: string, tz: string | null): Promise<unknown[]> {
+  const body = aggregateBody(metricId, from, to, tz) as { data: { type: string; attributes: Record<string, unknown> } };
+  body.data.attributes.by = [BY_MESSAGE];
+  const pages: unknown[] = [];
+  let next: string | null = "/api/metric-aggregates/";
+  for (let i = 0; next && i < 10; i++) {
+    const json = await call(key, next, { method: "POST", body });
+    pages.push(json);
+    next = nextLink(json);
+  }
+  return pages;
+}

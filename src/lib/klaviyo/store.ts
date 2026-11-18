@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptionKey, seal, unseal } from "@/lib/meta-token-core";
 import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
-import { audienceSize, campaignContent, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, metricDaily, placedOrderMetric, pulseMetrics, listMetrics } from "./api";
+import { attributedPages, audienceSize, campaignContent, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, metricDaily, placedOrderMetric, pulseMetrics, listMetrics } from "./api";
 import { BACKFILL_DAYS, cleanKey, dayIn, emailContextLine, emptyStats, keyLast4, keyProblem, klaviyoClientState, klaviyoCostMs, partialSyncWarning, pickKlaviyoWindow, rates, redactKey, rollupDays, sumSince, type CampaignInfo, type KlaviyoClientState, type KlaviyoPlainError, type KlaviyoWindow, type SeriesRow, type Stats } from "./core";
 import { audienceGrowth, emailHealth, keyFlowCoverage, pulseWindow, sanitizeEmailHtml, seriesChunks, sortCampaigns, type CampaignLite, type DailyRow, type DayValue, type FlowLite, type HealthFinding, type KeyFlow, type PulseWindow } from "./insights";
 import { tracker } from "@/lib/progress";
@@ -282,6 +282,33 @@ export async function saveFlowDays(admin: SupabaseClient, clientId: string, seri
   }
 }
 
+// ─── Order systems not ranked yet ──────────────────────────────────────────
+
+/**
+ * The weekly check for a second order system (src/lib/klaviyo/sources.ts): the account's order metrics that aren't
+ * ranked, each one's revenue Klaviyo credits to email over the last 30 days, kept in sync_state for the report's QA.
+ * Read only in Klaviyo; a failure is noted in the memo, never failing the read.
+ */
+async function checkUnrankedSources(admin: SupabaseClient, conn: ConnRow, key: string, ranked: string[], today: string, tz: string | null) {
+  const { SOURCES_EVERY_MS, parseAttributedTotal, sourceCandidates } = await import("./sources");
+  const source = `klaviyo-sources:${conn.client_id}`;
+  const { data } = await admin.from("sync_state").select("last_result").eq("source", source).maybeSingle();
+  const was = (data?.last_result as { at?: string } | null) ?? null;
+  if (was?.at && Date.now() - Date.parse(was.at) < SOURCES_EVERY_MS) return;
+  const found: { id: string; name: string; integration: string | null; revenue: number; orders: number }[] = [];
+  let error: string | null = null;
+  try {
+    for (const m of sourceCandidates(await listMetrics(key), ranked)) {
+      const t = parseAttributedTotal(await attributedPages(key, m.id, shift(today, -29), today, tz));
+      if (t.revenue > 0 || t.orders > 0) found.push({ id: m.id, name: m.name, integration: m.integration, ...t });
+    }
+  } catch (e) {
+    if (isAuth(e)) throw e;
+    error = redactKey(errText(e), key).slice(0, 240);
+  }
+  await admin.from("sync_state").upsert({ source, last_run_at: new Date().toISOString(), last_result: { at: new Date().toISOString(), found, error } });
+}
+
 // ─── The lower ranked conversion metrics ───────────────────────────────────
 
 /** The metrics ranked under the primary that this read also reads (none unless a lead or an exec picked more than one) */
@@ -467,6 +494,11 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
     await step(76 + i * 3, `Reading ${m.name}`);
     extraReads.push(await readMetric(key, m.id, { full: true, from, today, tz, nowIso, campaigns: true }));
   }
+
+  // Once a week: order metrics email earns through that nobody ranked yet (a custom POS next to Toast), for the report's QA
+  if (metricId && reportable) await checkUnrankedSources(admin, conn, key, [metricId, ...extras.map((m) => m.id)], today, tz).catch((e) => {
+    if (isAuth(e)) throw e;
+  });
 
   // Profile counts for the main lists and segments: the ones campaigns go to most, then the newest lists
   const used = new Map<string, number>();

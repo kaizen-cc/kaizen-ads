@@ -5,7 +5,17 @@
 //   - the month's running revenue, day by day, for the scrubbable chart
 
 /** One Klaviyo metric that counts as a sale, as kept on the connection (the integration tells same-named ones apart) */
-export type ConversionMetric = { id: string; name: string; integration: string | null };
+export type ConversionMetric = {
+  id: string;
+  name: string;
+  integration: string | null;
+  /**
+   * Whether this metric is a revenue source in the email report (a restaurant's Toast orders and its custom POS's are
+   * two; a reservations metric isn't): true or false as the team set it, unset to decide by itself (the primary always
+   * is; a lower one is once it carries attributed revenue). See src/lib/channel-reports/email-sources.ts.
+   */
+  revenueSource?: boolean;
+};
 
 /** At most four ranked metrics: each extra one costs the sync a few more Reporting API calls */
 export const MAX_CONVERSION_METRICS = 4;
@@ -23,14 +33,14 @@ export const rankWeights = (n: number): readonly number[] => RANK_WEIGHTS[Math.m
  */
 export function conversionMetricsOf(raw: unknown, primary: { id: string | null; name: string | null }): ConversionMetric[] {
   const list: ConversionMetric[] = [];
-  const add = (m: { id?: unknown; name?: unknown; integration?: unknown }) => {
+  const add = (m: { id?: unknown; name?: unknown; integration?: unknown; revenueSource?: unknown }) => {
     const id = typeof m.id === "string" ? m.id.trim() : "";
     if (!id || list.some((x) => x.id === id)) return;
-    list.push({ id, name: typeof m.name === "string" && m.name.trim() ? m.name.trim() : "Conversion", integration: typeof m.integration === "string" && m.integration.trim() ? m.integration.trim() : null });
+    list.push({ id, name: typeof m.name === "string" && m.name.trim() ? m.name.trim() : "Conversion", integration: typeof m.integration === "string" && m.integration.trim() ? m.integration.trim() : null, ...(typeof m.revenueSource === "boolean" ? { revenueSource: m.revenueSource } : {}) });
   };
   const saved = Array.isArray(raw) ? (raw as Record<string, unknown>[]).filter((x) => x && typeof x === "object") : [];
   const savedPrimary = primary.id ? saved.find((m) => m.id === primary.id) : null;
-  if (primary.id) add({ id: primary.id, name: primary.name ?? savedPrimary?.name ?? "Placed Order", integration: savedPrimary?.integration ?? null });
+  if (primary.id) add({ id: primary.id, name: primary.name ?? savedPrimary?.name ?? "Placed Order", integration: savedPrimary?.integration ?? null, revenueSource: savedPrimary?.revenueSource });
   for (const m of saved) add(m);
   return list.slice(0, MAX_CONVERSION_METRICS);
 }

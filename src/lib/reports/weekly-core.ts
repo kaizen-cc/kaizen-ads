@@ -12,8 +12,8 @@ export type WeekPoint = { label: string; start: string; end: string; spend: numb
 /** A Google ad group or Performance Max asset group in the period: its best RSA headline, or the asset group's picture */
 export type GoogleUnit = { id: string; kind: "ad_group" | "asset_group"; name: string; campaign: string; campaignId?: string; headline: string | null; image: string | null; spend: number; clicks: number; impressions: number; results: number; revenue: number };
 
-/** A takeaway card: a short claim, then one or two sentences with the numbers behind it */
-export type Takeaway = { title: string; text: string };
+/** A takeaway card: a short claim, then one or two sentences with the numbers behind it (a social report's also says what we'll do next) */
+export type Takeaway = { title: string; text: string; next?: string };
 
 /** How the client is judged, which decides what leads */
 export type KpiType = "roas" | "leads" | "purchases" | "other";

@@ -1,6 +1,10 @@
 import type { Move } from "@/lib/reports/weekly-core";
 import { int, money, moveOf, pct, signed, targetSub, type ChannelPlatform, type EmailMetrics, type SocialMetrics } from "./core";
 import { grade, RATE_BARS, type Grade } from "./email-detail";
+import { EMAIL_CHECKS } from "@/lib/email-score";
+
+/** Kaizen's revenue per recipient bar, the email score's (src/lib/email-score.ts) */
+const RPR_TILE_BAR = EMAIL_CHECKS.find((c) => c.key === "rpr")?.bar ?? 0.15;
 
 // What an email or social report shows, picked the way an ads report's tiles and columns are: the tiles at the top of
 // the PDF (swap one for another, add, remove) and the columns of its tables. Kept on the report (reports.layout) and
@@ -18,10 +22,10 @@ export const MAX_TILES = 6;
 const EMAIL_TILES = ["revenue", "orders", "split", "score", "campaignRevenue", "flowRevenue", "aov", "recipients", "openRate", "clickRate", "orderRate", "subscribers", "sms", "rpr"] as const;
 const SOCIAL_TILES = ["followers", "reach", "views", "rate", "interactions", "posts", "profileViews", "engaged", "gained"] as const;
 
-const EMAIL_COLUMNS = ["date", "channel", "status", "recipients", "open", "click", "orders", "orderRate", "revenue"] as const;
+const EMAIL_COLUMNS = ["date", "channel", "status", "recipients", "open", "click", "orders", "orderRate", "revenue", "rpr"] as const;
 const SOCIAL_COLUMNS = ["followers", "change", "reach", "views", "rate", "posts"] as const;
 
-const COLUMN_LABEL: Record<string, string> = { date: "Sent", channel: "Type", status: "Status", recipients: "Recipients", open: "Open", click: "Click", orders: "Orders", orderRate: "Order rate", revenue: "Revenue", followers: "Followers", change: "Change", reach: "Reach", views: "Views", rate: "Engage", posts: "Posts" };
+const COLUMN_LABEL: Record<string, string> = { date: "Sent", channel: "Type", status: "Status", recipients: "Recipients", open: "Open", click: "Click", orders: "Orders", orderRate: "Order rate", revenue: "Revenue", rpr: "Per recipient", followers: "Followers", change: "Change", reach: "Reach", views: "Views", rate: "Engage", posts: "Posts" };
 
 /** Every tile a report on this line can show (an older email report without the detail has fewer) */
 export function tileOptions(m: Metrics): string[] {
@@ -34,7 +38,8 @@ export function tileOptions(m: Metrics): string[] {
 export function defaultTiles(m: Metrics): string[] {
   if (m.platform === "social") return ["followers", "reach", "views", "rate"];
   if (!m.detail) return ["revenue", "campaignRevenue", "flowRevenue", "subscribers"];
-  return ["revenue", "orders", "split", "score"];
+  // Revenue per recipient leads with revenue when revenue is tracked (the email team's headline numbers)
+  return m.revenueMeasured === false ? ["revenue", "orders", "split", "score"] : ["revenue", "orders", "rpr", "split", "score"];
 }
 
 /** The tiles on the page: the ones picked (still offered for this report), else the defaults */
@@ -156,11 +161,14 @@ export function tileView(m: Metrics, key: string): TileView | null {
     case "sms":
       return tile(key, "SMS revenue", money(now.smsRevenue, c), "Within the revenue from email & SMS", money(before.smsRevenue, c), moveOf(now.smsRevenue, before.smsRevenue));
     case "rpr":
-      return tile(key, "Revenue per email sent", now.revenuePerRecipient != null ? money(now.revenuePerRecipient, c) : "–", null, before.revenuePerRecipient != null ? money(before.revenuePerRecipient, c) : "–", moveOf(now.revenuePerRecipient, before.revenuePerRecipient));
+      return tile(key, "Revenue per recipient", now.revenuePerRecipient != null ? cents(now.revenuePerRecipient, c) : "–", `Kaizen's bar ${cents(RPR_TILE_BAR, c)} · every email and text sent`, before.revenuePerRecipient != null ? cents(before.revenuePerRecipient, c) : "–", moveOf(now.revenuePerRecipient, before.revenuePerRecipient), grade(now.revenuePerRecipient, RPR_TILE_BAR));
     default:
       return null;
   }
 }
+
+/** Revenue per recipient with its cents always shown (it's a small number) */
+const cents = (n: number, currency: string | null) => `${!currency || currency === "USD" ? "$" : `${currency} `}${n.toFixed(2)}`;
 
 /** A tile's name for a picker (whatever this report's numbers are) */
 export function tileLabel(m: Metrics, key: string): string {

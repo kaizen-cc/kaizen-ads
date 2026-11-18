@@ -31,14 +31,22 @@ export function grade(value: number | null | undefined, target: number): Grade |
 export type MessageRow = { id: string; name: string; date: string | null; channel: "email" | "sms"; status: string | null; recipients: number; delivered: number; openRate: number | null; clickRate: number | null; orders: number; orderRate: number | null; revenue: number };
 
 /** The performance of campaigns (or flows) over the period and the one before */
-export type PerfBlock = { recipients: Pair; open: Pair; click: Pair; orderRate: Pair; orders: Pair; revenue: Pair; sent: Pair };
+export type PerfBlock = { recipients: Pair; open: Pair; click: Pair; orderRate: Pair; orders: Pair; revenue: Pair; sent: Pair; /** Revenue per recipient (older stored reports have none) */ rpr?: Pair };
+
+/** Revenue per recipient: revenue over everyone it went to, the same as the email score's (src/lib/email-score.ts) */
+export const rprOf = (revenue: number | null | undefined, recipients: number | null | undefined): number | null => (revenue != null && recipients != null && recipients > 0 && Number.isFinite(revenue) ? revenue / recipients : null);
+
+/** One channel's part of the period: revenue (campaigns and automated messages) and how many it went to */
+export type ChannelSide = { revenue: Pair; sends: Pair; campaigns: Pair };
 
 export type EmailDetail = {
   version: 1;
   /** Placed orders attributed to email and SMS */
   orders: Pair;
-  /** Each day of the period: revenue from campaigns and from automated emails */
-  daily: { date: string; campaign: number; flow: number }[];
+  /** Each day of the period: revenue from campaigns and from automated messages; `sms` is the part of both that came from texts (`smsCampaign` from SMS campaigns) */
+  daily: { date: string; campaign: number; flow: number; sms?: number; smsCampaign?: number }[];
+  /** Email against SMS, for a client that sent texts in either period (null when it sent none; older stored reports have none) */
+  channels?: { email: ChannelSide; sms: ChannelSide } | null;
   campaign: PerfBlock;
   /** Every campaign sent in the period, oldest first */
   campaigns: MessageRow[];
@@ -91,6 +99,7 @@ function campaignPerf(list: CampaignLite[]) {
     orders: list.length ? orders : null,
     revenue: list.length ? r2(sum(list, (c) => c.revenue)) : null,
     sent: list.length,
+    rpr: list.length ? rprOf(sum(list, (c) => c.revenue), recipients) : null,
   };
 }
 
@@ -98,7 +107,7 @@ type FlowTotals = { recipients: number; delivered: number; opens: number; clicks
 function flowTotals(rows: FlowDay[]): FlowTotals {
   return { recipients: sum(rows, (r) => r.recipients), delivered: sum(rows, (r) => r.delivered), opens: sum(rows, (r) => r.opensUnique), clicks: sum(rows, (r) => r.clicksUnique), orders: sum(rows, (r) => r.conversions), revenue: sum(rows, (r) => r.revenue) };
 }
-const flowPerf = (t: FlowTotals, flowsSent: number) => ({ recipients: t.recipients, open: ratio(t.opens, t.delivered || t.recipients), click: ratio(t.clicks, t.delivered || t.recipients), orderRate: ratio(t.orders, t.recipients), orders: t.orders, revenue: r2(t.revenue), sent: flowsSent });
+const flowPerf = (t: FlowTotals, flowsSent: number) => ({ recipients: t.recipients, open: ratio(t.opens, t.delivered || t.recipients), click: ratio(t.clicks, t.delivered || t.recipients), orderRate: ratio(t.orders, t.recipients), orders: t.orders, revenue: r2(t.revenue), sent: flowsSent, rpr: rprOf(t.revenue, t.recipients) });
 
 const pair = <K extends string>(a: Record<K, number | null>, b: Record<K, number | null>, k: K): Pair => ({ now: a[k], before: b[k] });
 const perfPair = (a: ReturnType<typeof campaignPerf>, b: ReturnType<typeof campaignPerf>): PerfBlock => ({
@@ -109,6 +118,7 @@ const perfPair = (a: ReturnType<typeof campaignPerf>, b: ReturnType<typeof campa
   orders: pair(a, b, "orders"),
   revenue: pair(a, b, "revenue"),
   sent: pair(a, b, "sent"),
+  rpr: pair(a, b, "rpr"),
 });
 
 /** The main list's size on a day: the latest read on or before it */
@@ -150,7 +160,8 @@ export function emailDetail(i: DetailInput): EmailDetail {
   if (i.days.some((d) => inWin(d.date, i.main)))
     for (let d = i.main.start; d <= i.main.end; d = nextDay(d)) {
       const row = byDate.get(d);
-      daily.push({ date: d, campaign: r2(row?.campaignRevenue ?? 0), flow: r2(row?.flowRevenue ?? 0) });
+      const smsCampaign = r2(sum(now.filter((c) => c.channel === "sms" && etDay(c.sendTime) === d), (c) => c.revenue));
+      daily.push({ date: d, campaign: r2(row?.campaignRevenue ?? 0), flow: r2(row?.flowRevenue ?? 0), sms: r2(Math.max(row?.smsRevenue ?? 0, smsCampaign)), smsCampaign });
     }
 
   const campaigns: MessageRow[] = [...now]
@@ -218,6 +229,7 @@ export function emailDetail(i: DetailInput): EmailDetail {
     version: 1,
     orders: { now: ordersIn(i, i.main), before: ordersIn(i, i.compare) },
     daily,
+    channels: channelsOf(i, now, before),
     campaign: perfPair(campaignPerf(now), campaignPerf(before)),
     campaigns,
     flow,
@@ -226,6 +238,44 @@ export function emailDetail(i: DetailInput): EmailDetail {
     deliverability,
     subscribers,
   };
+}
+
+/**
+ * Email against SMS for the period and the one before: SMS revenue is the daily rows' (texts from campaigns and
+ * automated messages), or the SMS campaigns' when that's more; email is the rest. Sends are campaign recipients by
+ * channel plus the automated messages' (counted as email: the daily flow numbers aren't split by channel). Null when
+ * no text went out in either period.
+ */
+function channelsOf(i: DetailInput, now: CampaignLite[], before: CampaignLite[]): EmailDetail["channels"] {
+  const side = (w: Win, list: CampaignLite[]) => {
+    const ds = i.days.filter((d) => inWin(d.date, w));
+    const sms = list.filter((c) => c.channel === "sms");
+    const em = list.filter((c) => c.channel !== "sms");
+    const total = sum(ds, (d) => d.revenue);
+    const smsRev = Math.max(sum(ds, (d) => d.smsRevenue), sum(sms, (c) => c.revenue));
+    const flowSends = i.flowDays ? sum(i.flowDays.filter((r) => inWin(r.date, w)), (r) => r.recipients) : 0;
+    const allSends = ds.length ? sum(ds, (d) => d.sends) : sum(list, (c) => c.recipients) + flowSends;
+    const smsSends = sum(sms, (c) => c.recipients);
+    return { smsRev, emailRev: Math.max(0, total - smsRev), smsSends, emailSends: Math.max(0, allSends - smsSends), smsCount: sms.length, emailCount: em.length, any: smsRev > 0 || smsSends > 0 };
+  };
+  const a = side(i.main, now);
+  const b = side(i.compare, before);
+  if (!a.any && !b.any) return null;
+  return {
+    email: { revenue: { now: r2(a.emailRev), before: r2(b.emailRev) }, sends: { now: a.emailSends, before: b.emailSends }, campaigns: { now: a.emailCount, before: b.emailCount } },
+    sms: { revenue: { now: r2(a.smsRev), before: r2(b.smsRev) }, sends: { now: a.smsSends, before: b.smsSends }, campaigns: { now: a.smsCount, before: b.smsCount } },
+  };
+}
+
+/**
+ * A day's bar split three ways when texts went out: email campaigns, automated emails and SMS (campaign and automated
+ * texts together), adding up to the day's total. Without the SMS numbers (an older report) it's the two email parts.
+ */
+export function channelBars(p: { campaign: number; flow: number; sms?: number; smsCampaign?: number }): { campaign: number; flow: number; sms: number } {
+  const sms = Math.max(0, Math.min(p.sms ?? 0, p.campaign + p.flow));
+  const smsCamp = Math.max(0, Math.min(p.smsCampaign ?? 0, sms, p.campaign));
+  const smsFlow = Math.min(Math.max(0, sms - smsCamp), p.flow);
+  return { campaign: r2(p.campaign - smsCamp), flow: r2(p.flow - smsFlow), sms: r2(smsCamp + smsFlow) };
 }
 
 // ─── What's coming up ──────────────────────────────────────────────────────

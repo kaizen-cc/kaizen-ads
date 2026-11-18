@@ -91,6 +91,20 @@ export function KlaviyoMetricPicker({ clientId, current, fallback, canPick }: { 
                   {m.name}
                   {m.integration && <span className="text-faint"> · {m.integration}</span>}
                 </span>
+                {i > 0 && (
+                  <select
+                    value={m.revenueSource === true ? "yes" : m.revenueSource === false ? "no" : "auto"}
+                    disabled={pending}
+                    onChange={(e) => save(list.map((x) => (x.id === m.id ? { id: x.id, name: x.name, integration: x.integration, ...(e.target.value === "auto" ? {} : { revenueSource: e.target.value === "yes" }) } : x)))}
+                    aria-label={`Whether ${m.name} is a revenue source in the email report`}
+                    title="A revenue source gets its own section in the email report (a second order system, like a custom POS next to Toast), and the combined total counts each order once"
+                    className="h-11 shrink-0 rounded-[8px] border border-line bg-surface px-2 text-xs text-muted md:h-8"
+                  >
+                    <option value="auto">Revenue: auto</option>
+                    <option value="yes">Revenue source</option>
+                    <option value="no">Not revenue</option>
+                  </select>
+                )}
                 <button type="button" aria-label={`Move ${m.name} up`} disabled={pending || i === 0} onClick={() => move(i, -1)} className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted hover:bg-surface-2 hover:text-fg disabled:opacity-30 md:h-8 md:w-8">
                   ↑
                 </button>
@@ -125,7 +139,7 @@ export function KlaviyoMetricPicker({ clientId, current, fallback, canPick }: { 
             </select>
           )}
           <div className="flex items-center justify-between gap-2 px-1">
-            <p className="text-xs text-faint">{pending ? "Saving…" : (note ?? "The primary is the one Klaviyo shows as the Conversion metric on the account's home page.")}</p>
+            <p className="text-xs text-faint">{pending ? "Saving…" : (note ?? "The primary is the one Klaviyo shows as the Conversion metric on the account's home page. A second order system (a custom POS next to Toast) set as a revenue source gets its own section in the email report.")}</p>
             <button type="button" onClick={() => setOpen(false)} className="inline-flex min-h-11 shrink-0 items-center px-2 text-xs text-muted hover:text-fg md:min-h-0">
               Done
             </button>

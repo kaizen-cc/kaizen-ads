@@ -27,7 +27,7 @@ describe("the email detail", () => {
   });
   it("has each day of the period split into campaigns and automated emails", () => {
     expect(d.daily).toHaveLength(7);
-    expect(d.daily[0]).toEqual({ date: "2026-11-09", campaign: 100, flow: 200 });
+    expect(d.daily[0]).toEqual({ date: "2026-11-09", campaign: 100, flow: 200, sms: 0, smsCampaign: 0 });
   });
   it("lists every campaign sent in the period by date, with orders and order rate", () => {
     expect(d.campaigns.map((c) => c.id)).toEqual(["a", "b"]);

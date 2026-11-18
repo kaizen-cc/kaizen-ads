@@ -13,7 +13,8 @@ import { channelMetricsText } from "./text";
 import { channelTitle, emailMessageFlags, withTitle } from "./email-message";
 import { applyStated, type Stated } from "./stated";
 import { channelReportTools, channelToolsLine } from "./tools";
-import { cardCampaigns } from "./email-cards";
+import { shotCampaigns } from "./email-cards";
+import { SOCIAL_DRAFT_SCHEMA, SOCIAL_REVISE_SCHEMA, SOCIAL_TAKEAWAY_RULES } from "./social-write";
 
 // Writing a channel client report (email or organic social): the numbers (data.ts), the work behind them, the owner's own
 // voice, what this client likes in a report, and the client's Brand Bible and context. The same arc as the ads reports:
@@ -33,7 +34,7 @@ const QA_SCHEMA = obj({ verdict: { type: "string", enum: ["clean", "check", "fix
 export const noEmDashes = (t: string) => t.replace(/\s*—\s*/g, ", ").replace(/,\s*,/g, ",");
 function plain(sections: Sections): Sections {
   const f = (t: string) => noEmDashes(t);
-  return { ...sections, headline: f(sections.headline), summary: f(sections.summary), did: sections.did.map(f), doing: sections.doing.map(f), next: sections.next.map(f), highlights: sections.highlights.map(f), takeaways: sections.takeaways?.map((t) => ({ title: f(t.title), text: f(t.text) })), stories: [] };
+  return { ...sections, headline: f(sections.headline), summary: f(sections.summary), did: sections.did.map(f), doing: sections.doing.map(f), next: sections.next.map(f), highlights: sections.highlights.map(f), takeaways: sections.takeaways?.map((t) => ({ title: f(t.title), text: f(t.text), ...(t.next?.trim() ? { next: f(t.next) } : {}) })), stories: [] };
 }
 
 const ROLE: Record<ChannelLine, string> = { email: "email strategist", social: "social media manager" };
@@ -43,7 +44,7 @@ const TAKEAWAY_RULES = `takeaways: exactly three cards for the PDF, read from th
 /** What the writer is told, by line: the owner's role, what leads the report, what each number means */
 function lineRules(platform: ChannelPlatform): string {
   if (platform === "klaviyo")
-    return `Revenue is what Klaviyo attributes to email and SMS: never call it the store's total revenue and never claim email caused sales it doesn't show. In anything the client reads, say "automated emails" (never "flows"), "people who received it" (never "recipients" in prose), and plain words for every rate ("60% of people opened it", "about 1.4% of the people who received it placed an order"); no jargon (RPR, CTR, CVR, AOV, deliverability score weights). Every campaign and automated email has its own numbers for the period in <numbers>: use those. If a deliverability flag is red, say it plainly and what we're doing about it. When <numbers> has a location breakdown (a multi-location client), Highlights may end with one bullet naming the top and the bottom location by revenue with their exact figures from the ranked list; never invent a location or rank one that isn't listed.`;
+    return `Revenue is what Klaviyo attributes to email and SMS: never call it the store's total revenue and never claim email caused sales it doesn't show. In anything the client reads, say "automated emails" (never "flows"), "people who received it" (never "recipients" in prose), and plain words for every rate ("60% of people opened it", "about 1.4% of the people who received it placed an order"); no jargon (RPR, CTR, CVR, AOV, deliverability score weights). Every campaign and automated email has its own numbers for the period in <numbers>: use those. If a deliverability flag is red, say it plainly and what we're doing about it. When <numbers> has a location breakdown (a multi-location client), Highlights may end with one bullet naming the top and the bottom location by revenue with their exact figures from the ranked list; never invent a location or rank one that isn't listed. When <numbers> lists revenue sources (two order systems, such as Toast and a custom POS), say what each one earned and the combined total exactly as given (What happened's paragraph or a Highlights bullet), never add them yourself and never call one of them the whole. When <numbers> gives email against SMS and texts earned a real part of the revenue (about a tenth or more) or moved a lot against the period before, say what SMS brought in and from how many texts. Revenue per recipient is "revenue for each email sent" in the client's words; mention it when it moved clearly against the period before or a campaign stood out on it.`;
   return `Lead with follower growth and reach for the period against the period before, then views, the engagement rate (interactions over reach; if <numbers> says it isn't available, don't quote one) against the target when <numbers> gives one, how much we published, and the posts that did best and why they likely worked (format, topic, hook, from what the numbers and captions show). Never claim a post caused follower growth unless the numbers show it. Instagram and Facebook are counted from Meta's own account insights; say which platform a number is from when it matters.`;
 }
 
@@ -93,7 +94,7 @@ ${platform === "klaviyo" ? `${EMAIL_MESSAGE(kind)}
 sections: the same content, structured, for the report page (the PDF draws the numbers itself): headline (one line, the main takeaway), summary (the What happened paragraph), did (what we did, 2 to 6 bullets from the work log), doing (2 to 4), next (the Coming up items), highlights (the Highlights bullets).
 ${TAKEAWAY_RULES}` : `${SOCIAL_MESSAGE(kind)}
 sections: the same content, structured, for the PDF and the report page: headline (one line, the main takeaway), summary (the What happened paragraph), did (what we did, 3 to 7 bullets from the work log), doing (what we're doing now and why, 2 to 5), next (the Coming up items), highlights (the Highlights bullets).
-${TAKEAWAY_RULES}`}`;
+${SOCIAL_TAKEAWAY_RULES}`}`;
   return whiteLabel ? `${base}\n${WHITE_LABEL_RULE}` : base;
 }
 
@@ -230,7 +231,7 @@ export async function qaChannelReport(admin: SupabaseClient, reportId: string): 
 /** Draws and saves the top of each card campaign's email (never failing the draft, and never more than a minute) */
 async function warmShots(admin: SupabaseClient, clientId: string, m: Metrics): Promise<void> {
   if (m.platform !== "klaviyo" || !m.detail) return;
-  const ids = cardCampaigns(m.detail.campaigns).filter((x) => x.channel !== "sms").map((x) => x.id);
+  const ids = shotCampaigns(m.detail.campaigns, { currency: m.currency, revenueMeasured: m.revenueMeasured !== false }).filter((x) => x.channel !== "sms").map((x) => x.id);
   if (!ids.length) return;
   const { ensureEmailShots } = await import("./email-shots");
   await Promise.race([ensureEmailShots(admin, clientId, ids, { fetch: true, budgetMs: 50_000 }).catch(() => null), new Promise((done) => setTimeout(done, 60_000))]);
@@ -260,7 +261,7 @@ export async function draftChannelReport(admin: SupabaseClient, reportId: string
       label: `${KIND_WORD(c.r.kind)} ${line} report`,
       clientId: c.r.client_id,
       system: forSource(writerSystem(c.r.kind, c.r.platform, c.whiteLabel), metrics),
-      schema: DRAFT_SCHEMA,
+      schema: c.r.platform === "social" ? SOCIAL_DRAFT_SCHEMA : DRAFT_SCHEMA,
       maxTokens: 12000,
       prompt: `${sourcesBlock(c, metrics, work.text, voice, client)}\n\nWrite the ${KIND_WORD(c.r.kind)} ${channelName(c.r.platform).toLowerCase()} report for ${metrics.main.label}.`,
     });
@@ -306,7 +307,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
     label: "revise channel report",
     clientId: c.r.client_id,
     system: `${forSource(writerSystem(c.r.kind, c.r.platform, c.whiteLabel), c.r.metrics)}\n\n${REVISE_SYSTEM}\n${PERIOD_RULE}\n\n${channelToolsLine(c.r.platform)}`,
-    schema: REVISE_SCHEMA,
+    schema: c.r.platform === "social" ? SOCIAL_REVISE_SCHEMA : REVISE_SCHEMA,
     tools,
     maxRounds: 6,
     maxTokens: 16000,

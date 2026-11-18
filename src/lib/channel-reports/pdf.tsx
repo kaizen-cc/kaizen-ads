@@ -1,8 +1,8 @@
 import "server-only";
 import { renderToBuffer } from "@react-pdf/renderer";
 import sharp from "sharp";
-import { ChannelDocument, postKey, shotKey, type ChannelImages, type ChannelPdfInput } from "./channel-doc";
-import { cardCampaigns } from "./email-cards";
+import { ChannelDocument, shotKey, type ChannelImages, type ChannelPdfInput } from "./channel-doc";
+import { shotCampaigns } from "./email-cards";
 
 // A channel report as a PDF on the server: its document (channel-doc.tsx) with each email's and post's picture fetched and
 // made a small JPEG (one that fails is left out, never holding the report up), and the client's logo and colour beside
@@ -33,7 +33,7 @@ async function picture(url: string | null, size = 320, tall = false): Promise<st
 async function emailShots(input: ChannelPdfInput): Promise<ChannelImages> {
   const m = input.metrics;
   if (m.platform !== "klaviyo" || !m.detail) return {};
-  const ids = cardCampaigns(m.detail.campaigns).filter((c) => c.channel !== "sms").map((c) => c.id);
+  const ids = shotCampaigns(m.detail.campaigns, { currency: m.currency, revenueMeasured: m.revenueMeasured !== false }).filter((c) => c.channel !== "sms").map((c) => c.id);
   if (!ids.length) return {};
   const out: ChannelImages = {};
   const { adminConfigured, createAdminClient } = await import("@/lib/supabase/admin");
@@ -52,8 +52,10 @@ async function emailShots(input: ChannelPdfInput): Promise<ChannelImages> {
 /** The pictures the document draws, by what they picture */
 export async function channelImages(input: ChannelPdfInput): Promise<ChannelImages> {
   const m = input.metrics;
+  // Social: each post framed 4:5 whole, never cropped (social-pictures.ts)
+  if (m.platform === "social") return (await import("./social-pictures")).socialPictures(m);
   // An email report with its detail shows each card's email (emailShots); an older one shows the campaigns' first pictures
-  const jobs: [string, string | null][] = m.platform === "klaviyo" ? (m.detail ? [] : m.campaigns.slice(0, 6).map((c) => [c.id, c.image])) : m.posts.slice(0, 3).map((p) => [postKey(p), p.thumbnail]);
+  const jobs: [string, string | null][] = m.detail ? [] : m.campaigns.slice(0, 6).map((c) => [c.id, c.image]);
   const [got, shots] = await Promise.all([Promise.all(jobs.map(([, url]) => within(20_000, picture(url), null))), emailShots(input)]);
   return { ...Object.fromEntries(jobs.map(([k], i) => [k, got[i]])), ...shots };
 }

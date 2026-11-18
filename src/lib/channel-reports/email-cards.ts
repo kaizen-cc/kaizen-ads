@@ -2,7 +2,7 @@ import { EMAIL_CHECKS } from "@/lib/email-score";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
 import { int, pct } from "./core";
 import { wholeMoney } from "./email-message";
-import { grade, RATE_BARS, type Grade, type MessageRow } from "./email-detail";
+import { grade, RATE_BARS, rprOf, type Grade, type MessageRow } from "./email-detail";
 
 // What the email report's campaign cards and location visuals show, worked out once so the PDF (channel-doc.tsx) and the
 // live page the client opens (/r/<token>) say the same thing. Pure: no database, no network.
@@ -20,6 +20,59 @@ export function cardCampaigns<T extends Pick<MessageRow, "id" | "revenue" | "dat
   if (rows.length <= limit) return rows;
   const best = new Set([...rows].sort((a, b) => b.revenue - a.revenue).slice(0, limit).map((r) => r.id));
   return rows.filter((r) => best.has(r.id));
+}
+
+// ─── Best and lowest campaign ──────────────────────────────────────────────
+
+type PickRow = Pick<MessageRow, "id" | "name" | "channel" | "recipients" | "openRate" | "clickRate" | "orders" | "revenue">;
+export type CampaignPick<T> = { row: T; why: string };
+export type CampaignPicks<T> = { basis: "rpr" | "click"; best: CampaignPick<T>; lowest: CampaignPick<T> };
+
+const times = (a: number, b: number) => {
+  const x = a / b;
+  return x >= 1.95 ? `${x.toFixed(1).replace(/\.0$/, "")}x` : `${Math.round((x - 1) * 100)}% above`;
+};
+
+/**
+ * With several campaigns in the period, the best and the lowest performer: by revenue per recipient when revenue is
+ * tracked (some campaign earned), else by click rate. Ties go to the bigger send. Each comes with a one-line why against
+ * the period's campaigns taken together. Null with fewer than two campaigns that reached anyone.
+ */
+export function campaignPicks<T extends PickRow>(rows: T[], opts: { currency: string | null; revenueMeasured?: boolean }): CampaignPicks<T> | null {
+  const list = rows.filter((r) => r.recipients > 0);
+  if (list.length < 2) return null;
+  const c = opts.currency;
+  const money = opts.revenueMeasured !== false && list.some((r) => r.revenue > 0);
+  const recips = list.reduce((t, r) => t + r.recipients, 0);
+  if (money) {
+    const avg = rprOf(list.reduce((t, r) => t + r.revenue, 0), recips) ?? 0;
+    const rpr = (r: T) => rprOf(r.revenue, r.recipients) ?? 0;
+    const sorted = [...list].sort((a, b) => rpr(b) - rpr(a) || b.recipients - a.recipients);
+    const best = sorted[0];
+    const lowest = list.filter((x) => x !== best).sort((a, b) => rpr(a) - rpr(b) || a.recipients - b.recipients)[0];
+    const r = (n: number) => rprMoney(n, c);
+    const rate = (x: T) => (x.channel !== "sms" && x.openRate != null ? `, ${pct(x.openRate, 0)} opened` : x.clickRate != null ? `, ${pct(x.clickRate, 1)} clicked` : "");
+    const bestWhy = `${r(rpr(best))} per recipient, ${avg > 0 && rpr(best) > avg ? `${times(rpr(best), avg)} the ${r(avg)} campaign average` : `against a ${r(avg)} campaign average`}: ${wholeMoney(best.revenue, c)} from ${int(best.orders)} ${best.orders === 1 ? "order" : "orders"}${rate(best)}.`;
+    const lowWhy = lowest.revenue > 0 ? `${r(rpr(lowest))} per recipient against the ${r(avg)} average: ${wholeMoney(lowest.revenue, c)} from ${int(lowest.recipients)} recipients${rate(lowest)}.` : `No orders from ${int(lowest.recipients)} recipients${rate(lowest)}, against a ${r(avg)} average per recipient.`;
+    return { basis: "rpr", best: { row: best, why: bestWhy }, lowest: { row: lowest, why: lowWhy } };
+  }
+  const click = (r: T) => r.clickRate ?? 0;
+  const avgClick = list.reduce((t, r) => t + click(r) * r.recipients, 0) / Math.max(1, recips);
+  const best = [...list].sort((a, b) => click(b) - click(a) || b.recipients - a.recipients)[0];
+  const lowest = list.filter((x) => x !== best).sort((a, b) => click(a) - click(b) || a.recipients - b.recipients)[0];
+  return {
+    basis: "click",
+    best: { row: best, why: `${pct(click(best), 2)} clicked, against ${pct(avgClick, 2)} across the period's campaigns${best.channel !== "sms" && best.openRate != null ? `; ${pct(best.openRate, 0)} opened` : ""}.` },
+    lowest: { row: lowest, why: `${pct(click(lowest), 2)} clicked, against ${pct(avgClick, 2)} across the period's campaigns${lowest.channel !== "sms" && lowest.openRate != null ? `; ${pct(lowest.openRate, 0)} opened` : ""}.` },
+  };
+}
+
+/** The campaigns whose email gets drawn for a card: the best and the lowest when there are several, else the usual cards */
+export function shotCampaigns<T extends PickRow & Pick<MessageRow, "date">>(rows: T[], opts: { currency: string | null; revenueMeasured?: boolean }): T[] {
+  const p = campaignPicks(rows, opts);
+  if (!p) return cardCampaigns(rows);
+  const ids = new Set([p.best.row.id, p.lowest.row.id]);
+  return [...rows.filter((r) => ids.has(r.id)), ...cardCampaigns(rows).filter((r) => !ids.has(r.id))];
 }
 
 /** The campaign's own report in Klaviyo (only for a report whose numbers come from Klaviyo) */

@@ -37,6 +37,35 @@ describe("the channel PDF", () => {
     expect(wl.length).toBeGreaterThan(1000);
   });
 
+  it("draws an email report with two revenue sources, several campaigns and SMS", async () => {
+    const camp = (id: string, day: string, recipients: number, revenue: number, channel = "email") => ({ id, name: `${id} campaign`, channel, sendTime: `${day}T15:00:00Z`, subject: null, recipients, delivered: recipients, opensUnique: channel === "sms" ? 0 : recipients * 0.4, clicksUnique: recipients * 0.02, unsubscribes: 1, bounced: 1, spamComplaints: 0, revenue, conversions: revenue / 30, openRate: 0.4, clickRate: 0.02 });
+    const m = emailMetrics({
+      kind: "monthly",
+      main,
+      compare,
+      today: "2026-11-02",
+      days: range("2026-08-01", "2026-10-31").map((date) => ({ date, revenue: 100, campaignRevenue: 60, flowRevenue: 40, smsRevenue: date.endsWith("5") ? 30 : 0, sends: 500, campaignsSent: 0, storeRevenue: null, storeOrders: null, subscribed: 10, unsubscribed: 2 })),
+      campaigns: [camp("a", "2026-10-05", 1000, 900), camp("b", "2026-10-12", 3000, 300), camp("c", "2026-10-15", 400, 120, "sms"), camp("d", "2026-10-20", 2000, 0)],
+      flows: [],
+      keyFlows: [],
+      profiles: 5000,
+      currency: "USD",
+      account: null,
+    });
+    m.sources = {
+      version: 1,
+      sources: [
+        { id: "T", name: "Placed Order", primary: true, revenue: { now: 3100, before: 2800 }, orders: { now: 120, before: 110 }, campaignRevenue: 1860, flowRevenue: 1240, store: 40000, attributedShare: 0.0775, share: 0.7, locations: [{ location: "Crust Pizza Co. - Heights", revenue: 900, conversions: 30 }], locationCount: 12 },
+        { id: "P", name: "Custom POS Order", primary: false, revenue: { now: 1300, before: 900 }, orders: { now: 50, before: 30 }, campaignRevenue: 800, flowRevenue: 500, store: null, attributedShare: null, share: 0.3, locations: [], locationCount: 0 },
+      ],
+      combined: { revenue: { now: 4340, before: 3700 }, orders: { now: 168, before: 140 }, campaignRevenue: 2660, flowRevenue: 1740, overlap: { revenue: 60, orders: 2 } },
+      note: "Combined = Placed Order + Custom POS Order. Each order is counted once.",
+    };
+    const buf = await renderToBuffer(createElement(ChannelDocument, { input: { client: "Acme", metrics: m, sections }, images: {} }) as unknown as Parameters<typeof renderToBuffer>[0]);
+    expect(buf.length).toBeGreaterThan(5000);
+    if (process.env.REPORT_SAMPLE_OUT) (await import("node:fs")).writeFileSync(process.env.REPORT_SAMPLE_OUT, buf);
+  });
+
   it("draws a social report", async () => {
     const days = range("2026-08-01", "2026-10-31").map((date, i) => ({ platform: "instagram" as const, date, followers: 1000 + i, gained: 5, lost: null, reach: 200, views: 400, profileViews: 10, engaged: 20, interactions: 10 }));
     const posts = [{ id: "1", platform: "instagram" as const, format: "reel" as const, caption: "A reel", permalink: "https://ig/1", thumbnail: null, postedAt: "2026-10-04T14:00:00Z", likes: 50, comments: 5, shares: 3, saves: 8, reach: 1000, views: 3000, interactions: 100, insightsOk: true }];

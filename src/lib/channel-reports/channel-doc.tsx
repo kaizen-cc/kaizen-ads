@@ -5,13 +5,15 @@ import { scrubAgency, scrubSections } from "@/lib/reports/white-label";
 import type { Sections } from "@/lib/reports/write";
 import type { Move } from "@/lib/reports/weekly-core";
 import { BENCHMARKS } from "@/lib/klaviyo/insights";
-import { cadenceWord, channelName, fitFont, int, metricsSupport, money, moveOf, pct, postRateText, priorWordOf, shortMoney, signed, socialName, takeawaysFor, type EmailMetrics, type SocialMetrics, type TrendPoint } from "./core";
+import { cadenceWord, channelName, fitFont, int, metricsSupport, money, moveOf, pct, priorWordOf, shortMoney, signed, takeawaysFor, type EmailMetrics, type SocialMetrics } from "./core";
 import { channelMtdView, MTD_STATUS_WORD, type ChannelMtdView } from "./mtd";
 import { columnKeys, tileViews, type ChannelLayout, type TileView } from "./layout";
 import { wholeMoney } from "./email-message";
-import { grade, RATE_BARS, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
+import { channelBars, grade, RATE_BARS, rprOf, type Grade, type MessageRow, type Pair, type PerfBlock } from "./email-detail";
+import type { RevenueSource } from "./email-sources";
 import type { LocationMetricBreakdown } from "@/lib/klaviyo/locations";
-import { cardCampaigns, cardStats, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, RPR_BAR, shareText, tint, type CardStat } from "./email-cards";
+import { campaignPicks, cardCampaigns, cardStats, fromKlaviyo, heat, klaviyoCampaignUrl, locationViews, RPR_BAR, shareText, tint, type CardStat } from "./email-cards";
+import { SocialBody } from "./social-doc";
 
 // A channel client report as a PDF, in the same design as the ads report (weekly-doc.tsx): the client's logo beside
 // Kaizen's, the hero band with the period, the period at a glance, and three takeaways. Email reads like the overview the
@@ -41,6 +43,10 @@ const AMBER = { fg: "#a1650f", bg: "#fdf1dc" };
 const GRADE_TONE: Record<Grade, { fg: string; bg: string }> = { good: GOOD, fair: AMBER, poor: BAD };
 const GRADE_WORD: Record<Grade, string> = { good: "Good", fair: "Fair", poor: "Poor" };
 const CAMPAIGN_HEX = "#24364d";
+/** SMS on the charts: a warm teal that reads apart from both email colours */
+const SMS_HEX = "#1f9e8f";
+/** Revenue per recipient with its cents */
+const centsMoney = (n: number | null | undefined, currency: string | null) => (n == null || !Number.isFinite(n) ? "–" : `${!currency || currency === "USD" ? "$" : `${currency} `}${n.toFixed(2)}`);
 
 /** Image data URIs by what they picture (a campaign's id, a post's platform and id) */
 export type ChannelImages = Record<string, string | null>;
@@ -155,7 +161,8 @@ function Stat({ title, value, mv, before, prior, sub, width, height = 80, max = 
   const size = fitFont(value, width - pad * 2 - (badge ? 34 : 0), max);
   return (
     <View style={{ width, height, paddingHorizontal: pad, paddingVertical: 9 }}>
-      <Text style={label}>{title}</Text>
+      {/* A long title in a narrow box (five or six tiles) tightens instead of being cut */}
+      <Text style={title.length * 5.2 > width - pad * 2 ? [label, { fontSize: 5.6, letterSpacing: 0.15 }] : label}>{title}</Text>
       <View style={{ flexDirection: "row", alignItems: "center", height: max + 6, marginTop: 4 }}>
         <Text style={{ fontSize: size, fontFamily: "Helvetica-Bold", letterSpacing: -0.4, color: color ?? INK, lineHeight: 1 }}>{value}</Text>
         <Badge g={badge ?? null} />
@@ -348,7 +355,128 @@ function EmailGlance({ m, layout, hot }: { m: EmailMetrics; layout?: ChannelLayo
     <View style={s.section} wrap={false}>
       <Head title="Performance at a glance" sub={`${m.kind === "monthly" ? "Month-over-month" : m.kind === "weekly" ? "Week-over-week" : "Period-over-period"} movement · green = favorable, red = unfavorable`} />
       <Tiles m={m} tiles={tileViews(m, layout)} hot={hot} height={84} />
-      <MetricSides m={m} />
+      {m.sources ? null : <MetricSides m={m} />}
+    </View>
+  );
+}
+
+// ─── Revenue by source (two order systems) ─────────────────────────────────
+
+/** A part of a whole as a thin bar with its two colours */
+function SplitBar({ a, b, colors }: { a: number; b: number; colors: [string, string] }) {
+  const t = a + b;
+  return (
+    <View style={{ flexDirection: "row", height: 4, borderRadius: 2, overflow: "hidden", backgroundColor: "#edf1f4" }}>
+      {t > 0 ? (
+        <>
+          <View style={{ width: `${(a / t) * 100}%`, backgroundColor: colors[0] }} />
+          <View style={{ flex: 1, backgroundColor: colors[1] }} />
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+const SOURCE_H = 214;
+
+/** One order system's card: what email earned through it, against the period before, its share, its split and its best locations */
+function SourceCard({ x, m, w, look }: { x: RevenueSource; m: EmailMetrics; w: number; look: Look }) {
+  const c = m.currency;
+  const prior = priorWord(m);
+  const camp = x.campaignRevenue ?? 0;
+  const flow = x.flowRevenue ?? 0;
+  const split = x.campaignRevenue != null && x.flowRevenue != null && camp + flow > 0;
+  const value = wholeMoney(x.revenue.now, c);
+  return (
+    <View style={{ width: w, height: SOURCE_H, backgroundColor: "#ffffff", borderWidth: 1, borderColor: LINE, borderRadius: 10, overflow: "hidden" }}>
+      <View style={{ height: 3, backgroundColor: x.primary ? look.primary : look.bars }} />
+      <View style={{ paddingHorizontal: 11, paddingTop: 9 }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", height: 12 }}>
+          <Text style={[label, { flexShrink: 1 }]}>{x.name}</Text>
+          {x.share != null ? <Text style={{ fontSize: 7, fontFamily: "Helvetica-Bold", color: look.barsText, marginLeft: 4 }}>{shareText(x.share)} of total</Text> : null}
+        </View>
+        <Text style={{ fontSize: fitFont(value, w - 22, 19), fontFamily: "Helvetica-Bold", letterSpacing: -0.4, marginTop: 6, lineHeight: 1 }}>{value}</Text>
+        <View style={{ marginTop: 5 }}>
+          <MoveLine mv={moveOf(x.revenue.now, x.revenue.before)} before={x.revenue.before == null ? "–" : wholeMoney(x.revenue.before, c)} prior={prior} />
+        </View>
+        <View style={{ flexDirection: "row", marginTop: 8, paddingTop: 7, borderTopWidth: 1, borderTopColor: "#edf1f4" }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 8.6, fontFamily: "Helvetica-Bold", color: INK }}>{int(x.orders.now)}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+              <Chip mv={moveOf(x.orders.now, x.orders.before)} />
+              <Text style={{ fontSize: 6.2, color: MUTED }}>orders</Text>
+            </View>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 8.6, fontFamily: "Helvetica-Bold", color: INK }}>{x.attributedShare != null ? shareText(x.attributedShare) : "–"}</Text>
+            <Text style={{ fontSize: 6.2, color: MUTED, marginTop: 3, maxLines: 1 }}>{x.store != null ? `of ${wholeMoney(x.store, c)} in ${x.name}` : "of its own total"}</Text>
+          </View>
+        </View>
+        <View style={{ marginTop: 8 }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 3 }}>
+            <Text style={{ fontSize: 6.2, color: MUTED }}>Campaigns {split ? wholeMoney(camp, c) : "–"}</Text>
+            <Text style={{ fontSize: 6.2, color: MUTED }}>Automated {split ? wholeMoney(flow, c) : "–"}</Text>
+          </View>
+          <SplitBar a={camp} b={flow} colors={[CAMPAIGN_HEX, look.bars]} />
+        </View>
+        <View style={{ marginTop: 8 }}>
+          <Text style={[label, { fontSize: 5.8 }]}>{x.locationCount ? `Top locations · ${x.locationCount} converted` : "Locations"}</Text>
+          {x.locations.length ? (
+            x.locations.slice(0, 3).map((l) => (
+              <View key={l.location} style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 3 }}>
+                <Text style={{ fontSize: 6.8, color: INK, maxLines: 1, textOverflow: "ellipsis", flex: 1, paddingRight: 6 }}>{l.location.replace(/^.*?\s[-–|:·]\s/, "")}</Text>
+                <Text style={{ fontSize: 6.8, fontFamily: "Helvetica-Bold", color: INK }}>{wholeMoney(l.revenue, c)}</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={{ fontSize: 6.4, color: FAINT, marginTop: 3 }}>No location read for this source</Text>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Two or more order systems (Toast and a custom POS): a card each with what email earned through it, and the combined
+ * total beside them, every order counted once. The client's earlier reports showed each system on its own; this keeps
+ * that, with the total the two make.
+ */
+function RevenueSources({ m, look }: { m: EmailMetrics; look: Look }) {
+  const src = m.sources;
+  if (!src || src.sources.length < 2) return null;
+  const c = m.currency;
+  const prior = priorWord(m);
+  const list = src.sources.slice(0, 3);
+  const w = (INNER - GAP * list.length) / (list.length + 1);
+  const comb = src.combined;
+  const total = wholeMoney(comb.revenue.now, c);
+  return (
+    <View style={s.section} wrap={false}>
+      <Head title="Revenue by source" sub={`Each order system ${m.source ?? "Klaviyo"} credits to email, on its own and combined · ${m.main.label}`} />
+      <View style={{ flexDirection: "row", gap: GAP }}>
+        {list.map((x) => (
+          <SourceCard key={x.id} x={x} m={m} w={w} look={look} />
+        ))}
+        <View style={{ width: w, height: SOURCE_H, borderRadius: 10, overflow: "hidden", backgroundColor: look.hero }}>
+          <View style={{ paddingHorizontal: 11, paddingTop: 12, flex: 1 }}>
+            <Text style={[s.eyebrow, { color: look.heroSoft }]}>Combined</Text>
+            <Text style={{ fontSize: fitFont(total, w - 22, 21), fontFamily: "Helvetica-Bold", color: "#ffffff", letterSpacing: -0.5, marginTop: 6, lineHeight: 1 }}>{total}</Text>
+            <Text style={{ fontSize: 6.6, color: "#d8dde3", marginTop: 5 }}>{comb.revenue.before == null ? "No prior number" : `vs ${wholeMoney(comb.revenue.before, c)} prior ${prior}`}</Text>
+            <View style={{ marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.2)" }}>
+              <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: "#ffffff" }}>{int(comb.orders.now)}</Text>
+              <Text style={{ fontSize: 6.2, color: "#d8dde3", marginTop: 2 }}>orders, each counted once</Text>
+            </View>
+            {comb.campaignRevenue != null && comb.flowRevenue != null ? (
+              <View style={{ marginTop: 9 }}>
+                <Text style={{ fontSize: 6.4, color: "#d8dde3" }}>Campaigns {wholeMoney(comb.campaignRevenue, c)}</Text>
+                <Text style={{ fontSize: 6.4, color: "#d8dde3", marginTop: 2 }}>Automated {wholeMoney(comb.flowRevenue, c)}</Text>
+              </View>
+            ) : null}
+            <Text style={{ position: "absolute", left: 11, right: 11, bottom: 10, fontSize: 6, color: "#d8dde3", lineHeight: 1.35 }}>{src.note}</Text>
+          </View>
+        </View>
+      </View>
     </View>
   );
 }
@@ -393,6 +521,10 @@ function ConversionSummary({ m, look }: { m: EmailMetrics; look: Look }) {
   const prior = priorWord(m);
   const total = m.now.campaignRevenue + m.now.flowRevenue;
   const share = (x: number) => (total > 0 ? `${Math.round((x / total) * 100)}%` : "");
+  // Texts on the chart: their own colour beside email's, when the client sent any in the period
+  const ch = d.channels ?? null;
+  const withSms = Boolean(ch && ((ch.sms.revenue.now ?? 0) > 0 || (ch.sms.sends.now ?? 0) > 0) && d.daily.some((p) => p.sms != null));
+  const bars = d.daily.map((p) => (withSms ? channelBars(p) : { campaign: p.campaign, flow: p.flow, sms: 0 }));
   const left = 132;
   const W = INNER - 26 - left - 14;
   const H = 128;
@@ -406,12 +538,30 @@ function ConversionSummary({ m, look }: { m: EmailMetrics; look: Look }) {
   const few = daily.length <= 10;
   return (
     <View style={s.section} wrap={false}>
-      <Head title="Conversion summary" sub={`Revenue attributed to email and SMS by day, ${m.main.label}`} />
+      <Head title="Conversion summary" sub={withSms ? `Revenue by day from email campaigns, automated emails and SMS, ${m.main.label}` : `Revenue attributed to email and SMS by day, ${m.main.label}`} />
       <View style={[s.panel, { flexDirection: "row" }]}>
         <View style={{ width: left, paddingRight: 10, borderRightWidth: 1, borderRightColor: "#edf1f4", marginRight: 14 }}>
-          <LegendRow color={CAMPAIGN_HEX} name="Campaigns" value={wholeMoney(m.now.campaignRevenue, c)} share={share(m.now.campaignRevenue)} mv={moveOf(m.now.campaignRevenue, m.before.campaignRevenue)} before={wholeMoney(m.before.campaignRevenue, c)} prior={prior} />
-          <LegendRow color={look.bars} name="Automated emails" value={wholeMoney(m.now.flowRevenue, c)} share={share(m.now.flowRevenue)} mv={moveOf(m.now.flowRevenue, m.before.flowRevenue)} before={wholeMoney(m.before.flowRevenue, c)} prior={prior} />
-          {m.now.smsRevenue > 0 ? <Text style={{ fontSize: 6.4, color: MUTED }}>SMS within these: {money(m.now.smsRevenue, c)}</Text> : null}
+          {withSms && ch ? (
+            <>
+              <LegendRow color={CAMPAIGN_HEX} name="Email" value={wholeMoney(ch.email.revenue.now, c)} share={share(ch.email.revenue.now ?? 0)} mv={moveOf(ch.email.revenue.now, ch.email.revenue.before)} before={wholeMoney(ch.email.revenue.before, c)} prior={prior} />
+              <LegendRow color={SMS_HEX} name="SMS" value={wholeMoney(ch.sms.revenue.now, c)} share={share(ch.sms.revenue.now ?? 0)} mv={moveOf(ch.sms.revenue.now, ch.sms.revenue.before)} before={wholeMoney(ch.sms.revenue.before, c)} prior={prior} />
+              <Text style={{ fontSize: 6.2, color: MUTED, lineHeight: 1.35 }}>
+                {int(ch.email.sends.now)} emails and {int(ch.sms.sends.now)} texts sent ({int(ch.sms.campaigns.now)} SMS {ch.sms.campaigns.now === 1 ? "campaign" : "campaigns"})
+              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", marginTop: 5 }}>
+                <View style={[s.dot, { backgroundColor: CAMPAIGN_HEX, marginRight: 3 }]} />
+                <Text style={{ fontSize: 5.8, color: MUTED, marginRight: 6 }}>Campaigns</Text>
+                <View style={[s.dot, { backgroundColor: look.bars, marginRight: 3 }]} />
+                <Text style={{ fontSize: 5.8, color: MUTED }}>Automated</Text>
+              </View>
+            </>
+          ) : (
+            <>
+              <LegendRow color={CAMPAIGN_HEX} name="Campaigns" value={wholeMoney(m.now.campaignRevenue, c)} share={share(m.now.campaignRevenue)} mv={moveOf(m.now.campaignRevenue, m.before.campaignRevenue)} before={wholeMoney(m.before.campaignRevenue, c)} prior={prior} />
+              <LegendRow color={look.bars} name="Automated emails" value={wholeMoney(m.now.flowRevenue, c)} share={share(m.now.flowRevenue)} mv={moveOf(m.now.flowRevenue, m.before.flowRevenue)} before={wholeMoney(m.before.flowRevenue, c)} prior={prior} />
+              {m.now.smsRevenue > 0 ? <Text style={{ fontSize: 6.4, color: MUTED }}>SMS within these: {money(m.now.smsRevenue, c)}</Text> : null}
+            </>
+          )}
         </View>
         {daily.length ? (
           <Svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
@@ -425,15 +575,18 @@ function ConversionSummary({ m, look }: { m: EmailMetrics; look: Look }) {
             ))}
             {daily.map((p, i) => {
               const x = 30 + i * slot + (slot - bar) / 2;
-              const yf = y(p.flow);
+              const b = bars[i];
+              const yf = y(b.flow);
+              const yc = y(b.flow + b.campaign);
               const yt = y(p.flow + p.campaign);
               // A long period labels every few days, counted back from the last so the last day is always named
               const every = few ? 1 : Math.ceil(daily.length / 7);
               const named = (daily.length - 1 - i) % every === 0;
               return (
                 <G key={p.date}>
-                  {p.flow > 0 ? <Rect x={x} y={yf} width={bar} height={base - yf} fill={look.bars} /> : null}
-                  {p.campaign > 0 ? <Rect x={x} y={yt} width={bar} height={Math.max(0.8, yf - yt)} fill={CAMPAIGN_HEX} /> : null}
+                  {b.flow > 0 ? <Rect x={x} y={yf} width={bar} height={base - yf} fill={look.bars} /> : null}
+                  {b.campaign > 0 ? <Rect x={x} y={yc} width={bar} height={Math.max(0.8, yf - yc)} fill={CAMPAIGN_HEX} /> : null}
+                  {b.sms > 0 ? <Rect x={x} y={yt} width={bar} height={Math.max(0.8, yc - yt)} fill={SMS_HEX} /> : null}
                   {few && p.flow + p.campaign > 0 ? (
                     <SvgText x={x + bar / 2} y={yt - 3} anchor="middle" fill={INK} size={6}>
                       {shortMoney(p.flow + p.campaign, c)}
@@ -459,8 +612,9 @@ function ConversionSummary({ m, look }: { m: EmailMetrics; look: Look }) {
 // ─── Campaign and flow performance ─────────────────────────────────────────
 
 /** Recipients, open, click and placed order rate for the period, each graded against Kaizen's bar where it has one */
-function PerfCells({ p, bars, prior, kind }: { p: PerfBlock; bars: { open: number; click: number }; prior: string; kind: "campaign" | "flow" }) {
-  const w = (INNER - 2 - 3) / 4;
+function PerfCells({ p, bars, prior, kind, currency, measured = true }: { p: PerfBlock; bars: { open: number; click: number }; prior: string; kind: "campaign" | "flow"; currency: string | null; measured?: boolean }) {
+  const withRpr = measured && p.rpr != null;
+  const w = (INNER - 2 - (withRpr ? 4 : 3)) / (withRpr ? 5 : 4);
   const rate = (x: Pair, digits: number, better: "up" | "down" = "up") => ({ value: pct(x.now, digits), mv: moveOf(x.now, x.before, better), before: pct(x.before, digits) });
   const open = rate(p.open, 1);
   const click = rate(p.click, 2);
@@ -474,6 +628,12 @@ function PerfCells({ p, bars, prior, kind }: { p: PerfBlock; bars: { open: numbe
       <Stat title="Click rate" value={click.value} mv={click.mv} before={click.before} prior={prior} width={w} height={62} max={15} badge={grade(p.click.now, bars.click)} />
       <Rule />
       <Stat title="Placed order rate" value={order.value} mv={order.mv} before={order.before} prior={prior} width={w} height={62} max={15} />
+      {withRpr && p.rpr ? (
+        <>
+          <Rule />
+          <Stat title="Revenue per recipient" value={centsMoney(p.rpr.now, currency)} mv={moveOf(p.rpr.now, p.rpr.before)} before={centsMoney(p.rpr.before, currency)} prior={prior} width={w} height={62} max={15} badge={kind === "campaign" ? grade(p.rpr.now, RPR_BAR) : null} />
+        </>
+      ) : null}
     </StatRow>
   );
 }
@@ -489,6 +649,7 @@ const CAMPAIGN_COLS: Col[] = [
   { key: "orders", head: "Orders", width: 34 },
   { key: "orderRate", head: "Order rate", width: 42 },
   { key: "revenue", head: "Revenue", width: 56 },
+  { key: "rpr", head: "Per recip.", width: 42 },
 ];
 const FLOW_COLS: Col[] = [
   { key: "name", head: "Automated email (flow)", align: "left" },
@@ -499,6 +660,17 @@ const FLOW_COLS: Col[] = [
   { key: "orders", head: "Orders", width: 34 },
   { key: "orderRate", head: "Order rate", width: 42 },
   { key: "revenue", head: "Revenue", width: 56 },
+  { key: "rpr", head: "Per recip.", width: 42 },
+];
+/** Every campaign in the period, compact: under the best and the lowest */
+const COMPACT_COLS: Col[] = [
+  { key: "name", head: "Campaign", align: "left" },
+  { key: "date", head: "Sent", width: 36 },
+  { key: "recipients", head: "Recipients", width: 48 },
+  { key: "open", head: "Open", width: 36 },
+  { key: "click", head: "Click", width: 36 },
+  { key: "revenue", head: "Revenue", width: 54 },
+  { key: "rpr", head: "Per recip.", width: 44 },
 ];
 
 function cell(r: MessageRow, key: string, currency: string | null): string {
@@ -521,6 +693,8 @@ function cell(r: MessageRow, key: string, currency: string | null): string {
       return pct(r.orderRate, 2);
     case "revenue":
       return wholeMoney(r.revenue, currency);
+    case "rpr":
+      return centsMoney(rprOf(r.revenue, r.recipients), currency);
     default:
       return r.name;
   }
@@ -571,9 +745,9 @@ const CARD_H = 184;
 const PIC_W = 122;
 
 /** Placeholder for a card with no picture: a text message, or an email whose preview couldn't be read */
-function NoPicture({ sms }: { sms: boolean }) {
+function NoPicture({ sms, height = CARD_H }: { sms: boolean; height?: number }) {
   return (
-    <View style={{ width: PIC_W, height: CARD_H, backgroundColor: "#eef2f5", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 }}>
+    <View style={{ width: PIC_W, height, backgroundColor: "#eef2f5", alignItems: "center", justifyContent: "center", paddingHorizontal: 12 }}>
       <Text style={{ fontSize: 8, fontFamily: "Helvetica-Bold", color: MUTED, textTransform: "uppercase", letterSpacing: 0.8 }}>{sms ? "SMS" : "Email"}</Text>
       <Text style={{ fontSize: 6.4, color: FAINT, marginTop: 3, textAlign: "center" }}>{sms ? "A text message" : "Preview not available"}</Text>
     </View>
@@ -608,17 +782,22 @@ function CardCell({ x, w }: { x: CardStat; w: number }) {
 }
 
 /** One campaign as the email itself (its top half, linked to the campaign in Klaviyo) beside its numbers against the bars */
-function CampaignCard({ r, m, pic, total, look }: { r: MessageRow; m: EmailMetrics; pic: string | null | undefined; total: number; look: Look }) {
+type CardPick = { tone: "best" | "lowest"; why: string };
+const PICK_H = CARD_H + 26;
+
+function CampaignCard({ r, m, pic, total, look, pick }: { r: MessageRow; m: EmailMetrics; pic: string | null | undefined; total: number; look: Look; pick?: CardPick }) {
   const link = fromKlaviyo(m.source) ? klaviyoCampaignUrl(r.id) : null;
   const stats = cardStats(r, m.currency, m.revenueMeasured !== false);
   const right = INNER - 2 - PIC_W - 28;
   const cw = right / 3;
   const share = total > 0 && m.revenueMeasured !== false ? r.revenue / total : null;
+  const h = pick ? PICK_H : CARD_H;
+  const pickTone = pick?.tone === "best" ? GOOD : AMBER;
   // eslint-disable-next-line jsx-a11y/alt-text -- a PDF image, no alt prop
-  const picture = pic ? <Image src={pic} style={{ width: PIC_W, height: CARD_H, objectFit: "cover", objectPosition: "top" }} /> : <NoPicture sms={r.channel === "sms"} />;
+  const picture = pic ? <Image src={pic} style={{ width: PIC_W, height: h, objectFit: "cover", objectPosition: "top" }} /> : <NoPicture sms={r.channel === "sms"} height={h} />;
   return (
-    <View wrap={false} style={{ flexDirection: "row", height: CARD_H, backgroundColor: "#ffffff", borderWidth: 1, borderColor: LINE, borderRadius: 10, overflow: "hidden", marginTop: GAP }}>
-      <View style={{ width: PIC_W, height: CARD_H, borderRightWidth: 1, borderRightColor: LINE }}>
+    <View wrap={false} style={{ flexDirection: "row", height: h, backgroundColor: "#ffffff", borderWidth: 1, borderColor: LINE, borderRadius: 10, overflow: "hidden", marginTop: GAP }}>
+      <View style={{ width: PIC_W, height: h, borderRightWidth: 1, borderRightColor: LINE }}>
         {link ? (
           <Link src={link} style={{ textDecoration: "none" }}>
             {picture}
@@ -630,9 +809,16 @@ function CampaignCard({ r, m, pic, total, look }: { r: MessageRow; m: EmailMetri
       <View style={{ flex: 1, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10 }}>
         <View style={{ flexDirection: "row", alignItems: "flex-start", height: 44 }}>
           <View style={{ flex: 1, paddingRight: 10 }}>
-            <Text style={{ fontSize: 6.4, fontFamily: "Helvetica-Bold", color: look.primary, letterSpacing: 0.8, textTransform: "uppercase" }}>
-              {r.date ? `Sent ${weekday(r.date)} ${day(r.date)}` : "Sent"} · {r.channel === "sms" ? "SMS" : "Email"}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              {pick ? (
+                <View style={{ height: 11, borderRadius: 3, paddingHorizontal: 5, backgroundColor: pickTone.bg, justifyContent: "center", marginRight: 6 }}>
+                  <Text style={{ fontSize: 6, fontFamily: "Helvetica-Bold", color: pickTone.fg, letterSpacing: 0.5 }}>{pick.tone === "best" ? "BEST PERFORMER" : "LOWEST PERFORMER"}</Text>
+                </View>
+              ) : null}
+              <Text style={{ fontSize: 6.4, fontFamily: "Helvetica-Bold", color: look.primary, letterSpacing: 0.8, textTransform: "uppercase" }}>
+                {r.date ? `Sent ${weekday(r.date)} ${day(r.date)}` : "Sent"} · {r.channel === "sms" ? "SMS" : "Email"}
+              </Text>
+            </View>
             <Text style={{ fontSize: 9.5, fontFamily: "Helvetica-Bold", color: INK, lineHeight: 1.22, marginTop: 3, maxLines: 2, textOverflow: "ellipsis" }}>{r.name}</Text>
           </View>
           {share != null ? (
@@ -648,6 +834,12 @@ function CampaignCard({ r, m, pic, total, look }: { r: MessageRow; m: EmailMetri
             <CardCell key={x.key} x={x} w={cw} />
           ))}
         </View>
+        {pick ? (
+          <Text style={{ fontSize: 7, color: INK, lineHeight: 1.3, marginTop: 6, maxLines: 2, textOverflow: "ellipsis", paddingRight: link ? 128 : 0 }}>
+            <Text style={{ fontFamily: "Helvetica-Bold", color: pickTone.fg }}>Why: </Text>
+            {pick.why}
+          </Text>
+        ) : null}
         {link ? (
           <Link src={link} style={{ position: "absolute", right: 14, bottom: 9, fontSize: 7.2, fontFamily: "Helvetica-Bold", color: look.primary, textDecoration: "none" }}>
             Open the campaign in Klaviyo ›
@@ -675,20 +867,42 @@ function CampaignPerformance({ m, keys, hot, images, look }: { m: EmailMetrics; 
         </View>
       </View>
     );
+  const measured = m.revenueMeasured !== false;
+  const total = d.campaigns.reduce((a, r) => a + r.revenue, 0);
+  const bars = `open ${pct(RATE_BARS.campaign.open, 0)}, click ${pct(RATE_BARS.campaign.click, 0)}${measured ? `, ${centsMoney(RPR_BAR, m.currency)} per recipient` : ""}`;
+  const picks = campaignPicks(d.campaigns, { currency: m.currency, revenueMeasured: measured });
+  if (picks) {
+    // Several campaigns: the best and the lowest as cards with why, then every campaign in one compact table
+    const cols = COMPACT_COLS.filter((col) => measured || (col.key !== "revenue" && col.key !== "rpr"));
+    const by = picks.basis === "rpr" ? "revenue per recipient" : "click rate (revenue isn't tracked)";
+    return (
+      <View style={s.section}>
+        <View wrap={false} minPresenceAhead={120}>
+          <Head title="Campaign performance" sub={`${n} campaigns sent · the best and the lowest by ${by}, each with why, then every campaign · graded against Kaizen's bars: ${bars}`} />
+          <PerfCells p={d.campaign} bars={RATE_BARS.campaign} prior={prior} kind="campaign" currency={m.currency} measured={measured} />
+        </View>
+        <CampaignCard r={picks.best.row} m={m} pic={images[shotKey(picks.best.row.id)]} total={total} look={look} pick={{ tone: "best", why: picks.best.why }} />
+        <CampaignCard r={picks.lowest.row} m={m} pic={images[shotKey(picks.lowest.row.id)]} total={total} look={look} pick={{ tone: "lowest", why: picks.lowest.why }} />
+        <View wrap={n > 18} minPresenceAhead={60}>
+          <Text style={[s.h3, { marginTop: 14 }]}>{`All ${n} campaigns, by send date`}</Text>
+          <Table cols={cols} rows={d.campaigns} currency={m.currency} foot={measured ? "Per recipient: revenue over everyone the campaign went to." : null} />
+        </View>
+      </View>
+    );
+  }
   const cards = cardCampaigns(d.campaigns);
   const carded = new Set(cards.map((c) => c.id));
   const others = d.campaigns.filter((c) => !carded.has(c.id));
   const shown = others.slice(0, MAX_CAMPAIGNS);
   const rest = others.slice(MAX_CAMPAIGNS);
   const foot = rest.length ? `And ${rest.length} more ${rest.length === 1 ? "campaign" : "campaigns"} earning ${money(rest.reduce((a, r) => a + r.revenue, 0), m.currency)}.` : null;
-  const total = d.campaigns.reduce((a, r) => a + r.revenue, 0);
   const card = (r: MessageRow) => <CampaignCard key={r.id} r={r} m={m} pic={images[shotKey(r.id)]} total={total} look={look} />;
   return (
     <View style={s.section}>
       {/* The heading and the totals stay together, and never sit alone at the foot of a page */}
       <View wrap={false} minPresenceAhead={120}>
-        <Head title="Campaign performance" sub={`${n} ${n === 1 ? "campaign" : "campaigns"} sent · graded against Kaizen's bars: open ${pct(RATE_BARS.campaign.open, 0)}, click ${pct(RATE_BARS.campaign.click, 0)}, ${money(RPR_BAR, m.currency)} per recipient`} />
-        <PerfCells p={d.campaign} bars={RATE_BARS.campaign} prior={prior} kind="campaign" />
+        <Head title="Campaign performance" sub={`${n} ${n === 1 ? "campaign" : "campaigns"} sent · graded against Kaizen's bars: ${bars}`} />
+        <PerfCells p={d.campaign} bars={RATE_BARS.campaign} prior={prior} kind="campaign" currency={m.currency} measured={measured} />
       </View>
       {cards.map(card)}
       {shown.length ? (
@@ -712,7 +926,7 @@ function FlowPerformance({ m, keys, hot }: { m: EmailMetrics; keys: string[]; ho
     <View style={s.section} wrap={rows.length > 18}>
       <View wrap={false}>
         <Head title="Automated email performance" sub={`${sent} ${sent === 1 ? "flow" : "flows"} sent · graded against Kaizen's bars: open ${pct(RATE_BARS.flow.open, 0)}, click ${pct(RATE_BARS.flow.click, 1)}`} />
-        <PerfCells p={d.flow} bars={RATE_BARS.flow} prior={prior} kind="flow" />
+        <PerfCells p={d.flow} bars={RATE_BARS.flow} prior={prior} kind="flow" currency={m.currency} measured={m.revenueMeasured !== false} />
       </View>
       {rows.length ? <Table cols={pickedCols(FLOW_COLS, keys)} rows={rows} currency={m.currency} foot={d.flowsOther ? "Best by revenue; the rest are added up in the last row." : null} keys={keys} hot={hot} /> : null}
     </View>
@@ -899,129 +1113,7 @@ function LegacyListHealth({ m }: { m: EmailMetrics }) {
   );
 }
 
-// ─── Social ────────────────────────────────────────────────────────────────
-
-/** Eight weeks of reach as bars (every value labelled) */
-function Trend({ m, look }: { m: SocialMetrics; look: Look }) {
-  const pts: TrendPoint[] = m.trend;
-  if (!pts.length || pts.every((p) => !p.value)) return null;
-  const W = INNER - 26;
-  const H = 108;
-  const top = 16;
-  const base = H - 20;
-  const max = Math.max(...pts.map((p) => p.value), 1);
-  const slot = W / pts.length;
-  const bar = Math.min(34, slot - 10);
-  return (
-    <View style={s.section} wrap={false}>
-      <Head title="Reach by week" sub={`Eight weeks ending ${day(m.main.end)}`} />
-      <View style={s.panel}>
-        <Svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-          <Line x1={0} y1={base} x2={W} y2={base} stroke={LINE} strokeWidth={1} />
-          {pts.map((p, i) => {
-            const h = (p.value / max) * (base - top);
-            const x = i * slot + (slot - bar) / 2;
-            const last = i === pts.length - 1;
-            return (
-              <G key={p.start}>
-                <Rect x={x} y={base - h} width={bar} height={Math.max(h, 1)} rx={3} fill={last ? look.bars : look.barsSoft} />
-                <SvgText x={x + bar / 2} y={base - h - 4} anchor="middle" fill={INK}>
-                  {int(p.value)}
-                </SvgText>
-                <SvgText x={x + bar / 2} y={H - 6} anchor="middle" fill={MUTED}>
-                  {p.label}
-                </SvgText>
-              </G>
-            );
-          })}
-        </Svg>
-      </View>
-    </View>
-  );
-}
-
-type PlatformRow = SocialMetrics["platforms"][number];
-const SOCIAL_COL: Record<string, { head: string; width: number; cell: (p: PlatformRow, m: SocialMetrics) => string; color?: (p: PlatformRow) => string }> = {
-  followers: { head: "Followers", width: 58, cell: (p) => int(p.now.followers) },
-  change: { head: "Change", width: 50, cell: (p) => signed(p.now.followerChange), color: (p) => ((p.now.followerChange ?? 0) < 0 ? "#c23e4c" : "#087a5e") },
-  reach: { head: "Reach", width: 54, cell: (p) => int(p.now.reach) },
-  views: { head: "Views", width: 54, cell: (p) => int(p.now.views) },
-  rate: { head: "Engage", width: 50, cell: (p, m) => (m.insightsRead ? pct(p.now.rate) : "–") },
-  posts: { head: "Posts", width: 36, cell: (p) => int(p.now.posts) },
-};
-
-function Platforms({ m, keys, hot }: { m: SocialMetrics; keys: string[]; hot: HotOf }) {
-  if (!m.platforms.length) return null;
-  return (
-    <View style={s.section} wrap={false}>
-      <Head title="By platform" sub={`${m.main.label} against ${m.compare.label}`} />
-      <View style={s.panel}>
-        <View style={s.th}>
-          <Text style={[...th, { flex: 1 }]}>Platform</Text>
-          {keys.map((k, i) => (
-            <View key={k} style={{ width: SOCIAL_COL[k].width }}>
-              <Text style={[...th, { textAlign: "right" }]}>{SOCIAL_COL[k].head}</Text>
-              <Hot href={hot(`col/${i}`)} />
-            </View>
-          ))}
-        </View>
-        {m.platforms.map((p) => (
-          <View key={p.platform} style={s.tr}>
-            <Text style={[s.adName, { flex: 1 }]}>
-              {socialName(p.platform)}
-              {p.name ? `  ${p.name}` : ""}
-            </Text>
-            {keys.map((k) => {
-              const col = SOCIAL_COL[k];
-              return (
-                <Text key={k} style={[s.td, { width: col.width }, col.color ? { color: col.color(p) } : {}]}>
-                  {col.cell(p, m)}
-                </Text>
-              );
-            })}
-          </View>
-        ))}
-      </View>
-    </View>
-  );
-}
-
-function TopPosts({ m, images, look }: { m: SocialMetrics; images: ChannelImages; look: Look }) {
-  const top = m.posts.slice(0, 3);
-  if (!top.length) return null;
-  return (
-    <View style={s.section} wrap={false}>
-      <Head title="Top posts" sub={`${m.postsTotal} published · best by engagement`} />
-      <View style={s.insights}>
-        {top.map((p) => {
-          const pic = images[postKey(p)];
-          return (
-            <View key={postKey(p)} style={s.adCard}>
-              {/* eslint-disable-next-line jsx-a11y/alt-text -- a PDF image, no alt prop */}
-              {pic ? <Image src={pic} style={s.adPic} /> : <View style={s.adPicBlank}><Text style={{ fontSize: 7, color: FAINT }}>{p.format}</Text></View>}
-              <View style={s.adBody}>
-                <Text style={s.adName}>{p.caption ? p.caption.slice(0, 70) : `${socialName(p.platform)} ${p.format}`}</Text>
-                <Text style={s.adMeta}>
-                  {socialName(p.platform)} · {p.format}
-                  {p.postedAt ? ` · ${day(p.postedAt.slice(0, 10))}` : ""}
-                </Text>
-                <Text style={[s.adMeta, { marginTop: 4, color: INK }]}>
-                  {int(p.interactions)} interactions · reach {int(p.reach)}
-                </Text>
-                <Text style={s.adMeta}>{postRateText(p)}</Text>
-                {p.permalink ? (
-                  <Link src={p.permalink} style={{ fontSize: 7, color: look.primary, fontFamily: "Helvetica-Bold", textDecoration: "none", marginTop: 5 }}>
-                    View post
-                  </Link>
-                ) : null}
-              </View>
-            </View>
-          );
-        })}
-      </View>
-    </View>
-  );
-}
+// Social: drawn by social-doc.tsx (the score, the glance, the month to date, the takeaways, the chart, the platforms and the posts)
 
 // ─── Both ──────────────────────────────────────────────────────────────────
 
@@ -1471,6 +1563,7 @@ function EmailBody({ m, images, look, layout, hot }: { m: EmailMetrics; images: 
   return (
     <>
       <EmailGlance m={m} layout={layout} hot={hot} />
+      <RevenueSources m={m} look={look} />
       <ChannelMtd m={m} look={look} />
       <ConversionSummary m={m} look={look} />
       <CampaignPerformance m={m} keys={keys} hot={hot} images={images} look={look} />
@@ -1497,16 +1590,10 @@ export function ChannelDocument({ input: asked, images }: { input: ChannelPdfInp
         {m.platform === "klaviyo" ? (
           <EmailBody m={m} images={images} look={look} layout={input.layout} hot={hot} />
         ) : (
-          <>
-            <Glance m={m} layout={input.layout} hot={hot} />
-            <ChannelMtd m={m} look={look} />
-            <Trend m={m} look={look} />
-            <Platforms m={m} keys={columnKeys("social", input.layout)} hot={hot} />
-            <TopPosts m={m} images={images} look={look} />
-          </>
+          <SocialBody m={m} images={images} look={look} layout={input.layout} hot={hot} sections={input.sections} />
         )}
-        {/* The detailed email report ends on the numbers: what the team learned travels in the message */}
-        {m.platform === "klaviyo" && m.detail ? null : <Takeaways m={m} sections={input.sections} look={look} hot={hot} />}
+        {/* The detailed email report ends on the numbers: what the team learned travels in the message; social draws its own (social-doc.tsx) */}
+        {m.platform === "social" || m.detail ? null : <Takeaways m={m} sections={input.sections} look={look} hot={hot} />}
         {input.dashboard && !input.whiteLabel ? (
           <Link src={input.dashboard} style={{ fontSize: 8, color: look.primary, fontFamily: "Helvetica-Bold", textDecoration: "none", marginTop: 2 }}>
             See every number, any dates, on your live dashboard

@@ -65,7 +65,7 @@ export function scrubName(name: string): string {
 /** Scrubbed only when the client is white label; anyone else's text as it was */
 export const forClient = (text: string, whiteLabel: boolean | null | undefined) => (whiteLabel ? scrubAgency(text) : text);
 
-type Words = { headline: string; summary: string; did: string[]; doing: string[]; next: string[]; highlights: string[]; stories?: { title: string; see: string; why: string; next: string }[]; takeaways?: { title: string; text: string }[] };
+type Words = { headline: string; summary: string; did: string[]; doing: string[]; next: string[]; highlights: string[]; stories?: { title: string; see: string; why: string; next: string }[]; takeaways?: { title: string; text: string; next?: string }[] };
 
 /** A report's written sections with the agency taken out of every line (the backstop for the PDF and the report page) */
 export function scrubSections<T extends Words>(s: T): T {
@@ -80,7 +80,7 @@ export function scrubSections<T extends Words>(s: T): T {
     next: list(s.next),
     highlights: list(s.highlights),
     ...(s.stories ? { stories: s.stories.map((st) => ({ ...st, title: one(st.title), see: one(st.see), why: one(st.why), next: one(st.next) })) } : {}),
-    ...(s.takeaways ? { takeaways: s.takeaways.map((t) => ({ title: one(t.title), text: one(t.text) })) } : {}),
+    ...(s.takeaways ? { takeaways: s.takeaways.map((t) => ({ title: one(t.title), text: one(t.text), ...(t.next ? { next: one(t.next) } : {}) })) } : {}),
   };
 }
 

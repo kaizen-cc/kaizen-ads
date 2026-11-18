@@ -39,7 +39,7 @@ const social = socialMetrics({ kind: "monthly", main, compare, days: socialDays,
 
 describe("the tiles and columns picked on an email or social report", () => {
   it("starts on what the team's report leads with", () => {
-    expect(defaultTiles(email)).toEqual(["revenue", "orders", "split", "score"]);
+    expect(defaultTiles(email)).toEqual(["revenue", "orders", "rpr", "split", "score"]);
     expect(tileOptions(email)).toContain("aov");
     expect(defaultTiles(social)).toEqual(["followers", "reach", "views", "rate"]);
   });
