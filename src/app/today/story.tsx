@@ -90,20 +90,23 @@ export function Story({
   const card = cards[Math.min(at, cards.length - 1)];
 
   const snap = (i: TodayItem) => ({ topic: i.topic, client: i.client, title: i.title, clientId: i.clientId });
-  // Everything on a screen that's been shown counts as seen (once); a "taken care of" card is read once
+  // Everything on a screen that's been shown counts as seen (once); a "taken care of" card is read once. These marks
+  // happen in the background: one that doesn't go through (an expired sign in, a tab from before an update, a dropped
+  // connection) is tried again the next time the card is shown rather than surfacing as an error (issue #33)
   const shown = useRef(new Set<string>());
   useEffect(() => {
+    const retryLater = (key: string) => () => void shown.current.delete(key);
     if (card.kind === "topic")
       for (const i of card.items)
         if (!shown.current.has(i.key)) {
           shown.current.add(i.key);
-          if (!demo) void setItem(i.key, "seen", { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId });
+          if (!demo) setItem(i.key, "seen", { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId }).catch(retryLater(i.key));
         }
     if (card.kind === "resolved")
       for (const r of card.rs)
         if (!shown.current.has(r.key)) {
           shown.current.add(r.key);
-          if (!demo) void acknowledge(r.key);
+          if (!demo) acknowledge(r.key).catch(retryLater(r.key));
         }
   }, [card, demo]);
 
