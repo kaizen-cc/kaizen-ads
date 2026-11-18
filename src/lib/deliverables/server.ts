@@ -4,6 +4,7 @@ import { mapAsanaFields, pickSection, purposeText, looseName, type AsanaFieldSet
 import { approveCopyDoc, clientFacts, loadCopyDoc, type Me } from "@/lib/copy-docs/server";
 import { applyPatch, followerOf, newRun, readAsk, tasksFor, type LineConfig, type Patch, type Request, type RunState } from "./engine";
 import { lineOf } from "./lines";
+import { slidesOfPost } from "./lines/social";
 
 // The deliverable flow on the server: one run per call and line (kept on deliverable_runs, so every agent on the call
 // and every turn reads the same state), the fresh context the lead reads before brainstorming, and the requests: the
@@ -75,7 +76,11 @@ export async function freshContext(admin: Admin, cfg: LineConfig, clientId: stri
     cfg.line === "email" ? import("@/lib/email-ops/chat").then((m) => m.emailBrief(admin, clientId)).catch(() => null) : Promise.resolve(null),
     admin.from("call_commitments").select("kind, what, due_at, status").eq("client_id", clientId).in("status", ["open", "briefed"]).gte("created_at", since).order("due_at").limit(15),
     cfg.line === "email" ? admin.from("email_tickets").select("number, kind, title, stage, due_on").eq("client_id", clientId).is("deleted_at", null).neq("stage", "live").limit(15) : Promise.resolve({ data: [] }),
-    cfg.asana.mirror ? admin.from(cfg.asana.mirror).select("name, section, due_on").eq("client_id", clientId).eq("open", true).is("ticket_id", null).limit(15) : Promise.resolve({ data: [] }),
+    cfg.asana.mirror
+      ? admin.from(cfg.asana.mirror).select("name, section, due_on").eq("client_id", clientId).eq("open", true).is("ticket_id", null).limit(15)
+      : cfg.line === "creative"
+        ? admin.from("asana_tasks").select("name, section, due_on").eq("client_id", clientId).eq("open", true).limit(15)
+        : Promise.resolve({ data: [] }),
     admin.from("client_memory").select("kind, body, dated, created_at").eq("client_id", clientId).order("created_at", { ascending: false }).limit(12),
   ]);
   return {
@@ -138,7 +143,33 @@ async function strategistFollower(admin: Admin, cfg: LineConfig, clientId: strin
       }
     }
   }
-  return followerOf(cfg.followerSeat.replace(/_/g, " "), seat, user);
+  return { ...followerOf(cfg.followerSeat.replace(/_/g, " "), seat, user), email: seat?.email ?? null };
+}
+
+/** The line's collaborators (people in the staff roles it names, e.g. the head of creative) as Asana users by email */
+async function collaboratorsOf(admin: Admin, cfg: LineConfig): Promise<{ emails: string[]; users: string[] }> {
+  if (!cfg.collaborators?.length) return { emails: [], users: [] };
+  const { data } = await admin.from("profiles").select("email").in("role", cfg.collaborators).not("email", "is", null).limit(4);
+  const emails = [...new Set((data ?? []).map((p) => String(p.email)).filter(Boolean))];
+  const { asana } = await import("@/lib/asana");
+  const users: string[] = [];
+  for (const e of emails) {
+    const u = await asana<{ gid: string }>(`/users/${encodeURIComponent(e)}`, { opt_fields: "gid" }).catch(() => null);
+    if (u?.data?.gid) users.push(u.data.gid);
+  }
+  return { emails, users };
+}
+
+/** The social line's quick links: the account sheet's calendar, the creative folder, the client's HQ and website */
+async function socialLinks(admin: Admin, clientId: string, facts: { hqUrl: string | null; website: string | null }) {
+  const { data } = await admin.from("clients").select("channel_sheet, creative_db").eq("id", clientId).maybeSingle();
+  const sheet = (((data?.channel_sheet ?? {}) as Record<string, unknown>).social_details ?? {}) as Record<string, string | null>;
+  return [
+    { label: "Social Media Calendar", url: sheet.calendar ?? "" },
+    { label: "Ad Creative Folder", url: sheet.creativeFolder ?? (data?.creative_db as { url?: string } | null)?.url ?? "" },
+    { label: "Client Headquarters Link", url: facts.hqUrl ?? "" },
+    { label: "Website", url: facts.website ?? "" },
+  ];
 }
 
 export type RequestsResult = { ok: true; doc: string; tasks: Request[]; fieldsMissing: string[]; followerMissing: string | null } | { ok: false; error: string; fixHref?: string };
@@ -168,7 +199,28 @@ export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, r
   const section = pickSection(sections, cfg.asana.section);
   const urgency = opts.urgency ?? "normal";
   const c = d.content;
-  const items = c.emails.map((e, i) => ({ shortName: c.emails.length > 1 ? (state.topics[i]?.title || e.name) : c.shortName, docUrl: approvedDoc.docUrl, purpose: purposeText({ ...c, title: state.topics[i]?.title || c.title, brief: { ...c.brief, goal: state.topics[i] ? `${state.topics[i].title}: ${state.topics[i].angle}` : c.brief.goal } }) }));
+  const collab = await collaboratorsOf(admin, cfg);
+  if (cfg.asana.via === "creative_form") {
+    // The request form's own path: the same task, allotment counting and from_kaizen_ads as a request sent there
+    const { why } = await import("@/lib/live-guard").then(async (m) => ({ why: await m.notLive(db, d.clientId!) }));
+    if (why) return { ok: false, error: why };
+    const { creativeDraft } = await import("./lines/creative");
+    const { sendAsanaRequest } = await import("@/lib/asana-request");
+    const draft = creativeDraft({ clientId: d.clientId, kind: state.kind ?? "image", count: state.count ?? 1, content: c, angle: state.topics[0]?.angle ?? "", urgency, landing: facts.website });
+    try {
+      const sent = await sendAsanaRequest(admin, draft, { id: me.id, email: me.email }, { origin: { kind: "brief", label: c.title }, followers: [...(follow.email ? [follow.email] : []), ...collab.emails] });
+      const tasks: Request[] = sent.tasks.map((t) => ({ name: t.name, url: t.url ?? "", gid: t.gid, follower: follow.follower, followerMissing: follow.missing }));
+      await admin.from("copy_docs").update({ status: "requested", asana_gid: tasks[0]?.gid ?? null, asana_url: tasks[0]?.url ?? null, updated_at: new Date().toISOString() }).eq("id", d.id);
+      return { ok: true, doc: approvedDoc.docUrl, tasks, fieldsMissing: [], followerMissing: follow.missing };
+    } catch (e) {
+      return { ok: false, error: `Asana refused the request: ${e instanceof Error ? e.message : "unknown"}` };
+    }
+  }
+  const links = cfg.line === "social" ? await socialLinks(admin, d.clientId, facts) : [];
+  const isDay = (x: unknown): x is string => typeof x === "string" && /^d{4}-d{2}-d{2}$/.test(x);
+  const items = c.emails.map((e, i) => ({
+    extra: cfg.asana.description ? { concept: state.topics[i] ? `${state.topics[i].angle || state.topics[i].title}` : c.brief.goal || e.name, postDate: [state.topics[i]?.send, c.emails.length === 1 ? c.brief.sendDate : null].find(isDay) ?? null, slides: slidesOfPost(e), links } : undefined,
+    shortName: c.emails.length > 1 ? (state.topics[i]?.title || e.name) : c.shortName, docUrl: approvedDoc.docUrl, purpose: purposeText({ ...c, title: state.topics[i]?.title || c.title, brief: { ...c.brief, goal: state.topics[i] ? `${state.topics[i].title}: ${state.topics[i].angle}` : c.brief.goal } }) }));
   const planned = tasksFor(cfg, state, items, { client: facts, urgency }, c.shortName, approvedDoc.docUrl, purposeText(c));
   const { requestDescription } = await import("@/lib/copy-docs/core");
   const missingAll = new Set<string>();
@@ -176,9 +228,9 @@ export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, r
   for (const p of planned) {
     const { custom_fields, missing } = mapAsanaFields(fields, p.fields);
     missing.forEach((m) => missingAll.add(m.name));
-    const notes = [requestDescription(c, { copyUrl: approvedDoc.docUrl, hqUrl: facts.hqUrl, website: facts.website, figma: facts.figma, platform: facts.platform, requestedBy: me.fullName }), missing.length ? missing.map((m) => `${m.name}: ${m.value}`).join("\n") : "", follow.missing ?? ""].filter(Boolean).join("\n\n");
+    const notes = [cfg.asana.description ? cfg.asana.description(p.input) : requestDescription(c, { copyUrl: approvedDoc.docUrl, hqUrl: facts.hqUrl, website: facts.website, figma: facts.figma, platform: facts.platform, requestedBy: me.fullName }), missing.length ? missing.map((m) => `${m.name}: ${m.value}`).join("\n") : "", follow.missing ?? ""].filter(Boolean).join("\n\n");
     const base: Record<string, unknown> = { name: p.name, notes: notes.slice(0, 60000), ...(section ? { memberships: [{ project, section: section.gid }] } : { projects: [project] }), ...(Object.keys(custom_fields).length ? { custom_fields } : {}) };
-    const followers = [follow.follower, me.email].filter(Boolean) as string[];
+    const followers = [...new Set([follow.follower, ...collab.users, me.email].filter(Boolean) as string[])];
     let task: { gid: string; permalink_url?: string };
     try {
       task = await asanaWrite("/tasks?opt_fields=permalink_url", { ...base, ...(followers.length ? { followers } : {}) });

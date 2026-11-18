@@ -6,7 +6,7 @@ import type { CallCard, CallCopyDoc } from "@/lib/agent-call/core";
 // sections, button and design notes, wrapping (never sideways). Open shows it full screen to comment on lines, ask for
 // changes and approve; once approved and requested, the Google Doc and Asana links sit on the card.
 
-const KIND: Record<CallCopyDoc["kind"], string> = { campaign: "Email campaign", flow: "Email flow", sms: "SMS" };
+const KIND: Record<CallCopyDoc["kind"], string> = { campaign: "Email campaign", flow: "Email flow", sms: "SMS", creative: "Ad creative brief", social: "Organic social" };
 
 export function CopyDocCardView({ card, onOpen, onDismiss, wide = true }: { card: CallCard & { copy: CallCopyDoc }; onOpen: (c: CallCard) => void; onDismiss?: () => void; wide?: boolean }) {
   const c = card.copy;
@@ -16,7 +16,7 @@ export function CopyDocCardView({ card, onOpen, onDismiss, wide = true }: { card
       <div className="relative flex items-start gap-3">
         <span className="grid min-w-0 flex-1 gap-0.5">
           <span className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-brand-text">
-            {KIND[c.kind]} · {c.emails.length} {c.kind === "sms" ? "text" : "email"}
+            {KIND[c.kind]} · {c.emails.length} {c.kind === "sms" ? "text" : c.kind === "social" ? "post" : c.kind === "creative" ? "concept" : "email"}
             {c.emails.length === 1 ? "" : "s"}
             {c.version > 1 ? ` · v${c.version}` : ""}
             {c.status !== "draft" ? ` · ${c.status === "requested" ? "Requested" : "Approved"}` : ""}

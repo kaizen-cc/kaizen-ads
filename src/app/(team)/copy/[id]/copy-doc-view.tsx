@@ -11,7 +11,7 @@ import { approveCopy, askForChange, commentOnLine, copyVersion, requestCopy, res
 // Doc in the client's Drive), then Create in Asana (Kaizen OS requests coming soon). A change made on a call (by voice
 // or in the chat) shows up here on its own.
 
-const KIND: Record<string, string> = { campaign: "Email campaign", flow: "Email flow", sms: "SMS" };
+const KIND: Record<string, string> = { campaign: "Email campaign", flow: "Email flow", sms: "SMS", creative: "Ad creative brief", social: "Organic social" };
 
 export function CopyDocView({ doc: start, changed: firstChanged, requests: firstRequests }: { doc: CopyDoc; changed: string[]; me: string; requests: { name: string; url: string }[] }) {
   const router = useRouter();
@@ -76,7 +76,7 @@ export function CopyDocView({ doc: start, changed: firstChanged, requests: first
       <header className="relative grid gap-3 overflow-hidden rounded-[24px] border border-line bg-surface p-5 shadow-sm md:p-7">
         <span aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-brand opacity-[0.09] blur-3xl" />
         <p className="relative text-[11px] font-medium uppercase tracking-[0.16em] text-brand-text">
-          {KIND[c.kind] ?? "Copy"} · {c.emails.length} {c.kind === "sms" ? "text" : "email"}
+          {KIND[c.kind] ?? "Copy"} · {c.emails.length} {c.kind === "sms" ? "text" : c.kind === "social" ? "post" : c.kind === "creative" ? "concept" : "email"}
           {c.emails.length === 1 ? "" : "s"} · v{doc.version}
         </p>
         <h1 className="relative font-display text-[26px] leading-tight tracking-tight text-fg [overflow-wrap:anywhere] md:text-[34px]">{c.title}</h1>

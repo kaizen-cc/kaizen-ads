@@ -35,6 +35,18 @@ export type TaskInput = {
   /** The purpose line: what it's for, design direction, assets */
   purpose: string;
   urgency: "urgent" | "high" | "normal" | "low";
+  /** Creative and social: what the item is (concept, posting date, one entry per slide or frame, the client's quick links) */
+  concept?: string;
+  postDate?: string | null;
+  slides?: { name: string; headline: string; line: string; visual: string }[];
+  links?: { label: string; url: string }[];
+};
+
+/** Words a line says differently from email (its count question, brainstorm ask and draft instruction); unset, email's apply */
+export type LinePrompts = {
+  askCount?: (kind: KindConfig) => string;
+  brainstorm?: (count: number) => string;
+  draft?: (kind: KindConfig, cfg: { lead: string }) => string;
 };
 
 export type LineConfig = {
@@ -54,7 +66,10 @@ export type LineConfig = {
   /** How to brainstorm: the rules from the line's knowledge (segments to include and exclude, send times) */
   brainstorm: string;
   /** The preview document: its template and the Drive folder the approved copy goes in (under the client's HQ) */
-  doc: { template: "copy"; folder: string };
+  doc: { template: "copy" | "creative" | "social"; folder: string };
+  /** More people (by staff role, e.g. "head_of_creative") added to each task as collaborators beside the seat's person */
+  collaborators?: string[];
+  prompts?: LinePrompts;
   asana: {
     /** Where the project is found: a fixed gid, an env var, an app setting ({ gid }), else a project named like this */
     project: { gid?: string; env?: string; setting?: string; nameLike?: RegExp };
@@ -62,6 +77,10 @@ export type LineConfig = {
     section: string;
     taskName: (t: TaskInput) => string;
     fields: (t: TaskInput) => WantedField[];
+    /** The task's description, when the line writes its own (social); unset, the copy brief's (email) */
+    description?: (t: TaskInput) => string;
+    /** "creative_form": send through the request form's own path (src/lib/asana-request.ts) instead of writing the task here */
+    via?: "creative_form";
     /** The Kaizen mirror to record the task on (the Email Board's outline cards), if any */
     mirror?: "email_asana_tasks";
   };
@@ -130,18 +149,18 @@ export function nextStep(cfg: LineConfig, s: RunState): Next {
   const kind = kindOf(cfg, s.kind);
   const many = kind ? `${kind.label.toLowerCase()}s` : "items";
   if (!kind) return { step: "ask_type", who: "lead", say: `Greet them in a line and ask which it is: ${cfg.kinds.map((k) => k.label.toLowerCase()).join(" or ")}${s.count == null ? ", and how many" : ""}. One short question.` };
-  if (s.count == null) return { step: "ask_count", who: "lead", say: `Ask how many ${kind.split === "per_doc" ? `emails in the ${kind.label.toLowerCase()}` : many} (up to ${kind.max}). One short question.` };
+  if (s.count == null) return { step: "ask_count", who: "lead", say: cfg.prompts?.askCount?.(kind) ?? `Ask how many ${kind.split === "per_doc" ? `emails in the ${kind.label.toLowerCase()}` : many} (up to ${kind.max}). One short question.` };
   if (!s.contextPulled) return { step: "pull_context", who: "lead", say: `Before brainstorming, pull fresh context (deliverable action: context), then read: ${cfg.context.join("; ")}. Say in one line what stood out.` };
   if (!s.topicsAgreed)
     return {
       step: "brainstorm",
       who: "lead",
       say: s.topics.length
-        ? `Settle the ${s.count} topic${s.count === 1 ? "" : "s"} with them: angle, offer, segments to include and exclude, send date. ${cfg.brainstorm} When they agree, record them with agreed: true.`
+        ? `${cfg.prompts?.brainstorm?.(s.count) ?? `Settle the ${s.count} topic${s.count === 1 ? "" : "s"} with them: angle, offer, segments to include and exclude, send date.`} ${cfg.brainstorm} When they agree, record them with agreed: true.`
         : `Brainstorm with them: ask for their ideas first. No ideas: propose ${s.count} from holidays and national days that fit the client, what worked in their own data, and patterns from similar clients in their industry (never name another client). ${cfg.brainstorm}`,
     };
   if (!s.writerJoined) return { step: "bring_writer", who: "lead", say: `Topics are agreed: bring in the ${cfg.writer.replace(/_/g, " ")} (call_in_specialist) with the topics, segments and send dates, in one line.` };
-  if (!s.docId) return { step: "draft", who: "writer", say: `Draft every ${kind.split === "per_doc" ? "email in the flow" : kind.label.toLowerCase()} into ONE preview document (create_copy_doc, a section per email: subject, preview text, body, button, design notes), then ask what they think in a line and hand_off to the ${cfg.lead.replace(/_/g, " ")} for its notes.` };
+  if (!s.docId) return { step: "draft", who: "writer", say: cfg.prompts?.draft?.(kind, cfg) ?? `Draft every ${kind.split === "per_doc" ? "email in the flow" : kind.label.toLowerCase()} into ONE preview document (create_copy_doc, a section per email: subject, preview text, body, button, design notes), then ask what they think in a line and hand_off to the ${cfg.lead.replace(/_/g, " ")} for its notes.` };
   if (!approved(s))
     return {
       step: "review",
@@ -232,15 +251,15 @@ export function readAsk(cfg: LineConfig, text: string): { kind: string | null; c
   const t = String(text ?? "");
   const kind = cfg.kinds.find((k) => k.words.test(t)) ?? null;
   const words: Record<string, number> = { one: 1, a: 1, an: 1, single: 1, two: 2, couple: 2, three: 3, four: 4, five: 5, six: 6 };
-  const m = /\b(\d{1,2}|one|two|three|four|five|six|couple|single)\s*(?:of\s+)?(?:new\s+)?(?:-?\s*)?(?:emails?|campaigns?|sends?|blasts?|newsletters?|messages?|texts?|posts?|ads?|creatives?)\b/i.exec(t);
+  const m = /\b(\d{1,2}|one|two|three|four|five|six|couple|single)\s*(?:of\s+)?(?:new\s+)?(?:-?\s*)?(?:emails?|campaigns?|sends?|blasts?|newsletters?|messages?|texts?|posts?|ads?|creatives?|videos?|carousels?|statics?|images?|versions?|variations?|concepts?)\b/i.exec(t);
   const count = m ? (/^\d+$/.test(m[1]) ? Number(m[1]) : (words[m[1].toLowerCase()] ?? null)) : null;
   return { kind: kind?.key ?? null, count };
 }
 
 /** The Asana tasks a run makes: one per item, or one for the document (a flow, with its count) */
-export function tasksFor(cfg: LineConfig, s: RunState, items: { shortName: string; docUrl: string | null; purpose: string }[], base: Omit<TaskInput, "kind" | "shortName" | "count" | "docUrl" | "purpose">, docName: string, docUrl: string | null, purpose: string) {
+export function tasksFor(cfg: LineConfig, s: RunState, items: { shortName: string; docUrl: string | null; purpose: string; extra?: Pick<TaskInput, "concept" | "postDate" | "slides" | "links"> }[], base: Omit<TaskInput, "kind" | "shortName" | "count" | "docUrl" | "purpose">, docName: string, docUrl: string | null, purpose: string) {
   const kind = kindOf(cfg, s.kind) ?? cfg.kinds[0];
-  const inputs: TaskInput[] = kind.split === "per_item" ? items.map((i) => ({ ...base, kind, shortName: i.shortName, count: 1, docUrl: i.docUrl ?? docUrl, purpose: i.purpose })) : [{ ...base, kind, shortName: docName, count: items.length, docUrl, purpose }];
+  const inputs: TaskInput[] = kind.split === "per_item" ? items.map((i) => ({ ...base, ...i.extra, kind, shortName: i.shortName, count: 1, docUrl: i.docUrl ?? docUrl, purpose: i.purpose })) : [{ ...base, kind, shortName: docName, count: items.length, docUrl, purpose }];
   return inputs.map((t) => ({ input: t, name: cfg.asana.taskName(t), fields: cfg.asana.fields(t) }));
 }
 

@@ -4,8 +4,10 @@
 // folder ("Email Marketing"), then requested in Asana's Email Marketing project the way the team makes them.
 // Pure: no database, Drive or Asana calls, so the naming, field mapping, folders and dates are tested on their own.
 
-export type CopyKind = "campaign" | "flow" | "sms";
-export const COPY_KINDS: readonly CopyKind[] = ["campaign", "flow", "sms"];
+export type CopyKind = "campaign" | "flow" | "sms" | "creative" | "social";
+export const COPY_KINDS: readonly CopyKind[] = ["campaign", "flow", "sms", "creative", "social"];
+/** Kinds with no subject or preview line: a text, an ad concept, an organic post (the document view and the Doc skip them) */
+export const noSubject = (k: CopyKind) => k === "sms" || k === "creative" || k === "social";
 
 export type CopySection = { heading: string; body: string };
 export type CopyEmail = {
@@ -67,9 +69,9 @@ export function normalizeCopy(input: Record<string, unknown>): CopyContent {
     const cta = e.cta && typeof e.cta === "object" ? (e.cta as Record<string, unknown>) : null;
     const label = str(cta?.label ?? (typeof e.cta === "string" ? e.cta : ""), 60);
     return {
-      name: str(e.name, 80) || (kind === "flow" ? `Email ${i + 1}` : kind === "sms" ? `Text ${i + 1}` : raw.length > 1 ? `Email ${i + 1}` : "Email"),
-      subject: kind === "sms" ? "" : str(e.subject, 200),
-      preview: kind === "sms" ? "" : str(e.preview ?? e.preheader, 250),
+      name: str(e.name, 80) || (kind === "flow" ? `Email ${i + 1}` : kind === "sms" ? `Text ${i + 1}` : kind === "social" ? `Post ${i + 1}` : kind === "creative" ? "Concept" : raw.length > 1 ? `Email ${i + 1}` : "Email"),
+      subject: noSubject(kind) ? "" : str(e.subject, 200),
+      preview: noSubject(kind) ? "" : str(e.preview ?? e.preheader, 250),
       sections,
       cta: label ? { label, url: str(cta?.url, 500) } : null,
       designNotes: list(e.design_notes ?? e.designNotes, 300, 12),
@@ -164,7 +166,7 @@ export function emailWritingKind(text: string): CopyKind | "message" | null {
 
 // ─── The Asana task, the way the email team makes it ──────────────────────────────────────────────────────────────
 
-export const REQUEST_TYPE: Record<CopyKind, string> = { campaign: "Email Campaign", flow: "Email Flow", sms: "SMS" };
+export const REQUEST_TYPE: Record<CopyKind, string> = { campaign: "Email Campaign", flow: "Email Flow", sms: "SMS", creative: "Ad Creative Brief", social: "Organic Social" };
 
 /** "KZN x Candy Cloud | Email Campaign - Scratch to Win"; a flow carries its email count: "Email Flow - Welcome Series (3)" */
 export function asanaTaskName(p: { client: string; kind: CopyKind; shortName: string; count: number }) {
@@ -353,7 +355,7 @@ export function copyDocHtml(c: CopyContent, p: { client: string }) {
   ].filter(([, v]) => v);
   const emails = c.emails
     .map((e) => {
-      const head = c.kind === "sms" ? "" : `<p><b>Subject:</b> ${esc(e.subject)}</p><p><b>Preview text:</b> ${esc(e.preview)}</p>`;
+      const head = noSubject(c.kind) ? "" : `<p><b>Subject:</b> ${esc(e.subject)}</p><p><b>Preview text:</b> ${esc(e.preview)}</p>`;
       const sections = e.sections.map((s) => `${s.heading ? `<h3>${esc(s.heading)}</h3>` : ""}${para(s.body)}`).join("");
       const cta = e.cta ? `<p><b>Button:</b> ${esc(e.cta.label)}${e.cta.url ? ` (${esc(e.cta.url)})` : ""}</p>` : "";
       const notes = e.designNotes.length ? `<p><b>Design notes</b></p><ul>${e.designNotes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : "";

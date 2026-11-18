@@ -154,7 +154,7 @@ async function fieldValues(project: string, fields: PlannedTask["fields"]) {
  * fields, assignee (by email; created unassigned if Asana doesn't know them) and the sender as a follower. Kept as a sent
  * request, and put on the mirror straight away (marked as made in Kaizen OS) so the Board shows it now.
  */
-export async function sendAsanaRequest(admin: SupabaseClient, d: AsanaDraft, by: { id: string; email: string | null }, extra: { suggestionId?: string | null; origin?: Record<string, unknown> | null } = {}) {
+export async function sendAsanaRequest(admin: SupabaseClient, d: AsanaDraft, by: { id: string; email: string | null }, extra: { suggestionId?: string | null; origin?: Record<string, unknown> | null; /** Others added as followers beside the sender (emails): the client's buyer, the head of creative */ followers?: string[] } = {}) {
   const planned = await planAsanaRequest(admin, d);
   if (!planned.length) throw new Error("Pick at least one format.");
   const project = await projectGid(admin);
@@ -169,7 +169,7 @@ export async function sendAsanaRequest(admin: SupabaseClient, d: AsanaDraft, by:
       ...(section ? { memberships: [{ project, section: section.gid }] } : { projects: [project] }),
       ...(p.dueOn ? { due_on: p.dueOn } : {}),
       ...(Object.keys(custom_fields).length ? { custom_fields } : {}),
-      ...(by.email ? { followers: [by.email] } : {}),
+      ...(by.email || extra.followers?.length ? { followers: [...new Set([by.email, ...(extra.followers ?? [])].filter((e): e is string => Boolean(e)))] } : {}),
     };
     let task: { gid: string; permalink_url?: string };
     let assigned = Boolean(p.assignee?.email);
@@ -177,7 +177,7 @@ export async function sendAsanaRequest(admin: SupabaseClient, d: AsanaDraft, by:
       task = await asanaWrite<{ gid: string; permalink_url?: string }>("/tasks?opt_fields=permalink_url", { ...base, ...(p.assignee?.email ? { assignee: p.assignee.email } : {}) });
     } catch (e) {
       // Someone Asana doesn't know by that email (or a follower it can't add): made without them, never lost
-      if (!p.assignee?.email && !by.email) throw e;
+      if (!p.assignee?.email && !by.email && !extra.followers?.length) throw e;
       const { followers: _f, ...rest } = base;
       void _f;
       task = await asanaWrite<{ gid: string; permalink_url?: string }>("/tasks?opt_fields=permalink_url", rest);

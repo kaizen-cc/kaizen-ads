@@ -694,7 +694,7 @@ export type CallCard = {
 /** Copy written for the email team, shown on the call or chat as a document card */
 export type CallCopyDoc = {
   id: string;
-  kind: "campaign" | "flow" | "sms";
+  kind: "campaign" | "flow" | "sms" | "creative" | "social";
   title: string;
   client: string | null;
   version: number;

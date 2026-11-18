@@ -72,7 +72,7 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
           action: { type: "string", enum: ["start", "status", "context", "update", "approve", "asked", "wrap"] },
           client: { type: "string", description: "The client's name (start)" },
           line: { type: "string", enum: LINES.map((l) => l.line) },
-          kind: { type: "string", description: "campaign, flow or sms (email)" },
+          kind: { type: "string", description: "email: campaign, flow or sms; creative: image (static), carousel or video; social: image (single image), carousel or video" },
           count: { type: "integer" },
           topics: { type: "array", items: { type: "object", properties: { title: { type: "string" }, angle: { type: "string" }, offer: { type: "string" }, include: { type: "array", items: { type: "string" } }, exclude: { type: "array", items: { type: "string" } }, send: { type: "string" } }, required: ["title"] } },
           agreed: { type: "boolean", description: "The person agreed the topics" },
@@ -142,12 +142,12 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
     {
       name: "create_copy_doc",
       description:
-        "Writes campaign, flow or SMS copy for the email team into ONE preview document (a section per email: subject, preview text, body sections, button, design notes), shown as a document card to read, comment on and approve. This is copy for the email team to design and send to the client's list, never a message to anyone: no greeting to a contact, nobody's name. In the deliverable flow, only once the topics are agreed. To revise, pass copy_doc_id with the whole new content (the earlier version is kept). Write from the client's knowledge and brand rules. After it's on screen, ask what they think in a line.",
+        "Writes the copy for a deliverable into ONE preview document, shown as a document card to read, comment on and approve. Email (campaign, flow, sms): a section per email (subject, preview text, body sections, button, design notes) for the email team to design and send to the client's list. Creative (kind creative): ONE paid ad concept in the creative brief's structure (sections Hook, Concept, Script or Slide n or Frame, Copy, Platform; a button for the call to action; design notes for references; sizes 4:5 and 9:16 only). Social (kind social): an entry per organic post with a section per slide (heading the slide's name, body the on-image headline then the supporting line, design notes \"Visual: ...\" one per slide, brief.send_date the posting date). Never a message to anyone: no greeting to a contact, nobody's name. In the deliverable flow, only once the topics are agreed. To revise, pass copy_doc_id with the whole new content (the earlier version is kept). Write from the client's knowledge and brand rules. After it's on screen, ask what they think in a line.",
       input_schema: {
         type: "object",
         properties: {
           client: { type: "string", description: "The client's name" },
-          kind: { type: "string", enum: ["campaign", "flow", "sms"] },
+          kind: { type: "string", enum: ["campaign", "flow", "sms", "creative", "social"], description: "campaign, flow or sms (email); creative (one ad concept brief); social (organic posts, an entry per post, a section per slide)" },
           title: { type: "string" },
           short_name: { type: "string", description: "Short name for the request title (Scratch to Win)" },
           emails: { type: "array", items: COPY_EMAIL_SCHEMA },
@@ -162,7 +162,7 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
       run: async (input) => {
         const { saveCopyDoc, copyCard, loadCopyDoc } = await import("@/lib/copy-docs/server");
         const { currentRun, patchRun } = await import("./server");
-        const run = ctx.callId ? await currentRun(ctx.admin, ctx.callId, "email") : null;
+        const run = ctx.callId ? await currentRun(ctx.admin, ctx.callId) : null;
         if (run && !run.state.topicsAgreed) return { made: false, note: "Agree the topics with them first (the lead records them), then draft." };
         const id = typeof input.copy_doc_id === "string" && /^[0-9a-f-]{36}$/i.test(input.copy_doc_id) ? input.copy_doc_id : (run?.state.docId ?? null);
         let client: { id: string; name: string } | null = run?.state.client ?? null;
@@ -182,7 +182,7 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
         }
         if (run) await patchRun(ctx.admin, run, { doc: { id: doc.id, version: doc.version } });
         const fresh = (await loadCopyDoc(ctx.db, doc.id)) ?? doc;
-        card({ title: fresh.content.title, detail: `${fresh.client ?? ""} · ${fresh.content.emails.length} ${fresh.content.kind === "sms" ? "text" : "email"}${fresh.content.emails.length === 1 ? "" : "s"}${fresh.version > 1 ? ` · v${fresh.version}` : ""}`, href: `/copy/${fresh.id}`, external: false, cta: "Open", copy: copyCard(fresh) });
+        card({ title: fresh.content.title, detail: `${fresh.client ?? ""} · ${fresh.content.emails.length} ${fresh.content.kind === "sms" ? "text" : fresh.content.kind === "social" ? "post" : fresh.content.kind === "creative" ? "concept" : "email"}${fresh.content.emails.length === 1 ? "" : "s"}${fresh.version > 1 ? ` · v${fresh.version}` : ""}`, href: `/copy/${fresh.id}`, external: false, cta: "Open", copy: copyCard(fresh) });
         return { made: true, copy_doc_id: fresh.id, version: fresh.version, open: `/copy/${fresh.id}`, note: "The document card is on screen (Open shows it full screen to comment on lines). Ask what they think in a line; don't read it all out." };
       },
     },
@@ -226,6 +226,12 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
               const r = await patchRun(ctx.admin, run, p);
               if (r.ok) run = r.run;
             }
+          }
+          if (cfg.asana.via === "creative_form") {
+            // The request form's rules: only people who brief ads, and only the formats they request
+            const { can } = await import("@/lib/chat-permissions");
+            const v = can(ctx.me, "brief", { formats: run.state.kind ? [run.state.kind] : undefined });
+            if (!v.ok) return { created: false, note: v.reason };
           }
           if (!canRequest(run.state)) return { created: false, note: "Not yet: the person and the lead both approve the latest version, then the lead asks. Read next from deliverable status." };
           const r = await createRequests(ctx.admin, ctx.db, asMe(ctx.me), run, { urgency: typeof input.priority === "string" ? (input.priority as "urgent") : undefined });
