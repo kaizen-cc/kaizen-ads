@@ -365,11 +365,9 @@ export function Story({
         <div className="relative z-50 [color-scheme:normal]">
           <SuggestionSheet
             s={sheet.action.suggestion}
-            onClose={() => {
-              setMine((m) => ({ ...m, [sheet.key]: "done" }));
-              if (!demo) void setItem(sheet.key, "done", snap(sheet));
-              closeParams("item");
-            }}
+            // Looking at it isn't handling it: the item stays open until it's marked done or not for me (or the
+            // system sees it was handled)
+            onClose={() => closeParams("item")}
           />
         </div>
       )}
@@ -803,7 +801,7 @@ function ItemBody({ i, status, big = false, onChoose, onAct, onNext }: { i: Toda
             </BriefPreviewButton>
           </span>
         ) : (
-          <a href={i.action.href} target="_blank" rel="noreferrer" onClick={() => onChoose("done")} className={primary}>
+          <a href={i.action.href} target="_blank" rel="noreferrer" className={primary}>
             {i.action.label} ↗
           </a>
         )}
