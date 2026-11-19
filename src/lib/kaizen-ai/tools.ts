@@ -1201,6 +1201,9 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   // Figma, read with their own token (Figma's hosted connector admits only apps Figma approved)
   const { figmaTools } = await import("./figma-tools");
   for (const t of figmaTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  // Asana, read the way the boards read it (Asana's hosted connector needs an app registered with Asana)
+  const { asanaTools } = await import("./asana-tools");
+  for (const t of asanaTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
 
   // Rankings across clients: clients on a line, and single emails, ads and posts (each scoped to the person's line)
   for (const t of rankTools(ctx)) tools.push(t);

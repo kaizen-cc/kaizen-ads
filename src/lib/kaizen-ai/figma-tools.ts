@@ -6,7 +6,7 @@ import { textAnswer } from "./my-tools";
 // connector menu (Figma's hosted connector admits only apps Figma approved). Read only: a file or a frame's pages,
 // frames and every text layer, rendered images of frames, and the comments.
 
-const HOW = "Connect Figma once: in Figma, Settings, Security, Personal access tokens, make a token with File content read, Comments read and Current user read, then paste it in Kaizen AI's connector menu (the plug) under Figma.";
+const HOW = "Figma isn't connected yet. An exec adds one team token in Settings, Connections, Team connectors, Figma (Team token), and everyone can read Figma. Or connect your own: in Figma, Settings, Security, Personal access tokens, make one with File content read, Comments read and Current user read, and paste it in Kaizen AI's connector menu under Figma.";
 
 export function figmaTools(ctx: ToolCtx): ChatTool[] {
   const token = async () => {

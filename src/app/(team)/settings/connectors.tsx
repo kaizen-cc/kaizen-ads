@@ -749,6 +749,13 @@ function Editor({ c }: { c: AdminItem }) {
               </p>
             </div>
           ) : null}
+          {auth === "token" ? (
+            <label className="grid gap-1.5">
+              <span className="text-[12.5px] text-muted">Team token (optional)</span>
+              <input type="password" value={secret ?? ""} onChange={(e) => setSecret(e.target.value)} autoComplete="new-password" placeholder={c.hasSecret ? "Saved (type to replace, clear to remove)" : "One token from a company account, for everyone"} className={field} />
+              <span className="text-[12px] text-faint">Everyone&apos;s Kaizen AI uses it, nobody has to connect their own. Someone who pastes their own token uses theirs instead.</span>
+            </label>
+          ) : null}
           {auth === "oauth" || auth === "oauth_client" ? (
             <label className="grid gap-1.5">
               <span className="text-[12.5px] text-muted">Scopes (optional)</span>

@@ -352,13 +352,28 @@ export async function finishConnect(me: Staff, p: { code: string; state: string;
 /** Connectors Kaizen AI reads with its own tools and the person's token (Figma: its hosted connector admits only approved apps) */
 export const isNativeConnector = (c: Pick<Connector, "url" | "key">) => c.key === "figma" || /(^|\.)figma\.com/i.test(new URL(c.url).hostname);
 
-/** The person's own saved token for a connector (a pasted personal token), or null */
+/** The token a connector runs on for this person: their own pasted token, else the team token an exec set, else null */
 export async function personalTokenFor(admin: SupabaseClient, profileId: string, connectorKey: string): Promise<string | null> {
   const c = await connectorByKey(admin, connectorKey);
-  if (!c) return null;
+  if (!c || !c.enabled) return null;
   const { data: conn } = await admin.from("ai_connections").select("id, status").eq("profile_id", profileId).eq("connector_id", c.id).maybeSingle();
-  if (!conn || conn.status !== "active") return null;
-  return (await tokensOf(admin, conn.id as string)).access;
+  if (conn && conn.status === "active") {
+    const own = (await tokensOf(admin, conn.id as string)).access;
+    if (own) return own;
+  }
+  return teamTokenOf(admin, c.id);
+}
+
+/** The team token an exec set on a token connector (sealed in its secret slot), or null */
+async function teamTokenOf(admin: SupabaseClient, connectorId: string): Promise<string | null> {
+  const s = await secretsOf(admin, connectorId).catch(() => null);
+  const k = key();
+  if (!s?.client_secret_ciphertext || !s.client_secret_iv || !s.client_secret_tag || !k) return null;
+  try {
+    return unseal({ iv: s.client_secret_iv, tag: s.client_secret_tag, ciphertext: s.client_secret_ciphertext }, k);
+  } catch {
+    return null;
+  }
 }
 
 export async function savePersonalToken(me: Staff, connectorKey: string, token: string): Promise<void> {

@@ -64,8 +64,17 @@ export async function saveConnector(input: ConnectorInput): Promise<{ ok: true; 
   const id = res.data.id as string;
   const { setClientSecret } = await import("@/lib/connectors/server");
   try {
-    if (input.auth !== "oauth_client") await setClientSecret(admin, id, null);
-    else if (input.client_secret !== undefined) await setClientSecret(admin, id, input.client_secret.trim() || null);
+    // oauth_client: the app's client secret. token: an optional team token everyone uses (their own token wins). Others: none
+    if (input.auth !== "oauth_client" && input.auth !== "token") await setClientSecret(admin, id, null);
+    else if (input.client_secret !== undefined) {
+      const v = input.client_secret.trim();
+      if (v && input.auth === "token" && (key === "figma" || /figma\.com/i.test(url))) {
+        const { figmaMe } = await import("@/lib/figma");
+        const who = await figmaMe(v);
+        if (!who.ok) return { ok: false, error: who.error };
+      }
+      await setClientSecret(admin, id, v || null);
+    }
     // A new URL means new OAuth endpoints and a new registration
     if (input.id) await admin.from("ai_connector_secrets").update({ auth_meta: null, auth_meta_at: null, ...(input.auth === "oauth" ? {} : { reg_client_id: null, reg_redirect_uri: null }) }).eq("connector_id", id);
   } catch (e) {
