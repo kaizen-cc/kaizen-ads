@@ -44,6 +44,7 @@ import { ShotListPanel, type AssetGlance, type SavedShotList } from "./shot-list
 import { MomentsPanel, type MomentRow } from "./moments-panel";
 import { ClientSections, type ServiceSection } from "./client-sections";
 import { BusinessOverview, type ServiceCard } from "./business-overview";
+import { CurrentBrief } from "./current-brief";
 import { CampaignsPanel } from "./campaigns-panel";
 import { TikTokPanel } from "./tiktok-panel";
 import { TikTokReportToggle } from "./tiktok-report-toggle";
@@ -423,6 +424,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                 hint: "Every service side by side, what needs someone and what's in motion",
                 content: (
                   <div className="grid gap-6">
+                    {/* The brief the system drafted for them, waiting on approval: their current brief, first */}
+                    <CurrentBrief clientId={client.id} />
                     {/* The full business audit leads the page: the first thing anyone opening a client sees */}
                     {businessAudit}
                     {glance}

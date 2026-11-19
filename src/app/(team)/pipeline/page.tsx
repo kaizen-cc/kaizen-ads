@@ -31,6 +31,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { topicsFor } from "@/lib/today";
 import { todaySnapshot } from "@/lib/today-snapshot";
 import { MyDesk } from "./views/my-desk";
+import { ReadyCallout } from "./views/ready-callout";
 
 const department = (me: Staff) => (me.role === "head_of_creative" ? "Creative" : me.role === "head_of_google" ? "Google" : "Meta");
 
@@ -116,6 +117,10 @@ export default async function Home() {
             today: (
               <>
                 <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
+                {/* Briefs the system drafted for them to approve (lead makers, a client's Meta buyer) */}
+                <Suspense fallback={null}>
+                  <ReadyCallout db={db} me={me} />
+                </Suspense>
                 <HandoffCallout db={db} me={me.id} />
               </>
             ),

@@ -637,60 +637,35 @@ export function byConcept(d: SuggestionDraft): SuggestionDraft[] {
   });
 }
 
-/** One suggestion for one client from its signals. Returns null when the strategist decides it isn't needed. */
-async function suggestFor(admin: SupabaseClient, clientId: string, signals: Signal[], load?: Workload) {
+/**
+ * A full brief for a reason the drafter found (src/lib/brief-drafting.ts): the same writer, standard and reviewer as
+ * every brief, with the drafting rules and what this brief is to do (`task`). null when the client isn't found; skip
+ * when the strategist decides it isn't needed.
+ */
+export async function writeDraftedBrief(admin: SupabaseClient, clientId: string, signals: Signal[], task: string, load?: Workload) {
   const prompt = await promptFor(admin, clientId, signals, load);
   if (!prompt) return null;
-  // Only the summary: nobody has picked it yet. The full brief is written when someone does ("Write the full brief")
-  const task = `Decide whether this client needs new creative now, and if so write the request. One concept per request: if the signal could take several ideas, the strongest one (the others can come next time). kind: the main signal it answers. signal: one line on what the data shows. evidence: 2 to 4 short facts from the signals and context. why: 2 or 3 sentences making the case to an exec.`;
-  const out = await writeSummary(clientId, { prompt, task });
-  if (!out.suggest || !out.drafts.length) return null;
-  // One open suggestion per client (creative_suggestions_one_open): one concept
-  const drafts = out.drafts.slice(0, 1);
-  const { error } = await admin.from("creative_suggestions").insert(drafts.map((draft) => ({ client_id: clientId, kind: out.kind, signal: out.signal, evidence: out.evidence.slice(0, 5), why: out.why, draft, original: draft })));
-  return error ? null : true;
+  const out = await writeBrief(admin, clientId, { agent: "strategist", label: "drafted brief", system: SYSTEM, schema: SCHEMA, prompt: `${prompt}
+
+${task}` });
+  if (!out.suggest || !out.draft?.brief) return { skip: out.skipReason || "Not needed right now" };
+  return { draft: clean(out.draft), signal: out.signal, evidence: (out.evidence ?? []).slice(0, 5), why: out.why };
 }
 
 /**
- * A strategist run: the strongest signals first, a few clients at a time. Clients with an open suggestion are left
- * alone, and so is a signal the team declined in the last 10 days.
+ * A strategist run: the drafter looks for a reason to brief, client by client (src/lib/brief-drafting.ts): a
+ * time-sensitive ask, hard fatigue, a KPI dropping, or the allotment falling behind its even line. Never a batch.
  */
 export async function runStrategist(admin: SupabaseClient, startedBy: string | null, max = 8) {
   const { data: run } = await admin.from("suggestion_runs").insert({ started_by: startedBy }).select("id").single();
   try {
-    const signals = await gatherSignals(admin);
-    const since10 = new Date(Date.now() - 10 * 86_400_000).toISOString();
-    const { data: busy } = await admin.from("creative_suggestions").select("client_id, kind, status, decided_at").or(`status.eq.open,and(status.eq.declined,decided_at.gte.${since10})`);
-    const open = new Set((busy ?? []).filter((b) => b.status === "open" && b.kind !== "lab").map((b) => b.client_id));
-    const declined = new Set((busy ?? []).filter((b) => b.status === "declined").map((b) => `${b.client_id}:${b.kind}`));
-    // Balance: the strongest signals first, but a client already full of work drops back and one nobody has touched
-    // in weeks moves up. A client with lots in motion only gets more when they're unhappy.
-    const load = await workload(admin);
-    const busiest = Math.max(loadPct(load.team.designers) ?? 0, loadPct(load.team.editors) ?? 0);
-    const score = (id: string, list: readonly Signal[]) => {
-      const c = load.clients.get(id);
-      const days = c?.lastRequest ? (Date.now() - Date.parse(c.lastRequest)) / 86_400_000 : 60;
-      return (list.reduce((t, s) => t + s.weight, 0) / (1 + 0.35 * (c?.open ?? 0))) * (1 + Math.min(1, days / 30) * 0.5);
-    };
-    const ranked = [...signals]
-      .filter(([id]) => !open.has(id))
-      .map(([id, list]) => [id, list.filter((s) => !declined.has(`${id}:${s.kind}`))] as const)
-      .filter(([, list]) => list.length)
-      .filter(([id, list]) => (load.clients.get(id)?.open ?? 0) < Math.max(6, load.fairShare * 2.5) || list.some((s) => s.kind === "unhappy"))
-      .sort((a, b) => score(b[0], b[1]) - score(a[0], a[1]))
-      // A stretched team gets fewer suggestions at once
-      .slice(0, busiest >= 90 ? Math.min(max, 4) : max);
-    let made = 0;
-    for (let i = 0; i < ranked.length; i += 3) {
-      const done = await Promise.allSettled(ranked.slice(i, i + 3).map(([id, list]) => suggestFor(admin, id, [...list], load)));
-      made += done.filter((d) => d.status === "fulfilled" && d.value).length;
-      for (const d of done) if (d.status === "rejected") console.error("[strategist]", d.reason);
-    }
+    const { runDrafting } = await import("@/lib/brief-drafting");
+    const r = await runDrafting(admin, { max, runId: (run?.id as string | undefined) ?? null });
     // Open suggestions older than two weeks have gone stale
     // A marketing moment's brief is written weeks ahead on purpose: it waits for its moment, not two weeks
     await admin.from("creative_suggestions").update({ status: "expired" }).eq("status", "open").neq("kind", "moment").lt("created_at", new Date(Date.now() - 14 * 86_400_000).toISOString());
-    if (run) await admin.from("suggestion_runs").update({ finished_at: new Date().toISOString(), looked_at: ranked.length, made }).eq("id", run.id);
-    return { lookedAt: ranked.length, made };
+    if (run) await admin.from("suggestion_runs").update({ finished_at: new Date().toISOString(), looked_at: r.lookedAt, made: r.made }).eq("id", run.id);
+    return r;
   } catch (e) {
     if (run) await admin.from("suggestion_runs").update({ finished_at: new Date().toISOString(), error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", run.id);
     throw e;
@@ -744,10 +719,21 @@ export type OpenSuggestion = {
   /** The batch it was written in (a new client's first round: one suggestion per concept), reviewed together */
   batch: { id: string; label: string | null } | null;
   messages: { role: "user" | "ai"; body: string; at: string }[];
+  /** Drafted by the system for a reason it found (src/lib/brief-drafting.ts): the reason, the deadline, the mix and the pace */
+  drafted?: Drafted | null;
+};
+export type Drafted = {
+  trigger: string;
+  deadline: string | null;
+  urgent: boolean;
+  mix: import("@/lib/brief-drafting-core").Mix | null;
+  pace: import("@/lib/brief-drafting-core").Pace | null;
+  citation: import("@/lib/brief-drafting-core").Citation | null;
+  askedBy: import("@/lib/brief-drafting-core").AskedBy | null;
 };
 export type SuggestionsState = { open: OpenSuggestion[]; running: boolean; lastRun: string | null; decided30: { approved: number; declined: number } };
 
-const OPEN_COLS = "id, client_id, kind, signal, evidence, why, draft, version, created_at, source, batch_id, batch_label, clients(name, slug, status, archived_at)";
+export const OPEN_COLS = "id, client_id, kind, signal, evidence, why, draft, version, created_at, source, batch_id, batch_label, trigger_key, deadline, urgent, mix, pace, citation, asked_by, clients(name, slug, status, archived_at)";
 // Paused and archived clients are left out of what the team is asked to act on
 const liveClient = (c: unknown) => !c || isLive(c as { status?: string | null; archived_at?: string | null });
 
@@ -778,9 +764,23 @@ async function toOpen(db: SupabaseClient, rows: Record<string, unknown>[]): Prom
       source: (r.source as OpenSuggestion["source"]) ?? null,
       batch: r.batch_id ? { id: r.batch_id as string, label: (r.batch_label as string | null) ?? null } : null,
       messages: (msgs ?? []).filter((m: { suggestion_id: string }) => m.suggestion_id === r.id).map((m: { role: string; body: string; created_at: string }) => ({ role: m.role as "user" | "ai", body: m.body, at: m.created_at })),
+      drafted: r.trigger_key
+        ? {
+            trigger: String(r.trigger_key).split(":")[0],
+            deadline: (r.deadline as string | null) ?? null,
+            urgent: Boolean(r.urgent),
+            mix: (r.mix as Drafted["mix"]) ?? null,
+            pace: (r.pace as Drafted["pace"]) ?? null,
+            citation: (r.citation as Drafted["citation"]) ?? null,
+            askedBy: (r.asked_by as Drafted["askedBy"]) ?? null,
+          }
+        : null,
     };
   });
 }
+
+/** Rows read with OPEN_COLS as the sheet shows them (the drafter's Ready to approve list reads them too) */
+export const loadSuggestionRows = toOpen;
 
 /** One suggestion, for the sheet (read with the viewer's access). */
 export async function loadSuggestion(db: SupabaseClient, id: string) {
@@ -801,7 +801,10 @@ export async function loadSuggestions(db: SupabaseClient, allowed?: ReadonlySet<
     db.from("suggestion_runs").select("started_at, finished_at").order("started_at", { ascending: false }).limit(1),
     db.from("creative_suggestions").select("status").in("status", ["approved", "declined"]).not("kind", "in", "(winner,refresh)").gte("decided_at", since30),
   ]);
-  const rows = all ? found : (found ?? []).filter((r) => fitsAnyFormat(allowed!, ((r.draft as SuggestionDraft | null)?.formats ?? []).map((f) => f.format))).slice(0, 20);
+  const { hasRealReason } = await import("@/lib/brief-drafting-core");
+  // A drafted brief is shown only with its real reason (the call, the ad, the numbers)
+  const cited = (found ?? []).filter((r) => !r.trigger_key || hasRealReason(r.citation as Drafted["citation"]));
+  const rows = all ? cited : cited.filter((r) => fitsAnyFormat(allowed!, ((r.draft as SuggestionDraft | null)?.formats ?? []).map((f) => f.format))).slice(0, 20);
   const run = runs?.[0];
   return {
     open: await toOpen(db, (rows ?? []).filter((r) => liveClient(r.clients))),

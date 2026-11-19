@@ -174,6 +174,7 @@ const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/app/(team)/ai/actions.ts": { labels: ["claude import client match"], why: "sorts a person's imported chats across every client; a classifier" },
   "src/lib/ai-router.ts": { labels: [""], why: "routes a message to a model level; a classifier" },
   "src/lib/asana.ts": { labels: ["asana allotment count"], why: "counts units across many tickets at once" },
+  "src/lib/brief-drafting.ts": { labels: ["read a client ask"], why: "reads a few client messages for a time-bound ask and its date before any brief is drafted; a classifier" },
   "src/lib/bible-links.ts": { labels: ["bible link check"], why: "compares two versions of a web page; a diff" },
   "src/lib/bible-rules.ts": { labels: ["bible rules log"], why: "extracts dos and don'ts from statements; extraction" },
   "src/lib/business-audit-route.ts": { labels: ["sprint merge"], why: "merges two action lists; a utility" },

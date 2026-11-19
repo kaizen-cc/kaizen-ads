@@ -29,7 +29,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
         <p className="mt-3 text-[14px] leading-relaxed text-fg/60">{briefing.reason}</p>
       </div>
     );
-  const { client, from, brief, asana, ai, card, audit, business, idea, draft, copyline, format } = await searchParams;
+  const { client, from, brief, asana, ai, card, audit, business, idea, draft, copyline, format, own, approve } = await searchParams;
   const supabase = await createClient();
   const [{ data: rows }, { data: usage }, { data: angles }, { data: assignments }] = await Promise.all([
     supabase.from("clients").select("id, name, slug, status, creative_package, strategy_only").is("archived_at", null).in("status", LIVE).order("name"),
@@ -80,6 +80,21 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   // "Create brief" from a creative gap (?format=video): the form opens for that client with that format picked
   const asked = typeof format === "string" && (["image", "video", "carousel"] as const).find((f) => f === format && allowed.has(f));
   const prefill = !restart && initialClient && asked ? { formats: { [asked]: { new: 1, variations: 0 } } } : null;
+
+  // The briefs the system drafted come first (src/lib/brief-drafting.ts): the request form opens on "Ready to approve",
+  // grouped by client and most urgent first; "Add my own idea" (?own=1) is the second option
+  if (!restart && !auditIdea && !initialClient && own !== "1") {
+    const { loadReady } = await import("@/lib/brief-drafting");
+    const groups = await loadReady(supabase).catch(() => []);
+    if (groups.length || typeof approve === "string") {
+      const { ReadyToApprove } = await import("@/components/ready-to-approve");
+      return (
+        <div className="mx-auto max-w-6xl px-4 py-6 md:px-0 md:py-10">
+          <ReadyToApprove groups={groups} today={new Date().toISOString().slice(0, 10)} ownHref="/requests/new?own=1" />
+        </div>
+      );
+    }
+  }
 
   return (
     <div className="mx-auto max-w-6xl">

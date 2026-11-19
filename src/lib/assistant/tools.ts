@@ -343,6 +343,51 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
       },
     },
     {
+      name: "ready_briefs",
+      description: "Creative briefs the system drafted from the data (a client's time-sensitive ask, a tired ad, a KPI dropping, the allotment behind its even pace), waiting for the creative leads, the account's media buyer, the head of Meta or an executive to approve, edit or reject. Grouped by client, most urgent first, each with its real reason (quoted), deadline, iteration/net new split and pace. Only people who approve briefs see them. To open one: open_screen with its href.",
+      input_schema: { type: "object", properties: { client: CLIENT }, additionalProperties: false },
+      run: async (input) => {
+        const { loadReady } = await import("@/lib/brief-drafting");
+        const want = String(input.client ?? "").toLowerCase().trim();
+        const groups = (await loadReady(ctx.db)).filter((g) => !want || g.client.toLowerCase().includes(want));
+        if (!groups.length) return { note: "No drafted briefs waiting on a decision that they can see." };
+        return {
+          clients: groups.slice(0, 12).map((g) => ({
+            client: g.client,
+            briefs: g.items.slice(0, 5).map((s) => ({ id: s.id, title: s.draft.title, why_now: s.drafted?.citation?.quote ?? s.signal, deadline: s.drafted?.deadline ?? null, over_week_share: Boolean(s.drafted?.pace?.over), mix: s.drafted?.mix ? `${s.drafted.mix.track === "iterate" ? "iteration" : "net new"} (${s.drafted.mix.iterate}/${s.drafted.mix.netNew}): ${s.drafted.mix.reason}` : null, open: `/requests/new?approve=${s.id}` })),
+          })),
+        };
+      },
+    },
+    {
+      name: "approve_brief",
+      description: "Approves a drafted brief (id from ready_briefs) as the person: it becomes the Creative board's task in Asana (Kaizen tickets when Asana isn't connected). Only the creative leads, the account's media buyer, the head of Meta and the executives can. It starts production: say which brief and ask first, run with confirmed: true after a yes.",
+      input_schema: { type: "object", properties: { id: { type: "string" }, confirmed: CONFIRMED }, required: ["id"], additionalProperties: false },
+      run: async (input) => {
+        if (!yes(ctx, input)) return { done: false, note: NO_YES };
+        const { approveDrafted } = await import("@/lib/brief-drafting");
+        const r = await approveDrafted(ctx.db, ctx.admin, ctx.me, String(input.id ?? ""));
+        return r.ok ? { done: true, landed: r.where === "asana" ? "Asana, Creative board" : "Kaizen board", links: r.links } : { done: false, error: r.error };
+      },
+    },
+    {
+      name: "reject_brief",
+      description: "Rejects a drafted brief (id from ready_briefs) with the person's reason, in their words: the strategist reads every reason before it drafts again.",
+      input_schema: { type: "object", properties: { id: { type: "string" }, reason: { type: "string" } }, required: ["id", "reason"], additionalProperties: false },
+      run: async (input) => {
+        const why = clip(input.reason, 600);
+        if (why.length < 3) return { done: false, note: "Ask them why, so it learns." };
+        const { data, error } = await ctx.db
+          .from("creative_suggestions")
+          .update({ status: "declined", decline_reason: why, decided_by: ctx.me.id, decided_at: new Date().toISOString() })
+          .eq("id", String(input.id ?? ""))
+          .eq("status", "open")
+          .not("trigger_key", "is", null)
+          .select("id");
+        return error || !data?.length ? { done: false, error: "That brief isn't open, or isn't one they can decide." } : { done: true };
+      },
+    },
+    {
       name: "open_screen",
       description:
         "Takes the person to the exact thing in the app while the call carries on. Open the most specific thing they named, never the page around it: 'open Ocean Box's Google KPI card' is what: kpi_card, client, platform google (not the whole KPI board). what: client (a client's page, with tab), kpi_card (one ad account's card on the KPI board; card_tab: overview, numbers, actions, policy, creative, notes, settings), email_sheet or social_sheet (a client's sheet on the Email or Social KPI board; card_tab: overview, numbers, campaigns, flows, actions, notes, settings for email; overview, posts, actions, notes, settings for social), ticket (creative board, by number), email_ticket (Email Board, by number), report (the client's latest, or href for one), audit (the client's latest Meta or Google audit; platform), email_audit, social_audit, sprint (the client's Meta or Google sprint; platform), email_sprint, social_sprint, agent (an AI agent's page in Settings, by role key), direction_change (a client's change of direction with its flagged tasks: by id from direction_changes, or the client's newest), copy_doc (campaign or flow copy in its full document view to comment on lines and approve: id from create_copy_doc, or the client's newest), feedback (a report they filed: id from submit_feedback, or their own feedback list), profile (a teammate's profile by name in person, or their own). Or a place by name (place: a board, a KPI view, a Settings tab, the assistant's settings), or an exact in-app path (href). Say in a few words what you opened.",

@@ -18,6 +18,8 @@ import { BriefJobStatus } from "@/components/brief-jobs";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 import { ReportThis } from "@/components/report-this";
 import { messageKey } from "@/lib/chat-report";
+import { DraftedChips, DraftedLine, SwapPanel, WhyNow } from "@/components/drafted-brief-parts";
+import { approveDraftedBrief } from "../draft-actions";
 
 const KIND_TONE: Record<SuggestionKind, string> = {
   fatigue: "bg-warn-soft text-warn",
@@ -94,9 +96,10 @@ export function SuggestedBriefs({ state, bare = false, priority = null }: { stat
         <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${KIND_TONE[s.kind]}`}>{KIND_LABEL[s.kind]}</span>
         <span className="text-xs text-muted">{s.client}</span>
         {priority?.[s.id] && priority[s.id].tier !== "worth" && <span className={`rounded-full px-2 py-0.5 text-[11px] ${priority[s.id].tier === "critical" ? "bg-bad-soft text-bad" : "bg-ink/[0.06] text-muted"}`}>{priority[s.id].reason}</span>}
+        {s.drafted && <DraftedChips d={s.drafted} />}
       </span>
       <span className="font-heading text-[17px] leading-snug">{s.draft.title}</span>
-      <span className="line-clamp-2 text-sm text-muted">{s.signal}</span>
+      {s.drafted ? <DraftedLine d={s.drafted} /> : <span className="line-clamp-2 text-sm text-muted">{s.signal}</span>}
       <span className="flex items-center justify-between gap-2 pt-1 text-xs text-faint">
         <span>
           {countsOf(s.draft.formats)}
@@ -138,7 +141,7 @@ export function SuggestedBriefs({ state, bare = false, priority = null }: { stat
           <p className="text-sm text-muted">
             {running
               ? "The strategist is reading every account: fatigue, KPIs, pacing, new offers and how clients are feeling."
-              : "Nothing needs a new brief right now. The strategist checks every weekday morning, or look again any time."}
+              : "Nothing needs a new brief right now. A brief is drafted the moment there's a reason (checked every working hour), or look again any time."}
           </p>
           {running && <Dots />}
         </div>
@@ -220,6 +223,9 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
   const [busy, act] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<number[] | null>(null);
+  // A drafted brief approved: where it landed (its Asana tasks, or tickets here)
+  const [landed, setLanded] = useState<{ where: "asana" | "board"; links: { label: string; href: string }[] } | null>(null);
+  const [swapping, setSwapping] = useState(false);
   // The strategist's last answer failed on the server: its error, reported from the chat
   const [chatError, setChatError] = useState<string | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
@@ -255,6 +261,16 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
   const approve = () =>
     act(async () => {
       setError(null);
+      if (s.drafted) {
+        // Drafted by the system: saved as it stands, then pushed through (the ticket and its Asana task)
+        await saveSuggestion(s.id, draft);
+        const r = await approveDraftedBrief(s.id);
+        if (!r.ok) return setError(r.error);
+        setLanded({ where: r.where, links: r.links });
+        setDone([]);
+        router.refresh();
+        return;
+      }
       const r = await approveSuggestion(s.id, draft);
       if (!r.ok) return setError(r.error);
       setDone(r.numbers);
@@ -309,6 +325,8 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
             </button>
           </div>
 
+          {s.drafted && <WhyNow d={s.drafted} />}
+
           <div className="grid gap-3 rounded-[14px] border border-line bg-surface p-4">
             <div className="flex items-start gap-3">
               {s.source?.thumbnail && (
@@ -334,7 +352,18 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
             <p className="border-t border-line pt-3 text-sm text-muted">{why}</p>
           </div>
 
-          {done ? (
+          {done && landed ? (
+            <div className="grid gap-2 rounded-[14px] border border-ok/40 bg-ok/10 p-5">
+              <p className="font-heading text-lg text-ok">Approved. {landed.where === "asana" ? "It's on the Creative board in Asana." : "It's with the makers."}</p>
+              <p className="flex flex-wrap gap-2 text-sm">
+                {landed.links.map((l) => (
+                  <a key={l.href} href={l.href} target={landed.where === "asana" ? "_blank" : undefined} rel="noreferrer" className="max-w-full truncate rounded-full border border-line px-4 py-2.5 hover:border-faint md:px-3 md:py-1">
+                    {l.label}
+                  </a>
+                ))}
+              </p>
+            </div>
+          ) : done ? (
             <div className="grid gap-2 rounded-[14px] border border-ok/40 bg-ok/10 p-5">
               <p className="font-heading text-lg text-ok">Approved. It&apos;s with the makers.</p>
               <p className="flex flex-wrap gap-2 text-sm">
@@ -445,6 +474,8 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
 
               {error && <p className="text-sm text-bad">{error}</p>}
 
+              {swapping && s.drafted && <SwapPanel id={s.id} onDone={() => (setSwapping(false), onClose())} />}
+
               {declining && (s.kind === "winner" || s.kind === "refresh" || s.kind === "call" || s.kind === "market") ? (
                 <div className="flex flex-wrap items-center gap-2 rounded-[14px] border border-line bg-surface p-4">
                   <p className="flex-1 text-sm">Discard this brief? Nothing was sent to production.</p>
@@ -492,13 +523,18 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
               ) : (
                 <div className="sticky bottom-0 z-10 -mx-5 -mb-5 flex flex-wrap items-center gap-2 border-t border-line bg-bg px-5 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-3 shadow-[0_-12px_24px_-12px_rgba(0,0,0,0.6)] md:-bottom-6 md:-mx-6 md:-mb-6 md:px-6 md:pb-6">
                   <button onClick={approve} disabled={busy || thinking} className="h-12 flex-1 rounded-brand bg-brand px-5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50 md:h-10 md:flex-none">
-                    {busy ? "Making tickets…" : s.kind === "winner" || s.kind === "refresh" || s.kind === "call" || s.kind === "market" ? "Send to production" : "Approve and send to the makers"}
+                    {busy ? (s.drafted ? "Sending to Asana…" : "Making tickets…") : s.drafted ? "Approve" : s.kind === "winner" || s.kind === "refresh" || s.kind === "call" || s.kind === "market" ? "Send to production" : "Approve and send to the makers"}
                   </button>
                   <button onClick={() => setDeclining(true)} disabled={busy} className="h-12 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
                     {s.kind === "winner" || s.kind === "refresh" || s.kind === "call" || s.kind === "market" ? "Discard" : "Decline"}
                   </button>
+                  {s.drafted && (
+                    <button onClick={() => setSwapping((x) => !x)} disabled={busy} className="h-12 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10">
+                      Swap for…
+                    </button>
+                  )}
                   {/* The same brief to the Creative board in Asana, laid out like a form request (the edits above are saved first) */}
-                  <AsanaSend
+                  {!s.drafted && <AsanaSend
                     className="inline-flex h-12 items-center gap-2 rounded-brand border border-line px-4 text-sm text-muted hover:text-fg md:h-10"
                     preview={async () => {
                       await saveSuggestion(s.id, draft);
@@ -506,7 +542,7 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
                     }}
                     send={() => sendSuggestionToAsana(s.id)}
                     onSent={() => router.refresh()}
-                  />
+                  />}
                   <span className="hidden text-[11px] text-faint md:ml-auto md:inline">Edits save as you go</span>
                 </div>
               )}

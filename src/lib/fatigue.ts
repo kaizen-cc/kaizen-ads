@@ -217,36 +217,13 @@ export function describeFatigue(rows: { ad_name: string; headline: string | null
 }
 
 /**
- * A refresh brief written ahead for every ad on the watch list, so the team opens it ready to send instead of
- * waiting on the strategist. Worst first; a few per run, and the rest next run.
+ * After the watcher: a brief drafted for hard fatigue only (a tired ad, once per ad), through the drafter
+ * (src/lib/brief-drafting.ts), with its real reason and the client's pace. A summary used to be written for every
+ * tiring ad and most expired unread (113 in 30 days); a tiring ad gets its refresh when someone asks for it.
  */
 export async function prewriteRefreshes(admin: SupabaseClient, max = 6) {
-  const { data: watch } = await admin
-    .from("ad_fatigue")
-    .select("client_id, ad_id, severity, signals, clients!inner(archived_at, creative_package, status)")
-    .eq("state", "open")
-    .is("clients.archived_at", null)
-    .in("clients.status", LIVE)
-    .limit(300);
-  if (!watch?.length) return { waiting: 0, written: 0 };
-  const { data: written } = await admin.from("creative_suggestions").select("client_id, source").eq("kind", "refresh").eq("status", "open");
-  const have = new Set((written ?? []).map((s) => `${s.client_id}:${(s.source as { adId?: string } | null)?.adId}`));
-  const todo = watch
-    .filter((w) => !have.has(`${w.client_id}:${w.ad_id}`))
-    .sort((a, b) => Number(b.severity === "tired") - Number(a.severity === "tired") || ((b.signals as FatigueSignals).spend7 ?? 0) - ((a.signals as FatigueSignals).spend7 ?? 0));
-  const { suggestRefresh } = await import("@/lib/suggestions");
-  let done = 0;
-  const errors: string[] = [];
-  for (const w of todo.slice(0, max)) {
-    try {
-      // Only the summary: the full refresh is written when someone picks it
-      await suggestRefresh(admin, w.client_id, w.ad_id, null, null, true);
-      done++;
-    } catch (e) {
-      errors.push(e instanceof Error ? e.message : String(e));
-    }
-  }
-  return { waiting: todo.length - done, written: done, errors };
+  const { draftFatigue } = await import("@/lib/brief-drafting");
+  return draftFatigue(admin, max);
 }
 
 export type WatchRow = {
