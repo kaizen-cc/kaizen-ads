@@ -64,3 +64,36 @@ export function weeklyListChange(daily: readonly { date: string; subscribed: num
   }
   return [...weeks].sort((a, b) => a[0].localeCompare(b[0])).map(([week_starting, w]) => ({ week_starting, ...w }));
 }
+
+type BoardCheck = { key: string; label: string; value: number | null; bar: number; weight: number; points: number; met: boolean; unit: "pct" | "money" | "score" };
+type BoardScore = {
+  score: number;
+  band: "good" | "watch" | "bad";
+  checks: BoardCheck[];
+  deliverability?: { score: number; parts: { label: string; rate: number; points: number; of: number; grade: string }[] } | null;
+  window?: { from: string; to: string };
+};
+
+/**
+ * The email KPI board's numbers for one client, as the agents read them: the email score with its band, each of the
+ * eight checks against its bar, and the deliverability score (0 to 100) with its parts. The deliverability score is
+ * Kaizen's own, worked out from the campaign sends (Klaviyo's API doesn't share Klaviyo's), so it lives here, not in
+ * the provider's numbers. Null when the board has nothing to score.
+ */
+export function kpiBoardEmail(s: BoardScore | null | undefined) {
+  if (!s) return null;
+  const val = (unit: BoardCheck["unit"], x: number | null) => (x == null ? null : unit === "pct" ? Math.round(x * 10000) / 100 : unit === "money" ? Math.round(x * 1000) / 1000 : Math.round(x));
+  const d = s.deliverability ?? null;
+  const dCheck = s.checks.find((c) => c.key === "deliverability");
+  return {
+    source: "The email KPI board (Kaizen's email score). Use these numbers for the score and deliverability: they are what the board shows.",
+    window: s.window ?? null,
+    email_score: s.score,
+    band: s.band === "good" ? "green (80 and up)" : s.band === "watch" ? "yellow (60 to 79)" : "red (under 60)",
+    deliverability_score: d ? d.score : null,
+    deliverability_bar: dCheck?.bar ?? null,
+    deliverability_parts: d ? d.parts.map((p) => ({ metric: p.label, rate_pct: Math.round(p.rate * 100000) / 1000, grade: p.grade, points: p.points, of: p.of })) : [],
+    deliverability_note: d ? undefined : "No email campaign went out in the board's 30-day window, so there is no deliverability score yet.",
+    checks: s.checks.map((c) => ({ check: c.label, unit: c.unit === "pct" ? "%" : c.unit === "money" ? "$ per recipient" : "score", value: val(c.unit, c.value), bar: val(c.unit, c.bar), met: c.value == null ? null : c.met, points: Math.round(c.points * 10) / 10, of: c.weight })),
+  };
+}
