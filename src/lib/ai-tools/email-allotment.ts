@@ -14,6 +14,7 @@ import { str, type AiTool } from "./types";
 //                        or every email client behind or over pace
 //   find_email_sow       look again for the client's SOW in what Kaizen reads (Drive, Gmail, documents) and read it
 //   draft_sow_requests   draft this SOW month's requests now (copy and all) for the client's Email Strategist
+//   adjust_email_scope   change the SOW's months from what the person says (only the sprint signed, another option)
 // The request form: open_screen place 'new email request'; the tab: the client page, Email, Allotment and SOW.
 
 const emailAllotment: AiTool = {
@@ -94,4 +95,26 @@ const draftSow: AiTool = {
   },
 };
 
-export const tools: AiTool[] = [emailAllotment, findSow, draftSow];
+const adjustScope: AiTool = {
+  name: "adjust_email_scope",
+  description:
+    "Adjust a client's email scope (their SOW months) from what the person says: \"they only signed the 1-month sprint, months 2 and 3 were just pitched\" (those months marked not signed, holding no allotment, reopenable), \"they picked Option B\", \"December is 5 campaigns, not 3\". First call without confirmed: it returns the proposed changes; say them and ask. Call again with confirmed: true and the same words to apply them (a dated note of why is kept). Never deletes a month.",
+  input_schema: { type: "object", properties: { client: { type: "string" }, what_changed: { type: "string" }, confirmed: { type: "boolean" } }, required: ["client", "what_changed"], additionalProperties: false },
+  lines: ["email"],
+  run: async (user: Staff, input) => {
+    if (!seesEmailBoard(user) && !user.isLead) return { ok: false, error: "The email team and the executives manage the email scope." };
+    const db = await createClient();
+    const c = await clientNamed(db, input.client);
+    const said = str(input.what_changed);
+    if (!said) return { ok: false, error: "Say what changed." };
+    const admin = createAdminClient();
+    const { proposeScopeChanges, applyScopeChanges } = await import("@/lib/email-sow");
+    const p = await proposeScopeChanges(admin, c.id, [{ role: "you", text: said }]);
+    if (!p.changes.length) return { ok: true, applied: 0, reply: p.reply };
+    if (input.confirmed !== true) return { ok: true, proposed: p.changes.map((x) => ({ month: x.month.slice(0, 7), action: x.action, campaigns: x.campaigns, sms: x.sms, flows: x.flows, flow_emails: x.flow_emails, why: x.why })), note: p.note, ask: "Say these changes and ask before applying (call again with confirmed: true)." };
+    const applied = await applyScopeChanges(admin, c.id, p.changes, p.note, user.id, "chat");
+    return { ok: true, applied, note: p.note, page: `/clients/${c.slug}` };
+  },
+};
+
+export const tools: AiTool[] = [emailAllotment, findSow, draftSow, adjustScope];

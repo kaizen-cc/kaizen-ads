@@ -4,14 +4,16 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { emailAllotmentLine, emailPools, type EmailAllotment, type SowScope } from "@/lib/email-allotment-core";
-import { draftScopeNow, findSowNow, setScopeMonth, sowUploadSlot, sowUploaded } from "./email-scope-actions";
+import { draftScopeNow, findSowNow, rereadSowNow, setMonthStatus, setScopeMonth, sowUploadSlot, sowUploaded } from "./email-scope-actions";
+import { ScopeChat } from "./scope-chat";
 
 // The Allotment and SOW tab: this cycle at a glance (campaigns, SMS, flows and flow emails, each paced against the top
 // of its range), the SOW (found or uploaded; replace it when the scope changes, the months follow), and each scoped month
 // (changed by hand when needed). The tier itself is set in one place: Services, on Team & setup. Saves on change.
 
 type Sow = { id: string; name: string; url: string | null; source: "found" | "upload"; foundIn: string | null; scope: SowScope | null; status: string; note: string | null; at: string };
-export type ScopeMonth = { month: string; campaigns: number; sms: number; flows: number; flowEmails: number; label: string | null; notes: string | null; source: "sow" | "manual"; drafted: boolean };
+/** A month's numbers as shown in the boxes: a number or a range ("3-5") */
+export type ScopeMonth = { month: string; campaigns: string; sms: string; flows: string; flowEmails: string; label: string | null; notes: string | null; source: "sow" | "manual"; drafted: boolean; status: "active" | "unsigned" | "removed"; statusNote: string | null };
 
 const FOUND: Record<string, string> = { drive: "their Drive", gmail: "an email", documents: "their documents", kaizen_documents: "a SOW drawn in Kaizen OS", upload: "an upload" };
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -27,10 +29,10 @@ function sourceLine(a: EmailAllotment | null) {
   return "No tier yet: set it in Services on Team & setup, or add their SOW below (onboarding months follow the SOW).";
 }
 
-export function EmailScopeEditor({ clientId, allotment, sow, replaced, months, canEdit }: { clientId: string; allotment: EmailAllotment | null; sow: Sow | null; replaced: { name: string; at: string }[]; months: ScopeMonth[]; canEdit: boolean }) {
+export function EmailScopeEditor({ clientId, allotment, sow, replaced, months, log = [], canEdit }: { clientId: string; allotment: EmailAllotment | null; sow: Sow | null; replaced: { name: string; at: string }[]; months: ScopeMonth[]; log?: { note: string; via: string; at: string; by: string | null }[]; canEdit: boolean }) {
   const router = useRouter();
   const [, start] = useTransition();
-  const [busy, setBusy] = useState<null | "upload" | "find" | "draft">(null);
+  const [busy, setBusy] = useState<null | "upload" | "find" | "draft" | "reread">(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const refresh = () => start(() => router.refresh());
@@ -62,6 +64,14 @@ export function EmailScopeEditor({ clientId, allotment, sow, replaced, months, c
     setBusy(null);
     if (!r.ok) return setMsg({ tone: "bad", text: r.error });
     setMsg(r.found ? { tone: "ok", text: `Found and read: ${r.found}` } : { tone: "bad", text: "No SOW in their Drive, emails or documents yet. Upload it here." });
+    refresh();
+  };
+  const reread = async () => {
+    setBusy("reread");
+    setMsg(null);
+    const r = await rereadSowNow(clientId);
+    setBusy(null);
+    setMsg(r.ok ? { tone: "ok", text: "Read again: campaigns, SMS, flows and flow emails per month, and months that weren't signed." } : { tone: "bad", text: r.error });
     refresh();
   };
   const draft = async () => {
@@ -147,6 +157,11 @@ export function EmailScopeEditor({ clientId, allotment, sow, replaced, months, c
               <button type="button" onClick={() => file.current?.click()} disabled={busy !== null} className="min-h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg transition active:scale-[0.98] disabled:opacity-50 md:min-h-9">
                 {busy === "upload" ? "Reading the SOW…" : sow ? "Replace the SOW" : "Upload the SOW"}
               </button>
+              {sow && (
+                <button type="button" onClick={reread} disabled={busy !== null} className="min-h-11 rounded-full border border-line px-4 text-[13px] text-muted hover:border-faint hover:text-fg disabled:opacity-50 md:min-h-9">
+                  {busy === "reread" ? "Reading…" : "Read it again"}
+                </button>
+              )}
               {!sow && (
                 <button type="button" onClick={find} disabled={busy !== null} className="min-h-11 rounded-full border border-line px-4 text-[13px] text-muted hover:border-faint hover:text-fg disabled:opacity-50 md:min-h-9">
                   {busy === "find" ? "Looking…" : "Look for it again"}
@@ -162,6 +177,7 @@ export function EmailScopeEditor({ clientId, allotment, sow, replaced, months, c
           </a>
         )}
         {msg && <p className={`rounded-[12px] px-3 py-2 text-[13px] ${msg.tone === "ok" ? "bg-ok-soft text-fg" : "bg-bad-soft text-bad"}`}>{msg.text}</p>}
+        {canEdit && (sow || months.length > 0) && <ScopeChat clientId={clientId} onApplied={refresh} />}
 
         {months.length > 0 && (
           <div className="grid gap-2">
@@ -176,11 +192,26 @@ export function EmailScopeEditor({ clientId, allotment, sow, replaced, months, c
             <p className="text-[12px] text-faint">This month isn&rsquo;t scoped by a SOW. Set it by hand to override the tier for this month only:</p>
             <MonthRow
               clientId={clientId}
-              m={{ month: now, campaigns: allotment?.campaigns.max ?? 0, sms: allotment?.sms.max ?? 0, flows: allotment?.flows.max ?? 0, flowEmails: allotment?.flowEmails.max ?? 0, label: null, notes: null, source: "manual", drafted: false }}
+              m={{ month: now, campaigns: String(allotment?.campaigns.max ?? 0), sms: String(allotment?.sms.max ?? 0), flows: String(allotment?.flows.max ?? 0), flowEmails: String(allotment?.flowEmails.max ?? 0), label: null, notes: null, source: "manual", drafted: false, status: "active", statusNote: null }}
               now
               canEdit={canEdit}
               onSaved={refresh}
             />
+          </div>
+        )}
+        {log.length > 0 && (
+          <div className="grid gap-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Why it changed</p>
+            {log.map((n, i) => (
+              <p key={i} className="text-[12.5px] leading-relaxed text-muted">
+                <span className="text-faint">
+                  {day(n.at)}
+                  {n.by ? ` · ${n.by.split(" ")[0]}` : ""}
+                  {n.via === "chat" ? " · with AI" : ""}:
+                </span>{" "}
+                {n.note}
+              </p>
+            ))}
           </div>
         )}
         {replaced.length > 0 && <p className="text-[12px] text-faint">Replaced: {replaced.map((r) => `${r.name} (${day(r.at)})`).join(", ")}</p>}
@@ -197,35 +228,74 @@ const POOLS = [
 ] as const;
 
 function MonthRow({ clientId, m, now, canEdit, onSaved }: { clientId: string; m: ScopeMonth; now: boolean; canEdit: boolean; onSaved: () => void }) {
-  const [v, setV] = useState({ campaigns: String(m.campaigns), sms: String(m.sms), flows: String(m.flows), flowEmails: String(m.flowEmails) });
+  const [v, setV] = useState({ campaigns: m.campaigns, sms: m.sms, flows: m.flows, flowEmails: m.flowEmails });
   const [saving, setSaving] = useState(false);
+  const off = m.status !== "active";
   const save = async () => {
-    const n = { campaigns: Number(v.campaigns) || 0, sms: Number(v.sms) || 0, flows: Number(v.flows) || 0, flowEmails: Number(v.flowEmails) || 0 };
-    if (n.campaigns === m.campaigns && n.sms === m.sms && n.flows === m.flows && n.flowEmails === m.flowEmails) return;
+    if (v.campaigns === m.campaigns && v.sms === m.sms && v.flows === m.flows && v.flowEmails === m.flowEmails) return;
     setSaving(true);
-    await setScopeMonth(clientId, m.month, n);
+    await setScopeMonth(clientId, m.month, v);
     setSaving(false);
     onSaved();
   };
-  const num = "h-11 w-14 rounded-[10px] border border-line bg-bg px-2 text-center text-[16px] tabular text-fg outline-none focus:border-faint disabled:opacity-60 md:h-9 md:text-[14px]";
+  const mark = async (action: "unsigned" | "removed" | "reopen") => {
+    if (action === "removed" && !confirm(`Remove ${monthName(m.month)}? It holds no allotment until it's reopened.`)) return;
+    setSaving(true);
+    await setMonthStatus(clientId, m.month, action);
+    setSaving(false);
+    onSaved();
+  };
+  const num = "h-11 w-16 rounded-[10px] border border-line bg-bg px-2 text-center text-[16px] tabular text-fg outline-none focus:border-faint disabled:opacity-60 md:h-9 md:text-[14px]";
+  const link = "min-h-10 text-[12px] text-faint underline-offset-2 hover:text-fg hover:underline disabled:opacity-50 md:min-h-0";
   return (
-    <div className={`grid gap-3 rounded-[14px] border px-4 py-3 ${now ? "border-brand/40 bg-brand/[0.05]" : "border-line"}`}>
-      <span className="grid min-w-0">
-        <span className="text-[14px] text-fg">
-          {monthName(m.month)}
-          {now && <span className="ml-2 rounded-full bg-brand-soft px-2 py-0.5 text-[10.5px] text-brand-text">Now</span>}
+    <div className={`grid gap-3 rounded-[14px] border px-4 py-3 ${off ? "border-dashed border-line opacity-60" : now ? "border-brand/40 bg-brand/[0.05]" : "border-line"}`}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <span className="grid min-w-0">
+          <span className="text-[14px] text-fg">
+            {monthName(m.month)}
+            {now && !off && <span className="ml-2 rounded-full bg-brand-soft px-2 py-0.5 text-[10.5px] text-brand-text">Now</span>}
+            {off && <span className="ml-2 rounded-full bg-surface-2 px-2 py-0.5 text-[10.5px] text-muted">{m.status === "unsigned" ? "Not signed" : "Removed"}</span>}
+          </span>
+          <span className="text-[12px] text-faint">{[m.label, m.source === "manual" ? "set by hand" : "from the SOW", m.drafted ? "requests drafted" : null].filter(Boolean).join(" · ")}</span>
+          {m.notes && <span className="text-[12px] text-muted">{m.notes}</span>}
+          {off && <span className="text-[12px] text-muted">{m.statusNote ? `${m.statusNote}. ` : ""}Holds no allotment.</span>}
         </span>
-        <span className="text-[12px] text-faint">{[m.label, m.source === "manual" ? "set by hand" : "from the SOW", m.drafted ? "requests drafted" : null].filter(Boolean).join(" · ")}</span>
-        {m.notes && <span className="text-[12px] text-muted">{m.notes}</span>}
-      </span>
-      <div className="flex flex-wrap gap-x-4 gap-y-2">
-        {POOLS.map(([key, label]) => (
-          <label key={key} className="flex items-center gap-2 text-[12.5px] text-muted">
-            {label}
-            <input inputMode="numeric" value={v[key]} disabled={!canEdit || saving} onChange={(e) => setV((x) => ({ ...x, [key]: e.target.value.replace(/\D/g, "").slice(0, 2) }))} onBlur={() => void save()} className={num} />
-          </label>
-        ))}
+        {canEdit && (
+          <span className="flex flex-wrap gap-3">
+            {off ? (
+              <button type="button" disabled={saving} onClick={() => void mark("reopen")} className={link}>
+                Reopen
+              </button>
+            ) : (
+              <>
+                <button type="button" disabled={saving} onClick={() => void mark("unsigned")} className={link}>
+                  Not signed
+                </button>
+                <button type="button" disabled={saving} onClick={() => void mark("removed")} className={link}>
+                  Remove month
+                </button>
+              </>
+            )}
+          </span>
+        )}
       </div>
+      {!off && (
+        <div className="flex flex-wrap gap-x-4 gap-y-2">
+          {POOLS.map(([key, label]) => (
+            <label key={key} className="flex items-center gap-2 text-[12.5px] text-muted">
+              {label}
+              <input
+                value={v[key]}
+                disabled={!canEdit || saving}
+                onChange={(e) => setV((x) => ({ ...x, [key]: e.target.value.replace(/[^\d-]/g, "").slice(0, 5) }))}
+                onBlur={() => void save()}
+                aria-label={`${label}: a number or a range like 3-5`}
+                className={num}
+              />
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

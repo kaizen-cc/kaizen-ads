@@ -27,21 +27,78 @@ async function guard(clientId: string, opts: { package?: boolean } = {}) {
   return { me, admin: createAdminClient(), slug: c.slug as string };
 }
 
-/** One month's allotment set by hand (kept over the SOW's for that month) */
-export async function setScopeMonth(clientId: string, month: string, n: { campaigns: number; sms: number; flows: number; flowEmails: number }): Promise<{ ok: true } | Fail> {
+/** "3-5" → min 3, max 5; "4" → 4, 4 */
+const rangeOf = (v: string | number, cap: number): [number, number] => {
+  const [a, b] = String(v).split("-").map((x) => Math.max(0, Math.min(cap, Math.round(Number(x) || 0))));
+  return b == null ? [a ?? 0, a ?? 0] : [Math.min(a, b), Math.max(a, b)];
+};
+
+/** One month's numbers set by hand (each pool a number or a range, "3-5"), kept over the SOW's for that month */
+export async function setScopeMonth(clientId: string, month: string, n: { campaigns: string; sms: string; flows: string; flowEmails: string }): Promise<{ ok: true } | Fail> {
   try {
     const { me, admin, slug } = await guard(clientId);
     if (!/^\d{4}-\d{2}-01$/.test(month)) return { ok: false, error: "Pick a month." };
-    const w = (v: number, max: number) => Math.max(0, Math.min(max, Math.round(Number(v) || 0)));
-    // Set by hand: one number per pool (the bottom of the range is the same)
-    const c = w(n.campaigns, 60);
-    const t = w(n.sms, 40);
-    const fe = w(n.flowEmails, 60);
-    await admin
-      .from("email_scope_months")
-      .upsert({ client_id: clientId, month, campaigns: c, campaigns_min: c, sms: t, sms_min: t, flows: w(n.flows, 20), flow_emails: fe, flow_emails_min: fe, source: "manual", updated_by: me.id, updated_at: new Date().toISOString() }, { onConflict: "client_id,month" });
+    const [cMin, cMax] = rangeOf(n.campaigns, 60);
+    const [sMin, sMax] = rangeOf(n.sms, 40);
+    const [fMin, fMax] = rangeOf(n.flowEmails, 60);
+    const { applyScopeChanges } = await import("@/lib/email-sow");
+    await applyScopeChanges(admin, clientId, [{ month, action: "set", campaigns: cMax, campaigns_min: cMin, sms: sMax, sms_min: sMin, flows: rangeOf(n.flows, 20)[1], flow_emails: fMax, flow_emails_min: fMin, why: "Set by hand" }], `${month.slice(0, 7)} set by hand`, me.id, "hand");
     revalidatePath(`/clients/${slug}`);
     return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** A month marked not signed, removed, or reopened (it stays visible; nothing is deleted) */
+export async function setMonthStatus(clientId: string, month: string, action: "unsigned" | "removed" | "reopen"): Promise<{ ok: true } | Fail> {
+  try {
+    const { me, admin, slug } = await guard(clientId);
+    const { applyScopeChanges } = await import("@/lib/email-sow");
+    const word = action === "reopen" ? "Reopened" : action === "unsigned" ? "Marked not signed" : "Removed";
+    await applyScopeChanges(admin, clientId, [{ month, action, why: `${word} by hand` }], `${word}: ${month.slice(0, 7)}`, me.id, "hand");
+    revalidatePath(`/clients/${slug}`);
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Read the SOW again (it fills SMS, flow emails and months not signed) */
+export async function rereadSowNow(clientId: string): Promise<{ ok: true } | Fail> {
+  try {
+    const { admin, slug } = await guard(clientId);
+    const { rereadSow } = await import("@/lib/email-sow");
+    const r = await rereadSow(admin, clientId);
+    if (!r.ok) return r;
+    revalidatePath(`/clients/${slug}`);
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Adjust with AI: what the AI would change, from the conversation (nothing is written) */
+export async function proposeScope(clientId: string, turns: { role: "you" | "ai"; text: string }[]): Promise<{ ok: true; reply: string; note: string; changes: import("@/lib/email-sow").ScopeChange[] } | Fail> {
+  try {
+    const { admin } = await guard(clientId);
+    const clean = turns.filter((t) => t.text?.trim()).slice(-16).map((t) => ({ role: t.role === "ai" ? ("ai" as const) : ("you" as const), text: t.text.slice(0, 3000) }));
+    if (!clean.length) return { ok: false, error: "Say what changed." };
+    const { proposeScopeChanges } = await import("@/lib/email-sow");
+    return { ok: true, ...(await proposeScopeChanges(admin, clientId, clean)) };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Apply what the AI proposed, with its dated note */
+export async function applyScope(clientId: string, changes: import("@/lib/email-sow").ScopeChange[], note: string): Promise<{ ok: true; applied: number } | Fail> {
+  try {
+    const { me, admin, slug } = await guard(clientId);
+    const { applyScopeChanges } = await import("@/lib/email-sow");
+    const applied = await applyScopeChanges(admin, clientId, changes.slice(0, 24), note, me.id, "chat");
+    revalidatePath(`/clients/${slug}`);
+    return { ok: true, applied };
   } catch (e) {
     return fail(e);
   }

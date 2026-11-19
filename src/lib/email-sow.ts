@@ -80,8 +80,9 @@ const SCOPE_SCHEMA = {
           flow_emails: RANGE("Emails across flows that month, new or optimization (the top: 'up to 15 emails across all flows' is 15)"),
           flow_emails_min: RANGE("The bottom of the range"),
           notes: { type: "string", description: "The flows it names and anything else that month, one line" },
+          signed: { type: "boolean", description: "False when this month is only pitched (a roadmap beyond what the client signed or is moving forward with)" },
         },
-        required: ["month", "label", "campaigns", "campaigns_min", "sms", "sms_min", "flows", "flow_emails", "flow_emails_min", "notes"],
+        required: ["month", "label", "campaigns", "campaigns_min", "sms", "sms_min", "flows", "flow_emails", "flow_emails_min", "notes", "signed"],
         additionalProperties: false,
       },
     },
@@ -101,7 +102,7 @@ export async function readSowScope(admin: Db, clientId: string, s: Pick<SowSourc
     schema: SCOPE_SCHEMA,
     maxTokens: 4000,
     override: { model: "sonnet", effort: "low" },
-    system: `You read a Kaizen Marketing Scope of Work (or the email that carries it) for the email and SMS work only, month by month: campaign emails, SMS campaign messages, flows built or optimized (a flow counts once), and emails across flows. Kaizen's standard 3-Month Initial Setup is: month 1 Foundation (3 core flows, up to 15 flow emails, no campaigns), month 2 Expansion (2 more flows, up to 10 flow emails, 3 campaigns, 2 SMS), month 3 Ongoing (1 new flow or optimization of 5 emails, 5 campaigns, 2 SMS); a SOW may change any of it, and what it says wins. Domain-warming sends aren't campaigns. When the SOW offers several options, read the one it recommends or the client chose. Ranges ("3 to 5") give min and max. Never invent numbers the SOW doesn't give; when email isn't in it, email_in_scope false and no months. Today: ${today}.`,
+    system: `You read a Kaizen Marketing Scope of Work (or the email that carries it) for the email and SMS work only, month by month: campaign emails, SMS campaign messages, flows built or optimized (a flow counts once), and emails across flows. Kaizen's standard 3-Month Initial Setup is: month 1 Foundation (3 core flows, up to 15 flow emails, no campaigns), month 2 Expansion (2 more flows, up to 10 flow emails, 3 campaigns, 2 SMS), month 3 Ongoing (1 new flow or optimization of 5 emails, 5 campaigns, 2 SMS); a SOW may change any of it, and what it says wins. Domain-warming sends aren't campaigns. When the SOW offers several options, read the one it recommends or the client chose. Every pool is read into its own number, never folded into another or left at 0 when the SOW states it: "plus 2 SMS campaign messages" is sms 2; "4 to 6 SMS" is sms_min 4, sms 6; "up to 8 flow emails" is flow_emails 8; "3 to 5 flow optimization emails" is flow_emails_min 3, flow_emails 5. A range keeps both ends (min and max), never only the low end. An SOW often pitches a longer roadmap (month 2, month 3, an ongoing tier) while the client signs only the sprint or month 1: when it says the client is only moving forward with part of it, or the price or signature covers only the sprint, the months beyond it are signed false (we're only on the hook for what was signed). Never invent numbers the SOW doesn't give; when email isn't in it, email_in_scope false and no months. Today: ${today}.`,
     prompt: `<sow name="${s.name.replace(/"/g, "'")}">\n${s.text.slice(0, 60000)}\n</sow>`,
   });
   return cleanScope(out);
@@ -138,11 +139,12 @@ export async function saveSow(admin: Db, clientId: string, s: SowSource, by: str
 
 /** The SOW's months as the allotment (hand-set months kept); months the old SOW scoped and the new one doesn't, from this month on, are dropped */
 export async function applyScope(admin: Db, clientId: string, sowId: string, scope: SowScope, replaced: string[] = []) {
-  const { data: manual } = await admin.from("email_scope_months").select("month").eq("client_id", clientId).eq("source", "manual");
-  const keep = new Set((manual ?? []).map((m) => String(m.month)));
+  // Months a person set (by hand, or marked not signed or removed, through the chat or the buttons) stay as they are
+  const { data: kept } = await admin.from("email_scope_months").select("month").eq("client_id", clientId).or("source.eq.manual,status_at.not.is.null");
+  const keep = new Set((kept ?? []).map((m) => String(m.month)));
   const rows = scope.months
     .filter((m) => !keep.has(m.month))
-    .map((m) => ({ client_id: clientId, month: m.month, campaigns: m.campaigns, campaigns_min: m.campaigns_min, sms: m.sms, sms_min: m.sms_min, flows: m.flows, flow_emails: m.flow_emails, flow_emails_min: m.flow_emails_min, label: m.label || null, notes: m.notes || null, source: "sow", sow_id: sowId, updated_at: new Date().toISOString() }));
+    .map((m) => ({ client_id: clientId, month: m.month, campaigns: m.campaigns, campaigns_min: m.campaigns_min, sms: m.sms, sms_min: m.sms_min, flows: m.flows, flow_emails: m.flow_emails, flow_emails_min: m.flow_emails_min, label: m.label || null, notes: m.notes || null, source: "sow", sow_id: sowId, status: m.signed ? "active" : "unsigned", status_note: m.signed ? null : "Pitched in the SOW, not signed", updated_at: new Date().toISOString() }));
   if (rows.length) await admin.from("email_scope_months").upsert(rows, { onConflict: "client_id,month" });
   if (replaced.length) {
     const months = new Set(scope.months.map((m) => m.month));
@@ -227,6 +229,148 @@ async function strategistOf(admin: Db, clientId: string) {
   return data && p ? { id: data.profile_id as string, name: p.full_name, email: p.email } : null;
 }
 
+// ─── Reading again, adjusting with the AI, and months not signed ────────────
+
+/** Read the client's current SOW again (a SOW read before the parser knew SMS and flow emails, or after a fix) */
+export async function rereadSow(admin: Db, clientId: string): Promise<{ ok: true; scope: SowScope } | { ok: false; error: string }> {
+  const { data: s } = await admin.from("client_sows").select("id, name, text").eq("client_id", clientId).eq("line", "email").neq("status", "replaced").order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (!s?.text) return { ok: false, error: "No SOW text to read. Upload it again." };
+  const scope = await readSowScope(admin, clientId, { name: String(s.name), text: String(s.text) });
+  await admin.from("client_sows").update({ scope, read_at: new Date().toISOString(), status: "active", note: null }).eq("id", s.id);
+  await applyScope(admin, clientId, s.id as string, scope);
+  return { ok: true, scope };
+}
+
+export type ScopeAction = "set" | "unsigned" | "removed" | "reopen";
+export type ScopeChange = {
+  month: string;
+  action: ScopeAction;
+  label?: string | null;
+  campaigns?: number | null;
+  campaigns_min?: number | null;
+  sms?: number | null;
+  sms_min?: number | null;
+  flows?: number | null;
+  flow_emails?: number | null;
+  flow_emails_min?: number | null;
+  notes?: string | null;
+  /** Why, in a few words (shown beside the change) */
+  why: string;
+};
+export type ScopeMonthRow = { month: string; label: string | null; campaigns: number | null; campaigns_min: number | null; sms: number | null; sms_min: number | null; flows: number | null; flow_emails: number | null; flow_emails_min: number | null; notes: string | null; status: string; status_note: string | null; source: string };
+export type ScopeTurn = { role: "you" | "ai"; text: string };
+
+const CHANGE_SCHEMA = {
+  type: "object",
+  properties: {
+    reply: { type: "string", description: "A short answer in plain words: what you'd change and why, or the one question you need answered" },
+    note: { type: "string", description: "The dated note kept with the change: what the client signed or decided, in one or two sentences" },
+    changes: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          month: { type: "string", description: "YYYY-MM" },
+          action: { type: "string", enum: ["set", "unsigned", "removed", "reopen"] },
+          label: { type: "string" },
+          campaigns: { type: "integer" },
+          campaigns_min: { type: "integer" },
+          sms: { type: "integer" },
+          sms_min: { type: "integer" },
+          flows: { type: "integer" },
+          flow_emails: { type: "integer" },
+          flow_emails_min: { type: "integer" },
+          notes: { type: "string" },
+          why: { type: "string" },
+        },
+        required: ["month", "action", "label", "campaigns", "campaigns_min", "sms", "sms_min", "flows", "flow_emails", "flow_emails_min", "notes", "why"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["reply", "note", "changes"],
+  additionalProperties: false,
+};
+
+/** The client's scoped months, as stored */
+export async function scopeMonths(admin: Db, clientId: string): Promise<ScopeMonthRow[]> {
+  const { data } = await admin.from("email_scope_months").select("month, label, campaigns, campaigns_min, sms, sms_min, flows, flow_emails, flow_emails_min, notes, status, status_note, source").eq("client_id", clientId).order("month").limit(36);
+  return (data ?? []) as ScopeMonthRow[];
+}
+
+/**
+ * The AI proposes changes to the scoped months from what the person says ("they only signed the 1-month sprint",
+ * "they picked Option B", "December is 5 campaigns"), reading the SOW, the months as they stand and the notes kept so
+ * far. Nothing is written: the person sees the changes and applies them.
+ */
+export async function proposeScopeChanges(admin: Db, clientId: string, turns: ScopeTurn[]): Promise<{ reply: string; note: string; changes: ScopeChange[] }> {
+  const [{ askJson }, months, { data: sow }, { data: notes }, { data: c }] = await Promise.all([
+    import("@/lib/ai"),
+    scopeMonths(admin, clientId),
+    admin.from("client_sows").select("name, text, scope").eq("client_id", clientId).eq("line", "email").neq("status", "replaced").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    admin.from("email_scope_notes").select("note, created_at").eq("client_id", clientId).order("created_at", { ascending: false }).limit(12),
+    admin.from("clients").select("name").eq("id", clientId).maybeSingle(),
+  ]);
+  const today = new Date().toISOString().slice(0, 10);
+  const out = await askJson<{ reply: string; note: string; changes: ScopeChange[] }>({
+    agent: "email_calendar",
+    label: "email sow adjust",
+    clientId,
+    schema: CHANGE_SCHEMA,
+    maxTokens: 3000,
+    system: `You help Kaizen's email team keep a client's email scope right, month by month: campaign emails, SMS messages, flows (each counts once) and flow emails, each a range (min to max). The person tells you what the client actually signed or decided; you propose changes to the months and they apply them.
+Actions: "set" changes a month's numbers (or adds a month), "unsigned" marks a month pitched but not signed (it holds no allotment, stays visible and can be reopened), "removed" takes a month off (also reopenable), "reopen" brings an unsigned or removed month back as it was.
+The common case: the SOW pitches a longer roadmap (month 2, month 3, an ongoing tier) but the client is only moving forward with the sprint or month 1. Then we're only on the hook for what they signed: the other months are "unsigned", never deleted. "They picked Option B" means the months follow Option B's numbers in the SOW.
+Every number you change must come from what the person said or from the SOW; keep the rest of a month as it is (repeat its current numbers in a "set"). A range keeps both ends. Months are YYYY-MM. If you can't tell which month or what number, ask one short question and propose nothing. No em dashes. Today: ${today}.`,
+    prompt: [
+      `Client: ${c?.name ?? "the client"}.`,
+      `<months_now>\n${JSON.stringify(months.map((m) => ({ ...m, month: String(m.month).slice(0, 7) })))}\n</months_now>`,
+      notes?.length ? `<notes_so_far>\n${notes.map((n) => `${String(n.created_at).slice(0, 10)}: ${n.note}`).join("\n")}\n</notes_so_far>` : "",
+      sow ? `<sow name="${String(sow.name).replace(/"/g, "'")}">\n${String(sow.text ?? "").slice(0, 40000)}\n</sow>` : "No SOW on file.",
+      `<conversation>\n${turns.map((t) => `${t.role === "you" ? "Person" : "You"}: ${t.text}`).join("\n")}\n</conversation>`,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+  });
+  const changes = (out.changes ?? [])
+    .filter((x) => /^\d{4}-\d{2}/.test(String(x.month)) && ["set", "unsigned", "removed", "reopen"].includes(x.action))
+    .map((x) => ({ ...x, month: `${String(x.month).slice(0, 7)}-01` }))
+    .slice(0, 24);
+  return { reply: String(out.reply ?? "").slice(0, 1500), note: String(out.note ?? "").slice(0, 600), changes };
+}
+
+/** Apply changes to the scoped months (from the chat or the month buttons), keeping a dated note of why. Never deletes. */
+export async function applyScopeChanges(admin: Db, clientId: string, changes: ScopeChange[], note: string, by: string | null, via: "chat" | "hand") {
+  const before = new Map((await scopeMonths(admin, clientId)).map((m) => [String(m.month).slice(0, 10), m]));
+  const now = new Date().toISOString();
+  const w = (v: unknown, max: number) => (v == null ? null : Math.max(0, Math.min(max, Math.round(Number(v) || 0))));
+  const log: { month: string; action: ScopeAction; before: unknown; after: unknown }[] = [];
+  for (const c of changes) {
+    const month = `${String(c.month).slice(0, 7)}-01`;
+    const was = before.get(month) ?? null;
+    if (c.action === "set") {
+      const pair = (max: unknown, min: unknown, cap: number, prior: number | null | undefined, priorMin: number | null | undefined) => {
+        const hi = w(max, cap) ?? prior ?? 0;
+        const lo = w(min, cap) ?? priorMin ?? hi;
+        return [Math.min(lo, hi), hi] as const;
+      };
+      const [cMin, cMax] = pair(c.campaigns, c.campaigns_min, 60, was?.campaigns, was?.campaigns_min);
+      const [sMin, sMax] = pair(c.sms, c.sms_min, 40, was?.sms, was?.sms_min);
+      const [fMin, fMax] = pair(c.flow_emails, c.flow_emails_min, 60, was?.flow_emails, was?.flow_emails_min);
+      const row = { client_id: clientId, month, campaigns: cMax, campaigns_min: cMin, sms: sMax, sms_min: sMin, flows: w(c.flows, 20) ?? was?.flows ?? 0, flow_emails: fMax, flow_emails_min: fMin, label: c.label || was?.label || null, notes: c.notes || was?.notes || null, source: "manual", status: "active", status_note: c.why || null, status_at: now, updated_by: by, updated_at: now };
+      await admin.from("email_scope_months").upsert(row, { onConflict: "client_id,month" });
+      log.push({ month, action: "set", before: was, after: row });
+    } else {
+      if (!was) continue;
+      const status = c.action === "reopen" ? "active" : c.action;
+      await admin.from("email_scope_months").update({ status, status_note: c.why || null, status_at: now, updated_by: by, updated_at: now }).eq("client_id", clientId).eq("month", month);
+      log.push({ month, action: c.action, before: { status: was.status }, after: { status } });
+    }
+  }
+  if (log.length) await admin.from("email_scope_notes").insert({ client_id: clientId, note: note.trim().slice(0, 600) || "Scope adjusted", changes: log, via, profile_id: by });
+  return log.length;
+}
+
 // ─── The daily pass ─────────────────────────────────────────────────────────
 
 /**
@@ -255,6 +399,11 @@ export async function sowPass(admin: Db, deadline: number) {
         await saveSow(admin, id, s, null).catch(() => null);
         found++;
       }
+    }
+    // A SOW read by the first parser (no SMS, flow emails or signed months): read again once
+    if (tried.has(id) && Date.now() < deadline) {
+      const { data: old } = await admin.from("client_sows").select("id, scope").eq("client_id", id).eq("line", "email").eq("status", "active").order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (old && !("setup" in ((old.scope ?? {}) as object))) await rereadSow(admin, id).catch(() => null);
     }
     if (Date.now() > deadline) break;
     const r = await draftScopeMonth(admin, id).catch(() => ({ drafted: 0 }));

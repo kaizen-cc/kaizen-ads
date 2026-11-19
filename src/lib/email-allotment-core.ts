@@ -185,7 +185,7 @@ export function requestFit(a: EmailAllotment | null | undefined, kind: string, c
 
 // ─── Scope of Work ───────────────────────────────────────────────────────────
 
-export type SowMonth = { month: string; label: string; campaigns: number; campaigns_min: number; sms: number; sms_min: number; flows: number; flow_emails: number; flow_emails_min: number; notes: string };
+export type SowMonth = { month: string; label: string; campaigns: number; campaigns_min: number; sms: number; sms_min: number; flows: number; flow_emails: number; flow_emails_min: number; notes: string; /** False: pitched in the SOW but not signed (a roadmap beyond the sprint they took) */ signed: boolean };
 export type SowScope = { summary: string; email_in_scope: boolean; start: string; setup: "three_month" | "sprint" | "none"; ongoing_tier: string; months: SowMonth[] };
 
 /** Names that look like a Scope of Work */
@@ -211,6 +211,7 @@ export function cleanScope(s: Partial<SowScope> | null | undefined): SowScope {
         flow_emails: flowEmails,
         flow_emails_min: Math.min(flowEmails, whole(m?.flow_emails_min ?? flowEmails, 60)),
         notes: String(m?.notes ?? "").slice(0, 400),
+        signed: m?.signed !== false,
       };
     })
     .filter((m) => m.month)

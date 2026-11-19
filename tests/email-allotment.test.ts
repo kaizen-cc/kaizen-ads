@@ -96,7 +96,7 @@ describe("the allotment line and pace", () => {
 describe("cleanScope", () => {
   it("normalizes months, counts and ranges", () => {
     const s = cleanScope({ summary: "x", email_in_scope: true, setup: "three_month", ongoing_tier: "Basic", months: [{ month: "2026-12", label: "Month 1", campaigns: 4.4, campaigns_min: 9, sms: 2, sms_min: 2, flows: 3, flow_emails: 15, flow_emails_min: 15, notes: "" }] } as never);
-    expect(s.months[0]).toEqual({ month: "2026-12-01", label: "Month 1", campaigns: 4, campaigns_min: 4, sms: 2, sms_min: 2, flows: 3, flow_emails: 15, flow_emails_min: 15, notes: "" });
+    expect(s.months[0]).toEqual({ month: "2026-12-01", label: "Month 1", campaigns: 4, campaigns_min: 4, sms: 2, sms_min: 2, flows: 3, flow_emails: 15, flow_emails_min: 15, notes: "", signed: true });
     expect(s.start).toBe("2026-12-01");
     expect(s.ongoing_tier).toBe("basic");
   });

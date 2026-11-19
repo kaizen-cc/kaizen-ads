@@ -15,11 +15,13 @@ export async function EmailScopePanel({ clientId }: { clientId: string }) {
   const db = await createClient();
   const from = new Date();
   from.setMonth(from.getMonth() - 2);
-  const [allotments, { data: sows }, { data: months }] = await Promise.all([
+  const [allotments, { data: sows }, { data: months }, { data: notes }] = await Promise.all([
     emailAllotments(db, [clientId]),
     db.from("client_sows").select("id, name, url, source, found_in, scope, status, note, read_at, created_at").eq("client_id", clientId).eq("line", "email").order("created_at", { ascending: false }).limit(4),
-    db.from("email_scope_months").select("month, campaigns, sms, flows, flow_emails, label, notes, source, drafted_at").eq("client_id", clientId).gte("month", `${from.toISOString().slice(0, 7)}-01`).order("month").limit(24),
+    db.from("email_scope_months").select("month, campaigns, campaigns_min, sms, sms_min, flows, flow_emails, flow_emails_min, label, notes, source, drafted_at, status, status_note").eq("client_id", clientId).gte("month", `${from.toISOString().slice(0, 7)}-01`).order("month").limit(24),
+    db.from("email_scope_notes").select("note, via, created_at, profiles(full_name)").eq("client_id", clientId).order("created_at", { ascending: false }).limit(8),
   ]);
+  const r = (max: unknown, min: unknown) => (max == null ? "0" : min != null && Number(min) < Number(max) ? `${min}-${max}` : String(max));
   const active = (sows ?? []).find((s) => s.status !== "replaced") ?? null;
   return (
     <EmailScopeEditor
@@ -41,7 +43,20 @@ export async function EmailScopePanel({ clientId }: { clientId: string }) {
           : null
       }
       replaced={(sows ?? []).filter((s) => s.status === "replaced").map((s) => ({ name: s.name as string, at: s.created_at as string }))}
-      months={(months ?? []).map((m) => ({ month: m.month as string, campaigns: Number(m.campaigns), sms: Number(m.sms) || 0, flows: Number(m.flows), flowEmails: Number(m.flow_emails) || 0, label: (m.label as string | null) ?? null, notes: (m.notes as string | null) ?? null, source: m.source as "sow" | "manual", drafted: Boolean(m.drafted_at) }))}
+      months={(months ?? []).map((m) => ({
+        month: m.month as string,
+        campaigns: r(m.campaigns, m.campaigns_min),
+        sms: r(m.sms, m.sms_min),
+        flows: String(m.flows ?? 0),
+        flowEmails: r(m.flow_emails, m.flow_emails_min),
+        label: (m.label as string | null) ?? null,
+        notes: (m.notes as string | null) ?? null,
+        source: m.source as "sow" | "manual",
+        drafted: Boolean(m.drafted_at),
+        status: (m.status as "active" | "unsigned" | "removed") ?? "active",
+        statusNote: (m.status_note as string | null) ?? null,
+      }))}
+      log={(notes ?? []).map((n) => ({ note: n.note as string, via: n.via as string, at: n.created_at as string, by: (n.profiles as unknown as { full_name: string } | null)?.full_name ?? null }))}
       canEdit={seesEmailBoard(me) || me.isExec || me.isLead}
     />
   );
