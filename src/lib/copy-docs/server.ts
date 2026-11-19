@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CallCopyDoc } from "@/lib/agent-call/core";
 import { findOrCreateFolder, folderIdOf } from "@/lib/creative-drive-paths";
-import { changedLines, COPY_SCHEMA, docKindsFor, copyDocHtml, copyDocName, EMAIL_FOLDER, normalizeCopy, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
+import { changedLines, copyLines, COPY_SCHEMA, docKindsFor, copyDocHtml, copyDocName, EMAIL_FOLDER, normalizeCopy, setCopyLine, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
 
 // Copy documents on the server: saved (each change a new version, the old ones kept), read through the person's own
 // session, revised by the AI copywriter from a note or the open comments, approved into a Google Doc in the client's
@@ -27,9 +27,11 @@ export type CopyDoc = {
   approvedAt: string | null;
   createdBy: string;
   updatedAt: string;
+  /** Where it came from: the email request form (with its priority and plan) or a client's SOW month */
+  origin: { kind?: string; month?: string; priority?: string } | null;
 };
 
-const COLS = "id, client_id, created_by, kind, title, content, version, versions, comments, status, approved_at, doc_url, asana_url, updated_at, clients(name, slug)";
+const COLS = "id, client_id, created_by, kind, title, content, version, versions, comments, status, approved_at, doc_url, asana_url, updated_at, origin, clients(name, slug)";
 
 function rowToDoc(r: Record<string, unknown>): CopyDoc {
   const c = r.clients as { name: string; slug: string } | null;
@@ -48,6 +50,7 @@ function rowToDoc(r: Record<string, unknown>): CopyDoc {
     approvedAt: (r.approved_at as string | null) ?? null,
     createdBy: r.created_by as string,
     updatedAt: r.updated_at as string,
+    origin: (r.origin as CopyDoc["origin"]) ?? null,
   };
 }
 
@@ -89,7 +92,7 @@ export function copyCard(d: CopyDoc): CallCopyDoc {
  * A new copy document, or the next version of one (the earlier version kept, with why it changed). An approved one
  * that changes goes back to a draft: the new words need approving again.
  */
-export async function saveCopyDoc(admin: Admin, db: SupabaseClient, me: Me, p: { client: { id: string } | null; loose: Record<string, unknown>; id?: string | null; why?: string | null; callId?: string | null }): Promise<CopyDoc> {
+export async function saveCopyDoc(admin: Admin, db: SupabaseClient, me: Me, p: { client: { id: string } | null; loose: Record<string, unknown>; id?: string | null; why?: string | null; callId?: string | null; origin?: Record<string, unknown> | null }): Promise<CopyDoc> {
   const content = normalizeCopy(p.loose);
   if (!content.emails.length) throw new Error("Write at least one email (subject, preview text, sections, button).");
   const now = new Date().toISOString();
@@ -108,7 +111,7 @@ export async function saveCopyDoc(admin: Admin, db: SupabaseClient, me: Me, p: {
   }
   const { data, error } = await admin
     .from("copy_docs")
-    .insert({ client_id: p.client?.id ?? null, created_by: me.id, kind: content.kind, title: content.title, content, call_id: p.callId && /^[0-9a-f-]{36}$/i.test(p.callId) ? p.callId : null })
+    .insert({ client_id: p.client?.id ?? null, created_by: me.id, kind: content.kind, title: content.title, content, call_id: p.callId && /^[0-9a-f-]{36}$/i.test(p.callId) ? p.callId : null, origin: p.origin ?? null })
     .select(COLS)
     .single();
   if (error || !data) throw new Error("The copy didn't save. Try again.");
@@ -137,6 +140,46 @@ export async function resolveCopyComment(admin: Admin, db: SupabaseClient, id: s
   const comments = d.comments.map((c) => (c.id === commentId ? { ...c, resolved } : c));
   await admin.from("copy_docs").update({ comments }).eq("id", id);
   return comments;
+}
+
+// ─── The strategist's own edits, and the learning loop ──────────────────────
+
+/** A strategist rewrites one line themselves: the next version (the earlier one kept), the edit kept to learn from */
+export async function editCopyLine(admin: Admin, db: SupabaseClient, me: Me, id: string, anchor: string, text: string) {
+  const d = await loadCopyDoc(db, id);
+  if (!d) throw new Error("That copy isn't one you can change.");
+  const line = copyLines(d.content).find((l) => l.anchor === anchor);
+  if (!line) throw new Error("That line isn't in this copy any more.");
+  if (!text.trim()) throw new Error("Write the line first.");
+  if (text.trim() === line.text.trim()) return { doc: d, feedbackId: null as string | null };
+  const next = setCopyLine(d.content, anchor, text);
+  if (!next) throw new Error("That line can't be edited.");
+  const doc = await saveCopyDoc(admin, db, me, { client: d.clientId ? { id: d.clientId } : null, loose: toLooseCopy(next), id, why: `${me.fullName.split(" ")[0]} edited ${line.label}` });
+  const { data } = await admin.from("copy_feedback").insert({ copy_doc_id: id, client_id: d.clientId, kind: "edit", anchor, before: line.text.slice(0, 4000), after: text.trim().slice(0, 4000), profile_id: me.id }).select("id").maybeSingle();
+  return { doc, feedbackId: (data?.id as string | undefined) ?? null };
+}
+
+/** A comment on a line, kept to learn from (the comment itself is on the copy) */
+export async function keepCopyComment(admin: Admin, d: { id: string; clientId: string | null }, me: Me, c: { anchor: string; quote: string; text: string }) {
+  const { data } = await admin.from("copy_feedback").insert({ copy_doc_id: d.id, client_id: d.clientId, kind: "comment", anchor: c.anchor.slice(0, 40), before: c.quote.slice(0, 1000), text: c.text.slice(0, 2000), profile_id: me.id }).select("id").maybeSingle();
+  return (data?.id as string | undefined) ?? null;
+}
+
+/**
+ * What the copywriter learns from one edit or comment: a lesson for this client, or (about the craft) for every
+ * client's copy at once (src/lib/learnings.ts, source copy_feedback). Never throws; run it after the response.
+ */
+export async function learnFromCopyFeedback(admin: Admin, feedbackId: string) {
+  const { data: f } = await admin.from("copy_feedback").select("id, copy_doc_id, client_id, kind, anchor, before, after, text").eq("id", feedbackId).maybeSingle();
+  if (!f?.client_id) return;
+  const { data: doc } = await admin.from("copy_docs").select("kind").eq("id", f.copy_doc_id).maybeSingle();
+  const what = String(f.anchor ?? "").replace(/^e(\d+)\./, (_m, n: string) => `email ${Number(n) + 1} `);
+  const text =
+    f.kind === "edit"
+      ? `The strategist rewrote a line of the ${doc?.kind ?? "email"} copy (${what}). Copywriter wrote: "${String(f.before ?? "").slice(0, 400)}". Strategist changed it to: "${String(f.after ?? "").slice(0, 400)}".`
+      : `The strategist commented on a line of the ${doc?.kind ?? "email"} copy (${what}): "${String(f.before ?? "").slice(0, 300)}". Comment: ${String(f.text ?? "").slice(0, 600)}`;
+  const { recordLearning } = await import("@/lib/learnings");
+  await recordLearning(admin, { table: "copy_feedback", id: f.id as string, clientId: f.client_id as string, text });
 }
 
 // ─── Revising with the AI copywriter ────────────────────────────────────────

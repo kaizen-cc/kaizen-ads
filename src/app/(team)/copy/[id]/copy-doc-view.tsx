@@ -4,17 +4,38 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { CopyComment } from "@/lib/copy-docs/core";
 import type { CopyDoc } from "@/lib/copy-docs/server";
-import { approveCopy, askForChange, commentOnLine, copyVersion, requestCopy, resolveComment } from "../actions";
+import { approveCopy, askForChange, commentOnLine, copyVersion, editLine, requestCopy, resolveComment } from "../actions";
 
 // The copy document view: reads like the email it will become, every line tappable to comment on, the lines the last
 // revision changed marked, a note box to ask the AI copywriter for a change, and the steps after: Approve (the Google
 // Doc in the client's Drive), then Create in Asana (Kaizen OS requests coming soon). A change made on a call (by voice
-// or in the chat) shows up here on its own.
+// or in the chat) shows up here on its own. Each line can also be rewritten by hand (Edit): the strategist's edits and
+// comments are kept and teach the copywriter (this client's lesson, or every client's when it's about the craft).
+// Inside another page (the email request form) it reloads through onReload instead of refreshing the page.
 
 const KIND: Record<string, string> = { campaign: "Email campaign", flow: "Email flow", sms: "SMS", creative: "Ad creative brief", social: "Organic social" };
 
-export function CopyDocView({ doc: start, changed: firstChanged, requests: firstRequests }: { doc: CopyDoc; changed: string[]; me: string; requests: { name: string; url: string }[] }) {
+export function CopyDocView({
+  doc: start,
+  changed: firstChanged,
+  requests: firstRequests,
+  onReload,
+  onRequested,
+  embedded = false,
+}: {
+  doc: CopyDoc;
+  changed: string[];
+  me: string;
+  requests: { name: string; url: string }[];
+  /** Inside another page: load the copy again (instead of refreshing the page) */
+  onReload?: () => void;
+  /** The Asana request was made */
+  onRequested?: (tasks: { name: string; url: string }[]) => void;
+  /** Inside another page: no outer page margins */
+  embedded?: boolean;
+}) {
   const router = useRouter();
+  const reload = () => (onReload ? onReload() : startTransition(() => router.refresh()));
   const [doc, setDoc] = useState(start);
   const changed = firstChanged;
   const [comments, setComments] = useState<CopyComment[]>(start.comments);
@@ -31,10 +52,13 @@ export function CopyDocView({ doc: start, changed: firstChanged, requests: first
     const t = setInterval(async () => {
       if (document.visibilityState !== "visible") return;
       const v = await copyVersion(doc.id).catch(() => null);
-      if (v && (v.version !== start.version || v.status !== doc.status)) startTransition(() => router.refresh());
+      if (v && (v.version !== start.version || v.status !== doc.status)) {
+        if (onReload) onReload();
+        else startTransition(() => router.refresh());
+      }
     }, 6000);
     return () => clearInterval(t);
-  }, [doc.id, doc.status, start.version, router]);
+  }, [doc.id, doc.status, start.version, router, onReload]);
 
   const openFor = (anchor: string) => comments.filter((c) => c.anchor === anchor);
   const unresolved = comments.filter((c) => !c.resolved).length;
@@ -46,7 +70,7 @@ export function CopyDocView({ doc: start, changed: firstChanged, requests: first
     setBusy(null);
     if (!r.ok) return setError(r.error);
     setNote("");
-    startTransition(() => router.refresh());
+    reload();
   };
   const approve = async () => {
     setBusy("approve");
@@ -65,6 +89,7 @@ export function CopyDocView({ doc: start, changed: firstChanged, requests: first
     setRequests(r.tasks);
     setFollowerNote(r.followerMissing);
     setDoc((d) => ({ ...d, status: "requested" }));
+    onRequested?.(r.tasks);
   };
 
   const c = doc.content;
@@ -72,7 +97,7 @@ export function CopyDocView({ doc: start, changed: firstChanged, requests: first
   const why = doc.versions.at(-1)?.why;
 
   return (
-    <div className="mx-auto grid w-full max-w-3xl gap-6 pb-40">
+    <div className={`grid w-full gap-6 pb-40 ${embedded ? "" : "mx-auto max-w-3xl"}`}>
       <header className="relative grid gap-3 overflow-hidden rounded-[24px] border border-line bg-surface p-5 shadow-sm md:p-7">
         <span aria-hidden className="pointer-events-none absolute -right-16 -top-20 h-48 w-48 rounded-full bg-brand opacity-[0.09] blur-3xl" />
         <p className="relative text-[11px] font-medium uppercase tracking-[0.16em] text-brand-text">
@@ -133,17 +158,17 @@ export function CopyDocView({ doc: start, changed: firstChanged, requests: first
             {e.timing && <span className="text-[12px] text-faint">{e.timing}</span>}
           </div>
           <div className="grid gap-0.5 px-2 py-2 md:px-3">
-            {e.subject && <Line anchor={`e${i}.subject`} label="Subject" text={e.subject} strong {...{ open, setOpen, changed, comments: openFor(`e${i}.subject`), docId: doc.id, setComments }} />}
-            {e.preview && <Line anchor={`e${i}.preview`} label="Preview text" text={e.preview} muted {...{ open, setOpen, changed, comments: openFor(`e${i}.preview`), docId: doc.id, setComments }} />}
+            {e.subject && <Line anchor={`e${i}.subject`} label="Subject" text={e.subject} strong {...{ open, setOpen, changed, comments: openFor(`e${i}.subject`), docId: doc.id, setComments, editable: doc.status !== "requested", onEdited: reload }} />}
+            {e.preview && <Line anchor={`e${i}.preview`} label="Preview text" text={e.preview} muted {...{ open, setOpen, changed, comments: openFor(`e${i}.preview`), docId: doc.id, setComments, editable: doc.status !== "requested", onEdited: reload }} />}
             {e.sections.map((s, j) => (
               <div key={j} className="grid gap-0.5 pt-2">
-                {s.heading && <Line anchor={`e${i}.s${j}.heading`} text={s.heading} heading {...{ open, setOpen, changed, comments: openFor(`e${i}.s${j}.heading`), docId: doc.id, setComments }} />}
-                {s.body && <Line anchor={`e${i}.s${j}.body`} text={s.body} {...{ open, setOpen, changed, comments: openFor(`e${i}.s${j}.body`), docId: doc.id, setComments }} />}
+                {s.heading && <Line anchor={`e${i}.s${j}.heading`} text={s.heading} heading {...{ open, setOpen, changed, comments: openFor(`e${i}.s${j}.heading`), docId: doc.id, setComments, editable: doc.status !== "requested", onEdited: reload }} />}
+                {s.body && <Line anchor={`e${i}.s${j}.body`} text={s.body} {...{ open, setOpen, changed, comments: openFor(`e${i}.s${j}.body`), docId: doc.id, setComments, editable: doc.status !== "requested", onEdited: reload }} />}
               </div>
             ))}
             {e.cta && (
               <div className="px-3 pt-3">
-                <Line anchor={`e${i}.cta`} text={e.cta.label} button {...{ open, setOpen, changed, comments: openFor(`e${i}.cta`), docId: doc.id, setComments }} />
+                <Line anchor={`e${i}.cta`} text={e.cta.label} button {...{ open, setOpen, changed, comments: openFor(`e${i}.cta`), docId: doc.id, setComments, editable: doc.status !== "requested", onEdited: reload }} />
               </div>
             )}
           </div>
@@ -151,7 +176,7 @@ export function CopyDocView({ doc: start, changed: firstChanged, requests: first
             <div className="mx-3 mb-3 grid gap-1 rounded-[14px] bg-surface-2/70 p-3">
               <p className="px-2 text-[11px] font-medium uppercase tracking-[0.14em] text-faint">For the designer</p>
               {e.designNotes.map((n, j) => (
-                <Line key={j} anchor={`e${i}.d${j}`} text={n} muted {...{ open, setOpen, changed, comments: openFor(`e${i}.d${j}`), docId: doc.id, setComments }} />
+                <Line key={j} anchor={`e${i}.d${j}`} text={n} muted {...{ open, setOpen, changed, comments: openFor(`e${i}.d${j}`), docId: doc.id, setComments, editable: doc.status !== "requested", onEdited: reload }} />
               ))}
             </div>
           )}
@@ -254,12 +279,28 @@ type LineProps = {
   comments: CopyComment[];
   docId: string;
   setComments: (c: CopyComment[]) => void;
+  /** The line can be rewritten by hand */
+  editable?: boolean;
+  /** A hand edit was saved (the next version) */
+  onEdited?: () => void;
 };
 
 /** One line of the copy: tap to comment; marked when the last revision changed it */
-function Line({ anchor, text, label, strong, muted, heading, button, open, setOpen, changed, comments, docId, setComments }: LineProps) {
+function Line({ anchor, text, label, strong, muted, heading, button, open, setOpen, changed, comments, docId, setComments, editable = false, onEdited }: LineProps) {
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const saveEdit = async () => {
+    if (editing == null || !editing.trim()) return;
+    setSaving(true);
+    setEditError(null);
+    const r = await editLine(docId, anchor, editing);
+    setSaving(false);
+    if (!r.ok) return setEditError(r.error);
+    setEditing(null);
+    onEdited?.();
+  };
   const isOpen = open === anchor;
   const isNew = changed.includes(anchor);
   const live = comments.filter((c) => !c.resolved);
@@ -290,6 +331,33 @@ function Line({ anchor, text, label, strong, muted, heading, button, open, setOp
       </button>
       {isOpen && (
         <div className="grid gap-2 px-3 pb-3">
+          {editable &&
+            (editing == null ? (
+              <button type="button" onClick={() => setEditing(text)} className="justify-self-start rounded-full border border-line px-3 py-1.5 text-[12.5px] text-muted transition-colors hover:border-faint hover:text-fg">
+                Edit this line
+              </button>
+            ) : (
+              <div className="grid gap-2">
+                <textarea
+                  value={editing}
+                  autoFocus
+                  onChange={(e) => setEditing(e.target.value)}
+                  rows={Math.min(8, Math.max(2, Math.ceil(editing.length / 60)))}
+                  aria-label="Edit the line"
+                  className="w-full resize-y rounded-[12px] border border-brand/40 bg-surface px-3 py-2 text-[16px] leading-relaxed text-fg outline-none focus:border-brand md:text-[14px]"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={saveEdit} disabled={saving || !editing.trim()} className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white transition hover:bg-brand-hover disabled:opacity-50 md:min-h-9">
+                    {saving ? "Saving…" : "Save edit"}
+                  </button>
+                  <button type="button" onClick={() => setEditing(null)} className="inline-flex min-h-11 items-center rounded-full px-3 text-[13px] text-muted hover:text-fg md:min-h-9">
+                    Cancel
+                  </button>
+                  <span className="text-[11.5px] text-faint">The copywriter learns from your edit.</span>
+                </div>
+                {editError && <p className="text-[12.5px] text-bad">{editError}</p>}
+              </div>
+            ))}
           {comments.map((c) => (
             <div key={c.id} className={`flex items-start gap-2 rounded-[10px] border border-line bg-surface px-3 py-2 text-[13px] ${c.resolved ? "opacity-60" : ""}`}>
               <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">

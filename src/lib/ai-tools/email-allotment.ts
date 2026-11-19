@@ -1,0 +1,92 @@
+import "server-only";
+import { clientNamed } from "@/lib/client-named";
+import type { Staff } from "@/lib/auth";
+import { seesEmailBoard } from "@/lib/roles";
+import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { emailAllotmentLine, emailPace } from "@/lib/email-allotment-core";
+import { str, type AiTool } from "./types";
+
+// The email allotment and Scope of Work, for the assistant, Kaizen AI and every agent on a call (registered in
+// src/lib/kaizen-ai/extensions.ts):
+//   email_allotment      a client's campaigns and flows this cycle (delivered and in motion count; a flow once), where
+//                        the cap comes from (the SOW's month, a month set by hand, the package), the SOW and its months;
+//                        or every email client behind or over pace
+//   find_email_sow       look again for the client's SOW in what Kaizen reads (Drive, Gmail, documents) and read it
+//   draft_sow_requests   draft this SOW month's requests now (copy and all) for the client's Email Strategist
+// The request form: open_screen place 'new email request'; the tab: the client page, Email, Allotment and SOW.
+
+const emailAllotment: AiTool = {
+  name: "email_allotment",
+  description:
+    "A client's email allotment this billing cycle: campaigns (email and SMS sends) and flows (each flow request counts once, whatever its messages), used (asked this cycle plus anything still in motion) against the cap, what's in progress, where the cap comes from (their Scope of Work's month during onboarding, a month set by hand, or their email package), and their SOW with its month-by-month scope. Without a client: every email client grouped behind pace, on pace, over, or with no allotment set. Use it before planning email requests, and when asked what a client has left. To make a request: open_screen place 'new email request'.",
+  input_schema: { type: "object", properties: { client: { type: "string", description: "A client name; leave out for every email client" } }, additionalProperties: false },
+  lines: ["email"],
+  run: async (user: Staff, input) => {
+    const db = await createClient();
+    const { emailAllotments } = await import("@/lib/email-request");
+    if (str(input.client)) {
+      const c = await clientNamed(db, input.client);
+      const [all, { data: sow }, { data: months }] = await Promise.all([
+        emailAllotments(db, [c.id]),
+        db.from("client_sows").select("name, url, source, found_in, scope, status, created_at").eq("client_id", c.id).eq("line", "email").neq("status", "replaced").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+        db.from("email_scope_months").select("month, campaigns, flows, label, notes, source, drafted_at").eq("client_id", c.id).order("month").limit(24),
+      ]);
+      const a = all[c.id] ?? null;
+      return {
+        ok: true,
+        client: c.name,
+        allotment: a ? { line: emailAllotmentLine(a) ?? "No allotment set", campaigns: { cap: a.campaigns, used: a.campaignsUsed, inProgress: a.campaignsProgress }, flows: { cap: a.flows, used: a.flowsUsed, inProgress: a.flowsProgress }, from: a.source, label: a.label, cycle: a.cycle, pace: emailPace(a).group } : null,
+        sow: sow ? { name: sow.name, url: sow.url, how: sow.source === "upload" ? "uploaded" : `found in ${sow.found_in}`, summary: (sow.scope as { summary?: string } | null)?.summary ?? null, status: sow.status, at: String(sow.created_at).slice(0, 10) } : null,
+        months: (months ?? []).map((m) => ({ month: String(m.month).slice(0, 7), campaigns: m.campaigns, flows: m.flows, label: m.label, notes: m.notes, from: m.source, drafted: Boolean(m.drafted_at) })),
+        newRequest: `/board/email/new?client=${c.slug}`,
+        clientPage: `/clients/${c.slug}`,
+      };
+    }
+    const all = await emailAllotments(db);
+    const { data: names } = await db.from("clients").select("id, name").in("id", Object.keys(all));
+    const name = new Map((names ?? []).map((n) => [n.id as string, n.name as string]));
+    const groups: Record<string, { client: string; line: string }[]> = { over: [], behind: [], pace: [], none: [] };
+    for (const [id, a] of Object.entries(all)) {
+      const line = emailAllotmentLine(a);
+      if (!line && !a.campaignsUsed && !a.flowsUsed) continue;
+      groups[emailPace(a).group].push({ client: name.get(id) ?? id, line: line ?? `No allotment set (${a.campaignsUsed} campaigns, ${a.flowsUsed} flows asked)` });
+    }
+    return { ok: true, ...groups };
+  },
+};
+
+const findSow: AiTool = {
+  name: "find_email_sow",
+  description: "Look again for a client's Scope of Work in what Kaizen reads (their Drive, Gmail, their documents, a SOW drawn in Kaizen OS) and read its email scope month by month as their allotment. When nothing is found, say they can upload it on the client page (Email, Allotment and SOW).",
+  input_schema: { type: "object", properties: { client: { type: "string" } }, required: ["client"], additionalProperties: false },
+  lines: ["email"],
+  run: async (user: Staff, input) => {
+    if (!seesEmailBoard(user) && !user.isLead) return { ok: false, error: "The email team and the executives manage the email scope." };
+    const db = await createClient();
+    const c = await clientNamed(db, input.client);
+    const admin = createAdminClient();
+    const { findSow, saveSow } = await import("@/lib/email-sow");
+    const s = await findSow(admin, c.id);
+    if (!s) return { ok: true, found: false, say: `No SOW for ${c.name} in their Drive, emails or documents yet. Upload it on the client page: Email, Allotment and SOW.`, page: `/clients/${c.slug}` };
+    const r = await saveSow(admin, c.id, s, user.id);
+    return { ok: true, found: true, name: s.name, scope: r.scope, note: r.error ?? null };
+  },
+};
+
+const draftSow: AiTool = {
+  name: "draft_sow_requests",
+  description: "Draft this SOW month's email requests now for a client (campaigns batched up to 5 per copy doc, each flow its own, copy written), for their Email Strategist to review on the request form. Only for a client whose current month comes from their SOW. Say what you'll draft and ask first.",
+  input_schema: { type: "object", properties: { client: { type: "string" } }, required: ["client"], additionalProperties: false },
+  lines: ["email"],
+  run: async (user: Staff, input) => {
+    if (!seesEmailBoard(user) && !user.isLead) return { ok: false, error: "The email team and the executives draft email requests." };
+    const db = await createClient();
+    const c = await clientNamed(db, input.client);
+    const { draftScopeMonth } = await import("@/lib/email-sow");
+    const r = await draftScopeMonth(createAdminClient(), c.id);
+    return r.drafted ? { ok: true, drafted: r.drafted, review: `/board/email/new?client=${c.slug}` } : { ok: false, error: r.reason ?? "Nothing to draft." };
+  },
+};
+
+export const tools: AiTool[] = [emailAllotment, findSow, draftSow];

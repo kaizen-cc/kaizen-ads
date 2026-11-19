@@ -97,6 +97,7 @@ function due(step: string | null) {
   if (step === "asana") return true; // every 5 minutes (vercel.json), so the mirror keeps up with Asana
   if (step === "sheet") return [12, 17].includes(hour);
   if (step === "docs") return true; // every 30 minutes (vercel.json)
+  if (step === "email_sow") return hour >= 6 && hour <= 21; // hourly (vercel.json): email clients' SOWs found and read, the SOW month's requests drafted
   if (step === "loom") return true; // every 15 minutes (vercel.json): the Loom queue, shared folders daily, the senior buyer's teachings consolidated
   if (step === "remind") return !["Sat", "Sun"].includes(weekday) && [11, 15].includes(hour);
   if (step === "notify") return true; // every 10 minutes (vercel.json): critical notifications still unread go out by email
@@ -306,6 +307,12 @@ export async function GET(request: Request) {
       // Contradictions nobody was told about yet: the bell of everyone who rules on them
       const told = await (await import("@/lib/insight-conflicts")).notifyContradictions(admin).catch((e) => String(e));
       return Response.json({ folders, atlassian, tokenExpiry, queue, attribution, insights, prospects, suggested, thumbs, told });
+    }
+    if (step === "email_sow") {
+      const { aiEnabled } = await import("@/lib/ai");
+      if (!aiEnabled()) return Response.json({ skipped: "The AI isn't connected" });
+      const { sowPass } = await import("@/lib/email-sow");
+      return Response.json(await sowPass(admin, Date.now() + 600_000));
     }
     if (step === "docs") {
       const { watchDocs } = await import("@/lib/context/docs");

@@ -135,6 +135,31 @@ export function copyLines(c: CopyContent): CopyLine[] {
   return out;
 }
 
+/** The copy with one line's words replaced (by its anchor, as copyLines names it); null when no such line */
+export function setCopyLine(c: CopyContent, anchor: string, text: string): CopyContent | null {
+  const m = anchor.match(/^e(\d+)\.(subject|preview|cta|s(\d+)\.(heading|body)|d(\d+))$/);
+  const i = m ? Number(m[1]) : -1;
+  const e = c.emails[i];
+  if (!m || !e) return null;
+  const t = text.replace(/\r\n/g, "\n").trim().slice(0, 4000);
+  const next: CopyEmail = { ...e, sections: e.sections.map((s) => ({ ...s })), designNotes: [...e.designNotes], cta: e.cta ? { ...e.cta } : null };
+  if (m[2] === "subject") next.subject = t;
+  else if (m[2] === "preview") next.preview = t;
+  else if (m[2] === "cta") {
+    if (!next.cta) return null;
+    next.cta.label = t;
+  } else if (m[3] != null) {
+    const s = next.sections[Number(m[3])];
+    if (!s) return null;
+    s[m[4] as "heading" | "body"] = t;
+  } else {
+    const j = Number(m[5]);
+    if (j >= next.designNotes.length) return null;
+    next.designNotes[j] = t;
+  }
+  return { ...c, emails: c.emails.map((x, k) => (k === i ? next : x)) };
+}
+
 /** The anchors whose words changed from one version to the next (new lines count as changed) */
 export function changedLines(before: CopyContent | null, after: CopyContent): string[] {
   if (!before) return [];

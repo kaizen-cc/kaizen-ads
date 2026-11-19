@@ -85,8 +85,11 @@ export async function freshContext(admin: Admin, cfg: LineConfig, clientId: stri
     // The line's KPI board as the board shows it (the email score with deliverability, pace, RPR, rates, the cycle, segments)
     cfg.line === "email" || cfg.line === "social" ? boardFor(admin, cfg.line, clientId) : Promise.resolve(null),
   ]);
+  // Email: what the allotment leaves this cycle (the SOW's month during onboarding, else the package), so the plan fits it
+  const allot = cfg.line === "email" ? await emailAllotmentFor(admin, clientId).catch(() => null) : null;
   return {
     kpi_board: board,
+    ...(allot ? { email_allotment: allot } : {}),
     account: brief?.text?.slice(0, 14000) ?? null,
     promised_on_calls: (promises.data ?? []).map((p) => ({ kind: p.kind, what: p.what, due: String(p.due_at ?? "").slice(0, 10), status: p.status })),
     open_on_the_board: (tickets.data ?? []).map((t) => ({ number: t.number, kind: t.kind, title: t.title, stage: t.stage, due: t.due_on })),
@@ -94,6 +97,16 @@ export async function freshContext(admin: Admin, cfg: LineConfig, clientId: stri
     client_memory: (notes.data ?? []).map((n) => ({ kind: n.kind, body: String(n.body ?? "").slice(0, 600), at: String(n.dated ?? n.created_at ?? "").slice(0, 10) })),
     also_read: cfg.context,
   };
+}
+
+/** The client's email allotment this cycle, in words, with the SOW month's notes */
+async function emailAllotmentFor(admin: Admin, clientId: string) {
+  const [{ emailAllotments }, { emailAllotmentLine }] = await Promise.all([import("@/lib/email-request"), import("@/lib/email-allotment-core")]);
+  const a = (await emailAllotments(admin, [clientId]))[clientId];
+  if (!a) return null;
+  const month = a.cycle ? `${a.cycle.start.slice(0, 7)}-01` : null;
+  const { data: m } = month ? await admin.from("email_scope_months").select("label, notes").eq("client_id", clientId).eq("month", month).maybeSingle() : { data: null };
+  return { this_cycle: emailAllotmentLine(a) ?? "No allotment set", from: a.source, label: a.label, sow_month_notes: (m?.notes as string | null) ?? null, rule: "A flow counts once; a batch counts each campaign; delivered and in-motion requests both count." };
 }
 
 /** The KPI board's view of the client (read with the server's rights, as the lead's own tools already reach this client) */

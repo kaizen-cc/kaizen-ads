@@ -95,14 +95,14 @@ export function widenScope(evidence: ClientPlace[], proposed: LearningScope, kin
 }
 
 /**
- * How far a brief correction reaches the moment it's classified. A correction about the craft of writing a brief (a
+ * How far a brief correction (or a strategist's edit or comment on request copy) reaches the moment it's classified. A correction about the craft of writing a brief (a
  * hook answered late, versions that don't match the body, an unflagged claim, a generic concept) is a lesson for the
  * brief writer on every client from the start, so the next brief doesn't need the same fix; anything about one
  * client's brand, offer or deal stays with that client, and every other kind of pushback waits for widenScope's
  * evidence. Only a confident, reusable lesson the classifier itself proposed for everyone.
  */
 export function immediateScope(source: string, kind: LearningKind, proposed: LearningScope, confidence: number): LearningScope {
-  if (source !== "brief_corrections" || kind !== "lesson") return "client";
+  if ((source !== "brief_corrections" && source !== "copy_feedback") || kind !== "lesson") return "client";
   return proposed === "everyone" && confidence >= 0.7 ? "everyone" : "client";
 }
 

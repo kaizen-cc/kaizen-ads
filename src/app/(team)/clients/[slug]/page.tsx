@@ -36,6 +36,7 @@ import { clientPerms } from "@/lib/chat-permissions";
 import { permsOn } from "@/lib/chat-permissions-server";
 import type { AuditTarget } from "./client-chat";
 import { EmailOpsPanel } from "./email-ops-panel";
+import { EmailScopePanel } from "./email-scope-panel";
 import { clientReadiness } from "@/lib/readiness";
 import { loadCampaigns } from "@/lib/client-campaigns";
 import { tiktokConfigured } from "@/lib/tiktok/core";
@@ -531,6 +532,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       tiktok={tiktokOn ? { data: tiktok, separate: tiktokSeparate } : null}
       klaviyo={klaviyo}
       emailOps={klaviyo?.conn && klaviyo.data && acts.includes("email") ? <EmailOpsPanel clientId={client.id} /> : null}
+      emailScope={acts.includes("email") && !channel ? <EmailScopePanel clientId={client.id} /> : null}
       social={social}
       googleSync={googleSync}
       docs={docs}

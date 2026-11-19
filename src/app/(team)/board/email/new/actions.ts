@@ -1,156 +1,117 @@
 "use server";
 
-import { after } from "next/server";
-import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
 import { seesEmailBoard } from "@/lib/roles";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { MAX_MESSAGES, ownerFor, sizeProblem, type EmailKind, type EmailPriority, type MessageChannel } from "@/lib/email-board-core";
+import type { EmailKind, Plan, StartData } from "@/lib/email-request";
 
-// The email request form: what to suggest for a client (their own campaign ideas, what worked for other clients, the
-// flows every store should have), the AI writing the brief for a flow or a batch within the limits, and making the
-// ticket. AI-written briefs go straight to the board (no second review), and nothing about the client's sign-off or
-// assets ever holds a ticket back.
+// The email request form: where to start for a client (their own ideas, what worked for similar brands, the flows
+// they're missing, copy drafted from their SOW), the Email Strategist's plan, the Copywriter's copy document from it,
+// and what the one batched Asana request will hold. The copy document itself (edits, comments, approval into the
+// client's HQ Drive, the Asana request) has its own actions (src/app/(team)/copy/actions.ts). AI-written requests
+// skip a second review, and nothing about the client's sign-off or assets ever holds one back.
 
-export type Idea = { id: string | null; source: "client" | "elsewhere" | "starter"; title: string; idea: string; why: string | null; sendOn: string | null; kind: EmailKind; subjects: string[] };
+type Fail = { ok: false; error: string };
+const fail = (e: unknown): Fail => ({ ok: false, error: e instanceof Error ? e.message : "Something went wrong." });
+const NOT_EMAIL = "The email request form is for the email team and the executives.";
 
-const STARTERS: Omit<Idea, "id" | "source" | "sendOn" | "subjects">[] = [
-  { kind: "flow", title: "Welcome series", idea: "New subscribers get the brand story, the best sellers and a first-order reason to buy, over three to four emails.", why: "Usually the best earning flow per recipient" },
-  { kind: "flow", title: "Abandoned checkout", idea: "People who started checkout and didn't finish get a reminder, then proof, then a nudge.", why: "Recovers revenue already in the cart" },
-  { kind: "flow", title: "Browse abandonment", idea: "People who looked at a product and left see it again with reasons to buy.", why: "Catches intent before it fades" },
-  { kind: "flow", title: "Post-purchase", idea: "Thanks, how to get the most from the product, a review ask, then the next thing to buy.", why: "Builds the second order" },
-  { kind: "flow", title: "Winback", idea: "Customers who haven't bought in a while get a reason to come back, with a stronger offer at the end.", why: "Wakes up lapsed buyers" },
-  { kind: "batch", title: "Text message flash sale", idea: "A short sale announced by text, with a reminder before it ends.", why: "Texts for a quick, urgent push" },
-];
-
-/** What to suggest for a client: their own ideas first, then what worked for other clients, then the standard flows */
-export async function suggestionsFor(clientId: string): Promise<Idea[]> {
+async function who() {
   const me = await requireStaff();
-  if (!seesEmailBoard(me)) return [];
-  const db = await createClient();
-  const { data: own } = await db.from("email_suggestions").select("id, title, idea, why, send_on, subjects").eq("client_id", clientId).eq("status", "new").order("send_on", { ascending: true, nullsFirst: false }).limit(8);
-  // What worked for other clients (no names: a pattern to borrow, not their campaign)
-  const { data: worked } = adminConfigured() ? await createAdminClient().from("email_suggestions").select("id, title, idea, why, outcome_note").neq("client_id", clientId).eq("outcome", "worked").order("outcome_at", { ascending: false }).limit(6) : { data: [] };
-  const { data: existing } = await db.from("email_tickets").select("title").eq("client_id", clientId).is("deleted_at", null).limit(200);
-  const have = new Set((existing ?? []).map((t) => String(t.title).toLowerCase()));
-  return [
-    ...(own ?? []).map((s): Idea => ({ id: s.id as string, source: "client", title: s.title as string, idea: s.idea as string, why: (s.why as string | null) ?? null, sendOn: (s.send_on as string | null) ?? null, kind: "batch", subjects: ((s.subjects ?? []) as string[]).slice(0, 3) })),
-    ...(worked ?? []).map((s): Idea => ({ id: null, source: "elsewhere", title: s.title as string, idea: s.idea as string, why: (s.outcome_note as string | null) ?? (s.why as string | null) ?? null, sendOn: null, kind: "batch", subjects: [] })),
-    ...STARTERS.filter((s) => !have.has(s.title.toLowerCase())).map((s): Idea => ({ ...s, id: null, source: "starter", sendOn: null, subjects: [] })),
-  ];
+  if (!seesEmailBoard(me) || !adminConfigured()) throw new Error(NOT_EMAIL);
+  return { me: { id: me.id, fullName: me.fullName, email: me.email ?? null }, db: await createClient(), admin: createAdminClient() };
 }
 
-export type BriefDraft = {
-  title: string;
-  kind: EmailKind;
-  goal: string;
-  trigger: string;
-  brief: string;
-  messages: { channel: MessageChannel; name: string; sendOn: string | null; delayHours: number | null }[];
-};
+/** Can this person see the client? (read through their own session) */
+async function client(db: Awaited<ReturnType<typeof createClient>>, id: string) {
+  const { data } = await db.from("clients").select("id, name").eq("id", id).maybeSingle();
+  if (!data) throw new Error("Pick a client you work on.");
+  return data as { id: string; name: string };
+}
 
-const BRIEF_SCHEMA = {
-  type: "object",
-  properties: {
-    title: { type: "string" },
-    goal: { type: "string" },
-    trigger: { type: "string" },
-    brief: { type: "string" },
-    messages: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: { channel: { type: "string", enum: ["email", "sms"] }, name: { type: "string" }, send_on: { type: "string" }, delay_hours: { type: "integer" } },
-        required: ["channel", "name", "send_on", "delay_hours"],
-        additionalProperties: false,
-      },
-    },
-  },
-  required: ["title", "goal", "trigger", "brief", "messages"],
-  additionalProperties: false,
-};
-
-/** The AI strategist writes the brief for a flow or a batch, inside the limits, from the client's own email results */
-export async function writeEmailBrief(input: { clientId: string; kind: EmailKind; idea: string; count: number | null; dueOn: string | null; texts: boolean }): Promise<{ ok: true; draft: BriefDraft } | { ok: false; error: string }> {
-  const me = await requireStaff();
-  if (!seesEmailBoard(me) || !adminConfigured()) return { ok: false, error: "The email request form is for the email team and the executives." };
-  const db = await createClient();
-  const { data: c } = await db.from("clients").select("id, name").eq("id", input.clientId).maybeSingle();
-  if (!c) return { ok: false, error: "Pick a client you work on." };
-  if (!input.idea.trim()) return { ok: false, error: "Say what it's for, or pick a suggestion." };
-  const admin = createAdminClient();
-  const max = MAX_MESSAGES[input.kind];
-  const count = input.count ? Math.max(1, Math.min(max, input.count)) : null;
+/** Where to start for one client */
+export async function startFor(clientId: string): Promise<{ ok: true; data: StartData } | Fail> {
   try {
-    const { askJson } = await import("@/lib/ai");
-    const { emailBrief, emailDeskBlock } = await import("@/lib/email-ops/chat");
-    const [ctx, account] = await Promise.all([emailBrief(admin, c.id as string), emailDeskBlock(admin, c.id as string).catch(() => "")]);
-    const today = new Date().toISOString().slice(0, 10);
-    const out = await askJson<{ title: string; goal: string; trigger: string; brief: string; messages: { channel: MessageChannel; name: string; send_on: string; delay_hours: number }[] }>({
-      agent: "email_calendar",
-      label: "email board brief",
-      clientId: c.id as string,
-      system: `You are Kaizen Marketing's email strategist writing the brief for one email request: a campaign batch (separate sends, up to ${MAX_MESSAGES.batch}) or a flow (a sequence on a trigger, up to ${MAX_MESSAGES.flow} messages, texts allowed). Build it on what has worked for this client (subject styles, send days, offers) and on the client's calendar and what they said lately. The brief says the goal, who it's for, the offer and the angle, the proof to use, and what each message does, in short plain paragraphs the copywriter and designer work from. Name each message plainly. For a batch give each a send day (YYYY-MM-DD, on or after today and before the due date when there is one) and delay_hours 0; for a flow give the trigger, send_on "" and each message's wait in hours after the one before (the first usually 0). Only use text messages (sms) when asked or when the idea is a text. Refer to people by role, never by name. No em dashes.`,
-      schema: BRIEF_SCHEMA,
-      maxTokens: 6000,
-      prompt: `Client: ${ctx.name}. Today: ${today}.${input.dueOn ? ` Due: ${input.dueOn}.` : ""}\n\n${ctx.text.slice(0, 20000)}\n\n${account.slice(0, 12000)}\n\n<request kind="${input.kind}"${count ? ` messages="${count}"` : ""} texts="${input.texts ? "yes" : "no"}">\n${input.idea.trim().slice(0, 3000)}\n</request>\n\nWrite the brief${count ? ` with exactly ${count} messages` : ` with the number of messages it needs (at most ${max})`}.`,
-    });
-    const messages = out.messages.slice(0, max).map((m, i) => ({
-      channel: (m.channel === "sms" ? "sms" : "email") as MessageChannel,
-      name: m.name.trim().slice(0, 120) || `Message ${i + 1}`,
-      sendOn: input.kind === "batch" && /^\d{4}-\d{2}-\d{2}$/.test(m.send_on) ? m.send_on : null,
-      delayHours: input.kind === "flow" ? Math.max(0, Math.min(24 * 90, Math.round(m.delay_hours || 0))) : null,
-    }));
-    return { ok: true, draft: { title: out.title.slice(0, 200), kind: input.kind, goal: out.goal.slice(0, 600), trigger: input.kind === "flow" ? out.trigger.slice(0, 300) : "", brief: out.brief.slice(0, 12000), messages: messages.length ? messages : [{ channel: "email", name: "Email 1", sendOn: null, delayHours: input.kind === "flow" ? 0 : null }] } };
+    const { db, admin } = await who();
+    await client(db, clientId);
+    const { emailStartData } = await import("@/lib/email-request");
+    return { ok: true, data: await emailStartData(admin, db, clientId) };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "The AI couldn't write the brief." };
+    return fail(e);
   }
 }
 
-/** Make the ticket: it lands in Copy for review with the strategist, and the AI starts writing the copy at once */
-export async function createEmailTicket(input: { clientId: string; draft: BriefDraft; priority: EmailPriority; dueOn: string | null; suggestionId: string | null }): Promise<{ ok: true; number: number } | { ok: false; error: string }> {
-  const me = await requireStaff();
-  if (!seesEmailBoard(me) || !adminConfigured()) return { ok: false, error: "The email request form is for the email team and the executives." };
-  const db = await createClient();
-  const { data: c } = await db.from("clients").select("id").eq("id", input.clientId).maybeSingle();
-  if (!c) return { ok: false, error: "Pick a client you work on." };
-  const d = input.draft;
-  const size = sizeProblem(d.kind, d.messages.length);
-  if (size) return { ok: false, error: size };
-  if (!d.title.trim()) return { ok: false, error: "Give it a title." };
-  const admin = createAdminClient();
-  const { seatsOf, dueFor, logEvent, writeEmailCopy } = await import("@/lib/email-board");
-  const { data: prov } = await admin.from("brevo_connections").select("client_id").eq("client_id", input.clientId).maybeSingle().then((r) => r, () => ({ data: null }));
-  const { data: cio } = prov ? { data: null } : await admin.from("customerio_connections").select("client_id").eq("client_id", input.clientId).maybeSingle().then((r) => r, () => ({ data: null }));
-  const provider = prov ? "brevo" : cio ? "customerio" : "klaviyo";
-  const seats = await seatsOf(admin, input.clientId);
-  const { data: t, error } = await admin
-    .from("email_tickets")
-    .insert({
-      client_id: input.clientId,
-      kind: d.kind,
-      title: d.title.trim().slice(0, 200),
-      brief: d.brief.trim().slice(0, 12000) || null,
-      goal: d.goal.trim().slice(0, 600) || null,
-      trigger: d.kind === "flow" ? d.trigger.trim().slice(0, 300) || null : null,
-      provider,
-      stage: "copy_review",
-      priority: input.priority,
-      assignee_id: ownerFor("copy_review", seats),
-      stage_due_at: await dueFor(admin, "copy_review"),
-      due_on: input.dueOn && /^\d{4}-\d{2}-\d{2}$/.test(input.dueOn) ? input.dueOn : null,
-      copy_status: "writing",
-      suggestion_id: input.suggestionId,
-      created_by: me.id,
-    })
-    .select("id, number")
-    .single();
-  if (error || !t) return { ok: false, error: error?.message ?? "Couldn't make the ticket." };
-  await admin.from("email_messages").insert(d.messages.map((m, i) => ({ ticket_id: t.id, client_id: input.clientId, position: i, channel: m.channel, name: m.name.slice(0, 120), send_on: d.kind === "batch" ? m.sendOn : null, delay_hours: d.kind === "flow" ? (m.delayHours ?? 0) : null })));
-  await logEvent(admin, { ticketId: t.id as string, clientId: input.clientId, kind: "created", actorId: me.id, body: `${d.kind === "flow" ? "Flow" : "Campaign batch"} of ${d.messages.length}.` });
-  if (input.suggestionId) await admin.from("email_suggestions").update({ status: "in_motion", status_by: me.id, status_at: new Date().toISOString() }).eq("id", input.suggestionId).eq("client_id", input.clientId);
-  after(() => writeEmailCopy(createAdminClient(), t.id as string));
-  revalidatePath("/board/email");
-  return { ok: true, number: t.number as number };
+const KINDS: EmailKind[] = ["campaign", "flow", "sms", "sms_flow"];
+const PRIORITIES = ["urgent", "high", "normal", "low"];
+
+/** The Email Strategist plans the emails (one line each), for the person to change before the copy is written */
+export async function planRequest(input: { clientId: string; kind: EmailKind; count: number; idea: string; month: string | null; priority: string }): Promise<{ ok: true; plan: Plan } | Fail> {
+  try {
+    const { db, admin } = await who();
+    await client(db, input.clientId);
+    if (!KINDS.includes(input.kind)) return { ok: false, error: "Pick campaigns, a flow or texts." };
+    const max = input.kind === "flow" || input.kind === "sms_flow" ? 6 : 5;
+    const count = Math.max(1, Math.min(max, Math.round(input.count) || 1));
+    const { planEmails } = await import("@/lib/email-request");
+    return { ok: true, plan: await planEmails(admin, input.clientId, { kind: input.kind, count, idea: input.idea, month: input.month, priority: PRIORITIES.includes(input.priority) ? input.priority : "normal" }) };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** The Copywriter writes the copy document from the agreed plan (or writes it again into the same document) */
+export async function writeCopy(input: { clientId: string; kind: EmailKind; plan: Plan; priority: string; month: string | null; suggestionId: string | null; docId: string | null }): Promise<{ ok: true; docId: string } | Fail> {
+  try {
+    const { me, db, admin } = await who();
+    await client(db, input.clientId);
+    if (!input.plan.items.length) return { ok: false, error: "The plan needs at least one email." };
+    const { writeRequestCopy } = await import("@/lib/email-request");
+    const doc = await writeRequestCopy(admin, db, me, { clientId: input.clientId, kind: input.kind, plan: input.plan, priority: PRIORITIES.includes(input.priority) ? input.priority : "normal", month: input.month, docId: input.docId });
+    if (input.suggestionId) await admin.from("email_suggestions").update({ status: "in_motion", status_by: me.id, status_at: new Date().toISOString() }).eq("id", input.suggestionId).eq("client_id", input.clientId);
+    return { ok: true, docId: doc.id };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export type SendPreview = { name: string; project: string; column: string; fields: { name: string; value: string }[]; follower: string | null; folder: string; emails: number; counts: string };
+
+/** What the Asana request will hold, before it's made: its name, column, every field, the strategist following */
+export async function sendPreview(docId: string): Promise<{ ok: true; preview: SendPreview } | Fail> {
+  try {
+    const { db, admin } = await who();
+    const { loadCopyDoc, clientFacts } = await import("@/lib/copy-docs/server");
+    const d = await loadCopyDoc(db, docId);
+    if (!d?.clientId) return { ok: false, error: "That copy isn't one you can request." };
+    const [{ EMAIL_LINE }, { kindOf }, { purposeText }, { unitsOfRequest }] = await Promise.all([import("@/lib/deliverables/lines/email"), import("@/lib/deliverables/engine"), import("@/lib/copy-docs/core"), import("@/lib/email-allotment-core")]);
+    const facts = await clientFacts(admin, d.clientId, "email");
+    const kind = kindOf(EMAIL_LINE, d.content.kind) ?? EMAIL_LINE.kinds[0];
+    const pr = String(d.origin?.priority ?? "normal");
+    const input = {
+      client: { name: facts.name, kaizenId: facts.kaizenId, website: facts.website, hqUrl: facts.hqUrl, figma: facts.figma, platform: facts.platform },
+      kind,
+      shortName: d.content.shortName || d.content.title,
+      count: d.content.emails.length,
+      docUrl: d.docUrl ?? "(the Google Doc, made when you approve)",
+      purpose: purposeText(d.content),
+      urgency: (["urgent", "high", "normal", "low"].includes(pr) ? pr : "normal") as "urgent" | "high" | "normal" | "low",
+    };
+    const { data: seat } = await admin.from("client_assignments").select("profiles(full_name)").eq("client_id", d.clientId).eq("role", "email_strategist").order("is_primary", { ascending: false }).limit(1).maybeSingle();
+    const units = unitsOfRequest(d.content.kind, d.content.emails.length);
+    return {
+      ok: true,
+      preview: {
+        name: EMAIL_LINE.asana.taskName(input),
+        project: "Email Marketing",
+        column: EMAIL_LINE.asana.section,
+        fields: EMAIL_LINE.asana.fields(input).map((f) => ({ name: f.name, value: f.value })),
+        follower: (seat?.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+        folder: `Clients › ${facts.kaizenId ?? "ID"}-${facts.name} › ${facts.name}-Headquarters › Email Marketing`,
+        emails: d.content.emails.length,
+        counts: d.content.kind === "flow" ? `1 flow (${d.content.emails.length} messages)` : `${units} ${d.content.kind === "sms" ? "text" : "campaign"}${units === 1 ? "" : "s"}`,
+      },
+    };
+  } catch (e) {
+    return fail(e);
+  }
 }

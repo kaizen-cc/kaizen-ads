@@ -8,13 +8,13 @@ import { immediateScope, learnedBlock, pickWinner, rankLearnings, widenScope, ty
 // conditional learning (what holds, under which condition, for whom), consolidated nightly (duplicates merged,
 // contradictions settled or put to an exec, stale ones retired), and every call reads only the few that fit it.
 
-export type LearningSource = "creative_review_disagreements" | "audit_rebuttals" | "copy_rule_overrides" | "audit_item_messages" | "brief_corrections";
+export type LearningSource = "creative_review_disagreements" | "audit_rebuttals" | "copy_rule_overrides" | "audit_item_messages" | "brief_corrections" | "copy_feedback";
 
 /**
  * The agent that learns from each kind of pushback, unless the caller names it (a Google audit's rebuttal teaches the
  * Google auditor; a lesson taught in the Why chat on a Google idea plan teaches the Google launcher)
  */
-export const SOURCE_AGENT: Record<LearningSource, AgentKey> = { creative_review_disagreements: "creativereview", audit_rebuttals: "auditor", copy_rule_overrides: "copy", audit_item_messages: "google_launcher", brief_corrections: "strategist" };
+export const SOURCE_AGENT: Record<LearningSource, AgentKey> = { creative_review_disagreements: "creativereview", audit_rebuttals: "auditor", copy_rule_overrides: "copy", audit_item_messages: "google_launcher", brief_corrections: "strategist", copy_feedback: "email_copy" };
 
 type Row = {
   id: string;
@@ -125,7 +125,8 @@ Return:
 - kind: "exception" when it's a one-off (this ad, this campaign, a special arrangement, a client's own approval of one thing); "lesson" when it's a reusable way of judging.
 - scope: the widest it could ever reasonably apply to if other clients showed the same: "client" (only this client's brand or deal), "vertical" (their sub-vertical), "model" (their kind of business), "everyone" (any client). Be conservative: most pushback is about the client.
 - confidence: 0 to 1, how clearly the pushback supports the lesson.
-A correction to a creative brief (source brief_corrections) about the craft of a brief (the hook answered late, versions that don't match the body, the strongest visual spent early, a claim not flagged as a blocker, a generic concept that fails the competitor swap test, context dropped in a revision) is a "lesson" with scope "everyone": the brief writer should apply it on every client from the first draft. One about this client's brand, offer, footage or a fact only they know is scope "client".`,
+A correction to a creative brief (source brief_corrections) about the craft of a brief (the hook answered late, versions that don't match the body, the strongest visual spent early, a claim not flagged as a blocker, a generic concept that fails the competitor swap test, context dropped in a revision) is a "lesson" with scope "everyone": the brief writer should apply it on every client from the first draft. One about this client's brand, offer, footage or a fact only they know is scope "client".
+A strategist's edit or comment on email or SMS copy (source copy_feedback) about the craft of the copy (subject line length or style, preview text that repeats the subject, a weak or buried CTA, too long, too salesy, the wrong mix of story and sales, generic lines) is a "lesson" with scope "everyone": the copywriter should apply it on every client. One about this client's voice, offer, products or facts is scope "client".`,
     prompt: `<agent>${row.agent_key}</agent>
 <client>${c?.name ?? "unknown"}${c?.industry_detail ? ` · ${c.industry_detail}` : ""}${v?.name ? ` · sub-vertical: ${v.name}` : ""}${row.model ? ` · kind of business: ${row.model}` : ""}</client>
 <pushback source="${row.source_table}">
@@ -351,7 +352,7 @@ export async function loadLearnings(admin: SupabaseClient, agentKey: string): Pr
   ]);
   const ticket = new Map([...(dis ?? []), ...(ovr ?? [])].map((x) => [x.id as string, (x.requests as unknown as { number: number } | null)?.number ?? null]));
   const slug = new Map((reb ?? []).map((x) => [x.id as string, (x.clients as unknown as { slug: string } | null)?.slug ?? null]));
-  const NAMES: Record<string, string> = { creative_review_disagreements: "Disagreed with a review note", copy_rule_overrides: "Copy flag rebutted or approved past", audit_rebuttals: "Audit finding pushed back on", brief_corrections: "A brief corrected" };
+  const NAMES: Record<string, string> = { creative_review_disagreements: "Disagreed with a review note", copy_rule_overrides: "Copy flag rebutted or approved past", audit_rebuttals: "Audit finding pushed back on", brief_corrections: "A brief corrected", copy_feedback: "Copy edited or commented on" };
   return rows.map((r) => ({
     id: r.id,
     scope: r.scope,

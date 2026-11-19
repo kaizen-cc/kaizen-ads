@@ -1,5 +1,6 @@
 "use server";
 
+import { after } from "next/server";
 import { requireStaff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -28,8 +29,48 @@ export async function copyVersion(id: string): Promise<{ version: number; status
 export async function commentOnLine(id: string, c: { anchor: string; quote: string; text: string }): Promise<{ ok: true; comments: CopyComment[] } | Fail> {
   try {
     const { me, db, admin } = await who();
-    const { addCopyComment } = await import("@/lib/copy-docs/server");
-    return { ok: true, comments: await addCopyComment(admin, db, me, id, c) };
+    const { addCopyComment, keepCopyComment, learnFromCopyFeedback, loadCopyDoc } = await import("@/lib/copy-docs/server");
+    const comments = await addCopyComment(admin, db, me, id, c);
+    // Kept to learn from: the copywriter's lesson for this client, or every client's when it's about the craft
+    const d = await loadCopyDoc(db, id);
+    if (d) {
+      const fb = await keepCopyComment(admin, d, me, c).catch(() => null);
+      if (fb) after(() => learnFromCopyFeedback(createAdminClient(), fb));
+    }
+    return { ok: true, comments };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** The strategist rewrites a line themselves: the next version, and a lesson for the copywriter */
+export async function editLine(id: string, anchor: string, text: string): Promise<{ ok: true; doc: CopyDoc; changed: string[] } | Fail> {
+  try {
+    const { me, db, admin } = await who();
+    const { editCopyLine, latestChanges, learnFromCopyFeedback } = await import("@/lib/copy-docs/server");
+    const r = await editCopyLine(admin, db, me, id, anchor, text);
+    if (r.feedbackId) after(() => learnFromCopyFeedback(createAdminClient(), r.feedbackId!));
+    const { data: run } = await admin.from("deliverable_runs").select("id").eq("doc_id", id).eq("open", true).maybeSingle();
+    if (run) {
+      const { patchRunById } = await import("@/lib/deliverables/server");
+      await patchRunById(admin, run.id as string, { doc: { id, version: r.doc.version } });
+    }
+    return { ok: true, doc: r.doc, changed: latestChanges(r.doc) };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** The copy as it stands (a view that lives inside another page reloads it from here) */
+export async function loadCopy(id: string): Promise<{ ok: true; doc: CopyDoc; changed: string[]; requests: { name: string; url: string }[] } | Fail> {
+  try {
+    const { db } = await who();
+    const { loadCopyDoc, latestChanges } = await import("@/lib/copy-docs/server");
+    const doc = await loadCopyDoc(db, id);
+    if (!doc) return { ok: false, error: "That copy isn't one you can open." };
+    const { data: run } = await db.from("deliverable_runs").select("state").eq("doc_id", id).eq("open", true).maybeSingle();
+    const requests = ((run?.state as { requests?: { name: string; url: string }[] } | null)?.requests ?? []).map((r) => ({ name: r.name, url: r.url }));
+    return { ok: true, doc, changed: latestChanges(doc), requests };
   } catch (e) {
     return fail(e);
   }
@@ -106,7 +147,10 @@ export async function requestCopy(id: string, where: "asana" | "kaizen"): Promis
       runId = made?.id as string;
     }
     const run = { id: runId, state, cfg };
-    const r = await createRequests(admin, db, me, run);
+    // The priority picked on the request form (else worked out from the send date)
+    const pr = String(d.origin?.priority ?? "");
+    const urgency = (["urgent", "high", "normal", "low"] as const).find((u) => u === pr);
+    const r = await createRequests(admin, db, me, run, urgency ? { urgency } : {});
     if (!r.ok) return r;
     await patchRun(admin, run, { requests: r.tasks });
     return { ok: true, tasks: r.tasks.map((t) => ({ name: t.name, url: t.url })), followerMissing: r.followerMissing };
