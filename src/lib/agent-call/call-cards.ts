@@ -63,6 +63,8 @@ export function cardLink(thread: string, c: Card): Omit<CallCard, "id"> {
     return { title: clip(r.title, 120), detail: clip(r.detail, 160), href: l?.href ?? home, external: l?.external ?? false, cta: clip(r.cta, 40) || "Open" };
   }
   if (c.type === "brief") return { title: `Brief: ${clip(r.title, 100)}`, detail: "Review it, then brief it to the board", href: safeAppPath(r.href) ?? home, external: false, cta: "Review the brief" };
+  // A change of who's on a client's seat: on the Handoffs page with every other move (never a Kaizen AI thread)
+  if (c.type === "plan" && r.platform === "team") return { title: `Team change for ${clip(r.client, 60)}`, detail: "Approve it on the Handoffs page", href: "/team/handoffs", external: false, cta: "Open Handoffs" };
   if (c.type === "plan") return { title: `Change plan for ${clip(r.client, 60)}`, detail: "Check the exact changes and confirm there", href: home, external: false, cta: "Review the plan" };
   if (c.type === "launch") return { title: `Launch for ${clip(r.client, 60)}`, detail: "The checklist and questions are on the card", href: home, external: false, cta: "Open the launch" };
   return { title: "From our call", detail: "Saved in Kaizen AI", href: home, external: false, cta: "Open" };

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { AdImg } from "@/components/ad-img";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -370,6 +371,11 @@ export function ChatPlan({ id }: { id: string }) {
             </button>
           )}
         </div>
+      )}
+      {v.platform === "team" && (
+        <Link href="/team/handoffs" className="inline-flex min-h-11 w-fit items-center gap-1 text-[12px] text-ink/55 underline decoration-ink/20 underline-offset-2 transition-colors hover:text-fg md:min-h-0">
+          Every account move is on the Handoffs page
+        </Link>
       )}
     </section>
   );

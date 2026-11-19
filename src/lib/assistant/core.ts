@@ -132,6 +132,8 @@ export const SCREEN_PLACES: Record<string, string> = {
   "overview my work": "/pipeline?tab=work",
   "overview watch": "/pipeline?tab=watch",
   // The account watch, each tab its own address
+  // Accounts moving between people (plans to approve, with the handoffs): execs and line heads
+  handoffs: "/team/handoffs",
   "account watch": "/watch",
   "account watch idle": "/watch",
   "account watch accounts": "/watch?tab=accounts",

@@ -1119,7 +1119,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     {
       name: "plan_ad_changes",
       description:
-        "Plans a change in a client's Meta or Google Ads account (pause or turn on campaigns, ad sets, ads or keywords, budgets, bids, names, links and UTMs, negatives, moving an ad) or a change of the client's media buyer (platform team). The buyer agent reads the live account and shows the exact objects on a plan card; nothing changes until someone allowed confirms on the card. Give the full instruction with every name, number and condition. TikTok changes aren't connected yet: never plan one; say so and point them to TikTok Ads Manager.",
+        "Plans a change in a client's Meta or Google Ads account (pause or turn on campaigns, ad sets, ads or keywords, budgets, bids, names, links and UTMs, negatives, moving an ad) or a change of one client's media buyer (platform team; moving several or all of a person's accounts is plan_account_transfer, where you have it). The buyer agent reads the live account and shows the exact objects on a plan card; nothing changes until someone allowed confirms on the card. Give the full instruction with every name, number and condition. TikTok changes aren't connected yet: never plan one; say so and point them to TikTok Ads Manager.",
       input_schema: { type: "object", properties: { client: CLIENT, platform: { type: "string", enum: ["meta", "google", "team"] }, instruction: { type: "string" } }, required: ["platform", "instruction"], additionalProperties: false },
       status: (input, client) => `Planning the change for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {

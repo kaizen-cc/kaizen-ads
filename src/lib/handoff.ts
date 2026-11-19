@@ -213,6 +213,21 @@ export async function accountBrief(admin: SupabaseClient, clientId: string, buye
   return { name: g.name, text: `${contextBlock(ctx)}\n\n${g.extra}` };
 }
 
+/** The handoff for the buyer taking over a client (also written ahead of a planned move, to read before approving it) */
+export async function handoffDoc(admin: SupabaseClient, clientId: string, toId: string, fromId: string | null): Promise<HandoffDoc> {
+  const b = await accountBrief(admin, clientId, toId);
+  return askJson<HandoffDoc>({
+    agent: "strategist",
+    label: "account handoff",
+    clientId,
+    system: SYSTEM,
+    schema: SCHEMA,
+    maxTokens: 24000,
+    onText: () => {},
+    prompt: `${b.text}\n\nWrite the handoff for the media buyer taking over ${b.name}${fromId ? " from the previous buyer" : ""}.`,
+  });
+}
+
 /** Writes the handoff doc. Safe to run again (a retry, or "Write it again"). */
 export async function writeHandoff(admin: SupabaseClient, id: string) {
   const { data: h } = await admin.from("account_handoffs").select("client_id, to_id, from_id, moved, kind").eq("id", id).single();
@@ -220,17 +235,7 @@ export async function writeHandoff(admin: SupabaseClient, id: string) {
   await admin.from("account_handoffs").update({ status: "writing", error: null }).eq("id", id);
   if (h.kind === "comeback") return writeComeback(admin, id, h.client_id);
   try {
-    const b = await accountBrief(admin, h.client_id, h.to_id);
-    const doc = await askJson<HandoffDoc>({
-      agent: "strategist",
-      label: "account handoff",
-      clientId: h.client_id,
-      system: SYSTEM,
-      schema: SCHEMA,
-      maxTokens: 24000,
-      onText: () => {},
-      prompt: `${b.text}\n\nWrite the handoff for the media buyer taking over ${b.name}${h.from_id ? " from the previous buyer" : ""}.`,
-    });
+    const doc = await handoffDoc(admin, h.client_id, h.to_id, h.from_id);
     await admin.from("account_handoffs").update({ status: "ready", doc, ready_at: new Date().toISOString() }).eq("id", id);
   } catch (e) {
     await admin.from("account_handoffs").update({ status: "failed", error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq("id", id);
