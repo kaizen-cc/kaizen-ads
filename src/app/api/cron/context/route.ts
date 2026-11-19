@@ -115,6 +115,7 @@ function due(step: string | null) {
   if (step === "market") return hour === 8;
   if (step === "creative_drive") return true; // every 10 minutes (vercel.json): ticket creative copied into each client's Drive, retries
   if (step === "bibles") return true; // every 10 minutes (vercel.json): every client gets a Brand Bible, kept current
+  if (step === "slack_seats") return true; // hourly (vercel.json), but runs once a day: everyone on a client's seats in its Slack channels
   if (step === "meta_tokens") return true; // daily (vercel.json): each Business Manager's Meta token checked, execs told when one stops working
   if (step === "connectors") return true; // daily (vercel.json): the MCP registry's remote servers into the connector catalog, offered ones kept current
   if (step === "bible_write") return true; // started by a Bible build once its research is in (?client=<id>)
@@ -157,6 +158,14 @@ export async function GET(request: Request) {
       return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
     }
   }
+  // Execs only, by hand: who's assigned to a client but missing from its Slack channels (a report unless &go=1, which invites them)
+  if (step === "slack_seats" && !cron && adminConfigured()) {
+    try {
+      return Response.json(await (await import("@/lib/slack-seats")).syncSlackSeats(createAdminClient(), { invite: new URL(request.url).searchParams.get("go") === "1" }));
+    } catch (e) {
+      return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
+    }
+  }
   // Execs only, by hand: add the bot to private client channels (dry run unless &go=1)
   if (step === "invite") {
     if (cron) return new Response("Not for the schedule", { status: 400 });
@@ -191,6 +200,14 @@ export async function GET(request: Request) {
       const adPosts = await boosts.syncAdPosts(admin, { budgetMs: 90_000 }).catch((e) => String(e));
       const boostFlags = await boosts.boostAlerts(admin).catch((e) => String(e));
       return Response.json({ ...synced, pace, adPosts, boostFlags });
+    }
+    if (step === "slack_seats") {
+      // Once a day: the hourly call does nothing when the last audit is under 20 hours old (so the first runs soon after a deploy)
+      const { data: last } = await admin.from("slack_seat_audits").select("ran_at").order("ran_at", { ascending: false }).limit(1).maybeSingle();
+      if (last && Date.now() - Date.parse(last.ran_at as string) < 20 * 3_600_000) return Response.json({ skipped: "audited in the last 20 hours" });
+      const { slackConfigured } = await import("@/lib/context/slack");
+      if (!slackConfigured()) return Response.json({ skipped: "Slack isn't connected" });
+      return Response.json(await (await import("@/lib/slack-seats")).syncSlackSeats(admin));
     }
     if (step === "meta_tokens") return Response.json(await (await import("@/lib/meta-tokens")).checkAllBusinessTokens(admin));
     if (step === "connectors") return Response.json(await (await import("@/lib/connectors/registry-sync")).syncConnectorRegistry(admin));

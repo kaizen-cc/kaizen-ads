@@ -5,13 +5,16 @@ import { requireStaff } from "@/lib/auth";
 import type { ChatTurn, ComebackDoc, HandoffDoc } from "@/lib/handoff";
 import { createClient } from "@/lib/supabase/server";
 import { AccountChat, HandoffBar, Seen, Writing } from "./handoff-parts";
+import { HandOverChecklist } from "./handover-checklist";
+import { movedLine, seatJob } from "@/lib/handoff-roles";
 
 export const metadata: Metadata = { title: "Account handoff", robots: { index: false, follow: false } };
 export const maxDuration = 300;
 
 /**
- * A new media buyer's handoff for an account: everything about the client up to now, laid out to read here or save
- * as a PDF, with a chat beside it to ask the system anything the handoff doesn't answer.
+ * The handoff for whoever takes over a seat on an account (any seat): everything outstanding, what the client has said,
+ * what to tell them, and the outgoing person's checklist, laid out to read here or save as a PDF, with a chat beside it
+ * to ask the system anything the handoff doesn't answer.
  */
 export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">) {
   const { id } = await params;
@@ -20,7 +23,7 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
   const { data: h } = await db
     .from("account_handoffs")
     .select(
-      "id, kind, status, doc, error, chat, created_at, to_id, seen_at, via, moved, clients(name, slug), to:profiles!account_handoffs_to_id_fkey(full_name), from:profiles!account_handoffs_from_id_fkey(full_name)",
+      "id, kind, status, doc, error, chat, created_at, to_id, from_id, role, checklist, seen_at, via, moved, clients(name, slug), to:profiles!account_handoffs_to_id_fkey(full_name), from:profiles!account_handoffs_from_id_fkey(full_name)",
     )
     .eq("id", id)
     .maybeSingle();
@@ -31,13 +34,14 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
   const comeback = h.kind === "comeback";
   const d = comeback ? null : (h.doc as HandoffDoc | null);
   const cb = comeback ? (h.doc as ComebackDoc | null) : null;
-  const moved = (h.moved ?? {}) as { kpis?: number; tickets?: number; held?: number; sprints?: number };
+  const role = (h.role as string | null) ?? "meta_buyer";
+  const seat = seatJob(role).label;
+  const moved = movedLine(role, (h.moved ?? {}) as Record<string, number>);
   const date = new Date(h.created_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/New_York" });
-  const movedLine = [
-    moved.kpis ? `${moved.kpis} KPI${moved.kpis === 1 ? "" : "s"}` : null,
-    moved.tickets ? `${moved.tickets} open ticket${moved.tickets === 1 ? "" : "s"}` : null,
-    moved.sprints ? "the optimization sprint" : null,
-  ].filter(Boolean);
+  const canTick = me.id === h.from_id || me.isExec || me.isLead || String(me.role).startsWith("head_of_");
+  // Parts are numbered in the order they show (some only show when there's something in them)
+  let part = 0;
+  const nx = () => String(++part);
 
   return (
     <div className="min-h-screen bg-[#f4f2f1] px-4 py-8 pt-[max(2rem,env(safe-area-inset-top))] text-[#17131a] print:bg-white print:p-0 [color-scheme:light]">
@@ -49,7 +53,7 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
           <header className="grid gap-6 border-b border-[#e7e2e3] pb-8">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
               <Image src="/kaizen-logo.png" alt="Kaizen Marketing" width={120} height={28} className="h-7 w-auto" />
-              <p className="text-xs uppercase tracking-[0.18em] text-[#8a8189]">{comeback ? "Back live" : "Account handoff"} · {date}</p>
+              <p className="text-xs uppercase tracking-[0.18em] text-[#8a8189]">{comeback ? "Back live" : `Handoff · ${seat}`} · {date}</p>
             </div>
             <div className="grid gap-2">
               <p className="text-sm font-medium text-[#c8102e]">
@@ -57,7 +61,7 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
               </p>
               <h1 className="text-[24px] font-semibold leading-[1.2] tracking-tight sm:text-[28px]">{(cb ?? d)?.headline ?? (comeback ? `${client.name} is back` : `${client.name} is yours now`)}</h1>
               {(cb ?? d) && <p className="max-w-[62ch] text-[15px] leading-relaxed text-[#4d464f]">{(cb ?? d)!.summary}</p>}
-              {movedLine.length > 0 && <p className="text-xs text-[#8a8189]">Moved to {to}: {movedLine.join(", ")}.</p>}
+              {moved.length > 0 && <p className="text-xs text-[#8a8189]">Moved to {to}: {moved.join(", ")}.</p>}
             </div>
           </header>
 
@@ -71,14 +75,44 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
             <Writing id={id} status={h.status} error={h.error} />
           ) : (
             <>
-              <Part n="1" title="Dos and don'ts">
+              {(d.outstanding ?? []).length > 0 && (
+                <Part n={nx()} title="Outstanding: pick these up">
+                  <ul className="grid gap-2">
+                    {(d.outstanding ?? []).map((o, i) => (
+                      <li key={i} className="grid gap-1 rounded-[8px] border border-[#e7e2e3] px-4 py-3 break-inside-avoid">
+                        <p className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                          <span className="text-[14px] font-medium">{o.what}</span>
+                          <span className="text-[11px] uppercase tracking-[0.12em] text-[#8a8189]">
+                            {o.due} · {o.where}
+                          </span>
+                        </p>
+                        <p className="text-[13px] leading-relaxed text-[#4d464f]">{o.action}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </Part>
+              )}
+
+              {(d.tellClient ?? []).length > 0 && (
+                <Part n={nx()} title="Tell the client">
+                  <Bullets items={d.tellClient ?? []} />
+                </Part>
+              )}
+
+              {(d.handOver ?? []).length > 0 && h.from_id && (
+                <Part n={nx()} title={`Before ${from ?? "the previous person"} steps away`}>
+                  <HandOverChecklist id={id} items={d.handOver ?? []} done={((h.checklist ?? []) as number[]).map(Number)} canTick={canTick} />
+                </Part>
+              )}
+
+              <Part n={nx()} title="Dos and don'ts">
                 <div className="grid gap-4 sm:grid-cols-2 print:grid-cols-2">
                   <Rules tone="do" title="Do" items={d.dos} />
                   <Rules tone="dont" title="Don't" items={d.donts} />
                 </div>
               </Part>
 
-              <Part n="2" title="What's in motion">
+              <Part n={nx()} title="What's in motion">
                 {d.inMotion.length ? (
                   <ul className="grid gap-2">
                     {d.inMotion.map((m, i) => (
@@ -93,7 +127,7 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
                 )}
               </Part>
 
-              <Part n="3" title="What the client has told us (last 45 days)">
+              <Part n={nx()} title="What the client has told us (last 45 days)">
                 {d.clientSaid.length ? (
                   <ol className="grid gap-3 border-l border-[#e7e2e3] pl-5">
                     {d.clientSaid.map((c, i) => (
@@ -111,11 +145,11 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
                 )}
               </Part>
 
-              <Part n="4" title="What we've learned">
+              <Part n={nx()} title="What we've learned">
                 <Bullets items={d.learnings} empty="No learnings recorded yet." />
               </Part>
 
-              <Part n="5" title="Brand and go-to-market">
+              <Part n={nx()} title="Brand and go-to-market">
                 <div className="grid gap-4 sm:grid-cols-2 print:grid-cols-2">
                   <Card title="Brand">
                     {d.brand.voice || d.brand.audience ? (
@@ -135,12 +169,12 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
                 </div>
               </Part>
 
-              <Part n="6" title="Keep in mind">
+              <Part n={nx()} title="Keep in mind">
                 <Bullets items={d.keepInMind} empty="Nothing unusual." />
               </Part>
 
               {d.similar.length > 0 && (
-                <Part n="7" title="Like accounts you already run">
+                <Part n={nx()} title="Like accounts you already run">
                   <div className="grid gap-3 sm:grid-cols-2 print:grid-cols-2">
                     {d.similar.map((s, i) => (
                       <Card key={i} title={s.client}>
@@ -152,7 +186,7 @@ export default async function HandoffPage({ params }: PageProps<"/handoff/[id]">
                 </Part>
               )}
 
-              <Part n={d.similar.length ? "8" : "7"} title="Your first week">
+              <Part n={nx()} title="Your first week">
                 <ol className="grid gap-3">
                   {d.firstWeek.map((f, i) => (
                     <li key={i} className="grid grid-cols-[28px_minmax(0,1fr)] gap-3 break-inside-avoid">

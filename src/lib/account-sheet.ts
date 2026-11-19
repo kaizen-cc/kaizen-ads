@@ -140,11 +140,11 @@ export async function syncAccountSheet(admin: SupabaseClient) {
       const res = await setPrimarySeat(admin, clientId, slot, buyer.id);
       if (!res.ok) return;
       out.buyers++;
-      if (slot === "meta_buyer") {
-        const { handOff } = await import("@/lib/handoff");
-        const id = await handOff(admin, clientId, res.from, buyer.id, null, "sheet");
-        if (id) handoffs.push(id);
-      }
+      // Every buyer seat gets the handoff (a Google or TikTok buyer only when someone held it before), and Slack follows
+      const { handOff } = await import("@/lib/handoff");
+      const id = await handOff(admin, clientId, res.from, buyer.id, null, "sheet", slot);
+      if (id) handoffs.push(id);
+      await (await import("@/lib/slack-seats")).seatSlackChange(admin, clientId, buyer.id, res.from).catch(() => null);
     };
 
     for (const { r, platform } of rows) {

@@ -383,10 +383,11 @@ async function assignBuyer(admin: SupabaseClient, clientId: string, op: Extract<
   const { setPrimarySeat } = await import("@/lib/buyer-seats");
   const res = await setPrimarySeat(admin, clientId, op.slot, op.toId);
   if (!res.ok) throw new Error(res.error);
-  if (op.slot === "meta_buyer" && res.to && res.to !== res.from) {
+  if (res.to && res.to !== res.from) {
     const { handOff, writeHandoff } = await import("@/lib/handoff");
-    const id = await handOff(admin, clientId, res.from, res.to, me.id, "app");
+    const id = await handOff(admin, clientId, res.from, res.to, me.id, "app", op.slot);
     if (id) await writeHandoff(admin, id).catch(() => null);
+    await (await import("@/lib/slack-seats")).seatSlackChange(admin, clientId, res.to, res.from).catch(() => null);
   }
 }
 

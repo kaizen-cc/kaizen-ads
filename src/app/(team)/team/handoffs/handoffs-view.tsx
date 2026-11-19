@@ -38,7 +38,7 @@ export function HandoffsView({ transfers, singles, focus, lines, exec }: { trans
         <h1 className="font-heading text-[28px] leading-tight md:text-[34px]">Handoffs</h1>
         <p className="max-w-2xl text-[14px] leading-relaxed text-muted">
           Accounts moving from one person to another. Read each handoff, change who takes a seat, then approve. Nothing moves until you do.{" "}
-          {exec ? "You can move any seat." : `You move the ${lines.map((l) => LINE[l]).join(" and ")} seats.`} Ask your assistant to plan one: &ldquo;Move all of Matheus&apos;s accounts to Lucas.&rdquo;
+          {exec ? "You can move any seat." : `You move the ${lines.map((l) => LINE[l]).join(" and ")} seats.`} Every seat gets a handoff, and Slack access follows the seat. Ask your assistant to plan one: &ldquo;Move all of Matheus&apos;s accounts to Lucas.&rdquo;
         </p>
       </header>
 
@@ -217,6 +217,12 @@ function MoveRow({ m, busyAll }: { m: MoveView; busyAll: boolean }) {
           </Link>
         )}
       </div>
+      {m.status === "applied" && (m.moved.length > 0 || m.slack) && (
+        <p className="text-[12.5px] leading-relaxed text-muted md:col-span-3">
+          {m.moved.length > 0 && <>Moved to {m.to}: {m.moved.join(", ")}. </>}
+          {m.slack && <>Slack: {slackLine(m.slack)}.</>}
+        </p>
+      )}
       {error && (
         <p role="alert" className="text-[12.5px] text-bad md:col-span-3">
           {error}
@@ -224,6 +230,11 @@ function MoveRow({ m, busyAll }: { m: MoveView; busyAll: boolean }) {
       )}
     </li>
   );
+}
+
+/** "internal channel added, client channel already in" */
+function slackLine(s: NonNullable<MoveView["slack"]>) {
+  return [s.internal && `internal channel ${s.internal}`, s.external && `client channel ${s.external}`, s.leftExternal && `the previous person ${s.leftExternal}`].filter(Boolean).join(", ");
 }
 
 function DocChip({ m, onRetry }: { m: MoveView; onRetry: () => void }) {
@@ -309,6 +320,24 @@ function DocSheet({ m, onClose }: { m: MoveView; onClose: () => void }) {
                 <p className="font-heading text-[18px] leading-snug">{d.headline}</p>
                 <p className="text-[14.5px] leading-relaxed text-fg/90">{d.summary}</p>
               </div>
+              {(d.outstanding ?? []).length > 0 && (
+                <section className="grid gap-1.5">
+                  <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-faint">Outstanding</h3>
+                  <ul className="grid gap-2">
+                    {(d.outstanding ?? []).map((o, i) => (
+                      <li key={i} className="grid gap-0.5 rounded-[12px] border border-line px-3 py-2.5">
+                        <span className="text-[14px] font-medium text-fg [overflow-wrap:anywhere]">{o.what}</span>
+                        <span className="text-[12px] text-muted [overflow-wrap:anywhere]">
+                          {o.due} · {o.where}
+                        </span>
+                        <span className="text-[13px] leading-relaxed text-fg/85 [overflow-wrap:anywhere]">{o.action}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+              <List title="Tell the client" items={d.tellClient ?? []} />
+              <List title="For the person handing over" items={d.handOver ?? []} />
               <List title="Do" items={d.dos} />
               <List title="Don't" items={d.donts} />
               <List title="In motion" items={(d.inMotion ?? []).map((x) => `${x.what}: ${x.status}`)} />

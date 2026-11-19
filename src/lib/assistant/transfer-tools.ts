@@ -90,7 +90,7 @@ export function transferTools(ctx: AssistantCtx): LoopTool[] {
           planned: true,
           seats: r.moves.map((m) => `${m.client}: ${seatLabel(m.role)}${m.primary ? "" : " (secondary)"} → ${m.to ?? "needs a person"}`),
           needPerson: open.map((m) => `${m.client} (${seatLabel(m.role)})`),
-          note: "The Handoffs page is open with every move; the Meta buyer handoffs are being written now. Nothing moves until they approve there (one by one or Approve all). Say so in a sentence or two; don't read every seat out.",
+          note: "The Handoffs page is open with every move; a handoff for each new person (everything outstanding, what to tell the client, a checklist for whoever hands over) is being written now; on approval the open work moves and Slack access follows the seat. Nothing moves until they approve there (one by one or Approve all). Say so in a sentence or two; don't read every seat out.",
         };
       },
     },

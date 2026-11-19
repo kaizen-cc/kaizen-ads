@@ -11,7 +11,7 @@ import { parseSlackUser, reimportPatch, seedPatch, type ProfileFields, type Slac
 export const AVATAR_BUCKET = "avatars";
 
 /** Their Slack user, found by work email (users.lookupByEmail; the member list when that scope isn't granted) */
-async function findSlackUser(email: string): Promise<SlackPerson | null> {
+export async function findSlackUser(email: string): Promise<SlackPerson | null> {
   try {
     const r = await slack<{ user?: unknown }>("users.lookupByEmail", { email });
     return parseSlackUser(r);

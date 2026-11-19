@@ -43,3 +43,21 @@ export async function markHandoffSeen(id: string) {
   if (!ok || ok.h.to_id !== ok.me.id) return;
   await createAdminClient().from("account_handoffs").update({ seen_at: new Date().toISOString() }).eq("id", id).is("seen_at", null);
 }
+
+/** The person handing over ticks off what they've passed on (they, an executive or a line head) */
+export async function toggleHandOver(id: string, item: number): Promise<Result<{ done: number[] }>> {
+  const ok = await canSee(id);
+  if (!ok) return { ok: false, error: "Handoff not found." };
+  const admin = createAdminClient();
+  const { data } = await admin.from("account_handoffs").select("from_id, checklist").eq("id", id).maybeSingle();
+  if (!data) return { ok: false, error: "Handoff not found." };
+  const me = ok.me;
+  if (data.from_id !== me.id && !me.isExec && !me.isLead && !String(me.role).startsWith("head_of_")) return { ok: false, error: "Only the person handing over ticks these off." };
+  const cur = new Set(((data.checklist ?? []) as unknown[]).map(Number).filter(Number.isInteger));
+  if (cur.has(item)) cur.delete(item);
+  else cur.add(item);
+  const done = [...cur].sort((a, b) => a - b);
+  await admin.from("account_handoffs").update({ checklist: done }).eq("id", id);
+  revalidatePath(`/handoff/${id}`);
+  return { ok: true, done };
+}

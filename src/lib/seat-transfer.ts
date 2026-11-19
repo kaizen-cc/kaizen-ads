@@ -4,6 +4,7 @@ import { setPrimarySeat } from "@/lib/buyer-seats";
 import { servicesOf } from "@/lib/services";
 import { canTake, matchPerson, mayTransferSeat, planMoves, seatLabel, seatLine, type HeldSeat, type Mover, type Person, type PlannedMove, type SeatLine } from "@/lib/seat-transfer-core";
 import type { HandoffDoc } from "@/lib/handoff";
+import { movedLine } from "@/lib/handoff-roles";
 
 // Moving someone's accounts in one plan: find every seat a person holds (that the asker may move), plan each move to
 // the right person for its line, write the handoff ahead for the seats that get one, and apply each move on approval
@@ -77,12 +78,12 @@ export async function planTransfer(
   return { id: t.id as string, moves };
 }
 
-/** The seats that get a handoff written for the new person (the Meta buyer's, as on the client page) */
-const needsDoc = (role: string, primary: boolean, toId: string | null) => role === "meta_buyer" && primary && Boolean(toId);
+/** The seats that get a handoff written for the new person: every seat they take over as its primary */
+const needsDoc = (_role: string, primary: boolean, toId: string | null) => primary && Boolean(toId);
 
 /** Writes the handoffs a plan's moves are waiting for (in the background, after planning or a change of person) */
 export async function writeMoveDocs(admin: SupabaseClient, transferId: string) {
-  const { data } = await admin.from("seat_transfer_moves").select("id, client_id, from_id, to_id").eq("transfer_id", transferId).eq("doc_status", "writing");
+  const { data } = await admin.from("seat_transfer_moves").select("id, client_id, from_id, to_id, role").eq("transfer_id", transferId).eq("doc_status", "writing");
   const { handoffDoc } = await import("@/lib/handoff");
   // A few at a time: a leaving buyer can hold a dozen accounts
   const list = data ?? [];
@@ -90,7 +91,7 @@ export async function writeMoveDocs(admin: SupabaseClient, transferId: string) {
     await Promise.all(
       list.slice(i, i + 3).map(async (m) => {
         try {
-          const doc = await handoffDoc(admin, m.client_id as string, m.to_id as string, (m.from_id as string | null) ?? null);
+          const doc = await handoffDoc(admin, m.client_id as string, m.to_id as string, (m.from_id as string | null) ?? null, m.role as string);
           // Only if the move still goes to the same person (it may have been changed while this was written)
           await admin.from("seat_transfer_moves").update({ doc, doc_status: "ready" }).eq("id", m.id).eq("to_id", m.to_id as string);
         } catch {
@@ -152,12 +153,17 @@ export async function applyMove(admin: SupabaseClient, me: Asker, id: string): P
   if (m.from_id && !rows.some((r) => r.profile_id === m.from_id)) return fail("They're no longer on this seat: it changed since the plan was made.");
   let handoffId: string | null = null;
   let write = false;
+  let moved: Record<string, number> | null = null;
   if (m.primary_seat) {
     const res = await setPrimarySeat(admin, m.client_id, m.role, m.to_id);
     if (!res.ok) return fail(res.error);
-    if (m.role === "meta_buyer" && res.to && res.to !== res.from) {
+    if (res.to && res.to !== res.from) {
       const { handOff } = await import("@/lib/handoff");
-      handoffId = await handOff(admin, m.client_id, res.from, res.to, me.id, "app");
+      handoffId = await handOff(admin, m.client_id, res.from, res.to, me.id, "app", m.role);
+      if (handoffId) {
+        const { data: h } = await admin.from("account_handoffs").select("moved").eq("id", handoffId).maybeSingle();
+        moved = (h?.moved as Record<string, number> | null) ?? null;
+      }
       // The handoff read on the Handoffs page is the one they get; written now when it wasn't ready
       if (handoffId && m.doc && m.doc_status === "ready") await admin.from("account_handoffs").update({ status: "ready", doc: m.doc, ready_at: new Date().toISOString() }).eq("id", handoffId);
       else if (handoffId) write = true;
@@ -177,7 +183,10 @@ export async function applyMove(admin: SupabaseClient, me: Asker, id: string): P
       if (ins.error) return fail(ins.error.message);
     }
   }
-  await admin.from("seat_transfer_moves").update({ status: "applied", applied_by: me.id, applied_at: new Date().toISOString(), handoff_id: handoffId, error: null }).eq("id", id);
+  // Slack follows the seat: into the client's channels; the person leaving out of the client's own when it's their last seat
+  const { seatSlackChange } = await import("@/lib/slack-seats");
+  const slackDone = await seatSlackChange(admin, m.client_id, m.to_id, m.from_id).catch((e) => ({ internal: e instanceof Error ? e.message : String(e) }));
+  await admin.from("seat_transfer_moves").update({ status: "applied", applied_by: me.id, applied_at: new Date().toISOString(), handoff_id: handoffId, error: null, moved, slack: slackDone }).eq("id", id);
   await settle(admin, m.transfer_id);
   return { ok: true, handoffId, writeHandoff: write };
 }
@@ -208,6 +217,9 @@ export type MoveView = {
   handoffId: string | null;
   /** Who can take this seat (for the picker) */
   options: { id: string; name: string }[];
+  /** After the move: the open work that followed it, and what happened in Slack */
+  moved: string[];
+  slack: { internal?: string; external?: string; leftExternal?: string } | null;
   canMove: boolean;
 };
 
@@ -222,7 +234,7 @@ export async function loadTransfers(admin: SupabaseClient, me: Asker, opts: { id
   if (!ids.length) return [];
   const { data: ms } = await admin
     .from("seat_transfer_moves")
-    .select("id, transfer_id, client_id, role, primary_seat, to_id, status, error, doc_status, doc, handoff_id, clients(name, slug), from:profiles!seat_transfer_moves_from_id_fkey(full_name), to:profiles!seat_transfer_moves_to_id_fkey(full_name)")
+    .select("id, transfer_id, client_id, role, primary_seat, to_id, status, error, doc_status, doc, handoff_id, moved, slack, clients(name, slug), from:profiles!seat_transfer_moves_from_id_fkey(full_name), to:profiles!seat_transfer_moves_to_id_fkey(full_name)")
     .in("transfer_id", ids)
     .order("created_at");
   const name = (x: unknown) => (x as { full_name: string } | null)?.full_name ?? null;
@@ -256,6 +268,8 @@ export async function loadTransfers(admin: SupabaseClient, me: Asker, opts: { id
             doc: (m.doc as HandoffDoc | null) ?? null,
             handoffId: (m.handoff_id as string | null) ?? null,
             options: people.filter((p) => canTake(m.role as string, p)).map((p) => ({ id: p.id, name: p.full_name })),
+            moved: movedLine(m.role as string, (m.moved as Record<string, number> | null) ?? {}),
+            slack: (m.slack as MoveView["slack"]) ?? null,
             canMove: true,
           };
         })

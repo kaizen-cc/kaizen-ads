@@ -193,6 +193,10 @@
     {
       "path": "/api/cron/context?step=social_learn",
       "schedule": "47 * * * *"
+    },
+    {
+      "path": "/api/cron/context?step=slack_seats",
+      "schedule": "50 * * * *"
     }
   ]
 }
