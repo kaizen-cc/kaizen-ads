@@ -101,13 +101,14 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
     const allot = (u.images_per_month ?? 0) + (u.videos_per_month ?? 0);
     if (!allot) continue;
     const used = u.images_used + u.videos_used;
-    const covered = (used + (inWorks.get(u.client_id) ?? 0)) / allot;
+    // used already holds everything in the production line (client_allotment_usage counts it once), so nothing on top
+    const covered = used / allot;
     if (elapsed > 0.25 && covered < elapsed - 0.3)
       add(u.client_id, {
         kind: "pacing",
         weight: 2 + (elapsed - covered) * 4,
         line: `${allotmentLine(usageCounts(u)) ?? "Nothing used"} with ${Math.round(elapsed * 100)}% of the month gone`,
-        facts: [`Per pool (never summed): ${allotmentLine(usageCounts(u)) ?? "no allotment set"}`, `${inWorks.get(u.client_id) ?? 0} more already in the works (every version counts, a carousel per slide)`],
+        facts: [`Per pool (never summed): ${allotmentLine(usageCounts(u)) ?? "no allotment set"}`, `${inWorks.get(u.client_id) ?? 0} of those still in production (they count, every version, a carousel per slide)`],
       });
   }
 

@@ -4,9 +4,10 @@
 // How it counts (the same numbers as public.client_allotment_usage, src/lib/allotment.ts):
 // * The cycle is the client's creative billing cycle: it starts on their billing day (from Stripe via Kaizen Track,
 //   src/lib/client-sync.ts) and resets on the same day next month. The view gives it; cycleFor() is the same rule.
-// * Requested this cycle = what the view counts as used (tickets and Asana tasks asked this cycle, every version, a
-//   carousel per slide) plus Asana briefs not started yet (spoken for). Briefs sent clear a gap the moment they're sent.
-// * In motion = on the board or in Asana and not delivered yet, whatever cycle it was asked in.
+// * Requested this cycle = what the view counts as used: everything asked this cycle (delivered or not) plus anything
+//   still in the production line whatever cycle it was asked in (Asana briefs not started yet included), every
+//   version, a carousel per slide, each piece once. Briefs sent clear a gap the moment they're sent.
+// * In motion = on the board or in Asana and not delivered yet, whatever cycle it was asked in (already inside used).
 // * Missing = the cap less what's requested. Nothing in motion = nothing requested and nothing on its way.
 // * Pacing: work spread evenly through the cycle. "Due this week" is what has to be briefed by a week from today to
 //   stay on that even line (all of what's missing in the last week), so the team doesn't make it all in one batch.
@@ -106,13 +107,13 @@ export function poolGap(u: UsageLike, client: { name: string; slug: string }, po
   const cap = whole(pool === "images" ? u.images_per_month : u.videos_per_month);
   if (!cap) return null;
   const used = whole(pool === "images" ? u.images_used : u.videos_used);
-  const waiting = whole(pool === "images" ? u.asana_waiting_images : u.asana_waiting_videos);
   const inMotion = whole(pool === "images" ? u.progress_images : u.progress_videos);
   const cycle = u.period_start && u.period_end ? { start: String(u.period_start).slice(0, 10), end: String(u.period_end).slice(0, 10) } : cycleFor(u.billing_day, today);
   const length = Math.max(1, daysBetween(cycle.start, cycle.end));
   const gone = Math.max(0, Math.min(length, daysBetween(cycle.start, today)));
   const daysLeft = Math.max(0, daysBetween(today, cycle.end));
-  const requested = used + waiting;
+  // Everything in the production line is already in used (the view counts it once), so nothing is added on top
+  const requested = used;
   const missing = Math.max(0, cap - requested);
   const over = Math.max(0, requested - cap);
   const delivered = Math.max(0, used - inMotion);

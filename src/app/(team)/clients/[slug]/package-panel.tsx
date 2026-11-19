@@ -276,7 +276,7 @@ export function PackagePanel({
         )}
         {fromAsana && ((fromAsana.waitingImages ?? 0) > 0 || (fromAsana.waitingVideos ?? 0) > 0) && (
           <p className="-mt-1 text-[11px] text-warn">
-            {both(fromAsana.waitingImages ?? 0, fromAsana.waitingVideos ?? 0)} more briefed in Asana, not started yet: they count once production starts
+            {both(fromAsana.waitingImages ?? 0, fromAsana.waitingVideos ?? 0)} of these briefed in Asana and not started yet: they count from the moment they&apos;re briefed
           </p>
         )}
         {creativeDb && <DbCheck db={creativeDb} imagesUsed={imagesUsed} videosUsed={videosUsed} />}

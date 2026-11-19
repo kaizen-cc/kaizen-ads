@@ -50,17 +50,20 @@ describe("requested and in motion", () => {
     expect(g.missing).toBe(4);
     expect(g.line).toMatch(/^Nothing in motion/);
   });
-  it("briefs sent and Asana briefs not started both count as requested", () => {
-    const g = poolGap(row({ videos_used: 1, asana_waiting_videos: 1, progress_videos: 2 }), client, "videos", "2026-12-03")!;
+  it("briefs sent and Asana briefs not started both count as requested (the view's used holds both, once)", () => {
+    const g = poolGap(row({ videos_used: 2, asana_waiting_videos: 1, progress_videos: 2 }), client, "videos", "2026-12-03")!;
     expect(g.requested).toBe(2);
     expect(g.missing).toBe(2);
     expect(g.line).toBe("2 videos missing · resets in 2 days");
     expect(g.detail).toContain("nothing delivered yet");
   });
   it("in motion from an earlier cycle isn't nothing in motion", () => {
-    const g = poolGap(row({ progress_videos: 3 }), client, "videos", "2026-11-18")!;
+    // Still in the production line from last cycle: it counts against this cycle too
+    const g = poolGap(row({ videos_used: 3, progress_videos: 3 }), client, "videos", "2026-11-18")!;
     expect(g.state).toBe("missing");
     expect(g.inMotion).toBe(3);
+    expect(g.requested).toBe(3);
+    expect(g.missing).toBe(1);
   });
   it("over the allotment is said, not hidden", () => {
     const g = poolGap(row({ images_used: 13 }), client, "images", "2026-11-18")!;

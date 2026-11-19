@@ -10,7 +10,7 @@ export type Allotment = {
   imagesUsed: number;
   videosUsed: number;
   until: string | null;
-  /** Briefed in Asana, production not started: not counted yet, but spoken for */
+  /** Briefed in Asana, production not started: already inside the used counts (anything in the production line counts) */
   waiting?: { images: number; videos: number };
   /** The billing cycle being counted (YYYY-MM-DD; the end is the day it resets) */
   cycle?: { start: string; end: string } | null;
@@ -190,12 +190,12 @@ export function describeAllotment(a: Allotment | null, request?: { images: numbe
       ? `${label}: not set`
       : `${label}: ${cap} per month${cycle}, ${used} used, ${cap - used} left${req !== undefined ? `; this request takes ${req}, leaving ${cap - used - req}` : ""}`;
   const lines = [line("Images and carousels", a.images, a.imagesUsed, request?.images), line("Videos", a.videos, a.videosUsed, request?.videos), `How it counts: ${ALLOTMENT_RULE}`];
-  if (a.waiting) lines.push(`Also briefed in Asana and not started yet (they'll count once production starts): ${a.waiting.images} images, ${a.waiting.videos} videos. Treat them as spoken for.`);
+  if (a.waiting) lines.push(`Of what's used, briefed in Asana and not started yet: ${a.waiting.images} images, ${a.waiting.videos} videos (they count from the moment they're briefed).`);
   const pi = inProgress(a, "images");
   const pv = inProgress(a, "videos");
   if (pi || pv)
     lines.push(
-      `In progress right now (on the board or in Asana, not delivered yet: requested, in production, in review, with the client): ${pi} images and carousel slides, ${pv} videos. Some may already count in "used" above (asked this cycle); the rest are still coming. Before suggesting more, weigh what's already coming: don't overproduce. A request that adds to a pool with a lot in progress needs a reason, and say in why what's in progress.`,
+      `In progress right now (on the board or in Asana, not delivered yet: requested, in production, in review, with the client): ${pi} images and carousel slides, ${pv} videos. They are already inside "used" above: anything in the production line counts against the allotment until it's delivered, whatever cycle it was asked in. Before suggesting more, weigh what's already coming: don't overproduce. A request that adds to a pool with a lot in progress needs a reason, and say in why what's in progress.`,
     );
   return lines.join("\n");
 }
