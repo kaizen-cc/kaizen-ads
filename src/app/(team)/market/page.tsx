@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { requireStaff } from "@/lib/auth";
+import { noIdeas } from "@/lib/maker-day-core";
+import { redirect } from "next/navigation";
 import { INDUSTRY_OPTIONS } from "@/lib/industries";
 import { loadMarket } from "@/lib/market";
 import { loadVerticals } from "@/lib/verticals";
@@ -19,6 +21,8 @@ export const maxDuration = 300;
 
 export default async function Market({ searchParams }: PageProps<"/market">) {
   const me = await requireStaff();
+  // Not for the makers or customer success (owner, Nov 19 2026): their Overview is their plate
+  if (noIdeas(me.role)) redirect("/pipeline");
   // Only the formats this person works in: a designer never sees video examples (the owner's rule)
   const allowed = formatsFor(me);
   const sp = await searchParams;

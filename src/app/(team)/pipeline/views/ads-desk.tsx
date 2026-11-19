@@ -262,7 +262,7 @@ export async function creativeDesk(db: SupabaseClient, me: Me, clients: Creative
   const waiting = clientRows.reduce((n, r) => n + r.ideas.length, 0);
   const urgent = clientRows.filter((r) => r.pools.some((p) => p.urgent || p.nothing)).length;
   return {
-    tabs: [{ id: "clients", label: head ? "Clients" : "My clients", count: waiting + urgent, tone: urgent ? "bad" : "brand" }],
+    tabs: [{ id: "clients", label: head || lead ? "Clients" : "My clients", count: waiting + urgent, tone: urgent ? "bad" : "brand" }],
     panels: {
       clients: (
         <>

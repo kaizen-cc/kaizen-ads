@@ -22,7 +22,7 @@ export function MakerTasks({ tasks }: { tasks: MakerTask[] }) {
           {tasks.map((t) => {
             const d = t.due ? daysBetween(today, t.due) : null;
             const tone = d != null && d < 0 ? "text-bad" : d === 0 ? "text-warn" : "text-muted";
-            const external = t.kind === "asana";
+            const external = t.kind === "asana" || t.kind === "email_asana";
             return (
               <li key={t.key}>
                 <a

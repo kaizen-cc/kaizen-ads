@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { requireStaff } from "@/lib/auth";
+import { noIdeas } from "@/lib/maker-day-core";
+import { redirect } from "next/navigation";
 import { INDUSTRY_OPTIONS } from "@/lib/industries";
 import { allWinners, loadPeerContext, type WinnerScope } from "@/lib/industry";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -16,6 +18,8 @@ export const maxDuration = 300;
 
 export default async function Winners() {
   const me = await requireStaff();
+  // Not for the makers or customer success (owner, Nov 19 2026): their Overview is their plate
+  if (noIdeas(me.role)) redirect("/pipeline");
   // Every account's numbers, whoever is looking: the point is learning from clients you don't work on
   const db = adminConfigured() ? createAdminClient() : await createClient();
   const scope: WinnerScope = { accounts: 0, ads: 0, eligible: 0, withoutData: 0 };

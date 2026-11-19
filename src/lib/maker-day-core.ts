@@ -3,8 +3,26 @@
 // clients (failing accounts, KPIs, social posting gaps, reports): that isn't theirs to carry. The server side is
 // src/lib/maker-day.ts.
 
-/** Graphic designers and video editors (not their leads, who run the line) */
-export const isMaker = (role: string | null | undefined) => role === "graphic_designer" || role === "video_editor";
+export type MakerKind = "creative" | "email" | "copy";
+/**
+ * The makers, by what they make (not their leads, who run the line): graphic designers and video editors (creative),
+ * email designers and builders (email), the copywriter (copy). Owner, Nov 19 2026: each gets the same Today-only view.
+ */
+export function makerKind(role: string | null | undefined): MakerKind | null {
+  if (role === "graphic_designer" || role === "video_editor") return "creative";
+  if (role === "email_designer" || role === "email_builder") return "email";
+  if (role === "copywriter") return "copy";
+  return null;
+}
+export const isMaker = (role: string | null | undefined) => makerKind(role) !== null;
+
+/** Customer success: the makers' Today-only shape, keeping the client-facing signals they act on */
+export const isCustomerSuccess = (role: string | null | undefined) => role === "customer_success";
+
+/** No Ideas (the sidebar, /ideas, /winners, /market and the assistant's way there): the makers and customer success */
+export const noIdeas = (role: string | null | undefined) => isMaker(role) || isCustomerSuccess(role);
+export const IDEAS_PATHS = ["/ideas", "/winners", "/market"];
+export const isIdeasPath = (href: string) => IDEAS_PATHS.some((p) => href === p || href.startsWith(`${p}/`) || href.startsWith(`${p}?`));
 
 /** The pool a maker makes for: images and carousels, or video */
 export const makerPool = (role: string | null | undefined): "images" | "videos" => (role === "video_editor" ? "videos" : "images");
@@ -26,6 +44,19 @@ export const makerNextItem = (kind: string) => MAKER_NEXT.has(kind);
 
 /** The stages where a piece waits on its maker (the rest wait on review, copy, the client or a launch) */
 export const MAKER_STAGES = new Set(["requested", "in_production", "client_revision"]);
+/** The Email Board's stages each email maker works in (the rest wait on copy, review, the client or the send) */
+export const EMAIL_MAKER_STAGES: Record<string, Set<string>> = { email_designer: new Set(["ready_for_design", "revisions"]), email_builder: new Set(["ready_for_build"]) };
+/** The copywriter's columns */
+export const COPY_STAGES = new Set(["copy", "copy_review"]);
+
+/**
+ * Customer success keeps what they act on with the client (a client waiting on a reply, a promise from a call, a new
+ * client's first steps, a client missing a contact) and never an account's performance (KPIs, scores, allotments).
+ */
+const CS_KEYS = new Set(["mine", "radar", "owed", "owed2", "said", "said2", "promise", "onboarding", "intake", "bible", "contact", "unhappy"]);
+export const csItem = (key: string) => CS_KEYS.has(key.split(":")[0]);
+const CS_NEXT = new Set(["ticket", "review", "task", "direction", "ask", "feedback", "promise", "intake", "client", "first_round", "bible", "call-learnings"]);
+export const csNextItem = (kind: string) => CS_NEXT.has(kind);
 
 export type PlateTask = { due: string | null; stage: string | null };
 export type Urgency = "overdue" | "today" | "revision" | "week" | "later";

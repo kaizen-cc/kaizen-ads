@@ -32,7 +32,7 @@ import { topicsFor } from "@/lib/today";
 import { todaySnapshot } from "@/lib/today-snapshot";
 import { MyDesk } from "./views/my-desk";
 import { MakerTasks } from "./views/maker-tasks";
-import { isMaker } from "@/lib/maker-day-core";
+import { isCustomerSuccess, isMaker } from "@/lib/maker-day-core";
 import { makerTasks } from "@/lib/maker-day";
 import { ReadyCallout } from "./views/ready-callout";
 
@@ -92,6 +92,39 @@ export default async function Home() {
   const now = new Date();
   const base = { greeting: greetingFor(now), firstName: me.fullName.split(" ")[0], today: todayLabel(now) };
   const hiddenQuery = () => db.from("hidden_items").select("key, how, label, href, hidden_at").eq("profile_id", me.id).order("hidden_at", { ascending: false }).limit(200);
+  // The makers (graphic designers, video editors, email designers and builders, the copywriter): the Today view only. Their recap is a brief of their own plate and what's about
+  // to hit it (never a client's metrics: src/lib/maker-day.ts), and under it their tasks, Asana and the board, overdue
+  // first, each one tap from the task itself (owner, Nov 19 2026)
+  if (isMaker(me.role)) {
+    const [{ data: hiddenRows }, tasks] = await Promise.all([hiddenQuery(), makerTasks(db, me).catch(() => [])]);
+    const onYou = tasks.filter((t) => t.onThem).length;
+    return (
+      <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
+        <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${onYou ? `${onYou} ${onYou === 1 ? "piece is" : "pieces are"} on you` : "nothing on you right now"}`} />
+        <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
+        <HandoffCallout db={db} me={me.id} />
+        <MakerTasks tasks={tasks} />
+      </div>
+    );
+  }
+
+  // Customer success: the same Today-only shape, with My work folded in under the day: the client-facing things they
+  // act on (approvals waiting, replies owed, new clients, what's heading to a client), never an account's numbers
+  if (isCustomerSuccess(me.role)) {
+    const [{ data: hiddenRows }, next] = await Promise.all([hiddenQuery(), loadNextForMe(db, me)]);
+    const n = next.now.length + next.decide.length;
+    return (
+      <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
+        <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${n ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : "nothing needs you right now"}`} />
+        <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
+        <HandoffCallout db={db} me={me.id} />
+        <WorkUnderToday>
+          <NextSection data={next} me={me.id} deploys={[]} />
+        </WorkUnderToday>
+      </div>
+    );
+  }
+
   // The email and organic social teams: their day first (the same recap as everyone, built from their line only: no
   // ad accounts, allotments or buyer alerts), then their clients ordered by how likely each is to leave
   const channel = lineOfTeam(me.role);
@@ -111,22 +144,6 @@ export default async function Home() {
     );
   }
   const assignedQuery = () => db.from("client_assignments").select("client_id").eq("profile_id", me.id);
-
-  // Graphic designers and video editors: the Today view only. Their recap is a brief of their own plate and what's about
-  // to hit it (never a client's metrics: src/lib/maker-day.ts), and under it their tasks, Asana and the board, overdue
-  // first, each one tap from the task itself (owner, Nov 19 2026)
-  if (isMaker(me.role)) {
-    const [{ data: hiddenRows }, tasks] = await Promise.all([hiddenQuery(), makerTasks(db, me).catch(() => [])]);
-    const onYou = tasks.filter((t) => t.onThem).length;
-    return (
-      <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
-        <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${onYou ? `${onYou} ${onYou === 1 ? "piece is" : "pieces are"} on you` : "nothing on you right now"}`} />
-        <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
-        <HandoffCallout db={db} me={me.id} />
-        <MakerTasks tasks={tasks} />
-      </div>
-    );
-  }
 
   // Team members (designers, editors, buyers, the copywriter, customer success): their recap and their Next for me.
   // What the themes hold for execs and leads (promises, messages, ads wearing out, new clients) reaches them in the

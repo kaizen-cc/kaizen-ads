@@ -14,7 +14,7 @@ import { secondarySeatKeys } from "@/lib/buyer-seats";
 import { INTAKE_WAIT_DAYS, addBusinessDays as addBizDays } from "@/lib/brand-bible";
 import { countLooks, hideKeyOf, type Looks } from "@/lib/today-counts";
 import { byRetention } from "@/lib/today-lines-core";
-import { forMaker, isMaker } from "@/lib/maker-day-core";
+import { csItem, forMaker, isCustomerSuccess, isMaker } from "@/lib/maker-day-core";
 
 // The daily recap: everything that needs an exec or lead today, one item at a time, most critical first. Critical
 // means it can cost us the client: a promise we made and haven't kept, a new client waiting on us, an important
@@ -98,6 +98,8 @@ export type TodayDraft = Draft;
 export function topicsFor(me: Staff): Set<TopicKey> {
   // Graphic designers and video editors: their own plate and what's coming to it, never a client's metrics
   if (isMaker(me.role)) return new Set<TopicKey>(["mine", "radar", "promises"]);
+  // Customer success: the client relationship (promises, new clients, what's heading to a client), never performance
+  if (isCustomerSuccess(me.role)) return new Set<TopicKey>(["mine", "radar", "promises", "onboarding"]);
   const manager = me.isExec || me.isLead;
   // Everyone has messages they could owe a reply to; promises from calls are for the people who run accounts
   const t = new Set<TopicKey>(["mine", "promises"]);
@@ -217,6 +219,12 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     const { makerPlate, makerRadar } = await import("@/lib/maker-day");
     const [base, plate, radar] = await Promise.all([gatherAll(db, me).catch(() => [] as Draft[]), makerPlate(db, me).catch(() => [] as Draft[]), makerRadar(db, me).catch(() => [] as Draft[])]);
     return forMaker([...plate, ...radar, ...base.filter((d) => !d.key.startsWith("mine:ticket:") && !d.key.startsWith("mine:asana:"))]);
+  }
+  // Customer success: what they act on with clients, and what's about to land on them; an account's numbers never
+  if (isCustomerSuccess(me.role)) {
+    const { csRadar } = await import("@/lib/maker-day");
+    const [base, radar] = await Promise.all([gatherAll(db, me).catch(() => [] as Draft[]), csRadar(db).catch(() => [] as Draft[])]);
+    return [...base, ...radar].filter((d) => csItem(d.key));
   }
   // The ads side and the email and social lines, read side by side, then ordered by how likely each client is to leave
   const [ads, lines, risky] = await Promise.all([gatherAll(db, me), import("@/lib/today-lines").then(({ gatherLines }) => gatherLines(db, me)).catch(() => [] as Draft[]), atRiskNow(db).catch(() => new Set<string>())]);

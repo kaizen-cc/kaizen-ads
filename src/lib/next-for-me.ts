@@ -358,8 +358,9 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
 
   const rank = { bad: 0, warn: 1, brand: 2, ok: 3 } as const;
   // Graphic designers and video editors: their own work only, never a KPI, an ad wearing out or an allotment
-  const { isMaker, makerNextItem } = await import("@/lib/maker-day-core");
-  const own = (xs: NextItem[]) => (isMaker(me.role) ? xs.filter((x) => makerNextItem(x.kind)) : xs);
+  // (customer success: the client-facing items they act on, never a KPI or an allotment)
+  const { csNextItem, isCustomerSuccess, isMaker, makerNextItem } = await import("@/lib/maker-day-core");
+  const own = (xs: NextItem[]) => (isMaker(me.role) ? xs.filter((x) => makerNextItem(x.kind)) : isCustomerSuccess(me.role) ? xs.filter((x) => csNextItem(x.kind)) : xs);
   const sort = (xs: NextItem[]) => own(kept(xs)).sort((a, b) => rank[a.tone] - rank[b.tone]);
   return {
     now: sort(now),

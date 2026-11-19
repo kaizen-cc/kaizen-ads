@@ -8,6 +8,8 @@ import { createClient } from "@/lib/supabase/server";
 import { loadVerticals } from "@/lib/verticals";
 import { VerticalsView, type SubCard } from "./verticals-view";
 import { requireStaff } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { noIdeas } from "@/lib/maker-day-core";
 import { fameFormatOf, formatsFor } from "@/lib/creative-formats";
 import { PLAYBOOK_VERSION } from "@/lib/playbooks";
 import { FameLibrary } from "./fame-library";
@@ -57,7 +59,9 @@ export default async function Ideas({ searchParams }: PageProps<"/ideas">) {
   const sp = await searchParams;
   // Three sides: Meta (briefs for the creative team), Google (search ads, keywords and search terms) and TikTok (our own
   // clients' TikTok winners: shown once there's TikTok data). Everyone can look at each
-  await requireStaff();
+  const me = await requireStaff();
+  // Not for the makers or customer success (owner, Nov 19 2026): their Overview is their plate
+  if (noIdeas(me.role)) redirect("/pipeline");
   const tiktok = await hasTikTokData(adminConfigured() ? createAdminClient() : await createClient());
   const line = ideasLine(sp.line, tiktok);
   const tab = ideasTab(sp.tab, line);

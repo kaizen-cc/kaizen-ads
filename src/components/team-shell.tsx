@@ -1,5 +1,6 @@
 "use client";
 
+import { isIdeasPath, noIdeas } from "@/lib/maker-day-core";
 import { useUnreadHeadsUps } from "@/lib/assistant/heads-up-store";
 import Image from "next/image";
 import { ThemeSwitch } from "./theme-switch";
@@ -259,7 +260,8 @@ export function TeamShell({ name, fullName, meId, roles, tier, creative = null, 
   const can = (i: Item) => (!i.tiers || i.tiers.includes(tier)) && !(i.buyer && creative) && (!i.reports || reports) && (!i.creativeLead || creative === "lead");
   // The email and social teams get only Overview, Clients, KPIs, Reports and Kaizen AI (Feedback and Settings sit apart);
   // the email team also gets Boards (their Email Board)
-  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i) && (!channel || channelNavOk(i.href, role))) })).filter((g) => g.items.length);
+  // The makers and customer success have no Ideas (their Overview is their plate): gone from the sidebar and the tab bar
+  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i) && (!channel || channelNavOk(i.href, role)) && !(noIdeas(role) && isIdeasPath(i.href))) })).filter((g) => g.items.length);
   const settings = can(SETTINGS) ? SETTINGS : null;
   // The tab bar on phones: home (the Overview), the board, clients and KPIs (the creative team: their own
   // KPIs, or Ideas); everything else is in the menu

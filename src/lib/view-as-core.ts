@@ -1,3 +1,4 @@
+import { noIdeas } from "@/lib/maker-day-core";
 import { canSeeReports, channelNavOk, isChannelOnly, isCreativeRole, isLeadMaker, ROLES, roleLabel, type TeamRole } from "@/lib/roles";
 
 // View as: the owner sees the app exactly as one teammate (or one role) sees it, read only. The pure parts live here
@@ -155,7 +156,7 @@ export function roleView(role: TeamRole): { role: string; tier: string; places: 
     { href: "/kpis", label: "KPIs", ok: !creative },
     { href: "/reports", label: "Reports", ok: reports },
     { href: "/ai", label: "Kaizen AI", ok: true },
-    { href: "/ideas", label: "Ideas", ok: true },
+    { href: "/ideas", label: "Ideas", ok: !noIdeas(role) },
     { href: "/lab", label: "Ads Lab", ok: (tier === "exec" || tier === "lead") && !creative },
     { href: "/settings", label: "Settings", ok: tier === "exec" || tier === "lead" },
   ];

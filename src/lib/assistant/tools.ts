@@ -1,4 +1,5 @@
 import "server-only";
+import { isIdeasPath, noIdeas } from "@/lib/maker-day-core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { clientNamed as sharedClientNamed } from "@/lib/client-named";
 import { after } from "next/server";
@@ -415,6 +416,8 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
         if ("note" in opened) return { opened: false, note: opened.note };
         const href = safeAppPath(opened.href);
         if (!href) return { opened: false, note: "That isn't a screen in the app." };
+        // Ideas (and the winners and market libraries) isn't part of a maker's or customer success's app
+        if (noIdeas(ctx.me.role) && isIdeasPath(href)) return { opened: false, note: "Ideas isn't part of their view: their Overview is their own plate and what's coming to it." };
         ctx.emit({ t: "navigate", href });
         return { opened: href, what: opened.label };
       },

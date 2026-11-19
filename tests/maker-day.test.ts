@@ -68,3 +68,30 @@ describe("their plate, by urgency", () => {
     expect(asanaRevisions(null)).toBe(0);
   });
 });
+
+describe("every maker, and customer success", () => {
+  it("knows what each maker makes", async () => {
+    const { makerKind } = await import("@/lib/maker-day-core");
+    expect(makerKind("graphic_designer")).toBe("creative");
+    expect(makerKind("video_editor")).toBe("creative");
+    expect(makerKind("email_designer")).toBe("email");
+    expect(makerKind("email_builder")).toBe("email");
+    expect(makerKind("copywriter")).toBe("copy");
+    for (const r of ["email_strategist", "head_of_email", "social_media_manager", "lead_graphic_designer", "customer_success"]) expect(makerKind(r)).toBeNull();
+  });
+  it("takes Ideas away from the makers and customer success only", async () => {
+    const { isIdeasPath, noIdeas } = await import("@/lib/maker-day-core");
+    for (const r of ["graphic_designer", "video_editor", "email_designer", "email_builder", "copywriter", "customer_success"]) expect(noIdeas(r)).toBe(true);
+    for (const r of ["head_of_creative", "lead_graphic_designer", "lead_video_editor", "media_buyer", "head_of_meta", "email_strategist", "executive"]) expect(noIdeas(r)).toBe(false);
+    for (const h of ["/ideas", "/ideas?line=google", "/ideas/playbook/1", "/winners", "/market?client=x"]) expect(isIdeasPath(h)).toBe(true);
+    for (const h of ["/pipeline", "/idea", "/marketing", "/clients/ideas-co"]) expect(isIdeasPath(h)).toBe(false);
+  });
+  it("customer success keeps what they act on with clients, never an account's numbers", async () => {
+    const { csItem, csNextItem } = await import("@/lib/maker-day-core");
+    for (const k of ["mine:task:1", "radar:to-client:2", "owed:3", "promise:4", "onboarding:c1", "contact:c1"]) expect(csItem(k)).toBe(true);
+    for (const k of ["kpi:t1", "allot-behind:c1", "social-quiet:c1", "email-score:c1", "fatigue:c1:a", "brief:s1"]) expect(csItem(k)).toBe(false);
+    expect(csNextItem("promise")).toBe(true);
+    expect(csNextItem("kpi")).toBe(false);
+    expect(csNextItem("allotment")).toBe(false);
+  });
+});
