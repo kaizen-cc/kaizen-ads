@@ -312,3 +312,41 @@ describe("logoCandidates skips a web designer's credit", () => {
     expect(logoCandidates(html, "https://myinfernofitness.com/")).toEqual(["https://myinfernofitness.com/wp-content/uploads/brand-logo.png", "https://cdn.example.net/Inferno-Round-Sticker-22.png"]);
   });
 });
+
+describe("logoCandidates skips other brands' logos", () => {
+  it("passes over an 'as featured in' strip and a photo-named icon goes after", async () => {
+    const { logoCandidates: pick, nameWords } = await import("@/lib/reports/brand-server");
+    const html = `<html><head><link rel="icon" type="image/png" href="https://cdn.site.co/wedding-5.png"></head><body>
+      <h3>As featured in</h3><div><img src="https://cdn.site.co/ok_logo_black.png" title="ok_logo_black"><img src="https://cdn.site.co/page_six_logo.png" title="Page Six Logo"><img src="https://cdn.site.co/people_logo.png" title="People Logo"></div></body></html>`;
+    expect(pick(html, "https://michellebehre.com/", nameWords("Michelle Behre", "https://michellebehre.com/"))).toEqual(["https://cdn.site.co/wedding-5.png"]);
+  });
+  it("puts a logo named for the client first", async () => {
+    const { logoCandidates: pick } = await import("@/lib/reports/brand-server");
+    const html = `<header><img src="/img/site-logo.png"></header><img src="/img/behre-logo-script.png">`;
+    expect(pick(html, "https://michellebehre.com/", ["michelle", "behre"])[0]).toBe("https://michellebehre.com/img/behre-logo-script.png");
+  });
+});
+
+describe("a report logo is drawn whole", () => {
+  // A 400x200 PNG header (signature, IHDR length and type, width, height)
+  const png = (w: number, h: number) => {
+    const b = Buffer.alloc(33);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]).copy(b, 0);
+    b.writeUInt32BE(w, 16);
+    b.writeUInt32BE(h, 20);
+    return `data:image/png;base64,${b.toString("base64")}`;
+  };
+  it("fits a wide logo to the width and keeps its shape", async () => {
+    const { logoBox } = await import("@/lib/reports/weekly-doc");
+    expect(logoBox(png(600, 100), 24, 84)).toEqual({ width: 84, height: 14 });
+  });
+  it("fits a tall or square logo to the height", async () => {
+    const { logoBox } = await import("@/lib/reports/weekly-doc");
+    expect(logoBox(png(200, 200), 24, 84)).toEqual({ width: 24, height: 24 });
+    expect(logoBox(png(100, 300), 30, 150)).toEqual({ width: 10, height: 30 });
+  });
+  it("falls back to the box for anything it can't read", async () => {
+    const { logoBox } = await import("@/lib/reports/weekly-doc");
+    expect(logoBox("data:image/jpeg;base64,abcd", 24, 84)).toEqual({ width: 84, height: 24 });
+  });
+});

@@ -77,8 +77,25 @@ export function isCredit(html: string, at: number, base: string): boolean {
   return false;
 }
 
-/** The pictures on a client's website that could be their logo, best first (pure, so it's tested) */
-export function logoCandidates(html: string, base: string): string[] {
+/** Words before a strip of other brands' logos: press ("as featured in"), clients, partners, awards */
+const STRIP_INTRO = /\b(?:as\s+(?:seen|featured|heard)\s+(?:in|on)|featured\s+(?:in|on)|in\s+the\s+(?:news|press)|press|publications?|our\s+clients|clients\s+include|trusted\s+by|partners?|brands?\s+we|awards?|certified|accredited|as\s+seen)\b[^<]{0,40}(?:<[^>]*>\s*){0,12}$/i;
+
+/**
+ * A logo that sits in a strip of other brands' logos ("As featured in" People, Page Six, The Knot): several pictures
+ * named logo close together, or one right after a press or clients heading. Never the client's own (owner, Nov 19 2026:
+ * a photographer's report carried a magazine's logo).
+ */
+export function inLogoStrip(html: string, at: number, logoAts: readonly number[]): boolean {
+  if (STRIP_INTRO.test(html.slice(Math.max(0, at - 600), at))) return true;
+  return logoAts.filter((x) => Math.abs(x - at) < 1500).length >= 3;
+}
+
+/** The words of a client's name and site worth matching in a file name ("Michelle Behre" → michelle, behre) */
+export const nameWords = (...names: (string | null | undefined)[]) =>
+  [...new Set(names.flatMap((n) => String(n ?? "").toLowerCase().replace(/^https?:\/\/(www\.)?/, "").split(/[^a-z0-9]+/)).filter((w) => w.length >= 4 && !["https", "http", "photography", "studio", "group", "company", "the"].includes(w)))];
+
+/** The pictures on a client's website that could be their logo, best first (pure, so it's tested). `names`: the client's name and site, so a logo named for them goes first */
+export function logoCandidates(html: string, base: string, names: readonly string[] = []): string[] {
   const abs = (u: string | null) => {
     if (!u || u.startsWith("data:")) return null;
     try {
@@ -89,14 +106,21 @@ export function logoCandidates(html: string, base: string): string[] {
   };
   const out: string[] = [];
   const head = html.slice(0, 300_000);
-  // 1. The header's logo image (an <img> whose class, id, alt or file name says logo)
-  for (const hit of head.matchAll(/<img\b[^>]*>/gi)) {
+  // 1. The header's logo image (an <img> whose class, id, alt or file name says logo), never one in a strip of other
+  // brands' logos; one named for the client goes first
+  const imgs = [...head.matchAll(/<img\b[^>]*>/gi)].filter((hit) => /logo/i.test(hit[0]));
+  // Where the logos that aren't a credit or in the footer sit: three of those close together are a strip
+  const ats = imgs.filter((hit) => !isCredit(head, hit.index ?? 0, base)).map((hit) => hit.index ?? 0);
+  const own: string[] = [];
+  for (const hit of imgs) {
     const tag = hit[0];
-    if (!/logo/i.test(tag) || isCredit(head, hit.index ?? 0, base)) continue;
+    const named = names.some((w) => tag.toLowerCase().includes(w));
+    if (!named && (isCredit(head, hit.index ?? 0, base) || inLogoStrip(head, hit.index ?? 0, ats))) continue;
     const src = abs(attr(tag, "src") ?? attr(tag, "data-src") ?? attr(tag, "srcset")?.split(/\s+/)[0] ?? null);
-    if (src) out.push(src);
-    if (out.length >= 3) break;
+    if (src) (named ? own : out).push(src);
+    if (own.length + out.length >= 3) break;
   }
+  out.unshift(...own);
   // 2. The touch icon, then the largest favicon
   const links = head.match(/<link\b[^>]*>/gi) ?? [];
   for (const tag of links) if (/rel=["'][^"']*apple-touch-icon/i.test(tag)) out.push(abs(attr(tag, "href"))!);
@@ -112,6 +136,18 @@ export function logoCandidates(html: string, base: string): string[] {
   return [...new Set(out.filter(Boolean))];
 }
 
+/** Many colours in a small copy: a photograph, not a logo (logos are a few flat colours) */
+async function looksLikePhoto(bytes: Buffer) {
+  try {
+    const { data } = await sharp(bytes).removeAlpha().resize(48, 48, { fit: "inside" }).raw().toBuffer({ resolveWithObject: true });
+    const seen = new Set<number>();
+    for (let i = 0; i + 2 < data.length; i += 3) seen.add(((data[i] >> 4) << 8) | ((data[i + 1] >> 4) << 4) | (data[i + 2] >> 4));
+    return seen.size > 320;
+  } catch {
+    return false;
+  }
+}
+
 /** A share image is only a logo when it has see-through parts or its file name says so (a photo never does) */
 async function looksLikeLogo(bytes: Buffer, url: string) {
   if (/logo/i.test(url)) return true;
@@ -125,7 +161,7 @@ async function looksLikeLogo(bytes: Buffer, url: string) {
   }
 }
 
-async function fromWebsite(website: string | null | undefined) {
+async function fromWebsite(website: string | null | undefined, name: string | null = null) {
   if (!website) return null;
   const { isPublicHost } = await import("@/lib/references");
   const url = /^https?:\/\//i.test(website) ? website : `https://${website}`;
@@ -134,12 +170,14 @@ async function fromWebsite(website: string | null | undefined) {
     const res = await fetch(url, { headers: { "user-agent": UA, accept: "text/html" }, signal: AbortSignal.timeout(8000), redirect: "follow", cache: "no-store" });
     if (!res.ok) return null;
     const html = await res.text();
-    for (const c of logoCandidates(html, res.url || url).slice(0, 6)) {
+    for (const c of logoCandidates(html, res.url || url, nameWords(name, website)).slice(0, 6)) {
       const share = c.startsWith("og:");
       const link = share ? c.slice(3) : c;
       if (!isPublicHost(link)) continue;
       const bytes = await fetchBytes(link);
       if (!bytes || (share && !(await looksLikeLogo(bytes, link)))) continue;
+      // A photo set as the site's icon (a photographer's portfolio shot) is never a logo
+      if (!/logo/i.test(link) && (await looksLikePhoto(bytes))) continue;
       const got = await processLogo(bytes);
       if (got) return { ...got, source: share ? "website share image" : "website" };
     }
@@ -203,14 +241,14 @@ export async function reportBrand(admin: SupabaseClient, clientId: string, opts:
   const fresh = kept.checkedAt && Date.now() - Date.parse(kept.checkedAt) < KEEP_DAYS * 86_400_000;
   if (!opts.refresh && (fresh || kept.uploaded) && (kept.logo || kept.color || fresh)) return { logo: kept.logo ?? null, light: Boolean(kept.light), color: kept.color ?? null, source: kept.source ?? null };
 
-  const [{ data: client }, { data: bible }] = await Promise.all([admin.from("clients").select("website").eq("id", clientId).maybeSingle(), admin.from("client_brand_bibles").select("markdown").eq("client_id", clientId).maybeSingle()]);
+  const [{ data: client }, { data: bible }] = await Promise.all([admin.from("clients").select("website, name").eq("id", clientId).maybeSingle(), admin.from("client_brand_bibles").select("markdown").eq("client_id", clientId).maybeSingle()]);
   const markdown = String((bible as { markdown?: string } | null)?.markdown ?? "");
   let found: { logo: string; light: boolean; color: string | null; source: string } | null = null;
   // The search has 20 seconds: a slow website (six pictures at up to 7 seconds each) once kept a report's preview past
   // its minute, and as nothing was kept it started over on every view. Out of time: no logo now, and it looks again tomorrow.
   let late = false;
   if (!kept.uploaded) {
-    const search = (async () => (await fromBible(markdown)) ?? (await fromWebsite((client as { website?: string | null } | null)?.website)) ?? (await fromDrive(admin, clientId)))();
+    const search = (async () => (await fromBible(markdown)) ?? (await fromWebsite((client as { website?: string | null } | null)?.website, (client as { name?: string | null } | null)?.name ?? null)) ?? (await fromDrive(admin, clientId)))();
     found = await Promise.race([search, new Promise<null>((done) => setTimeout(() => ((late = true), done(null)), 20_000))]);
   }
   const logo = kept.uploaded ? (kept.logo ?? null) : (found?.logo ?? null);

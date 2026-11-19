@@ -178,10 +178,39 @@ function Arrow({ up, color }: { up: boolean; color: string }) {
   );
 }
 
+/** A PNG data URI's width and height, read from its header (null for anything else) */
+export function pngSize(src: string): { w: number; h: number } | null {
+  const m = /^data:image\/png;base64,(.+)$/.exec(src);
+  if (!m) return null;
+  try {
+    const head = Buffer.from(m[1].slice(0, 64), "base64");
+    if (head.length < 24 || head.toString("ascii", 1, 4) !== "PNG") return null;
+    const w = head.readUInt32BE(16);
+    const h = head.readUInt32BE(20);
+    return w > 0 && h > 0 ? { w, h } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The size a logo is drawn at: the whole logo inside its box (at most `maxWidth` wide and `height` tall), its own shape
+ * kept. Sizing it exactly is what keeps a wide or tall logo from being cropped: the PDF renderer cuts an image to its
+ * box when only one side is set (Head of Social, Nov 19 2026: the organic social report's logo was cut off).
+ */
+export function logoBox(src: string, height: number, maxWidth: number): { width: number; height: number } {
+  const size = pngSize(src);
+  if (!size) return { width: maxWidth, height };
+  const ratio = size.w / size.h;
+  const width = Math.min(maxWidth, height * ratio);
+  return { width: Math.round(width * 100) / 100, height: Math.round((width / ratio) * 100) / 100 };
+}
+
 /** A logo in the header: as it is, or on a dark chip when it's a white logo */
 function Logo({ src, light, chip, height, maxWidth }: { src: string; light?: boolean; chip: string; height: number; maxWidth: number }) {
   /* eslint-disable jsx-a11y/alt-text -- a PDF image, no alt prop */
-  const img = <Image src={src} style={{ height, maxWidth, objectFit: "contain" }} />;
+  const box = logoBox(src, height, maxWidth);
+  const img = <Image src={src} style={{ width: box.width, height: box.height, objectFit: "contain" }} />;
   return light ? <View style={{ backgroundColor: chip, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 4 }}>{img}</View> : img;
   /* eslint-enable jsx-a11y/alt-text */
 }

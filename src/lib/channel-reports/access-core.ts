@@ -24,13 +24,13 @@ export const SEATS_OF: Record<ChannelLine, readonly string[]> = {
 };
 
 /**
- * The seats that own and send a line's reports: for email only the strategists (a designer or a builder seated on the
- * client never reports on it); social keeps both of its seats. The head of email sees her strategists' reports through
- * the service rule below, never through a seat.
+ * The seats that own and send a line's reports, and the only people a report lists: the line's strategist. Email: the
+ * Email Strategist; social: the Social Media Manager (Head of Social, Nov 19 2026). A designer, builder or social
+ * creative seated on the client never shows on a report. The line's head sees the reports through the service rule below.
  */
 export const REPORT_SEATS: Record<ChannelLine, readonly string[]> = {
   email: ["email_strategist"],
-  social: ["social_manager", "social_creative"],
+  social: ["social_manager"],
 };
 
 /** The head of a line sees every client that buys its service */

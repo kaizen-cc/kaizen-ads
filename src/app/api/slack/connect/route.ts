@@ -4,6 +4,21 @@ import { requireStaff } from "@/lib/auth";
 import { SLACK_READ_SCOPES, SLACK_USER_SCOPES, slackOAuthConfigured } from "@/lib/slack-user";
 import { safeNext, withParams } from "../shared";
 
+/** Kaizen's Slack workspace (SLACK_WORKSPACE_URL, else the company workspace) */
+const slackWorkspaceUrl = () => (process.env.SLACK_WORKSPACE_URL?.trim() || "https://kaizen-marketing-hq.slack.com").replace(/\/+$/, "");
+
+/** The workspace's team id: SLACK_TEAM_ID, else the bot's own workspace (null when neither answers) */
+async function kaizenTeamId(): Promise<string | null> {
+  if (process.env.SLACK_TEAM_ID?.trim()) return process.env.SLACK_TEAM_ID.trim();
+  try {
+    const { slack } = await import("@/lib/context/slack");
+    const r = await slack<{ team_id?: string }>("auth.test", {});
+    return r.team_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // A team member connects their own Slack, so reports can go out from them. Slack sends them back to /api/slack/callback.
 export async function GET(request: Request) {
   await requireStaff();
@@ -16,7 +31,11 @@ export async function GET(request: Request) {
   const jar = await cookies();
   jar.set("slack_oauth", JSON.stringify({ state, next }), { httpOnly: true, secure: true, sameSite: "lax", path: "/api/slack", maxAge: 600 });
 
-  const authorize = new URL("https://slack.com/oauth/v2/authorize");
+  // Kaizen's own workspace, never Slack's generic sign-in (Head of Social, Nov 19 2026): the authorize page on the
+  // workspace's domain signs them straight into it, and the team id (the bot's own workspace) preselects it
+  const authorize = new URL(`${slackWorkspaceUrl()}/oauth/v2/authorize`);
+  const team = await kaizenTeamId();
+  if (team) authorize.searchParams.set("team", team);
   authorize.searchParams.set("client_id", process.env.SLACK_CLIENT_ID!);
   // Only user scopes: the bot's own scopes are untouched by this
   // ?read=1 also asks to read as them (their assistant searching their Slack, DMs included)
