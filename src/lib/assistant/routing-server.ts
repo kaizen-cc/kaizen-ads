@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { maySeeClient, type AccessCtx } from "@/lib/ai-access";
 import { businessFitBlock } from "@/lib/agent-call/business-fit";
 import { servicesOf } from "@/lib/services";
 import { clientLines, routeSeat, SEAT_LABEL, teamLines, type Line, type SeatHolder } from "./seat-routing";
@@ -113,7 +114,7 @@ export async function clientInPlay(db: SupabaseClient, clientId: string | null |
  * that fit (so a restaurant never gets ecommerce flows). Read at once, and kept a couple of minutes per person and
  * client, since every turn and every agent on the call reads it.
  */
-export async function clientTeamBlock(db: SupabaseClient, admin: SupabaseClient, clientId: string | null | undefined, text: string, opts: { viewer?: string | null } = {}): Promise<string> {
+export async function clientTeamBlock(db: SupabaseClient, admin: SupabaseClient, clientId: string | null | undefined, text: string, opts: { viewer?: string | null; me?: AccessCtx["me"] } = {}): Promise<string> {
   const viewer = opts.viewer ?? null;
   const id = await clientInPlay(db, clientId, text, viewer).catch(() => null);
   if (!id) return "";
@@ -123,7 +124,7 @@ export async function clientTeamBlock(db: SupabaseClient, admin: SupabaseClient,
   const block = (async () => {
     const [seen, team, model] = await Promise.all([
       // Only a client this person may see (their own session decides)
-      Promise.resolve(db.from("clients").select("id").eq("id", id).maybeSingle()).then((r) => r.data),
+      opts.me ? maySeeClient({ me: opts.me, db, admin }, id).then((ok) => (ok ? { id } : null)) : Promise.resolve(db.from("clients").select("id").eq("id", id).maybeSingle()).then((r) => r.data),
       clientTeam(admin, id),
       import("@/lib/business-model").then(({ businessModelOf }) => businessModelOf(admin, id)).catch(() => null),
     ]);

@@ -5,7 +5,11 @@ import { motionConnected, MotionNotConnected, openSession } from "@/lib/motion";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { marketForTalk } from "@/lib/market-fit";
+import { mayOpen, seesAccountNumbers } from "@/lib/ai-access-core";
 import { num, str, type AiTool } from "./types";
+
+// The market library is the Market page: people whose view leaves it out (the makers) don't get it here either.
+const noMarket = (user: Parameters<typeof mayOpen>[1]) => (mayOpen("/market", user).ok ? null : { ok: false as const, error: "The market ads aren't part of your view." });
 
 // Motion for the Kaizen AI chat and the "References from Motion" pickers: the market ads Motion's sync keeps
 // (src/lib/market.ts), searched for a client or an industry, the client's swipe file, and Motion's own read-only
@@ -85,7 +89,9 @@ export const tools: AiTool[] = [
       },
       additionalProperties: false,
     },
-    run: async (_user, input) => {
+    run: async (user, input) => {
+      const blocked = noMarket(user);
+      if (blocked) return blocked;
       const clientId = str(input.client_id);
       if (clientId && !(await canSee(clientId))) return { ok: false, error: "Client not found." };
       const format = input.format === "image" || input.format === "video" ? input.format : null;
@@ -97,7 +103,9 @@ export const tools: AiTool[] = [
     name: "client_swipe_file",
     description: "A client's swipe file: the proven and early-winning US ads from their competitors and sub-vertical, the ones the strategist uses as references.",
     input_schema: { type: "object", properties: { client_id: { type: "string" }, max: { type: "integer", minimum: 1, maximum: 20 } }, required: ["client_id"], additionalProperties: false },
-    run: async (_user, input) => {
+    run: async (user, input) => {
+      const blocked = noMarket(user);
+      if (blocked) return blocked;
       const clientId = str(input.client_id);
       if (!clientId || !(await canSee(clientId))) return { ok: false, error: "Client not found." };
       const ads = await swipeFile(createAdminClient(), clientId, Math.min(20, num(input.max) ?? 8));
@@ -112,7 +120,9 @@ export const tools: AiTool[] = [
       properties: { tool: { type: "string", description: "The Motion tool's name, from the list" }, arguments: { type: "object" } },
       additionalProperties: false,
     },
-    run: async (_user, input) => {
+    run: async (user, input) => {
+      // Motion's own reports cover every client's accounts (spend, top ads): only for people who see all clients and account numbers
+      if (!seesAccountNumbers(user) || !(user.isExec || user.isLead || user.isCoordinator || user.isCopywriter)) return { ok: false, error: "Motion's reports cover every client's account numbers, which aren't part of your view." };
       const admin = createAdminClient();
       if (!(await motionConnected(admin))) return { ok: false, error: new MotionNotConnected().message };
       try {

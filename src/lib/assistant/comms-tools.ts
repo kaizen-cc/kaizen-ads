@@ -2,6 +2,7 @@ import "server-only";
 import { emailWritingKind } from "@/lib/copy-docs/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { clientNamedOrNull } from "@/lib/client-named";
+import { maySeeClient } from "@/lib/ai-access";
 import type { Staff } from "@/lib/auth";
 import type { CallDraft, CallEvent } from "@/lib/agent-call/core";
 import { firstNameOf } from "@/lib/agent-call/core";
@@ -56,10 +57,11 @@ async function clientNamed(db: SupabaseClient, name: unknown): Promise<{ id: str
 /** The client a tool means: the one named, else the one the call is about */
 async function clientOf(ctx: CommsCtx, name: unknown) {
   const named = await clientNamed(ctx.db, name);
-  if (named) return named;
+  if (named) return (await maySeeClient(ctx, named.id)) ? named : null;
   if (!ctx.clientId) return null;
   const { data } = await ctx.db.from("clients").select("id, name, slug").eq("id", ctx.clientId).maybeSingle();
-  return (data as { id: string; name: string; slug: string } | null) ?? null;
+  const c = (data as { id: string; name: string; slug: string } | null) ?? null;
+  return c && (await maySeeClient(ctx, c.id)) ? c : null;
 }
 
 // ─── Threads the person can reply in ────────────────────────────────────────

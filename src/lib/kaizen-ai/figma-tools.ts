@@ -1,6 +1,6 @@
 import "server-only";
 import type { ChatTool, ToolCtx } from "./tools";
-import { textAnswer } from "./my-tools";
+import { PRIVATE_WHILE_VIEWING, textAnswer, viewingAs } from "./my-tools";
 
 // Figma in Kaizen AI (and the assistant), read with the person's own personal access token, saved once from the
 // connector menu (Figma's hosted connector admits only apps Figma approved). Read only: a file or a frame's pages,
@@ -33,6 +33,7 @@ export function figmaTools(ctx: ToolCtx): ChatTool[] {
       },
       status: () => "Opening the Figma file…",
       run: async (input) => {
+        if (viewingAs(ctx)) return { error: PRIVATE_WHILE_VIEWING };
         const { parseFigmaLink, readFigma, figmaImages, figmaComments } = await import("@/lib/figma");
         const link = parseFigmaLink(String(input.url ?? ""));
         if (!link) return { error: "That isn't a Figma file or frame link (figma.com/design/…, /file/…, /board/…)." };

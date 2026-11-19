@@ -43,7 +43,7 @@ export function lookupTools(ctx: AssistantCtx): LoopTool[] {
     return { token: t.token };
   }
 
-  return [
+  const tools: LoopTool[] = [
     {
       name: "search_my_slack",
       description:
@@ -178,4 +178,7 @@ export function lookupTools(ctx: AssistantCtx): LoopTool[] {
       },
     },
   ];
+  // While the owner views the app as someone, that person's own mailbox and Slack stay private
+  const PRIVATE = new Set(["search_my_slack", "read_my_slack_thread", "search_my_email", "read_my_email_thread"]);
+  return ctx.me.viewAs ? tools.map((t) => (PRIVATE.has(t.name) ? { ...t, run: async () => ({ error: "While viewing as someone, their own mailbox and Slack stay private." }) } : t)) : tools;
 }

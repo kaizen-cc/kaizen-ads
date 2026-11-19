@@ -7,6 +7,10 @@ import { seatsOn } from "@/lib/chat-permissions-server";
 import { googleMutate, googleQuery } from "@/lib/context/google-ads";
 import { isPublicHost, pageText } from "@/lib/references";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { assertMaySee } from "@/lib/ai-access";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
+import { clientNamed } from "@/lib/client-named";
+import { accessFor } from "./access";
 import type { AiTool } from "./types";
 
 // The Google policy checker: one click reads every disapproved or limited ad, asset and keyword in a client's Google Ads
@@ -623,13 +627,26 @@ export function requestReviewFor(issue: PolicyIssue, account: string) {
 
 // ─── For Kaizen AI ───────────────────────────────────────────────────────────────────────────────────────────────────
 
-async function clientIdFor(admin: SupabaseClient, input: Record<string, unknown>) {
-  if (typeof input.client_id === "string") return input.client_id;
-  if (typeof input.client === "string") {
-    const { data } = await admin.from("clients").select("id").or(`slug.eq.${input.client.replace(/[^\w-]/g, "")},name.ilike.%${input.client.replace(/[%,()]/g, "")}%`).limit(1).maybeSingle();
-    if (data) return data.id as string;
-  }
-  throw new Error("Which client? Give client_id or the client's name.");
+// Google account numbers and the checks on them: not for the makers, and only for clients the person can see (their own
+// session decides which, never the server's rights).
+async function clientIdFor(user: Staff, input: Record<string, unknown>) {
+  if (!seesAccountNumbers(user)) throw new Error("Account numbers aren't part of your view.");
+  const ctx = await accessFor(user);
+  let id: string | null = null;
+  if (typeof input.client_id === "string") id = input.client_id;
+  else if (typeof input.client === "string") id = (await clientNamed(ctx.db, input.client)).id;
+  if (!id) throw new Error("Which client? Give client_id or the client's name.");
+  await assertMaySee(ctx, id);
+  return id;
+}
+
+/** The client a saved check belongs to, only when the person can see that client */
+async function assertMayUseCheck(user: Staff, checkId: string) {
+  if (!seesAccountNumbers(user)) throw new Error("Account numbers aren't part of your view.");
+  const ctx = await accessFor(user);
+  const { data } = await ctx.admin.from("policy_checks").select("client_id").eq("id", checkId).maybeSingle();
+  if (!data) throw new Error("That check isn't there.");
+  await assertMaySee(ctx, data.client_id as string);
 }
 
 export const tools: AiTool[] = [
@@ -639,7 +656,7 @@ export const tools: AiTool[] = [
     input_schema: { type: "object", properties: { client_id: { type: "string" }, client: { type: "string", description: "The client's name or slug, when the id isn't known" } } },
     run: async (user, input) => {
       const admin = createAdminClient();
-      const clientId = await clientIdFor(admin, input);
+      const clientId = await clientIdFor(user, input);
       const s = await startPolicyCheck(admin, clientId, user.id);
       if (!s.already) await runPolicyCheck(admin, s.id);
       const c = await latestPolicyCheck(admin, clientId);
@@ -655,22 +672,26 @@ export const tools: AiTool[] = [
     name: "google_policy_latest",
     description: "The latest Google policy check for a client (without running a new one).",
     input_schema: { type: "object", properties: { client_id: { type: "string" }, client: { type: "string" } } },
-    run: async (_user, input) => {
+    run: async (user, input) => {
       const admin = createAdminClient();
-      return latestPolicyCheck(admin, await clientIdFor(admin, input));
+      return latestPolicyCheck(admin, await clientIdFor(user, input));
     },
   },
   {
     name: "google_policy_apply_fix",
     description: "Apply the fix for one item from a policy check: a paused compliant replacement in Google Ads where live Google changes are on and the person may change the account; otherwise the checklist to do by hand.",
     input_schema: { type: "object", properties: { check_id: { type: "string" }, key: { type: "string", description: "The item's key from the check" } }, required: ["check_id", "key"] },
-    run: async (user, input) => applyPolicyFix(createAdminClient(), user, String(input.check_id), String(input.key)),
+    run: async (user, input) => {
+      await assertMayUseCheck(user, String(input.check_id));
+      return applyPolicyFix(createAdminClient(), user, String(input.check_id), String(input.key));
+    },
   },
   {
     name: "google_policy_request_review",
     description: "How to request Google's review for one item, with the drafted appeal to paste (the API has no appeal call).",
     input_schema: { type: "object", properties: { check_id: { type: "string" }, key: { type: "string" } }, required: ["check_id", "key"] },
-    run: async (_user, input) => {
+    run: async (user, input) => {
+      await assertMayUseCheck(user, String(input.check_id));
       const { data } = await createAdminClient().from("policy_checks").select("account, issues").eq("id", String(input.check_id)).single();
       const issue = ((data?.issues ?? []) as PolicyIssue[]).find((i) => i.key === input.key);
       if (!data || !issue) throw new Error("That item isn't in the check.");

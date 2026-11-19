@@ -14,6 +14,7 @@ import { clampFormats, formatList, formatsFor, formatsRule } from "@/lib/creativ
 import { can, roleWidePerms, type Who } from "@/lib/chat-permissions";
 import { isChannelOnly, lineOfTeam } from "@/lib/roles";
 import { channelMaySee } from "./channel-access";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
 import { servicesOf } from "@/lib/services";
 import { kpiBoardEmail, subjectPatterns, weeklyListChange } from "./email-insights";
 import { SLIDE_KINDS, cleanSlides, clip } from "./deck-core";
@@ -93,6 +94,11 @@ async function clientOf(ctx: ToolCtx, input: Record<string, unknown>): Promise<C
   if (!data || !(await channelMaySeeClient(ctx, data.id))) throw new Error("You can't see this client.");
   names.set(data.id, data.name);
   return data as ClientRow;
+}
+
+/** Account numbers (KPIs, spend, audits) aren't part of a maker's view in the app, so their assistant refuses them too */
+function needNumbers(ctx: Pick<ToolCtx, "me">) {
+  if (!seesAccountNumbers(ctx.me)) throw new Error("Account numbers aren't part of your view.");
 }
 
 const nameFor = (ctx: ToolCtx, input: Record<string, unknown>) => (String(input.client ?? "").trim() || (ctx.clientId ? (names.get(ctx.clientId) ?? null) : null));
@@ -347,7 +353,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
         const c = await clientOf(ctx, input);
         // With the package (its tier per service and what it includes), so scope and volume are never guessed
         const { clientPackage, packageBlock } = await import("@/lib/client-package");
-        const [brief, pkg] = await Promise.all([isChannelOnly(ctx.me.role) ? channelBrief(ctx.admin, c.id) : clientBrief(ctx.admin, c.id), clientPackage(ctx.admin, c.id).catch(() => null)]);
+        const [brief, pkg] = await Promise.all([isChannelOnly(ctx.me.role) || !seesAccountNumbers(ctx.me) ? channelBrief(ctx.admin, c.id) : clientBrief(ctx.admin, c.id), clientPackage(ctx.admin, c.id).catch(() => null)]);
         return pkg ? `${brief}\n\n${packageBlock(pkg)}` : brief;
       },
     },
@@ -370,6 +376,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       status: (input, client) => `Reading ${input.platform === "google" ? "Google Ads" : "Meta"} data for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
+        needNumbers(ctx);
         const platform = input.platform === "google" ? "google" : "meta";
         const days = [1, 3, 7, 14, 30].includes(Number(input.days)) ? Number(input.days) : 7;
         const until = shift(nyToday(), -1);
@@ -492,6 +499,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       status: (input, client) => `Reading Meta history month by month for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
+        needNumbers(ctx);
         const { historyRange, historyResultType, monthRows, monthChanges, HISTORY_FIELDS } = await import("./meta-history");
         const range = historyRange(input.since, input.until, nyToday());
         if ("error" in range) throw new Error(range.error);
@@ -543,6 +551,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       status: (input, client) => `Reading what's winning for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
+        needNumbers(ctx);
         const days = Number(input.days) || 30;
         const until = shift(nyToday(), -1);
         const [rows, { data: insights }, { data: tiring }, { data: targets }] = await Promise.all([
@@ -591,6 +600,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       status: (input, client) => `Reading email for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
+        needNumbers(ctx);
         const { clientKlaviyo, topAndBottom } = await import("@/lib/klaviyo/store");
         const { loadEmailScore } = await import("@/lib/email-score-load");
         const [k, board] = await Promise.all([clientKlaviyo(ctx.admin, c.id).catch(() => null), loadEmailScore(ctx.admin, c.id).catch(() => null)]);
@@ -653,6 +663,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       status: (input, client) => `Reading ${nameFor(ctx, input) ?? client ?? "the client"}'s KPI board…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
+        needNumbers(ctx);
         const line = input.line === "social" || input.line === "ads" ? input.line : "email";
         // The email and social teams read their own line's board
         if (isChannelOnly(ctx.me.role) && line !== lineOfTeam(ctx.me.role)) return { client: c.name, note: `The ${line} board isn't one your team reads.` };
@@ -677,6 +688,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       status: (input, client) => `Reading Facebook and Instagram for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
+        needNumbers(ctx);
         // The server's rights read it, so the person's access to this client was checked above (channel roles again in clientOf)
         const { clientSocial, socialLink } = await import("@/lib/social/store");
         const { organicSocialReport, socialMissingNote } = await import("./social-report");
@@ -719,6 +731,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       status: (input, client) => `Scoring ${nameFor(ctx, input) ?? client ?? "the client"}'s social…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
+        needNumbers(ctx);
         const score = await (await import("@/lib/social-score-load")).loadSocialScore(ctx.admin, c.id).catch(() => null);
         if (!score) return { client: c.name, scored: false, note: "No social numbers yet: the Page or Instagram account isn't linked, or the first read hasn't finished." };
         const { socialCheckText, PLATFORM_LABEL } = await import("@/lib/social-score");
@@ -779,10 +792,12 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
         const since = DAY.test(String(input.since ?? "")) ? String(input.since) : shift(nyToday(), -7);
         const a = ctx.admin;
         const cut = (s: unknown, n = 400) => String(s ?? "").replace(/\s+/g, " ").slice(0, n);
-        const { data: targets } = await a.from("kpi_targets").select("ad_account_id, platform").eq("client_id", c.id).eq("active", true);
+        // Makers don't see the ad accounts' changes or history (account numbers), only the work and the conversation
+        const numbers = seesAccountNumbers(ctx.me);
+        const { data: targets } = numbers ? await a.from("kpi_targets").select("ad_account_id, platform").eq("client_id", c.id).eq("active", true) : { data: [] as { ad_account_id: string | null; platform: string }[] };
         const accounts = [...new Set((targets ?? []).map((t) => String(t.ad_account_id ?? "").replace(/^act_/, "")).filter(Boolean))];
         const [changes, history, messages, calls, tasks, launches, requests, owed, promises] = await Promise.all([
-          a.from("ad_changes").select("platform, title, status, created_at, applied_at, note").eq("client_id", c.id).gte("created_at", since).order("created_at", { ascending: false }).limit(30),
+          numbers ? a.from("ad_changes").select("platform, title, status, created_at, applied_at, note").eq("client_id", c.id).gte("created_at", since).order("created_at", { ascending: false }).limit(30) : Promise.resolve({ data: [] }),
           accounts.length ? a.from("ad_account_activity").select("ad_account_id, recent").in("ad_account_id", accounts) : Promise.resolve({ data: [] }),
           a.from("context_items").select("source, occurred_at, author, title, body, url").eq("client_id", c.id).in("source", ["slack_external", "slack_internal", "gmail"]).gte("occurred_at", since).order("occurred_at", { ascending: false }).limit(60),
           a.from("client_calls").select("title, occurred_at, summary, url").eq("client_id", c.id).gte("occurred_at", since).order("occurred_at", { ascending: false }).limit(8),
@@ -818,6 +833,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       status: (input, client) => `Starting the report for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
+        needNumbers(ctx);
         const { resolveRange, buildReport, draftParts } = await import("@/lib/reports/builder");
         const range = resolveRange(String(input.range ?? "last7"));
         if (!range) throw new Error("That range isn't available.");
@@ -1098,6 +1114,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       input_schema: { type: "object", properties: { title: { type: "string" }, markdown: { type: "string" } }, required: ["title", "markdown"], additionalProperties: false },
       status: () => "Making the Google Doc…",
       run: async (input) => {
+        if (ctx.me.viewAs) throw new Error("While viewing as someone, nothing is created in their Drive.");
         const f = await uploadAs(ctx.me.email, String(input.title).slice(0, 200), "application/vnd.google-apps.document", mdToHtml(String(input.markdown)), "text/html");
         card({ type: "link", title: String(input.title), detail: "In your Google Drive", href: f.webViewLink, cta: "Open the Doc", external: true });
         return { link: f.webViewLink };
@@ -1111,6 +1128,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       run: async (input) => {
         const rows = ((input.rows ?? []) as unknown[][]).slice(0, 5000);
         const csv = rows.map((r) => r.map(csvCell).join(",")).join("\r\n");
+        if (ctx.me.viewAs) throw new Error("While viewing as someone, nothing is created in their Drive.");
         const f = await uploadAs(ctx.me.email, String(input.title).slice(0, 200), "application/vnd.google-apps.spreadsheet", csv, "text/csv");
         card({ type: "link", title: String(input.title), detail: `${Math.max(0, rows.length - 1)} rows · in your Google Drive`, href: f.webViewLink, cta: "Open the Sheet", external: true });
         return { link: f.webViewLink };
@@ -1183,12 +1201,12 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   });
 
   // Search everything on file, recorded calls: the report chat's own lookups, reused for the pinned client
-  if (ctx.clientId && (await channelMaySeeClient(ctx, ctx.clientId))) {
+  if (ctx.clientId && (await (await import("@/lib/ai-access")).maySeeClient(ctx, ctx.clientId))) {
     const { reportTools } = await import("@/lib/reports/tools");
     const pulled: { label: string; data: string }[] = [];
     const reused = await reportTools(ctx.admin, { client_id: ctx.clientId, platform: "meta", kpi_targets: null }, pulled).catch(() => [] as AiTool[]);
     const label: Record<string, string> = { search_client: "Searching Slack, email, Drive and calls…", recent_calls: "Reading the recent calls…", read_call: "Reading the call…", earlier_reports: "Reading earlier reports…" };
-    for (const t of reused) if (label[t.name]) tools.push({ ...t, description: `${t.description} (Only for the client this thread is pinned to.)`, status: () => label[t.name] });
+    for (const t of reused) if (label[t.name] && (t.name !== "earlier_reports" || seesAccountNumbers(ctx.me))) tools.push({ ...t, description: `${t.description} (Only for the client this thread is pinned to.)`, status: () => label[t.name] });
   }
 
   // Their own Kaizen AI and imported Claude chats, Google files opened as them, and a client's records by name
@@ -1238,13 +1256,15 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
  * account changes for the creative team, a Meta launch only for the Meta side, briefs only for those who brief (in
  * their formats), copy only for those who write it. Every tool that's kept checks the client again on the server.
  */
-export function toolsFor<T extends { name: string; input_schema?: unknown }>(me: Who, tools: T[]): T[] {
+export function toolsFor<T extends { name: string; input_schema?: unknown }>(me: Who & { isLead?: boolean | null }, tools: T[]): T[] {
   // The email and social teams: client lookup, shared context, calls and their own channel. Every other tool reads ad
   // data with the server's rights, so none of them are offered
   if (isChannelOnly(me.role)) return tools.filter((t) => (CHANNEL_TOOLS.has(t.name) || CHANNEL_EXTRA.has(t.name)) && !(["email_marketing", "top_emails", "email_detail"].includes(t.name) && lineOfTeam(me.role) !== "email") && !(["organic_social", "social_score", "run_social_audit", "start_social_sprint", "top_posts"].includes(t.name) && lineOfTeam(me.role) !== "social"));
   const p = roleWidePerms(me);
   const changeOn = (["meta", "google"] as const).filter((x) => p.change[x]);
   const drop = new Set<string>();
+  // Makers never see account numbers, audits or reports in the app, so these aren't offered (each also refuses in run)
+  if (!seesAccountNumbers(me)) for (const n of ["account_metrics", "meta_history", "winners_and_fatigue", "kpi_board", "draft_weekly_report", "plan_ad_changes", "launch_sheet", "launch_reply", "rank_clients", "top_ads", "top_emails", "email_detail", "top_posts", "email_marketing", "organic_social", "social_score"]) drop.add(n);
   if (!changeOn.length && !p.buyer) drop.add("plan_ad_changes");
   if (!p.launch.meta) for (const n of ["launch_sheet", "launch_reply"]) drop.add(n);
   if (!p.copy) drop.add("write_ad_copy");

@@ -2,6 +2,7 @@ import "server-only";
 import { DOC_KINDS, DOC_LABEL, PRICE_PLACEHOLDER } from "@/lib/documents/core";
 import { clientNamedForTools, type ChatTool, type ToolCtx } from "./tools";
 import type { DocumentCard } from "./types";
+import { seesAccountNumbers, seesMoney } from "@/lib/ai-access-core";
 
 // Documents for the assistant and Kaizen AI: Kaizen's package definitions for a Scope of Work (package_details), a
 // client's wins from their own data for a handoff or recap (client_wins), and the branded PDF itself (create_document),
@@ -35,7 +36,9 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
       run: async (input) => {
         const c = await maybeClient(input).catch(() => null);
         const { packageFacts } = await import("@/lib/documents/server");
-        const f = await packageFacts(ctx.admin, c?.id ?? null, input.service, clip(input.tier, 40) || null);
+        const f0 = await packageFacts(ctx.admin, c?.id ?? null, input.service, clip(input.tier, 40) || null);
+        // What Stripe bills a client is billing, for the executives only; the package record's own prices are Kaizen's price list
+        const f = seesMoney(ctx.me).ok ? f0 : { ...f0, stored: f0.stored.filter((p) => p.source === "package") };
         return {
           service: f.service,
           client: c?.name ?? null,
@@ -57,6 +60,7 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
       input_schema: { type: "object", properties: { client: CLIENT, since: { type: "string", description: "YYYY-MM-DD: what we shipped from this day (default 90 days ago)" } }, additionalProperties: false },
       status: (input, client) => `Pulling the wins for ${clip(input.client, 40) || client || "the client"}…`,
       run: async (input) => {
+        if (!seesAccountNumbers(ctx.me)) return { error: "Account numbers aren't part of your view." };
         const c = await clientNamedForTools(ctx, input);
         const since = DAY.test(String(input.since ?? "")) ? String(input.since) : new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
         const [{ clientKlaviyo }, tickets, sprints] = await Promise.all([

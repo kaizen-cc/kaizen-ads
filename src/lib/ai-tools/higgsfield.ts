@@ -4,6 +4,8 @@ import { higgsfieldConfigured } from "@/lib/higgsfield";
 import { canGenerateMedia, HF_MODELS } from "@/lib/media-models";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { maySeeClient } from "@/lib/ai-access";
+import { accessFor } from "./access";
 import { str, type AiTool } from "./types";
 
 // Higgsfield for the Kaizen AI chat: start an image or a video (it runs in the background and the person is told
@@ -84,6 +86,14 @@ export const tools: AiTool[] = [
       const admin = createAdminClient();
       const { advance } = await import("@/lib/ai-media-jobs");
       const id = String(input.job_id ?? "");
+      // Someone else's job is only for the person when it is about a client or a ticket they can see
+      const { data: owner } = await admin.from("ai_media_jobs").select("profile_id, client_id, request_id").eq("id", id).maybeSingle();
+      if (!owner) return { ok: false, error: "Not found." };
+      if (owner.profile_id !== user.id && !user.isExec) {
+        const ctx = await accessFor(user);
+        const ticket = owner.request_id ? (await ctx.db.from("board_requests").select("id").eq("id", owner.request_id as string).maybeSingle()).data : null;
+        if (!ticket && !(await maySeeClient(ctx, owner.client_id as string | null))) return { ok: false, error: "Not found." };
+      }
       await advance(admin, id).catch(() => null);
       const { data } = await admin.from("ai_media_jobs").select("*").eq("id", id).maybeSingle();
       if (!data) return { ok: false, error: "Not found." };

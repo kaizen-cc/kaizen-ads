@@ -5,6 +5,10 @@ import { count, money, multiple, percent, platformName } from "@/lib/reports/for
 import type { ReportMetrics } from "@/lib/reports/metrics";
 import type { Sections } from "@/lib/reports/write";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { assertMaySee } from "@/lib/ai-access";
+import { canSeeReports } from "@/lib/roles";
+import type { Staff } from "@/lib/auth";
+import { accessFor } from "./access";
 import type { AiTool } from "./types";
 
 // The monthly recap in the team's own PowerPoint template. The template (a PowerPoint file in Drive, its id in
@@ -468,17 +472,32 @@ export async function deckPptx(presentationId: string) {
 
 // ─── For Kaizen AI ───────────────────────────────────────────────────────────────────────────────────────────────────
 
+/** A report's deck is only for those who may open client reports (executives, media buyers, the channel teams), and only for a client they can see */
+async function assertMayUseReport(user: Staff, reportId: string) {
+  if (!canSeeReports(user)) throw new Error("Client reports are for the executives and the strategists.");
+  const ctx = await accessFor(user);
+  const { data } = await ctx.db.from("reports").select("client_id").eq("id", reportId).maybeSingle();
+  if (!data) throw new Error("That report isn't there.");
+  await assertMaySee(ctx, data.client_id as string);
+}
+
 export const tools: AiTool[] = [
   {
     name: "fill_recap_deck",
     description: "Fill the team's PowerPoint template with a client's monthly recap report (KPIs, spend, results, trends, top ads, what we did, next steps, charts): a copy in the client's Drive folder. Returns the Slides link and the PPTX download link.",
     input_schema: { type: "object", properties: { report_id: { type: "string", description: "The monthly recap report" }, remap: { type: "boolean", description: "Work out again where each piece goes in the template" } }, required: ["report_id"] },
-    run: async (user, input) => fillRecapDeck(createAdminClient(), String(input.report_id), user.id, { remap: input.remap === true }),
+    run: async (user, input) => {
+      await assertMayUseReport(user, String(input.report_id));
+      return fillRecapDeck(createAdminClient(), String(input.report_id), user.id, { remap: input.remap === true });
+    },
   },
   {
     name: "recap_deck_status",
     description: "The filled template for a monthly recap report, if there is one: its link, status and notes.",
     input_schema: { type: "object", properties: { report_id: { type: "string" } }, required: ["report_id"] },
-    run: async (_user, input) => recapDeckFor(createAdminClient(), String(input.report_id)),
+    run: async (user, input) => {
+      await assertMayUseReport(user, String(input.report_id));
+      return recapDeckFor(createAdminClient(), String(input.report_id));
+    },
   },
 ];

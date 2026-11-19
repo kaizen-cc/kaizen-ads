@@ -5,6 +5,8 @@ import { seesEmailBoard } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { emailAllotmentLine, emailPace, emailPools } from "@/lib/email-allotment-core";
+import { assertMaySee } from "@/lib/ai-access";
+import { accessFor } from "./access";
 import { str, type AiTool } from "./types";
 
 // The email allotment and Scope of Work, for the assistant, Kaizen AI and every agent on a call (registered in
@@ -28,6 +30,7 @@ const emailAllotment: AiTool = {
     const { emailAllotments } = await import("@/lib/email-request");
     if (str(input.client)) {
       const c = await clientNamed(db, input.client);
+      await assertMaySee(await accessFor(user), c.id);
       const [all, { data: sow }, { data: months }] = await Promise.all([
         emailAllotments(db, [c.id]),
         db.from("client_sows").select("name, url, source, found_in, scope, status, created_at").eq("client_id", c.id).eq("line", "email").neq("status", "replaced").order("created_at", { ascending: false }).limit(1).maybeSingle(),
@@ -71,6 +74,7 @@ const findSow: AiTool = {
     if (!seesEmailBoard(user) && !user.isLead) return { ok: false, error: "The email team and the executives manage the email scope." };
     const db = await createClient();
     const c = await clientNamed(db, input.client);
+    await assertMaySee(await accessFor(user), c.id);
     const admin = createAdminClient();
     const { findSow, saveSow } = await import("@/lib/email-sow");
     const s = await findSow(admin, c.id);
@@ -89,6 +93,7 @@ const draftSow: AiTool = {
     if (!seesEmailBoard(user) && !user.isLead) return { ok: false, error: "The email team and the executives draft email requests." };
     const db = await createClient();
     const c = await clientNamed(db, input.client);
+    await assertMaySee(await accessFor(user), c.id);
     const { draftScopeMonth } = await import("@/lib/email-sow");
     const r = await draftScopeMonth(createAdminClient(), c.id);
     return r.drafted ? { ok: true, drafted: r.drafted, review: `/board/email/new?client=${c.slug}` } : { ok: false, error: r.reason ?? "Nothing to draft." };
@@ -105,6 +110,7 @@ const adjustScope: AiTool = {
     if (!seesEmailBoard(user) && !user.isLead) return { ok: false, error: "The email team and the executives manage the email scope." };
     const db = await createClient();
     const c = await clientNamed(db, input.client);
+    await assertMaySee(await accessFor(user), c.id);
     const said = str(input.what_changed);
     if (!said) return { ok: false, error: "Say what changed." };
     const admin = createAdminClient();

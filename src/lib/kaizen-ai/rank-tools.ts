@@ -8,6 +8,7 @@ import { servicesOf } from "@/lib/services";
 import { onService } from "@/lib/service-gate";
 import { conversionValue } from "@/lib/kpi/conversion-value";
 import { channelMaySee } from "./channel-access";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
 import { DEFAULT_METRIC, RANK_METRICS, asPeriod, moneyWords, pctWords, periodRange, rankEntries, rankLinesFor, sumDays, vsTarget, type RankEntry, type RankLine, type RankPeriod } from "./rank-core";
 import type { ChatTool, ToolCtx } from "./tools";
 import { rankCriticalClients } from "./rank-critical";
@@ -210,6 +211,8 @@ function emailParts(html: string | null) {
 const NY_TIME = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/New_York", weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 export function rankTools(ctx: ToolCtx): ChatTool[] {
+  // Rankings are account numbers, which makers never see in the app
+  if (!seesAccountNumbers(ctx.me)) return [];
   const PERIOD = { type: "string", enum: ["7", "30", "90", "month"], description: "The last 7, 30 or 90 days, or this month so far (default 30)" };
   const ORDER = { type: "string", enum: ["top", "bottom"], description: "Best first (top) or worst first (bottom). Default top." };
   const LIMIT = { type: "integer", minimum: 1, maximum: 25, description: "How many (default 3)" };

@@ -29,6 +29,10 @@ async function googleRead(email: string, url: string) {
   return read;
 }
 
+/** While the owner views the app as a teammate, that teammate's own mailbox, Drive, calendar and chats stay private */
+export const PRIVATE_WHILE_VIEWING = "While viewing as someone, their own Gmail, Drive, Calendar and Kaizen AI chats stay private.";
+export const viewingAs = (ctx: Pick<ToolCtx, "me">) => Boolean(ctx.me.viewAs);
+
 /** A long text as a tool answer: one part (whole when it fits), or the passages matching a search */
 export function textAnswer(text: string, input: Record<string, unknown>): Record<string, unknown> {
   const q = clip(input.search, 200);
@@ -49,6 +53,7 @@ export function myTools(ctx: ToolCtx): ChatTool[] {
       input_schema: { type: "object", properties: { query: { type: "string", description: "A title, a client, or words that were said" }, limit: { type: "integer" } }, required: ["query"], additionalProperties: false },
       status: (input) => `Searching your Kaizen AI chats for ${clip(input.query, 40)}…`,
       run: async (input) => {
+        if (viewingAs(ctx)) return { error: PRIVATE_WHILE_VIEWING };
         const query = clip(input.query, 200);
         const terms = searchTerms(query).filter((t) => t.length >= 3).slice(0, 4);
         if (!query) throw new Error("What should I look for?");
@@ -95,6 +100,7 @@ export function myTools(ctx: ToolCtx): ChatTool[] {
       input_schema: { type: "object", properties: { thread_id: { type: "string" }, project_id: { type: "string" }, project_doc_id: { type: "string" }, part: { type: "integer", minimum: 1 }, search: { type: "string", description: "Words to find inside it (instead of a part)" } }, additionalProperties: false },
       status: () => "Reading the chat…",
       run: async (input) => {
+        if (viewingAs(ctx)) return { error: PRIVATE_WHILE_VIEWING };
         const id = (k: string) => (typeof input[k] === "string" && /^[0-9a-f-]{36}$/i.test(input[k] as string) ? (input[k] as string) : null);
         if (id("project_doc_id")) {
           const { data: d } = await ctx.db.from("ai_project_docs").select("name, text, note, ai_projects(name)").eq("id", id("project_doc_id")!).maybeSingle();
@@ -132,6 +138,7 @@ export function myTools(ctx: ToolCtx): ChatTool[] {
       input_schema: { type: "object", properties: { url: { type: "string", description: "The docs.google.com or drive.google.com link" }, part: { type: "integer", minimum: 1 }, search: { type: "string", description: "Words to find inside it (instead of a part)" } }, required: ["url"], additionalProperties: false },
       status: () => "Opening the Google file…",
       run: async (input) => {
+        if (viewingAs(ctx)) return { opened: false, why: PRIVATE_WHILE_VIEWING };
         const read = await googleRead(ctx.me.email, String(input.url ?? "").trim());
         if (!read.ok) return { opened: false, why: read.say, ...(read.problem === "scope" ? { for_the_admin: "Add https://www.googleapis.com/auth/drive.readonly to the service account's domain-wide delegation (Google Admin console, Security, API controls)." } : {}) };
         return { opened: true, title: read.title, kind: read.kind, modified: read.modified?.slice(0, 10) ?? null, link: read.url, ...(read.note ? { note: read.note } : {}), ...textAnswer(read.text || "(empty)", input) };

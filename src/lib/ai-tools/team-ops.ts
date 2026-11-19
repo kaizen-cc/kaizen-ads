@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
 import { metaConfigured, metaGraph } from "@/lib/context/meta";
 import { AI_BUCKET } from "@/lib/kaizen-ai/files";
 import { canEditProject, projectRole, type ProjectAccess } from "@/lib/kaizen-ai/projects";
@@ -391,6 +392,8 @@ const metaTroubleshoot: AiTool = {
     additionalProperties: false,
   },
   run: async (user: Staff, input, chat) => {
+    // The ad account's standing is account detail the makers never see in the app
+    if (!seesAccountNumbers(user)) return fail("Account numbers aren't part of your view.");
     const got = await clientFor(user, input, chat);
     if ("error" in got) return fail(got.error);
     const c = got.client;
@@ -556,6 +559,21 @@ async function readDriveFile(id: string): Promise<{ ok: true; file: Loaded } | {
   return { ok: false, error: `${info.name} isn't a sheet I can read (${info.mimeType}).` };
 }
 
+/** Whether the person can open this Drive file with their own Google access (true), or why not */
+async function opensInOwnDrive(user: Staff, id: string): Promise<true | string> {
+  if (user.viewAs) return "While viewing as someone, their own Drive stays private.";
+  const { googleConfigured, googleDriveToken } = await import("@/lib/context/google");
+  // Without the Workspace connection there's no way to ask Google as them: the shared account's own sharing decides
+  if (!googleConfigured()) return true;
+  try {
+    const token = await googleDriveToken(user.email);
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=id&supportsAllDrives=true`, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
+    return res.ok ? true : "That sheet isn't shared with you in Google Drive. Ask its owner to share it with you, or attach it as Excel or CSV.";
+  } catch {
+    return "I couldn't check that sheet with your Google access. Attach it as Excel or CSV instead.";
+  }
+}
+
 const readReportSheet: AiTool = {
   name: "read_report_sheet",
   description:
@@ -572,12 +590,15 @@ const readReportSheet: AiTool = {
     additionalProperties: false,
   },
   lines: ["social", "email"],
-  run: async (_user: Staff, input, chat) => {
+  run: async (user: Staff, input, chat) => {
     const url = str(input.url);
     let loaded: { ok: true; file: Loaded } | { ok: false; error: string };
     if (url) {
       const link = sheetLink(url);
       if (!link) return fail("That doesn't look like a Google Sheets link. Paste the sheet's address from the browser, or attach the file.");
+      // Kaizen's Drive account reads it, but only a sheet the person can open in their own Drive: a link alone isn't access
+      const mine = await opensInOwnDrive(user, link.id);
+      if (mine !== true) return fail(mine);
       loaded = await readDriveFile(link.id);
     } else {
       const files = (chat?.files ?? []).filter((f) => LISTY.test(f.name));

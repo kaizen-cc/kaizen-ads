@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import type { ChatTool, ToolCtx } from "@/lib/kaizen-ai/tools";
 import type { Card } from "@/lib/kaizen-ai/types";
+import { mayOpenPath } from "@/lib/ai-access";
 import { safeAppPath, safeLink } from "@/lib/assistant/core";
 import type { CallCard, CallEvent } from "./core";
 import { CARD_TOOLS, type LoopTool } from "./tool-loop";
@@ -70,6 +71,13 @@ export function cardLink(thread: string, c: Card): Omit<CallCard, "id"> {
   return { title: "From our call", detail: "Saved in Kaizen AI", href: home, external: false, cta: "Open" };
 }
 
+/** A card whose link goes to a page the person can't open points at the call's own thread instead (a card never opens a page they couldn't open themselves) */
+async function openable(ctx: CardCtx, thread: string, card: Omit<CallCard, "id">): Promise<Omit<CallCard, "id">> {
+  if (card.external) return card;
+  const gate = await mayOpenPath(ctx, card.href).catch(() => ({ ok: false as const }));
+  return gate.ok ? card : { ...card, href: `/ai?t=${thread}`, cta: "Open" };
+}
+
 /** The person's card tools (already narrowed to their rights), working on a call */
 export function callCardTools(ctx: CardCtx, tctx: ToolCtx, base: readonly ChatTool[]): LoopTool[] {
   return base
@@ -82,7 +90,7 @@ export function callCardTools(ctx: CardCtx, tctx: ToolCtx, base: readonly ChatTo
         const out = await t.run(input);
         if (tctx.cards.length) {
           await ctx.admin.from("ai_messages").update({ cards: tctx.cards }).eq("id", tctx.messageId);
-          for (const c of tctx.cards) showCard(ctx, cardLink(ctx.thread.id ?? "", c));
+          for (const c of tctx.cards) showCard(ctx, await openable(ctx, ctx.thread.id ?? "", cardLink(ctx.thread.id ?? "", c)));
         }
         return out;
       },

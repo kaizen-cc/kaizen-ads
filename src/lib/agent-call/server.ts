@@ -240,12 +240,12 @@ export function playbookFor(admin: SupabaseClient, roleKey: string): Promise<Rol
 export async function turnExtras(input: TurnInput, text: string, tag = "") {
   const t = input.timer ?? callTimer();
   const [where0, team, connectors, frame] = await Promise.all([
-    t.time(`${tag}screen`, contextBlock(input.db, input.context).catch(() => "")),
+    t.time(`${tag}screen`, contextBlock(input.db, input.context, input.me).catch(() => "")),
     // The client in play: the lines it buys, who sits in each seat (so hand-offs only go to roles it has) and how it
     // makes money (so every idea fits the business)
     t.time(
       `${tag}client`,
-      import("@/lib/assistant/routing-server").then(({ clientTeamBlock }) => clientTeamBlock(input.db, input.admin, input.context?.clientId ?? null, text, { viewer: input.me.id })).catch(() => ""),
+      import("@/lib/assistant/routing-server").then(({ clientTeamBlock }) => clientTeamBlock(input.db, input.admin, input.context?.clientId ?? null, text, { viewer: input.me.id, me: input.me })).catch(() => ""),
     ),
     t.time(
       `${tag}connectors`,

@@ -2,6 +2,8 @@ import "server-only";
 import { isIdeasPath, noIdeas } from "@/lib/maker-day-core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { clientNamed as sharedClientNamed } from "@/lib/client-named";
+import { maySeeClient, mayOpenPath } from "@/lib/ai-access";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
 import { after } from "next/server";
 import type { Staff } from "@/lib/auth";
 import type { CallCard, CallEvent } from "@/lib/agent-call/core";
@@ -53,10 +55,16 @@ const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").tri
 const CLIENT = { type: "string", description: "The client's name" };
 const NO_YES = "Not run: say in one sentence exactly what this will do and ask; run it again with confirmed: true only once they clearly say yes.";
 
-/** The client named, if this person may see it (their own session decides) */
-async function clientNamed(db: SupabaseClient, name: unknown): Promise<{ id: string; name: string; slug: string }> {
-  return sharedClientNamed(db, clip(name, 120));
+/** The client named, if this person may see it (their own session decides, then the channel rule for the email and social teams) */
+async function clientNamed(ctx: AssistantCtx, name: unknown): Promise<{ id: string; name: string; slug: string }> {
+  const c = await sharedClientNamed(ctx.db, clip(name, 120));
+  if (!(await maySeeClient(ctx, c.id))) throw new Error(`No client called "${clip(name, 120)}" that you can see.`);
+  return c;
 }
+
+/** While the owner views the app as someone, the person's own private places and anything that acts as them stay shut */
+const VIEWING_NOTE = "While viewing as someone, nothing is changed and their own mailbox and Slack stay private.";
+const NO_WHILE_VIEWING = new Set(["remember", "set_style", "forget", "keep_for_later", "run_audit", "start_sprint", "update_my_profile", "update_assistant_settings", "send_to_teammate", "draft_message", "save_draft", "send_message", "search_my_slack", "read_my_slack_thread", "search_my_email", "read_my_email_thread"]);
 
 const showCard = (ctx: AssistantCtx, c: Omit<CallCard, "id">) => showCallCard(ctx, c);
 
@@ -131,6 +139,8 @@ async function screenFor(ctx: AssistantCtx, input: Record<string, unknown>): Pro
   const pw = platform === "google" ? "Google" : platform === "tiktok" ? "TikTok" : "Meta";
   const onTab = tab && tab !== "overview" ? `, ${tab} tab` : "";
   if (typeof input.href === "string" && input.href.trim()) return { href: input.href.trim(), label: "that page" };
+  // Account numbers (KPI cards, audits, sprints) aren't part of a maker's app
+  if (["kpi_card", "email_sheet", "social_sheet", "audit", "email_audit", "social_audit", "sprint", "email_sprint", "social_sprint"].includes(what) && !seesAccountNumbers(ctx.me)) return { note: "Account numbers aren't part of their view." };
   if (!what && typeof input.place === "string" && SCREEN_PLACES[input.place]) return { href: SCREEN_PLACES[input.place], label: input.place };
   const n = Number(input.number);
   if (what === "ticket" || what === "email_ticket") {
@@ -156,7 +166,7 @@ async function screenFor(ctx: AssistantCtx, input: Record<string, unknown>): Pro
     if (/^[0-9a-f-]{36}$/i.test(id)) q = q.eq("id", id);
     else if (input.client) {
       try {
-        q = q.eq("client_id", (await clientNamed(ctx.db, input.client)).id).eq("status", "open");
+        q = q.eq("client_id", (await clientNamed(ctx, input.client)).id).eq("status", "open");
       } catch (e) {
         return { note: `${e instanceof Error ? e.message : "No such client."} Ask which client they meant.` };
       }
@@ -180,7 +190,7 @@ async function screenFor(ctx: AssistantCtx, input: Record<string, unknown>): Pro
     if (/^[0-9a-f-]{36}$/i.test(id)) q = q.eq("id", id);
     else if (input.client) {
       try {
-        q = q.eq("client_id", (await clientNamed(ctx.db, input.client)).id);
+        q = q.eq("client_id", (await clientNamed(ctx, input.client)).id);
       } catch (e) {
         return { note: `${e instanceof Error ? e.message : "No such client."} Ask which client they meant.` };
       }
@@ -196,7 +206,7 @@ async function screenFor(ctx: AssistantCtx, input: Record<string, unknown>): Pro
   if (!input.client) return what ? { note: "Which client?" } : { note: "Where to? Name a client, a place, or what to open." };
   let c: { id: string; name: string; slug: string };
   try {
-    c = await clientNamed(ctx.db, input.client);
+    c = await clientNamed(ctx, input.client);
   } catch (e) {
     return { note: `${e instanceof Error ? e.message : "No such client."} Ask which client they meant.` };
   }
@@ -307,7 +317,8 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
         const { data: o } = await ctx.db.from("owed_replies").select("id, source, status, subject, body, from_name, from_team, mailbox, channel_name, asked_at, gist, url, client_id, clients(name), target:profiles!owed_replies_target_id_fkey(full_name, role)").eq("id", id).maybeSingle();
         if (!o) return { error: "That message isn't one you can see." };
         const { sameEmailLater } = await import("@/lib/owed-replies");
-        const later = await sameEmailLater(ctx.admin, o as Record<string, unknown>).catch(() => "");
+        // What others said on the same email sits in their mailboxes: only an executive reads across them, anyone else reads what their own session can
+        const later = await sameEmailLater(ctx.me.isExec ? ctx.admin : ctx.db, o as Record<string, unknown>).catch(() => "");
         const target = o.target as unknown as { full_name: string; role: string } | null;
         return {
           from: o.from_name,
@@ -416,6 +427,9 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
         if ("note" in opened) return { opened: false, note: opened.note };
         const href = safeAppPath(opened.href);
         if (!href) return { opened: false, note: "That isn't a screen in the app." };
+        // Only a page they could open themselves (the role rules, then the client or record behind it)
+        const may = await mayOpenPath(ctx, href);
+        if (!may.ok) return { opened: false, note: may.why };
         // Ideas (and the winners and market libraries) isn't part of a maker's or customer success's app
         if (noIdeas(ctx.me.role) && isIdeasPath(href)) return { opened: false, note: "Ideas isn't part of their view: their Overview is their own plate and what's coming to it." };
         ctx.emit({ t: "navigate", href });
@@ -475,6 +489,10 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
       run: async (input) => {
         const l = safeLink(input.href);
         if (!l) return { shown: false, note: "That link can't be shown on a call." };
+        if (!l.external) {
+          const may = await mayOpenPath(ctx, l.href);
+          if (!may.ok) return { shown: false, note: may.why };
+        }
         showCard(ctx, { title: clip(input.title, 120), detail: clip(input.detail, 160), href: l.href, external: l.external, cta: clip(input.cta, 40) || "Open" });
         return { shown: true };
       },
@@ -597,7 +615,7 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
       },
       run: async (input) => {
         if (!yes(ctx, input)) return { done: false, note: NO_YES };
-        const c = await clientNamed(ctx.db, input.client);
+        const c = await clientNamed(ctx, input.client);
         const range = { key: String(input.period), ...(input.period === "custom" ? { start: clip(input.start, 10), end: clip(input.end, 10) } : {}) };
         let id: string;
         if (input.line === "email" || input.line === "social") {
@@ -624,7 +642,8 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
       input_schema: { type: "object", properties: { client: CLIENT, kind: { type: "string", enum: ["meta", "google", "email", "social"] }, confirmed: CONFIRMED }, required: ["client", "kind"], additionalProperties: false },
       run: async (input) => {
         if (!yes(ctx, input)) return { done: false, note: NO_YES };
-        const c = await clientNamed(ctx.db, input.client);
+        if (!seesAccountNumbers(ctx.me)) return { done: false, error: "Audits aren't part of their view." };
+        const c = await clientNamed(ctx, input.client);
         if (input.kind === "social") {
           const { requestSocialAudit, runSocialAudit } = await import("@/lib/social-ops/audit");
           const out = await requestSocialAudit(ctx.db, ctx.admin, c.id, ctx.me.id);
@@ -659,7 +678,8 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
       input_schema: { type: "object", properties: { client: CLIENT, line: { type: "string", enum: ["email", "social"] }, move: { type: "integer", minimum: 1, description: "Only this move of the plan (optional)" }, confirmed: CONFIRMED }, required: ["client", "line"], additionalProperties: false },
       run: async (input) => {
         if (!yes(ctx, input)) return { done: false, note: NO_YES };
-        const c = await clientNamed(ctx.db, input.client);
+        if (!seesAccountNumbers(ctx.me)) return { done: false, error: "Sprints aren't part of their view." };
+        const c = await clientNamed(ctx, input.client);
         const line = input.line === "social" ? "social" : "email";
         // The person's own session reads the audit: only a client they can see
         const { data: a } = await ctx.db.from(`${line}_audits`).select("id").eq("client_id", c.id).eq("status", "ready").order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -728,7 +748,9 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
             return out;
           },
         };
-  return carryYes(ctx, cctx, [...own, ...lookupTools(ctx), ...profileTools(ctx), ...transferTools(ctx), ...viewAsTools(ctx), ...comms, ...cardTools, ...rest.map(docCards)]);
+  const all = [...own, ...lookupTools(ctx), ...profileTools(ctx), ...transferTools(ctx), ...viewAsTools(ctx), ...comms, ...cardTools, ...rest.map(docCards)];
+  const guarded = ctx.me.viewAs ? all.map((t) => (NO_WHILE_VIEWING.has(t.name) ? { ...t, run: async () => ({ done: false, error: VIEWING_NOTE }) } : t)) : all;
+  return carryYes(ctx, cctx, guarded);
 }
 
 /**

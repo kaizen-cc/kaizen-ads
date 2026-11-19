@@ -8,6 +8,7 @@ import { isChannelOnly } from "@/lib/roles";
 import { servicesOf } from "@/lib/services";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
 import { str, num, type AiTool, type ChatExtra } from "./types";
 
 // Segment performance for the assistant and every agent (registered in src/lib/kaizen-ai/extensions.ts):
@@ -22,6 +23,8 @@ const segmentPerformance: AiTool = {
     "How one client's email lists and segments perform: per segment the campaigns sent to it, recipients, open, click, revenue and revenue per recipient over 30, 90 or 120 days, flagged underperforming or overused; advice on who to include and who to exclude (engaged 30 days and leaving out the unengaged when deliverability is low, targeting zero-time purchasers while excluding recent buyers, resting an overused segment); and which kinds of segment work for other clients in the same industry and sub-category. Use it for 'which segments are working for X', 'who should we send to', 'what should we exclude'. To show it, open_screen to the client's email Audience tab (or the KPI board's email sheet, Segments tab).",
   input_schema: { type: "object", properties: { client: { type: "string", description: "The client's name or slug (the one this chat is about when left out)" }, days: { type: "number", enum: [30, 90, 120], description: "The window; 90 when left out" } }, additionalProperties: false },
   run: async (user: Staff, input: Record<string, unknown>, chat?: ChatExtra) => {
+    // Revenue and click numbers per segment are account numbers: the makers never see them
+    if (!seesAccountNumbers(user)) return { ok: false, error: "Account numbers aren't part of your view." };
     const db = await createClient();
     const asked = str(input.client);
     type Row = { id: string; name: string; slug: string };

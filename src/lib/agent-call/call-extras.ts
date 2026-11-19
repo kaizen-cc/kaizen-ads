@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { AI_BUCKET } from "@/lib/kaizen-ai/files";
+import { canSeeReports } from "@/lib/roles";
 import { contextPrompt, looksLikeLook, type CallContext, type ContextFacts } from "./call-context";
 import type { CallEvent } from "./core";
 import type { LoopTool } from "./tool-loop";
@@ -11,12 +12,13 @@ import type { LoopTool } from "./tool-loop";
 // calls when it needs to see their screen, and the screenshot itself when one comes with the turn).
 
 /** The context block for the prompt: the client, report and chat the person called from (empty when there's none) */
-export async function contextBlock(db: SupabaseClient, ctx: CallContext | null | undefined): Promise<string> {
+export async function contextBlock(db: SupabaseClient, ctx: CallContext | null | undefined, me: Pick<Staff, "role" | "isExec">): Promise<string> {
   if (!ctx) return "";
   const facts: ContextFacts = { screen: ctx.screen };
   const [client, report, thread] = await Promise.all([
     ctx.clientId ? db.from("clients").select("name").eq("id", ctx.clientId).maybeSingle() : null,
-    ctx.reportId ? db.from("reports").select("kind, platform, status, period_start, period_end, message, sections, qa, clients(name)").eq("id", ctx.reportId).maybeSingle() : null,
+    // Reports are for those who may open them (executives, media buyers, the email and social teams), never the makers
+    ctx.reportId && canSeeReports(me) ? db.from("reports").select("kind, platform, status, period_start, period_end, message, sections, qa, clients(name)").eq("id", ctx.reportId).maybeSingle() : null,
     ctx.threadId ? db.from("ai_threads").select("id, title, clients(name)").eq("id", ctx.threadId).maybeSingle() : null,
   ]);
   if (client?.data?.name) facts.client = { name: String(client.data.name) };

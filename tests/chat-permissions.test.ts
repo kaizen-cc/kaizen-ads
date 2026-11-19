@@ -144,8 +144,9 @@ describe("Kaizen AI quick actions and tools", () => {
     const { toolsFor } = await import("@/lib/kaizen-ai/tools");
     const all = ["plan_ad_changes", "launch_sheet", "launch_reply", "write_ad_copy", "create_brief", "creative_assessment", "google_policy_apply_fix", "account_metrics"].map((name) => ({ name, input_schema: { type: "object", properties: { platform: { type: "string", enum: ["meta", "google", "team"] } } } }));
     const names = (role: string) => toolsFor(who(role), all).map((t) => t.name);
-    expect(names("graphic_designer")).toEqual(["create_brief", "creative_assessment", "account_metrics"]);
-    expect(names("copywriter")).toEqual(["write_ad_copy", "creative_assessment", "account_metrics"]);
+    // Makers never get account numbers (the makers' view), so no account_metrics
+    expect(names("graphic_designer")).toEqual(["create_brief", "creative_assessment"]);
+    expect(names("copywriter")).toEqual(["write_ad_copy", "creative_assessment"]);
     expect(names("customer_success")).toEqual(["creative_assessment", "account_metrics"]);
     expect(names("google_buyer")).toEqual(["plan_ad_changes", "write_ad_copy", "create_brief", "creative_assessment", "google_policy_apply_fix", "account_metrics"]);
     expect(names("media_buyer")).toContain("launch_sheet");

@@ -4,6 +4,8 @@ import type { Staff } from "@/lib/auth";
 import { clientPackage, packageBlock } from "@/lib/client-package";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { assertMaySee } from "@/lib/ai-access";
+import { accessFor } from "./access";
 import { str, num, type AiTool } from "./types";
 
 // What the team already knows, for every agent, on calls and in chats (registered in src/lib/kaizen-ai/extensions.ts):
@@ -84,7 +86,7 @@ const searchLooms: AiTool = {
     const c = await clientId(str(input.client));
     if (c && "error" in c) return { ok: false, error: c.error };
     const terms = words(str(input.query) ?? "");
-    let q = db.from("loom_videos").select("id, title, url, kind, platform, client_id, summary, transcript, recorded_at, created_at").neq("status", "failed").not("transcript", "is", null);
+    let q = db.from("loom_videos").select("id, title, url, kind, platform, client_id, client_ids, summary, transcript, recorded_at, created_at").neq("status", "failed").not("transcript", "is", null);
     if (c) q = q.or(`client_id.eq.${c.id},client_ids.cs.{${c.id}}`);
     if (input.kind === "client") q = q.in("kind", ["client", "both"]);
     if (input.kind === "method") q = q.in("kind", ["method", "both"]);
@@ -92,7 +94,8 @@ const searchLooms: AiTool = {
     const { data, error } = await q.order("recorded_at", { ascending: false, nullsFirst: false }).limit(60);
     if (error) return { ok: false, error: "Couldn't search the Looms right now." };
     const seen = await visibleClients();
-    const rows = (data ?? []).filter((r) => !r.client_id || seen.has(r.client_id as string));
+    // Every client a recording covers must be one they can see (a Loom about two clients shows only to who sees both)
+    const rows = (data ?? []).filter((r) => coversOnly(r, seen));
     const limit = Math.max(1, Math.min(25, num(input.limit) ?? 10));
     return {
       ok: true,
@@ -111,6 +114,10 @@ const searchLooms: AiTool = {
   },
 };
 
+/** Whether every client a recording is about (its main one and any others) is one the person can see */
+const coversOnly = (r: { client_id?: unknown; client_ids?: unknown }, seen: { has: (id: string) => boolean }) =>
+  [r.client_id, ...((r.client_ids as unknown[] | null) ?? [])].filter(Boolean).every((id) => seen.has(String(id)));
+
 const readLoom: AiTool = {
   name: "read_loom",
   description: "One Loom recording from search_looms: what it covers and its transcript (with focus: only the passages about those words, so a long recording stays short). Quote what was said plainly and say which recording it came from.",
@@ -124,10 +131,10 @@ const readLoom: AiTool = {
     const id = str(input.id) ?? "";
     if (!/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, error: "Use a recording's id from search_looms." };
     const db = await createClient();
-    const { data: r } = await db.from("loom_videos").select("id, title, url, client_id, summary, transcript, recorded_at, created_at").eq("id", id).maybeSingle();
+    const { data: r } = await db.from("loom_videos").select("id, title, url, client_id, client_ids, summary, transcript, recorded_at, created_at").eq("id", id).maybeSingle();
     if (!r) return { ok: false, error: "That recording isn't there." };
     const seen = await visibleClients();
-    if (r.client_id && !seen.has(r.client_id as string)) return { ok: false, error: "That recording is about a client you can't see." };
+    if (!coversOnly(r, seen)) return { ok: false, error: "That recording is about a client you can't see." };
     const text = String(r.transcript ?? "");
     const terms = words(str(input.focus) ?? "");
     const parts = terms.length ? passages(text, terms) : [];
@@ -147,7 +154,7 @@ const clientPackageTool: AiTool = {
   name: "client_package",
   description: "A client's package: the tier it's on for each service it buys (for example basic, silver or gold) and what that tier includes (campaigns a month, flows, deliverables). Use it to plan volume and scope (how many campaigns after the first three months) instead of guessing; also in get_client_context. all: true lists every tier Kaizen offers.",
   input_schema: { type: "object", properties: { client: { type: "string" }, all: { type: "boolean" } }, additionalProperties: false },
-  run: async (_user: Staff, input) => {
+  run: async (user: Staff, input) => {
     const admin = createAdminClient();
     if (input.all === true) {
       const { data } = await admin.from("service_tiers").select("service, label, includes").order("service").order("sort_order");
@@ -156,6 +163,7 @@ const clientPackageTool: AiTool = {
     const c = await clientId(str(input.client));
     if (!c) return { ok: false, error: "Which client?" };
     if ("error" in c) return { ok: false, error: c.error };
+    await assertMaySee(await accessFor(user), c.id);
     const lines = await clientPackage(admin, c.id);
     return { ok: true, client: c.name, package: lines, text: packageBlock(lines) };
   },

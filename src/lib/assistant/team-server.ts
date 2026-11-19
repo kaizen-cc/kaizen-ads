@@ -12,6 +12,7 @@ import { callContext, playbookFor, readMoment, streamAnswer, turnExtras, voiceSy
 import { callTimer } from "@/lib/agent-call/timing";
 import type { LoopTool } from "@/lib/agent-call/tool-loop";
 import { turnTimes } from "@/lib/agent-call/transcript";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
 import { saidYes, specialistOf } from "./core";
 import {
   JOB_KINDS,
@@ -196,6 +197,8 @@ async function readFacts(ctx: TeamCtx, job: Job): Promise<{ facts: Record<string
       return { facts: { brief: has("brief") }, seen: { recent_tickets: ((data ?? []) as { number: number; title: string; stage: string }[]).map((t) => `#${t.number} ${t.title} (${String(t.stage).replace(/_/g, " ")})`) } };
     }
     case "audit_sprint": {
+      // Audits are account numbers: a maker's call never reads them
+      if (!seesAccountNumbers(ctx.me)) return { facts: {}, seen: { note: "Audits aren't part of their view." } };
       const { data: targets } = await ctx.db.from("kpi_targets").select("id").eq("client_id", job.client.id).eq("platform", job.platform === "google" ? "google" : "meta").eq("active", true).limit(5);
       const ids = ((targets ?? []) as { id: string }[]).map((t) => t.id);
       const { data: audit } = ids.length ? await ctx.db.from("account_audits").select("id, created_at, status").in("target_id", ids).order("created_at", { ascending: false }).limit(1).maybeSingle() : { data: null };

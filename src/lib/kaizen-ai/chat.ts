@@ -1,4 +1,5 @@
 import "server-only";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
 import { googleLinksHint } from "@/lib/assistant/lookup";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -319,11 +320,11 @@ export async function runTurn(input: TurnInput): Promise<void> {
   const { wantsCopy, wantsGoogle } = await import("@/lib/copy-library-core");
   // Google copy when the message is about Google or the Google buyer answers; else Meta (both platforms' proven lines come either way)
   const copyPlatform = agent === "google_auditor" || wantsGoogle(userText) ? "google" : "meta";
-  // The email and social teams get no ad copy context (it's built from ad performance)
+  // The email and social teams and the makers get no ad copy context (it's built from ad performance)
   const channelOnly = isChannelOnly(me.role);
-  const copyAsked = !channelOnly && (agent === "copy" || wantsCopy(userText));
+  const copyAsked = !channelOnly && seesAccountNumbers(me) && (agent === "copy" || wantsCopy(userText));
   const [brief, knowledge, convo, copyCtx, aiRule, project] = await Promise.all([
-    client ? (channelOnly ? channelBrief(admin, client.id) : clientBrief(admin, client.id)).catch((e) => `(The client's context couldn't be read: ${e instanceof Error ? e.message : "unknown"})`) : Promise.resolve(""),
+    client ? (channelOnly || !seesAccountNumbers(me) ? channelBrief(admin, client.id) : clientBrief(admin, client.id)).catch((e) => `(The client's context couldn't be read: ${e instanceof Error ? e.message : "unknown"})`) : Promise.resolve(""),
     knowledgeFor(agent, label, userText.slice(0, 6000), client?.id ?? null).catch(() => ""),
     history(admin, recent),
     client && copyAsked ? import("@/lib/copy-library").then(({ copyContext }) => copyContext(admin, client!.id, 14_000, copyPlatform)).catch(() => "") : Promise.resolve(""),

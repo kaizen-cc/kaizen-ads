@@ -3,7 +3,26 @@ import { clientNamed } from "@/lib/client-named";
 import type { Staff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { assertMaySee, maySeeClient } from "@/lib/ai-access";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
+import { accessFor } from "./access";
 import { str, type AiTool } from "./types";
+
+// The account watch is account numbers: the makers (designers and video editors) never see it, so neither do their tools.
+const NOT_FOR_MAKERS = { ok: false as const, error: "Account numbers aren't part of your view." };
+
+/** A flag is only the person's to act on when it is about a client they can see (the flag's own client, read through their session) */
+async function mayTouchFlag(user: Staff, id: string) {
+  const ctx = await accessFor(user);
+  const { data } = await ctx.db.from("watch_flags").select("client_id").eq("id", id).maybeSingle();
+  if (!data) return false;
+  try {
+    await assertMaySee(ctx, data.client_id as string);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // The account watch, for the assistant and every agent (registered in src/lib/kaizen-ai/extensions.ts):
 //   account_watch            what's open: billed but idle, neglected or overtouched accounts, spend spikes, drops and
@@ -20,6 +39,7 @@ const accountWatch: AiTool = {
     "The account watch: services a client is billed for in Stripe (or listed on) with no activity for 7+ days (no spend, no creative delivered, no campaign sent, no post), ad accounts nobody on our team changed lately, accounts edited too often (learning resets), spend spikes, drops, stops and overspend, creative behind pace or quiet, accounts beating their KPI worth a creative sprint, unrecognized people in change history, services paused on purpose, and (leads and execs) where Kaizen OS services or creative packages don't match what Stripe bills. part: all, idle, accounts, creative, people, paused or billing; client: a client name to narrow it. Each flag has its id for close_watch_flag. To show it, open_screen place 'account watch' or 'account watch idle' / 'accounts' / 'creative' / 'people' / 'billing' / 'paused'.",
   input_schema: { type: "object", properties: { part: { type: "string", enum: ["all", "idle", "accounts", "creative", "people", "paused", "billing"] }, client: { type: "string" } }, additionalProperties: false },
   run: async (user: Staff, input) => {
+    if (!seesAccountNumbers(user)) return NOT_FOR_MAKERS;
     const { loadWatch, loadMismatches, WATCH_GROUP } = await import("@/lib/account-watch/load");
     const db = await createClient();
     const part = str(input.part) ?? "all";
@@ -45,6 +65,7 @@ const pauseWatched: AiTool = {
     "A lead or exec: mark one client's service intentionally paused until a day, with the reason (a paintball park closed for winter, the client asked to hold Google until spring). The billed-but-idle alert for it closes and the watch leaves it alone until then. service: facebook-ads, google-ads, tiktok-ads, creative, email-marketing or social-media; until: YYYY-MM-DD. Say what you'll set and ask first.",
   input_schema: { type: "object", properties: { client: { type: "string" }, service: { type: "string" }, until: { type: "string" }, reason: { type: "string" } }, required: ["client", "service", "until", "reason"], additionalProperties: false },
   run: async (user: Staff, input) => {
+    if (!seesAccountNumbers(user)) return NOT_FOR_MAKERS;
     const db = await createClient();
     const name = str(input.client);
     if (!name) return { ok: false, error: "Which client?" };
@@ -54,6 +75,7 @@ const pauseWatched: AiTool = {
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : `No client called ${name}.` };
     }
+    if (!(await maySeeClient(await accessFor(user), c[0].id))) return { ok: false, error: "That client isn't one you can see." };
     const { pauseService } = await import("@/lib/account-watch/act");
     return pauseService(createAdminClient(), user, { clientId: c[0].id as string, service: str(input.service) ?? "", until: str(input.until) ?? "", reason: str(input.reason) ?? "" });
   },
@@ -65,9 +87,11 @@ const closeFlag: AiTool = {
     "Close an account watch flag (id from account_watch): how 'handled' with a note of what was done; or, for an unrecognized person in change history (leads and execs), how 'team' with team_member (their name: the change-history name becomes an alias on their profile), 'client' (the client's own person) or 'partner' (an outside partner or tool). Billed-but-idle flags are a lead's or exec's to close (or pause the service). Say what you'll do and ask first.",
   input_schema: { type: "object", properties: { id: { type: "string" }, how: { type: "string", enum: ["handled", "team", "client", "partner"] }, note: { type: "string" }, team_member: { type: "string" } }, required: ["id", "how"], additionalProperties: false },
   run: async (user: Staff, input) => {
+    if (!seesAccountNumbers(user)) return NOT_FOR_MAKERS;
     const act = await import("@/lib/account-watch/act");
     const admin = createAdminClient();
     const id = str(input.id) ?? "";
+    if (!(await mayTouchFlag(user, id))) return { ok: false, error: "That flag isn't one you can see." };
     const how = str(input.how);
     if (how === "handled") return act.resolveFlag(admin, user, id, str(input.note) ?? "");
     if (how === "team") {
@@ -86,7 +110,12 @@ const askSprint: AiTool = {
   name: "ask_creative_sprint",
   description: "For an account beating its KPI by a wide margin (an account watch creative_sprint flag, id from account_watch): ask the head of creative and the client's designer and editor for two extra creatives this cycle. Ask first.",
   input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
-  run: async (user: Staff, input) => (await import("@/lib/account-watch/act")).requestSprint(createAdminClient(), user, str(input.id) ?? ""),
+  run: async (user: Staff, input) => {
+    if (!seesAccountNumbers(user)) return NOT_FOR_MAKERS;
+    const id = str(input.id) ?? "";
+    if (!(await mayTouchFlag(user, id))) return { ok: false, error: "That flag isn't one you can see." };
+    return (await import("@/lib/account-watch/act")).requestSprint(createAdminClient(), user, id);
+  },
 };
 
 export const tools: AiTool[] = [accountWatch, pauseWatched, closeFlag, askSprint];

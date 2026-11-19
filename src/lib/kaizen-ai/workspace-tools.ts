@@ -1,6 +1,7 @@
 import "server-only";
 import type { ChatTool, ToolCtx } from "./tools";
-import { textAnswer } from "./my-tools";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
+import { PRIVATE_WHILE_VIEWING, textAnswer, viewingAs } from "./my-tools";
 import { beforeAfter, describeWrite, driveQuery, eventRow, gmailRow, klaviyoPathOk, mayEditKlaviyo, scopeHelp, short, type KlaviyoMethod } from "./workspace-core";
 
 // Kaizen AI working where the team works (owner, Nov 19 2026), for everyone and in every chat (the assistant gets every
@@ -33,6 +34,7 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
       input_schema: { type: "object", properties: { query: { type: "string", description: "Gmail search, e.g. from:jason@acme.com after:2026/11/10" }, limit: { type: "integer", minimum: 1, maximum: 20 } }, required: ["query"], additionalProperties: false },
       status: (input) => `Searching your Gmail for ${clip(input.query, 40)}…`,
       run: async (input) => {
+        if (viewingAs(ctx)) return { error: PRIVATE_WHILE_VIEWING };
         const { gmailToken, google, googleConfigured } = await import("@/lib/context/google");
         if (!googleConfigured()) return { error: "Google isn't connected to Kaizen OS yet." };
         return googleOrHelp(async () => {
@@ -50,6 +52,7 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
       input_schema: { type: "object", properties: { thread_id: { type: "string" }, part: { type: "integer", minimum: 1 }, search: { type: "string" } }, required: ["thread_id"], additionalProperties: false },
       status: () => "Reading the email thread…",
       run: async (input) => {
+        if (viewingAs(ctx)) return { error: PRIVATE_WHILE_VIEWING };
         const id = String(input.thread_id ?? "").replace(/[^A-Za-z0-9]/g, "");
         if (!id) return { error: "Which thread? Give a thread_id from search_my_gmail." };
         const { gmailToken, google, plainText, withoutQuotes } = await import("@/lib/context/google");
@@ -72,6 +75,7 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
       input_schema: { type: "object", properties: { words: { type: "string", description: "Words in the file's name or text" }, limit: { type: "integer", minimum: 1, maximum: 25 } }, required: ["words"], additionalProperties: false },
       status: (input) => `Searching your Drive for ${clip(input.words, 40)}…`,
       run: async (input) => {
+        if (viewingAs(ctx)) return { error: PRIVATE_WHILE_VIEWING };
         const words = clip(input.words, 120);
         if (!words) return { error: "What should I look for?" };
         const { googleDriveToken, google } = await import("@/lib/context/google");
@@ -99,6 +103,7 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
       input_schema: { type: "object", properties: { from: { type: "string", description: "YYYY-MM-DD, default today" }, to: { type: "string", description: "YYYY-MM-DD, default a week later" }, search: { type: "string", description: "Words in the event (a client, a person)" } }, additionalProperties: false },
       status: () => "Reading your calendar…",
       run: async (input) => {
+        if (viewingAs(ctx)) return { error: PRIVATE_WHILE_VIEWING };
         const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
         const from = day(input.from) ?? new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
         const to = day(input.to) ?? new Date(Date.parse(`${from}T12:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
@@ -145,6 +150,8 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
         const method = (["GET", "POST", "PATCH"].includes(String(input.method)) ? input.method : "GET") as KlaviyoMethod;
         const checked = klaviyoPathOk(input.path, method);
         if (!checked.ok) return { error: checked.why };
+        // Klaviyo's metrics and reports are account numbers, which makers never see
+        if (!seesAccountNumbers(ctx.me) && /metric|report|aggregate/i.test(checked.path)) return { error: "Account numbers aren't part of your view." };
         const { clientNamedForTools } = await import("./tools");
         const c = await clientNamedForTools(ctx, input);
         if (method !== "GET" && !mayEditKlaviyo(ctx.me)) return { error: "Changing a client's Klaviyo is for the email team, leads and execs. They can still read it." };

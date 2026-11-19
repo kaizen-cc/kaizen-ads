@@ -18,6 +18,9 @@ import {
   tierText,
   type SocialCustom,
 } from "@/lib/social-allotment-core";
+import { assertMaySee } from "@/lib/ai-access";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
+import { accessFor } from "./access";
 import { str, type AiTool } from "./types";
 
 // The social allotment and tier, for the assistant, Kaizen AI and every agent on a call (registered in
@@ -112,6 +115,7 @@ const setSocialTierTool: AiTool = {
     const c = await clientNamed(db, input.client);
     const { data: row } = await db.from("clients").select("strategy_only").eq("id", c.id).maybeSingle();
     if (!row) return { ok: false, error: "That client isn't one you work on." };
+    await assertMaySee(await accessFor(user), c.id);
     const tier = str(input.tier) ?? "";
     const platforms = Array.isArray(input.platforms) ? [...new Set((input.platforms as unknown[]).filter(isSocialPlatform))] : null;
     const strategy = ((row.strategy_only ?? []) as string[]).filter((s) => s !== "social-media");
@@ -154,6 +158,8 @@ const boostedPostsTool: AiTool = {
   lines: ["social", "ads"],
   run: async (user: Staff, input) => {
     const db = await createClient();
+    // What is spent behind each post is account numbers: the makers never see them
+    if (!seesAccountNumbers(user)) return { ok: false, error: "Account numbers aren't part of your view." };
     const { boostedPosts } = await import("@/lib/social-boosts");
     const { boostLine } = await import("@/lib/social-boosts-core");
     const out = (p: Awaited<ReturnType<typeof boostedPosts>>[string][number]) => ({
