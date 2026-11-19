@@ -19,11 +19,14 @@ export type DeskRow = ChannelRow & { risk: Risk; brand: Brand };
 const NO_BRAND: Brand = { color: null, light: false, logo: null };
 export const brandOf = (m: Map<string, Brand>, id: string) => m.get(id) ?? NO_BRAND;
 
+/** A client card's extras on the Overview: its open audit or sprint (small, under the card) and What to know on hover */
+export type CardExtra = { work?: DeskCardData["work"]; brief?: DeskCardData["brief"]; /** The heads don't work tickets: no Board link */ hideBoard?: boolean };
+
 /** The ways into a client: their page, the Email Board (email), their KPI sheet and reports */
-function QuickLinks({ r }: { r: DeskRow }) {
+function QuickLinks({ r, hideBoard = false }: { r: DeskRow; hideBoard?: boolean }) {
   const links = [
     { href: `/clients/${r.slug}?service=${r.line}`, label: "Client" },
-    ...(r.line === "email" ? [{ href: `/board/email?client=${encodeURIComponent(r.slug)}&person=all`, label: "Board" }] : []),
+    ...(r.line === "email" && !hideBoard ? [{ href: `/board/email?client=${encodeURIComponent(r.slug)}&person=all`, label: "Board" }] : []),
     { href: `/kpis?p=${r.line}&open=${encodeURIComponent(r.clientId)}`, label: "KPIs" },
     { href: `/reports?client=${encodeURIComponent(r.slug)}`, label: "Reports" },
   ];
@@ -39,7 +42,7 @@ function QuickLinks({ r }: { r: DeskRow }) {
 }
 
 /** One client, small: who, why it's here and the main number; opens for the trend, what weighs on it and the crew */
-export function ClientCard({ r }: { r: DeskRow }) {
+export function ClientCard({ r, extra }: { r: DeskRow; extra?: CardExtra }) {
   const tone = TONE[r.status];
   const goal = r.target != null && r.series.length ? (r.line === "email" ? { from: 0, to: r.target } : { from: r.target, to: r.target }) : null;
   const why = r.risk.reasons.length ? r.risk.reasons.join(" · ") : "On track";
@@ -49,15 +52,26 @@ export function ClientCard({ r }: { r: DeskRow }) {
       <span aria-hidden className="pointer-events-none absolute inset-0 -z-10" style={{ backgroundImage: `radial-gradient(120% 80% at 0% 0%, color-mix(in srgb, ${r.brand.color ?? tone.css} 10%, transparent), transparent 60%)` }} />
       <details className="group/card">
         <summary className="grid cursor-pointer list-none gap-2.5 p-3.5 [&::-webkit-details-marker]:hidden">
-          <span className="flex min-w-0 items-center gap-2.5">
-            <BrandChip name={r.name} color={r.brand.color} logo={r.brand.logo} light={r.brand.light} size="sm" />
-            <span className="grid min-w-0 flex-1">
-              <span className="truncate font-heading text-[15px] leading-snug">{r.name}</span>
-              <span className={`truncate text-[11.5px] ${r.risk.reasons.length ? "text-muted" : "text-faint"}`} title={why}>
-                {why}
+          {(() => {
+            const head = (
+              <span className="flex min-w-0 items-center gap-2.5">
+                <BrandChip name={r.name} color={r.brand.color} logo={r.brand.logo} light={r.brand.light} size="sm" />
+                <span className="grid min-w-0 flex-1">
+                  <span className="truncate font-heading text-[15px] leading-snug">{r.name}</span>
+                  <span className={`truncate text-[11.5px] ${r.risk.reasons.length ? "text-muted" : "text-faint"}`} title={extra?.brief?.length ? undefined : why}>
+                    {why}
+                  </span>
+                </span>
               </span>
-            </span>
-          </span>
+            );
+            return extra?.brief?.length ? (
+              <HoverCard width={400} className="flex min-w-0" content={<BriefCard name={r.name} items={extra.brief} />}>
+                {head}
+              </HoverCard>
+            ) : (
+              head
+            );
+          })()}
           <span className="flex items-end justify-between gap-2">
             <span className="flex min-w-0 items-baseline gap-1.5">
               {r.score ? (
@@ -97,7 +111,8 @@ export function ClientCard({ r }: { r: DeskRow }) {
           {r.team.length > 0 && <p className="truncate text-[11.5px] text-faint">{r.team.map((t) => `${t.seat}: ${t.name}`).join(" · ")}</p>}
         </div>
       </details>
-      <QuickLinks r={r} />
+      {extra?.work && <WorkLine work={extra.work} />}
+      <QuickLinks r={r} hideBoard={extra?.hideBoard} />
     </li>
   );
 }
@@ -105,7 +120,7 @@ export function ClientCard({ r }: { r: DeskRow }) {
 const GRID = "grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
 
 /** A group of client cards; `contained` keeps a long list in its own scrolling area so the page stays short */
-export function ClientGroup({ id, title, aside, rows, contained = false, empty }: { id: string; title: string; aside?: string; rows: DeskRow[]; contained?: boolean; empty?: string }) {
+export function ClientGroup({ id, title, aside, rows, contained = false, empty, extra }: { id: string; title: string; aside?: string; rows: DeskRow[]; contained?: boolean; empty?: string; extra?: (r: DeskRow) => CardExtra }) {
   return (
     <section id={id} className="grid scroll-mt-24 gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -121,7 +136,7 @@ export function ClientGroup({ id, title, aside, rows, contained = false, empty }
           <div className="max-h-[min(68vh,760px)] overflow-y-auto overscroll-contain p-3">
             <ul className={GRID}>
               {rows.map((r) => (
-                <ClientCard key={r.clientId} r={r} />
+                <ClientCard key={r.clientId} r={r} extra={extra?.(r)} />
               ))}
             </ul>
           </div>
@@ -130,7 +145,7 @@ export function ClientGroup({ id, title, aside, rows, contained = false, empty }
       ) : (
         <ul className={GRID}>
           {rows.map((r) => (
-            <ClientCard key={r.clientId} r={r} />
+            <ClientCard key={r.clientId} r={r} extra={extra?.(r)} />
           ))}
         </ul>
       )}
@@ -269,6 +284,18 @@ const CARD_TONE = {
 } as const;
 const clamp = (x: number) => Math.max(0, Math.min(1, x));
 
+/** A card's open audit or sprint, one line under it: its progress and what it needs; opens it */
+function WorkLine({ work }: { work: NonNullable<DeskCardData["work"]> }) {
+  return (
+    <Link href={work.href} className="group/work flex min-h-10 items-center gap-2 border-t border-line px-3.5 py-2 text-[11.5px] transition-colors hover:bg-surface-2 md:min-h-0">
+      <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${work.tone === "bad" ? "bg-bad" : work.tone === "warn" ? "bg-warn" : "bg-faint"}`} />
+      <span className="shrink-0 font-medium text-fg">{work.label}</span>
+      <span className="min-w-0 truncate text-faint">{work.why}</span>
+      <span aria-hidden className="ml-auto shrink-0 text-faint transition-transform group-hover/work:translate-x-0.5">→</span>
+    </Link>
+  );
+}
+
 const BRIEF_DOT = { bad: "bg-bad", warn: "bg-warn", ok: "bg-ok" } as const;
 
 /** What to know about an account, on hover: the critical things first, one line each */
@@ -351,14 +378,7 @@ export function DeskCard({ c }: { c: DeskCardData }) {
           )}
         </div>
       </details>
-      {c.work && (
-        <Link href={c.work.href} className="group/work flex min-h-10 items-center gap-2 border-t border-line px-3.5 py-2 text-[11.5px] transition-colors hover:bg-surface-2 md:min-h-0">
-          <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.work.tone === "bad" ? "bg-bad" : c.work.tone === "warn" ? "bg-warn" : "bg-faint"}`} />
-          <span className="shrink-0 font-medium text-fg">{c.work.label}</span>
-          <span className="min-w-0 truncate text-faint">{c.work.why}</span>
-          <span aria-hidden className="ml-auto shrink-0 text-faint transition-transform group-hover/work:translate-x-0.5">→</span>
-        </Link>
-      )}
+      {c.work && <WorkLine work={c.work} />}
       <nav aria-label={`${c.name} links`} className="grid gap-px border-t border-line bg-line" style={{ gridTemplateColumns: `repeat(${c.links.length}, minmax(0, 1fr))` }}>
         {c.links.map((l) => (
           <Link key={l.label} href={l.href} className="grid min-h-11 place-items-center bg-surface text-[12px] text-muted transition-colors hover:bg-surface-2 hover:text-fg md:min-h-9">

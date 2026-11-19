@@ -3,13 +3,15 @@ import { needsConnecting } from "@/components/channel-parts";
 import { loadChannelBoard, riskForRow } from "@/lib/channel-kpis/load";
 import { etToday, moneyShort, orderByRisk, pctText, type Line } from "@/lib/channel-kpis/calc";
 import { loadSuggestions } from "@/lib/email-ops/load";
-import { auditReminders, mineFirst, prioritizeIdeas } from "@/lib/overview-desk";
+import { mineFirst, prioritizeIdeas, reminderFor } from "@/lib/overview-desk";
+import { mainText, targetText } from "@/components/channel-parts";
+import { accountBrief } from "@/lib/account-brief";
 import { loadBrands, loadDeskOps, owedByClient } from "@/lib/overview-desk-load";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
 import { IdeaDeck } from "./campaign-ideas";
-import { ClientGroup, Reminders, SetupList, brandOf, type DeskRow } from "./channel-desk";
-import { OverviewTabs, TabCards } from "./overview-tabs";
+import { ClientGroup, SetupList, brandOf, type CardExtra, type DeskRow } from "./channel-desk";
+import { OverviewTabs, TabCards, WorkUnderToday } from "./overview-tabs";
 import { PageHeader, Stats } from "./shared";
 
 type Me = { id: string; role: TeamRole; isExec: boolean; isLead: boolean };
@@ -27,7 +29,7 @@ const LOOK_AT = 30;
  *   Setup            the clients still to connect
  * It reads nothing from the ad tables.
  */
-export async function ChannelHome({ me, line, today, greeting, firstName, recap = null }: { me: Me; line: Line; today: string; greeting: string; firstName: string; /** Their day (the recap's way in), above their clients */ recap?: React.ReactNode }) {
+export async function ChannelHome({ me, line, today, greeting, firstName, recap = null, work = null, workCount = 0 }: { me: Me; line: Line; today: string; greeting: string; firstName: string; /** Their day (the recap's way in), above their clients */ recap?: React.ReactNode; /** My work, under the day (no separate tab) */ work?: React.ReactNode; workCount?: number }) {
   const db = await createClient();
   const [board, owed] = await Promise.all([loadChannelBoard(db, line, me), owedByClient(db, me)]);
   const ids = board.rows.map((r) => r.clientId);
@@ -66,11 +68,49 @@ export async function ChannelHome({ me, line, today, greeting, firstName, recap 
     { label: "Need connecting", value: connecting.length, hint: connecting.length ? (line === "email" ? "Klaviyo key missing or failing" : "Page or Instagram not linked") : "All reading", tone: connecting.length ? ("warn" as const) : ("ok" as const) },
   ];
 
-  // Audits and sprints: a head sees only what needs a head; the strategist all of their own
-  const reminders = auditReminders(head ? ranked : ranked.filter((r) => r.mine), ops.audits, ops.sprints, day, { head });
-  const critical = reminders.filter((r) => r.level === "critical").length;
   const byId = new Map(ranked.map((r) => [r.clientId, r]));
-  const reminderClients = new Map(ranked.map((r) => [r.clientId, { name: r.name, brand: r.brand }]));
+  // On each card: its open audit or sprint (no separate tab), and What to know on hover (owner, Nov 19 2026)
+  const [{ data: changes }, { data: promises }] = ids.length
+    ? await Promise.all([
+        db.from("client_direction_changes").select("client_id, summary, lines, direction_change_tasks(action)").eq("status", "open").eq("scope", "direction").in("client_id", ids).order("created_at", { ascending: false }).limit(300),
+        db.from("message_promises").select("client_id").eq("status", "overdue").in("client_id", ids).limit(500),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const changesOf = new Map<string, { summary: string; pending: number }[]>();
+  for (const c of (changes ?? []) as { client_id: string; summary: string; lines: string[] | null; direction_change_tasks: { action: string }[] | null }[]) {
+    if (c.lines?.length && !c.lines.includes(line)) continue;
+    changesOf.set(c.client_id, [...(changesOf.get(c.client_id) ?? []), { summary: c.summary, pending: (c.direction_change_tasks ?? []).filter((t) => t.action === "pending").length }]);
+  }
+  const overdue = new Map<string, number>();
+  for (const p of (promises ?? []) as { client_id: string | null }[]) if (p.client_id) overdue.set(p.client_id, (overdue.get(p.client_id) ?? 0) + 1);
+  const BAND: Record<string, "bad" | "warn" | "ok"> = { bad: "bad", red: "bad", watch: "warn", yellow: "warn", good: "ok", green: "ok" };
+  const extra = (r: DeskRow): CardExtra => {
+    const w = reminderFor(r.clientId, ops.audits.get(r.clientId) ?? null, ops.sprints.get(r.clientId) ?? null, day);
+    const sc = r.score ?? r.socialScore ?? null;
+    const drags = r.score ? r.score.weighingDown.map((c) => c.label) : r.socialScore ? (r.socialScore.weighingDown as { label: string; platform?: string }[]).map((c) => (c.platform ? `${c.label} (${c.platform})` : c.label)) : [];
+    const brief = accountBrief({
+      status: "good",
+      label: "",
+      value: null,
+      target: null,
+      deviation: null,
+      pacing: null,
+      pace: null,
+      spend30: 0,
+      hasAccount: !needsConnecting(r),
+      owed: owed.get(r.clientId) ?? null,
+      changes: changesOf.get(r.clientId) ?? [],
+      overduePromises: overdue.get(r.clientId) ?? 0,
+      kpiLine: sc ? { tone: BAND[sc.band] ?? "warn", text: `${line === "email" ? "Account" : "Social"} score ${sc.score}/100${r.target != null ? ` · ${mainText(r)} vs ${targetText(r)}` : ""}` } : null,
+      drags,
+      ...(w ? { sprint: w.kind === "sprint" ? (ops.sprints.get(r.clientId) ?? null) : null, audit: w.kind === "audit" ? (ops.audits.get(r.clientId) ?? null) : null } : {}),
+    }).map(({ tone, text }) => ({ tone, text: text.replace("No ad account is linked, so nothing is being measured", line === "email" ? "Klaviyo isn't connected, so nothing is being measured" : "The page or Instagram isn't linked, so nothing is being measured") }));
+    return {
+      brief,
+      hideBoard: head,
+      work: w ? { label: `${w.kind === "sprint" ? "Sprint" : "Audit"} ${w.progress.done}/${w.progress.of}`, why: w.why, href: `/kpis/${line}-${w.kind}/${w.id}`, tone: w.level === "critical" ? "bad" : w.level === "stale" ? "warn" : "quiet" } : null,
+    };
+  };
 
   // Campaign ideas still open, critical first
   const ideas = prioritizeIdeas(
@@ -106,12 +146,11 @@ export async function ChannelHome({ me, line, today, greeting, firstName, recap 
     );
 
   const names = (rows: DeskRow[]) => rows.slice(0, 3).map((r) => `${r.name}${r.risk.reasons[0] ? `: ${r.risk.reasons[0].toLowerCase()}` : ""}`);
+  // Today (with My work under it), Clients and Ideas: audits and sprints sit on each card, setup at the end of Clients
   const tabs = [
-    { id: "today", label: "Today" },
+    { id: "today", label: "Today", ...(workCount ? { count: workCount, tone: "brand" as const } : {}) },
     { id: "clients", label: head ? "Clients" : "My clients", count: mineHurting.length + (head ? teamHurting.length : 0), tone: mineHurting.some((r) => r.status === "off") ? ("bad" as const) : ("warn" as const) },
     ...(line === "email" ? [{ id: "ideas", label: "Ideas", count: criticalIdeas.length, tone: "bad" as const }] : []),
-    { id: "audits", label: "Audits & sprints", count: reminders.length, tone: critical ? ("bad" as const) : ("warn" as const) },
-    { id: "setup", label: "Setup", count: connecting.length, tone: "warn" as const },
   ];
   const cards = [
     {
@@ -126,8 +165,6 @@ export async function ChannelHome({ me, line, today, greeting, firstName, recap 
       ? [{ tab: "clients", title: "Your team's", count: teamHurting.length, tone: teamHurting.some((r) => r.status === "off") ? ("bad" as const) : ("warn" as const), headline: teamHurting.length ? `of ${team.length} team accounts need a look` : `All ${team.length} team accounts steady`, points: names(teamHurting) }]
       : []),
     ...(line === "email" ? [{ tab: "ideas", title: "Campaign ideas", count: criticalIdeas.length, tone: "bad" as const, headline: criticalIdeas.length ? `critical, ${ideas.length - criticalIdeas.length} more when there's room` : `Nothing urgent · ${ideas.length} open`, points: criticalIdeas.slice(0, 3).map((i) => `${i.clientName}: ${i.reason.split(" · ")[0].toLowerCase()}`) }] : []),
-    { tab: "audits", title: "Audits & sprints", count: reminders.length, tone: critical ? ("bad" as const) : ("warn" as const), headline: reminders.length ? (head ? "need you: critical or gone stale" : "open on your clients") : "Nothing needs you", points: reminders.slice(0, 3).map((r) => `${reminderClients.get(r.clientId)?.name ?? "A client"}: ${r.why.toLowerCase()}`) },
-    ...(!head || connecting.length ? [{ tab: "setup", title: "Setup", count: connecting.length, tone: "warn" as const, headline: connecting.length ? "still to connect" : "Every client reading", points: connecting.slice(0, 3).map((r) => r.name) }] : []),
   ].slice(0, 4);
 
   const panels: Record<string, React.ReactNode> = {
@@ -136,17 +173,28 @@ export async function ChannelHome({ me, line, today, greeting, firstName, recap 
         {recap}
         <Stats items={stats} />
         <TabCards cards={cards} />
+        {work && <WorkUnderToday>{work}</WorkUnderToday>}
       </>
     ),
     clients: (
       <>
-        {(mine.length > 0 || !head) && <ClientGroup id="mine" title={head ? "Your accounts" : "My clients"} aside="Most at risk of leaving first" rows={mine} empty="You hold no seat on a client yet." />}
-        {team.length > 0 && <ClientGroup id="team" title={head ? "Your team's accounts" : "Other clients you can see"} aside={`Worst first · ${teamHurting.length} need a look`} rows={team} contained />}
+        {(mine.length > 0 || !head) && <ClientGroup id="mine" title={head ? "Your accounts" : "My clients"} aside="Most at risk of leaving first" rows={mine} empty="You hold no seat on a client yet." extra={extra} />}
+        {team.length > 0 && <ClientGroup id="team" title={head ? "Your team's accounts" : "Other clients you can see"} aside={`Worst first · ${teamHurting.length} need a look`} rows={team} contained extra={extra} />}
+        {connecting.length > 0 && (
+          <details className="group/setup">
+            <summary className="flex min-h-11 cursor-pointer list-none items-baseline justify-between gap-2 [&::-webkit-details-marker]:hidden">
+              <span className="font-heading text-lg">
+                Needs connecting <span className="tabular text-[14px] text-faint">{connecting.length}</span> <span aria-hidden className="inline-block text-faint transition-transform group-open/setup:rotate-180">⌄</span>
+              </span>
+            </summary>
+            <div className="mt-3">
+              <SetupList rows={connecting} line={line} />
+            </div>
+          </details>
+        )}
       </>
     ),
     ideas: <IdeaDeck ideas={ideas} />,
-    audits: <Reminders items={reminders} line={line} clients={reminderClients} head={head} />,
-    setup: <SetupList rows={connecting} line={line} />,
   };
 
   return (

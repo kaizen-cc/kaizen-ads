@@ -23,6 +23,9 @@ export type BriefInput = {
   overduePromises?: number;
   /** The client's creative allotment this cycle, when it's behind */
   creativeBehind?: string | null;
+  /** Email and social: the account's own line (its score or engagement) instead of the ad KPI's, and what drags it down */
+  kpiLine?: { tone: BriefTone; text: string } | null;
+  drags?: string[];
 };
 
 const days = (iso: string | null | undefined, now: number) => (iso ? Math.floor((now - Date.parse(iso)) / 86_400_000) : null);
@@ -36,7 +39,8 @@ export function accountBrief(i: BriefInput, now = Date.now()): BriefItem[] {
   if (!i.hasAccount) add("bad", 100, "No ad account is linked, so nothing is being measured");
   else if (i.status === "setup" || i.status === "unset") add("warn", 60, "No KPI is set: the account isn't being judged against anything");
 
-  if (i.status === "off" && i.deviation != null) add("bad", 90 + Math.min(30, Math.abs(i.deviation) * 20), `${i.label || "The KPI"} is ${pctText(i.deviation)} off target (${i.value ?? "n/a"} vs ${i.target ?? "n/a"}, last 14 days)`);
+  if (i.kpiLine) add(i.kpiLine.tone, i.kpiLine.tone === "bad" ? 92 : i.kpiLine.tone === "warn" ? 50 : 1, i.kpiLine.text);
+  else if (i.status === "off" && i.deviation != null) add("bad", 90 + Math.min(30, Math.abs(i.deviation) * 20), `${i.label || "The KPI"} is ${pctText(i.deviation)} off target (${i.value ?? "n/a"} vs ${i.target ?? "n/a"}, last 14 days)`);
   else if (i.status === "close" && i.deviation != null) add("warn", 50, `${i.label || "The KPI"} is close to target but slipping (${i.value ?? "n/a"} vs ${i.target ?? "n/a"})`);
   else if (i.status === "idle") add("bad", 85, "No spend lately: the account has gone quiet");
 
@@ -61,10 +65,14 @@ export function accountBrief(i: BriefInput, now = Date.now()): BriefItem[] {
     else if (idle != null && idle >= 5 && i.sprint.done < i.sprint.moves) add("warn", 48, `The sprint has stalled: no move done in ${idle} days (${i.sprint.done} of ${i.sprint.moves})`);
   }
 
+  for (const d of (i.drags ?? []).slice(0, 2)) add("warn", 44, `Weighing it down: ${d}`);
+
   if (i.creativeBehind) add("warn", 46, `Creative is behind: ${i.creativeBehind}`);
 
-  if (!out.length) {
-    if (i.status === "excellent" || i.status === "good") add("ok", 1, `${i.label || "The KPI"} is on target (${i.value ?? "n/a"} vs ${i.target ?? "n/a"})`);
+  if (!out.some((x) => x.tone !== "ok")) {
+    out.length = 0;
+    if (i.kpiLine) add("ok", 1, i.kpiLine.text);
+    else if (i.status === "excellent" || i.status === "good") add("ok", 1, `${i.label || "The KPI"} is on target (${i.value ?? "n/a"} vs ${i.target ?? "n/a"})`);
     add("ok", 0, "Nothing critical: no unanswered messages, no open changes, spend on pace");
   }
   return out.sort((a, b) => b.weight - a.weight).slice(0, 5);

@@ -93,8 +93,19 @@ export default async function Home() {
   // ad accounts, allotments or buyer alerts), then their clients ordered by how likely each is to leave
   const channel = lineOfTeam(me.role);
   if (channel) {
-    const { data: hiddenRows } = await hiddenQuery();
-    return <ChannelHome me={me} line={channel} today={base.today} greeting={base.greeting} firstName={base.firstName} recap={<Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />} />;
+    const [{ data: hiddenRows }, next] = await Promise.all([hiddenQuery(), loadNextForMe(db, me)]);
+    return (
+      <ChannelHome
+        me={me}
+        line={channel}
+        today={base.today}
+        greeting={base.greeting}
+        firstName={base.firstName}
+        recap={<Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />}
+        work={<NextSection data={next} me={me.id} />}
+        workCount={next.now.length + next.decide.length}
+      />
+    );
   }
   const assignedQuery = () => db.from("client_assignments").select("client_id").eq("profile_id", me.id);
 
