@@ -44,6 +44,8 @@ export type Draft = {
   /** The client email draft it's also kept as (Overview's "Emails ready to send") */
   clientDraftId?: string | null;
   sent?: "slack" | "gmail" | "gmail_draft" | null;
+  /** Where it was put for the person to send themselves (their Gmail drafts, their Slack self-DM) and its link */
+  saved?: { to: "gmail" | "slack"; href: string | null } | null;
   at: string;
 };
 type YesMemo = { kind: "yes"; id: string; done: true; tool: string; at: string };

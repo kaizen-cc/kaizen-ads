@@ -4,7 +4,7 @@ import { DocumentCardView } from "./document-card";
 import { CopyDocCardView } from "./copy-doc-card";
 import { useRef, useState } from "react";
 import { callTranscript, saveCallDraft } from "@/app/(team)/settings/call-actions";
-import { openCallDraftInGmail } from "@/app/(team)/assistant/document-actions";
+import { DraftSave } from "./draft-save";
 import type { CallCard, CallProgress, UploadAsk } from "@/lib/agent-call/core";
 import type { Speaker } from "@/lib/agent-call/engine";
 import { tintOf } from "@/lib/agent-look";
@@ -216,7 +216,8 @@ const PEEK_LINES = 6;
 
 /**
  * A message drafted as the person (a Slack reply or an email): edit it right here, Approve (which says yes on the call,
- * so the agent sends it as them), or copy it. After sending it shows what happened (sent, a Gmail draft, or copy).
+ * so the agent sends it as them), save it to their Gmail drafts or their own Slack to send themselves (DraftSave), or
+ * copy it. After sending it shows what happened (sent, a Gmail draft, or copy).
  */
 function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft: NonNullable<CallCard["draft"]> }; callId: string | null; onApprove?: (text: string) => void; onDismiss: (id: string) => void }) {
   const d = c.draft;
@@ -237,24 +238,6 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
     } catch {
       setErr("Couldn't copy: select the text and copy it.");
     }
-  };
-  const [opened, setOpened] = useState<string | null>(null);
-  /** Into their Gmail as a draft with the PDF attached, or a prefilled compose that names the PDF to attach */
-  const openGmail = async () => {
-    if (!callId) return d.compose && window.open(d.compose, "_blank", "noopener");
-    const tab = window.open("about:blank", "_blank");
-    setBusy(true);
-    setErr(null);
-    const saved = text.trim() !== d.text.trim() ? await saveCallDraft(callId, d.id, text) : { ok: true as const };
-    const r = saved.ok ? await openCallDraftInGmail(callId, d.id) : { ok: false as const, error: saved.error };
-    setBusy(false);
-    if (!r.ok) {
-      tab?.close();
-      return setErr(r.error);
-    }
-    if (tab) tab.location.href = r.href;
-    else window.open(r.href, "_blank", "noopener");
-    setOpened(r.where === "gmail" ? "It's in your Gmail drafts with the PDF attached." : d.attachments?.length ? "Opened a new email: download the PDF here and attach it before sending." : "Opened a new email in Gmail.");
   };
   const approve = async () => {
     if (!onApprove || !callId) return;
@@ -309,8 +292,6 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
           ))}
         </div>
       )}
-      {opened && <p className="text-[12px] text-muted">{opened}</p>}
-      {d.status === "gmail_draft" && <p className="text-[12px] text-muted">It&apos;s in your Gmail drafts{d.attachments?.length ? ", with the PDF attached" : ", in the thread"}: one click to send it there.</p>}
       {d.status === "copy" && <p className="text-[12px] text-muted">It can&apos;t go out as you from here yet: copy it and send it yourself.</p>}
       {err && (
         <p role="alert" className="text-[12px] text-bad">
@@ -321,11 +302,7 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
         <button type="button" onClick={copy} className="inline-flex min-h-11 items-center rounded-full px-4 text-[13px] text-muted transition-colors hover:bg-surface-2 hover:text-fg md:min-h-9">
           {copied ? "Copied" : "Copy"}
         </button>
-        {d.channel === "email" && open && (
-          <button type="button" disabled={busy} onClick={openGmail} className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] text-muted transition-colors hover:border-faint hover:text-fg disabled:opacity-50 md:min-h-9">
-            Open in Gmail
-          </button>
-        )}
+        <DraftSave key={d.status} callId={callId} d={d} text={text} />
         {d.status === "draft" && onApprove && (
           <button type="button" disabled={busy || !text.trim()} onClick={approve} className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] disabled:opacity-50 md:min-h-9">
             Approve and send

@@ -209,23 +209,14 @@ export async function openDraft(admin: SupabaseClient, me: Pick<Staff, "id" | "e
   if (!d) ({ data: d } = await admin.from("client_email_drafts").select("id, owner_id, subject, body, to_emails, gmail_draft_id").eq("id", id).maybeSingle());
   if (!d || d.owner_id !== me.id) return { ok: false, error: "That draft isn't yours." };
   // Files on it (a Scope of Work PDF): attached in Gmail; named at the bottom of a prefilled compose otherwise
-  const { attachNote, mailFiles } = await import("@/lib/documents/attach");
+  const { attachNote } = await import("@/lib/documents/attach");
   const files = (((d as { attachments?: unknown }).attachments ?? []) as { document_id?: string; name?: string }[]).filter((f) => f.document_id).map((f) => ({ documentId: String(f.document_id), name: String(f.name ?? "Kaizen document.pdf") }));
   const links = composeLinks({ to: (d.to_emails as string[]) ?? [], subject: d.subject as string, body: `${d.body as string}${attachNote(files)}` });
-  const { gmailComposeToken, googleConfigured, googlePost } = await import("@/lib/context/google");
-  if (googleConfigured()) {
-    try {
-      const { rawEmail } = await import("@/lib/assistant/messages");
-      const { attached, missing } = await mailFiles(admin, files);
-      if (missing.length) throw new Error(`files missing: ${missing.join(", ")}`);
-      const raw = rawEmail({ from: `${me.fullName} <${me.email}>`, to: ((d.to_emails as string[]) ?? []).join(", "), subject: d.subject as string, body: d.body as string, attachments: attached });
-      const token = await gmailComposeToken(me.email);
-      const made = await googlePost<{ id: string; message?: { id: string } }>(token, "https://gmail.googleapis.com/gmail/v1/users/me/drafts", { message: { raw } });
-      await admin.from("client_email_drafts").update({ status: "opened", gmail_draft_id: made.id, updated_at: new Date().toISOString() }).eq("id", id);
-      return { ok: true, where: "gmail", href: made.message?.id ? `https://mail.google.com/mail/u/0/#drafts?compose=${made.message.id}` : "https://mail.google.com/mail/u/0/#drafts" };
-    } catch (e) {
-      console.error("[email drafts] gmail draft", e instanceof Error ? e.message : e);
-    }
+  const { saveGmailDraft } = await import("@/lib/assistant/platform-drafts");
+  const made = await saveGmailDraft(admin, { mailbox: me.email, fromName: me.fullName, to: ((d.to_emails as string[]) ?? []).join(", "), subject: d.subject as string, body: d.body as string, files });
+  if (made.ok) {
+    await admin.from("client_email_drafts").update({ status: "opened", gmail_draft_id: made.draftId, updated_at: new Date().toISOString() }).eq("id", id);
+    return { ok: true, where: "gmail", href: made.href };
   }
   await admin.from("client_email_drafts").update({ status: "opened", updated_at: new Date().toISOString() }).eq("id", id);
   return { ok: true, where: "link", href: links.gmail };

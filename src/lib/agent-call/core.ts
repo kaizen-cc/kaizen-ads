@@ -717,7 +717,7 @@ export type CallDocument = { id: string; kind: "sow" | "proposal" | "handoff" | 
 export type CallAttachment = { documentId: string; name: string; download: string };
 
 /** A drafted message on the call: where it goes, its words, and what became of it */
-export type CallDraft = { id: string; channel: "slack" | "email"; where: string; text: string; subject?: string | null; to?: string | null; status: "draft" | "sent" | "gmail_draft" | "copy"; attachments?: CallAttachment[]; compose?: string | null };
+export type CallDraft = { id: string; channel: "slack" | "email"; where: string; text: string; subject?: string | null; to?: string | null; status: "draft" | "sent" | "gmail_draft" | "slack_draft" | "copy"; attachments?: CallAttachment[]; compose?: string | null; /** Where the saved draft opens (Gmail or Slack) */ link?: string | null };
 
 /** What the assistant asked to be uploaded: launch creatives, files for it to read, or a screenshot to look at */
 export type UploadAsk = { purpose: "creatives" | "files" | "screen"; client: string | null; note: string };

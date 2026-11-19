@@ -15,10 +15,12 @@ import { addressOf, reSubject, rawEmail, replyTo, slackPlace } from "./messages"
 import { attachNote, draftFiles, fileViews, mailFiles } from "@/lib/documents/attach";
 import { composeLinks } from "@/lib/email-drafts/core";
 import { teammateTitle, type TeammateKind } from "./teammates";
+import { placeCallDraft } from "./platform-drafts";
 
 // What the assistant and every agent can do for the person with the team and their messages, on a call or in a chat:
 // send a task, an ask or an FYI to any teammate by name or role (send_to_teammate); draft a Slack reply or an email as
-// them, shown on the call to edit (draft_message), and send it in the exact thread on a spoken yes (send_message);
+// them, shown on the call to edit (draft_message), put it in their own Gmail drafts or Slack self-DM to edit and send
+// there (save_draft, no yes needed: nothing leaves), and send it in the exact thread on a spoken yes (send_message);
 // note a client may be leaving (flag_client_risk); and file feedback about the app down the in-app form's path
 // (submit_feedback). Nothing here goes to a client except a message the person approved, as themselves.
 
@@ -167,18 +169,18 @@ async function lastInThread(mailbox: string, threadId: string): Promise<{ to: st
 }
 
 /** The draft as a card on the call: edit it, send it (on their yes), or copy it */
-function showDraft(ctx: CommsCtx, d: Draft, status: CallDraft["status"], href = "/assistant") {
+function showDraft(ctx: CommsCtx, d: Draft, status: CallDraft["status"], href = "/assistant", external = false) {
   if (!ctx.emit) return;
   const where = d.slack?.where ?? (d.email ? `email to ${addressOf(d.email.to)}` : "a message");
   ctx.emit({
     t: "card",
     card: {
       id: `draft-${d.id}`,
-      title: status === "sent" ? "Sent as you" : status === "gmail_draft" ? "Saved as a Gmail draft" : d.channel === "slack" ? "Slack reply, drafted" : "Email, drafted",
+      title: status === "sent" ? "Sent as you" : status === "gmail_draft" ? "Saved as a Gmail draft" : status === "slack_draft" ? "In your Slack, to send" : d.channel === "slack" ? "Slack reply, drafted" : "Email, drafted",
       detail: where,
       href,
-      external: false,
-      cta: "Open",
+      external,
+      cta: status === "gmail_draft" ? "Open in Gmail" : status === "slack_draft" ? "Open in Slack" : "Open",
       draft: {
         id: d.id,
         channel: d.channel,
@@ -187,6 +189,7 @@ function showDraft(ctx: CommsCtx, d: Draft, status: CallDraft["status"], href = 
         subject: d.email?.subject ?? null,
         to: d.email?.to ?? null,
         status,
+        link: external ? href : null,
         attachments: fileViews(d.attachments),
         // Without Gmail access: a prefilled compose, with a line saying which PDF to attach
         compose: d.email ? composeLinks({ to: [addressOf(d.email.to)], subject: d.email.subject, body: `${d.text}${attachNote(d.attachments ?? [])}` }).gmail : null,
@@ -212,6 +215,20 @@ async function keepClientDraft(ctx: CommsCtx, clientId: string, d: Draft): Promi
     return (again.data?.id as string | undefined) ?? null;
   }
   return (data?.id as string | undefined) ?? null;
+}
+
+/**
+ * A call draft into the person's own Gmail drafts (email) or Slack self-DM (Slack), marked on the call and shown on the
+ * card with its link. Their own mailbox only. Never sends.
+ */
+async function saveDraftToPlatform(ctx: CommsCtx, d: Draft): Promise<{ ok: true; where: string; href: string | null } | { ok: false; error: string; needs?: "slack" | "google_admin" }> {
+  const r = await placeCallDraft(ctx.admin, ctx.me, ctx.callId!, d);
+  if (!r.ok) {
+    if (r.needsConnect) ctx.emit?.({ t: "card", card: { id: "connect-slack", title: "Connect your Slack", detail: "So drafts land in your own Slack", href: "/api/slack/connect?next=%2Fassistant", external: true, cta: "Connect" } });
+    return { ok: false, error: r.error, needs: r.needsConnect ? "slack" : r.scope ? "google_admin" : undefined };
+  }
+  showDraft(ctx, r.draft, d.slack ? "slack_draft" : "gmail_draft", r.href ?? "/assistant", Boolean(r.href));
+  return { ok: true, where: r.where, href: r.href };
 }
 
 // ─── The tools ──────────────────────────────────────────────────────────────
@@ -259,7 +276,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
     },
     {
       name: "draft_message",
-      description: `Drafts a Slack reply or an email as ${from}, in their voice (a message to a person; campaign, flow or SMS copy for the email team is never this: that's create_copy_doc): a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). A document goes with an email: make it first (create_document), then pass its document_id in attach (the card offers Open in Gmail with the PDF attached, and the PDF to download). After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes.`,
+      description: `Drafts a Slack reply or an email as ${from}, in their voice (a message to a person; campaign, flow or SMS copy for the email team is never this: that's create_copy_doc): a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). A document goes with an email: make it first (create_document), then pass its document_id in attach (the card can save it to their Gmail drafts with the PDF attached, and offers the PDF to download). After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes. When they'd rather send it themselves ("put it in my drafts", "I'll send it from Gmail"), run save_draft.`,
       input_schema: {
         type: "object",
         properties: {
@@ -330,8 +347,22 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           text: d.text,
           ...(files.length ? { attached: files.map((f) => f.name) } : {}),
           ...(askedFiles > files.length ? { not_attached: askedFiles - files.length, why: "Those documents weren't found or aren't theirs to attach. Make the document first (create_document) and attach its document_id." } : {}),
-          note: "It's on screen to edit (with Open in Gmail and the PDF to download). Read it back in a sentence or two, then ask if you should send it. Send only on their yes (send_message).",
+          note: "It's on screen to edit. Read it back in a sentence or two, then ask if you should send it (send only on their yes, send_message) or put it in their Gmail drafts / Slack to send themselves (save_draft, no yes needed).",
         };
+      },
+    },
+    {
+      name: "save_draft",
+      description: `Puts a drafted message (draft_message) where ${from} edits and sends it themselves. Email: a real draft in their own Gmail (a reply sits in its thread; to, cc, subject and any attached PDFs included), with a link straight to it. Slack: Slack has no way for an app to write into someone's Slack Drafts, so it's posted to their own self-DM (their "message to yourself", with their own connected Slack) labeled with where it goes and a link to the thread; they copy it, edit it and send it there. Nothing reaches anyone else, so it needs no "send it?": run it when they ask ("put it in my Gmail drafts", "drop it in my Slack"). Then say where it is in a few words; the card links to it. If it can't, say the reason it gives in a sentence.`,
+      input_schema: { type: "object", properties: { draft_id: { type: "string", description: "The draft's id (leave out for the latest draft on this call)" } }, additionalProperties: false },
+      status: () => "Saving it to your drafts…",
+      run: async (input) => {
+        if (!ctx.callId) return { saved: false, note: "Draft it first (draft_message), then save it." };
+        const d = input.draft_id ? await getDraft(ctx.admin, ctx.callId, clip(input.draft_id, 40)) : await latestDraft(ctx.admin, ctx.callId);
+        if (!d) return { saved: false, note: "That draft isn't on this conversation. Draft it again (draft_message), then save it." };
+        const r = await saveDraftToPlatform(ctx, d);
+        if (!r.ok) return { saved: false, error: r.error, ...(r.needs ? { needs: r.needs } : {}) };
+        return { saved: true, where: r.where, link: r.href, note: d.slack ? "Say it's in their Slack, in their messages to themselves, ready to copy into the thread." : "Say it's in their Gmail drafts, ready to edit and send there." };
       },
     },
     {
@@ -363,7 +394,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         }
         const e = d.email!;
         if (e.mailbox.toLowerCase() !== ctx.me.email.toLowerCase()) return { sent: false, note: "That thread isn't in their own mailbox, so it can't go out as them." };
-        const { gmailComposeToken, gmailSendToken, googleConfigured, googlePost } = await import("@/lib/context/google");
+        const { gmailSendToken, googleConfigured, googlePost } = await import("@/lib/context/google");
         if (!googleConfigured()) {
           showDraft(ctx, d, "copy");
           return { sent: false, fallback: "copy", note: "Google isn't connected, so it can't send: the draft is on screen with a copy button." };
@@ -382,18 +413,10 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           return { sent: true, where: `email to ${addressOf(e.to)}` };
         } catch (sendErr) {
           console.error("[send_message] gmail send", sendErr instanceof Error ? sendErr.message : sendErr);
-          try {
-            const token = await gmailComposeToken(e.mailbox);
-            const made = await googlePost<{ id: string }>(token, "https://gmail.googleapis.com/gmail/v1/users/me/drafts", { message: msg });
-            await putDraft(ctx.admin, ctx.callId, { ...d, sent: "gmail_draft" });
-            if (d.clientDraftId) await ctx.admin.from("client_email_drafts").update({ status: "opened", gmail_draft_id: made.id, updated_at: new Date().toISOString() }).eq("id", d.clientDraftId).eq("owner_id", ctx.me.id);
-            showDraft(ctx, { ...d, sent: "gmail_draft" }, "gmail_draft");
-            return { sent: false, fallback: "gmail_draft", note: "Sending email as them isn't switched on, so it's saved as a draft in their Gmail, in the thread: say so in a sentence (one click to send there)." };
-          } catch (draftErr) {
-            console.error("[send_message] gmail draft", draftErr instanceof Error ? draftErr.message : draftErr);
-            showDraft(ctx, d, "copy");
-            return { sent: false, fallback: "copy", note: "Email can't go out as them from the app yet: the draft is on screen with a copy button. Say so in a sentence." };
-          }
+          const saved = await saveDraftToPlatform(ctx, d);
+          if (saved.ok) return { sent: false, fallback: "gmail_draft", link: saved.href, note: "Sending email as them isn't switched on, so it's saved as a draft in their Gmail, in the thread: say so in a sentence (one click to send there)." };
+          showDraft(ctx, d, "copy");
+          return { sent: false, fallback: "copy", why: saved.error, note: "Email can't go out as them from the app yet: the draft is on screen with a copy button. Say so in a sentence." };
         }
       },
     },
