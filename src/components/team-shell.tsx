@@ -521,7 +521,7 @@ export function TeamShell({ name, fullName, meId, roles, tier, creative = null, 
 
       {/* No stacking context of its own (no isolate, no z-index): a page's drawers and sheets (z-50) then rise above the
           top bar and tab bar instead of being trapped under them */}
-      <main className="relative min-w-0 overflow-x-clip px-4 pb-[calc(88px+env(safe-area-inset-bottom))] pt-6 md:px-10 md:py-8">{children}</main>
+      <main className="relative min-w-0 overflow-x-clip px-4 pb-[calc(70px+env(safe-area-inset-bottom))] pt-6 md:px-10 md:py-8">{children}</main>
     </div>
   );
 }

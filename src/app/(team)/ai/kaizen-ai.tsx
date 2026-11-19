@@ -448,7 +448,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
   const shownAgent = live?.agent?.label ?? (agentPick ? AGENT_LABEL[agentPick] : null);
 
   return (
-    <div className="-mx-4 -mt-6 flex h-[calc(100dvh-88px-env(safe-area-inset-bottom)-56px)] min-h-0 overflow-hidden md:-mx-10 md:-my-8 md:h-[100dvh]">
+    <div className="-mx-4 -mt-6 flex h-[calc(100dvh-70px-env(safe-area-inset-bottom)-56px)] min-h-0 overflow-hidden md:-mx-10 md:-my-8 md:h-[100dvh]">
       {/* Threads */}
       <Rail
         open={listOpen}

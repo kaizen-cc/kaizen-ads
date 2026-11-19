@@ -173,29 +173,31 @@ export function ChannelBoard({ line, rows: given, month, switcher, initialWho, l
       ) : (
         <>
           {/* Where things stand */}
-          <div className={`grid grid-cols-2 gap-3 ${email || line === "social" ? "xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.6fr)]" : "xl:grid-cols-[repeat(5,minmax(0,1fr))_minmax(0,1.6fr)]"}`}>
+          {/* Email and social fit every width (Head of Social, Nov 19 2026): on a phone the four bands two by two with the
+              average across, from small screens the bands and the average in one row, the totals under them until xl */}
+          <div className={`grid grid-cols-2 gap-2.5 md:gap-3 ${email || line === "social" ? "sm:grid-cols-5 xl:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.6fr)]" : "xl:grid-cols-[repeat(5,minmax(0,1fr))_minmax(0,1.6fr)]"}`}>
             {(email || line === "social" ? EMAIL_TILES.map((t) => t.status) : TILES).map((t) => {
               const on = status === t;
               const n = count(t);
               const band = EMAIL_TILES.find((x) => x.status === t);
               return (
-                <button key={t} onClick={() => go({ status: on ? null : t })} className={`group relative grid min-w-0 content-start gap-1 overflow-hidden rounded-[14px] border bg-surface p-3.5 text-left transition-colors md:p-4 ${on ? "border-fg/40" : "border-line hover:border-faint/60"}`}>
+                <button key={t} onClick={() => go({ status: on ? null : t })} className={`group relative grid min-w-0 content-start gap-1 overflow-hidden rounded-[14px] border bg-surface p-3 text-left transition-colors md:p-4 ${on ? "border-fg/40" : "border-line hover:border-faint/60"}`}>
                   <span aria-hidden className={`absolute inset-x-0 top-0 h-0.5 ${TONE[t].bar}`} />
                   <span className="text-xs text-muted">{(email || line === "social") && band ? BAND_TONE[band.band].label : STATUS_LABEL[t]}</span>
-                  <span className={`tabular font-heading text-[30px] leading-none ${n ? TONE[t].text : "text-faint"}`}>{n}</span>
-                  <span className="text-[11px] text-faint">{(email || line === "social") && band ? band.hint : TILE_HINT[t]}</span>
+                  <span className={`tabular font-heading text-[26px] leading-none md:text-[30px] ${n ? TONE[t].text : "text-faint"}`}>{n}</span>
+                  <span className="line-clamp-2 text-[11px] text-faint">{(email || line === "social") && band ? band.hint : TILE_HINT[t]}</span>
                 </button>
               );
             })}
             {(email || line === "social") && (
-              <div className="relative grid min-w-0 content-start gap-1 overflow-hidden rounded-[14px] border border-line bg-surface p-3.5 md:p-4">
+              <div className="relative col-span-2 grid min-w-0 content-start gap-1 overflow-hidden rounded-[14px] border border-line bg-surface p-3 sm:col-span-1 md:p-4">
                 <span aria-hidden className={`absolute inset-x-0 top-0 h-0.5 ${avgScore == null ? "bg-faint" : BAND_TONE[avgScore >= 80 ? "good" : avgScore >= 60 ? "watch" : "bad"].bar}`} />
                 <span className="text-xs text-muted">Average score{!email && platform !== "all" ? ` · ${PLATFORM_LABEL[platform]}` : ""}</span>
                 <span className={`tabular font-heading text-[30px] leading-none ${avgScore == null ? "text-faint" : BAND_TONE[avgScore >= 80 ? "good" : avgScore >= 60 ? "watch" : "bad"].text}`}>{avgScore ?? "n/a"}</span>
                 <span className="text-[11px] text-faint">{scored.length} scored {scored.length === 1 ? "account" : "accounts"}</span>
               </div>
             )}
-            <div className="col-span-2 grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-4 xl:col-span-1">
+            <div className={`col-span-2 grid content-start gap-2.5 rounded-[14px] border border-line bg-surface p-3.5 md:p-4 xl:col-span-1 ${email || line === "social" ? "sm:col-span-5" : ""}`}>
               {email ? (
                 <>
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
