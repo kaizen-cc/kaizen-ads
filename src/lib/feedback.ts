@@ -570,7 +570,7 @@ const issueOf = async (admin: Admin, groupId: string) =>
 export async function approveMerge(admin: Admin, groupId: string, actor: string) {
   const g = await issueOf(admin, groupId);
   if (!g?.fix_issue_number || !g.fix_pr_url) return { error: "There's no pull request to merge yet." };
-  const r = await labelIssue(g.fix_issue_number, [APPROVED_LABEL.name], APPROVED_LABEL);
+  const r = await labelIssue(g.fix_issue_number, [APPROVED_LABEL.name], APPROVED_LABEL, { fresh: true });
   if ("error" in r) return { error: `GitHub didn't take the approval: ${r.error}` };
   await logEvent(admin, groupId, "merge_approved", "Approved: merging once every check passes", { actor, link: g.fix_pr_url, shared: true });
   return { ok: true as const };

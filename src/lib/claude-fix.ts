@@ -76,8 +76,11 @@ export async function createFixIssue(fingerprint: string, by = "by Santi", autoM
 }
 
 /** Add labels to an issue (the claude-fix workflow acts on some: approved-merge has it merge the fix). */
-export async function labelIssue(issue: number, labels: string[], create?: { name: string; color: string; description: string }) {
+export async function labelIssue(issue: number, labels: string[], create?: { name: string; color: string; description: string }, opts: { fresh?: boolean } = {}) {
   if (create) await github("/labels", { body: create }).catch(() => null);
+  // A label already on the issue sends no new "labeled" event, so approving again did nothing: take it off first so
+  // adding it starts the workflow again
+  if (opts.fresh) for (const l of labels) await github(`/issues/${issue}/labels/${encodeURIComponent(l)}`, { method: "DELETE" }).catch(() => null);
   const res = await github(`/issues/${issue}/labels`, { body: { labels } }).catch(() => null);
   return res?.ok ? { ok: true as const } : { error: res ? `GitHub said ${res.status}` : "GitHub isn't connected (GITHUB_TOKEN)" };
 }
