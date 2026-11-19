@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { connectorError, isWriteTool, MCP_BETA, mcpPayload, serversNamed, threadKeys, type McpServer, type McpToolset, type Ready } from "@/lib/connectors/core";
+import { missingConnectorLine, vendorsWithoutConnector } from "@/lib/connectors/registry";
 import { markReconnect, myConnections, offeredConnectors, readyFor, setThreadConnectorKeys, threadConnectorKeys } from "@/lib/connectors/server";
 import type { ChatTool } from "./tools";
 import type { Card, ChatEvent, ConnectorConfirmCard, ToolRun } from "./types";
@@ -47,7 +48,9 @@ export async function connectorTurn(p: {
 }): Promise<ConnectorTurn> {
   const { me, admin, emit, cards, runs } = p;
   const offered = await offeredConnectors(admin, me).catch(() => []);
-  if (!offered.length) return none();
+  // A well-known service named (Figma, a figma.com link...) that no connector offered to them covers: how to get it
+  const missing = missingConnectorLine(vendorsWithoutConnector(p.text, offered.map((c) => c.name)), me.isExec);
+  if (!offered.length) return { ...none(), system: missing };
   const mine = await myConnections(admin, me.id);
   const usable = offered.filter((c) => mine.some((m) => m.connector_id === c.id)).map((c) => c.key);
   if (p.initial) await setThreadConnectorKeys(admin, p.threadId, p.initial).then(() => {}, () => {});
@@ -88,7 +91,7 @@ export async function connectorTurn(p: {
     emit({ t: "tool", run });
     if (x.reconnect) card({ type: "connect", key: x.key, name: x.name, reason: x.text, reconnect: true, auth: offered.find((c) => c.key === x.key)?.auth });
   }
-  if (!ready.length && !offNamed.length) return none();
+  if (!ready.length && !offNamed.length) return { ...none(), system: missing };
 
   let live: Ready[] = ready;
   const build = () => mcpPayload(live, approved ? { key: approved.key, tool: approved.tool } : null);
@@ -111,6 +114,7 @@ export async function connectorTurn(p: {
   if (approved)
     lines.push(`The person just pressed Run on: ${approved.card.summary} (${approved.card.name}, tool ${approved.tool}, input ${approved.card.input}). Run that tool now, once, with exactly that input, then say plainly what happened.`);
   if (offNamed.length) lines.push(`${offNamed.map((c) => c.name).join(", ")} is connected but switched off in this chat. If the ask needs it, tell them to switch it on in the connections menu (the plug button by the message box) and send again.`);
+  if (missing) lines.push(missing);
   turn.system = lines.join("\n");
 
   // ─── Asking before a write ───
