@@ -100,7 +100,7 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid gap-1">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Full business audit</p>
-          <p className="max-w-2xl text-[13.5px] text-muted">Every channel at once: Meta, Google, creative and what the client is telling us, connected. {latest ? `Last run ${new Date(latest.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}${latest.by ? ` by ${latest.by}` : ""}.` : "Not run yet."}</p>
+          <p className="max-w-2xl text-[13.5px] text-muted">Every channel at once: Meta, Google, creative and what the client is telling us, connected. {latest ? `Last run ${new Date(latest.at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}${latest.by ? ` by ${latest.by}` : ""}.` : "Not run yet."}</p>
         </div>
         <button type="button" disabled={Boolean(running)} onClick={start} className="min-h-11 rounded-full bg-fg px-5 text-[13.5px] font-medium text-bg disabled:opacity-60 md:min-h-9">
           {running ? (running.step ?? "Auditing…") : latest ? "Audit the whole business again" : "Audit the whole business"}
