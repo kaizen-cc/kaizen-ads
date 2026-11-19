@@ -45,10 +45,10 @@ export async function setStrategyOnly(clientId: string, slug: string, service: s
   }
 }
 
-export type EmailCustom = { campaigns: number; campaigns_min: number; sms: number; sms_min: number; flows: number | null; flow_emails: number; flow_emails_min: number };
+export type EmailCustom = { campaigns: number; campaigns_min: number; sms: number; sms_min: number; flows: number | null; flow_emails: number; flow_emails_min: number; /** A sprint: its numbers hold until this day, then the client moves to `after` (or holds none) */ sprint_until?: string; after?: "basic" | "silver" | "gold" | null };
 
 /** The client's email tier */
-export async function setEmailTier(clientId: string, slug: string, t: { tier: "setup" | "basic" | "silver" | "gold" | "custom"; start?: string | null; custom?: Partial<EmailCustom> | null; after?: string | null }): Promise<Result> {
+export async function setEmailTier(clientId: string, slug: string, t: { tier: "setup" | "basic" | "silver" | "gold" | "custom" | "sprint"; start?: string | null; until?: string | null; custom?: Partial<EmailCustom> | null; after?: string | null }): Promise<Result> {
   try {
     const { me, admin, strategy } = await guard(clientId);
     const now = new Date().toISOString();
@@ -57,7 +57,10 @@ export async function setEmailTier(clientId: string, slug: string, t: { tier: "s
       if (!t.start || !/^\d{4}-\d{2}/.test(t.start)) return { ok: false, error: "Pick the month the setup starts." };
       const after = ["basic", "silver", "gold"].includes(String(t.after)) ? t.after : "basic";
       await admin.from("clients").update({ ...base, email_setup_start: `${t.start.slice(0, 7)}-01`, email_package_key: after }).eq("id", clientId);
-    } else if (t.tier === "custom") {
+    } else if (t.tier === "custom" || t.tier === "sprint") {
+      const sprint = t.tier === "sprint";
+      if (sprint && (!t.until || !/^\d{4}-\d{2}-\d{2}$/.test(t.until))) return { ok: false, error: "Pick the day the sprint ends." };
+      if (sprint && t.until! < new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })) return { ok: false, error: "The sprint has to end today or later." };
       const c = t.custom ?? {};
       const pair = (max: unknown, min: unknown, cap: number) => {
         const hi = whole(max, cap);
@@ -66,7 +69,9 @@ export async function setEmailTier(clientId: string, slug: string, t: { tier: "s
       const [cMin, cMax] = pair(c.campaigns, c.campaigns_min, 60);
       const [sMin, sMax] = pair(c.sms, c.sms_min, 40);
       const [fMin, fMax] = pair(c.flow_emails, c.flow_emails_min, 60);
-      const custom: EmailCustom = { campaigns: cMax, campaigns_min: cMin, sms: sMax, sms_min: sMin, flows: c.flows == null ? null : whole(c.flows, 20), flow_emails: fMax, flow_emails_min: fMin };
+      const after = sprint && ["basic", "silver", "gold"].includes(String(t.after)) ? (t.after as "basic" | "silver" | "gold") : null;
+      // The allotment reads a sprint the way it reads Custom (these numbers); the daily step ends it on its day
+      const custom: EmailCustom = { campaigns: cMax, campaigns_min: cMin, sms: sMax, sms_min: sMin, flows: c.flows == null ? null : whole(c.flows, 20), flow_emails: fMax, flow_emails_min: fMin, ...(sprint ? { sprint_until: t.until!, after } : {}) };
       await admin.from("clients").update({ ...base, email_package_key: "custom", email_custom: custom, email_setup_start: null }).eq("id", clientId);
     } else {
       await admin.from("clients").update({ ...base, email_package_key: t.tier, email_setup_start: null }).eq("id", clientId);

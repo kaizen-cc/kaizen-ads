@@ -558,7 +558,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         tiers: tierList ?? [],
         chosen: Object.fromEntries((tierPicks ?? []).filter((x) => x.tier_id).map((x) => [x.service as string, x.tier_id as string])),
         strategyOnly: ((client.strategy_only ?? []) as string[]).filter(Boolean),
-        email: { key: (client.email_package_key as string | null) ?? null, setupStart: (client.email_setup_start as string | null) ?? null, custom: (client.email_custom ?? null) as Record<string, number | null> | null },
+        email: { key: (client.email_package_key as string | null) ?? null, setupStart: (client.email_setup_start as string | null) ?? null, custom: (client.email_custom ?? null) as Record<string, number | string | null> | null },
       }}
       connections={connections}
       creative={creative}
