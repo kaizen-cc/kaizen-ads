@@ -27,6 +27,7 @@ import { str, type AiTool } from "./types";
 //                      social client grouped behind pace, on pace, over, or with no tier
 //   set_social_tier    put a client on Basic, Silver, Gold, Platinum, Custom numbers, a Sprint or Strategy only, and
 //                      pick the platforms they post on (execs and leads; asks first, then confirmed: true)
+//   boosted_posts      which organic posts the ads team is boosting and the spend behind each (src/lib/social-boosts.ts)
 // The screen: open_screen the client page, Team & setup, Services.
 
 const platformName = (k: string) => SOCIAL_PLATFORM_OPTIONS.find((p) => p.key === k)?.label ?? k;
@@ -145,4 +146,40 @@ const setSocialTierTool: AiTool = {
   },
 };
 
-export const tools: AiTool[] = [socialAllotment, setSocialTierTool];
+const boostedPostsTool: AiTool = {
+  name: "boosted_posts",
+  description:
+    "Which organic Facebook and Instagram posts the ads team is boosting (an ad running the published post), with the ads and the spend behind each over the last 30 days. For one client, or without a client every social client: the ones boosting and the ones with nothing boosted. Use it for \"which posts are being boosted?\", \"how much is behind our posts?\", or before suggesting posts to boost.",
+  input_schema: { type: "object", properties: { client: { type: "string", description: "A client name; leave out for every social client" } }, additionalProperties: false },
+  lines: ["social", "ads"],
+  run: async (user: Staff, input) => {
+    const db = await createClient();
+    const { boostedPosts } = await import("@/lib/social-boosts");
+    const { boostLine } = await import("@/lib/social-boosts-core");
+    const out = (p: Awaited<ReturnType<typeof boostedPosts>>[string][number]) => ({
+      platform: p.platform,
+      posted: p.postedAt?.slice(0, 10) ?? null,
+      caption: (p.caption ?? "").replace(/\s+/g, " ").slice(0, 160),
+      ads: p.ads,
+      ad_names: p.adNames.slice(0, 3),
+      spend_30d: Math.round(p.spend30d * 100) / 100,
+      impressions_30d: p.impressions30d,
+      last_spend_day: p.lastSpendDay,
+      link: p.permalink,
+    });
+    if (str(input.client)) {
+      const c = await clientNamed(db, input.client);
+      const list = (await boostedPosts(db, [c.id]))[c.id] ?? [];
+      return { ok: true, client: c.name, summary: boostLine(list), posts: list.map(out), sheet: `/kpis?p=social&open=${c.id}` };
+    }
+    const [all, { data: rows }] = await Promise.all([boostedPosts(db), db.from("clients").select("id, name, services, services_extra, services_removed").is("archived_at", null)]);
+    const social = (rows ?? []).filter((r) => (servicesOf(r) as string[]).includes("social-media"));
+    return {
+      ok: true,
+      boosting: social.filter((r) => all[r.id as string]?.length).map((r) => ({ client: r.name, summary: boostLine(all[r.id as string]), top: all[r.id as string].slice(0, 3).map(out) })),
+      nothing_boosted: social.filter((r) => !all[r.id as string]?.length).map((r) => r.name as string),
+    };
+  },
+};
+
+export const tools: AiTool[] = [socialAllotment, setSocialTierTool, boostedPostsTool];

@@ -273,7 +273,7 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
   const from = basis === "month" ? month.start : shiftDay(month.today, -29);
   // Last month for the comparison, and 36 days back so the 7 day rate has its window on the oldest day charted
   const earliest = [month.prevStart, shiftDay(month.today, -36)].sort()[0];
-  const [links, days, posts, scores] = await Promise.all([
+  const [links, days, posts, scores, boosts] = await Promise.all([
     db.from("social_accounts").select("client_id, page_id, ig_id, page_name, ig_username, last_synced_at, last_error, missing_permissions").in("client_id", ids).then((r) => r.data ?? []),
     readAll<Record<string, unknown>>((a, b) =>
       db.from("social_daily").select("client_id, platform, account_id, date, followers, follows_gained, follows_lost, reach, views, interactions").in("client_id", ids).gte("date", earliest).order("client_id").order("platform").order("date").range(a, b),
@@ -283,6 +283,8 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
     ),
     // The account score (every platform and the overall), read through the same session as the rest
     loadSocialScores(db, ids, month.today).catch(() => new Map<string, SocialAccountScore>()),
+    // Which posts the ads team is boosting (src/lib/social-boosts.ts), for the card's chip
+    import("@/lib/social-boosts").then((m) => m.boostedPosts(db, ids)).catch(() => ({}) as Awaited<ReturnType<typeof import("@/lib/social-boosts").boostedPosts>>),
   ]);
   const linkBy = new Map(links.map((l) => [l.client_id as string, l]));
   const daysBy = groupBy(days, (d) => d.client_id as string);
@@ -382,6 +384,7 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
       social,
       score: null,
       socialScore: sc,
+      boosted: boosts[id]?.length ? { posts: boosts[id].length, spend: boosts[id].reduce((n, b) => n + b.spend30d, 0) } : null,
     };
   });
 }

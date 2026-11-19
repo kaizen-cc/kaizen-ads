@@ -525,6 +525,14 @@ function Card({ r, reading, active, onOpen }: { r: ChannelRow; reading: ReadStat
             {r.line !== "email" && (
               <div className="mt-auto grid gap-2 pt-1">
                 <SupportChips r={r} />
+                {r.line === "social" && r.boosted && (
+                  <span className="tabular inline-flex h-6 w-fit items-center gap-1.5 rounded-full border border-brand/30 bg-brand/[0.07] px-2 text-[11px]" title="Posts the ads team is boosting, last 30 days">
+                    <span className="text-brand-text">Boosted</span>
+                    <span className="text-fg">
+                      {r.boosted.posts} post{r.boosted.posts === 1 ? "" : "s"} · ${Math.round(r.boosted.spend).toLocaleString("en-US")}
+                    </span>
+                  </span>
+                )}
                 {r.socialScore && r.socialScore.platforms.length > 0 && (
                   <span className="flex flex-wrap gap-1.5">
                     {r.socialScore.platforms.map((p) => (

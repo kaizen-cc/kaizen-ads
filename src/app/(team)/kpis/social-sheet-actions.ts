@@ -13,7 +13,10 @@ import type { SheetAudit, SheetMove, SheetSprint } from "./email-sheet-actions";
 export type SheetDay = { platform: string; date: string; reach: number | null; interactions: number | null; followers: number | null };
 export type SheetPost = { id: string; platform: string; format: string | null; caption: string | null; permalink: string | null; thumbnail: string | null; postedAt: string | null; reach: number | null; interactions: number | null; saves: number | null; shares: number | null };
 
-export type SocialSheet = { today: string; now: number; days: SheetDay[]; posts: SheetPost[]; audit: SheetAudit | null; sprint: SheetSprint | null };
+/** A post the ads team is boosting: its ads and their spend over the last 30 days */
+export type SheetBoost = { postId: string; platform: string; permalink: string | null; caption: string | null; thumbnail: string | null; postedAt: string | null; format: string | null; ads: number; spend: number; impressions: number; lastSpendDay: string | null; adNames: string[] };
+
+export type SocialSheet = { today: string; now: number; days: SheetDay[]; posts: SheetPost[]; audit: SheetAudit | null; sprint: SheetSprint | null; boosts: SheetBoost[] };
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const orNull = (v: unknown) => (v == null ? null : Number(v));
@@ -25,11 +28,13 @@ export async function loadSocialSheet(clientId: string): Promise<{ ok: true; she
   const { data: c } = await db.from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!c) return { ok: false, error: "You don't work on this client." };
   const today = etDay(new Date().toISOString());
-  const [link, days, posts, audit, sprint] = await Promise.all([
+  const [link, days, posts, audit, boosted, sprint] = await Promise.all([
     db.from("social_accounts").select("page_id, ig_id").eq("client_id", clientId).maybeSingle(),
     db.from("social_daily").select("platform, account_id, date, reach, interactions, followers").eq("client_id", clientId).gte("date", shiftDay(today, -40)).lte("date", today).order("date").limit(400),
     db.from("social_posts").select("post_id, platform, account_id, format, caption, permalink, thumbnail_url, posted_at, reach, interactions, saves, shares").eq("client_id", clientId).gte("posted_at", `${shiftDay(today, -90)}T00:00:00Z`).order("posted_at", { ascending: false }).limit(240),
     db.from("social_audits").select("id, status, step, progress, score, band, result, done, auto, error, created_at, profiles(full_name)").eq("client_id", clientId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    // Which of their posts the ads team is boosting, and the spend behind each (src/lib/social-boosts.ts)
+    import("@/lib/social-boosts").then((m) => m.boostedPosts(db, [clientId])).then((r) => r[clientId] ?? []).catch(() => []),
     db.from("social_sprints").select('id, audit_id, started_at, baseline, latest, next_check_at, last_check_at, social_sprint_actions(id, audit_index, title, owner, "when", steps, why, impact, status, note, ai_note, sort_order), social_sprint_checks(verdict, message, created_at)').eq("client_id", clientId).eq("status", "active").maybeSingle(),
   ]);
   const l = link.data;
@@ -41,6 +46,7 @@ export async function loadSocialSheet(clientId: string): Promise<{ ok: true; she
     sheet: {
       today,
       now: Date.now(),
+      boosts: boosted.map((b) => ({ postId: b.postId, platform: b.platform, permalink: b.permalink, caption: b.caption, thumbnail: b.thumbnail, postedAt: b.postedAt, format: b.format, ads: b.ads, spend: b.spend30d, impressions: b.impressions30d, lastSpendDay: b.lastSpendDay, adNames: b.adNames })),
       days: (days.data ?? []).filter(current).map((d) => ({ platform: d.platform as string, date: d.date as string, reach: orNull(d.reach), interactions: orNull(d.interactions), followers: orNull(d.followers) })),
       posts: (posts.data ?? []).filter(current).map((p) => ({
         id: p.post_id as string,

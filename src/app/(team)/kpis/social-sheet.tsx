@@ -377,6 +377,52 @@ function PostLine({ p }: { p: SheetPost & { rate: number | null } }) {
 
 // ─── Posts ───────────────────────────────────────────────────────────────────
 
+/** The posts the ads team is boosting, with the spend behind each (last 30 days); nothing boosted says so */
+function Boosts({ sheet, pick }: { sheet: SocialSheet; pick: PlatformPick }) {
+  const list = (sheet.boosts ?? []).filter((b) => pick === "all" || b.platform === pick);
+  const total = list.reduce((n, b) => n + b.spend, 0);
+  const money = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
+  return (
+    <section className="grid gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <Eyebrow>Boosted by the ads team, last 30 days</Eyebrow>
+        {list.length > 0 && <span className="tabular text-sm text-fg">{money(total)} across {list.length} post{list.length === 1 ? "" : "s"}</span>}
+      </div>
+      {list.length ? (
+        <ul className="grid gap-2">
+          {list.map((b) => (
+            <li key={`${b.platform}:${b.postId}`}>
+              <PostHover p={{ ...b, reach: null, interactions: null }}>
+                <a href={b.permalink ?? undefined} target="_blank" rel="noreferrer" className="group grid w-full grid-cols-[48px_minmax(0,1fr)_auto] items-center gap-3 rounded-[14px] p-2 text-left transition-colors hover:bg-surface-2/70">
+                  <span className="h-12 w-12 overflow-hidden rounded-[10px] border border-line bg-surface-2">
+                    {b.thumbnail ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={b.thumbnail} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    ) : null}
+                  </span>
+                  <span className="grid min-w-0 gap-0.5">
+                    <span className="line-clamp-1 text-[13px] text-fg">{b.caption?.trim() || "No caption"}</span>
+                    <span className="truncate text-[11px] text-faint">
+                      {PLATFORM_LABEL[b.platform as SocialPlatform] ?? b.platform} · {b.ads} ad{b.ads === 1 ? "" : "s"}
+                      {b.adNames[0] ? ` · ${b.adNames[0]}` : ""}
+                    </span>
+                  </span>
+                  <span className="tabular grid justify-items-end text-right">
+                    <span className="text-[13px] font-medium text-fg">{money(b.spend)}</span>
+                    <span className="text-[10.5px] text-faint">{b.impressions.toLocaleString("en-US")} impressions</span>
+                  </span>
+                </a>
+              </PostHover>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted">Nothing boosted: none of their ads is running one of these posts. Pick the best recent posts with the media buyer.</p>
+      )}
+    </section>
+  );
+}
+
 function Posts({ sheet, pick }: { sheet: SocialSheet; pick: PlatformPick }) {
   const [all, setAll] = useState(false);
   const { top, bottom } = topAndBottom(sheet.posts.filter((p) => (p.postedAt ?? "") >= shiftDay(sheet.today, -30)), pick, 3);
@@ -384,6 +430,7 @@ function Posts({ sheet, pick }: { sheet: SocialSheet; pick: PlatformPick }) {
   const shown = all ? list : list.slice(0, 12);
   return (
     <>
+      <Boosts sheet={sheet} pick={pick} />
       <div className="grid gap-3 md:grid-cols-2">
         <section className="grid content-start gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
           <Eyebrow>Top posts, last 30 days</Eyebrow>

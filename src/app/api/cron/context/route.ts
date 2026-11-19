@@ -183,10 +183,14 @@ export async function GET(request: Request) {
       return Response.json({ ...synced, history });
     }
     if (step === "social") {
-      const synced = await (await import("@/lib/social/store")).syncAllSocial(admin, { budgetMs: 600_000 });
+      const synced = await (await import("@/lib/social/store")).syncAllSocial(admin, { budgetMs: 560_000 });
       // Clients very behind on their social allotment: their Social Media Manager and the Head of Social, once a cycle (and in its last week)
       const pace = await (await import("@/lib/social-pace-alerts")).socialPaceAlerts(admin).catch((e) => String(e));
-      return Response.json({ ...synced, pace });
+      // Which posts the ads team is boosting (each recent ad's post, asked of Meta), and clients with nothing boosted flagged
+      const boosts = await import("@/lib/social-boosts");
+      const adPosts = await boosts.syncAdPosts(admin, { budgetMs: 90_000 }).catch((e) => String(e));
+      const boostFlags = await boosts.boostAlerts(admin).catch((e) => String(e));
+      return Response.json({ ...synced, pace, adPosts, boostFlags });
     }
     if (step === "meta_tokens") return Response.json(await (await import("@/lib/meta-tokens")).checkAllBusinessTokens(admin));
     if (step === "connectors") return Response.json(await (await import("@/lib/connectors/registry-sync")).syncConnectorRegistry(admin));

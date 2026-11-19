@@ -58,6 +58,8 @@ export type MetricNumbers = ConversionMetric & {
 
 export type ChannelRow = {
   line: Line;
+  /** Social: the posts the ads team is boosting over the last 30 days and the spend behind them (null: none read) */
+  boosted?: { posts: number; spend: number } | null;
   clientId: string;
   name: string;
   slug: string;
