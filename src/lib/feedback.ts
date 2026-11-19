@@ -634,6 +634,24 @@ export async function rebuildOnLatest(admin: Admin, groupId: string, actor: stri
   return askForChanges(admin, groupId, `The approved fix couldn't merge${reason ? ` (${reason.toLowerCase()})` : ""}. Rebuild it on the latest version of main, keeping the same change, and make every check pass.`, actor);
 }
 
+/** How many times an approved fix that couldn't merge is sent back through the workflow by itself before the owner hears */
+export const MERGE_RETRIES = 2;
+
+/**
+ * An approved fix that couldn't merge goes through the workflow again by itself (it rebases on main, repairs a failing
+ * check and retries a database blip), up to MERGE_RETRIES times. True when a retry was started.
+ */
+async function retryMerge(admin: Admin, groupId: string, issue: number, prUrl: string | null, prOpen: boolean): Promise<boolean> {
+  if (!prOpen) return false;
+  const { count } = await admin.from("app_feedback_events").select("id", { count: "exact", head: true }).eq("group_id", groupId).eq("kind", "merge_retry");
+  if ((count ?? 0) >= MERGE_RETRIES) return false;
+  const r = await labelIssue(issue, [APPROVED_LABEL.name], APPROVED_LABEL, { fresh: true });
+  if ("error" in r) return false;
+  await logEvent(admin, groupId, "merge_retry", `Trying again by itself (${(count ?? 0) + 1} of ${MERGE_RETRIES}): it rebases on the latest version and repairs what failed`, { link: prUrl, shared: true });
+  await logEvent(admin, groupId, "merge_approved", "Merging again once every check passes", { link: prUrl, shared: true });
+  return true;
+}
+
 type GhIssue = { state: string; created_at: string };
 type GhComment = { body: string; created_at?: string };
 type GhPull = { html_url: string; state: string; merged_at: string | null; number: number };
@@ -708,6 +726,8 @@ async function syncGroup(admin: Admin, g: SyncRow): Promise<boolean> {
       if (mo.state === "merging") return false;
       if (mo.state === "failed") {
         await logEvent(admin, id, "merge_failed", mo.note, { link: prUrl, shared: true });
+        // It tries again by itself first (the workflow rebases and repairs what failed); the owner hears only when that's spent
+        if (await retryMerge(admin, id, g.fix_issue_number, prUrl, pr?.state === "open")) return false;
         await notifyOwner(admin, {
           key: `feedback-review:merge-failed:${id}:${new Date(last.created_at as string).getTime()}`,
           title: `Couldn't merge: ${g.title}`,
@@ -717,7 +737,11 @@ async function syncGroup(admin: Admin, g: SyncRow): Promise<boolean> {
         return false;
       }
       out = { state: "merged", commit: mo.commit, note: null };
-    } else if (last?.kind === "merge_failed" && out.state !== "merged") return false;
+    } else if (last?.kind === "merge_failed" && out.state !== "merged") {
+      // Failed before self-repair existed (or a retry is still due): try again by itself
+      await retryMerge(admin, id, g.fix_issue_number, prUrl, pr?.state === "open");
+      return false;
+    }
     if (out.state === "merged") {
       const commit = out.commit ? commitUrl(out.commit) : null;
       const now = new Date().toISOString();
@@ -737,6 +761,19 @@ async function syncGroup(admin: Admin, g: SyncRow): Promise<boolean> {
       if (moved) {
         await admin.from("app_feedback_groups").update({ lane: "build", fix_state: "pr_open", fix_pr_url: prUrl }).eq("id", id);
         await logEvent(admin, id, "fix_ready", out.note, { link: prUrl, shared: true });
+      }
+      // The owner already approved this ticket (approved to build, asked for changes or rebuilt it): that was the approval
+      // to merge, so it merges now, never waiting for a second yes
+      // (the owner's word is logged just before the build starts)
+      const since = new Date(Date.parse(g.fix_started_at ?? "1970-01-01T00:00:00Z") - 10 * 60_000).toISOString();
+      const { count: ownerSaid } = await admin.from("app_feedback_events").select("id", { count: "exact", head: true }).eq("group_id", id).in("kind", ["approved", "changes_asked"]).gte("created_at", since);
+      const { count: autoApproved } = await admin.from("app_feedback_events").select("id", { count: "exact", head: true }).eq("group_id", id).eq("kind", "merge_approved").gte("created_at", g.fix_started_at ?? since);
+      if (ownerSaid && !autoApproved && pr?.state === "open") {
+        const r = await labelIssue(n, [APPROVED_LABEL.name], APPROVED_LABEL, { fresh: true });
+        if (!("error" in r)) {
+          await logEvent(admin, id, "merge_approved", "Approved with the ticket: merging once every check passes", { link: prUrl, shared: true });
+          return false;
+        }
       }
       await notifyOwner(admin, { key: `feedback-review:approve:${id}:${pr?.number ?? n}`, title: `Fix ready to approve: ${g.title}`, body: /^Every check passed/i.test(out.note ?? "") ? String(out.note) : `Every check passed. ${out.note ?? ""}`.trim(), href: `/feedback?section=approval&g=${id}` });
       if (moved) await tellStatus(admin, id);
