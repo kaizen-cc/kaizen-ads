@@ -57,7 +57,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main className="grid min-h-dvh place-items-center bg-bg px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,env(safe-area-inset-bottom))] text-fg">
       <div className="grid w-full max-w-[480px] gap-5">
-        <p className="font-display text-[22px] leading-none text-brand-text">ads</p>
+        <p className="font-heading text-[15px] leading-none text-muted">Kaizen OS</p>
         <section className="grid gap-4 rounded-[18px] border border-line bg-surface p-5 shadow-[var(--lift-3)] sm:p-7">{children}</section>
       </div>
     </main>

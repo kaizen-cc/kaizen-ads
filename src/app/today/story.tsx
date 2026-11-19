@@ -3,7 +3,6 @@
 import { DraftReply } from "@/components/draft-reply";
 import { LinePauseControl } from "@/components/line-pause";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
@@ -50,7 +49,6 @@ export function Story({
   /** Design preview: nothing is saved */
   demo?: boolean;
 }) {
-  const router = useRouter();
   // The screens are fixed for this sitting: marking something done refreshes the page, and a list that changed under
   // you (a topic gone, a "taken care of" screen added) would shift every screen after it. What you did shows on the
   // item instead, and the next visit starts from the fresh list.
@@ -236,9 +234,15 @@ export function Story({
                 </div>
               )}
               <div className="flex flex-wrap gap-3">
-                <button type="button" onClick={() => (items.length || resolved.length ? go(1) : router.push(home))} className="h-14 w-full rounded-full bg-white px-7 text-base font-semibold text-black hover:bg-white/90 md:h-12 md:w-auto md:text-[15px]">
-                  {items.length || resolved.length ? "Start" : "Back to your home"}
-                </button>
+                {items.length || resolved.length ? (
+                  <button type="button" onClick={() => go(1)} className="h-14 w-full rounded-full bg-white px-7 text-base font-semibold text-black hover:bg-white/90 md:h-12 md:w-auto md:text-[15px]">
+                    Start
+                  </button>
+                ) : (
+                  <Link href={home} className="grid h-14 w-full place-items-center rounded-full bg-white px-7 text-base font-semibold text-black hover:bg-white/90 md:h-12 md:w-auto md:text-[15px]">
+                    Back to your home
+                  </Link>
+                )}
                 <span className="self-center text-xs text-white/40">
                   <span className="md:hidden">Or swipe to move on</span>
                   <span className="hidden md:inline">→ or space to move on</span>
@@ -334,9 +338,10 @@ export function Story({
                 </ul>
               )}
               <div className="flex flex-wrap gap-3">
-                <button type="button" onClick={() => router.push(home)} className="h-12 flex-1 rounded-full bg-white px-7 text-[15px] font-semibold text-black md:flex-none">
+                {/* A link like Close (prefetched, so it always goes), never a push that can sit waiting on the Overview */}
+                <Link href={home} className="grid h-12 flex-1 place-items-center rounded-full bg-white px-7 text-[15px] font-semibold text-black md:flex-none">
                   Back to your home
-                </button>
+                </Link>
                 <button type="button" onClick={() => setAt(0)} className="h-12 flex-1 rounded-full border border-white/25 px-6 text-sm text-white/80 hover:bg-white/10 md:flex-none">
                   From the top
                 </button>
@@ -354,9 +359,15 @@ export function Story({
         <span className="tabular flex-1 text-center text-xs text-white/45">
           {Math.min(at, cards.length - 1) + 1} of {cards.length}
         </span>
-        <button type="button" onClick={() => (card.kind === "end" ? router.push(home) : go(1))} className="h-12 shrink-0 rounded-full bg-white px-8 text-[15px] font-semibold text-black active:bg-white/90">
-          {card.kind === "end" ? "Done" : "Next"}
-        </button>
+        {card.kind === "end" ? (
+          <Link href={home} className="grid h-12 shrink-0 place-items-center rounded-full bg-white px-8 text-[15px] font-semibold text-black active:bg-white/90">
+            Done
+          </Link>
+        ) : (
+          <button type="button" onClick={() => go(1)} className="h-12 shrink-0 rounded-full bg-white px-8 text-[15px] font-semibold text-black active:bg-white/90">
+            Next
+          </button>
+        )}
       </nav>
 
       {/* Back and forward, for a mouse */}

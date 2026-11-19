@@ -61,12 +61,17 @@ export function splitName(name: string) {
 
 const keyWords = (s: string) => words(s).filter((w) => !STOP.has(w.t));
 
+// Sites that host someone's page rather than being their own (an Instagram profile as the "website"): the platform's
+// name is in every other email ("connect your Instagram"), so it never names a client
+const PLATFORMS = new Set(["instagram", "facebook", "tiktok", "youtube", "linkedin", "twitter", "threads", "pinterest", "linktr", "linktree", "google", "goo", "yelp", "shopify", "myshopify", "etsy", "amazon", "squarespace", "wixsite", "wordpress", "godaddysites", "square", "toasttab", "doordash", "ubereats", "grubhub", "calendly", "beacons", "carrd", "canva", "klaviyo"]);
+
 function domainRoot(site: string | null | undefined) {
   const d = (site ?? "").toLowerCase().replace(/^[a-z]+:\/\//, "").replace(/^www\./, "").replace(/[/?#:].*$/, "");
   if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d)) return null;
   const parts = d.split(".");
   const tail = parts.length > 2 && parts[parts.length - 2].length <= 3 ? 3 : 2;
   const root = parts[parts.length - tail] ?? "";
+  if (parts.some((x) => PLATFORMS.has(x))) return null;
   return root.length >= 5 ? root : null;
 }
 

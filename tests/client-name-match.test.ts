@@ -117,3 +117,15 @@ describe("a client asked for by name (the tools' shared resolver)", () => {
     expect(pickClientByName("Nobody Here", list)).toEqual({ hit: null, close: [] });
   });
 });
+
+describe("a social profile as the website", () => {
+  it("never names the client when the text mentions the platform", () => {
+    const c = { id: "mh", name: "Makayla Harris", website: "https://www.instagram.com/mklajade/" };
+    const text = "Instagram only gives us a username for each comment. To get that ready, connect your Instagram account.";
+    expect(scoreClient(text, c)).toBe(0);
+    expect(matchClientName(text, [c, { id: "aw", name: "Atomic Wings", website: "https://atomicwings.com" }]).sure).toBeNull();
+  });
+  it("still counts a client's own site", () => {
+    expect(scoreClient("see atomicwings.com for the menu", { id: "aw", name: "Atomic Wings", website: "https://atomicwings.com" })).toBeGreaterThanOrEqual(3);
+  });
+});
