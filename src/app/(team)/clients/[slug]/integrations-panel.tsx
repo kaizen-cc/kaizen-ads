@@ -129,7 +129,7 @@ export function IntegrationsPanel({ clientId, connections, summary, suggest }: {
               <span className={`h-2 w-2 rounded-full ${c.status === "connected" ? "bg-ok" : c.status === "error" ? "bg-bad" : "bg-warn"}`} />
               <span className="font-medium">{NAMES[c.kind]}</span>
               <span className="min-w-0 truncate text-muted">{c.label ?? c.account}</span>
-              <span className="ml-auto text-[12px] text-faint">{c.status === "error" ? <span className="text-bad">{c.lastError?.slice(0, 80) ?? "Failing"}</span> : c.status === "pending" ? "Noted, not read" : c.lastSyncedAt ? `Read ${ago(c.lastSyncedAt)}` : "Reading…"}</span>
+              <span suppressHydrationWarning className="ml-auto text-[12px] text-faint">{c.status === "error" ? <span className="text-bad">{c.lastError?.slice(0, 80) ?? "Failing"}</span> : c.status === "pending" ? "Noted, not read" : c.lastSyncedAt ? `Read ${ago(c.lastSyncedAt)}` : "Reading…"}</span>
               {c.kind !== "other" && (
                 <button type="button" disabled={pending} onClick={() => start(async () => { const r = await syncStoreNow(clientId, c.id); setError(r.ok ? null : r.error); router.refresh(); })} className="text-[12px] text-brand-text hover:underline disabled:opacity-50">
                   Read now

@@ -30,7 +30,7 @@ export function LaunchRules({ rules, slug, canEdit }: { rules: LaunchRule[]; slu
           </div>
           <p className="text-[11px] text-faint [overflow-wrap:anywhere]">
             {r.from && r.to ? `Moved from "${r.from}" to "${r.to}"${r.via === "ads_manager" ? " in Ads Manager" : ""}` : "From a move"}
-            {r.by ? ` by ${r.by}` : ""} · {new Date(r.at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            {r.by ? ` by ${r.by}` : ""} · {new Date(r.at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/New_York" })}
             {!r.active && " · turned off"}
           </p>
         </li>

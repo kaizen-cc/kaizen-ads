@@ -80,7 +80,7 @@ function Card({ s, showClient, onChange }: { s: SuggestionView; showClient: bool
         <blockquote className="grid gap-1 border-l-2 border-line pl-3 text-[12.5px] leading-relaxed text-muted">
           <span>&ldquo;{s.sourceQuote}&rdquo;</span>
           <span className="text-[11px] text-faint">
-            {s.sourceAt ? `${new Date(s.sourceAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })} · ` : ""}
+            {s.sourceAt ? `${new Date(s.sourceAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })} · ` : ""}
             {s.sourceUrl ? (
               <a href={s.sourceUrl} target="_blank" rel="noreferrer" className="underline-offset-2 hover:text-fg hover:underline">
                 Open the source

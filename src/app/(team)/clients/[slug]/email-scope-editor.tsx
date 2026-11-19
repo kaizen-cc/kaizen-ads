@@ -14,7 +14,7 @@ type Sow = { id: string; name: string; url: string | null; source: "found" | "up
 export type ScopeMonth = { month: string; campaigns: number; sms: number; flows: number; flowEmails: number; label: string | null; notes: string | null; source: "sow" | "manual"; drafted: boolean };
 
 const FOUND: Record<string, string> = { drive: "their Drive", gmail: "an email", documents: "their documents", kaizen_documents: "a SOW drawn in Kaizen OS", upload: "an upload" };
-const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/New_York" });
 const monthName = (m: string) => new Date(`${m}T12:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 const thisMonth = () => `${new Date().toISOString().slice(0, 7)}-01`;
 

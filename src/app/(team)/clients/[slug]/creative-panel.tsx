@@ -54,7 +54,7 @@ export function CreativePanel({ data }: { data: ClientCreative }) {
         <Tickets rows={tab === "moving" ? data.moving : data.launched} launched={tab === "launched"} />
       ) : (
         <>
-          {data.syncedAt && <p className="-mt-2 text-xs text-faint">From the ad account · synced {ago(data.syncedAt)}</p>}
+          {data.syncedAt && <p suppressHydrationWarning className="-mt-2 text-xs text-faint">From the ad account · synced {ago(data.syncedAt)}</p>}
           <Ads ads={tab === "live" ? data.live : data.paused} paused={tab === "paused"} onOpen={setAd} />
         </>
       )}

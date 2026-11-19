@@ -566,12 +566,12 @@ function Resume({ last, at, onPickUp, onFresh }: { last: string; at: string | un
   const when = at ? new Date(at) : null;
   const [now] = useState(() => Date.now());
   const ago = when ? Math.round((now - when.getTime()) / 60000) : null;
-  const said = ago == null ? "" : ago < 2 ? "just now" : ago < 60 ? `${ago} min ago` : ago < 60 * 24 ? `${Math.round(ago / 60)} h ago` : when!.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const said = ago == null ? "" : ago < 2 ? "just now" : ago < 60 ? `${ago} min ago` : ago < 60 * 24 ? `${Math.round(ago / 60)} h ago` : when!.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
   return (
     <div className="grid gap-3 rounded-[16px] border border-ink/10 bg-ink/[0.03] p-4" style={{ animation: "card-in .3s cubic-bezier(.2,.8,.2,1) both" }}>
       <div className="grid gap-1">
         <p className="text-[13.5px] font-medium">Welcome back</p>
-        <p className="line-clamp-2 text-[12.5px] leading-snug text-ink/60 [overflow-wrap:anywhere]">
+        <p suppressHydrationWarning className="line-clamp-2 text-[12.5px] leading-snug text-ink/60 [overflow-wrap:anywhere]">
           Last time{said ? ` (${said})` : ""}: &ldquo;{last.replace(/\s+/g, " ").slice(0, 160)}&rdquo;
         </p>
       </div>
