@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CallCopyDoc } from "@/lib/agent-call/core";
 import { findOrCreateFolder, folderIdOf } from "@/lib/creative-drive-paths";
-import { changedLines, COPY_SCHEMA, copyDocHtml, copyDocName, EMAIL_FOLDER, normalizeCopy, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
+import { changedLines, COPY_SCHEMA, docKindsFor, copyDocHtml, copyDocName, EMAIL_FOLDER, normalizeCopy, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
 
 // Copy documents on the server: saved (each change a new version, the old ones kept), read through the person's own
 // session, revised by the AI copywriter from a note or the open comments, approved into a Google Doc in the client's
@@ -55,6 +55,17 @@ function rowToDoc(r: Record<string, unknown>): CopyDoc {
 export async function loadCopyDoc(db: SupabaseClient, id: string): Promise<CopyDoc | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
   const { data } = await db.from("copy_docs").select(COLS).eq("id", id).maybeSingle();
+  return data ? rowToDoc(data as unknown as Record<string, unknown>) : null;
+}
+
+/**
+ * The newest copy document for a line not yet requested, for a request asked for on a later call or chat that never
+ * saw the doc's id: the client's when named, else the person's own. Read through the person's session.
+ */
+export async function latestCopyDoc(db: SupabaseClient, p: { line: string; clientId?: string | null; createdBy: string }): Promise<CopyDoc | null> {
+  let q = db.from("copy_docs").select(COLS).in("kind", docKindsFor(p.line)).neq("status", "requested");
+  q = p.clientId ? q.eq("client_id", p.clientId) : q.eq("created_by", p.createdBy);
+  const { data } = await q.order("updated_at", { ascending: false }).limit(1).maybeSingle();
   return data ? rowToDoc(data as unknown as Record<string, unknown>) : null;
 }
 

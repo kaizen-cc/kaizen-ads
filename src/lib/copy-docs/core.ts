@@ -38,6 +38,9 @@ export type CopyContent = { kind: CopyKind; title: string; shortName: string; em
 export type CopyComment = { id: string; anchor: string; quote: string; text: string; by: string; byName: string; at: string; resolved: boolean };
 export type CopyStatus = "draft" | "approved" | "requested";
 
+/** The copy_docs kinds a deliverable line's documents are saved under (email: campaign, flow, sms; creative; social) */
+export const docKindsFor = (line: string): string[] => (line === "email" ? ["campaign", "flow", "sms"] : [line]);
+
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 /** En and em dashes, written as code points so the source holds none */
 const DASHES = new RegExp(`\\s*[${String.fromCharCode(0x2013, 0x2014)}]\\s*`, "g");
