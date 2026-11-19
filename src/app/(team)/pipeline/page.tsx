@@ -24,7 +24,7 @@ import { lineInFocus, type FocusLine } from "@/lib/exec-focus/core";
 import { loadExecFocus } from "@/lib/exec-focus/server";
 import { PageHeader } from "./views/shared";
 import { NextSection } from "./views/next-section";
-import { OverviewTabs } from "./views/overview-tabs";
+import { OverviewTabs, WorkUnderToday } from "./views/overview-tabs";
 import { adsDesk, creativeDesk } from "./views/ads-desk";
 import { loadNextForMe } from "@/lib/next-for-me";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -112,7 +112,7 @@ export default async function Home() {
         <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${n ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : "nothing needs you right now"}`} />
         {/* Tabs (?tab=): their day, their line's clients, audits and setup (buyers and the creative team), and everything on them */}
         <OverviewTabs
-          tabs={[{ id: "today", label: "Today" }, ...(desk?.tabs ?? []), { id: "work", label: "My work", count: n, tone: "brand" }]}
+          tabs={[{ id: "today", label: "Today", ...(desk?.mergeWork ? { count: n, tone: "brand" as const } : {}) }, ...(desk?.tabs ?? []), ...(desk?.mergeWork ? [] : [{ id: "work", label: "My work", count: n, tone: "brand" as const }])]}
           panels={{
             today: (
               <>
@@ -122,10 +122,16 @@ export default async function Home() {
                   <ReadyCallout db={db} me={me} />
                 </Suspense>
                 <HandoffCallout db={db} me={me.id} />
+                {/* The ads lines keep My work under their day (no separate tab) */}
+                {desk?.mergeWork && (
+                  <WorkUnderToday>
+                    <NextSection data={next} me={me.id} deploys={deploys} patterns={patterns} />
+                  </WorkUnderToday>
+                )}
               </>
             ),
             ...(desk?.panels ?? {}),
-            work: <NextSection data={next} me={me.id} deploys={deploys} patterns={patterns} />,
+            ...(desk?.mergeWork ? {} : { work: <NextSection data={next} me={me.id} deploys={deploys} patterns={patterns} /> }),
           }}
         />
       </div>

@@ -3,7 +3,7 @@ import type { Production } from "@/lib/production";
 import type { CallPromise, OnboardingState, SuggestionsState } from "@/lib/suggestions";
 import Link from "next/link";
 import { buildThemes } from "./overview-topics";
-import { OverviewTabs } from "./overview-tabs";
+import { OverviewTabs, WorkUnderToday } from "./overview-tabs";
 import { FlowStrip, PageHeader, PrimaryAction, Stats, TeamLoad, type Alert, type KpiPulseData, type Load, type PhaseKey, type PhaseStat } from "./shared";
 import { Themes } from "./themes";
 import { Topic } from "./topics";
@@ -87,9 +87,9 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
       />
       <OverviewTabs
         tabs={[
-          { id: "today", label: "Today" },
+          { id: "today", label: "Today", ...(d.desk?.mergeWork ? { count: d.nextCount ?? d.stats.waitingOnYou, tone: "brand" as const } : {}) },
           ...(d.desk?.tabs ?? []),
-          { id: "work", label: "My work", count: d.nextCount ?? d.stats.waitingOnYou, tone: "brand" },
+          ...(d.desk?.mergeWork ? [] : [{ id: "work", label: "My work", count: d.nextCount ?? d.stats.waitingOnYou, tone: "brand" as const }]),
         ]}
         panels={{
           today: (
@@ -97,10 +97,12 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
               {d.recap}
               {d.handoffs}
               <Themes themes={themes} />
+              {/* The ads lines keep My work under their day (no separate tab) */}
+              {d.desk?.mergeWork && <WorkUnderToday>{d.next}</WorkUnderToday>}
             </>
           ),
           ...(d.desk?.panels ?? {}),
-          work: d.next,
+          ...(d.desk?.mergeWork ? {} : { work: d.next }),
         }}
         follow={{ theme: "today" }}
       />

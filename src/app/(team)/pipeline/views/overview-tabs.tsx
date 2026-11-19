@@ -132,3 +132,13 @@ export function BrandChip({ name, color, logo, light, size = "md" }: { name: str
     </span>
   );
 }
+
+/** My work under the day, for the views that keep it in Today instead of its own tab (the ads lines) */
+export function WorkUnderToday({ children }: { children: React.ReactNode }) {
+  return (
+    <section id="my-work" className="grid scroll-mt-24 gap-3">
+      <h2 className="font-heading text-xl">My work</h2>
+      {children}
+    </section>
+  );
+}

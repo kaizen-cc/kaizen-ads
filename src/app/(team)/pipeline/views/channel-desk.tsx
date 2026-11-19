@@ -257,6 +257,8 @@ export type DeskCardData = {
   links: { href: string; label: string }[];
   /** "What to know": the few critical things about the account, worst first, shown on hover over the card's name */
   brief?: { tone: "bad" | "warn" | "ok"; text: string }[] | null;
+  /** The account's open audit or sprint, small under the card: its progress and what it needs, opens it */
+  work?: { label: string; why: string; href: string; tone: "bad" | "warn" | "quiet" } | null;
 };
 
 const CARD_TONE = {
@@ -349,6 +351,14 @@ export function DeskCard({ c }: { c: DeskCardData }) {
           )}
         </div>
       </details>
+      {c.work && (
+        <Link href={c.work.href} className="group/work flex min-h-10 items-center gap-2 border-t border-line px-3.5 py-2 text-[11.5px] transition-colors hover:bg-surface-2 md:min-h-0">
+          <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.work.tone === "bad" ? "bg-bad" : c.work.tone === "warn" ? "bg-warn" : "bg-faint"}`} />
+          <span className="shrink-0 font-medium text-fg">{c.work.label}</span>
+          <span className="min-w-0 truncate text-faint">{c.work.why}</span>
+          <span aria-hidden className="ml-auto shrink-0 text-faint transition-transform group-hover/work:translate-x-0.5">→</span>
+        </Link>
+      )}
       <nav aria-label={`${c.name} links`} className="grid gap-px border-t border-line bg-line" style={{ gridTemplateColumns: `repeat(${c.links.length}, minmax(0, 1fr))` }}>
         {c.links.map((l) => (
           <Link key={l.label} href={l.href} className="grid min-h-11 place-items-center bg-surface text-[12px] text-muted transition-colors hover:bg-surface-2 hover:text-fg md:min-h-9">

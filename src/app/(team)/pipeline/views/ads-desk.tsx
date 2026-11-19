@@ -2,11 +2,11 @@ import Link from "next/link";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { allotmentPools, type PoolCounts } from "@/lib/allotment";
 import { STATUS, kpiValue, money, pct } from "@/lib/kpi/format";
-import { adsRisk, auditReminders, briefPriority, creativeRisk, mineFirst } from "@/lib/overview-desk";
+import { adsRisk, briefPriority, creativeRisk, mineFirst, reminderFor } from "@/lib/overview-desk";
 import { loadAdsDesk, loadBrands, mySeatClients, owedByClient, type AdsDeskRow } from "@/lib/overview-desk-load";
 import { etToday } from "@/lib/channel-kpis/calc";
 import type { SuggestionsState } from "@/lib/suggestions";
-import { DeskGroup, Reminders, brandOf, type DeskCardData } from "./channel-desk";
+import { DeskGroup, brandOf, type DeskCardData } from "./channel-desk";
 import { SuggestedBriefs } from "./suggested-briefs";
 import { watchTab } from "./watch-panel";
 import { AllotmentGapsPanel } from "./allotment-gaps";
@@ -24,13 +24,14 @@ import { accountBrief, type BriefInput } from "@/lib/account-brief";
 
 type Me = { id: string; role: string; isExec: boolean; isLead: boolean };
 export type DeskTab = { id: string; label: string; count?: number; tone?: "bad" | "warn" | "ok" | "brand" | "quiet" };
-export type Desk = { tabs: DeskTab[]; panels: Record<string, React.ReactNode> };
+/** mergeWork: no My work tab; Today holds the day and My work under it (the ads lines, owner Nov 19 2026) */
+export type Desk = { tabs: DeskTab[]; panels: Record<string, React.ReactNode>; mergeWork?: boolean };
 
 const LOOK_AT = 30;
 const TONE_OF: Record<AdsDeskRow["status"], DeskCardData["tone"]> = { off: "bad", close: "warn", good: "ok", excellent: "ok", idle: "quiet", setup: "quiet", unset: "quiet" };
 
 /** An ad account as a card: the KPI against target, what's hurting, the ways in */
-function adsCard(r: AdsDeskRow & { risk: ReturnType<typeof adsRisk> }, brand: DeskCardData["brand"], opts: { head: boolean; brief: DeskCardData["brief"] }): DeskCardData {
+function adsCard(r: AdsDeskRow & { risk: ReturnType<typeof adsRisk> }, brand: DeskCardData["brand"], opts: { head: boolean; brief: DeskCardData["brief"]; work: DeskCardData["work"] }): DeskCardData {
   const has = r.value != null && r.target != null && r.target > 0;
   // Toward target: ROAS higher is better, a cost lower is better
   const fill = has ? (r.roas ? r.value! / r.target! : r.target! / Math.max(r.value!, 0.0001)) : null;
@@ -58,27 +59,22 @@ function adsCard(r: AdsDeskRow & { risk: ReturnType<typeof adsRisk> }, brand: De
       { href: `/reports?client=${encodeURIComponent(r.slug)}`, label: "Reports" },
     ],
     brief: opts.brief,
+    work: opts.work,
   };
 }
 
-/** Accounts still to set up: no ad account, one we can't read, or no KPI set; each opens its KPI card */
+/** Accounts still to set up (no ad account, one we can't read, or no KPI set), folded at the end of Clients: each opens its KPI card */
 function SetupRows({ rows }: { rows: AdsDeskRow[] }) {
-  if (!rows.length)
-    return (
-      <section className="grid justify-items-start gap-2 rounded-[20px] border border-dashed border-line p-6">
-        <p className="font-heading text-lg">Everything is set up</p>
-        <p className="text-sm text-muted">Every account is reading and has a KPI.</p>
-      </section>
-    );
+  if (!rows.length) return null;
   return (
-    <section className="grid gap-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-heading text-xl">
-          Needs setup <span className="tabular text-[15px] text-faint">{rows.length}</span>
-        </h2>
+    <details className="group/setup grid gap-3">
+      <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-baseline justify-between gap-2 [&::-webkit-details-marker]:hidden">
+        <span className="font-heading text-lg">
+          Needs setup <span className="tabular text-[14px] text-faint">{rows.length}</span> <span aria-hidden className="inline-block text-faint transition-transform group-open/setup:rotate-180">⌄</span>
+        </span>
         <span className="text-xs text-faint">Link the ad account, share access, or set the KPI on its card</span>
-      </div>
-      <ul className="grid max-h-[min(68vh,700px)] gap-px overflow-y-auto overscroll-contain rounded-[20px] border border-line bg-line">
+      </summary>
+      <ul className="mt-3 grid max-h-[min(68vh,700px)] gap-px overflow-y-auto overscroll-contain rounded-[20px] border border-line bg-line">
         {rows.map((r) => (
           <li key={r.targetId}>
             <Link href={`/kpis?target=${encodeURIComponent(r.targetId)}`} className="flex min-h-11 items-center justify-between gap-3 bg-surface px-4 py-3 hover:bg-surface-2">
@@ -91,7 +87,7 @@ function SetupRows({ rows }: { rows: AdsDeskRow[] }) {
           </li>
         ))}
       </ul>
-    </section>
+    </details>
   );
 }
 
@@ -105,7 +101,7 @@ function ideasPanel(suggestions: SuggestionsState | null | undefined, riskOf: Ma
 /** The Meta or Google line: a head sees their own accounts then the team's; a buyer their own */
 export async function adsDesk(db: SupabaseClient, me: Me, platform: "meta" | "google", suggestions?: SuggestionsState | null): Promise<Desk> {
   const head = me.isLead || me.isExec;
-  const [desk, owed, watch] = await Promise.all([loadAdsDesk(db, me, platform), owedByClient(db, me), watchTab(db, me)]);
+  const [desk, owed] = await Promise.all([loadAdsDesk(db, me, platform), owedByClient(db, me)]);
   const brands = await loadBrands(db, [...new Set(desk.rows.map((r) => r.clientId))]).catch(() => new Map());
   const scoped = head ? desk.rows : desk.rows.filter((r) => r.mine);
   const setup = scoped.filter((r) => r.status === "setup" || r.status === "unset");
@@ -150,42 +146,37 @@ export async function adsDesk(db: SupabaseClient, me: Me, platform: "meta" | "go
       changes: changesOf.get(r.clientId) ?? [],
       overduePromises: overdue.get(r.clientId) ?? 0,
     }).map(({ tone, text }) => ({ tone, text }));
-  const card = (r: (typeof live)[number]) => adsCard(r, brandOf(brands, r.clientId), { head, brief: briefOf(r) });
+  const today = etToday();
+  // The account's open audit or sprint, small under its card (no separate tab): critical, gone stale, or open
+  const workOf = (r: (typeof live)[number]): DeskCardData["work"] => {
+    const w = reminderFor(r.targetId, desk.audits.get(r.targetId) ?? null, desk.sprints.get(r.targetId) ?? null, today);
+    if (!w) return null;
+    return { label: `${w.kind === "sprint" ? "Sprint" : "Audit"} ${w.progress.done}/${w.progress.of}`, why: w.why, href: `/kpis/${w.kind}/${w.id}`, tone: w.level === "critical" ? "bad" : w.level === "stale" ? "warn" : "quiet" };
+  };
+  const card = (r: (typeof live)[number]) => adsCard(r, brandOf(brands, r.clientId), { head, brief: briefOf(r), work: workOf(r) });
   const hurting = (rows: typeof live) => rows.filter((r) => r.risk.score >= LOOK_AT).length;
 
-  const reminders = auditReminders(
-    scoped.map((r) => ({ clientId: r.targetId })),
-    desk.audits,
-    desk.sprints,
-    etToday(),
-    { head },
-  );
-  const byTarget = new Map(desk.rows.map((r) => [r.targetId, { name: `${r.name}${r.label ? ` · ${r.label}` : ""}`, brand: brandOf(brands, r.clientId) }]));
-  const critical = reminders.filter((r) => r.level === "critical").length;
   const riskOf = new Map<string, number>();
   for (const r of live) riskOf.set(r.clientId, Math.max(riskOf.get(r.clientId) ?? 0, r.risk.score));
   const ideas = platform === "meta" ? ideasPanel(suggestions, riskOf) : null;
   const name = platform === "meta" ? "Meta" : "Google";
 
   return {
+    // Today (with My work under it), Clients and Ideas: audits and sprints sit on each card, setup at the end of Clients
+    mergeWork: true,
     tabs: [
       { id: "clients", label: head ? "Clients" : "My clients", count: hurting(mine) + (head ? hurting(team) : 0), tone: live.some((r) => r.status === "off") ? "bad" : "warn" },
       ...(ideas ? [{ id: "ideas", label: "Ideas", count: ideas.critical, tone: "bad" as const }] : []),
-      { id: "audits", label: "Audits & sprints", count: reminders.length, tone: critical ? "bad" : "warn" },
-      { id: "setup", label: "Setup", count: setup.length, tone: "warn" },
-      watch.tab,
     ],
     panels: {
       clients: (
         <>
           {(mine.length > 0 || !head) && <DeskGroup id="mine" title={head ? "Your accounts" : "My accounts"} aside="Most at risk of leaving first" cards={mine.map(card)} empty={`You own no ${name} account yet.`} />}
           {team.length > 0 && <DeskGroup id="team" title={head ? "Your team's accounts" : "Other accounts"} aside={`Worst first · ${hurting(team)} need a look`} cards={team.map(card)} contained />}
+          <SetupRows rows={setup} />
         </>
       ),
       ...(ideas ? { ideas: ideas.panel } : {}),
-      audits: <Reminders items={reminders} line={platform} clients={byTarget} head={head} href={(r) => `/kpis/${r.kind}/${r.id}`} board="the KPI board" />,
-      setup: <SetupRows rows={setup} />,
-      watch: watch.panel,
     },
   };
 }
