@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { createPortal } from "react-dom";
 import { PersonAvatar } from "@/components/person-avatar";
 import { toast } from "@/components/toasts";
 import { exitViewAs, startViewAs, viewAsOptions, type ViewAsPerson, type ViewAsRole } from "@/app/(team)/view-as-actions";
@@ -22,6 +23,16 @@ function EyeIcon({ size = 16 }: { size?: number }) {
 /** A fresh page, so every server and browser read starts over as the new person */
 const reload = () => window.location.reload();
 
+const subscribeNone = () => () => undefined;
+/** True in the browser once hydrated: portals need document.body */
+const useMounted = () => useSyncExternalStore(subscribeNone, () => true, () => false);
+
+/**
+ * Over everything: the picker and the bar go straight onto document.body. Inside the sidebar (sticky, so its own
+ * stacking context) no z-index could lift them above the page's cards.
+ */
+const TOP = "z-[2147483000]";
+
 const hasCookie = (name: string) => typeof document !== "undefined" && document.cookie.split("; ").some((c) => c.startsWith(`${name}=`));
 
 /** The owner's "View as" button and its picker: roles (each shown through a representative teammate) and people, searchable */
@@ -33,13 +44,20 @@ export function ViewAsControl({ size = "side", onPicked }: { size?: "side" | "me
   const [pending, start] = useTransition();
   const [busy, setBusy] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const mounted = useMounted();
 
   useEffect(() => {
     if (!open) return;
+    // The page behind doesn't scroll while the picker is open
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     input.current?.focus();
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
   const show = () => {
@@ -85,10 +103,10 @@ export function ViewAsControl({ size = "side", onPicked }: { size?: "side" | "me
         <EyeIcon size={size === "menu" ? 18 : 15} />
         View as…
       </button>
-      {open && (
-        <div className="fixed inset-0 z-[60]" role="dialog" aria-modal="true" aria-label="View as">
-          <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="absolute inset-0 bg-black/50 backdrop-blur-sm animate-[sheet-fade_.2s_ease-out]" />
-          <div className="pb-safe absolute inset-x-0 bottom-0 flex max-h-[82vh] flex-col overflow-hidden rounded-t-[22px] border border-line bg-surface shadow-2xl animate-[step-in_.25s_ease] md:bottom-6 md:left-[252px] md:right-auto md:max-h-[72vh] md:w-[400px] md:rounded-[18px]">
+      {open && mounted && createPortal(
+        <div className={`fixed inset-0 ${TOP} isolate`} role="dialog" aria-modal="true" aria-label="View as">
+          <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="absolute inset-0 z-0 bg-black/50 backdrop-blur-sm animate-[sheet-fade_.2s_ease-out]" />
+          <div className="pb-safe absolute inset-x-0 bottom-0 z-10 flex max-h-[85dvh] w-full flex-col overflow-hidden rounded-t-[22px] border border-line bg-surface shadow-2xl animate-[step-in_.25s_ease] md:bottom-6 md:left-[252px] md:right-auto md:max-h-[min(78vh,720px)] md:w-[min(480px,calc(100vw-276px))] md:rounded-[18px]">
             <div className="grid gap-3 border-b border-line px-4 pb-3 pt-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="grid gap-0.5">
@@ -129,7 +147,7 @@ export function ViewAsControl({ size = "side", onPicked }: { size?: "side" | "me
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm">{r.label}</span>
-                        <span className="block truncate text-xs text-faint">{r.through ? `Shown through ${r.through.name}` : "Nobody active in this role"}</span>
+                        <span className="block text-xs leading-snug text-faint">{r.through ? `Shown through ${r.through.name}` : "Nobody active in this role"}</span>
                       </span>
                       {busy === `role:${r.role}` && <span className="text-xs text-faint">Opening…</span>}
                     </button>
@@ -163,7 +181,8 @@ export function ViewAsControl({ size = "side", onPicked }: { size?: "side" | "me
               {data && !roles.length && !people.length && <p className="px-3 py-6 text-center text-xs text-faint">No role or teammate matches “{q}”.</p>}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
@@ -207,14 +226,15 @@ export function ViewAsBar({ label, name }: { label: string | null; name: string 
     reload();
   });
 
-  if (!label && !stale) return null;
-  return (
+  const mounted = useMounted();
+  if ((!label && !stale) || !mounted) return null;
+  return createPortal(
     <>
       {/* A thin warm line along the top: this isn't your own view */}
-      <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 z-[55] h-[3px] bg-warn" />
+      <div aria-hidden className={`pointer-events-none fixed inset-x-0 top-0 ${TOP} h-[3px] bg-warn`} />
       <div
         role="status"
-        className="fixed inset-x-3 bottom-[calc(58px+env(safe-area-inset-bottom)+10px)] z-[55] mx-auto flex max-w-[560px] items-center gap-3 rounded-full border border-warn/40 bg-surface/95 py-1.5 pl-4 pr-1.5 shadow-[0_18px_50px_-18px_rgba(0,0,0,0.6)] backdrop-blur-xl animate-[step-in_.25s_ease] md:bottom-6 md:left-[240px] md:right-0"
+        className={`fixed inset-x-3 bottom-[calc(58px+env(safe-area-inset-bottom)+10px)] ${TOP} mx-auto flex max-w-[560px] items-center gap-3 rounded-full border border-warn/40 bg-surface/95 py-1.5 pl-4 pr-1.5 shadow-[0_18px_50px_-18px_rgba(0,0,0,0.6)] backdrop-blur-xl animate-[step-in_.25s_ease] md:bottom-6 md:left-[240px] md:right-0`}
       >
         <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-warn-soft text-warn">
           <EyeIcon size={14} />
@@ -234,6 +254,7 @@ export function ViewAsBar({ label, name }: { label: string | null; name: string 
           {pending ? "…" : label ? "Exit" : "Clear"}
         </button>
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
