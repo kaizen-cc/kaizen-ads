@@ -12,11 +12,13 @@ import {
   featuredVendor,
   iconOf,
   latestByName,
+  missingConnectorLine,
   OFFICIAL_REGISTRY,
   pickRemote,
   pullRegistry,
   siteOf,
   toEntry,
+  vendorsWithoutConnector,
   verifiedPublisher,
   weeklyNoticeDue,
   type Entry,
@@ -368,5 +370,28 @@ describe("the sync", () => {
     const r2 = await syncConnectorRegistry(db, { fetcher: reg.fetcher });
     expect(r2).toMatchObject({ complete: true });
     expect(tables.ai_connector_registry).toHaveLength(60);
+  });
+});
+
+describe("a service named in Kaizen AI with no connector for it", () => {
+  it("finds Figma by name or by a board link, unless a connector offered to the person covers it", () => {
+    expect(vendorsWithoutConnector("should kaizen ai be able to view our figma boards like claude could?", [])).toEqual(["Figma"]);
+    expect(vendorsWithoutConnector("check https://www.figma.com/design/abc123/BFCM?node-id=1-2", ["Shopify"])).toEqual(["Figma"]);
+    expect(vendorsWithoutConnector("look at the Figma board", ["Figma"])).toEqual([]);
+    expect(vendorsWithoutConnector("look at the Figma board", ["Figma Design"])).toEqual([]);
+  });
+
+  it("leaves out what Kaizen AI reads on its own and words that only contain a vendor's name", () => {
+    expect(vendorsWithoutConnector("search Slack and Google Drive for the brief", [])).toEqual([]);
+    expect(vendorsWithoutConnector("a configuration of figmas", [])).toEqual([]);
+  });
+
+  it("tells the model how to get it connected, Enable for an exec and Request to enable for everyone else", () => {
+    expect(missingConnectorLine([], false)).toBe("");
+    const line = missingConnectorLine(["Figma"], false);
+    expect(line).toContain("Figma isn't connected");
+    expect(line).toContain("Browse connectors");
+    expect(line).toContain("Request to enable");
+    expect(missingConnectorLine(["Figma"], true)).toContain("press Enable");
   });
 });
