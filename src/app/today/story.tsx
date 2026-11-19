@@ -165,6 +165,17 @@ export function Story({
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) go(dx < 0 ? 1 : -1);
   };
 
+  // Like stories (Head of Social, Nov 19 2026): a tap or click anywhere on the screen moves it, the left half back and the
+  // right half forward, not only the small arrows. Anything you can act on (a button, a link, a field, a card that opens)
+  // keeps its own click, and selecting text never moves the screen.
+  const onTap = (e: React.MouseEvent) => {
+    if (sheet || picker) return;
+    const el = e.target as HTMLElement;
+    if (el.closest("a, button, input, textarea, select, label, summary, details, [role=button], [role=link], [role=menuitem], [data-no-tap], [data-no-swipe]")) return;
+    if (window.getSelection?.()?.toString()) return;
+    go(e.clientX < window.innerWidth / 2 ? -1 : 1);
+  };
+
   return (
     // Phones: a column (progress, the screen, then back and next within thumb reach); desktop as it was
     <div className="force-dark fixed inset-0 z-40 flex flex-col overflow-hidden bg-[#07060a] text-white [color-scheme:dark] md:block">
@@ -203,7 +214,7 @@ export function Story({
         </div>
       )}
 
-      <main onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} className="relative z-10 grid min-h-0 flex-1 place-items-center overflow-y-auto overscroll-contain px-4 pb-6 md:h-[calc(100%-110px)] md:flex-none md:px-8">
+      <main onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onClick={onTap} className="relative z-10 grid min-h-0 flex-1 cursor-pointer place-items-center overflow-y-auto overscroll-contain px-4 pb-6 md:h-[calc(100%-110px)] md:flex-none md:px-8">
         <div key={`${at}:${first}`} className="grid w-full max-w-6xl gap-6 py-5 md:gap-8 md:py-8" style={{ animation: "card-in .45s cubic-bezier(.2,.8,.2,1) both" }}>
           {card.kind === "intro" && (
             <div className="grid max-w-4xl gap-7 md:gap-8">

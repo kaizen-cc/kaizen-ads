@@ -357,7 +357,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
 
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
-      {chat && !demo && <ClientChat clientId={client.id} client={client.name} initial={chat.initial} targets={chat.targets} live={live} perms={chat.perms} desk={line === "email" ? "email" : null} line={line} />}
+      {chat && !demo && <ClientChat clientId={client.id} client={client.name} initial={chat.initial} targets={chat.targets} live={live} perms={chat.perms} desk={line ?? null} line={line} />}
       {/* Header */}
       <header className="grid gap-3">
         <Link href="/clients" className="inline-flex min-h-11 w-fit items-center text-xs text-muted hover:text-fg md:min-h-0">

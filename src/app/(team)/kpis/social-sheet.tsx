@@ -1,5 +1,6 @@
 "use client";
 
+import { PostHover } from "@/components/social-post-preview";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ActionForm } from "@/components/action-form";
@@ -331,27 +332,46 @@ function Overview({ r, sheet, loading, pick, onTab }: { r: ChannelRow; sheet: So
 }
 
 function PostLine({ p }: { p: SheetPost & { rate: number | null } }) {
-  return (
-    <div className="grid grid-cols-[56px_minmax(0,1fr)] gap-3">
-      {p.thumbnail ? (
-        // A platform's thumbnail URL (signed, short-lived): a plain img, no optimisation round trip
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={p.thumbnail} alt="" className="h-14 w-14 rounded-[10px] border border-line object-cover" loading="lazy" />
-      ) : (
-        <span aria-hidden className="grid h-14 w-14 place-items-center rounded-[10px] border border-line bg-surface-2 text-[10px] uppercase text-faint">{p.format ?? "post"}</span>
-      )}
-      <div className="grid min-w-0 content-start gap-0.5">
-        <p className="line-clamp-2 text-[13px] leading-snug text-fg">{p.caption?.trim() || "No caption"}</p>
-        <p className="tabular text-[11px] text-faint">
-          {PLATFORM_LABEL[p.platform as SocialPlatform] ?? p.platform} · {p.format ?? "post"} · {when(p.postedAt)} · {pctText(p.rate)} · reach {num(p.reach)}
-        </p>
-        {p.permalink && (
-          <a href={p.permalink} target="_blank" rel="noreferrer" className="inline-flex min-h-11 w-fit items-center text-[11.5px] text-muted underline-offset-4 hover:text-fg hover:underline md:min-h-0">
-            Open the post
-          </a>
+  // The whole row opens the post; hovering shows it larger with every number (a tap on a phone)
+  const body = (
+    <>
+      <span className="relative h-16 w-16 shrink-0 overflow-hidden rounded-[12px] border border-line bg-surface-2">
+        {p.thumbnail ? (
+          // A platform's thumbnail URL (signed, short-lived): a plain img, no optimisation round trip
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={p.thumbnail} alt="" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy" />
+        ) : (
+          <span aria-hidden className="grid h-full w-full place-items-center text-[10px] uppercase text-faint">{p.format ?? "post"}</span>
         )}
-      </div>
-    </div>
+        {(p.format === "reel" || p.format === "video") && (
+          <span aria-hidden className="absolute bottom-1 right-1 grid h-4 w-4 place-items-center rounded-full bg-black/60 text-[8px] text-white">▶</span>
+        )}
+      </span>
+      <span className="grid min-w-0 content-center gap-1">
+        <span className="line-clamp-2 text-[13px] leading-snug text-fg">{p.caption?.trim() || "No caption"}</span>
+        <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-faint">
+          <span className="text-muted">{PLATFORM_LABEL[p.platform as SocialPlatform] ?? p.platform}</span>
+          <span>· {p.format ?? "post"}</span>
+          <span>· {when(p.postedAt)}</span>
+        </span>
+      </span>
+      <span className="tabular grid shrink-0 content-center justify-items-end gap-0.5 text-right">
+        <span className="text-[13px] text-fg">{pctText(p.rate)}</span>
+        <span className="text-[10.5px] text-faint">reach {num(p.reach)}</span>
+      </span>
+    </>
+  );
+  const cls = "group grid w-full grid-cols-[64px_minmax(0,1fr)_auto] items-center gap-3 rounded-[14px] p-2 text-left transition-colors hover:bg-surface-2/70";
+  return (
+    <PostHover p={p}>
+      {p.permalink ? (
+        <a href={p.permalink} target="_blank" rel="noreferrer" className={cls} aria-label="Open the post">
+          {body}
+        </a>
+      ) : (
+        <span className={cls}>{body}</span>
+      )}
+    </PostHover>
   );
 }
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { PostHover } from "@/components/social-post-preview";
 import { useMemo } from "react";
 import { pushParams, useParam } from "@/lib/url-state";
 import type { ClientSocial, SocialLinkView, SocialPlatformView } from "@/lib/social/store";
@@ -258,7 +259,11 @@ function PostLine({ p }: { p: PostView }) {
     </>
   );
   const cls = `grid w-full gap-2 rounded-[12px] px-3 py-3 text-left transition-colors hover:bg-surface-2/60 md:items-center md:gap-3 ${COLS}`;
-  return <li className="border-t border-line/60 first:border-t-0">{p.permalink ? <a href={p.permalink} target="_blank" rel="noopener noreferrer" className={cls} aria-label={`Open the ${NAME[p.platform]} post from ${when(p.postedAt)}`}>{inner}</a> : <div className={cls}>{inner}</div>}</li>;
+  return (
+    <li className="border-t border-line/60 first:border-t-0">
+      <PostHover p={p}>{p.permalink ? <a href={p.permalink} target="_blank" rel="noopener noreferrer" className={cls} aria-label={`Open the ${NAME[p.platform]} post from ${when(p.postedAt)}`}>{inner}</a> : <div className={cls}>{inner}</div>}</PostHover>
+    </li>
+  );
 }
 
 function Mini({ p, tone }: { p: PostView; tone: "ok" | "bad" }) {

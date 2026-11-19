@@ -276,7 +276,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     ])),
     kpiChain(),
     t("calls", callChain),
-    t("chat", channel && line !== "email" ? Promise.resolve([] as Awaited<ReturnType<typeof loadClientChat>>) : loadClientChat(supabase, client.id, me.id)),
+    t("chat", loadClientChat(supabase, client.id, me.id)),
     // What's on their Drive to make creative from, the latest shot list, and their marketing moments
     t("assets & moments", Promise.all([
       count("image"),
@@ -579,8 +579,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       assets={assetGlance}
       shotList={shotList}
       moments={(momentRows ?? []) as MomentRow[]}
-      // The email team gets the client chat too (the email desk: Klaviyo, the score, the audits); the social team does not yet
-      chat={channel && line !== "email" ? null : { initial: chatTurns, targets, perms }}
+      // "Ask about <client>" for everyone (Head of Social, Nov 19 2026): the email and social teams get their own desk
+      chat={{ initial: chatTurns, targets, perms }}
       fatigue={fatigue}
       market={market}
       intake={intake}

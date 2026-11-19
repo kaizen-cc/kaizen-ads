@@ -335,11 +335,11 @@ export function ClientChat({
       )}
 
       <Layer>
-      {open && <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="fixed inset-0 z-40 bg-black/50 backdrop-blur-[2px]" />}
+      {open && <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-[2px]" />}
       <aside
         ref={panel}
         aria-hidden={!open}
-        className={`fixed right-0 top-[var(--vvt,0px)] z-50 grid h-[var(--vvh,100dvh)] w-full grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden bg-deep shadow-[-30px_0_80px_-30px_rgba(0,0,0,0.9)] transition-transform duration-300 ease-out md:inset-y-0 md:h-auto md:max-w-[460px] md:border-l md:border-ink/[0.07] ${open ? "translate-x-0 translate-y-0" : "pointer-events-none translate-y-full md:translate-x-full md:translate-y-0"}`}
+        className={`fixed right-0 top-[var(--vvt,0px)] z-[61] grid h-[var(--vvh,100dvh)] w-full grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden bg-deep shadow-[-30px_0_80px_-30px_rgba(0,0,0,0.9)] transition-transform duration-300 ease-out md:inset-y-0 md:h-auto md:max-w-[460px] md:border-l md:border-ink/[0.07] ${open ? "translate-x-0 translate-y-0" : "pointer-events-none translate-y-full md:translate-x-full md:translate-y-0"}`}
       >
         <span aria-hidden className="pointer-events-none absolute -left-24 -top-28 h-72 w-72 rounded-full bg-[rgba(200,16,46,0.35)] blur-[90px]" />
         <header className="relative flex items-start justify-between gap-3 px-4 pb-3 pt-[calc(1rem+env(safe-area-inset-top))] md:px-5 md:pt-5">

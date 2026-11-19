@@ -81,7 +81,11 @@ export default async function Clients() {
   const { data: log } = archived?.length || isExecOrLead(me)
     ? await supabase.from("client_archive_events").select("client_id, action, reason, source, set_aside, at, profiles(full_name), clients(name, slug)").order("at", { ascending: false }).limit(300)
     : { data: [] };
-  const rows = (data ?? []) as unknown as Row[];
+  // The email and social teams see their own line's clients: a client is theirs when it buys their service (a seat held
+  // on a client that doesn't, like a social seat left on an email-only client, doesn't put it on their list)
+  const teamLine = lineOfTeam(me.role);
+  const lineService = teamLine === "email" ? "email-marketing" : teamLine === "social" ? "social-media" : null;
+  const rows = ((data ?? []) as unknown as Row[]).filter((r) => !lineService || (servicesOf(r) as string[]).includes(lineService));
   // A sprint counts until its end date (the scheduled job switches it off the day after)
   const today = nyToday();
   const pkgOf = (r: Row): ClientCard["pkg"] =>

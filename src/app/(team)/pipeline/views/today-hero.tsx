@@ -100,7 +100,7 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
     <section className="relative grid gap-5 overflow-hidden rounded-[24px] border border-line bg-deep p-5 md:p-7">
       <div aria-hidden className="pointer-events-none absolute -left-24 -top-32 h-[340px] w-[340px] rounded-full blur-[110px]" style={{ background: looks.byTier.critical ? "rgba(200,16,46,0.45)" : "rgba(90,110,255,0.3)" }} />
       <div aria-hidden className="pointer-events-none absolute -bottom-40 right-0 h-[300px] w-[300px] rounded-full bg-[rgba(224,150,40,0.18)] blur-[120px]" />
-      <div className="relative flex flex-wrap items-end justify-between gap-5">
+      <div className="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
         <div className="grid min-w-0 gap-2">
           <p className="flex flex-wrap items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-ink/50">
             Your day
@@ -113,7 +113,7 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
             )}
             <TodayLive shown={snap.computedAt} />
           </p>
-          <p className="font-display text-3xl leading-tight tracking-tight text-fg md:text-4xl">
+          <p className="font-display text-[26px] leading-tight tracking-tight text-fg [overflow-wrap:anywhere] sm:text-3xl xl:text-4xl">
             {looks.total ? (
               <>
                 {looks.total} {looks.total === 1 ? "thing" : "things"}
@@ -160,8 +160,8 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
             </HoverCard>
           )}
         </div>
-        <div className="flex w-full items-center gap-3 md:w-auto">
-          <div className="hidden gap-4 text-right sm:flex">
+        <div className="grid w-full gap-3 sm:flex sm:items-center lg:w-auto">
+          <div className="grid grid-cols-3 gap-1 sm:flex sm:gap-4 sm:text-right">
             {TIER_ORDER.map((k) => {
               const c = TIER_COLOR[k];
               const these = rows.filter((b) => b.tier === k);
@@ -183,7 +183,7 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
               );
             })}
           </div>
-          <Link href="/today" className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-full bg-fg px-6 md:flex-none md:justify-start text-[15px] font-semibold text-bg shadow-[0_10px_40px_-10px_rgba(255,255,255,0.4)] hover:bg-ink/90">
+          <Link href="/today" className="inline-flex h-12 w-full items-center justify-center gap-2 whitespace-nowrap rounded-full bg-fg px-6 sm:ml-auto sm:w-auto sm:flex-none text-[15px] font-semibold text-bg shadow-[0_10px_40px_-10px_rgba(255,255,255,0.4)] hover:bg-ink/90">
             {looks.total || t.resolved.length ? "Start your day" : "Open"} <span aria-hidden>→</span>
           </Link>
         </div>
