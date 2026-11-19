@@ -3,7 +3,12 @@ import "server-only";
 // Sends through Resend using the OS's verified domain (contact.kaizenmarketing.agency).
 // Mirrors kaizen-cc's lib/email/client.ts so the two can merge later.
 
-const DEFAULT_FROM = "Kaizen OS <ads@contact.kaizenmarketing.agency>";
+const DEFAULT_FROM = "Kaizen <ads@contact.kaizenmarketing.agency>";
+/**
+ * The name every email is from (owner, Nov 19 2026): just "Kaizen", whatever name RESEND_FROM_EMAIL carries. The
+ * address stays RESEND_FROM_EMAIL's: only a domain verified in Resend can send (contact. today; app. once verified).
+ */
+export const SENDER_NAME = "Kaizen";
 const DEFAULT_REPLY_TO = "admin@kaizenmarketing.agency";
 const MAX_ATTEMPTS = 3;
 const BACKOFF_MS = [1000, 2000];
@@ -33,7 +38,7 @@ export async function sendEmail(params: {
   if (!apiKey) return { ok: false, error: "Email isn't set up yet (RESEND_API_KEY missing in Vercel)" };
 
   const body = JSON.stringify({
-    from: fromWithName(process.env.RESEND_FROM_EMAIL || DEFAULT_FROM, params.fromName),
+    from: fromWithName(process.env.RESEND_FROM_EMAIL || DEFAULT_FROM, params.fromName || SENDER_NAME),
     to: params.to,
     subject: params.subject,
     html: params.html,
