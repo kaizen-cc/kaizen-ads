@@ -40,6 +40,8 @@ jobs:
       OWNER: ${{ contains(github.event.issue.labels.*.name, 'owner-approved') || github.event.label.name == 'approved-merge' }}
       AUTO: ${{ contains(github.event.issue.labels.*.name, 'auto-merge') }}
       MAX_FILES: ${{ vars.AUTO_MERGE_MAX_FILES || '8' }}
+      # The type check needs ~5 GB on this codebase: Node's default heap is smaller and it was killed (exit 134)
+      NODE_OPTIONS: --max-old-space-size=6144
     steps:
       - uses: actions/checkout@v4
         with:

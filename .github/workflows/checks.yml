@@ -11,6 +11,9 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    env:
+      # The type check needs ~5 GB on this codebase: Node's default heap is smaller and it was killed (exit 134)
+      NODE_OPTIONS: --max-old-space-size=6144
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
