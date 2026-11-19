@@ -21,6 +21,7 @@ export const READ_TOOLS: ReadonlySet<string> = new Set([
   "client_wins",
   "get_client_context",
   "account_metrics",
+  "meta_history",
   "winners_and_fatigue",
   "email_marketing",
   "kpi_board",
@@ -182,7 +183,7 @@ export function fillerFor(calls: readonly { name: string; input: Record<string, 
       ? `${whose ?? "the"} ${names.has("kpi_board") ? "KPI board" : "email numbers"}`
       : names.has("organic_social")
         ? `${whose ?? "the"} social numbers`
-        : names.has("account_metrics") || names.has("winners_and_fatigue")
+        : names.has("account_metrics") || names.has("meta_history") || names.has("winners_and_fatigue")
           ? `${whose ?? "the"} numbers`
           : names.has("what_changed")
             ? `what's changed${client ? ` on ${client}` : ""}`
