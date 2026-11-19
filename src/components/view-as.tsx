@@ -207,17 +207,25 @@ export function ViewAsBar({ label, name }: { label: string | null; name: string 
     if (!label) return;
     const said = viewAsMessage(name ?? "this teammate");
     const original = window.fetch;
+    // The page's own background work (activity pings, read marks) is refused quietly; only a change the owner just
+    // tried (a click, a key, within a few seconds) gets the message
+    let lastGesture = 0;
+    const touched = () => (lastGesture = Date.now());
+    window.addEventListener("pointerdown", touched, true);
+    window.addEventListener("keydown", touched, true);
     // Every request the page makes (server actions included): when the server refused a change, say so once
     window.fetch = async (...args: Parameters<typeof fetch>) => {
       const res = await original(...args);
       if (hasCookie(VIEW_AS_BLOCKED_COOKIE)) {
         document.cookie = `${VIEW_AS_BLOCKED_COOKIE}=; path=/; max-age=0`;
-        toast({ id: "view-as-blocked", tone: "warn", title: said, actions: [{ label: "Exit view as", primary: true, run: () => exitViewAs().then(reload) }] });
+        if (Date.now() - lastGesture < 5000) toast({ id: "view-as-blocked", tone: "warn", title: said, actions: [{ label: "Exit view as", primary: true, run: () => exitViewAs().then(reload) }] });
       }
       return res;
     };
     return () => {
       window.fetch = original;
+      window.removeEventListener("pointerdown", touched, true);
+      window.removeEventListener("keydown", touched, true);
     };
   }, [label, name]);
 
@@ -234,7 +242,7 @@ export function ViewAsBar({ label, name }: { label: string | null; name: string 
       <div aria-hidden className={`pointer-events-none fixed inset-x-0 top-0 ${TOP} h-[3px] bg-warn`} />
       <div
         role="status"
-        className={`fixed inset-x-3 bottom-[calc(58px+env(safe-area-inset-bottom)+10px)] ${TOP} mx-auto flex max-w-[560px] items-center gap-3 rounded-full border border-warn/40 bg-surface/95 py-1.5 pl-4 pr-1.5 shadow-[0_18px_50px_-18px_rgba(0,0,0,0.6)] backdrop-blur-xl animate-[step-in_.25s_ease] md:bottom-6 md:left-[240px] md:right-0`}
+        className={`fixed inset-x-3 bottom-[calc(58px+env(safe-area-inset-bottom)+10px)] ${TOP} mx-auto flex max-w-[720px] items-center gap-3 rounded-full border border-warn/40 bg-surface/95 py-1.5 pl-4 pr-1.5 shadow-[0_18px_50px_-18px_rgba(0,0,0,0.6)] backdrop-blur-xl animate-[step-in_.25s_ease] md:bottom-6 md:left-[240px] md:right-0`}
       >
         <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-warn-soft text-warn">
           <EyeIcon size={14} />
