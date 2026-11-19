@@ -100,7 +100,7 @@ function due(step: string | null) {
   if (step === "loom") return true; // every 15 minutes (vercel.json): the Loom queue, shared folders daily, the senior buyer's teachings consolidated
   if (step === "remind") return !["Sat", "Sun"].includes(weekday) && [11, 15].includes(hour);
   if (step === "notify") return true; // every 10 minutes (vercel.json): critical notifications still unread go out by email
-  if (step === "feedback") return true; // every 15 minutes (vercel.json): missed feedback read, automatic fixes followed on GitHub; Mondays at 9am the digest
+  if (step === "feedback") return true; // every 5 minutes (vercel.json): missed feedback read, automatic fixes followed on GitHub; Mondays at 9am the digest
   if (step === "reports") return true; // every 15 minutes (vercel.json): queues on Mondays and the 1st, drafts what's queued
   if (step === "audits") return hour >= 6 && hour <= 21;
   if (step === "ledger") return hour >= 5 && hour <= 22; // hourly (vercel.json): each client's playbook, oldest first

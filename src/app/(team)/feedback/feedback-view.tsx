@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ErrorButtons } from "../settings/error-buttons";
 import { toast } from "@/components/toasts";
 import type { TranscriptEntry } from "@/lib/chat-transcript";
-import { REPORTER_STATUS, SCOPE_LABEL, SECTIONS, TYPES, isOpen, pathLabel, reporterStatus, sectionOf, typeLabel, type FeedbackStatus, type Scope, type Section } from "@/lib/feedback-logic";
+import { REPORTER_STATUS, SCOPE_LABEL, SECTIONS, TYPES, approvalState, isOpen, pathLabel, reporterStatus, sectionOf, typeLabel, type FeedbackStatus, type Scope, type Section } from "@/lib/feedback-logic";
 import { pushParams, replaceParams, useParam } from "@/lib/url-state";
-import { approveFeedback, approveFixMerge, askFixChanges, commentFeedback, planAsk, replyFeedback, setFeedbackAssignee, setFeedbackStatus, wontDoFeedback } from "./actions";
+import { approveFeedback, approveFixMerge, askFixChanges, commentFeedback, markFixAlreadyDone, planAsk, rebuildFixOnLatest, refreshFix, replyFeedback, setFeedbackAssignee, setFeedbackStatus, wontDoFeedback } from "./actions";
 
 export type Report = {
   id: string;
@@ -117,6 +117,7 @@ const EVENT_LABEL: Record<string, string> = {
   needs_review: "With the owner",
   fix_ready: "Fix ready to approve",
   merge_approved: "Approved to merge",
+  merge_failed: "Couldn't merge",
   changes_asked: "Changes asked",
   planned: "Planned",
   approved: "Build now",
@@ -142,7 +143,7 @@ function Activity({ events }: { events: FeedbackEvent[] }) {
       <ol className="grid gap-2 border-l border-line pl-4">
         {events.map((e) => (
           <li key={e.id} className="relative text-[13px] leading-relaxed">
-            <span className={`absolute -left-[21px] top-[7px] h-2 w-2 rounded-full ${e.kind === "fixed" ? "bg-ok" : e.kind === "checks_failed" || e.kind === "fix_error" ? "bg-bad" : e.kind === "needs_review" ? "bg-warn" : "bg-faint"}`} />
+            <span className={`absolute -left-[21px] top-[7px] h-2 w-2 rounded-full ${e.kind === "fixed" ? "bg-ok" : e.kind === "checks_failed" || e.kind === "fix_error" || e.kind === "merge_failed" ? "bg-bad" : e.kind === "needs_review" ? "bg-warn" : "bg-faint"}`} />
             <span className="font-medium">{EVENT_LABEL[e.kind] ?? e.kind}</span>
             <span className="text-faint">
               {" "}
@@ -320,33 +321,93 @@ const quiet = "min-h-11 rounded-full px-4 text-[13.5px] text-muted hover:text-fg
 function ApprovalCard({ g, onDone }: { g: Group; onDone: (patch: Patch) => void }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  // Approved a moment ago, before the page has the event back
+  const [approvedNow, setApprovedNow] = useState<string | null>(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   const built = g.lane === "build" && Boolean(g.fixPrUrl);
   const why = [...g.events].reverse().find((e) => e.kind === "fix_ready" || e.kind === "needs_review")?.body ?? g.scopeReason;
-  const run = async (kind: "merge" | "changes" | "again" | "wont") => {
+  const st = approvalState({ lane: g.lane, fixPrUrl: g.fixPrUrl, events: approvedNow ? [...g.events, { kind: "merge_approved", at: approvedNow }].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) : g.events });
+  // After approving, read where it stands every 10 seconds for a minute (the cron picks it up after that)
+  const follow = async () => {
+    for (let i = 0; i < 6 && alive.current; i++) {
+      await new Promise((res) => setTimeout(res, 10_000));
+      if (!alive.current) return;
+      const r = await refreshFix(g.id).catch(() => null);
+      if (r?.shipped) return;
+    }
+  };
+  const run = async (kind: "merge" | "changes" | "again" | "wont" | "rebuild" | "done") => {
     if ((kind === "changes" || kind === "wont") && !note.trim()) {
       toast({ tone: "warn", title: kind === "changes" ? "Say what to change first" : "Say why, so the people who reported it understand" });
       return;
     }
     setBusy(kind);
     if (kind === "wont") onDone({ status: "wont_fix" });
-    if (kind === "again" || kind === "changes") onDone({ lane: "build", fixState: "working" });
-    const r = kind === "merge" ? await approveFixMerge(g.id) : kind === "changes" ? await askFixChanges(g.id, note) : kind === "again" ? await approveFeedback(g.id, note) : await wontDoFeedback(g.id, note);
+    if (kind === "done") onDone({ status: "fixed" });
+    if (kind === "again" || kind === "changes" || kind === "rebuild") onDone({ lane: "build", fixState: "working" });
+    if (kind === "merge") setApprovedNow(new Date().toISOString());
+    const r =
+      kind === "merge"
+        ? await approveFixMerge(g.id)
+        : kind === "changes"
+          ? await askFixChanges(g.id, note)
+          : kind === "rebuild"
+            ? await rebuildFixOnLatest(g.id, st.reason)
+            : kind === "done"
+              ? await markFixAlreadyDone(g.id)
+              : kind === "again"
+                ? await approveFeedback(g.id, note)
+                : await wontDoFeedback(g.id, note);
     setBusy(null);
     if ("error" in r) {
       onDone({ status: g.status, lane: g.lane, fixState: g.fixState });
+      setApprovedNow(null);
       toast({ tone: "bad", title: r.error });
       return;
     }
+    if (kind === "merge") void follow();
     setNote("");
     toast({
       tone: "ok",
-      title: kind === "merge" ? "Approved" : kind === "changes" ? "Sent back to Claude" : kind === "again" ? "Sent to Claude again" : "Marked won't do",
-      body: kind === "merge" ? "Every check runs once more, then it merges and goes live. The people who reported it hear." : kind === "wont" ? "The people who reported it were told why." : "A new pull request comes back here for your approval.",
+      title: kind === "merge" ? "Approved" : kind === "changes" || kind === "rebuild" ? "Sent back to Claude" : kind === "again" ? "Sent to Claude again" : kind === "done" ? "Marked already done" : "Marked won't do",
+      body:
+        kind === "merge"
+          ? "Every check runs once more, then it merges and goes live. This card shows how it's going."
+          : kind === "wont"
+            ? "The people who reported it were told why."
+            : kind === "done"
+              ? "The pull request and the issue were closed, and the people who reported it were told."
+              : "A new pull request comes back here for your approval.",
     });
   };
+  const approvedAt = st.at ? new Date(st.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : null;
   return (
-    <li className="grid gap-4 rounded-[18px] border border-warn/35 bg-surface p-4 md:p-5">
-      <CardHead g={g} why={why ? `Why it needs you: ${why}` : null} />
+    <li className={`grid gap-4 rounded-[18px] border bg-surface p-4 md:p-5 ${st.state === "merge_failed" ? "border-bad/40" : "border-warn/35"}`}>
+      <CardHead g={g} why={st.state === "ready" || st.state === "stuck" ? (why ? `Why it needs you: ${why}` : null) : null} />
+      {st.state === "merging" && (
+        <div role="status" className="flex items-start gap-3 rounded-[12px] bg-brand-soft px-3.5 py-3 text-[13.5px] text-brand-text">
+          <span className="mt-1.5 h-2 w-2 shrink-0 animate-pulse rounded-full bg-brand" />
+          <span className="grid gap-0.5">
+            <span className="font-medium">Merging: checks running</span>
+            <span className="text-[12.5px] opacity-80">Approved {approvedAt}. Every check runs once more, then it merges and goes live. This updates by itself.</span>
+          </span>
+        </div>
+      )}
+      {st.state === "merge_failed" && (
+        <div role="alert" className="grid gap-0.5 rounded-[12px] bg-bad-soft px-3.5 py-3 text-[13.5px] text-bad">
+          <span className="font-medium">Couldn&apos;t merge</span>
+          <span className="text-[12.5px]">
+            {st.reason ?? "It didn't merge"}
+            {approvedAt ? ` (approved ${approvedAt})` : ""}. Rebuild it on the latest version, or mark it done if the change is already live.
+          </span>
+        </div>
+      )}
       {(g.fixPrUrl || g.fixIssueUrl) && (
         <p className="flex flex-wrap gap-x-4 text-[12.5px]">
           {g.fixPrUrl && (
@@ -362,15 +423,30 @@ function ApprovalCard({ g, onDone }: { g: Group; onDone: (patch: Patch) => void 
         </p>
       )}
       <InTheirWords g={g} />
-      <textarea
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        rows={2}
-        placeholder={built ? "What to change, if you ask for changes" : "A note for Claude, or why not"}
-        className="w-full resize-none rounded-[12px] border border-line bg-bg px-3.5 py-2.5 text-[15px] outline-none placeholder:text-faint focus:border-brand-text/70 md:text-sm"
-      />
+      {st.state !== "merging" && (
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          placeholder={built ? "What to change, if you ask for changes" : "A note for Claude, or why not"}
+          className="w-full resize-none rounded-[12px] border border-line bg-bg px-3.5 py-2.5 text-[15px] outline-none placeholder:text-faint focus:border-brand-text/70 md:text-sm"
+        />
+      )}
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-        {built ? (
+        {st.state === "merging" ? (
+          <button type="button" disabled={Boolean(busy)} onClick={() => void run("done")} className={quiet}>
+            {busy === "done" ? "Closing..." : "Mark as already done"}
+          </button>
+        ) : st.state === "merge_failed" ? (
+          <>
+            <button type="button" disabled={Boolean(busy)} onClick={() => void run("rebuild")} className={primary}>
+              {busy === "rebuild" ? "Sending..." : "Rebuild it on the latest version"}
+            </button>
+            <button type="button" disabled={Boolean(busy)} onClick={() => void run("done")} className={secondary}>
+              {busy === "done" ? "Closing..." : "Mark as already done"}
+            </button>
+          </>
+        ) : built ? (
           <>
             <button type="button" disabled={Boolean(busy)} onClick={() => void run("merge")} className={primary}>
               {busy === "merge" ? "Approving..." : "Approve and merge"}
@@ -378,15 +454,20 @@ function ApprovalCard({ g, onDone }: { g: Group; onDone: (patch: Patch) => void 
             <button type="button" disabled={Boolean(busy)} onClick={() => void run("changes")} className={secondary}>
               {busy === "changes" ? "Sending..." : "Ask for changes"}
             </button>
+            <button type="button" disabled={Boolean(busy)} onClick={() => void run("done")} className={quiet}>
+              {busy === "done" ? "Closing..." : "Mark as already done"}
+            </button>
           </>
         ) : (
           <button type="button" disabled={Boolean(busy)} onClick={() => void run("again")} className={primary}>
             {busy === "again" ? "Sending..." : "Send to Claude again"}
           </button>
         )}
-        <button type="button" disabled={Boolean(busy)} onClick={() => void run("wont")} className={quiet}>
-          Won&apos;t do
-        </button>
+        {st.state !== "merging" && (
+          <button type="button" disabled={Boolean(busy)} onClick={() => void run("wont")} className={quiet}>
+            Won&apos;t do
+          </button>
+        )}
       </div>
     </li>
   );

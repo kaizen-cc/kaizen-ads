@@ -7,7 +7,7 @@ import { requireExec, requireStaff } from "@/lib/auth";
 import { CHAT_LABEL, chatReportMessage, sanitizeChatReport } from "@/lib/chat-report";
 import { transcriptMarkdown } from "@/lib/chat-transcript";
 import { loadTranscript } from "@/lib/chat-transcript-server";
-import { FEEDBACK_BUCKET, approveMerge, askForChanges, logEvent, notifyFixed, notifyReporters, planOnRoadmap, recomputeGroup, startFix, triageFeedback } from "@/lib/feedback";
+import { FEEDBACK_BUCKET, approveMerge, askForChanges, logEvent, markAlreadyDone, notifyFixed, notifyReporters, planOnRoadmap, rebuildOnLatest, recomputeGroup, startFix, syncOneFix, triageFeedback } from "@/lib/feedback";
 import { STATUSES, TYPES, areaFromRoute, routePattern, type FeedbackStatus, type FeedbackType } from "@/lib/feedback-logic";
 import { roleLabel } from "@/lib/roles";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -279,6 +279,33 @@ export async function approveFixMerge(groupId: string): Promise<{ ok: true } | {
   const me = await requireExec();
   if (!adminConfigured()) return { error: "The server isn't set up for this yet." };
   const r = await approveMerge(createAdminClient(), groupId, me.id);
+  revalidatePath("/feedback");
+  return r;
+}
+
+/** Where this fix stands on GitHub, read now (the card polls this for a minute after the owner approves). */
+export async function refreshFix(groupId: string): Promise<{ ok: true; shipped: boolean }> {
+  await requireExec();
+  if (!adminConfigured()) return { ok: true, shipped: false };
+  const r = await syncOneFix(createAdminClient(), groupId);
+  revalidatePath("/feedback");
+  return { ok: true, shipped: Boolean("shipped" in r && r.shipped) };
+}
+
+/** The owner: the approved fix couldn't merge; Claude builds it again on the latest version (it waits for approval again). */
+export async function rebuildFixOnLatest(groupId: string, reason: string | null): Promise<{ ok: true; url?: string } | { error: string }> {
+  const me = await requireExec();
+  if (!adminConfigured()) return { error: "The server isn't set up for this yet." };
+  const r = await rebuildOnLatest(createAdminClient(), groupId, me.id, reason);
+  revalidatePath("/feedback");
+  return "error" in r && r.error ? { error: r.error } : { ok: true, url: "url" in r ? r.url : undefined };
+}
+
+/** The owner: the change is already on the app (solved directly): closes the pull request and the issue and marks it live. */
+export async function markFixAlreadyDone(groupId: string): Promise<{ ok: true } | { error: string }> {
+  const me = await requireExec();
+  if (!adminConfigured()) return { error: "The server isn't set up for this yet." };
+  const r = await markAlreadyDone(createAdminClient(), groupId, me.id);
   revalidatePath("/feedback");
   return r;
 }

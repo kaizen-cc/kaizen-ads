@@ -104,7 +104,7 @@
     },
     {
       "path": "/api/cron/context?step=feedback",
-      "schedule": "7,22,37,52 * * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/cron/context?step=reports",

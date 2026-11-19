@@ -11,6 +11,8 @@ import {
   dailyFixCap,
   fixOutcome,
   groupStats,
+  approvalState,
+  mergeOutcome,
   looksLikeNote,
   pathLabel,
   priorityScore,
@@ -217,6 +219,37 @@ describe("reading a fix's state from GitHub", () => {
     expect(fixOutcome({ issueClosed: false, pr: null, comments: [], minutesSinceStart: 10 }).state).toBe("working");
   });
   it("shows an open pull request with checks running", () => expect(fixOutcome({ issueClosed: false, pr, comments: [], minutesSinceStart: 10 }).state).toBe("pr_open"));
+});
+
+describe("an approved fix: merging, merged or couldn't merge", () => {
+  const approvedAt = "2026-11-19T10:00:00Z";
+  const at = (min: number) => new Date(Date.parse(approvedAt) + min * 60_000).toISOString();
+  const now = Date.parse(at(5));
+  const o = (comments: { body: string; at: string }[], extra: Partial<{ merged: boolean; now: number }> = {}) => mergeOutcome({ approvedAt, merged: false, now, comments, ...extra });
+
+  it("is merging while no comment has come after the approval", () => expect(o([]).state).toBe("merging"));
+  it("ignores comments from before the approval", () => expect(o([{ body: "A check failed, so this fix wasn't merged.", at: at(-30) }]).state).toBe("merging"));
+  it("reads a check that failed after approval", () =>
+    expect(o([{ body: "A check failed after approval, so it wasn't merged. It needs another try.", at: at(3) }])).toMatchObject({ state: "failed", reason: "check_failed", note: "A check failed" }));
+  it("reads a fix that no longer fits main", () =>
+    expect(o([{ body: "A check failed: the approved fix no longer applies cleanly on main. It needs another try.", at: at(2) }])).toMatchObject({ state: "failed", reason: "no_longer_fits", note: "It no longer fits the latest version of the app" }));
+  it("reads a missing pull request", () => expect(o([{ body: "Approved, but there's no open fix pull request to merge.", at: at(1) }])).toMatchObject({ state: "failed", reason: "no_pull_request" }));
+  it("reads a merge", () => {
+    expect(o([{ body: "Merged into main as abc1234 (approved; every check passed).", at: at(4) }])).toMatchObject({ state: "merged", commit: "abc1234" });
+    expect(o([], { merged: true }).state).toBe("merged");
+  });
+  it("gives up when nothing happens for too long", () => expect(o([], { now: Date.parse(at(60)) })).toMatchObject({ state: "failed", reason: "timed_out" }));
+});
+
+describe("which approval card shows", () => {
+  const ev = (kind: string, min: number, body: string | null = null) => ({ kind, body, at: new Date(Date.parse("2026-11-19T10:00:00Z") + min * 60_000).toISOString() });
+  const base = { lane: "build", fixPrUrl: "https://github.com/x/y/pull/3" };
+  it("is the approve card until approved", () => expect(approvalState({ ...base, events: [ev("fix_ready", 0)] }).state).toBe("ready"));
+  it("shows merging with the time it was approved", () => expect(approvalState({ ...base, events: [ev("fix_ready", 0), ev("merge_approved", 5)] })).toMatchObject({ state: "merging", at: ev("x", 5).at }));
+  it("shows couldn't merge with the reason", () => expect(approvalState({ ...base, events: [ev("fix_ready", 0), ev("merge_approved", 5), ev("merge_failed", 12, "A check failed")] })).toMatchObject({ state: "merge_failed", reason: "A check failed" }));
+  it("approving again goes back to merging", () => expect(approvalState({ ...base, events: [ev("merge_approved", 5), ev("merge_failed", 12), ev("merge_approved", 20)] }).state).toBe("merging"));
+  it("a rebuilt fix is the approve card again", () => expect(approvalState({ ...base, events: [ev("merge_failed", 12), ev("changes_asked", 13), ev("build_started", 13), ev("fix_ready", 40)] }).state).toBe("ready"));
+  it("is the stuck card with no pull request", () => expect(approvalState({ lane: "review", fixPrUrl: null, events: [] }).state).toBe("stuck"));
 });
 
 describe("where a group sits, and what its reporters see", () => {

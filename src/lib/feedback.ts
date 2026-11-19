@@ -17,6 +17,7 @@ import {
   dailyFixCap,
   fixOutcome,
   groupStats,
+  mergeOutcome,
   priorityScore,
   reporterStatus,
   widerScope,
@@ -605,8 +606,35 @@ export async function planOnRoadmap(admin: Admin, groupId: string, actor: string
   return { ok: true as const };
 }
 
+/** The change is already on the app (solved directly): close the pull request and the issue, and mark the group fixed. */
+export async function markAlreadyDone(admin: Admin, groupId: string, actor: string) {
+  const g = await issueOf(admin, groupId);
+  if (!g) return { error: "That one is gone." };
+  const prNumber = Number(g.fix_pr_url?.match(/\/pull\/(\d+)/)?.[1] ?? 0);
+  const why = "Closed: this change is already on the latest version of the app (it was solved directly), marked done by the owner in Kaizen Ads.";
+  if (prNumber) {
+    await commentOn(prNumber, why);
+    await closeOn(prNumber, "pull");
+  }
+  if (g.fix_issue_number) {
+    await commentOn(g.fix_issue_number, why);
+    await closeOn(g.fix_issue_number, "issue");
+  }
+  const now = new Date().toISOString();
+  await admin.from("app_feedback_groups").update({ status: "fixed", fixed_at: now, fixed_by: actor, fix_state: "no_change", updated_at: now }).eq("id", groupId);
+  await logEvent(admin, groupId, "fixed", "Marked already done: the change was already on the app", { actor, link: g.fix_pr_url, shared: true });
+  await recomputeGroup(admin, groupId);
+  await notifyFixed(admin, groupId, actor);
+  return { ok: true as const };
+}
+
+/** "Rebuild it on the latest version": the fix no longer merged, so Claude builds it again (it waits for approval again). */
+export async function rebuildOnLatest(admin: Admin, groupId: string, actor: string, reason: string | null) {
+  return askForChanges(admin, groupId, `The approved fix couldn't merge${reason ? ` (${reason.toLowerCase()})` : ""}. Rebuild it on the latest version of main, keeping the same change, and make every check pass.`, actor);
+}
+
 type GhIssue = { state: string; created_at: string };
-type GhComment = { body: string };
+type GhComment = { body: string; created_at?: string };
 type GhPull = { html_url: string; state: string; merged_at: string | null; number: number };
 
 async function ghJson<T>(path: string): Promise<T | null> {
@@ -623,26 +651,72 @@ export async function syncFixes(admin: Admin) {
     .in("fix_state", ["working", "pr_open"])
     .not("fix_issue_number", "is", null)
     .limit(30);
-  const owner = (process.env.GITHUB_REPO || "kaizen-cc/kaizen-ads").split("/")[0];
   let shipped = 0;
-  for (const g of data ?? []) {
-    const n = g.fix_issue_number as number;
+  for (const g of data ?? []) if (await syncGroup(admin, g as SyncRow)) shipped++;
+  return { checked: data?.length ?? 0, shipped };
+}
+
+type SyncRow = { id: string; title: string; lane: string; fix_state: string | null; fix_issue_number: number; fix_issue_url: string | null; fix_started_at: string | null; fix_pr_url: string | null };
+
+/** One fix, right now (after the owner approves: the card moves on without waiting for the cron). */
+export async function syncOneFix(admin: Admin, groupId: string) {
+  if (!githubConfigured()) return { checked: 0 };
+  const { data } = await admin
+    .from("app_feedback_groups")
+    .select("id, title, lane, fix_state, fix_issue_number, fix_issue_url, fix_started_at, fix_pr_url")
+    .eq("id", groupId)
+    .in("fix_state", ["working", "pr_open"])
+    .not("fix_issue_number", "is", null)
+    .maybeSingle();
+  if (!data) return { checked: 0 };
+  const shipped = await syncGroup(admin, data as SyncRow);
+  return { checked: 1, shipped: shipped ? 1 : 0 };
+}
+
+/** Where one fix stands on GitHub, and what the group (and its card) shows because of it. True when it shipped. */
+async function syncGroup(admin: Admin, g: SyncRow): Promise<boolean> {
+  {
+    const n = g.fix_issue_number;
+    const owner = (process.env.GITHUB_REPO || "kaizen-cc/kaizen-ads").split("/")[0];
     const [issue, comments, pulls] = await Promise.all([
       ghJson<GhIssue>(`/issues/${n}`),
-      ghJson<GhComment[]>(`/issues/${n}/comments?per_page=50`),
+      ghJson<GhComment[]>(`/issues/${n}/comments?per_page=100`),
       ghJson<GhPull[]>(`/pulls?state=all&head=${owner}:claude/fix-${n}&per_page=5`),
     ]);
-    if (!issue) continue;
+    if (!issue) return false;
     const pr = pulls?.[0] ?? null;
-    const prComments = pr ? ((await ghJson<GhComment[]>(`/issues/${pr.number}/comments?per_page=50`)) ?? []) : [];
-    const out = fixOutcome({
+    const prComments = pr ? ((await ghJson<GhComment[]>(`/issues/${pr.number}/comments?per_page=100`)) ?? []) : [];
+    const all = [...(comments ?? []), ...prComments];
+    let out = fixOutcome({
       issueClosed: issue.state === "closed",
       pr: pr ? { url: pr.html_url, open: pr.state === "open", merged: Boolean(pr.merged_at) } : null,
-      comments: [...(comments ?? []), ...prComments].map((c) => c.body ?? ""),
-      minutesSinceStart: (Date.now() - new Date((g.fix_started_at as string | null) ?? issue.created_at).getTime()) / 60_000,
+      comments: all.map((c) => c.body ?? ""),
+      minutesSinceStart: (Date.now() - new Date(g.fix_started_at ?? issue.created_at).getTime()) / 60_000,
     });
-    const id = g.id as string;
+    const id = g.id;
     const prUrl = pr?.html_url ?? null;
+    // The owner approved it: the workflow's comments after that say whether it merged. Until then the card says Merging;
+    // a failed merge shows Couldn't merge with the reason (not the automatic retry a failed first build gets).
+    const { data: last } = await admin.from("app_feedback_events").select("kind, created_at").eq("group_id", id).in("kind", ["merge_approved", "merge_failed"]).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (last?.kind === "merge_approved") {
+      const mo = mergeOutcome({
+        approvedAt: last.created_at as string,
+        merged: Boolean(pr?.merged_at),
+        comments: all.map((c) => ({ body: c.body ?? "", at: c.created_at ?? "" })),
+      });
+      if (mo.state === "merging") return false;
+      if (mo.state === "failed") {
+        await logEvent(admin, id, "merge_failed", mo.note, { link: prUrl, shared: true });
+        await notifyOwner(admin, {
+          key: `feedback-review:merge-failed:${id}:${new Date(last.created_at as string).getTime()}`,
+          title: `Couldn't merge: ${g.title}`,
+          body: `${mo.note}. Rebuild it on the latest version, or mark it done if it's already live.`,
+          href: `/feedback?section=approval&g=${id}`,
+        });
+        return false;
+      }
+      out = { state: "merged", commit: mo.commit, note: null };
+    } else if (last?.kind === "merge_failed" && out.state !== "merged") return false;
     if (out.state === "merged") {
       const commit = out.commit ? commitUrl(out.commit) : null;
       const now = new Date().toISOString();
@@ -650,7 +724,7 @@ export async function syncFixes(admin: Admin) {
       await logEvent(admin, id, "fixed", g.lane === "build" ? "Approved and merged: live with this deploy" : "Fixed by Claude; every check passed and it shipped", { link: commit ?? prUrl, shared: true });
       await recomputeGroup(admin, id);
       await notifyFixed(admin, id, null);
-      shipped++;
+      return true;
     } else if (out.state === "checks_failed") {
       await admin.from("app_feedback_groups").update({ fix_state: "checks_failed", fix_pr_url: prUrl }).eq("id", id);
       await logEvent(admin, id, "checks_failed", out.note, { link: prUrl });
@@ -673,8 +747,8 @@ export async function syncFixes(admin: Admin) {
       await admin.from("app_feedback_groups").update({ fix_state: "pr_open", fix_pr_url: prUrl }).eq("id", id);
       await logEvent(admin, id, "pr_opened", "Pull request open; checks running", { link: prUrl });
     }
+    return false;
   }
-  return { checked: data?.length ?? 0, shipped };
 }
 
 /** Reports the moment after sending missed (a timeout, a deploy): read now, three tries each. */
@@ -691,7 +765,7 @@ export async function triagePending(admin: Admin) {
   return { triaged: data?.length ?? 0 };
 }
 
-/** Every 15 minutes: missed reports read, fixes in flight checked, queued fixes started as today's cap allows. */
+/** Every 5 minutes: missed reports read, fixes in flight checked, queued fixes started as today's cap allows. */
 export async function runFeedback(admin: Admin) {
   const triaged = await triagePending(admin);
   const fixes = await syncFixes(admin);

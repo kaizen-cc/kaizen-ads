@@ -293,6 +293,56 @@ export function fixOutcome(gh: {
   return { state: "working", commit: null, note: null };
 }
 
+// ─── After the owner approves: merging, merged, or couldn't merge ───────────
+
+export type MergeReason = "no_longer_fits" | "check_failed" | "no_pull_request" | "timed_out";
+export const MERGE_REASON_TEXT: Record<MergeReason, string> = {
+  no_longer_fits: "It no longer fits the latest version of the app",
+  check_failed: "A check failed",
+  no_pull_request: "The fix's pull request was no longer open",
+  timed_out: "The merge didn't finish in time",
+};
+/** The merge-approved job gets 30 minutes; past this with no word, call it failed. */
+export const MERGE_WAIT_MINUTES = 45;
+
+/**
+ * What happened to an approved fix, from the comments the merge-approved workflow left after the approval (older
+ * comments, from before it, are ignored): merged, couldn't merge (and why, in plain words), or still running.
+ */
+export function mergeOutcome(i: {
+  approvedAt: string;
+  now?: number;
+  merged: boolean;
+  comments: { body: string; at: string }[];
+}): { state: "merging" | "merged" | "failed"; commit: string | null; reason: MergeReason | null; note: string | null } {
+  const from = Date.parse(i.approvedAt) - 60_000;
+  const after = i.comments.filter((c) => Date.parse(c.at) >= from).map((c) => c.body ?? "");
+  const commit = after.join("\n").match(/Merged into main as ([0-9a-f]{7,40})/)?.[1] ?? null;
+  if (i.merged || commit) return { state: "merged", commit, reason: null, note: null };
+  const failure = after.findLast((b) => /no longer applies cleanly|A check failed|no open fix pull request/i.test(b));
+  if (failure) {
+    const reason: MergeReason = /no longer applies cleanly/i.test(failure) ? "no_longer_fits" : /no open fix pull request/i.test(failure) ? "no_pull_request" : "check_failed";
+    return { state: "failed", commit: null, reason, note: MERGE_REASON_TEXT[reason] };
+  }
+  const minutes = ((i.now ?? Date.now()) - Date.parse(i.approvedAt)) / 60_000;
+  if (minutes > MERGE_WAIT_MINUTES) return { state: "failed", commit: null, reason: "timed_out", note: MERGE_REASON_TEXT.timed_out };
+  return { state: "merging", commit: null, reason: null, note: null };
+}
+
+export type ApprovalState = "ready" | "merging" | "merge_failed" | "stuck";
+
+/**
+ * Which version of the approval card to show, from the group's activity (oldest first): after Approve it's Merging
+ * until the sync finds the outcome; a failed merge shows Couldn't merge until it's approved again or rebuilt; a new
+ * fix ready (or a rebuild started) goes back to the normal card.
+ */
+export function approvalState(g: { lane: string; fixPrUrl: string | null; events: { kind: string; body?: string | null; at: string }[] }): { state: ApprovalState; at: string | null; reason: string | null } {
+  const last = [...g.events].reverse().find((e) => ["merge_approved", "merge_failed", "changes_asked", "fix_ready", "build_started", "auto_fix_started"].includes(e.kind));
+  if (last?.kind === "merge_approved") return { state: "merging", at: last.at, reason: null };
+  if (last?.kind === "merge_failed") return { state: "merge_failed", at: last.at, reason: last.body ?? null };
+  return { state: g.lane === "build" && g.fixPrUrl ? "ready" : "stuck", at: null, reason: null };
+}
+
 // ─── Where a group sits on the Feedback page, and what its reporters see ────
 
 export type Section = "fixing" | "approval" | "asks" | "done";
