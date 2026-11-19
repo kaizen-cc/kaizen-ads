@@ -101,7 +101,11 @@ export const REPORT_ROLES: readonly TeamRole[] = ["executive", "head_of_meta", "
  * Whether someone sees client reports at all (the Reports page, a client's Reports tab, report links and notices):
  * executives, media buyers and the email and social teams (their own clients only). The creative team, the copywriter and customer success never do.
  */
-export const canSeeReports = (p: { role: string | null | undefined; isExec?: boolean | null }) => Boolean(p.isExec) || REPORT_ROLES.includes(p.role as TeamRole) || isChannelOnly(p.role);
+export const canSeeReports = (p: { role: string | null | undefined; isExec?: boolean | null }) => Boolean(p.isExec) || REPORT_ROLES.includes(p.role as TeamRole) || (isChannelOnly(p.role) && !NO_KPIS.includes(String(p.role)));
+
+/** The email team's makers (owner, Nov 19 2026): their Overview is their plate, so no KPIs or Reports for them */
+export const NO_KPIS: readonly string[] = ["email_designer", "email_builder"];
+export const seesKpis = (role: string | null | undefined) => !NO_KPIS.includes(String(role));
 
 /** Per-client slots and who can fill them. */
 export const SLOTS = [
@@ -222,7 +226,7 @@ export function teamPlatform(role: string): "meta" | "google" | null {
 export const CHANNEL_NAV: readonly string[] = ["/pipeline", "/clients", "/kpis", "/reports", "/ai"];
 
 /** Whether a menu place is open to someone in one of the six email and social positions (the email team also gets Boards: their Email Board) */
-export const channelNavOk = (href: string, role?: string | null) => CHANNEL_NAV.includes(href) || (href === "/board" && isEmailRole(role));
+export const channelNavOk = (href: string, role?: string | null) => ((CHANNEL_NAV.includes(href) && !(NO_KPIS.includes(String(role)) && (href === "/kpis" || href === "/reports"))) || (href === "/board" && isEmailRole(role)));
 
 /**
  * Boards: the Creative Board and the Email Board. Executives see both (with a switch); the email team only the Email

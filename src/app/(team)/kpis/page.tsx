@@ -5,6 +5,8 @@ import { AccountReviewKpis } from "./review-page";
 import { orderSeats, platformOf, seatRoleFor, type SeatRow } from "@/lib/buyer-seats";
 import { clientPerms } from "@/lib/chat-permissions";
 import { requireStaff } from "@/lib/auth";
+import { seesKpis } from "@/lib/roles";
+import { redirect } from "next/navigation";
 import { shownStatus, type Agg, type Pacing, type Status, type Trend } from "@/lib/kpi/calc";
 import { conversionFor, conversionLabel } from "@/lib/kpi/conversions";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -44,6 +46,8 @@ type Snap = {
 export default async function Kpis({ searchParams }: PageProps<"/kpis">) {
   const sp = await searchParams;
   const [me, supabase] = await Promise.all([requireStaff(), createClient()]);
+  // The email team's makers work their plate on the Overview: no KPI boards for them
+  if (!seesKpis(me.role)) redirect("/pipeline");
   // The email and social teams see their own board; execs and leads reach Email and Social from the switch (?p=)
   const own = lineOfTeam(me.role);
   if (own) return <ChannelKpis me={me} line={own} switcher={false} />;
