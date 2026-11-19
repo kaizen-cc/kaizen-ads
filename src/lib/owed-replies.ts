@@ -355,6 +355,23 @@ async function slackSince(o: Row) {
 // ─── Email ──────────────────────────────────────────────────────────────────
 
 /** Each teammate's inbox: new emails written to them by a client contact or a teammate. */
+const SHARED_MAIL = /^(gmail|googlemail|yahoo|hotmail|outlook|live|icloud|me|aol|msn|proton|protonmail)\.|kaizenmarketing\.agency$/i;
+
+/**
+ * The client a teammate's email is about, from the addresses in it (a forwarded or quoted client email): a client
+ * contact's address first, then a client's own domain. Null when none, or when it names more than one client.
+ */
+export function clientInText(text: string, contacts: ReadonlyMap<string, { clientId: string }>, domains: ReadonlyMap<string, string | null>, team: ReadonlyMap<string, unknown>): string | null {
+  const found = new Set<string>();
+  for (const raw of String(text ?? "").match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g) ?? []) {
+    const a = raw.toLowerCase();
+    if (team.has(a)) continue;
+    const id = contacts.get(a)?.clientId ?? domains.get(a.split("@")[1]) ?? null;
+    if (id) found.add(id);
+  }
+  return found.size === 1 ? [...found][0] : null;
+}
+
 async function scanGmail(admin: Admin) {
   const [{ data: people }, { data: links }] = await Promise.all([
     admin.from("profiles").select("id, email, full_name").eq("is_active", true).not("email", "is", null),
@@ -362,9 +379,14 @@ async function scanGmail(admin: Admin) {
   ]);
   const team = new Map((people ?? []).map((p) => [String(p.email).toLowerCase(), p]));
   const contacts = new Map<string, { clientId: string; name: string | null }>();
+  // A client's own domain (oceanbox.com), from its contacts: shared mail services never count
+  const domains = new Map<string, string | null>();
   for (const l of links ?? []) {
     const c = l.contacts as unknown as { email: string | null; name: string | null } | null;
-    if (c?.email) contacts.set(c.email.toLowerCase(), { clientId: l.client_id as string, name: c.name });
+    if (!c?.email) continue;
+    contacts.set(c.email.toLowerCase(), { clientId: l.client_id as string, name: c.name });
+    const d = c.email.toLowerCase().split("@")[1];
+    if (d && !SHARED_MAIL.test(d)) domains.set(d, domains.has(d) && domains.get(d) !== l.client_id ? null : (l.client_id as string));
   }
   const since = Date.now() - LOOKBACK_DAYS * 86_400_000;
   let found = 0;
@@ -391,15 +413,17 @@ async function scanGmail(admin: Admin) {
         // A calendar invite or RSVP isn't a message to answer
         if (isCalendarEmail(header("subject"), m.payload)) continue;
         const mate = team.get(from);
-        // A teammate's email is the team's, never filed to a client (even if their address is on a client's contacts)
+        // A teammate's email is the team's (even if their address is on a client's contacts), but one forwarding or
+        // quoting a client's email is about that client: filed to it from the addresses in what they forwarded
         const contact = mate ? undefined : contacts.get(from);
         if (!contact && !mate) continue;
+        const aboutClient = mate ? clientInText(plainText(m.payload) ?? m.snippet ?? "", contacts, domains, team) : null;
         const name = (header("from") ?? "").replace(/<[^>]+>/, "").replace(/"/g, "").trim() || contact?.name || mate?.full_name || from;
         rows.push({
           source: "gmail",
           message_key: `${mailbox}:${m.id}`,
           target_id: person.id,
-          client_id: contact?.clientId ?? null,
+          client_id: contact?.clientId ?? aboutClient,
           mailbox,
           gmail_thread_id: m.threadId,
           from_name: name,
@@ -510,6 +534,23 @@ async function isAnswered(o: Row, who: Awaited<ReturnType<typeof slackPeople>> |
   }
 }
 
+/** "Re: Fwd: BFCM offer structure" → "bfcm offer structure" */
+export const coreSubject = (s: unknown) => String(s ?? "").replace(/^\s*((re|fwd?|fw)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * What the team said on the same email after it, in any mailbox (each mailbox has its own Gmail thread, so a reply
+ * from the person who asked, telling the client it's done, never shows in the target's thread). For the AI's read.
+ */
+export async function sameEmailLater(admin: Admin, o: Row): Promise<string> {
+  const core = coreSubject(o.subject);
+  if (o.source !== "gmail" || core.length < 6) return "";
+  const { data } = await admin.from("owed_replies").select("from_name, mailbox, body, asked_at, subject").eq("source", "gmail").neq("id", o.id).gt("asked_at", o.asked_at).ilike("subject", `%${core.replace(/[%_]/g, " ")}%`).order("asked_at").limit(6);
+  return (data ?? [])
+    .filter((x) => coreSubject(x.subject) === core)
+    .map((x) => `${x.from_name}, ${new Date(x.asked_at as string).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}: ${String(x.body ?? "").replace(/\s+/g, " ").slice(0, 300)}`)
+    .join("\n");
+}
+
 type Verdict = { n: number; needsReply: boolean; gist: string };
 
 /** The AI's read of each one: is something really owed (a question, a request, work shared for feedback), and what. */
@@ -522,7 +563,7 @@ async function judge(items: Row[], context: Map<string, string>, names: Map<stri
       bare: true,
       maxTokens: 4000,
       system:
-        "You read messages sent to someone at Kaizen, a paid ads and creative agency, and decide if that person owes a reply or an action. needsReply is true when they're asked a question, asked to check, review, approve, send or do something, when someone shares work for their feedback (a landing page, a design, a doc), or when a client raises something with them. It's false for an FYI that needs nothing, a thank-you, praise or approval with no question in it (“looks great, thank you”, “approved”, “love it”), a sign-off, an @here or @channel announcement that asks nothing, something automated, or when what follows (a reply or an emoji reaction from the team) already answers or acknowledges it. When in doubt about a message that asks nothing, it's false. gist: what they're waiting on, in a few words a person would say (\"feedback on the landing page concept\", \"the March invoice question\"), no names, at most 70 characters.",
+        "You read messages sent to someone at Kaizen, a paid ads and creative agency, and decide if that person owes a reply or an action. needsReply is true when they're asked a question, asked to check, review, approve, send or do something, when someone shares work for their feedback (a landing page, a design, a doc), or when a client raises something with them. It's false for an FYI that needs nothing, a thank-you, praise or approval with no question in it (“looks great, thank you”, “approved”, “love it”), a sign-off, an @here or @channel announcement that asks nothing, something automated, or when what follows (a reply or an emoji reaction from the team, or the asker later saying the work is done, like \"we have implemented the updates\") already answers, acknowledges or completes it. When in doubt about a message that asks nothing, it's false. gist: what they're waiting on, in a few words a person would say (\"feedback on the landing page concept\", \"the March invoice question\"), no names, at most 70 characters.",
       schema: {
         type: "object",
         properties: { items: { type: "array", items: { type: "object", properties: { n: { type: "integer" }, needsReply: { type: "boolean" }, gist: { type: "string" } }, required: ["n", "needsReply", "gist"], additionalProperties: false } } },
@@ -592,7 +633,11 @@ export async function runOwedReplies(admin: Admin) {
     if (how) {
       await closeAnswered(admin, o, stamp, how === "reacted" ? "reacted" : "replied");
       tally.answered++;
-    } else due.push(o);
+    } else {
+      const later = await sameEmailLater(admin, o);
+      if (later) context.set(o.id as string, `${context.get(o.id as string) ?? ""}\n${later}`.trim());
+      due.push(o);
+    }
   }
   const verdicts = new Map<string, Verdict>();
   // Whoever gets a notice has a reply drafted for them, ready in their day
@@ -673,27 +718,41 @@ export async function runOwedReplies(admin: Admin) {
       await admin.from("owed_replies").update({ checked_at: stamp }).eq("id", o.id);
       continue;
     }
+    // Before it goes up: read again with what was said since on the same email in any mailbox (the asker saying it's
+    // done). Taken care of: closed, never escalated
+    const later = await sameEmailLater(admin, o);
+    if (later) {
+      context.set(o.id as string, `${context.get(o.id as string) ?? ""}\n${later}`.trim());
+      const again = (await judge([o], context, names)).get(o.id as string);
+      if (again && !again.needsReply) {
+        await closeAnswered(admin, o, stamp, "handled");
+        tally.answered++;
+        continue;
+      }
+    }
     const person = byId.get(o.target_id);
     const lead = LEAD_OF[String(person?.role ?? "")];
     const { data: leads } = lead ? await admin.from("profiles").select("id").eq("is_active", true).eq("role", lead) : { data: [] };
-    const above = [...new Set([...(leads ?? []), ...(execs ?? [])].map((p) => p.id as string))].filter((id) => id !== o.target_id);
+    // A teammate's ask stays in the team: their lead hears it, never the execs (they hear about clients waiting)
+    const above = [...new Set([...(leads ?? []), ...(o.from_team ? [] : (execs ?? []))].map((p) => p.id as string))].filter((id) => id !== o.target_id);
+    const priority = o.from_team ? ("normal" as const) : ("critical" as const);
     await admin.from("owed_replies").update({ status: "escalated", escalated_at: stamp, checked_at: stamp }).eq("id", o.id);
     const gist = gistOf(o);
     await notify(admin, [o.target_id], {
       key: `owed2:${o.id}`,
       title: `Second notice: still no reply to ${o.from_name}`,
-      body: `${gist}, ${whereOf(o)}. ${above.length ? "Your lead and the exec team have been told it's waiting." : "The exec team has been told it's waiting."} Reply there, or mark it as not needing a reply in your day.`,
+      body: `${gist}, ${whereOf(o)}. ${o.from_team ? (above.length ? "Your lead has been told it's waiting." : "") : above.length ? "Your lead and the exec team have been told it's waiting." : "The exec team has been told it's waiting."} Reply there, or mark it as not needing a reply in your day.`.replace(/\.\s+\./, "."),
       href: o.url,
       clientId: o.client_id,
-      priority: "critical",
+      priority,
     });
     await notify(admin, above, {
       key: `owed-lead:${o.id}`,
       title: `${person?.full_name ?? "Someone"} hasn't replied to ${o.from_name}`,
-      body: `${gist}, ${whereOf(o)}, since ${new Date(o.asked_at).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/New_York" })}. They had a notice and it's still unanswered.`,
+      body: `${gist}, ${whereOf(o)}, since ${new Date(o.asked_at).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/New_York" })}. ${o.from_team ? "A teammate's ask" : "A client message"}${o.client_id ? "" : ", no client found on it"}. They had a notice and it's still unanswered.`,
       href: o.url,
       clientId: o.client_id,
-      priority: "critical",
+      priority,
     });
     tally.escalated++;
   }

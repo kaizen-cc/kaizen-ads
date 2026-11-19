@@ -294,6 +294,35 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
       },
     },
     {
+      name: "read_waiting_message",
+      description: "Reads one message waiting on a reply (a 'replies' item from my_work, id starting o-, or a notice like 'X hasn't replied to Y'): who sent it to whom and whether the sender is a teammate or a client, whose mailbox or channel it's in, the client it's filed to (or none found), the subject, the message itself, and what the team said on the same email afterwards in any mailbox (the asker saying it's done). Use it before saying anything about such an item: never guess its client, dates or details.",
+      input_schema: { type: "object", properties: { id: { type: "string", description: "The my_work item id (o-…) or the waiting message's id" } }, required: ["id"], additionalProperties: false },
+      run: async (input) => {
+        const id = String(input.id ?? "").replace(/^o-/, "");
+        if (!/^[0-9a-f-]{36}$/i.test(id)) return { error: "Give the id of a waiting message (from my_work, starting o-)." };
+        // Their own session: only what they may see (theirs, or one escalated to them as a lead or exec)
+        const { data: o } = await ctx.db.from("owed_replies").select("id, source, status, subject, body, from_name, from_team, mailbox, channel_name, asked_at, gist, url, client_id, clients(name), target:profiles!owed_replies_target_id_fkey(full_name, role)").eq("id", id).maybeSingle();
+        if (!o) return { error: "That message isn't one you can see." };
+        const { sameEmailLater } = await import("@/lib/owed-replies");
+        const later = await sameEmailLater(ctx.admin, o as Record<string, unknown>).catch(() => "");
+        const target = o.target as unknown as { full_name: string; role: string } | null;
+        return {
+          from: o.from_name,
+          from_is: o.from_team ? "a teammate (an internal ask, not a client email)" : "a client or someone outside the team",
+          waiting_on: target?.full_name ?? null,
+          where: o.source === "gmail" ? `email in ${o.mailbox}` : `Slack #${o.channel_name}`,
+          client: (o.clients as unknown as { name: string } | null)?.name ?? "none found on it: say so, never guess one",
+          subject: o.subject ?? null,
+          asked: String(o.asked_at).slice(0, 10),
+          status: o.status,
+          what_they_want: o.gist ?? null,
+          message: String(o.body ?? "").slice(0, 2500),
+          said_after_on_the_same_email: later || "nothing found",
+          open: o.url,
+        };
+      },
+    },
+    {
       name: "creative_allotments",
       description: "This billing cycle's creative allotment gaps in the person's slice (head of creative and execs every client; the lead graphic designer images and carousels, the lead video editor video, across clients; a designer or editor their own clients), most urgent first: what's missing, when each resets, what's due this week to stay on pace, and (for the head of creative) this week's load against a usual week. Also accounts off target that need fresh creative. Paused clients and paused creative never show. To brief one, open its create link with open_screen (href).",
       input_schema: { type: "object", properties: { client: CLIENT }, additionalProperties: false },
