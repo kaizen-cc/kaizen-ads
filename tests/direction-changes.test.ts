@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionLabel, allActed, cleanDetection, directionNote, isOpenTask, noDash, recipientsFor, suggestStage, withClient, type OpenTask } from "@/lib/direction-core";
+import { actionLabel, allActed, changeLines, cleanDetection, directionNote, isOpenTask, noDash, recipientsFor, suggestStage, withClient, type OpenTask } from "@/lib/direction-core";
 
 // A client changing direction mid-production: where flagged work goes back to, how the AI's answer is checked, who is
 // told, and which tasks count as open work.
@@ -166,5 +166,37 @@ describe("which tasks are open work", () => {
     expect(allActed([{ action: "sent_back" }, { action: "kept" }])).toBe(true);
     expect(allActed([{ action: "sent_back" }, { action: "pending" }])).toBe(false);
     expect(allActed([])).toBe(false);
+  });
+});
+
+describe("kept with the right team, revisions apart", () => {
+  const tasks: OpenTask[] = [
+    { kind: "asana_email", ref: "e1", title: "12 Days of Xmas campaign", stage: "with_client", assigneeId: "builder" },
+    { kind: "asana_creative", ref: "c1", title: "QLS static", stage: "in_production", assigneeId: "designer" },
+  ];
+  it("a one-piece edit is a revision on that piece, and only that team's", () => {
+    const [c] = cleanDetection({ changes: [{ scope: "revision", lines: ["email"], kind: "product", summary: "Take the 4 straps off the 12 Days list", message: 1, tasks: [{ n: 1, verdict: "affected", fix: "both", why: "Sold out." }] }] }, tasks, 1);
+    expect(c.scope).toBe("revision");
+    expect(c.lines).toEqual(["email"]);
+  });
+  it("a revision with no piece to put it on is a change for the line", () => {
+    const [c] = cleanDetection({ changes: [{ scope: "revision", lines: ["meta"], kind: "priority", summary: "Focus on QLS", message: 1, tasks: [] }] }, tasks, 1);
+    expect(c.scope).toBe("direction");
+    expect(c.lines).toEqual(["meta"]);
+  });
+  it("ads is every paid platform; the tasks' teams are added; junk is dropped", () => {
+    expect(changeLines(["ads", "nope"], [])).toEqual(["meta", "google", "tiktok"]);
+    expect(changeLines(["social"], [{ kind: "asana_creative" }])).toEqual(["creative", "social"]);
+  });
+  it("a revision tells whoever holds the piece, nobody else", () => {
+    const seats = [{ profile_id: "buyer", role: "meta_buyer" }, { profile_id: "strategist", role: "email_strategist" }, { profile_id: "cs", role: "coordinator" }];
+    const r = recipientsFor({ seats, headsOfCreative: ["hoc"], execs: ["exec"], scope: "revision", lines: ["email"], tasks: [{ kind: "asana_email", stage: "with_client", assigneeId: "builder", verdict: "affected" }] });
+    expect(r.ids).toEqual(["builder"]);
+    expect(r.critical).toBe(false);
+  });
+  it("an email-only change never brings the media buyer", () => {
+    const seats = [{ profile_id: "buyer", role: "meta_buyer" }, { profile_id: "strategist", role: "email_strategist" }];
+    const r = recipientsFor({ seats, headsOfCreative: [], execs: [], lines: ["email"], tasks: [{ kind: "asana_email", stage: "in_design", assigneeId: null, verdict: "affected" }] });
+    expect(r.ids).toEqual(["strategist"]);
   });
 });

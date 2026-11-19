@@ -122,7 +122,7 @@ function Sheet({ id }: { id: string }) {
                       {!handled && change.status === "open" && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-warn opacity-60" />}
                       <span className={`relative h-2 w-2 rounded-full ${handled ? "bg-ok" : change.status === "dismissed" ? "bg-faint" : "bg-warn"}`} />
                     </span>
-                    {CHANGE_KIND_LABEL[change.kind]} change
+                    {change.scope === "revision" ? "Revision on a piece" : `${CHANGE_KIND_LABEL[change.kind]} change`}
                     <span className="font-normal normal-case tracking-normal">·</span>
                     <Link href={`/clients/${change.client.slug}`} className="font-medium normal-case tracking-normal text-muted hover:text-fg">
                       {change.client.name}

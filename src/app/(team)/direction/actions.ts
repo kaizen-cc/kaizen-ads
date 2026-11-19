@@ -5,6 +5,7 @@ import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { actOnTasks, closeChange, headsUpFor, loadChange, logChange, openChanges, type ActHow, type ActResult, type ChangeLine, type ChangeView, type LoggedResult } from "@/lib/direction-changes";
+import { CHANGE_LINES, type ChangeLineId } from "@/lib/direction-core";
 
 // A client changing direction: the sheet (?direction=<id>, from any page), the flags on the boards and tickets, the
 // client page's list and the request form's heads-up. Everything reads and writes with the person's own session (only
@@ -48,10 +49,11 @@ export async function closeDirection(changeId: string, status: "dismissed" | "ha
 }
 
 /** "Client changed direction": logged by a person, matched to the client's open tasks */
-export async function logDirectionChange(clientId: string, said: string): Promise<LoggedResult> {
+export async function logDirectionChange(clientId: string, said: string, line: ChangeLineId | null = null): Promise<LoggedResult> {
   const me = await requireStaff();
   if (!adminConfigured()) return { ok: false, error: "Not set up here." };
-  const r = await logChange(await createClient(), createAdminClient(), me, clientId, said, "team");
+  const team = line && (CHANGE_LINES as readonly string[]).includes(line) ? line : null;
+  const r = await logChange(await createClient(), createAdminClient(), me, clientId, said, "team", team);
   if (r.ok) revalidatePath("/", "layout");
   return r;
 }

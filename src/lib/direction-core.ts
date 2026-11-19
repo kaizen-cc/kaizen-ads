@@ -86,11 +86,36 @@ export const noDash = (s: string) => s.replace(/\s*—\s*/g, ", ").replace(/–/
 const text = (v: unknown, max: number) => noDash(String(v ?? "").replace(/\s+/g, " ").trim()).slice(0, max);
 
 export type RawTaskVerdict = { n: number; verdict: string; fix: string; why: string };
-export type RawChange = { kind: string; summary: string; was: string; now: string; quote: string; message: number; tasks: RawTaskVerdict[] };
+export type RawChange = { kind: string; scope?: string; lines?: string[]; summary: string; was: string; now: string; quote: string; message: number; tasks: RawTaskVerdict[] };
+
+/**
+ * Whose work a change is about: the team's section on the client page it's kept in. "ads" (paid ads in general) is
+ * every paid platform's section.
+ */
+export const CHANGE_LINES = ["meta", "google", "tiktok", "creative", "email", "social"] as const;
+export type ChangeLineId = (typeof CHANGE_LINES)[number];
+/**
+ * direction: what several pieces or all future work should say or show (an offer, a focus, a product dropped).
+ * revision: an edit to one piece in progress (a price, a product list, a description on that email or ad): flagged on
+ * that task for whoever holds it, never shown as the client changing direction.
+ */
+export type ChangeScope = "direction" | "revision";
+
+/** The AI's lines, checked ("ads" is every paid platform), plus the lines of the tasks it touches */
+export function changeLines(raw: unknown, tasks: readonly { kind: TaskKind }[]): ChangeLineId[] {
+  const out = new Set<ChangeLineId>();
+  for (const l of Array.isArray(raw) ? raw : []) {
+    const v = String(l ?? "").toLowerCase().trim();
+    if (v === "ads" || v === "paid") ["meta", "google", "tiktok"].forEach((x) => out.add(x as ChangeLineId));
+    else if ((CHANGE_LINES as readonly string[]).includes(v)) out.add(v as ChangeLineId);
+  }
+  for (const t of tasks) out.add(lineOf(t.kind));
+  return CHANGE_LINES.filter((l) => out.has(l));
+}
 
 export type OpenTask = { kind: TaskKind; ref: string; title: string; stage: string | null; notes?: string | null; assigneeId?: string | null; assigneeName?: string | null; url?: string | null; number?: number | null };
 export type FlaggedTask = { kind: TaskKind; ref: string; title: string; stage: string | null; verdict: Verdict; fix: Fix; suggested: string | null; why: string; assigneeId: string | null };
-export type CleanChange = { kind: ChangeKind; summary: string; was: string; now: string; quote: string; message: number | null; tasks: FlaggedTask[] };
+export type CleanChange = { kind: ChangeKind; scope: ChangeScope; lines: ChangeLineId[]; summary: string; was: string; now: string; quote: string; message: number | null; tasks: FlaggedTask[] };
 
 /**
  * The AI's changes checked: a real summary, a known kind, a message that exists, tasks from the list only (each once,
@@ -117,7 +142,10 @@ export function cleanDetection(raw: { changes?: unknown } | null | undefined, ta
       if (prev && (prev.verdict === "affected" || verdict === "maybe")) continue;
       byTask.set(key, { kind: task.kind, ref: task.ref, title: task.title, stage: task.stage, verdict, fix: s.fix, suggested: s.stage, why: text(t.why, 240) || "Touched by the change.", assigneeId: task.assigneeId ?? null });
     }
-    out.push({ kind, summary, was: text(c.was, 300), now: text(c.now, 300), quote: text(c.quote, 300), message, tasks: [...byTask.values()] });
+    const flagged = [...byTask.values()];
+    // A revision belongs to the piece it's about: with no open piece to put it on, it's a change for the line instead
+    const scope: ChangeScope = c.scope === "revision" && flagged.length ? "revision" : "direction";
+    out.push({ kind, scope, lines: changeLines(c.lines, flagged), summary, was: text(c.was, 300), now: text(c.now, 300), quote: text(c.quote, 300), message, tasks: flagged });
   }
   return out;
 }
@@ -132,11 +160,26 @@ export type Seat = { profile_id: string; role: string; is_primary?: boolean | nu
  * seat) when a flagged task is with the client. Critical when the client is looking at work they said to change. With
  * nobody at all, the execs.
  */
-export function recipientsFor(input: { seats: readonly Seat[]; headsOfCreative: readonly string[]; execs: readonly string[]; tasks: readonly Pick<FlaggedTask, "kind" | "stage" | "assigneeId" | "verdict">[] }): { ids: string[]; critical: boolean } {
+export function recipientsFor(input: { seats: readonly Seat[]; headsOfCreative: readonly string[]; execs: readonly string[]; tasks: readonly Pick<FlaggedTask, "kind" | "stage" | "assigneeId" | "verdict">[]; lines?: readonly ChangeLineId[]; scope?: ChangeScope }): { ids: string[]; critical: boolean } {
   const ids = new Set<string>();
   const seat = (role: string) => input.seats.filter((s) => s.role === role).map((s) => s.profile_id);
-  for (const id of seat("meta_buyer")) ids.add(id);
-  const lines = new Set(input.tasks.map((t) => lineOf(t.kind)));
+  // A revision to one piece: whoever holds it (the line's strategist or lead when nobody does), nobody else
+  if (input.scope === "revision") {
+    for (const t of input.tasks) if (t.assigneeId) ids.add(t.assigneeId);
+    if (!ids.size) {
+      if (input.tasks.some((t) => lineOf(t.kind) === "email")) for (const id of seat("email_strategist")) ids.add(id);
+      if (input.tasks.some((t) => lineOf(t.kind) === "creative")) for (const id of input.headsOfCreative) ids.add(id);
+    }
+    return { ids: [...ids].filter(Boolean), critical: false };
+  }
+  // The team the change is about: each platform's buyer for its ads (Meta's for creative too: it runs in their ads),
+  // the social manager for social, never a buyer for email or social alone
+  const known = input.lines ?? [];
+  if (!known.length || known.includes("meta") || known.includes("creative") || input.tasks.some((t) => lineOf(t.kind) === "creative")) for (const id of seat("meta_buyer")) ids.add(id);
+  if (known.includes("google")) for (const id of seat("google_buyer")) ids.add(id);
+  if (known.includes("tiktok")) for (const id of seat("tiktok_buyer")) ids.add(id);
+  if (known.includes("social")) for (const id of seat("social_manager")) ids.add(id);
+  const lines = new Set<string>([...input.tasks.map((t) => lineOf(t.kind)), ...known.filter((l) => l === "email" || l === "creative")]);
   if (lines.has("email")) for (const id of seat("email_strategist")) ids.add(id);
   if (lines.has("creative")) for (const id of input.headsOfCreative) ids.add(id);
   for (const t of input.tasks) if (t.assigneeId) ids.add(t.assigneeId);
@@ -153,10 +196,10 @@ export const tasksLine = (n: number) => (n === 1 ? "1 task to adapt" : `${n} tas
 export const allActed = (tasks: readonly { action: TaskAction }[]) => tasks.length > 0 && tasks.every((t) => t.action !== "pending");
 
 /** The note a sent-back task carries (on the Kaizen timeline, or as an Asana comment) */
-export function directionNote(c: { summary: string; quote?: string | null; was?: string | null; now?: string | null }, t: { fix: Fix; why?: string | null }, extra?: string | null): string {
+export function directionNote(c: { summary: string; quote?: string | null; was?: string | null; now?: string | null; scope?: string | null }, t: { fix: Fix; why?: string | null }, extra?: string | null): string {
   const what = t.fix === "copy" ? "Change the copy" : t.fix === "design" ? "Change the design" : t.fix === "both" ? "Change the design and the copy" : t.fix === "brief" ? "Update the brief before starting" : "Check before finishing";
   const lines = [
-    `The client changed direction: ${c.summary}.`,
+    c.scope === "revision" ? `The client asked for a revision: ${c.summary}.` : `The client changed direction: ${c.summary}.`,
     c.was && c.now ? `Was: ${c.was}. Now: ${c.now}.` : null,
     c.quote ? `In their words: "${c.quote}"` : null,
     t.why ? `For this one: ${t.why}` : null,

@@ -149,7 +149,8 @@ export function ServicesPanel({
                           }}
                         />
                       )}
-                      <StrategyToggle clientId={clientId} slug={slug} service={s.slug} on={strategyOnly.includes(s.slug)} canEdit={canEdit} />
+                      {/* Strategy only is for services with deliverables (social here; creative and email in their own picks): paid ads have no such client */}
+                      {s.slug === "social-media" && <StrategyToggle clientId={clientId} slug={slug} service={s.slug} on={strategyOnly.includes(s.slug)} canEdit={canEdit} />}
                     </span>
                   )}
                 </span>

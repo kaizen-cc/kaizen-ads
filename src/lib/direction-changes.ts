@@ -15,6 +15,8 @@ import {
   withClient,
   BACK_STAGES,
   type ChangeKind,
+  type ChangeLineId,
+  type ChangeScope,
   type ChangeSource,
   type CleanChange,
   type Fix,
@@ -118,7 +120,7 @@ async function newMessages(admin: Db, since: Date, clientIds: string[]): Promise
 
 // ─── The AI ──────────────────────────────────────────────────────────────────
 
-const RULES = `A direction change is something the client says that changes what several pieces of work, or all future work, should say or show, or which campaign gets the focus: a new or ended offer or price, "stop campaign X, focus on Y", "evergreen only, nothing tied to a team or date", a product dropped or added, a new audience, a new message or claim to lead with or to stop using. A one-off revision on one ad ("make the logo bigger on this one", "change the headline on ad 3") is NOT a direction change: that's a normal revision and the review flow handles it. Approval, praise, scheduling, invoices, reporting questions and small talk are not direction changes either. Be conservative: when unsure, it's not one.`;
+const RULES = `A direction change is something the client says that changes what several pieces of work, or all future work, should say or show, or which campaign gets the focus: a new or ended offer or price, "stop campaign X, focus on Y", "evergreen only, nothing tied to a team or date", a product dropped or added, a new audience, a new message or claim to lead with or to stop using. A revision to one piece of work is NOT a direction change, even when it's about a product, a price or what's listed: "take those 4 straps off the 12 Days list", "add the Air Raid to that list", "Day 3 is a combo price of $225", "this frame description is wrong", "make the logo bigger on this one", "change the headline on ad 3". Those edit one email, one campaign's content or one ad; they're revisions. Approval, praise, scheduling, invoices, reporting questions and small talk are not direction changes either. Be conservative: when unsure, it's not one.`;
 
 const PREFILTER_SCHEMA = { type: "object", properties: { maybe: { type: "boolean" }, messages: { type: "array", items: { type: "integer" } } }, required: ["maybe", "messages"], additionalProperties: false };
 
@@ -145,6 +147,8 @@ const DETECT_SCHEMA = {
       items: {
         type: "object",
         properties: {
+          scope: { type: "string", enum: ["direction", "revision"] },
+          lines: { type: "array", items: { type: "string", enum: ["meta", "google", "tiktok", "ads", "creative", "email", "social"] } },
           kind: { type: "string", enum: ["offer", "priority", "stop", "product", "messaging", "audience", "other"] },
           summary: { type: "string" },
           was: { type: "string" },
@@ -161,7 +165,7 @@ const DETECT_SCHEMA = {
             },
           },
         },
-        required: ["kind", "summary", "was", "now", "quote", "message", "tasks"],
+        required: ["scope", "lines", "kind", "summary", "was", "now", "quote", "message", "tasks"],
         additionalProperties: false,
       },
     },
@@ -186,7 +190,10 @@ export async function matchChanges(client: { id: string; name: string }, message
     override: { model: "sonnet", effort: "medium" },
     system: `You catch a client changing direction mid-production at Kaizen, a paid ads, creative and email agency, so the team adapts work already in progress instead of finishing what the client said to stop. ${RULES}
 
-For each direction change: kind; summary (one plain line, what's different now, e.g. "Evergreen creative only; stop team-specific"); was (what it was before, short, empty if unknown); now (what it is now, short); quote (the client's own words, short, exact); message (the number of the message it's in); tasks: every open task below it touches. verdict "affected" when the task clearly has to change, "maybe" when it might. fix: "copy" when only the words change, "design" when what's on the image or video changes (the offer or price on it, the wrong theme, product or team), "both", "brief" when the task hasn't been started yet, "stop" only when the campaign is dropped and nothing in it can be adapted. Prefer adapting over stopping: the hours are already paid. why: one plain sentence about this task. Name roles, never people. Never use em dashes. Leave out tasks the change doesn't touch.`,
+Return revisions too, but marked as such, so each lands on the piece it's about: scope "revision" when it edits one piece of work (one email, one campaign's content, one ad or video) and you can name that open task below; scope "direction" only when it changes what several pieces or all future work should say or show, or which campaign gets the focus. A revision with no open task to put it on: leave it out. When unsure, it's a revision.
+lines: whose work it is, from meta, google, tiktok (one platform's ads), ads (paid ads in general), creative (ad images and videos), email (email and SMS), social (organic posts). Only the teams it really touches: a list of products in an email is email only; a Meta campaign's focus is meta (and creative only if the ads themselves must change).
+
+For each change: scope; lines; kind; summary (one plain line, what's different now, e.g. "Evergreen creative only; stop team-specific"); was (what it was before, short, empty if unknown); now (what it is now, short); quote (the client's own words, short, exact); message (the number of the message it's in); tasks: every open task below it touches. verdict "affected" when the task clearly has to change, "maybe" when it might. fix: "copy" when only the words change, "design" when what's on the image or video changes (the offer or price on it, the wrong theme, product or team), "both", "brief" when the task hasn't been started yet, "stop" only when the campaign is dropped and nothing in it can be adapted. Prefer adapting over stopping: the hours are already paid. why: one plain sentence about this task. Name roles, never people. Never use em dashes. Leave out tasks the change doesn't touch.`,
     schema: DETECT_SCHEMA,
     prompt: `Client: ${client.name}
 
@@ -213,6 +220,8 @@ export async function saveChange(admin: Db, clientId: string, c: CleanChange, me
   const row = {
     client_id: clientId,
     kind: c.kind,
+    scope: c.scope,
+    lines: c.lines,
     summary: noDash(c.summary).slice(0, 300) || "The client changed direction",
     was_text: c.was || null,
     now_text: c.now || null,
@@ -243,7 +252,7 @@ export const changeHref = (slug: string, id: string) => `/clients/${slug}?direct
 
 /** Tells the people who need to know, once each (in the app, and by Slack DM when their Slack is connected) */
 export async function notifyChange(admin: Db, changeId: string, skip: string | null = null) {
-  const { data: ch } = await admin.from("client_direction_changes").select("id, client_id, summary, quote, clients(name, slug)").eq("id", changeId).maybeSingle();
+  const { data: ch } = await admin.from("client_direction_changes").select("id, client_id, summary, quote, scope, lines, clients(name, slug)").eq("id", changeId).maybeSingle();
   if (!ch) return { told: 0 };
   const client = ch.clients as unknown as { name: string; slug: string };
   const [{ data: tasks }, { data: seats }, { data: heads }, { data: execs }] = await Promise.all([
@@ -271,20 +280,23 @@ export async function notifyChange(admin: Db, changeId: string, skip: string | n
     headsOfCreative: (heads ?? []).map((h) => h.id as string),
     execs: (execs ?? []).map((e) => e.id as string),
     tasks: flagged.map((t) => ({ kind: t.task_kind as TaskKind, stage: t.stage_at_flag as string | null, verdict: t.verdict as Verdict, assigneeId: holder.get(`${t.task_kind}:${t.task_ref}`) ?? null })),
+    lines: ((ch.lines ?? []) as ChangeLineId[]).filter(Boolean),
+    scope: (ch.scope as ChangeScope | null) ?? "direction",
   });
+  const revision = ch.scope === "revision";
   const to = ids.filter((id) => id !== skip);
   await admin.from("client_direction_changes").update({ notified: ids }).eq("id", changeId);
   if (!to.length) return { told: 0 };
   const n = flagged.length;
-  const title = noDash(`${client.name} changed direction: ${n ? tasksLine(n) : "check the open work"}`);
+  const title = noDash(revision ? `${client.name} asked for a revision: ${n === 1 ? "1 piece" : `${n} pieces`} to change` : `${client.name} changed direction: ${n ? tasksLine(n) : "check the open work"}`);
   const body = noDash(`${ch.summary}${ch.quote ? `. In their words: "${clip(ch.quote, 200)}"` : ""}`);
   const href = changeHref(client.slug, changeId);
   await admin.from("notifications").upsert(
     to.map((profile_id) => ({ profile_id, kind: "direction", title: title.slice(0, 200), body: body.slice(0, 1000), href, client_id: ch.client_id, key: `direction:${changeId}`, priority: critical ? "critical" : "normal" })),
     { onConflict: "profile_id,key", ignoreDuplicates: true },
   );
-  // The client saying they're leaving or furious with it: every exec hears it's on fire
-  await import("@/lib/exec-focus/server").then(({ raiseFire }) => raiseFire(admin, { clientId: ch.client_id as string, client: client.name, href, body, signal: { kind: "client_message", text: `${ch.summary ?? ""} ${ch.quote ?? ""}`, fromClient: true } })).catch(() => false);
+  // The client saying they're leaving or furious with it: every exec hears it's on fire (never for a one-piece revision)
+  if (!revision) await import("@/lib/exec-focus/server").then(({ raiseFire }) => raiseFire(admin, { clientId: ch.client_id as string, client: client.name, href, body, signal: { kind: "client_message", text: `${ch.summary ?? ""} ${ch.quote ?? ""}`, fromClient: true } })).catch(() => false);
   try {
     const { slackConnection, postAsApp } = await import("@/lib/slack-user");
     const { siteUrl } = await import("@/lib/site");
@@ -346,7 +358,7 @@ export async function runDirectionChanges(admin: Db) {
 export type LoggedResult = { ok: true; id: string; summary: string; tasks: { title: string; stage: string; suggestion: string; why: string; verdict: Verdict }[] } | { ok: false; error: string };
 
 /** A change someone heard about (a call, a WhatsApp, anywhere): the same matcher on the client's open tasks */
-export async function logChange(db: Db, admin: Db, me: Staff, clientId: string, said: string, source: "team" | "assistant" = "team"): Promise<LoggedResult> {
+export async function logChange(db: Db, admin: Db, me: Staff, clientId: string, said: string, source: "team" | "assistant" = "team", line: ChangeLineId | null = null): Promise<LoggedResult> {
   const words = String(said ?? "").trim().slice(0, 3000);
   if (words.length < 8) return { ok: false, error: "Say what the client changed, in a sentence." };
   const { data: client } = await db.from("clients").select("id, name").eq("id", clientId).maybeSingle();
@@ -359,7 +371,9 @@ export async function logChange(db: Db, admin: Db, me: Staff, clientId: string, 
   } catch (e) {
     console.error("[direction] match", e instanceof Error ? e.message : e);
   }
-  const change: CleanChange = found[0] ?? { kind: "other", summary: noDash(clip(words, 150)), was: "", now: "", quote: noDash(clip(words, 300)), message: 1, tasks: [] };
+  const picked: CleanChange = found[0] ?? { kind: "other", scope: "direction", lines: [], summary: noDash(clip(words, 150)), was: "", now: "", quote: noDash(clip(words, 300)), message: 1, tasks: [] };
+  // Logged from a team's tab: that team's, whatever else it touches
+  const change: CleanChange = line && !picked.lines.includes(line) ? { ...picked, lines: [...picked.lines, line] } : picked;
   const id = await saveChange(admin, clientId, change, { source, sourceRef: null, url: null, saidAt: now, detectedBy: "person", createdBy: me.id });
   if (!id) return { ok: false, error: "It couldn't be saved." };
   await notifyChange(admin, id, me.id);
@@ -395,6 +409,7 @@ export type ChangeView = {
   id: string;
   client: { id: string; name: string; slug: string };
   kind: ChangeKind;
+  scope: ChangeScope;
   summary: string;
   was: string | null;
   now: string | null;
@@ -435,6 +450,7 @@ export async function loadChange(db: Db, id: string): Promise<ChangeView | null>
     id: c.id as string,
     client,
     kind: c.kind as ChangeKind,
+    scope: ((c.scope as ChangeScope | null) ?? "direction") as ChangeScope,
     summary: c.summary as string,
     was: (c.was_text as string | null) ?? null,
     now: (c.now_text as string | null) ?? null,
@@ -474,11 +490,12 @@ export async function loadChange(db: Db, id: string): Promise<ChangeView | null>
   };
 }
 
-export type ChangeLine = { id: string; clientId: string; client: string; slug: string; summary: string; quote: string | null; source: ChangeSource; saidAt: string | null; createdAt: string; pending: number; total: number; withClient: boolean; href: string };
+export type ChangeLine = { id: string; clientId: string; client: string; slug: string; summary: string; quote: string | null; source: ChangeSource; saidAt: string | null; createdAt: string; pending: number; total: number; withClient: boolean; href: string; scope: ChangeScope; lines: ChangeLineId[] };
 
 /** Open changes: for one client, or the ones this person was told about */
-export async function openChanges(db: Db, opts: { clientId?: string | null; notified?: string | null; limit?: number }): Promise<ChangeLine[]> {
-  let q = db.from("client_direction_changes").select("id, client_id, summary, quote, source, said_at, created_at, clients(name, slug), direction_change_tasks(action, verdict, stage_at_flag, task_kind)").eq("status", "open").order("created_at", { ascending: false }).limit(opts.limit ?? 20);
+export async function openChanges(db: Db, opts: { clientId?: string | null; notified?: string | null; limit?: number; /** Revisions to one piece too (the client page's team tabs); off everywhere else */ revisions?: boolean }): Promise<ChangeLine[]> {
+  let q = db.from("client_direction_changes").select("id, client_id, summary, quote, source, said_at, created_at, scope, lines, clients(name, slug), direction_change_tasks(action, verdict, stage_at_flag, task_kind)").eq("status", "open").order("created_at", { ascending: false }).limit(opts.limit ?? 20);
+  if (!opts.revisions) q = q.eq("scope", "direction");
   if (opts.clientId) q = q.eq("client_id", opts.clientId);
   if (opts.notified) q = q.contains("notified", [opts.notified]);
   const { data, error } = await q;
@@ -501,27 +518,29 @@ export async function openChanges(db: Db, opts: { clientId?: string | null; noti
       total: tasks.length,
       withClient: pending.some((t) => t.verdict === "affected" && withClient(t.task_kind, t.stage_at_flag)),
       href: changeHref(cl?.slug ?? "", c.id as string),
+      scope: ((c.scope as ChangeScope | null) ?? "direction") as ChangeScope,
+      lines: ((c.lines ?? []) as ChangeLineId[]).filter(Boolean),
     };
   });
 }
 
-export type TaskFlag = { changeId: string; taskId: string; summary: string; quote: string | null; why: string | null; verdict: Verdict; fix: Fix; suggested: string | null; client: string; slug: string };
+export type TaskFlag = { changeId: string; taskId: string; /** A revision to this piece, or the client changing direction */ scope: ChangeScope; summary: string; quote: string | null; why: string | null; verdict: Verdict; fix: Fix; suggested: string | null; client: string; slug: string };
 
 /** Every pending flag on open changes, by "<kind>:<ref>" (the boards' chips and the ticket banners) */
 export async function loadTaskFlags(db: Db): Promise<Record<string, TaskFlag>> {
   const { data, error } = await db
     .from("direction_change_tasks")
-    .select("id, task_kind, task_ref, why, verdict, fix, suggested_stage, change:client_direction_changes!inner(id, summary, quote, status, clients(name, slug))")
+    .select("id, task_kind, task_ref, why, verdict, fix, suggested_stage, change:client_direction_changes!inner(id, summary, quote, status, scope, clients(name, slug))")
     .eq("action", "pending")
     .eq("change.status", "open")
     .limit(1000);
   if (error) return {};
   const out: Record<string, TaskFlag> = {};
   for (const t of data ?? []) {
-    const ch = t.change as unknown as { id: string; summary: string; quote: string | null; clients: { name: string; slug: string } | null };
+    const ch = t.change as unknown as { id: string; summary: string; quote: string | null; scope: ChangeScope | null; clients: { name: string; slug: string } | null };
     const key = `${t.task_kind}:${t.task_ref}`;
     if (out[key] && out[key].verdict === "affected") continue;
-    out[key] = { changeId: ch.id, taskId: t.id as string, summary: ch.summary, quote: ch.quote, why: (t.why as string | null) ?? null, verdict: t.verdict as Verdict, fix: t.fix as Fix, suggested: (t.suggested_stage as string | null) ?? null, client: ch.clients?.name ?? "", slug: ch.clients?.slug ?? "" };
+    out[key] = { changeId: ch.id, taskId: t.id as string, scope: ch.scope ?? "direction", summary: ch.summary, quote: ch.quote, why: (t.why as string | null) ?? null, verdict: t.verdict as Verdict, fix: t.fix as Fix, suggested: (t.suggested_stage as string | null) ?? null, client: ch.clients?.name ?? "", slug: ch.clients?.slug ?? "" };
   }
   return out;
 }
@@ -566,7 +585,7 @@ async function asanaStory(gid: string, text: string) {
 export async function actOnTasks(db: Db, admin: Db, me: Staff, taskIds: string[], how: ActHow, opts: { to?: Record<string, string>; note?: string | null } = {}): Promise<ActResult> {
   const ids = [...new Set(taskIds.filter((x) => /^[0-9a-f-]{36}$/i.test(x)))].slice(0, 60);
   if (!ids.length) return { ok: false, error: "Pick the tasks first." };
-  const { data: rows } = await db.from("direction_change_tasks").select("*, change:client_direction_changes!inner(id, summary, quote, was_text, now_text, status)").in("id", ids);
+  const { data: rows } = await db.from("direction_change_tasks").select("*, change:client_direction_changes!inner(id, summary, quote, was_text, now_text, status, scope)").in("id", ids);
   const tasks = rows ?? [];
   if (!tasks.length) return { ok: false, error: "Those tasks aren't ones you can see." };
   const note = clip(opts.note, 600) || null;
@@ -577,9 +596,9 @@ export async function actOnTasks(db: Db, admin: Db, me: Staff, taskIds: string[]
   for (const t of tasks) {
     const kind = t.task_kind as TaskKind;
     const ref = t.task_ref as string;
-    const ch = t.change as unknown as { id: string; summary: string; quote: string | null; was_text: string | null; now_text: string | null };
+    const ch = t.change as unknown as { id: string; summary: string; quote: string | null; was_text: string | null; now_text: string | null; scope: string | null };
     const fix = t.fix as Fix;
-    const text = directionNote({ summary: ch.summary, quote: ch.quote, was: ch.was_text, now: ch.now_text }, { fix: how === "stop" ? "stop" : fix, why: t.why as string | null }, note);
+    const text = directionNote({ summary: ch.summary, quote: ch.quote, was: ch.was_text, now: ch.now_text, scope: ch.scope }, { fix: how === "stop" ? "stop" : fix, why: t.why as string | null }, note);
     const picked = opts.to?.[t.id as string] ?? null;
     const line = lineOf(kind);
     const allowed = (BACK_STAGES[line] as string[]).concat(line === "creative" ? ["client_revision"] : ["revisions"]);

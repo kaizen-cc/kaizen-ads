@@ -96,6 +96,9 @@ import type { KeywordList } from "@/lib/keyword-research";
 import type { Deploy } from "@/lib/google-deploy";
 import { untilLabel } from "@/lib/allotment";
 import { isLive } from "@/lib/live";
+import { ClientDirection } from "@/components/direction-parts";
+import type { ChangeLine } from "@/lib/direction-changes";
+import type { ChangeLineId } from "@/lib/direction-core";
 
 const fmt = (iso: string) => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 const chip = "inline-flex items-center rounded-full px-2.5 py-1 text-xs";
@@ -243,8 +246,8 @@ export type ClientViewProps = {
   patterns?: React.ReactNode;
   /** Under the contacts: changes their emails asked for (to confirm, or to undo) and the people taken off */
   contactChanges?: React.ReactNode;
-  /** The client changing direction: open changes and a way to log one (src/components/direction-parts.tsx) */
-  direction?: React.ReactNode;
+  /** The client changing direction: open changes and revisions, each kept in its team's section (src/components/direction-parts.tsx) */
+  direction?: { lines: ChangeLine[]; canLog: boolean } | null;
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
@@ -326,7 +329,29 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
   const reportAccounts = (kpis ?? []).filter((k) => k.accountId && (!reportable || reportable.includes(k.id))).map((k) => ({ id: k.id, label: `${k.platform === "google" ? "Google" : k.platform === "tiktok" ? "TikTok" : "Meta"}${k.label ? ` · ${k.label}` : ""}` }));
 
   // Other lines are read-only overviews: their action tabs (strategy, policy, ideas, copy library, package) drop out
-  const gate = (list: ServiceSection[]) => list.map((s) => ((ALL_LINES as readonly string[]).includes(s.id) && ro(s.id as LineId) ? { ...s, tabs: s.tabs.filter((t) => !t.action) } : s));
+  const gated = (list: ServiceSection[]) => list.map((s) => ((ALL_LINES as readonly string[]).includes(s.id) && ro(s.id as LineId) ? { ...s, tabs: s.tabs.filter((t) => !t.action) } : s));
+  // Each team's section gets its own "Client changes" tab: what the client changed or asked to revise in that team's
+  // work, never on the whole-business page (owner, Nov 19 2026). A change for several teams shows in each.
+  const TEAM_SECTIONS: readonly string[] = ["meta", "google", "tiktok", "creative", "email", "social"];
+  const gate = (list: ServiceSection[]) =>
+    gated(list).map((s) => {
+      if (demo || !direction || !TEAM_SECTIONS.includes(s.id)) return s;
+      const mine = direction.lines.filter((l) => !l.lines.length || l.lines.includes(s.id as ChangeLineId));
+      if (!mine.length && !direction.canLog) return s;
+      return {
+        ...s,
+        tabs: [
+          ...s.tabs,
+          {
+            id: "changes",
+            label: "Client changes",
+            count: mine.length || null,
+            hint: "What the client changed for this team's work, and revisions asked on its pieces in progress",
+            content: <ClientDirection clientId={client.id} client={client.name} lines={mine} canLog={direction.canLog} line={s.id as ChangeLineId} />,
+          },
+        ],
+      };
+    });
 
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
@@ -348,7 +373,6 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             {can.assign && !demo && !client.archived_at && <ArchiveControl clientId={client.id} slug={client.slug} name={client.name} archived={null} />}
           </span>
         </div>
-        {!demo && direction}
         {readiness && live && !demo && <ReadinessCheck clientId={client.id} slug={client.slug} name={client.name} initial={readiness.initial} team={team} autoOpen={readiness.autoOpen} stamp={readiness.stamp} />}
         {!client.archived_at && !live && (
           <p className="rounded-[14px] border border-warn/40 bg-warn-soft/40 px-4 py-3 text-sm">

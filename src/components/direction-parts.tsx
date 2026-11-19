@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState, useTransition } from "react";
 import { applyDirection, directionHeadsUp, logDirectionChange } from "@/app/(team)/direction/actions";
-import { SOURCE_LABEL, actionLabel, type TaskKind } from "@/lib/direction-core";
+import { SOURCE_LABEL, actionLabel, type ChangeLineId, type TaskKind } from "@/lib/direction-core";
 import type { ChangeLine, TaskFlag } from "@/lib/direction-changes";
 import { pushParams } from "@/lib/url-state";
 import { toast } from "./toasts";
@@ -24,11 +24,11 @@ export function DirectionChip({ kind, refId }: { kind: TaskKind; refId: string }
   const f = useContext(Flags)[`${kind}:${refId}`];
   if (!f) return null;
   return (
-    <span title={`Client changed direction: ${f.summary}`} className={`-mt-0.5 inline-flex max-w-full items-center gap-1.5 justify-self-start rounded-full px-2 py-0.5 text-[11px] font-medium ${f.verdict === "affected" ? "bg-warn-soft text-warn" : "bg-surface-2 text-muted"}`}>
+    <span title={`${f.scope === "revision" ? "Revision asked" : "Client changed direction"}: ${f.summary}`} className={`-mt-0.5 inline-flex max-w-full items-center gap-1.5 justify-self-start rounded-full px-2 py-0.5 text-[11px] font-medium ${f.verdict === "affected" ? "bg-warn-soft text-warn" : "bg-surface-2 text-muted"}`}>
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d="M5 21V4M5 4h11l-2 4 2 4H5" />
       </svg>
-      <span className="truncate">{f.verdict === "affected" ? "Direction changed" : "Direction may have changed"}</span>
+      <span className="truncate">{f.scope === "revision" ? "Revision asked" : f.verdict === "affected" ? "Direction changed" : "Direction may have changed"}</span>
     </span>
   );
 }
@@ -56,7 +56,7 @@ export function DirectionBanner({ kind, refId }: { kind: TaskKind; refId: string
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M5 21V4M5 4h11l-2 4 2 4H5" />
         </svg>
-        The client changed direction
+        {f.scope === "revision" ? "The client asked for a revision" : "The client changed direction"}
       </p>
       <p className="font-medium leading-snug">{f.summary}</p>
       {f.quote && <p className="leading-relaxed text-muted">&ldquo;{f.quote}&rdquo;</p>}
@@ -88,16 +88,22 @@ const ago = (iso: string) => {
   return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d} days ago`;
 };
 
-/** The client page: open changes, and a way to log one heard anywhere (a call, a WhatsApp) */
-export function ClientDirection({ clientId, client, lines, canLog }: { clientId: string; client: string; lines: ChangeLine[]; canLog: boolean }) {
+/**
+ * The client page, in one team's "Client changes" tab: that team's open direction changes, then the revisions asked on
+ * its pieces in progress (kept apart: a revision edits one piece, a change moves the work), and a way to log one heard
+ * anywhere (a call, a WhatsApp), kept with this team.
+ */
+export function ClientDirection({ clientId, client, lines: all, canLog, line = null }: { clientId: string; client: string; lines: ChangeLine[]; canLog: boolean; line?: ChangeLineId | null }) {
+  const lines = all.filter((l) => l.scope !== "revision");
+  const revisions = all.filter((l) => l.scope === "revision");
   const [open, setOpen] = useState(false);
   const [said, setSaid] = useState("");
   const [busy, start] = useTransition();
   const router = useRouter();
-  if (!lines.length && !canLog) return null;
+  if (!all.length && !canLog) return null;
   const log = () =>
     start(async () => {
-      const r = await logDirectionChange(clientId, said);
+      const r = await logDirectionChange(clientId, said, line);
       if (!r.ok) return toast({ tone: "bad", title: "Couldn't log it", body: r.error });
       setSaid("");
       setOpen(false);
@@ -107,6 +113,7 @@ export function ClientDirection({ clientId, client, lines, canLog }: { clientId:
     });
   return (
     <section className="grid gap-2">
+      {!all.length && <p className="text-sm text-faint">Nothing open. When {client} changes what this team&apos;s work should say or show, it lands here with the pieces it touches.</p>}
       {lines.map((l) => (
         <button
           key={l.id}
@@ -122,6 +129,20 @@ export function ClientDirection({ clientId, client, lines, canLog }: { clientId:
           {l.quote && <span className="line-clamp-2 text-sm text-muted">&ldquo;{l.quote}&rdquo;</span>}
         </button>
       ))}
+      {revisions.length > 0 && (
+        <div className="grid gap-2 pt-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Revisions on pieces in progress</p>
+          {revisions.map((l) => (
+            <button key={l.id} type="button" onClick={() => pushParams({ direction: l.id })} className="grid gap-0.5 rounded-[12px] border border-line bg-surface px-4 py-2.5 text-left transition hover:border-faint">
+              <span className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-faint">
+                <span>Revision · {SOURCE_LABEL[l.source]} · {ago(l.saidAt ?? l.createdAt)}</span>
+                <span className="text-fg">{l.pending ? `${l.pending} of ${l.total} to change` : "Done"} →</span>
+              </span>
+              <span className="text-sm leading-snug">{l.summary}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {canLog &&
         (open ? (
           <div className="grid gap-2 rounded-[14px] border border-line bg-surface p-3">

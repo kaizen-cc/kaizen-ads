@@ -20,7 +20,6 @@ import { loadClientCreative } from "@/lib/client-creative";
 import { ClientView } from "./client-view";
 import { actableLines } from "@/lib/client-lines";
 import { ContactChangesPanel, type RemovedContact } from "./contact-changes-panel";
-import { ClientDirection } from "@/components/direction-parts";
 import { openChanges } from "@/lib/direction-changes";
 import { contactRequestsFor } from "@/lib/contact-changes";
 import { CONTACT_TEAM_SEATS } from "@/lib/contact-changes-core";
@@ -589,7 +588,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       today={nyToday()}
       team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot), secondaries: secondariesIn(slot.value) }]))}
       contacts={contacts}
-      direction={<ClientDirection clientId={client.id} client={client.name} lines={await openChanges(supabase, { clientId: client.id }).catch(() => [])} canLog={!client.archived_at} />}
+      direction={{ lines: await openChanges(supabase, { clientId: client.id, revisions: true, limit: 60 }).catch(() => []), canLog: !client.archived_at }}
       contactChanges={<ContactChangesPanel clientId={client.id} slug={client.slug} requests={contactRequests} removed={removedContacts} contacts={contacts} canEdit={canChangeContacts} />}
       angles={angles ?? []}
       memory={(memory ?? []).map((m) => ({ id: m.id, kind: m.kind, body: m.body, source: m.source, shareReason: m.share_reason, dated: m.dated, by: (m.profiles as unknown as { full_name: string } | null)?.full_name ?? null }))}
