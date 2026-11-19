@@ -70,7 +70,7 @@ export default async function EmailBoard({ searchParams }: PageProps<"/board/ema
   const asked = typeof t === "string" && /^\d+$/.test(t) ? Number(t) : null;
   const [allTickets, { data: clientRows }, { data: people }, shadows, flags] = await Promise.all([
     loadEmailBoard(db, { number: asked }),
-    db.from("clients").select("id, name, slug, services, services_extra, services_removed").is("archived_at", null).in("status", ["active", "onboarding"]).order("name"),
+    db.from("clients").select("id, name, slug, services, services_extra, services_removed, strategy_only").is("archived_at", null).in("status", ["active", "onboarding"]).order("name"),
     db.from("profiles").select("id, full_name, role, is_exec").eq("is_active", true).order("full_name"),
     loadEmailShadows(db).catch(() => []),
     // A client changed direction: the open tasks it touches are flagged on their cards

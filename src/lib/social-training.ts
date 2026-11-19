@@ -64,7 +64,7 @@ const grouped = (ls: HarvestLesson[]) =>
 
 /** The clients with Social Media (not archived): their names */
 async function socialClients(admin: Admin): Promise<Map<string, string>> {
-  const { data } = await admin.from("clients").select("id, name, services, services_extra, services_removed").is("archived_at", null);
+  const { data } = await admin.from("clients").select("id, name, services, services_extra, services_removed, strategy_only").is("archived_at", null);
   return new Map((data ?? []).filter((c) => (servicesOf(c) as string[]).includes("social-media")).map((c) => [c.id as string, c.name as string]));
 }
 

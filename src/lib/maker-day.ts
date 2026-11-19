@@ -227,7 +227,10 @@ async function creativeRadar(db: SupabaseClient, me: Pick<Staff, "id" | "role">)
   // work across clients without a seat)
   const clients = new Map((seats ?? []).map((s) => [s.client_id as string, s.clients as unknown as { name: string; slug: string } | null]));
   for (const t of mine) if (t.clientId && !clients.has(t.clientId)) clients.set(t.clientId, { name: t.client, slug: t.clientSlug });
-  const ids = [...clients.keys()];
+  // Only clients we do creative for: nothing is coming to a designer's board from the rest
+  const { clientsWithLine } = await import("@/lib/service-gate");
+  const doing = await clientsWithLine(reader, "creative", [...clients.keys()]);
+  const ids = [...clients.keys()].filter((id) => doing.has(id));
   const refs = mine.map((t) => (t.kind === "asana" ? t.key.split(":")[2] : t.key.split(":")[2]));
   const since = new Date(Date.now() - 21 * 86_400_000).toISOString();
   const soon = new Date(Date.now() + 14 * 86_400_000).toISOString();

@@ -48,7 +48,7 @@ export async function draftKickoff(admin: SupabaseClient, clientId: string, forc
   await admin.from("client_kickoffs").upsert({ client_id: clientId, status: "writing", missing: [], error: null, ...(force ? { forced_by: force.by } : {}), updated_at: new Date().toISOString() }, { onConflict: "client_id" });
   try {
     const [{ data: c }, { data: seats }, plan] = await Promise.all([
-      admin.from("clients").select("name, slug, services, services_extra, services_removed").eq("id", clientId).single(),
+      admin.from("clients").select("name, slug, services, services_extra, services_removed, strategy_only").eq("id", clientId).single(),
       admin.from("client_assignments").select("role, profiles(full_name)").eq("client_id", clientId),
       planSignedOff(admin, clientId),
     ]);
@@ -244,7 +244,7 @@ export async function keepMeetTeam(admin: SupabaseClient) {
   const { autoOutreach } = await import("@/lib/client-outreach");
   const { data: clients } = await admin
     .from("clients")
-    .select("id, name, slug, slack_channel_id, portal_live, services, services_extra, services_removed")
+    .select("id, name, slug, slack_channel_id, portal_live, services, services_extra, services_removed, strategy_only")
     .is("archived_at", null)
     .not("slack_channel_id", "is", null)
     .or(`created_at.gte.${FLOW_START},reonboarded_at.gte.${FLOW_START}`)

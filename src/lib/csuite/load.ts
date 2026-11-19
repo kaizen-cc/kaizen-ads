@@ -45,14 +45,14 @@ function textOf(v: unknown): string {
 /** The review's numbers for an exec (every client, every line) */
 export async function loadReview(db: SupabaseClient, admin: SupabaseClient): Promise<Review> {
   const [{ data: rows }, all, said, flags, billedRes, snaps] = await Promise.all([
-    db.from("clients").select("id, name, slug, industry, services, services_extra, services_removed, creative_package, creative_packages(label)").is("archived_at", null).in("status", [...LIVE]).order("name"),
+    db.from("clients").select("id, name, slug, industry, services, services_extra, services_removed, strategy_only, creative_package, creative_packages(label)").is("archived_at", null).in("status", [...LIVE]).order("name"),
     cachedClientKpis().catch((): Promise<AllClientKpis> => loadAllClientKpis(admin)),
     // What clients said lately (call summaries and notes from Slack and email), for "they asked about it"
     db.from("client_calls").select("client_id, title, occurred_at, summary").not("client_id", "is", null).gte("occurred_at", new Date(Date.now() - 60 * 86_400_000).toISOString()).order("occurred_at", { ascending: false }).limit(400),
     // The account watch's open flags, when it's running (read through the session; nothing when the table isn't there)
     db.from("watch_flags").select("id, kind, client_id, line, title, body, severity, opened_at").is("resolved_at", null).order("opened_at", { ascending: false }).limit(200),
     db.from("clients").select("id, billed_services, billed_synced_at").is("archived_at", null),
-    admin.from("kpi_snapshots").select("windows, kpi_targets!inner(client_id, active, platform, clients(services, services_extra, services_removed))").eq("kpi_targets.active", true),
+    admin.from("kpi_snapshots").select("windows, kpi_targets!inner(client_id, active, platform, clients(services, services_extra, services_removed, strategy_only))").eq("kpi_targets.active", true),
   ]);
   const clients: ReviewClient[] = ((rows ?? []) as unknown as { id: string; name: string; slug: string; industry: string | null; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null; creative_package: boolean; creative_packages: { label: string } | null }[]).map((c) => ({
     id: c.id,

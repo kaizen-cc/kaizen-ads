@@ -30,7 +30,7 @@ export async function personNamed(admin: SupabaseClient, name: string): Promise<
 
 /** Every seat this person holds on a client that isn't archived */
 export async function seatsHeldBy(admin: SupabaseClient, personId: string): Promise<HeldSeat[]> {
-  const { data } = await admin.from("client_assignments").select("client_id, role, is_primary, clients(name, archived_at, services, services_extra, services_removed)").eq("profile_id", personId);
+  const { data } = await admin.from("client_assignments").select("client_id, role, is_primary, clients(name, archived_at, services, services_extra, services_removed, strategy_only)").eq("profile_id", personId);
   return (data ?? [])
     .map((r) => ({ r, c: r.clients as unknown as { name: string; archived_at: string | null; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null } | null }))
     .filter(({ c }) => c && !c.archived_at)

@@ -27,7 +27,7 @@ async function lastAudit(admin: SupabaseClient, clientId: string): Promise<LastA
 export async function dueSocialAudits(admin: SupabaseClient): Promise<Due[]> {
   const { error } = await admin.from("social_audits").select("id").limit(1);
   if (error) return [];
-  const { data: clients } = await admin.from("clients").select("id, name, services, services_extra, services_removed").is("archived_at", null).in("status", [...LIVE]);
+  const { data: clients } = await admin.from("clients").select("id, name, services, services_extra, services_removed, strategy_only").is("archived_at", null).in("status", [...LIVE]);
   const live = (clients ?? []).filter((c) => (servicesOf(c as Parameters<typeof servicesOf>[0]) as string[]).includes("social-media"));
   const scores = await loadSocialScores(admin, live.map((c) => c.id as string));
   const out: Due[] = [];

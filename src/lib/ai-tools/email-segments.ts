@@ -42,7 +42,7 @@ const segmentPerformance: AiTool = {
     // The email and social teams see a client only as their line allows (the same rule the database applies)
     if (isChannelOnly(user.role)) {
       const [{ data: c }, { data: seats }] = await Promise.all([
-        admin.from("clients").select("archived_at, services, services_extra, services_removed").eq("id", row.id).maybeSingle(),
+        admin.from("clients").select("archived_at, services, services_extra, services_removed, strategy_only").eq("id", row.id).maybeSingle(),
         admin.from("client_assignments").select("profile_id").eq("client_id", row.id),
       ]);
       if (!c || !channelMaySee({ id: user.id, role: user.role }, { archived: Boolean(c.archived_at), services: servicesOf(c), seatHolders: (seats ?? []).map((a) => String(a.profile_id)) })) return { ok: false, error: "You can't see this client." };

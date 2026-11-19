@@ -40,7 +40,7 @@ const day = (iso: string) => String(iso).slice(0, 10);
  */
 async function bibleSources(admin: SupabaseClient, clientId: string) {
   const [{ data: c }, { data: kpis }, { data: own }, { data: mentioned }, { data: items }, { data: decided }, { data: said }, { data: setup }, { data: bible }] = await Promise.all([
-    admin.from("clients").select("website, drive_folder_id, creative_db, onboarding_sheet, services, services_extra, services_removed, creative_package, creative_package_key, creative_package_note, creative_packages(label, images, videos)").eq("id", clientId).maybeSingle(),
+    admin.from("clients").select("website, drive_folder_id, creative_db, onboarding_sheet, services, services_extra, services_removed, strategy_only, creative_package, creative_package_key, creative_package_note, creative_packages(label, images, videos)").eq("id", clientId).maybeSingle(),
     admin.from("kpi_targets").select("platform, conversion, custom_action, target, monthly_budget").eq("client_id", clientId).eq("active", true),
     admin.from("client_calls").select("id, source, title, occurred_at, url, notes").eq("client_id", clientId).order("occurred_at", { ascending: false }).limit(60),
     admin.from("call_mentions").select("call_id, summary, client_calls(id, source, title, occurred_at, url, notes)").eq("client_id", clientId).limit(80),

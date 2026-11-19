@@ -20,7 +20,7 @@ export async function setChannelTarget(clientId: string, line: Line, form: FormD
   if (!adminConfigured()) return { ok: false, error: "Not set up here." };
   const db = await createClient();
   const [{ data: client }, { data: seats }] = await Promise.all([
-    db.from("clients").select("id, slug, services, services_extra, services_removed").eq("id", clientId).maybeSingle(),
+    db.from("clients").select("id, slug, services, services_extra, services_removed, strategy_only").eq("id", clientId).maybeSingle(),
     db.from("client_assignments").select("role").eq("client_id", clientId).eq("profile_id", me.id).in("role", LINE_SEAT_ROLES[line]),
   ]);
   if (!client) return { ok: false, error: "You don't work on this client." };

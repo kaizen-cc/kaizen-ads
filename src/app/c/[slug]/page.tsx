@@ -15,7 +15,7 @@ export default async function ClientHome({ params }: { params: Promise<{ slug: s
   if (viewer.kind === "contact" && (!viewer.brands.some((b) => b.slug === slug) || !adminConfigured())) notFound();
   // Contacts read through the server (only live brands reach here); the team through its own access rules
   const db = viewer.kind === "contact" ? createAdminClient() : await createClient();
-  const { data: client } = await db.from("clients").select("id, name, slug, portal_live, status, services, services_extra, services_removed").eq("slug", slug).maybeSingle();
+  const { data: client } = await db.from("clients").select("id, name, slug, portal_live, status, services, services_extra, services_removed, strategy_only").eq("slug", slug).maybeSingle();
   if (!client || (viewer.kind === "contact" && !client.portal_live)) notFound();
   const admin = createAdminClient();
 

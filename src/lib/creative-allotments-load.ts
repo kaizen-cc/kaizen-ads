@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
-import { gateRows, hasLine, type ServiceFields } from "@/lib/service-gate";
+import { SERVICE_FIELDS, gateRows, hasLine, type ServiceFields } from "@/lib/service-gate";
 import { nyToday } from "@/lib/dates";
 import { loadPauses } from "@/lib/account-watch/pauses";
 import { shownStatus } from "@/lib/kpi/calc";
@@ -28,7 +28,7 @@ export async function loadAllotmentDesk(db: SupabaseClient, me: { id: string; ro
   const today = nyToday();
   const [{ data: usage }, { data: clients }, paused, { data: seats }] = await Promise.all([
     db.from("client_allotment_usage").select("*"),
-    db.from("clients").select("id, name, slug, services, services_extra, services_removed").is("archived_at", null).in("status", LIVE),
+    db.from("clients").select(`id, name, slug, ${SERVICE_FIELDS}`).is("archived_at", null).in("status", LIVE),
     loadPauses(db, "creative", today),
     db.from("client_assignments").select("client_id").eq("profile_id", me.id),
   ]);

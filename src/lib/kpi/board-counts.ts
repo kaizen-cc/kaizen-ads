@@ -12,8 +12,8 @@ export type BoardCounts = { meta: number; google: number; tiktok: number; email:
 
 export async function boardCounts(db: SupabaseClient): Promise<BoardCounts> {
   const [{ data: targets }, { data: clients }] = await Promise.all([
-    db.from("kpi_targets").select("platform, clients!inner(archived_at, services, services_extra, services_removed)").eq("active", true).is("clients.archived_at", null),
-    db.from("clients").select("services, services_extra, services_removed").is("archived_at", null).in("status", [...LIVE]),
+    db.from("kpi_targets").select("platform, clients!inner(archived_at, services, services_extra, services_removed, strategy_only)").eq("active", true).is("clients.archived_at", null),
+    db.from("clients").select("services, services_extra, services_removed, strategy_only").is("archived_at", null).in("status", [...LIVE]),
   ]);
   // Only the cards of clients that buy that line (src/lib/service-gate.ts), as the board shows them
   const by = (p: string) => (targets ?? []).filter((t) => t.platform === p && onService(t)).length;

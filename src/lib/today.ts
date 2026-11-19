@@ -437,7 +437,7 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   // Accounts off target, weighted by how far off, how much is spent and how important the account is
   // Each service line on its own, for the people on it: execs both, the Head of Meta Meta, the Head of Google Google,
   // a buyer only the accounts they own (and the ones they're a secondary buyer on)
-  let kq = db.from("kpi_targets").select("id, label, platform, ad_account_id, conversion, target, monthly_budget, sheet, owner_id, client_id, clients!inner(name, slug, archived_at, status, services, services_extra, services_removed)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
+  let kq = db.from("kpi_targets").select("id, label, platform, ad_account_id, conversion, target, monthly_budget, sheet, owner_id, client_id, clients!inner(name, slug, archived_at, status, services, services_extra, services_removed, strategy_only)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
   const co = !manager && topics.has("accounts") ? await secondarySeatKeys(db, me.id) : new Set<string>();
   const coClients = [...new Set([...co].map((k) => k.split(":")[0]))];
   if (!manager) kq = coClients.length ? kq.or(`owner_id.eq.${me.id},client_id.in.(${coClients.join(",")})`) : kq.eq("owner_id", me.id);

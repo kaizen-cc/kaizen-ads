@@ -25,7 +25,7 @@ export async function setAssignment(clientId: string, slot: SlotRole, profileId:
   const supabase = await createClient();
   if (!isExecOrLead(me)) {
     // A channel head: only their own seats, on a client that buys the service (read through their own session)
-    const { data: c } = await supabase.from("clients").select("services, services_extra, services_removed").eq("id", clientId).maybeSingle();
+    const { data: c } = await supabase.from("clients").select("services, services_extra, services_removed, strategy_only").eq("id", clientId).maybeSingle();
     if (!c || !mayAssignSeat(me, slot, servicesOf(c))) return { ok: false, error: "You can assign your own team's seats on clients with that service. Ask an executive or leader for any other." };
   }
   // Whoever is picked must be allowed the seat (the social creative seat needs "also works on organic social", and so on)

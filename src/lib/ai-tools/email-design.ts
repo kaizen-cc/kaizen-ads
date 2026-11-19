@@ -85,7 +85,7 @@ async function clientFor(me: Staff, input: Record<string, unknown>, chat?: ChatE
   if (isChannelOnly(me.role)) {
     const admin = createAdminClient();
     const [{ data: c }, { data: seats }] = await Promise.all([
-      admin.from("clients").select("archived_at, services, services_extra, services_removed").eq("id", row.id).maybeSingle(),
+      admin.from("clients").select("archived_at, services, services_extra, services_removed, strategy_only").eq("id", row.id).maybeSingle(),
       admin.from("client_assignments").select("profile_id").eq("client_id", row.id),
     ]);
     if (!c || !channelMaySee({ id: me.id, role: me.role }, { archived: Boolean(c.archived_at), services: servicesOf(c), seatHolders: (seats ?? []).map((a) => String(a.profile_id)) })) throw new Error("You can't see this client.");

@@ -188,7 +188,7 @@ export type SocialRosterRow = { id: string; name: string; slug: string; page: st
 export async function socialRoster(admin: SupabaseClient): Promise<SocialRosterRow[] | null> {
   const [{ data: links, error }, { data: clients }, { data: memos }] = await Promise.all([
     admin.from("social_accounts").select("*"),
-    admin.from("clients").select("id, name, slug, services, services_extra, services_removed").is("archived_at", null).in("status", LIVE).order("name"),
+    admin.from("clients").select("id, name, slug, services, services_extra, services_removed, strategy_only").is("archived_at", null).in("status", LIVE).order("name"),
     admin.from("sync_state").select("source, last_result").like("source", "social:%"),
   ]);
   if (error) return null;

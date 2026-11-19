@@ -33,7 +33,7 @@ const keyOf = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().
 export async function readIssues(admin: SupabaseClient, clientId: string) {
   const [{ data: b }, { data: c }] = await Promise.all([
     admin.from("client_brand_bibles").select("markdown, team_notes, generated_at").eq("client_id", clientId).maybeSingle(),
-    admin.from("clients").select("name, website, services, services_extra, services_removed").eq("id", clientId).single(),
+    admin.from("clients").select("name, website, services, services_extra, services_removed, strategy_only").eq("id", clientId).single(),
   ]);
   if (!b?.markdown || !c) return 0;
   const notes = ((b.team_notes ?? []) as string[]).filter(Boolean);

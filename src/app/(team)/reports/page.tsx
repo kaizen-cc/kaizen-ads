@@ -104,7 +104,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const { data: slots } = admin && seatClientIds.length ? await admin.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("client_id", seatClientIds).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer", ...REPORT_SEATS.email, ...REPORT_SEATS.social]) : { data: [] };
   const [{ data: allTargets }, { data: built }] = admin && clientIds.length
     ? await Promise.all([
-        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id, services, services_extra, services_removed), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line ? [line] : ["meta", "google"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
+        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id, services, services_extra, services_removed, strategy_only), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line ? [line] : ["meta", "google"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
         admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, sent_at, clients(name), reports(id, platform, status, owner_id, viewed_at, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).gte("created_at", daysAgo(60)).order("created_at", { ascending: false }).limit(150),
       ])
     : [{ data: [] }, { data: [] }];

@@ -53,7 +53,7 @@ export function missingKpiCards(c: EnsureClient, targets: readonly EnsureTarget[
 /** Makes a client's missing KPI cards and syncs them, so they show every number on the board. Returns how many. */
 export async function ensureKpiCards(admin: SupabaseClient, clientId: string): Promise<number> {
   const [{ data: c }, { data: targets }, { data: seats }] = await Promise.all([
-    admin.from("clients").select("id, status, archived_at, meta_ad_account_id, services, services_extra, services_removed").eq("id", clientId).maybeSingle(),
+    admin.from("clients").select("id, status, archived_at, meta_ad_account_id, services, services_extra, services_removed, strategy_only").eq("id", clientId).maybeSingle(),
     admin.from("kpi_targets").select("platform, active, ad_account_id, updated_at").eq("client_id", clientId),
     admin.from("client_assignments").select("client_id, profile_id, role, is_primary, created_at").eq("client_id", clientId).in("role", ["meta_buyer", "google_buyer"]),
   ]);

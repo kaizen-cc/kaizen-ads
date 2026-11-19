@@ -174,7 +174,7 @@ export async function providerRoster(admin: SupabaseClient, def: ProviderDef): P
   if (!conns?.length) return [];
   const ids = conns.map((c) => c.client_id as string);
   const [{ data: clients }, { data: memos }] = await Promise.all([
-    admin.from("clients").select("id, name, slug, services, services_extra, services_removed").in("id", ids).is("archived_at", null).in("status", LIVE).order("name"),
+    admin.from("clients").select("id, name, slug, services, services_extra, services_removed, strategy_only").in("id", ids).is("archived_at", null).in("status", LIVE).order("name"),
     admin.from("sync_state").select("source, last_result").in("source", ids.map(memoSource)),
   ]);
   const by = new Map(conns.map((c) => [c.client_id as string, c]));
@@ -241,7 +241,7 @@ export async function syncAllProvider(admin: SupabaseClient, def: ProviderDef, o
   if (!(await providerReady(admin, def))) return { skipped: `${providerName(def.id)} migration not applied` };
   const deadline = Date.now() + (opts.budgetMs ?? 600_000);
   const [{ data }, { data: memos }] = await Promise.all([
-    admin.from(def.table).select("client_id, last_synced_at, clients!inner(name, status, archived_at, services, services_extra, services_removed)").eq("status", "active"),
+    admin.from(def.table).select("client_id, last_synced_at, clients!inner(name, status, archived_at, services, services_extra, services_removed, strategy_only)").eq("status", "active"),
     admin.from("sync_state").select("source, last_run_at, last_result").like("source", "klaviyo:%"),
   ]);
   type Row = { client_id: string; last_synced_at: string | null; clients: { name: string; status: string; archived_at: string | null } | null };

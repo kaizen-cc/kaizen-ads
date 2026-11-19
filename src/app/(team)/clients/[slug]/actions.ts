@@ -171,7 +171,7 @@ export async function setClientService(clientId: string, slug: string, service: 
   if (!SERVICES.some((s) => s.slug === service)) return { ok: false, error: "Unknown service." };
   if (!adminConfigured()) return { ok: false, error: "Can't save here." };
   const admin = createAdminClient();
-  const { data: c } = await admin.from("clients").select("services, services_extra, services_removed").eq("id", clientId).maybeSingle();
+  const { data: c } = await admin.from("clients").select("services, services_extra, services_removed, strategy_only").eq("id", clientId).maybeSingle();
   if (!c) return { ok: false, error: "Client not found." };
   const extra = new Set((c.services_extra ?? []) as string[]);
   const removed = new Set((c.services_removed ?? []) as string[]);

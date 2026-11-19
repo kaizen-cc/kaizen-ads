@@ -13,7 +13,7 @@ export type GoogleRosterRow = GoogleClientHealth & { id: string; name: string; s
 
 /** Every live client that runs Google, worst first; or one client (any status) when `clientId` is given */
 export async function googleRoster(admin: SupabaseClient, clientId?: string): Promise<GoogleRosterRow[]> {
-  let q = admin.from("clients").select("id, name, slug, services, services_extra, services_removed").order("name");
+  let q = admin.from("clients").select("id, name, slug, services, services_extra, services_removed, strategy_only").order("name");
   q = clientId ? q.eq("id", clientId) : q.is("archived_at", null).in("status", LIVE);
   let t = admin.from("kpi_targets").select("client_id, ad_account_id, active").eq("platform", "google");
   if (clientId) t = t.eq("client_id", clientId);

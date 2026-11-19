@@ -49,7 +49,7 @@ async function pages<T>(page: (from: number, to: number) => PromiseLike<{ data: 
 
 /** The live clients on an email or social line the person may see (their session decides, then the channel rule) */
 async function channelClients(ctx: ToolCtx, line: "email" | "social"): Promise<Client[]> {
-  const { data } = await ctx.db.from("clients").select("id, name, slug, services, services_extra, services_removed").is("archived_at", null).in("status", [...LIVE]).order("name");
+  const { data } = await ctx.db.from("clients").select("id, name, slug, services, services_extra, services_removed, strategy_only").is("archived_at", null).in("status", [...LIVE]).order("name");
   const rows = (data ?? []).filter((c) => (servicesOf(c as Parameters<typeof servicesOf>[0]) as string[]).includes(SERVICE[line]));
   if (!isChannelOnly(ctx.me.role)) return rows.map((c) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string }));
   const { data: seats } = await ctx.db.from("client_assignments").select("client_id").eq("profile_id", ctx.me.id);
@@ -65,7 +65,7 @@ type Target = { id: string; client_id: string; label: string | null; conversion:
 async function adTargets(ctx: ToolCtx, platform: "meta" | "google"): Promise<Target[]> {
   const { data } = await ctx.db
     .from("kpi_targets")
-    .select("id, client_id, platform, label, conversion, target, owner_id, clients!inner(id, name, slug, archived_at, services, services_extra, services_removed)")
+    .select("id, client_id, platform, label, conversion, target, owner_id, clients!inner(id, name, slug, archived_at, services, services_extra, services_removed, strategy_only)")
     .eq("active", true)
     .eq("platform", platform)
     .is("clients.archived_at", null);

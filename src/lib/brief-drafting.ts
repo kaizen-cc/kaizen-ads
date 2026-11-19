@@ -5,7 +5,7 @@ import { draws } from "@/lib/allotment";
 import { cycleFor } from "@/lib/creative-allotments";
 import { describeFatigue } from "@/lib/fatigue";
 import { LIVE } from "@/lib/live";
-import { linesOf, lineOfPlatform } from "@/lib/service-gate";
+import { SERVICE_FIELDS, doesCreative, linesOf, lineOfPlatform } from "@/lib/service-gate";
 import type { Signal, SuggestionDraft } from "@/lib/suggestions";
 import {
   accountState,
@@ -139,7 +139,7 @@ export async function runDrafting(admin: Db, opts: { max?: number; runId?: strin
   const { data: lastRuns } = await admin.from("suggestion_runs").select("started_at").not("finished_at", "is", null).is("error", null).order("started_at", { ascending: false }).limit(1);
   // Messages that came in since the last pass (with an hour's overlap), and never more than three days back
   const since = new Date(Math.max(Date.now() - 3 * 86_400_000, lastRuns?.[0] ? Date.parse(lastRuns[0].started_at) - 3_600_000 : Date.now() - 86_400_000)).toISOString();
-  let clientsQ = admin.from("clients").select("id, name, services, services_extra, services_removed").is("archived_at", null).in("status", LIVE);
+  let clientsQ = admin.from("clients").select(`id, name, ${SERVICE_FIELDS}`).is("archived_at", null).in("status", LIVE);
   if (opts.clientId) clientsQ = clientsQ.eq("id", opts.clientId);
   const since8 = new Date(Date.now() - 8 * 86_400_000).toISOString();
   const [{ data: clients }, { data: usage }, { data: drafted }, { data: kpis }, { data: tired }, { data: items }, { data: snaps }, { data: recentReqs }, { data: weekReqs }, { data: weekTasks }] = await Promise.all([
@@ -577,7 +577,8 @@ export async function loadReady(db: Db, opts: { clientId?: string | null; limit?
   let q = db.from("creative_suggestions").select(OPEN_COLS).eq("status", "open").not("trigger_key", "is", null).order("created_at", { ascending: false }).limit(opts.limit ?? 60);
   if (opts.clientId) q = q.eq("client_id", opts.clientId);
   const { data } = await q;
-  const rows = ((data ?? []) as unknown as Record<string, unknown>[]).filter((r) => hasRealReason(r.citation as Citation | null));
+  // Only clients we do creative for (src/lib/service-gate.ts), and only with their real reason
+  const rows = ((data ?? []) as unknown as Record<string, unknown>[]).filter((r) => doesCreative(r.clients as never) && hasRealReason(r.citation as Citation | null));
   const open = await loadSuggestionRows(db, rows);
   return groupByClient(open.map((s) => ({ ...s, urgent: Boolean(s.drafted?.urgent), deadline: s.drafted?.deadline ?? null, askedBy: s.drafted?.askedBy ?? null })));
 }
@@ -713,6 +714,10 @@ export async function approveDrafted(db: Db, admin: Db, me: import("@/lib/auth")
   if (!s || !s.trigger_key) return { ok: false, error: "That brief isn't one you can approve." };
   if (s.status !== "open") return { ok: false, error: "This brief was already decided." };
   const clientId = s.client_id as string;
+  {
+    const { data: c } = await db.from("clients").select(SERVICE_FIELDS).eq("id", clientId).maybeSingle();
+    if (!doesCreative(c as never)) return { ok: false, error: "We don't do creative for this client (Creative isn't on their services), so nothing is made for them." };
+  }
   if (!canApprove(me, await buyerSeats(db, me.id), clientId)) return { ok: false, error: "Drafted briefs are approved by the creative leads, the account's media buyer, the head of Meta and the executives." };
   const draft = s.draft as SuggestionDraft;
   if (draft.summary || !draft.brief?.trim()) return { ok: false, error: "Only its summary is written so far." };

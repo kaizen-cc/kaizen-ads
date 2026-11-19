@@ -454,7 +454,7 @@ ${snapshot.text}
 
 /** The scheduled step: every active sprint whose check is due, a few at a time. */
 export async function checkDueSprints(admin: SupabaseClient, deadline = Date.now() + 600_000) {
-  const { data } = await admin.from("optimization_sprints").select("id, kpi_targets(target, platform), clients(services, services_extra, services_removed)").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(25);
+  const { data } = await admin.from("optimization_sprints").select("id, kpi_targets(target, platform), clients(services, services_extra, services_removed, strategy_only)").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(25);
   let checked = 0;
   const errors: string[] = [];
   for (const s of data ?? []) {
@@ -483,7 +483,7 @@ export type SprintSummary = { id: string; buyer: string | null; buyerId: string 
 
 /** Active sprints by KPI, for the board and Next for me. */
 export async function loadSprints(db: SupabaseClient, opts: { targetIds?: string[]; personId?: string } = {}) {
-  let q = db.from("optimization_sprints").select("id, target_id, client_id, buyer_id, watcher_ids, started_at, last_check_at, next_check_at, profiles!optimization_sprints_buyer_id_fkey(full_name), clients(name, slug, services, services_extra, services_removed), kpi_targets(label, platform)").eq("status", "active");
+  let q = db.from("optimization_sprints").select("id, target_id, client_id, buyer_id, watcher_ids, started_at, last_check_at, next_check_at, profiles!optimization_sprints_buyer_id_fkey(full_name), clients(name, slug, services, services_extra, services_removed, strategy_only), kpi_targets(label, platform)").eq("status", "active");
   if (opts.targetIds) q = q.in("target_id", opts.targetIds);
   if (opts.personId) q = q.or(`buyer_id.eq.${opts.personId},watcher_ids.cs.{${opts.personId}}`);
   const { data: all } = await q;

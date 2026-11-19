@@ -19,7 +19,7 @@ export async function loadExecFocus(db: SupabaseClient, profileId: string): Prom
 export async function linesByClient(db: SupabaseClient, ids: string[]): Promise<Map<string, FocusLine[]>> {
   const uniq = [...new Set(ids.filter(Boolean))];
   if (!uniq.length) return new Map();
-  const { data } = await db.from("clients").select("id, services, services_extra, services_removed").in("id", uniq);
+  const { data } = await db.from("clients").select("id, services, services_extra, services_removed, strategy_only").in("id", uniq);
   const { servicesOf } = await import("@/lib/services");
   return new Map((data ?? []).map((c) => [c.id as string, clientLines(servicesOf(c as { services?: string[] | null; services_extra?: string[] | null; services_removed?: string[] | null }))]));
 }
@@ -65,7 +65,7 @@ type Win = { spend?: number; results?: number; value?: number | null };
 export async function fireSweep(admin: SupabaseClient): Promise<{ fired: number }> {
   const { data: targets } = await admin
     .from("kpi_targets")
-    .select("id, client_id, platform, conversion, target, clients!inner(name, slug, archived_at, status, services, services_extra, services_removed)")
+    .select("id, client_id, platform, conversion, target, clients!inner(name, slug, archived_at, status, services, services_extra, services_removed, strategy_only)")
     .eq("active", true)
     .not("target", "is", null)
     .is("clients.archived_at", null)

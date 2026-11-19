@@ -28,21 +28,32 @@ export const LINE_SERVICE: Record<ServiceLine, ServiceSlug> = {
 };
 
 /** The client columns the gate reads; add them to any select (or a clients(...) embed) that's gated */
-export const SERVICE_FIELDS = "services, services_extra, services_removed";
+export const SERVICE_FIELDS = "services, services_extra, services_removed, strategy_only";
 
-export type ServiceFields = { services?: string[] | null; services_extra?: string[] | null; services_removed?: string[] | null };
+export type ServiceFields = { services?: string[] | null; services_extra?: string[] | null; services_removed?: string[] | null; strategy_only?: string[] | null };
+
+/**
+ * Creative is ours only when it's on the client's services (Kaizen Track's or added on the client page), not removed
+ * there, and not strategy only (owner, Nov 19 2026): only those clients show up for the creative team, get briefs
+ * drafted and hold an allotment (the database's client_allotment_usage view holds the same rule). A strategy-only
+ * creative client gets strategy, never production. The other lines keep their strategy-only work (email's strategist).
+ */
+const productionOff = (c: ServiceFields, line: ServiceLine) => line === "creative" && (c.strategy_only ?? []).includes(LINE_SERVICE.creative);
 
 /** The lines a client buys */
 export function linesOf(c: ServiceFields | null | undefined): Set<ServiceLine> {
   const s = new Set<string>(servicesOf(c ?? {}));
-  return new Set(SERVICE_LINES.filter((l) => s.has(LINE_SERVICE[l])));
+  return new Set(SERVICE_LINES.filter((l) => s.has(LINE_SERVICE[l]) && !productionOff(c ?? {}, l)));
 }
 
 /** Whether the client buys this line (no client row: no) */
 export function hasLine(c: ServiceFields | null | undefined, line: ServiceLine): boolean {
   if (!c) return false;
-  return (servicesOf(c) as string[]).includes(LINE_SERVICE[line]);
+  return (servicesOf(c) as string[]).includes(LINE_SERVICE[line]) && !productionOff(c, line);
 }
+
+/** Whether we do creative for this client: the one test every creative screen, brief and allotment uses */
+export const doesCreative = (c: ServiceFields | null | undefined) => hasLine(c, "creative");
 
 /** A KPI or ad platform as its line ("facebook" is Meta); null for anything that isn't an ad line */
 export function lineOfPlatform(platform: string | null | undefined): ServiceLine | null {

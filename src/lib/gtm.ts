@@ -302,7 +302,7 @@ async function autoGtmFor(admin: SupabaseClient, platform: GtmPlatform, max: num
   // Each platform only for the clients who buy it
   if (ids.length) {
     const { servicesOf } = await import("@/lib/services");
-    const { data: cs } = await admin.from("clients").select("id, services, services_extra, services_removed").in("id", ids);
+    const { data: cs } = await admin.from("clients").select("id, services, services_extra, services_removed, strategy_only").in("id", ids);
     const want = platform === "google" ? "google-ads" : "facebook-ads";
     const buys = new Set((cs ?? []).filter((c) => (servicesOf(c) as string[]).includes(want)).map((c) => c.id as string));
     ids = ids.filter((id) => buys.has(id));

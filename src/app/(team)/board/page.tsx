@@ -12,6 +12,7 @@ import { timed } from "@/lib/perf";
 import { BoardTabs, CreativeKpisView } from "./creative-kpis";
 import { DirectionFlagsProvider } from "@/components/direction-parts";
 import { loadTaskFlags } from "@/lib/direction-changes";
+import { clientsWithLine } from "@/lib/service-gate";
 
 // Writing a video script with the AI can take a minute
 export const maxDuration = 800; // room for the AI creative review that starts at review, and for planning a launch (video uploads to Meta)
@@ -61,7 +62,12 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     // Tickets migrated from Asana past production: do they have their creative and copy yet?
     supabase.from("asana_tasks").select("request_id, url").not("request_id", "is", null),
   ]);
-  const [{ data: moving }, { data: one }, { data: clients }, { data: people }, shadows, flags, { data: migrated }] = await timed("board", "tickets", first);
+  const [{ data: movingAll }, { data: one }, { data: clientsAll }, { data: people }, shadowsAll, flags, { data: migrated }] = await timed("board", "tickets", first);
+  // Only clients we do creative for (Creative on their services, not removed, not strategy only: src/lib/service-gate.ts)
+  const doing = await clientsWithLine(supabase, "creative");
+  const moving = (movingAll ?? []).filter((r) => !r.client_id || doing.has(r.client_id as string));
+  const clients = (clientsAll ?? []).filter((c) => doing.has(c.id as string));
+  const shadows = shadowsAll.filter((s) => !s.clientId || doing.has(s.clientId));
   const migratedIds = (migrated ?? []).map((m) => m.request_id as string);
   const PAST_PRODUCTION = ["internal_review", "copy", "copy_review", "ready_for_client", "client_review", "client_revision", "ready_for_launch"];
   const PAST_COPY = ["copy_review", "ready_for_client", "client_review", "ready_for_launch"];

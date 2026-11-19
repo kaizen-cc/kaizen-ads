@@ -244,7 +244,7 @@ export default async function Home() {
   // The heads of Meta and Google see the clients on their line being onboarded, not every new client
   if (onboarding && lines.length === 1) {
     const ids = onboarding.clients.map((c) => c.clientId);
-    const { data: cs } = ids.length ? await db.from("clients").select("id, services, services_extra, services_removed").in("id", ids) : { data: [] };
+    const { data: cs } = ids.length ? await db.from("clients").select("id, services, services_extra, services_removed, strategy_only").in("id", ids) : { data: [] };
     const slug = lines[0] === "google" ? "google-ads" : "facebook-ads";
     // The client's services decide (src/lib/service-gate.ts), never a leftover KPI card or a linked ad account
     const on = new Set((cs ?? []).filter((c) => servicesOf(c).includes(slug)).map((c) => c.id as string));

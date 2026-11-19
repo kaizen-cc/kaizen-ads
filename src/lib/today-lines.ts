@@ -145,7 +145,7 @@ async function lineItems(db: SupabaseClient, me: Staff, s: LineScope, today: str
 async function contactItems(db: SupabaseClient, me: Staff, seats: Seat[]): Promise<TodayDraft[]> {
   const { data, error } = await db
     .from("contact_change_requests")
-    .select("id, client_id, from_name, from_email, received_at, quote, why, changes, clients(name, slug, status, archived_at, services, services_extra, services_removed)")
+    .select("id, client_id, from_name, from_email, received_at, quote, why, changes, clients(name, slug, status, archived_at, services, services_extra, services_removed, strategy_only)")
     .eq("status", "to_confirm")
     .order("received_at")
     .limit(60);

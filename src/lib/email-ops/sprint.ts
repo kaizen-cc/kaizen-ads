@@ -170,7 +170,7 @@ async function historyKnown(admin: SupabaseClient, clientId: string): Promise<bo
 
 /** The scheduled step: every sprint whose next check is due */
 export async function checkDueEmailSprints(admin: SupabaseClient, limit = 12) {
-  const { data } = await admin.from("email_sprints").select("id, clients(services, services_extra, services_removed)").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(limit);
+  const { data } = await admin.from("email_sprints").select("id, clients(services, services_extra, services_removed, strategy_only)").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(limit);
   let checked = 0;
   for (const s of data ?? []) {
     // A client that no longer buys email marketing (src/lib/service-gate.ts): the sprint is kept and waits a day, unchecked

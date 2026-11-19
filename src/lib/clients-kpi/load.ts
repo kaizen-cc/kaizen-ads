@@ -67,7 +67,7 @@ export async function loadAllClientKpis(admin: SupabaseClient): Promise<AllClien
   const me = { id: "", role: "", isExec: false, isLead: false };
 
   const [targetsRes, snapsRes, auditsRes, fatigueRes, riskRes, email, social] = await Promise.all([
-    admin.from("kpi_targets").select("id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, excluded_campaigns, target, clients!inner(archived_at, services, services_extra, services_removed)").eq("active", true).is("clients.archived_at", null),
+    admin.from("kpi_targets").select("id, client_id, platform, ad_account_id, conversion, custom_action, campaign_match, excluded_campaigns, target, clients!inner(archived_at, services, services_extra, services_removed, strategy_only)").eq("active", true).is("clients.archived_at", null),
     admin.from("kpi_snapshots").select("target_id, status, deviation, vs_month, trend, windows, budget"),
     // The latest finished audit per account: its verdict's headline is the one reason an agent already wrote
     admin.from("account_audits").select("target_id, created_at, verdict:result->verdict").eq("status", "ready").order("created_at", { ascending: false }).limit(800),
@@ -187,7 +187,7 @@ export async function loadAllClientKpis(admin: SupabaseClient): Promise<AllClien
  */
 async function creativeChips(admin: SupabaseClient, slot: (id: string) => ClientKpis, today: string) {
   const [clientsRes, usageRes, openRes, doneRes] = await Promise.all([
-    admin.from("clients").select("id, slug, services, services_extra, services_removed").is("archived_at", null),
+    admin.from("clients").select("id, slug, services, services_extra, services_removed, strategy_only").is("archived_at", null),
     admin.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used, period_start, period_end"),
     admin.from("requests").select("client_id, created_at").neq("stage", "launched").is("completed_at", null).is("deleted_at", null).order("created_at", { ascending: true }).limit(3000),
     admin.from("requests").select("client_id, completed_at").not("completed_at", "is", null).is("deleted_at", null).gte("completed_at", new Date(Date.now() - 120 * 86_400_000).toISOString()).order("completed_at", { ascending: false }).limit(3000),

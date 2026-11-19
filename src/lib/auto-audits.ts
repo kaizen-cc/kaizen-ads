@@ -38,7 +38,7 @@ async function due(admin: SupabaseClient) {
   if (!dev.size) return [];
   const { data: targets } = await admin
     .from("kpi_targets")
-    .select("id, client_id, platform, owner_id, label, clients!inner(name, status, archived_at, services, services_extra, services_removed)")
+    .select("id, client_id, platform, owner_id, label, clients!inner(name, status, archived_at, services, services_extra, services_removed, strategy_only)")
     .eq("active", true)
     // TikTok too once it is set up (its audit is a checklist for TikTok Ads Manager)
     .in("platform", tiktokConfigured() ? ["meta", "google", "tiktok"] : ["meta", "google"])

@@ -155,7 +155,7 @@ export type KlaviyoRosterRow = { id: string; name: string; slug: string; account
 export async function klaviyoRoster(admin: SupabaseClient): Promise<KlaviyoRosterRow[] | null> {
   const [{ data: conns, error }, { data: clients }, { data: memos }] = await Promise.all([
     admin.from("klaviyo_connections").select("client_id, account_name, key_last4, status, last_synced_at, last_error"),
-    admin.from("clients").select("id, name, slug, services, services_extra, services_removed").is("archived_at", null).in("status", LIVE).order("name"),
+    admin.from("clients").select("id, name, slug, services, services_extra, services_removed, strategy_only").is("archived_at", null).in("status", LIVE).order("name"),
     admin.from("sync_state").select("source, last_result").like("source", "klaviyo:%"),
   ]);
   if (error) return null;
@@ -709,7 +709,7 @@ export async function syncAllKlaviyo(admin: SupabaseClient, opts: { budgetMs?: n
   if (!(await klaviyoReady(admin))) return { skipped: "Klaviyo migration not applied" };
   const deadline = Date.now() + (opts.budgetMs ?? 600_000);
   const [{ data }, { data: memos }, { data: ranked }] = await Promise.all([
-    admin.from("klaviyo_connections").select("client_id, last_synced_at, clients!inner(name, status, archived_at, services, services_extra, services_removed)").eq("status", "active"),
+    admin.from("klaviyo_connections").select("client_id, last_synced_at, clients!inner(name, status, archived_at, services, services_extra, services_removed, strategy_only)").eq("status", "active"),
     admin.from("sync_state").select("source, last_run_at, last_result").like("source", "klaviyo:%"),
     // Read apart, so the run goes on before the ranked metrics migration is applied
     admin.from("klaviyo_connections").select("client_id, conversion_metric_id, conversion_metrics").eq("status", "active"),

@@ -1,5 +1,5 @@
 import "server-only";
-import { lineOfPlatform, linesOf } from "@/lib/service-gate";
+import { SERVICE_FIELDS, doesCreative, lineOfPlatform, linesOf } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { OnboardingSheet } from "@/lib/account-sheet";
 import { AGENCY_SYSTEM, askJson, clientContext, contextBlock, getAgent } from "@/lib/ai";
@@ -81,7 +81,7 @@ export async function gatherSignals(admin: SupabaseClient): Promise<Map<string, 
     admin.from("client_rounds").select("decision, created_at, requests(client_id)").gte("created_at", since30),
     admin.from("requests").select("client_id, created_at").gte("created_at", since7).is("deleted_at", null),
     admin.from("ad_fatigue").select("client_id, ad_name, headline, severity, signals, state").in("state", ["open", "refreshing"]),
-    admin.from("clients").select("id, services, services_extra, services_removed").is("archived_at", null).in("status", LIVE),
+    admin.from("clients").select(`id, ${SERVICE_FIELDS}`).is("archived_at", null).in("status", LIVE),
   ]);
   // Paused clients get no suggestions until they're live again; and only clients that buy creative (src/lib/service-gate.ts)
   const linesBy = new Map((live ?? []).map((c) => [c.id as string, linesOf(c)]));
@@ -553,6 +553,9 @@ function workloadBlock(w: Workload, clientId: string) {
 }
 
 async function promptFor(admin: SupabaseClient, clientId: string, signals: Signal[], load?: Workload, fresh = false) {
+  // Every brief the strategist writes goes through here: never one for a client we don't do creative for
+  const { data: svc } = await admin.from("clients").select(SERVICE_FIELDS).eq("id", clientId).maybeSingle();
+  if (!doesCreative(svc as never)) throw new Error("We don't do creative for this client (Creative isn't on their services).");
   const [ctx, { sources }, decisions, w] = await Promise.all([clientContext(admin, clientId, { fresh }), getAgent("strategist"), teamDecisions(admin, clientId), load ?? workload(admin)]);
   if (!ctx) return null;
   // What's live in this client's market right now (Motion), so a brief can build on it
@@ -733,7 +736,7 @@ export type Drafted = {
 };
 export type SuggestionsState = { open: OpenSuggestion[]; running: boolean; lastRun: string | null; decided30: { approved: number; declined: number } };
 
-export const OPEN_COLS = "id, client_id, kind, signal, evidence, why, draft, version, created_at, source, batch_id, batch_label, trigger_key, deadline, urgent, mix, pace, citation, asked_by, clients(name, slug, status, archived_at)";
+export const OPEN_COLS = "id, client_id, kind, signal, evidence, why, draft, version, created_at, source, batch_id, batch_label, trigger_key, deadline, urgent, mix, pace, citation, asked_by, clients(name, slug, status, archived_at, services, services_extra, services_removed, strategy_only)";
 // Paused and archived clients are left out of what the team is asked to act on
 const liveClient = (c: unknown) => !c || isLive(c as { status?: string | null; archived_at?: string | null });
 
@@ -803,7 +806,8 @@ export async function loadSuggestions(db: SupabaseClient, allowed?: ReadonlySet<
   ]);
   const { hasRealReason } = await import("@/lib/brief-drafting-core");
   // A drafted brief is shown only with its real reason (the call, the ad, the numbers)
-  const cited = (found ?? []).filter((r) => !r.trigger_key || hasRealReason(r.citation as Drafted["citation"]));
+  // Only clients we do creative for, and a drafted brief only with its real reason (the call, the ad, the numbers)
+  const cited = (found ?? []).filter((r) => doesCreative(r.clients as never) && (!r.trigger_key || hasRealReason(r.citation as Drafted["citation"])));
   const rows = all ? cited : cited.filter((r) => fitsAnyFormat(allowed!, ((r.draft as SuggestionDraft | null)?.formats ?? []).map((f) => f.format))).slice(0, 20);
   const run = runs?.[0];
   return {

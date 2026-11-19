@@ -82,7 +82,7 @@ export async function loadWatch(db: SupabaseClient, me: { id: string; role: stri
 
 /** Execs and leads: every client where Kaizen OS and Stripe disagree on what they buy */
 export async function loadMismatches(db: SupabaseClient): Promise<{ rows: WatchMismatch[]; syncedAt: string | null }> {
-  const { data } = await db.from("clients").select("id, name, slug, services, services_extra, services_removed, billed_services, billed_synced_at, creative_package").is("archived_at", null).in("status", ["active", "onboarding"]).order("name");
+  const { data } = await db.from("clients").select("id, name, slug, services, services_extra, services_removed, strategy_only, billed_services, billed_synced_at, creative_package").is("archived_at", null).in("status", ["active", "onboarding"]).order("name");
   const rows: WatchMismatch[] = [];
   let syncedAt: string | null = null;
   for (const c of data ?? []) {

@@ -14,7 +14,7 @@ export type ClientTeam = { id: string; name: string; lines: Line[]; seats: SeatH
 /** A client's lines (what it buys, plus seats held) and who sits in each seat, primary first */
 export async function clientTeam(admin: SupabaseClient, clientId: string): Promise<ClientTeam | null> {
   const [{ data: c }, { data: rows }] = await Promise.all([
-    admin.from("clients").select("id, name, services, services_extra, services_removed").eq("id", clientId).maybeSingle(),
+    admin.from("clients").select("id, name, services, services_extra, services_removed, strategy_only").eq("id", clientId).maybeSingle(),
     admin.from("client_assignments").select("role, profile_id, is_primary, created_at, profiles(full_name, is_active)").eq("client_id", clientId),
   ]);
   if (!c) return null;

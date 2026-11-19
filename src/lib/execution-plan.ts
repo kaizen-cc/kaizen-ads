@@ -111,7 +111,7 @@ const fromRow = (r: Record<string, unknown> | null, signer: string | null = null
 /** What the plan needs before it can be written: the client's approval and a go-to-market strategy per platform */
 export async function planGate(admin: SupabaseClient, clientId: string) {
   const [{ data: c }, { data: deck }, { data: meta }, { data: google }] = await Promise.all([
-    admin.from("clients").select("services, services_extra, services_removed").eq("id", clientId).maybeSingle(),
+    admin.from("clients").select("services, services_extra, services_removed, strategy_only").eq("id", clientId).maybeSingle(),
     admin.from("client_presentations").select("status, approved_at").eq("client_id", clientId).maybeSingle(),
     admin.from("client_gtm_strategies").select("status").eq("client_id", clientId).maybeSingle(),
     admin.from("client_google_gtm").select("status").eq("client_id", clientId).maybeSingle(),

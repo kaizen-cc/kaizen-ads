@@ -62,7 +62,7 @@ const names = new Map<string, string>();
 export async function channelMaySeeClient(ctx: Pick<ToolCtx, "me" | "admin">, clientId: string): Promise<boolean> {
   if (!isChannelOnly(ctx.me.role)) return true;
   const [{ data: c }, { data: seats }] = await Promise.all([
-    ctx.admin.from("clients").select("archived_at, services, services_extra, services_removed").eq("id", clientId).maybeSingle(),
+    ctx.admin.from("clients").select("archived_at, services, services_extra, services_removed, strategy_only").eq("id", clientId).maybeSingle(),
     ctx.admin.from("client_assignments").select("profile_id").eq("client_id", clientId),
   ]);
   if (!c) return false;
@@ -684,7 +684,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
         if (!d) {
           const [link, { data: svc }] = await Promise.all([
             socialLink(ctx.admin, c.id).catch(() => undefined),
-            ctx.admin.from("clients").select("services, services_extra, services_removed").eq("id", c.id).maybeSingle(),
+            ctx.admin.from("clients").select("services, services_extra, services_removed, strategy_only").eq("id", c.id).maybeSingle(),
           ]);
           const buys = svc ? servicesOf(svc).includes("social-media") : true;
           return { client: c.name, linked: Boolean(link?.pageId || link?.igId), connected: false, note: socialMissingNote(link?.state ?? null, link?.error ?? null, buys) };

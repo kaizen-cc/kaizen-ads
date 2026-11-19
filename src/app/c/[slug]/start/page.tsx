@@ -17,7 +17,7 @@ export default async function StartPage({ params }: { params: Promise<{ slug: st
   const team = viewer.kind === "staff";
   if (!adminConfigured() || (!team && !viewer.brands.some((b) => b.slug === slug))) notFound();
   const admin = createAdminClient();
-  const { data: client } = await admin.from("clients").select("id, name, slug, kaizen_id, portal_live, slack_channel_id, services, services_extra, services_removed").eq("slug", slug).maybeSingle();
+  const { data: client } = await admin.from("clients").select("id, name, slug, kaizen_id, portal_live, slack_channel_id, services, services_extra, services_removed, strategy_only").eq("slug", slug).maybeSingle();
   if (!client || (!team && !client.portal_live)) notFound();
   if (team) {
     // The team's own access rules decide whether they may open it

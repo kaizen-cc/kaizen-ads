@@ -149,7 +149,7 @@ export async function checkSocialSprint(admin: SupabaseClient, sprintId: string)
 
 /** The scheduled step: every social sprint whose next check is due */
 export async function checkDueSocialSprints(admin: SupabaseClient, limit = 12) {
-  const { data, error } = await admin.from("social_sprints").select("id, clients(services, services_extra, services_removed)").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(limit);
+  const { data, error } = await admin.from("social_sprints").select("id, clients(services, services_extra, services_removed, strategy_only)").eq("status", "active").lte("next_check_at", new Date().toISOString()).order("next_check_at").limit(limit);
   if (error) return { skipped: "Social ops migration not applied" };
   let checked = 0;
   for (const s of data ?? []) {

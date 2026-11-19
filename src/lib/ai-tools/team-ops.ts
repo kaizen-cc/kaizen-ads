@@ -295,7 +295,7 @@ const onboardingResearch: AiTool = {
     const db = await createClient();
     const admin = createAdminClient();
     const [{ data: rec }, { data: bible }, { data: intake }, { data: sheet }, { data: matches }] = await Promise.all([
-      admin.from("clients").select("industry, industry_detail, vertical_id, services, services_extra, services_removed, website").eq("id", c.id).maybeSingle(),
+      admin.from("clients").select("industry, industry_detail, vertical_id, services, services_extra, services_removed, strategy_only, website").eq("id", c.id).maybeSingle(),
       admin.from("client_brand_bibles").select("read_this_first, markdown, status").eq("client_id", c.id).maybeSingle(),
       db.from("client_intakes").select("answers, summary, received_at").eq("client_id", c.id).order("received_at", { ascending: false }).limit(1).maybeSingle(),
       admin.from("client_onboarding_sheets").select("url, name, modified_at, bible").eq("client_id", c.id).maybeSingle(),
@@ -396,7 +396,7 @@ const metaTroubleshoot: AiTool = {
     const c = got.client;
     const admin = createAdminClient();
     const [{ data: rec }, { data: targets }, guideMod, access, social, bmMod] = await Promise.all([
-      admin.from("clients").select("meta_ad_account_id, services, services_extra, services_removed").eq("id", c.id).maybeSingle(),
+      admin.from("clients").select("meta_ad_account_id, services, services_extra, services_removed, strategy_only").eq("id", c.id).maybeSingle(),
       admin.from("kpi_targets").select("ad_account_id, label").eq("client_id", c.id).eq("platform", "meta").eq("active", true),
       import("@/lib/onboarding-guide"),
       import("@/lib/onboarding-guide").then((m) => m.accessSetting(admin)),

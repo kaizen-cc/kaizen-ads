@@ -131,7 +131,7 @@ export async function opportunityFor(admin: SupabaseClient, r: { id: string; cli
     if (meta?.length) return null;
   }
   const [{ data: c }, { data: platforms }, { data: past }] = await Promise.all([
-    admin.from("clients").select("industry, services, services_extra, services_removed, creative_package, meta_ad_account_id").eq("id", r.client_id).maybeSingle(),
+    admin.from("clients").select("industry, services, services_extra, services_removed, strategy_only, creative_package, meta_ad_account_id").eq("id", r.client_id).maybeSingle(),
     admin.from("kpi_targets").select("platform, conversion").eq("client_id", r.client_id).eq("active", true),
     admin.from("reports").select("id, created_at, metrics->opportunity").eq("client_id", r.client_id).neq("id", r.id).gte("created_at", new Date(Date.now() - 60 * DAY).toISOString()).neq("status", "skipped"),
   ]);

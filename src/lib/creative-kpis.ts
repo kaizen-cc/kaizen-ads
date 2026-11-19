@@ -9,6 +9,7 @@ import { loadErrors, type ErrorItem } from "@/lib/creative-errors";
 import { loadWatchList, type WatchRow } from "@/lib/fatigue";
 import { bizDays } from "@/lib/production";
 import { cleanTitle } from "@/lib/task-title";
+import { SERVICE_FIELDS, doesCreative } from "@/lib/service-gate";
 
 // The creative team's KPIs for execs and leads, on the Board's KPIs tab: speed, quality and volume against the period
 // before, each maker's card, every creative-package client's allotment this billing cycle, how the new creative is
@@ -143,10 +144,11 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
   const d90 = new Date(Date.now() - 90 * 86_400_000).toISOString();
   const d45 = new Date(Date.now() - 45 * 86_400_000).toISOString();
 
-  const [now, prev, { data: clients }, { data: tickets }, { data: people }, gaps, { data: ledger }, { data: asanaRows }, { data: dismissals }, errors, { data: winnersRaw }, watch] = await Promise.all([
+  const [now, prev, { data: clientsAll }, { data: ticketsAll }, { data: people }, gaps, { data: ledger }, { data: asanaAll }, { data: dismissals }, errors, { data: winnersRaw }, watch] = await Promise.all([
     loadProduction(db, days).catch(() => null),
     loadProduction(db, days, days).catch(() => null),
-    db.from("clients").select("id, name, slug, creative_package, status").is("archived_at", null).in("status", ["active", "onboarding"]),
+    // Only clients we do creative for (src/lib/service-gate.ts)
+    db.from("clients").select(`id, name, slug, creative_package, status, ${SERVICE_FIELDS}`).is("archived_at", null).in("status", ["active", "onboarding"]),
     db.from("board_requests").select("id, number, title, client_name, client_slug, client_id, stage, assignee_id, assignee_name, creative_id, minutes_over, stage_due_at, created_at, launched_at, internal_rounds, client_rounds, updated_at").is("deleted_at", null).gte("updated_at", d90).limit(2000),
     db.from("profiles").select("id, full_name, role").eq("is_active", true),
     packageGaps(db).catch(() => new Map()),
@@ -164,6 +166,11 @@ export async function loadCreativeKpis(db: SupabaseClient, period: Period): Prom
   ]);
   const winTickets = [...new Set((allWins ?? []).map((w) => (w.detail as { ticket?: number } | null)?.ticket).filter((n): n is number => typeof n === "number"))];
   const { data: winTicketRows } = winTickets.length ? await db.from("board_requests").select("number, creative_id, assignee_id, title").in("number", winTickets) : { data: [] };
+  // The team's numbers count only clients we do creative for (src/lib/service-gate.ts)
+  const clients = (clientsAll ?? []).filter((c) => doesCreative(c as never));
+  const doing = new Set(clients.map((c) => c.id as string));
+  const tickets = (ticketsAll ?? []).filter((t) => !t.client_id || doing.has(t.client_id as string));
+  const asanaRows = (asanaAll ?? []).filter((t) => !t.client_id || doing.has(t.client_id as string));
   const clientById = new Map((clients ?? []).map((c) => [c.id as string, c]));
   const team_ = (people ?? []) as { id: string; full_name: string; role: string }[];
   const personFor = (name: string | null) => (name ? team_.find((p) => p.full_name.toLowerCase().startsWith(name.toLowerCase()) || name.toLowerCase().startsWith(p.full_name.toLowerCase())) : undefined);

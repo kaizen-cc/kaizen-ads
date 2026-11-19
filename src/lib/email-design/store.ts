@@ -108,7 +108,7 @@ export async function mayOpenDesign(me: Staff, meta: DesignMeta, db: SupabaseCli
   if (!data) return false;
   if (!isChannelOnly(me.role)) return true;
   const [{ data: c }, { data: seats }] = await Promise.all([
-    admin.from("clients").select("archived_at, services, services_extra, services_removed").eq("id", meta.clientId).maybeSingle(),
+    admin.from("clients").select("archived_at, services, services_extra, services_removed, strategy_only").eq("id", meta.clientId).maybeSingle(),
     admin.from("client_assignments").select("profile_id").eq("client_id", meta.clientId),
   ]);
   if (!c) return false;

@@ -24,7 +24,7 @@ type Result = { created: number; skipped: { client: string; reason: string }[]; 
 export async function queueChannelReports(admin: SupabaseClient, kind: ChannelKind, today: string, opts: { onlyClient?: string; lines?: ChannelLine[] } = {}): Promise<Result> {
   const out: Result = { created: 0, skipped: [] };
   const p = channelPeriods(kind, today).main;
-  const { data: clients } = await admin.from("clients").select("id, name, services, services_extra, services_removed").is("archived_at", null).eq("internal", false).in("status", [...LIVE]);
+  const { data: clients } = await admin.from("clients").select("id, name, services, services_extra, services_removed, strategy_only").is("archived_at", null).eq("internal", false).in("status", [...LIVE]);
   const all = ((clients ?? []) as { id: string; name: string; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null }[]).filter((c) => !opts.onlyClient || c.id === opts.onlyClient);
   for (const line of opts.lines ?? (["email", "social"] as ChannelLine[])) {
     // Every connected client that buys the line gets both, like the ads reports (weekly Mondays, monthly the first Monday)
@@ -73,7 +73,7 @@ export async function draftChannelQueued(admin: SupabaseClient, budgetMs = 240_0
   while (Date.now() < until - 120_000) {
     // Queued ones, and any stuck mid-draft for 20 minutes (a timeout)
     const stuck = new Date(Date.now() - 20 * 60_000).toISOString();
-    let q = admin.from("reports").select("id, status, updated_at, client_id, platform, period_start, clients(services, services_extra, services_removed)").in("platform", ["klaviyo", "social"]).or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`).order("kind", { ascending: true }).order("created_at").limit(3);
+    let q = admin.from("reports").select("id, status, updated_at, client_id, platform, period_start, clients(services, services_extra, services_removed, strategy_only)").in("platform", ["klaviyo", "social"]).or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`).order("kind", { ascending: true }).order("created_at").limit(3);
     if (held.size) q = q.not("id", "in", `(${[...held].join(",")})`);
     const { data } = await q;
     if (!data?.length) break;
@@ -110,7 +110,7 @@ export async function draftChannelQueued(admin: SupabaseClient, budgetMs = 240_0
 
 /** A nudge to the owner of a channel report nobody has sent, on the ads reports' schedule (Monday afternoon, Tuesday morning): a monthly by the 5th */
 export async function remindChannelReports(admin: SupabaseClient, today: string) {
-  const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, clients(name, services, services_extra, services_removed)").in("platform", ["klaviyo", "social"]).in("status", ["draft", "failed"]).not("owner_id", "is", null).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
+  const { data } = await admin.from("reports").select("id, kind, platform, owner_id, client_id, period_start, clients(name, services, services_extra, services_removed, strategy_only)").in("platform", ["klaviyo", "social"]).in("status", ["draft", "failed"]).not("owner_id", "is", null).gte("period_start", new Date(Date.now() - 40 * 86_400_000).toISOString().slice(0, 10));
   // Only the lines the client buys (src/lib/service-gate.ts)
   const rows = (data ?? []).filter((r) => onService({ platform: r.platform === "klaviyo" ? "email" : "social", clients: r.clients ?? null })) as unknown as { id: string; kind: string; owner_id: string; client_id: string; clients: { name: string } }[];
   const day = Number(today.slice(8, 10));

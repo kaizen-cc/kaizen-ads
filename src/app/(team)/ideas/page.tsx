@@ -142,7 +142,7 @@ async function GoogleIdeas({ mode }: { mode: "fame" | "live" }) {
   const canDeploy = me.isExec || me.role === "google_buyer" || me.role === "head_of_google";
   const [items, { data: mine }] = await Promise.all([
     loadGoogleIdeas(db, mode),
-    canDeploy ? (await createClient()).from("clients").select("id, name, slug, services, services_extra, services_removed, verticals(name)").is("archived_at", null).in("status", LIVE).order("name") : Promise.resolve({ data: [] }),
+    canDeploy ? (await createClient()).from("clients").select("id, name, slug, services, services_extra, services_removed, strategy_only, verticals(name)").is("archived_at", null).in("status", LIVE).order("name") : Promise.resolve({ data: [] }),
   ]);
   const { servicesOf } = await import("@/lib/services");
   const clients = (mine ?? [])
@@ -188,7 +188,7 @@ async function GoogleMarket() {
   // Keyword research: any client the person can see, Google clients first; the Google team, execs and leads add keywords
   const [industries, { data: mine }] = await Promise.all([
     loadGoogleMarket(db),
-    (await createClient()).from("clients").select("id, name, services, services_extra, services_removed, verticals(name)").is("archived_at", null).in("status", LIVE).order("name"),
+    (await createClient()).from("clients").select("id, name, services, services_extra, services_removed, strategy_only, verticals(name)").is("archived_at", null).in("status", LIVE).order("name"),
   ]);
   const { servicesOf } = await import("@/lib/services");
   const clients = (mine ?? []).map((c) => ({ id: c.id as string, name: c.name as string, google: servicesOf(c).includes("google-ads"), vertical: (c.verticals as unknown as { name: string } | null)?.name ?? null }));

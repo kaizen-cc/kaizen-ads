@@ -17,7 +17,7 @@ type ClientRow = { id: string; name: string; slug: string; status: string; servi
 
 const toClient = (c: ClientRow): ChannelClient => ({ id: c.id, name: c.name, slug: c.slug, services: servicesOf(c), hasChannel: Boolean(c.slack_channel_id), whiteLabel: String(c.client_type ?? "").toLowerCase().replace(/[\s_-]/g, "") === "whitelabel" });
 
-const CLIENT_FIELDS = "id, name, slug, status, services, services_extra, services_removed, slack_channel_id, client_type";
+const CLIENT_FIELDS = "id, name, slug, status, services, services_extra, services_removed, strategy_only, slack_channel_id, client_type";
 
 /** The seats this person holds, by client */
 async function seatsOf(admin: SupabaseClient, profileId: string) {

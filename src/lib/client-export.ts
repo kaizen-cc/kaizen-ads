@@ -12,7 +12,7 @@ const day = () => new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York
 export async function makeExport(admin: SupabaseClient, clientId: string, reason: "offboarding" | "on demand", by: string | null) {
   const { clientContext, contextBlock, askJson } = await import("@/lib/ai");
   const [{ data: c }, { data: b }, ctx, { data: answered }, { issuesBlock }] = await Promise.all([
-    admin.from("clients").select("name, website, industry, services, services_extra, services_removed, created_at, archive_reason").eq("id", clientId).single(),
+    admin.from("clients").select("name, website, industry, services, services_extra, services_removed, strategy_only, created_at, archive_reason").eq("id", clientId).single(),
     admin.from("client_brand_bibles").select("markdown, version, learnings, generated_at").eq("client_id", clientId).maybeSingle(),
     clientContext(admin, clientId),
     admin.from("bible_questions").select("question, answer, answered_by, answered_via, answered_at").eq("client_id", clientId).eq("stage", "answered").not("answer", "is", null).order("answered_at"),

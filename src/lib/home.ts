@@ -106,7 +106,7 @@ export async function loadHome(db: SupabaseClient, me: Staff) {
     db.from("request_events").select("request_id, kind, to_stage, data, actor_id, created_at").gte("created_at", since30).in("kind", ["review", "stage"]).limit(5000),
     db.from("copy_sets").select("request_id, approved_by, approved_at").gte("approved_at", since7),
     // Paused and archived clients aren't owed creative, so they're never flagged for it
-    db.from("clients").select("id, services, services_extra, services_removed").is("archived_at", null).in("status", LIVE),
+    db.from("clients").select("id, services, services_extra, services_removed, strategy_only").is("archived_at", null).in("status", LIVE),
   ]);
   // And only clients that buy creative are owed an allotment (src/lib/service-gate.ts)
   const liveIds = new Set((liveRows ?? []).filter((c) => hasLine(c, "creative")).map((c) => c.id as string));
@@ -296,7 +296,7 @@ export const workedOn = (worked: Map<string, { at: string; who: string | null }>
  */
 export async function loadKpiPulse(db: SupabaseClient, opts?: string | { owner?: string; platform?: "meta" | "google" }): Promise<KpiPulse | null> {
   const { owner, platform } = typeof opts === "string" ? { owner: opts, platform: undefined } : (opts ?? {});
-  let q = db.from("kpi_targets").select("id, client_id, label, platform, ad_account_id, owner_id, target, clients!inner(name, slug, archived_at, status, services, services_extra, services_removed)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
+  let q = db.from("kpi_targets").select("id, client_id, label, platform, ad_account_id, owner_id, target, clients!inner(name, slug, archived_at, status, services, services_extra, services_removed, strategy_only)").eq("active", true).is("clients.archived_at", null).in("clients.status", LIVE);
   // Someone's accounts: the ones they own, and the ones they're a secondary buyer on (that client, that platform)
   const co = owner ? await secondarySeatKeys(db, owner) : new Set<string>();
   const coClients = [...new Set([...co].map((k) => k.split(":")[0]))];

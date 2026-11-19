@@ -38,7 +38,7 @@ export async function loadGuide(admin: SupabaseClient, clientId: string): Promis
  * where their orders, bookings or leads live (their industry and sub-vertical)
  */
 export async function guideHas(admin: SupabaseClient, clientId: string): Promise<GuideHas> {
-  const { data: c } = await admin.from("clients").select("industry, industry_detail, vertical_id, services, services_extra, services_removed").eq("id", clientId).single();
+  const { data: c } = await admin.from("clients").select("industry, industry_detail, vertical_id, services, services_extra, services_removed, strategy_only").eq("id", clientId).single();
   const industry = (c?.industry as string | null) ?? null;
   const { data: v } = c?.vertical_id ? await admin.from("verticals").select("name").eq("id", c.vertical_id).maybeSingle() : { data: null };
   const ecommerce = industry ? industry === "ecommerce" : null;
@@ -148,7 +148,7 @@ export async function welcomeClient(admin: SupabaseClient, clientId: string) {
   if (o?.welcomed_at) return "already";
   // Not to real clients until the portal is launched to them (the sandbox always)
   if (!(await (await import("@/lib/client-outreach")).autoOutreach(admin, clientId))) return "held";
-  const { data: c } = await admin.from("clients").select("name, slug, portal_live, slack_channel_id, services, services_extra, services_removed").eq("id", clientId).single();
+  const { data: c } = await admin.from("clients").select("name, slug, portal_live, slack_channel_id, services, services_extra, services_removed, strategy_only").eq("id", clientId).single();
   if (!c) return "missing";
   // Not until Kaizen's Business Manager ID is set: the Meta step would have nothing to give them
   if (!(await accessSetting(admin)).bmId) return "no business id";
@@ -184,7 +184,7 @@ export async function welcomeClient(admin: SupabaseClient, clientId: string) {
  */
 export async function afterOnboardingCall(admin: SupabaseClient, clientId: string, call: { id: string; title: string; at: string; summary: string }) {
   const { inNewFlow } = await import("@/lib/presentation-types");
-  const [{ data: c }, { data: o }] = await Promise.all([admin.from("clients").select("created_at, reonboarded_at, status, services, services_extra, services_removed").eq("id", clientId).single(), admin.from("client_onboarding").select("call_checked_at").eq("client_id", clientId).maybeSingle()]);
+  const [{ data: c }, { data: o }] = await Promise.all([admin.from("clients").select("created_at, reonboarded_at, status, services, services_extra, services_removed, strategy_only").eq("id", clientId).single(), admin.from("client_onboarding").select("call_checked_at").eq("client_id", clientId).maybeSingle()]);
   if (!c || c.status !== "onboarding" || !inNewFlow(c) || o?.call_checked_at) return;
   const start = (c.reonboarded_at ?? c.created_at) as string;
   if (call.at < start) return;

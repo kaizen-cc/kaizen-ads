@@ -145,3 +145,30 @@ describe("entry points use the gate", () => {
     vi.doUnmock("@/lib/audit");
   });
 });
+
+describe("creative only for clients we do creative for (owner, Nov 19 2026)", () => {
+  it("is on when Creative is on their services or added on the client page", async () => {
+    const { doesCreative } = await import("@/lib/service-gate");
+    expect(doesCreative({ services: ["creative", "facebook-ads"] })).toBe(true);
+    expect(doesCreative({ services: ["facebook-ads"], services_extra: ["creative"] })).toBe(true);
+  });
+  it("is off when it was never bought, was removed, or is strategy only", async () => {
+    const { doesCreative, hasLine, linesOf } = await import("@/lib/service-gate");
+    expect(doesCreative({ services: ["facebook-ads"] })).toBe(false);
+    expect(doesCreative({ services: ["creative"], services_removed: ["creative"] })).toBe(false);
+    expect(doesCreative({ services: ["creative"], strategy_only: ["creative"] })).toBe(false);
+    expect(doesCreative(null)).toBe(false);
+    // The same rule wherever the lines are read
+    expect(linesOf({ services: ["creative", "facebook-ads"], strategy_only: ["creative"] }).has("creative")).toBe(false);
+    expect(linesOf({ services: ["creative", "facebook-ads"], strategy_only: ["creative"] }).has("meta")).toBe(true);
+    expect(hasLine({ services: ["creative"], strategy_only: ["creative"] }, "creative")).toBe(false);
+  });
+  it("keeps other lines' strategy-only work (an email strategist still works a strategy-only email client)", async () => {
+    const { hasLine } = await import("@/lib/service-gate");
+    expect(hasLine({ services: ["email-marketing"], strategy_only: ["email-marketing"] }, "email")).toBe(true);
+  });
+  it("every gated select reads strategy_only", async () => {
+    const { SERVICE_FIELDS } = await import("@/lib/service-gate");
+    expect(SERVICE_FIELDS).toContain("strategy_only");
+  });
+});

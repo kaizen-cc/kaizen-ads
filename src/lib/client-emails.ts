@@ -155,7 +155,7 @@ type Composer = (first: string | null) => { subject: string; html: string; text:
 
 /** The email for a stage, ready to write for each contact; null with the reason when it can't go yet */
 export async function composeClientEmail(admin: SupabaseClient, clientId: string, kind: ClientEmailKind, reminder: boolean): Promise<{ make: Composer } | { error: string }> {
-  const { data: c } = await admin.from("clients").select("name, slug, kaizen_id, portal_live, services, services_extra, services_removed").eq("id", clientId).single();
+  const { data: c } = await admin.from("clients").select("name, slug, kaizen_id, portal_live, services, services_extra, services_removed, strategy_only").eq("id", clientId).single();
   if (!c) return { error: "Client not found." };
   const url = intakeLink({ slug: c.slug as string, portal_live: c.portal_live as boolean | null });
   const brand = c.name as string;

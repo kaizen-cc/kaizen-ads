@@ -57,7 +57,7 @@ const describe = (q: IntakeQuestion) => `${q.id} [${q.section}${q.required ? ", 
 export async function prepareIntakeForm(admin: SupabaseClient, clientId: string, force = false): Promise<IntakeFormRow> {
   const existing = await loadIntakeForm(admin, clientId);
   if (existing?.form && !force && existing.status !== "failed") return existing;
-  const { data: c } = await admin.from("clients").select("name, industry, industry_detail, services, services_extra, services_removed").eq("id", clientId).single();
+  const { data: c } = await admin.from("clients").select("name, industry, industry_detail, services, services_extra, services_removed, strategy_only").eq("id", clientId).single();
   if (!c) throw new Error("Client not found");
   const services = servicesOf(c);
   const startModel = modelFor(c.industry as string | null);
@@ -193,7 +193,7 @@ const IN_KAIZEN_ADS = new Set(["facebook-ads", "tiktok-ads", "creative"]);
 
 async function tellTeamIntake(admin: SupabaseClient, clientId: string) {
   const [{ data: c }, row] = await Promise.all([
-    admin.from("clients").select("name, slug, kaizen_id, asana_project_gid, internal_slack_channel_id, services, services_extra, services_removed").eq("id", clientId).single(),
+    admin.from("clients").select("name, slug, kaizen_id, asana_project_gid, internal_slack_channel_id, services, services_extra, services_removed, strategy_only").eq("id", clientId).single(),
     loadIntakeForm(admin, clientId),
   ]);
   if (!c || !row?.form) return;

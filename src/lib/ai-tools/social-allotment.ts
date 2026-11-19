@@ -67,7 +67,7 @@ const socialAllotment: AiTool = {
       };
     }
     const all = await socialAllotments(db);
-    const { data: rows } = await db.from("clients").select("id, name, services, services_extra, services_removed").in("id", Object.keys(all));
+    const { data: rows } = await db.from("clients").select("id, name, services, services_extra, services_removed, strategy_only").in("id", Object.keys(all));
     const groups: Record<string, { client: string; line: string }[]> = { over: [], behind: [], pace: [], none: [] };
     for (const r of rows ?? []) {
       if (!(servicesOf(r) as string[]).includes("social-media")) continue;
@@ -172,7 +172,7 @@ const boostedPostsTool: AiTool = {
       const list = (await boostedPosts(db, [c.id]))[c.id] ?? [];
       return { ok: true, client: c.name, summary: boostLine(list), posts: list.map(out), sheet: `/kpis?p=social&open=${c.id}` };
     }
-    const [all, { data: rows }] = await Promise.all([boostedPosts(db), db.from("clients").select("id, name, services, services_extra, services_removed").is("archived_at", null)]);
+    const [all, { data: rows }] = await Promise.all([boostedPosts(db), db.from("clients").select("id, name, services, services_extra, services_removed, strategy_only").is("archived_at", null)]);
     const social = (rows ?? []).filter((r) => (servicesOf(r) as string[]).includes("social-media"));
     return {
       ok: true,

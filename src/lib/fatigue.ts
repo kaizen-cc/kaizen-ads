@@ -131,7 +131,7 @@ export function detect(clientId: string, rows: { date: string; ad_id: string; ad
  * and ads no longer flagged are marked recovered.
  */
 export async function runFatigue(admin: SupabaseClient, clientIds?: string[]) {
-  let q = admin.from("clients").select("id, services, services_extra, services_removed").eq("creative_package", true).is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null);
+  let q = admin.from("clients").select("id, services, services_extra, services_removed, strategy_only").eq("creative_package", true).is("archived_at", null).in("status", LIVE).not("meta_ad_account_id", "is", null);
   if (clientIds?.length) q = q.in("id", clientIds);
   const { data: clients } = await q;
   const from = ymd(Date.now() - 29 * DAY);
@@ -257,7 +257,7 @@ export async function loadWatchList(db: SupabaseClient, opts: { clientId?: strin
   }
   let q = db
     .from("ad_fatigue")
-    .select("client_id, ad_id, ad_name, headline, thumbnail, severity, state, signals, series, first_flagged_at, request_numbers, clients!inner(name, slug, status, services, services_extra, services_removed)")
+    .select("client_id, ad_id, ad_name, headline, thumbnail, severity, state, signals, series, first_flagged_at, request_numbers, clients!inner(name, slug, status, services, services_extra, services_removed, strategy_only)")
     .in("state", ["open", "refreshing"])
     .is("clients.archived_at", null)
     .in("clients.status", LIVE);

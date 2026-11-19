@@ -46,7 +46,7 @@ export default async function Clients() {
   const req = supabase
     .from("clients")
     .select(
-      "id, name, slug, status, kaizen_id, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, services_removed, creative_packages(label), brand_color:report_brand->>color, brand_light:report_brand->>light, brand_checked:report_brand->>checkedAt, brand_logo:report_brand->>source, client_assignments(role, profile_id, is_primary, created_at, profiles(full_name)), contact_clients(contact_id, removed_at)",
+      "id, name, slug, status, kaizen_id, client_type, creative_package, creative_package_until, meta_ad_account_id, slack_channel_id, internal_slack_channel_id, drive_folder_id, services, services_extra, services_removed, strategy_only, creative_packages(label), brand_color:report_brand->>color, brand_light:report_brand->>light, brand_checked:report_brand->>checkedAt, brand_logo:report_brand->>source, client_assignments(role, profile_id, is_primary, created_at, profiles(full_name)), contact_clients(contact_id, removed_at)",
     )
     .neq("status", "offboarded")
     .order("name");
