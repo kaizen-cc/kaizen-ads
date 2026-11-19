@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { HoverCard } from "@/components/hover-card";
 import { ChannelSpark } from "@/components/channel-spark";
 import { ChannelStatusPill, ConnectCta, Gauge, SupportChips, TONE, mainCaption, mainText, targetText } from "@/components/channel-parts";
 import { BAND_TONE, WeighingDown } from "@/components/email-score-parts";
@@ -254,6 +255,8 @@ export type DeskCardData = {
   gauge?: { fill: number; mark?: number | null } | null;
   detail: { label: string; value: string }[];
   links: { href: string; label: string }[];
+  /** "What to know": the few critical things about the account, worst first, shown on hover over the card's name */
+  brief?: { tone: "bad" | "warn" | "ok"; text: string }[] | null;
 };
 
 const CARD_TONE = {
@@ -263,6 +266,25 @@ const CARD_TONE = {
   quiet: { bar: "bg-faint", text: "text-muted", pill: "bg-ink/[0.06] text-muted", css: "var(--color-muted)" },
 } as const;
 const clamp = (x: number) => Math.max(0, Math.min(1, x));
+
+const BRIEF_DOT = { bad: "bg-bad", warn: "bg-warn", ok: "bg-ok" } as const;
+
+/** What to know about an account, on hover: the critical things first, one line each */
+function BriefCard({ name, items }: { name: string; items: NonNullable<DeskCardData["brief"]> }) {
+  return (
+    <div className="grid gap-2.5 p-1">
+      <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-faint">What to know · {name}</p>
+      <ol className="grid gap-2">
+        {items.map((b, i) => (
+          <li key={i} className="flex gap-2.5 text-[13px] leading-snug">
+            <span aria-hidden className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${BRIEF_DOT[b.tone]}`} />
+            <span className={b.tone === "ok" ? "text-muted" : "text-fg"}>{b.text}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
 
 /** One client or ad account, small, the same look as the email and social cards: opens for the detail */
 export function DeskCard({ c }: { c: DeskCardData }) {
@@ -274,15 +296,26 @@ export function DeskCard({ c }: { c: DeskCardData }) {
       <span aria-hidden className="pointer-events-none absolute inset-0 -z-10" style={{ backgroundImage: `radial-gradient(120% 80% at 0% 0%, color-mix(in srgb, ${c.brand.color ?? t.css} 10%, transparent), transparent 60%)` }} />
       <details className="group/card">
         <summary className="grid cursor-pointer list-none gap-2.5 p-3.5 [&::-webkit-details-marker]:hidden">
-          <span className="flex min-w-0 items-center gap-2.5">
-            <BrandChip name={c.name} color={c.brand.color} logo={c.brand.logo} light={c.brand.light} size="sm" />
-            <span className="grid min-w-0 flex-1">
-              <span className="truncate font-heading text-[15px] leading-snug">{c.name}</span>
-              <span className={`truncate text-[11.5px] ${c.risk.reasons.length ? "text-muted" : "text-faint"}`} title={why}>
-                {why}
+          {(() => {
+            const head = (
+              <span className="flex min-w-0 items-center gap-2.5">
+                <BrandChip name={c.name} color={c.brand.color} logo={c.brand.logo} light={c.brand.light} size="sm" />
+                <span className="grid min-w-0 flex-1">
+                  <span className="truncate font-heading text-[15px] leading-snug">{c.name}</span>
+                  <span className={`truncate text-[11.5px] ${c.risk.reasons.length ? "text-muted" : "text-faint"}`} title={c.brief?.length ? undefined : why}>
+                    {why}
+                  </span>
+                </span>
               </span>
-            </span>
-          </span>
+            );
+            return c.brief?.length ? (
+              <HoverCard width={400} className="flex min-w-0" content={<BriefCard name={c.name} items={c.brief} />}>
+                {head}
+              </HoverCard>
+            ) : (
+              head
+            );
+          })()}
           <span className="flex items-end justify-between gap-2">
             <span className="flex min-w-0 items-baseline gap-1.5">
               <span className={`tabular font-display text-[24px] leading-none tracking-tight ${t.text}`}>{c.big}</span>

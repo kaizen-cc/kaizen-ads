@@ -12,6 +12,7 @@ import { watchTab } from "./watch-panel";
 import { AllotmentGapsPanel } from "./allotment-gaps";
 import { nextBucket } from "@/lib/creative-allotments";
 import { loadAllotmentDesk } from "@/lib/creative-allotments-load";
+import { accountBrief, type BriefInput } from "@/lib/account-brief";
 
 // The Overview's tabs for the ads lines (Meta, Google) and the creative line, the email and social Overview's pattern:
 //   Clients           the person's own accounts first, then the rest of their team's in a contained scrolling area,
@@ -29,7 +30,7 @@ const LOOK_AT = 30;
 const TONE_OF: Record<AdsDeskRow["status"], DeskCardData["tone"]> = { off: "bad", close: "warn", good: "ok", excellent: "ok", idle: "quiet", setup: "quiet", unset: "quiet" };
 
 /** An ad account as a card: the KPI against target, what's hurting, the ways in */
-function adsCard(r: AdsDeskRow & { risk: ReturnType<typeof adsRisk> }, brand: DeskCardData["brand"]): DeskCardData {
+function adsCard(r: AdsDeskRow & { risk: ReturnType<typeof adsRisk> }, brand: DeskCardData["brand"], opts: { head: boolean; brief: DeskCardData["brief"] }): DeskCardData {
   const has = r.value != null && r.target != null && r.target > 0;
   // Toward target: ROAS higher is better, a cost lower is better
   const fill = has ? (r.roas ? r.value! / r.target! : r.target! / Math.max(r.value!, 0.0001)) : null;
@@ -52,9 +53,11 @@ function adsCard(r: AdsDeskRow & { risk: ReturnType<typeof adsRisk> }, brand: De
     links: [
       { href: `/clients/${r.slug}?service=${r.platform}`, label: "Client" },
       { href: `/kpis?target=${encodeURIComponent(r.targetId)}`, label: "KPIs" },
-      ...(r.platform === "meta" ? [{ href: `/board?client=${encodeURIComponent(r.slug)}`, label: "Board" }] : []),
+      // The heads don't work tickets: no Board for them (a buyer keeps it)
+      ...(r.platform === "meta" && !opts.head ? [{ href: `/board?client=${encodeURIComponent(r.slug)}`, label: "Board" }] : []),
       { href: `/reports?client=${encodeURIComponent(r.slug)}`, label: "Reports" },
     ],
+    brief: opts.brief,
   };
 }
 
@@ -113,7 +116,41 @@ export async function adsDesk(db: SupabaseClient, me: Me, platform: "meta" | "go
       return { ...r, risk: adsRisk({ status: r.status, deviation: r.deviation, pacing: r.pacing, hasAccount: r.hasAccount, owed: o?.n, escalated: o?.escalated }) };
     });
   const { mine, team } = mineFirst(live);
-  const card = (r: (typeof live)[number]) => adsCard(r, brandOf(brands, r.clientId));
+  // What to know on hover: the client's open direction changes on this line and overdue promises, with the rest
+  const ids = [...new Set(live.map((r) => r.clientId))];
+  const [{ data: changes }, { data: promises }] = ids.length
+    ? await Promise.all([
+        db.from("client_direction_changes").select("client_id, summary, lines, created_at, direction_change_tasks(action)").eq("status", "open").eq("scope", "direction").in("client_id", ids).order("created_at", { ascending: false }).limit(300),
+        db.from("message_promises").select("client_id").eq("status", "overdue").in("client_id", ids).limit(500),
+      ])
+    : [{ data: [] }, { data: [] }];
+  const changesOf = new Map<string, NonNullable<BriefInput["changes"]>>();
+  for (const c of (changes ?? []) as { client_id: string; summary: string; lines: string[] | null; direction_change_tasks: { action: string }[] | null }[]) {
+    if (c.lines?.length && !c.lines.includes(platform) && !c.lines.includes("creative")) continue;
+    const list = changesOf.get(c.client_id) ?? [];
+    list.push({ summary: c.summary, pending: (c.direction_change_tasks ?? []).filter((t) => t.action === "pending").length });
+    changesOf.set(c.client_id, list);
+  }
+  const overdue = new Map<string, number>();
+  for (const p of (promises ?? []) as { client_id: string | null }[]) if (p.client_id) overdue.set(p.client_id, (overdue.get(p.client_id) ?? 0) + 1);
+  const briefOf = (r: (typeof live)[number]) =>
+    accountBrief({
+      status: r.status,
+      label: r.label,
+      value: r.value == null ? null : kpiValue(r.value, r.roas),
+      target: r.target == null ? null : kpiValue(r.target, r.roas),
+      deviation: r.deviation,
+      pacing: r.pacing,
+      pace: r.pace,
+      spend30: r.spend30,
+      hasAccount: r.hasAccount,
+      owed: owed.get(r.clientId) ?? null,
+      audit: desk.audits.get(r.targetId) ?? null,
+      sprint: desk.sprints.get(r.targetId) ?? null,
+      changes: changesOf.get(r.clientId) ?? [],
+      overduePromises: overdue.get(r.clientId) ?? 0,
+    }).map(({ tone, text }) => ({ tone, text }));
+  const card = (r: (typeof live)[number]) => adsCard(r, brandOf(brands, r.clientId), { head, brief: briefOf(r) });
   const hurting = (rows: typeof live) => rows.filter((r) => r.risk.score >= LOOK_AT).length;
 
   const reminders = auditReminders(
