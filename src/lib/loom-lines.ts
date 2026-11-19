@@ -24,8 +24,8 @@ const EMAIL_WORDS =
   /\b(e-?mails?|klaviyo|brevo|sendinblue|customer\.?io|omnisend|mailchimp|newsletters?|deliverability|open rates?|click rates?|subject lines?|preview text|welcome (flow|series)|abandon(ed)? (cart|checkout)|post[- ]purchase flow|browse abandon|winback|win-back|sunset(ting)? (flow|policy)|segments?|sms|dmarc|dkim|spf|warm(ing)? up)\b/gi;
 const STRONG_EMAIL = /\b(klaviyo|brevo|sendinblue|customer\.?io|omnisend|mailchimp|e-?mails?|newsletters?|deliverability)\b/i;
 const SOCIAL_WORDS =
-  /\b(organic social|social media|instagram|facebook (page|posts?)|reels?|carousel posts?|content calendar|posting (plan|schedule)|engagement rate|community management|tiktok (organic|content)|hashtags?|stories|followers?|follower growth)\b/gi;
-const STRONG_SOCIAL = /\b(organic social|social media (plan|strategy|audit|calendar)|content calendar|posting (plan|schedule)|community management)\b/i;
+  /\b(organic social|social media|instagram|facebook (page|posts?)|reels?|carousel posts?|content calendar|content pillars?|posting (plan|schedule|cadence)|engagement rate|community management|tiktok (organic|content)|hashtags?|stories|followers?|follower growth|boost(ed|ing)? posts?|captions?)\b/gi;
+const STRONG_SOCIAL = /\b(organic social|social media (plan|strategy|audit|calendar)|content calendar|content pillars?|posting (plan|schedule|cadence)|community management)\b/i;
 const ADS_WORDS = /\b(ad account|ad sets?|adsets?|campaigns? budget|roas|cpa|cpm|advantage\+|meta ads|google ads|performance max|pmax|ad spend|lookalike|creative testing)\b/gi;
 
 export type LineSignal = { email: number; social: number; ads: number; strongEmail: boolean; strongSocial: boolean };

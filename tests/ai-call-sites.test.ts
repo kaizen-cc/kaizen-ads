@@ -166,6 +166,7 @@ function sites(): Site[] {
 // cross-client work where no single client is the subject.
 const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/lib/agent-evals.ts": { labels: ["agent eval"], why: "the evals run the agent bare on purpose, to test its own config" },
+  "src/lib/social-training.ts": { labels: ["social training"], why: "distills lessons for the social agents from a client's calls, Slack and email; extraction, filed pending approval" },
   "src/lib/agent-call/server.ts": { labels: ["agent call learnings", "agent call summary", "agent call topic"], why: "reads what a person taught an agent on a voice call (extraction), summarises a call once it ends, and names its topic when it moves between chat and call" },
   "src/lib/agent-call/safety.ts": { labels: ["call safety review"], why: "reads a call's transcript for concerning content after it ends; a classifier" },
   "src/lib/assistant/memory.ts": { labels: ["assistant memory"], why: "picks what a person said about themselves for their private memory; extraction, never shared knowledge" },

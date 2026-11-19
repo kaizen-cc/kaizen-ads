@@ -290,7 +290,10 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Audits a client's Instagram and Facebook against the social score (profile, content mix and cadence against the package, engagement quality, growth, top and bottom posts, hooks, formats, posting times) and writes the plan", where: "KPIs · Social · a client's sheet · Actions, and the social audit page", trigger: "auto", when: "When someone runs an audit, and on its own when an account's social score goes red (refreshed after 3 days if untouched)", labels: ["social account audit"] },
     { title: "Re-measures the social score for a social sprint, reads what went up since, and tells the social media manager what moved", where: "Social sprint page", trigger: "auto", when: "At each sprint check (every few days, sooner after a slip), or on Check the score now", labels: ["social sprint check"] },
   ],
-  social_desk: [{ title: "Answers the social team in the client chat and on the Social sheet, from every platform's numbers, the social score, the latest audit and the sprint", where: "KPIs · Social · a client's sheet, and the client chat", trigger: "click", when: "When someone on the social team asks about a client", labels: ["social desk"] }],
+  social_desk: [
+    { title: "Answers the social team in the client chat and on the Social sheet, from every platform's numbers, the social score, the latest audit and the sprint", where: "KPIs · Social · a client's sheet, and the client chat", trigger: "click", when: "When someone on the social team asks about a client", labels: ["social desk"] },
+    { title: "Reads each social client's calls, Slack and email for lessons (calendar, pillars, reels and stories, engagement, community, boosting, platforms, feedback on posts), filed for the Head of Social to approve", where: "Settings · AI agents · Organic Social · Knowledge", trigger: "auto", when: "Hourly, the last 12 months first", labels: ["social training"] },
+  ],
   fatigue: [{ title: "Flags ads wearing out from their own numbers (no AI call; the strategist writes the refresh)", where: "Overview · Client page · Next for me", trigger: "auto", when: "After every Meta sync", labels: [] }],
 };
 

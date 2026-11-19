@@ -189,6 +189,10 @@
     {
       "path": "/api/cron/context?step=email_sow",
       "schedule": "41 * * * *"
+    },
+    {
+      "path": "/api/cron/context?step=social_learn",
+      "schedule": "47 * * * *"
     }
   ]
 }
