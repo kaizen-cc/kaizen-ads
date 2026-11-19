@@ -6,7 +6,8 @@ import { LinePauseControl } from "@/components/line-pause";
 import { EmailHistory } from "./email-history";
 import { KlaviyoMetricPicker } from "@/components/klaviyo-metric-picker";
 import { CustomerioExtras, ProviderChoice } from "@/components/klaviyo-key-inline";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { klaviyoReadProgress, type ReadState } from "../../kpis/channel-actions";
 import type { KlaviyoConnectionView } from "@/lib/klaviyo/store";
 import { KLAVIYO_SCOPE_NAMES } from "@/lib/klaviyo/core";
 import { KEY_HELP, plainEmailError, providerName, type EmailProvider } from "@/lib/email-providers/core";
@@ -41,6 +42,25 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  // Sync now's bar: how far the read has got, polled while it runs (the read writes each step as it goes)
+  const [syncing, setSyncing] = useState(false);
+  const [read, setRead] = useState<ReadState | null>(null);
+  useEffect(() => {
+    if (!syncing) return;
+    let stopped = false;
+    const tick = async () => {
+      const got = await klaviyoReadProgress([clientId]).catch(() => ({}) as Record<string, ReadState>);
+      const p = got[clientId];
+      // The last read's "Done" until this one has started: keep the bar at its start
+      if (!stopped && p && !p.done) setRead(p);
+    };
+    const t = setInterval(() => void tick(), 1500);
+    void tick();
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [syncing, clientId]);
   const provider: EmailProvider = conn?.provider ?? picked;
   const name = providerName(provider);
   // Why it isn't reading, in plain words with the fix (a missing revenue source only warns)
@@ -117,22 +137,26 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
           {provider === "klaviyo" && <KlaviyoLocations clientId={clientId} />}
           <EmailHistory clientId={clientId} />
           <LinePauseControl clientId={clientId} service="email-marketing" label="Pause email for this client" />
+          {syncing && <SyncBar name={name} read={read} />}
           <div className="flex flex-wrap gap-x-4 gap-y-1 pt-0.5">
             <button
               type="button"
               disabled={pending}
               onClick={() =>
                 start(async () => {
-                  setNote(`Reading ${name}… this takes about a minute.`);
+                  setRead(null);
+                  setSyncing(true);
                   const r = await syncKlaviyoNow(clientId);
-                  setNote(null);
+                  setSyncing(false);
+                  setRead(null);
+                  setNote(r.ok ? "Read just now." : null);
                   setError(r.ok ? null : r.error);
                   router.refresh();
                 })
               }
               className="min-h-11 text-[13px] text-brand-text hover:underline disabled:opacity-50 md:min-h-0"
             >
-              Sync now
+              {syncing ? "Syncing…" : "Sync now"}
             </button>
             {canEdit && (
               <>
@@ -197,6 +221,22 @@ export function KlaviyoConnection({ clientId, conn, canEdit }: { clientId: strin
       )}
       {note && <p className="text-[12.5px] text-muted">{note}</p>}
       {error && <p className="text-[12.5px] text-bad">{error}</p>}
+    </div>
+  );
+}
+
+/** The read under way: a bar that fills step by step, with the step it's on */
+function SyncBar({ name, read }: { name: string; read: ReadState | null }) {
+  const pct = Math.max(4, Math.min(100, read?.pct ?? 4));
+  return (
+    <div className="grid gap-1.5" role="status" aria-live="polite">
+      <div className="flex items-baseline justify-between gap-3 text-[13px]">
+        <span className="text-fg">{read?.step ?? `Starting the ${name} read`}</span>
+        <span className="tabular text-faint">{Math.round(pct)}%</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-surface-2" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
+        <div className="h-full rounded-full bg-brand transition-[width] duration-700 ease-out" style={{ width: `${pct}%` }} />
+      </div>
     </div>
   );
 }

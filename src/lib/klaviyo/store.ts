@@ -555,6 +555,8 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
  */
 async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Promise<ReadOut> {
   const clientId = conn.client_id;
+  // How far along, for the bar under Sync now (the same keys a full read uses)
+  const step = readProgress(admin, clientId);
   const tz = conn.timezone;
   const today = dayIn(new Date().toISOString(), tz);
   const yesterday = shift(today, -1);
@@ -562,7 +564,9 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
   const from30 = shift(today, -29);
   const utc = (day: string) => `${day}T00:00:00+00:00`;
   const nowIso = new Date().toISOString().replace(/\.\d+Z$/, "+00:00");
+  await step(8, "Finding the store's metrics");
   const metricId = await metricOf(admin, conn, key);
+  await step(18, "Reading the latest campaigns and flows");
   // A day either side, so the account's own calendar days are covered whatever its time zone
   const since = new Date(Date.parse(`${shift(today, -8)}T00:00:00Z`)).toISOString();
   const email = await listCampaigns(key, "email", since, 2);
@@ -570,6 +574,7 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
   const flows = await listFlows(key);
   const recent = [...email, ...sms].filter((c) => c.sendTime && dayIn(c.sendTime, tz) >= from7);
 
+  await step(35, "Reading each campaign's and flow's results");
   let values: { id: string; stats: Stats }[] = [];
   let series: SeriesRow[] = [];
   let seriesOk = false;
@@ -595,6 +600,7 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
       metricNote = redactKey(errText(e), key).slice(0, 240);
     }
   }
+  await step(70, "Reading the store's revenue");
   let storeError: string | null = null;
   const store = metricId
     ? await metricDaily(key, metricId, yesterday, today, tz).then(byDate).catch((e) => {
@@ -607,6 +613,7 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
   const extraReads: MetricRead[] = [];
   for (const m of extras) extraReads.push(await readMetric(key, m.id, { full: false, from: yesterday, today, tz, nowIso, campaigns: recent.length > 0 }));
 
+  await step(88, "Saving the numbers");
   const now = new Date().toISOString();
   // Audience names from the last full read (lists and segments aren't listed on a recent one)
   const { data: auds } = await admin.from("klaviyo_audiences").select("audience_id, name, kind").eq("client_id", clientId);
@@ -656,6 +663,8 @@ export async function syncKlaviyo(admin: SupabaseClient, clientId: string, opts:
     await saveMemo(admin, clientId, { window, fullAt: lastFullAt, error: msg, account: conn.account_name });
     return { client: clientId, ok: false, window, error: "The key can't be decrypted." };
   }
+  // The bar starts at once (a full read's first step, or the recent read's), never showing the last read's "Done"
+  await readProgress(admin, clientId)(2, "Starting");
   try {
     const out = window === "full" ? await readFull(admin, conn, key) : await readRecent(admin, conn, key);
     // Once a day: a multi-location client's orders by restaurant, or the weekly check that suggests the flag (never fails the read)
@@ -668,14 +677,14 @@ export async function syncKlaviyo(admin: SupabaseClient, clientId: string, opts:
       .update({ last_synced_at: now, updated_at: now, status: "active", last_error: out.metricId ? null : NO_ORDERS, ...(window === "full" && out.metricId && !conn.backfilled_at ? { backfilled_at: now } : {}) })
       .eq("client_id", clientId);
     await saveMemo(admin, clientId, { window, fullAt: window === "full" ? now : lastFullAt, error: null, account: conn.account_name, seriesError: out.seriesError, storeError: out.storeError, locationError });
-    if (window === "full") await readProgress(admin, clientId)(100, "Done", { done: true });
+    await readProgress(admin, clientId)(100, "Done", { done: true });
     return { client: clientId, ok: true, window, campaigns: out.campaigns, flows: out.flows, audiences: out.audiences, days: out.days };
   } catch (e) {
     const msg = redactKey(errText(e), key);
     const refused = e instanceof KlaviyoError && (e.status === 401 || (e.status === 400 && /refused/i.test(msg)));
     await admin.from("klaviyo_connections").update({ last_error: msg, updated_at: new Date().toISOString(), ...(refused ? { status: "invalid" } : {}) }).eq("client_id", clientId);
     await saveMemo(admin, clientId, { window, fullAt: lastFullAt, error: msg, account: conn.account_name });
-    if (window === "full") await readProgress(admin, clientId)(0, "Couldn't finish", { done: true, error: msg.slice(0, 200) });
+    await readProgress(admin, clientId)(0, "Couldn't finish", { done: true, error: msg.slice(0, 200) });
     return { client: clientId, ok: false, window, error: msg };
   }
 }

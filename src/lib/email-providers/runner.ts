@@ -209,9 +209,9 @@ export async function syncProvider(admin: SupabaseClient, def: ProviderDef, clie
     return { client: clientId, ok: false, window, error: "The key can't be decrypted." };
   }
   const progress = readProgress(admin, clientId);
-  const step: Step = async (pct, label) => {
-    if (window === "full") await progress(pct, label);
-  };
+  // Every read reports how far along it is (the bar under Sync now), not only the full one
+  const step: Step = (pct, label) => progress(pct, label);
+  await progress(2, "Starting");
   try {
     const out = await def.read({ admin, conn, key, window, step, depth: opts.depthDays });
     const now = new Date().toISOString();
@@ -220,14 +220,14 @@ export async function syncProvider(admin: SupabaseClient, def: ProviderDef, clie
       .update({ last_synced_at: now, updated_at: now, status: "active", last_error: out.revenueRead === false ? `No ecommerce revenue can be read for this ${name} account yet.` : null, revenue_read: out.revenueRead ?? conn.revenue_read, ...(window === "full" && !conn.backfilled_at ? { backfilled_at: now } : {}) })
       .eq("client_id", clientId);
     await saveMemo(admin, clientId, { window, fullAt: window === "full" ? now : lastFullAt, error: null, account: conn.account_name, seriesError: out.seriesError, storeError: out.storeError });
-    if (window === "full") await progress(100, "Done", { done: true });
+    await progress(100, "Done", { done: true });
     return { client: clientId, ok: true, window, campaigns: out.campaigns, flows: out.flows, audiences: out.audiences, days: out.days };
   } catch (e) {
     const msg = redactSecret(errText(e), key);
     const refused = def.refused(e);
     await admin.from(def.table).update({ last_error: msg, updated_at: new Date().toISOString(), ...(refused ? { status: "invalid" } : {}) }).eq("client_id", clientId);
     await saveMemo(admin, clientId, { window, fullAt: lastFullAt, error: msg, account: conn.account_name });
-    if (window === "full") await progress(0, "Couldn't finish", { done: true, error: msg.slice(0, 200) });
+    await progress(0, "Couldn't finish", { done: true, error: msg.slice(0, 200) });
     return { client: clientId, ok: false, window, error: msg };
   }
 }
