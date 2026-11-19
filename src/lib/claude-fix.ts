@@ -24,12 +24,20 @@ export const commitUrl = (sha: string) => `https://github.com/${repo()}/commit/$
  * autoMerge it's also labelled auto-merge, and the workflow merges the fix itself once every check passes (and it
  * stays out of the database and the other protected files); without it the pull request waits for someone to merge.
  */
-export async function openClaudeIssue(title: string, body: string, autoMerge: boolean): Promise<{ url?: string; number?: number; error?: string }> {
+/**
+ * owner-approved: the owner approved the ticket in Kaizen OS, and that approval is the approval to merge, so the
+ * claude-fix workflow merges it once every check passes (repairing itself if one fails), never asking twice.
+ */
+export const OWNER_APPROVED_LABEL = { name: "owner-approved", color: "8957E5", description: "The owner approved this ticket: it merges itself once every check passes" };
+
+export async function openClaudeIssue(title: string, body: string, autoMerge: boolean, ownerApproved = false): Promise<{ url?: string; number?: number; error?: string }> {
   if (!githubConfigured()) return { error: "Automatic fixes aren't connected yet: add GITHUB_TOKEN in Vercel." };
   // Make sure the labels exist (422 = they already do)
   await github("/labels", { body: { name: LABEL, color: "B21E2C", description: "Kaizen OS error handed to Claude to fix" } }).catch(() => null);
   if (autoMerge) await github("/labels", { body: { name: "auto-merge", color: "2EB67D", description: "Low-severity fix: merges itself when the checks pass" } }).catch(() => null);
-  const res = await github("/issues", { body: { title: title.slice(0, 200), body, labels: autoMerge ? [LABEL, "auto-merge"] : [LABEL] } });
+  if (ownerApproved) await github("/labels", { body: OWNER_APPROVED_LABEL }).catch(() => null);
+  // The other labels go on first: the workflow reads them when claude-fix starts it
+  const res = await github("/issues", { body: { title: title.slice(0, 200), body, labels: [LABEL, ...(autoMerge ? ["auto-merge"] : []), ...(ownerApproved ? [OWNER_APPROVED_LABEL.name] : [])] } });
   if (!res) return { error: "Automatic fixes aren't connected yet: add GITHUB_TOKEN in Vercel." };
   if (!res.ok) return { error: `GitHub said ${res.status}: ${(await res.text()).slice(0, 300)}` };
   const issue = (await res.json()) as { html_url: string; number: number };

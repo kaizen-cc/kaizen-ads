@@ -479,7 +479,7 @@ async function issueBody(admin: Admin, groupId: string, mode: "fix" | "approval"
       ? `Reported by the team and sent to Claude automatically as a bug. It merges itself once every check passes.`
       : mode === "approval"
         ? `Reported by the team as a bug and sent to Claude at once. ${reason ?? "Its fix may touch a safety rail"}: build the fix on a pull request as usual; it is not merged automatically, the owner approves it.`
-        : `An Ask from the team that the owner approved to build. Open a pull request; the owner approves it before it merges.`,
+        : `An Ask from the team that the owner approved to build. That approval is the approval to merge: open a pull request and it merges itself once every check passes (failing checks are repaired on the branch).`,
     ``,
     `**${g?.title}**`,
     g?.summary ?? "",
@@ -509,10 +509,11 @@ async function issueBody(admin: Admin, groupId: string, mode: "fix" | "approval"
  * Hand a group to Claude. autoMerge: it ships itself when every check passes. Otherwise the pull request waits for
  * the owner's approval (a bug at the safety rails, or an Ask the owner said to build).
  */
-export async function startFix(admin: Admin, groupId: string, autoMerge: boolean, opts: { note?: string | null; actor?: string | null; reason?: string | null } = {}) {
+export async function startFix(admin: Admin, groupId: string, autoMerge: boolean, opts: { note?: string | null; actor?: string | null; reason?: string | null; /** The owner approved this ticket: it merges itself once every check passes, never a second approval */ ownerApproved?: boolean } = {}) {
   const { data: g } = await admin.from("app_feedback_groups").select("title, scope, fix_attempts").eq("id", groupId).single();
-  const mode = autoMerge ? "fix" : g?.scope === "feature" ? "build" : "approval";
-  const issue = await openClaudeIssue(`${mode === "build" ? "Build" : "Fix"}: ${g?.title}`, await issueBody(admin, groupId, mode, opts.note ?? null, opts.reason ?? null), autoMerge);
+  const owner = Boolean(opts.ownerApproved);
+  const mode = autoMerge ? "fix" : g?.scope === "feature" || owner ? "build" : "approval";
+  const issue = await openClaudeIssue(`${mode === "build" ? "Build" : "Fix"}: ${g?.title}`, await issueBody(admin, groupId, mode, opts.note ?? null, opts.reason ?? null), autoMerge, owner);
   if (!issue.url || !issue.number) {
     await logEvent(admin, groupId, "fix_error", issue.error ?? "GitHub didn't take it");
     await needsALook(admin, groupId, (g?.title as string) ?? "Feedback", `Couldn't start the fix: ${issue.error ?? "GitHub didn't take it"}`);
@@ -536,7 +537,7 @@ export async function startFix(admin: Admin, groupId: string, autoMerge: boolean
     admin,
     groupId,
     autoMerge ? "auto_fix_started" : "build_started",
-    autoMerge ? "Sent to Claude to fix; it ships itself if every check passes" : mode === "build" ? "Sent to Claude to build; the pull request waits for approval" : `Sent to Claude to fix; ${opts.reason ?? "it waits for approval before it merges"}`,
+    autoMerge ? "Sent to Claude to fix; it ships itself if every check passes" : owner ? "Approved and sent to Claude to build; it merges itself once every check passes" : mode === "build" ? "Sent to Claude to build; the pull request waits for approval" : `Sent to Claude to fix; ${opts.reason ?? "it waits for approval before it merges"}`,
     { link: issue.url, actor: opts.actor ?? null, shared: true },
   );
   await tellStatus(admin, groupId);
@@ -589,7 +590,7 @@ export async function askForChanges(admin: Admin, groupId: string, note: string,
   await closeOn(g.fix_issue_number, "issue");
   await logEvent(admin, groupId, "changes_asked", note, { actor, link: g.fix_pr_url });
   await admin.from("app_feedback_groups").update({ fix_state: null, fix_attempts: 0, lane: "build" }).eq("id", groupId);
-  return startFix(admin, groupId, false, { note, actor, reason: "The owner asked for changes; the new fix waits for approval too" });
+  return startFix(admin, groupId, false, { note, actor, ownerApproved: true, reason: "The owner asked for changes: the new fix merges itself once every check passes" });
 }
 
 /** Plan it: a line under "Requested by the team" on the roadmap, and the group is planned. */
@@ -737,7 +738,7 @@ async function syncGroup(admin: Admin, g: SyncRow): Promise<boolean> {
         await admin.from("app_feedback_groups").update({ lane: "build", fix_state: "pr_open", fix_pr_url: prUrl }).eq("id", id);
         await logEvent(admin, id, "fix_ready", out.note, { link: prUrl, shared: true });
       }
-      await notifyOwner(admin, { key: `feedback-review:approve:${id}:${pr?.number ?? n}`, title: `Fix ready to approve: ${g.title}`, body: `Every check passed. ${out.note ?? ""}`.trim(), href: `/feedback?section=approval&g=${id}` });
+      await notifyOwner(admin, { key: `feedback-review:approve:${id}:${pr?.number ?? n}`, title: `Fix ready to approve: ${g.title}`, body: /^Every check passed/i.test(out.note ?? "") ? String(out.note) : `Every check passed. ${out.note ?? ""}`.trim(), href: `/feedback?section=approval&g=${id}` });
       if (moved) await tellStatus(admin, id);
     } else if (out.state === "no_change") {
       await admin.from("app_feedback_groups").update({ fix_state: "no_change", fix_pr_url: prUrl }).eq("id", id);

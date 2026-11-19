@@ -1,9 +1,16 @@
-# An issue labelled claude-fix (from the error monitor, or a bug the team reported in Kaizen Ads) has Claude find the
-# cause and open a pull request on claude/fix-<n>. Then every check runs on it. A fix labelled auto-merge that stays
-# clear of the safety rails merges itself as kaizen-cc; any other fix that passes waits for the owner, who approves it
-# in Kaizen Ads (that adds the approved-merge label, and the merge-approved job below checks it again and merges it).
-# Needs the ANTHROPIC_API_KEY repository secret (Settings › Secrets and variables › Actions); test:db reads
-# SUPABASE_DB_URL. The app's GITHUB_TOKEN must be a token whose label events start workflows (a PAT), as today.
+# An issue labelled claude-fix (from the error monitor, or a bug or ask the team reported in Kaizen OS) has Claude find
+# the cause and open a pull request on claude/fix-<n>, then every check runs on it and it merges as kaizen-cc when:
+#   * it's labelled owner-approved (the owner approved the ticket in Kaizen OS: that approval is the approval to merge,
+#     nothing is asked twice), or
+#   * it's labelled auto-merge and stays clear of the safety rails (the database, sign-in and permissions, ad-account
+#     writes, billing, secrets and env, this pipeline) and isn't large.
+# Any other fix that passes waits for the owner, who approves it in Kaizen OS (the approved-merge label runs this same
+# job again, without building).
+# It repairs itself: a branch that no longer fits main is rebased (Claude resolves conflicts); a failing check is read
+# by Claude, fixed on the branch and checked again, up to two rounds; a database that's briefly unreachable is retried
+# before it counts. A database change is applied to the live database as it merges.
+# Needs the ANTHROPIC_API_KEY and SUPABASE_DB_URL repository secrets. The app's GITHUB_TOKEN must be a token whose
+# label events start workflows (a PAT), as today.
 name: Claude fix
 
 on:
@@ -22,11 +29,17 @@ concurrency:
 
 jobs:
   fix:
-    if: github.event.label.name == 'claude-fix'
+    if: github.event.label.name == 'claude-fix' || github.event.label.name == 'approved-merge'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ISSUE: ${{ github.event.issue.number }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      BUILD: ${{ github.event.label.name == 'claude-fix' }}
+      OWNER: ${{ contains(github.event.issue.labels.*.name, 'owner-approved') || github.event.label.name == 'approved-merge' }}
+      AUTO: ${{ contains(github.event.issue.labels.*.name, 'auto-merge') }}
+      MAX_FILES: ${{ vars.AUTO_MERGE_MAX_FILES || '8' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,15 +51,18 @@ jobs:
       - run: npm ci
       # Vercel only deploys commits from this identity
       - run: git config user.name "kaizen-cc" && git config user.email "santi@kaizenmarketing.agency"
-      - uses: anthropics/claude-code-action@v1
+
+      - name: Build the fix
+        if: env.BUILD == 'true'
+        uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           claude_args: >-
-            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(npm run *),Bash(npx tsc *),Bash(npx vitest *),Bash(npx eslint *),Bash(npx next typegen*),Bash(git *),Bash(gh pr create *),Bash(gh issue comment *)"
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(npm run *),Bash(npm test*),Bash(npx tsc *),Bash(npx vitest *),Bash(npx eslint *),Bash(npx next typegen*),Bash(git *),Bash(gh pr create *),Bash(gh issue comment *)"
           prompt: |
-            You are fixing a production error, or a bug or planned change the team reported through the feedback
-            bubble, in Kaizen Ads (this repo). Follow any rules the issue itself sets. Issue #${{ github.event.issue.number }}:
+            You are fixing a production error, or building a bug fix or a change the team reported through the feedback
+            bubble, in Kaizen OS (this repo). Follow any rules the issue itself sets. Issue #${{ github.event.issue.number }}:
 
             ${{ github.event.issue.title }}
 
@@ -55,31 +71,138 @@ jobs:
             1. Read AGENTS.md first (this Next.js version differs from what you know; its docs are in node_modules/next/dist/docs/).
             2. Find the root cause in the code. If the error is not caused by our code (e.g. a network blip or a browser extension),
                don't change anything: comment on the issue explaining why, and stop.
-            3. Make the smallest safe fix. Match the surrounding code style. Don't touch unrelated files. Add or update a
-               test in tests/ where practical.
-               If the database needs a change, add a new file in supabase/migrations/ and say clearly in the PR that it must be applied.
-            4. Run: npm run lint && npx next typegen && npx tsc --noEmit && npx vitest run. All must pass.
+            3. Make the change well and completely, the smallest one that does it properly. Match the surrounding code style.
+               Don't touch unrelated files. Add or update a test in tests/ where practical.
+               If the database needs a change, add a new idempotent file in supabase/migrations/ (it's applied to the live
+               database as it merges); the code must also work before it's applied.
+            4. Run: npx eslint src tests && npx next typegen && npx tsc --noEmit && npx vitest run. All must pass.
             5. Create a branch claude/fix-${{ github.event.issue.number }}, commit, push, and open a PR with
                `gh pr create --base main` titled "Fix: <short description>" whose body explains, in plain language for a non-technical owner:
                What happened · Why it happened · What changed · How it was checked. End the body with "Closes #${{ github.event.issue.number }}".
             6. Comment on the issue with the PR link.
 
-      # Every fix is checked here once Claude's pull request is up. One labelled auto-merge that stays clear of the
-      # safety rails (the database, sign-in and permissions, ad-account writes, billing, secrets and env, this
-      # pipeline) and isn't large merges itself, so it goes live with no one waiting on it. Any other fix that passes
-      # waits for the owner's approval in Kaizen Ads. When Claude changed nothing, the issue is closed.
-      - name: Check the fix, and merge it if it may ship itself
-        env:
-          ISSUE: ${{ github.event.issue.number }}
-          AUTO: ${{ contains(github.event.issue.labels.*.name, 'auto-merge') }}
-          MAX_FILES: ${{ vars.AUTO_MERGE_MAX_FILES || '8' }}
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      - name: Find the fix and bring it up to date with main
+        id: prep
         run: |
           set -e
           PR=$(gh pr list --head "claude/fix-$ISSUE" --state open --json number --jq '.[0].number')
           if [ -z "$PR" ]; then
-            echo "No fix pull request (Claude found nothing of ours to fix)"
-            gh issue close "$ISSUE" --reason "not planned" --comment "Claude changed nothing: the reason is in the comment above." || true
+            if [ "$BUILD" = "true" ]; then
+              echo "No fix pull request (Claude found nothing of ours to fix)"
+              gh issue close "$ISSUE" --reason "not planned" --comment "Claude changed nothing: the reason is in the comment above." || true
+            else
+              gh issue comment "$ISSUE" --body "Approved, but there's no open fix pull request to merge."
+            fi
+            echo "pr=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          git fetch origin main "claude/fix-$ISSUE"
+          git checkout -B "claude/fix-$ISSUE" "origin/claude/fix-$ISSUE"
+          # Main moved on since it was built: replay the fix on top of it so the checks run on what will ship
+          if git rebase origin/main; then
+            git push --force-with-lease origin "claude/fix-$ISSUE"
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            git rebase --abort
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve conflicts with main
+        if: steps.prep.outputs.pr != '' && steps.prep.outputs.conflict == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: >-
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(npm run *),Bash(npm test*),Bash(npx tsc *),Bash(npx vitest *),Bash(npx eslint *),Bash(npx next typegen*),Bash(git *)"
+          prompt: |
+            Branch claude/fix-${{ github.event.issue.number }} (pull request #${{ steps.prep.outputs.pr }}) no longer applies on
+            the latest main: other changes landed in the same files. Read AGENTS.md first. Check out the branch, rebase it onto
+            origin/main, and resolve every conflict so that both main's changes and this fix's intent are kept (never drop
+            main's work). Then run npx eslint src tests && npx next typegen && npx tsc --noEmit && npx vitest run, fix
+            anything that breaks, and push with git push --force-with-lease origin claude/fix-${{ github.event.issue.number }}.
+
+      - name: Checks
+        id: c1
+        if: steps.prep.outputs.pr != ''
+        continue-on-error: true
+        run: |
+          git fetch origin "claude/fix-$ISSUE" && git checkout -B "claude/fix-$ISSUE" "origin/claude/fix-$ISSUE"
+          npm ci --silent
+          bash .github/scripts/fix-checks.sh /tmp/checks.log
+
+      - name: Repair what failed (round 1)
+        if: steps.prep.outputs.pr != '' && steps.c1.outcome == 'failure'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: >-
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(npm run *),Bash(npm test*),Bash(npx tsc *),Bash(npx vitest *),Bash(npx eslint *),Bash(npx next typegen*),Bash(git *),Bash(cat /tmp/*),Bash(tail *),Bash(gh pr comment *),Bash(gh pr view *)"
+          prompt: |
+            The checks failed on branch claude/fix-${{ github.event.issue.number }} (pull request #${{ steps.prep.outputs.pr }},
+            for issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}). The failing check's name is in
+            /tmp/checks.failed and the full log is /tmp/checks.log: read them first, and read AGENTS.md.
+            Find why it failed and fix the cause on this branch. Never weaken, skip or delete a test to make it pass, unless
+            this fix intentionally changed the behaviour that test describes (then update the test to the new behaviour and
+            say so). Run the failing check again until it passes, then the full set:
+            npx eslint src tests && npx next typegen && npx tsc --noEmit && npx vitest run.
+            Commit as kaizen-cc and push to origin claude/fix-${{ github.event.issue.number }}. Comment on the pull request
+            in one or two plain sentences: what failed and what you changed.
+            If the failure isn't caused by this branch (it fails on main as well, or the database couldn't be reached),
+            change nothing and comment why.
+
+      - name: Checks again
+        id: c2
+        if: steps.prep.outputs.pr != '' && steps.c1.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          git fetch origin "claude/fix-$ISSUE" && git checkout -B "claude/fix-$ISSUE" "origin/claude/fix-$ISSUE"
+          npm ci --silent
+          bash .github/scripts/fix-checks.sh /tmp/checks.log
+
+      - name: Repair what failed (round 2)
+        if: steps.prep.outputs.pr != '' && steps.c2.outcome == 'failure'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: >-
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(npm run *),Bash(npm test*),Bash(npx tsc *),Bash(npx vitest *),Bash(npx eslint *),Bash(npx next typegen*),Bash(git *),Bash(cat /tmp/*),Bash(tail *),Bash(gh pr comment *),Bash(gh pr view *)"
+          prompt: |
+            The checks still fail on branch claude/fix-${{ github.event.issue.number }} after one repair (pull request
+            #${{ steps.prep.outputs.pr }}). Read /tmp/checks.failed and /tmp/checks.log, the pull request's comments (what
+            was tried already) and AGENTS.md. Take a different, careful look at the real cause, fix it on the branch, run
+            npx eslint src tests && npx next typegen && npx tsc --noEmit && npx vitest run until all pass, commit as kaizen-cc
+            and push. Never weaken, skip or delete a test to get it green. Comment on the pull request in plain words what
+            you changed. If it can't be fixed on this branch, change nothing and comment exactly why.
+
+      - name: Checks a last time
+        id: c3
+        if: steps.prep.outputs.pr != '' && steps.c2.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          git fetch origin "claude/fix-$ISSUE" && git checkout -B "claude/fix-$ISSUE" "origin/claude/fix-$ISSUE"
+          npm ci --silent
+          bash .github/scripts/fix-checks.sh /tmp/checks.log
+
+      - name: Merge it, or say what it waits on
+        if: steps.prep.outputs.pr != ''
+        env:
+          PR: ${{ steps.prep.outputs.pr }}
+          PASSED: ${{ steps.c1.outcome == 'success' || steps.c2.outcome == 'success' || steps.c3.outcome == 'success' }}
+        run: |
+          set -e
+          if [ "$PASSED" != "true" ]; then
+            FAILED=$(cat /tmp/checks.failed 2>/dev/null || echo "a check")
+            gh pr comment "$PR" --body "A check failed ($FAILED) and two repair rounds couldn't fix it, so it wasn't merged. It needs another try: the comments above say what was tried."
+            exit 0
+          fi
+          if [ "$OWNER" = "true" ]; then
+            HOW=owner
+            [ "${{ github.event.label.name }}" = "approved-merge" ] && HOW=approved
+            HOW="$HOW" bash .github/scripts/fix-merge.sh
             exit 0
           fi
           FILES=$(gh pr diff "$PR" --name-only)
@@ -91,67 +214,8 @@ jobs:
           if [ -n "$MIGRATIONS" ]; then REASONS="${REASONS:+$REASONS; }it changes the database ($(echo $MIGRATIONS | tr '\n' ' '))"; fi
           if [ -n "$PROTECTED" ]; then REASONS="${REASONS:+$REASONS; }it touches protected files ($(echo $PROTECTED | tr '\n' ' '))"; fi
           if [ "$COUNT" -gt "$MAX_FILES" ]; then REASONS="${REASONS:+$REASONS; }it changes $COUNT files"; fi
-          git fetch origin "claude/fix-$ISSUE" && git checkout "claude/fix-$ISSUE"
-          npm ci
-          if ! (npx eslint src tests && npx next typegen && npx tsc --noEmit && npm test && npm run test:db); then
-            gh pr comment "$PR" --body "A check failed, so this fix wasn't merged. It needs another try."
-            exit 0
-          fi
           if [ -n "$REASONS" ]; then
-            gh pr comment "$PR" --body "Every check passed. It needs approval: $REASONS. The owner approves it in Kaizen Ads (Feedback, Needs your approval)."
+            gh pr comment "$PR" --body "Every check passed. It needs approval: $REASONS. The owner approves it in Kaizen OS (Feedback, Needs your approval)."
             exit 0
           fi
-          # One commit on main authored as kaizen-cc, the only identity Vercel deploys (Claude's own commits are
-          # claude[bot], which Vercel skips)
-          TITLE=$(gh pr view "$PR" --json title --jq .title)
-          git checkout main && git pull --ff-only origin main
-          git merge --squash "origin/claude/fix-$ISSUE"
-          git commit -m "$TITLE" -m "Fix by Claude from #$ISSUE, merged automatically after every check passed."
-          git push origin main
-          gh pr close "$PR" --delete-branch --comment "Merged into main as $(git rev-parse --short HEAD) (every check passed)."
-          gh issue close "$ISSUE" --comment "Every check passed: merged automatically. It goes live with this Vercel deploy."
-
-  # The owner approved a fix in Kaizen Ads (the issue got the approved-merge label): check it again on top of the
-  # latest main and merge it the same way, as kaizen-cc. A database change in it is called out so it gets applied.
-  merge-approved:
-    if: github.event.label.name == 'approved-merge'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      ISSUE: ${{ github.event.issue.number }}
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: git config user.name "kaizen-cc" && git config user.email "santi@kaizenmarketing.agency"
-      - name: Merge the approved fix
-        run: |
-          set -e
-          PR=$(gh pr list --head "claude/fix-$ISSUE" --state open --json number --jq '.[0].number')
-          if [ -z "$PR" ]; then gh issue comment "$ISSUE" --body "Approved, but there's no open fix pull request to merge."; exit 0; fi
-          git fetch origin "claude/fix-$ISSUE"
-          git checkout main && git pull --ff-only origin main
-          if ! git merge --squash "origin/claude/fix-$ISSUE"; then
-            git reset --hard origin/main
-            gh pr comment "$PR" --body "A check failed: the approved fix no longer applies cleanly on main. It needs another try."
-            exit 0
-          fi
-          npm ci
-          if ! (npx eslint src tests && npx next typegen && npx tsc --noEmit && npm test && npm run test:db); then
-            gh pr comment "$PR" --body "A check failed after approval, so it wasn't merged. It needs another try."
-            exit 0
-          fi
-          TITLE=$(gh pr view "$PR" --json title --jq .title)
-          git commit -m "$TITLE" -m "Fix by Claude from #$ISSUE, approved by the owner in Kaizen Ads and merged after every check passed."
-          git push origin main
-          MIGRATIONS=$(git show --name-only --format= HEAD | grep '^supabase/migrations/' || true)
-          NOTE=""
-          if [ -n "$MIGRATIONS" ]; then NOTE=" It includes a database change to apply: $(echo $MIGRATIONS | tr '\n' ' ')."; fi
-          gh pr close "$PR" --delete-branch --comment "Merged into main as $(git rev-parse --short HEAD) (approved; every check passed).$NOTE"
-          gh issue close "$ISSUE" --comment "Approved, and every check passed: merged automatically after approval. It goes live with this Vercel deploy.$NOTE"
+          HOW=auto bash .github/scripts/fix-merge.sh

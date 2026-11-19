@@ -302,8 +302,8 @@ export const MERGE_REASON_TEXT: Record<MergeReason, string> = {
   no_pull_request: "The fix's pull request was no longer open",
   timed_out: "The merge didn't finish in time",
 };
-/** The merge-approved job gets 30 minutes; past this with no word, call it failed. */
-export const MERGE_WAIT_MINUTES = 45;
+/** The workflow gets 90 minutes (two self-repair rounds included); past this with no word, call it failed. */
+export const MERGE_WAIT_MINUTES = 100;
 
 /**
  * What happened to an approved fix, from the comments the merge-approved workflow left after the approval (older

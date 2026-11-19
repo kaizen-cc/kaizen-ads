@@ -148,7 +148,8 @@ export async function approveFeedback(groupId: string, note: string): Promise<{ 
   const text = note.trim().slice(0, 2000) || null;
   await admin.from("app_feedback_groups").update({ status: "planned", lane: "build", updated_at: new Date().toISOString() }).eq("id", groupId);
   await logEvent(admin, groupId, "approved", text ? `Approved to build: ${text}` : "Approved to build", { actor: me.id, shared: true });
-  const r = await startFix(admin, groupId, false, { note: text, actor: me.id });
+  // Approving the ticket is the approval to merge: it ships once every check passes, never asked twice
+  const r = await startFix(admin, groupId, false, { note: text, actor: me.id, ownerApproved: true });
   await recomputeGroup(admin, groupId);
   revalidatePath("/feedback");
   if ("error" in r && r.error) return { error: `Approved, but it couldn't be sent to Claude: ${r.error}` };

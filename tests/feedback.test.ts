@@ -238,7 +238,9 @@ describe("an approved fix: merging, merged or couldn't merge", () => {
     expect(o([{ body: "Merged into main as abc1234 (approved; every check passed).", at: at(4) }])).toMatchObject({ state: "merged", commit: "abc1234" });
     expect(o([], { merged: true }).state).toBe("merged");
   });
-  it("gives up when nothing happens for too long", () => expect(o([], { now: Date.parse(at(60)) })).toMatchObject({ state: "failed", reason: "timed_out" }));
+  // Two self-repair rounds can take most of the workflow's 90 minutes: an hour in it's still merging
+  it("keeps waiting while the workflow may still be repairing", () => expect(o([], { now: Date.parse(at(60)) })).toMatchObject({ state: "merging" }));
+  it("gives up when nothing happens for too long", () => expect(o([], { now: Date.parse(at(120)) })).toMatchObject({ state: "failed", reason: "timed_out" }));
 });
 
 describe("which approval card shows", () => {
