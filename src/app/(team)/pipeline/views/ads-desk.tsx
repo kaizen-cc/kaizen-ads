@@ -8,24 +8,28 @@ import { etToday } from "@/lib/channel-kpis/calc";
 import type { SuggestionsState } from "@/lib/suggestions";
 import { DeskGroup, brandOf, type DeskCardData } from "./channel-desk";
 import { SuggestedBriefs } from "./suggested-briefs";
-import { watchTab } from "./watch-panel";
-import { AllotmentGapsPanel } from "./allotment-gaps";
-import { nextBucket } from "@/lib/creative-allotments";
+import { WatchList } from "./watch-panel";
+import { CreativeClientRows, type ClientRow } from "./creative-client-rows";
+import { WATCH_GROUP, type WatchFlag } from "@/lib/account-watch/load";
+import type { OpenSuggestion } from "@/lib/suggestions";
+import { allotmentSlice, nextBucket, POOL_FORMAT } from "@/lib/creative-allotments";
 import { loadAllotmentDesk } from "@/lib/creative-allotments-load";
 import { accountBrief, type BriefInput } from "@/lib/account-brief";
 
 // The Overview's tabs for the ads lines (Meta, Google) and the creative line, the email and social Overview's pattern:
 //   Clients           the person's own accounts first, then the rest of their team's in a contained scrolling area,
 //                     each worst first (retention risk); compact cards that open for the detail
-//   Ideas             suggested briefs, critical first (an account off target, an unhappy client, a promise), the rest folded
+//   Ideas             suggested briefs, critical first (an account off target, an unhappy client, a promise), the rest
+//                     folded (the ads lines; the creative leads have their briefs inside each client's row instead)
 //   Audits & sprints  a head: only what's critical or gone stale; a buyer: their own open ones
 //   Setup             accounts we can't read yet or with no KPI set
 // The exec Overview doesn't use this.
 
 type Me = { id: string; role: string; isExec: boolean; isLead: boolean };
 export type DeskTab = { id: string; label: string; count?: number; tone?: "bad" | "warn" | "ok" | "brand" | "quiet" };
-/** mergeWork: no My work tab; Today holds the day and My work under it (the ads lines, owner Nov 19 2026) */
-export type Desk = { tabs: DeskTab[]; panels: Record<string, React.ReactNode>; mergeWork?: boolean };
+/** mergeWork: no My work tab; Today holds the day and My work under it (the ads lines, owner Nov 19 2026). today:
+ *  anything more for the Today tab (a creative lead's account watch flags with no client row) */
+export type Desk = { tabs: DeskTab[]; panels: Record<string, React.ReactNode>; mergeWork?: boolean; today?: React.ReactNode };
 
 const LOOK_AT = 30;
 const TONE_OF: Record<AdsDeskRow["status"], DeskCardData["tone"]> = { off: "bad", close: "warn", good: "ok", excellent: "ok", idle: "quiet", setup: "quiet", unset: "quiet" };
@@ -183,21 +187,61 @@ export async function adsDesk(db: SupabaseClient, me: Me, platform: "meta" | "go
 
 type CreativeClient = { clientId: string; name: string; slug: string; tone: string; note: string; waiting: number; revisionsPerItem: number; counts: PoolCounts; elapsed?: number };
 
-/** The creative line: each client's allotment against where they should be by now, their own first */
+/**
+ * The creative line. The creative leads (the head of creative, the lead graphic designer, the lead video editor) get
+ * Today, Clients and My work only: each client's row holds its allotment, this week's healthy share, its account watch
+ * flags and the briefs already drafted for it (pacing catch-up, the market, what's winning for similar clients, a
+ * client's ask), ready to approve, edit or reject right there; Create brief opens the normal request form. Watch
+ * flags on clients without a row go to Today. Designers and editors keep their clients' cards under their rows.
+ */
 export async function creativeDesk(db: SupabaseClient, me: Me, clients: CreativeClient[], monthElapsed: number, suggestions?: SuggestionsState | null): Promise<Desk> {
   const head = me.isLead || me.isExec;
-  const [seats, brands, watch, gaps] = await Promise.all([
+  const lead = me.isExec || me.role === "head_of_creative" || me.role === "lead_graphic_designer" || me.role === "lead_video_editor";
+  const { loadReady } = await import("@/lib/brief-drafting");
+  const { loadWatch } = await import("@/lib/account-watch/load");
+  const [seats, brands, gaps, ready, watchFlags] = await Promise.all([
     mySeatClients(db, me).catch(() => new Set<string>()),
     loadBrands(db, clients.map((c) => c.clientId)).catch(() => new Map()),
-    watchTab(db, me),
     // Their slice of this cycle's allotment gaps (src/lib/creative-allotments.ts), most urgent first
     loadAllotmentDesk(db, me).catch(() => null),
+    // The briefs drafted for their clients, waiting on a decision (only approvers can read them)
+    loadReady(db, { limit: 200 }).catch(() => []),
+    loadWatch(db, me)
+      .then((w) => w.flags.filter((f) => f.kind !== "unrecognized" || me.isExec))
+      .catch(() => [] as WatchFlag[]),
   ]);
+  const slice = allotmentSlice(me);
+  const pools = new Set<string>(slice?.pools ?? ["images", "videos"]);
+  // A brief is theirs when it makes something in their pool (images and carousels share the image pool)
+  const inPool = (s: OpenSuggestion) => s.draft.formats.some((f) => pools.has(f.format === "video" ? "videos" : "images"));
+  const ideas = [...ready.flatMap((g) => g.items), ...(suggestions?.open ?? []).filter((s) => !s.drafted)].filter(inPool);
+  const rowsBy = new Map<string, ClientRow>();
+  const row = (clientId: string, client: string, slug: string) => {
+    const r = rowsBy.get(clientId) ?? { clientId, client, slug, pools: [], fresh: null, watch: [], ideas: [] };
+    rowsBy.set(clientId, r);
+    return r;
+  };
+  for (const g of gaps?.gaps ?? []) {
+    if (!g.missing) continue;
+    row(g.clientId, g.client, g.slug).pools.push({ pool: g.pool, line: g.line, pace: g.pace, detail: g.detail, requested: g.requested, cap: g.cap, elapsed: g.elapsed, urgent: nextBucket(g) === "now", nothing: g.state === "nothing", format: POOL_FORMAT[g.pool] });
+  }
+  for (const s of ideas) if (s.clientSlug) row(s.clientId, s.client, s.clientSlug).ideas.push(s);
+  for (const f of gaps?.fresh ?? []) row(f.clientId, f.client, f.slug).fresh = f.why;
+  const leftover: typeof watchFlags = [];
+  for (const f of watchFlags) {
+    const r = rowsBy.get(f.clientId);
+    if (r) r.watch.push({ id: f.id, title: f.title, severity: f.severity, href: `/watch?tab=${WATCH_GROUP[f.kind] ?? "idle"}&client=${f.slug}` });
+    else leftover.push(f);
+  }
+  const clientRows = [...rowsBy.values()];
+  const briefed = (gaps?.gaps ?? []).filter((g) => !g.missing && g.state !== "nothing").length;
+  const week = gaps?.load ? gaps.load.filter((w) => pools.has(w.pool)).map((w) => ({ pool: w.pool, due: w.due, capacity: w.capacity, line: w.line })) : null;
+
   const rows = clients.map((c) => ({ ...c, mine: seats.has(c.clientId), risk: creativeRisk(c) })).filter((c) => head || c.mine);
   const { mine, team } = mineFirst(rows);
   const card = (c: (typeof rows)[number]): DeskCardData => {
-    const pools = allotmentPools(c.counts).filter((p) => p.cap > 0 || p.used > 0);
-    const main = pools[0];
+    const ps = allotmentPools(c.counts).filter((p) => p.cap > 0 || p.used > 0);
+    const main = ps[0];
     return {
       key: c.clientId,
       name: c.name,
@@ -208,32 +252,26 @@ export async function creativeDesk(db: SupabaseClient, me: Me, clients: Creative
       big: main ? `${main.used}/${main.cap}` : String(c.waiting),
       bigCaption: main ? main.label.toLowerCase() : "with the client",
       gauge: main && main.cap > 0 ? { fill: main.used / main.cap, mark: c.elapsed ?? monthElapsed } : null,
-      detail: [...pools.map((p) => ({ label: p.label, value: `${p.used}/${p.cap}` })), { label: "With client", value: String(c.waiting) }, { label: "Revisions", value: c.revisionsPerItem.toFixed(1) }].slice(0, 3),
+      detail: [...ps.map((p) => ({ label: p.label, value: `${p.used}/${p.cap}` })), { label: "With client", value: String(c.waiting) }, { label: "Revisions", value: c.revisionsPerItem.toFixed(1) }].slice(0, 3),
       links: [
         { href: `/clients/${c.slug}?service=creative`, label: "Client" },
         { href: `/board?client=${encodeURIComponent(c.slug)}`, label: "Board" },
       ],
     };
   };
-  const hurting = (xs: typeof rows) => xs.filter((r) => r.risk.score >= LOOK_AT).length;
-  const riskOf = new Map(rows.map((r) => [r.clientId, r.risk.score]));
-  const ideas = head ? ideasPanel(suggestions, riskOf) : null;
+  const waiting = clientRows.reduce((n, r) => n + r.ideas.length, 0);
+  const urgent = clientRows.filter((r) => r.pools.some((p) => p.urgent || p.nothing)).length;
   return {
-    tabs: [
-      { id: "clients", label: head ? "Clients" : "My clients", count: hurting(mine) + (head ? hurting(team) : 0) + (gaps?.gaps.filter((g) => nextBucket(g) === "now").length ?? 0), tone: rows.some((r) => r.tone === "bad") ? "bad" : "warn" },
-      ...(ideas ? [{ id: "ideas", label: "Ideas", count: ideas.critical, tone: "bad" as const }] : []),
-      watch.tab,
-    ],
+    tabs: [{ id: "clients", label: head ? "Clients" : "My clients", count: waiting + urgent, tone: urgent ? "bad" : "brand" }],
     panels: {
-      watch: watch.panel,
       clients: (
         <>
-          {gaps && <AllotmentGapsPanel data={gaps} />}
-          {(mine.length > 0 || !head) && <DeskGroup id="mine" title={head ? "Your clients" : "My clients"} aside="Furthest behind first" cards={mine.map(card)} empty="You hold no seat on a creative client yet." />}
-          {team.length > 0 && <DeskGroup id="team" title="Your team's clients" aside={`Furthest behind first · ${hurting(team)} need a look`} cards={team.map(card)} contained />}
+          <CreativeClientRows rows={clientRows} week={week} briefed={briefed} />
+          {!lead && (mine.length > 0 || !head) && <DeskGroup id="mine" title="My clients" aside="Furthest behind first" cards={mine.map(card)} empty="You hold no seat on a creative client yet." />}
+          {!lead && team.length > 0 && <DeskGroup id="team" title="Your team's clients" aside="Furthest behind first" cards={team.map(card)} contained />}
         </>
       ),
-      ...(ideas ? { ideas: ideas.panel } : {}),
     },
+    today: leftover.length ? <WatchList flags={leftover} /> : null,
   };
 }

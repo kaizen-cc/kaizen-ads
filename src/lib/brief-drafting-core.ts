@@ -20,7 +20,7 @@ export type AskedBy = "client" | "media_buyer" | "creative";
 
 export type Mix = { track: Track; iterate: number; netNew: number; state: PerfState; reason: string };
 export type Pace = { pool: "images" | "videos"; cap: number; weekShare: number; dueByWeekEnd: number; asked: number; takes: number; over: boolean; line: string };
-export type Citation = { source: "call" | "slack" | "email" | "ad" | "numbers" | "pattern"; ref: string | null; quote: string; at: string | null; numbers: string | null };
+export type Citation = { source: "call" | "slack" | "email" | "ad" | "numbers" | "pattern" | "market" | "peer"; ref: string | null; quote: string; at: string | null; numbers: string | null };
 
 const DAY = 86_400_000;
 const utc = (d: string) => Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)));
@@ -88,14 +88,37 @@ export function weekPace(p: { cap: number; asked: number; open: number; cycleSta
   return { week, weeks: Math.ceil(length / 7), weekShare, dueByWeekEnd, room, daysLeft: Math.max(0, days(p.today, p.cycleEnd)) };
 }
 
+/**
+ * This week's healthy share for a pool, and the room left in it: what's missing at the start of the week, spread
+ * evenly over the days left in the cycle (never more than catching the even line, all of it only in the last week).
+ * A client far behind catches up a week at a time instead of making the whole gap at once. `askedThisWeek` is what's
+ * been asked since the week started (tickets, Asana tasks, approved drafts); `open` is what drafts waiting on approval
+ * would take. A client 21 images behind with 9 days left gets 17 this week and the rest after, not 21 now.
+ */
+export function catchUpWeek(p: { cap: number; asked: number; askedThisWeek: number; open: number; cycleStart: string; cycleEnd: string; today: string }) {
+  const cap = whole(p.cap);
+  const length = Math.max(1, days(p.cycleStart, p.cycleEnd));
+  const gone = Math.max(0, Math.min(length - 1, days(p.cycleStart, p.today)));
+  const week = Math.floor(gone / 7);
+  const startDay = week * 7;
+  const thisWeek = Math.min(whole(p.askedThisWeek), whole(p.asked));
+  const askedAtStart = whole(p.asked) - thisWeek;
+  const missingAtStart = Math.max(0, cap - askedAtStart);
+  const daysLeftAtStart = Math.max(1, length - startDay);
+  const evenDue = Math.max(0, Math.ceil((cap * Math.min(length, startDay + 7)) / length) - askedAtStart);
+  const weekShare = daysLeftAtStart <= 7 ? missingAtStart : Math.min(evenDue, Math.ceil((missingAtStart * 7) / daysLeftAtStart));
+  const room = Math.max(0, weekShare - thisWeek - whole(p.open));
+  return { week, weekShare, askedThisWeek: thisWeek, dueByWeekEnd: askedAtStart + weekShare, room, behind: evenDue > weekShare, daysLeft: Math.max(0, days(p.today, p.cycleEnd)) };
+}
+
 /** How a brief taking `takes` sits against this week's room: over it on purpose (urgent) says so and why */
-export function paceFor(pool: Pace["pool"], cap: number, w: ReturnType<typeof weekPace>, asked: number, takes: number, why: string | null): Pace {
+export function paceFor(pool: Pace["pool"], cap: number, w: { weekShare: number; dueByWeekEnd: number; room: number }, asked: number, takes: number, why: string | null): Pace {
   const over = takes > w.room;
   const word = pool === "videos" ? "video" : "image";
   const n = (x: number) => `${x} ${word}${x === 1 ? "" : "s"}`;
   const line = over
     ? `Over this week's share by ${n(takes - w.room)}${why ? `: ${why}` : ""}. The pacing drafts after it slow down to make room.`
-    : `Within this week's share: ${n(asked)} of ${cap} asked, ${n(w.dueByWeekEnd)} due by the week's end (${n(w.weekShare)} a week).`;
+    : `Within this week's healthy share (${n(w.weekShare)}): ${n(asked)} of ${cap} asked this cycle, the rest spread over the weeks left.`;
   return { pool, cap, weekShare: w.weekShare, dueByWeekEnd: w.dueByWeekEnd, asked, takes, over, line };
 }
 

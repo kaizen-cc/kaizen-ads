@@ -79,11 +79,17 @@ describe("requested and in motion", () => {
 });
 
 describe("pacing", () => {
-  it("spreads the cap evenly: what's due by a week from today", () => {
-    // Day 13 of 30, 0 of 10 asked: by day 20 two thirds should be asked (7)
+  it("catches up at a healthy pace: what's missing spread over the days left, never all at once", () => {
+    // Day 13 of 30, 0 of 10 asked: the even line says 7 by day 20, but 10 over the 17 days left is 5 this week
     const g = poolGap(row(), client, "images", "2026-11-18")!;
-    expect(g.dueThisWeek).toBe(7);
-    expect(g.pace).toBe("7 this week to stay on pace");
+    expect(g.dueThisWeek).toBe(5);
+    expect(g.pace).toBe("5 this week to catch up at a healthy pace");
+  });
+  it("on the even line, the week's share is the even line", () => {
+    // Day 3 of 30, 1 of 10 asked: 3 due by day 10 on the line, 9 over 27 days is 3 a week
+    const g = poolGap(row({ images_used: 1 }), client, "images", "2026-11-08")!;
+    expect(g.dueThisWeek).toBe(3);
+    expect(g.pace).toBe("3 this week to stay on pace");
   });
   it("ahead of pace owes nothing this week", () => {
     const g = poolGap(row({ images_used: 8 }), client, "images", "2026-11-08")!;
@@ -99,8 +105,8 @@ describe("pacing", () => {
     const cap = weeklyCapacity([{ pool: "images", units: 40 }, { pool: "videos", units: 8 }], 8);
     expect(cap).toEqual({ images: 5, videos: 1 });
     const [img, vid] = weekLoad(gaps, cap);
-    expect(img.due).toBe(14);
-    expect(img.line).toContain("9 more than a usual week (5)");
+    expect(img.due).toBe(10);
+    expect(img.line).toContain("5 more than a usual week (5)");
     expect(vid.clients).toBe(1);
     expect(weeklyCapacity([], 8)).toEqual({ images: null, videos: null });
   });

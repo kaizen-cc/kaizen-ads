@@ -9,8 +9,9 @@
 //   version, a carousel per slide, each piece once. Briefs sent clear a gap the moment they're sent.
 // * In motion = on the board or in Asana and not delivered yet, whatever cycle it was asked in (already inside used).
 // * Missing = the cap less what's requested. Nothing in motion = nothing requested and nothing on its way.
-// * Pacing: work spread evenly through the cycle. "Due this week" is what has to be briefed by a week from today to
-//   stay on that even line (all of what's missing in the last week), so the team doesn't make it all in one batch.
+// * Pacing: work spread evenly through the cycle. "Due this week" is the healthy share: what's missing spread evenly
+//   over the days left, never more than catching the even line (all of what's missing only in the last week), so a
+//   client far behind catches up a week at a time and the team never makes it all in one batch.
 // * Urgency orders the list: what's missing over the days left to the reset (the closer the reset and the bigger the
 //   gap, the higher), nothing in motion first among equals.
 // Paused clients (status) and a paused creative service (watch_pauses 'creative') never reach here: the loader drops them.
@@ -118,8 +119,11 @@ export function poolGap(u: UsageLike, client: { name: string; slug: string }, po
   const over = Math.max(0, requested - cap);
   const delivered = Math.max(0, used - inMotion);
   const state: AllotmentGap["state"] = requested === 0 && inMotion === 0 ? "nothing" : over > 0 ? "over" : missing > 0 ? "missing" : "covered";
-  // Even pace: by a week from today, this much of the cap should be asked for (all of it in the last week)
-  const dueThisWeek = daysLeft <= 7 ? missing : Math.min(missing, Math.max(0, Math.ceil((cap * Math.min(length, gone + 7)) / length) - requested));
+  // A healthy pace: what's missing spread evenly over the days left (never more than catching the even line; all of it
+  // only in the last week), so a client far behind catches up a week at a time instead of in one batch
+  const evenDue = Math.min(missing, Math.max(0, Math.ceil((cap * Math.min(length, gone + 7)) / length) - requested));
+  const dueThisWeek = daysLeft <= 7 ? missing : Math.min(evenDue, Math.ceil((missing * 7) / Math.max(1, daysLeft)));
+  const catchingUp = daysLeft > 7 && evenDue > dueThisWeek;
   const urgency = missing ? missing / Math.max(1, daysLeft) + (state === "nothing" ? 0.01 : 0) : 0;
   const resets = resetsLabel(cycle.end, daysLeft);
   const line =
@@ -130,7 +134,7 @@ export function poolGap(u: UsageLike, client: { name: string; slug: string }, po
         : state === "over"
           ? `${over} ${word(pool, over)} over the allotment · ${resets}`
           : `Covered · ${resets}`;
-  const pace = !missing ? "Nothing more to brief this cycle" : dueThisWeek ? `${dueThisWeek} this week to stay on pace` : "On pace this week";
+  const pace = !missing ? "Nothing more to brief this cycle" : !dueThisWeek ? "On pace this week" : catchingUp ? `${dueThisWeek} this week to catch up at a healthy pace` : `${dueThisWeek} this week to stay on pace`;
   const detail = [`${requested} of ${cap} ${word(pool, cap)} requested`, inMotion ? `${inMotion} in motion` : null, requested > 0 && delivered === 0 ? "nothing delivered yet" : delivered ? `${delivered} delivered` : null].filter(Boolean).join(" · ");
   return { clientId: u.client_id, client: client.name, slug: client.slug, pool, cap, requested, inMotion, delivered, missing, over, resetsOn: cycle.end, daysLeft, elapsed: gone / length, state, dueThisWeek, urgency, line, pace, detail };
 }

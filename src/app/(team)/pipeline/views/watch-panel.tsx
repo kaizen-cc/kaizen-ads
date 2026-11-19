@@ -26,6 +26,23 @@ function Rows({ flags }: { flags: WatchFlag[] }) {
   );
 }
 
+/** Account watch flags as a titled list (a creative lead's Today: flags on clients without a row of their own) */
+export function WatchList({ flags }: { flags: WatchFlag[] }) {
+  return (
+    <section className="grid gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-heading text-xl">
+          Account watch <span className="tabular text-[15px] text-faint">{flags.length}</span>
+        </h2>
+        <Link href="/watch" className="inline-flex min-h-11 items-center text-sm text-muted hover:text-fg md:min-h-0">
+          All of it →
+        </Link>
+      </div>
+      <Rows flags={flags.slice(0, 12)} />
+    </section>
+  );
+}
+
 /** The exec Overview: billed but idle, critical first, above the rest */
 export async function WatchCallout({ db, me }: { db: SupabaseClient; me: Staff }) {
   const { flags } = await loadWatch(db, me).catch(() => ({ flags: [] as WatchFlag[] }));

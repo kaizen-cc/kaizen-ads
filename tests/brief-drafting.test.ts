@@ -3,6 +3,7 @@ import {
   accountState,
   canApprove,
   canForceSwap,
+  catchUpWeek,
   churning,
   cleanDeadline,
   dueLabel,
@@ -86,6 +87,35 @@ describe("pacing: an even line through the billing cycle", () => {
     expect(p.line).toMatch(/Over this week's share by 3 images: the client asked/);
     expect(p.line).toMatch(/slow down/);
     expect(paceFor("videos", 4, weekPace({ cap: 4, asked: 0, open: 0, today: "2026-11-03", ...cycle }), 0, 1, null).over).toBe(false);
+  });
+});
+
+describe("a healthy catch-up, never the whole gap at once", () => {
+  const cycle = { cycleStart: "2026-11-01", cycleEnd: "2026-12-01" };
+  it("spreads what's missing over the days left: 21 behind with 9 days left is 17 this week, not 21", () => {
+    const w = catchUpWeek({ cap: 30, asked: 9, askedThisWeek: 0, open: 0, today: "2026-11-22", ...cycle });
+    expect(w.daysLeft).toBe(9);
+    expect(w.weekShare).toBe(17);
+    expect(w.room).toBe(17);
+    expect(w.behind).toBe(true);
+  });
+  it("on the even line, the share is the even line", () => {
+    const w = catchUpWeek({ cap: 12, asked: 0, askedThisWeek: 0, open: 0, today: "2026-11-02", ...cycle });
+    expect(w.weekShare).toBe(3);
+    expect(w.behind).toBe(false);
+  });
+  it("counts what was asked this week and what waits on approval against the share", () => {
+    const w = catchUpWeek({ cap: 30, asked: 14, askedThisWeek: 5, open: 6, today: "2026-11-22", ...cycle });
+    expect(w.weekShare).toBe(17);
+    expect(w.askedThisWeek).toBe(5);
+    expect(w.room).toBe(6);
+  });
+  it("in the last week, all of what's missing", () => {
+    const w = catchUpWeek({ cap: 30, asked: 20, askedThisWeek: 0, open: 0, today: "2026-11-29", ...cycle });
+    expect(w.weekShare).toBe(10);
+  });
+  it("ahead of the line, nothing more this week", () => {
+    expect(catchUpWeek({ cap: 12, asked: 8, askedThisWeek: 0, open: 0, today: "2026-11-03", ...cycle }).room).toBe(0);
   });
 });
 

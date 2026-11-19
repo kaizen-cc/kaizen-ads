@@ -10,7 +10,7 @@ import { draftSwapOptions, swapDraftedBrief } from "@/app/(team)/pipeline/draft-
 // The pieces a drafted brief shows (src/lib/brief-drafting.ts): why now (its real reason, quoted), the deadline, the
 // iteration / net new split with its reason, and how it sits against this week's share. Plus the swap panel.
 
-const SOURCE_LABEL = { call: "On the call", slack: "In Slack", email: "By email", ad: "The ad", numbers: "The numbers", pattern: "Proven for similar businesses" } as const;
+const SOURCE_LABEL = { call: "On the call", slack: "In Slack", email: "By email", ad: "The ad", numbers: "The numbers", pattern: "Proven for similar businesses", market: "In the market", peer: "Winning for a similar client" } as const;
 const localToday = () => new Date().toISOString().slice(0, 10);
 
 /** The small chips a drafted brief's card carries: the deadline, over the week's share, whose ask */

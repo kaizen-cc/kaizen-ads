@@ -95,6 +95,7 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
           today: (
             <>
               {d.recap}
+              {d.desk?.today}
               {d.handoffs}
               <Themes themes={themes} />
               {/* The ads lines keep My work under their day (no separate tab) */}

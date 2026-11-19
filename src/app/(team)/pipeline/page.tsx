@@ -117,10 +117,11 @@ export default async function Home() {
             today: (
               <>
                 <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
-                {/* Briefs the system drafted for them to approve (lead makers, a client's Meta buyer) */}
+                {/* Briefs the system drafted for a client's Meta buyer to approve (the creative leads have theirs in Clients) */}
                 <Suspense fallback={null}>
                   <ReadyCallout db={db} me={me} />
                 </Suspense>
+                {desk?.today}
                 <HandoffCallout db={db} me={me.id} />
                 {/* The ads lines keep My work under their day (no separate tab) */}
                 {desk?.mergeWork && (
@@ -296,7 +297,8 @@ export default async function Home() {
       canRequest
       kpis={kpis}
       production={production}
-      suggestions={suggestionsShown}
+      // The Head of Creative's briefs live inside each client's row (Clients), not as a theme of their own
+      suggestions={creative ? null : suggestionsShown}
       fatigue={fatigueShown}
       onboarding={onboarding}
       clientOptions={clientOptions}

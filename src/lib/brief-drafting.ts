@@ -22,7 +22,7 @@ import {
   swapVerdict,
   outranks,
   TRACK_LABEL,
-  weekPace,
+  catchUpWeek,
   type AskedBy,
   type Citation,
   type Mix,
@@ -48,7 +48,7 @@ type Db = SupabaseClient;
 const today = () => new Date().toISOString().slice(0, 10);
 const OFFER = /\b(offer|promo|promotion|sale|discount|% ?off|deal|bogo|special|launch(ing)?|new (menu|product|service|location|collection)|holiday|black friday|cyber monday|giveaway|limited time|coupon|event|ends|deadline|this weekend|next week)\b/i;
 const CLIENT_SOURCES = ["slack_external", "gmail", "call"];
-const PACING_PER_PASS = 3;
+const PACING_PER_PASS = 6;
 const SOURCE_OF: Record<string, Citation["source"]> = { slack_external: "slack", gmail: "email", call: "call" };
 
 type Candidate = {
@@ -141,16 +141,27 @@ export async function runDrafting(admin: Db, opts: { max?: number; runId?: strin
   const since = new Date(Math.max(Date.now() - 3 * 86_400_000, lastRuns?.[0] ? Date.parse(lastRuns[0].started_at) - 3_600_000 : Date.now() - 86_400_000)).toISOString();
   let clientsQ = admin.from("clients").select("id, name, services, services_extra, services_removed").is("archived_at", null).in("status", LIVE);
   if (opts.clientId) clientsQ = clientsQ.eq("id", opts.clientId);
-  const [{ data: clients }, { data: usage }, { data: drafted }, { data: kpis }, { data: tired }, { data: items }, { data: snaps }, { data: recentReqs }] = await Promise.all([
+  const since8 = new Date(Date.now() - 8 * 86_400_000).toISOString();
+  const [{ data: clients }, { data: usage }, { data: drafted }, { data: kpis }, { data: tired }, { data: items }, { data: snaps }, { data: recentReqs }, { data: weekReqs }, { data: weekTasks }] = await Promise.all([
     clientsQ,
     admin.from("client_allotment_usage").select("client_id, images_per_month, videos_per_month, images_used, videos_used, period_start, period_end, billing_day"),
-    admin.from("creative_suggestions").select("client_id, kind, status, trigger_key, draft, mix, created_at, source").not("trigger_key", "is", null).gte("created_at", new Date(Date.now() - 45 * 86_400_000).toISOString()),
+    admin.from("creative_suggestions").select("client_id, kind, status, trigger_key, draft, mix, citation, created_at, source").not("trigger_key", "is", null).gte("created_at", new Date(Date.now() - 45 * 86_400_000).toISOString()),
     admin.from("kpi_snapshots").select("target_id, client_id, status, trend, deviation, kpi_targets(label, target, platform, conversion)"),
     admin.from("ad_fatigue").select("client_id, ad_id, ad_name, headline, severity, signals, state").eq("state", "open"),
     admin.from("context_items").select("id, client_id, source, occurred_at, author, title, body, url").in("source", CLIENT_SOURCES).gte("created_at", since).order("occurred_at", { ascending: false }).limit(800),
     admin.from("meta_snapshots").select("client_id, ads, fetched_at").gte("fetched_at", new Date(Date.now() - 7 * 86_400_000).toISOString()).order("fetched_at", { ascending: false }).limit(1000),
     admin.from("requests").select("client_id, created_at").gte("created_at", new Date(Date.now() - 3 * 86_400_000).toISOString()).is("deleted_at", null),
+    // What was asked in the last eight days (tickets and Asana tasks, approved drafts included), for this week's share
+    admin.from("requests").select("client_id, format, allotment_units, created_at").gte("created_at", since8).is("deleted_at", null).limit(3000),
+    admin.from("asana_tasks").select("client_id, new_images, new_videos, asana_created_at").is("request_id", null).gte("asana_created_at", since8).limit(3000),
   ]);
+  /** Asked for this pool since a day (YYYY-MM-DD) */
+  const askedSince = (clientId: string, pool: "images" | "videos", from: string) => {
+    let n = 0;
+    for (const r of weekReqs ?? []) if (r.client_id === clientId && String(r.created_at).slice(0, 10) >= from && (r.format === "video") === (pool === "videos")) n += Number(r.allotment_units) || 0;
+    for (const t of weekTasks ?? []) if (t.client_id === clientId && String(t.asana_created_at).slice(0, 10) >= from) n += Number(pool === "videos" ? t.new_videos : t.new_images) || 0;
+    return n;
+  };
   const creative = new Map((clients ?? []).filter((c) => linesOf(c).has("creative")).map((c) => [c.id as string, c]));
   const usageBy = new Map(((usage ?? []) as Usage[]).filter((u) => creative.has(u.client_id)).map((u) => [u.client_id, u]));
   const keys = new Set((drafted ?? []).map((d) => `${d.client_id}:${d.trigger_key}`));
@@ -240,20 +251,23 @@ export async function runDrafting(admin: Db, opts: { max?: number; runId?: strin
     });
   }
 
-  // 4. Pacing: a pool behind this week's share of the even line, one brief's worth at a time
+  // 4. Pacing: this week's healthy share of the allotment (what's missing spread over the days left, never all at once),
+  // drafted a brief's worth at a time until the week's share is loaded and waiting
   for (const [clientId, u] of usageBy) {
-    if (openDrafts.some((d) => d.client_id === clientId && d.kind === "pacing")) continue;
     const cycle = cycleOf(u, day);
     const t = takes.get(clientId) ?? { images: 0, videos: 0 };
     for (const pool of ["videos", "images"] as const) {
       const cap = Number(pool === "images" ? u.images_per_month : u.videos_per_month) || 0;
       if (!cap) continue;
       const asked = Number(pool === "images" ? u.images_used : u.videos_used) || 0;
-      const w = weekPace({ cap, asked, open: t[pool], cycleStart: cycle.start, cycleEnd: cycle.end, today: day });
+      const probe = catchUpWeek({ cap, asked, askedThisWeek: 0, open: 0, cycleStart: cycle.start, cycleEnd: cycle.end, today: day });
+      const weekStart = new Date(Date.parse(`${cycle.start}T00:00:00Z`) + probe.week * 7 * 86_400_000).toISOString().slice(0, 10);
+      const w = catchUpWeek({ cap, asked, askedThisWeek: askedSince(clientId, pool, weekStart), open: t[pool], cycleStart: cycle.start, cycleEnd: cycle.end, today: day });
       const take = pacingTake(w.room);
-      const key = `pacing:${cycle.start}:${pool}:w${w.week}`;
+      const prefix = `pacing:${cycle.start}:${pool}:w${w.week}:`;
+      const key = `${prefix}${[...keys].filter((k) => k.startsWith(`${clientId}:${prefix}`)).length + 1}`;
       if (!take || !fresh(clientId, key)) continue;
-      const numbers = `${asked} of ${cap} ${pool} asked this cycle, ${w.dueByWeekEnd} due by the end of this week on an even line (${w.weekShare} a week), ${w.daysLeft} days to the reset`;
+      const numbers = `${asked} of ${cap} ${pool} asked this cycle, ${w.daysLeft} days to the reset: this week's healthy share is ${w.weekShare} (${w.askedThisWeek} asked so far this week)${w.behind ? ", catching up over the weeks left rather than all at once" : ""}`;
       out.push({
         clientId,
         trigger: "pacing",
@@ -266,7 +280,7 @@ export async function runDrafting(admin: Db, opts: { max?: number; runId?: strin
         pool,
         take,
         weight: 2 + w.room / Math.max(1, w.weekShare),
-        signal: { kind: "pacing", weight: 2, line: `Behind this week's share of the allotment (${pool})`, facts: [numbers] },
+        signal: { kind: "pacing", weight: 2, line: `This week's healthy share of the allotment (${pool})`, facts: [numbers] },
         task: "",
       });
       break; // one pool per client per pass
@@ -293,7 +307,7 @@ export async function runDrafting(admin: Db, opts: { max?: number; runId?: strin
   const skipped: string[] = [];
   for (let i = 0; i < todo.length; i += 3) {
     const done = await Promise.allSettled(
-      todo.slice(i, i + 3).map((c) => draftOne(admin, c, { usage: usageBy.get(c.clientId)!, kpis: (kpis ?? []).filter((k) => k.client_id === c.clientId), drafted: (drafted ?? []).filter((d) => d.client_id === c.clientId), ads: adsBy.get(c.clientId) ?? [], tired: (tired ?? []).filter((f) => f.client_id === c.clientId), openTake: takes.get(c.clientId) ?? { images: 0, videos: 0 }, client: (creative.get(c.clientId)?.name as string) ?? "", load })),
+      todo.slice(i, i + 3).map((c) => draftOne(admin, c, { usage: usageBy.get(c.clientId)!, kpis: (kpis ?? []).filter((k) => k.client_id === c.clientId), drafted: (drafted ?? []).filter((d) => d.client_id === c.clientId), ads: adsBy.get(c.clientId) ?? [], tired: (tired ?? []).filter((f) => f.client_id === c.clientId), openTake: takes.get(c.clientId) ?? { images: 0, videos: 0 }, askedSince: (pool, from) => askedSince(c.clientId, pool, from), client: (creative.get(c.clientId)?.name as string) ?? "", load })),
     );
     for (const [j, d] of done.entries()) {
       if (d.status === "fulfilled" && d.value === true) made++;
@@ -327,10 +341,11 @@ async function readAsk(clientId: string, client: string, list: { id: string; sou
 type Ctx = {
   usage: Usage;
   kpis: { status: string | null; trend: string | null }[];
-  drafted: { kind: string; status: string; mix: unknown; created_at: string }[];
+  drafted: { kind: string; status: string; mix: unknown; citation: unknown; created_at: string }[];
   ads: SnapAd[];
   tired: { headline: string | null; ad_name: string }[];
   openTake: { images: number; videos: number };
+  askedSince: (pool: "images" | "videos", from: string) => number;
   client: string;
   load: Awaited<ReturnType<typeof import("@/lib/suggestions").workload>>;
 };
@@ -352,27 +367,14 @@ async function draftOne(admin: Db, c: Candidate, x: Ctx): Promise<true | string>
   let citation = c.citation;
   let seed = "";
   if (c.trigger === "pacing") {
-    // An iteration needs a winner to iterate on; net new builds on what's proven for businesses like this one
-    const win = topWinner(x.ads);
-    let pattern: { title: string; detail: string; evidence: { clients: number; of: number } } | null = null;
-    if (track === "net_new" || !win) {
-      const { patternsForClient } = await import("@/lib/patterns");
-      const { patterns } = await patternsForClient(admin, c.clientId).catch(() => ({ patterns: [] as Awaited<ReturnType<typeof patternsForClient>>["patterns"] }));
-      const p = patterns.filter((p) => p.verdict === "works").sort((a, b) => Number(b.opportunity) - Number(a.opportunity) || b.evidence.clients - a.evidence.clients)[0];
-      pattern = p ? { title: p.title, detail: p.detail, evidence: p.evidence } : null;
-    }
-    if (track === "iterate" && !win) track = "net_new";
-    if (track === "net_new" && !pattern) track = win ? "iterate" : track;
-    if (track === "iterate" && win) {
-      const a = win.ad;
-      const nums = `${money(a.costPerResult!)} per ${a.result ?? "result"} vs the account's usual ${money(win.usual)}, ${money(a.spend ?? 0)} spent, ${a.results} ${a.result ?? "results"}`;
-      citation = { source: "ad", ref: a.id ?? a.name, quote: `"${a.headline ?? a.name}": ${nums}`, at: null, numbers: `${c.citation.numbers}; ${nums}` };
-      seed = `<winner_to_iterate_on>\n"${a.headline ?? a.name}" (${a.name}): ${nums}\n</winner_to_iterate_on>\nIterate on this winner: keep its angle, offer and proof; each version changes one thing.`;
-    } else if (pattern) {
-      const nums = `proven for ${pattern.evidence.clients} of ${pattern.evidence.of} businesses like this one`;
-      citation = { source: "pattern", ref: null, quote: `${pattern.title}: ${nums}`, at: null, numbers: `${c.citation.numbers}; ${nums}` };
-      seed = `<pattern_to_build_on>\n${pattern.title} (${nums})\n${pattern.detail}\n</pattern_to_build_on>\nBuild this client's version of the pattern, never a copy, never naming another client.`;
-    } else return "Nothing real to build on (no winner, no proven pattern): no pacing brief";
+    // What it builds on, each with its numbers: an iteration on the client's own winner; net new from what's proven
+    // for businesses like this one, an angle working in their market right now, or a winner on a similar client.
+    // Net new rotates through the sources this cycle hasn't used yet, so the month isn't one idea five times.
+    const pick = await pacingSeed(admin, c, x, track, cycle.start);
+    if (!pick) return "Nothing real to build on (no winner, pattern, market ad or similar client's winner): no pacing brief";
+    track = pick.track;
+    citation = { ...pick.citation, numbers: `${c.citation.numbers}; ${pick.citation.numbers ?? ""}` };
+    seed = pick.seed;
   }
   if (!hasRealReason(citation)) return "No real reason to cite";
   const mix: Mix = { ...base, track };
@@ -406,7 +408,9 @@ ${DRAFT_RULES}`;
   const asked = Number(p === "images" ? x.usage.images_used : x.usage.videos_used) || 0;
   let pace: Pace | null = null;
   if (cap) {
-    const wk = weekPace({ cap, asked, open: x.openTake[p], cycleStart: cycle.start, cycleEnd: cycle.end, today: day });
+    const probe = catchUpWeek({ cap, asked, askedThisWeek: 0, open: 0, cycleStart: cycle.start, cycleEnd: cycle.end, today: day });
+    const weekStart = new Date(Date.parse(`${cycle.start}T00:00:00Z`) + probe.week * 7 * 86_400_000).toISOString().slice(0, 10);
+    const wk = catchUpWeek({ cap, asked, askedThisWeek: x.askedSince(p, weekStart), open: x.openTake[p], cycleStart: cycle.start, cycleEnd: cycle.end, today: day });
     pace = paceFor(p, cap, wk, asked, take[p], c.trigger === "offer" ? `the client asked${c.deadline ? ` for it by ${c.deadline}` : ""}` : c.trigger === "fatigue" ? "an ad is worn out now" : c.trigger === "kpi" ? "the KPI is dropping now" : null);
   }
   const urgent = c.trigger !== "pacing" && Boolean(pace?.over || c.deadline);
@@ -437,6 +441,92 @@ ${DRAFT_RULES}`;
   return true;
 }
 
+type Seed = { track: Track; citation: Citation; seed: string };
+
+/** What a pacing brief builds on (see draftOne), or null when there's nothing real to build on */
+async function pacingSeed(admin: Db, c: Candidate, x: Ctx, want: Track, cycleStart: string): Promise<Seed | null> {
+  const own = (): Seed | null => {
+    const win = topWinner(x.ads);
+    if (!win) return null;
+    const a = win.ad;
+    const nums = `${money(a.costPerResult!)} per ${a.result ?? "result"} vs the account's usual ${money(win.usual)}, ${money(a.spend ?? 0)} spent, ${a.results} ${a.result ?? "results"}`;
+    return {
+      track: "iterate",
+      citation: { source: "ad", ref: a.id ?? a.name, quote: `"${a.headline ?? a.name}": ${nums}`, at: null, numbers: nums },
+      seed: `<winner_to_iterate_on>
+"${a.headline ?? a.name}" (${a.name}): ${nums}
+</winner_to_iterate_on>
+Iterate on this winner: keep its angle, offer and proof; each version changes one thing.`,
+    };
+  };
+  const pattern = async (): Promise<Seed | null> => {
+    const { patternsForClient } = await import("@/lib/patterns");
+    const { patterns } = await patternsForClient(admin, c.clientId).catch(() => ({ patterns: [] as Awaited<ReturnType<typeof patternsForClient>>["patterns"] }));
+    const p = patterns.filter((p) => p.verdict === "works").sort((a, b) => Number(b.opportunity) - Number(a.opportunity) || b.evidence.clients - a.evidence.clients)[0];
+    if (!p) return null;
+    const nums = `proven for ${p.evidence.clients} of ${p.evidence.of} businesses like this one`;
+    return { track: "net_new", citation: { source: "pattern", ref: null, quote: `${p.title}: ${nums}`, at: null, numbers: nums }, seed: `<pattern_to_build_on>
+${p.title} (${nums})
+${p.detail}
+</pattern_to_build_on>
+Build this client's version of the pattern, never a copy, never naming another client.` };
+  };
+  const market = async (): Promise<Seed | null> => {
+    const { loadClientMarket } = await import("@/lib/market");
+    const ads = await loadClientMarket(admin, c.clientId, { limit: 80 }).catch(() => []);
+    const used = new Set(x.drafted.map((d) => (d.citation as Citation | null)?.ref).filter(Boolean));
+    const a = ads.find((a) => (a.proven || a.early) && (a.angle || a.hook) && a.daysActive != null && !used.has(a.motionUrl ?? a.libraryUrl ?? a.id));
+    if (!a) return null;
+    const link = a.motionUrl ?? a.libraryUrl ?? null;
+    const nums = `running ${a.daysActive} days${a.early ? " (early success)" : ""}`;
+    return {
+      track: "net_new",
+      citation: { source: "market", ref: link ?? a.id, quote: `${a.brand}${a.competitorOf.includes(c.clientId) ? " (a competitor)" : ""}: "${a.angle ?? a.hook ?? a.headline}", ${nums}`, at: null, numbers: nums },
+      seed: `<market_opportunity>
+A live ad in this client's market, ${nums}: brands rarely keep paying for an ad that loses.
+Angle: ${a.angle ?? "(read it from the hook)"}${a.hook ? `
+Hook: ${a.hook}` : ""}${a.why ? `
+Why it likely works: ${a.why}` : ""}${a.headline ? `
+Headline: ${a.headline}` : ""}${link ? `
+Link: ${link}` : ""}
+</market_opportunity>
+Build this client's own version of what's working in their market: never a copy, never naming the other brand, never borrowing its offer or claims.${link ? ` Put ${link} first in draft.refs.` : ""}`,
+    };
+  };
+  const peer = async (): Promise<Seed | null> => {
+    const { data: me } = await admin.from("clients").select("industry").eq("id", c.clientId).maybeSingle();
+    if (!me?.industry || me.industry === "other") return null;
+    const { industryWinners } = await import("@/lib/industry");
+    const ws = await industryWinners(admin, me.industry as string, c.clientId, 4).catch(() => []);
+    const used = new Set(x.drafted.map((d) => (d.citation as Citation | null)?.ref).filter(Boolean));
+    const w = ws.find((w) => !used.has(w.id));
+    if (!w) return null;
+    const nums = `${w.ratio}x better cost per ${w.result ?? "result"} than its account's usual`;
+    const { winningAdBlock } = await import("@/lib/suggestions");
+    return {
+      track: "net_new",
+      citation: { source: "peer", ref: w.id, quote: `A ${w.detail ?? "similar"} client's ad "${w.headline ?? w.name}": ${nums}`, at: null, numbers: nums },
+      seed: `${winningAdBlock({ adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual, clientId: w.clientId }, 1500)}
+Translate why this works into this client's brief: their offer, voice and Brand Bible; never a copy, never naming the other business.`,
+    };
+  };
+  if (want === "iterate") return own() ?? (await pattern()) ?? (await market()) ?? (await peer());
+  // Net new: the source this cycle has used least first
+  const usedBy = new Map<string, number>();
+  for (const d of x.drafted) {
+    if (d.created_at.slice(0, 10) < cycleStart) continue;
+    const src = (d.citation as Citation | null)?.source;
+    if (src) usedBy.set(src, (usedBy.get(src) ?? 0) + 1);
+  }
+  const order = (["pattern", "market", "peer"] as const).slice().sort((a, b) => (usedBy.get(a) ?? 0) - (usedBy.get(b) ?? 0));
+  const make = { pattern, market, peer };
+  for (const k of order) {
+    const got = await make[k]();
+    if (got) return got;
+  }
+  return own();
+}
+
 /** A pacing draft held to its pool and the week's share: the counts trimmed, never more than it may take */
 export function holdToTake(d: SuggestionDraft, pool: "images" | "videos", take: number): SuggestionDraft {
   const fits = d.formats.filter((f) => (pool === "videos" ? f.format === "video" : f.format !== "video"));
@@ -458,7 +548,8 @@ async function notifyLeads(admin: Db, b: { id: string; clientId: string; client:
       kind: "brief",
       title: `Brief to approve: ${b.client} · ${clip(b.title, 80)}${b.deadline ? ` (live by ${b.deadline})` : ""}`,
       body: clip(`${b.reason}${b.over ? ` · ${b.over}` : ""}`, 900),
-      href: `/requests/new?approve=${b.id}`,
+      // Their Overview, Clients tab: the brief opens inside its client's row
+      href: `/pipeline?tab=clients&approve=${b.id}`,
       client_id: b.clientId,
       key: `drafted:${b.id}`,
       priority: b.urgent ? "critical" : "normal",
