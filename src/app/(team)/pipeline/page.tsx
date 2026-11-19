@@ -31,6 +31,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { topicsFor } from "@/lib/today";
 import { todaySnapshot } from "@/lib/today-snapshot";
 import { MyDesk } from "./views/my-desk";
+import { MakerTasks } from "./views/maker-tasks";
+import { isMaker } from "@/lib/maker-day-core";
+import { makerTasks } from "@/lib/maker-day";
 import { ReadyCallout } from "./views/ready-callout";
 
 const department = (me: Staff) => (me.role === "head_of_creative" ? "Creative" : me.role === "head_of_google" ? "Google" : "Meta");
@@ -108,6 +111,22 @@ export default async function Home() {
     );
   }
   const assignedQuery = () => db.from("client_assignments").select("client_id").eq("profile_id", me.id);
+
+  // Graphic designers and video editors: the Today view only. Their recap is a brief of their own plate and what's about
+  // to hit it (never a client's metrics: src/lib/maker-day.ts), and under it their tasks, Asana and the board, overdue
+  // first, each one tap from the task itself (owner, Nov 19 2026)
+  if (isMaker(me.role)) {
+    const [{ data: hiddenRows }, tasks] = await Promise.all([hiddenQuery(), makerTasks(db, me).catch(() => [])]);
+    const onYou = tasks.filter((t) => t.onThem).length;
+    return (
+      <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
+        <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${onYou ? `${onYou} ${onYou === 1 ? "piece is" : "pieces are"} on you` : "nothing on you right now"}`} />
+        <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
+        <HandoffCallout db={db} me={me.id} />
+        <MakerTasks tasks={tasks} />
+      </div>
+    );
+  }
 
   // Team members (designers, editors, buyers, the copywriter, customer success): their recap and their Next for me.
   // What the themes hold for execs and leads (promises, messages, ads wearing out, new clients) reaches them in the

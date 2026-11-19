@@ -6,7 +6,7 @@ import type { Tier, TodayItem, TopicKey } from "@/lib/today";
 // gather as one "Team" row. A client's row is as urgent as its most urgent item. Pure: no database, no server-only.
 
 export const TIER_ORDER: Tier[] = ["critical", "high", "normal"];
-export const TOPIC_KEYS: TopicKey[] = ["fire", "mine", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments", "elsewhere"];
+export const TOPIC_KEYS: TopicKey[] = ["fire", "mine", "radar", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments", "elsewhere"];
 /** An exec's "Everything else": outside their focus, shown last and left out of every total */
 export const QUIET_TOPIC: TopicKey = "elsewhere";
 const RANK: Record<Tier, number> = { critical: 2, high: 1, normal: 0 };
@@ -103,6 +103,8 @@ export function lookHeadline(topic: TopicKey, n: number): string {
       return `${n} ${s(n, "client", "clients")} outside your focus, when you want them`;
     case "mine":
       return `${n} ${s(n, "thing is", "things are")} on you today`;
+    case "radar":
+      return `${n} ${s(n, "thing is", "things are")} coming to your board soon`;
     case "promises":
       return `${n} ${s(n, "thing is", "things are")} waiting on us: promised, said yes to, or not answered`;
     case "onboarding":
@@ -133,6 +135,8 @@ export function lookChip(topic: TopicKey, n: number): string {
       return `${n} everything else`;
     case "mine":
       return `${n} on you today`;
+    case "radar":
+      return `${n} on your radar`;
     case "promises":
       return `${n} waiting on us`;
     case "onboarding":

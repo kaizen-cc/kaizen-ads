@@ -357,14 +357,17 @@ export async function loadNextForMe(db: SupabaseClient, me: Staff): Promise<Next
     });
 
   const rank = { bad: 0, warn: 1, brand: 2, ok: 3 } as const;
-  const sort = (xs: NextItem[]) => kept(xs).sort((a, b) => rank[a.tone] - rank[b.tone]);
+  // Graphic designers and video editors: their own work only, never a KPI, an ad wearing out or an allotment
+  const { isMaker, makerNextItem } = await import("@/lib/maker-day-core");
+  const own = (xs: NextItem[]) => (isMaker(me.role) ? xs.filter((x) => makerNextItem(x.kind)) : xs);
+  const sort = (xs: NextItem[]) => own(kept(xs)).sort((a, b) => rank[a.tone] - rank[b.tone]);
   return {
     now: sort(now),
     decide: sort(decide),
     watch: sort(watch),
     bibles: kept(bibles),
-    waiting: kept(waiting),
-    coming: kept(coming),
+    waiting: own(kept(waiting)),
+    coming: own(kept(coming)),
     stats: { onMe: h.mine.length, late: h.mine.filter((r) => r.minutes_over > 0).length, dueToday: h.dueToday, toDecide: decide.length },
   };
 }
