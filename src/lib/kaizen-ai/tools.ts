@@ -1198,6 +1198,9 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   // Where the team works: their own Gmail, Drive and Calendar, and hands-on work in a client's Klaviyo (writes after a yes)
   const { workspaceTools } = await import("./workspace-tools");
   for (const t of workspaceTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  // Figma, read with their own token (Figma's hosted connector admits only apps Figma approved)
+  const { figmaTools } = await import("./figma-tools");
+  for (const t of figmaTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
 
   // Rankings across clients: clients on a line, and single emails, ads and posts (each scoped to the person's line)
   for (const t of rankTools(ctx)) tools.push(t);

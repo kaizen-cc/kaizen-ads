@@ -349,6 +349,18 @@ export async function finishConnect(me: Staff, p: { code: string; state: string;
 }
 
 /** A personal token pasted for a token connector: checked against the server (it must list its tools), then sealed */
+/** Connectors Kaizen AI reads with its own tools and the person's token (Figma: its hosted connector admits only approved apps) */
+export const isNativeConnector = (c: Pick<Connector, "url" | "key">) => c.key === "figma" || /(^|\.)figma\.com/i.test(new URL(c.url).hostname);
+
+/** The person's own saved token for a connector (a pasted personal token), or null */
+export async function personalTokenFor(admin: SupabaseClient, profileId: string, connectorKey: string): Promise<string | null> {
+  const c = await connectorByKey(admin, connectorKey);
+  if (!c) return null;
+  const { data: conn } = await admin.from("ai_connections").select("id, status").eq("profile_id", profileId).eq("connector_id", c.id).maybeSingle();
+  if (!conn || conn.status !== "active") return null;
+  return (await tokensOf(admin, conn.id as string)).access;
+}
+
 export async function savePersonalToken(me: Staff, connectorKey: string, token: string): Promise<void> {
   const admin = createAdminClient();
   const c = await connectorByKey(admin, connectorKey);
@@ -356,6 +368,15 @@ export async function savePersonalToken(me: Staff, connectorKey: string, token: 
   if (c.auth !== "token") throw new Error(`${c.name} doesn't take a pasted token.`);
   const t = token.trim();
   if (t.length < 8 || t.length > 4000 || /\s/.test(t)) throw new Error("That doesn't look like a token. Copy it again in full.");
+  // Figma's hosted connector only lets apps Figma approved sign in; Kaizen AI reads Figma through its API with the
+  // person's own token instead (src/lib/kaizen-ai/figma-tools.ts): checked against Figma, never sent to the MCP server
+  if (isNativeConnector(c)) {
+    const { figmaMe } = await import("@/lib/figma");
+    const who = await figmaMe(t);
+    if (!who.ok) throw new Error(who.error);
+    await saveConnection(admin, me.id, c, { access_token: t });
+    return;
+  }
   const listed = await listTools(c.url, t);
   if (!listed.ok && (listed.status === 401 || listed.status === 403)) throw new Error(`${c.name} didn't accept that token.`);
   const id = await saveConnection(admin, me.id, c, { access_token: t });
@@ -484,6 +505,8 @@ export async function readyFor(admin: SupabaseClient, me: Staff, keys: string[])
         ready.push({ key: c.key, name: c.name, url: c.url, token: null, tools: conn.tools });
         return;
       }
+      // Read by Kaizen AI's own tools with the person's token, not through the MCP connector
+      if (isNativeConnector(c)) return;
       if (conn.status !== "active") return problems.push({ key: c.key, name: c.name, text: `${c.name} needs you to sign in again.`, reconnect: true });
       let { access, refresh } = await tokensOf(admin, conn.id);
       if (!access) {
