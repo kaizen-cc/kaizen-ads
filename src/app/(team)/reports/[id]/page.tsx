@@ -59,7 +59,8 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   }
   const r = current;
   // Its buyer opening it for the first time: the heads of the line see it's been looked at
-  if (r.owner_id === me.id && !r.viewed_at && adminConfigured()) after(async () => {
+  // (not when the owner is only viewing as them)
+  if (r.owner_id === me.id && !r.viewed_at && adminConfigured() && !me.viewAs) after(async () => {
     await createAdminClient().from("reports").update({ viewed_at: new Date().toISOString() }).eq("id", r.id).is("viewed_at", null);
   });
 

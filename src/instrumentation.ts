@@ -3,11 +3,21 @@ import type { Instrumentation } from "next";
 // Framework signals that look like errors but aren't (redirects, 404s, dynamic rendering)
 const NOT_ERRORS = /^(NEXT_REDIRECT|NEXT_NOT_FOUND|NEXT_HTTP_ERROR_FALLBACK|DYNAMIC_SERVER_USAGE|BAILOUT_TO_CLIENT_SIDE_RENDERING)/;
 
+/** Outside calls go through the view-as guard: nothing that changes anything leaves while the owner views as someone */
+export async function register() {
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  const { installViewAsFetchGuard } = await import("@/lib/view-as-fetch");
+  installViewAsFetchGuard();
+}
+
 /** Every unexpected server error is recorded and, when due, emailed (see lib/error-report). */
 export const onRequestError: Instrumentation.onRequestError = async (err, request, context) => {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   const e = err as Error & { digest?: string };
   if (NOT_ERRORS.test(e?.digest ?? "") || NOT_ERRORS.test(e?.message ?? "")) return;
+  // A change refused while the owner views as someone is meant to happen, not a bug
+  const { isViewAsMessage } = await import("@/lib/view-as-core");
+  if (isViewAsMessage(e?.message)) return;
   const { reportError, personFromCookies } = await import("@/lib/error-report");
   const cookie = request.headers.cookie;
   await reportError({

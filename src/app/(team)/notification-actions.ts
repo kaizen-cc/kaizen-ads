@@ -1,6 +1,6 @@
 "use server";
 
-import { requireStaff } from "@/lib/auth";
+import { getViewer, requireStaff } from "@/lib/auth";
 import { loadNotifications, NOT_FOR_CREATIVE, withDefaults, type NoticePrefs } from "@/lib/notifications";
 import { isCreativeRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
@@ -15,8 +15,9 @@ export async function myNotifications() {
   const { data: claims } = await db.auth.getClaims();
   if (!claims?.claims) return { items: [], unread: 0, popups: false };
   // The creative team's bell leaves out the alerts only a buyer can act on (accounts off target, sprints, connections)
-  const { data: me } = await db.from("profiles").select("role").eq("auth_user_id", claims.claims.sub).eq("is_active", true).maybeSingle();
-  const skipKinds = isCreativeRole(me?.role as string | null | undefined) ? NOT_FOR_CREATIVE : [];
+  // Whoever the app answers as (the teammate, while the owner views as them)
+  const me = await getViewer();
+  const skipKinds = me.kind === "staff" && isCreativeRole(me.role) ? NOT_FOR_CREATIVE : [];
   const [list, { data: prefs }] = await Promise.all([loadNotifications(db, 40, { skipKinds }), db.from("notification_prefs").select("settings").maybeSingle()]);
   return { ...list, popups: withDefaults(prefs?.settings).popups };
 }

@@ -15,6 +15,7 @@ import { writeCallNotes } from "@/lib/assistant/notes";
 import { logTraining, snapshot } from "@/lib/agent-training";
 import { aiEnabled } from "@/lib/ai";
 import { requireStaff, type Staff } from "@/lib/auth";
+import { viewAsMessage } from "@/lib/view-as-core";
 import { elevenlabsConfigured, listVoices, realtimeSttToken } from "@/lib/elevenlabs";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { chatWithAgent } from "./actions";
@@ -49,6 +50,8 @@ async function lastConversation(admin: ReturnType<typeof createAdminClient>, pro
 export async function startCall(roleKey: string, opts: { talk?: TalkMode; headsUp?: string | null } = {}): Promise<StartedCall | Fail> {
   const me = await requireStaff();
   const talk = talkModeOf(opts.talk);
+  // The owner viewing as a teammate: their assistant and agents stay theirs (a conversation would be kept as theirs)
+  if (me.viewAs) return { ok: false, error: `${viewAsMessage(me.fullName)} The assistant is read only while you view as someone; ask your own assistant what a role sees.` };
   if (!canTalkToAgent(me, roleKey)) return { ok: false, error: "That isn't one of the agents." };
   if (!aiEnabled()) return { ok: false, error: "AI isn't connected yet." };
   if (talk === "voice" && !elevenlabsConfigured()) return { ok: false, error: "Calls need ElevenLabs: an exec adds ELEVENLABS_API_KEY in Vercel." };

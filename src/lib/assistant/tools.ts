@@ -14,6 +14,7 @@ import { forgetContext, myWork } from "./context";
 import { saveNotes } from "./memory";
 import { commsTools } from "./comms-tools";
 import { profileTools } from "./profile-tools";
+import { viewAsTools } from "./view-as-tools";
 import { lookupTools } from "./lookup-tools";
 import { failedOnOurSide } from "./messages";
 
@@ -723,7 +724,7 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
             return out;
           },
         };
-  return carryYes(ctx, cctx, [...own, ...lookupTools(ctx), ...profileTools(ctx), ...comms, ...cardTools, ...rest.map(docCards)]);
+  return carryYes(ctx, cctx, [...own, ...lookupTools(ctx), ...profileTools(ctx), ...viewAsTools(ctx), ...comms, ...cardTools, ...rest.map(docCards)]);
 }
 
 /**

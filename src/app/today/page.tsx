@@ -27,7 +27,7 @@ export default async function TodayPage() {
   const [today, production] = await Promise.all([todaySnapshot(db, me).then((s) => s.today), (me.isCreative || me.isCopywriter) && adminConfigured() ? loadProduction(createAdminClient()).catch(() => null) : Promise.resolve(null)]);
   const score = production?.team.find((s) => s.profileId === me.id) ?? null;
   // Been through today's recap: no reminder this afternoon
-  if (adminConfigured()) after(async () => void (await createAdminClient().from("profiles").update({ recap_seen_on: new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }) }).eq("id", me.id)));
+  if (adminConfigured() && !me.viewAs) after(async () => void (await createAdminClient().from("profiles").update({ recap_seen_on: new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }) }).eq("id", me.id)));
   return (
     <>
       {/* A brief started from the recap is written in the background: its notices show here too */}

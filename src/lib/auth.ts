@@ -1,8 +1,9 @@
 import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
 import { canSeeReports, isCreativeRole, isLeadMaker, type TeamRole } from "@/lib/roles";
+import { createSessionClient } from "@/lib/supabase/session";
+import { activeViewAs, STAFF_COLUMNS, type StaffRow } from "@/lib/view-as";
 
 export type Staff = {
   kind: "staff";
@@ -17,6 +18,13 @@ export type Staff = {
   isBuyer: boolean;
   isCopywriter: boolean;
   isCoordinator: boolean;
+  /** Only the owner: may view the app as a teammate (profiles.can_view_as, set by migration, never by role) */
+  canViewAs?: boolean;
+  /**
+   * Set while the owner views the app as this teammate (lib/view-as-core.ts): everything above is the teammate's, so
+   * every gate is theirs; nothing can be changed. The real person signed in is viewAs.actorId.
+   */
+  viewAs?: { actorId: string; actorName: string; mode: "person" | "role"; role: TeamRole | null; label: string };
 };
 
 export type Brand = { id: string; name: string; slug: string; logoPath: string | null };
@@ -31,36 +39,36 @@ export type Contact = {
 
 export type Viewer = Staff | Contact;
 
+const staffFrom = (p: StaffRow): Staff => ({
+  kind: "staff",
+  id: p.id,
+  email: p.email,
+  fullName: p.full_name,
+  avatarUrl: p.avatar_url,
+  role: p.role as TeamRole,
+  isExec: p.is_exec,
+  isLead: p.is_lead,
+  isCreative: p.is_creative,
+  isBuyer: p.is_buyer,
+  isCopywriter: p.is_copywriter,
+  isCoordinator: p.is_coordinator,
+  canViewAs: Boolean(p.can_view_as),
+});
+
 // Who is signed in: a Kaizen team member or a client contact. RLS only lets each read themselves.
+// While the owner views as a teammate (checked on the server for every request: lib/view-as.ts), it's that teammate.
 export const getViewer = cache(async (): Promise<Viewer> => {
-  const supabase = await createClient();
+  const supabase = await createSessionClient();
   const { data: claims } = await supabase.auth.getClaims();
   if (!claims?.claims) redirect("/login");
   const uid = claims.claims.sub;
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id, email, full_name, avatar_url, role, is_exec, is_lead, is_creative, is_buyer, is_copywriter, is_coordinator")
-    .eq("auth_user_id", uid)
-    .eq("is_active", true)
-    .maybeSingle();
+  const va = await activeViewAs();
+  if (va) return { ...staffFrom(va.target), viewAs: { actorId: va.actorId, actorName: va.actorName, mode: va.mode, role: va.role, label: va.label } };
 
-  if (profile) {
-    return {
-      kind: "staff",
-      id: profile.id,
-      email: profile.email,
-      fullName: profile.full_name,
-      avatarUrl: profile.avatar_url,
-      role: profile.role as TeamRole,
-      isExec: profile.is_exec,
-      isLead: profile.is_lead,
-      isCreative: profile.is_creative,
-      isBuyer: profile.is_buyer,
-      isCopywriter: profile.is_copywriter,
-      isCoordinator: profile.is_coordinator,
-    };
-  }
+  const { data: profile } = await supabase.from("profiles").select(STAFF_COLUMNS).eq("auth_user_id", uid).eq("is_active", true).maybeSingle();
+
+  if (profile) return staffFrom(profile as StaffRow);
 
   const { data: contact } = await supabase
     .from("contacts")

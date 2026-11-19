@@ -1,29 +1,15 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies, headers } from "next/headers";
-import { cookieDomain } from "@/lib/site";
+import "server-only";
+import { createSessionClient } from "@/lib/supabase/session";
+import { activeViewAs } from "@/lib/view-as";
+import { viewAsFetch } from "@/lib/view-as-fetch";
+import { VIEW_AS_HEADER } from "@/lib/view-as-core";
 
+/**
+ * The signed-in person's connection: RLS answers for them. While the owner views as a teammate it answers for that
+ * teammate instead (the database's pre-request hook reads x-kz-view-as) and it can't write (lib/view-as-core.ts).
+ */
 export async function createClient() {
-  const cookieStore = await cookies();
-  const h = await headers();
-  const domain = cookieDomain(h.get("x-forwarded-host") ?? h.get("host"));
-
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-    {
-      cookieOptions: { domain },
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options));
-          } catch {
-            // Called from a Server Component — the proxy refreshes the session instead.
-          }
-        },
-      },
-    },
-  );
+  const va = await activeViewAs();
+  if (!va) return createSessionClient();
+  return createSessionClient({ headers: { [VIEW_AS_HEADER]: va.target.id }, fetch: viewAsFetch(fetch, { header: true }) });
 }

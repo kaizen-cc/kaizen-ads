@@ -12,6 +12,7 @@ import { NotificationBell } from "./notification-bell";
 import { BriefJobsIndicator, BriefJobsRoot } from "./brief-jobs";
 import { MediaJobsIndicator, MediaJobsRoot } from "./media-jobs";
 import { PersonAvatar } from "@/components/person-avatar";
+import { ViewAsBar, ViewAsControl } from "@/components/view-as";
 import { channelNavOk } from "@/lib/roles";
 import { useAgentCall } from "./agent-call-provider";
 
@@ -250,7 +251,7 @@ function Icon({ d }: { d: string }) {
   );
 }
 
-export function TeamShell({ name, fullName, meId, roles, tier, creative = null, reports = false, channel = false, role = null, theme = null, children }: { name: string; fullName: string; meId: string; roles: string; tier: Tier; creative?: CreativeSide; reports?: boolean; channel?: boolean; role?: string | null; theme?: Theme | null; children: React.ReactNode }) {
+export function TeamShell({ name, fullName, meId, roles, tier, creative = null, reports = false, channel = false, role = null, theme = null, viewAs = null, canViewAs = false, children }: { name: string; fullName: string; meId: string; roles: string; tier: Tier; creative?: CreativeSide; reports?: boolean; channel?: boolean; role?: string | null; theme?: Theme | null; viewAs?: { label: string; name: string } | null; canViewAs?: boolean; children: React.ReactNode }) {
   const path = usePathname();
   const view = useSearchParams().get("view");
   // The creative team doesn't get the media-buying tools; the Head of Creative gets their team's KPIs instead. Reports
@@ -324,6 +325,7 @@ export function TeamShell({ name, fullName, meId, roles, tier, creative = null, 
     <div className="relative min-h-screen md:grid md:grid-cols-[240px_1fr]">
       <BriefJobsRoot />
       <MediaJobsRoot />
+      <ViewAsBar label={viewAs?.label ?? null} name={viewAs?.name ?? null} />
       {/* A faint brand glow behind the top of every page (first, so everything after it paints above) */}
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(60%_100%_at_15%_0%,rgba(178,30,44,0.16),transparent_70%)] md:left-[240px]" />
       <aside className="pt-safe hidden border-r border-line bg-surface md:sticky md:top-0 md:flex md:h-screen md:flex-col">
@@ -367,6 +369,12 @@ export function TeamShell({ name, fullName, meId, roles, tier, creative = null, 
             <button className="rounded-brand px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-fg">Sign out</button>
           </form>
         </div>
+        {/* The owner alone: see the app as a teammate or a role (lib/view-as-core.ts) */}
+        {canViewAs && (
+          <div className="px-3 pb-1">
+            <ViewAsControl />
+          </div>
+        )}
         <div className="px-4 pb-4">
           <ThemeSwitch saved={theme} />
         </div>
@@ -473,6 +481,11 @@ export function TeamShell({ name, fullName, meId, roles, tier, creative = null, 
                 <button className="min-h-10 rounded-full border border-line px-3 text-xs text-muted active:bg-surface-2">Sign out</button>
               </form>
             </div>
+            {canViewAs && (
+              <div className="px-5 pb-3">
+                <ViewAsControl size="menu" onPicked={() => setMenu(false)} />
+              </div>
+            )}
             <div className="px-5 pb-[calc(env(safe-area-inset-bottom)+16px)]">
               <p className="pb-2 text-[11px] font-medium uppercase tracking-[0.16em] text-faint">Appearance</p>
               <ThemeSwitch saved={theme} size="lg" />

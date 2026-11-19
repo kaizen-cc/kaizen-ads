@@ -13,7 +13,8 @@ import { EmailsReady, ReviewTodos } from "./emails-ready";
  */
 export async function MyDesk({ db, me }: { db: SupabaseClient; me: Staff }) {
   const [drafts, todos] = await Promise.all([myDrafts(db, me.id).catch(() => []), myReviewTodos(db, me.id).catch(() => [])]);
-  if (adminConfigured()) {
+  // Never while the owner views as them (lib/view-as-core.ts): nothing is done for a real person
+  if (adminConfigured() && !me.viewAs) {
     after(async () => {
       const admin = createAdminClient();
       const { scannedRecently, scanForPerson } = await import("@/lib/email-drafts/server");
