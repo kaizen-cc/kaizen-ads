@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanScope, emailAllotmentLine, emailPace, requestFit, requestUnits, toEmailAllotment, unitsOfRequest, type EmailAllotmentRow } from "@/lib/email-allotment-core";
+import { allotmentPace, veryBehind, cleanScope, emailAllotmentLine, emailPace, requestFit, requestUnits, toEmailAllotment, unitsOfRequest, type EmailAllotmentRow } from "@/lib/email-allotment-core";
 
 const u = (p: Partial<{ campaigns: number; sms: number; flows: number; flowEmails: number }>) => ({ campaigns: 0, sms: 0, flows: 0, flowEmails: 0, ...p });
 
@@ -99,5 +99,28 @@ describe("cleanScope", () => {
     expect(s.months[0]).toEqual({ month: "2026-12-01", label: "Month 1", campaigns: 4, campaigns_min: 4, sms: 2, sms_min: 2, flows: 3, flow_emails: 15, flow_emails_min: 15, notes: "", signed: true });
     expect(s.start).toBe("2026-12-01");
     expect(s.ongoing_tier).toBe("basic");
+  });
+});
+
+describe("allotment pacing", () => {
+  const a = (p: Partial<EmailAllotmentRow>) => toEmailAllotment(row({ campaigns_used: 0, campaigns_progress: 0, campaigns_done: 0, ...p }));
+  it("gives the first days of a cycle grace", () => {
+    expect(allotmentPace(a({}), new Date("2026-11-03T12:00:00"))).toBeNull();
+  });
+  it("measures used against the cycle, the top of each range, over the cap adding nothing", () => {
+    const p = allotmentPace(a({ campaigns_used: 9, sms_used: 1 }), new Date("2026-11-16T12:00:00"))!;
+    // caps 5 + 2 + 5 = 12; used counted at the cap: 5 + 1 = 6
+    expect(p.used).toBeCloseTo(0.5, 2);
+    expect(p.expected).toBeGreaterThan(0.45);
+  });
+  it("leaves out strategy-only clients and clients with nothing set", () => {
+    expect(allotmentPace(a({ cap_source: "strategy" }), new Date("2026-11-20T12:00:00"))).toBeNull();
+    expect(allotmentPace(a({ cap_source: null, campaigns_per_month: null, sms_per_month: null, flow_emails_per_month: null }), new Date("2026-11-20T12:00:00"))).toBeNull();
+  });
+  it("flags very behind past half the cycle, and anything short in the last week", () => {
+    expect(veryBehind(a({ campaigns_used: 1 }), new Date("2026-11-10T12:00:00"))).toBeNull();
+    expect(veryBehind(a({ campaigns_used: 1 }), new Date("2026-11-20T12:00:00"))?.kind).toBe("behind");
+    expect(veryBehind(a({ campaigns_used: 3, sms_used: 2, flow_emails_used: 2 }), new Date("2026-11-27T12:00:00"))?.kind).toBe("last_week");
+    expect(veryBehind(a({ campaigns_used: 5, sms_used: 2, flow_emails_used: 5 }), new Date("2026-11-27T12:00:00"))).toBeNull();
   });
 });

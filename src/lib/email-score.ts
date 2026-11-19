@@ -11,18 +11,28 @@
 // revenue can't sit at 100. Its credit is steeper: on pace earns it all, half the pace or less earns nothing. It's left
 // out (the rest scaled up, exactly as before it existed) with no target or in the first days of the month. The other
 // seven keep their old proportions (20/20/15/11/11/11/12 scaled to 75).
+//
+// Allotment pacing (owner, Nov 19 2026) is worth a tenth: the share of the client's email allotment used (everything in
+// the production line) against how far through the billing cycle they are. Behind drags the score down; on or ahead
+// takes nothing off, over the cap adds nothing; half the pace or less earns none of it. Unmeasured for strategy-only
+// clients, clients with no tier or SOW, and the first days of a cycle. The other eight keep their proportions.
 
-export type EmailCheckKey = "pace" | "attributed" | "rpr" | "deliverability" | "campaignOpen" | "campaignClick" | "flowOpen" | "flowClick";
+export type EmailCheckKey = "pace" | "allotment" | "attributed" | "rpr" | "deliverability" | "campaignOpen" | "campaignClick" | "flowOpen" | "flowClick";
 
 export const EMAIL_CHECKS: readonly { key: EmailCheckKey; label: string; bar: number; weight: number; unit: "pct" | "money" | "score" }[] = [
-  { key: "pace", label: "Revenue pace", bar: 1, weight: 25, unit: "pct" },
-  { key: "attributed", label: "Attributed revenue", bar: 0.3, weight: 15, unit: "pct" },
-  { key: "rpr", label: "Revenue per recipient", bar: 0.15, weight: 15, unit: "money" },
-  { key: "deliverability", label: "Deliverability", bar: 65, weight: 11.25, unit: "score" },
-  { key: "campaignOpen", label: "Campaign open rate", bar: 0.3, weight: 8.25, unit: "pct" },
-  { key: "campaignClick", label: "Campaign click rate", bar: 0.01, weight: 8.25, unit: "pct" },
-  { key: "flowOpen", label: "Flow open rate", bar: 0.35, weight: 8.25, unit: "pct" },
-  { key: "flowClick", label: "Flow click rate", bar: 0.015, weight: 9, unit: "pct" },
+  // The eight checks before allotment pacing keep their proportions (scaled to 90), so an account with no allotment scores
+  // exactly as before (allotment pacing is then unmeasured and the rest scaled up)
+  { key: "pace", label: "Revenue pace", bar: 1, weight: 22.5, unit: "pct" },
+  // Allotment pacing: the share of the month's allotment used against the share of the billing cycle gone (its bar moves
+  // with the cycle). Measured only for clients with an allotment, past the first days of the cycle
+  { key: "allotment", label: "Allotment pacing", bar: 1, weight: 10, unit: "pct" },
+  { key: "attributed", label: "Attributed revenue", bar: 0.3, weight: 13.5, unit: "pct" },
+  { key: "rpr", label: "Revenue per recipient", bar: 0.15, weight: 13.5, unit: "money" },
+  { key: "deliverability", label: "Deliverability", bar: 65, weight: 10.125, unit: "score" },
+  { key: "campaignOpen", label: "Campaign open rate", bar: 0.3, weight: 7.425, unit: "pct" },
+  { key: "campaignClick", label: "Campaign click rate", bar: 0.01, weight: 7.425, unit: "pct" },
+  { key: "flowOpen", label: "Flow open rate", bar: 0.35, weight: 7.425, unit: "pct" },
+  { key: "flowClick", label: "Flow click rate", bar: 0.015, weight: 8.1, unit: "pct" },
 ];
 
 /** Revenue pace earns nothing at half the pace or less, all of it on pace, in a straight line between */
@@ -36,6 +46,8 @@ export const emailBand = (score: number): EmailBand => (score >= 80 ? "good" : s
 export type EmailInputs = {
   /** Where the month lands at this pace over its target (1 = on pace); null with no target or too early in the month */
   pace?: number | null;
+  /** The share of the allotment used and the share of the billing cycle gone (src/lib/email-allotment-core.ts allotmentPace) */
+  allotment?: { used: number; expected: number } | null;
   /** Klaviyo-attributed revenue / the store's revenue */
   attributed: number | null;
   /** Attributed revenue / recipients (campaigns and flows) */
@@ -59,7 +71,15 @@ const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
  */
 export function emailScore(i: EmailInputs): EmailScore {
   const checks: EmailCheck[] = EMAIL_CHECKS.map((c) => {
-    const value = i[c.key] ?? null;
+    if (c.key === "allotment") {
+      // Shown as "30% vs 70%": used against where the cycle is. On or ahead earns it all (over the cap adds nothing);
+      // half the pace or less earns nothing, the same steep credit as revenue pace
+      const a = i.allotment ?? null;
+      if (!a || !Number.isFinite(a.used) || !(a.expected > 0)) return { key: c.key, label: c.label, value: null, bar: c.bar, weight: c.weight, unit: c.unit, points: 0, met: false };
+      const share = clamp01((a.used / a.expected - PACE_FLOOR) / (1 - PACE_FLOOR));
+      return { key: c.key, label: c.label, value: a.used, bar: a.expected, weight: c.weight, unit: c.unit, points: share * c.weight, met: a.used >= a.expected };
+    }
+    const value = (i[c.key] as number | null | undefined) ?? null;
     const share = value === null || !Number.isFinite(value) ? null : c.key === "pace" ? clamp01((value - PACE_FLOOR) / (c.bar - PACE_FLOOR)) : clamp01(value / c.bar);
     return { key: c.key, label: c.label, value: value ?? null, bar: c.bar, weight: c.weight, unit: c.unit, points: share === null ? 0 : share * c.weight, met: value !== null && value >= c.bar };
   });

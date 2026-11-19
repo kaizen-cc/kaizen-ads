@@ -83,6 +83,7 @@ export type RuleFinding = { title: string; area: EmailArea; severity: "high" | "
 
 const CHECK_AREA: Record<EmailCheck["key"], EmailArea> = {
   pace: "campaigns",
+  allotment: "cadence",
   attributed: "flows",
   rpr: "campaigns",
   deliverability: "deliverability",

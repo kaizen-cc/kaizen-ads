@@ -13,7 +13,7 @@ describe("the email KPI board in the email tool", () => {
     expect(b.deliverability_score).toBeGreaterThan(0);
     expect(b.deliverability_bar).toBe(65);
     expect(b.deliverability_parts.map((p) => p.metric)).toContain("Spam complaint rate");
-    expect(b.checks).toHaveLength(8);
+    expect(b.checks).toHaveLength(9);
     expect(b.checks.find((c) => c.check === "Deliverability")?.value).toBe(d.score);
     expect(b.checks.find((c) => c.check === "Campaign open rate")?.value).toBe(62);
     expect(b.email_score).toBe(s.score);

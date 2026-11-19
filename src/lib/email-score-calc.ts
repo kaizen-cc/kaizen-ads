@@ -150,8 +150,9 @@ export function paceInput(mtd: number, target: number | null | undefined, m: { d
 }
 
 /** Rows in, the full result out (pace: see paceInput; left out when not given) */
-export function scoreFromRows(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[]; extra?: MetricDay[][]; noRevenue?: boolean; pace?: number | null }, window: { from: string; to: string }): EmailScoreResult {
+export function scoreFromRows(d: { days: ScoreDay[]; campaigns: ScoreCampaign[]; flows: ScoreFlow[]; extra?: MetricDay[][]; noRevenue?: boolean; pace?: number | null; allotment?: { used: number; expected: number } | null }, window: { from: string; to: string }): EmailScoreResult {
   const a = aggregateEmailScore(d);
   if (d.pace != null && !d.noRevenue) a.inputs.pace = d.pace;
+  if (d.allotment) a.inputs.allotment = d.allotment;
   return { ...emailScore(a.inputs), ...a, window };
 }

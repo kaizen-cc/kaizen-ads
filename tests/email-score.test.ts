@@ -5,7 +5,7 @@ const healthy = { attributed: 0.35, rpr: 0.2, deliverability: 80, campaignOpen: 
 
 describe("emailScore", () => {
   it("weights add to 100", () => {
-    expect(EMAIL_CHECKS.reduce((n, c) => n + c.weight, 0)).toBe(100);
+    expect(EMAIL_CHECKS.reduce((n, c) => n + c.weight, 0)).toBeCloseTo(100, 9);
   });
   it("every check met is 100 and green", () => {
     const s = emailScore(healthy);
@@ -27,7 +27,19 @@ describe("emailScore", () => {
   it("leaves out what it can't measure and scales the rest", () => {
     const s = emailScore({ ...healthy, campaignOpen: null, campaignClick: null });
     expect(s.score).toBe(100);
-    expect(s.unmeasured).toEqual(["pace", "campaignOpen", "campaignClick"]);
+    expect(s.unmeasured).toEqual(["pace", "allotment", "campaignOpen", "campaignClick"]);
+  });
+  it("allotment pacing: behind drags the score down, on or ahead takes nothing, over adds nothing", () => {
+    const behind = emailScore({ ...healthy, allotment: { used: 0.3, expected: 0.7 } });
+    const onPace = emailScore({ ...healthy, allotment: { used: 0.7, expected: 0.7 } });
+    const ahead = emailScore({ ...healthy, allotment: { used: 1, expected: 0.7 } });
+    const check = behind.checks.find((c) => c.key === "allotment")!;
+    expect(check.value).toBe(0.3);
+    expect(check.bar).toBe(0.7);
+    expect(check.points).toBe(0);
+    expect(behind.weighingDown.some((c) => c.key === "allotment")).toBe(true);
+    expect(onPace.score).toBe(ahead.score);
+    expect(behind.score).toBeLessThan(onPace.score);
   });
   it("revenue pace: strong rates far behind on revenue can't sit at 100", () => {
     // 38% of pace (the Aldecoa case): nothing from the quarter pace is worth, so the account drops to watch

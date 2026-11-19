@@ -226,3 +226,54 @@ export function cleanScope(s: Partial<SowScope> | null | undefined): SowScope {
     months,
   };
 }
+
+// ─── Pacing, for the email account score and the alerts ─────────────────────
+
+/** The first part of a cycle is grace: too early to call anyone behind (about the first 4 days of a month) */
+export const PACE_GRACE = 0.15;
+/** Very behind: under half of where the cycle says they should be, with more than half the cycle gone */
+export const VERY_BEHIND_RATIO = 0.5;
+export const VERY_BEHIND_AFTER = 0.5;
+/** The last week of the cycle: anything short of the bottom of the range is flagged */
+export const LAST_WEEK_DAYS = 7;
+
+/**
+ * Allotment pacing: the share of the month's allotment used (everything in the production line, each pool's top of the
+ * range, over the cap counted at the cap so being over adds nothing) against how far through the billing cycle the
+ * client is. Null (not measured) for strategy-only clients, clients with no tier, SOW or month set, and in the first
+ * days of a cycle.
+ */
+export function allotmentPace(a: EmailAllotment | null | undefined, now = new Date()): { used: number; expected: number; ratio: number; elapsed: number } | null {
+  if (!a || !a.source || a.source === "strategy") return null;
+  const pools = (["campaigns", "sms", "flows", "flowEmails"] as const).map((k) => a[k]).filter((p) => p.max != null && p.max > 0);
+  const cap = pools.reduce((n, p) => n + (p.max ?? 0), 0);
+  if (!cap) return null;
+  const elapsed = emailCycleElapsed(a.cycle, now);
+  if (elapsed < PACE_GRACE) return null;
+  const used = pools.reduce((n, p) => n + Math.min(p.used, p.max ?? 0), 0) / cap;
+  return { used, expected: elapsed, ratio: used / Math.max(0.01, elapsed), elapsed };
+}
+
+/** Days left in the cycle (0 on its last day) */
+export function cycleDaysLeft(cycle: { start: string; end: string } | null | undefined, now = new Date()): number | null {
+  if (!cycle) return null;
+  return Math.max(0, Math.ceil((new Date(`${cycle.end}T00:00:00`).getTime() - now.getTime()) / 86_400_000) - 1);
+}
+
+/**
+ * Is this client VERY behind on their allotment? "behind": under half of where they should be with more than half the
+ * cycle gone; "last_week": in the cycle's last week with any pool short of the bottom of its range. Null otherwise.
+ */
+export function veryBehind(a: EmailAllotment | null | undefined, now = new Date()): { kind: "behind" | "last_week"; text: string } | null {
+  const p = allotmentPace(a, now);
+  if (!p || !a) return null;
+  const left = cycleDaysLeft(a.cycle, now);
+  const short = (["campaigns", "sms", "flows", "flowEmails"] as const)
+    .map((k) => ({ k, c: a[k] }))
+    .filter(({ c }) => c.max != null && c.max > 0 && c.used < (c.min ?? c.max))
+    .map(({ k, c }) => `${POOL_LABEL[k]} ${c.used} of ${c.min != null && c.min < (c.max ?? 0) ? `${c.min}-${c.max}` : c.max}`);
+  const pct = (n: number) => `${Math.round(n * 100)}%`;
+  if (left != null && left < LAST_WEEK_DAYS && short.length) return { kind: "last_week", text: `${left} day${left === 1 ? "" : "s"} left in the cycle and still short: ${short.join(", ")}.` };
+  if (p.elapsed > VERY_BEHIND_AFTER && p.ratio < VERY_BEHIND_RATIO) return { kind: "behind", text: `${pct(p.used)} of the allotment used with ${pct(p.elapsed)} of the cycle gone${short.length ? ` (${short.join(", ")})` : ""}.` };
+  return null;
+}

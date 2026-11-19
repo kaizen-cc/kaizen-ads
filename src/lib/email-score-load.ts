@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { etToday, monthOf, shiftDay } from "@/lib/channel-kpis/calc";
 import { conversionMetricsOf, revenueTarget } from "./email-metrics";
 import { emailConnection } from "./email-providers/which";
+import { allotmentPace, type EmailAllotment } from "./email-allotment-core";
 import { paceInput, scoreFromRows, type EmailScoreResult, type MetricDay, type ScoreCampaign, type ScoreDay, type ScoreFlow } from "./email-score-calc";
 
 // Loads each client's email account score from the synced Klaviyo tables: the last 30 days, New York dates. Pass the
@@ -62,7 +63,7 @@ export async function loadEmailScores(admin: SupabaseClient, clientIds: string[]
   const readFrom = month.prevStart < from ? month.prevStart : from;
   const ranked = ranks ?? (await rankedMetrics(admin, clientIds).catch(() => new Map<string, string[]>()));
   const extraIds = [...new Set([...ranked.values()].flatMap((l) => l.slice(1)))];
-  const [allDays, camps, flows, metricDays, manual] = await Promise.all([
+  const [allDays, camps, flows, metricDays, manual, allotments] = await Promise.all([
     readAll<Record<string, unknown>>((a, b) => admin.from("klaviyo_daily").select("client_id, date, revenue, store_revenue, campaign_recipients, flow_recipients").in("client_id", clientIds).gte("date", readFrom).lte("date", to).order("client_id").order("date").range(a, b)),
     // A day of slack either side of the window, then cut to New York dates below
     readAll<Record<string, unknown>>((a, b) =>
@@ -88,6 +89,8 @@ export async function loadEmailScores(admin: SupabaseClient, clientIds: string[]
       .eq("line", "email")
       .in("client_id", clientIds)
       .then((r) => new Map((r.error ? [] : (r.data ?? [])).map((t) => [t.client_id as string, t.target == null ? null : Number(t.target)]))),
+    // Each client's email allotment this cycle, for the allotment pacing check (quietly none where it can't be read)
+    import("@/lib/email-request").then((m) => m.emailAllotments(admin, clientIds)).catch(() => ({}) as Record<string, EmailAllotment>),
   ]);
   const days = allDays.filter((d) => (d.date as string) >= from);
   const sumOf = (rows: Record<string, unknown>[]) => rows.reduce((n, r) => n + num(r.revenue), 0);
@@ -114,7 +117,7 @@ export async function loadEmailScores(admin: SupabaseClient, clientIds: string[]
   for (const id of clientIds) {
     if (!dayBy.has(id) && !campBy.has(id) && !flowBy.has(id)) continue;
     const extra = (ranked.get(id) ?? []).slice(1).map((m) => metricBy.get(`${id}:${m}`) ?? []);
-    out.set(id, scoreFromRows({ days: dayBy.get(id) ?? [], campaigns: campBy.get(id) ?? [], flows: flowBy.get(id) ?? [], ...(extra.length ? { extra } : {}), ...(noRevenue?.has(id) ? { noRevenue: true } : {}), pace: paceBy.get(id) ?? null }, { from, to }));
+    out.set(id, scoreFromRows({ days: dayBy.get(id) ?? [], campaigns: campBy.get(id) ?? [], flows: flowBy.get(id) ?? [], ...(extra.length ? { extra } : {}), ...(noRevenue?.has(id) ? { noRevenue: true } : {}), pace: paceBy.get(id) ?? null, allotment: allotmentPace(allotments[id]) }, { from, to }));
   }
   return out;
 }
