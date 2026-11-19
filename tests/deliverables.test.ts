@@ -35,10 +35,10 @@ describe("the deliverable flow's steps", () => {
     expect(readAsk(cfg, "I need to create campaigns for Candy Cloud")).toEqual({ kind: "campaign", count: null });
   });
 
-  it("keeps the Email Board's limits: a batch up to 5 campaigns, a flow up to 6 emails", () => {
+  it("keeps a request to a batch of up to 5 emails (campaigns or a flow)", () => {
     expect(applyPatch(cfg, run({ kind: "campaign" }), { count: 6 }).ok).toBe(false);
-    expect(applyPatch(cfg, run({ kind: "flow" }), { count: 6 }).ok).toBe(true);
-    expect(applyPatch(cfg, run({ kind: "flow" }), { count: 7 }).ok).toBe(false);
+    expect(applyPatch(cfg, run({ kind: "flow" }), { count: 5 }).ok).toBe(true);
+    expect(applyPatch(cfg, run({ kind: "flow" }), { count: 6 }).ok).toBe(false);
     expect(applyPatch(cfg, run(), { kind: "podcast" }).ok).toBe(false);
   });
 
@@ -134,9 +134,10 @@ describe("the Asana request", () => {
   it("fills the fields by name and enum option, with no assignee, due date or revision stage", () => {
     const s = run({ kind: "campaign", count: 2 }, { contextPulled: true }, { topics: [topic("Scratch to Win"), topic("Last Call")], agreed: true });
     const tasks = tasksFor(cfg, s, [{ shortName: "Scratch to Win", docUrl: "https://docs.google.com/document/d/1", purpose: "Launch the game" }, { shortName: "Last Call", docUrl: null, purpose: "Close it out" }], base, "Scratch to Win", "https://docs.google.com/document/d/1", "x");
-    expect(tasks.map((t) => t.name)).toEqual(["KZN x Candy Cloud | Email Campaign - Scratch to Win", "KZN x Candy Cloud | Email Campaign - Last Call"]);
+    // One ticket for the whole batch, all the copy in one doc
+    expect(tasks.map((t) => t.name)).toEqual(["KZN x Candy Cloud | Email Campaigns - Scratch to Win (2)"]);
     const { custom_fields, missing, set } = mapAsanaFields(settings, tasks[0].fields);
-    expect(custom_fields).toMatchObject({ f1: "412", f2: "o1", f3: "p3", f5: base.client.hqUrl, f6: "Launch the game", f8: "https://docs.google.com/document/d/1", f10: "https://candycloud.com" });
+    expect(custom_fields).toMatchObject({ f1: "412", f2: "o1", f3: "p3", f5: base.client.hqUrl, f6: "1. Scratch to Win: Launch the game\n2. Last Call: Close it out", f8: "https://docs.google.com/document/d/1", f10: "https://candycloud.com" });
     // Urgent is switched off in the project: the next best, High
     expect(custom_fields.f4).toBe("r3");
     expect(custom_fields.f9).toBeUndefined();

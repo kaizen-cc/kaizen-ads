@@ -262,7 +262,7 @@ export function readAsk(cfg: LineConfig, text: string): { kind: string | null; c
 /** The Asana tasks a run makes: one per item, or one for the document (a flow, with its count) */
 export function tasksFor(cfg: LineConfig, s: RunState, items: { shortName: string; docUrl: string | null; purpose: string; extra?: Pick<TaskInput, "concept" | "postDate" | "slides" | "links"> }[], base: Omit<TaskInput, "kind" | "shortName" | "count" | "docUrl" | "purpose">, docName: string, docUrl: string | null, purpose: string) {
   const kind = kindOf(cfg, s.kind) ?? cfg.kinds[0];
-  const inputs: TaskInput[] = kind.split === "per_item" ? items.map((i) => ({ ...base, ...i.extra, kind, shortName: i.shortName, count: 1, docUrl: i.docUrl ?? docUrl, purpose: i.purpose })) : [{ ...base, kind, shortName: docName, count: items.length, docUrl, purpose }];
+  const inputs: TaskInput[] = kind.split === "per_item" ? items.map((i) => ({ ...base, ...i.extra, kind, shortName: i.shortName, count: 1, docUrl: i.docUrl ?? docUrl, purpose: i.purpose })) : [{ ...base, kind, shortName: docName, count: items.length, docUrl, purpose: batchPurpose(items, purpose) }];
   return inputs.map((t) => ({ input: t, name: cfg.asana.taskName(t), fields: cfg.asana.fields(t) }));
 }
 
@@ -274,4 +274,10 @@ export function followerOf(seatLabel: string, seat: { name: string; email: strin
   if (!seat) return { follower: null, missing: `No ${seatLabel} on the account, so nobody was added as a follower.` };
   if (!asanaUser) return { follower: null, missing: `${seat.name} couldn't be matched to an Asana user, so they aren't following it yet: add them on the task.` };
   return { follower: asanaUser, missing: null };
+}
+
+/** One request for a batch: each email's purpose on its own line ("1. Scratch to Win: Launch the game"), else the doc's */
+export function batchPurpose(items: { shortName: string; purpose?: string | null }[], fallback: string): string {
+  const lines = items.filter((i) => (i.purpose ?? "").trim()).map((i, n) => `${n + 1}. ${i.shortName}: ${String(i.purpose).trim()}`);
+  return lines.length > 1 ? lines.join("\n") : lines.length === 1 && items.length === 1 ? String(items[0].purpose).trim() : fallback;
 }

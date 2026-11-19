@@ -170,9 +170,11 @@ export const REQUEST_TYPE: Record<CopyKind, string> = { campaign: "Email Campaig
 
 /** "KZN x Candy Cloud | Email Campaign - Scratch to Win"; a flow carries its email count: "Email Flow - Welcome Series (3)" */
 export function asanaTaskName(p: { client: string; kind: CopyKind; shortName: string; count: number }) {
-  const what = p.kind === "flow" ? "Email Flow" : p.kind === "sms" ? "SMS Campaign" : "Email Campaign";
+  // One request per batch of up to 5 emails: the count shows whenever there's more than one (a flow always shows it)
+  const many = Math.max(1, p.count) > 1;
+  const what = p.kind === "flow" ? "Email Flow" : p.kind === "sms" ? (many ? "SMS Campaigns" : "SMS Campaign") : many ? "Email Campaigns" : "Email Campaign";
   const name = str(p.shortName, 90).replace(/\s*\(\d+\)\s*$/, "") || "Untitled";
-  return `KZN x ${str(p.client, 80)} | ${what} - ${name}${p.kind === "flow" ? ` (${Math.max(1, p.count)})` : ""}`.slice(0, 250);
+  return `KZN x ${str(p.client, 80)} | ${what} - ${name}${p.kind === "flow" || many ? ` (${Math.max(1, p.count)})` : ""}`.slice(0, 250);
 }
 
 export type Urgency = "urgent" | "high" | "normal" | "low";

@@ -4,7 +4,7 @@ import type { LineConfig, TaskInput } from "../engine";
 // The email line: the Email Strategist leads, the Copywriter writes, one preview document per batch or flow, the
 // approved copy as a Google Doc in the client's HQ Drive under "Email Marketing", and the requests in Asana's Email
 // Marketing project, "Email Requests" column, no assignee or due date (the strategists set those), the client's email
-// strategist following. One task per campaign in a batch; one per flow with its email count.
+// strategist following. One request per batch of up to 5 emails (campaigns, a flow or SMS), all the copy in one doc.
 
 const REQUEST_TYPE: Record<string, string> = { campaign: "Email Campaign", flow: "Email Flow", sms: "SMS" };
 
@@ -15,9 +15,9 @@ export const EMAIL_LINE: LineConfig = {
   writer: "copywriter",
   followerSeat: "email_strategist",
   kinds: [
-    { key: "campaign", label: "Campaign", max: 5, split: "per_item", words: /\b(?:campaigns?|blasts?|newsletters?|promo(?:tional)? emails?|batch(?:es)?)\b/i },
-    { key: "flow", label: "Flow", max: 6, split: "per_doc", words: /\b(?:flows?|automations?|series|sequences?|drip)\b/i },
-    { key: "sms", label: "SMS", max: 5, split: "per_item", words: /\b(?:sms|texts?|text messages?)\b/i },
+    { key: "campaign", label: "Campaign", max: 5, split: "per_doc", words: /\b(?:campaigns?|blasts?|newsletters?|promo(?:tional)? emails?|batch(?:es)?)\b/i },
+    { key: "flow", label: "Flow", max: 5, split: "per_doc", words: /\b(?:flows?|automations?|series|sequences?|drip)\b/i },
+    { key: "sms", label: "SMS", max: 5, split: "per_doc", words: /\b(?:sms|texts?|text messages?)\b/i },
   ],
   trigger: /\b(?:(?:create|make|build|plan|do|need|write|draft|set up|put together)\b[^.?!]{0,40}\b(?:email\s+)?(?:campaigns?|flows?|newsletters?|blasts?|email copy|emails?\s+for|sms|welcome series|abandon\w* (?:cart|checkout))|copy for (?:an?|the|their) (?:campaign|email|newsletter|flow))\b/i,
   context: [
