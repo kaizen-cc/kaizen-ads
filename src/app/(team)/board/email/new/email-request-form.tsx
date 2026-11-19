@@ -8,7 +8,7 @@ import { AgentGlyph } from "@/components/assistant-call-parts";
 import { CALL_ROLES } from "@/lib/agent-call/call-context";
 import { tintOf } from "@/lib/agent-look";
 import { pushParams, replaceParams, useParam } from "@/lib/url-state";
-import { emailPace, emailPools, requestFit, type EmailAllotment } from "@/lib/email-allotment-core";
+import { emailPace, emailPools, requestFit, unitsOfRequest, type EmailAllotment, type Units } from "@/lib/email-allotment-core";
 import type { EmailKind, Plan, PlanItem, Start, StartData } from "@/lib/email-request";
 import type { CopyDoc } from "@/lib/copy-docs/server";
 import { Progress, Spark, Stepper } from "@/app/(team)/requests/new/parts";
@@ -226,8 +226,9 @@ function Empty({ text, action, onAction }: { text: string; action: string; onAct
 
 // ─── The allotment, per pool ─────────────────────────────────────────────────
 
-/** "Campaigns 3/8 used · 2 in progress · Flows 0/1 used", each pool coloured by where it stands */
+/** "Campaigns 3/3-5 used · 2 in progress · SMS 0/2 used", each pool coloured by where it stands (paced against the top of its range) */
 function AllotmentLine({ a, empty = "No email allotment set" }: { a: EmailAllotment | undefined; empty?: string | null }) {
+  if (a?.source === "strategy") return <>Strategy only, no deliverables</>;
   const pools = emailPools(a);
   if (!pools.length) return empty ? <>{empty}</> : null;
   return (
@@ -235,51 +236,58 @@ function AllotmentLine({ a, empty = "No email allotment set" }: { a: EmailAllotm
       {pools.map((p, i) => (
         <Fragment key={p.key}>
           {i > 0 && " · "}
-          <span className={p.over ? "text-bad" : p.used >= p.cap ? "text-ok" : undefined}>
-            {p.label} {p.used}/{p.cap} used{p.over ? ` · ${p.over} over` : ""}
+          <span className={p.over ? "text-bad" : p.cap != null && p.used >= p.cap ? "text-ok" : undefined}>
+            {p.label} {p.range == null ? `${p.used} asked` : `${p.used}/${p.range} used`}
+            {p.over ? ` · ${p.over} over` : ""}
           </span>
           {p.progress > 0 && <span className="text-warn"> · {p.progress} in progress</span>}
+          {p.done > 0 && <span> · {p.done} done</span>}
         </Fragment>
       ))}
     </>
   );
 }
 
-/** The client's allotment as bars: used (delivered and in motion) against the cap, with where the cap comes from */
-function AllotmentBars({ a, adding }: { a: EmailAllotment | undefined; adding?: { pool: "campaigns" | "flows"; units: number } | null }) {
+/** Where the cap comes from, in words */
+const capSource = (a: EmailAllotment | undefined) =>
+  a?.source === "sow" ? `From their SOW${a.label ? `: ${a.label}` : ""}.` : a?.source === "setup" ? `${a.label ?? "3-Month Setup"}.` : a?.source === "manual" ? "Set by hand for this month." : a?.label ? `${a.label} tier.` : "";
+
+/** The client's allotment as bars: used (delivered and in motion) against the top of each range, with what this request adds */
+function AllotmentBars({ a, adding }: { a: EmailAllotment | undefined; adding?: Units | null }) {
   const pools = emailPools(a);
   if (!pools.length)
     return (
       <p className="text-[12.5px] text-faint">
-        No email allotment set yet. Pick their package or add their SOW on the client page&rsquo;s Email tab.
+        No email allotment set yet. Pick their tier in Services on the client page (Team &amp; setup), or add their SOW on the Email tab.
       </p>
     );
   return (
     <div className="grid gap-3">
       {pools.map((p) => {
-        const add = adding?.pool === p.key ? adding.units : 0;
-        const total = Math.max(p.cap, p.used + add, 1);
+        const add = adding?.[p.key] ?? 0;
+        const top = p.cap ?? 0;
+        const total = Math.max(top, p.used + add, 1);
         const done = Math.max(0, p.used - p.progress);
         return (
           <div key={p.key} className="grid gap-1.5">
             <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
               <span className="text-fg">{p.label}</span>
               <span className="tabular text-muted">
-                {p.used + add}/{p.cap}
+                {p.used + add}
+                {p.range != null ? `/${p.range}` : " asked"}
                 {add ? <span className="text-brand-text"> (+{add} with this)</span> : null}
               </span>
             </div>
             <span className="relative flex h-2 overflow-hidden rounded-full bg-surface-2" aria-hidden>
               <span className="h-full bg-ok/80" style={{ width: `${(done / total) * 100}%` }} />
               <span className="h-full bg-warn/80" style={{ width: `${(p.progress / total) * 100}%` }} />
-              <span className={`h-full ${p.used + add > p.cap ? "bg-bad" : "bg-brand"}`} style={{ width: `${(add / total) * 100}%` }} />
+              <span className={`h-full ${p.cap != null && p.used + add > p.cap ? "bg-bad" : "bg-brand"}`} style={{ width: `${(add / total) * 100}%` }} />
             </span>
           </div>
         );
       })}
       <p className="text-[11.5px] text-faint">
-        <span className="text-ok">Delivered</span> · <span className="text-warn">in progress</span> both count.{" "}
-        {a?.source === "sow" ? `From their SOW${a.label ? `: ${a.label}` : ""}.` : a?.source === "manual" ? "Set by hand for this month." : a?.label ? `${a.label} package.` : ""}
+        <span className="text-ok">Delivered</span> · <span className="text-warn">in progress</span> both count. {capSource(a)}
       </p>
     </div>
   );
@@ -435,10 +443,9 @@ function StartStep({
         <div className="rounded-[20px] border border-line bg-surface p-4">
           <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">This cycle</p>
           <AllotmentBars a={allotment} />
-          {data?.scope && (
-            <p className="mt-3 rounded-[12px] bg-surface-2/70 px-3 py-2 text-[12px] text-muted">
-              {data.scope.label ?? "This month"} of their SOW: {data.scope.campaigns} campaign{data.scope.campaigns === 1 ? "" : "s"}, {data.scope.flows} flow{data.scope.flows === 1 ? "" : "s"}
-              {data.scope.notes ? `. ${data.scope.notes}` : ""}
+          {(data?.scope?.notes || allotment?.notes) && (
+            <p className="mt-3 rounded-[12px] bg-surface-2/70 px-3 py-2 text-[12px] leading-relaxed text-muted">
+              <span className="text-fg">{data?.scope?.label ?? allotment?.label ?? "This month"}:</span> {data?.scope?.notes ?? allotment?.notes}
             </p>
           )}
         </div>
@@ -687,7 +694,7 @@ function PlanStep({ client, allotment, work, setWork, onWritten, docId }: { clie
       <aside className="grid gap-4 lg:sticky lg:top-6">
         <div className="rounded-[20px] border border-line bg-surface p-4">
           <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Their allotment</p>
-          <AllotmentBars a={allotment} adding={{ pool: flow ? "flows" : "campaigns", units: flow ? 1 : work.count }} />
+          <AllotmentBars a={allotment} adding={unitsOfRequest(work.kind, work.count)} />
         </div>
         <div className="rounded-[20px] border border-line bg-surface p-4 text-[12.5px] leading-relaxed text-muted">
           <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Already known</p>

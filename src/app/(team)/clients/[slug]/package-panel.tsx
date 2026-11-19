@@ -1,8 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { ActionButton, ActionForm } from "@/components/action-form";
-import { Section, field, label } from "@/components/ui";
+import { Section } from "@/components/ui";
 import { allotmentPool, untilLabel } from "@/lib/allotment";
 import type { CreativeDb } from "@/lib/creative-db";
 
@@ -13,15 +11,6 @@ export type Cycle = { billingDay: number | null; source: string | null; start: s
 
 const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
 
-const addDays = (day: string, n: number) => {
-  const d = new Date(`${day}T12:00:00`);
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-};
-const monthEnd = (day: string, ahead: number) => {
-  const d = new Date(`${day}T12:00:00`);
-  return new Date(d.getFullYear(), d.getMonth() + 1 + ahead, 0, 12).toISOString().slice(0, 10);
-};
 const daysBetween = (a: string, b: string) => Math.round((new Date(`${b}T12:00:00`).getTime() - new Date(`${a}T12:00:00`).getTime()) / 86400000);
 
 const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
@@ -76,94 +65,13 @@ function Meter({ name, cap, used }: { name: string; cap: number; used: number })
   );
 }
 
-/** Exec override: a package (or custom counts) until a set day. */
-function SprintForm({ action, packages, today, until, packageKey, images, videos, note, submitLabel }: {
-  action: (form: FormData) => Promise<Result>;
-  packages: PackageOption[];
-  today: string;
-  until: string | null;
-  packageKey: string | null;
-  images: number;
-  videos: number;
-  note: string | null;
-  submitLabel: string;
-}) {
-  const [pkg, setPkg] = useState(packageKey ?? packages[1]?.key ?? "custom");
-  const [day, setDay] = useState(until ?? addDays(today, 30));
-  const quick = [
-    ["2 weeks", addDays(today, 14)],
-    ["30 days", addDays(today, 30)],
-    ["End of month", monthEnd(today, 0)],
-    ["End of next month", monthEnd(today, 1)],
-  ] as const;
-  const chosen = packages.find((p) => p.key === pkg);
-
-  return (
-    <ActionForm action={action} submitLabel={submitLabel} className="grid gap-4">
-      <label className={label}>
-        Package
-        <select name="package" value={pkg} onChange={(e) => setPkg(e.target.value)} className={field}>
-          {packages.map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.label} · {p.images} images, {p.videos} videos
-            </option>
-          ))}
-          <option value="custom">Custom counts</option>
-        </select>
-      </label>
-      {pkg === "custom" ? (
-        <div className="grid grid-cols-2 gap-3">
-          <label className={label}>
-            Images / month
-            <input name="images" type="number" min={0} max={999} defaultValue={images} className={`${field} tabular`} />
-          </label>
-          <label className={label}>
-            Videos / month
-            <input name="videos" type="number" min={0} max={999} defaultValue={videos} className={`${field} tabular`} />
-          </label>
-        </div>
-      ) : (
-        chosen && <p className="-mt-1 text-xs text-faint">Sets the allotment to {chosen.images} images and {chosen.videos} videos a month.</p>
-      )}
-      <div className={label}>
-        <span>Runs until</span>
-        <input name="until" type="date" required min={today} value={day} onChange={(e) => setDay(e.target.value)} className={`${field} tabular`} />
-        <span className="flex flex-wrap gap-1.5 pt-1">
-          {quick.map(([text, d]) => (
-            <button
-              key={text}
-              type="button"
-              onClick={() => setDay(d)}
-              className={`h-10 rounded-full px-3.5 text-xs transition-colors md:h-7 md:px-3 ${day === d ? "bg-fg text-bg" : "bg-surface-2 text-muted hover:text-fg"}`}
-            >
-              {text}
-            </button>
-          ))}
-        </span>
-        {day >= today && (
-          <span className="text-xs font-normal text-faint">
-            Ends after {untilLabel(day)}, {daysBetween(today, day) + 1} days including today. Requests stop the day after.
-          </span>
-        )}
-      </div>
-      <label className={label}>
-        <span>
-          Why <span className="font-normal text-faint">(optional)</span>
-        </span>
-        <input name="note" defaultValue={note ?? ""} className={field} placeholder="e.g. Holiday push, 6 week test" />
-      </label>
-    </ActionForm>
-  );
-}
-
 /**
- * The client's creative package: what they're on and this month's use.
- * Enrollment and upsell forms set ongoing packages. Only an exec can override, and an override is always a sprint with an end date.
+ * The client's creative package: what they're on and this month's use. The package itself (a package, Custom numbers,
+ * a sprint, or strategy only) is set in one place: Services, on Team & setup (owner, Nov 19 2026).
  */
 export function PackagePanel({
   active,
   packageLabel,
-  packageKey,
   until,
   note,
   today,
@@ -174,11 +82,8 @@ export function PackagePanel({
   fromAsana,
   cycle = null,
   creativeDb,
-  packages,
   can,
-  setSprint,
-  endPackage,
-  saveAllotment,
+  setupHref,
 }: {
   active: boolean;
   packageLabel: string | null;
@@ -195,11 +100,12 @@ export function PackagePanel({
   creativeDb?: CreativeDb | null;
   packages: PackageOption[];
   can: { exec: boolean; allot: boolean };
-  setSprint: (form: FormData) => Promise<Result>;
-  endPackage: () => Promise<Result>;
-  saveAllotment: (form: FormData) => Promise<Result>;
+  setSprint?: (form: FormData) => Promise<Result>;
+  endPackage?: () => Promise<Result>;
+  saveAllotment?: (form: FormData) => Promise<Result>;
+  /** Team & setup, where Services sets the package */
+  setupHref?: string;
 }) {
-  const [editing, setEditing] = useState(false);
   const sprint = active && until;
   const left = sprint ? daysBetween(today, until) + 1 : 0;
 
@@ -215,25 +121,14 @@ export function PackagePanel({
           </span>
           <p className="font-heading text-[17px]">Not on a creative package</p>
           <p className="max-w-[260px] text-xs leading-relaxed text-muted">
-            Creative requests are off for this client. The upsell form turns a package on{can.exec ? ", or you can start a sprint." : ". Only an exec can override it."}
+            Creative requests are off for this client. {can.exec ? "Set their package, custom numbers, a sprint, or strategy only in Services." : "An exec sets the package in Services."}
           </p>
-          {can.exec && !editing && (
-            <button onClick={() => setEditing(true)} className="mt-1 h-11 rounded-full bg-fg px-5 text-sm text-bg transition-opacity hover:opacity-90 md:h-9 md:px-4">
-              Start a sprint package
-            </button>
+          {can.exec && setupHref && (
+            <a href={setupHref} className="mt-1 grid h-11 place-items-center rounded-full bg-fg px-5 text-sm text-bg transition-opacity hover:opacity-90 md:h-9 md:px-4">
+              Set it in Services
+            </a>
           )}
         </div>
-        {can.exec && editing && (
-          <div className="grid gap-3 border-t border-line pt-5">
-            <div className="flex items-center justify-between">
-              <p className="text-sm">Sprint package</p>
-              <button onClick={() => setEditing(false)} className="min-h-11 px-1 text-xs text-muted hover:text-fg md:min-h-0 md:px-0">
-                Cancel
-              </button>
-            </div>
-            <SprintForm action={setSprint} packages={packages} today={today} until={null} packageKey={packageKey} images={images} videos={videos} note={null} submitLabel="Start sprint" />
-          </div>
-        )}
       </Section>
     );
 
@@ -282,56 +177,18 @@ export function PackagePanel({
         {creativeDb && <DbCheck db={creativeDb} imagesUsed={imagesUsed} videosUsed={videosUsed} />}
       </div>
 
-      {can.allot && !editing && (
-        <ActionForm action={saveAllotment} submitLabel="Save allotment" autosave className="grid gap-4 border-t border-line pt-5">
-          <div className="grid grid-cols-2 gap-3">
-            <label className={label}>
-              Images / month
-              <input name="images" type="number" min={0} defaultValue={images} className={`${field} tabular`} />
-            </label>
-            <label className={label}>
-              Videos / month
-              <input name="videos" type="number" min={0} defaultValue={videos} className={`${field} tabular`} />
-            </label>
-          </div>
-        </ActionForm>
-      )}
-
       {cycle?.billingDay ? (
         <p className="border-t border-line pt-4 text-[12px] text-faint">The allotment starts again on the {ordinal(cycle.billingDay)}{cycle.source === "stripe" ? ", from their Stripe Creative Package bill" : cycle.source === "set" ? ", set by an exec" : ""}. Execs change it in Team &amp; setup.</p>
       ) : null}
 
-      {can.exec && (
-        <div className="grid gap-3 border-t border-line pt-5">
-          {editing ? (
-            <>
-              <div className="flex items-center justify-between">
-                <p className="text-sm">{sprint ? "Change the sprint" : "Switch to a sprint"}</p>
-                <button onClick={() => setEditing(false)} className="min-h-11 px-1 text-xs text-muted hover:text-fg md:min-h-0 md:px-0">
-                  Cancel
-                </button>
-              </div>
-              <SprintForm
-                action={setSprint}
-                packages={packages}
-                today={today}
-                until={until}
-                packageKey={packageKey}
-                images={images}
-                videos={videos}
-                note={note}
-                submitLabel={sprint ? "Save sprint" : "Start sprint"}
-              />
-            </>
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <button onClick={() => setEditing(true)} className="min-h-11 text-left text-sm text-muted underline-offset-4 hover:text-fg hover:underline md:min-h-0">
-                {sprint ? "Extend or change sprint" : "Override with a sprint"}
-              </button>
-              <ActionButton action={endPackage} label="End package" confirmText="End it now?" />
-            </div>
-          )}
-        </div>
+      {(can.exec || can.allot) && setupHref && (
+        <p className="border-t border-line pt-4 text-[12px] text-faint">
+          The package, custom numbers, a sprint or strategy only are set in one place:{" "}
+          <a href={setupHref} className="text-muted underline-offset-2 hover:text-fg hover:underline">
+            Services on Team &amp; setup
+          </a>
+          .
+        </p>
       )}
     </Section>
   );

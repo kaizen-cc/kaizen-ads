@@ -207,7 +207,7 @@ export type ClientViewProps = {
   intake?: IntakeRecord | null; // the marketing intake form; undefined in the design preview
   calls?: ClientCall[]; // from Gemini and Fireflies notes; undefined in the design preview
   readiness?: { initial: Readiness; autoOpen: boolean; stamp: string } | null; // what's missing after going live again
-  services?: { track: string[]; extra: string[]; removed?: string[]; tiers: Tier[]; chosen: Record<string, string> } | null; // what they buy, and the tiers
+  services?: { track: string[]; extra: string[]; removed?: string[]; tiers: Tier[]; chosen: Record<string, string>; strategyOnly?: string[]; email?: { key: string | null; setupStart: string | null; custom: Record<string, number | null> | null } } | null; // what they buy, and the tiers
   launchRules?: LaunchRule[]; // where their new ads go, learned from their buyers' moves
   campaigns?: PlatformSummary[] | null; // each platform's campaigns, last 30 days
   /** TikTok (read only): null while TikTok isn't set up, so nothing about it shows */
@@ -693,6 +693,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                         canEdit={can.assign && !demo}
                         packages={packages}
                         canSetPackage={can.admin && !demo}
+                        strategyOnly={services.strategyOnly ?? []}
+                        email={services.email ?? null}
                       />
                     </Section>
                   )}
@@ -1192,6 +1194,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             setSprint={setSprintPackage.bind(null, client.id, client.slug)}
             endPackage={endCreativePackage.bind(null, client.id, client.slug)}
             saveAllotment={saveAllotment.bind(null, client.id, client.slug)}
+            setupHref={tab("team")}
           />
                           </div>
                         </div>

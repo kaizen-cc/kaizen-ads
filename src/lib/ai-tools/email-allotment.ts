@@ -4,7 +4,7 @@ import type { Staff } from "@/lib/auth";
 import { seesEmailBoard } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { emailAllotmentLine, emailPace } from "@/lib/email-allotment-core";
+import { emailAllotmentLine, emailPace, emailPools } from "@/lib/email-allotment-core";
 import { str, type AiTool } from "./types";
 
 // The email allotment and Scope of Work, for the assistant, Kaizen AI and every agent on a call (registered in
@@ -19,7 +19,7 @@ import { str, type AiTool } from "./types";
 const emailAllotment: AiTool = {
   name: "email_allotment",
   description:
-    "A client's email allotment this billing cycle: campaigns (email and SMS sends) and flows (each flow request counts once, whatever its messages), used (asked this cycle plus anything still in motion) against the cap, what's in progress, where the cap comes from (their Scope of Work's month during onboarding, a month set by hand, or their email package), and their SOW with its month-by-month scope. Without a client: every email client grouped behind pace, on pace, over, or with no allotment set. Use it before planning email requests, and when asked what a client has left. To make a request: open_screen place 'new email request'.",
+    "A client's email allotment this billing cycle, four pools each a range paced against its top: campaign emails, SMS messages, flows (each flow request counts once) and flow emails (new or optimization). Used (asked this cycle plus anything still in motion), what's in progress, where the cap comes from (a month set by hand, their Scope of Work's month, the 3-Month Initial Setup's month by its start date, or their tier: Basic, Silver, Gold or Custom; strategy-only clients hold no allotment), and their SOW with its month-by-month scope. Without a client: every email client grouped behind pace, on pace, over, or with no allotment set. Use it before planning email requests, and when asked what a client has left. To make a request: open_screen place 'new email request'.",
   input_schema: { type: "object", properties: { client: { type: "string", description: "A client name; leave out for every email client" } }, additionalProperties: false },
   lines: ["email"],
   run: async (user: Staff, input) => {
@@ -36,7 +36,11 @@ const emailAllotment: AiTool = {
       return {
         ok: true,
         client: c.name,
-        allotment: a ? { line: emailAllotmentLine(a) ?? "No allotment set", campaigns: { cap: a.campaigns, used: a.campaignsUsed, inProgress: a.campaignsProgress }, flows: { cap: a.flows, used: a.flowsUsed, inProgress: a.flowsProgress }, from: a.source, label: a.label, cycle: a.cycle, pace: emailPace(a).group } : null,
+        allotment: a
+          ? a.source === "strategy"
+            ? { line: "Strategy only: no copy or design, so no allotment and no requests", from: "strategy" }
+            : { line: emailAllotmentLine(a) ?? "No allotment set", pools: emailPools(a).map((p) => ({ pool: p.label, range: p.range, used: p.used, inProgress: p.progress, over: p.over })), from: a.source, label: a.label, monthNotes: a.notes, cycle: a.cycle, pace: emailPace(a).group }
+          : null,
         sow: sow ? { name: sow.name, url: sow.url, how: sow.source === "upload" ? "uploaded" : `found in ${sow.found_in}`, summary: (sow.scope as { summary?: string } | null)?.summary ?? null, status: sow.status, at: String(sow.created_at).slice(0, 10) } : null,
         months: (months ?? []).map((m) => ({ month: String(m.month).slice(0, 7), campaigns: m.campaigns, flows: m.flows, label: m.label, notes: m.notes, from: m.source, drafted: Boolean(m.drafted_at) })),
         newRequest: `/board/email/new?client=${c.slug}`,
@@ -49,8 +53,9 @@ const emailAllotment: AiTool = {
     const groups: Record<string, { client: string; line: string }[]> = { over: [], behind: [], pace: [], none: [] };
     for (const [id, a] of Object.entries(all)) {
       const line = emailAllotmentLine(a);
-      if (!line && !a.campaignsUsed && !a.flowsUsed) continue;
-      groups[emailPace(a).group].push({ client: name.get(id) ?? id, line: line ?? `No allotment set (${a.campaignsUsed} campaigns, ${a.flowsUsed} flows asked)` });
+      const asked = a.campaigns.used + a.sms.used + a.flows.used;
+      if (a.source === "strategy" || (!line && !asked)) continue;
+      groups[emailPace(a).group].push({ client: name.get(id) ?? id, line: line ?? `No allotment set (${a.campaigns.used} campaigns, ${a.sms.used} SMS, ${a.flows.used} flows asked)` });
     }
     return { ok: true, ...groups };
   },

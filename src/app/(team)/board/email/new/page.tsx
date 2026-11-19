@@ -19,9 +19,10 @@ export default async function NewEmailRequest({ searchParams }: PageProps<"/boar
   if (!seesEmailBoard(me)) redirect("/requests/new");
   const { client, idea, doc } = await searchParams;
   const db = await createClient();
-  const { data } = await db.from("clients").select("id, name, slug, services, services_extra, services_removed, industry_detail, industry").is("archived_at", null).in("status", ["active", "onboarding"]).order("name");
+  const { data } = await db.from("clients").select("id, name, slug, services, services_extra, services_removed, industry_detail, industry, strategy_only").is("archived_at", null).in("status", ["active", "onboarding"]).order("name");
   const clients = (data ?? [])
-    .filter((c) => (servicesOf(c) as string[]).includes("email-marketing"))
+    // Strategy-only email (no copy or design) never gets requests
+    .filter((c) => (servicesOf(c) as string[]).includes("email-marketing") && !((c.strategy_only ?? []) as string[]).includes("email-marketing"))
     .map((c) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string, industry: ((c.industry_detail ?? c.industry) as string | null) ?? null }));
   const [allotments, { data: seats }] = await Promise.all([
     emailAllotments(db, clients.map((c) => c.id)),

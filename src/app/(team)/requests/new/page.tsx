@@ -32,7 +32,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   const { client, from, brief, asana, ai, card, audit, business, idea, draft, copyline, format } = await searchParams;
   const supabase = await createClient();
   const [{ data: rows }, { data: usage }, { data: angles }, { data: assignments }] = await Promise.all([
-    supabase.from("clients").select("id, name, slug, status, creative_package").is("archived_at", null).in("status", LIVE).order("name"),
+    supabase.from("clients").select("id, name, slug, status, creative_package, strategy_only").is("archived_at", null).in("status", LIVE).order("name"),
     supabase.from("client_allotment_usage").select("*"),
     supabase.from("angles").select("client_id, name").eq("status", "active").order("name"),
     supabase.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)"),
@@ -43,6 +43,8 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   const allotments: Record<string, Allotment> = {};
   for (const u of (usage ?? []) as UsageRow[]) allotments[u.client_id] = toAllotment(u);
   const clients = (rows ?? [])
+    // Strategy-only creative (no design): never listed for briefs
+    .filter((c) => !((c.strategy_only ?? []) as string[]).includes("creative"))
     .filter((c) => c.creative_package || c.status === "active" || c.status === "onboarding")
     .map((c) => ({ id: c.id, name: c.name, slug: c.slug, creative: c.id in allotments }));
 

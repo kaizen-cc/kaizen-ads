@@ -1,15 +1,16 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { SERVICES } from "@/lib/services";
-import { addServiceTier, setClientService, setOngoingPackage, setServiceTier } from "./actions";
+import { addServiceTier, setClientService, setServiceTier } from "./actions";
+import { CreativeTier, EmailTier, StrategyToggle, type EmailTierValue } from "./service-tiers";
 
 // What the client buys, at a glance: every service Kaizen sells, lit when they have it, with its tier. Kaizen Track's
 // services come in on their own (and end there); execs and leads add the rest here and pick each one's tier, adding a
-// tier when a new one is sold. Creative's tier is its creative package: an exec picks it here (ongoing), or starts a
-// sprint with an end date on the Creative tab.
+// tier when a new one is sold. This is the one place every tier lives (owner, Nov 19 2026): Creative's package (a package,
+// Custom numbers, or a sprint until a day), Email's (the 3-Month Initial Setup by its start date, Basic, Silver, Gold or
+// Custom numbers), and for any service "Strategy only, no deliverables" (no allotment, alerts or requests).
 
 export type Tier = { id: string; service: string; label: string; includes: string | null };
 
@@ -44,6 +45,8 @@ export function ServicesPanel({
   canEdit,
   packages = [],
   canSetPackage = false,
+  strategyOnly = [],
+  email = null,
 }: {
   clientId: string;
   slug: string;
@@ -57,6 +60,10 @@ export function ServicesPanel({
   /** The creative packages an exec can put the client on */
   packages?: { key: string; label: string; images: number; videos: number }[];
   canSetPackage?: boolean;
+  /** Services bought for strategy only (no copy or design): no allotment */
+  strategyOnly?: string[];
+  /** Email's tier as stored */
+  email?: EmailTierValue | null;
 }) {
   const router = useRouter();
   const [mine, setMine] = useState(() => new Set([...track, ...extra].filter((s) => !removed.includes(s))));
@@ -123,53 +130,27 @@ export function ServicesPanel({
                     {s.label}
                     <span className={`rounded-full px-1.5 py-px text-[10px] font-normal ${fromTrack ? "bg-surface-2 text-faint" : "bg-warn-soft text-warn"}`}>{fromTrack ? "Track" : "Added here"}</span>
                   </span>
-                  {s.slug === "creative" && canSetPackage && packages.length ? (
-                    <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted">
-                      <select
-                        value={creative.active && !creative.until ? (creative.key ?? "") : ""}
-                        disabled={pending}
-                        onChange={(e) =>
-                          e.target.value &&
-                          start(async () => {
-                            setError(null);
-                            const r = await setOngoingPackage(clientId, slug, e.target.value);
-                            if (!r.ok) setError(r.error);
-                            else router.refresh();
-                          })
-                        }
-                        className="max-w-full cursor-pointer truncate bg-transparent text-xs text-muted outline-none hover:text-fg max-md:min-h-10"
-                      >
-                        <option value="">{creative.label ? `${creative.label}${creative.until ? ` (sprint until ${creative.until})` : ""}` : "Pick a package"}</option>
-                        {packages.map((pk) => (
-                          <option key={pk.key} value={pk.key}>
-                            {pk.label} · {[pk.images && `${pk.images} images`, pk.videos && `${pk.videos} videos`].filter(Boolean).join(" + ") || "no allotment"} a month
-                          </option>
-                        ))}
-                      </select>
-                      <Link href={`/clients/${slug}?tab=creative`} className="text-faint underline-offset-2 hover:text-fg hover:underline">
-                        or a sprint on Creative
-                      </Link>
-                    </span>
-                  ) : s.slug === "creative" ? (
-                    <span className="text-xs text-muted">
-                      {creative.label ? `${creative.label} package${creative.until ? ` until ${creative.until}` : ""}` : "No package set"}
-                      {" · "}
-                      <Link href={`/clients/${slug}?tab=creative`} className="text-faint underline-offset-2 hover:text-fg hover:underline">
-                        {creative.label ? "change" : "set it"} on Creative
-                      </Link>
-                    </span>
+                  {s.slug === "creative" ? (
+                    <CreativeTier clientId={clientId} slug={slug} creative={creative} packages={packages} strategy={strategyOnly.includes("creative")} canEdit={canSetPackage} />
+                  ) : s.slug === "email-marketing" ? (
+                    <EmailTier clientId={clientId} slug={slug} value={email ?? { key: null, setupStart: null, custom: null }} strategy={strategyOnly.includes("email-marketing")} canEdit={canEdit} />
                   ) : (
-                    <TierPick
-                      service={s.slug}
-                      tiers={tiers.filter((t) => t.service === s.slug)}
-                      value={picked[s.slug] ?? null}
-                      canEdit={canEdit}
-                      onPick={(id) => pickTier(s.slug, id)}
-                      onAdded={(t) => {
-                        setTiers((all) => [...all, t]);
-                        pickTier(s.slug, t.id);
-                      }}
-                    />
+                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      {!strategyOnly.includes(s.slug) && (
+                        <TierPick
+                          service={s.slug}
+                          tiers={tiers.filter((t) => t.service === s.slug)}
+                          value={picked[s.slug] ?? null}
+                          canEdit={canEdit}
+                          onPick={(id) => pickTier(s.slug, id)}
+                          onAdded={(t) => {
+                            setTiers((all) => [...all, t]);
+                            pickTier(s.slug, t.id);
+                          }}
+                        />
+                      )}
+                      <StrategyToggle clientId={clientId} slug={slug} service={s.slug} on={strategyOnly.includes(s.slug)} canEdit={canEdit} />
+                    </span>
                   )}
                 </span>
                 {canEdit && (

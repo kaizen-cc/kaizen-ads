@@ -49,7 +49,7 @@ const SEATS: Record<WatchLine, string[]> = { meta: ["meta_buyer"], google: ["goo
 const HEAD: Record<WatchLine, string | null> = { meta: "head_of_meta", google: "head_of_google", tiktok: "head_of_meta", creative: "head_of_creative", email: "head_of_email", social: "head_of_social", web: null, crm: null };
 
 type Profile = Person & { role: string; is_exec: boolean | null; is_active: boolean; slack_user_id: string | null; joined_at: string | null };
-type Client = { id: string; name: string; slug: string; created_at: string; status: string; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null; billed_services: Billed | null; billed_synced_at: string | null; creative_package: boolean; creative_package_until: string | null };
+type Client = { id: string; name: string; slug: string; created_at: string; status: string; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null; billed_services: Billed | null; billed_synced_at: string | null; creative_package: boolean; creative_package_until: string | null; strategy_only?: string[] | null };
 type Target = { id: string; client_id: string; platform: string; ad_account_id: string; owner_id: string | null; monthly_budget: number | null };
 
 export type Finding = {
@@ -89,7 +89,7 @@ export async function runAccountWatch(admin: SupabaseClient, now = new Date()) {
   const since14 = new Date(now.getTime() - 14 * DAY).toISOString();
 
   const [{ data: clientRows }, { data: pauseRows }, { data: seatRows }, { data: people }, { data: targetRows }, { data: snapRows }, { data: usageRows }, lastRows, spendRows, changeRows, { data: activityRows }, { data: contactRows }, { data: decided }, { data: klaviyo }, { data: socialAcc }] = await Promise.all([
-    admin.from("clients").select("id, name, slug, created_at, status, services, services_extra, services_removed, billed_services, billed_synced_at, creative_package, creative_package_until").is("archived_at", null).in("status", LIVE),
+    admin.from("clients").select("id, name, slug, created_at, status, services, services_extra, services_removed, billed_services, billed_synced_at, creative_package, creative_package_until, strategy_only").is("archived_at", null).in("status", LIVE),
     admin.from("watch_pauses").select("client_id, service, until, reason").is("cleared_at", null).gte("until", today),
     admin.from("client_assignments").select("client_id, profile_id, role, is_primary"),
     // Everyone who's been on the team (a past buyer's name is still ours); alerts only reach active, joined people
@@ -136,7 +136,8 @@ export async function runAccountWatch(admin: SupabaseClient, now = new Date()) {
     const lines = new Set<WatchLine>();
     for (const s of [...listed, ...(Object.keys(billed) as ServiceSlug[])]) {
       const l = SERVICE_LINE[s];
-      if (l && WATCHED_LINES.includes(l) && !removed.has(s)) lines.add(l);
+      // Strategy only (no copy or design for that line): nothing is ever delivered, so it's never idle
+      if (l && WATCHED_LINES.includes(l) && !removed.has(s) && !(c.strategy_only ?? []).includes(s)) lines.add(l);
     }
     for (const line of lines) {
       const slug = LINE_SERVICE[line];

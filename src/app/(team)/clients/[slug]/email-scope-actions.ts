@@ -8,7 +8,7 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { SowScope } from "@/lib/email-allotment-core";
 
-// The client page's Allotment and SOW tab (Email): the email package (execs and leads), the Scope of Work (found in
+// The client page's Allotment and SOW tab (Email): the Scope of Work (found in
 // what Kaizen reads, or uploaded here, also to replace it when the scope changes: the months follow it), a month set
 // by hand, and drafting this month's requests from the SOW now. The email team and the executives use it.
 
@@ -27,28 +27,19 @@ async function guard(clientId: string, opts: { package?: boolean } = {}) {
   return { me, admin: createAdminClient(), slug: c.slug as string };
 }
 
-/** The client's email package (null: none) */
-export async function setEmailPackage(clientId: string, key: string | null): Promise<{ ok: true } | Fail> {
-  try {
-    const { me, admin, slug } = await guard(clientId, { package: true });
-    if (key) {
-      const { data } = await admin.from("email_packages").select("key").eq("key", key).eq("active", true).maybeSingle();
-      if (!data) return { ok: false, error: "That package isn't set up." };
-    }
-    await admin.from("clients").update({ email_package_key: key, email_package_set_by: me.id, email_package_set_at: new Date().toISOString() }).eq("id", clientId);
-    revalidatePath(`/clients/${slug}`);
-    return { ok: true };
-  } catch (e) {
-    return fail(e);
-  }
-}
-
 /** One month's allotment set by hand (kept over the SOW's for that month) */
-export async function setScopeMonth(clientId: string, month: string, campaigns: number, flows: number): Promise<{ ok: true } | Fail> {
+export async function setScopeMonth(clientId: string, month: string, n: { campaigns: number; sms: number; flows: number; flowEmails: number }): Promise<{ ok: true } | Fail> {
   try {
     const { me, admin, slug } = await guard(clientId);
     if (!/^\d{4}-\d{2}-01$/.test(month)) return { ok: false, error: "Pick a month." };
-    await admin.from("email_scope_months").upsert({ client_id: clientId, month, campaigns: Math.max(0, Math.min(60, Math.round(campaigns))), flows: Math.max(0, Math.min(20, Math.round(flows))), source: "manual", updated_by: me.id, updated_at: new Date().toISOString() }, { onConflict: "client_id,month" });
+    const w = (v: number, max: number) => Math.max(0, Math.min(max, Math.round(Number(v) || 0)));
+    // Set by hand: one number per pool (the bottom of the range is the same)
+    const c = w(n.campaigns, 60);
+    const t = w(n.sms, 40);
+    const fe = w(n.flowEmails, 60);
+    await admin
+      .from("email_scope_months")
+      .upsert({ client_id: clientId, month, campaigns: c, campaigns_min: c, sms: t, sms_min: t, flows: w(n.flows, 20), flow_emails: fe, flow_emails_min: fe, source: "manual", updated_by: me.id, updated_at: new Date().toISOString() }, { onConflict: "client_id,month" });
     revalidatePath(`/clients/${slug}`);
     return { ok: true };
   } catch (e) {

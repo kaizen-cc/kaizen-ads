@@ -54,37 +54,39 @@ async function driveText(url: string) {
   return r.ok ? r.text : "";
 }
 
+const RANGE = (what: string) => ({ type: "integer", description: what });
+
 const SCOPE_SCHEMA = {
   type: "object",
   properties: {
-    summary: { type: "string", description: "Two or three sentences: what the SOW covers for email" },
+    summary: { type: "string", description: "Two or three sentences: what the SOW covers for email and SMS" },
     email_in_scope: { type: "boolean" },
-    start: { type: "string", description: "When the engagement starts, YYYY-MM (the closing month when not said)" },
+    start: { type: "string", description: "When the engagement starts (month 1), YYYY-MM (the month after the SOW's date when not said)" },
+    setup: { type: "string", enum: ["three_month", "sprint", "none"], description: "three_month: the 3-Month Initial Setup; sprint: a 1- or 2-month sprint; none: straight into ongoing" },
+    ongoing_tier: { type: "string", enum: ["basic", "silver", "gold", ""], description: "The ongoing tier it names or recommends after setup" },
     months: {
       type: "array",
-      description: "One entry per month the SOW scopes for email (onboarding months, a sprint), in order",
+      description: "One entry per month the SOW scopes (each setup or sprint month, in order). When the SOW offers options, the one it recommends or the client chose.",
       items: {
         type: "object",
         properties: {
           month: { type: "string", description: "YYYY-MM" },
-          label: { type: "string", description: "Month 1, Onboarding month 2, Sprint" },
-          campaigns: { type: "integer", description: "Email and SMS campaign sends that month" },
-          flows: { type: "integer", description: "Flows built or optimized that month (a flow counts once, whatever its messages)" },
-          notes: { type: "string", description: "Which flows or campaigns it names, anything else that month" },
+          label: { type: "string", description: "Setup month 1: Foundation, Month 2: Expansion, Sprint" },
+          campaigns: RANGE("Campaign emails that month (the top of a range); warming-only months are 0"),
+          campaigns_min: RANGE("The bottom of the range (the same as campaigns when one number)"),
+          sms: RANGE("SMS campaign messages that month (the top of a range)"),
+          sms_min: RANGE("The bottom of the range"),
+          flows: RANGE("Flows built (or a flow optimization) that month; each flow counts once"),
+          flow_emails: RANGE("Emails across flows that month, new or optimization (the top: 'up to 15 emails across all flows' is 15)"),
+          flow_emails_min: RANGE("The bottom of the range"),
+          notes: { type: "string", description: "The flows it names and anything else that month, one line" },
         },
-        required: ["month", "label", "campaigns", "flows", "notes"],
+        required: ["month", "label", "campaigns", "campaigns_min", "sms", "sms_min", "flows", "flow_emails", "flow_emails_min", "notes"],
         additionalProperties: false,
       },
     },
-    ongoing: {
-      type: "object",
-      description: "The monthly email allotment after the scoped months, when the SOW says one (else zeros)",
-      properties: { campaigns: { type: "integer" }, flows: { type: "integer" } },
-      required: ["campaigns", "flows"],
-      additionalProperties: false,
-    },
   },
-  required: ["summary", "email_in_scope", "start", "months", "ongoing"],
+  required: ["summary", "email_in_scope", "start", "setup", "ongoing_tier", "months"],
   additionalProperties: false,
 };
 
@@ -97,9 +99,9 @@ export async function readSowScope(admin: Db, clientId: string, s: Pick<SowSourc
     label: "email sow read",
     clientId,
     schema: SCOPE_SCHEMA,
-    maxTokens: 3000,
+    maxTokens: 4000,
     override: { model: "sonnet", effort: "low" },
-    system: `You read a Kaizen Marketing Scope of Work (or the email that carries it) for the email marketing work only: how many email or SMS campaigns and how many flows (built or optimized) each month, through onboarding and after. "Month 1" is the start month. A flow counts once whatever its number of emails. When the SOW gives one total for a period, spread it over its months evenly. When email isn't in the SOW, say email_in_scope false and no months. Never invent numbers the SOW doesn't give. Today: ${today}.`,
+    system: `You read a Kaizen Marketing Scope of Work (or the email that carries it) for the email and SMS work only, month by month: campaign emails, SMS campaign messages, flows built or optimized (a flow counts once), and emails across flows. Kaizen's standard 3-Month Initial Setup is: month 1 Foundation (3 core flows, up to 15 flow emails, no campaigns), month 2 Expansion (2 more flows, up to 10 flow emails, 3 campaigns, 2 SMS), month 3 Ongoing (1 new flow or optimization of 5 emails, 5 campaigns, 2 SMS); a SOW may change any of it, and what it says wins. Domain-warming sends aren't campaigns. When the SOW offers several options, read the one it recommends or the client chose. Ranges ("3 to 5") give min and max. Never invent numbers the SOW doesn't give; when email isn't in it, email_in_scope false and no months. Today: ${today}.`,
     prompt: `<sow name="${s.name.replace(/"/g, "'")}">\n${s.text.slice(0, 60000)}\n</sow>`,
   });
   return cleanScope(out);
@@ -129,6 +131,8 @@ export async function saveSow(admin: Db, clientId: string, s: SowSource, by: str
   }
   await admin.from("client_sows").update({ scope, read_at: new Date().toISOString() }).eq("id", id);
   await applyScope(admin, clientId, id, scope, old);
+  // The ongoing tier it names becomes theirs when none is set yet
+  if (scope.ongoing_tier) await admin.from("clients").update({ email_package_key: scope.ongoing_tier, email_package_set_by: by, email_package_set_at: new Date().toISOString() }).eq("id", clientId).is("email_package_key", null);
   return { id, scope };
 }
 
@@ -136,7 +140,9 @@ export async function saveSow(admin: Db, clientId: string, s: SowSource, by: str
 export async function applyScope(admin: Db, clientId: string, sowId: string, scope: SowScope, replaced: string[] = []) {
   const { data: manual } = await admin.from("email_scope_months").select("month").eq("client_id", clientId).eq("source", "manual");
   const keep = new Set((manual ?? []).map((m) => String(m.month)));
-  const rows = scope.months.filter((m) => !keep.has(m.month)).map((m) => ({ client_id: clientId, month: m.month, campaigns: m.campaigns, flows: m.flows, label: m.label || null, notes: m.notes || null, source: "sow", sow_id: sowId, updated_at: new Date().toISOString() }));
+  const rows = scope.months
+    .filter((m) => !keep.has(m.month))
+    .map((m) => ({ client_id: clientId, month: m.month, campaigns: m.campaigns, campaigns_min: m.campaigns_min, sms: m.sms, sms_min: m.sms_min, flows: m.flows, flow_emails: m.flow_emails, flow_emails_min: m.flow_emails_min, label: m.label || null, notes: m.notes || null, source: "sow", sow_id: sowId, updated_at: new Date().toISOString() }));
   if (rows.length) await admin.from("email_scope_months").upsert(rows, { onConflict: "client_id,month" });
   if (replaced.length) {
     const months = new Set(scope.months.map((m) => m.month));
@@ -149,31 +155,41 @@ export async function applyScope(admin: Db, clientId: string, sowId: string, sco
 // ─── Drafting the month's requests ──────────────────────────────────────────
 
 /**
- * The SOW month the client is in now: its requests drafted (campaigns batched up to 5 per copy document, each flow its
- * own), copy and all, for the client's Email Strategist to review on the request form. Once per month.
+ * The scoped month the client is in now (their SOW's, or the 3-Month Setup's): what's left of it drafted, copy and
+ * all, for the client's Email Strategist to review on the request form: campaigns and texts batched up to 5 per copy
+ * document, each flow its own with its share of the flow emails. Once per client and month.
  */
 export async function draftScopeMonth(admin: Db, clientId: string): Promise<{ drafted: number; reason?: string }> {
-  const { data: a } = await admin.from("client_email_allotment").select("period_start, cap_source, campaigns_used, flows_used").eq("client_id", clientId).maybeSingle();
-  if (a?.cap_source !== "sow" || !a.period_start) return { drafted: 0, reason: "No SOW month now" };
+  const { data: a } = await admin.from("client_email_allotment").select("*").eq("client_id", clientId).maybeSingle();
+  if (!a?.period_start || (a.cap_source !== "sow" && a.cap_source !== "setup")) return { drafted: 0, reason: "No SOW or setup month now" };
   const month = `${String(a.period_start).slice(0, 7)}-01`;
-  const { data: m } = await admin.from("email_scope_months").select("campaigns, flows, label, notes, drafted_at").eq("client_id", clientId).eq("month", month).maybeSingle();
-  if (!m || m.drafted_at) return { drafted: 0, reason: "Already drafted" };
-  // What's already asked this cycle counts first: only what's left is drafted
-  const campaigns = Math.max(0, Number(m.campaigns) - Number(a.campaigns_used ?? 0));
-  const flows = Math.max(0, Number(m.flows) - Number(a.flows_used ?? 0));
+  // What's already asked this cycle counts first: only what's left is drafted (against the top of each range)
+  const left = (max: unknown, used: unknown) => Math.max(0, (Number(max) || 0) - (Number(used) || 0));
+  const campaigns = left(a.campaigns_per_month, a.campaigns_used);
+  const sms = left(a.sms_per_month, a.sms_used);
+  const flows = left(a.flows_per_month, a.flows_used);
+  const flowEmails = left(a.flow_emails_per_month, a.flow_emails_used);
   // Claimed first, so two runs never draft the same month twice
-  const { data: claimed } = await admin.from("email_scope_months").update({ drafted_at: new Date().toISOString() }).eq("client_id", clientId).eq("month", month).is("drafted_at", null).select("month");
+  const key = `email-draft:${clientId}:${month}`;
+  const { data: claimed } = await admin.from("sync_state").upsert({ source: key, last_run_at: new Date().toISOString(), last_result: {} }, { onConflict: "source", ignoreDuplicates: true }).select("source");
   if (!claimed?.length) return { drafted: 0, reason: "Already drafted" };
-  if (!campaigns && !flows) return { drafted: 0, reason: "Nothing left to draft" };
+  await admin.from("email_scope_months").update({ drafted_at: new Date().toISOString() }).eq("client_id", clientId).eq("month", month);
+  if (!campaigns && !sms && !flows) return { drafted: 0, reason: "Nothing left to draft" };
   const strategist = await strategistOf(admin, clientId);
   if (!strategist) return { drafted: 0, reason: "No Email Strategist on the client" };
   const me = { id: strategist.id, fullName: strategist.name, email: strategist.email };
   const { planEmails, writeRequestCopy } = await import("@/lib/email-request");
-  const label = (m.label as string | null) ?? "this month";
-  const why = `${label} of the Scope of Work${m.notes ? `: ${m.notes}` : ""}`;
-  const jobs: { kind: "campaign" | "flow"; count: number; idea: string }[] = [];
-  for (let left = campaigns; left > 0; left -= 5) jobs.push({ kind: "campaign", count: Math.min(5, left), idea: `The campaigns scoped for ${why}.` });
-  for (let i = 0; i < flows; i++) jobs.push({ kind: "flow", count: 3, idea: `Flow ${i + 1} of ${flows} scoped for ${why}. Build the flow this client most needs (or optimize the weakest live one).` });
+  const label = (a.scope_label as string | null) ?? "this month";
+  const { data: m } = await admin.from("email_scope_months").select("notes").eq("client_id", clientId).eq("month", month).maybeSingle();
+  const notes = (m?.notes as string | null) ?? (a.scope_notes as string | null) ?? null;
+  const why = `${label} of their ${a.cap_source === "sow" ? "Scope of Work" : "3-Month Setup"}${notes ? `: ${notes}` : ""}`;
+  const jobs: { kind: "campaign" | "sms" | "flow"; count: number; idea: string }[] = [];
+  for (let n = campaigns; n > 0; n -= 5) jobs.push({ kind: "campaign", count: Math.min(5, n), idea: `The campaign emails scoped for ${why}. Keep the 80/20 rule: 80% story and product, 20% sales.` });
+  for (let n = sms; n > 0; n -= 5) jobs.push({ kind: "sms", count: Math.min(5, n), idea: `The SMS messages scoped for ${why}.` });
+  for (let i = 0; i < flows; i++) {
+    const share = Math.max(1, Math.min(6, Math.round((flowEmails || flows * 3) / flows)));
+    jobs.push({ kind: "flow", count: share, idea: `Flow ${i + 1} of ${flows} scoped for ${why}. Build the one it names next that isn't live yet (or optimize the weakest live one when it says optimization).` });
+  }
   let drafted = 0;
   for (const j of jobs) {
     try {
@@ -181,20 +197,22 @@ export async function draftScopeMonth(admin: Db, clientId: string): Promise<{ dr
       await writeRequestCopy(admin, admin, me, { clientId, kind: j.kind, plan, priority: "normal", month, from: "sow" });
       drafted++;
     } catch (e) {
-      console.error("[email sow draft]", e instanceof Error ? e.message : e);
+      console.error("[email scope draft]", e instanceof Error ? e.message : e);
     }
   }
+  await admin.from("sync_state").update({ last_result: { drafted, jobs: jobs.length } }).eq("source", key);
   if (drafted) {
     const { data: c } = await admin.from("clients").select("name, slug").eq("id", clientId).maybeSingle();
+    const parts = [campaigns && `${campaigns} campaign${campaigns === 1 ? "" : "s"}`, sms && `${sms} SMS`, flows && `${flows} flow${flows === 1 ? "" : "s"}`].filter(Boolean).join(", ");
     await admin.from("notifications").upsert(
       {
         profile_id: strategist.id,
         kind: "email_request",
         client_id: clientId,
-        title: `${c?.name ?? "A client"}: ${drafted} email request${drafted === 1 ? "" : "s"} drafted from the SOW`,
-        body: `${label}: ${campaigns ? `${campaigns} campaign${campaigns === 1 ? "" : "s"}` : ""}${campaigns && flows ? " and " : ""}${flows ? `${flows} flow${flows === 1 ? "" : "s"}` : ""}, copy written. Review, edit and send them to Asana.`,
+        title: `${c?.name ?? "A client"}: ${drafted} email request${drafted === 1 ? "" : "s"} drafted for ${label}`,
+        body: `${parts}, copy written. Review, edit and send them to Asana.`,
         href: `/board/email/new?client=${c?.slug ?? ""}`,
-        key: `asana_email:sow:${clientId}:${month}`,
+        key: `asana_email:scope:${clientId}:${month}`,
         priority: "normal",
       },
       { onConflict: "profile_id,key", ignoreDuplicates: true },
@@ -216,9 +234,10 @@ async function strategistOf(admin: Db, clientId: string) {
  * client in a SOW month gets that month's requests drafted. Time-boxed; the rest waits for tomorrow.
  */
 export async function sowPass(admin: Db, deadline: number) {
-  const { data: clients } = await admin.from("clients").select("id, services, services_extra, services_removed, created_at").is("archived_at", null).in("status", ["active", "onboarding"]).order("created_at", { ascending: false });
+  const { data: clients } = await admin.from("clients").select("id, services, services_extra, services_removed, strategy_only, created_at").is("archived_at", null).in("status", ["active", "onboarding"]).order("created_at", { ascending: false });
   const { servicesOf } = await import("@/lib/services");
-  const email = (clients ?? []).filter((c) => (servicesOf(c) as string[]).includes("email-marketing"));
+  // Strategy-only email clients hold no allotment: nothing to find or draft
+  const email = (clients ?? []).filter((c) => (servicesOf(c) as string[]).includes("email-marketing") && !((c.strategy_only ?? []) as string[]).includes("email-marketing"));
   const { data: have } = await admin.from("client_sows").select("client_id, created_at").eq("line", "email");
   const tried = new Map((have ?? []).map((h) => [h.client_id as string, h.created_at as string]));
   const { data: looked } = await admin.from("sync_state").select("source, last_run_at").like("source", "sow:%");

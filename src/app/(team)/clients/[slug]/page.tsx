@@ -72,7 +72,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       supabase
         .from("clients")
         .select(
-          "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, billing_day, billing_day_source, live_ad_writes, live_ad_writes_at, live_ad_writes_by, live_google_writes, live_google_writes_at, live_google_writes_by, reactivated_at, reactivated_by, created_at, reonboarded_at, services, services_extra, services_removed, creative_packages(label)",
+          "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, billing_day, billing_day_source, live_ad_writes, live_ad_writes_at, live_ad_writes_by, live_google_writes, live_google_writes_at, live_google_writes_by, reactivated_at, reactivated_by, created_at, reonboarded_at, services, services_extra, services_removed, email_package_key, email_setup_start, email_custom, strategy_only, creative_packages(label)",
         )
         .eq("slug", slug)
         .maybeSingle(),
@@ -558,6 +558,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         removed: (client.services_removed ?? []) as string[],
         tiers: tierList ?? [],
         chosen: Object.fromEntries((tierPicks ?? []).filter((x) => x.tier_id).map((x) => [x.service as string, x.tier_id as string])),
+        strategyOnly: ((client.strategy_only ?? []) as string[]).filter(Boolean),
+        email: { key: (client.email_package_key as string | null) ?? null, setupStart: (client.email_setup_start as string | null) ?? null, custom: (client.email_custom ?? null) as Record<string, number | null> | null },
       }}
       connections={connections}
       creative={creative}

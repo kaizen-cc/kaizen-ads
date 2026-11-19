@@ -83,7 +83,7 @@ export async function sendPreview(docId: string): Promise<{ ok: true; preview: S
     const { loadCopyDoc, clientFacts } = await import("@/lib/copy-docs/server");
     const d = await loadCopyDoc(db, docId);
     if (!d?.clientId) return { ok: false, error: "That copy isn't one you can request." };
-    const [{ EMAIL_LINE }, { kindOf }, { purposeText }, { unitsOfRequest }] = await Promise.all([import("@/lib/deliverables/lines/email"), import("@/lib/deliverables/engine"), import("@/lib/copy-docs/core"), import("@/lib/email-allotment-core")]);
+    const [{ EMAIL_LINE }, { kindOf }, { purposeText }] = await Promise.all([import("@/lib/deliverables/lines/email"), import("@/lib/deliverables/engine"), import("@/lib/copy-docs/core")]);
     const facts = await clientFacts(admin, d.clientId, "email");
     const kind = kindOf(EMAIL_LINE, d.content.kind) ?? EMAIL_LINE.kinds[0];
     const pr = String(d.origin?.priority ?? "normal");
@@ -97,7 +97,7 @@ export async function sendPreview(docId: string): Promise<{ ok: true; preview: S
       urgency: (["urgent", "high", "normal", "low"].includes(pr) ? pr : "normal") as "urgent" | "high" | "normal" | "low",
     };
     const { data: seat } = await admin.from("client_assignments").select("profiles(full_name)").eq("client_id", d.clientId).eq("role", "email_strategist").order("is_primary", { ascending: false }).limit(1).maybeSingle();
-    const units = unitsOfRequest(d.content.kind, d.content.emails.length);
+    const n = d.content.emails.length;
     return {
       ok: true,
       preview: {
@@ -108,7 +108,7 @@ export async function sendPreview(docId: string): Promise<{ ok: true; preview: S
         follower: (seat?.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
         folder: `Clients › ${facts.kaizenId ?? "ID"}-${facts.name} › ${facts.name}-Headquarters › Email Marketing`,
         emails: d.content.emails.length,
-        counts: d.content.kind === "flow" ? `1 flow (${d.content.emails.length} messages)` : `${units} ${d.content.kind === "sms" ? "text" : "campaign"}${units === 1 ? "" : "s"}`,
+        counts: d.content.kind === "flow" ? `1 flow, ${n} flow email${n === 1 ? "" : "s"}` : `${n} ${d.content.kind === "sms" ? "text" : "campaign"}${n === 1 ? "" : "s"}`,
       },
     };
   } catch (e) {

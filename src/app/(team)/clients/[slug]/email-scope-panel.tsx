@@ -15,20 +15,16 @@ export async function EmailScopePanel({ clientId }: { clientId: string }) {
   const db = await createClient();
   const from = new Date();
   from.setMonth(from.getMonth() - 2);
-  const [allotments, { data: packages }, { data: c }, { data: sows }, { data: months }] = await Promise.all([
+  const [allotments, { data: sows }, { data: months }] = await Promise.all([
     emailAllotments(db, [clientId]),
-    db.from("email_packages").select("key, label, campaigns, flows, note").eq("active", true).order("sort_order").order("label"),
-    db.from("clients").select("email_package_key").eq("id", clientId).maybeSingle(),
     db.from("client_sows").select("id, name, url, source, found_in, scope, status, note, read_at, created_at").eq("client_id", clientId).eq("line", "email").order("created_at", { ascending: false }).limit(4),
-    db.from("email_scope_months").select("month, campaigns, flows, label, notes, source, drafted_at").eq("client_id", clientId).gte("month", `${from.toISOString().slice(0, 7)}-01`).order("month").limit(24),
+    db.from("email_scope_months").select("month, campaigns, sms, flows, flow_emails, label, notes, source, drafted_at").eq("client_id", clientId).gte("month", `${from.toISOString().slice(0, 7)}-01`).order("month").limit(24),
   ]);
   const active = (sows ?? []).find((s) => s.status !== "replaced") ?? null;
   return (
     <EmailScopeEditor
       clientId={clientId}
       allotment={allotments[clientId] ?? null}
-      packages={(packages ?? []).map((p) => ({ key: p.key as string, label: p.label as string, campaigns: Number(p.campaigns), flows: Number(p.flows), note: (p.note as string | null) ?? null }))}
-      packageKey={(c?.email_package_key as string | null) ?? null}
       sow={
         active
           ? {
@@ -45,9 +41,8 @@ export async function EmailScopePanel({ clientId }: { clientId: string }) {
           : null
       }
       replaced={(sows ?? []).filter((s) => s.status === "replaced").map((s) => ({ name: s.name as string, at: s.created_at as string }))}
-      months={(months ?? []).map((m) => ({ month: m.month as string, campaigns: Number(m.campaigns), flows: Number(m.flows), label: (m.label as string | null) ?? null, notes: (m.notes as string | null) ?? null, source: m.source as "sow" | "manual", drafted: Boolean(m.drafted_at) }))}
+      months={(months ?? []).map((m) => ({ month: m.month as string, campaigns: Number(m.campaigns), sms: Number(m.sms) || 0, flows: Number(m.flows), flowEmails: Number(m.flow_emails) || 0, label: (m.label as string | null) ?? null, notes: (m.notes as string | null) ?? null, source: m.source as "sow" | "manual", drafted: Boolean(m.drafted_at) }))}
       canEdit={seesEmailBoard(me) || me.isExec || me.isLead}
-      canSetPackage={me.isExec || me.isLead}
     />
   );
 }
