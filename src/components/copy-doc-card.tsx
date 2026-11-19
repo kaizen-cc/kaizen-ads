@@ -11,7 +11,7 @@ const KIND: Record<CallCopyDoc["kind"], string> = { campaign: "Email campaign", 
 export function CopyDocCardView({ card, onOpen, onDismiss, wide = true }: { card: CallCard & { copy: CallCopyDoc }; onOpen: (c: CallCard) => void; onDismiss?: () => void; wide?: boolean }) {
   const c = card.copy;
   return (
-    <li className={`relative grid gap-3 overflow-hidden rounded-[18px] border border-line bg-surface p-4 shadow-sm ${wide ? "sm:col-span-2" : ""}`} aria-label={`${KIND[c.kind]}: ${c.title}`}>
+    <li className={`relative grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 overflow-hidden rounded-[18px] border border-line bg-surface p-4 shadow-sm ${wide ? "sm:col-span-2" : ""}`} aria-label={`${KIND[c.kind]}: ${c.title}`}>
       <span aria-hidden className="pointer-events-none absolute -right-12 -top-14 h-32 w-32 rounded-full bg-brand opacity-[0.08] blur-2xl" />
       <div className="relative flex items-start gap-3">
         <span className="grid min-w-0 flex-1 gap-0.5">

@@ -20,6 +20,7 @@ import { ConnectorsMenu, RUN_EVENT, type RunDetail } from "./connectors-ui";
 import { ReportThis, type ReportTurn } from "@/components/report-this";
 import { messageKey } from "@/lib/chat-report";
 import { fromAiMessages, type TranscriptEntry } from "@/lib/chat-transcript";
+import { chatDraftKey, readDraft, writeDraft } from "@/lib/chat-drafts";
 
 // Kaizen AI: a chat like Claude's, for the team. Threads on the left (search, pinned, grouped by client, shared with
 // me), the conversation in the middle with streaming answers, tool status and cards, and a composer with files,
@@ -107,7 +108,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
   const flash = connectError ?? (connectedParam ? `Connected. It's on in this chat.` : null);
   const abort = useRef<AbortController | null>(null);
   const streamingThread = useRef<string | null>(null);
-  const bottom = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
 
   const readOnly = Boolean(thread && thread.profile_id !== me.id);
@@ -202,9 +203,39 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
     };
   }, [t]);
 
+  // Only the messages column scrolls (scrollIntoView also scrolled the page itself, past the app, on long chats)
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "end" });
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, live?.text, live?.tools.length, live?.cards.length]);
+  // The page is a fixed full-screen layout: the window itself never scrolls while it's open
+  useEffect(() => {
+    const html = document.documentElement;
+    const was = html.style.overflow;
+    html.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = was;
+    };
+  }, []);
+
+  // ─── What's typed and not sent, kept per thread on this device (with files already uploaded) ───
+  const draftKey = chatDraftKey(me.id, `ai:${t ?? "new"}`);
+  const loadedKey = useRef<string | null>(null);
+  // Saved first, so a thread change never writes the old thread's words under the new thread's key
+  useEffect(() => {
+    if (loadedKey.current !== draftKey) return;
+    writeDraft(
+      draftKey,
+      text,
+      files.filter((f) => f.status === "ready" && f.att).map((f) => f.att as Attachment),
+    );
+  }, [draftKey, text, files]);
+  useEffect(() => {
+    const d = readDraft<Attachment>(draftKey);
+    loadedKey.current = draftKey;
+    setText(d.text);
+    setFiles(d.attachments.filter((a) => a && typeof a.path === "string").map((a) => ({ key: `kept-${a.path}`, name: a.name, kind: a.kind, status: "ready" as const, att: a })));
+  }, [draftKey]);
 
   // ─── Files: straight to storage as they're picked (videos watched here first: frames and audio) ───
   const attach = async (list: FileList | File[]) => {
@@ -414,7 +445,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
   const shownAgent = live?.agent?.label ?? (agentPick ? AGENT_LABEL[agentPick] : null);
 
   return (
-    <div className="-mx-4 -mt-6 flex h-[calc(100dvh-88px-env(safe-area-inset-bottom)-56px)] min-h-[480px] md:-mx-10 md:-my-8 md:h-[100dvh]">
+    <div className="-mx-4 -mt-6 flex h-[calc(100dvh-88px-env(safe-area-inset-bottom)-56px)] min-h-0 overflow-hidden md:-mx-10 md:-my-8 md:h-[100dvh]">
       {/* Threads */}
       <Rail
         open={listOpen}
@@ -438,7 +469,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
         <ProjectsHome clients={clients} onMenu={() => pushParams({ list: "1" })} />
       ) : (
       /* The conversation */
-      <section className="flex min-w-0 flex-1 flex-col bg-bg">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
         <Header
           thread={thread}
           readOnly={readOnly}
@@ -456,8 +487,8 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
           onProject={(id) => (thread ? pushParams({ p: id, t: null, projects: null }) : pushParams({ projects: "1", p: null }))}
         />
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className={`mx-auto grid w-full gap-7 px-4 pb-6 pt-6 md:px-8 ${projectParam && !thread ? "max-w-[1080px]" : "max-w-[820px]"}`}>
+        <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
+          <div className={`mx-auto grid w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-7 px-4 pb-6 pt-6 md:px-8 ${projectParam && !thread ? "max-w-[1080px]" : "max-w-[820px]"}`}>
             {projectParam && !thread ? (
               projectData ? (
                 <ProjectView data={projectData} meId={me.id} clients={clients} onOpenChat={(id) => pushParams({ t: id })} onChanged={openProject.reload} />
@@ -495,7 +526,6 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
               ),
             )}
             {live && (live.thread === null || live.thread === thread?.id) ? <LiveBlock live={live} report={report} at={messages.length} reported={messages.at(-1)?.role === "assistant" && messages.at(-1)?.error === live.error} onRetry={() => void run("regenerate", "")} /> : null}
-            <div ref={bottom} />
           </div>
         </div>
 

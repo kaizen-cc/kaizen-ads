@@ -211,6 +211,9 @@ export function SharingBar({ onStop, looking }: { onStop: () => void; looking: b
   );
 }
 
+/** How many lines a drafted message shows before Show all */
+const PEEK_LINES = 6;
+
 /**
  * A message drafted as the person (a Slack reply or an email): edit it right here, Approve (which says yes on the call,
  * so the agent sends it as them), or copy it. After sending it shows what happened (sent, a Gmail draft, or copy).
@@ -222,6 +225,10 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const open = d.status === "draft" || d.status === "copy";
+  // Compact by default: the first few lines (it scrolls inside), Show all for the whole message
+  const [all, setAll] = useState(false);
+  const lineCount = text.split("\n").length;
+  const long = lineCount > PEEK_LINES - 1 || text.length > 320;
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -259,11 +266,11 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
     onApprove(text);
   };
   return (
-    <li className="grid gap-2 rounded-[14px] border border-line bg-surface p-3 shadow-sm sm:col-span-2" aria-label={c.title}>
+    <li className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 rounded-[14px] border border-line bg-surface p-3 shadow-sm sm:col-span-2" aria-label={c.title}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className={`text-[11px] uppercase tracking-[0.14em] ${d.status === "sent" ? "text-ok" : "text-brand-text"}`}>{c.title}</p>
-          <p className="truncate text-[12.5px] text-muted">
+          <p className={`text-[12.5px] leading-snug text-muted [overflow-wrap:anywhere] ${all ? "" : "line-clamp-2"}`}>
             {d.where}
             {d.subject ? ` · ${d.subject}` : ""}
           </p>
@@ -282,9 +289,14 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
         value={text}
         onChange={(e) => setText(e.target.value)}
         readOnly={!open}
-        rows={Math.min(8, Math.max(3, text.split("\n").length + 1))}
-        className="w-full resize-y rounded-[12px] border border-line bg-surface-2/40 px-3 py-2 text-[16px] leading-snug text-fg outline-none focus:border-faint md:text-[13.5px]"
+        rows={all ? Math.min(40, Math.max(3, lineCount + 1)) : Math.min(PEEK_LINES, Math.max(3, lineCount + 1))}
+        className={`block w-full min-w-0 max-w-full resize-none overflow-y-auto overscroll-contain whitespace-pre-wrap break-words rounded-[12px] border border-line bg-surface-2/40 px-3 py-2 text-[16px] leading-snug text-fg outline-none [overflow-wrap:anywhere] focus:border-faint md:text-[13.5px] ${all ? "max-h-[min(55vh,520px)]" : ""}`}
       />
+      {long && (
+        <button type="button" onClick={() => setAll((x) => !x)} aria-expanded={all} aria-controls={`draft-${d.id}`} className="-mt-0.5 inline-flex min-h-11 items-center justify-self-start rounded-full px-1 text-[12.5px] font-medium text-brand-text transition-colors hover:text-fg md:min-h-7">
+          {all ? "Show less" : "Show all"}
+        </button>
+      )}
       {d.attachments && d.attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5" aria-label="Attached">
           {d.attachments.map((f) => (
@@ -305,7 +317,7 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
           {err}
         </p>
       )}
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
         <button type="button" onClick={copy} className="inline-flex min-h-11 items-center rounded-full px-4 text-[13px] text-muted transition-colors hover:bg-surface-2 hover:text-fg md:min-h-9">
           {copied ? "Copied" : "Copy"}
         </button>
@@ -328,7 +340,7 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
 export function CardsStrip({ cards, onOpen, onDismiss, compact = false, callId = null, onApprove }: { cards: CallCard[]; onOpen: (c: CallCard) => void; onDismiss: (id: string) => void; compact?: boolean; callId?: string | null; onApprove?: (text: string) => void }) {
   if (!cards.length) return null;
   return (
-    <ul className={`grid gap-2 ${compact ? "" : "sm:grid-cols-2"}`} aria-label="Shared on the call">
+    <ul className={`grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 ${compact ? "" : "sm:grid-cols-[repeat(2,minmax(0,1fr))]"}`} aria-label="Shared on the call">
       {cards.map((c) =>
         c.copy ? (
           <CopyDocCardView key={c.id} card={c as CallCard & { copy: NonNullable<CallCard["copy"]> }} onOpen={onOpen} onDismiss={() => onDismiss(c.id)} wide={!compact} />
@@ -337,7 +349,7 @@ export function CardsStrip({ cards, onOpen, onDismiss, compact = false, callId =
         ) : c.draft ? (
           <DraftCard key={c.id} c={c as CallCard & { draft: NonNullable<CallCard["draft"]> }} callId={callId} onApprove={onApprove} onDismiss={onDismiss} />
         ) : (
-        <li key={c.id} className="group relative flex items-center gap-3 rounded-[14px] border border-line bg-surface p-2.5 pr-2 shadow-sm">
+        <li key={c.id} className="group relative flex min-w-0 items-center gap-3 rounded-[14px] border border-line bg-surface p-2.5 pr-2 shadow-sm">
           <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-brand-soft text-brand-text">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               {c.external ? <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /> : <path d="M5 12h14M13 6l6 6-6 6" />}

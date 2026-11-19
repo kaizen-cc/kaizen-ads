@@ -99,7 +99,7 @@ const assistantRef = (tint: string, name: string | null, context?: AgentRef["con
 const subscribeNone = () => () => undefined;
 const debugOn = () => /[?&]calldebug=1/.test(window.location.search);
 
-export function AgentCallProvider({ assistantColor = null, assistantName: givenName = null, children }: { assistantColor?: string | null; assistantName?: string | null; children: React.ReactNode }) {
+export function AgentCallProvider({ assistantColor = null, assistantName: givenName = null, meId = null, children }: { assistantColor?: string | null; assistantName?: string | null; /** Who's signed in: their chat draft and window size are kept per person */ meId?: string | null; children: React.ReactNode }) {
   const router = useRouter();
   const desktop = useDesktop();
   const mounted = useSyncExternalStore(
@@ -926,6 +926,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
     shown && stage === "chat"
       ? {
           agent: shown,
+          meId,
           lines: chatLines,
           earlier,
           busy: chatBusy,

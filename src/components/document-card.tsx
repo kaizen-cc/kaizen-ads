@@ -17,7 +17,7 @@ export function DocumentCardView({ doc: start, onDismiss, wide = true }: { doc: 
   const [doc, setDoc] = useState(start);
   const editing = useParam("doc") === doc.id;
   return (
-    <li className={`relative grid gap-3 overflow-hidden rounded-[16px] border border-line bg-surface p-3.5 shadow-sm ${wide ? "sm:col-span-2" : ""}`} aria-label={`${KIND[doc.kind]}: ${doc.title}`}>
+    <li className={`relative grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 overflow-hidden rounded-[16px] border border-line bg-surface p-3.5 shadow-sm ${wide ? "sm:col-span-2" : ""}`} aria-label={`${KIND[doc.kind]}: ${doc.title}`}>
       <span aria-hidden className="pointer-events-none absolute -right-10 -top-12 h-28 w-28 rounded-full bg-brand opacity-[0.08] blur-2xl" />
       <div className="relative flex items-start gap-3">
         <span aria-hidden className="grid h-11 w-9 shrink-0 place-items-center rounded-[8px] border border-line bg-surface-2 text-brand-text">

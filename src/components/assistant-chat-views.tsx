@@ -8,6 +8,7 @@ import type { Speaker } from "@/lib/agent-call/engine";
 import { tintOf } from "@/lib/agent-look";
 import type { JobView } from "@/lib/assistant/team";
 import { useCallDock } from "@/lib/use-call-dock";
+import { chatDraftKey, chatSizeKey, readChatSize, readDraft, writeChatSize, writeDraft, type ChatSize } from "@/lib/chat-drafts";
 import { useDictation } from "@/lib/use-dictation";
 import { AgentGlyph, CardsStrip, JobStrip, WorkingBar, RecordedMark, ShareAsk, SharingBar, TeamChips, TranscriptButton, UploadPanel } from "./assistant-call-parts";
 import type { AgentRef } from "./agent-call-views";
@@ -17,9 +18,13 @@ import type { AgentRef } from "./agent-call-views";
 // written, with light formatting and clickable links; specialists who join show as their own speaker in their color;
 // cards, drafts, uploads, the job strip, a look at the screen and screens it opens work as on a call. A mic dictates
 // into the input; "Call" carries the same conversation on as a voice call. Phones get it full screen (or the pill).
+// Computers can expand it to a tall panel on the right (remembered per person). What's typed and not sent is kept on
+// this device per person and thread, so minimising, closing or changing page never loses it.
 
 export type ChatView = {
   agent: AgentRef;
+  /** Who's chatting (their draft and window size are kept per person on this device) */
+  meId?: string | null;
   lines: ChatLine[];
   /** The last few lines of the conversation before this one (shown dimmed above it) */
   earlier: ChatLine[];
@@ -185,8 +190,13 @@ export const PhoneGlyph = ({ size = 16 }: { size?: number }) => (
 
 /** The input: type (Enter sends, Shift+Enter a new line), or dictate with the mic; Stop while an answer is written */
 function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
-  const [draft, setDraft] = useState("");
-  const base = useRef("");
+  // What was typed and not sent comes back (the window is only drawn in the browser, so storage is there)
+  const key = chatDraftKey(v.meId, `assistant:${v.agent.roleKey}`);
+  const [draft, setDraft] = useState(() => readDraft(key).text);
+  const base = useRef(draft);
+  useEffect(() => {
+    writeDraft(key, draft);
+  }, [key, draft]);
   const box = useRef<HTMLTextAreaElement>(null);
   const join = (a: string, b: string) => (a && b ? `${a.replace(/\s+$/, "")} ${b.trim()}` : `${a}${b.trim()}`);
   const dict = useDictation({
@@ -290,7 +300,7 @@ function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
   );
 }
 
-function Thread({ v }: { v: ChatView }) {
+function Thread({ v, large = false }: { v: ChatView; large?: boolean }) {
   const scroller = useRef<HTMLDivElement>(null);
   const last = v.lines[v.lines.length - 1];
   useEffect(() => {
@@ -299,8 +309,8 @@ function Thread({ v }: { v: ChatView }) {
   }, [v.lines.length, last?.text, v.cards.length, v.uploadAsk, v.job]);
   const thinking = v.busy && !(last?.who === "agent" && last.streaming);
   return (
-    <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3" aria-label="Conversation" aria-live="polite" aria-relevant="additions">
-      <div className="grid gap-3.5">
+    <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3" aria-label="Conversation" aria-live="polite" aria-relevant="additions">
+      <div className={`mx-auto grid w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-3.5 ${large ? "max-w-[760px]" : ""}`}>
         {v.earlier.length > 0 && (
           <>
             {v.earlier.map((l) => (
@@ -332,12 +342,12 @@ function Thread({ v }: { v: ChatView }) {
   );
 }
 
-function Extras({ v, compact }: { v: ChatView; compact: boolean }) {
+function Extras({ v, compact, large = false }: { v: ChatView; compact: boolean; large?: boolean }) {
   const sc = v.screen;
   if (!v.cards.length && !v.uploadAsk && !sc.asked && !sc.sharing && !v.job && !v.team.length && !v.progress) return null;
   const speaking = [...v.lines].reverse().find((l) => l.who === "agent" && l.streaming)?.speaker?.role ?? null;
   return (
-    <div className="grid max-h-[40vh] gap-2 overflow-y-auto border-t border-line px-4 py-2.5">
+    <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 overflow-y-auto overflow-x-hidden overscroll-contain border-t border-line px-4 py-2.5 ${large ? "max-h-[48vh]" : "max-h-[40vh]"}`}>
       <TeamChips team={v.team} speaking={speaking} />
       {v.progress && <WorkingBar p={v.progress} />}
       {v.job && <JobStrip job={v.job} />}
@@ -376,6 +386,15 @@ function HeaderButton({ label, onClick, children, className = "" }: { label: str
 export function ChatWidget({ v, minimized, phone, onMinimize, onExpand }: { v: ChatView; minimized: boolean; phone: boolean; onMinimize: () => void; onExpand: () => void }) {
   const { ref: dockRef, style: dockStyle, dragging, handle, keys } = useCallDock(phone ? "phone" : "desktop", { snap: phone && minimized });
   const [menu, setMenu] = useState(false);
+  // Computers: the docked window, or a tall panel on the right (most of the screen); remembered per person
+  const sizeKey = chatSizeKey(v.meId);
+  const [size, setSize] = useState<ChatSize>(() => readChatSize(sizeKey));
+  const large = !phone && size === "large";
+  const toggleSize = () => {
+    const next: ChatSize = large ? "dock" : "large";
+    setSize(next);
+    writeChatSize(sizeKey, next);
+  };
   const title = v.agent.roleKey === "assistant" ? assistantTitle(v.agent.label) : `The ${v.agent.label}`;
   const lastAgent = [...v.lines].reverse().find((l) => l.who === "agent");
   const status = v.error ?? (v.connecting ? "Opening…" : v.busy ? "Writing…" : "Chat");
@@ -408,12 +427,14 @@ export function ChatWidget({ v, minimized, phone, onMinimize, onExpand }: { v: C
     );
 
   const shell = phone
-    ? "fixed inset-0 z-[80] flex flex-col bg-bg pt-safe pb-safe animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)]"
-    : `${DOCK} flex h-[min(620px,calc(100vh-140px))] w-[400px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[22px] border border-line bg-surface shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65)] ${dragging ? "select-none" : "animate-[sheet-up_.26s_cubic-bezier(.2,.8,.2,1)]"}`;
+    ? "fixed inset-0 z-[80] flex h-[100dvh] flex-col overflow-hidden bg-bg pt-safe pb-safe pl-safe pr-safe animate-[sheet-up_.28s_cubic-bezier(.2,.8,.2,1)]"
+    : large
+      ? "fixed bottom-4 right-4 top-4 z-[75] flex w-[min(820px,calc(100vw-32px))] flex-col overflow-hidden rounded-[22px] border border-line bg-surface shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65)] animate-[sheet-fade_.18s_ease-out]"
+      : `${DOCK} flex h-[min(620px,calc(100vh-140px))] w-[400px] max-w-[calc(100vw-48px)] flex-col overflow-hidden rounded-[22px] border border-line bg-surface shadow-[0_24px_60px_-20px_rgba(0,0,0,0.65)] ${dragging ? "select-none" : "animate-[sheet-up_.26s_cubic-bezier(.2,.8,.2,1)]"}`;
   return (
     <div
-      ref={phone ? undefined : dockRef}
-      style={phone ? undefined : dockStyle}
+      ref={phone || large ? undefined : dockRef}
+      style={phone || large ? undefined : dockStyle}
       role={phone ? "dialog" : "region"}
       aria-modal={phone || undefined}
       aria-label={`Chat with ${title.toLowerCase()}`}
@@ -423,8 +444,8 @@ export function ChatWidget({ v, minimized, phone, onMinimize, onExpand }: { v: C
       }}
     >
       <span aria-hidden className="pointer-events-none absolute -top-16 left-1/2 h-32 w-56 -translate-x-1/2 rounded-full opacity-20 blur-3xl" style={{ background: v.agent.tint }} />
-      <div className={`relative flex items-center gap-2.5 border-b border-line py-2 pl-3 pr-2 ${phone ? "" : "touch-none"}`} {...(phone ? {} : handle)}>
-        {!phone && (
+      <div className={`relative flex min-w-0 items-center gap-2.5 border-b border-line py-2 pl-3 pr-2 ${phone || large ? "" : "touch-none"}`} {...(phone || large ? {} : handle)}>
+        {!phone && !large && (
           <button type="button" aria-label="Move the chat: drag it, or use the arrow keys (Home puts it back)" title="Drag to move (arrow keys too)" {...handle} {...keys} className="grid h-8 w-6 shrink-0 cursor-grab touch-none place-items-center rounded-full text-faint hover:bg-surface-2 hover:text-fg active:cursor-grabbing">
             <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden>
               <circle cx="2.5" cy="3" r="1.4" />
@@ -483,6 +504,13 @@ export function ChatWidget({ v, minimized, phone, onMinimize, onExpand }: { v: C
             </>
           )}
         </span>
+        {!phone && (
+          <HeaderButton label={large ? "Back to the small window" : "Expand the chat"} onClick={toggleSize}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              {large ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}
+            </svg>
+          </HeaderButton>
+        )}
         <HeaderButton label={phone ? "Minimise the chat" : "Minimise the chat (Esc)"} onClick={onMinimize}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
             {phone ? <path d="m6 9 6 6 6-6" /> : <path d="M5 12h14" />}
@@ -495,11 +523,11 @@ export function ChatWidget({ v, minimized, phone, onMinimize, onExpand }: { v: C
         </HeaderButton>
       </div>
 
-      <Thread v={v} />
-      <Extras v={v} compact={!phone} />
+      <Thread v={v} large={large} />
+      <Extras v={v} compact={!phone && !large} large={large} />
       <Learned items={v.learned} />
 
-      <div className="relative px-3 pb-3 pt-2">
+      <div className={`relative mx-auto w-full px-3 pb-3 pt-2 ${large ? "max-w-[784px]" : ""}`}>
         <Composer v={v} phone={phone} />
         <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-faint">
           <RecordedMark />
