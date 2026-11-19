@@ -1,10 +1,12 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
+// No revalidatePath here: it re-rendered the whole client page inside the save, so a two-row update took the page's
+// full load to answer. The panel shows the new tier at once and refreshes the page in the background.
+//
 // Every service's tier, set in one place: the Services panel on Team & setup (owner, Nov 19 2026).
 //   Email: the 3-Month Initial Setup (by its start date, then the ongoing tier), Basic, Silver, Gold, Custom (the
 //          client's own numbers per pool), or Strategy only.
@@ -37,7 +39,6 @@ export async function setStrategyOnly(clientId: string, slug: string, service: s
       const db = await createClient();
       await db.rpc("end_creative_package", { p_client: clientId });
     }
-    revalidatePath(`/clients/${slug}`);
     return { ok: true };
   } catch (e) {
     return fail(e);
@@ -70,7 +71,6 @@ export async function setEmailTier(clientId: string, slug: string, t: { tier: "s
     } else {
       await admin.from("clients").update({ ...base, email_package_key: t.tier, email_setup_start: null }).eq("id", clientId);
     }
-    revalidatePath(`/clients/${slug}`);
     return { ok: true };
   } catch (e) {
     return fail(e);
@@ -94,7 +94,6 @@ export async function setCreativeTier(clientId: string, slug: string, t: { tier:
       const { error } = await db.rpc("set_sprint_package", { p_client: clientId, p_until: t.until, p_package: t.key, p_images: t.key ? null : whole(t.images, 999), p_videos: t.key ? null : whole(t.videos, 999), p_note: t.note ?? null });
       if (error) return { ok: false, error: error.message };
     }
-    revalidatePath(`/clients/${slug}`);
     return { ok: true };
   } catch (e) {
     return fail(e);

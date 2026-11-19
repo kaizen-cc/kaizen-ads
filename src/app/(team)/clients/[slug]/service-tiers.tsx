@@ -31,19 +31,28 @@ const monthsSince = (start: string) => {
 const monthLabel = (m: string) => new Date(`${m.slice(0, 7)}-01T12:00:00`).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
+/**
+ * A save that answers as soon as the row is written: the new tier shows at once (`shown`) with "Saved", and the page
+ * refreshes in the background, never holding "Saving…" while the whole client page renders again.
+ */
 function useSave() {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const run = (fn: () => Promise<{ ok: true } | { ok: false; error: string }>, then?: () => void) =>
+  const [shown, setShown] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const run = (fn: () => Promise<{ ok: true } | { ok: false; error: string }>, then?: () => void, show?: string) =>
     start(async () => {
       setError(null);
+      setSaved(false);
       const r = await fn();
       if (!r.ok) return setError(r.error);
       then?.();
-      router.refresh();
+      if (show !== undefined) setShown(show);
+      setSaved(true);
+      setTimeout(() => router.refresh(), 0);
     });
-  return { pending, error, run };
+  return { pending, error, run, shown, saved };
 }
 
 function Num({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
@@ -72,7 +81,7 @@ export function EmailTier({ clientId, slug, value, strategy, canEdit }: { client
   const c = value.custom ?? {};
   const r = (max: unknown, min: unknown) => (max == null ? "" : min != null && Number(min) < Number(max) ? `${min}-${max}` : String(max));
   const [custom, setCustom] = useState({ campaigns: r(c.campaigns, c.campaigns_min), sms: r(c.sms, c.sms_min), flows: c.flows == null ? "" : String(c.flows), flowEmails: r(c.flow_emails, c.flow_emails_min) });
-  const { pending, error, run } = useSave();
+  const { pending, error, run, shown, saved } = useSave();
 
   const summary = strategy
     ? "Strategy only, no copy or design: no allotment or requests"
@@ -87,14 +96,14 @@ export function EmailTier({ clientId, slug, value, strategy, canEdit }: { client
   const pick = (v: string) => {
     if (v === "setup" || v === "custom") return setOpen(v);
     setOpen(null);
-    if (v === STRATEGY) return run(() => setStrategyOnly(clientId, slug, "email-marketing", true));
-    if (v) run(() => setEmailTier(clientId, slug, { tier: v as "basic" | "silver" | "gold" }));
+    if (v === STRATEGY) return run(() => setStrategyOnly(clientId, slug, "email-marketing", true), undefined, STRATEGY);
+    if (v) run(() => setEmailTier(clientId, slug, { tier: v as "basic" | "silver" | "gold" }), undefined, v);
   };
 
   return (
     <span className="grid gap-1.5">
       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <select value={open ?? current} disabled={pending} onChange={(e) => pick(e.target.value)} className={select} aria-label="Email tier">
+        <select value={open ?? shown ?? current} disabled={pending} onChange={(e) => pick(e.target.value)} className={select} aria-label="Email tier">
           <option value="">Pick a tier</option>
           <option value="setup">3-Month Initial Setup · $1,000/mo for 90 days</option>
           {EMAIL_TIERS.map((t) => (
@@ -105,7 +114,7 @@ export function EmailTier({ clientId, slug, value, strategy, canEdit }: { client
           <option value="custom">Custom numbers…</option>
           <option value={STRATEGY}>Strategy only, no deliverables</option>
         </select>
-        {pending && <span className="text-[11px] text-faint">Saving…</span>}
+        {pending ? <span className="text-[11px] text-faint">Saving…</span> : saved && !open ? <span className="text-[11px] text-ok">Saved</span> : null}
       </span>
       {!open && summary && current !== "basic" && current !== "silver" && current !== "gold" && <span className="text-[11px] text-faint">{summary}</span>}
       {open === "setup" && (
@@ -124,7 +133,7 @@ export function EmailTier({ clientId, slug, value, strategy, canEdit }: { client
               ))}
             </select>
           </label>
-          <button type="button" disabled={pending || !start} onClick={() => run(() => setEmailTier(clientId, slug, { tier: "setup", start, after }), () => setOpen(null))} className={btn}>
+          <button type="button" disabled={pending || !start} onClick={() => run(() => setEmailTier(clientId, slug, { tier: "setup", start, after }), () => setOpen(null), "setup")} className={btn}>
             Save
           </button>
           <button type="button" onClick={() => setOpen(null)} className="min-h-10 text-[11px] text-faint hover:text-fg md:min-h-0">
@@ -146,7 +155,7 @@ export function EmailTier({ clientId, slug, value, strategy, canEdit }: { client
               const [cMin, cMax] = range(custom.campaigns);
               const [sMin, sMax] = range(custom.sms);
               const [fMin, fMax] = range(custom.flowEmails);
-              run(() => setEmailTier(clientId, slug, { tier: "custom", custom: { campaigns: cMax, campaigns_min: cMin, sms: sMax, sms_min: sMin, flows: custom.flows ? Number(custom.flows) : null, flow_emails: fMax, flow_emails_min: fMin } }), () => setOpen(null));
+              run(() => setEmailTier(clientId, slug, { tier: "custom", custom: { campaigns: cMax, campaigns_min: cMin, sms: sMax, sms_min: sMin, flows: custom.flows ? Number(custom.flows) : null, flow_emails: fMax, flow_emails_min: fMin } }), () => setOpen(null), "custom");
             }}
             className={btn}
           >
@@ -186,7 +195,7 @@ export function CreativeTier({
   const [videos, setVideos] = useState("");
   const [until, setUntil] = useState("");
   const [sprintKey, setSprintKey] = useState(packages[0]?.key ?? "custom");
-  const { pending, error, run } = useSave();
+  const { pending, error, run, shown, saved } = useSave();
   const both = (i: number, v: number) => [i && `${i} images`, v && `${v} videos`].filter(Boolean).join(" + ") || "no allotment";
   const summary = strategy ? "Strategy only, no design: no allotment or briefs" : creative.label ? `${creative.label}${creative.until ? ` (sprint until ${creative.until})` : ""}` : "No package set";
 
@@ -195,14 +204,14 @@ export function CreativeTier({
   const pick = (v: string) => {
     if (v === "custom" || v === "sprint") return setOpen(v);
     setOpen(null);
-    if (v === STRATEGY) return run(() => setStrategyOnly(clientId, slug, "creative", true));
-    if (v) run(() => setCreativeTier(clientId, slug, { tier: "package", key: v }));
+    if (v === STRATEGY) return run(() => setStrategyOnly(clientId, slug, "creative", true), undefined, STRATEGY);
+    if (v) run(() => setCreativeTier(clientId, slug, { tier: "package", key: v }), undefined, v);
   };
 
   return (
     <span className="grid gap-1.5">
       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <select value={open ?? current} disabled={pending} onChange={(e) => pick(e.target.value)} className={select} aria-label="Creative package">
+        <select value={open ?? shown ?? current} disabled={pending} onChange={(e) => pick(e.target.value)} className={select} aria-label="Creative package">
           <option value="">{creative.label && current === "" ? summary : "Pick a package"}</option>
           {packages.map((pk) => (
             <option key={pk.key} value={pk.key}>
@@ -213,7 +222,7 @@ export function CreativeTier({
           <option value="sprint">{current === "sprint" ? summary : "Sprint until a day…"}</option>
           <option value={STRATEGY}>Strategy only, no deliverables</option>
         </select>
-        {pending && <span className="text-[11px] text-faint">Saving…</span>}
+        {pending ? <span className="text-[11px] text-faint">Saving…</span> : saved && !open ? <span className="text-[11px] text-ok">Saved</span> : null}
       </span>
       {(current === STRATEGY || current === "sprint") && !open && <span className="text-[11px] text-faint">{summary}</span>}
       {open && (
@@ -250,6 +259,7 @@ export function CreativeTier({
                     ? setCreativeTier(clientId, slug, { tier: "custom", images: Number(images) || 0, videos: Number(videos) || 0 })
                     : setCreativeTier(clientId, slug, { tier: "sprint", until, key: sprintKey === "custom" ? null : sprintKey, images: Number(images) || 0, videos: Number(videos) || 0 }),
                 () => setOpen(null),
+                open ?? undefined,
               )
             }
             className={btn}
@@ -270,12 +280,13 @@ export function CreativeTier({
 
 /** Strategy only, no deliverables: on (no allotment, alerts or requests for it) or back to deliverables */
 export function StrategyToggle({ clientId, slug, service, on, canEdit }: { clientId: string; slug: string; service: string; on: boolean; canEdit: boolean }) {
-  const { pending, error, run } = useSave();
+  const { pending, error, run, shown } = useSave();
+  const isOn = shown == null ? on : shown === "on";
   if (!canEdit) return on ? <span className="text-xs text-muted">Strategy only, no deliverables</span> : null;
   return (
     <span className="inline-flex items-center gap-2">
       <label className="inline-flex min-h-10 cursor-pointer items-center gap-1.5 text-[11px] text-faint hover:text-fg md:min-h-0">
-        <input type="checkbox" checked={on} disabled={pending} onChange={(e) => run(() => setStrategyOnly(clientId, slug, service, e.target.checked))} className="h-3.5 w-3.5 accent-[var(--color-brand,#c8102e)]" />
+        <input type="checkbox" checked={isOn} disabled={pending} onChange={(e) => { const next = e.target.checked; run(() => setStrategyOnly(clientId, slug, service, next), undefined, next ? "on" : "off"); }} className="h-3.5 w-3.5 accent-[var(--color-brand,#c8102e)]" />
         Strategy only, no deliverables
       </label>
       {error && <span className="text-[11px] text-bad">{error}</span>}
