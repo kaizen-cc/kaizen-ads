@@ -64,7 +64,7 @@ export function ChatMarkdown({ text }: { text: string }) {
               </pre>
             </div>
           );
-        return p.trim() ? <Markdown key={i} text={p.replace(/`([^`\n]+)`/g, "$1")} /> : null;
+        return p.trim() ? <Markdown key={i} fitColumn text={p.replace(/`([^`\n]+)`/g, "$1")} /> : null;
       })}
     </div>
   );
