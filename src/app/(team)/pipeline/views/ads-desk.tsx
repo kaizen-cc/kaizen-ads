@@ -217,13 +217,13 @@ export async function creativeDesk(db: SupabaseClient, me: Me, clients: Creative
   const ideas = [...ready.flatMap((g) => g.items), ...(suggestions?.open ?? []).filter((s) => !s.drafted)].filter(inPool);
   const rowsBy = new Map<string, ClientRow>();
   const row = (clientId: string, client: string, slug: string) => {
-    const r = rowsBy.get(clientId) ?? { clientId, client, slug, pools: [], fresh: null, watch: [], ideas: [] };
+    const r = rowsBy.get(clientId) ?? { clientId, client, slug, brand: brandOf(brands, clientId), group: "covered" as const, pools: [], fresh: null, watch: [], ideas: [], noBriefsWhy: null };
     rowsBy.set(clientId, r);
     return r;
   };
+  // Every client in their slice with an allotment: behind, on pace, covered and over alike (each in its own group)
   for (const g of gaps?.gaps ?? []) {
-    if (!g.missing) continue;
-    row(g.clientId, g.client, g.slug).pools.push({ pool: g.pool, line: g.line, pace: g.pace, detail: g.detail, requested: g.requested, cap: g.cap, elapsed: g.elapsed, urgent: nextBucket(g) === "now", nothing: g.state === "nothing", format: POOL_FORMAT[g.pool] });
+    row(g.clientId, g.client, g.slug).pools.push({ pool: g.pool, line: g.line, pace: g.pace, detail: g.detail, requested: g.requested, inMotion: g.inMotion, delivered: g.delivered, cap: g.cap, missing: g.missing, over: g.over, dueThisWeek: g.dueThisWeek, state: g.state, elapsed: g.elapsed, daysLeft: g.daysLeft, urgent: nextBucket(g) === "now", nothing: g.state === "nothing", format: POOL_FORMAT[g.pool] });
   }
   for (const s of ideas) if (s.clientSlug) row(s.clientId, s.client, s.clientSlug).ideas.push(s);
   for (const f of gaps?.fresh ?? []) row(f.clientId, f.client, f.slug).fresh = f.why;
@@ -233,8 +233,17 @@ export async function creativeDesk(db: SupabaseClient, me: Me, clients: Creative
     if (r) r.watch.push({ id: f.id, title: f.title, severity: f.severity, href: `/watch?tab=${WATCH_GROUP[f.kind] ?? "idle"}&client=${f.slug}` });
     else leftover.push(f);
   }
-  const clientRows = [...rowsBy.values()];
-  const briefed = (gaps?.gaps ?? []).filter((g) => !g.missing && g.state !== "nothing").length;
+  const { clientGroup } = await import("@/lib/creative-desk-core");
+  const { noBriefsWhy } = await import("@/lib/allotment-over");
+  for (const r of rowsBy.values()) {
+    r.group = r.pools.length ? clientGroup(r.pools) : "now";
+    // Over the allotment with nothing drafted: the card says why (and Create brief anyway stays)
+    r.noBriefsWhy = r.ideas.length ? null : noBriefsWhy(r.pools.map((p) => ({ pool: p.pool, cap: p.cap, used: p.requested })));
+  }
+  // Most urgent first within each group: the gap over the days to reset, then the most briefs waiting
+  const urgency = (r: ClientRow) => Math.max(0, ...r.pools.map((p) => (p.missing ? p.missing / Math.max(1, p.daysLeft) : 0) + (p.nothing ? 1 : 0))) + r.ideas.length * 0.05;
+  const clientRows = [...rowsBy.values()].sort((a, b) => urgency(b) - urgency(a) || a.client.localeCompare(b.client));
+  const briefed = clientRows.filter((r) => r.group === "covered").length;
   const week = gaps?.load ? gaps.load.filter((w) => pools.has(w.pool)).map((w) => ({ pool: w.pool, due: w.due, capacity: w.capacity, line: w.line })) : null;
 
   const rows = clients.map((c) => ({ ...c, mine: seats.has(c.clientId), risk: creativeRisk(c) })).filter((c) => head || c.mine);
@@ -260,13 +269,13 @@ export async function creativeDesk(db: SupabaseClient, me: Me, clients: Creative
     };
   };
   const waiting = clientRows.reduce((n, r) => n + r.ideas.length, 0);
-  const urgent = clientRows.filter((r) => r.pools.some((p) => p.urgent || p.nothing)).length;
+  const urgent = clientRows.filter((r) => r.group === "now").length;
   return {
     tabs: [{ id: "clients", label: head || lead ? "Clients" : "My clients", count: waiting + urgent, tone: urgent ? "bad" : "brand" }],
     panels: {
       clients: (
         <>
-          <CreativeClientRows rows={clientRows} week={week} briefed={briefed} />
+          <CreativeClientRows rows={clientRows} week={week} briefed={briefed} canApprove={lead} />
           {!lead && (mine.length > 0 || !head) && <DeskGroup id="mine" title="My clients" aside="Furthest behind first" cards={mine.map(card)} empty="You hold no seat on a creative client yet." />}
           {!lead && team.length > 0 && <DeskGroup id="team" title="Your team's clients" aside="Furthest behind first" cards={team.map(card)} contained />}
         </>

@@ -287,8 +287,17 @@ export async function runDrafting(admin: Db, opts: { max?: number; runId?: strin
     }
   }
 
+  // A client whose allotment is used up (every capped pool covered or over) gets no drafted briefs: their card says
+  // why, and anyone can still brief them over the allotment with a disclaimer (src/lib/allotment-over.ts)
+  const { allotmentFull } = await import("@/lib/allotment-over");
+  const full = new Set(
+    [...usageBy.values()]
+      .filter((u) => allotmentFull({ images: u.images_per_month, videos: u.videos_per_month, imagesUsed: Number(u.images_used) || 0, videosUsed: Number(u.videos_used) || 0 }))
+      .map((u) => u.client_id),
+  );
+  if (full.size) await admin.from("creative_suggestions").update({ status: "expired", decline_reason: "Over the allotment this cycle", updated_at: new Date().toISOString() }).eq("status", "open").not("trigger_key", "is", null).in("client_id", [...full]);
   // Urgent first, one per client, then the strongest
-  const ranked = [...out].sort((a, b) => b.weight - a.weight);
+  const ranked = [...out].filter((c) => !full.has(c.clientId)).sort((a, b) => b.weight - a.weight);
   const picked: Candidate[] = [];
   const seen = new Set<string>();
   for (const c of ranked) {
@@ -366,6 +375,7 @@ async function draftOne(admin: Db, c: Candidate, x: Ctx): Promise<true | string>
   let track: Track = c.track ?? pickTrack(base, so);
   let citation = c.citation;
   let seed = "";
+  let shown: Seed["source"] | null = null;
   if (c.trigger === "pacing") {
     // What it builds on, each with its numbers: an iteration on the client's own winner; net new from what's proven
     // for businesses like this one, an angle working in their market right now, or a winner on a similar client.
@@ -375,6 +385,7 @@ async function draftOne(admin: Db, c: Candidate, x: Ctx): Promise<true | string>
     track = pick.track;
     citation = { ...pick.citation, numbers: `${c.citation.numbers}; ${pick.citation.numbers ?? ""}` };
     seed = pick.seed;
+    shown = pick.source ?? null;
   }
   if (!hasRealReason(citation)) return "No real reason to cite";
   const mix: Mix = { ...base, track };
@@ -432,7 +443,7 @@ ${DRAFT_RULES}`;
       pace,
       citation,
       asked_by: c.askedBy,
-      source: c.trigger === "fatigue" ? { adId: citation.ref, headline: c.signal.line.replace(/^"|" is tired$/g, ""), client: "this account", fatigue: true } : null,
+      source: c.trigger === "fatigue" ? { adId: citation.ref, headline: c.signal.line.replace(/^"|" is tired$/g, ""), client: "this account", fatigue: true } : (shown ?? null),
     })
     .select("id")
     .single();
@@ -441,7 +452,7 @@ ${DRAFT_RULES}`;
   return true;
 }
 
-type Seed = { track: Track; citation: Citation; seed: string };
+type Seed = { track: Track; citation: Citation; seed: string; /** What the brief card shows: the ad it builds on */ source?: { thumbnail: string | null; headline: string | null; client: string } };
 
 /** What a pacing brief builds on (see draftOne), or null when there's nothing real to build on */
 async function pacingSeed(admin: Db, c: Candidate, x: Ctx, want: Track, cycleStart: string): Promise<Seed | null> {
@@ -481,6 +492,7 @@ Build this client's version of the pattern, never a copy, never naming another c
     const nums = `running ${a.daysActive} days${a.early ? " (early success)" : ""}`;
     return {
       track: "net_new",
+      source: { thumbnail: a.media[0]?.thumb ?? (a.media[0]?.type === "image" ? a.media[0].url : null), headline: a.angle ?? a.hook ?? a.headline, client: a.brand },
       citation: { source: "market", ref: link ?? a.id, quote: `${a.brand}${a.competitorOf.includes(c.clientId) ? " (a competitor)" : ""}: "${a.angle ?? a.hook ?? a.headline}", ${nums}`, at: null, numbers: nums },
       seed: `<market_opportunity>
 A live ad in this client's market, ${nums}: brands rarely keep paying for an ad that loses.
@@ -505,6 +517,7 @@ Build this client's own version of what's working in their market: never a copy,
     const { winningAdBlock } = await import("@/lib/suggestions");
     return {
       track: "net_new",
+      source: { thumbnail: w.thumbnail, headline: w.headline, client: w.detail ?? "a similar client" },
       citation: { source: "peer", ref: w.id, quote: `A ${w.detail ?? "similar"} client's ad "${w.headline ?? w.name}": ${nums}`, at: null, numbers: nums },
       seed: `${winningAdBlock({ adId: w.id, client: w.client, detail: w.detail, headline: w.headline, text: w.text, thumbnail: w.thumbnail, ratio: w.ratio, result: w.result, costPerResult: w.costPerResult, usual: w.usual, clientId: w.clientId }, 1500)}
 Translate why this works into this client's brief: their offer, voice and Brand Bible; never a copy, never naming the other business.`,

@@ -34,6 +34,8 @@ export type Draft = {
   ideaKeys?: IdeaKey[]; // the ideas it's built on (a market ad, a pattern, an audit's idea): everyone's save of them is marked used once it's sent
   pdfCache?: { key: string; structure: BriefStructure } | null; // the brief restructured for its PDF, kept until the brief changes (by key)
   ai?: AiStamp | null; // written entirely by the AI: where from, and the fingerprint of what it wrote (unchanged skips the review)
+  /** Briefed over the allotment on purpose: why (optional, logged with the override and shown on the ticket and the Asana task) */
+  overReason?: string;
 };
 
 /** Where an AI-written brief came from, so the server can read the version the AI wrote (src/lib/brief-fingerprint.ts) */

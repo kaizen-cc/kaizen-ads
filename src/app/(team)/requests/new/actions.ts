@@ -354,6 +354,33 @@ changed: which of title, angle, audience, brief, refs, sizes, formats you change
 }
 
 /** One ticket per selected format, routed to that format's maker. */
+/** Over the allotment on purpose: how far this request takes the client past its cap, read now on the server */
+async function overFor(draft: Draft) {
+  if (!draft.clientId) return [];
+  const db = await createClient();
+  const { data } = await db.from("client_allotment_usage").select("*").eq("client_id", draft.clientId).maybeSingle();
+  if (!data) return [];
+  const [{ toAllotment }, { overAllotment }] = await Promise.all([import("@/lib/allotment"), import("@/lib/allotment-over")]);
+  return overAllotment(toAllotment(data as import("@/lib/allotment").UsageRow), draft.formats);
+}
+
+/** Who pushed it through over the allotment, why, by how much, and what it became (allotment_overrides) */
+async function logOverride(lines: import("@/lib/allotment-over").OverLine[], draft: Draft, me: { id: string }, made: { numbers?: number[]; gids?: string[] }) {
+  if (!lines.length || !draft.clientId || !adminConfigured()) return;
+  await createAdminClient()
+    .from("allotment_overrides")
+    .insert(lines.map((l) => ({ client_id: draft.clientId, pool: l.pool, cap: l.cap, used: l.used, adds: l.adds, over_by: l.after - l.cap, reason: draft.overReason?.trim().slice(0, 600) || null, title: draft.title.slice(0, 200), request_numbers: made.numbers ?? [], asana_gids: made.gids ?? [], created_by: me.id })))
+    .then(({ error }) => error && console.error("[allotment] override log:", error.message));
+}
+
+/** The brief with the over-allotment disclaimer on top, when it goes over */
+async function withOverNote(draft: Draft, me: { fullName: string }) {
+  const lines = await overFor(draft).catch(() => []);
+  const { overNote } = await import("@/lib/allotment-over");
+  const note = overNote(lines, me.fullName, draft.overReason);
+  return { lines, brief: note ? `${note}\n\n${draft.brief.trim()}` : draft.brief.trim() };
+}
+
 export async function createBatch(draft: Draft, review: Review | null, decisions?: ReviewDecisions, opts?: { sendAnyway?: boolean }): Promise<CreateResult> {
   const me = await requireStaff();
   const no = await briefer(selectedFormats(draft));
@@ -382,6 +409,8 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
   }
 
   const supabase = await createClient();
+  // Over the allotment on purpose: said on the ticket, and logged
+  const over = await withOverNote(draft, me);
   const { data: batch, error } = await supabase.rpc("create_request_batch", {
     p_client: draft.clientId,
     p_title: draft.title,
@@ -389,7 +418,7 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
     p_priority: ["high", "urgent"].includes(draft.priority) ? draft.priority : "normal",
     p_angle: draft.angle.trim() || null,
     p_audience: draft.audience.trim() || null,
-    p_brief: draft.brief.trim() || null,
+    p_brief: over.brief || null,
     p_refs: refLinks(draft.refs),
     p_sizes: draft.sizes.filter((s) => SIZES.includes(s)),
     p_ai_review: review ? { ...review, decisions: decisions ?? null } : null,
@@ -397,6 +426,7 @@ export async function createBatch(draft: Draft, review: Review | null, decisions
   if (error) return { ok: false, error: error.message };
 
   const { data: rows } = await supabase.from("requests").select("id, number, format").eq("batch_id", batch).order("number");
+  await logOverride(over.lines, draft, me, { numbers: (rows ?? []).map((r) => r.number as number) });
   // Carousels: how many cards each has (the upload gets a slot per card)
   const carouselRow = (rows ?? []).find((r) => r.format === "carousel");
   if (carouselRow && adminConfigured()) await createAdminClient().from("requests").update({ cards: Math.min(10, Math.max(2, draft.formats.carousel?.cards ?? 5)) }).eq("id", carouselRow.id);
@@ -968,7 +998,10 @@ async function asanaSend(draft: Draft, me: Awaited<ReturnType<typeof requireStaf
   try {
     const { sendAsanaRequest } = await import("@/lib/asana-request");
     const { suggestionId, ...origin } = draft.origin ?? {};
-    const r = await sendAsanaRequest(createAdminClient(), toAsana(draft), { id: me.id, email: me.email ?? null }, { suggestionId: suggestionId ?? null, origin: draft.origin ? origin : null });
+    // Over the allotment on purpose: said at the top of the Asana task, and logged
+    const over = await withOverNote(draft, me);
+    const r = await sendAsanaRequest(createAdminClient(), { ...toAsana(draft), brief: over.brief }, { id: me.id, email: me.email ?? null }, { suggestionId: suggestionId ?? null, origin: draft.origin ? origin : null });
+    await logOverride(over.lines, draft, me, { gids: r.tasks.map((t) => t.gid) });
     await ideasUsed(draft, me, null, r.tasks.find((t) => t.url)?.url ?? null);
     revalidatePath("/board");
     revalidatePath("/pipeline");

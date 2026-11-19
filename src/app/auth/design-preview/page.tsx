@@ -16,6 +16,8 @@ import { UploadProvider } from "@/components/upload-provider";
 import { RequestForm } from "@/app/(team)/requests/new/request-form";
 import { sampleRequest } from "./sample-request";
 import { ClientView } from "@/app/(team)/clients/[slug]/client-view";
+import { CreativeClientRows } from "@/app/(team)/pipeline/views/creative-client-rows";
+import { sampleCreativeRows, sampleWeek } from "./sample-creative-clients";
 import { sampleTickets } from "./sample-tickets";
 import { KpiBoard } from "@/app/(team)/kpis/kpi-board";
 import { sampleKpis } from "./sample-kpis";
@@ -375,6 +377,14 @@ export default async function DesignPreview({ searchParams }: PageProps<"/auth/d
           slotOptions={{ social_manager: [], social_creative: [], email_strategist: [], email_designer: [], email_builder: [], meta_buyer: buyers, google_buyer: [], tiktok_buyer: buyers, graphic_designer: designers, video_editor: editors }}
           canEdit
         />
+      </div>
+    );
+  } else if (view === "creative-clients") {
+    // The creative leads' Clients tab: every group, briefs from each source, an over-allotment client
+    who = { name: "Jesus", role: "Head of Creative" };
+    body = (
+      <div className="mx-auto max-w-6xl">
+        <CreativeClientRows rows={sampleCreativeRows} week={sampleWeek} briefed={2} />
       </div>
     );
   } else if (view === "leader") {

@@ -37,7 +37,8 @@ export async function loadAllotmentDesk(db: SupabaseClient, me: { id: string; ro
   const seated = new Set((seats ?? []).map((s) => s.client_id as string));
   const gaps = sliceGaps(allotmentGaps((usage ?? []) as UsageLike[], live, today), me, seated);
 
-  const head = slice.every && slice.pools.length === 2;
+  // The head of creative and the lead makers: this week's load across clients (the lead makers read their own pool)
+  const head = slice.every;
   const [load, fresh] = await Promise.all([head ? teamWeek(db, gaps) : Promise.resolve(null), offTarget(db, [...new Set(gaps.map((g) => g.clientId))], live).catch(() => [])]);
   return { gaps, load, fresh };
 }

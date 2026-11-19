@@ -70,3 +70,27 @@ export async function draftForClientNow(clientId: string) {
   });
   return { ok: true as const };
 }
+
+/** Approve every drafted brief given (the Clients tab's "Approve all ready"): each to Asana, one after another */
+export async function approveAllDraftedBriefs(ids: string[]) {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Not connected here." } as Fail;
+  const db = await createClient();
+  const admin = createAdminClient();
+  const { approveDrafted } = await import("@/lib/brief-drafting");
+  const done: string[] = [];
+  const failed: { id: string; error: string }[] = [];
+  for (const id of ids.filter((x) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 40)) {
+    const r = await approveDrafted(db, admin, me, id);
+    if (r.ok) {
+      done.push(id);
+      await markItem(db, me.id, `brief:${id}`, "done", { topic: "briefs" });
+    } else failed.push({ id, error: r.error });
+  }
+  if (done.length) {
+    await reviewsChanged();
+    revalidatePath("/pipeline");
+    revalidatePath("/board");
+  }
+  return { ok: true as const, approved: done.length, failed };
+}

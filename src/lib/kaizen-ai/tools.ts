@@ -1102,9 +1102,17 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           href: `/requests/new?ai=${ctx.messageId}&card=${index}`,
         };
         card(b);
+        // Over the allotment: never a block, but they hear it before they brief it (owner, Nov 19 2026)
+        const over = await (async () => {
+          const { data: u } = await ctx.db.from("client_allotment_usage").select("*").eq("client_id", c.id).maybeSingle();
+          if (!u) return null;
+          const [{ toAllotment }, { overAllotment, overDisclaimer }] = await Promise.all([import("@/lib/allotment"), import("@/lib/allotment-over")]);
+          return overDisclaimer(overAllotment(toAllotment(u as import("@/lib/allotment").UsageRow), Object.fromEntries(formats.map((f) => [f.format, f]))));
+        })().catch(() => null);
         return {
           shown: true,
-          note: `The card is on screen. Brief it opens its quick preview there; the full brief is written only if they choose it, and lands in Ready to send.${likeness && !hasConsentLine(briefText) ? ` It alters or generates a real person's face or voice ("${likeness}"): tell them it needs the client's written consent for that person's likeness/voice and an on-screen disclaimer.` : ""}`,
+          ...(over ? { over_allotment: over } : {}),
+          note: `The card is on screen. Brief it opens its quick preview there; the full brief is written only if they choose it, and lands in Ready to send.${over ? ` ${over}: tell them plainly it's over what the client pays for this cycle; they can still send it (the request asks why, and it's marked on the ticket and the Asana task).` : ""}${likeness && !hasConsentLine(briefText) ? ` It alters or generates a real person's face or voice ("${likeness}"): tell them it needs the client's written consent for that person's likeness/voice and an on-screen disclaimer.` : ""}`,
         };
       },
     },

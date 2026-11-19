@@ -25,6 +25,7 @@ import { ClientTag, FormatIcon } from "@/app/(team)/board/ticket-card";
 import { applyFixes, asanaPreview, createBatch, fulfilPromise, loadBriefing, reviewRequest, sendToAsana, suggestForRequest, type ContextSummary, type RefSummary, type ReviewDecisions, type ReviewResult, type SimilarCard, type SuggestResult } from "./actions";
 import { ReviewWorkspace, startHandled, type Handled } from "./review-workspace";
 import { FORMATS, INSPIRE_KEY, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
+import { OverAllotmentBanner } from "./over-allotment";
 import { AllotmentBars, AspectOption, Chip, Progress, Spark, Stepper, conceptLine, type ClientOption } from "./parts";
 import { SavedConcepts } from "@/components/saved-concepts";
 import { savedHref, savedLine } from "@/lib/saved-references";
@@ -683,6 +684,9 @@ export function RequestForm({
 
             {/* The client changed direction and tasks were flagged: adapt them rather than ask again (never a block) */}
             {step >= 1 && draft.clientId && !demo && <DirectionHeadsUp key={draft.clientId} clientId={draft.clientId} />}
+
+            {/* Over the allotment on purpose: the numbers, what this adds, and why (never a block) */}
+            {step >= 1 && draft.clientId && <OverAllotmentBanner allotment={allotment} formats={draft.formats} reason={draft.overReason ?? ""} onReason={(v) => set({ overReason: v })} />}
 
             {step === 1 && draft.clientId && client && (
               talking ? (
