@@ -42,7 +42,9 @@ const cells = (row: string) =>
     .split("|")
     .map((c) => c.trim());
 
-export function Markdown({ text }: { text: string }) {
+/** `fitColumn`: tables fit the reading column on wider screens (columns wrap instead of the table scrolling sideways);
+ *  only phones keep a minimum width and scroll. Used by Kaizen AI answers */
+export function Markdown({ text, fitColumn = false }: { text: string; fitColumn?: boolean }) {
   const lines = text.replace(/\r/g, "").split("\n");
   const out: React.ReactNode[] = [];
   let i = 0;
@@ -82,7 +84,7 @@ export function Markdown({ text }: { text: string }) {
       const fit = (r: string[]) => (r.length > cols && cols > 0 ? [...r.slice(0, cols - 1), r.slice(cols - 1).join(" | ")] : [...r, ...Array(Math.max(0, cols - r.length)).fill("")]);
       out.push(
         <div key={`t${i}`} className="my-1 overflow-x-auto rounded-[12px] border border-line [overflow-wrap:normal]">
-          <table className={`w-full table-fixed border-collapse text-left text-[12.5px] ${cols > 4 ? "min-w-[760px]" : cols > 2 ? "min-w-[560px]" : ""}`}>
+          <table className={`w-full table-fixed border-collapse text-left text-[12.5px] ${fitColumn ? (cols > 4 ? "max-md:min-w-[760px]" : cols > 2 ? "max-md:min-w-[560px]" : "") : cols > 4 ? "min-w-[760px]" : cols > 2 ? "min-w-[560px]" : ""}`}>
             <colgroup>
               {weight.map((w, j) => (
                 <col key={j} style={{ width: `${Math.max(9, Math.round((Math.min(w, 120) / total) * 100))}%` }} />
