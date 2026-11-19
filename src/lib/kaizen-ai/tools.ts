@@ -475,6 +475,68 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       },
     },
     {
+      name: "meta_history",
+      description:
+        "A client's Meta performance month by month over any range (up to 37 months back, e.g. April through October), read live from the ad account (read only, nothing changes in Meta): spend, results and cost per result (the KPI's conversion), revenue and ROAS where it's purchases, CTR, CPM, reach and frequency, with the change from each month to the next. For the whole account, or each campaign by month. Shows as a table. Use it for historical trends, month-over-month reviews and trend reports; to hand them a PDF, write the findings and call make_deck (a stats or bullets slide per period, a scorecard of what improved and what slipped).",
+      input_schema: {
+        type: "object",
+        properties: {
+          client: CLIENT,
+          since: { type: "string", description: "YYYY-MM-DD, the first month (read from the 1st)" },
+          until: { type: "string", description: "YYYY-MM-DD, defaults to yesterday" },
+          level: { type: "string", enum: ["account", "campaign"], description: "Defaults to account" },
+        },
+        required: ["since"],
+        additionalProperties: false,
+      },
+      status: (input, client) => `Reading Meta history month by month for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
+      run: async (input) => {
+        const c = await clientOf(ctx, input);
+        const { historyRange, historyResultType, monthRows, monthChanges, HISTORY_FIELDS } = await import("./meta-history");
+        const range = historyRange(input.since, input.until, nyToday());
+        if ("error" in range) throw new Error(range.error);
+        const { data: targets } = await ctx.admin.from("kpi_targets").select("ad_account_id, conversion, target").eq("client_id", c.id).eq("platform", "meta").eq("active", true).not("ad_account_id", "is", null);
+        const t = (targets ?? [])[0];
+        if (!t) throw new Error(`${c.name} has no Meta account on the KPI board.`);
+        const level = input.level === "campaign" ? "campaign" : "account";
+        const { metaInsights } = await import("@/lib/context/meta");
+        const raw = (await metaInsights(String(t.ad_account_id), {
+          level,
+          time_increment: "monthly",
+          time_range: JSON.stringify(range),
+          fields: `${level === "campaign" ? "campaign_id,campaign_name," : ""}${HISTORY_FIELDS}`,
+        }, 600)) as unknown as Record<string, unknown>[];
+        const conv = conversionFor(t.conversion ?? "purchases");
+        const type = historyResultType(raw, conv.types ?? []);
+        const roas = Boolean(conv.roas) || /purchase/.test(type ?? "");
+        const months = monthRows(raw, type, roas);
+        const m: MetricsCard = {
+          type: "metrics",
+          client: c.name,
+          platform: "meta",
+          title: `${c.name} · Meta · ${level === "campaign" ? "campaigns " : ""}by month`,
+          range: `${range.since} to ${range.until}`,
+          // The KPI's target marks the months that missed it; the ROAS column shows when it's purchases
+          kpi: { label: conv.label, target: t.target == null ? null : Number(t.target), roas, value: null, status: null },
+          budget: null,
+          windows: [],
+          rows: months.slice(0, 150).map((r) => ({ name: r.name, spend: r.spend, results: r.results, cpr: r.cpr, roas: r.roas, ctr: r.ctr, cpm: r.cpm, freq: r.freq, clicks: r.clicks, impressions: r.impressions, revenue: r.revenue })),
+          level: "month",
+        };
+        card(m);
+        return {
+          client: c.name,
+          range: m.range,
+          result: type ? `${conv.label} (counted as ${type})` : "no result reported",
+          kpi_target: t.target == null ? "no target set" : roas ? `${t.target}x ROAS` : `$${t.target} per result`,
+          months: months.slice(0, 300),
+          month_over_month: level === "account" ? monthChanges(months) : "ask at the account level for the month-over-month change",
+          note: "Read live from Meta. Reach and frequency are each month's own unique people. A month with little or no spend has no meaningful cost per result. The last month may be partial.",
+          shown_to_person: "a table of these months is already on screen; don't repeat it in full, talk about the trend",
+        };
+      },
+    },
+    {
       name: "winners_and_fatigue",
       description: "A client's Meta ads by angle, concept or single ad over the last N days: what's winning (spend, results, cost per result, CTR) with why each winner works when it's been read, and which ads are wearing out (the fatigue watch). Use for creative performance, concepts and angles, and what to brief next.",
       input_schema: { type: "object", properties: { client: CLIENT, days: { type: "integer", enum: [7, 14, 30, 60, 90] }, by: { type: "string", enum: ["angle", "concept", "ad"] } }, required: ["by"], additionalProperties: false },
