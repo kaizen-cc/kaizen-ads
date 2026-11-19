@@ -20,6 +20,7 @@ import { ConnectorsMenu, RUN_EVENT, type RunDetail } from "./connectors-ui";
 import { ReportThis, type ReportTurn } from "@/components/report-this";
 import { messageKey } from "@/lib/chat-report";
 import { fromAiMessages, type TranscriptEntry } from "@/lib/chat-transcript";
+import { useRailCollapsed } from "@/lib/rail-collapse";
 
 // Kaizen AI: a chat like Claude's, for the team. Threads on the left (search, pinned, grouped by client, shared with
 // me), the conversation in the middle with streaming answers, tool status and cards, and a composer with files,
@@ -72,6 +73,8 @@ const P = {
   download: "M12 3v12M7 10l5 5 5-5M5 21h14",
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
   folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+  hide: "M11 17l-5-5 5-5M18 17l-5-5 5-5",
+  show: "M13 17l5-5-5-5M6 17l5-5-5-5",
 };
 
 export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThreadProjects = {}, clients, groups, quickIds, homeAgent, mustImport = false }: { me: Me; on: boolean; initialThreads: Thread[]; initialTemplates: Template[]; /** The project each thread is in */ initialThreadProjects?: Record<string, ProjectRef>; clients: ClientOpt[]; groups: QuickAction["group"][]; /** The quick actions this person may use (by role) */ quickIds: string[]; homeAgent: { key: ChatAgent; label: string }; mustImport?: boolean }) {
@@ -644,6 +647,8 @@ function Rail({
 }) {
   const [q, setQ] = useState("");
   const [menu, setMenu] = useState(false);
+  // Desktop only: the rail can be hidden to give the conversation the room, and is remembered for next time
+  const [collapsed, setCollapsed] = useRailCollapsed();
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
     return s ? threads.filter((x) => x.title.toLowerCase().includes(s) || (x.clients?.name ?? "").toLowerCase().includes(s)) : threads;
@@ -691,6 +696,9 @@ function Rail({
         <button type="button" onClick={onClose} className="grid h-11 w-11 place-items-center rounded-full text-muted hover:bg-ink/[0.05] md:hidden" aria-label="Close">
           <Icon d={P.x} />
         </button>
+        <button type="button" onClick={() => setCollapsed(true)} className="hidden h-11 w-11 place-items-center rounded-full text-muted hover:bg-ink/[0.05] hover:text-fg md:grid" aria-label="Hide chats" title="Hide chats">
+          <Icon d={P.hide} size={16} />
+        </button>
       </div>
       <button type="button" onClick={onProjects} aria-current={projectsActive ? "page" : undefined} className={`mx-3 mb-2 flex min-h-11 items-center gap-2.5 rounded-[12px] px-3 text-left text-[14px] transition ${projectsActive ? "bg-ink/[0.07] font-medium text-fg" : "text-muted hover:bg-ink/[0.04] hover:text-fg"}`}>
         <Icon d={P.folder} size={17} />
@@ -725,7 +733,18 @@ function Rail({
   );
   return (
     <>
-      <aside className="hidden w-[280px] shrink-0 border-r border-line bg-surface md:block">{body}</aside>
+      {collapsed ? (
+        <aside className="hidden w-14 shrink-0 flex-col items-center gap-2 border-r border-line bg-surface pt-4 md:flex">
+          <button type="button" onClick={() => setCollapsed(false)} className="grid h-11 w-11 place-items-center rounded-full text-muted hover:bg-ink/[0.05] hover:text-fg" aria-label="Show chats" title="Show chats">
+            <Icon d={P.show} size={16} />
+          </button>
+          <button type="button" onClick={onNew} className="grid h-11 w-11 place-items-center rounded-full bg-brand text-white shadow-sm transition hover:bg-brand-hover" aria-label="New chat" title="New chat">
+            <Icon d={P.plus} size={16} />
+          </button>
+        </aside>
+      ) : (
+        <aside className="hidden w-[280px] shrink-0 border-r border-line bg-surface md:block">{body}</aside>
+      )}
       {open ? (
         <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal>
           <button type="button" className="absolute inset-0 bg-deep/40 backdrop-blur-[2px]" onClick={onClose} aria-label="Close" />
