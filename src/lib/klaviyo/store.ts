@@ -32,6 +32,15 @@ export async function klaviyoReady(admin: SupabaseClient) {
   return !error;
 }
 
+/** A client's Klaviyo key, unsealed, for Kaizen AI's hands-on tools (the caller checks the person may work on the client) */
+export async function clientKlaviyoKey(admin: SupabaseClient, clientId: string): Promise<{ key: string; account: string | null } | { error: string }> {
+  const { data } = await admin.from("klaviyo_connections").select("key_iv, key_tag, key_ciphertext, account_name, status").eq("client_id", clientId).maybeSingle();
+  if (!data) return { error: "Klaviyo isn't connected for this client." };
+  if (data.status === "invalid") return { error: "Klaviyo refused this client's key: it was revoked. Replace it on the client's Klaviyo card." };
+  const key = keyOf(data as Pick<ConnRow, "key_iv" | "key_tag" | "key_ciphertext">);
+  return key ? { key, account: (data.account_name as string | null) ?? null } : { error: "The saved key can't be unlocked (the encryption key changed). Replace it on the client's Klaviyo card." };
+}
+
 function keyOf(r: Pick<ConnRow, "key_iv" | "key_tag" | "key_ciphertext">): string | null {
   const k = encryptionKey(process.env.TOKEN_ENCRYPTION_KEY);
   if (!k) return null;

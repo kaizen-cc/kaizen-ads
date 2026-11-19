@@ -46,6 +46,9 @@ export async function googlePost<T>(token: string, url: string, body: unknown): 
 
 /** A Drive read token as someone in the Workspace (their own Drive: Gemini meeting notes). */
 export const googleDriveToken = (user: string) => tokenFor(user, DRIVE_SCOPE);
+/** Their own calendar, read only (works once calendar.readonly is added to the domain-wide delegation) */
+export const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+export const googleCalendarToken = (user: string) => tokenFor(user, CALENDAR_SCOPE);
 
 /** A Drive read token as GOOGLE_DRIVE_USER, for opening reference files linked in requests. */
 export const driveToken = () => {

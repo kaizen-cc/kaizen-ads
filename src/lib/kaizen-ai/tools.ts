@@ -1195,6 +1195,10 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   const { myTools } = await import("./my-tools");
   for (const t of myTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
 
+  // Where the team works: their own Gmail, Drive and Calendar, and hands-on work in a client's Klaviyo (writes after a yes)
+  const { workspaceTools } = await import("./workspace-tools");
+  for (const t of workspaceTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+
   // Rankings across clients: clients on a line, and single emails, ads and posts (each scoped to the person's line)
   for (const t of rankTools(ctx)) tools.push(t);
   // The team KPI boards (Email Team KPIs, Creative Team KPIs): execs, the Head of Email and the creative leads only

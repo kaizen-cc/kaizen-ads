@@ -22,7 +22,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // The Reporting API allows 2 queries a minute per account: the last one's time, per key, in this process
 const lastReport = new Map<string, number>();
 
-async function call(key: string, path: string, init: { method?: "GET" | "POST"; body?: unknown; report?: boolean } = {}): Promise<unknown> {
+async function call(key: string, path: string, init: { method?: "GET" | "POST" | "PATCH"; body?: unknown; report?: boolean } = {}): Promise<unknown> {
   const url = path.startsWith("http") ? path : `${KLAVIYO_BASE}${path}`;
   if (!url.startsWith(KLAVIYO_BASE)) throw new KlaviyoError("Refused a link outside Klaviyo's API.", null);
   for (let attempt = 0; ; attempt++) {
@@ -318,4 +318,13 @@ export async function attributedPages(key: string, metricId: string, from: strin
     next = nextLink(json);
   }
   return pages;
+}
+
+/**
+ * Kaizen AI's hands-on work in a client's account: one request to Klaviyo's API (JSON:API), with the same retries and
+ * key redaction as the sync. Which paths may run, and that a write had the person's yes, is decided by the caller
+ * (src/lib/kaizen-ai/workspace-tools.ts); deletes never come through here.
+ */
+export async function klaviyoRequest(key: string, method: "GET" | "POST" | "PATCH", path: string, body?: unknown): Promise<unknown> {
+  return call(key, path, { method, body });
 }
