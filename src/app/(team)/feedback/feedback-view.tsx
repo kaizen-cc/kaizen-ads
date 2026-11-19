@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ErrorButtons } from "../settings/error-buttons";
 import { toast } from "@/components/toasts";
 import type { TranscriptEntry } from "@/lib/chat-transcript";
-import { REPORTER_STATUS, SCOPE_LABEL, SECTIONS, TYPES, approvalState, isOpen, pathLabel, reporterStatus, sectionOf, typeLabel, type FeedbackStatus, type Scope, type Section } from "@/lib/feedback-logic";
+import { REPORTER_STATUS, SCOPE_LABEL, SECTIONS, TYPES, agoLabel, approvalState, isOpen, pathLabel, reporterStatus, sectionOf, typeLabel, type FeedbackStatus, type Scope, type Section } from "@/lib/feedback-logic";
 import { pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { approveFeedback, approveFixMerge, askFixChanges, commentFeedback, markFixAlreadyDone, planAsk, rebuildFixOnLatest, refreshFix, replyFeedback, setFeedbackAssignee, setFeedbackStatus, wontDoFeedback } from "./actions";
 
@@ -83,17 +83,12 @@ export type MineItem = {
   fixedAt: string | null;
 };
 
-const ago = (iso: string | null) => {
-  if (!iso) return "";
-  const m = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.round(h / 24);
-  if (d < 30) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-};
+/** How long ago, in its own span: the minute can turn between the server drawing it and the browser picking it up, which
+ * is fine to show a moment late, so React is told not to treat that as a mismatch. */
+function Ago({ iso }: { iso: string | null }) {
+  const [now] = useState(() => Date.now());
+  return <span suppressHydrationWarning>{agoLabel(iso, now)}</span>;
+}
 
 const PATH_TONE: Record<ReturnType<typeof pathLabel>["tone"], string> = {
   ok: "bg-ok-soft text-ok",
@@ -147,7 +142,7 @@ function Activity({ events }: { events: FeedbackEvent[] }) {
             <span className="font-medium">{EVENT_LABEL[e.kind] ?? e.kind}</span>
             <span className="text-faint">
               {" "}
-              · {ago(e.at)}
+              · <Ago iso={e.at} />
               {e.actor ? ` · ${e.actor}` : ""}
             </span>
             {e.body && <span className="block whitespace-pre-wrap text-muted [overflow-wrap:anywhere]">{e.body}</span>}
@@ -213,7 +208,7 @@ function TranscriptPanel({ chat }: { chat: NonNullable<Report["chat"]> }) {
                 <li key={i} className={`grid gap-1 ${e.role === "user" ? "justify-items-end" : ""}`}>
                   <span className="text-[11px] text-faint">
                     {e.role === "user" ? (e.name ?? "Person") : e.role === "tool" ? `Tool · ${e.name ?? ""}${e.ok === false ? " · failed" : ""}` : (e.name ?? "AI")}
-                    {e.at ? ` · ${new Date(e.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
+                    {e.at ? ` · ${new Date(e.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}` : ""}
                   </span>
                   {e.text && (
                     <p
@@ -255,7 +250,7 @@ function InTheirWords({ g }: { g: Group }) {
                 <div className="grid min-w-0 flex-1 gap-1">
                   <p className="text-[12px] text-faint">
                     {r.author}
-                    {r.role ? ` (${r.role})` : ""} · {ago(r.createdAt)}
+                    {r.role ? ` (${r.role})` : ""} · <Ago iso={r.createdAt} />
                     {r.client ? ` · ${r.client}` : ""}
                     {r.chat ? ` · from ${r.chat.label}` : ""}
                   </p>
@@ -296,7 +291,7 @@ function CardHead({ g, why }: { g: Group; why: string | null }) {
       <div className="flex flex-wrap items-center gap-2">
         <PathPill g={g} />
         <span className="text-[12.5px] text-muted">
-          {g.area} · {g.reports} {g.reports === 1 ? "report" : "reports"} from {g.people} {g.people === 1 ? "person" : "people"} · {ago(g.lastReportedAt)}
+          {g.area} · {g.reports} {g.reports === 1 ? "report" : "reports"} from {g.people} {g.people === 1 ? "person" : "people"} · <Ago iso={g.lastReportedAt} />
         </span>
       </div>
       <button type="button" onClick={() => pushParams({ g: g.id })} className="min-h-11 text-left font-heading text-[17px] leading-snug hover:underline md:min-h-0">
@@ -386,7 +381,7 @@ function ApprovalCard({ g, onDone }: { g: Group; onDone: (patch: Patch) => void 
               : "A new pull request comes back here for your approval.",
     });
   };
-  const approvedAt = st.at ? new Date(st.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : null;
+  const approvedAt = st.at ? new Date(st.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" }) : null;
   return (
     <li className={`grid gap-4 rounded-[18px] border bg-surface p-4 md:p-5 ${st.state === "merge_failed" ? "border-bad/40" : "border-warn/35"}`}>
       <CardHead g={g} why={st.state === "ready" || st.state === "stuck" ? (why ? `Why it needs you: ${why}` : null) : null} />
@@ -734,7 +729,7 @@ function Everyone({ groups, staff, monthAgo }: { groups: Group[]; staff: { id: s
                           {g.people > 1 ? ` from ${g.people} people` : ""}
                         </span>
                         <span className="text-faint">·</span>
-                        <span>{ago(section === "done" ? (g.fixedAt ?? g.lastReportedAt) : g.lastReportedAt)}</span>
+                        <Ago iso={section === "done" ? (g.fixedAt ?? g.lastReportedAt) : g.lastReportedAt} />
                         {g.severity === "high" && <Pill tone="bg-bad-soft text-bad">High</Pill>}
                         {g.blocksWork && <Pill tone="bg-bad-soft text-bad">Blocks work</Pill>}
                       </span>
@@ -768,7 +763,7 @@ function Everyone({ groups, staff, monthAgo }: { groups: Group[]; staff: { id: s
                             Mark live
                           </button>
                         ) : (
-                          g.fixedAt && <span className="text-[13px] text-ok">Live {ago(g.fixedAt)}, everyone who reported it was told</span>
+                          g.fixedAt && <span className="text-[13px] text-ok">Live <Ago iso={g.fixedAt} />, everyone who reported it was told</span>
                         )}
                       </div>
                     )}
@@ -823,7 +818,7 @@ function ReportCard({ r }: { r: Report }) {
       <div className="grid min-w-0 flex-1 gap-1.5">
         <p className="text-[12.5px] text-muted">
           <span className="font-medium text-fg">{r.author}</span>
-          {r.role && ` · ${r.role}`} · {ago(r.createdAt)}
+          {r.role && ` · ${r.role}`} · <Ago iso={r.createdAt} />
           {r.type && ` · ${typeLabel(r.type)}`}
         </p>
         <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">{r.message}</p>
@@ -912,7 +907,7 @@ function Mine({ items }: { items: MineItem[] }) {
           <li key={m.id} className={`grid gap-2 rounded-[16px] border bg-surface p-4 md:px-5 ${status === "fixed" ? "border-ok/40" : "border-line"}`}>
             <div className="flex items-start justify-between gap-3">
               <p className="text-[12.5px] text-muted">
-                {typeLabel(m.type)} · {ago(m.createdAt)}
+                {typeLabel(m.type)} · <Ago iso={m.createdAt} />
                 {m.route && <span className="text-faint"> · {m.route.split("?")[0]}</span>}
               </p>
               {(() => {
@@ -923,7 +918,13 @@ function Mine({ items }: { items: MineItem[] }) {
             <p className="line-clamp-4 whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">{m.message}</p>
             {(m.others > 0 || (status === "fixed" && m.fixedAt)) && (
               <p className="text-[12.5px] text-faint">
-                {status === "fixed" && m.fixedAt ? `Live ${ago(m.fixedAt)}. Thanks for flagging it.` : ""}
+                {status === "fixed" && m.fixedAt ? (
+                  <>
+                    Live <Ago iso={m.fixedAt} />. Thanks for flagging it.
+                  </>
+                ) : (
+                  ""
+                )}
                 {m.others > 0 && `${status === "fixed" ? " " : ""}${m.others} ${m.others === 1 ? "other person" : "other people"} reported this too.`}
               </p>
             )}

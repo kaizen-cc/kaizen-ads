@@ -468,3 +468,20 @@ export function feedbackPath(type: FeedbackType): { path: "fix" | "owner"; mode:
 export function awaitsOwner(g: { status: string; scope: string; lane: string }): boolean {
   return g.status === "new" && g.scope === "feature" && g.lane !== "build";
 }
+
+/**
+ * "5m ago", "3h ago", "2d ago", or the date ("Oct 13") after a month. `now` is passed in so the page can print the
+ * same words on the server and in the browser; the date is on Kaizen's clock (New York) so it doesn't move with the
+ * server's or the viewer's time zone.
+ */
+export function agoLabel(iso: string | null, now: number) {
+  if (!iso) return "";
+  const m = Math.round((now - new Date(iso).getTime()) / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  if (d < 30) return `${d}d ago`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
+}
