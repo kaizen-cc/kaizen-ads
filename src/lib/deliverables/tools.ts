@@ -216,7 +216,7 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
       {
         name: cfg.tools.request,
         description: `Creates the ${cfg.label.toLowerCase()} request for approved copy. where: asana (now) or kaizen (Kaizen OS requests are coming soon: say so). Asana: makes the Google Doc in the client's HQ Drive (${cfg.doc.folder}) if it isn't there, then the task${cfg.kinds.some((k) => k.split === "per_item") ? "s (one per campaign; a flow is one task with its email count)" : ""} in the ${cfg.asana.section} column with the fields filled, no assignee or due date (the strategists set those), the client's ${cfg.followerSeat.replace(/_/g, " ")} following. Link cards show. Only after both approved and you asked; confirmed: true on their yes.`,
-        input_schema: { type: "object", properties: { where: { type: "string", enum: ["asana", "kaizen"] }, copy_doc_id: { type: "string" }, priority: { type: "string", enum: ["urgent", "high", "normal", "low"] }, hq_folder: HQ_FOLDER, confirmed: CONFIRMED }, required: ["where"], additionalProperties: false },
+        input_schema: { type: "object", properties: { where: { type: "string", enum: ["asana", "kaizen"] }, copy_doc_id: { type: "string", description: "The copy document, when you have its id; leave it out to use the client's latest one not yet requested" }, client: { type: "string", description: "The client's name, to find their latest copy when you don't have the id" }, priority: { type: "string", enum: ["urgent", "high", "normal", "low"] }, hq_folder: HQ_FOLDER, confirmed: CONFIRMED }, required: ["where"], additionalProperties: false },
         status: () => "Creating the request…",
         run: async (input) => {
           if (input.where === "kaizen" && !cfg.kaizenRequests) return { created: false, note: "Kaizen OS requests are coming soon: for now it goes to Asana. Offer Asana." };
@@ -226,9 +226,21 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
           let run = ctx.callId ? await currentRun(ctx.admin, ctx.callId, cfg.line) : null;
           if (!run) {
             // Copy approved outside the flow: a run for it, approved as it stands
-            const { loadCopyDoc } = await import("@/lib/copy-docs/server");
-            const d = typeof input.copy_doc_id === "string" ? await loadCopyDoc(ctx.db, input.copy_doc_id) : null;
-            if (!d || !d.clientId || !ctx.callId) return { created: false, note: "Which copy? Make it first (create_copy_doc)." };
+            // Copy made on an earlier call or chat: its id when given, else the client's (or the person's) latest one
+            const { loadCopyDoc, latestCopyDoc } = await import("@/lib/copy-docs/server");
+            let d = typeof input.copy_doc_id === "string" ? await loadCopyDoc(ctx.db, clip(input.copy_doc_id, 40)) : null;
+            if (!d) {
+              let clientId: string | null = null;
+              if (typeof input.client === "string" && input.client.trim()) {
+                try {
+                  clientId = (await clientNamed(ctx.db, input.client)).id;
+                } catch (e) {
+                  return { created: false, note: `${e instanceof Error ? e.message : "No such client."} Ask which client.` };
+                }
+              }
+              d = await latestCopyDoc(ctx.db, { line: cfg.line, clientId, createdBy: ctx.me.id });
+            }
+            if (!d || !d.clientId || !ctx.callId) return { created: false, note: "No copy found for that client that isn't already requested. Which copy? Make it first (create_copy_doc)." };
             run = await startRun(ctx.admin, asMe(ctx.me), ctx.callId, cfg, { id: d.clientId, name: d.client ?? "" }, "");
             const steps: Patch[] = [{ kind: d.content.kind, count: d.content.emails.length }, { topics: d.content.emails.map((e) => ({ title: e.name, angle: "", offer: "", include: [], exclude: [], send: "" })), agreed: true }, { doc: { id: d.id, version: d.version } }, { approve: "person" }, { approve: "lead" }, { asked: true }];
             for (const p of steps) {
