@@ -138,8 +138,9 @@ export function ChannelBoard({ line, rows: given, month, switcher, initialWho, l
 
   return (
     <div className="grid gap-7">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
+      {/* The switcher keeps its place on every tab: the line under the title wraps beside it, never pushing it down */}
+      <header className="flex flex-wrap items-end justify-between gap-4 lg:flex-nowrap">
+        <div className="min-w-0 lg:flex-1">
           <h1 className="font-heading text-[32px] leading-tight">KPIs</h1>
           <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-sm text-muted">
             {line === "email" ? "Each client's email account score, 0 to 100, with what is weighing it down." : "Each client's engagement against its target, with the social score (0 to 100) per platform and what is weighing it down."}
@@ -152,7 +153,7 @@ export function ChannelBoard({ line, rows: given, month, switcher, initialWho, l
         {/* The same switch and Add KPI as the ads board, so moving between tabs only changes the board under it; each tab is
             prefetched as soon as the board shows, so switching opens a page that is already loaded */}
         {switcher && (
-          <div className="flex w-full items-center gap-2 md:w-auto">
+          <div className="flex w-full items-center gap-2 lg:w-auto lg:shrink-0">
             <KpiSwitch tabs={switcher} />
             <Link href="/kpis?p=meta&add=new" className="inline-flex h-12 shrink-0 items-center rounded-[8px] bg-brand px-4 text-sm font-medium text-white transition-colors hover:bg-brand-hover md:h-10">
               Add KPI

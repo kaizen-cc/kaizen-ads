@@ -2047,8 +2047,9 @@ export function KpiBoard({
 
   return (
     <div className="grid gap-7">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
+      {/* The switcher keeps its place on every tab: the line under the title wraps beside it, never pushing it down */}
+      <header className="flex flex-wrap items-end justify-between gap-4 lg:flex-nowrap">
+        <div className="min-w-0 lg:flex-1">
           <h1 className="font-heading text-[32px] leading-tight">KPIs</h1>
           <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-sm text-muted">
             How every account is pacing toward its target and its budget.
@@ -2058,7 +2059,7 @@ export function KpiBoard({
             </span>
           </p>
         </div>
-        <div className="flex w-full items-center gap-2 md:w-auto">
+        <div className="flex w-full items-center gap-2 lg:w-auto lg:shrink-0">
           <nav aria-label="KPI board" className="no-scrollbar flex min-w-0 flex-1 overflow-x-auto md:flex-none">
             <div className="flex min-w-full shrink-0 rounded-full border border-line bg-surface p-1 md:min-w-0">
               {platforms.map((p) => (
