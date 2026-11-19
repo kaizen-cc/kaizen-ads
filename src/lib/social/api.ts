@@ -1,7 +1,7 @@
 import "server-only";
 import { metaGraph, metaGraphAs } from "@/lib/context/meta";
 import { runBounded } from "@/lib/bounded";
-import { FB_METRICS, FB_POST_METRICS, IG_POST_METRIC_SETS, IG_SERIES_METRICS, IG_TOTAL_METRICS, invalidMetric, missingPermission, parseFbPosts, parseIgMedia, parseIgPostInsights, parseIgStories, parseSeries, parseTotals, shiftDay, type FbField, type MetaCallKind, type PageRef, type PostInsights, type SocialPost, type SocialStory } from "./core";
+import { FB_METRICS, FB_POST_METRICS, IG_POST_METRIC_SETS, IG_SERIES_METRICS, IG_TOTAL_METRICS, invalidMetric, missingPermission, parseFbPosts, parseIgMedia, parseIgPostInsights, parseIgStories, daysBetween, parseSeries, parseTotals, shiftDay, type FbField, type MetaCallKind, type PageRef, type PostInsights, type SocialPost, type SocialStory } from "./core";
 
 // Meta's Graph API for a client's Facebook Page and Instagram business account, read only (GET calls). Reads use
 // Kaizen's Meta system user (the Business Manager's token the client picked when it has one). Page insights need the
@@ -176,10 +176,20 @@ export async function igDayTotals(ctx: SocialCtx, igId: string, day: string): Pr
   return { totals, skipped };
 }
 
-/** The last `limit` posts with their public counts */
-export async function igMedia(ctx: SocialCtx, igId: string, limit = 50): Promise<SocialPost[]> {
-  const r = await viaIg(ctx, "ig_media", `${igId}/media`, { fields: "id,caption,media_type,media_product_type,like_count,comments_count,timestamp,permalink,thumbnail_url,media_url", limit: String(limit) });
-  return parseIgMedia(r);
+/** The last `limit` posts with their public counts; with `since`, page back until the posts are older than that day (at most `max`) */
+export async function igMedia(ctx: SocialCtx, igId: string, limit = 50, opts: { since?: string; max?: number } = {}): Promise<SocialPost[]> {
+  const fields = "id,caption,media_type,media_product_type,like_count,comments_count,timestamp,permalink,thumbnail_url,media_url";
+  const out: SocialPost[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < 20; page++) {
+    const r: { paging?: { cursors?: { after?: string }; next?: string } } = await viaIg(ctx, "ig_media", `${igId}/media`, { fields, limit: String(limit), ...(after ? { after } : {}) });
+    const posts = parseIgMedia(r);
+    out.push(...posts);
+    after = r.paging?.next ? (r.paging.cursors?.after ?? null) : null;
+    const oldest = posts.map((p) => p.postedAt ?? "").filter(Boolean).sort()[0] ?? "";
+    if (!opts.since || !after || !posts.length || oldest.slice(0, 10) < opts.since || out.length >= (opts.max ?? 500)) break;
+  }
+  return out;
 }
 
 /** The account's live stories (each listed only for its 24 hours, so the 3-hourly sync catches every one) */
@@ -229,6 +239,18 @@ export async function fbProfile(ctx: SocialCtx, pageId: string): Promise<{ follo
  * by the caller), unless Meta named a missing permission, which throws.
  */
 export async function fbSeries(ctx: SocialCtx, pageId: string, field: FbField, from: string, to: string): Promise<{ days: Map<string, number>; used: string | null }> {
+  // A longer window (the history read) in pieces of 90 days, newest first; the metric the first piece answered with is kept
+  if (daysBetween(from, to) > 89) {
+    const days = new Map<string, number>();
+    let used: string | null = null;
+    for (let e = to; e >= from; e = shiftDay(e, -90)) {
+      const s = shiftDay(e, -89) < from ? from : shiftDay(e, -89);
+      const r = await fbSeries(ctx, pageId, field, s, e);
+      for (const [d, v] of r.days) days.set(d, v);
+      used = used ?? r.used;
+    }
+    return { days, used };
+  }
   let permission: SocialReadError | null = null;
   for (const metric of FB_METRICS[field]) {
     try {
@@ -244,10 +266,20 @@ export async function fbSeries(ctx: SocialCtx, pageId: string, field: FbField, f
   return { days: new Map(), used: null };
 }
 
-/** The Page's recent published posts with reactions, comments and shares */
-export async function fbPosts(ctx: SocialCtx, pageId: string, limit = 40): Promise<SocialPost[]> {
-  const r = await viaPage(ctx, "fb_posts", `${pageId}/published_posts`, { fields: "message,created_time,full_picture,permalink_url,status_type,attachments{media_type},shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)", limit: String(limit) });
-  return parseFbPosts(r);
+/** The Page's recent published posts with reactions, comments and shares; with `since`, page back until older than that day (at most `max`) */
+export async function fbPosts(ctx: SocialCtx, pageId: string, limit = 40, opts: { since?: string; max?: number } = {}): Promise<SocialPost[]> {
+  const fields = "message,created_time,full_picture,permalink_url,status_type,attachments{media_type},shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)";
+  const out: SocialPost[] = [];
+  let after: string | null = null;
+  for (let page = 0; page < 20; page++) {
+    const r: { paging?: { cursors?: { after?: string }; next?: string } } = await viaPage(ctx, "fb_posts", `${pageId}/published_posts`, { fields, limit: String(limit), ...(after ? { after } : {}) });
+    const posts = parseFbPosts(r);
+    out.push(...posts);
+    after = r.paging?.next ? (r.paging.cursors?.after ?? null) : null;
+    const oldest = posts.map((p) => p.postedAt ?? "").filter(Boolean).sort()[0] ?? "";
+    if (!opts.since || !after || !posts.length || oldest.slice(0, 10) < opts.since || out.length >= (opts.max ?? 500)) break;
+  }
+  return out;
 }
 
 /** Lifetime reach and views for posts, one batched ask per metric (ids=), the current metric first; posts Meta doesn't answer for stay without */

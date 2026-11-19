@@ -34,14 +34,74 @@ const change = (now: number | null, before: number | null) => (now != null && be
 
 export type SocialReportOpts = { days: number; top: number };
 
-/** The numbers for the last `days` days (through today) against the same length before (when 90 days of numbers cover it) */
+/** The longest period the tool reads (Meta keeps about two years of insights) */
+export const SOCIAL_REPORT_MAX_DAYS = 730;
+
+const monthEnd = (m: string) => shiftDay(`${nextMonth(m)}-01`, -1);
+function nextMonth(m: string) {
+  const [y, mo] = m.slice(0, 7).split("-").map(Number);
+  return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Each calendar month the stored numbers cover (newest first): reach, interactions, engagement rate, posts and the
+ * followers at its end, with month over month and year over year (the same month a year before) where both are read.
+ */
+export function socialMonths(d: Pick<ClientSocial, "today" | "reach" | "interactions" | "followers" | "posts">) {
+  const first = [...d.reach, ...d.interactions].filter((p) => p.value != null).map((p) => p.date).sort()[0];
+  if (!first) return [];
+  const months: string[] = [];
+  for (let m = d.today.slice(0, 7); m >= first.slice(0, 7); ) {
+    months.push(m);
+    const [y, mo] = m.split("-").map(Number);
+    m = mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, "0")}`;
+  }
+  const one = (m: string) => {
+    const from = `${m}-01`;
+    const to = monthEnd(m) > d.today ? d.today : monthEnd(m);
+    const reach = sumBetween(d.reach, from, to);
+    const inter = sumBetween(d.interactions, from, to);
+    return { month: m, partial: to < monthEnd(m) || from < first, reach, interactions: inter, rate: reach && inter != null ? inter / reach : null, posts: d.posts.filter((p) => p.postedAt && p.postedAt.slice(0, 10) >= from && p.postedAt.slice(0, 10) <= to).length, followers_end: followersOn(d.followers, to) };
+  };
+  const by = new Map(months.map((m) => [m, one(m)]));
+  const back = (m: string, n: number) => {
+    let [y, mo] = m.split("-").map(Number);
+    mo -= n;
+    while (mo < 1) {
+      mo += 12;
+      y -= 1;
+    }
+    return `${y}-${String(mo).padStart(2, "0")}`;
+  };
+  return months.map((m) => {
+    const x = by.get(m)!;
+    const prev = by.get(back(m, 1));
+    const yago = by.get(back(m, 12));
+    return {
+      month: x.month,
+      partial: x.partial,
+      reach: x.reach,
+      interactions: x.interactions,
+      engagement_rate_pct: pct(x.rate),
+      posts: x.posts,
+      followers_end: x.followers_end,
+      reach_vs_month_before_pct: prev ? change(x.reach, prev.reach) : null,
+      reach_vs_year_before_pct: yago ? change(x.reach, yago.reach) : null,
+      engagement_rate_vs_year_before_pts: yago && x.rate != null && yago.rate != null ? Math.round((x.rate - yago.rate) * 1000) / 10 : null,
+      followers_vs_year_before: yago && x.followers_end != null && yago.followers_end != null ? x.followers_end - yago.followers_end : null,
+    };
+  });
+}
+
+/** The numbers for the last `days` days (through today) against the same length before (when the stored numbers cover it) */
 export function organicSocialReport(d: ClientSocial, o: SocialReportOpts) {
-  const days = Math.min(90, Math.max(7, Math.round(o.days)));
+  const days = Math.min(SOCIAL_REPORT_MAX_DAYS, Math.max(7, Math.round(o.days)));
   const from = shiftDay(d.today, -(days - 1));
   const prevTo = shiftDay(from, -1);
   const prevFrom = shiftDay(from, -days);
-  // The daily series cover 90 days: a comparison period outside them is left out rather than guessed
-  const hasPrev = days * 2 <= 90;
+  // A comparison period the stored numbers don't reach is left out rather than guessed
+  const earliest = [...d.reach].filter((p) => p.value != null).map((p) => p.date).sort()[0] ?? d.today;
+  const hasPrev = earliest <= shiftDay(prevFrom, 3);
   const reach = sumBetween(d.reach, from, d.today);
   const prevReach = hasPrev ? sumBetween(d.reach, prevFrom, prevTo) : null;
   const inter = sumBetween(d.interactions, from, d.today);
@@ -100,6 +160,8 @@ export function organicSocialReport(d: ClientSocial, o: SocialReportOpts) {
     formats: formatStats(posts).map((f) => ({ format: f.format, posts: f.count, typical_engagement_rate_pct: pct(f.typicalRate), average_reach: f.avgReach == null ? null : Math.round(f.avgReach) })),
     top_posts: best.map(postOut),
     weakest_posts: weakest.map(postOut),
+    // Month by month over the stored history (13 months kept): month over month and year over year
+    months: socialMonths(d),
     health: d.health.map((h) => ({ tone: h.tone === "bad" ? "red" : h.tone === "warn" ? "amber" : "green", finding: h.title, detail: h.detail, what_to_do: h.action })),
     warning: d.warning,
   };

@@ -668,7 +668,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
         type: "object",
         properties: {
           client: CLIENT,
-          days: { type: "integer", minimum: 7, maximum: 90, description: "The period in days, through today (default 30). The comparison period before it is given when it fits in 90 days." },
+          days: { type: "integer", minimum: 7, maximum: 730, description: "The period in days, through today (default 30). The comparison period before it is given when the stored history covers it (13 months or more are kept). The answer also has every month side by side with month over month and year over year." },
           top_posts: { type: "integer", minimum: 1, maximum: 10, description: "How many top and weakest posts (default 3)" },
           platform: { type: "string", enum: ["all", "instagram", "facebook", "tiktok"], description: "One platform's numbers alone (default all: every platform side by side, plus the totals)" },
         },
@@ -680,7 +680,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
         // The server's rights read it, so the person's access to this client was checked above (channel roles again in clientOf)
         const { clientSocial, socialLink } = await import("@/lib/social/store");
         const { organicSocialReport, socialMissingNote } = await import("./social-report");
-        const d = await clientSocial(ctx.admin, c.id).catch(() => null);
+        const d = await clientSocial(ctx.admin, c.id, { historyDays: 730 }).catch(() => null);
         if (!d) {
           const [link, { data: svc }] = await Promise.all([
             socialLink(ctx.admin, c.id).catch(() => undefined),
@@ -689,7 +689,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           const buys = svc ? servicesOf(svc).includes("social-media") : true;
           return { client: c.name, linked: Boolean(link?.pageId || link?.igId), connected: false, note: socialMissingNote(link?.state ?? null, link?.error ?? null, buys) };
         }
-        const days = Math.min(90, Math.max(7, Number(input.days) || 30));
+        const days = Math.min(730, Math.max(7, Number(input.days) || 30));
         const top = Math.min(10, Math.max(1, Number(input.top_posts) || 3));
         const r = organicSocialReport(d, { days, top });
         card({

@@ -10,6 +10,24 @@ const DAY = 86_400_000;
 export const shiftDay = (day: string, n: number) => new Date(Date.parse(`${day}T12:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 export const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / DAY);
 
+/** History kept for every social client: 13 months (month over month and year over year), 60 days before Kaizen took over a newer client, never past Meta's 2 years */
+export const HISTORY_MONTHS_DAYS = 400;
+export const HISTORY_BEFORE_TAKEOVER_DAYS = 60;
+export const HISTORY_MAX_DAYS = 720;
+/** How much further back each daily full read reaches until the history is there */
+export const HISTORY_STEP_DAYS = 60;
+
+/** The oldest day the history should reach for a client Kaizen took over on `takeover` (null: not known) */
+export function historyStart(today: string, takeover: string | null): string {
+  const months = shiftDay(today, -HISTORY_MONTHS_DAYS);
+  // A client Kaizen took over within those months: 60 days before the takeover too
+  const recent = takeover && /^\d{4}-\d{2}-\d{2}/.test(takeover) && takeover.slice(0, 10) >= months;
+  const before = recent ? shiftDay(takeover.slice(0, 10), -HISTORY_BEFORE_TAKEOVER_DAYS) : months;
+  const want = before < months ? before : months;
+  const floor = shiftDay(today, -HISTORY_MAX_DAYS);
+  return want < floor ? floor : want;
+}
+
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
