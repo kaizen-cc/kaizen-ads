@@ -183,6 +183,31 @@ export const VENDORS: { name: string; domains: string[]; github?: string[] }[] =
   { name: "Zoom", domains: ["zoom.us"], github: ["zoom"] },
 ];
 
+/** Vendors Kaizen AI already reads on its own (Slack, Gmail, Drive), so naming them never means a missing connector */
+const READ_NATIVELY = new Set(["Google", "Slack"]);
+const words = (s: string) => ` ${s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()} `;
+
+/**
+ * The well-known vendors a message names (by name, or a link to their site: "figma.com/design/...") that none of the
+ * connectors offered to the person covers, so Kaizen AI can say how to get one instead of only asking for screenshots
+ */
+export function vendorsWithoutConnector(text: string, offeredNames: string[]): string[] {
+  const t = words(text);
+  const offered = offeredNames.map(words);
+  return VENDORS.filter((v) => !READ_NATIVELY.has(v.name))
+    .filter((v) => t.includes(words(v.name)) || v.domains.some((d) => t.includes(words(d))))
+    .filter((v) => !offered.some((o) => o.includes(words(v.name)) || words(v.name).includes(o)))
+    .map((v) => v.name);
+}
+
+/** What the model is told about those vendors: how the person gets it working here, the way it works in Claude */
+export function missingConnectorLine(names: string[], isExec: boolean): string {
+  if (!names.length) return "";
+  const list = names.join(", ");
+  const get = isExec ? "find it and press Enable (it's then on for the team), then Connect" : "find it and press Request to enable (an exec turns it on for the team), then Connect";
+  return `${list} isn't connected for this person in Kaizen AI yet, so you can't open it here. If the ask needs what's inside it and none of your other tools can read it, don't just ask for screenshots: say Kaizen AI reads it the way Claude does once it's connected. In the plug button by the message box, open Browse connectors, ${get} their own account and switch it on in this chat. Pasted content or screenshots work in the meantime.`;
+}
+
 /** The vendor whose own GitHub organization this is (io.github.zoom → Zoom) */
 const githubVendor = (namespace: string) => {
   const m = /^io\.github\.([a-z0-9-]+)$/.exec(namespace);
