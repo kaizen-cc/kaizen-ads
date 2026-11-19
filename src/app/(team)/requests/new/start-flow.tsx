@@ -230,7 +230,7 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
   };
   // Per pool, the overage in red (never summed, never clamped): one helper for every screen
   // With what's in progress for them (board and Asana, not delivered yet), so "0 of 25 used" never reads as room for 25
-  const left = (c: ClientOption) => <AllotmentPools allotment={allotments[c.id]} empty={null} progress />;
+  const left = (c: ClientOption) => <AllotmentPools allotment={allotments[c.id]} empty={null} progress stacked />;
   const hasPools = (c: ClientOption) => allotmentPools(allotments[c.id]).length > 0;
 
   return (
@@ -307,12 +307,12 @@ export function ClientPicker({ clients, allotments, onPick }: { clients: ClientO
                 disabled={!c.creative}
                 onPointerEnter={() => c.creative && void prefetchStart(c.id).catch(() => {})}
                 onFocus={() => c.creative && void prefetchStart(c.id).catch(() => {})}
-                className={`group flex min-h-[64px] items-center gap-3 rounded-[16px] border px-3.5 py-3 text-left transition ${c.creative ? `hover:-translate-y-px hover:border-faint hover:bg-surface-2 ${on ? "border-brand/60 bg-surface-2" : "border-line bg-surface"}` : "cursor-not-allowed border-line/60 bg-transparent opacity-50"}`}
+                className={`group flex min-h-[72px] items-center gap-3 rounded-[16px] border px-3.5 py-3 text-left transition ${c.creative ? `hover:-translate-y-px hover:border-faint hover:bg-surface-2 ${on ? "border-brand/60 bg-surface-2" : "border-line bg-surface"}` : "cursor-not-allowed border-line/60 bg-transparent opacity-50"}`}
               >
                 <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-[11px] text-[12px] font-semibold ${c.creative ? "bg-surface-2 text-fg group-hover:bg-brand group-hover:text-white" : "bg-surface-2 text-faint"}`}>{initials(c.name)}</span>
                 <span className="grid min-w-0">
                   <span className="truncate text-[14.5px]">{c.name}</span>
-                  <span className="truncate text-[11.5px] text-faint">{c.creative ? (hasPools(c) ? left(c) : "On a creative package") : "No creative package"}</span>
+                  <span className="mt-0.5 text-[12.5px] leading-snug text-faint">{c.creative ? (hasPools(c) ? left(c) : "On a creative package") : "No creative package"}</span>
                 </span>
               </button>
               </Fragment>

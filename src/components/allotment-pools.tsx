@@ -12,6 +12,7 @@ export function AllotmentPools({
   empty = null,
   suffix,
   progress = false,
+  stacked = false,
 }: {
   allotment: (PoolCounts & Pick<Allotment, "progress">) | null | undefined;
   className?: string;
@@ -19,9 +20,30 @@ export function AllotmentPools({
   suffix?: string;
   /** Beside each pool, what's on the board or in Asana and not delivered yet ("Images 0/25 used · 14 in progress") */
   progress?: boolean;
+  /** One line per pool (a client with images and videos reads both in full, at a readable size, never cut off) */
+  stacked?: boolean;
 }) {
   const pools = allotmentPools(allotment);
   if (!pools.length) return <>{empty}</>;
+  if (stacked)
+    return (
+      <span className={`tabular grid gap-0.5 ${className}`}>
+        {pools.map((p) => {
+          const moving = progress ? inProgress(allotment, p.key) : 0;
+          return (
+            <span key={p.key} className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+              <span className="w-[3.4rem] shrink-0 text-faint">{p.label}</span>
+              <span className={`font-medium ${POOL_TONE[p.state] || "text-muted"}`}>
+                {p.used}/{p.cap}
+              </span>
+              {p.over > 0 && <span className="text-bad">· {p.over} over</span>}
+              {moving > 0 && <span className="text-warn">· {moving} in progress</span>}
+            </span>
+          );
+        })}
+        {suffix && <span>{suffix}</span>}
+      </span>
+    );
   return (
     <span className={`tabular ${className}`}>
       {pools.map((p, i) => (
