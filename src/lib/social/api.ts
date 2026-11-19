@@ -1,7 +1,7 @@
 import "server-only";
 import { metaGraph, metaGraphAs } from "@/lib/context/meta";
 import { runBounded } from "@/lib/bounded";
-import { FB_METRICS, FB_POST_METRICS, IG_POST_METRIC_SETS, IG_SERIES_METRICS, IG_TOTAL_METRICS, invalidMetric, missingPermission, parseFbPosts, parseIgMedia, parseIgPostInsights, parseSeries, parseTotals, shiftDay, type FbField, type MetaCallKind, type PageRef, type PostInsights, type SocialPost } from "./core";
+import { FB_METRICS, FB_POST_METRICS, IG_POST_METRIC_SETS, IG_SERIES_METRICS, IG_TOTAL_METRICS, invalidMetric, missingPermission, parseFbPosts, parseIgMedia, parseIgPostInsights, parseIgStories, parseSeries, parseTotals, shiftDay, type FbField, type MetaCallKind, type PageRef, type PostInsights, type SocialPost, type SocialStory } from "./core";
 
 // Meta's Graph API for a client's Facebook Page and Instagram business account, read only (GET calls). Reads use
 // Kaizen's Meta system user (the Business Manager's token the client picked when it has one). Page insights need the
@@ -180,6 +180,12 @@ export async function igDayTotals(ctx: SocialCtx, igId: string, day: string): Pr
 export async function igMedia(ctx: SocialCtx, igId: string, limit = 50): Promise<SocialPost[]> {
   const r = await viaIg(ctx, "ig_media", `${igId}/media`, { fields: "id,caption,media_type,media_product_type,like_count,comments_count,timestamp,permalink,thumbnail_url,media_url", limit: String(limit) });
   return parseIgMedia(r);
+}
+
+/** The account's live stories (each listed only for its 24 hours, so the 3-hourly sync catches every one) */
+export async function igStories(ctx: SocialCtx, igId: string): Promise<SocialStory[]> {
+  const r = await viaIg(ctx, "ig_media", `${igId}/stories`, { fields: "id,media_type,permalink,timestamp", limit: "100" });
+  return parseIgStories(r);
 }
 
 /** One post's own insights, from the fullest metric set down; null where Meta doesn't give any (old posts, stories) */

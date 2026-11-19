@@ -1,0 +1,148 @@
+import "server-only";
+import { clientNamed } from "@/lib/client-named";
+import { isExecOrLead, type Staff } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { servicesOf } from "@/lib/services";
+import {
+  addedPlatforms,
+  cleanSocialCustom,
+  isSocialPlatform,
+  isSocialTier,
+  SOCIAL_PLATFORM_OPTIONS,
+  SOCIAL_TIERS,
+  socialAllotmentLine,
+  socialAllotmentPace,
+  socialPace,
+  socialPools,
+  tierText,
+  type SocialCustom,
+} from "@/lib/social-allotment-core";
+import { str, type AiTool } from "./types";
+
+// The social allotment and tier, for the assistant, Kaizen AI and every agent on a call (registered in
+// src/lib/kaizen-ai/extensions.ts). The same rules as the Services panel on Team & setup (src/lib/social-allotment-core.ts):
+//   social_allotment   a client's posts, statics, video/reels and IG stories this billing cycle (published on the
+//                      platforms they post on, plus what's requested) against their tier, with the pace; or every
+//                      social client grouped behind pace, on pace, over, or with no tier
+//   set_social_tier    put a client on Basic, Silver, Gold, Platinum, Custom numbers, a Sprint or Strategy only, and
+//                      pick the platforms they post on (execs and leads; asks first, then confirmed: true)
+// The screen: open_screen the client page, Team & setup, Services.
+
+const platformName = (k: string) => SOCIAL_PLATFORM_OPTIONS.find((p) => p.key === k)?.label ?? k;
+
+const socialAllotment: AiTool = {
+  name: "social_allotment",
+  description:
+    "A client's organic social allotment this billing cycle: four pools (posts, static graphics, video/reels, IG stories) each against their tier (Basic $600: 12 posts, 12 statics; Silver $1,000: 16 posts, 10 statics, 2 video/reels, 4 IG stories; Gold $1,500: 22 posts, 10 statics, 4 video/reels, 8 stories, adds TikTok; Platinum $2,250 + ad spend: 30 posts, 12 statics, 6 video/reels, 12 stories, adds LinkedIn), their Custom numbers or a Sprint; strategy-only clients hold none. Used is what was published on the platforms they post on (the most on any one platform) plus posts requested and not yet out. Also the platforms they post on (only those are read and scored) and the pace against the cycle. Without a client: every social client grouped behind pace, on pace, over, or with no tier set.",
+  input_schema: { type: "object", properties: { client: { type: "string", description: "A client name; leave out for every social client" } }, additionalProperties: false },
+  lines: ["social"],
+  run: async (user: Staff, input) => {
+    const db = await createClient();
+    const { socialAllotments } = await import("@/lib/social-allotment");
+    if (str(input.client)) {
+      const c = await clientNamed(db, input.client);
+      const a = (await socialAllotments(db, [c.id]))[c.id] ?? null;
+      if (!a) return { ok: true, client: c.name, allotment: null, say: "No social allotment read for this client." };
+      if (a.source === "strategy") return { ok: true, client: c.name, allotment: { line: "Strategy only: no posts made, so no allotment and no requests", from: "strategy" } };
+      const pace = socialAllotmentPace(a);
+      return {
+        ok: true,
+        client: c.name,
+        allotment: {
+          tier: a.label,
+          from: a.source,
+          line: socialAllotmentLine(a) ?? "No tier set",
+          pools: socialPools(a).map((p) => ({ pool: p.label, range: p.range, used: p.used, inProgress: p.progress, published: p.done, over: p.over })),
+          sprint: a.sprint,
+          addedVideoReels: a.extraVideos,
+          platforms: a.platforms.map(platformName),
+          platformsBeyondTier: addedPlatforms(a.platforms, a.packageKey),
+          cycle: a.cycle,
+          pace: socialPace(a).group,
+          paceDetail: pace ? `${Math.round(pace.used * 100)}% used with ${Math.round(pace.elapsed * 100)}% of the cycle gone` : "Too early in the cycle to call, or no tier",
+        },
+        clientPage: `/clients/${c.slug}?tab=team`,
+      };
+    }
+    const all = await socialAllotments(db);
+    const { data: rows } = await db.from("clients").select("id, name, services, services_extra, services_removed").in("id", Object.keys(all));
+    const groups: Record<string, { client: string; line: string }[]> = { over: [], behind: [], pace: [], none: [] };
+    for (const r of rows ?? []) {
+      if (!(servicesOf(r) as string[]).includes("social-media")) continue;
+      const a = all[r.id as string];
+      if (!a || a.source === "strategy") continue;
+      groups[socialPace(a).group].push({ client: r.name as string, line: socialAllotmentLine(a) ?? `No tier set (${a.posts.used} posts this cycle)` });
+    }
+    return { ok: true, ...groups };
+  },
+};
+
+const setSocialTierTool: AiTool = {
+  name: "set_social_tier",
+  description:
+    "Set a client's social tier in the Services panel: basic, silver, gold, platinum (with added_video_reels on top, $150 each), custom (each pool's numbers: posts, statics, videos, stories, with an optional _min for a range), sprint (custom numbers until a day, then a tier or nothing) or strategy (strategy only, no posts, no allotment). Also the platforms they post on (facebook, instagram, tiktok, linkedin, google_business; only these are read and scored; leave out to keep them, [] for the tier's own). Executives and leads only. First call without confirmed: say what will change and ask; call again with confirmed: true after their yes.",
+  input_schema: {
+    type: "object",
+    properties: {
+      client: { type: "string" },
+      tier: { type: "string", enum: ["basic", "silver", "gold", "platinum", "custom", "sprint", "strategy"] },
+      posts: { type: "number" },
+      posts_min: { type: "number" },
+      statics: { type: "number" },
+      statics_min: { type: "number" },
+      videos: { type: "number" },
+      videos_min: { type: "number" },
+      stories: { type: "number" },
+      stories_min: { type: "number" },
+      until: { type: "string", description: "Sprint: the last day, YYYY-MM-DD" },
+      after: { type: "string", enum: ["basic", "silver", "gold", "platinum", "none"], description: "Sprint: the tier it rolls into" },
+      added_video_reels: { type: "number" },
+      platforms: { type: "array", items: { type: "string", enum: SOCIAL_PLATFORM_OPTIONS.map((p) => p.key) } },
+      confirmed: { type: "boolean" },
+    },
+    required: ["client"],
+    additionalProperties: false,
+  },
+  lines: ["social"],
+  run: async (user: Staff, input) => {
+    if (!isExecOrLead(user)) return { ok: false, error: "Only executives and leads set a tier." };
+    const db = await createClient();
+    const c = await clientNamed(db, input.client);
+    const { data: row } = await db.from("clients").select("strategy_only").eq("id", c.id).maybeSingle();
+    if (!row) return { ok: false, error: "That client isn't one you work on." };
+    const tier = str(input.tier) ?? "";
+    const platforms = Array.isArray(input.platforms) ? [...new Set((input.platforms as unknown[]).filter(isSocialPlatform))] : null;
+    const strategy = ((row.strategy_only ?? []) as string[]).filter((s) => s !== "social-media");
+    const update: Record<string, unknown> = {};
+    let what = "";
+    if (tier === "strategy") {
+      update.strategy_only = [...strategy, "social-media"];
+      what = "Strategy only (no posts, no allotment)";
+    } else if (tier === "custom" || tier === "sprint") {
+      const until = str(input.until) ?? "";
+      if (tier === "sprint" && !/^\d{4}-\d{2}-\d{2}$/.test(until)) return { ok: false, error: "A sprint needs its last day (YYYY-MM-DD)." };
+      const nums = cleanSocialCustom(input as Record<string, unknown>);
+      const after = tier === "sprint" && isSocialTier(input.after) ? input.after : null;
+      const custom: SocialCustom = { ...nums, ...(tier === "sprint" ? { sprint_until: until, after } : {}) };
+      Object.assign(update, { strategy_only: strategy, social_package_key: "custom", social_custom: custom });
+      what = `${tier === "sprint" ? `Sprint until ${until}` : "Custom"}: ${tierText(nums)}${tier === "sprint" ? `, then ${after ?? "nothing"}` : ""}`;
+    } else if (isSocialTier(tier)) {
+      const t = SOCIAL_TIERS.find((x) => x.key === tier)!;
+      const extra = input.added_video_reels == null ? null : Math.max(0, Math.min(60, Math.round(Number(input.added_video_reels) || 0)));
+      Object.assign(update, { strategy_only: strategy, social_package_key: tier, ...(extra != null ? { social_extra_videos: extra } : {}) });
+      what = `${t.label} (${t.price}${tier === "platinum" ? "" : "/mo"}): ${tierText(t)}${extra ? ` plus ${extra} added video/reels` : ""}`;
+    } else if (!platforms) return { ok: false, error: "Say the tier or the platforms." };
+    if (platforms) {
+      update.social_platforms = platforms.length ? platforms : null;
+      what = `${what ? `${what}; ` : ""}posts on ${platforms.length ? platforms.map(platformName).join(", ") : "the tier's own platforms"}`;
+    }
+    if (input.confirmed !== true) return { ok: true, proposed: what, ask: "Say this change and ask before applying (call again with confirmed: true)." };
+    if (tier && tier !== "strategy") Object.assign(update, { social_package_set_by: user.id, social_package_set_at: new Date().toISOString() });
+    const { error } = await createAdminClient().from("clients").update(update).eq("id", c.id);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, applied: what, page: `/clients/${c.slug}?tab=team` };
+  },
+};
+
+export const tools: AiTool[] = [socialAllotment, setSocialTierTool];

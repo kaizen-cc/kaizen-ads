@@ -3,11 +3,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { metaConfigured } from "@/lib/context/meta";
 import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
+import { platformsFor } from "@/lib/social-allotment-core";
 import { clientsWithLine } from "@/lib/service-gate";
 import { tracker } from "@/lib/progress";
 import { runBounded } from "@/lib/bounded";
 import { socialDetailsBrief, type SocialDetails } from "@/lib/account-sheet-channels-core";
-import { fbPosts, fbPostsInsights, fbProfile, fbSeries, igDayTotals, igMedia, igPostsInsights, igProfile, igSeries, pageAccessToken, pageInstagram, pageName, promotePages, SocialReadError, systemPages, type SocialCtx } from "./api";
+import { fbPosts, fbPostsInsights, fbProfile, fbSeries, igDayTotals, igMedia, igPostsInsights, igProfile, igStories, igSeries, pageAccessToken, pageInstagram, pageName, promotePages, SocialReadError, systemPages, type SocialCtx } from "./api";
 import { cleanError, matchPage, pickSocialWindow, plainSocialError, shiftDay, socialClientState, socialCostMs, SOCIAL_BACKFILL_DAYS, withIgInsights, type PageRef, type Platform, type SocialClientState, type SocialPlainError, type SocialPost, type SocialWindow } from "./core";
 import { combineFollowers, dailyTotal, platformFollowers, rateSeries, type DayPoint, type RatePoint } from "./charts";
 import { bestAndWeakest, filterPosts, followerGrowth, formatStats, longestGap, postsPerWeek, socialHealth, withRates, windowOf, type DailyRow, type FollowerPoint, type HealthFinding, type PlatformPulse, type PostView, type Window } from "./insights";
@@ -281,6 +282,13 @@ async function readInstagram(admin: SupabaseClient, clientId: string, ig: string
     const posts = fresh.map((p) => withIgInsights(p, ins.by.get(p.id) ?? null));
     await saveGrouped(admin, "social_posts", posts.map((p) => postRow(clientId, ig, p, now)), "client_id,platform,post_id");
     out.posts = posts.length;
+    // Live stories, kept for the IG stories pool of the social allotment (a quiet gap when Meta won't list them)
+    const stories = await igStories(ctx, ig).catch(() => []);
+    if (stories.length)
+      await admin
+        .from("social_stories")
+        .upsert(stories.map((x) => ({ client_id: clientId, account_id: ig, story_id: x.id, media_type: x.mediaType, permalink: x.permalink, posted_at: x.postedAt, updated_at: now })), { onConflict: "client_id,story_id" })
+        .then(() => undefined, () => undefined);
   } catch (e) {
     out.error = errText(e);
     if (e instanceof SocialReadError && e.permission) out.permission = e.permission;
@@ -364,10 +372,16 @@ export async function syncSocial(admin: SupabaseClient, clientId: string, opts: 
     }
   }
   const ctx: SocialCtx = { account, pageToken };
-  const [ig, fb] = await Promise.all([link.ig_id ? readInstagram(admin, clientId, link.ig_id, ctx, window, today, now) : null, link.page_id && !tokenError ? readFacebook(admin, clientId, link.page_id, ctx, window, today, now) : null]);
+  // Only the platforms the client posts on (their pick in the Services panel, else their tier's) are read
+  const { data: pick } = await admin.from("clients").select("social_platforms, social_package_key").eq("id", clientId).maybeSingle();
+  const posts = platformsFor((pick?.social_platforms as string[] | null) ?? null, (pick?.social_package_key as string | null) ?? null);
+  const [ig, fb] = await Promise.all([
+    link.ig_id && posts.includes("instagram") ? readInstagram(admin, clientId, link.ig_id, ctx, window, today, now) : null,
+    link.page_id && !tokenError && posts.includes("facebook") ? readFacebook(admin, clientId, link.page_id, ctx, window, today, now) : null,
+  ]);
   const perms = [...new Set([ig?.permission, fb?.permission, tokenError && /pages_show_list/.test(tokenError) ? "pages_show_list" : null].filter((x): x is string => Boolean(x)))];
   const igError = ig?.error ? `Instagram: ${ig.error}` : null;
-  const fbError = tokenError ? tokenError : fb?.error ? `Facebook: ${fb.error}` : null;
+  const fbError = tokenError && posts.includes("facebook") ? tokenError : fb?.error ? `Facebook: ${fb.error}` : null;
   // Some part of the read worked: the link is read; every part failing is the link failing
   const anyOk = Boolean((ig && !ig.error) || (fb && !fb.error));
   const errors = [igError, fbError].filter(Boolean) as string[];

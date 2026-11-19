@@ -71,7 +71,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       supabase
         .from("clients")
         .select(
-          "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, billing_day, billing_day_source, live_ad_writes, live_ad_writes_at, live_ad_writes_by, live_google_writes, live_google_writes_at, live_google_writes_by, reactivated_at, reactivated_by, created_at, reonboarded_at, services, services_extra, services_removed, email_package_key, email_setup_start, email_custom, strategy_only, creative_packages(label)",
+          "id, name, slug, status, client_type, archived_at, archive_reason, archive_source, portal_live, portal_live_at, industry, industry_detail, industry_source, website, meta_ad_account_id, url_tags, slack_channel_id, internal_slack_channel_id, drive_folder_id, kaizen_id, auto_approve_opt_in, creative_package, creative_package_key, creative_package_until, creative_package_note, creative_db, billing_day, billing_day_source, live_ad_writes, live_ad_writes_at, live_ad_writes_by, live_google_writes, live_google_writes_at, live_google_writes_by, reactivated_at, reactivated_by, created_at, reonboarded_at, services, services_extra, services_removed, email_package_key, email_setup_start, email_custom, social_package_key, social_custom, social_platforms, social_extra_videos, strategy_only, creative_packages(label)",
         )
         .eq("slug", slug)
         .maybeSingle(),
@@ -225,7 +225,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     [{ count: imageCount }, { count: videoCount }, { count: designs }, { data: newestAsset }, { data: shot }, { data: momentRows }],
     reportableAll,
     readinessInitial,
-    [{ data: tierList }, { data: tierPicks }],
+    [{ data: tierList }, { data: tierPicks }, socialAllot],
     { data: ruleRows },
     campaigns,
     [{ data: docRows }, knowledge, { data: repRows }, loom],
@@ -294,6 +294,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     t("services", Promise.all([
       supabase.from("service_tiers").select("id, service, label, includes").order("sort_order").order("created_at"),
       supabase.from("client_service_tiers").select("service, tier_id").eq("client_id", client.id),
+      // This cycle's social allotment (used/cap per pool), shown under the Social tier
+      servicesNow.includes("social-media") ? import("@/lib/social-allotment").then((m) => m.socialAllotments(supabase, [client.id])).then((r) => r[client.id] ?? null).catch(() => null) : Promise.resolve(null),
     ])),
     // Where this client's new ads go, as their buyers taught the launcher
     t("launch rules", supabase.from("launch_rules").select("id, rule, from_adset, to_adset, via, active, created_at, profiles(full_name)").eq("client_id", client.id).order("created_at", { ascending: false }).limit(30)),
@@ -559,6 +561,13 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         chosen: Object.fromEntries((tierPicks ?? []).filter((x) => x.tier_id).map((x) => [x.service as string, x.tier_id as string])),
         strategyOnly: ((client.strategy_only ?? []) as string[]).filter(Boolean),
         email: { key: (client.email_package_key as string | null) ?? null, setupStart: (client.email_setup_start as string | null) ?? null, custom: (client.email_custom ?? null) as Record<string, number | string | null> | null },
+        social: {
+          key: (client.social_package_key as string | null) ?? null,
+          custom: (client.social_custom ?? null) as Record<string, number | string | null> | null,
+          platforms: (client.social_platforms as string[] | null) ?? null,
+          extraVideos: Number(client.social_extra_videos) || 0,
+          allotment: socialAllot ?? null,
+        },
       }}
       connections={connections}
       creative={creative}

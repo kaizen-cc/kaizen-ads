@@ -2,13 +2,32 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { setCreativeTier, setEmailTier, setStrategyOnly } from "./tier-actions";
+import {
+  ADDON_PRICE,
+  addedPlatforms,
+  isSocialTier,
+  parseRange,
+  platformsFor,
+  SOCIAL_PLATFORM_OPTIONS,
+  SOCIAL_TIERS,
+  socialAllotmentPace,
+  socialPace,
+  socialPools,
+  socialTier,
+  tierText,
+  type SocialAllotment,
+  type SocialCustom,
+  type SocialPlatformKey,
+  type SocialTierKey,
+} from "@/lib/social-allotment-core";
+import { setCreativeTier, setEmailTier, setSocialExtraVideos, setSocialPlatforms, setSocialTier, setStrategyOnly } from "./tier-actions";
 
 // The tier pickers in the Services panel, the one place every service's tier is set (owner, Nov 19 2026):
 //   Email: 3-Month Initial Setup (its start month, then the ongoing tier), a Sprint (its own numbers until a day, then
 //          a tier or nothing), Basic, Silver, Gold, Custom (each pool's numbers), or Strategy only, no deliverables.
 //   Creative: a package, Custom (images and videos a month), a sprint until a day, or Strategy only.
-//   Any other service: Strategy only, no deliverables, beside its tier.
+//   Social: Basic, Silver, Gold, Platinum (and added video/reels), a Sprint, Custom numbers, or Strategy only; the
+//           platforms the client posts on (the tier's own unless picked), and this cycle's allotment with its pace.
 // A pick saves at once; Setup, Sprint and Custom ask for their numbers first. The menu is the app's own (grouped rows
 // with what each tier holds and its price), never the browser's plain dropdown.
 
@@ -437,19 +456,245 @@ export function CreativeTier({
   );
 }
 
-// ─── Any service ─────────────────────────────────────────────────────────────
+// ─── Social ──────────────────────────────────────────────────────────────────
 
-/** Strategy only, no deliverables: on (no allotment, alerts or requests for it) or back to deliverables */
-export function StrategyToggle({ clientId, slug, service, on, canEdit }: { clientId: string; slug: string; service: string; on: boolean; canEdit: boolean }) {
-  const { pending, error, run, shown } = useSave();
-  const isOn = shown == null ? on : shown === "on";
-  if (!canEdit) return on ? <span className="text-xs text-muted">Strategy only, no deliverables</span> : null;
+export type SocialTierValue = {
+  key: string | null;
+  custom: Record<string, number | string | null> | null;
+  /** The platforms picked by hand (null: the tier's own) */
+  platforms: string[] | null;
+  extraVideos: number;
+  allotment: SocialAllotment | null;
+};
+
+/** The platforms the client posts on, as toggles: they decide which platforms' numbers are read and scored */
+function PlatformPicks({ value, tierKey, own, canEdit, onSave, pending }: { value: SocialPlatformKey[]; tierKey: string | null; own: boolean; canEdit: boolean; onSave: (next: SocialPlatformKey[] | null) => void; pending: boolean }) {
+  const added = addedPlatforms(value, tierKey);
+  const toggle = (k: SocialPlatformKey) => {
+    const next = value.includes(k) ? value.filter((x) => x !== k) : [...value, k];
+    if (next.length) onSave(next);
+  };
+  const unread = value.filter((k) => !SOCIAL_PLATFORM_OPTIONS.find((p) => p.key === k)?.read);
   return (
-    <span className="inline-flex items-center gap-2">
-      <label className="inline-flex min-h-10 cursor-pointer items-center gap-1.5 text-[11px] text-faint hover:text-fg md:min-h-0">
-        <input type="checkbox" checked={isOn} disabled={pending} onChange={(e) => { const next = e.target.checked; run(() => setStrategyOnly(clientId, slug, service, next), undefined, next ? "on" : "off"); }} className="h-3.5 w-3.5 accent-[var(--color-brand,#c8102e)]" />
-        Strategy only, no deliverables
-      </label>
+    <span className="grid gap-1">
+      <span className="flex flex-wrap items-center gap-1.5 text-[11px] text-faint">
+        Posts on
+        <span role="group" aria-label="Platforms the client posts on" className="inline-flex flex-wrap gap-1">
+          {SOCIAL_PLATFORM_OPTIONS.map((p) => {
+            const on = value.includes(p.key);
+            return (
+              <button
+                key={p.key}
+                type="button"
+                role="checkbox"
+                aria-checked={on}
+                disabled={!canEdit || pending || (on && value.length === 1)}
+                onClick={() => toggle(p.key)}
+                title={p.label}
+                className={`min-h-9 rounded-full border px-2.5 text-[11px] transition-colors md:min-h-6 ${on ? "border-brand/40 bg-brand/10 font-medium text-fg" : "border-line text-faint hover:border-faint hover:text-fg"} disabled:cursor-default ${!canEdit && !on ? "hidden" : ""}`}
+              >
+                {p.short}
+              </button>
+            );
+          })}
+        </span>
+        {canEdit && own && (
+          <button type="button" disabled={pending} onClick={() => onSave(null)} className="min-h-9 px-1 text-[11px] text-faint underline-offset-2 hover:text-fg hover:underline md:min-h-0">
+            Tier&apos;s own
+          </button>
+        )}
+      </span>
+      {(added > 0 || unread.length > 0) && (
+        <span className="text-[11px] leading-snug text-faint">
+          {added > 0 && `${added} platform${added === 1 ? "" : "s"} beyond the tier (add-on, $${ADDON_PRICE}/mo each). `}
+          {unread.length > 0 && `${unread.map((k) => SOCIAL_PLATFORM_OPTIONS.find((p) => p.key === k)!.label).join(", ")} not read yet: only Facebook and Instagram numbers are pulled and scored.`}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** This cycle against the allotment: each pool used/cap with a thin bar, in progress and published, and the pace */
+export function SocialMeter({ a }: { a: SocialAllotment | null }) {
+  const pools = socialPools(a);
+  if (!a || !pools.length) return null;
+  const pace = socialPace(a);
+  const p = socialAllotmentPace(a);
+  const pct = (n: number) => `${Math.round(n * 100)}%`;
+  const tone = pace.group === "behind" ? "text-warn" : pace.group === "over" ? "text-bad" : "text-ok";
+  const paceText = pace.group === "behind" ? `Behind: ${p ? `${pct(p.used)} used, ${pct(p.elapsed)} of the cycle gone` : "under pace"}` : pace.group === "over" ? "Over the allotment" : "On pace";
+  return (
+    <span className="grid gap-1.5 rounded-[12px] border border-line/80 bg-ink/[0.02] px-2.5 py-2">
+      <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[10.5px] uppercase tracking-[0.12em] text-faint">
+        <span>{a.cycle ? `This cycle · ${dayLabel(a.cycle.start).replace(/, \d{4}$/, "")} to ${dayLabel(a.cycle.end).replace(/, \d{4}$/, "")}` : "This cycle"}</span>
+        <span className={`normal-case tracking-normal ${tone}`}>{paceText}</span>
+      </span>
+      <span className="grid grid-cols-2 gap-x-3 gap-y-1.5 sm:grid-cols-4">
+        {pools.map((x) => (
+          <span key={x.key} className="grid gap-0.5">
+            <span className="flex items-baseline justify-between gap-1 text-[11px]">
+              <span className="text-faint">{x.label}</span>
+              <span className="tabular text-fg">
+                {x.used}
+                <span className="text-faint">/{x.range}</span>
+              </span>
+            </span>
+            <span aria-hidden className="h-1 overflow-hidden rounded-full bg-ink/[0.08]">
+              <span className={`block h-full rounded-full ${x.over ? "bg-bad" : "bg-brand"}`} style={{ width: `${Math.min(100, (x.used / Math.max(1, x.cap)) * 100)}%` }} />
+            </span>
+            {(x.progress > 0 || (x.done > 0 && x.done !== x.used)) && (
+              <span className="text-[10.5px] text-faint">
+                {[x.progress && `${x.progress} in progress`, x.done !== x.used && `${x.done} published`].filter(Boolean).join(" · ")}
+              </span>
+            )}
+          </span>
+        ))}
+      </span>
+    </span>
+  );
+}
+
+export function SocialTier({ clientId, slug, value, strategy, canEdit }: { clientId: string; slug: string; value: SocialTierValue; strategy: boolean; canEdit: boolean }) {
+  const c = value.custom ?? {};
+  const sprintUntil = value.key === "custom" && typeof c.sprint_until === "string" && c.sprint_until ? c.sprint_until : null;
+  const current = strategy ? STRATEGY : sprintUntil ? "sprint" : (value.key ?? "");
+  const [open, setOpen] = useState<null | "custom" | "sprint">(null);
+  const r = (max: unknown, min: unknown) => (max == null ? "" : min != null && Number(min) < Number(max) ? `${min}-${max}` : String(max));
+  const [custom, setCustom] = useState({ posts: r(c.posts, c.posts_min), statics: r(c.statics, c.statics_min), videos: r(c.videos, c.videos_min), stories: r(c.stories, c.stories_min) });
+  const [until, setUntil] = useState(sprintUntil ?? "");
+  const [after, setAfter] = useState<SocialTierKey | "none">(isSocialTier(c.after) ? c.after : "none");
+  const [platforms, setPlatforms] = useState<{ list: string[] | null } | null>(null);
+  const [extra, setExtra] = useState<number | null>(null);
+  const { pending, error, run, shown, saved } = useSave();
+  const tierKey = shown && isSocialTier(shown) ? shown : isSocialTier(value.key) ? value.key : null;
+  const ownPlatforms = platforms ? platforms.list : value.platforms;
+  const list = platformsFor(ownPlatforms, tierKey);
+  const extraVideos = extra ?? value.extraVideos;
+
+  const numbers = [custom.posts && `${custom.posts} posts`, custom.statics && `${custom.statics} statics`, custom.videos && `${custom.videos} video/reels`, custom.stories && `${custom.stories} IG stories`].filter(Boolean).join(", ");
+  const tier = socialTier(tierKey);
+  const tierName = (k: unknown) => socialTier(typeof k === "string" ? k : null)?.label ?? null;
+  const summary = strategy
+    ? "Strategy only, no posts made: no allotment or requests"
+    : sprintUntil
+      ? `Until ${dayLabel(sprintUntil)}: ${numbers || "no numbers yet"}${tierName(c.after) ? `, then ${tierName(c.after)}` : ", then nothing"}`
+      : value.key === "custom"
+        ? `${numbers || "No numbers yet"} a month`
+        : tier
+          ? `${tierText({ ...tier, videos: tier.videos + extraVideos })} a month · ${tier.extras} · ${tier.minimumMonths}-month minimum`
+          : null;
+
+  const pools = (): Partial<SocialCustom> => {
+    const [pMin, pMax] = parseRange(custom.posts);
+    const [sMin, sMax] = parseRange(custom.statics);
+    const [vMin, vMax] = parseRange(custom.videos);
+    const [tMin, tMax] = parseRange(custom.stories);
+    return { posts: pMax, posts_min: pMin, statics: sMax, statics_min: sMin, videos: vMax, videos_min: vMin, stories: tMax, stories_min: tMin };
+  };
+
+  if (!canEdit)
+    return (
+      <span className="grid gap-1.5">
+        <span className="text-xs text-muted">{strategy ? summary : tier && current === tier.key ? `${tier.label} · ${tier.price}/mo` : (summary ?? "No tier set")}</span>
+        {current && current !== STRATEGY && current !== "sprint" && current !== "custom" && summary && <span className="text-[11px] leading-snug text-faint">{summary}</span>}
+        {!strategy && <PlatformPicks value={list} tierKey={tierKey} own={Boolean(ownPlatforms)} canEdit={false} onSave={() => {}} pending={false} />}
+        {!strategy && <SocialMeter a={value.allotment} />}
+      </span>
+    );
+
+  const groups: MenuGroup[] = [
+    { title: "Tiers", items: SOCIAL_TIERS.map((t) => ({ value: t.key, label: t.label, detail: `${tierText(t)} · ${t.platforms.map((k) => SOCIAL_PLATFORM_OPTIONS.find((p) => p.key === k)!.short).join(", ")}`, price: `${t.price}${t.key === "platinum" ? "" : "/mo"}` })) },
+    {
+      title: "Their own",
+      items: [
+        { value: "sprint", label: "Sprint", detail: current === "sprint" && summary ? summary : "A set scope until a day, then a tier or nothing", more: true },
+        { value: "custom", label: "Custom numbers", detail: current === "custom" && summary ? summary : "Each pool set by hand, one number or a range", more: true },
+        { value: STRATEGY, label: "Strategy only", detail: "No posts made: no allotment, no requests" },
+      ],
+    },
+  ];
+
+  const pick = (v: string) => {
+    if (v === "custom" || v === "sprint") return setOpen(v);
+    setOpen(null);
+    if (v === STRATEGY) return run(() => setStrategyOnly(clientId, slug, "social-media", true), undefined, STRATEGY);
+    if (isSocialTier(v)) run(() => setSocialTier(clientId, slug, { tier: v }), undefined, v);
+  };
+  const numberBoxes = (
+    <>
+      <Num label="Posts" value={custom.posts} onChange={(v) => setCustom((x) => ({ ...x, posts: v }))} />
+      <Num label="Statics" value={custom.statics} onChange={(v) => setCustom((x) => ({ ...x, statics: v }))} />
+      <Num label="Video/reels" value={custom.videos} onChange={(v) => setCustom((x) => ({ ...x, videos: v }))} />
+      <Num label="IG stories" value={custom.stories} onChange={(v) => setCustom((x) => ({ ...x, stories: v }))} />
+    </>
+  );
+  const cancel = (
+    <button type="button" onClick={() => setOpen(null)} className="min-h-10 px-1 text-[11px] text-faint hover:text-fg md:min-h-0">
+      Cancel
+    </button>
+  );
+  const shownNow = open ?? shown ?? current;
+  const onTier = isSocialTier(shownNow);
+
+  return (
+    <span className="grid gap-2">
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <TierMenu label="Social tier" value={shownNow} groups={groups} onPick={pick} disabled={pending} empty="Pick a tier" />
+        <Status pending={pending} saved={saved && !open} error={error} />
+      </span>
+      {!open && summary && <span className="text-[11px] leading-snug text-faint">{summary}</span>}
+      {!open && onTier && (
+        <span className="flex flex-wrap items-center gap-1.5 text-[11px] text-faint">
+          Added video/reels
+          <span className="inline-flex items-center rounded-full border border-line bg-bg">
+            <button type="button" aria-label="One fewer added video" disabled={pending || extraVideos <= 0} onClick={() => { const n = extraVideos - 1; setExtra(n); run(() => setSocialExtraVideos(clientId, slug, n)); }} className="h-9 w-9 text-muted hover:text-fg disabled:opacity-40 md:h-6 md:w-6">
+              −
+            </button>
+            <span className="tabular min-w-5 text-center text-fg">{extraVideos}</span>
+            <button type="button" aria-label="One more added video" disabled={pending || extraVideos >= 60} onClick={() => { const n = extraVideos + 1; setExtra(n); run(() => setSocialExtraVideos(clientId, slug, n)); }} className="h-9 w-9 text-muted hover:text-fg disabled:opacity-40 md:h-6 md:w-6">
+              +
+            </button>
+          </span>
+          {extraVideos > 0 && <span>${(extraVideos * ADDON_PRICE).toLocaleString("en-US")}/mo add-on</span>}
+        </span>
+      )}
+      {open === "sprint" && (
+        <Panel note="What the sprint holds each month, as one number or a range (3-5). It ends on its day: the client moves to the tier picked, or holds no social allotment.">
+          <label className="flex items-center gap-1.5 text-[11px] text-faint">
+            Until
+            <input type="date" value={until} min={today()} onChange={(e) => setUntil(e.target.value)} className={dateBox} />
+          </label>
+          {numberBoxes}
+          <Pills label="Then" value={after} options={[{ value: "none", label: "Nothing" }, ...SOCIAL_TIERS.map((t) => ({ value: t.key, label: t.label }))]} onChange={setAfter} />
+          <button type="button" disabled={pending || !until} onClick={() => run(() => setSocialTier(clientId, slug, { tier: "sprint", until, custom: pools(), after: after === "none" ? null : after }), () => setOpen(null), "sprint")} className={btn}>
+            Start sprint
+          </button>
+          {cancel}
+        </Panel>
+      )}
+      {open === "custom" && (
+        <Panel note="A month each, as one number or a range (3-5). Leave a pool empty when they don't buy it.">
+          {numberBoxes}
+          <button type="button" disabled={pending} onClick={() => run(() => setSocialTier(clientId, slug, { tier: "custom", custom: pools() }), () => setOpen(null), "custom")} className={btn}>
+            Save
+          </button>
+          {cancel}
+        </Panel>
+      )}
+      {current !== STRATEGY && shown !== STRATEGY && (
+        <PlatformPicks
+          value={list}
+          tierKey={tierKey}
+          own={Boolean(ownPlatforms)}
+          canEdit
+          pending={pending}
+          onSave={(next) => {
+            setPlatforms({ list: next });
+            run(() => setSocialPlatforms(clientId, slug, next));
+          }}
+        />
+      )}
+      {current !== STRATEGY && shown !== STRATEGY && <SocialMeter a={value.allotment} />}
       {error && <span className="text-[11px] text-bad">{error}</span>}
     </span>
   );

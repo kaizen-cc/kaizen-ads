@@ -47,7 +47,8 @@ function nyNow() {
  * - kpi: every 30 minutes on weekdays 8am to 6pm, every hour otherwise (campaign numbers for the KPI dashboard; no AI)
  * - klaviyo: on the KPI numbers' cadence; every connected client's recent email numbers, the full window once a day,
  *   six clients at a time
- * - social: every 3 hours (organic social clients: Facebook Page and Instagram account numbers and recent posts, read only;
+ * - social: every 3 hours (organic social clients: Facebook Page and Instagram account numbers, recent posts and live
+ *   stories, read only, only the platforms each client posts on; clients very behind on their social allotment flagged;
  *   the full 90 days once a day, three clients at a time; a client still without a Page is looked for again every 6 hours)
  * - brief: 12pm and 6pm
  * - market: 8:30am (live ads from Motion for the Market tab, ready for the morning)
@@ -180,7 +181,12 @@ export async function GET(request: Request) {
       const history = await import("@/lib/email-history/run").then((m) => m.runHistoryJobs(admin, 200_000)).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
       return Response.json({ ...synced, history });
     }
-    if (step === "social") return Response.json(await (await import("@/lib/social/store")).syncAllSocial(admin, { budgetMs: 640_000 }));
+    if (step === "social") {
+      const synced = await (await import("@/lib/social/store")).syncAllSocial(admin, { budgetMs: 600_000 });
+      // Clients very behind on their social allotment: their Social Media Manager and the Head of Social, once a cycle (and in its last week)
+      const pace = await (await import("@/lib/social-pace-alerts")).socialPaceAlerts(admin).catch((e) => String(e));
+      return Response.json({ ...synced, pace });
+    }
     if (step === "meta_tokens") return Response.json(await (await import("@/lib/meta-tokens")).checkAllBusinessTokens(admin));
     if (step === "connectors") return Response.json(await (await import("@/lib/connectors/registry-sync")).syncConnectorRegistry(admin));
     if (step === "google_ideas") {

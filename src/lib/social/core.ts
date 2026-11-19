@@ -142,6 +142,21 @@ export function parseIgMedia(json: unknown): SocialPost[] {
   return out;
 }
 
+/** An Instagram story seen while live (the API lists a story only for its 24 hours) */
+export type SocialStory = { id: string; mediaType: string | null; permalink: string | null; postedAt: string | null };
+
+/** GET {ig}/stories: the live stories */
+export function parseIgStories(json: unknown): SocialStory[] {
+  const out: SocialStory[] = [];
+  for (const m of arr(obj(json).data)) {
+    const o = obj(m);
+    const id = str(o.id);
+    if (!id) continue;
+    out.push({ id, mediaType: str(o.media_type), permalink: str(o.permalink), postedAt: str(o.timestamp) });
+  }
+  return out;
+}
+
 export type PostInsights = { reach: number | null; saves: number | null; shares: number | null; views: number | null; totalInteractions: number | null };
 
 /** GET {media}/insights: reach, saved, shares, views, total_interactions, whichever were asked for and given */

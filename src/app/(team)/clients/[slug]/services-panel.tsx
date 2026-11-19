@@ -4,13 +4,14 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { SERVICES } from "@/lib/services";
 import { addServiceTier, setClientService, setServiceTier } from "./actions";
-import { CreativeTier, EmailTier, StrategyToggle, type EmailTierValue } from "./service-tiers";
+import { CreativeTier, EmailTier, SocialTier, type EmailTierValue, type SocialTierValue } from "./service-tiers";
 
 // What the client buys, at a glance: every service Kaizen sells, lit when they have it, with its tier. Kaizen Track's
 // services come in on their own (and end there); execs and leads add the rest here and pick each one's tier, adding a
 // tier when a new one is sold. This is the one place every tier lives (owner, Nov 19 2026): Creative's package (a package,
 // Custom numbers, or a sprint until a day), Email's (the 3-Month Initial Setup by its start date, Basic, Silver, Gold or
-// Custom numbers), and for any service "Strategy only, no deliverables" (no allotment, alerts or requests).
+// Custom numbers), Social's (Basic, Silver, Gold, Platinum, Custom or a Sprint, with the platforms it posts on), and
+// "Strategy only" for creative, email and social, in each one's own menu (no allotment, alerts or requests).
 
 export type Tier = { id: string; service: string; label: string; includes: string | null };
 
@@ -47,6 +48,7 @@ export function ServicesPanel({
   canSetPackage = false,
   strategyOnly = [],
   email = null,
+  social = null,
 }: {
   clientId: string;
   slug: string;
@@ -64,6 +66,8 @@ export function ServicesPanel({
   strategyOnly?: string[];
   /** Email's tier as stored */
   email?: EmailTierValue | null;
+  /** Social's tier, platforms and this cycle's allotment */
+  social?: SocialTierValue | null;
 }) {
   const router = useRouter();
   const [mine, setMine] = useState(() => new Set([...track, ...extra].filter((s) => !removed.includes(s))));
@@ -134,23 +138,21 @@ export function ServicesPanel({
                     <CreativeTier clientId={clientId} slug={slug} creative={creative} packages={packages} strategy={strategyOnly.includes("creative")} canEdit={canSetPackage} />
                   ) : s.slug === "email-marketing" ? (
                     <EmailTier clientId={clientId} slug={slug} value={email ?? { key: null, setupStart: null, custom: null }} strategy={strategyOnly.includes("email-marketing")} canEdit={canEdit} />
+                  ) : s.slug === "social-media" ? (
+                    <SocialTier clientId={clientId} slug={slug} value={social ?? { key: null, custom: null, platforms: null, extraVideos: 0, allotment: null }} strategy={strategyOnly.includes("social-media")} canEdit={canEdit} />
                   ) : (
                     <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      {!strategyOnly.includes(s.slug) && (
-                        <TierPick
-                          service={s.slug}
-                          tiers={tiers.filter((t) => t.service === s.slug)}
-                          value={picked[s.slug] ?? null}
-                          canEdit={canEdit}
-                          onPick={(id) => pickTier(s.slug, id)}
-                          onAdded={(t) => {
-                            setTiers((all) => [...all, t]);
-                            pickTier(s.slug, t.id);
-                          }}
-                        />
-                      )}
-                      {/* Strategy only is for services with deliverables (social here; creative and email in their own picks): paid ads have no such client */}
-                      {s.slug === "social-media" && <StrategyToggle clientId={clientId} slug={slug} service={s.slug} on={strategyOnly.includes(s.slug)} canEdit={canEdit} />}
+                      <TierPick
+                        service={s.slug}
+                        tiers={tiers.filter((t) => t.service === s.slug)}
+                        value={picked[s.slug] ?? null}
+                        canEdit={canEdit}
+                        onPick={(id) => pickTier(s.slug, id)}
+                        onAdded={(t) => {
+                          setTiers((all) => [...all, t]);
+                          pickTier(s.slug, t.id);
+                        }}
+                      />
                     </span>
                   )}
                 </span>

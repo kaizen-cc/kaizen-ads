@@ -3,6 +3,7 @@
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { cleanSocialCustom, isSocialPlatform, isSocialTier, type SocialCustom, type SocialTierKey } from "@/lib/social-allotment-core";
 
 // No revalidatePath here: it re-rendered the whole client page inside the save, so a two-row update took the page's
 // full load to answer. The panel shows the new tier at once and refreshes the page in the background.
@@ -11,6 +12,8 @@ import { createClient } from "@/lib/supabase/server";
 //   Email: the 3-Month Initial Setup (by its start date, then the ongoing tier), Basic, Silver, Gold, Custom (the
 //          client's own numbers per pool), or Strategy only.
 //   Creative: a creative package, Custom (images and videos a month), a sprint until a day, or Strategy only.
+//   Social: Basic, Silver, Gold, Platinum (plus added video/reels), Custom numbers, a Sprint until a day, or Strategy
+//           only; and the platforms the client posts on (the tier's own unless picked).
 //   Any service: Strategy only, no deliverables (no allotment, no pace or idle alerts, no gaps, never listed for
 //   requests or briefs).
 
@@ -76,6 +79,59 @@ export async function setEmailTier(clientId: string, slug: string, t: { tier: "s
     } else {
       await admin.from("clients").update({ ...base, email_package_key: t.tier, email_setup_start: null }).eq("id", clientId);
     }
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * The client's social tier: Basic, Silver, Gold or Platinum (with any added video/reels), Custom numbers (each pool, one
+ * number or a range), or a Sprint (its numbers until a day, then a tier or nothing). Strategy only is setStrategyOnly.
+ */
+export async function setSocialTier(
+  clientId: string,
+  slug: string,
+  t: { tier: SocialTierKey; extraVideos?: number | null } | { tier: "custom"; custom: Partial<SocialCustom> } | { tier: "sprint"; until: string; custom: Partial<SocialCustom>; after?: string | null },
+): Promise<Result> {
+  try {
+    const { me, admin, strategy } = await guard(clientId);
+    const base = { strategy_only: without(strategy, "social-media"), social_package_set_by: me.id, social_package_set_at: new Date().toISOString() };
+    if (t.tier === "custom" || t.tier === "sprint") {
+      const sprint = t.tier === "sprint";
+      if (sprint && !/^\d{4}-\d{2}-\d{2}$/.test(t.until)) return { ok: false, error: "Pick the day the sprint ends." };
+      if (sprint && t.until < new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })) return { ok: false, error: "The sprint has to end today or later." };
+      const after = sprint && isSocialTier(t.after) ? t.after : null;
+      const custom: SocialCustom = { ...cleanSocialCustom(t.custom ?? {}), ...(sprint ? { sprint_until: t.until, after } : {}) };
+      await admin.from("clients").update({ ...base, social_package_key: "custom", social_custom: custom }).eq("id", clientId);
+    } else {
+      if (!isSocialTier(t.tier)) return { ok: false, error: "Pick a tier." };
+      await admin.from("clients").update({ ...base, social_package_key: t.tier, ...(t.extraVideos != null ? { social_extra_videos: whole(t.extraVideos, 60) } : {}) }).eq("id", clientId);
+    }
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** The platforms the client posts on (null: the tier's own). Only these are read and scored. */
+export async function setSocialPlatforms(clientId: string, slug: string, platforms: string[] | null): Promise<Result> {
+  try {
+    const { admin } = await guard(clientId);
+    const list = platforms == null ? null : [...new Set(platforms.filter(isSocialPlatform))];
+    if (list && !list.length) return { ok: false, error: "Pick at least one platform." };
+    await admin.from("clients").update({ social_platforms: list }).eq("id", clientId);
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Added video/reels a month on top of the social tier ($150 each) */
+export async function setSocialExtraVideos(clientId: string, slug: string, n: number): Promise<Result> {
+  try {
+    const { admin } = await guard(clientId);
+    await admin.from("clients").update({ social_extra_videos: whole(n, 60) }).eq("id", clientId);
     return { ok: true };
   } catch (e) {
     return fail(e);

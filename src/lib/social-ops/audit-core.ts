@@ -89,7 +89,7 @@ export function socialSnapshotOf(s: SocialAccountScore, at = new Date().toISOStr
 
 export type SocialRuleFinding = { title: string; area: SocialArea; severity: "high" | "medium" | "low"; evidence: string[] };
 
-const CHECK_AREA: Record<SocialCheck["key"], SocialArea> = { engagement: "engagement", growth: "growth", reach: "content_mix", cadence: "cadence", quality: "engagement", videoShare: "formats", videoLift: "formats", profile: "profile" };
+const CHECK_AREA: Record<SocialCheck["key"], SocialArea> = { engagement: "engagement", growth: "growth", reach: "content_mix", cadence: "cadence", quality: "engagement", videoShare: "formats", videoLift: "formats", profile: "profile", allotment: "cadence" };
 
 /** What the numbers prove on their own, before any AI: each platform's checks under their bar, worst first */
 export function socialRuleFindings(score: SocialAccountScore): SocialRuleFinding[] {

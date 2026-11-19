@@ -2,11 +2,14 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { etToday, shiftDay } from "@/lib/channel-kpis/calc";
 import { promisedPosts, socialAccountScore, type SocialAccountScore, type SocialDayRow, type SocialPostRow } from "./social-score";
+import { socialAllotmentPace, type SocialAllotment } from "./social-allotment-core";
 
 // Loads each client's social account score from the synced Meta tables (src/lib/social/store.ts): the last 60 days of
 // days and 45 of posts, only the linked accounts' rows. Pass a person's session (RLS limits it to their clients) or the
 // server client for an all-clients read (the audits, the sprints, the agents). Never throws: a table the database
-// doesn't have yet reads as nothing to score.
+// doesn't have yet reads as nothing to score. Only the platforms the client posts on are scored (their pick in the
+// Services panel, else their tier's); the cadence check holds them to their tier's posts a month (else what the old
+// tier's words promised); allotment pacing comes from this cycle's social allotment (src/lib/social-allotment-core.ts).
 
 export type { SocialAccountScore } from "./social-score";
 
@@ -49,6 +52,8 @@ export async function loadSocialScores(db: SupabaseClient, clientIds: string[], 
     db.from("channel_targets").select("client_id, target").eq("line", "social").in("client_id", clientIds).then((r) => new Map((r.error ? [] : (r.data ?? [])).map((t) => [t.client_id as string, t.target == null ? null : Number(t.target)]))),
     packagePromises(db, clientIds).catch(() => new Map<string, number | null>()),
   ]);
+  // Each client's social allotment this cycle: the platforms they post on, the tier's posts, and the pacing
+  const allotments = await import("./social-allotment").then((m) => m.socialAllotments(db, clientIds)).catch(() => ({}) as Record<string, SocialAllotment>);
   const linkBy = new Map(links.map((l) => [l.client_id as string, l]));
   // Only the linked accounts' rows (a Page or Instagram account picked before keeps its history, unread); TikTok rows
   // carry their own account and count once they exist
@@ -73,7 +78,17 @@ export async function loadSocialScores(db: SupabaseClient, clientIds: string[], 
     postBy.set(k, [...(postBy.get(k) ?? []), row]);
   }
   for (const id of clientIds) {
-    const s = socialAccountScore({ days: dayBy.get(id) ?? [], posts: postBy.get(id) ?? [], today, engagementTarget: targets.get(id) ?? null, promisedPerMonth: promised.get(id) ?? null });
+    const a = allotments[id] ?? null;
+    const tierPosts = a && a.source !== "strategy" && a.posts.max != null && a.posts.max > 0 ? a.posts.max : null;
+    const s = socialAccountScore({
+      days: dayBy.get(id) ?? [],
+      posts: postBy.get(id) ?? [],
+      today,
+      engagementTarget: targets.get(id) ?? null,
+      promisedPerMonth: tierPosts ?? promised.get(id) ?? null,
+      allotment: socialAllotmentPace(a),
+      platforms: a?.platforms ?? null,
+    });
     if (s) out.set(id, s);
   }
   return out;

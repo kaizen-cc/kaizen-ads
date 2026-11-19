@@ -1,6 +1,6 @@
 import { BAND_TONE } from "@/components/email-score-parts";
 import { basisLabel } from "@/lib/social/rate";
-import { PLATFORM_LABEL, socialCheckText, type SocialCheck, type SocialCheckKey, type SocialDrag } from "@/lib/social-score";
+import { PLATFORM_LABEL, socialCheckText, type SocialAccountCheckKey, type SocialCheck, type SocialDrag } from "@/lib/social-score";
 
 // How the social account score looks everywhere (the Social board, its sheet, the Overview): the checks against their
 // bars, what weighs the score down (per platform), and why each check matters. The colours and the badge are email's
@@ -9,7 +9,7 @@ import { PLATFORM_LABEL, socialCheckText, type SocialCheck, type SocialCheckKey,
 export { BAND_TONE };
 
 /** Why each check is in the score and what moves it: the sheet's "why" under each check */
-export const CHECK_WHY: Record<SocialCheckKey, { what: string; moves: string }> = {
+export const CHECK_WHY: Record<SocialAccountCheckKey, { what: string; moves: string }> = {
   engagement: { what: "Interactions (likes, comments, shares, saves) over reach, the last 30 days, against the client's own target. With no reach from Meta it is over views, then per post over followers, each against its own bar (3% and 1%), so rates on different bases are never compared.", moves: "Stronger hooks in the first line and the first second, posts that ask for a reply or a save, and more of the formats this account's best posts use." },
   growth: { what: "Net new followers over the 30 days, as a share of where the account started.", moves: "Reels that reach beyond the followers, a reason to follow in the bio and captions, collaborations and shares." },
   reach: { what: "The 30 days' reach against the 30 before (holding level meets the bar).", moves: "Posting steadily, Reels and video (the platforms push them to non-followers), and topics that already earned reach." },
@@ -17,7 +17,7 @@ export const CHECK_WHY: Record<SocialCheckKey, { what: string; moves: string }> 
   quality: { what: "Saves and shares over reach: the engagement that says a post was worth keeping or sending.", moves: "Carousels people save (how-tos, lists, before and after), posts made to be sent to a friend." },
   videoShare: { what: "The share of posts that are video or Reels.", moves: "Turning the best statics into short video, a Reel a week at least." },
   videoLift: { what: "Engagement on video and Reels against static posts (level or better meets the bar).", moves: "Hooks in the first second, captions on screen, and lengths that fit the platform." },
-  profile: { what: "Profile visits over reach: people curious enough to look closer.", moves: "Clear calls to visit the profile, a reason to click the link, consistent visuals people recognise." },
+  profile: { what: "Profile visits over reach: people curious enough to look closer.", moves: "Clear calls to visit the profile, a reason to click the link, consistent visuals people recognise." },  allotment: { what: "The share of this billing cycle's social allotment delivered (posts, statics, video/reels and IG stories published on the platforms they post on, plus what's requested) against how far through the cycle they are. The first days of a cycle, strategy-only clients and clients with no tier are left out.", moves: "Plan the month's calendar against the tier at the start of the cycle, batch the creative, and post on every platform the client buys." },
 };
 
 /** The checks, compact: met or not, the value against the bar, and why on a tap (a native details, no script) */

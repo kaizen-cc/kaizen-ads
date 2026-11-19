@@ -17,12 +17,22 @@ import { barFor, engagementChain, postSums, type RateBasis, type RateParts } fro
 // Bars were set from the live accounts in Nov 2026 (median engagement 4.5% on Instagram, 6.6% on Facebook; follower
 // growth about 1% a month; saves and shares about 0.5% of reach; profile visits about 4% of reach; a third to a half of
 // posts are video): each bar sits at what a healthy account already does, so the score reads "at the bar" as healthy.
+//
+// Allotment pacing (owner, Nov 19 2026), on the account, worth a tenth: the share of the client's social allotment used
+// (published on the platforms they post on, plus the production line) against how far through the billing cycle they
+// are (src/lib/social-allotment-core.ts). Under-posting drags the score down; on or ahead takes nothing off; half the
+// pace or less earns none of it. Unmeasured for strategy-only clients, clients with no tier, and the first 15% of a
+// cycle: the platform checks then make the whole score, exactly as before. Each platform's own score never includes it.
 
 export type SocialPlatform = "instagram" | "facebook" | "tiktok";
 export const SOCIAL_PLATFORMS: readonly SocialPlatform[] = ["instagram", "facebook", "tiktok"];
-export const PLATFORM_LABEL: Record<SocialPlatform, string> = { instagram: "Instagram", facebook: "Facebook", tiktok: "TikTok" };
+export const PLATFORM_LABEL: Record<SocialScope, string> = { instagram: "Instagram", facebook: "Facebook", tiktok: "TikTok", account: "Account" };
 
 export type SocialCheckKey = "engagement" | "growth" | "reach" | "cadence" | "quality" | "videoShare" | "videoLift" | "profile";
+/** The account's checks: every platform check, and allotment pacing (the account's alone) */
+export type SocialAccountCheckKey = SocialCheckKey | "allotment";
+/** A drag is on one platform, or on the whole account (allotment pacing) */
+export type SocialScope = SocialPlatform | "account";
 export type SocialUnit = "pct" | "change" | "ratio";
 
 /** Kaizen's engagement target for every social account (at least 5% of reach engages); a client's own target overrides it */
@@ -41,12 +51,17 @@ export const SOCIAL_CHECKS: readonly { key: SocialCheckKey; label: string; bar: 
   { key: "profile", label: "Profile visits per reach", bar: 0.04, weight: 7.5, unit: "pct" },
 ];
 
+/** Allotment pacing: a tenth of the account's score when measured (the platform checks then make the other 90) */
+export const ALLOTMENT_CHECK = { key: "allotment" as const, label: "Allotment pacing", bar: 1, weight: 10, unit: "pct" as const };
+/** Half the expected pace or less earns none of allotment pacing, on pace all of it (the email score's revenue pace curve) */
+const PACE_FLOOR = 0.5;
+
 export type SocialBand = EmailBand;
 export const socialBand = emailBand;
 
 export type SocialInputs = Record<SocialCheckKey, number | null>;
-export type SocialCheck = { key: SocialCheckKey; label: string; value: number | null; bar: number; weight: number; points: number; met: boolean; unit: SocialUnit; /** Engagement only: what the rate is over (null: the standard, reach) */ basis?: RateBasis | null };
-export type SocialScore = { score: number; band: SocialBand; checks: SocialCheck[]; weighingDown: SocialCheck[]; unmeasured: SocialCheckKey[] };
+export type SocialCheck = { key: SocialAccountCheckKey; label: string; value: number | null; bar: number; weight: number; points: number; met: boolean; unit: SocialUnit; /** Engagement only: what the rate is over (null: the standard, reach) */ basis?: RateBasis | null };
+export type SocialScore = { score: number; band: SocialBand; checks: SocialCheck[]; weighingDown: SocialCheck[]; unmeasured: SocialAccountCheckKey[] };
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
@@ -193,7 +208,7 @@ export function platformInputs(d: { platform: SocialPlatform; days: SocialDayRow
 
 export type PlatformScore = SocialScore & { platform: SocialPlatform; inputs: SocialInputs; numbers: PlatformNumbers };
 /** A check under its bar on one platform, for the account's "what weighs it down" (worst first, by reach-weighted points) */
-export type SocialDrag = SocialCheck & { platform: SocialPlatform; /** Points of the overall score it costs */ cost: number };
+export type SocialDrag = SocialCheck & { platform: SocialScope; /** Points of the overall score it costs */ cost: number };
 
 export type SocialAccountScore = {
   /** Every platform's score weighted by its reach (an equal share each when none has reach) */
@@ -203,7 +218,7 @@ export type SocialAccountScore = {
   /** The overall's checks: each platform's checks blended by reach, so the board's hover reads like email's */
   checks: SocialCheck[];
   weighingDown: SocialDrag[];
-  unmeasured: SocialCheckKey[];
+  unmeasured: SocialAccountCheckKey[];
   /** Where the cadence's promise came from */
   promised: { perMonth: number; fromPackage: boolean };
   window: { from: string; to: string };
@@ -223,8 +238,18 @@ export function reachWeights(platforms: { reach: number | null }[]): number[] {
 }
 
 /** The whole account, scored: each platform on its own and the overall weighted by reach. Null with nothing read. */
-export function socialAccountScore(d: { days: SocialDayRow[]; posts: SocialPostRow[]; today: string; engagementTarget?: number | null; promisedPerMonth?: number | null }): SocialAccountScore | null {
-  const list = platformsIn(d.days, d.posts);
+export function socialAccountScore(d: {
+  days: SocialDayRow[];
+  posts: SocialPostRow[];
+  today: string;
+  engagementTarget?: number | null;
+  promisedPerMonth?: number | null;
+  /** The share of the social allotment used and the share of the billing cycle gone (null: not measured) */
+  allotment?: { used: number; expected: number } | null;
+  /** The platforms the client posts on: only these are scored (every platform read when not given) */
+  platforms?: readonly string[] | null;
+}): SocialAccountScore | null {
+  const list = platformsIn(d.days, d.posts).filter((p) => !d.platforms || d.platforms.includes(p));
   if (!list.length) return null;
   const platforms: PlatformScore[] = list.map((platform) => {
     const { inputs, numbers } = platformInputs({ platform, days: d.days, posts: d.posts, today: d.today, promisedPerMonth: d.promisedPerMonth });
@@ -233,8 +258,15 @@ export function socialAccountScore(d: { days: SocialDayRow[]; posts: SocialPostR
   const scored = platforms.filter((p) => p.unmeasured.length < p.checks.length);
   if (!scored.length) return null;
   const w = reachWeights(scored.map((p) => p.numbers));
-  const score = Math.round(scored.reduce((n, p, i) => n + p.score * w[i], 0));
-  const checks: SocialCheck[] = SOCIAL_CHECKS.map((c) => {
+  const base = scored.reduce((n, p, i) => n + p.score * w[i], 0);
+  // Allotment pacing: "30% vs 70%", used against where the cycle is; on or ahead earns it all
+  const a = d.allotment && Number.isFinite(d.allotment.used) && d.allotment.expected > 0 ? d.allotment : null;
+  const allotPoints = a ? clamp01((a.used / a.expected - PACE_FLOOR) / (1 - PACE_FLOOR)) * ALLOTMENT_CHECK.weight : 0;
+  const allotCheck: SocialCheck = { ...ALLOTMENT_CHECK, value: a ? a.used : null, bar: a ? a.expected : ALLOTMENT_CHECK.bar, points: allotPoints, met: Boolean(a && a.used >= a.expected) };
+  // The platform checks make 90 of 100 when allotment pacing is measured, all of it when not
+  const share = a ? (100 - ALLOTMENT_CHECK.weight) / 100 : 1;
+  const score = Math.round(base * share + allotPoints);
+  const platformChecks: SocialCheck[] = SOCIAL_CHECKS.map((c) => {
     const parts = scored.map((p, i) => ({ c: p.checks.find((x) => x.key === c.key)!, w: w[i] })).filter((x) => x.c.value != null);
     const ww = parts.reduce((n, x) => n + x.w, 0) || parts.length;
     const value = parts.length ? parts.reduce((n, x) => n + x.c.value! * (x.w || 1), 0) / ww : null;
@@ -243,12 +275,14 @@ export function socialAccountScore(d: { days: SocialDayRow[]; posts: SocialPostR
     const mixed = c.key === "engagement" && new Set(parts.map((x) => x.c.bar)).size > 1;
     const basis = c.key === "engagement" ? (new Set(parts.map((x) => x.c.basis ?? null)).size === 1 ? (parts[0]?.c.basis ?? null) : null) : undefined;
     const points = parts.length ? parts.reduce((n, x) => n + x.c.points * (x.w || 1), 0) / ww : 0;
-    return { key: c.key, label: c.label, value, bar, weight: c.weight, unit: c.unit, points, met: value != null && (mixed ? parts.every((x) => x.c.met) : value >= bar), ...(basis !== undefined ? { basis } : {}) };
+    return { key: c.key, label: c.label, value, bar, weight: c.weight * share, unit: c.unit, points: points * share, met: value != null && (mixed ? parts.every((x) => x.c.met) : value >= bar), ...(basis !== undefined ? { basis } : {}) };
   });
-  const possible = checks.filter((c) => c.value != null).reduce((n, c) => n + c.weight, 0);
-  const weighingDown: SocialDrag[] = scored
-    .flatMap((p, i) => p.weighingDown.map((c) => ({ ...c, platform: p.platform, cost: possible ? ((c.weight - c.points) * w[i] * 100) / possible : 0 })))
-    .sort((a, b) => b.cost - a.cost);
+  const checks: SocialCheck[] = [...platformChecks, allotCheck];
+  const possible = platformChecks.filter((c) => c.value != null).reduce((n, c) => n + c.weight / share, 0);
+  const weighingDown: SocialDrag[] = [
+    ...scored.flatMap((p, i) => p.weighingDown.map((c) => ({ ...c, platform: p.platform as SocialScope, cost: possible ? ((c.weight - c.points) * w[i] * 100 * share) / possible : 0 }))),
+    ...(a && !allotCheck.met ? [{ ...allotCheck, platform: "account" as const, cost: ALLOTMENT_CHECK.weight - allotPoints }] : []),
+  ].sort((x, y) => y.cost - x.cost);
   return {
     score,
     band: socialBand(score),
@@ -288,8 +322,10 @@ export function socialCheckText(unit: SocialUnit, x: number | null): string {
 }
 
 /** One check as a line for the agents: "Instagram engagement rate: 3.1% against a 3.5% bar, costing 3.4 of 30 points" */
-export function socialCheckLine(c: SocialCheck, platform?: SocialPlatform): string {
-  const name = `${platform ? `${PLATFORM_LABEL[platform]} ` : ""}${platform ? c.label.toLowerCase() : c.label}`;
+export function socialCheckLine(c: SocialCheck, platform?: SocialScope): string {
+  const on = platform && platform !== "account" ? platform : undefined;
+  const name = `${on ? `${PLATFORM_LABEL[on]} ` : ""}${on ? c.label.toLowerCase() : c.label}`;
+  if (c.key === "allotment" && c.value != null) return `${name}: ${socialCheckText(c.unit, c.value)} of the allotment used with ${socialCheckText(c.unit, c.bar)} of the billing cycle gone${c.met ? ", on pace" : `, costing ${(c.weight - c.points).toFixed(1)} of ${c.weight} points`}`;
   if (c.value == null) return `${name}: nothing to measure (bar ${socialCheckText(c.unit, c.bar)}, ${c.weight} points, left out)`;
   return `${name}: ${socialCheckText(c.unit, c.value)} against a ${socialCheckText(c.unit, c.bar)} bar${c.met ? ", met" : `, costing ${(c.weight - c.points).toFixed(1)} of ${c.weight} points`}`;
 }
