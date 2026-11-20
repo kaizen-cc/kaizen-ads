@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import {
+  MAX_SECONDS,
   agentsForTakeaway,
   cleanGeminiTranscript,
   geminiErrorKind,
@@ -207,7 +208,11 @@ export type GeminiRead = { transcript: string | null; problem: "unavailable" | "
  * A public YouTube video transcribed by Gemini's video understanding (the watch URL as file_data), every call logged in
  * ai_runs with its tokens so Settings › AI agents shows what it costs
  */
-export async function geminiTranscript(admin: Admin, videoId: string): Promise<GeminiRead> {
+/**
+ * clip: read only the first MAX_SECONDS (a channel's video whose length the server couldn't learn), so a three-hour
+ * livestream costs an hour at most; a video added on purpose is read whole
+ */
+export async function geminiTranscript(admin: Admin, videoId: string, opts: { clip?: boolean } = {}): Promise<GeminiRead> {
   const key = geminiKey();
   if (!key) return { transcript: null, problem: "key", error: "No Gemini key" };
   const started = Date.now();
@@ -220,7 +225,7 @@ export async function geminiTranscript(admin: Admin, videoId: string): Promise<G
       signal: AbortSignal.timeout(300_000),
       headers: { "content-type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ file_data: { file_uri: videoUrl(videoId) } }, { text: GEMINI_PROMPT }] }],
+        contents: [{ role: "user", parts: [{ file_data: { file_uri: videoUrl(videoId) }, ...(opts.clip ? { video_metadata: { end_offset: `${MAX_SECONDS}s` } } : {}) }, { text: GEMINI_PROMPT }] }],
         // Low resolution: the words are in the audio, and the frames are most of a video's tokens
         generationConfig: { temperature: 0, maxOutputTokens: 60_000, mediaResolution: "MEDIA_RESOLUTION_LOW" },
       }),
@@ -510,7 +515,7 @@ export async function processVideo(admin: Admin, row: VideoRow, gate: GeminiGate
       if (step === "later") return update(admin, row.id, { ...about, status: "queued", attempts: Math.max(0, row.attempts - 1), next_at: new Date(Date.now() + 25 * 60_000).toISOString(), error: null });
       if (step === "gemini") {
         gate.left--;
-        const g = await geminiTranscript(admin, row.video_id);
+        const g = await geminiTranscript(admin, row.video_id, { clip: !row.allow_long });
         if (g.transcript) {
           transcript = g.transcript;
           via = "gemini";

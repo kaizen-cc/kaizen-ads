@@ -21,8 +21,11 @@ describe("youtube transcript order", () => {
     // An unknown length is read (the per-run cap still holds)
     expect(nextTranscriptStep({ ...base, seconds: null })).toBe("gemini");
   });
-  it("stops at a private, removed or age-restricted video", () => {
-    expect(nextTranscriptStep({ ...base, playable: "LOGIN_REQUIRED" })).toBe("unavailable");
+  it("lets Gemini decide: the server's bot wall (LOGIN_REQUIRED) is no proof a video is unavailable", () => {
+    expect(nextTranscriptStep({ ...base, playable: "LOGIN_REQUIRED" })).toBe("gemini");
+    expect(nextTranscriptStep({ ...base, playable: "ERROR" })).toBe("gemini");
+    expect(nextTranscriptStep({ ...base, playable: "LOGIN_REQUIRED", geminiKey: false })).toBe("wait-key");
+    // Only with no Gemini key does the page's own "removed" stop it
     expect(nextTranscriptStep({ ...base, playable: "ERROR", geminiKey: false })).toBe("unavailable");
   });
 });

@@ -380,11 +380,13 @@ export type TranscriptStep = "gemini" | "service" | "wait-key" | "long" | "unava
 /**
  * Where a video's transcript comes from when the free captions track gave none, in the owner's order: Gemini (when
  * its key is set and this run's cap has room), then the transcript service (when its key is set), then a person
- * pasting it. A private, removed or age-restricted video stops here; a channel's video past an hour waits for someone
- * to add it on purpose; with no key at all it waits for the Gemini key.
+ * pasting it. A channel's video known to run past an hour waits for someone to add it on purpose; with no key at all
+ * it waits for the Gemini key. The watch page a server reads is no proof a video is unavailable (from a datacenter
+ * YouTube answers "sign in to confirm you're not a bot", LOGIN_REQUIRED, for every video), so Gemini decides that;
+ * only with no Gemini key does the page's own ERROR (removed) stop it here.
  */
 export function nextTranscriptStep(v: { playable: string | null; seconds: number | null; allowLong: boolean; geminiKey: boolean; geminiLeft: number; serviceKey: boolean; geminiFailed?: boolean }): TranscriptStep {
-  if (v.playable === "ERROR" || v.playable === "LOGIN_REQUIRED" || v.playable === "UNPLAYABLE") return "unavailable";
+  if (!v.geminiKey && v.playable === "ERROR") return "unavailable";
   if (!v.allowLong && v.seconds && v.seconds > MAX_SECONDS) return "long";
   if (v.geminiKey && !v.geminiFailed) return v.geminiLeft > 0 ? "gemini" : "later";
   if (v.serviceKey) return "service";
