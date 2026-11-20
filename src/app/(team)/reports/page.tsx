@@ -104,7 +104,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const { data: slots } = admin && seatClientIds.length ? await admin.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("client_id", seatClientIds).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer", ...REPORT_SEATS.email, ...REPORT_SEATS.social]) : { data: [] };
   const [{ data: allTargets }, { data: built }] = admin && clientIds.length
     ? await Promise.all([
-        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id, services, services_extra, services_removed, strategy_only), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line ? [line] : ["meta", "google"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
+        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id, services, services_extra, services_removed, strategy_only), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line === "meta" ? ["meta", "tiktok"] : line ? [line] : ["meta", "google", "tiktok"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
         admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, sent_at, clients(name), reports(id, platform, status, owner_id, viewed_at, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).gte("created_at", daysAgo(60)).order("created_at", { ascending: false }).limit(150),
       ])
     : [{ data: [] }, { data: [] }];
@@ -126,6 +126,20 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
     const owner = t.profiles?.full_name ?? slot?.profiles?.full_name ?? null;
     c.services.push({ platform: t.platform, owner, mine: isMine(t.client_id, { owner_id: ownerId, platform: t.platform }) });
     byClient.set(t.client_id, c);
+  }
+  // A service the client buys whose ad account isn't connected yet still shows, and says to connect it (adding TikTok on
+  // the client page shows here at once; removing it hides it, by the services gate above)
+  const ADS_SERVICE = { meta: "facebook-ads", google: "google-ads", tiktok: "tiktok-ads" } as const;
+  const ADS_NAME = { meta: "Meta", google: "Google Ads", tiktok: "TikTok" } as const;
+  for (const t of (allTargets ?? []) as unknown as { client_id: string; clients: { services: string[] | null; services_extra: string[] | null; services_removed: string[] | null } }[]) {
+    const c = byClient.get(t.client_id);
+    if (!c) continue;
+    const buys = new Set([...(t.clients.services ?? []), ...(t.clients.services_extra ?? [])].filter((x) => !(t.clients.services_removed ?? []).includes(x)));
+    for (const p of (line === "meta" ? ["meta", "tiktok"] : line ? [line] : ["meta", "google", "tiktok"]) as ("meta" | "google" | "tiktok")[]) {
+      if (!buys.has(ADS_SERVICE[p]) || c.services.some((x) => x.platform === p)) continue;
+      const slot = primaryOf(seatRows, buyerRole(p), t.client_id);
+      c.services.push({ platform: p, owner: slot?.profiles?.full_name ?? null, mine: slot?.profile_id === me.id, setup: { state: "missing", what: `${ADS_NAME[p]} is on their services, but no ${ADS_NAME[p]} ad account is connected yet. Add it on the client page.` } });
+    }
   }
   const builderClients = [...byClient.values()].map((c) => ({ ...c, services: c.services.sort((a, b) => (a.platform === "meta" ? 0 : 1) - (b.platform === "meta" ? 0 : 1)) })).sort((a, b) => a.name.localeCompare(b.name));
   type BuiltRow = { id: string; client_id: string; status: string; ranges: { label: string }[] | null; created_by: string | null; created_at: string; sent_at: string | null; clients: { name: string }; reports: { id: string; platform: string; status: string; owner_id: string | null; viewed_at: string | null; profiles: { full_name: string } | null }[] };
