@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
-import { markAsksDone, markAskDone, markBibleReviewed, tickAskGroupItem, tickAskItem } from "../next-actions";
+import { markAsksDone, markAskDone, markBibleReviewed, removeAskGroupItem, removeAsks, tickAskGroupItem, tickAskItem } from "../next-actions";
 import { delegateNextItem, delegateOptions } from "@/app/(team)/delegate-actions";
 import { approveFeedback, commentFeedback } from "@/app/(team)/feedback/actions";
 import { TranscriptButton } from "@/components/assistant-call-parts";
@@ -154,6 +154,21 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
       else router.refresh();
     });
   };
+  // A reminder or task no longer needed: removed once they confirm (it leaves the list at once)
+  const remove = (it: NextItem) => {
+    const ids = it.askGroup?.askIds ?? (it.ask ? [it.ask.id] : []);
+    if (!ids.length) return;
+    const what = it.askGroup ? (it.askGroup.items.length === 1 ? "this follow-up" : `these ${it.askGroup.items.length} follow-ups`) : `"${it.title}"`;
+    if (!confirm(`Remove ${what} from your list? Use this when it's no longer needed or won't be done.`)) return;
+    setReviewed((r) => [...r, it.id]);
+    startReview(async () => {
+      const r = await removeAsks(ids);
+      if (!r.ok) {
+        setReviewed((x) => x.filter((k) => k !== it.id));
+        alert(r.error);
+      } else router.refresh();
+    });
+  };
   const bibles = data.bibles.filter((it) => !reviewed.includes(it.id));
   const itemsOf = (k: Key) => (k === "bibles" ? bibles : data[k].filter((it) => !reviewed.includes(it.id)));
   const total = data.now.length + data.decide.length + data.watch.length + bibles.length + data.waiting.length;
@@ -179,7 +194,7 @@ export function NextList({ data, me }: { data: NextForMe; me: string }) {
       ) : (
         <>
           {shown.map((s, i) => (
-            <Group key={s.key} s={s} index={i} items={itemsOf(s.key)} open={!closed.includes(s.key)} onToggle={() => toggle(s.key)} onBrief={(b) => pushParams({ todo: b.id })} onReviewed={(it) => (it.ask ? done(it) : it.feedback || it.askGroup ? setReviewed((r) => [...r, it.id]) : review(it))} />
+            <Group key={s.key} s={s} index={i} items={itemsOf(s.key)} open={!closed.includes(s.key)} onToggle={() => toggle(s.key)} onBrief={(b) => pushParams({ todo: b.id })} onReviewed={(it) => (it.ask ? done(it) : it.feedback || it.askGroup ? setReviewed((r) => [...r, it.id]) : review(it))} onRemove={remove} />
           ))}
           {clear.length > 0 && (
             <p className="flex min-h-11 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-full border border-ink/[0.07] px-4 py-2 text-[13px] text-ink/55" style={{ animation: `next-in .45s ${0.06 * shown.length}s cubic-bezier(.2,.8,.2,1) both` }}>
@@ -329,7 +344,7 @@ function byClient(items: NextItem[]): [string, NextItem[]][] {
   return [...m.values()].map((its) => [its[0].client, its]);
 }
 
-type Handlers = { onBrief: (s: OpenSuggestion) => void; onReviewed: (it: NextItem) => void };
+type Handlers = { onBrief: (s: OpenSuggestion) => void; onReviewed: (it: NextItem) => void; onRemove: (it: NextItem) => void };
 
 function Group({ s, index, items, open, onToggle, ...h }: { s: (typeof SECTIONS)[number]; index: number; items: NextItem[]; open: boolean; onToggle: () => void } & Handlers) {
   const urgent = items.filter((it) => it.tone === "bad").length;
@@ -405,12 +420,13 @@ function Group({ s, index, items, open, onToggle, ...h }: { s: (typeof SECTIONS)
   );
 }
 
-function Row({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient: boolean } & Handlers) {
-  if (it.askGroup) return <AskGroupCard it={it} group={it.askGroup} onDone={() => onReviewed(it)} />;
-  return <PlainRow it={it} showClient={showClient} onBrief={onBrief} onReviewed={onReviewed} />;
+function Row({ it, showClient, onBrief, onReviewed, onRemove }: { it: NextItem; showClient: boolean } & Handlers) {
+  // Keyed by its lines, so a card fresh from the server starts from what's saved
+  if (it.askGroup) return <AskGroupCard key={it.askGroup.items.map((l) => `${l.askId}:${l.text}`).join("|")} it={it} group={it.askGroup} onDone={() => onReviewed(it)} onRemove={() => onRemove(it)} />;
+  return <PlainRow it={it} showClient={showClient} onBrief={onBrief} onReviewed={onReviewed} onRemove={onRemove} />;
 }
 
-function PlainRow({ it, showClient, onBrief, onReviewed }: { it: NextItem; showClient: boolean } & Handlers) {
+function PlainRow({ it, showClient, onBrief, onReviewed, onRemove }: { it: NextItem; showClient: boolean } & Handlers) {
   const [more, setMore] = useState(false);
   const short = shortOf(it);
   const tone = whenTone(it);
@@ -515,6 +531,12 @@ function PlainRow({ it, showClient, onBrief, onReviewed }: { it: NextItem; showC
               Mark done
             </button>
           )}
+          {it.ask && (
+            // No longer needed, or it won't be done: removed from their list after a confirm
+            <button type="button" onClick={() => onRemove(it)} title="Not needed any more, or it won't be done: take it off your list" className="order-3 inline-flex min-h-11 items-center justify-center rounded-full px-4 text-[13px] text-ink/45 transition-colors hover:bg-ink/[0.06] hover:text-fg sm:order-none sm:min-h-9">
+              Remove
+            </button>
+          )}
           {it.bible && (
             // A Brand Bible: open it to read, or mark it reviewed right here (it leaves the list at once)
             <button type="button" onClick={() => onReviewed(it)} className="order-2 inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full px-4 text-[13px] text-ink/55 transition-colors hover:bg-ink/[0.06] hover:text-fg sm:order-none sm:min-h-9">
@@ -552,26 +574,51 @@ function ClientLogo({ id, name, size = 40 }: { id: string | null; name: string; 
  * Follow-ups from the agents as one compact card per client: the logo and name, how many and how far through, where
  * they came from said once. Opens to the lines, ticked off right here (saved at once); Mark all done clears the card.
  */
-function AskGroupCard({ it, group, onDone }: { it: NextItem; group: AskGroup; onDone: () => void }) {
+function AskGroupCard({ it, group, onDone, onRemove }: { it: NextItem; group: AskGroup; onDone: () => void; onRemove: () => void }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [ticks, setTicks] = useState(() => group.items.map((i) => i.done));
+  // Lines removed here, gone at once (the page catches up behind it)
+  const [removed, setRemoved] = useState<number[]>([]);
   const [, start] = useTransition();
-  const done = ticks.filter(Boolean).length;
-  const total = group.items.length;
+  const left = group.items.map((_, n) => n).filter((n) => !removed.includes(n));
+  const done = left.filter((n) => ticks[n]).length;
+  const total = left.length;
   const pct = total ? Math.round((done / total) * 100) : 0;
   const late = it.tone === "bad";
+  // A checklist line's place on its saved list, once the lines above it removed here are gone
+  const placeOf = (n: number) => {
+    const line = group.items[n];
+    if (line.index === null) return null;
+    return line.index - removed.filter((k) => group.items[k].askId === line.askId && (group.items[k].index ?? -1) < line.index!).length;
+  };
   const tick = (n: number, v: boolean) => {
     const line = group.items[n];
     const next = ticks.map((x, k) => (k === n ? v : x));
     setTicks(next);
     start(async () => {
-      const r = await tickAskGroupItem(line.askId, line.index, v);
+      const r = await tickAskGroupItem(line.askId, placeOf(n), v);
       if (!r.ok) setTicks((t) => t.map((x, k) => (k === n ? !v : x)));
-      else if (next.every(Boolean)) {
+      else if (left.every((k) => next[k])) {
         onDone();
         router.refresh();
       }
+    });
+  };
+  const removeLine = (n: number) => {
+    const line = group.items[n];
+    if (!confirm(`Remove "${line.text}" from your list? Use this when it's no longer needed or won't be done.`)) return;
+    setRemoved((r) => [...r, n]);
+    const rest = left.filter((k) => k !== n);
+    start(async () => {
+      const r = await removeAskGroupItem(line.askId, line.index === null ? null : line.text);
+      if (!r.ok) {
+        setRemoved((x) => x.filter((k) => k !== n));
+        alert(r.error);
+        return;
+      }
+      if (!rest.length || rest.every((k) => ticks[k])) onDone();
+      router.refresh();
     });
   };
   const all = () => {
@@ -616,15 +663,20 @@ function AskGroupCard({ it, group, onDone }: { it: NextItem; group: AskGroup; on
       {open && (
         <div className="grid gap-2 px-4 pb-4 sm:pl-[68px] md:px-5 md:pl-[72px]">
           <ul className="grid gap-0.5" aria-label="Follow-ups">
-            {group.items.map((line, n) => (
-              <li key={`${line.askId}-${n}`}>
-                <label className="flex min-h-11 cursor-pointer items-start gap-2.5 rounded-[10px] px-1 py-1.5 text-[13px] leading-snug text-ink/75 transition-colors hover:bg-ink/[0.04] sm:min-h-8">
+            {group.items.map((line, n) => removed.includes(n) ? null : (
+              <li key={`${line.askId}-${n}`} className="group/line flex items-start gap-1">
+                <label className="flex min-h-11 min-w-0 flex-1 cursor-pointer items-start gap-2.5 rounded-[10px] px-1 py-1.5 text-[13px] leading-snug text-ink/75 transition-colors hover:bg-ink/[0.04] sm:min-h-8">
                   <input type="checkbox" checked={ticks[n] ?? false} onChange={(e) => tick(n, e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--brand)]" />
                   <span className="grid min-w-0 gap-0.5">
                     <span className={ticks[n] ? "text-ink/40 line-through" : ""}>{line.text}</span>
                     {line.note && <span className="text-[12px] text-ink/45">{line.note}</span>}
                   </span>
                 </label>
+                <button type="button" onClick={() => removeLine(n)} aria-label={`Remove "${line.text}"`} title="Not needed any more, or it won't be done: take it off your list" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-ink/35 transition-colors hover:bg-ink/[0.06] hover:text-fg sm:h-8 sm:w-8">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M6 6l12 12M18 6 6 18" />
+                  </svg>
+                </button>
               </li>
             ))}
           </ul>
@@ -634,6 +686,9 @@ function AskGroupCard({ it, group, onDone }: { it: NextItem; group: AskGroup; on
                 <path d="M5 12.5 10 17 19 7.5" />
               </svg>
               Mark all done
+            </button>
+            <button type="button" onClick={onRemove} title="None of it is needed any more: take the whole card off your list" className={`${btn} text-ink/45 hover:bg-ink/[0.06] hover:text-fg`}>
+              Remove all
             </button>
             {group.transcriptCallId && <TranscriptButton callId={group.transcriptCallId} label="Call transcript" className="min-h-11 justify-self-start rounded-full text-[12.5px] text-ink/60 transition-colors hover:text-fg sm:min-h-8" />}
             {it.href && (

@@ -77,3 +77,43 @@ export async function markAsksDone(ids: string[]): Promise<{ ok: true } | { ok: 
   revalidatePath("/pipeline");
   return { ok: true };
 }
+
+/**
+ * Reminders or tasks no longer needed: removed from the person's list (their own session: only their own). They're set
+ * aside (dismissed), not done, so nobody hears it was handled; the agents and the recap stop counting them.
+ */
+export async function removeAsks(ids: string[]): Promise<{ ok: true } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const db = await createClient();
+  const list = ids.map(String).slice(0, 60);
+  if (!list.length) return { ok: true };
+  const { error } = await db.from("agent_asks").update({ status: "dismissed", done_at: new Date().toISOString() }).in("id", list).eq("owner_id", me.id).eq("status", "open");
+  if (error) return { ok: false, error: "Couldn't remove it. Try again." };
+  await db.from("notifications").update({ read_at: new Date().toISOString() }).eq("profile_id", me.id).in("key", list.map((i) => `agent-ask:${i}`)).is("read_at", null);
+  revalidatePath("/pipeline");
+  return { ok: true };
+}
+
+/**
+ * One line of a follow-ups card removed: a plain reminder or task goes as a whole; a checklist item comes off its list
+ * (the last one off removes the reminder, and if everything left is ticked, it's done).
+ */
+export async function removeAskGroupItem(id: string, text: string | null): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (text === null) return removeAsks([id]);
+  const me = await requireStaff();
+  const db = await createClient();
+  const { data, error } = await db.from("agent_asks").select("checklist").eq("id", id).eq("owner_id", me.id).maybeSingle();
+  if (error || !data) return { ok: false, error: "That reminder isn't there any more." };
+  const { cleanItems, removeItem } = await import("@/lib/agent-call/ask-rules");
+  const items = removeItem(cleanItems(data.checklist), text);
+  if (!items.length) return removeAsks([id]);
+  const allDone = items.every((i) => i.done);
+  const { error: e } = await db
+    .from("agent_asks")
+    .update({ checklist: items, ...(allDone ? { status: "done", done_at: new Date().toISOString() } : {}) })
+    .eq("id", id)
+    .eq("owner_id", me.id);
+  if (e) return { ok: false, error: "Couldn't remove it. Try again." };
+  revalidatePath("/pipeline");
+  return { ok: true };
+}
