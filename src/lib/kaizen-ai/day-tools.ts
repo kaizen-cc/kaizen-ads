@@ -7,7 +7,7 @@ import type { ChatTool, ToolCtx } from "./tools";
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge"] as const;
+export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge", "my_team_work"] as const;
 
 export function dayTools(ctx: ToolCtx): ChatTool[] {
   return [
@@ -151,6 +151,19 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
           text = String(data?.draft ?? "");
         }
         return sendNudge(ctx.admin, ctx.me.id, id, text);
+      },
+    },
+    {
+      name: "my_team_work",
+      description: "For the lead video editor (their video editors), the lead graphic designer (their designers) and the Head of Creative (both): each teammate's plate, their Asana tasks and board tickets with stage and due date, what's overdue, and briefs they started and haven't sent. Optionally one person by name. open_screen 'my team' shows it; each person's open address opens their plate.",
+      input_schema: { type: "object", properties: { person: { type: "string", description: "One teammate's name" } }, additionalProperties: false },
+      status: () => "Looking at your team's work…",
+      run: async (input) => {
+        const { hasMyTeam, loadMyTeam } = await import("@/lib/my-team");
+        if (!hasMyTeam(ctx.me.role)) return { ok: false, note: "My team is for the lead video editor, the lead graphic designer and the Head of Creative." };
+        const who = clip(input.person, 80).toLowerCase();
+        const team = (await loadMyTeam(ctx.admin, ctx.me.role, ctx.me.id)).filter((m) => !who || m.name.toLowerCase().includes(who));
+        return { team: team.map((m) => ({ name: m.name, role: m.role, openTasks: m.tasks.length, overdue: m.overdue, onThemNow: m.onThem, tasks: m.tasks.slice(0, 15).map((t) => ({ client: t.client, title: t.title, stage: t.stageLabel, due: t.due, onThem: t.onThem })), briefsInProgress: m.briefs.map((b) => `${b.client ? `${b.client}: ` : ""}${b.title}`), open: `/pipeline?tab=team&person=${m.id}` })) };
       },
     },
     {

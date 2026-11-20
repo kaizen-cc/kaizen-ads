@@ -37,7 +37,7 @@ export const TIPS: readonly Tip[] = [
   { key: "calendar", tools: ["my_calendar"], text: "you can ask me what's on your calendar today or this week?" },
   { key: "schedule", tools: ["find_meeting_time", "book_meeting", "reschedule_meeting", "cancel_meeting"], text: "you can schedule calls with teammates through me? I'll check when you're both free, find the best time and send the invite." },
   { key: "specialists", tools: ["call_in_specialist", "hand_off", "start_job", "check_job", "update_job", "finish_job", "dismiss_specialist"], text: "I can bring a specialist onto our call, like the Media Buyer or the Email Strategist, to work on something with us?" },
-  { key: "team", tools: ["team_kpis", "team_nudges", "send_team_nudge"], text: "you can ask me how your team's doing on their KPIs, and who has something stuck, with a nudge drafted for each?" },
+  { key: "team", tools: ["team_kpis", "team_nudges", "send_team_nudge", "my_team_work"], text: "you can ask me how your team's doing on their KPIs, and who has something stuck, with a nudge drafted for each?" },
   { key: "role_views", tools: ["what_role_sees"], text: "you can ask me what any role or teammate sees in Kaizen OS?" },
   { key: "handoffs", tools: ["find_person_accounts", "plan_account_transfer"], text: "when someone's accounts need to move, you can just ask me? I'll plan every seat and write a handoff for the new person." },
   { key: "review", tools: ["account_review", "review_item", "assign_review_todo"], text: "I can run the weekly account review with you step by step, and capture each decision as a to-do?" },

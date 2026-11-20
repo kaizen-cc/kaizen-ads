@@ -6,16 +6,16 @@ import { daysBetween, whenLabel } from "@/lib/maker-day-core";
  * Asana creative tasks and any Kaizen board tickets, overdue first then due soonest. One tap opens the task in Asana
  * (or the ticket on the board). Pieces with someone else right now (review, copy, the client) show quieter.
  */
-export function MakerTasks({ tasks }: { tasks: MakerTask[] }) {
+export function MakerTasks({ tasks, title = "Your tasks", empty = "Nothing assigned to you right now. New work shows here the moment it's on you." }: { tasks: MakerTask[]; title?: string; empty?: string }) {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   const onYou = tasks.filter((t) => t.onThem).length;
   return (
     <section className="grid gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-heading text-xl">
-          Your tasks <span className="tabular text-[15px] text-faint">{tasks.length}</span>
+          {title} <span className="tabular text-[15px] text-faint">{tasks.length}</span>
         </h2>
-        <span className="text-xs text-faint">{onYou ? `${onYou} waiting on you · overdue first` : "Overdue first, then due soonest"}</span>
+        <span className="text-xs text-faint">{onYou ? `${onYou} waiting on ${title === "Your tasks" ? "you" : "them"} · overdue first` : "Overdue first, then due soonest"}</span>
       </div>
       {tasks.length ? (
         <ul className="grid gap-px overflow-hidden rounded-[20px] border border-line bg-line">
@@ -53,7 +53,7 @@ export function MakerTasks({ tasks }: { tasks: MakerTask[] }) {
           })}
         </ul>
       ) : (
-        <p className="rounded-[16px] border border-dashed border-line px-4 py-5 text-sm text-muted">Nothing assigned to you right now. New work shows here the moment it&apos;s on you.</p>
+        <p className="rounded-[16px] border border-dashed border-line px-4 py-5 text-sm text-muted">{empty}</p>
       )}
     </section>
   );

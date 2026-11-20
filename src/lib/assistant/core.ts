@@ -122,6 +122,8 @@ export const SCREEN_PLACES: Record<string, string> = {
   "sent by you": "/pipeline?tab=work#sent",
   // The escalation ladder's nudges for a lead (teammates 48 hours behind, a message drafted for each)
   "team nudges": "/pipeline",
+  // The creative leads' "My team": every editor's or designer's plate
+  "my team": "/pipeline?tab=team",
   // Emails drafted for the person to send to clients, on their Overview
   "emails ready to send": "/pipeline#emails-ready",
   // The executives' weekly account review, each step its own address

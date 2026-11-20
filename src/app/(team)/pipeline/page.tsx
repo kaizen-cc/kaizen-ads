@@ -41,6 +41,16 @@ import { ReadyCallout } from "./views/ready-callout";
 import { NudgeCallout } from "@/components/nudge-callout";
 import { LeadCreativePanel } from "./views/lead-creative-panel";
 import { isCreativeLead } from "@/lib/lead-creative-core";
+import { hasMyTeam } from "@/lib/my-team";
+
+/** "My team" (the lead video editor, the lead graphic designer, the Head of Creative): every teammate's plate */
+async function myTeamTab(me: Staff) {
+  if (!hasMyTeam(me.role)) return null;
+  const [{ loadMyTeam }, { createAdminClient }, { MyTeam }] = await Promise.all([import("@/lib/my-team"), import("@/lib/supabase/admin"), import("./views/my-team")]);
+  const team = await loadMyTeam(createAdminClient(), me.role, me.id).catch(() => []);
+  const overdue = team.reduce((n, m) => n + m.overdue, 0);
+  return { tab: { id: "team", label: "My team", ...(overdue ? { count: overdue, tone: "bad" as const } : {}) }, panel: <MyTeam team={team} /> };
+}
 
 const department = (me: Staff) => (me.role === "head_of_creative" ? "Creative" : me.role === "head_of_google" ? "Google" : "Meta");
 
@@ -178,14 +188,14 @@ export default async function Home() {
     const [next, { data: mine }, { data: hiddenRows }] = await Promise.all([loadNextForMe(db, me), assignedQuery(), hiddenQuery()]);
     const ids = [...new Set((mine ?? []).map((m) => m.client_id as string))];
     // What works across businesses like the ones they work on: the same patterns the audits and refresh briefs build on
-    const [patterns, deploys, desk] = await Promise.all([ids.length ? import("@/lib/patterns").then(({ loadPatterns }) => loadPatterns(db, ids)).catch(() => null) : Promise.resolve(null), googleDeploys(db, me, ids), memberDesk(db, me)]);
+    const [patterns, deploys, desk, myTeam] = await Promise.all([ids.length ? import("@/lib/patterns").then(({ loadPatterns }) => loadPatterns(db, ids)).catch(() => null) : Promise.resolve(null), googleDeploys(db, me, ids), memberDesk(db, me), myTeamTab(me)]);
     const n = next.now.length + next.decide.length;
     return (
       <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
         <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${n ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : "nothing needs you right now"}`} />
         {/* Tabs (?tab=): their day, their line's clients, audits and setup (buyers and the creative team), and everything on them */}
         <OverviewTabs
-          tabs={[{ id: "today", label: "Today", ...(desk?.mergeWork ? { count: n, tone: "brand" as const } : {}) }, ...(desk?.tabs ?? []), ...(desk?.mergeWork ? [] : [{ id: "work", label: "My work", count: n, tone: "brand" as const }])]}
+          tabs={[{ id: "today", label: "Today", ...(desk?.mergeWork ? { count: n, tone: "brand" as const } : {}) }, ...(desk?.tabs ?? []), ...(myTeam ? [myTeam.tab] : []), ...(desk?.mergeWork ? [] : [{ id: "work", label: "My work", count: n, tone: "brand" as const }])]}
           panels={{
             today: (
               <>
@@ -211,6 +221,7 @@ export default async function Home() {
               </>
             ),
             ...(desk?.panels ?? {}),
+            ...(myTeam ? { team: myTeam.panel } : {}),
             ...(desk?.mergeWork ? {} : { work: <NextSection data={next} me={me.id} deploys={deploys} patterns={patterns} /> }),
           }}
         />
@@ -354,10 +365,13 @@ export default async function Home() {
   const team = h.teamOf(creative ? ["graphic_designer", "video_editor"] : google ? ["google_buyer"] : ["media_buyer"]);
   // Their line's Clients, Ideas, Audits and Setup tabs: the heads of Meta and Google their ad accounts, the Head of
   // Creative their clients' allotments
-  const desk = await (google || dept === "Meta" ? adsDesk(db, me, google ? "google" : "meta", suggestionsShown) : creativeDesk(db, me, h.allClients, h.monthElapsed, suggestionsShown)).catch((e) => {
+  const deskBase = await (google || dept === "Meta" ? adsDesk(db, me, google ? "google" : "meta", suggestionsShown) : creativeDesk(db, me, h.allClients, h.monthElapsed, suggestionsShown)).catch((e) => {
     console.error("[overview] desk:", e instanceof Error ? e.message : e);
     return null;
   });
+  // The Head of Creative's "My team": every designer's and editor's plate
+  const leadTeam = await myTeamTab(me);
+  const desk = deskBase && leadTeam ? { ...deskBase, tabs: [...deskBase.tabs, leadTeam.tab], panels: { ...deskBase.panels, team: leadTeam.panel } } : deskBase;
   return (
     <LeaderView
       {...base}
