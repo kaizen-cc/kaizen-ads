@@ -5,7 +5,7 @@ import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { SLOTS, canHold, type SlotRole } from "@/lib/roles";
 import { mayAssignSeat } from "@/lib/seat-permissions";
 import { servicesOf } from "@/lib/services";
-import { isBuyerRole, setPrimarySeat } from "@/lib/buyer-seats";
+import { allowsSecondary, setPrimarySeat } from "@/lib/buyer-seats";
 import { after } from "next/server";
 import { handOff, writeHandoff } from "@/lib/handoff";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -53,11 +53,18 @@ export async function setAssignment(clientId: string, slot: SlotRole, profileId:
   return { ok: true };
 }
 
-/** Execs and leaders: add a secondary buyer to a client's Meta or Google buyer seat (the first one in is the primary) */
+/** Whether this person may add or remove a seat's second person: execs and leaders, or the line's head on a client buying that line */
+async function maySecond(me: Awaited<ReturnType<typeof requireStaff>>, clientId: string, slot: string) {
+  if (isExecOrLead(me)) return true;
+  const { data: c } = await (await createClient()).from("clients").select("services, services_extra, services_removed").eq("id", clientId).maybeSingle();
+  return Boolean(c) && mayAssignSeat(me, slot, servicesOf(c!) as string[]);
+}
+
+/** Execs, leaders and the line's head: add a second person to a shared seat (a buyer seat, or the social media manager); the first one in is the primary */
 export async function addSecondaryBuyer(clientId: string, slot: SlotRole, profileId: string): Promise<ActionResult> {
   const me = await requireStaff();
-  if (!isExecOrLead(me)) return { ok: false, error: "Only executives and leaders can assign people." };
-  if (!isBuyerRole(slot)) return { ok: false, error: "Only the buyer seats take a secondary." };
+  if (!allowsSecondary(slot)) return { ok: false, error: "Only the buyer and social media manager seats take a second person." };
+  if (!(await maySecond(me, clientId, slot))) return { ok: false, error: "Only executives, leaders and the line's head can assign people." };
   const supabase = await createClient();
   const { data: seat } = await supabase.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", slot);
   if ((seat ?? []).some((s) => s.profile_id === profileId)) return { ok: true };
@@ -74,8 +81,8 @@ export async function addSecondaryBuyer(clientId: string, slot: SlotRole, profil
 /** Execs and leaders: take a secondary buyer off a client (the primary changes with the seat's own picker) */
 export async function removeSecondaryBuyer(clientId: string, slot: SlotRole, profileId: string): Promise<ActionResult> {
   const me = await requireStaff();
-  if (!isExecOrLead(me)) return { ok: false, error: "Only executives and leaders can assign people." };
-  if (!isBuyerRole(slot)) return { ok: false, error: "Only the buyer seats take a secondary." };
+  if (!allowsSecondary(slot)) return { ok: false, error: "Only the buyer and social media manager seats take a second person." };
+  if (!(await maySecond(me, clientId, slot))) return { ok: false, error: "Only executives, leaders and the line's head can assign people." };
   const supabase = await createClient();
   const { error } = await supabase.from("client_assignments").delete().eq("client_id", clientId).eq("role", slot).eq("profile_id", profileId).eq("is_primary", false);
   if (error) return { ok: false, error: error.message };

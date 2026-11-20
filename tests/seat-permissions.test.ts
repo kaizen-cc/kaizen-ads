@@ -34,3 +34,17 @@ describe("who may assign a seat", () => {
     expect(mayAssignAnySeat({ role: "head_of_email" })).toBe(true);
   });
 });
+
+
+import { allowsSecondary } from "@/lib/buyer-seats";
+
+describe("seats that take a second person (Nov 20 2026)", () => {
+  it("the buyer seats and the social media manager seat; the others hold one person", () => {
+    for (const slot of ["meta_buyer", "google_buyer", "tiktok_buyer", "social_manager"]) expect(allowsSecondary(slot)).toBe(true);
+    for (const slot of ["email_strategist", "graphic_designer", "video_editor", "social_creative"]) expect(allowsSecondary(slot)).toBe(false);
+  });
+  it("the Head of Organic Social manages the social media manager seat on a client buying social", () => {
+    expect(mayAssignSeat({ role: "head_of_social", isExec: false, isLead: false }, "social_manager", ["social-media"])).toBe(true);
+    expect(mayAssignSeat({ role: "head_of_social", isExec: false, isLead: false }, "social_manager", ["facebook-ads"])).toBe(false);
+  });
+});

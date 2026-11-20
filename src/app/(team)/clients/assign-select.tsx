@@ -158,7 +158,7 @@ export function SecondaryBuyers({
           }}
           className="h-11 w-full truncate rounded-[8px] border border-line bg-transparent px-3 text-sm text-fg outline-none focus:border-brand-text md:h-10"
         >
-          <option value="">{free.length ? "Pick a buyer…" : "Nobody else can hold this seat"}</option>
+          <option value="">{free.length ? "Pick someone…" : "Nobody else can hold this seat"}</option>
           {free.map((o) => (
             <option key={o.id} value={o.id}>
               {o.name}
@@ -172,7 +172,7 @@ export function SecondaryBuyers({
           onClick={() => setAdding(true)}
           className="flex min-h-11 items-center justify-self-start rounded-[8px] px-3 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-fg disabled:opacity-50 md:min-h-9"
         >
-          + Add a secondary buyer
+          + Add a second {label.toLowerCase()}
         </button>
       ))}
       {error && <p className="px-3 text-xs text-brand-text">{error}</p>}

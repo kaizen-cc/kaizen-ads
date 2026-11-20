@@ -13,6 +13,14 @@ export const buyerRole = (platform: string): BuyerRole => (platform === "google"
 export const platformOf = (role: string): AdPlatform => (role === "google_buyer" ? "google" : role === "tiktok_buyer" ? "tiktok" : "meta");
 export const isBuyerRole = (role: string | null | undefined): role is BuyerRole => role === "meta_buyer" || role === "google_buyer" || role === "tiktok_buyer";
 
+/**
+ * The seats that take more than one person (a primary and secondaries): the buyer seats, and the social media manager
+ * seat (owner, Nov 20 2026: two organic social strategists on a client, like two Meta buyers). Everyone on the seat sees
+ * the client and hears its updates; the primary is the one a task picks when it needs a single owner.
+ */
+export const SHARED_SEATS: readonly string[] = ["meta_buyer", "google_buyer", "tiktok_buyer", "social_manager"];
+export const allowsSecondary = (slot: string | null | undefined) => SHARED_SEATS.includes(String(slot));
+
 /** The seats to read for a platform: TikTok's and the Meta seat it falls back to */
 export const seatRolesToRead = (platform: string): BuyerRole[] => (platform === "tiktok" ? ["tiktok_buyer", "meta_buyer"] : [buyerRole(platform)]);
 

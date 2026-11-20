@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { allowsSecondary } from "@/lib/buyer-seats";
 import type { CreativeDb } from "@/lib/creative-db";
 import { ActionButton, ActionForm } from "@/components/action-form";
 import { Section, field, label } from "@/components/ui";
@@ -762,7 +763,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   <dd className="min-w-0">
                     {(() => {
                       const seat = team[slot.value];
-                      const buyerSeat = slot.value === "meta_buyer" || slot.value === "google_buyer" || slot.value === "tiktok_buyer";
+                      // Seats that take a second person: the buyer seats and the social media manager
+                      const buyerSeat = allowsSecondary(slot.value);
                       const more = seat?.secondaries ?? [];
                       return (
                         <>
@@ -781,7 +783,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                               primary={seat?.current ?? null}
                               secondaries={more}
                               options={seat?.options ?? []}
-                              canEdit={can.assign && !demo}
+                              canEdit={(can.assign || Boolean(can.seats?.includes(slot.value))) && !demo}
                             />
                           )}
                         </>
