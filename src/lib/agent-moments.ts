@@ -186,6 +186,10 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Writes the client-facing version of an audit for the PDF", where: "Audit · Client PDF", trigger: "click", when: "The first time someone opens the client PDF", labels: ["audit client report"] },
     { title: "Adds a move to a sprint from an audit or the buyer's note", where: "KPIs \u00b7 sprint page", trigger: "click", when: "When someone adds a move", labels: ["sprint add move"] },
   ],
+  // Its runs are logged under the Coach's "agent call" (see below); this is the model and effort they run on
+  assistant_talk: [
+    { title: "Sets the model and effort for every answer your assistant gives, and every agent's answer on a call or in the assistant's chat", where: "Side menu · Call my assistant · Any agent's Call", trigger: "click", when: "With every turn of a call or the assistant's chat", labels: [] },
+  ],
   coach: [
     { title: "Judges a proposed change to an agent: replays recent real calls with and without it and says better, same or worse", where: "Settings · AI agents · Test this change", trigger: "click", when: "When someone tests a change; weekly drift check", labels: ["agent eval"] },
     { title: "Edits another agent's playbook from your feedback", where: "Settings · AI agents · Coach", trigger: "click", when: "When someone coaches an agent", labels: ["coach"] },

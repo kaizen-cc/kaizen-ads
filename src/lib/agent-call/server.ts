@@ -2,7 +2,7 @@ import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
-import { AiUnavailable, MODEL_IDS, aiBusy, aiEnabled, anthropicClient, askJson, cachedBlock, usageFor } from "@/lib/ai";
+import { AiUnavailable, MODEL_IDS, aiBusy, getAgent, type Effort, type ModelKey, aiEnabled, anthropicClient, askJson, cachedBlock, usageFor } from "@/lib/ai";
 import type { Staff } from "@/lib/auth";
 import { loadRolePlaybook, type RolePlaybook } from "@/lib/role-playbook";
 import { TOOLS_RULE, agentTools } from "./agent-tools";
@@ -336,7 +336,7 @@ export async function runCallTurn(input: TurnInput) {
 }
 
 /** What one spoken answer came to: the words (without the end marker), whether it hung up, and its cost */
-export type Answer = { reply: string; ended: boolean; error: string | null; used: { input_tokens: number; output_tokens: number; cache_write_tokens: number; cache_read_tokens: number }; model: "sonnet"; effort: "low"; started: number };
+export type Answer = { reply: string; ended: boolean; error: string | null; used: { input_tokens: number; output_tokens: number; cache_write_tokens: number; cache_read_tokens: number }; model: ModelKey; effort: Effort; started: number };
 
 /** The person's connected services for one answer (see call-connectors.ts) */
 type Conn = Pick<CallConnectors, "servers" | "toolsets" | "betas" | "system" | "drop" | "nameOf">;
@@ -395,8 +395,8 @@ export async function streamAnswer(input: {
   const conn = input.connectors ?? null;
   const defs = tools.map(({ name, description, input_schema }) => ({ name, description, input_schema: input_schema as Anthropic.Tool.InputSchema }));
   if (defs.length) (defs[defs.length - 1] as Anthropic.Tool).cache_control = { type: "ephemeral" };
-  const model = "sonnet" as const;
-  const effort = "low" as const;
+  // The model and effort an exec sets in Settings > AI agents > Assistant (Sonnet at medium until then), read each answer
+  const { model, effort } = await getAgent("assistant_talk").catch(() => ({ model: "sonnet" as const, effort: "medium" as const }));
   const started = Date.now();
   let reply = "";
   let error: string | null = null;

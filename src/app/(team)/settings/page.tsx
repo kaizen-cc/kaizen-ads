@@ -282,7 +282,7 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
             // Executives see the service lines first and open one (?line=email); a head lands directly in their own line
             const line = me.isExec ? parseLine(askedLine) : null;
             const inLine = line ? roles.filter((r) => lineOfRole(r.key) === line) : roles;
-            if (me.isExec && !(line && inLine.length)) return <LinesOverview roles={roles} agents={list.filter((a) => a.roleKey)} total7={[...cost7.values()].reduce((t, c) => t + c, 0)} />;
+            if (me.isExec && !(line && inLine.length)) return <LinesOverview roles={roles} agents={list.filter((a) => a.roleKey)} total7={[...cost7.values()].reduce((t, c) => t + c, 0)} assistant={list.find((a) => a.key === "assistant_talk") ?? null} />;
             const overview = <RolesOverview roles={inLine} agents={list.filter((a) => a.roleKey && inLine.some((r) => r.key === a.roleKey))} items={items} isExec={me.isExec} line={line} />;
             if (me.isExec) return overview;
             return (
