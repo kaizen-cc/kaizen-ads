@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mimeMessage, rawEmail } from "@/lib/assistant/messages";
-import { composeScopeMessage, draftError, gmailDraftLink, serviceAccountClientId, slackDmPlace, slackMessageLink, slackSelfNote } from "@/lib/assistant/platform-drafts-core";
+import { composeScopeMessage, draftError, gmailDraftLink, serviceAccountClientId, slackDmPlace, slackMessageLink, slackNewPlace, slackSelfNote, slackSelfText } from "@/lib/assistant/platform-drafts-core";
 
 const decode = (raw: string) => Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 
@@ -109,5 +109,24 @@ describe("a new Slack DM to a teammate", () => {
   it("saved to their self-DM, it says who it's for, with no thread link", () => {
     const place = slackDmPlace("U0123ABCD", "Jesus")!;
     expect(slackSelfNote({ where: place.where, link: slackMessageLink(place.channel, place.thread), text: "Hey Jesus, how's your day going?" })).toBe("Draft for a DM to Jesus. Copy it, edit it and send it there:\n\nHey Jesus, how's your day going?");
+  });
+});
+
+describe("a new Slack message that's neither a reply nor a DM", () => {
+  it("is tied to no channel and no thread", () => {
+    expect(slackNewPlace("the OO channel")).toEqual({ channel: "", thread: null, where: "the OO channel" });
+    expect(slackNewPlace("me")).toEqual({ channel: "", thread: null, where: "your Slack" });
+    expect(slackNewPlace(" my self-DM ")).toEqual({ channel: "", thread: null, where: "your Slack" });
+  });
+
+  it("lands in their self-DM as the text alone, with no label or thread link", () => {
+    const text = "Heads up: the US team is out next week.";
+    expect(slackSelfText(slackNewPlace("the OO channel"), text)).toBe(text);
+    expect(slackSelfText(slackNewPlace("me"), text)).toBe(text);
+  });
+
+  it("a reply still says where it goes and links the thread; a DM says who", () => {
+    expect(slackSelfText({ channel: "C0123ABCD", thread: "1700000000.000100", where: "#legal" }, "On it.")).toBe("Draft for #legal (<https://slack.com/archives/C0123ABCD/p1700000000000100|open the thread>). Copy it, edit it and send it there:\n\nOn it.");
+    expect(slackSelfText(slackDmPlace("U0123ABCD", "Jesus")!, "Hey")).toBe("Draft for a DM to Jesus. Copy it, edit it and send it there:\n\nHey");
   });
 });
