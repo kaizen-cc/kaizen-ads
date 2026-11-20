@@ -80,11 +80,11 @@ function useSave() {
 
 // ─── The menu ────────────────────────────────────────────────────────────────
 
-type MenuItem = { value: string; label: string; detail?: string; price?: string; more?: boolean };
-type MenuGroup = { title: string; items: MenuItem[] };
+export type MenuItem = { value: string; label: string; detail?: string; price?: string; more?: boolean };
+export type MenuGroup = { title: string; items: MenuItem[] };
 
 /** The tier menu: the current tier as a quiet button, and a panel of grouped rows (what each holds, its price) */
-function TierMenu({ label, value, groups, onPick, disabled, empty }: { label: string; value: string; groups: MenuGroup[]; onPick: (v: string) => void; disabled?: boolean; empty: string }) {
+export function TierMenu({ label, value, groups, onPick, disabled, empty }: { label: string; value: string; groups: MenuGroup[]; onPick: (v: string) => void; disabled?: boolean; empty: string }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLSpanElement>(null);
   const items = groups.flatMap((g) => g.items);

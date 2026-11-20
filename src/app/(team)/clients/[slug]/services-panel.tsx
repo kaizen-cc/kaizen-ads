@@ -4,7 +4,14 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { SERVICES } from "@/lib/services";
 import { addServiceTier, setClientService, setServiceTier } from "./actions";
-import { CreativeTier, EmailTier, SocialTier, type EmailTierValue, type SocialTierValue } from "./service-tiers";
+import {
+  CreativeTier,
+  EmailTier,
+  SocialTier,
+  TierMenu,
+  type EmailTierValue,
+  type SocialTierValue,
+} from "./service-tiers";
 
 // What the client buys, at a glance: every service Kaizen sells, lit when they have it, with its tier. Kaizen Track's
 // services come in on their own (and end there); execs and leads add the rest here and pick each one's tier, adding a
@@ -13,7 +20,12 @@ import { CreativeTier, EmailTier, SocialTier, type EmailTierValue, type SocialTi
 // Custom numbers), Social's (Basic, Silver, Gold, Platinum, Custom or a Sprint, with the platforms it posts on), and
 // "Strategy only" for creative, email and social, in each one's own menu (no allotment, alerts or requests).
 
-export type Tier = { id: string; service: string; label: string; includes: string | null };
+export type Tier = {
+  id: string;
+  service: string;
+  label: string;
+  includes: string | null;
+};
 
 const ICON: Record<string, string> = {
   "facebook-ads": "M14 8h3V4h-3a4 4 0 0 0-4 4v2H8v4h2v6h4v-6h3l1-4h-4V8z",
@@ -22,13 +34,31 @@ const ICON: Record<string, string> = {
   creative: "M4 16l4-4 3 3 5-6 4 5 M4 5h16v14H4z",
   "email-marketing": "M4 6h16v12H4z M4 7l8 6 8-6",
   "web-design": "M4 5h16v14H4z M4 9h16 M7 7h.01 M9.5 7h.01",
-  "social-media": "M7 12a2 2 0 1 0 0 .01 M17 7a2 2 0 1 0 0 .01 M17 17a2 2 0 1 0 0 .01 M8.8 11l6.4-3 M8.8 13l6.4 3",
+  "social-media":
+    "M7 12a2 2 0 1 0 0 .01 M17 7a2 2 0 1 0 0 .01 M17 17a2 2 0 1 0 0 .01 M8.8 11l6.4-3 M8.8 13l6.4 3",
   crm: "M8 9a3 3 0 1 0 0 .01 M3 19c0-3 2.5-5 5-5s5 2 5 5 M16 8h5 M16 12h5 M18 16h3",
 };
 
-export function ServiceIcon({ slug, className = "" }: { slug: string; className?: string }) {
+export function ServiceIcon({
+  slug,
+  className = "",
+}: {
+  slug: string;
+  className?: string;
+}) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
       <path d={ICON[slug] ?? "M12 12h.01"} />
     </svg>
   );
@@ -57,7 +87,12 @@ export function ServicesPanel({
   removed?: string[];
   tiers: Tier[];
   chosen: Record<string, string>; // service → tier id
-  creative: { label: string | null; active: boolean; until: string | null; key?: string | null };
+  creative: {
+    label: string | null;
+    active: boolean;
+    until: string | null;
+    key?: string | null;
+  };
   canEdit: boolean;
   /** The creative packages an exec can put the client on */
   packages?: { key: string; label: string; images: number; videos: number }[];
@@ -70,7 +105,9 @@ export function ServicesPanel({
   social?: SocialTierValue | null;
 }) {
   const router = useRouter();
-  const [mine, setMine] = useState(() => new Set([...track, ...extra].filter((s) => !removed.includes(s))));
+  const [mine, setMine] = useState(
+    () => new Set([...track, ...extra].filter((s) => !removed.includes(s))),
+  );
   const [tiers, setTiers] = useState(allTiers);
   const [picked, setPicked] = useState(chosen);
   const [error, setError] = useState<string | null>(null);
@@ -119,48 +156,95 @@ export function ServicesPanel({
   return (
     <div className="grid gap-4">
       {on.length === 0 ? (
-        <p className="rounded-[12px] border border-dashed border-line px-4 py-5 text-center text-sm text-faint">No services on file. Kaizen Track doesn&apos;t have this client{canEdit ? "; add what they buy below." : "."}</p>
+        <p className="rounded-[12px] border border-dashed border-line px-4 py-5 text-center text-sm text-faint">
+          No services on file. Kaizen Track doesn&apos;t have this client
+          {canEdit ? "; add what they buy below." : "."}
+        </p>
       ) : (
         <ul className="grid gap-2">
           {on.map((s) => {
             const fromTrack = track.includes(s.slug);
             return (
-              <li key={s.slug} className="flex flex-wrap items-center gap-3 rounded-[14px] border border-line bg-gradient-to-r from-ink/[0.035] to-transparent px-3.5 py-3">
+              <li
+                key={s.slug}
+                className="flex flex-wrap items-center gap-3 rounded-[14px] border border-line bg-gradient-to-r from-ink/[0.035] to-transparent px-3.5 py-3"
+              >
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-brand/15 text-brand-text">
                   <ServiceIcon slug={s.slug} />
                 </span>
                 <span className="grid min-w-0 flex-1 gap-0.5">
                   <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
                     {s.label}
-                    <span className={`rounded-full px-1.5 py-px text-[10px] font-normal ${fromTrack ? "bg-surface-2 text-faint" : "bg-warn-soft text-warn"}`}>{fromTrack ? "Track" : "Added here"}</span>
+                    <span
+                      className={`rounded-full px-1.5 py-px text-[10px] font-normal ${fromTrack ? "bg-surface-2 text-faint" : "bg-warn-soft text-warn"}`}
+                    >
+                      {fromTrack ? "Track" : "Added here"}
+                    </span>
                   </span>
                   {s.slug === "creative" ? (
-                    <CreativeTier clientId={clientId} slug={slug} creative={creative} packages={packages} strategy={strategyOnly.includes("creative")} canEdit={canSetPackage} />
+                    <CreativeTier
+                      clientId={clientId}
+                      slug={slug}
+                      creative={creative}
+                      packages={packages}
+                      strategy={strategyOnly.includes("creative")}
+                      canEdit={canSetPackage}
+                    />
                   ) : s.slug === "email-marketing" ? (
-                    <EmailTier clientId={clientId} slug={slug} value={email ?? { key: null, setupStart: null, custom: null }} strategy={strategyOnly.includes("email-marketing")} canEdit={canEdit} />
+                    <EmailTier
+                      clientId={clientId}
+                      slug={slug}
+                      value={
+                        email ?? { key: null, setupStart: null, custom: null }
+                      }
+                      strategy={strategyOnly.includes("email-marketing")}
+                      canEdit={canEdit}
+                    />
                   ) : s.slug === "social-media" ? (
-                    <SocialTier clientId={clientId} slug={slug} value={social ?? { key: null, custom: null, platforms: null, extraVideos: 0, allotment: null }} strategy={strategyOnly.includes("social-media")} canEdit={canEdit} />
+                    <SocialTier
+                      clientId={clientId}
+                      slug={slug}
+                      value={
+                        social ?? {
+                          key: null,
+                          custom: null,
+                          platforms: null,
+                          extraVideos: 0,
+                          allotment: null,
+                        }
+                      }
+                      strategy={strategyOnly.includes("social-media")}
+                      canEdit={canEdit}
+                    />
                   ) : (
-                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <TierPick
-                        service={s.slug}
-                        tiers={tiers.filter((t) => t.service === s.slug)}
-                        value={picked[s.slug] ?? null}
-                        canEdit={canEdit}
-                        onPick={(id) => pickTier(s.slug, id)}
-                        onAdded={(t) => {
-                          setTiers((all) => [...all, t]);
-                          pickTier(s.slug, t.id);
-                        }}
-                      />
-                    </span>
+                    tiers.some((t) => t.service === s.slug) && (
+                      <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <TierPick
+                          service={s.slug}
+                          tiers={tiers.filter((t) => t.service === s.slug)}
+                          value={picked[s.slug] ?? null}
+                          canEdit={canEdit}
+                          onPick={(id) => pickTier(s.slug, id)}
+                          onAdded={(t) => {
+                            setTiers((all) => [...all, t]);
+                            pickTier(s.slug, t.id);
+                          }}
+                        />
+                      </span>
+                    )
                   )}
                 </span>
                 {canEdit && (
                   <button
                     type="button"
                     onClick={() => {
-                      if (fromTrack && !confirm(`Take ${s.label} off this client in Kaizen OS? Kaizen Track still lists it; this keeps it off here.`)) return;
+                      if (
+                        fromTrack &&
+                        !confirm(
+                          `Take ${s.label} off this client in Kaizen OS? Kaizen Track still lists it; this keeps it off here.`,
+                        )
+                      )
+                        return;
                       toggle(s.slug, false);
                     }}
                     disabled={pending}
@@ -177,7 +261,9 @@ export function ServicesPanel({
 
       {canEdit && off.length > 0 && (
         <div className="grid gap-2">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-faint">Not on</p>
+          <p className="text-[11px] uppercase tracking-[0.14em] text-faint">
+            Not on
+          </p>
           <div className="flex flex-wrap gap-1.5">
             {off.map((s) => (
               <button
@@ -195,14 +281,32 @@ export function ServicesPanel({
           </div>
         </div>
       )}
-      {!canEdit && off.length > 0 && on.length > 0 && <p className="text-xs text-faint">Not on: {off.map((s) => s.short).join(", ")}</p>}
+      {!canEdit && off.length > 0 && on.length > 0 && (
+        <p className="text-xs text-faint">
+          Not on: {off.map((s) => s.short).join(", ")}
+        </p>
+      )}
       {error && <p className="text-xs text-bad">{error}</p>}
     </div>
   );
 }
 
 /** A service's tier: pick one, or (execs and leads) add a new one as it's sold. */
-function TierPick({ service, tiers, value, canEdit, onPick, onAdded }: { service: string; tiers: Tier[]; value: string | null; canEdit: boolean; onPick: (id: string | null) => void; onAdded: (t: Tier) => void }) {
+function TierPick({
+  service,
+  tiers,
+  value,
+  canEdit,
+  onPick,
+  onAdded,
+}: {
+  service: string;
+  tiers: Tier[];
+  value: string | null;
+  canEdit: boolean;
+  onPick: (id: string | null) => void;
+  onAdded: (t: Tier) => void;
+}) {
   const [adding, setAdding] = useState(false);
   const [label, setLabel] = useState("");
   const [includes, setIncludes] = useState("");
@@ -210,14 +314,32 @@ function TierPick({ service, tiers, value, canEdit, onPick, onAdded }: { service
   const [pending, start] = useTransition();
   const current = tiers.find((t) => t.id === value);
 
-  if (!canEdit) return <span className="text-xs text-muted">{current ? `${current.label}${current.includes ? ` · ${current.includes}` : ""}` : "No tier set"}</span>;
+  if (!canEdit)
+    return (
+      <span className="text-xs text-muted">
+        {current
+          ? `${current.label}${current.includes ? ` · ${current.includes}` : ""}`
+          : "No tier set"}
+      </span>
+    );
 
   if (adding)
     return (
       <span className="grid gap-1.5 pt-1">
         <span className="flex flex-wrap gap-1.5">
-          <input autoFocus value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Tier name, e.g. Growth" className="h-11 w-full rounded-[8px] border border-line bg-bg px-2.5 text-xs outline-none focus:border-brand/60 md:h-8 md:w-36" />
-          <input value={includes} onChange={(e) => setIncludes(e.target.value)} placeholder="What it includes" className="h-11 min-w-0 flex-1 rounded-[8px] border border-line bg-bg px-2.5 text-xs outline-none focus:border-brand/60 md:h-8" />
+          <input
+            autoFocus
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Tier name, e.g. Growth"
+            className="h-11 w-full rounded-[8px] border border-line bg-bg px-2.5 text-xs outline-none focus:border-brand/60 md:h-8 md:w-36"
+          />
+          <input
+            value={includes}
+            onChange={(e) => setIncludes(e.target.value)}
+            placeholder="What it includes"
+            className="h-11 min-w-0 flex-1 rounded-[8px] border border-line bg-bg px-2.5 text-xs outline-none focus:border-brand/60 md:h-8"
+          />
         </span>
         <span className="flex items-center gap-2">
           <button
@@ -237,7 +359,11 @@ function TierPick({ service, tiers, value, canEdit, onPick, onAdded }: { service
           >
             {pending ? "Adding…" : "Add tier"}
           </button>
-          <button type="button" onClick={() => setAdding(false)} className="min-h-10 px-1 text-[11px] text-faint hover:text-fg md:min-h-0 md:px-0">
+          <button
+            type="button"
+            onClick={() => setAdding(false)}
+            className="min-h-10 px-1 text-[11px] text-faint hover:text-fg md:min-h-0 md:px-0"
+          >
             Cancel
           </button>
           {error && <span className="text-[11px] text-bad">{error}</span>}
@@ -246,22 +372,28 @@ function TierPick({ service, tiers, value, canEdit, onPick, onAdded }: { service
     );
 
   return (
-    <span className="inline-flex max-w-full items-center">
-      {/* The arrow is the app's own for every select (globals.css) */}
-      <select
-        value={value ?? ""}
-        onChange={(e) => (e.target.value === "__new" ? setAdding(true) : onPick(e.target.value || null))}
-        className="max-w-full cursor-pointer truncate bg-transparent text-xs text-muted outline-none hover:text-fg max-md:min-h-10"
-      >
-        <option value="">{tiers.length ? "Pick a tier" : "No tiers yet"}</option>
-        {tiers.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.label}
-            {t.includes ? ` · ${t.includes}` : ""}
-          </option>
-        ))}
-        <option value="__new">+ New tier…</option>
-      </select>
-    </span>
+    <TierMenu
+      label="Tier"
+      value={value ?? ""}
+      empty="Pick a tier"
+      disabled={pending}
+      groups={[
+        {
+          title: "Tiers",
+          items: tiers.map((t) => ({
+            value: t.id,
+            label: t.label,
+            detail: t.includes ?? undefined,
+          })),
+        },
+        {
+          title: "Add",
+          items: [{ value: "__new", label: "New tier", more: true }],
+        },
+      ]}
+      onPick={(v) =>
+        v === "__new" ? setAdding(true) : onPick(v === value ? null : v)
+      }
+    />
   );
 }

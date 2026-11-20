@@ -65,16 +65,19 @@ export async function boostAlerts(admin: Db) {
   const clients = await socialClients(admin);
   if (!clients.length) return { flagged: 0 };
   const ids = clients.map((c) => c.id as string);
-  const [boosted, { data: links }, { data: seats }] = await Promise.all([
+  const [boosted, { data: links }, { data: seats }, { data: tiers }] = await Promise.all([
     boostedPosts(admin, ids),
     admin.from("social_accounts").select("client_id, page_id, ig_id").in("client_id", ids),
     admin.from("client_assignments").select("client_id, profile_id, role").in("client_id", ids).in("role", ["social_manager", "meta_buyer"]),
+    admin.from("client_service_tiers").select("client_id, service_tiers(label)").in("client_id", ids).eq("service", "facebook-ads"),
   ]);
+  // Meta on Performance (conversions only) isn't boosting anything by design
+  const performanceOnly = new Set(((tiers ?? []) as unknown as { client_id: string; service_tiers: { label: string } | null }[]).filter((t) => t.service_tiers?.label === "Performance").map((t) => t.client_id));
   const linked = new Set((links ?? []).filter((l) => l.page_id || l.ig_id).map((l) => l.client_id as string));
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   let flagged = 0;
   for (const c of clients) {
-    const meta = (servicesOf(c) as string[]).includes("facebook-ads");
+    const meta = (servicesOf(c) as string[]).includes("facebook-ads") && !performanceOnly.has(c.id as string);
     const flag = needsBoostFlag({ social: true, meta, linked: linked.has(c.id as string), strategyOnly: ((c.strategy_only ?? []) as string[]).includes("social-media"), boosted: boosted[c.id as string]?.length ?? 0, dayOfMonth: Number(today.slice(8, 10)) });
     if (!flag) continue;
     const to = [...new Set((seats ?? []).filter((s) => s.client_id === c.id).map((s) => s.profile_id as string))];
