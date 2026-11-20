@@ -2,7 +2,10 @@ import { requireStaff } from "@/lib/auth";
 import type { TeamRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
 import { TeamList, type Person } from "./team-list";
-import { usageOf } from "@/lib/activity";
+import { leastUsedFirst, usageOf } from "@/lib/activity";
+import { importsByPerson } from "@/lib/kaizen-ai/imports-by-person";
+import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
+import { UsageReport, type UsageRow } from "./usage-report";
 import { themeBreakdown } from "@/lib/profile";
 import { ThemeUse } from "./theme-use";
 
@@ -15,7 +18,11 @@ export default async function Team() {
   ]);
 
   // Execs: when each person was last on, and how much they use it (the activity record is theirs to see)
-  const usage = me.isExec ? await usageOf(supabase, profiles ?? []) : null;
+  // and who has imported their Claude chats, projects and docs into Kaizen AI (private to each person, so read with the
+  // server key)
+  const [usage, imports] = me.isExec
+    ? await Promise.all([usageOf(supabase, profiles ?? []), adminConfigured() ? importsByPerson(createAdminClient()) : Promise.resolve(null)])
+    : [null, null];
 
   // Execs: who uses light, dark or the device's setting (the choice is saved on each profile)
   const themes = me.isExec ? themeBreakdown((await supabase.from("profiles").select("theme").eq("is_active", true).not("joined_at", "is", null)).data ?? []) : null;
@@ -39,7 +46,17 @@ export default async function Team() {
     invitedAt: p.invited_at,
     clientCount: clientsPer.get(p.id)?.size ?? 0,
     usage: usage?.get(p.id) ?? null,
+    aiImports: imports ? (imports.get(p.id) ?? { chats: 0, projects: 0, docs: 0 }) : null,
   }));
+
+  // Execs: who has used Kaizen OS least, first
+  const report: UsageRow[] | null = usage
+    ? leastUsedFirst(
+        people
+          .filter((p) => p.isActive && p.joined)
+          .map((p) => ({ id: p.id, name: p.fullName, lastActive: p.usage?.lastActive ?? null, lastActiveAt: p.usage?.lastActiveAt ?? null, minutes: p.usage?.minutes ?? 0, imports: p.aiImports ?? null })),
+      )
+    : null;
 
   return (
     <div className="grid min-w-0 max-w-4xl grid-cols-[minmax(0,1fr)] gap-6">
@@ -50,6 +67,7 @@ export default async function Team() {
           {!me.isExec && " Only executives can change roles."}
         </p>
       </div>
+      {report && <UsageReport rows={report} />}
       {themes && <ThemeUse counts={themes} />}
       <TeamList people={people} canEdit={me.isExec} meId={me.id} />
     </div>

@@ -41,7 +41,7 @@ export async function usageOf(db: SupabaseClient, people: Prof[]) {
   const since = nyDate(new Date(Date.now() - 28 * DAY));
   const { data } = await db.from("activity_minutes").select("profile_id, day, minutes").gte("day", since);
   const monday = weekStart();
-  const out = new Map<string, { lastActive: string | null; lastSignIn: string | null; perWeek: string | null; thisWeek: string | null }>();
+  const out = new Map<string, Usage>();
   for (const p of people) {
     const rows = (data ?? []).filter((r) => r.profile_id === p.id);
     const total = rows.reduce((n, r) => n + (r.minutes as number), 0);
@@ -53,9 +53,23 @@ export async function usageOf(db: SupabaseClient, people: Prof[]) {
       lastSignIn: ago(p.last_sign_in_at ?? null),
       perWeek: weeks && total ? duration(Math.round(total / weeks)) : null,
       thisWeek: week ? duration(week) : null,
+      lastActiveAt: p.last_active_at ?? null,
+      minutes: total,
     });
   }
   return out;
+}
+
+/** One person's usage: the labels shown, and the raw numbers the least-used report sorts by */
+export type Usage = { lastActive: string | null; lastSignIn: string | null; perWeek: string | null; thisWeek: string | null; lastActiveAt: string | null; minutes: number };
+
+/**
+ * Who has used Kaizen OS least, first: never active, then the fewest minutes in the last four weeks, then the longest
+ * since they were last on, then by name.
+ */
+export function leastUsedFirst<T extends { name: string; lastActiveAt: string | null; minutes: number }>(people: T[]): T[] {
+  const at = (iso: string | null) => (iso ? new Date(iso).getTime() : -Infinity);
+  return [...people].sort((a, b) => Number(Boolean(a.lastActiveAt)) - Number(Boolean(b.lastActiveAt)) || a.minutes - b.minutes || at(a.lastActiveAt) - at(b.lastActiveAt) || a.name.localeCompare(b.name));
 }
 
 export type ActivityEntry = { at: string; kind: "sign_in" | "page" | "click" | "search" | "submit" | "decision" | "ticket" | "report"; what: string; detail: string | null; href: string | null };
