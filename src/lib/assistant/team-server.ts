@@ -570,6 +570,8 @@ export async function specialistTurn(input: TurnInput, team: TeamState, roleKey:
   const own = await timer.time(`${tag}tools_build`, agentTools({ me, db: input.db, admin, roleKey, label: book.role.label, callId: call.id, emit, said, path: input.path ?? null, screen: input.context?.screen ?? null, clientId: input.context?.clientId ?? null }));
   const tools = tracked(tctx, [...own, ...teamTools(tctx)]);
   emit({ t: "speaker", role: roleKey, label: book.role.label, icon: (role?.icon as string) ?? "spark" });
+  // A specialist's first words on the call say who it is, so a new voice is never a surprise (it says hi after)
+  if (mode === "voice" && (m.mode === "joined" || m.fresh)) emit({ t: "text", d: `${book.role.label} here. ` });
   const lastWord = team.chain.length >= MAX_HOPS ? `<last_word>That's the last hand-off for now: answer, then give ${firstName} the floor with a short question.</last_word>` : "";
   const prompt =
     m.mode === "joined"

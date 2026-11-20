@@ -1,4 +1,4 @@
-import { CALL_TTS_MODEL, speakable, voiceFor } from "@/lib/agent-call/core";
+import { CALL_TTS_MODEL, isVoiceId, speakable, voiceForLine } from "@/lib/agent-call/core";
 import { forSpeech } from "@/lib/agent-call/speech-text";
 import { openCall, type CallRow } from "@/lib/agent-call/server";
 import { callTimer } from "@/lib/agent-call/timing";
@@ -42,19 +42,27 @@ export async function POST(request: Request) {
   const previous = typeof body?.previous === "string" ? forSpeech(speakable(body.previous.slice(0, 600))) : null;
   if (!text) return new Response(null, { status: 204 });
   try {
-    // A specialist brought onto the call (by the assistant, or by the agent called directly) speaks in its own voice
+    // The call's own agent always speaks in the call's voice (the assistant: the one its person picked); a specialist
+    // brought onto the call speaks in its own, always a different one (src/lib/agent-call/core.ts voiceForLine)
     const role = typeof body?.role === "string" ? body.role : call.role_key;
-    let voiceId = voiceFor(call.role_key, call.voice_id);
-    if (role !== call.role_key && specialistOf(role)) {
+    const specialist = role !== call.role_key && Boolean(specialistOf(role));
+    let callVoice = call.voice_id;
+    if (!isVoiceId(callVoice) && call.role_key === "assistant") {
+      // A call whose voice wasn't kept: the person's own pick, never the default mid-call
+      const { data: p } = await admin.from("profiles").select("assistant_voice").eq("id", me.id).maybeSingle();
+      callVoice = (p?.assistant_voice as string | null) ?? null;
+    }
+    let picked: string | null = null;
+    if (specialist) {
       const v = VOICES.get(role);
-      let picked = v && Date.now() - v.at < VOICE_TTL_MS ? v.id : undefined;
-      if (picked === undefined) {
+      const cached = v && Date.now() - v.at < VOICE_TTL_MS ? v.id : undefined;
+      if (cached === undefined) {
         const { data: r } = await timer.time("voice", Promise.resolve(admin.from("ai_roles").select("voice_id").eq("key", role).maybeSingle()));
         picked = (r?.voice_id as string | null) ?? null;
         VOICES.set(role, { at: Date.now(), id: picked });
-      }
-      voiceId = voiceFor(role, picked);
+      } else picked = cached;
     }
+    const voiceId = voiceForLine({ callRole: call.role_key, callVoice, lineRole: role, specialist, specialistVoice: picked });
     const model = process.env.ELEVENLABS_CALL_MODEL || CALL_TTS_MODEL;
     // Time to ElevenLabs' first byte (its response starts as the audio does)
     const speech = await timer.time("tts_first_byte", speechStream({ voiceId, text, previous, model, signal: request.signal }));

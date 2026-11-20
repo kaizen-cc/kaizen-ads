@@ -822,7 +822,13 @@ export class Call {
     const timer = setTimeout(() => ctl.abort(), SPEAK_TIMEOUT_MS);
     const onAbort = () => ctl.abort();
     outer?.addEventListener("abort", onAbort, { once: true });
-    const audio = fetch("/api/agent-call/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ callId: this.callId, text, ...(previous ? { previous } : {}), ...(speaker ? { role: speaker.role } : {}) }), signal: ctl.signal })
+    // The same request again when the voice service fails once: the same text, the same speaker, so the same voice
+    // (a sentence is never dropped or said in another voice)
+    const body = JSON.stringify({ callId: this.callId, text, ...(previous ? { previous } : {}), ...(speaker ? { role: speaker.role } : {}) });
+    const speak = () => fetch("/api/agent-call/speak", { method: "POST", headers: { "content-type": "application/json" }, body, signal: ctl.signal });
+    const audio = speak()
+      .catch((e) => (ctl.signal.aborted ? Promise.reject(e) : speak()))
+      .then((r) => (r.ok || r.status === 204 || r.status === 410 || ctl.signal.aborted ? r : speak()))
       .then(async (r) => {
         // The first voice of a turn: how long from sending the turn, and where the speak request's time went
         if (this.timing.firstAudio === null && this.timing.sentAt) {

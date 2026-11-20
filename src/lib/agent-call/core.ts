@@ -52,6 +52,24 @@ export function assistantVoiceFor(personal: string | null | undefined, roleVoice
   return isVoiceId(personal) ? personal : voiceFor("assistant", roleVoice);
 }
 
+/**
+ * The voice one sentence of a call is spoken in. The call's own agent (on an assistant call: the assistant, in the voice
+ * its person picked) always speaks in the call's voice, set when the call started; a line with no speaker, or one from
+ * a role that isn't a specialist on the call, is the call's own agent too (never a default or a random voice mid-call).
+ * A specialist brought onto the call speaks in its own voice, which must sound like someone else: when it's the same as
+ * the call's voice, it takes its role's default, or another default that differs.
+ */
+export function voiceForLine(o: { callRole: string; callVoice: string | null | undefined; lineRole?: string | null; specialist?: boolean; specialistVoice?: string | null }): string {
+  const own = isVoiceId(o.callVoice) ? o.callVoice : voiceFor(o.callRole);
+  const role = o.lineRole ?? o.callRole;
+  if (role === o.callRole || !o.specialist) return own;
+  const theirs = voiceFor(role, o.specialistVoice);
+  if (theirs !== own) return theirs;
+  const fallback = (DEFAULT_VOICES[role] ?? FALLBACK_VOICE).id;
+  if (fallback !== own) return fallback;
+  return [...Object.values(DEFAULT_VOICES), FALLBACK_VOICE].find((v) => v.id !== own)!.id;
+}
+
 // ─── Greeting ───────────────────────────────────────────────────────────────
 
 /** The first name from a full name (or "there" when there's none) */
