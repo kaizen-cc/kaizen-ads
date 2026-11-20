@@ -30,7 +30,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
         <p className="mt-3 text-[14px] leading-relaxed text-fg/60">{briefing.reason}</p>
       </div>
     );
-  const { client, from, brief, asana, ai, card, audit, business, idea, draft, copyline, format, own, approve } = await searchParams;
+  const { client, from, brief, asana, ai, card, audit, business, idea, draft, copyline, format, own, approve, resume, fresh } = await searchParams;
   const supabase = await createClient();
   const [{ data: rows }, { data: usage }, { data: angles }, { data: assignments }] = await Promise.all([
     supabase.from("clients").select(`id, name, slug, status, creative_package, ${SERVICE_FIELDS}`).is("archived_at", null).in("status", LIVE).order("name"),
@@ -82,15 +82,23 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   const asked = typeof format === "string" && (["image", "video", "carousel"] as const).find((f) => f === format && allowed.has(f));
   const prefill = !restart && initialClient && asked ? { formats: { [asked]: { new: 1, variations: 0 } } } : null;
 
+  // A brief picked up from the database (?resume=: the Unfinished brief card), or their unfinished ones to offer
+  const { getBriefDraft, listBriefDrafts } = await import("@/lib/brief-drafts");
+  const resumed = typeof resume === "string" ? await getBriefDraft(supabase, resume).catch(() => null) : null;
+  const unfinished = !resumed && !restart && fresh !== "1" ? await listBriefDrafts(supabase, me.id).catch(() => []) : [];
+  const { UnfinishedBriefs } = await import("@/components/unfinished-briefs");
+  const unfinishedCard = unfinished.length ? <UnfinishedBriefs drafts={unfinished.map((d) => ({ id: d.id, client: d.client, title: d.title, updatedAt: d.updatedAt }))} /> : null;
+
   // The briefs the system drafted come first (src/lib/brief-drafting.ts): the request form opens on "Ready to approve",
   // grouped by client and most urgent first; "Add my own idea" (?own=1) is the second option
-  if (!restart && !auditIdea && !initialClient && own !== "1") {
+  if (!restart && !auditIdea && !initialClient && own !== "1" && !resumed && fresh !== "1") {
     const { loadReady } = await import("@/lib/brief-drafting");
     const groups = await loadReady(supabase).catch(() => []);
     if (groups.length || typeof approve === "string") {
       const { ReadyToApprove } = await import("@/components/ready-to-approve");
       return (
-        <div className="mx-auto max-w-6xl px-4 py-6 md:px-0 md:py-10">
+        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-6 md:px-0 md:py-10">
+          {unfinishedCard}
           <ReadyToApprove groups={groups} today={new Date().toISOString().slice(0, 10)} ownHref="/requests/new?own=1" />
         </div>
       );
@@ -98,9 +106,12 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
   }
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="mx-auto grid max-w-6xl gap-8">
+      {!initialClient && unfinishedCard}
       <RequestForm
-        key={written ? `draft-${draft}-${written.draft.origin?.writtenAt ?? ""}` : "new"}
+        key={resumed ? `resume-${resumed.id}` : written ? `draft-${draft}-${written.draft.origin?.writtenAt ?? ""}` : "new"}
+        resume={resumed ? { id: resumed.id, saved: resumed.payload } : null}
+        fresh={fresh === "1"}
         initialDraft={restart?.draft ?? prefill}
         startAtReview={Boolean(restart) && (brief === "same" || Boolean(written))}
         initialPromise={written?.promise ?? null}

@@ -237,7 +237,35 @@ function FullSuggestionSheet({ s, onClose }: { s: OpenSuggestion; onClose: () =>
   }, [messages.length, thinking]);
 
   const edit = (patch: Partial<SuggestionDraft>) => setDraft((d) => ({ ...d, ...patch }));
-  const save = (d = draft) => void saveSuggestion(s.id, d);
+  const save = (d = draft) => {
+    dirty.current = false;
+    void saveSuggestion(s.id, d);
+  };
+  // Saved as they type too (a moment after they stop), and whatever's left when the sheet closes: an edit to a
+  // drafted brief is never lost to a closed tab, a sign-out or a crash
+  const dirty = useRef(false);
+  const latestDraft = useRef(draft);
+  const firstDraft = useRef(true);
+  useEffect(() => {
+    latestDraft.current = draft;
+    if (firstDraft.current) {
+      firstDraft.current = false;
+      return;
+    }
+    dirty.current = true;
+    const t = setTimeout(() => {
+      if (!dirty.current) return;
+      dirty.current = false;
+      void saveSuggestion(s.id, draft);
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [draft, s.id]);
+  useEffect(
+    () => () => {
+      if (dirty.current) void saveSuggestion(s.id, latestDraft.current);
+    },
+    [s.id],
+  );
 
   const send = async () => {
     const body = text.trim();

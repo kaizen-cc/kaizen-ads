@@ -357,6 +357,28 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
       },
     },
     {
+      name: "my_unfinished_briefs",
+      description: "The creative briefs this person started and didn't send, kept as they typed (on any device, after a sign-out or a crash), newest first: client, title, when last edited, and the link that opens each exactly where they left off. For 'open my unfinished brief' or 'where's the brief I was writing': list them, then open the one they mean with open_screen (href).",
+      input_schema: { type: "object", properties: {}, additionalProperties: false },
+      run: async () => {
+        const { listBriefDrafts } = await import("@/lib/brief-drafts");
+        const drafts = await listBriefDrafts(ctx.db, ctx.me.id, 12);
+        if (!drafts.length) return { note: "No unfinished briefs: everything they started was sent or deleted." };
+        return { drafts: drafts.map((d) => ({ id: d.id, client: d.client, title: d.title || "Untitled brief", edited: d.updatedAt, open: `/requests/new?resume=${d.id}` })) };
+      },
+    },
+    {
+      name: "discard_unfinished_brief",
+      description: "Deletes one of the person's unfinished briefs for good (id from my_unfinished_briefs). It can't be brought back: say which one and ask first, run with confirmed: true after a yes.",
+      input_schema: { type: "object", properties: { id: { type: "string" }, confirmed: CONFIRMED }, required: ["id"], additionalProperties: false },
+      run: async (input) => {
+        if (!yes(ctx, input)) return { done: false, note: NO_YES };
+        const { deleteBriefDraft } = await import("@/lib/brief-drafts");
+        await deleteBriefDraft(ctx.db, String(input.id ?? ""));
+        return { done: true };
+      },
+    },
+    {
       name: "ready_briefs",
       description: "Creative briefs the system drafted from the data (a client's time-sensitive ask, a tired ad, a KPI dropping, the allotment behind its even pace), waiting for the creative leads, the account's media buyer, the head of Meta or an executive to approve, edit or reject. Grouped by client, most urgent first, each with its real reason (quoted), deadline, iteration/net new split and pace. Only people who approve briefs see them. To open one: open_screen with its href.",
       input_schema: { type: "object", properties: { client: CLIENT }, additionalProperties: false },

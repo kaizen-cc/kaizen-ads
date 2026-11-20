@@ -31,6 +31,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { topicsFor } from "@/lib/today";
 import { todaySnapshot } from "@/lib/today-snapshot";
 import { MyDesk } from "./views/my-desk";
+import { UnfinishedCallout } from "./views/unfinished-callout";
 import { MakerTasks } from "./views/maker-tasks";
 import { isCustomerSuccess, isMaker } from "@/lib/maker-day-core";
 import { makerTasks } from "@/lib/maker-day";
@@ -50,6 +51,10 @@ function Recap({ db, me, hidden }: { db: SupabaseClient; me: Staff; hidden: Hidd
     <>
       <Suspense fallback={<TodayHeroSkeleton />}>
         <TodayHero db={db} me={me} />
+      </Suspense>
+      {/* A brief they started and didn't send: waiting for them, on any device (src/lib/brief-drafts.ts) */}
+      <Suspense fallback={null}>
+        <UnfinishedCallout db={db} me={me} />
       </Suspense>
       {/* Emails drafted for them to send to clients, and to-dos from the account review */}
       <Suspense fallback={null}>

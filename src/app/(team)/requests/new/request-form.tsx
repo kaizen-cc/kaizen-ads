@@ -26,6 +26,7 @@ import { applyFixes, asanaPreview, createBatch, fulfilPromise, loadBriefing, rev
 import { ReviewWorkspace, startHandled, type Handled } from "./review-workspace";
 import { FORMATS, INSPIRE_KEY, MAX_VARIATIONS, SIZES, emptyDraft, selectedFormats, totalFor, type Draft, type Size } from "./draft";
 import { OverAllotmentBanner } from "./over-allotment";
+import { deleteBriefDraftAction, saveBriefDraftAction } from "./draft-store";
 import { AllotmentBars, AspectOption, Chip, Progress, Spark, Stepper, conceptLine, type ClientOption } from "./parts";
 import { SavedConcepts } from "@/components/saved-concepts";
 import { savedHref, savedLine } from "@/lib/saved-references";
@@ -74,7 +75,8 @@ function Field({ id, label, hint, children }: { id?: string; label: string; hint
 }
 
 // A request in progress is kept in this browser, so a refresh, a crash or clicking away doesn't lose it (or the
-// AI work already done). Cancel, Start over and sending it clear it. Kept for 7 days.
+// AI work already done), and in the database as it's typed (src/lib/brief-drafts.ts), so a sign-out, a closed app or
+// another device doesn't either: it waits on the "Unfinished brief" card. Start over and sending it clear both.
 const SAVE_KEY = "kz:new-request:v1";
 const SAVE_DAYS = 7;
 type Saved = {
@@ -87,6 +89,8 @@ type Saved = {
   handled: Handled | null;
   /** The other briefs of a split, still to preview and write */
   queue?: PreviewItem[];
+  /** Its copy in the database (brief_drafts), once saved there */
+  draftId?: string | null;
 };
 function readSaved(key = SAVE_KEY): Saved | null {
   try {
@@ -109,6 +113,8 @@ function writeSaved(s: Saved | null, key = SAVE_KEY) {
 }
 
 export function RequestForm({
+  resume = null,
+  fresh = false,
   clients,
   allotments,
   anglesByClient,
@@ -122,6 +128,10 @@ export function RequestForm({
   initialPreview = null,
   initialPromise = null,
 }: {
+  /** A brief picked up from the database (the Unfinished brief card): its saved form */
+  resume?: { id: string; saved: unknown } | null;
+  /** Start fresh: the saved copy in this browser isn't picked up (it stays in their drafts list) */
+  fresh?: boolean;
   clients: ClientOption[];
   allotments: Record<string, Allotment>;
   anglesByClient: Record<string, string[]>;
@@ -245,15 +255,22 @@ export function RequestForm({
   // A brief written in the background keeps its own saved copy, so it never overwrites another request in progress
   const saveKey = demo ? `${SAVE_KEY}:preview` : initialDraft?.migration ? `${SAVE_KEY}:asana:${initialDraft.migration.gid}` : initialPromise || initialDraft?.origin?.suggestionId ? `${SAVE_KEY}:brief:${initialDraft?.origin?.suggestionId ?? initialPromise?.id}` : SAVE_KEY;
   const [loaded, setLoaded] = useState(false); // nothing is saved until the saved copy has been read
+  // Its copy in the database: set once saved there (or picked up from there)
+  const draftIdRef = useRef<string | null>(resume?.id ?? null);
+  const dbTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dbContext = demo ? null : saveKey === SAVE_KEY ? null : saveKey.slice(SAVE_KEY.length + 1);
   useEffect(() => {
-    const kept = readSaved(saveKey);
+    const fromDb = resume?.saved && typeof resume.saved === "object" ? ({ ...(resume.saved as Saved), at: Date.now() } as Saved) : null;
+    if (fresh && !fromDb) writeSaved(null, saveKey);
+    const kept = fromDb ?? (fresh ? null : readSaved(saveKey));
+    if (kept?.draftId && !draftIdRef.current) draftIdRef.current = kept.draftId;
     // A brief rewritten since this copy was saved (its quick preview changed and written again): the new writing wins
     const rewritten = savedGivesWay(kept, initialDraft?.origin?.writtenAt);
     const saved = rewritten ? null : kept;
     if (rewritten) writeSaved(null, saveKey);
     // Read storage after mount (the server can't), then apply it
     void Promise.resolve().then(() => {
-      if (saved && saved.draft.clientId && (!initialClient || saved.draft.clientId === initialClient)) {
+      if (saved && saved.draft.clientId && (fromDb || !initialClient || saved.draft.clientId === initialClient)) {
         setDraft(saved.draft);
         // Picked up where it was left: the client's Start page, or the step reached past it
         replaceParams({ step: STEP_KEYS[Math.max(1, saved.step)] ?? null });
@@ -289,11 +306,37 @@ export function RequestForm({
   useEffect(() => {
     if (!loaded || created) return;
     if (!draft.clientId) return writeSaved(null, saveKey);
-    writeSaved({ at: Date.now(), draft, step, ai, briefAi, review, handled: handled ? { ...handled, fixing: null, running: null } : null, queue }, saveKey);
+    const kept: Saved = { at: Date.now(), draft, step, ai, briefAi, review, handled: handled ? { ...handled, fixing: null, running: null } : null, queue, draftId: draftIdRef.current };
+    writeSaved(kept, saveKey);
+    // And in the database, a moment after they stop typing: it survives a sign-out, a closed app, another device
+    if (demo) return;
+    if (dbTimer.current) clearTimeout(dbTimer.current);
+    dbTimer.current = setTimeout(() => {
+      const payload = { ...kept, ai: kept.ai.status === "loading" ? { status: "idle" } : kept.ai, briefAi: kept.briefAi.status === "loading" ? { status: "idle" } : kept.briefAi } as unknown as Record<string, unknown>;
+      void saveBriefDraftAction({ id: draftIdRef.current, context: dbContext, clientId: draft.clientId, title: draft.title.trim() || null, step, payload }).then((id) => {
+        if (id && id !== draftIdRef.current) {
+          draftIdRef.current = id;
+          writeSaved({ ...kept, draftId: id }, saveKey);
+        }
+      });
+    }, 1500);
+    return () => {
+      if (dbTimer.current) clearTimeout(dbTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, created, draft, step, ai, briefAi, review, handled, queue, saveKey]);
 
-  const startOver = () => {
+  /** Sent, or started over: gone from this browser and from the database */
+  const discardSaved = () => {
+    if (dbTimer.current) clearTimeout(dbTimer.current);
     writeSaved(null, saveKey);
+    const id = draftIdRef.current;
+    draftIdRef.current = null;
+    if (id && !demo) void deleteBriefDraftAction(id);
+  };
+
+  const startOver = () => {
+    discardSaved();
     setRestoredAt(null);
     reset();
   };
@@ -405,7 +448,7 @@ export function RequestForm({
       // A review still running is no longer wanted: it never sends a second time when it comes back
       reviewSeq.current++;
       if (demo) {
-        writeSaved(null, saveKey);
+        discardSaved();
         setCreated(formats.map((_, i) => 1061 + i));
         return;
       }
@@ -417,7 +460,7 @@ export function RequestForm({
         return;
       }
       if (res.ok) {
-        writeSaved(null, saveKey);
+        discardSaved();
         if (draft.clientId) {
           forgetStart(draft.clientId);
           forgetTalk(draft.clientId);
@@ -573,7 +616,7 @@ export function RequestForm({
   };
 
   const reset = () => {
-    writeSaved(null, saveKey);
+    discardSaved();
     setHandled(null);
     latest.current++;
     setDraft(emptyDraft(null));
@@ -1125,7 +1168,7 @@ export function RequestForm({
                         label="Asana"
                         className="inline-flex h-12 items-center gap-2 rounded-full border border-line px-3.5 text-[14px] text-fg hover:border-faint md:h-11 md:px-4"
                         onSent={(tasks) => {
-                          writeSaved(null, saveKey);
+                          discardSaved();
                           if (draft.clientId) {
                             forgetStart(draft.clientId);
                             forgetTalk(draft.clientId);
