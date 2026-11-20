@@ -441,6 +441,12 @@ export async function GET(request: Request) {
       return Response.json({ links, issues, packages, sheets, chat, knowledge, errors, emailErrors, guidelines });
     }
     // By hand (execs): the guideline pass plus the back-fill for every client, resumable; each call reads the next few
+    // ...or one client now (&client=<slug>)
+    if (step === "guidelines" && new URL(request.url).searchParams.get("client")) {
+      const { data: c } = await admin.from("clients").select("id, name").eq("slug", new URL(request.url).searchParams.get("client") as string).maybeSingle();
+      if (!c) return Response.json({ error: "No client with that slug" }, { status: 404 });
+      return Response.json({ client: c.name, ...(await (await import("@/lib/brand-guidelines")).guidelinesForClient(admin, c.id as string)) });
+    }
     if (step === "guidelines") return Response.json(await (await import("@/lib/brand-guidelines")).keepGuidelines(admin));
     if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin));
     if (step === "learnings") return Response.json(await (await import("@/lib/learnings")).consolidateLearnings(admin));

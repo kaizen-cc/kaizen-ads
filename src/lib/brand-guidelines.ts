@@ -220,6 +220,20 @@ async function backfill(admin: SupabaseClient, deadline: number, perRun = 6) {
   return out;
 }
 
+/**
+ * One client, now (an exec asked, or the assistant on their behalf): their guidelines read into the Documents tab and
+ * proposed for the Bible, and their back-fill marked done so the hourly pass doesn't read them again.
+ */
+export async function guidelinesForClient(admin: SupabaseClient, clientId: string) {
+  const r = await ingestGuidelines(admin, clientId);
+  if (r !== "not_ready") {
+    const { data: files } = await admin.from("context_items").select("client_id, title, url, occurred_at").eq("client_id", clientId).eq("source", "drive").or("title.ilike.%brand%,title.ilike.%guide%,title.ilike.%style%,title.ilike.%logo%,title.ilike.%font%,title.ilike.%palette%,title.ilike.%identity%,title.ilike.%kit%").order("occurred_at", { ascending: false }).limit(200);
+    const latest = latestGuidelineFiles((files ?? []) as { client_id: string; title: string | null; url: string | null; occurred_at: string }[]);
+    await admin.from("sync_state").upsert({ source: `${CURSOR}:${clientId}`, cursor_at: latest.get(clientId) ?? null, last_run_at: new Date().toISOString(), last_result: { result: r } });
+  }
+  return { result: r };
+}
+
 /** The hourly pass: clients with something new about their brand since the last one, read and proposed */
 export async function keepGuidelines(admin: SupabaseClient, budgetMs = 240_000) {
   const deadline = Date.now() + budgetMs;
