@@ -97,6 +97,14 @@ const assistantRef = (tint: string, name: string | null, context?: AgentRef["con
 
 /** The hidden debug overlay (?calldebug=1): the noise floor, the threshold, the listening and whose turn it is */
 const subscribeNone = () => () => undefined;
+/** The browser's time zone, so the agent greets them by their own clock ("good evening" at 8pm where they are) */
+const localTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+};
 const debugOn = () => /[?&]calldebug=1/.test(window.location.search);
 
 export function AgentCallProvider({ assistantColor = null, assistantName: givenName = null, meId = null, children }: { assistantColor?: string | null; assistantName?: string | null; /** Who's signed in: their chat draft and window size are kept per person */ meId?: string | null; children: React.ReactNode }) {
@@ -456,7 +464,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
         await before;
         const r = carry
           ? await switchCallMode(carry.callId, "voice").then((x) => (x.ok ? { ok: true as const, callId: carry.callId, greeting: x.line, sttToken: x.sttToken } : x))
-          : await startCall(a.roleKey, headsUp ? { headsUp } : {});
+          : await startCall(a.roleKey, { ...(headsUp ? { headsUp } : {}), tz: localTimeZone() });
         // Left before it picked up
         if (call.current !== c) {
           if (r.ok && !carry) void endCall(r.callId, "button");
@@ -573,7 +581,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
       chatToken.current = token;
       void (async () => {
         await before;
-        const r = await openAssistantChat();
+        const r = await openAssistantChat({ tz: localTimeZone() });
         if (chatToken.current !== token || stageRef.current !== "chat") {
           if (r.ok && !r.resumed) void endCall(r.callId, "chat_close");
           return;

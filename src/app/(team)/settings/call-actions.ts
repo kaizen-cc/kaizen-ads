@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
-import { CALL_LIMIT_SECONDS, assistantVoiceFor, decide, firstNameOf, greetingFor, handoverLine, isEndReason, isVoiceId, leftUnfinished, pendingOf, resumeModeFor, seedOf, statusOf, voiceFor, type Decision, type EndTrigger, type LearnedItem, type ResumeMode } from "@/lib/agent-call/core";
+import { CALL_LIMIT_SECONDS, assistantVoiceFor, decide, firstNameOf, greetingFor, handoverLine, isEndReason, isVoiceId, leftUnfinished, localDayIn, localHourIn, pendingOf, resumeModeFor, seedOf, statusOf, voiceFor, type Decision, type EndTrigger, type LearnedItem, type ResumeMode } from "@/lib/agent-call/core";
 import { CHAT_LIMIT_SECONDS, parseModeLog, stillOpen, talkModeOf, type TalkMode } from "@/lib/agent-call/modality";
 import { currentTopic, endReasonOf, saveEndReason, summarizeCall, sweepOpenCalls } from "@/lib/agent-call/server";
 import { reviewCallSafety } from "@/lib/agent-call/safety";
@@ -47,7 +47,7 @@ async function lastConversation(admin: ReturnType<typeof createAdminClient>, pro
  * token. `talk`: a voice call (the default) or a typed chat with the assistant; both are the same conversation and
  * turn pipeline, and either can move to the other (switchCallMode).
  */
-export async function startCall(roleKey: string, opts: { talk?: TalkMode; headsUp?: string | null } = {}): Promise<StartedCall | Fail> {
+export async function startCall(roleKey: string, opts: { talk?: TalkMode; headsUp?: string | null; tz?: string | null } = {}): Promise<StartedCall | Fail> {
   const me = await requireStaff();
   const talk = talkModeOf(opts.talk);
   // The owner viewing as a teammate: their assistant and agents stay theirs (a conversation would be kept as theirs)
@@ -99,12 +99,13 @@ export async function startCall(roleKey: string, opts: { talk?: TalkMode; headsU
     const job = prev.job as { status?: string } | null | undefined;
     if (!leftUnfinished({ jobOpen: job?.status === "open", lastAgent: (lastAgent?.content as string | null) ?? null })) topic = null;
   }
-  let greeting = greetingFor(me.fullName, role.label as string, mode, topic, seedOf(call.id as string));
+  // The hour where they are (their browser's time zone; New York when it isn't known): "good evening" at 8pm their time
+  const hour = localHourIn(opts.tz);
+  let greeting = greetingFor(me.fullName, role.label as string, mode, topic, seedOf(call.id as string), hour);
   // The assistant: a hello that remembers them (a birthday, how the trip went), unless the line just dropped
   if (roleKey === ASSISTANT_KEY && mode !== "continue") {
     const memory = await loadMemory(admin, me.id);
-    const hour = Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: "America/New_York" }).format(new Date())) % 24;
-    const hello = assistantGreeting({ name: firstNameOf(me.fullName), memory, today: new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }), seed: seedOf(call.id as string), mode, timed: greeting, hour });
+    const hello = assistantGreeting({ name: firstNameOf(me.fullName), memory, today: localDayIn(opts.tz), seed: seedOf(call.id as string), mode, timed: greeting, hour });
     greeting = hello.text;
     if (hello.followed) await markFollowedUp(admin, me.id, hello.followed);
   }
@@ -179,7 +180,7 @@ export async function takeChatHeadsUps(callId: string): Promise<{ ok: true; line
  * conversation starts (its greeting follows the same rules as a call's), with the last few lines of the one before
  * shown above it.
  */
-export async function openAssistantChat(): Promise<OpenedChat | Fail> {
+export async function openAssistantChat(opts: { tz?: string | null } = {}): Promise<OpenedChat | Fail> {
   const me = await requireStaff();
   const admin = createAdminClient();
   const { data: open, error } = await admin.from("ai_role_calls").select("id, started_at, last_turn_at, mode, mode_log").eq("profile_id", me.id).eq("role_key", ASSISTANT_KEY).is("ended_at", null).eq("mode", "text").order("started_at", { ascending: false }).limit(1).maybeSingle();
@@ -187,7 +188,7 @@ export async function openAssistantChat(): Promise<OpenedChat | Fail> {
     const headsUps = await headsUpsIntoChat(admin, me.id, open.id as string);
     return { ok: true, callId: open.id as string, startedAt: open.started_at as string, lines: await threadLines(admin, open.id as string), earlier: [], resumed: true, canTeach: canTrainAgent(me, ASSISTANT_KEY), headsUps };
   }
-  const r = await startCall(ASSISTANT_KEY, { talk: "text" });
+  const r = await startCall(ASSISTANT_KEY, { talk: "text", tz: opts.tz });
   if (!r.ok) return r;
   const { data: row } = await admin.from("ai_role_calls").select("resumed_from").eq("id", r.callId).maybeSingle();
   const before = (row?.resumed_from as string | null) ?? null;

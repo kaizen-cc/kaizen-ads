@@ -190,16 +190,104 @@ const GREETINGS: Record<ResumeMode, { withTopic: string[]; plain: string[] }> = 
   },
 };
 
+// ─── Their local time ───────────────────────────────────────────────────────
+
+/** A time zone the browser sent, if it's a real one (New York otherwise, where the team works) */
+export function timeZoneOf(tz: string | null | undefined): string {
+  const z = String(tz ?? "").trim();
+  if (!z || z.length > 64) return CALL_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: z });
+    return z;
+  } catch {
+    return CALL_TIME_ZONE;
+  }
+}
+
+/** The hour (0 to 23) in their time zone */
+export function localHourIn(tz: string | null | undefined, now: Date = new Date()): number {
+  return Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: timeZoneOf(tz) }).format(now)) % 24;
+}
+
+/** Their day (YYYY-MM-DD) in their time zone */
+export const localDayIn = (tz: string | null | undefined, now: Date = new Date()) => now.toLocaleDateString("en-CA", { timeZone: timeZoneOf(tz) });
+
+/** Work hours start and end (8am to 6pm, as the team's business hours) */
+export const WORK_START_HOUR = 8;
+export const WORK_END_HOUR = 18;
+export const isAfterHours = (hour: number) => hour < WORK_START_HOUR || hour >= WORK_END_HOUR;
+
+/** The part of the day an hour falls in, for "good morning" or "good evening" */
+export type DayPart = "morning" | "afternoon" | "evening" | "late";
+export function dayPartOf(hour: number): DayPart {
+  if (hour >= 5 && hour < 12) return "morning";
+  if (hour >= 12 && hour < 17) return "afternoon";
+  if (hour >= 17 && hour < 23) return "evening";
+  return "late";
+}
+
+/**
+ * After work hours: playful, human hellos, as if they caught the agent off the clock. Many of them, so it never sounds
+ * canned. `{name}` is their first name; evening, late night and early morning each have their own.
+ */
+export const AFTER_HOURS_GREETINGS: Record<Exclude<DayPart, "afternoon">, string[]> = {
+  evening: [
+    "Good evening, {name}! Was just taking a little rest, didn't expect you here. What's up?",
+    "Oh hey, {name}! I was just putting my feet up. Good evening! What can I do?",
+    "Evening, {name}! Caught me winding down for the night, but I'm all yours. What's going on?",
+    "Hey {name}, good evening! I was about to call it a day, but I've always got time for you. What's up?",
+    "Well hello, {name}! Didn't think I'd see you this evening. What are we working on?",
+    "Good evening, {name}! Still at it? Let's get it done so you can enjoy your night. What do you need?",
+    "{name}! Hey, good evening. I was just making a cup of tea. What can I help with?",
+    "Oh, hi {name}! Good evening. The office went quiet hours ago, so it's just us. What's up?",
+  ],
+  late: [
+    "Hey {name}! Burning the midnight oil? I was just dozing off. What's up?",
+    "Whoa, {name}, it's late! You caught me half asleep, but I'm here. What do you need?",
+    "{name}! Hey, night owl. Didn't expect you at this hour. What can I do?",
+    "Oh hey, {name}. Late one tonight, huh? I'm up. What's going on?",
+    "Hi {name}! It's way past office hours, but I'm happy to help. What's up?",
+    "Hey {name}, couldn't sleep either? What are we working on?",
+  ],
+  morning: [
+    "Good morning, {name}! You're up early. I'm still on my first coffee. What's up?",
+    "Morning, {name}! Early bird today, huh? What can I do for you?",
+    "Oh, good morning, {name}! Didn't expect anyone this early. What's going on?",
+    "Hey {name}, good morning! Beat everyone in today. What are we starting with?",
+    "Rise and shine, {name}! I was just stretching. What do you need?",
+  ],
+};
+
+/** A fresh start in work hours: "good morning" before noon, the usual hello after */
+const MORNING_GREETINGS = ["Good morning, {name}! It's the {label}. What can I help you with?", "Morning, {name}! {label} here. What's on your mind?", "Good morning, {name}! It's the {label}. What are we working on?"];
+
+/** Called back later the same day, after hours: the same "hey again", with a nod to the hour */
+const AFTER_HOURS_AGAIN = ["Hey again, {name}! Still at it? What's up?", "{name}, hey again! Didn't expect you back this late. What can I do?", "Oh hey again, {name}. Working late, huh? What's up?"];
+
+/** The plain lines that fit the hour, when it changes them (null: the usual ones) */
+function linesForHour(mode: ResumeMode, hour: number | null | undefined): string[] | null {
+  if (hour == null || !Number.isFinite(hour)) return null;
+  const h = ((Math.trunc(hour) % 24) + 24) % 24;
+  const part = dayPartOf(h);
+  if (isAfterHours(h)) {
+    if (mode === "fresh") return AFTER_HOURS_GREETINGS[part === "afternoon" ? "evening" : part];
+    if (mode === "soon" || mode === "later_today") return AFTER_HOURS_AGAIN;
+    return null;
+  }
+  return mode === "fresh" && part === "morning" ? MORNING_GREETINGS : null;
+}
+
 /**
  * What the agent says when it picks up: the person's first name, in a line that fits how this call follows the last
  * one (a cut-off, a quick call back, later the same day, or a fresh start). `seed` picks among a few ways of saying it
- * so it never sounds canned (seedOf the call's id; 0 is the first way).
+ * so it never sounds canned (seedOf the call's id; 0 is the first way). `hour`, in their own time zone, makes a fresh
+ * start a "good morning" and anything after work hours one of the playful after-hours lines.
  */
-export function greetingFor(fullName: string | null | undefined, roleLabel: string, mode: ResumeMode = "fresh", topic: string | null = null, seed = 0): string {
+export function greetingFor(fullName: string | null | undefined, roleLabel: string, mode: ResumeMode = "fresh", topic: string | null = null, seed = 0, hour: number | null = null): string {
   const name = firstNameOf(fullName);
   const t = topicPhrase(topic);
   const set = GREETINGS[mode];
-  const list = t && set.withTopic.length ? set.withTopic : set.plain;
+  const list = t && set.withTopic.length ? set.withTopic : (linesForHour(mode, hour) ?? set.plain);
   const line = list[Math.abs(Math.trunc(seed)) % list.length];
   const out = line.replace("{name}", name).replace("{label}", roleLabel).replace("{topic}", t ?? "");
   return out.charAt(0).toUpperCase() + out.slice(1);
