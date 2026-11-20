@@ -169,6 +169,57 @@ async function slackDms(dms: { to: string; title: string; body: string; href: st
 
 export type RoutedPromise = { id: string; clientId: string; client: string; clientSlug: string; title: string; what: string; why: string | null; dueAt: string; urgent: boolean; kind: string; callTitle: string };
 
+export type MyCallPromise = RoutedPromise & { draft: string | null; dest: import("@/lib/promise-today-core").Destination };
+
+/**
+ * Everything promised on a call that's on this person (routed to them, any kind), open, and due within a day or past
+ * due: their Today card shows each one as critical, with an update to the client drafted for the client's channel (or
+ * email, for an email-only client). Owner, Nov 20 2026.
+ */
+export async function loadMyCallPromises(db: Admin, profileId: string): Promise<MyCallPromise[]> {
+  const { callDestination, callOnToday } = await import("@/lib/promise-today-core");
+  const { servicesOf } = await import("@/lib/services");
+  const { data } = await db
+    .from("call_commitments")
+    .select("id, client_id, kind, what, why, due_at, urgent, status, routed_to, draft, clients!inner(name, slug, archived_at, status, slack_channel_id, services, services_extra, services_removed), client_calls!inner(title, occurred_at)")
+    .contains("routed_to", [profileId])
+    .in("status", ["open", "briefed"])
+    .gte("client_calls.occurred_at", new Date(Date.now() - 30 * 86_400_000).toISOString())
+    .lte("due_at", new Date(Date.now() + 86_400_000).toISOString())
+    .order("due_at")
+    .limit(30);
+  const rows = (data ?? []).filter((r) => {
+    const c = r.clients as unknown as { archived_at: string | null; status: string };
+    return !c.archived_at && (LIVE as readonly string[]).includes(c.status) && callOnToday({ routedTo: r.routed_to as string[] | null, status: r.status as string, dueAt: r.due_at as string }, profileId);
+  });
+  // The client's main contact, for an email-only client's update
+  const ids = [...new Set(rows.map((r) => r.client_id as string))];
+  const { data: contacts } = ids.length ? await db.from("contact_clients").select("client_id, is_primary, contacts(email)").in("client_id", ids).is("removed_at", null) : { data: [] };
+  const emailOf = new Map<string, string>();
+  for (const c of ((contacts ?? []) as unknown as { client_id: string; is_primary: boolean | null; contacts: { email: string | null } | null }[]).sort((a, b) => Number(b.is_primary) - Number(a.is_primary)))
+    if (c.contacts?.email && !emailOf.has(c.client_id)) emailOf.set(c.client_id, c.contacts.email);
+  return rows.map((r) => {
+    const c = r.clients as unknown as { name: string; slug: string; slack_channel_id: string | null; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null };
+    const call = r.client_calls as unknown as { title: string };
+    const title = promiseTitle({ client: c.name, what: r.what as string, why: (r.why as string | null) ?? null, dueAt: r.due_at as string });
+    return {
+      id: r.id as string,
+      clientId: r.client_id as string,
+      client: c.name,
+      clientSlug: c.slug,
+      title,
+      what: r.what as string,
+      why: (r.why as string | null) ?? null,
+      dueAt: r.due_at as string,
+      urgent: Boolean(r.urgent),
+      kind: r.kind as string,
+      callTitle: call.title,
+      draft: (r.draft as string | null) ?? null,
+      dest: callDestination({ slackChannelId: c.slack_channel_id, services: servicesOf(c) as string[], contactEmail: emailOf.get(r.client_id as string) ?? null, subject: `${c.name}: ${String(r.what).slice(0, 80)}` }),
+    };
+  });
+}
+
 /** Promises routed to this person that are work to do and not a brief (launches, changes, strategy): their Next for me */
 export async function loadRoutedPromises(db: Admin, profileId: string): Promise<RoutedPromise[]> {
   const { data } = await db

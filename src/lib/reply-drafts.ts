@@ -121,3 +121,102 @@ Answer what's actually asked, using only what the conversation and the client co
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't write a draft." };
   }
 }
+
+const UPDATE_SCHEMA = { type: "object", properties: { reply: { type: "string" }, delivered: { type: "boolean", description: "True only when the conversation shows the promised thing is done and this message hands it over" } }, required: ["reply", "delivered"], additionalProperties: false };
+
+/**
+ * An update on something the person said yes to in Slack or email, drafted in the same thread in their voice: when the
+ * thread shows it's done, the "here it is" message; otherwise an honest status with a concrete new time (a bracketed
+ * placeholder they fill in, never an invented date). Kept on the row until the thread moves on.
+ */
+export async function draftPromiseUpdate(admin: SupabaseClient, id: string, opts: { force?: boolean } = {}): Promise<{ ok: true; draft: string; delivered: boolean } | { ok: false; error: string }> {
+  const { data: p } = await admin.from("message_promises").select("*, clients(name)").eq("id", id).maybeSingle();
+  if (!p) return { ok: false, error: "That promise isn't open any more." };
+  if (p.source === "slack" && !slackConfigured()) return { ok: false, error: "Slack isn't connected." };
+  if (p.source === "gmail" && !googleConfigured()) return { ok: false, error: "Google isn't connected." };
+  const { data: me } = await admin.from("profiles").select("slack_user_id").eq("id", p.owner_id).maybeSingle();
+  let thread: { basis: string; lines: string[]; voice: string[]; subject?: string };
+  try {
+    thread = p.source === "gmail" ? await gmailThread(p) : await slackThread(p, (me?.slack_user_id as string | null) ?? null);
+  } catch (e) {
+    return { ok: false, error: `Couldn't read the conversation: ${e instanceof Error ? e.message : e}` };
+  }
+  if (!opts.force && p.draft && p.draft_basis === thread.basis) return { ok: true, draft: p.draft as string, delivered: false };
+  const email = p.source === "gmail";
+  const ctx = p.client_id ? await clientContext(admin, p.client_id as string, { fresh: true }).catch(() => null) : null;
+  try {
+    const out = await askJson<{ reply: string; delivered: boolean }>({
+      agent: "calls",
+      label: "draft promise update",
+      clientId: (p.client_id as string | null) ?? null,
+      override: { model: "sonnet", effort: "low" },
+      maxTokens: 1200,
+      system: `You draft an update for a teammate at Kaizen, a paid ads and creative agency, on something they said they'd do in this conversation and that's now due. Write it as them, in their voice: match how they write in their own messages below. ${email ? "It's an email reply: the body only (no subject), with the greeting and sign-off they'd use." : "It's a Slack reply in the same thread: short and plain, no headings."}
+If the conversation shows it's done (a link, a file, a confirmation), write the short "here it is" message and set delivered true. Otherwise set delivered false and write an honest status: own the delay in one short clause (no grovelling), say what's left, and give a concrete new time as a bracketed placeholder, e.g. [Tuesday 3pm]. Never invent dates, numbers, links, results or reasons; anything only they know goes in [brackets]. Keep it to what a busy person would send.`,
+      schema: UPDATE_SCHEMA,
+      prompt: [
+        ctx ? contextBlock(ctx, undefined, { allotment: false }) : "",
+        thread.subject ? `<subject>${thread.subject}</subject>` : "",
+        `<conversation>\n${thread.lines.join("\n")}\n</conversation>`,
+        `<their_promise>${p.ask ? `They were asked: ${p.ask}. ` : ""}They said: "${String(p.said ?? "").slice(0, 500)}". It was due ${String(p.due_at).slice(0, 10)}.</their_promise>`,
+        thread.voice.length ? `<how_they_write>\n${thread.voice.map((v) => `- ${v.replace(/\s+/g, " ")}`).join("\n")}\n</how_they_write>` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    });
+    const draft = out.reply.trim().slice(0, 4000);
+    if (!draft) return { ok: false, error: "The draft came back empty. Try again." };
+    await admin.from("message_promises").update({ draft, draft_basis: thread.basis, drafted_at: new Date().toISOString() }).eq("id", id);
+    return { ok: true, draft, delivered: Boolean(out.delivered) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't write a draft." };
+  }
+}
+
+/**
+ * An update to the client on something promised on a call, for the person it was routed to: where it stands and when
+ * it lands, for the client's Slack channel (or an email, for a client that works by email only). They send it
+ * themselves; nothing is posted for them. Kept on the row until redrafted.
+ */
+export async function draftCallUpdate(admin: SupabaseClient, id: string, profileId: string, opts: { force?: boolean } = {}): Promise<{ ok: true; draft: string } | { ok: false; error: string }> {
+  const { data: c } = await admin
+    .from("call_commitments")
+    .select("id, client_id, what, why, due_at, status, draft, routed_to, clients(name, slack_channel_id, services, services_extra, services_removed), client_calls(title, occurred_at)")
+    .eq("id", id)
+    .maybeSingle();
+  if (!c) return { ok: false, error: "That promise isn't open any more." };
+  if (!((c.routed_to as string[] | null) ?? []).includes(profileId)) return { ok: false, error: "Only the person it's on can draft the update." };
+  if (!opts.force && c.draft) return { ok: true, draft: c.draft as string };
+  const client = c.clients as unknown as { name: string; slack_channel_id: string | null; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null } | null;
+  const call = c.client_calls as unknown as { title: string; occurred_at: string } | null;
+  const { servicesOf } = await import("@/lib/services");
+  const { callDestination } = await import("@/lib/promise-today-core");
+  const dest = callDestination({ slackChannelId: client?.slack_channel_id ?? null, services: client ? (servicesOf(client) as string[]) : [], contactEmail: "-", subject: "" });
+  const email = dest?.source !== "slack";
+  const ctx = c.client_id ? await clientContext(admin, c.client_id as string, { fresh: true }).catch(() => null) : null;
+  const { data: me } = await admin.from("profiles").select("role").eq("id", profileId).maybeSingle();
+  try {
+    const out = await askJson<{ reply: string }>({
+      agent: "calls",
+      label: "draft call promise update",
+      clientId: c.client_id as string,
+      override: { model: "sonnet", effort: "low" },
+      maxTokens: 1000,
+      system: `You draft a short update to a client from their account team at Kaizen, a paid ads and creative agency, on something the team promised on a call. It comes from the person responsible (${me?.role ? String(me.role).replace(/_/g, " ") : "the account owner"}), to the client. ${email ? "It's an email: the body only, a short greeting and sign-off." : "It's a Slack message in the client's channel: short, warm and plain, no headings."}
+Say what was promised, where it stands and when it lands. Use only what the client context shows; never invent dates, numbers, links or results: put anything only they know in [brackets], e.g. [Thursday]. Never mention fees, invoices or internal people problems. Positive; own any delay in a clause, no grovelling.`,
+      schema: SCHEMA,
+      prompt: [
+        ctx ? contextBlock(ctx, undefined, { allotment: false }) : client ? `<client>${client.name}</client>` : "",
+        `<promise>On the call "${call?.title ?? "a call"}" (${String(call?.occurred_at ?? "").slice(0, 10)}) the team promised: ${c.what}${c.why ? ` (why: ${c.why})` : ""}. It was due ${String(c.due_at).slice(0, 10)}.</promise>`,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    });
+    const draft = out.reply.trim().slice(0, 3000);
+    if (!draft) return { ok: false, error: "The draft came back empty. Try again." };
+    await admin.from("call_commitments").update({ draft, drafted_at: new Date().toISOString() }).eq("id", id);
+    return { ok: true, draft };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't write a draft." };
+  }
+}

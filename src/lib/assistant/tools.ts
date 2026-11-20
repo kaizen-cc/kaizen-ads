@@ -337,6 +337,47 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
       },
     },
     {
+      name: "my_promises",
+      description: "What the person owes and promised, all of it critical: Slack messages and emails waiting on their reply (kind owed), things they said yes to in Slack or email that are due or late (kind said), and things promised on a client call that are on them and due or late (kind call). Each with its client, what it is, how late, where it happened and an id for draft_promise_update. Use for 'what do I owe', 'what did I promise', 'am I late on anything'. Their own only.",
+      input_schema: { type: "object", properties: {}, additionalProperties: false },
+      run: async () => {
+        const [{ loadOwedReplies }, { loadSaidPromises }, { loadMyCallPromises }] = await Promise.all([import("@/lib/owed-replies"), import("@/lib/message-promises"), import("@/lib/promise-routing")]);
+        const [owed, said, calls] = await Promise.all([
+          loadOwedReplies(ctx.db, ctx.me, false).catch(() => []),
+          loadSaidPromises(ctx.db, ctx.me).catch(() => []),
+          loadMyCallPromises(ctx.db, ctx.me.id).catch(() => []),
+        ]);
+        const items = [
+          ...owed.filter((o) => o.targetId === ctx.me.id).map((o) => ({ kind: "owed", id: o.id, client: o.client ?? null, what: `${o.from} is waiting on your reply: ${o.gist}`, since: String(o.askedAt).slice(0, 10), where: o.source === "gmail" ? "email" : `Slack${o.channelName ? ` #${o.channelName}` : ""}`, open: o.url })),
+          ...said.filter((p) => p.ownerId === ctx.me.id).map((p) => ({ kind: "said", id: p.id, client: p.client, what: `You said you'd ${p.group?.title ?? p.what}`, due: String(p.dueAt).slice(0, 10), where: p.source === "gmail" ? "email" : `Slack${p.channelName ? ` #${p.channelName}` : ""}`, open: p.url })),
+          ...calls.map((c) => ({ kind: "call", id: c.id, client: c.client, what: `Promised on "${c.callTitle}": ${c.what}`, due: String(c.dueAt).slice(0, 10), where: c.dest?.source === "gmail" ? "email to the client" : c.dest ? "the client's Slack channel" : "no channel or contact on file", open: c.dest?.url ?? `/clients/${c.clientSlug}` })),
+        ];
+        return { count: items.length, items, note: items.length ? "All critical. Offer to draft the update for any of them (draft_promise_update)." : "Nothing owed or promised is due." };
+      },
+    },
+    {
+      name: "draft_promise_update",
+      description: "Drafts the message for one item from my_promises, in the person's voice: a reply to a message waiting on them (owed), an update in the same thread on something they said yes to (said: 'here it is' if the thread shows it's done, else an honest status with a new time in [brackets]), or an update to the client on a call promise (call). Show the draft; nothing is sent from here. Placeholders in [brackets] are theirs to fill.",
+      input_schema: { type: "object", properties: { kind: { type: "string", enum: ["owed", "said", "call"] }, id: { type: "string" }, fresh: { type: "boolean" } }, required: ["kind", "id"], additionalProperties: false },
+      run: async (input) => {
+        const id = String(input.id ?? "").replace(/^o-/, "");
+        if (!/^[0-9a-f-]{36}$/i.test(id)) return { error: "Give the id from my_promises." };
+        const fresh = input.fresh === true;
+        const d = await import("@/lib/reply-drafts");
+        if (input.kind === "owed") {
+          const { data: o } = await ctx.admin.from("owed_replies").select("target_id").eq("id", id).maybeSingle();
+          if (!o || o.target_id !== ctx.me.id) return { error: "That message isn't waiting on them." };
+          return d.draftOwedReply(ctx.admin, id, { force: fresh });
+        }
+        if (input.kind === "said") {
+          const { data: p } = await ctx.admin.from("message_promises").select("owner_id").eq("id", id).maybeSingle();
+          if (!p || p.owner_id !== ctx.me.id) return { error: "That isn't something they promised." };
+          return d.draftPromiseUpdate(ctx.admin, id, { force: fresh });
+        }
+        return d.draftCallUpdate(ctx.admin, id, ctx.me.id, { force: fresh });
+      },
+    },
+    {
       name: "creative_allotments",
       description: "This billing cycle's creative allotment gaps in the person's slice (head of creative and execs every client; the lead graphic designer images and carousels, the lead video editor video, across clients; a designer or editor their own clients), most urgent first: what's missing, when each resets, what's due this week to stay on pace, and (for the head of creative) this week's load against a usual week. Also accounts off target that need fresh creative. Paused clients and paused creative never show. To brief one, open its create link with open_screen (href).",
       input_schema: { type: "object", properties: { client: CLIENT }, additionalProperties: false },

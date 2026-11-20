@@ -161,8 +161,8 @@ export function lookChip(topic: TopicKey, n: number): string {
 // One item, two places: the recap keys an item by what it is for this person (`owed:` a message waiting on you,
 // `owed-lead:` one waiting on someone you lead), the Overview's Done and Dismiss by the thing itself (`owed:<id>`).
 // These map one to the other, so a mark made in either place is read by both.
-const HIDE_AS: Record<string, string> = { owed: "owed", owed2: "owed", "owed-lead": "owed", said: "said", said2: "said", "said-lead": "said", promise: "call", attention: "alert" };
-const RECAP_AS: Record<string, string[]> = { owed: ["owed", "owed2", "owed-lead"], said: ["said", "said2", "said-lead"], call: ["promise"], alert: ["attention"] };
+const HIDE_AS: Record<string, string> = { owed: "owed", owed2: "owed", "owed-lead": "owed", said: "said", said2: "said", "said-lead": "said", promise: "call", callp: "call", attention: "alert" };
+const RECAP_AS: Record<string, string[]> = { owed: ["owed", "owed2", "owed-lead"], said: ["said", "said2", "said-lead"], call: ["promise", "callp"], alert: ["attention"] };
 
 /** The Overview key (hidden_items) for a recap item, when the Overview has that item with its own Done and Dismiss. */
 export function hideKeyOf(recapKey: string): string | null {

@@ -626,13 +626,16 @@ export type SaidPromise = {
   clientSlug: string | null;
   clientId: string | null;
   group: PromiseGroup | null;
+  /** The update drafted for its owner, if one was written */
+  draft: string | null;
+  channelName: string | null;
 };
 
 /** Promises from messages past due with nothing moving: the person's own, and (leads, execs) escalated ones. */
 export async function loadSaidPromises(db: SupabaseClient, me: { id: string; role: string; isExec: boolean; isLead: boolean }): Promise<SaidPromise[]> {
   const { data } = await db
     .from("message_promises")
-    .select("id, source, status, owner_id, what, ask, asked_by, said, said_at, due_at, channel_name, url, channel_url, kind, client_id, group_id, clients(name, slug, status, archived_at), owner:profiles!message_promises_owner_id_fkey(full_name, role)")
+    .select("id, source, status, owner_id, what, ask, asked_by, said, said_at, due_at, channel_name, url, channel_url, kind, client_id, group_id, draft, clients(name, slug, status, archived_at), owner:profiles!message_promises_owner_id_fkey(full_name, role)")
     .in("status", ["overdue", "escalated"])
     .order("due_at")
     .limit(80);
@@ -676,6 +679,8 @@ export async function loadSaidPromises(db: SupabaseClient, me: { id: string; rol
         clientSlug: c?.slug ?? null,
         clientId: (p.client_id as string | null) ?? null,
         group: p.group_id ? (groups.get(p.group_id as string) ?? null) : null,
+        draft: (p.draft as string | null) ?? null,
+        channelName: (p.channel_name as string | null) ?? null,
       };
     });
 }

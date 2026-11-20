@@ -23,13 +23,15 @@ export async function setItem(key: string, status: Status, snap: ItemSnapshot) {
   const me = await requireStaff();
   const db = await createClient();
   // Your own message or promise is closed for everyone below, so there's nothing to clear off your board as well
-  const own = /^(owed2?|said2?):/.test(key);
+  const own = /^(owed2?|said2?|callp):/.test(key);
   const next = await markItem(db, me.id, key, status, snap, { skip: own });
   // A message marked done (handled another way) or set aside as not needing a reply stops being chased (only the
   // person it's on can do that)
   if ((next === "dismissed" || next === "done") && /^owed2?:/.test(key)) await closeOwed(key.split(":")[1], me.id, next === "done" ? "done" : "not_needed");
   // Something you said yes to: Done, or "Done, or not needed", closes it as done, as the Overview's Done does
   if ((next === "dismissed" || next === "done") && /^said2?:/.test(key)) await closeSaid(key.split(":")[1], me.id, "done");
+  // A call promise routed to you: Done closes it as done, Dismiss as not happening (with who on record)
+  if ((next === "dismissed" || next === "done") && /^callp:/.test(key)) await closeCallPromise(key.split(":")[1], next === "done" ? "done" : "dropped");
   return next;
 }
 
@@ -120,4 +122,61 @@ export async function acknowledge(key: string) {
   const me = await requireStaff();
   const db = await createClient();
   await db.from("daily_items").update({ status: "done", done_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("profile_id", me.id).eq("key", key);
+}
+
+/** The update drafted for something you said yes to (from the thread as it is now; `fresh` writes a new one). */
+export async function draftPromise(id: string, fresh = false): Promise<{ ok: true; draft: string; delivered?: boolean } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Not available here." };
+  const admin = createAdminClient();
+  const { data: p } = await admin.from("message_promises").select("owner_id").eq("id", id).maybeSingle();
+  if (!p || p.owner_id !== me.id) return { ok: false, error: "Only the person who promised it can draft the update." };
+  const { draftPromiseUpdate } = await import("@/lib/reply-drafts");
+  return draftPromiseUpdate(admin, id, { force: fresh });
+}
+
+/**
+ * Sends your update in the Slack thread, as you. When it hands the thing over (`delivered`), the promise closes as done
+ * (anyone it went up to hears); otherwise it stays open with the update on record.
+ */
+export async function sendPromiseUpdate(id: string, text: string, delivered = false): Promise<{ ok: true } | { ok: false; error: string; needsConnect?: boolean }> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Not available here." };
+  const body = text.trim();
+  if (!body) return { ok: false, error: "Write the update first." };
+  const admin = createAdminClient();
+  const { data: p } = await admin.from("message_promises").select("owner_id, source, channel_id, thread_ts, message_ts").eq("id", id).maybeSingle();
+  if (!p || p.owner_id !== me.id) return { ok: false, error: "Only the person who promised it can send the update from here." };
+  if (p.source !== "slack" || !p.channel_id) return { ok: false, error: "Emails go from Gmail: copy the draft and open the email." };
+  const { postAsUser } = await import("@/lib/slack-user");
+  const sent = await postAsUser(me.id, { channel: p.channel_id as string, text: body.slice(0, 3900), thread: ((p.thread_ts as string | null) ?? (p.message_ts as string)) || undefined });
+  if (!sent.ok) return sent;
+  await admin.from("message_promises").update({ draft: body.slice(0, 4000) }).eq("id", id);
+  if (delivered) await closeSaidPromise(id, "done");
+  else await reviewsChanged();
+  return { ok: true };
+}
+
+/** The update to the client drafted for a call promise routed to you (`fresh` writes a new one). */
+export async function draftCallPromise(id: string, fresh = false): Promise<{ ok: true; draft: string } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  if (!adminConfigured()) return { ok: false, error: "Not available here." };
+  const { draftCallUpdate } = await import("@/lib/reply-drafts");
+  return draftCallUpdate(createAdminClient(), id, me.id, { force: fresh });
+}
+
+/** A call promise routed to you, closed: done (it happened), or not happening (dismissed, with who and why on record). */
+export async function closeCallPromise(id: string, how: "done" | "dropped") {
+  const me = await requireStaff();
+  if (!adminConfigured()) return;
+  const admin = createAdminClient();
+  const { data: c } = await admin.from("call_commitments").select("routed_to").eq("id", id).maybeSingle();
+  if (!c || !((c.routed_to as string[] | null) ?? []).includes(me.id)) return;
+  await admin
+    .from("call_commitments")
+    .update(how === "done" ? { status: "done" } : { status: "dismissed", dismissed_by: me.id, dismiss_reason: "Not happening (closed from the Overview)" })
+    .eq("id", id)
+    .in("status", ["open", "briefed", "in_motion"]);
+  await markItem(await createClient(), me.id, `callp:${id}`, how === "done" ? "done" : "dismissed", {}, { skip: true });
+  await reviewsChanged();
 }

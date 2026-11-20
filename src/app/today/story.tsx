@@ -812,7 +812,7 @@ function ItemBody({ i, status, big = false, onChoose, onAct, onNext }: { i: Toda
       )}
       {i.reply && (
         <div className="relative">
-          <DraftReply id={i.reply.id} source={i.reply.source} url={i.reply.url} initial={i.reply.draft} channel={i.reply.channel} tone="dark" onSent={() => onChoose("done")} />
+          <DraftReply id={i.reply.id} kind={i.reply.kind} source={i.reply.source} url={i.reply.url} initial={i.reply.draft} channel={i.reply.channel} tone="dark" onSent={() => onChoose("done")} />
         </div>
       )}
       <p className="relative text-xs text-white/45">Why it&apos;s here: {i.why}</p>

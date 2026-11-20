@@ -64,7 +64,7 @@ export type TodayItem = {
   /** A lead or exec may pause this client's line until a date ("Paused: hide until..."): the service's slug */
   pause?: { service: string };
   /** A message waiting on this person: the reply drafted for them */
-  reply?: { id: string; source: "slack" | "gmail"; url: string | null; draft: string | null; channel: string | null };
+  reply?: { id: string; source: "slack" | "gmail"; url: string | null; draft: string | null; channel: string | null; kind?: "owed" | "said" | "call" };
   /** Under "Everything else" (an exec's day, outside their focus): the topic it came from */
   from?: TopicKey;
   state: "new" | "seen" | "saved"; // what this person has done with it so far
@@ -193,7 +193,7 @@ async function mine(db: SupabaseClient, me: Staff): Promise<Draft[]> {
 // The creative team's day: what's on them and what they can act on (ads wearing out, late or stuck tickets, first
 // rounds, briefs, clients behind on creative, promises with a brief to make) can be urgent. Anything else (someone
 // else's escalation, a footage nudge) stays in the day as information, never an alarm.
-const CREATIVE_ACTIONABLE = new Set(["mine", "owed", "owed2", "said", "said2", "fatigue", "attention", "onboarding", "allot-behind", "promise", "brief", "social-quiet", "contact"]);
+const CREATIVE_ACTIONABLE = new Set(["mine", "owed", "owed2", "said", "said2", "callp", "fatigue", "attention", "onboarding", "allot-behind", "promise", "brief", "social-quiet", "contact"]);
 export function forCreative<T extends { key: string; score: number }>(items: T[]): T[] {
   return items.map((d) => (CREATIVE_ACTIONABLE.has(d.key.split(":")[0]) ? d : { ...d, score: Math.min(d.score, 59) }));
 }
@@ -255,7 +255,7 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   const topics = topicsFor(me);
   const manager = me.isExec || me.isLead;
   const callPromises = manager || me.isBuyer || me.isCoordinator;
-  const [promises, onboarding, suggestions, fatigue, home, own, owed, said] = await Promise.all([
+  const [promises, onboarding, suggestions, fatigue, home, own, owed, said, myCalls] = await Promise.all([
     // The creative team: only the call promises with a brief to make (the rest are the buyers' and account managers')
     callPromises ? loadCallPromises(db).then((ps) => (creative ? ps.filter((p) => p.suggestion) : ps)).catch(() => []) : [],
     topics.has("onboarding") ? loadOnboarding(db).catch(() => null) : null,
@@ -266,7 +266,10 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     // The heads of Email and Organic Social, like the other leads: their own, and their team's past a second notice
     loadOwedReplies(db, me, manager || me.role === "head_of_email" || me.role === "head_of_social").catch(() => []),
     loadSaidPromises(db, me).catch(() => []),
+    // Everything promised on a call that's on this person (every role), due within a day or past due
+    import("@/lib/promise-routing").then(({ loadMyCallPromises }) => loadMyCallPromises(db, me.id)).catch(() => []),
   ]);
+  const { ownScore } = await import("@/lib/promise-today-core");
   const out: Draft[] = [...own];
 
   // What someone said yes to in Slack or email, past when it was due with nothing moving
@@ -282,7 +285,8 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     out.push({
       key: mineToo ? `${second ? "said2" : "said"}:${p.id}` : `said-lead:${p.id}`,
       topic: "promises",
-      score: mineToo ? (second ? 95 : Math.min(90, 78 + late * 4)) : 85,
+      // Their own: always critical, at the top (owner, Nov 20 2026); someone else's for a lead as before
+      score: mineToo ? ownScore("said", { late, escalated: second }) : 85,
       client: p.client ?? p.askedBy ?? "Team",
       clientSlug: p.clientSlug ?? "",
       clientId: p.clientId,
@@ -302,7 +306,7 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
             }
           : { label: open, href: link ?? p.channelUrl ?? "/today" },
       ...(make && link ? { alt: { label: open, href: link } } : p.channelUrl ? { alt: { label: "Open the channel", href: p.channelUrl } } : {}),
-      ...(mineToo ? { dismiss: "Done, or not needed" } : {}),
+      ...(mineToo ? { dismiss: "Done, or not needed", reply: { id: p.id, kind: "said" as const, source: p.source, url: p.url, draft: p.draft, channel: p.channelName } } : {}),
     });
   }
 
@@ -318,7 +322,7 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     out.push({
       key: mineToo ? `${second ? "owed2" : "owed"}:${o.id}` : `owed-lead:${o.id}`,
       topic: "promises",
-      score: mineToo ? (second ? 94 : Math.min(88, 74 + waited * 4)) : 84,
+      score: mineToo ? ownScore("owed", { late: waited - 1, escalated: second }) : 84,
       client: o.client ?? (o.fromTeam ? "Team" : o.from),
       clientSlug: o.clientSlug ?? "",
       clientId: o.clientId,
@@ -333,8 +337,35 @@ async function gatherAll(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     });
   }
 
+  // What THEY promised on a call (routed to them, any kind), due within a day or past due: critical, with an update to
+  // the client drafted for its channel or email (sent by them; nothing is posted for them)
+  const mine_ = new Set<string>();
+  for (const c of myCalls) {
+    mine_.add(c.id);
+    const late = Math.max(0, bizDays(c.dueAt));
+    const dueInDays = Math.max(0, (Date.parse(c.dueAt) - Date.now()) / 86_400_000);
+    out.push({
+      key: `callp:${c.id}`,
+      topic: "promises",
+      score: ownScore("call", { late, dueInDays: late ? 0 : dueInDays }) || 84,
+      client: c.client,
+      clientSlug: c.clientSlug,
+      clientId: c.clientId,
+      stat: late ? { value: String(late), label: `business ${late === 1 ? "day" : "days"} past what you promised` } : { value: "Due", label: `due ${day(c.dueAt)}` },
+      title: `You promised on a call: ${c.what}`,
+      story: `On "${c.callTitle}" the client heard us promise this, due ${day(c.dueAt)}.${c.why ? ` ${c.why}` : ""} Nothing shows it's happened yet.`,
+      why: late ? "The client heard you promise it, and it's late" : "The client heard you promise it, and it's due",
+      evidence: [],
+      action: { label: "Open the client", href: `/clients/${c.clientSlug}` },
+      ...(c.dest ? { alt: { label: c.dest.source === "slack" ? "Open their channel" : "Email them", href: c.dest.url } } : {}),
+      dismiss: "Done, or not happening",
+      ...(c.dest ? { reply: { id: c.id, kind: "call" as const, source: c.dest.source, url: c.dest.url, draft: c.draft, channel: null } } : {}),
+    });
+  }
+
   // Promises we made on calls and haven't started: the client was told, so it's their trust on the line
   for (const p of promises) {
+    if (mine_.has(p.commitmentId)) continue;
     const late = Math.max(0, bizDays(p.dueAt));
     out.push({
       key: `promise:${p.commitmentId}`,

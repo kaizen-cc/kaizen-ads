@@ -86,7 +86,7 @@ describe("one done, read in both places", () => {
     expect(hideKeyOf("promise:c1")).toBe("call:c1");
     expect(hideKeyOf("attention:a1")).toBe("alert:a1");
     expect(hideKeyOf("kpi:t1")).toBeNull();
-    expect(recapKeysOf("call:c1")).toEqual(["promise:c1"]);
+    expect(recapKeysOf("call:c1")).toEqual(["promise:c1", "callp:c1"]);
     expect(recapKeysOf("alert:a1")).toEqual(["attention:a1"]);
     expect(recapKeysOf("owed-lead:x")).toEqual(["owed:x", "owed2:x", "owed-lead:x"]);
     expect(recapKeysOf("fatigue:c:ad")).toEqual(["fatigue:c:ad"]);
