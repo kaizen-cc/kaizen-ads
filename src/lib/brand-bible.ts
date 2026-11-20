@@ -44,7 +44,7 @@ async function bibleSources(admin: SupabaseClient, clientId: string) {
     admin.from("kpi_targets").select("platform, conversion, custom_action, target, monthly_budget").eq("client_id", clientId).eq("active", true),
     admin.from("client_calls").select("id, source, title, occurred_at, url, notes").eq("client_id", clientId).order("occurred_at", { ascending: false }).limit(60),
     admin.from("call_mentions").select("call_id, summary, client_calls(id, source, title, occurred_at, url, notes)").eq("client_id", clientId).limit(80),
-    admin.from("context_items").select("source, occurred_at, author, title, body").eq("client_id", clientId).in("source", ["slack_external", "slack_internal", "gmail", "call"]).order("occurred_at", { ascending: false }).limit(500),
+    admin.from("context_items").select("source, occurred_at, author, title, body, url").eq("client_id", clientId).in("source", ["slack_external", "slack_internal", "gmail", "call", "drive"]).order("occurred_at", { ascending: false }).limit(500),
     admin.from("designs").select("name, client_status, client_decided_at, requests(title, number)").eq("client_id", clientId).not("client_status", "is", null).order("client_decided_at", { ascending: false }).limit(60),
     admin.from("review_comments").select("body, created_at, author_name, requests(title, number)").eq("client_id", clientId).not("author_contact_id", "is", null).order("created_at", { ascending: false }).limit(120),
     admin.from("client_onboarding").select("meta, google, ga4, gtm, gbp, merchant, website, email, tracking, business, assets, style").eq("client_id", clientId).maybeSingle(),
@@ -81,7 +81,7 @@ async function bibleSources(admin: SupabaseClient, clientId: string) {
   let room = 70_000;
   const messages: string[] = [];
   for (const i of items ?? []) {
-    const line = `- ${day(i.occurred_at as string)} · ${i.source === "gmail" ? "Email" : i.source === "call" ? "Call" : i.source === "slack_internal" ? "Slack (internal)" : "Slack (with client)"}${i.author ? ` · ${i.author}` : ""}${i.title ? ` · "${i.title}"` : ""}: ${String(i.body ?? "").replace(/\s+/g, " ").slice(0, 700)}`;
+    const line = `- ${day(i.occurred_at as string)} · ${i.source === "gmail" ? "Email" : i.source === "call" ? "Call" : i.source === "drive" ? "Drive file" : i.source === "slack_internal" ? "Slack (internal)" : "Slack (with client)"}${i.author ? ` · ${i.author}` : ""}${i.title ? ` · "${i.title}"` : ""}${i.source === "drive" && i.url ? ` (${i.url})` : ""}: ${String(i.body ?? "").replace(/\s+/g, " ").slice(0, 700)}`;
     if ((room -= line.length) < 0) break;
     messages.push(line);
   }
@@ -120,7 +120,7 @@ async function bibleSources(admin: SupabaseClient, clientId: string) {
     kpis?.length && `<kpi_targets note="what the account is measured on today">\n${kpis.map((k) => `- ${k.platform === "google" ? "Google" : "Meta"}: ${k.conversion}${k.custom_action ? ` (${k.custom_action})` : ""}${k.target != null ? `, target ${k.target}` : ", no target set"}${k.monthly_budget ? `, monthly budget $${k.monthly_budget}` : ""}`).join("\n")}\n</kpi_targets>`,
     c?.services && `<services_kaizen_provides>${JSON.stringify(c.services)}</services_kaizen_provides>`,
     callLines.length ? `<calls note="every recorded call with or about the client, newest first; the client's own words on calls outrank the website">\n${callLines.join("\n")}\n</calls>` : "<calls>None recorded yet.</calls>",
-    messages.length && `<slack_and_email note="the full history, newest first">\n${messages.join("\n")}\n</slack_and_email>`,
+    messages.length && `<slack_and_email note="the full history, newest first, with the files they put in their Drive folder (a brand guideline or logo there means one was shared)">\n${messages.join("\n")}\n</slack_and_email>`,
     (verdicts.length || comments.length) && `<client_creative_feedback note="what the client approved, rejected and said about our creative, in their words">\n${[...verdicts, ...comments].join("\n")}\n</client_creative_feedback>`,
   ]
     .filter(Boolean)
