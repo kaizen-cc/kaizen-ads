@@ -22,7 +22,12 @@ export const DOG_KINDS = [
   "big_date",
   "site_down",
   "site_check",
+  "tracking_audit",
+  "tracking_mismatch",
+  "cvr_drop",
 ] as const;
+/** The tracking signals (the Tracking Specialist's Today reads these, plus zero_results and lead_no_crm) */
+export const TRACKING_KINDS: readonly DogKind[] = ["tracking_audit", "tracking_mismatch", "cvr_drop", "zero_results", "lead_no_crm"];
 export type DogKind = (typeof DOG_KINDS)[number];
 export const isDogKind = (k: string): k is DogKind => (DOG_KINDS as readonly string[]).includes(k);
 
@@ -216,4 +221,42 @@ export function pageProblems(html: string, status: number): string[] {
   if (text.length < 200 && status < 400) out.push("is nearly empty");
   if (/<img\b/i.test(h) === false && text.length < 600 && status < 400) out.push("has no images");
   return out;
+}
+
+// ─── Tracking ──────────────────────────────────────────────────────────────
+
+const TRACKING_OK = /\b(tracking (?:is |looks )?(?:clean|healthy|solid|fine)|no tracking issues?|verified and firing|fires correctly)\b/i;
+const TRACKING_BAD = /\b(not (?:verified|firing|tracked|passing|deduplicat\w*)|isn'?t|aren'?t|doesn'?t|no (?:server|conversions api|capi|utm|events?|purchase)|missing|broken|stopped|last fired|double[- ]?count\w*|mismatch\w*|under[- ]?match\w*|under[- ]?report\w*|over[- ]?report\w*|inflat\w*|duplicat\w*|off\b|\$1 default|default value|not trusted|reconcile|discrepan\w*|0 (?:viewcontent|initiatecheckout|purchase|events?))/i;
+
+/** The tracking problems an audit found (its tracking section), leaving out lines that say tracking is fine */
+export function trackingProblems(items: unknown): string[] {
+  if (!Array.isArray(items)) return [];
+  return items.map((x) => String(typeof x === "string" ? x : ((x as { text?: string; issue?: string })?.text ?? (x as { issue?: string })?.issue ?? ""))).filter((t) => t.trim() && !TRACKING_OK.test(t) && TRACKING_BAD.test(t));
+}
+
+/**
+ * Platform conversions against the site's own orders (the store's count, read through Klaviyo), over the same days.
+ * A platform claiming 30%+ more than the store saw is over-reporting; two platforms that each look fine but add up to
+ * 30%+ more are counting the same orders twice; a platform seeing under a third of a busy store is under-tracking.
+ */
+export function conversionGap(i: { meta: number; google: number; store: number }): { kind: "over" | "double" | "under"; text: string } | null {
+  const { meta, google, store } = i;
+  if (store < 5 && meta + google < 5) return null;
+  const over = (n: number) => n >= 5 && n > store * 1.3 + 2;
+  if (over(meta)) return { kind: "over", text: `Meta claims ${Math.round(meta)} purchases, the store saw ${Math.round(store)} orders` };
+  if (over(google)) return { kind: "over", text: `Google claims ${Math.round(google)} purchases, the store saw ${Math.round(store)} orders` };
+  if (meta > 0 && google > 0 && over(meta + google)) return { kind: "double", text: `Meta (${Math.round(meta)}) and Google (${Math.round(google)}) add up to ${Math.round(meta + google)}, the store saw ${Math.round(store)}: they're counting the same orders` };
+  if (store >= 15 && meta + google > 0 && meta + google < store / 3) return { kind: "under", text: `The store saw ${Math.round(store)} orders, the ad platforms see ${Math.round(meta + google)}: the pixel or Conversions API is missing most of them` };
+  return null;
+}
+
+/**
+ * Conversion rate dropping abnormally: the last 3 days' results per link click under half of the 28 days before, with
+ * enough clicks on both sides to mean something (200 before, 60 now).
+ */
+export function cvrDrop(i: { recentClicks: number; recentResults: number; baseClicks: number; baseResults: number }): { recent: number; base: number } | null {
+  if (i.baseClicks < 200 || i.recentClicks < 60 || i.baseResults < 5) return null;
+  const base = i.baseResults / i.baseClicks;
+  const recent = i.recentResults / i.recentClicks;
+  return recent < base * 0.5 ? { recent, base } : null;
 }

@@ -22,6 +22,10 @@ import {
   siteDown,
   stuckDays,
   zeroOutcome,
+  trackingProblems,
+  conversionGap,
+  cvrDrop,
+  TRACKING_KINDS,
   type SiteResult,
 } from "./core";
 
@@ -49,6 +53,18 @@ const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").tri
 type Profile = { id: string; full_name: string; display_name: string | null; email: string | null; role: string; is_active: boolean; platform_aliases: string[] | null };
 type Client = { id: string; name: string; slug: string; status: string; created_at: string; website: string | null; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null; strategy_only: string[] | null; billed_services: null; slack_channel_id: string | null };
 type Target = { id: string; client_id: string; platform: string; ad_account_id: string; owner_id: string | null; monthly_budget: number | null };
+
+/** Every row, a page of 1000 at a time (the API returns at most 1000 per request) */
+async function pages<T>(make: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>, max = 60_000): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; from < max; from += 1000) {
+    const { data, error } = await make(from, from + 999);
+    if (error) throw new Error(error.message);
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
 
 async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
@@ -98,19 +114,25 @@ export async function runWatchdogs(admin: SupabaseClient, now = new Date()) {
   const since3 = addDays(today, -3);
   const sinceIso2 = new Date(now.getTime() - 2 * DAY).toISOString();
 
-  const [{ data: daily }, { data: prior }, { data: changes }, { data: activity }, { data: social }, { data: klaviyo }, { data: integrations }, { data: contacts }, { data: memory }, { data: chatter }, { data: stuck }, { data: emailStuck }] = await Promise.all([
-    metaAccounts.length ? admin.from("meta_campaign_daily").select("ad_account_id, campaign_id, campaign_name, date, spend, link_clicks, actions").in("ad_account_id", metaAccounts).gte("date", since3).lt("date", today).limit(20_000) : Promise.resolve({ data: [] }),
-    metaAccounts.length ? admin.from("meta_campaign_daily").select("ad_account_id, actions").in("ad_account_id", metaAccounts).gte("date", addDays(today, -17)).lt("date", since3).limit(40_000) : Promise.resolve({ data: [] }),
-    admin.from("ad_account_changes").select("ad_account_id, platform, at, who, what, object").gte("at", sinceIso2).order("at", { ascending: false }).limit(5000),
+  const since7 = addDays(today, -7);
+  const googleAccounts = uniq(adTargets.filter((t) => t.platform === "google").map((t) => accountKey("google", t.ad_account_id)));
+  type DailyRow = { ad_account_id: string; campaign_id: string; campaign_name: string; date: string; spend: number; link_clicks: number | null; actions: Record<string, number> | null };
+  const [daily, prior, changes, { data: activity }, { data: social }, { data: klaviyo }, { data: integrations }, { data: contacts }, memory, chatter, { data: stuck }, { data: emailStuck }, googleDaily, storeDays, audits] = await Promise.all([
+    metaAccounts.length ? pages<DailyRow>((a, z) => admin.from("meta_campaign_daily").select("ad_account_id, campaign_id, campaign_name, date, spend, link_clicks, actions").in("ad_account_id", metaAccounts).gte("date", since7).lt("date", today).order("date").range(a, z)) : Promise.resolve([] as DailyRow[]),
+    metaAccounts.length ? pages<DailyRow>((a, z) => admin.from("meta_campaign_daily").select("ad_account_id, campaign_id, campaign_name, date, spend, link_clicks, actions").in("ad_account_id", metaAccounts).gte("date", addDays(today, -31)).lt("date", since3).order("date").range(a, z)) : Promise.resolve([] as DailyRow[]),
+    pages<{ ad_account_id: string; platform: string; at: string; who: string | null; what: string; object: string | null }>((a, z) => admin.from("ad_account_changes").select("ad_account_id, platform, at, who, what, object").gte("at", sinceIso2).order("at", { ascending: false }).range(a, z), 10_000),
     admin.from("ad_account_activity").select("ad_account_id, error, checked_at"),
     admin.from("social_accounts").select("client_id, page_name, ig_username, status, last_error, missing_permissions"),
     admin.from("klaviyo_connections").select("client_id, status, last_error, last_synced_at"),
     admin.from("client_integrations").select("client_id, kind, label, status, last_error, last_synced_at"),
-    admin.from("contact_clients").select("client_id, contacts(full_name, email)").is("removed_at", null),
-    admin.from("client_memory").select("client_id, body").or("body.ilike.%approv%,body.ilike.%sign off%,body.ilike.%sign-off%,body.ilike.%signoff%,body.ilike.%run it by%,body.ilike.%check with%").limit(3000),
-    admin.from("context_items").select("client_id, source, author, occurred_at, body").in("source", ["slack_external", "gmail", "slack_internal"]).gte("occurred_at", new Date(now.getTime() - 8 * DAY).toISOString()).order("occurred_at", { ascending: false }).limit(20_000),
-    admin.from("requests").select("number, title, client_id, stage, stage_entered_at, assignee_id").is("deleted_at", null).not("stage", "in", "(launched)").lte("stage_entered_at", new Date(now.getTime() - 7 * DAY).toISOString()).limit(500),
-    admin.from("email_tickets").select("number, title, client_id, stage, stage_entered_at, assignee_id").is("deleted_at", null).not("stage", "in", "(live,done,sent,archived)").lte("stage_entered_at", new Date(now.getTime() - 7 * DAY).toISOString()).limit(500),
+    admin.from("contact_clients").select("client_id, contacts(full_name, email)").is("removed_at", null).limit(5000),
+    pages<{ client_id: string; body: string }>((a, z) => admin.from("client_memory").select("client_id, body").or("body.ilike.%approv%,body.ilike.%sign off%,body.ilike.%sign-off%,body.ilike.%signoff%,body.ilike.%run it by%,body.ilike.%check with%").order("id").range(a, z), 10_000),
+    pages<{ client_id: string; source: string; author: string | null; occurred_at: string; body: string | null }>((a, z) => admin.from("context_items").select("client_id, source, author, occurred_at, body").in("source", ["slack_external", "gmail", "slack_internal"]).gte("occurred_at", new Date(now.getTime() - 8 * DAY).toISOString()).order("occurred_at", { ascending: false }).range(a, z), 30_000),
+    admin.from("requests").select("number, title, client_id, stage, stage_entered_at, assignee_id").is("deleted_at", null).not("stage", "in", "(launched)").lte("stage_entered_at", new Date(now.getTime() - 7 * DAY).toISOString()).limit(1000),
+    admin.from("email_tickets").select("number, title, client_id, stage, stage_entered_at, assignee_id").is("deleted_at", null).not("stage", "in", "(live,done,sent,archived)").lte("stage_entered_at", new Date(now.getTime() - 7 * DAY).toISOString()).limit(1000),
+    googleAccounts.length ? pages<{ ad_account_id: string; actions: Record<string, number> | null }>((a, z) => admin.from("google_campaign_daily").select("ad_account_id, actions").in("ad_account_id", googleAccounts).gte("date", since7).lt("date", today).order("date").range(a, z)) : Promise.resolve([] as { ad_account_id: string; actions: Record<string, number> | null }[]),
+    pages<{ client_id: string; store_orders: number | null }>((a, z) => admin.from("klaviyo_daily").select("client_id, store_orders").gte("date", since7).lt("date", today).gt("store_orders", 0).order("date").range(a, z)),
+    pages<{ id: string; target_id: string; client_id: string; created_at: string; tracking: unknown }>((a, z) => admin.from("account_audits").select("id, target_id, client_id, created_at, tracking:result->tracking").eq("status", "ready").gte("created_at", new Date(now.getTime() - 30 * DAY).toISOString()).order("created_at", { ascending: false }).range(a, z), 5000),
   ]);
 
   // Who's who in change history: our team, the client's people
@@ -133,15 +155,15 @@ export async function runWatchdogs(admin: SupabaseClient, now = new Date()) {
   };
   const signoffClients = new Set<string>();
   const notesBy = new Map<string, string[]>();
-  for (const m of memory ?? []) notesBy.set(m.client_id as string, [...(notesBy.get(m.client_id as string) ?? []), String(m.body ?? "")]);
+  for (const m of memory) notesBy.set(m.client_id as string, [...(notesBy.get(m.client_id as string) ?? []), String(m.body ?? "")]);
   for (const [id, notes] of notesBy) if (needsSignoff(notes)) signoffClients.add(id);
-  const items = (chatter ?? []) as { client_id: string; source: string; author: string | null; occurred_at: string; body: string | null }[];
+  const items = chatter as { client_id: string; source: string; author: string | null; occurred_at: string; body: string | null }[];
   const isTeamAuthor = (a: string | null) => Boolean(a) && (/@kaizenmarketing\.agency/i.test(a!) || Boolean(matchActor(a!.replace(/<[^>]*>/g, "").trim(), b.team)));
   for (const m of items) if (m.source === "slack_internal" && needsSignoff([m.body])) signoffClients.add(m.client_id);
 
   // ─── 1. Change history: the client pausing or editing, access removed, our moves without sign-off ─────
   const byAccChanges = new Map<string, { at: string; who: string | null; what: string; object: string | null; platform: string }[]>();
-  for (const x of (changes ?? []) as { ad_account_id: string; platform: string; at: string; who: string | null; what: string; object: string | null }[]) byAccChanges.set(x.ad_account_id, [...(byAccChanges.get(x.ad_account_id) ?? []), x]);
+  for (const x of changes as { ad_account_id: string; platform: string; at: string; who: string | null; what: string; object: string | null }[]) byAccChanges.set(x.ad_account_id, [...(byAccChanges.get(x.ad_account_id) ?? []), x]);
   for (const [acc, list] of byAccChanges) {
     const t = accountClient.get(acc);
     if (!t) continue;
@@ -198,7 +220,7 @@ export async function runWatchdogs(admin: SupabaseClient, now = new Date()) {
   // ─── 2. Spend with nothing to show, and new lead sources ────────────────────
   type Row = { ad_account_id: string; campaign_id: string; campaign_name: string; date: string; spend: number; link_clicks: number | null; actions: Record<string, number> | null };
   const byCampaign = new Map<string, { acc: string; name: string; spend: number; clicks: number; lpv: number; results: number; leads: number }>();
-  for (const r of (daily ?? []) as Row[]) {
+  for (const r of (daily as Row[]).filter((x) => x.date >= since3)) {
     const k = `${r.ad_account_id}:${r.campaign_id}`;
     const cur = byCampaign.get(k) ?? { acc: r.ad_account_id, name: r.campaign_name, spend: 0, clicks: 0, lpv: 0, results: 0, leads: 0 };
     cur.spend += Number(r.spend) || 0;
@@ -241,7 +263,7 @@ export async function runWatchdogs(admin: SupabaseClient, now = new Date()) {
     });
   }
   const leadsBefore = new Map<string, number>();
-  for (const r of (prior ?? []) as { ad_account_id: string; actions: Record<string, number> | null }[]) leadsBefore.set(r.ad_account_id, (leadsBefore.get(r.ad_account_id) ?? 0) + leadsOf(r.actions));
+  for (const r of prior.filter((x) => x.date >= addDays(today, -17))) leadsBefore.set(r.ad_account_id, (leadsBefore.get(r.ad_account_id) ?? 0) + leadsOf(r.actions));
   const crmSynced = new Set(((integrations ?? []) as { client_id: string; kind: string; last_synced_at: string | null; status: string | null }[]).filter((i) => /crm|gohighlevel|ghl|hubspot|salesforce|zoho|pipedrive|keap/i.test(i.kind) && i.last_synced_at && Date.parse(i.last_synced_at) > now.getTime() - 3 * DAY).map((i) => i.client_id));
   for (const acc of metaAccounts) {
     const t = accountClient.get(acc);
@@ -409,8 +431,72 @@ export async function runWatchdogs(admin: SupabaseClient, now = new Date()) {
     }
   }
 
+  // ─── 8. Tracking: audits that found tracking problems, platforms vs the store, conversion rate dropping ─────
+  // The tracking specialists hear every one of these too (their Today reads TRACKING_KINDS)
+  const trackers = b.headsOf("tracking_specialist");
+  const targetById = new Map(b.targets.map((t) => [t.id, t]));
+  const seenAudit = new Set<string>();
+  for (const a of audits) {
+    if (seenAudit.has(a.target_id)) continue;
+    seenAudit.add(a.target_id);
+    const t = targetById.get(a.target_id);
+    const c = byId.get(a.client_id);
+    if (!t || !c) continue;
+    const line: ReviewLine = t.platform === "google" ? "google" : "meta";
+    if (!hasLine(c, line)) continue;
+    const problems = trackingProblems(a.tracking);
+    if (!problems.length) continue;
+    push({ client_id: c.id, line: line === "google" ? "google-ads" : "facebook-ads", account: accountKey(t.platform, t.ad_account_id), key: `tracking_audit:${a.target_id}`, kind: "tracking_audit", title: `The ${line === "google" ? "Google" : "Meta"} audit found ${problems.length} tracking problem${problems.length === 1 ? "" : "s"}`, body: `${problems.slice(0, 2).map((x) => clip(x, 200)).join(" ")} (audit of ${shortDay(nyDay(new Date(a.created_at)))}).`, detail: { audit: a.id, problems: problems.slice(0, 8) }, severity: "warn", href: `/kpis/audit/${a.id}`, to: uniq([...b.ownerAndHead(c.id, line, [t.owner_id]), ...trackers]) });
+  }
+  // Platforms vs the store (7 days): Meta purchases, Google purchase conversions, the store's orders through Klaviyo
+  const purchases = (x: Record<string, number> | null) => Math.max(Number(x?.purchase ?? 0), Number(x?.omni_purchase ?? 0), Number(x?.["offsite_conversion.fb_pixel_purchase"] ?? 0));
+  const metaBuy = new Map<string, number>();
+  for (const r of daily as Row[]) {
+    const t = accountClient.get(r.ad_account_id);
+    if (t) metaBuy.set(t.client_id, (metaBuy.get(t.client_id) ?? 0) + purchases(r.actions));
+  }
+  const googleBuy = new Map<string, number>();
+  for (const r of googleDaily) {
+    const t = accountClient.get(r.ad_account_id);
+    if (!t) continue;
+    const n = Object.entries(r.actions ?? {}).filter(([k]) => /^action:.*purchase/i.test(k)).reduce((x, [, v]) => x + Number(v || 0), 0);
+    googleBuy.set(t.client_id, (googleBuy.get(t.client_id) ?? 0) + n);
+  }
+  const store = new Map<string, number>();
+  for (const r of storeDays) store.set(r.client_id, (store.get(r.client_id) ?? 0) + Number(r.store_orders ?? 0));
+  for (const [clientId, orders] of store) {
+    const c = byId.get(clientId);
+    if (!c || !(hasLine(c, "meta") || hasLine(c, "google"))) continue;
+    const gap = conversionGap({ meta: hasLine(c, "meta") ? (metaBuy.get(clientId) ?? 0) : 0, google: hasLine(c, "google") ? (googleBuy.get(clientId) ?? 0) : 0, store: orders });
+    if (!gap) continue;
+    const line: ReviewLine = gap.text.startsWith("Google") ? "google" : "meta";
+    push({ client_id: c.id, line: line === "google" ? "google-ads" : "facebook-ads", key: `tracking_mismatch:${c.id}:${gap.kind}`, kind: "tracking_mismatch", title: gap.kind === "double" ? "Meta and Google are counting the same orders" : gap.kind === "under" ? "The ad platforms are missing most of the store's orders" : `${line === "google" ? "Google" : "Meta"} claims more purchases than the store saw`, body: `${gap.text} in the last 7 days. Check the pixel, Conversions API, deduplication and the conversion settings, and never add the platforms' numbers together for this client.`, detail: { meta: metaBuy.get(clientId) ?? 0, google: googleBuy.get(clientId) ?? 0, store: orders, kind: gap.kind }, severity: "warn", href: `/clients/${c.slug}`, to: uniq([...b.ownerAndHead(c.id, line), ...trackers]) });
+  }
+  // Conversion rate dropping abnormally: the last 3 days against the 28 before, per Meta account
+  const cvr = new Map<string, { rc: number; rr: number; bc: number; br: number }>();
+  const skipName = /reach|awareness|engagement|boost|brand|video views?|followers?|page likes/i;
+  for (const r of [...(daily as Row[]).filter((x) => x.date >= since3), ...prior]) {
+    if (skipName.test(r.campaign_name ?? "")) continue;
+    const cur = cvr.get(r.ad_account_id) ?? { rc: 0, rr: 0, bc: 0, br: 0 };
+    const clicks = Number(r.link_clicks ?? r.actions?.link_click ?? 0);
+    if (r.date >= since3) {
+      cur.rc += clicks;
+      cur.rr += resultsOf(r.actions);
+    } else {
+      cur.bc += clicks;
+      cur.br += resultsOf(r.actions);
+    }
+    cvr.set(r.ad_account_id, cur);
+  }
+  for (const [acc, v] of cvr) {
+    const t = accountClient.get(acc);
+    const drop = cvrDrop({ recentClicks: v.rc, recentResults: v.rr, baseClicks: v.bc, baseResults: v.br });
+    if (!t || !drop) continue;
+    push({ client_id: t.client_id, line: "facebook-ads", account: acc, key: `cvr_drop:${acc}`, kind: "cvr_drop", title: `Meta conversion rate fell to ${(drop.recent * 100).toFixed(1)}% from ${(drop.base * 100).toFixed(1)}%`, body: `The last 3 days convert at under half the 28 days before (${Math.round(v.rr)} results on ${Math.round(v.rc)} link clicks). Check the site, the checkout or form, the pixel and any offer change before blaming the ads.`, detail: { recent: drop.recent, base: drop.base, clicks: v.rc, results: v.rr }, severity: "warn", href: `/kpis?target=${t.id}`, to: uniq([...b.ownerAndHead(t.client_id, "meta", [t.owner_id]), ...trackers]) });
+  }
+
   const applied = await applyFindings(admin, findings, b.clients.map((c) => ({ ...c, billed_services: null })), new Map(), now, { owns: (k) => isDogKind(k) && k !== "site_down" && k !== "site_check", noticeSuffix: ":dog" });
-  return { today, findings: findings.length, accounts: metaAccounts.length, ...applied };
+  return { today, findings: findings.length, accounts: metaAccounts.length, tracking: findings.filter((f) => (TRACKING_KINDS as readonly string[]).includes(f.kind)).length, ...applied };
 }
 
 // ─── Websites: uptime hourly, the page check weekly ────────────────────────

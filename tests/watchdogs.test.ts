@@ -110,3 +110,25 @@ describe("websites", () => {
     expect(isDogKind("idle")).toBe(false);
   });
 });
+
+import { conversionGap, cvrDrop, trackingProblems } from "@/lib/watchdogs/core";
+
+describe("tracking", () => {
+  it("keeps the audit's tracking problems, drops the all-clear lines", () => {
+    const p = trackingProblems(["Both pixels last fired 48 days ago.", "Tracking looks clean on the lead form.", "No Conversions API events reach the dataset.", 5]);
+    expect(p).toHaveLength(2);
+    expect(trackingProblems(null)).toEqual([]);
+  });
+  it("platform vs store", () => {
+    expect(conversionGap({ meta: 40, google: 0, store: 20 })?.kind).toBe("over");
+    expect(conversionGap({ meta: 20, google: 15, store: 22 })?.kind).toBe("double");
+    expect(conversionGap({ meta: 3, google: 0, store: 60 })?.kind).toBe("under");
+    expect(conversionGap({ meta: 20, google: 0, store: 22 })).toBeNull();
+    expect(conversionGap({ meta: 2, google: 1, store: 3 })).toBeNull();
+  });
+  it("conversion rate dropping abnormally", () => {
+    expect(cvrDrop({ recentClicks: 100, recentResults: 1, baseClicks: 1000, baseResults: 50 })).not.toBeNull();
+    expect(cvrDrop({ recentClicks: 100, recentResults: 4, baseClicks: 1000, baseResults: 50 })).toBeNull();
+    expect(cvrDrop({ recentClicks: 30, recentResults: 0, baseClicks: 1000, baseResults: 50 })).toBeNull();
+  });
+});
