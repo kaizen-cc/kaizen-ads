@@ -13,6 +13,9 @@ import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { monthLabel } from "@/lib/reports/format";
 import { slackConnection, slackIdentity } from "@/lib/slack-user";
 import { ReportStudio } from "../report-studio";
+import { ReportStyle, type StyleView } from "../report-style";
+import { loadStyle } from "@/lib/reports/style";
+import { lineOfPlatform, styleBanner } from "@/lib/reports/style-core";
 import type { ChannelLayout } from "@/lib/channel-reports/layout";
 import type { EmailMetrics, SocialMetrics } from "@/lib/channel-reports/core";
 import { portalUrl } from "@/lib/site";
@@ -130,6 +133,17 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const behind = r.kind === "weekly" && !sentNow && r.period_end < week.end ? rangeLabel(week, today) : null;
   const locked = sentNow ? "It went to the client with these dates. Duplicate it from the history for other dates." : r.kind === "monthly" ? "A monthly recap covers its month." : r.kind === "built" && bundle?.created_by && bundle.created_by !== me.id && !me.isExec ? "Whoever built the report sets its dates." : null;
 
+  // This client's report style (what the team taught; the next report is drafted with it), shown above the report
+  const styleLine = lineOfPlatform(r.platform as string);
+  const style = admin ? await loadStyle(admin, r.client_id as string, styleLine).catch(() => null) : null;
+  const styleView: StyleView = {
+    banner: styleBanner(style?.current ?? null),
+    version: style?.current?.version ?? null,
+    rules: (style?.current?.rules ?? []).map((x) => ({ text: x.text, by: x.by, source: x.source, at: x.at })),
+    history: (style?.history ?? []).filter((h) => h.id !== "old").map((h) => ({ version: h.version, change: h.change, by: h.taught_by_name, source: h.source, at: h.created_at, undone: Boolean(h.undone_at) })),
+    line: styleLine,
+  };
+
   return (
     <div className="mx-auto grid max-w-6xl gap-5">
       <header className="grid gap-1">
@@ -141,6 +155,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           {isChannel ? (r.platform === "klaviyo" ? "Email Marketing" : "Organic Social") : r.kind === "built" && (parts?.length ?? 0) > 1 ? "Joint report" : r.platform === "google" ? "Google Ads" : r.platform === "tiktok" ? (joinedTo ? "TikTok Ads · goes with the Meta report" : "TikTok Ads") : joint?.riders.some((x) => x.status !== "skipped") ? "Meta Ads + TikTok" : "Meta Ads"} · {periodLabel}
         </p>
       </header>
+      <ReportStyle reportId={r.id} view={styleView} />
       <ReportStudio
         report={{
           id: r.id,

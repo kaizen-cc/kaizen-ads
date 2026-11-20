@@ -2,7 +2,7 @@
 // a 16:9 page at 14 points or more. The model fills the loose shape below; clean() turns it into the strict one the
 // document draws, cutting what wouldn't fit rather than shrinking the type.
 
-export const SLIDE_KINDS = ["cover", "section", "bullets", "two_column", "stats", "quote", "image_notes", "scorecard"] as const;
+export const SLIDE_KINDS = ["cover", "section", "bullets", "two_column", "stats", "quote", "image_notes", "scorecard", "table", "bars"] as const;
 export type SlideKind = (typeof SLIDE_KINDS)[number];
 export type Tone = "good" | "watch" | "bad";
 
@@ -18,6 +18,12 @@ export type LooseSlide = {
   image?: string;
   caption?: string;
   rows?: { label?: string; tone?: string; note?: string }[];
+  /** table: the column headings and the cells, row by row */
+  columns?: string[];
+  cells?: unknown[][];
+  /** bars: one bar per label, longest first as given; display is the value as shown ("$42.10") */
+  bars?: { label?: string; value?: unknown; display?: string; tone?: string }[];
+  note?: string;
 };
 
 export type Column = { heading: string; bullets: string[] };
@@ -29,7 +35,9 @@ export type Slide =
   | { kind: "stats"; title: string; stats: { value: string; label: string; note: string }[]; text: string }
   | { kind: "quote"; title: string; text: string; by: string }
   | { kind: "image_notes"; title: string; image: string | null; caption: string; bullets: string[] }
-  | { kind: "scorecard"; title: string; rows: { label: string; tone: Tone; note: string }[] };
+  | { kind: "scorecard"; title: string; rows: { label: string; tone: Tone; note: string }[] }
+  | { kind: "table"; title: string; columns: string[]; cells: string[][]; note: string }
+  | { kind: "bars"; title: string; bars: { label: string; value: number; display: string; tone: Tone | null }[]; note: string };
 
 export const MAX_SLIDES = 30;
 
@@ -85,6 +93,28 @@ export function cleanSlide(raw: LooseSlide): Slide | null {
     case "image_notes": {
       const bullets = list(raw.bullets, 4, 100);
       return raw.image || bullets.length ? { kind, title, image: raw.image ? String(raw.image).trim() : null, caption: clip(raw.caption, 60), bullets } : null;
+    }
+    case "table": {
+      // Up to 6 columns and 8 rows, so every cell stays readable at 14 points
+      const columns = list(raw.columns, 6, 24);
+      const width = Math.max(columns.length, ...(raw.cells ?? []).map((r) => (Array.isArray(r) ? r.length : 0)));
+      const cols = Math.min(6, width);
+      const cells = (Array.isArray(raw.cells) ? raw.cells : [])
+        .filter((r): r is unknown[] => Array.isArray(r))
+        .map((r) => Array.from({ length: cols }, (_, i) => clip(r[i] ?? "", i === 0 ? 34 : 18)))
+        .filter((r) => r.some(Boolean))
+        .slice(0, 8);
+      return cells.length ? { kind, title, columns: Array.from({ length: cols }, (_, i) => columns[i] ?? ""), cells, note: clip(raw.note ?? raw.text, 140) } : null;
+    }
+    case "bars": {
+      const bars = (raw.bars ?? [])
+        .map((b) => {
+          const value = Number(String(b.value ?? "").replace(/[^\d.-]/g, ""));
+          return { label: clip(b.label, 28), value: isFinite(value) ? value : 0, display: clip(b.display ?? (isFinite(value) ? String(b.value) : ""), 14), tone: b.tone ? toneOf(b.tone) : null };
+        })
+        .filter((b) => b.label)
+        .slice(0, 8);
+      return bars.length ? { kind, title, bars, note: clip(raw.note ?? raw.text, 160) } : null;
     }
     case "scorecard": {
       const rows = (raw.rows ?? [])

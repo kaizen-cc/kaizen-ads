@@ -197,6 +197,37 @@ export async function reportTools(admin: SupabaseClient, r: { client_id: string;
         },
       },
       {
+        name: "custom_analysis",
+        description: `For a client's request in their own format, over any range up to 37 months: offers or price points compared (e.g. $99, $89, $49 and $7, matched in ad, ad set and campaign names; optionally month by month), before and after a dated change (conversion rates per click, per landing page view and per checkout started, cost per result, ROAS), and the top and worst creatives (with preview links). Read live from ${client?.name ?? "the client"}'s Meta account, only the report's campaigns. When the client wants this in every report, say so in lesson as a standing preference.`,
+        input_schema: {
+          type: "object",
+          properties: {
+            since: { type: "string", description: "YYYY-MM-DD" },
+            until: { type: "string", description: "YYYY-MM-DD" },
+            offers: { type: "array", items: { type: "object", properties: { label: { type: "string" }, match: { type: "array", items: { type: "string" } } }, required: ["label", "match"] } },
+            by_month: { type: "boolean" },
+            change: { type: "object", properties: { date: { type: "string" }, label: { type: "string" }, days: { type: "integer" } }, required: ["date"] },
+            creatives: { type: "object", properties: { top: { type: "integer" }, worst: { type: "integer" } } },
+          },
+          required: ["since"],
+          additionalProperties: false,
+        },
+        run: async (input) => {
+          const { customAnalysis } = await import("./custom-analysis");
+          const { todayIn } = await import("./period");
+          const offers = (Array.isArray(input.offers) ? input.offers : []).map((o) => ({ label: String((o as { label?: unknown }).label ?? "").slice(0, 40), match: ((o as { match?: unknown[] }).match ?? []).map((m) => String(m).slice(0, 60)).filter(Boolean) })).filter((o) => o.label && o.match.length).slice(0, 12);
+          const ch = input.change as { date?: unknown; label?: unknown; days?: unknown } | undefined;
+          const cr = input.creatives as { top?: unknown; worst?: unknown } | undefined;
+          const out = await customAnalysis(
+            { ...(t as CampaignScope), ad_account_id: account, conversion: (t as { conversion?: string | null } | null)?.conversion ?? null },
+            { since: String(input.since ?? ""), until: input.until ? String(input.until) : null, offers, byMonth: input.by_month === true, change: ch?.date ? { date: String(ch.date), label: ch.label ? String(ch.label).slice(0, 120) : null, days: Number(ch.days) || null } : null, creatives: cr ? { top: Number(cr.top ?? 5), worst: Number(cr.worst ?? 5) } : null },
+            todayIn(),
+          );
+          const what = [offers.length ? "offers compared" : null, ch?.date ? `before and after ${String(ch.date)}` : null, cr ? "top and worst creatives" : null].filter(Boolean).join(", ") || "custom analysis";
+          return note(`Meta · ${what} · ${String((out.range as { since: string }).since)} to ${String((out.range as { until: string }).until)}`, out);
+        },
+      },
+      {
         name: "meta_ad",
         description: "One Meta ad's copy and creative (primary text, headline, call to action, link, image or video) by its ad_id from meta_insights.",
         input_schema: { type: "object", properties: { ad_id: { type: "string" } }, required: ["ad_id"], additionalProperties: false },

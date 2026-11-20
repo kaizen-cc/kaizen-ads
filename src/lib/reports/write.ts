@@ -15,6 +15,10 @@ import { applyManual, type ManualResults } from "./manual";
 import { leftOutNames as leftOutNamesOf } from "./campaign-scope";
 import { openWithHere } from "./slack-text";
 import type { UploadedFile } from "./upload-csv";
+import { lineOfPlatform, rulesBlock, type StyleLine, type StyleSource } from "./style-core";
+import { styleRules, teachStyle, type Who } from "./style";
+import { styleAsks } from "./style-data";
+import type { MetaTarget } from "./custom-analysis";
 
 // Writing a client report: the numbers (reportMetrics), the work behind them (workDone), the buyer's own voice (their
 // recaps in client channels), what this client likes in a report (learned from past edits), and what the buyer added
@@ -124,11 +128,12 @@ async function context(admin: SupabaseClient, reportId: string) {
   const whiteLabel = isWhiteLabel((r.clients as unknown as { client_type?: string | null }).client_type);
   const target = r.kpi_targets as unknown as Parameters<typeof reportMetrics>[1];
   const owner = (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null;
-  const { data: prefs } = await admin.from("client_report_prefs").select("notes").eq("client_id", r.client_id).maybeSingle();
+  // This client's report style for the line (versioned, newest wins): see style.ts
+  const style = await styleRules(admin, r.client_id as string, lineOfPlatform(r.platform as string));
   const { data: last } = await admin.from("reports").select("period_start, sections").eq("target_id", r.target_id).eq("kind", r.kind).lt("period_start", r.period_start).in("status", ["posted", "submitted"]).order("period_start", { ascending: false }).limit(1).maybeSingle();
   // The campaigns left out of this report alone: the report's own layout, else the one the client's reports start from
   const layout = ((r as unknown as { layout?: ReportLayout | null }).layout ?? (r.kpi_targets as unknown as { report_layout?: ReportLayout | null } | null)?.report_layout ?? null) as ReportLayout | null;
-  return { r, client, whiteLabel, target, owner, prefs: ((prefs?.notes ?? []) as string[]).slice(-20), last, leftOut: await leftOutNames(admin, target), leave: leftOutNamesOf(layout?.campaigns?.hide), uploads: await uploadsOf(admin, reportId) };
+  return { r, client, whiteLabel, target, owner, prefs: style.map((x) => x.text), style, last, leftOut: await leftOutNames(admin, target), leave: leftOutNamesOf(layout?.campaigns?.hide), uploads: await uploadsOf(admin, reportId) };
 }
 
 /**
@@ -247,7 +252,7 @@ function sourcesBlock(c: Awaited<ReturnType<typeof context>>, metrics: ReportMet
     diagnosisText(metrics.diagnosis, metrics.opportunity),
     lastNext.length ? `<what_the_last_report_said_was_next>\n${lastNext.map((x) => `- ${x}`).join("\n")}\n</what_the_last_report_said_was_next>` : "",
     c.r.extras ? `<added_by_the_buyer>\n${c.r.extras}\n</added_by_the_buyer>` : "",
-    c.prefs.length ? `<what_this_client_wants_in_a_report>\n${c.prefs.map((p) => `- ${p}`).join("\n")}\n</what_this_client_wants_in_a_report>` : "",
+    rulesBlock(c.style),
     pulledBlock(c.r.chat as ChatTurn[] | null),
     voice,
   ]
@@ -298,6 +303,15 @@ export async function draftReport(admin: SupabaseClient, reportId: string) {
     metrics = withEntered(metrics, c.r as unknown as { period_start: string; period_end: string; manual_results?: unknown });
     await admin.from("reports").update({ metrics, work, extra_metrics: extra.length ? extra : null }).eq("id", reportId);
     (c.r as unknown as { extra_metrics: ReportMetrics[] }).extra_metrics = extra;
+    // What this client's report style asks for every time that the standard numbers don't have (offers compared, the
+    // worst creatives, before and after a dated change): read from the ad account now and kept in the report's chat as
+    // pulled data, so the draft, the QA and later asks all use the same numbers
+    const asked = c.style.length ? await styleAsks(c.style.map((x) => x.text), c.r.platform as string, c.target as unknown as MetaTarget, { start: metrics.main.start, end: metrics.main.end }).catch(() => null) : null;
+    if (asked) {
+      const chat = [...((c.r.chat ?? []) as ChatTurn[]), { role: "assistant" as const, text: asked.say, at: new Date().toISOString(), pulled: asked.labels, data: asked.data }].slice(-40);
+      (c.r as unknown as { chat: ChatTurn[] }).chat = chat;
+      await admin.from("reports").update({ chat }).eq("id", reportId);
+    }
     const out = await askJson<{ message: string; sections: Sections }>({
       agent: agentFor(c.r.platform),
       label: `${kind} report`,
@@ -417,15 +431,12 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
   out.message = openWithHere(out.message);
   await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), chat: next, updated_at: now }).eq("id", reportId);
 
-  if (out.lesson.trim()) await rememberPref(admin, c.r.client_id, out.lesson.trim());
+  if (out.lesson.trim()) await rememberPref(admin, c.r.client_id, out.lesson.trim(), { line: lineOfPlatform(c.r.platform as string), by: { id: opts.byId ?? null, name: by }, reportId, source: "studio_ask" }).catch(() => null);
   const qa = await qaReport(admin, reportId).catch(() => null);
   return { chat: next, message: out.message, sections: out.sections, qa, lesson: out.lesson.trim() || null };
 }
 
-/** A standing preference for this client's reports (not repeated). */
-export async function rememberPref(admin: SupabaseClient, clientId: string, note: string) {
-  const { data } = await admin.from("client_report_prefs").select("notes").eq("client_id", clientId).maybeSingle();
-  const notes = (data?.notes ?? []) as string[];
-  if (notes.some((n) => n.toLowerCase() === note.toLowerCase())) return;
-  await admin.from("client_report_prefs").upsert({ client_id: clientId, notes: [...notes, note].slice(-30), updated_at: new Date().toISOString() });
+/** A standing preference for this client's reports: a new version of the client's report style (not repeated). */
+export async function rememberPref(admin: SupabaseClient, clientId: string, note: string, opts: { line?: StyleLine; by?: Who; reportId?: string | null; source?: StyleSource } = {}) {
+  return teachStyle(admin, { clientId, line: opts.line ?? "ads", rules: [note], source: opts.source ?? "studio_ask", by: opts.by ?? { id: null, name: null }, reportId: opts.reportId ?? null });
 }

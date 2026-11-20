@@ -220,6 +220,53 @@ function SlideView({ slide, look, input, images }: { slide: Slide; look: Look; i
           </View>
         </Frame>
       );
+    case "table": {
+      const size = slide.cells.length > 6 || slide.columns.length > 5 ? 14 : 16;
+      return (
+        <Frame look={look} input={input}>
+          <Head slide={slide} look={look} input={input} />
+          <View style={[s.panel, { overflow: "hidden" }]}>
+            <View style={{ flexDirection: "row", backgroundColor: look.hero, paddingVertical: 9, paddingHorizontal: 14 }}>
+              {slide.columns.map((c, i) => (
+                <Text key={i} style={{ flex: i === 0 ? 1.6 : 1, fontSize: 14, fontFamily: "Helvetica-Bold", color: "#ffffff", textAlign: i === 0 ? "left" : "right" }}>{c}</Text>
+              ))}
+            </View>
+            {slide.cells.map((row, ri) => (
+              <View key={ri} style={{ flexDirection: "row", paddingVertical: 8, paddingHorizontal: 14, backgroundColor: ri % 2 ? SURFACE : "#ffffff", borderTopWidth: ri ? 1 : 0, borderTopColor: LINE }}>
+                {row.map((cell, i) => (
+                  <Text key={i} style={{ flex: i === 0 ? 1.6 : 1, fontSize: size, fontFamily: i === 0 ? "Helvetica-Bold" : "Helvetica", textAlign: i === 0 ? "left" : "right" }}>{cell}</Text>
+                ))}
+              </View>
+            ))}
+          </View>
+          {slide.note ? <Text style={{ fontSize: 15, color: MUTED, marginTop: 14, lineHeight: 1.35 }}>{slide.note}</Text> : null}
+        </Frame>
+      );
+    }
+    case "bars": {
+      const max = Math.max(...slide.bars.map((b) => Math.abs(b.value)), 0) || 1;
+      const h = slide.bars.length > 5 ? 26 : 34;
+      return (
+        <Frame look={look} input={input}>
+          <Head slide={slide} look={look} input={input} />
+          <View style={[s.panel, { padding: 22, gap: slide.bars.length > 5 ? 10 : 14 }]}>
+            {slide.bars.map((b, i) => {
+              const color = b.tone ? TONE[b.tone].fg : i === 0 ? look.bars : look.primary;
+              return (
+                <View key={i} style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+                  <Text style={{ width: 190, fontSize: 16, fontFamily: "Helvetica-Bold" }}>{b.label}</Text>
+                  <View style={{ flex: 1, height: h, backgroundColor: SURFACE, borderRadius: 6 }}>
+                    <View style={{ width: `${Math.max(2, (Math.abs(b.value) / max) * 100)}%`, height: h, backgroundColor: color, borderRadius: 6 }} />
+                  </View>
+                  <Text style={{ width: 92, fontSize: 17, fontFamily: "Helvetica-Bold", textAlign: "right" }}>{b.display}</Text>
+                </View>
+              );
+            })}
+          </View>
+          {slide.note ? <Text style={{ fontSize: 15, color: MUTED, marginTop: 14, lineHeight: 1.35 }}>{slide.note}</Text> : null}
+        </Frame>
+      );
+    }
   }
 }
 

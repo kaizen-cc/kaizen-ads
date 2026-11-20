@@ -68,6 +68,8 @@ export async function saveReport(id: string, patch: { message?: string; extras?:
     update.message_basis = reportBasis(patch.sections ?? cur?.sections, patch.extras ?? cur?.extras);
   }
   if (patch.extras !== undefined) update.extras = patch.extras.slice(0, 6000);
+  // What the sections were before this save: what the buyer changed by hand teaches the client's report style
+  const before = patch.sections !== undefined ? ((await createAdminClient().from("reports").select("sections").eq("id", id).single()).data?.sections ?? null) : null;
   if (patch.sections !== undefined) {
     // An organic social report's team notes and entered figures are cleaned, and each figure is stamped with who entered it and when
     if (ok.r.platform === "social") {
@@ -76,6 +78,15 @@ export async function saveReport(id: string, patch: { message?: string; extras?:
     } else update.sections = patch.sections;
   }
   await createAdminClient().from("reports").update(update).eq("id", id);
+  // Lasting preferences in the edit (a section cut, items trimmed, a line they always add) become this client's style,
+  // after the save so it never waits on the AI
+  if (patch.sections !== undefined && before) {
+    const by = { id: ok.me.id, name: ok.me.fullName };
+    after(async () => {
+      const [{ learnFromEdit }, { lineOfPlatform }] = await Promise.all([import("@/lib/reports/style"), import("@/lib/reports/style-core")]);
+      await learnFromEdit(createAdminClient(), { clientId: ok.r.client_id as string, line: lineOfPlatform(ok.r.platform as string), reportId: id, before, after: patch.sections, by }).catch((e) => console.error("[report style] learn from edit", e instanceof Error ? e.message : e));
+    });
+  }
   done(id);
   return { ok: true };
 }
@@ -110,7 +121,13 @@ export async function saveLayout(id: string, layout: ReportLayout | ChannelLayou
   // "Include our notes in the report" is this report's alone: the next one starts without them again
   await admin.from("reports").update({ layout: (layout as ReportLayout).notes === true ? { ...tidy, notes: true } : tidy, updated_at: new Date().toISOString() }).eq("id", id);
   const t = ok.r.kpi_targets as unknown as { id: string } | null;
-  if (t) await admin.from("kpi_targets").update({ report_layout: tidy }).eq("id", t.id);
+  if (t) {
+    const { data: was } = await admin.from("kpi_targets").select("report_layout").eq("id", t.id).maybeSingle();
+    await admin.from("kpi_targets").update({ report_layout: tidy }).eq("id", t.id);
+    // The metrics picked are part of the client's report style too (shown, and undone with it: undo puts these back)
+    const { layoutRules, teachStyle } = await import("@/lib/reports/style");
+    await teachStyle(admin, { clientId: ok.r.client_id as string, line: "ads", rules: layoutRules(tidy, ok.r.platform as string), source: "layout", by: { id: ok.me.id, name: ok.me.fullName }, reportId: id, layout: { target: t.id, before: (was?.report_layout as ReportLayout | null) ?? null } }).catch(() => null);
+  }
   done(id);
   return { ok: true };
 }

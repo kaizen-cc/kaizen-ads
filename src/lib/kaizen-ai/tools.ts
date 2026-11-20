@@ -830,22 +830,47 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     },
     {
       name: "draft_weekly_report",
-      description: "Starts a client report in the report builder (the same as Reports › Build): the AI drafts it in the buyer's voice in the background and the person reviews, edits and approves it there before anything is sent. Returns the link. Default: the last 7 days, every service with a KPI.",
-      input_schema: { type: "object", properties: { client: CLIENT, range: { type: "string", enum: ["last7", "last14", "last30", "mtd", "lastMonth"] }, platforms: { type: "array", items: { type: "string", enum: ["meta", "google"] } } }, additionalProperties: false },
+      description: "Starts a client report in the report builder (the same as Reports › Build), in the Kaizen report's look (PDF, live page, Slack message): the AI drafts it in the buyer's voice in the background, following the client's report style, and the person reviews, edits and approves it there before anything is sent. Any dates (start and end, several months is fine), and ask: what this report must answer in the client's own format (\"compare cost per purchase across the $99, $89, $49 and $7 offers since July\", \"top and worst creatives\"), which the report's AI works in right after the first draft, reading the ad account for it. Only the person's own service lines (the Meta team Meta and TikTok, the Google team Google, execs all). Returns the link. Default: the last 7 days, every service of theirs with a KPI.",
+      input_schema: {
+        type: "object",
+        properties: {
+          client: CLIENT,
+          range: { type: "string", enum: ["lastWeek", "last7", "last14", "last30", "mtd", "lastMonth", "custom"] },
+          start: { type: "string", description: "YYYY-MM-DD (custom)" },
+          end: { type: "string", description: "YYYY-MM-DD (custom)" },
+          platforms: { type: "array", items: { type: "string", enum: ["meta", "google", "tiktok"] } },
+          ask: { type: "string", description: "The client's specific request for this report, in plain words" },
+        },
+        additionalProperties: false,
+      },
       status: (input, client) => `Starting the report for ${nameFor(ctx, input) ?? client ?? "the client"}…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
         needNumbers(ctx);
         const { resolveRange, buildReport, draftParts } = await import("@/lib/reports/builder");
-        const range = resolveRange(String(input.range ?? "last7"));
-        if (!range) throw new Error("That range isn't available.");
-        const platforms = Array.isArray(input.platforms) && input.platforms.length ? (input.platforms as string[]) : ["meta", "google"];
+        const { adsLinesFor } = await import("@/lib/roles");
+        const key = input.start && input.end ? "custom" : String(input.range ?? "last7");
+        const range = resolveRange(key, undefined, key === "custom" ? { start: String(input.start ?? ""), end: String(input.end ?? "") } : undefined);
+        if (!range) throw new Error(key === "custom" ? "Custom dates need a start and an end (YYYY-MM-DD), in the past, at most 400 days." : "That range isn't available.");
+        // Their own lines only (the builder checks it again)
+        const mine = adsLinesFor(ctx.me) as string[];
+        const asked = Array.isArray(input.platforms) && input.platforms.length ? (input.platforms as string[]) : mine;
+        const platforms = asked.filter((p) => mine.includes(p));
+        if (!platforms.length) throw new Error(`You can only build reports for your own service line${mine.length ? ` (${mine.join(", ")})` : ""}.`);
         const out = await buildReport(ctx.admin, ctx.db, ctx.me, c.id, [range], platforms);
+        const ask = clip(input.ask, 2000);
         const { after } = await import("next/server");
-        after(() => draftParts(ctx.admin, out.partIds));
+        after(async () => {
+          await draftParts(ctx.admin, out.partIds);
+          if (!ask) return;
+          // The client's own format: worked into the person's part right after it's drafted, with the report's live lookups
+          const { reviseReport } = await import("@/lib/reports/write");
+          const id = out.mineId ?? out.partIds[0];
+          await reviseReport(ctx.admin, id, `The client asked for this report in their own format: ${ask}`, ctx.me.fullName, { byId: ctx.me.id }).catch((e) => console.error("[draft_weekly_report] ask", e instanceof Error ? e.message : e));
+        });
         const href = `/reports/${out.mineId ?? out.partIds[0]}`;
-        card({ type: "link", title: `${c.name} report · ${range.label}`, detail: "Drafting now (about a minute). Review, edit and approve it there; nothing is sent until you do.", href, cta: "Open the report" });
-        return { started: true, link: href, range: `${range.start} to ${range.end}`, parts: out.partIds.length };
+        card({ type: "link", title: `${c.name} report · ${range.label}`, detail: `Drafting now (${ask ? "a couple of minutes: the draft, then your ask worked in" : "about a minute"}). Review, edit and approve it there; nothing is sent until you do.`, href, cta: "Open the report" });
+        return { started: true, link: href, range: `${range.start} to ${range.end}`, parts: out.partIds.length, ask: ask || null };
       },
     },
     {
@@ -1011,7 +1036,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     {
       name: "make_deck",
       description:
-        "Turns what you worked out into a Kaizen-branded PDF deck (16:9 slides, the look of Kaizen's reports) the person can download and share: a creative assessment of attached ads, a strategy or audit summary, a pitch-style recap. Write the finished content first, then call this once with every slide. Start with a cover, keep to one idea per slide and at most 5 short bullets (a slide that runs long is cut, so split it). Slide kinds: cover (title, text), section (title, text), bullets (title, bullets), two_column (title, left and right each with heading and bullets), stats (title, stats of value, label, note; up to 4), quote (text, by), image_notes (title, image, caption, bullets: image is the name of a picture attached to this message, or its number, so an ad sits beside your notes), scorecard (title, rows of label, tone good, watch or bad, note; up to 5). Plain words, no em dashes, roles not names. Returns a download link card.",
+        "Turns what you worked out into a Kaizen-branded deck (16:9 slides, the look of Kaizen's reports) the person can download and share: an editable PowerPoint (every title, number, table and bar is a real PowerPoint shape they can change; opens in Google Slides and Keynote too) and the same deck as a PDF. For a creative assessment of attached ads, a strategy or audit summary, a pitch-style recap, or a client's custom report (offers compared, before and after a change, top and worst creatives: read the numbers with custom_report_data first). Write the finished content first, then call this once with every slide. Start with a cover, keep to one idea per slide and at most 5 short bullets (a slide that runs long is cut, so split it). Slide kinds: cover (title, text), section (title, text), bullets (title, bullets), two_column (title, left and right each with heading and bullets), stats (title, stats of value, label, note; up to 4), quote (text, by), image_notes (title, image, caption, bullets: image is the name of a picture attached to this message, or its number, so an ad sits beside your notes), scorecard (title, rows of label, tone good, watch or bad, note; up to 5), table (title, columns, cells row by row, note; up to 6 columns and 8 rows: the numbers side by side, e.g. offer, spend, purchases, cost per purchase, conversion rate), bars (title, bars of label, value as a number, display as shown, e.g. $42.10, optional tone; up to 8; note: one comparison, e.g. cost per purchase by offer). For a Meta ad's own picture (a top or worst creative), image is ad:<ad_id>. Plain words, no em dashes, roles not names. Returns a download link card.",
       input_schema: {
         type: "object",
         properties: {
@@ -1032,13 +1057,18 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
                 right: { type: "object", properties: { heading: { type: "string" }, bullets: { type: "array", items: { type: "string" } } } },
                 stats: { type: "array", items: { type: "object", properties: { value: { type: "string" }, label: { type: "string" }, note: { type: "string" } }, required: ["value", "label"] } },
                 by: { type: "string", description: "quote: who said it" },
-                image: { type: "string", description: "image_notes: an attached picture's file name, or its number among the attached pictures" },
+                image: { type: "string", description: "image_notes: an attached picture's file name, or its number among the attached pictures, or ad:<ad_id> for a Meta ad's own picture" },
                 caption: { type: "string" },
                 rows: { type: "array", items: { type: "object", properties: { label: { type: "string" }, tone: { type: "string", enum: ["good", "watch", "bad"] }, note: { type: "string" } }, required: ["label", "tone"] } },
+                columns: { type: "array", items: { type: "string" }, description: "table: the headings" },
+                cells: { type: "array", items: { type: "array", items: { type: "string" } }, description: "table: each row's cells, in the columns' order" },
+                bars: { type: "array", items: { type: "object", properties: { label: { type: "string" }, value: { type: "number" }, display: { type: "string" }, tone: { type: "string", enum: ["good", "watch", "bad"] } }, required: ["label", "value"] } },
+                note: { type: "string", description: "table or bars: a line under it (what it shows, the dates)" },
               },
               required: ["kind"],
             },
           },
+          format: { type: "string", enum: ["both", "pptx", "pdf"], description: "both (default): the editable PowerPoint and the PDF" },
         },
         required: ["title", "slides"],
         additionalProperties: false,
@@ -1051,9 +1081,11 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
         const slides = cleanSlides(input.slides, title, clip(input.subtitle, 140));
         if (slides.length < 2) throw new Error("Add the slides: a deck needs content after its cover.");
         const { makeDeckPdf } = await import("./deck-server");
-        const made = await makeDeckPdf({ admin: ctx.admin, profileId: ctx.me.id, title, subtitle: clip(input.subtitle, 140), client: c ? { id: c.id, name: c.name } : null, slides, files: ctx.files });
-        card({ type: "link", title, detail: `${made.slides} slides · PDF · the link works for 7 days`, href: made.url, cta: "Download the deck", external: true });
-        return { made: true, slides: made.slides, ...(made.missingPictures.length ? { pictures_not_found: made.missingPictures, note: "Those pictures weren't among the files attached to this message, so their slides show no picture. Ask them to attach the ads again, then make the deck again." } : { note: "The download card is on screen. Say what's in the deck in a line; don't repeat it." }) };
+        const format = input.format === "pdf" || input.format === "pptx" ? input.format : "both";
+        const made = await makeDeckPdf({ admin: ctx.admin, profileId: ctx.me.id, title, subtitle: clip(input.subtitle, 140), client: c ? { id: c.id, name: c.name } : null, slides, files: ctx.files, pptx: format !== "pdf", adPictures: !isChannelOnly(ctx.me.role) });
+        if (made.pptx) card({ type: "link", title, detail: `${made.slides} slides · PowerPoint you can edit (Google Slides and Keynote open it too) · the link works for 7 days`, href: made.pptx.url, cta: "Download the PowerPoint", external: true });
+        if (format !== "pptx" || !made.pptx) card({ type: "link", title, detail: `${made.slides} slides · PDF · the link works for 7 days`, href: made.url, cta: "Download the PDF", external: true });
+        return { made: true, slides: made.slides, formats: made.pptx ? (format === "pptx" ? ["pptx"] : ["pptx", "pdf"]) : ["pdf"], ...(made.missingPictures.length ? { pictures_not_found: made.missingPictures, note: "Those pictures weren't among the files attached to this message, so their slides show no picture. Ask them to attach the ads again, then make the deck again." } : { note: "The download card is on screen. Say what's in the deck in a line; don't repeat it." }) };
       },
     },
     {
@@ -1218,6 +1250,12 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     const label: Record<string, string> = { search_client: "Searching Slack, email, Drive and calls…", recent_calls: "Reading the recent calls…", read_call: "Reading the call…", earlier_reports: "Reading earlier reports…" };
     for (const t of reused) if (label[t.name] && (t.name !== "earlier_reports" || seesAccountNumbers(ctx.me))) tools.push({ ...t, description: `${t.description} (Only for the client this thread is pinned to.)`, status: () => label[t.name] });
   }
+
+  // Custom client reports (offers compared, before and after a change, top and worst creatives, any range) and the
+  // client's report style (what they always want, kept and versioned)
+  const { customReportTools } = await import("./custom-report-tools");
+  for (const t of customReportTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  CHANNEL_EXTRA.add("report_style");
 
   // Their own Kaizen AI and imported Claude chats, Google files opened as them, and a client's records by name
   const { myTools } = await import("./my-tools");

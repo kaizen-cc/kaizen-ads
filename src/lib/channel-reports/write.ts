@@ -118,9 +118,12 @@ async function context(admin: SupabaseClient, reportId: string) {
   const { data: r } = await admin.from("reports").select("id, kind, platform, period_start, period_end, client_id, owner_id, extras, metrics, sections, message, chat, work, layout, manual_results, clients(name, client_type), profiles!reports_owner_id_fkey(full_name)").eq("id", reportId).single();
   if (!r) throw new Error("Report not found");
   const row = r as unknown as ReportRow & { clients: { name: string; client_type?: string | null }; profiles: { full_name: string } | null };
-  const { data: prefs } = await admin.from("client_report_prefs").select("notes").eq("client_id", row.client_id).maybeSingle();
+  // This client's report style for the line (email or social), versioned: see src/lib/reports/style.ts
+  const { styleRules } = await import("@/lib/reports/style");
+  const { lineOfPlatform } = await import("@/lib/reports/style-core");
+  const style = await styleRules(admin, row.client_id, lineOfPlatform(row.platform));
   const { data: last } = await admin.from("reports").select("period_start, sections").eq("client_id", row.client_id).eq("platform", row.platform).eq("kind", row.kind).lt("period_start", row.period_start).in("status", ["posted", "submitted"]).order("period_start", { ascending: false }).limit(1).maybeSingle();
-  return { r: row, client: row.clients.name, whiteLabel: isWhiteLabel(row.clients.client_type), owner: row.profiles?.full_name ?? null, prefs: ((prefs?.notes ?? []) as string[]).slice(-20), last };
+  return { r: row, client: row.clients.name, whiteLabel: isWhiteLabel(row.clients.client_type), owner: row.profiles?.full_name ?? null, prefs: style.map((x) => x.text), last };
 }
 type Ctx = Awaited<ReturnType<typeof context>>;
 
@@ -339,7 +342,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
   out.message = withTitle(out.message, channelTitle(c.client, c.r.kind, m));
   out.message = openWithHere(out.message);
   await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), chat: next, updated_at: now }).eq("id", reportId);
-  if (out.lesson.trim()) await (await import("@/lib/reports/write")).rememberPref(admin, c.r.client_id, out.lesson.trim());
+  if (out.lesson.trim()) await (await import("@/lib/reports/write")).rememberPref(admin, c.r.client_id, out.lesson.trim(), { line: (await import("@/lib/reports/style-core")).lineOfPlatform(c.r.platform), by: { id: opts.byId ?? null, name: by }, reportId, source: "studio_ask" }).catch(() => null);
   const qa = await qaChannelReport(admin, reportId).catch(() => null);
   return { chat: next, message: out.message, sections: out.sections, qa, lesson: out.lesson.trim() || null };
 }
