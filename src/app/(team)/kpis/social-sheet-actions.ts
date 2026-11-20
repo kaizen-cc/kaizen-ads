@@ -38,7 +38,10 @@ export async function loadSocialSheet(clientId: string): Promise<{ ok: true; she
     db.from("social_sprints").select('id, audit_id, started_at, baseline, latest, next_check_at, last_check_at, social_sprint_actions(id, audit_index, title, owner, "when", steps, why, impact, status, note, ai_note, sort_order), social_sprint_checks(verdict, message, created_at)').eq("client_id", clientId).eq("status", "active").maybeSingle(),
   ]);
   const l = link.data;
-  const current = (r: Record<string, unknown>) => (r.platform === "facebook" ? r.account_id === l?.page_id : r.platform === "instagram" ? r.account_id === l?.ig_id : true);
+  // Every linked account (a Page and Instagram per location), their days added up per platform and day
+  const keys = (await (await import("@/lib/social/links")).linkedKeys(db, [clientId])).get(clientId) ?? new Set([`facebook:${l?.page_id ?? ""}`, `instagram:${l?.ig_id ?? ""}`]);
+  const current = (r: Record<string, unknown>) => (r.platform !== "facebook" && r.platform !== "instagram") || keys.has(`${r.platform}:${r.account_id ?? ""}`);
+  const { mergeAccountDays } = await import("@/lib/social/links-core");
   const a = audit.data as Record<string, unknown> | null;
   const s = sprint.data as Record<string, unknown> | null;
   return {
@@ -47,7 +50,7 @@ export async function loadSocialSheet(clientId: string): Promise<{ ok: true; she
       today,
       now: Date.now(),
       boosts: boosted.map((b) => ({ postId: b.postId, platform: b.platform, permalink: b.permalink, caption: b.caption, thumbnail: b.thumbnail, postedAt: b.postedAt, format: b.format, ads: b.ads, spend: b.spend30d, impressions: b.impressions30d, lastSpendDay: b.lastSpendDay, adNames: b.adNames })),
-      days: (days.data ?? []).filter(current).map((d) => ({ platform: d.platform as string, date: d.date as string, reach: orNull(d.reach), interactions: orNull(d.interactions), followers: orNull(d.followers) })),
+      days: mergeAccountDays((days.data ?? []).filter(current) as { platform: string; date: string }[], ["reach", "interactions", "followers"]).map((d) => d as Record<string, unknown>).map((d) => ({ platform: d.platform as string, date: d.date as string, reach: orNull(d.reach), interactions: orNull(d.interactions), followers: orNull(d.followers) })),
       posts: (posts.data ?? []).filter(current).map((p) => ({
         id: p.post_id as string,
         platform: p.platform as string,

@@ -219,6 +219,8 @@ export type SocialAccountScore = {
   checks: SocialCheck[];
   weighingDown: SocialDrag[];
   unmeasured: SocialAccountCheckKey[];
+  /** Each linked account on its own, when a platform has more than one (a Page per location), biggest reach first */
+  accounts?: { platform: string; accountId: string; name: string | null; location: string | null; score: number | null; band: SocialBand | null; followers: number | null; reach: number | null; rate: number | null; posts: number }[];
   /** Where the cadence's promise came from */
   promised: { perMonth: number; fromPackage: boolean };
   window: { from: string; to: string };

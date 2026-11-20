@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { etToday, shiftDay } from "@/lib/channel-kpis/calc";
 import { promisedPosts, socialAccountScore, type SocialAccountScore, type SocialDayRow, type SocialPostRow } from "./social-score";
 import { socialAllotmentPace, type SocialAllotment } from "./social-allotment-core";
+import { linkedAccounts, isLinkedRow } from "./social/links";
+import { linkKey, mergeAccountDays, type DayRow, type LinkedAccount } from "./social/links-core";
 
 // Loads each client's social account score from the synced Meta tables (src/lib/social/store.ts): the last 60 days of
 // days and 45 of posts, only the linked accounts' rows. Pass a person's session (RLS limits it to their clients) or the
@@ -41,8 +43,8 @@ export async function loadSocialScores(db: SupabaseClient, clientIds: string[], 
   const out = new Map<string, SocialAccountScore>();
   if (!clientIds.length) return out;
   const since = shiftDay(today, -60);
-  const [links, days, posts, targets, promised] = await Promise.all([
-    db.from("social_accounts").select("client_id, page_id, ig_id").in("client_id", clientIds).then((r) => (r.error ? [] : (r.data ?? []))),
+  const [linked, days, posts, targets, promised] = await Promise.all([
+    linkedAccounts(db, clientIds).catch(() => new Map<string, LinkedAccount[]>()),
     readAll<Record<string, unknown>>((a, b) =>
       db.from("social_daily").select("client_id, platform, account_id, date, followers, follows_gained, follows_lost, reach, views, interactions, profile_views").in("client_id", clientIds).gte("date", since).lte("date", today).order("client_id").order("platform").order("date").range(a, b),
     ),
@@ -54,29 +56,19 @@ export async function loadSocialScores(db: SupabaseClient, clientIds: string[], 
   ]);
   // Each client's social allotment this cycle: the platforms they post on, the tier's posts, and the pacing
   const allotments = await import("./social-allotment").then((m) => m.socialAllotments(db, clientIds)).catch(() => ({}) as Record<string, SocialAllotment>);
-  const linkBy = new Map(links.map((l) => [l.client_id as string, l]));
-  // Only the linked accounts' rows (a Page or Instagram account picked before keeps its history, unread); TikTok rows
-  // carry their own account and count once they exist
-  const current = (r: Record<string, unknown>) => {
-    const l = linkBy.get(r.client_id as string);
-    if (r.platform === "facebook") return r.account_id === l?.page_id;
-    if (r.platform === "instagram") return r.account_id === l?.ig_id;
-    return true;
-  };
-  const dayBy = new Map<string, SocialDayRow[]>();
-  for (const d of days) {
-    if (!current(d)) continue;
-    const k = d.client_id as string;
-    const row: SocialDayRow = { platform: d.platform as string, date: d.date as string, followers: n(d.followers), gained: n(d.follows_gained), lost: n(d.follows_lost), reach: n(d.reach), views: n(d.views), interactions: n(d.interactions), profileViews: n(d.profile_views) };
-    dayBy.set(k, [...(dayBy.get(k) ?? []), row]);
-  }
-  const postBy = new Map<string, SocialPostRow[]>();
-  for (const p of posts) {
-    if (!current(p)) continue;
-    const k = p.client_id as string;
-    const row: SocialPostRow = { platform: p.platform as string, postedAt: (p.posted_at as string | null) ?? null, format: (p.format as string | null) ?? null, reach: n(p.reach), views: n(p.views), likes: n(p.likes), comments: n(p.comments), interactions: n(p.interactions), saves: n(p.saves), shares: n(p.shares), caption: (p.caption as string | null) ?? null, permalink: (p.permalink as string | null) ?? null };
-    postBy.set(k, [...(postBy.get(k) ?? []), row]);
-  }
+  // Only the linked accounts' rows (an account taken off keeps its history, unread); TikTok rows carry their own
+  // account and count once they exist. Several locations' accounts are one platform for the client: their days are
+  // added up per platform and day, their posts each their own
+  const keys = new Map([...linked].map(([k, list]) => [k, new Set(list.map((a) => linkKey(a.platform, a.accountId)))]));
+  const current = (r: Record<string, unknown>) => isLinkedRow(keys.get(r.client_id as string), r);
+  const toDay = (d: Record<string, unknown>): SocialDayRow => ({ platform: d.platform as string, date: d.date as string, followers: n(d.followers), gained: n(d.follows_gained), lost: n(d.follows_lost), reach: n(d.reach), views: n(d.views), interactions: n(d.interactions), profileViews: n(d.profile_views) });
+  const toPost = (p: Record<string, unknown>): SocialPostRow => ({ platform: p.platform as string, postedAt: (p.posted_at as string | null) ?? null, format: (p.format as string | null) ?? null, reach: n(p.reach), views: n(p.views), likes: n(p.likes), comments: n(p.comments), interactions: n(p.interactions), saves: n(p.saves), shares: n(p.shares), caption: (p.caption as string | null) ?? null, permalink: (p.permalink as string | null) ?? null });
+  const rawDays = new Map<string, Record<string, unknown>[]>();
+  for (const d of days) if (current(d)) rawDays.set(d.client_id as string, [...(rawDays.get(d.client_id as string) ?? []), d]);
+  const rawPosts = new Map<string, Record<string, unknown>[]>();
+  for (const p of posts) if (current(p)) rawPosts.set(p.client_id as string, [...(rawPosts.get(p.client_id as string) ?? []), p]);
+  const dayBy = new Map([...rawDays].map(([k, rows]) => [k, mergeAccountDays(rows as DayRow[], ["followers", "follows_gained", "follows_lost", "reach", "views", "interactions", "profile_views"]).map(toDay)]));
+  const postBy = new Map([...rawPosts].map(([k, rows]) => [k, rows.map(toPost)]));
   for (const id of clientIds) {
     const a = allotments[id] ?? null;
     const tierPosts = a && a.source !== "strategy" && a.posts.max != null && a.posts.max > 0 ? a.posts.max : null;
@@ -89,7 +81,20 @@ export async function loadSocialScores(db: SupabaseClient, clientIds: string[], 
       allotment: socialAllotmentPace(a),
       platforms: a?.platforms ?? null,
     });
-    if (s) out.set(id, s);
+    if (!s) continue;
+    // More than one account on a platform (a Page per location): each scored on its own as well, for the breakdown
+    const list = linked.get(id) ?? [];
+    if (list.filter((x) => x.platform === "facebook").length > 1 || list.filter((x) => x.platform === "instagram").length > 1) {
+      s.accounts = list
+        .map((acc) => {
+          const mine = (r: Record<string, unknown>) => r.platform === acc.platform && r.account_id === acc.accountId;
+          const one = socialAccountScore({ days: (rawDays.get(id) ?? []).filter(mine).map(toDay), posts: (rawPosts.get(id) ?? []).filter(mine).map(toPost), today, engagementTarget: targets.get(id) ?? null, promisedPerMonth: tierPosts ?? promised.get(id) ?? null });
+          const pl = one?.platforms[0] ?? null;
+          return { platform: acc.platform, accountId: acc.accountId, name: acc.name, location: acc.location, score: one?.score ?? null, band: one?.band ?? null, followers: pl?.numbers.followers ?? null, reach: pl?.numbers.reach ?? null, rate: pl?.numbers.rate ?? null, posts: pl?.numbers.posts ?? 0 };
+        })
+        .sort((x, y) => x.platform.localeCompare(y.platform) || (y.reach ?? 0) - (x.reach ?? 0));
+    }
+    out.set(id, s);
   }
   return out;
 }

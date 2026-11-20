@@ -5,6 +5,8 @@ import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
 import { platformsFor } from "@/lib/social-allotment-core";
 import { HISTORY_STEP_DAYS, historyStart } from "./core";
+import { accountLabel, clientPages, mergeAccountDays, type LinkedAccount, type LinkPlatform } from "./links-core";
+import { linkedAccounts } from "./links";
 import { clientsWithLine } from "@/lib/service-gate";
 import { tracker } from "@/lib/progress";
 import { runBounded } from "@/lib/bounded";
@@ -158,14 +160,17 @@ export async function setSocialLink(admin: SupabaseClient, clientId: string, inp
   return { ok: true, pageName: name };
 }
 
-export type SocialLinkView = { pageId: string | null; pageName: string | null; igId: string | null; igUsername: string | null; source: "auto" | "manual"; status: string; state: SocialClientState; error: SocialPlainError | null; missing: string[]; lastSyncedAt: string | null; backfilled: boolean };
+export type SocialLinkView = { pageId: string | null; pageName: string | null; igId: string | null; igUsername: string | null; source: "auto" | "manual"; status: string; state: SocialClientState; error: SocialPlainError | null; missing: string[]; lastSyncedAt: string | null; backfilled: boolean; /** Every linked account (a Page and Instagram per location), the primary first */ accounts: LinkedAccount[] };
 
 /** The client's link as the tab shows it; undefined when Social isn't set up in the database yet */
 export async function socialLink(admin: SupabaseClient, clientId: string): Promise<SocialLinkView | null | undefined> {
   const { data, error } = await admin.from("social_accounts").select("*").eq("client_id", clientId).maybeSingle();
   if (error) return undefined;
-  const { data: m } = await admin.from("sync_state").select("last_result").eq("source", memoSource(clientId)).maybeSingle();
-  return viewOf((data as LinkRow | null) ?? null, (m?.last_result as Memo | null) ?? null);
+  const [{ data: m }, all] = await Promise.all([admin.from("sync_state").select("last_result").eq("source", memoSource(clientId)).maybeSingle(), linkedAccounts(admin, [clientId]).catch(() => new Map<string, LinkedAccount[]>())]);
+  const v = viewOf((data as LinkRow | null) ?? null, (m?.last_result as Memo | null) ?? null);
+  const accounts = all.get(clientId) ?? [];
+  if (!v) return accounts.length ? { pageId: null, pageName: null, igId: null, igUsername: null, source: "manual", status: "active", state: "pending", error: null, missing: [], lastSyncedAt: null, backfilled: false, accounts } : null;
+  return { ...v, accounts };
 }
 
 function viewOf(r: LinkRow | null, memo: Memo | null): SocialLinkView | null {
@@ -173,7 +178,7 @@ function viewOf(r: LinkRow | null, memo: Memo | null): SocialLinkView | null {
   const missing = r.missing_permissions ?? [];
   const s = socialClientState({ pageId: r.page_id, igId: r.ig_id, lastSyncedAt: r.last_synced_at, error: r.last_error, missing }, Date.now());
   void memo;
-  return { pageId: r.page_id, pageName: r.page_name, igId: r.ig_id, igUsername: r.ig_username, source: r.source, status: r.status, state: s.state, error: s.error, missing, lastSyncedAt: r.last_synced_at, backfilled: Boolean(r.backfilled_at) };
+  return { pageId: r.page_id, pageName: r.page_name, igId: r.ig_id, igUsername: r.ig_username, source: r.source, status: r.status, state: s.state, error: s.error, missing, lastSyncedAt: r.last_synced_at, backfilled: Boolean(r.backfilled_at), accounts: [] };
 }
 
 // ─── Sync health's roster ──────────────────────────────────────────────────
@@ -368,58 +373,187 @@ export async function syncSocial(admin: SupabaseClient, clientId: string, opts: 
   const lastFullAt = memo?.fullAt ?? null;
   const { link, error: linkError } = await resolveLink(admin, clientId);
   const window: SocialWindow = opts.window && opts.window !== "auto" ? opts.window : pickSocialWindow({ lastFullAt });
-  if (!link || (!link.page_id && !link.ig_id)) {
+  // Every location's Page and Instagram (Head of Social, Nov 19 2026): the clear name matches are linked once a day (and
+  // whenever nothing is linked yet); then every linked account is read
+  if (window === "full" || !link?.page_id) await discoverSocialLinks(admin, clientId, { apply: true }).catch(() => null);
+  const accounts = (await linkedAccounts(admin, [clientId])).get(clientId) ?? [];
+  if (!accounts.length) {
     await saveMemo(admin, clientId, { window, fullAt: lastFullAt, error: linkError ?? noPage });
     return { client: clientId, ok: false, window, error: linkError ?? noPage };
   }
   const account = await adAccountOf(admin, clientId);
   const today = etToday();
   const now = new Date().toISOString();
-  let pageToken: string | null = null;
-  let tokenError: string | null = null;
-  if (link.page_id) {
-    try {
-      pageToken = await pageAccessToken(account, link.page_id);
-      if (!pageToken) tokenError = "The Meta system user has no access to this Page: assign the Page to the system user in Business Settings.";
-    } catch (e) {
-      tokenError = e instanceof SocialReadError && e.permission ? errText(e) : `The Meta system user has no access to this Page (${errText(e).slice(0, 160)}).`;
-    }
-  }
-  const ctx: SocialCtx = { account, pageToken };
+  // Each Page's own token (an Instagram account is read with its Page's when the system user can't), asked once
+  const tokens = new Map<string, Promise<{ token: string | null; error: string | null }>>();
+  const tokenFor = (pageId: string) => {
+    if (!tokens.has(pageId))
+      tokens.set(
+        pageId,
+        pageAccessToken(account, pageId).then(
+          (token) => ({ token, error: token ? null : "The Meta system user has no access to this Page: assign the Page to the system user in Business Settings." }),
+          (e: unknown) => ({ token: null, error: e instanceof SocialReadError && e.permission ? errText(e) : `The Meta system user has no access to this Page (${errText(e).slice(0, 160)}).` }),
+        ),
+      );
+    return tokens.get(pageId)!;
+  };
   // Only the platforms the client posts on (their pick in the Services panel, else their tier's) are read
-  const { data: pick } = await admin.from("clients").select("social_platforms, social_package_key").eq("id", clientId).maybeSingle();
+  const { data: pick } = await admin.from("clients").select("social_platforms, social_package_key, created_at").eq("id", clientId).maybeSingle();
   const posts = platformsFor((pick?.social_platforms as string[] | null) ?? null, (pick?.social_package_key as string | null) ?? null);
   // History (owner, Nov 19 2026): at least 13 months for month over month and year over year, and for a new client 60
   // days before Kaizen took over. Each full read reaches HISTORY_STEP_DAYS further back until it's there (Meta limits
   // are shared by every client, so the history comes in over a few days); nothing read is ever deleted.
-  const { data: started } = await admin.from("clients").select("created_at").eq("id", clientId).maybeSingle();
-  const target = historyStart(today, (started?.created_at as string | null) ?? null);
+  const target = historyStart(today, (pick?.created_at as string | null) ?? null);
   const had = memo?.historyFrom ?? shiftDay(today, -(SOCIAL_BACKFILL_DAYS - 1));
   const fullFrom = had <= target ? shiftDay(today, -(SOCIAL_BACKFILL_DAYS - 1)) : shiftDay(had, -HISTORY_STEP_DAYS) < target ? target : shiftDay(had, -HISTORY_STEP_DAYS);
-  const [ig, fb] = await Promise.all([
-    link.ig_id && posts.includes("instagram") ? readInstagram(admin, clientId, link.ig_id, ctx, window, today, now, fullFrom, fullFrom < had ? had : null) : null,
-    link.page_id && !tokenError && posts.includes("facebook") ? readFacebook(admin, clientId, link.page_id, ctx, window, today, now, fullFrom) : null,
-  ]);
-  const perms = [...new Set([ig?.permission, fb?.permission, tokenError && /pages_show_list/.test(tokenError) ? "pages_show_list" : null].filter((x): x is string => Boolean(x)))];
-  const igError = ig?.error ? `Instagram: ${ig.error}` : null;
-  const fbError = tokenError && posts.includes("facebook") ? tokenError : fb?.error ? `Facebook: ${fb.error}` : null;
+  const reads = await Promise.all(
+    accounts
+      .filter((a) => posts.includes(a.platform))
+      .map(async (a): Promise<{ a: LinkedAccount; out: PlatformOut }> => {
+        if (a.platform === "instagram") {
+          const t = a.pageId ? await tokenFor(a.pageId) : { token: null, error: null };
+          return { a, out: await readInstagram(admin, clientId, a.accountId, { account, pageToken: t.token }, window, today, now, fullFrom, fullFrom < had ? had : null) };
+        }
+        const t = await tokenFor(a.accountId);
+        if (!t.token) return { a, out: { error: t.error, permission: t.error && /pages_show_list/.test(t.error) ? "pages_show_list" : null, skipped: [], days: 0, posts: 0 } };
+        return { a, out: await readFacebook(admin, clientId, a.accountId, { account, pageToken: t.token }, window, today, now, fullFrom) };
+      }),
+  );
+  const perms = [...new Set(reads.map((r) => r.out.permission).filter((x): x is string => Boolean(x)))];
+  const failed = (p: string) => reads.filter((r) => r.a.platform === p && r.out.error).map((r) => (accounts.filter((x) => x.platform === p).length > 1 ? `${accountLabel(r.a)}: ${r.out.error}` : r.out.error));
+  const igError = failed("instagram").length ? `Instagram: ${failed("instagram").join(" · ")}` : null;
+  const fbError = failed("facebook").length ? `Facebook: ${failed("facebook").join(" · ")}` : null;
   // Some part of the read worked: the link is read; every part failing is the link failing
-  const anyOk = Boolean((ig && !ig.error) || (fb && !fb.error));
+  const anyOk = reads.some((r) => !r.out.error);
   const errors = [igError, fbError].filter(Boolean) as string[];
-  const skipped = [...(ig?.skipped ?? []).map((x) => `instagram ${x}`), ...(fb?.skipped ?? []).map((x) => `facebook ${x}`)];
+  const skipped = reads.flatMap((r) => r.out.skipped.map((x) => `${r.a.platform} ${x}`));
   await admin
     .from("social_accounts")
-    .update({
+    .upsert({
+      client_id: clientId,
       updated_at: now,
       status: errors.length && !anyOk ? "failing" : "active",
       last_error: errors.length ? errors.join(" · ").slice(0, 600) : null,
       missing_permissions: perms,
       ...(anyOk ? { last_synced_at: now } : {}),
-      ...(anyOk && window === "full" && !link.backfilled_at ? { backfilled_at: now } : {}),
-    })
-    .eq("client_id", clientId);
+      ...(anyOk && window === "full" && !link?.backfilled_at ? { backfilled_at: now } : {}),
+    });
   await saveMemo(admin, clientId, { window, fullAt: window === "full" && anyOk ? now : lastFullAt, historyFrom: window === "full" && anyOk ? (fullFrom < had ? fullFrom : had) : (memo?.historyFrom ?? null), error: errors.length ? errors.join(" · ").slice(0, 600) : null, igError, fbError, skipped, permissions: perms });
-  return { client: clientId, ok: anyOk && !errors.length, window, days: (ig?.days ?? 0) + (fb?.days ?? 0), posts: (ig?.posts ?? 0) + (fb?.posts ?? 0), ...(errors.length ? { error: errors.join(" · ") } : {}) };
+  return { client: clientId, ok: anyOk && !errors.length, window, days: reads.reduce((n, r) => n + r.out.days, 0), posts: reads.reduce((n, r) => n + r.out.posts, 0), ...(errors.length ? { error: errors.join(" · ") } : {}) };
+}
+
+// ─── Many accounts per client ──────────────────────────────────────────────
+
+export type SocialDiscovery = {
+  /** Linked now by this run (or, without apply, what would be) */
+  added: { platform: LinkPlatform; accountId: string; name: string | null; location: string | null }[];
+  /** Pages Meta lets Kaizen read that aren't linked and aren't clearly this client's: for a person to pick */
+  others: PageRef[];
+  error: string | null;
+};
+
+/**
+ * The client's Pages (and the Instagram account on each) among those Kaizen's Meta access can see: their ad account's
+ * promotable Pages and every Page the system user has. A Page is linked only when it's clearly theirs (every word of
+ * their name in the Page's, and no other client's name fitting it as well), labeled with the location its name carries.
+ * An account a person removed is never added back.
+ */
+export async function discoverSocialLinks(admin: SupabaseClient, clientId: string, opts: { apply?: boolean; by?: string | null } = {}): Promise<SocialDiscovery> {
+  const [{ pages, error }, { data: c }, { data: names }, { data: had }] = await Promise.all([
+    socialCandidates(admin, clientId),
+    admin.from("clients").select("name").eq("id", clientId).maybeSingle(),
+    admin.from("clients").select("id, name").is("archived_at", null),
+    admin.from("social_links").select("platform, account_id, removed_at").eq("client_id", clientId),
+  ]);
+  const name = (c?.name as string | null) ?? "";
+  const known = new Set((had ?? []).map((h) => `${h.platform}:${h.account_id}`));
+  const matches = clientPages(pages, name, (names ?? []).filter((n) => n.id !== clientId).map((n) => n.name as string));
+  const added: SocialDiscovery["added"] = [];
+  for (const { page, location } of matches) {
+    if (!known.has(`facebook:${page.id}`)) added.push({ platform: "facebook", accountId: page.id, name: page.name, location });
+    if (page.ig && !known.has(`instagram:${page.ig.id}`)) added.push({ platform: "instagram", accountId: page.ig.id, name: page.ig.username, location });
+  }
+  const linked = new Set([...known, ...added.map((a) => `${a.platform}:${a.accountId}`)]);
+  const others = pages.filter((p) => !linked.has(`facebook:${p.id}`) && !matches.some((m) => m.page.id === p.id));
+  if (opts.apply && added.length) {
+    const now = new Date().toISOString();
+    const pageOf = new Map(matches.filter((m) => m.page.ig).map((m) => [m.page.ig!.id, m.page.id]));
+    await admin.from("social_links").upsert(
+      added.map((a) => ({ client_id: clientId, platform: a.platform, account_id: a.accountId, name: a.name, location: a.location, page_id: a.platform === "instagram" ? (pageOf.get(a.accountId) ?? null) : null, source: "auto", added_by: opts.by ?? null, updated_at: now })),
+      { onConflict: "client_id,platform,account_id", ignoreDuplicates: true },
+    );
+    // No primary yet: the first Page found becomes it (the sync's status lives there)
+    const { data: prim } = await admin.from("social_accounts").select("page_id").eq("client_id", clientId).maybeSingle();
+    const firstFb = added.find((a) => a.platform === "facebook");
+    if (!prim?.page_id && firstFb) {
+      const m = matches.find((x) => x.page.id === firstFb.accountId)!;
+      await admin.from("social_accounts").upsert({ client_id: clientId, page_id: m.page.id, page_name: m.page.name, ig_id: m.page.ig?.id ?? null, ig_username: m.page.ig?.username ?? null, source: "auto", status: "active", last_error: null, missing_permissions: [], updated_at: now });
+    }
+    // A new account starts its history over (the memo's history reach is per client)
+    await admin.from("sync_state").delete().eq("source", memoSource(clientId));
+  }
+  return { added, others, error };
+}
+
+/** Add a Page (its Instagram comes with it unless one is named) or an Instagram account to a client, with a location */
+export async function addSocialAccount(admin: SupabaseClient, clientId: string, input: { pageId?: string | null; igId?: string | null; location?: string | null; by: string }): Promise<{ ok: true; added: string[] } | { ok: false; error: string }> {
+  if (!metaConfigured()) return { ok: false, error: "Meta isn't connected: add META_SYSTEM_USER_TOKEN in Vercel." };
+  const pageId = (input.pageId ?? "").replace(/\D/g, "");
+  const igOnly = (input.igId ?? "").replace(/\D/g, "");
+  if (!pageId && !igOnly) return { ok: false, error: "Pick a Page, or paste a Page or Instagram account ID." };
+  const location = input.location?.replace(/\s+/g, " ").trim().slice(0, 60) || null;
+  const account = await adAccountOf(admin, clientId);
+  const now = new Date().toISOString();
+  const rows: Record<string, unknown>[] = [];
+  if (pageId) {
+    let name: string | null;
+    let ig: { id: string; username: string | null } | null;
+    try {
+      [name, ig] = await Promise.all([pageName(account, pageId), pageInstagram(account, pageId)]);
+    } catch (e) {
+      return { ok: false, error: `Meta can't open that Page with Kaizen's access: ${errText(e).slice(0, 160)}. Ask the client to share it with Kaizen's Business Manager.` };
+    }
+    rows.push({ client_id: clientId, platform: "facebook", account_id: pageId, name, location, page_id: null });
+    if (ig && !igOnly) rows.push({ client_id: clientId, platform: "instagram", account_id: ig.id, name: ig.username, location, page_id: pageId });
+  }
+  if (igOnly) rows.push({ client_id: clientId, platform: "instagram", account_id: igOnly, name: null, location, page_id: pageId || null });
+  const { error } = await admin.from("social_links").upsert(
+    rows.map((r) => ({ ...r, source: "manual", added_by: input.by, updated_at: now, removed_at: null, removed_by: null })),
+    { onConflict: "client_id,platform,account_id" },
+  );
+  if (error) return { ok: false, error: `Saving the link: ${error.message}` };
+  const { data: prim } = await admin.from("social_accounts").select("page_id, ig_id").eq("client_id", clientId).maybeSingle();
+  if (!prim?.page_id && pageId) await admin.from("social_accounts").upsert({ client_id: clientId, page_id: pageId, page_name: (rows[0].name as string | null) ?? null, ig_id: (rows.find((r) => r.platform === "instagram")?.account_id as string | undefined) ?? prim?.ig_id ?? null, source: "manual", status: "active", linked_by: input.by, last_error: null, missing_permissions: [], updated_at: now });
+  await admin.from("sync_state").delete().eq("source", memoSource(clientId));
+  return { ok: true, added: rows.map((r) => `${r.platform === "instagram" ? "Instagram" : "Facebook"}${r.name ? ` ${r.name}` : ""}`) };
+}
+
+/** Take an account off a client (kept on record: its numbers stay, and the automatic matching never adds it back) */
+export async function removeSocialAccount(admin: SupabaseClient, clientId: string, linkId: string, by: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const now = new Date().toISOString();
+  const { data: row } = await admin.from("social_links").select("platform, account_id").eq("id", linkId).eq("client_id", clientId).maybeSingle();
+  if (!row) return { ok: false, error: "That account isn't linked to this client." };
+  await admin.from("social_links").update({ removed_at: now, removed_by: by, updated_at: now }).eq("id", linkId);
+  // The primary itself removed: the next linked account of that platform takes its place (or none)
+  const { data: prim } = await admin.from("social_accounts").select("page_id, ig_id").eq("client_id", clientId).maybeSingle();
+  const isPrimary = (row.platform === "facebook" && prim?.page_id === row.account_id) || (row.platform === "instagram" && prim?.ig_id === row.account_id);
+  if (isPrimary) {
+    const { data: next } = await admin.from("social_links").select("account_id, name").eq("client_id", clientId).eq("platform", row.platform).is("removed_at", null).order("created_at").limit(1).maybeSingle();
+    await admin
+      .from("social_accounts")
+      .update(row.platform === "facebook" ? { page_id: next?.account_id ?? null, page_name: next?.name ?? null, source: "manual", updated_at: now } : { ig_id: next?.account_id ?? null, ig_username: next?.name ?? null, source: "manual", updated_at: now })
+      .eq("client_id", clientId);
+    // The trigger retired the old primary's link as "primary": keep the person's removal on it
+    await admin.from("social_links").update({ removed_at: now, removed_by: by }).eq("id", linkId);
+  }
+  return { ok: true };
+}
+
+/** Name an account's location ("Parmer", "Burnett", "Ocala") */
+export async function labelSocialAccount(admin: SupabaseClient, clientId: string, linkId: string, location: string | null): Promise<{ ok: true } | { ok: false; error: string }> {
+  const clean = location?.replace(/\s+/g, " ").trim().slice(0, 60) || null;
+  const { error } = await admin.from("social_links").update({ location: clean, updated_at: new Date().toISOString() }).eq("id", linkId).eq("client_id", clientId);
+  return error ? { ok: false, error: error.message } : { ok: true };
 }
 
 /**
@@ -524,9 +658,14 @@ export async function clientSocial(db: SupabaseClient, clientId: string, opts: {
     db.from("sync_state").select("last_result").eq("source", memoSource(clientId)).maybeSingle(),
     db.from("clients").select("channel_sheet").eq("id", clientId).maybeSingle(),
   ]);
-  // Only the linked accounts' rows (a Page or Instagram account picked before keeps its history, unread)
-  const current = (r: { platform: string; account_id?: string | null }) => r.account_id === (r.platform === "facebook" ? link?.page_id : link?.ig_id);
-  const days = (allDays ?? []).filter(current);
+  // Only the linked accounts' rows (a Page or Instagram account picked before keeps its history, unread); several
+  // locations' accounts are added up per platform and day (the posts stay each their own)
+  const linkedList = (await linkedAccounts(db, [clientId])).get(clientId) ?? [];
+  const keys = new Set(linkedList.map((a) => `${a.platform}:${a.accountId}`));
+  if (link?.page_id) keys.add(`facebook:${link.page_id}`);
+  if (link?.ig_id) keys.add(`instagram:${link.ig_id}`);
+  const current = (r: { platform: string; account_id?: string | null }) => keys.has(`${r.platform}:${r.account_id ?? ""}`);
+  const days = mergeAccountDays((allDays ?? []).filter(current), ["followers", "follows_gained", "follows_lost", "reach", "views", "profile_views", "accounts_engaged", "interactions"]);
   const posts = (allPosts ?? []).filter(current).slice(0, span > SOCIAL_BACKFILL_DAYS ? 3000 : 120);
   if (error || (!days?.length && !posts?.length)) return null;
   const rows: DailyRow[] = (days ?? []).map((d) => ({ platform: d.platform as Platform, date: d.date as string, followers: num(d.followers), gained: num(d.follows_gained), lost: num(d.follows_lost), reach: num(d.reach), views: num(d.views), profileViews: num(d.profile_views), engaged: num(d.accounts_engaged), interactions: num(d.interactions) }));

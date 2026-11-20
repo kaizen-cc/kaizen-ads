@@ -377,9 +377,12 @@ export async function loadSocialMetrics(admin: SupabaseClient, clientId: string,
     admin.from("social_posts").select("*").eq("client_id", clientId).gte("posted_at", `${shiftDay(back, -1)}T00:00:00Z`).order("posted_at", { ascending: false, nullsFirst: false }).limit(600),
     admin.from("social_accounts").select("page_name, ig_username, page_id, ig_id").eq("client_id", clientId).maybeSingle(),
   ]);
-  // Only the linked accounts' rows (a Page picked before keeps its history, unread)
-  const current = (r: { platform: string; account_id?: string | null }) => r.account_id === (r.platform === "facebook" ? link?.page_id : link?.ig_id);
-  const dayRows = (allDays ?? []).filter(current);
+  // Only the linked accounts' rows (an account taken off keeps its history, unread); several locations' accounts are
+  // one platform for the client, their days added up per platform and day
+  const keys = (await (await import("@/lib/social/links")).linkedKeys(admin, [clientId])).get(clientId) ?? new Set([`facebook:${link?.page_id ?? ""}`, `instagram:${link?.ig_id ?? ""}`]);
+  const current = (r: { platform: string; account_id?: string | null }) => keys.has(`${r.platform}:${r.account_id ?? ""}`);
+  const { mergeAccountDays } = await import("@/lib/social/links-core");
+  const dayRows = mergeAccountDays((allDays ?? []).filter(current) as { platform: string; date: string }[], ["followers", "follows_gained", "follows_lost", "reach", "views", "profile_views", "accounts_engaged", "interactions"]) as Record<string, unknown>[];
   const postRows = (allPosts ?? []).filter(current);
   if (error || (!dayRows.length && !postRows.length)) return null;
   const days: SocialDay[] = dayRows.map((d) => ({ platform: d.platform as Platform, date: d.date as string, followers: numOrNull(d.followers), gained: numOrNull(d.follows_gained), lost: numOrNull(d.follows_lost), reach: numOrNull(d.reach), views: numOrNull(d.views), profileViews: numOrNull(d.profile_views), engaged: numOrNull(d.accounts_engaged), interactions: numOrNull(d.interactions) }));

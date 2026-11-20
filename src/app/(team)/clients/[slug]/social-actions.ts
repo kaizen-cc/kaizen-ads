@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { requireStaff } from "@/lib/auth";
-import { setSocialLink, socialCandidates, syncSocial } from "@/lib/social/store";
+import { addSocialAccount, discoverSocialLinks, labelSocialAccount, removeSocialAccount, setSocialLink, socialCandidates, syncSocial } from "@/lib/social/store";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -51,4 +51,55 @@ export async function syncSocialNow(clientId: string): Promise<Result> {
   revalidatePath(`/clients/${l.slug}`);
   revalidatePath("/settings");
   return r.ok ? { ok: true } : { ok: false, error: (r.error ?? "The sync failed.").slice(0, 240) };
+}
+
+// ─── Many accounts per client (a Page and Instagram per location) ───────────
+
+/** Link every Page that's clearly theirs (and its Instagram), labeled with its location; the rest come back to pick from */
+export async function findSocialAccounts(clientId: string): Promise<{ ok: true; added: string[]; pages: PageChoice[]; note: string | null } | { ok: false; error: string }> {
+  const l = await mine(clientId);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const r = await discoverSocialLinks(l.admin, clientId, { apply: true, by: l.me.id });
+  if (r.added.length) {
+    const admin = l.admin;
+    after(() => syncSocial(admin, clientId, { window: "full" }).then(() => undefined));
+  }
+  revalidatePath(`/clients/${l.slug}`);
+  return {
+    ok: true,
+    added: r.added.map((a) => `${a.platform === "instagram" ? "Instagram" : "Facebook"} ${a.platform === "instagram" && a.name ? `@${a.name}` : (a.name ?? a.accountId)}${a.location ? ` (${a.location})` : ""}`),
+    pages: r.others.map((p) => ({ id: p.id, name: p.name, igId: p.ig?.id ?? null, igUsername: p.ig?.username ?? null })),
+    note: r.error,
+  };
+}
+
+/** Add a Page (with its Instagram) or an Instagram account by ID, for a location */
+export async function addSocialAccountAction(clientId: string, input: { pageId?: string | null; igId?: string | null; location?: string | null }): Promise<{ ok: true; added: string[] } | { ok: false; error: string }> {
+  const l = await mine(clientId);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const r = await addSocialAccount(l.admin, clientId, { pageId: input.pageId ? String(input.pageId).slice(0, 40) : null, igId: input.igId ? String(input.igId).slice(0, 40) : null, location: input.location ?? null, by: l.me.id });
+  if (!r.ok) return r;
+  const admin = l.admin;
+  after(() => syncSocial(admin, clientId, { window: "full" }).then(() => undefined));
+  revalidatePath(`/clients/${l.slug}`);
+  revalidatePath("/settings");
+  return r;
+}
+
+/** Take an account off (its numbers are kept; it's never linked again by name) */
+export async function removeSocialAccountAction(clientId: string, linkId: string): Promise<Result> {
+  const l = await mine(clientId);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const r = await removeSocialAccount(l.admin, clientId, linkId, l.me.id);
+  revalidatePath(`/clients/${l.slug}`);
+  return r;
+}
+
+/** Name an account's location */
+export async function labelSocialAccountAction(clientId: string, linkId: string, location: string): Promise<Result> {
+  const l = await mine(clientId);
+  if ("error" in l) return { ok: false, error: l.error! };
+  const r = await labelSocialAccount(l.admin, clientId, linkId, location);
+  revalidatePath(`/clients/${l.slug}`);
+  return r;
 }

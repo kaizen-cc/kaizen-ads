@@ -243,7 +243,8 @@ export function parseFbPosts(json: unknown): SocialPost[] {
 
 export type PageRef = { id: string; name: string; ig: { id: string; username: string | null } | null };
 
-const norm = (s: string) => s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]/g, "");
+// Accents folded first: "Café Diario" is "cafediario", not "cafdiario" (it matched no Page)
+const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]/g, "");
 
 /**
  * The Page that is the client's, by name: an exact match first, then one name containing the other (at least 4

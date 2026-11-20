@@ -23,7 +23,9 @@ export async function readSocialAccount(admin: SupabaseClient, clientId: string)
   ]);
   if (!score) return null;
   const name = (client?.name as string | null) ?? "the client";
-  const current = (r: Record<string, unknown>) => (r.platform === "facebook" ? r.account_id === link?.page_id : r.platform === "instagram" ? r.account_id === link?.ig_id : true);
+  // Every linked account's posts (a Page and Instagram per location)
+  const keys = (await (await import("@/lib/social/links")).linkedKeys(admin, [clientId])).get(clientId) ?? new Set([`facebook:${link?.page_id ?? ""}`, `instagram:${link?.ig_id ?? ""}`]);
+  const current = (r: Record<string, unknown>) => (r.platform !== "facebook" && r.platform !== "instagram") || keys.has(`${r.platform}:${r.account_id ?? ""}`);
   const posts: SocialPostRow[] = (rows ?? []).filter(current).map((p) => ({
     platform: p.platform as string,
     postedAt: (p.posted_at as string | null) ?? null,

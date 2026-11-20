@@ -1,3 +1,4 @@
+import { mergeAccountDays, type DayRow } from "@/lib/social/links-core";
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
@@ -273,7 +274,7 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
   const from = basis === "month" ? month.start : shiftDay(month.today, -29);
   // Last month for the comparison, and 36 days back so the 7 day rate has its window on the oldest day charted
   const earliest = [month.prevStart, shiftDay(month.today, -36)].sort()[0];
-  const [links, days, posts, scores, boosts] = await Promise.all([
+  const [links, days, posts, scores, boosts, keys] = await Promise.all([
     db.from("social_accounts").select("client_id, page_id, ig_id, page_name, ig_username, last_synced_at, last_error, missing_permissions").in("client_id", ids).then((r) => r.data ?? []),
     readAll<Record<string, unknown>>((a, b) =>
       db.from("social_daily").select("client_id, platform, account_id, date, followers, follows_gained, follows_lost, reach, views, interactions").in("client_id", ids).gte("date", earliest).order("client_id").order("platform").order("date").range(a, b),
@@ -285,6 +286,8 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
     loadSocialScores(db, ids, month.today).catch(() => new Map<string, SocialAccountScore>()),
     // Which posts the ads team is boosting (src/lib/social-boosts.ts), for the card's chip
     import("@/lib/social-boosts").then((m) => m.boostedPosts(db, ids)).catch(() => ({}) as Awaited<ReturnType<typeof import("@/lib/social-boosts").boostedPosts>>),
+    // Every linked account (a Page and Instagram per location), not only the primary
+    import("@/lib/social/links").then((m) => m.linkedKeys(db, ids)).catch(() => new Map<string, Set<string>>()),
   ]);
   const linkBy = new Map(links.map((l) => [l.client_id as string, l]));
   const daysBy = groupBy(days, (d) => d.client_id as string);
@@ -295,9 +298,11 @@ async function socialRows(db: SupabaseClient, clients: ClientRef[], ids: string[
     const b = base(c);
     const link = linkBy.get(id);
     const st = socialClientState(link ? { pageId: (link.page_id as string | null) ?? null, igId: (link.ig_id as string | null) ?? null, lastSyncedAt: (link.last_synced_at as string | null) ?? null, error: (link.last_error as string | null) ?? null, missing: (link.missing_permissions as string[] | null) ?? [] } : null);
-    // Only the linked accounts' rows: a Page or Instagram account picked before keeps its history, unread
-    const current = (r: Record<string, unknown>) => r.account_id === (r.platform === "facebook" ? link?.page_id : link?.ig_id);
-    const mine = (daysBy.get(id) ?? []).filter(current);
+    // Only the linked accounts' rows (an account taken off keeps its history, unread); several locations' accounts are
+    // added up per platform and day
+    const linkedSet = keys.get(id) ?? new Set([`facebook:${link?.page_id ?? ""}`, `instagram:${link?.ig_id ?? ""}`]);
+    const current = (r: Record<string, unknown>) => (r.platform !== "facebook" && r.platform !== "instagram") || linkedSet.has(`${r.platform}:${r.account_id ?? ""}`);
+    const mine = mergeAccountDays((daysBy.get(id) ?? []).filter(current) as DayRow[], ["followers", "follows_gained", "follows_lost", "reach", "views", "interactions"]) as Record<string, unknown>[];
     const win = (lo: string, hi: string) => mine.filter((d) => (d.date as string) >= lo && (d.date as string) <= hi);
     const total = (xs: Record<string, unknown>[], k: string): number | null => {
       let any = false;

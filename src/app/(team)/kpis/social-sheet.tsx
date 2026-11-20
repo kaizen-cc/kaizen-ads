@@ -216,6 +216,32 @@ export function SocialAccountSheet({ r, month, onClose, onStep }: { r: ChannelRo
 
 // ─── Overview ────────────────────────────────────────────────────────────────
 
+/** A client with a Page or Instagram per location: each account's score and numbers, the client's score above rolls them up */
+function Locations({ r, pick }: { r: ChannelRow; pick: PlatformPick }) {
+  const list = (r.socialScore?.accounts ?? []).filter((a) => pick === "all" || a.platform === pick);
+  if (list.length < 2) return null;
+  return (
+    <section className="grid gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
+      <Eyebrow>By location, last 30 days</Eyebrow>
+      <ul className="grid gap-2 sm:grid-cols-2">
+        {list.map((a) => (
+          <li key={`${a.platform}:${a.accountId}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[14px] border border-line bg-bg/40 px-3 py-2.5">
+            <span className="grid min-w-0 gap-0.5">
+              <span className="truncate text-[13px] text-fg">
+                {a.location ?? (a.platform === "instagram" && a.name ? `@${a.name}` : (a.name ?? "Unnamed"))}
+              </span>
+              <span className="truncate text-[11px] text-faint">
+                {PLATFORM_LABEL[a.platform as SocialPlatform] ?? a.platform} · {num(a.followers)} followers · reach {num(a.reach)} · {pctText(a.rate)} · {a.posts} posts
+              </span>
+            </span>
+            <span className={`tabular font-heading text-[22px] leading-none ${a.band ? BAND_TONE[a.band].text : "text-faint"}`}>{a.score ?? "n/a"}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function Overview({ r, sheet, loading, pick, onTab }: { r: ChannelRow; sheet: SocialSheet | null; loading: boolean; pick: PlatformPick; onTab: (t: Tab) => void }) {
   const s = r.socialScore ?? null;
   const shown = scoreFor(s, pick);
@@ -237,6 +263,7 @@ function Overview({ r, sheet, loading, pick, onTab }: { r: ChannelRow; sheet: So
 
   return (
     <>
+      <Locations r={r} pick={pick} />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <section className="relative isolate grid content-start gap-3 overflow-hidden rounded-[20px] border border-line bg-surface p-4 md:p-5">
           <span aria-hidden className="pointer-events-none absolute -left-20 -top-24 -z-10 h-64 w-64 rounded-full opacity-25 blur-[90px]" style={{ background: shown ? BAND_TONE[shown.band].css : TONE[r.status].css }} />
