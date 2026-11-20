@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { busyOf, calendarScopeMissing, defaultWindow, findSlots, freeStarts, inWorkingHours, localParts, parseClock, pickOptions, rfc3339, sameDomain, slotLabel, tzOffset, zonedTime } from "@/lib/assistant/scheduling-core";
+import { busyOf, calendarScopeMissing, defaultWindow, findSlots, freeStarts, inWorkingHours, localParts, nextBatch, parseClock, pickOptions, rfc3339, sameDomain, slotLabel, slotView, tzOffset, zonedTime } from "@/lib/assistant/scheduling-core";
 
 const NY = "America/New_York";
 const LA = "America/Los_Angeles";
@@ -140,5 +140,22 @@ describe("the small parts", () => {
   it("knows Google's scope refusal", () => {
     expect(calendarScopeMissing("unauthorized_client: Client is unauthorized to retrieve access tokens")).toBe(true);
     expect(calendarScopeMissing("Google /calendar/v3/freeBusy: 500 backend error")).toBe(false);
+  });
+});
+
+describe("slot cards", () => {
+  it("show the day, date and time range in the asker's timezone", () => {
+    expect(slotView(at("2026-11-24T19:00:00Z"), at("2026-11-24T19:30:00Z"), NY)).toEqual({ start: "2026-11-24T14:00:00-05:00", day: "Tuesday", date: "Nov 24", range: "2:00 – 2:30 PM", label: "Tue, Nov 24, 2:00 PM" });
+    expect(slotView(at("2026-11-24T16:30:00Z"), at("2026-11-24T17:30:00Z"), NY).range).toBe("11:30 AM – 12:30 PM");
+  });
+
+  it("More times gives the next batch: later starts only, never one already shown", () => {
+    const starts = freeStarts({ tz: NY, fromDay: "2026-11-24", toDay: "2026-11-27", notBefore: MON_8AM_NY, people: [{ tz: NY, busy: [] }] });
+    const first = nextBatch(starts, [], NY);
+    const second = nextBatch(starts, first, NY);
+    expect(second).toHaveLength(3);
+    expect(Math.min(...second)).toBeGreaterThan(Math.max(...first));
+    expect(second.some((t) => first.includes(t))).toBe(false);
+    expect(nextBatch(starts, [starts.at(-1)!], NY)).toEqual([]);
   });
 });

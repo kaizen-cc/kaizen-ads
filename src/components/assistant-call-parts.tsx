@@ -5,6 +5,7 @@ import { CopyDocCardView } from "./copy-doc-card";
 import { useRef, useState } from "react";
 import { callTranscript, saveCallDraft } from "@/app/(team)/settings/call-actions";
 import { DraftSave } from "./draft-save";
+import { SlotsCard } from "./slots-card";
 import type { CallCard, CallProgress, UploadAsk } from "@/lib/agent-call/core";
 import type { Speaker } from "@/lib/agent-call/engine";
 import { tintOf } from "@/lib/agent-look";
@@ -314,44 +315,7 @@ function DraftCard({ c, callId, onApprove, onDismiss }: { c: CallCard & { draft:
 }
 
 /** Link cards the agent showed: in the app (the call stays up) or a new tab; drafted messages to edit and approve */
-/** Choices to tap (times for a call): a tap says the choice for them, as if they'd typed it */
-function ChoicesCard({ c, onSay, onDismiss }: { c: CallCard & { choices: NonNullable<CallCard["choices"]> }; onSay?: (text: string) => void; onDismiss: (id: string) => void }) {
-  const [picked, setPicked] = useState<string | null>(null);
-  return (
-    <li className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 rounded-[14px] border border-line bg-surface p-3 shadow-sm sm:col-span-2" aria-label={c.title}>
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-brand-text">{c.title}</p>
-          {c.detail && <p className="text-[12.5px] leading-snug text-muted [overflow-wrap:anywhere]">{c.detail}</p>}
-        </div>
-        <button type="button" onClick={() => onDismiss(c.id)} aria-label={`Hide ${c.title}`} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-faint transition-colors hover:bg-surface-2 hover:text-fg">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
-            <path d="M6 6l12 12M18 6L6 18" />
-          </svg>
-        </button>
-      </div>
-      <div className="flex min-w-0 flex-wrap gap-2" role="group" aria-label="Pick one">
-        {c.choices.map((o) => (
-          <button
-            key={o.label}
-            type="button"
-            disabled={!onSay || Boolean(picked)}
-            aria-pressed={picked === o.label}
-            onClick={() => {
-              setPicked(o.label);
-              onSay?.(o.say);
-            }}
-            className={`inline-flex min-h-11 items-center rounded-full border px-4 text-[13px] transition active:scale-[0.98] disabled:cursor-default md:min-h-9 ${picked === o.label ? "border-brand bg-brand text-white" : "border-line text-fg hover:border-faint disabled:opacity-50"}`}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-    </li>
-  );
-}
-
-export function CardsStrip({ cards, onOpen, onDismiss, compact = false, callId = null, onApprove, onSay }: { cards: CallCard[]; onOpen: (c: CallCard) => void; onDismiss: (id: string) => void; compact?: boolean; callId?: string | null; onApprove?: (text: string) => void; /** Say words for the person (a tapped choice) */ onSay?: (text: string) => void }) {
+export function CardsStrip({ cards, onOpen, onDismiss, compact = false, callId = null, onApprove, onSay }: { cards: CallCard[]; onOpen: (c: CallCard) => void; onDismiss: (id: string) => void; compact?: boolean; callId?: string | null; onApprove?: (text: string) => void; /** Tell the assistant something the person did on a card (a call booked from it) */ onSay?: (text: string) => void }) {
   if (!cards.length) return null;
   return (
     <ul className={`grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 ${compact ? "" : "sm:grid-cols-[repeat(2,minmax(0,1fr))]"}`} aria-label="Shared on the call">
@@ -362,8 +326,8 @@ export function CardsStrip({ cards, onOpen, onDismiss, compact = false, callId =
           <DocumentCardView key={c.id} doc={c.document} onDismiss={() => onDismiss(c.id)} wide={!compact} />
         ) : c.draft ? (
           <DraftCard key={c.id} c={c as CallCard & { draft: NonNullable<CallCard["draft"]> }} callId={callId} onApprove={onApprove} onDismiss={onDismiss} />
-        ) : c.choices?.length ? (
-          <ChoicesCard key={c.id} c={c as CallCard & { choices: NonNullable<CallCard["choices"]> }} onSay={onSay} onDismiss={onDismiss} />
+        ) : c.slots ? (
+          <SlotsCard key={`${c.id}-${c.slots.status}`} slots={c.slots} wide={!compact} onDismiss={() => onDismiss(c.id)} onBooked={onSay ? (label) => onSay(`Booked from the card: ${label}.`) : undefined} />
         ) : (
         <li key={c.id} className="group relative flex min-w-0 items-center gap-3 rounded-[14px] border border-line bg-surface p-2.5 pr-2 shadow-sm">
           <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-brand-soft text-brand-text">

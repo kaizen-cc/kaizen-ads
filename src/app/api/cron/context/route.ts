@@ -261,7 +261,9 @@ export async function GET(request: Request) {
       const watches = await (await import("@/lib/assistant/tools")).sweepReportWatches(admin).catch((e) => ({ error: String(e) }));
       // Urgent heads-ups for people not in the app: into their assistant chat, unread (the app rings the others)
       const headsUps = await (await import("@/lib/assistant/heads-up-server")).sweepHeadsUps(admin).catch((e) => ({ error: String(e) }));
-      return Response.json({ ...(await (await import("@/lib/notifications")).emailNotifications(admin)), safety, watches, headsUps });
+      // Once: calendar scheduling checked end to end in production (no invites; system_checks "calendar-booking")
+      const calendar = await (await import("@/lib/assistant/calendar-selftest")).calendarSelfTestOnce(admin).catch((e) => ({ error: String(e) }));
+      return Response.json({ ...(await (await import("@/lib/notifications")).emailNotifications(admin)), safety, watches, headsUps, calendar });
     }
     if (step === "feedback") {
       const { feedbackDigest, runFeedback } = await import("@/lib/feedback");

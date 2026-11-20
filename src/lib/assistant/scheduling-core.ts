@@ -169,3 +169,25 @@ export function sameDomain(a: string, b: string): boolean {
 export function calendarScopeMissing(message: string): boolean {
   return /unauthorized_client|access_denied|insufficient(?:Permissions| authentication scopes)|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(message);
 }
+
+/** One slot as a card shows it: "Tuesday", "Nov 24", "2:00 – 2:30 PM" (and the start Google takes) */
+export type SlotView = { start: string; day: string; date: string; range: string; label: string };
+
+export function slotView(start: number, end: number, tz: string): SlotView {
+  const f = (o: Intl.DateTimeFormatOptions, at: number) => new Intl.DateTimeFormat("en-US", { timeZone: tz, ...o }).format(new Date(at));
+  const a = f({ hour: "numeric", minute: "2-digit" }, start);
+  const b = f({ hour: "numeric", minute: "2-digit" }, end);
+  const am = (s: string) => s.slice(-2);
+  const range = am(a) === am(b) ? `${a.slice(0, -3)} – ${b}` : `${a} – ${b}`;
+  return { start: rfc3339(start, tz), day: f({ weekday: "long" }, start), date: f({ month: "short", day: "numeric" }, start), range, label: slotLabel(start, tz) };
+}
+
+/** The next batch after what's been shown: later starts only, none already offered */
+export function nextBatch(starts: readonly number[], shown: readonly number[], tz: string, max = 3): number[] {
+  const last = shown.length ? Math.max(...shown) : -Infinity;
+  return pickOptions(
+    starts.filter((t) => t > last && !shown.includes(t)),
+    tz,
+    max,
+  );
+}

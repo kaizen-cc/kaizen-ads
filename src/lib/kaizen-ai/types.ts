@@ -125,7 +125,10 @@ export type DocumentCard = { type: "document"; id: string; kind: "sow" | "propos
 /** Copy written for a deliverable (create_copy_doc) as a document card: read it, open it full screen to comment and approve */
 export type CopyDocCard = { type: "copy_doc"; detail: string; copy: import("@/lib/agent-call/core").CallCopyDoc };
 
-export type Card = CopyDocCard | MetricsCard | CopyCard | BriefCard | LinkCard | PlanCard | ListCard | LaunchCardRef | ConnectCard | ConnectorConfirmCard | EmailDesignCard | DocumentCard;
+/** Times for an internal call: tap one, confirm, booked (the same card as on a call) */
+export type SlotsCard = { type: "slots"; slots: import("@/lib/agent-call/core").CallSlots };
+
+export type Card = SlotsCard | CopyDocCard | MetricsCard | CopyCard | BriefCard | LinkCard | PlanCard | ListCard | LaunchCardRef | ConnectCard | ConnectorConfirmCard | EmailDesignCard | DocumentCard;
 
 export type ChatMessage = {
   id: string;

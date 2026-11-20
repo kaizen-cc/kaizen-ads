@@ -56,6 +56,9 @@ export const googleCalendarToken = (user: string) => tokenFor(user, CALENDAR_SCO
  */
 export const CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 export const googleCalendarEventsToken = (user: string) => tokenFor(user, CALENDAR_EVENTS_SCOPE);
+/** Free/busy only (who is busy when, never what), for finding a time across the team */
+export const CALENDAR_FREEBUSY_SCOPE = "https://www.googleapis.com/auth/calendar.freebusy";
+export const googleFreeBusyToken = (user: string) => tokenFor(user, CALENDAR_FREEBUSY_SCOPE);
 
 /** A Drive read token as GOOGLE_DRIVE_USER, for opening reference files linked in requests. */
 export const driveToken = () => {

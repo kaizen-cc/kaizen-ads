@@ -801,8 +801,22 @@ export type CallCard = {
   document?: CallDocument;
   /** Campaign, flow or SMS copy (create_copy_doc): read it, open the document view, approve it */
   copy?: CallCopyDoc;
-  /** Choices to tap (times for a call): each says its words for the person, as if they'd typed them */
-  choices?: { label: string; say: string }[];
+  /** Times for an internal call (find_meeting_time): tap one, confirm, booked; or say yes on the call */
+  slots?: CallSlots;
+};
+
+/** Times offered for an internal call, as the slot card shows them (booked from the card or by a spoken yes) */
+export type CallSlots = {
+  proposalId: string;
+  title: string;
+  minutes: number;
+  attendees: string[];
+  timezone: string;
+  options: { start: string; day: string; date: string; range: string; label: string }[];
+  status: "open" | "booked";
+  booked: { label: string; link: string | null; meet: string | null } | null;
+  /** Whether More times may find another batch */
+  more: boolean;
 };
 
 /** Copy written for the email team, shown on the call or chat as a document card */

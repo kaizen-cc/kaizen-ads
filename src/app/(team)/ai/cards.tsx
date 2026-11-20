@@ -1,6 +1,7 @@
 "use client";
 
 import { DocumentCardView } from "@/components/document-card";
+import { SlotsCard } from "@/components/slots-card";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CopyDocCardView } from "@/components/copy-doc-card";
@@ -395,6 +396,12 @@ export function CardView({ card }: { card: Card }) {
       return <EmailDesignCardView c={card} />;
     case "copy_doc":
       return <CopyDocInThread card={card} />;
+    case "slots":
+      return (
+        <ul className="grid">
+          <SlotsCard slots={card.slots} wide={false} />
+        </ul>
+      );
     case "document":
       return (
         <ul className="grid">
