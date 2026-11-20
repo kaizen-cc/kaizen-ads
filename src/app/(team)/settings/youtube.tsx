@@ -38,9 +38,10 @@ const AGENT_LABEL: Record<string, string> = {
   email_creative: "Email Creative",
   email_builder: "Email Builder",
   social_strategist: "Social Strategist",
+  tracking_engineer: "Tracking Engineer",
 };
 
-const LINE_TINT: Record<YtLine, string> = { meta: "#5b8def", google: "#34a853", creative: "#e0752d", email: "#a259ff", social: "#e4405f" };
+const LINE_TINT: Record<YtLine, string> = { meta: "#5b8def", google: "#34a853", creative: "#e0752d", email: "#a259ff", social: "#e4405f", tracking: "#9b6bd6" };
 
 const when = (iso: string | null) => {
   if (!iso) return null;

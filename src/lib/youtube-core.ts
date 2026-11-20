@@ -194,9 +194,9 @@ export function pickTrack<T extends { languageCode?: string; kind?: string }>(tr
 // ─── Lines and roles ────────────────────────────────────────────────────────
 
 /** The lines a source or takeaway teaches. meta is the Meta and TikTok ads line. */
-export const YT_LINES = ["meta", "google", "creative", "email", "social"] as const;
+export const YT_LINES = ["meta", "google", "creative", "email", "social", "tracking"] as const;
 export type YtLine = (typeof YT_LINES)[number];
-export const YT_LINE_LABEL: Record<YtLine, string> = { meta: "Meta + TikTok ads", google: "Google ads", creative: "Creative", email: "Email", social: "Organic social" };
+export const YT_LINE_LABEL: Record<YtLine, string> = { meta: "Meta + TikTok ads", google: "Google ads", creative: "Creative", email: "Email", social: "Organic social", tracking: "Tracking" };
 
 /** Only real lines, once each, in order; "all" means every line */
 export function cleanLines(xs: readonly unknown[] | null | undefined): YtLine[] {
@@ -212,6 +212,7 @@ export const YT_ROLES = [
   "head_of_creative", "lead_graphic_designer", "graphic_designer", "lead_video_editor", "video_editor", "copywriter",
   "head_of_email", "email_strategist", "email_designer", "email_builder",
   "head_of_social", "social_media_manager",
+  "tracking_specialist",
 ] as const;
 export type YtRole = (typeof YT_ROLES)[number];
 
@@ -226,6 +227,8 @@ export const LINE_ALWAYS: Record<YtLine, readonly string[]> = {
   creative: ["head_of_creative", "lead_graphic_designer", "lead_video_editor"],
   email: ["head_of_email", "email_strategist"],
   social: ["head_of_social", "social_media_manager"],
+  // Measurement: the tracking specialist and the heads of the ad lines it serves
+  tracking: ["tracking_specialist", "head_of_meta", "head_of_google"],
 };
 export const LINE_CRAFT: Record<YtLine, readonly string[]> = {
   meta: [],
@@ -233,13 +236,14 @@ export const LINE_CRAFT: Record<YtLine, readonly string[]> = {
   creative: ["graphic_designer", "video_editor", "copywriter"],
   email: ["email_designer", "email_builder"],
   social: [],
+  tracking: [],
 };
 
 /** The head of each line: with the execs, the only ones who accept a takeaway into the agents' learning */
-export const LINE_HEAD: Record<YtLine, string> = { meta: "head_of_meta", google: "head_of_google", creative: "head_of_creative", email: "head_of_email", social: "head_of_social" };
+export const LINE_HEADS: Record<YtLine, readonly string[]> = { meta: ["head_of_meta"], google: ["head_of_google"], creative: ["head_of_creative"], email: ["head_of_email"], social: ["head_of_social"], tracking: ["head_of_meta", "head_of_google"] };
 
 /** An exec's focus lines that cover each takeaway line (src/lib/exec-focus/core.ts FOCUS_LINES) */
-const FOCUS_OF: Record<YtLine, readonly string[]> = { meta: ["meta", "tiktok"], google: ["google"], creative: ["creative", "creative_performance"], email: ["email"], social: ["social"] };
+const FOCUS_OF: Record<YtLine, readonly string[]> = { meta: ["meta", "tiktok"], google: ["google"], creative: ["creative", "creative_performance"], email: ["email"], social: ["social"], tracking: ["meta", "google"] };
 
 /** Whether an exec's focus covers any of these lines (no focus set: everything) */
 export function focusCovers(focus: readonly string[] | null | undefined, lines: readonly YtLine[]): boolean {
@@ -248,10 +252,10 @@ export function focusCovers(focus: readonly string[] | null | undefined, lines: 
 }
 
 /** Whether this person decides on a takeaway on these lines: an exec, or the head of one of its lines */
-export const canDecide = (me: { role: string | null | undefined; isExec?: boolean | null }, lines: readonly YtLine[]) => Boolean(me.isExec) || lines.some((l) => LINE_HEAD[l] === me.role);
+export const canDecide = (me: { role: string | null | undefined; isExec?: boolean | null }, lines: readonly YtLine[]) => Boolean(me.isExec) || lines.some((l) => LINE_HEADS[l].includes(String(me.role ?? "")));
 
 /** Whether this person adds and edits sources: an exec or any line head */
-export const canManageSources = (me: { role: string | null | undefined; isExec?: boolean | null }) => Boolean(me.isExec) || (Object.values(LINE_HEAD) as string[]).includes(String(me.role ?? ""));
+export const canManageSources = (me: { role: string | null | undefined; isExec?: boolean | null }) => Boolean(me.isExec) || Object.values(LINE_HEADS).some((h) => h.includes(String(me.role ?? "")));
 
 export type Person = { id: string; role: string; isExec: boolean; execFocus?: readonly string[] | null; active?: boolean };
 export type Routed = { team: string[]; execs: string[] };
@@ -303,6 +307,7 @@ export function agentsForTakeaway(t: { lines: readonly YtLine[]; roles: readonly
       if (t.roles.includes("email_builder")) add("email_builder");
     }
     if (l === "social") add("social_strategist");
+    if (l === "tracking") add("tracking_engineer");
   }
   return out;
 }

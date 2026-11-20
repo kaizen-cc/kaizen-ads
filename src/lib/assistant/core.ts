@@ -24,6 +24,7 @@ export const SPECIALISTS: readonly Specialist[] = [
   { key: "strategist", label: "Strategist", about: "client strategy and briefs across lines", words: /\b(strateg\w*|brief(s|ing)? strategy|go to market|positioning|brand bible|angles?)\b/i },
   { key: "market_analyst", label: "Market Analyst", about: "what's working across clients and the market", words: /\b(competitors?|market|trends?|industry|benchmarks?|other brands)\b/i },
   { key: "social_strategist", label: "Social Strategist", about: "organic social: posts, reels, engagement, followers, the posting plan", words: /\b(organic|social posts?|posts?|reels?|stories|engagement rate|followers?|content calendar|posting plan|social media)\b/i },
+  { key: "tracking_engineer", label: "Tracking Engineer", about: "tracking and measurement: pixels, Conversions API, GTM, GA4, conversion tracking, discrepancies", words: /\b(tracking|pixel|capi|conversions? api|server[- ]side|gtm|tag manager|ga4|google analytics|event match|emq|dedup\w*|event_?id|enhanced conversions|offline conversions?|utms?|attribution window|discrepanc\w*|double[- ]?(firing|counting)|thank[- ]you page|customer events|events api)\b/i },
   { key: "account_manager", label: "Account Manager", about: "client relationships, what's owed and how clients feel", words: /\b(client (call|relationship|happy|upset|churn)|retention|renewal|owed|follow up with the client|check-?in)\b/i },
 ];
 
@@ -202,6 +203,8 @@ export const SCREEN_PLACES: Record<string, string> = {
   "settings ai agents": "/settings?tab=agents",
   // YouTube learning: the channels the agents study and their takeaways (each view its own address)
   "youtube learning": "/settings?tab=agents&section=youtube",
+  // The Tracking Engineer: talk to it or call it (a client's tracking check runs through the tracking_check tool)
+  "tracking engineer": "/settings?tab=agents&role=tracking_engineer#talk",
   "youtube takeaways to decide": "/settings?tab=agents&section=youtube&yt=decide",
   "youtube takeaways for me": "/settings?tab=agents&section=youtube&yt=mine",
   "youtube videos": "/settings?tab=agents&section=youtube&yt=all",

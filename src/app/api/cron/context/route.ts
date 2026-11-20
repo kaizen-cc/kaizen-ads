@@ -351,7 +351,12 @@ export async function GET(request: Request) {
       const requeued = await yt.requeueForKey(admin).catch((e) => String(e));
       const queue = await yt.processYouTubeQueue(admin, { budgetMs: 420_000, parallel: 3 }).catch((e) => String(e));
       const shared = await yt.shareTakeaways(admin).catch((e) => String(e));
-      return Response.json({ sources, requeued, queue, shared });
+      // The Tracking Engineer, on the same beat: its playbook filed once, and clients with a tracking flag or a sudden
+      // conversion-rate drop checked (a few a run, each at most weekly), the tracking specialists told in the app
+      const tracking = await import("@/lib/tracking-agent");
+      const playbook = await tracking.seedTrackingPlaybook(admin).catch((e) => String(e));
+      const trackingChecks = await tracking.trackingWatch(admin, { max: 3 }).catch((e) => String(e));
+      return Response.json({ sources, requeued, queue, shared, playbook, trackingChecks });
     }
     if (step === "social_learn") {
       const { aiEnabled } = await import("@/lib/ai");

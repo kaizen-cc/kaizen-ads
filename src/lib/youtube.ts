@@ -401,7 +401,7 @@ export async function suggestLines(admin: Admin, id: string) {
     schema: SUGGEST,
     override: { model: "haiku", effort: "low" },
     maxTokens: 800,
-    system: `You sort a YouTube channel a marketing agency studies into the agency's lines it can teach. Lines: meta (paid social: Meta and TikTok ads, media buying, campaign structure, testing), google (Google and YouTube ads, search, Performance Max), creative (ad creative: hooks, images, video editing, UGC, copy for ads), email (email and SMS marketing, Klaviyo, flows), social (organic social: posting, content, community, growth). Pick every line it clearly teaches, usually one or two. about: one sentence on what the channel teaches, no people's names.`,
+    system: `You sort a YouTube channel a marketing agency studies into the agency's lines it can teach. Lines: meta (paid social: Meta and TikTok ads, media buying, campaign structure, testing), google (Google and YouTube ads, search, Performance Max), creative (ad creative: hooks, images, video editing, UGC, copy for ads), email (email and SMS marketing, Klaviyo, flows), social (organic social: posting, content, community, growth), tracking (measurement: pixels, Conversions API, server-side tagging, GTM, GA4, conversion tracking, attribution). Pick every line it clearly teaches, usually one or two. about: one sentence on what the channel teaches, no people's names.`,
     prompt: `<channel>${s.title ?? "unknown"}</channel>\n<description>${(s.about ?? "").slice(0, 800)}</description>\n<latest_titles>\n${titles.slice(0, 15).join("\n")}\n</latest_titles>`,
   });
   const lines = cleanLines(out.lines);
@@ -451,8 +451,8 @@ Return:
 - takeaways: the concrete, actionable methods, strategies, frameworks or findings (at most 8, the strongest first). Each:
   - takeaway: one or two sentences, specific enough to act on (numbers, structures, thresholds, sequences as the creator gives them). Attributed: say it's the creator's view or finding ("Per <channel>: …" or "<channel> finds…"), never present an opinion as settled fact. No people's names other than the channel's.
   - why: one line on why it matters or what it beats.
-  - lines: the lines it applies to: meta (Meta and TikTok ads, media buying), google (Google and YouTube ads), creative (ad creative: images, video, hooks, copy), email, social (organic social).
-  - roles: the team roles it matters to, from the list: the line's head and its day-to-day people (media_buyer, google_buyer, email_strategist, social_media_manager), and the craft roles only when it's about their craft: graphic_designer (static images), video_editor (video editing), copywriter (ad copy), email_designer (email design), email_builder (building in Klaviyo).
+  - lines: the lines it applies to: meta (Meta and TikTok ads, media buying), google (Google and YouTube ads), creative (ad creative: images, video, hooks, copy), email, social (organic social), tracking (pixels, Conversions API, server-side tagging, GTM, GA4, conversion tracking, attribution).
+  - roles: the team roles it matters to, from the list: the line's head and its day-to-day people (media_buyer, google_buyer, email_strategist, social_media_manager), and the craft roles only when it's about their craft: graphic_designer (static images), video_editor (video editing), copywriter (ad copy), email_designer (email design), email_builder (building in Klaviyo), tracking_specialist (setting up and fixing tracking).
   - at: where in the video it's said, as the nearest [m:ss] mark from the transcript ("12:34"), or "" if unsure.
 Skip generic advice every marketer knows ("test your creatives"), sponsor reads and calls to subscribe.`;
 

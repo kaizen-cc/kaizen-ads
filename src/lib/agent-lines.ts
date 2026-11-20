@@ -21,6 +21,7 @@ const LINE_OF_ROLE: Record<string, LineKey> = {
   strategist: "strategy",
   market_analyst: "strategy",
   account_manager: "strategy",
+  tracking_engineer: "strategy",
   media_buyer: "meta",
   google_buyer: "google",
   tiktok_buyer: "tiktok",

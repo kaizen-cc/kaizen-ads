@@ -32,6 +32,7 @@ export const DEFAULT_VOICES: Record<string, { id: string; name: string }> = {
   email_creative: { id: "pFZP5JQG7iQjIQuC4Bku", name: "Lily" },
   email_builder: { id: "iP95p4xoKVk53GoZ742B", name: "Chris" },
   social_strategist: { id: "Xb7hH8MSUJpSbSDYk0k2", name: "Alice" },
+  tracking_engineer: { id: "N2lVS1w4EtoT3dr4eOWO", name: "Callum" },
   // The personal assistant: a warm, friendly voice
   assistant: { id: "XrExE9yKIg1WjnnlVkGX", name: "Matilda" },
 };

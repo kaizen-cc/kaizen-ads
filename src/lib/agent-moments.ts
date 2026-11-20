@@ -305,6 +305,10 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Answers the social team in the client chat and on the Social sheet, from every platform's numbers, the social score, the latest audit and the sprint", where: "KPIs · Social · a client's sheet, and the client chat", trigger: "click", when: "When someone on the social team asks about a client", labels: ["social desk"] },
     { title: "Reads each social client's calls, Slack and email for lessons (calendar, pillars, reels and stories, engagement, community, boosting, platforms, feedback on posts), filed for the Head of Social to approve", where: "Settings · AI agents · Organic Social · Knowledge", trigger: "auto", when: "Hourly, the last 12 months first", labels: ["social training"] },
   ],
+  tracking_audit: [
+    { title: "Reads one client's tracking (conversion events and their numbers, audit findings, watchdog flags, platform vs store orders, store and CRM connections) and answers with numbered steps to check or fix", where: "Kaizen AI · the assistant · agent calls (tracking_check), notices to the tracking specialist", trigger: "auto", when: "When someone asks, and on its own when a tracking flag opens or the conversion rate drops suddenly (each client at most weekly)", labels: ["tracking check"] },
+  ],
+  tracking_desk: [{ title: "Answers tracking questions (setups, breakages, discrepancies between platforms, GA4 and the backend) in chat and on calls", where: "Settings · AI agents · Tracking Engineer · Talk", trigger: "click", when: "When someone talks to the Tracking Engineer", labels: [] }],
   fatigue: [{ title: "Flags ads wearing out from their own numbers (no AI call; the strategist writes the refresh)", where: "Overview · Client page · Next for me", trigger: "auto", when: "After every Meta sync", labels: [] }],
 };
 

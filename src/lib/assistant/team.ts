@@ -30,6 +30,7 @@ const ALIASES: Record<string, { full: string[]; short?: string[] }> = {
   market_analyst: { full: ["market analyst"], short: ["analyst"] },
   social_strategist: { full: ["social strategist", "social media strategist", "organic strategist"], short: ["strategist"] },
   account_manager: { full: ["account manager"] },
+  tracking_engineer: { full: ["tracking engineer", "tracking agent", "tracking ai", "measurement agent"] },
 };
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+");

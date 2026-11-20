@@ -22,6 +22,8 @@ export const ROLE_SKILLS: Record<string, readonly string[]> = {
   account_manager: ["briefing", "calls"],
   // Organic social: the social audit (and its sprint checks) and the client desk; its playbook skills come with the social team's
   social_strategist: ["social_audit", "social_desk"],
+  // The measurement expert for the tracking specialist and the buyers: a client's tracking check and the tracking desk
+  tracking_engineer: ["tracking_audit", "tracking_desk"],
 };
 
 /** The role agents that ship offline (parked): no AI path calls their skills until an exec brings the role online */
@@ -35,8 +37,9 @@ export const offlineRoleOfSkill = (key: string): string | null => {
 
 /** The role agents each head trains (the Head of Email approves the email playbook, so trains the email agents) */
 export const HEAD_LINES: Partial<Record<TeamRole, readonly string[]>> = {
-  head_of_meta: ["media_buyer", "tiktok_buyer"],
-  head_of_google: ["google_buyer"],
+  // The Tracking Engineer serves the ad lines' measurement: the Heads of Meta and Google teach it (with the execs)
+  head_of_meta: ["media_buyer", "tiktok_buyer", "tracking_engineer"],
+  head_of_google: ["google_buyer", "tracking_engineer"],
   head_of_creative: ["creative_director"],
   head_of_email: ["email_strategist", "email_creative", "email_builder"],
   head_of_social: ["social_strategist"],
