@@ -114,3 +114,23 @@ describe("stored without a database change", () => {
     expect(isGuidelineRow({ kind: "avatar_add", proposed: { name: "Busy mom", tier: "Primary", body: "" } })).toBe(false);
   });
 });
+
+import { isBrandFile, isBrandFolder, linksIn } from "@/lib/brand-guidelines-core";
+
+describe("brand folders and intake links (Nov 20 2026)", () => {
+  it("anything in the Headquarters' Brand or Guidelines folder counts, whatever it's called", () => {
+    expect(isBrandFolder("Brand")).toBe(true);
+    expect(isBrandFolder("Brand Guidelines")).toBe(true);
+    expect(isBrandFolder("Logos")).toBe(true);
+    expect(isBrandFolder(" Michelle Behre - Headquarters")).toBe(false);
+    expect(isBrandFile({ title: "IMG_2041.png", meta: { folder: "Brand" } })).toBe(true);
+    expect(isBrandFile({ title: "Brand Guidelines ", meta: { folder: "Headquarters" } })).toBe(true);
+    expect(isBrandFile({ title: "Invoice.pdf", meta: { folder: "Billing" } })).toBe(false);
+  });
+  it("pulls every link from an intake answer, never a search page", () => {
+    expect(linksIn("https://docs.google.com/presentation/d/1TLZ/edit?usp=sharing")).toEqual(["https://docs.google.com/presentation/d/1TLZ/edit?usp=sharing"]);
+    expect(linksIn("Here: https://www.dropbox.com/scl/fi/abc/guide.pdf?dl=0.")).toEqual(["https://www.dropbox.com/scl/fi/abc/guide.pdf?dl=0"]);
+    expect(linksIn("https://www.google.com/search?q=apartments")).toEqual([]);
+    expect(linksIn("Will send in slack")).toEqual([]);
+  });
+});

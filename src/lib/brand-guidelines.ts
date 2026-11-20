@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
 import { AiPaused, askJson } from "@/lib/ai";
 import { flagGuidelineGap, notifyGuidelines } from "@/lib/bible-governance";
-import { backfillOrder, extractHexColors, GUIDELINE_MARK, googleLinksIn, GUIDELINES_SECTION, hasGuidelines, isGuidelineFile, latestGuidelineFiles, mentionsGuideline, mergeHexColors, renderGuidelines, saysNotShared, type GuidelineRead, type Marker } from "@/lib/brand-guidelines-core";
+import { backfillOrder, extractHexColors, isBrandFile, linksIn, GUIDELINE_MARK, googleLinksIn, GUIDELINES_SECTION, hasGuidelines, isGuidelineFile, latestGuidelineFiles, mentionsGuideline, mergeHexColors, renderGuidelines, saysNotShared, type GuidelineRead, type Marker } from "@/lib/brand-guidelines-core";
 
 // Brand guidelines into the Brand Bible, as soon as they're shared. Every hour (bible_upkeep) what came in since the
 // last pass is checked for a guideline, logo, colors or fonts: Drive files in the client's folder, Slack and email
@@ -16,6 +16,8 @@ import { backfillOrder, extractHexColors, GUIDELINE_MARK, googleLinksIn, GUIDELI
 const CURSOR = "brand_guidelines";
 /** The Drive file names that can be a brand guideline (a PostgREST or-filter) */
 const GUIDE_TITLES = "title.ilike.%brand%,title.ilike.%guide%,title.ilike.%style%,title.ilike.%logo%,title.ilike.%font%,title.ilike.%palette%,title.ilike.%identity%,title.ilike.%kit%";
+/** ...and anything kept in the Headquarters' Brand or Guidelines folders, whatever it's called */
+const GUIDE_FOLDERS = "meta->>folder.ilike.%brand%,meta->>folder.ilike.%guideline%,meta->>folder.ilike.%logo%,meta->>folder.ilike.%identity%";
 const FIRST_DAYS = 120;
 const SOURCES = ["drive", "slack_external", "slack_internal", "gmail", "call"];
 const day = (iso: string) => String(iso).slice(0, 10);
@@ -44,7 +46,8 @@ rules: the client's visual and brand rules (logo clear space, what never to do w
 source: where it came from, short, with the date: "Drive: Brand Guidelines doc, Sep 30", "Slack, Oct 6: updated brand kit colors", "Call, Oct 2", "Intake form".
 When two sources disagree, the newest wins (a Slack update after the guide changes the color); keep only the current value and name the newer source.`;
 
-type Signal = { key: string; at: string; label: string; text: string; url: string | null; file: boolean; title?: string | null };
+/** doc: it goes in the client's Documents tab (a guideline file, a brand-folder file, a link from the intake form) */
+type Signal = { key: string; at: string; label: string; text: string; url: string | null; file: boolean; title?: string | null; doc?: boolean };
 
 /** Everything the client shared that mentions a guideline, logo, colors or fonts, newest first */
 async function signalsFor(admin: SupabaseClient, clientId: string): Promise<Signal[]> {
@@ -53,7 +56,7 @@ async function signalsFor(admin: SupabaseClient, clientId: string): Promise<Sign
     admin.from("context_items").select("id, source, occurred_at, author, title, body, url, meta").eq("client_id", clientId).in("source", SOURCES).gt("occurred_at", since).order("occurred_at", { ascending: false }).limit(1500),
     // The guideline files by their names, however old and however much came after them (a busy client's Drive pushed
     // its September brand guide out of the newest 1,500 items)
-    admin.from("context_items").select("id, source, occurred_at, author, title, body, url, meta").eq("client_id", clientId).eq("source", "drive").or(GUIDE_TITLES).order("occurred_at", { ascending: false }).limit(200),
+    admin.from("context_items").select("id, source, occurred_at, author, title, body, url, meta").eq("client_id", clientId).eq("source", "drive").or(`${GUIDE_TITLES},${GUIDE_FOLDERS}`).order("occurred_at", { ascending: false }).limit(200),
     admin.from("client_calls").select("id, source, title, occurred_at, url, notes").eq("client_id", clientId).gt("occurred_at", since).order("occurred_at", { ascending: false }).limit(60),
     admin.from("client_intakes").select("id, received_at, answers").eq("client_id", clientId).order("received_at", { ascending: false }).limit(1).maybeSingle(),
     admin.from("client_assets").select("file_id, name, url, created_at").eq("client_id", clientId).ilike("name", "%logo%").order("created_at", { ascending: false }).limit(12),
@@ -63,9 +66,10 @@ async function signalsFor(admin: SupabaseClient, clientId: string): Promise<Sign
   const items = [...(guideFiles ?? []), ...(recent ?? [])].filter((i) => !ids.has(i.id as string) && Boolean(ids.add(i.id as string)));
   for (const i of items) {
     const file = i.source === "drive";
-    if (file ? !isGuidelineFile(i.title) && !mentionsGuideline(i.body) : !mentionsGuideline(`${i.title ?? ""} ${i.body ?? ""}`)) continue;
+    const brandFile = file && isBrandFile(i);
+    if (file ? !brandFile && !mentionsGuideline(i.body) : !mentionsGuideline(`${i.title ?? ""} ${i.body ?? ""}`)) continue;
     const where = file ? "Drive file" : i.source === "gmail" ? "Email" : i.source === "call" ? "Call" : i.source === "slack_internal" ? "Slack (internal)" : "Slack (with client)";
-    out.push({ key: `item:${i.id}`, at: i.occurred_at as string, label: `${where}, ${day(i.occurred_at as string)}${i.author ? ` · ${i.author}` : ""}${i.title ? ` · "${i.title}"` : ""}`, text: String(i.body ?? "").slice(0, file ? 12_000 : 3000), url: (i.url as string | null) ?? null, file, title: i.title as string | null });
+    out.push({ key: `item:${i.id}`, at: i.occurred_at as string, label: `${where}, ${day(i.occurred_at as string)}${i.author ? ` · ${i.author}` : ""}${i.title ? ` · "${i.title}"` : ""}`, text: String(i.body ?? "").slice(0, file ? 12_000 : 3000), url: (i.url as string | null) ?? null, file, title: i.title as string | null, doc: brandFile });
   }
   for (const c of calls ?? []) {
     const notes = String(c.notes ?? "");
@@ -76,7 +80,12 @@ async function signalsFor(admin: SupabaseClient, clientId: string): Promise<Sign
   }
   const answers = (intake?.answers ?? []) as { q?: string; a?: unknown }[];
   const guide = Array.isArray(answers) ? answers.find((x) => /brand guide|guideline/i.test(String(x.q ?? ""))) : null;
-  if (intake && guide && String(guide.a ?? "").trim()) out.push({ key: `intake:${intake.id}`, at: intake.received_at as string, label: `Intake form, ${day(intake.received_at as string)}`, text: `${guide.q}: ${String(guide.a).slice(0, 3000)}`, url: null, file: false });
+  if (intake && guide && String(guide.a ?? "").trim()) {
+    out.push({ key: `intake:${intake.id}`, at: intake.received_at as string, label: `Intake form, ${day(intake.received_at as string)}`, text: `${guide.q}: ${String(guide.a).slice(0, 3000)}`, url: null, file: false });
+    // Each link they gave for their guideline (a doc, slides, a Drive or Dropbox folder, a PDF) goes in their Documents tab
+    for (const url of linksIn(String(guide.a)).slice(0, 6))
+      out.push({ key: `intake-link:${url}`, at: intake.received_at as string, label: `Intake form link, ${day(intake.received_at as string)}`, text: "", url, file: false, title: `Brand guidelines (from the intake form)${/dropbox/i.test(url) ? " · Dropbox" : /drive\/folders/i.test(url) ? " · Drive folder" : ""}`, doc: true });
+  }
   for (const l of logos ?? []) out.push({ key: `asset:${l.file_id}`, at: (l.created_at as string) ?? since, label: `Logo file in Drive, ${day((l.created_at as string) ?? since)} · "${l.name}"`, text: "", url: (l.url as string | null) ?? null, file: false });
   return out.sort((a, b) => b.at.localeCompare(a.at));
 }
@@ -86,7 +95,8 @@ async function readFiles(signals: Signal[]) {
   const user = process.env.GOOGLE_DRIVE_USER;
   if (!user) return [];
   const { readGoogleFile } = await import("@/lib/assistant/read-file");
-  const links = [...new Set([...signals.filter((s) => s.file && s.url).map((s) => s.url!), ...signals.flatMap((s) => googleLinksIn(s.text))])].slice(0, 4);
+  // The guideline files and the links they gave (the intake form's Google link included), Google ones read here
+  const links = [...new Set([...signals.filter((s) => (s.file || s.doc) && s.url && /google\.com/.test(s.url)).map((s) => s.url!), ...signals.flatMap((s) => googleLinksIn(s.text))])].slice(0, 5);
   const out: { title: string; url: string; text: string }[] = [];
   for (const url of links) {
     const r = await readGoogleFile(user, url).catch(() => null);
@@ -167,7 +177,7 @@ ${current ? `\n<in_the_bible_now>\n${current.body.slice(0, 6000)}\n</in_the_bibl
 
 /** Each guideline file lands in the client's Documents tab as a link to its source, once (matched on the link) */
 async function registerDocs(admin: SupabaseClient, clientId: string, signals: Signal[]) {
-  const files = signals.filter((s) => s.file && s.url && /^https?:\/\//.test(s.url) && isGuidelineFile(s.title));
+  const files = signals.filter((s) => s.url && /^https?:\/\//.test(s.url) && (s.doc || (s.file && isGuidelineFile(s.title))));
   if (!files.length) return 0;
   const { data: have } = await admin.from("client_documents").select("url").eq("client_id", clientId).eq("kind", "link").not("url", "is", null).limit(1000);
   const known = new Set((have ?? []).map((d) => String(d.url)));
@@ -181,7 +191,7 @@ async function registerDocs(admin: SupabaseClient, clientId: string, signals: Si
       name: String(f.title ?? "Brand guidelines").slice(0, 200),
       url: f.url,
       title: String(f.title ?? "Brand guidelines").slice(0, 200),
-      summary: `Brand guideline file found in the client's Drive. Read into the Brand Bible's ${GUIDELINES_SECTION} section for the Head of Creative to approve.`,
+      summary: `${f.key.startsWith("intake-link:") ? "The brand guideline they linked in the marketing intake form." : "Brand file from the client's Drive."} Read into the Brand Bible's ${GUIDELINES_SECTION} section for the Head of Creative to approve.`,
       text: f.text ? f.text.slice(0, 30_000) : null,
       status: "ready",
       via: "page",
@@ -200,7 +210,7 @@ async function registerDocs(admin: SupabaseClient, clientId: string, signals: Si
 async function backfill(admin: SupabaseClient, deadline: number, perRun = 6) {
   const [{ data: clients }, { data: files }, { data: marks }] = await Promise.all([
     admin.from("clients").select("id").is("archived_at", null).in("status", ["onboarding", "active", "paused"]).limit(2000),
-    admin.from("context_items").select("client_id, title, url, occurred_at").eq("source", "drive").or(GUIDE_TITLES).order("occurred_at", { ascending: false }).limit(5000),
+    admin.from("context_items").select("client_id, title, url, occurred_at").eq("source", "drive").or(`${GUIDE_TITLES},${GUIDE_FOLDERS}`).order("occurred_at", { ascending: false }).limit(5000),
     admin.from("sync_state").select("source, cursor_at, last_run_at").like("source", `${CURSOR}:%`).limit(3000),
   ]);
   const latest = latestGuidelineFiles((files ?? []) as { client_id: string; title: string | null; url: string | null; occurred_at: string }[]);
@@ -234,7 +244,7 @@ async function backfill(admin: SupabaseClient, deadline: number, perRun = 6) {
 export async function guidelinesForClient(admin: SupabaseClient, clientId: string) {
   const r = await ingestGuidelines(admin, clientId);
   if (r !== "not_ready") {
-    const { data: files } = await admin.from("context_items").select("client_id, title, url, occurred_at").eq("client_id", clientId).eq("source", "drive").or(GUIDE_TITLES).order("occurred_at", { ascending: false }).limit(200);
+    const { data: files } = await admin.from("context_items").select("client_id, title, url, occurred_at").eq("client_id", clientId).eq("source", "drive").or(`${GUIDE_TITLES},${GUIDE_FOLDERS}`).order("occurred_at", { ascending: false }).limit(200);
     const latest = latestGuidelineFiles((files ?? []) as { client_id: string; title: string | null; url: string | null; occurred_at: string }[]);
     await admin.from("sync_state").upsert({ source: `${CURSOR}:${clientId}`, cursor_at: latest.get(clientId) ?? null, last_run_at: new Date().toISOString(), last_result: { result: r } });
   }
@@ -248,13 +258,13 @@ export async function keepGuidelines(admin: SupabaseClient, budgetMs = 240_000) 
   const { data: st } = await admin.from("sync_state").select("cursor_at").eq("source", CURSOR).maybeSingle();
   const since = st?.cursor_at ? String(st.cursor_at) : new Date(Date.now() - FIRST_DAYS * 86_400_000).toISOString();
   const [{ data: items }, { data: calls }, { data: intakes }, { data: logos }] = await Promise.all([
-    admin.from("context_items").select("client_id, source, title, body").in("source", SOURCES).gt("created_at", since).limit(5000),
+    admin.from("context_items").select("client_id, source, title, body, meta").in("source", SOURCES).gt("created_at", since).limit(5000),
     admin.from("client_calls").select("client_id, notes").not("client_id", "is", null).gt("created_at", since).limit(500),
     admin.from("client_intakes").select("client_id").not("client_id", "is", null).gt("received_at", since).limit(200),
     admin.from("client_assets").select("client_id").ilike("name", "%logo%").gt("seen_at", since).limit(500),
   ]);
   const due = new Set<string>();
-  for (const i of items ?? []) if (i.source === "drive" ? isGuidelineFile(i.title) || mentionsGuideline(i.body) : mentionsGuideline(`${i.title ?? ""} ${i.body ?? ""}`)) due.add(i.client_id as string);
+  for (const i of items ?? []) if (i.source === "drive" ? isBrandFile(i) || mentionsGuideline(i.body) : mentionsGuideline(`${i.title ?? ""} ${i.body ?? ""}`)) due.add(i.client_id as string);
   for (const c of calls ?? []) if (mentionsGuideline(c.notes as string | null)) due.add(c.client_id as string);
   for (const x of [...(intakes ?? []), ...(logos ?? [])]) due.add(x.client_id as string);
   const out: Record<string, number> = { clients: due.size };

@@ -15,6 +15,22 @@ export function isGuidelineFile(name: string | null | undefined) {
   return Boolean(name && /\bbrand|guide|\bstyle|\blogo|\bfont|palette|identity|\bkit\b/i.test(name));
 }
 
+/** A Drive folder that holds the brand: the client's Headquarters "Brand" and "Guidelines" folders (anything in them counts) */
+export function isBrandFolder(folder: string | null | undefined) {
+  return Boolean(folder && /\bbrand|guideline|\bstyle ?guide|\blogos?\b|identity/i.test(folder));
+}
+
+/** A Drive file that's part of the brand: named like a guideline, or kept in a brand folder */
+export function isBrandFile(i: { title?: string | null; meta?: unknown }) {
+  const folder = (i.meta as { folder?: string } | null)?.folder ?? null;
+  return isGuidelineFile(i.title) || isBrandFolder(folder);
+}
+
+/** Every link in a text (an intake answer: a Google doc or folder, Dropbox, a website), cleaned of trailing punctuation */
+export function linksIn(text: string | null | undefined): string[] {
+  return [...new Set(((text ?? "").match(/https?:\/\/[^\s<>"'\]]+/g) ?? []).map((u) => u.replace(/[).,;]+$/, "")))].filter((u) => !/google\.com\/search/i.test(u));
+}
+
 /** Whether the Bible says the client's brand guideline isn't on file (shared nowhere, hex codes missing, a gap) */
 export function saysNotShared(markdown: string | null | undefined) {
   if (!markdown) return false;
