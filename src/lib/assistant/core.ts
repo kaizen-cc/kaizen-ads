@@ -391,6 +391,34 @@ export function memoryForPrompt(rows: readonly MemoryRow[], today: string): stri
   return [style.length ? `How they like to talk:\n${style.join("\n")}` : "", facts.length ? `What they've told you:\n${facts.join("\n")}` : ""].filter(Boolean).join("\n\n");
 }
 
+// ─── Tips ──────────────────────────────────────────────────────────────────
+/** Turned on once the assistant can find a time and book internal calls on Google Calendar */
+export const CALENDAR_BOOKING_LIVE = false;
+
+type TipFor = { role: string; isExec?: boolean };
+/** "Did you know" lines the hello shuffles in: only things the assistant can really do, only for roles that can use them */
+export const TIPS: { key: string; text: string; who?: (p: TipFor) => boolean; live?: () => boolean }[] = [
+  { key: "drafts", text: "you can have me draft messages in Slack and email? Tell me who it's for and what to say, and I'll write it in your voice for you to send." },
+  { key: "search", text: "I can dig through your Slack and email for you? Ask me what a client said about something, and I'll find the thread." },
+  { key: "teammate", text: "I can send a teammate a reminder or a checklist for you? They can tick it off on their end, and you'll see their progress." },
+  { key: "work", text: "you can ask me \"what's on my plate?\" any time? I'll go through it critical first." },
+  { key: "remember", text: "you can tell me to remember things, like how you like your updates or something to bring up later? I'll keep it in mind." },
+  { key: "checkins", text: "I can check in with you at set times, like a midday or 3pm recap of what's still open? Just tell me when." },
+  { key: "screens", text: "you can ask me to open any screen in Kaizen OS? Say what you're looking for and I'll take you there." },
+  { key: "clients", text: "you can ask me about any client: how they're doing, what's due, what they said last? I'll pull it together in a few seconds." },
+  { key: "ideas", text: "if something in Kaizen OS isn't working or could be better, you can tell me and I'll file it as feedback for you?" },
+  { key: "calendar", text: "you can schedule calls with teammates through me? I'll check when you're both free, find the best time and send the invite.", live: () => CALENDAR_BOOKING_LIVE },
+  { key: "handoffs", text: "when you need to move someone's accounts, you can just ask me? I'll plan every seat and write a handoff for the new person.", who: (p) => p.isExec === true || p.role.startsWith("head_of") },
+  { key: "audits", text: "you can ask me to run an audit on an account? I'll go through it and tell you what to fix first.", who: (p) => /buyer|head_of_(meta|google)/.test(p.role) || p.isExec === true },
+];
+
+/** About one fresh hello in two, a tip they can use, shuffled by the call's seed */
+export function tipFor(person: TipFor | null | undefined, seed: number): { key: string; text: string } | null {
+  if (!person || Math.abs(seed) % 2 !== 0) return null;
+  const pool = TIPS.filter((t) => (!t.live || t.live()) && (!t.who || t.who(person)));
+  return pool.length ? pool[Math.abs(seed >> 4) % pool.length] : null;
+}
+
 /**
  * The assistant's hello: a happy birthday on the day, else a question about something they mentioned that's due
  * ("How was the trip to Lisbon?"), else a warm plain hello. `followed` is the memory row asked about (marked so it's
@@ -407,6 +435,8 @@ export function assistantGreeting(input: {
   timed?: string | null;
   /** The hour in their own time zone, for a hello that fits the time of day */
   hour?: number;
+  /** Their role, for a "did you know" tip that fits it */
+  person?: TipFor | null;
 }): { text: string; followed: string | null } {
   const { name, memory, today } = input;
   const seed = Math.abs(input.seed ?? 0);
@@ -449,7 +479,9 @@ export function assistantGreeting(input: {
     const line = all[seed % all.length];
     return { text: line.charAt(0).toUpperCase() + line.slice(1), followed: null };
   }
-  return { text: plain[seed % plain.length], followed: null };
+  const hello = plain[seed % plain.length];
+  const tip = tipFor(input.person, seed);
+  return { text: tip ? `${hello} Oh, and did you know ${tip.text}` : hello, followed: null };
 }
 
 // ─── Safety review ──────────────────────────────────────────────────────────

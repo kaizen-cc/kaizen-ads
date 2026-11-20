@@ -105,7 +105,7 @@ export async function startCall(roleKey: string, opts: { talk?: TalkMode; headsU
   // The assistant: a hello that remembers them (a birthday, how the trip went), unless the line just dropped
   if (roleKey === ASSISTANT_KEY && mode !== "continue") {
     const memory = await loadMemory(admin, me.id);
-    const hello = assistantGreeting({ name: firstNameOf(me.fullName), memory, today: localDayIn(opts.tz), seed: seedOf(call.id as string), mode, timed: greeting, hour });
+    const hello = assistantGreeting({ name: firstNameOf(me.fullName), memory, today: localDayIn(opts.tz), seed: seedOf(call.id as string), mode, timed: greeting, hour, person: { role: me.role, isExec: me.isExec } });
     greeting = hello.text;
     if (hello.followed) await markFollowedUp(admin, me.id, hello.followed);
   }
