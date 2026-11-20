@@ -65,7 +65,17 @@ export async function planTransfer(
 ): Promise<{ id: string; moves: PlannedMove[] } | { error: string }> {
   const [held, people] = await Promise.all([seatsHeldBy(admin, input.fromId), activePeople(admin)]);
   const picked = held.filter((s) => (!input.clientIds?.length || input.clientIds.includes(s.clientId)) && (!input.roles?.length || input.roles.includes(s.role)));
-  const moves = planMoves(me, input.fromId, picked, people, input.toId, input.byLine ?? {});
+  const planned = planMoves(me, input.fromId, picked, people, input.toId, input.byLine ?? {});
+  // An ask repeated (the assistant calling twice, a second click) reuses the plan already waiting for those seats
+  const { data: pending } = await admin
+    .from("seat_transfer_moves")
+    .select("transfer_id, client_id, role, seat_transfers!inner(status)")
+    .eq("from_id", input.fromId)
+    .in("status", ["planned", "applying", "failed"])
+    .eq("seat_transfers.status", "open");
+  const waiting = (pending ?? []) as { transfer_id: string; client_id: string; role: string }[];
+  const { moves, existing } = splitPending(planned, waiting);
+  if (!moves.length && existing) return { id: existing, moves: planned };
   if (!moves.length) return { error: held.length ? "None of their seats are ones you can move (a head moves their own line's seats; executives move any)." : "They don't hold any seats on live clients." };
   const { data: t, error } = await admin.from("seat_transfers").insert({ from_id: input.fromId, to_id: input.toId, asked_by: me.id, note: input.note?.slice(0, 500) ?? null }).select("id").single();
   if (error || !t) return { error: error?.message ?? "Couldn't save the plan." };
@@ -80,6 +90,15 @@ export async function planTransfer(
 
 /** The seats that get a handoff written for the new person: every seat they take over as its primary */
 const needsDoc = (_role: string, primary: boolean, toId: string | null) => primary && Boolean(toId);
+
+/** Leaves out seats already waiting in an open plan; when every seat is, that plan's id comes back to reuse */
+export function splitPending<M extends { clientId: string; role: string }>(planned: M[], waiting: { transfer_id: string; client_id: string; role: string }[]): { moves: M[]; existing: string | null } {
+  const key = (c: string, r: string) => `${c}:${r}`;
+  const by = new Map(waiting.map((w) => [key(w.client_id, w.role), w.transfer_id]));
+  const moves = planned.filter((m) => !by.has(key(m.clientId, m.role)));
+  const existing = planned.length && !moves.length ? (by.get(key(planned[0].clientId, planned[0].role)) ?? null) : null;
+  return { moves, existing };
+}
 
 /** Writes the handoffs a plan's moves are waiting for (in the background, after planning or a change of person) */
 export async function writeMoveDocs(admin: SupabaseClient, transferId: string) {
@@ -150,6 +169,12 @@ export async function applyMove(admin: SupabaseClient, me: Asker, id: string): P
   await admin.from("seat_transfer_moves").update({ status: "applying", error: null }).eq("id", id);
   const { data: seat } = await admin.from("client_assignments").select("profile_id, is_primary").eq("client_id", m.client_id).eq("role", m.role);
   const rows = seat ?? [];
+  if (m.from_id && !rows.some((r) => r.profile_id === m.from_id) && rows.some((r) => r.profile_id === m.to_id)) {
+    // Already done (by another plan or on the client's page): nothing left to move, so it isn't a failure
+    await admin.from("seat_transfer_moves").update({ status: "dropped", error: "Already moved: the new person holds this seat." }).eq("id", id);
+    await settle(admin, m.transfer_id);
+    return { ok: true, handoffId: null, writeHandoff: false };
+  }
   if (m.from_id && !rows.some((r) => r.profile_id === m.from_id)) return fail("They're no longer on this seat: it changed since the plan was made.");
   let handoffId: string | null = null;
   let write = false;

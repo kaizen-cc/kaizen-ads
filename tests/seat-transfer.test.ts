@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { linesFor, matchPerson, mayTransferAny, mayTransferSeat, planMoves, type HeldSeat, type Person } from "@/lib/seat-transfer-core";
+import { splitPending } from "@/lib/seat-transfer";
 
 const exec = { role: "executive", isExec: true };
 const headMeta = { role: "head_of_meta", isExec: false };
@@ -78,5 +79,17 @@ describe("finding a person by name", () => {
   it("asks when several match, and says when nobody does", () => {
     expect(matchPerson(people, "Luc")).toEqual({ many: [people[1], people[4]] });
     expect(matchPerson(people, "Zed")).toEqual({ none: true });
+  });
+});
+
+describe("a repeated ask reuses the plan waiting for those seats", () => {
+  const w = [{ transfer_id: "t1", client_id: "c1", role: "email_strategist" }];
+  it("returns the open plan when every seat is already in it", () => {
+    expect(splitPending([{ clientId: "c1", role: "email_strategist" }], w)).toEqual({ moves: [], existing: "t1" });
+  });
+  it("plans only the seats not already waiting", () => {
+    const r = splitPending([{ clientId: "c1", role: "email_strategist" }, { clientId: "c2", role: "email_builder" }], w);
+    expect(r.moves).toEqual([{ clientId: "c2", role: "email_builder" }]);
+    expect(r.existing).toBeNull();
   });
 });
