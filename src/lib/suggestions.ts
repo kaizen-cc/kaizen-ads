@@ -317,7 +317,11 @@ async function writeBrief(admin: SupabaseClient, clientId: string, opts: Paramet
   // here so the brief can say which ones it was written with
   const { learningsFor } = await import("@/lib/learnings");
   const learned = await learningsFor(admin, ["strategist"], clientId, opts.prompt.slice(-4000)).catch(() => ({ block: "", used: [] }));
-  const out = await askJson<Out>({ ...opts, clientId, system: `${opts.system}\n\n${BRIEF_STANDARD}`, prompt: learned.block ? `${opts.prompt}\n\n${learned.block}` : opts.prompt });
+  // Assets this client waived or confirmed they don't have: never asked for again (src/lib/asset-waivers-core.ts)
+  const [{ loadWaivers }, { waiversBlock }] = await Promise.all([import("@/lib/asset-waivers"), import("@/lib/asset-waivers-core")]);
+  const waived = waiversBlock(await loadWaivers(admin, clientId).catch(() => []));
+  const extra = [learned.block, waived].filter(Boolean).join("\n\n");
+  const out = await askJson<Out>({ ...opts, clientId, system: `${opts.system}\n\n${BRIEF_STANDARD}`, prompt: extra ? `${opts.prompt}\n\n${extra}` : opts.prompt });
   if (!out.suggest || !out.draft?.brief) return out;
   const draft = await withAssetLinks(admin, clientId, await selfReview(admin, clientId, out.draft));
   return { ...out, draft: { ...draft, ...(learned.used.length ? { learnings: learned.used.map((l) => ({ id: l.id, lesson: l.lesson.slice(0, 300) })) } : {}) } };

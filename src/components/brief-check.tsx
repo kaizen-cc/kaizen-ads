@@ -1,5 +1,6 @@
 "use client";
 
+import { waiveBriefAsset } from "@/app/(team)/brief-asset-actions";
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { answerBriefFact, askClientFact, briefLog, checkBrief, markBriefReviewed, overrideBriefGate, reviseBrief, undoBriefCorrection, type BriefTarget, type CheckResult, type LogEntry, type ReviseTurn } from "@/app/(team)/brief-review-actions";
 import { GATE_LABEL, STATUS_LABEL, headsLine, stampLine, type BriefStatus, type GateKey } from "@/lib/brief-gate";
@@ -98,8 +99,8 @@ const TONE: Record<BriefStatus, string> = {
   ready: "border-ok/40 bg-ok-soft text-ok",
   reviewed: "border-ok/40 bg-ok-soft text-ok",
 };
-const ASSET_TONE: Record<string, string> = { have: "text-ok", need: "text-warn", shoot: "text-warn", missing: "text-bad", unreachable: "text-bad" };
-const ASSET_WORD: Record<string, string> = { have: "Have", need: "Need", shoot: "Client to shoot", missing: "Missing", unreachable: "Doesn't open" };
+const ASSET_TONE: Record<string, string> = { have: "text-ok", need: "text-warn", shoot: "text-warn", missing: "text-bad", unreachable: "text-bad", waived: "text-faint" };
+const ASSET_WORD: Record<string, string> = { have: "Have", need: "Need", shoot: "Client to shoot", missing: "Missing", unreachable: "Doesn't open", waived: "Not needed" };
 
 /** An asset's Drive file or folder, opened in a new tab */
 function AssetLink({ url }: { url: string | null }) {
@@ -369,6 +370,29 @@ export function BriefCheck({ target, signature, brief, onChange, demo = false, p
                   {splitLink(a.label).text}
                   <AssetLink url={a.url ?? splitLink(a.label).url} />
                   {a.note && <span className="block text-[12px] text-faint">{a.note}</span>}
+                  {/* Waived or not available for this client: never asked for again (src/lib/asset-waivers.ts) */}
+                  {clientId && !demo && (a.status === "need" || a.status === "shoot" || a.status === "missing") && (
+                    <span className="mt-1 flex flex-wrap gap-1.5">
+                      {(["waived", "unavailable"] as const).map((how) => (
+                        <button
+                          key={how}
+                          type="button"
+                          disabled={Boolean(busy)}
+                          onClick={() => {
+                            setBusy(`waive-${i}`);
+                            void waiveBriefAsset(clientId, a.label, how).then((r) => {
+                              setBusy(null);
+                              if (!r.ok) setError(r.error);
+                              else run(false);
+                            });
+                          }}
+                          className="min-h-9 rounded-full border border-line px-3 text-[12px] text-muted hover:border-faint hover:text-fg disabled:opacity-50 sm:min-h-7"
+                        >
+                          {how === "waived" ? "Waived" : "Client doesn't have it"}
+                        </button>
+                      ))}
+                    </span>
+                  )}
                 </span>
               </li>
             ))}

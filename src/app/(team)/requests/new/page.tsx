@@ -99,7 +99,7 @@ export default async function NewRequest({ searchParams }: PageProps<"/requests/
       return (
         <div className="mx-auto grid max-w-6xl gap-8 px-4 py-6 md:px-0 md:py-10">
           {unfinishedCard}
-          <ReadyToApprove groups={groups} today={new Date().toISOString().slice(0, 10)} ownHref="/requests/new?own=1" />
+          <ReadyToApprove groups={groups} today={new Date().toISOString().slice(0, 10)} ownHref="/requests/new?own=1" canRate={me.role === "head_of_creative" || me.role === "lead_graphic_designer" || me.role === "lead_video_editor"} />
         </div>
       );
     }

@@ -6,6 +6,7 @@ import { KIND_LABEL } from "@/lib/suggestion-kinds";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { DraftedChips, DraftedLine } from "@/components/drafted-brief-parts";
+import { BriefRating } from "./brief-rating";
 
 // The briefs the system drafted, waiting on a decision (src/lib/brief-drafting.ts): grouped by client, most urgent
 // first (the nearest deadline, then the client's own asks). The request form opens on it, the Overview of anyone who
@@ -20,7 +21,7 @@ const counts = (s: OpenSuggestion) =>
     .filter(Boolean)
     .join(" · ");
 
-export function ReadyToApprove({ groups, today, ownHref, compact = false }: { groups: ReadyGroup[]; today: string; /** "Add my own idea": the request form */ ownHref?: string; compact?: boolean }) {
+export function ReadyToApprove({ groups, today, ownHref, compact = false, canRate = false }: { groups: ReadyGroup[]; today: string; /** "Add my own idea": the request form */ ownHref?: string; compact?: boolean; /** The creative leads rate each drafted brief */ canRate?: boolean }) {
   const open = useParam("approve");
   const all = groups.flatMap((g) => g.items);
   const current = all.find((s) => s.id === open) ?? null;
@@ -47,7 +48,8 @@ export function ReadyToApprove({ groups, today, ownHref, compact = false }: { gr
           <p className="text-xs uppercase tracking-[0.14em] text-faint">{g.client}</p>
           <div className="grid gap-2 md:grid-cols-2">
             {g.items.map((s) => (
-              <button key={s.id} type="button" onClick={() => pushParams({ approve: s.id })} className="group grid content-start gap-2 rounded-[14px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint">
+              <div key={s.id} className="grid content-start gap-2">
+              <button type="button" onClick={() => pushParams({ approve: s.id })} className="group grid content-start gap-2 rounded-[14px] border border-line bg-surface p-4 text-left transition-colors hover:border-faint">
                 <span className="flex flex-wrap items-center gap-1.5">
                   <span className="rounded-full bg-ink/[0.06] px-2 py-0.5 text-[11px] text-muted">{KIND_LABEL[s.kind]}</span>
                   {s.drafted && <DraftedChips d={s.drafted} today={today} />}
@@ -59,6 +61,8 @@ export function ReadyToApprove({ groups, today, ownHref, compact = false }: { gr
                   <span className="text-fg transition-transform group-hover:translate-x-0.5">Review →</span>
                 </span>
               </button>
+              {canRate && s.drafted && <div className="px-1"><BriefRating id={s.id} /></div>}
+              </div>
             ))}
           </div>
         </div>

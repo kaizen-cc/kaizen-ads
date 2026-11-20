@@ -12,6 +12,7 @@ import { BrandChip } from "./overview-tabs";
 import { SuggestionSheet } from "./suggested-briefs";
 import { approveAllDraftedBriefs, approveDraftedBrief } from "../draft-actions";
 import { declineSuggestion } from "../suggestion-actions";
+import { BriefRating } from "@/components/brief-rating";
 
 // The creative leads' Clients tab (the head of creative every pool, the lead graphic designer images, the lead video
 // editor video). A hero for the week (what to brief at a healthy pace against a usual week, the briefs ready, Approve
@@ -75,7 +76,7 @@ const CHIP_TONE: Record<SourceChip["tone"], string> = {
 const REASONS = ["Not the right time", "Already handled", "Wrong angle", "Brief isn't strong enough", "The reason isn't real"];
 const FORMAT_ONE = { image: "image", video: "video", carousel: "carousel" } as const;
 
-export function CreativeClientRows({ rows, week, briefed, canApprove = true }: { rows: ClientRow[]; week: WeekLine[] | null; /** Clients fully briefed this cycle */ briefed: number; canApprove?: boolean }) {
+export function CreativeClientRows({ rows, week, briefed, canApprove = true, canRate = false }: { rows: ClientRow[]; week: WeekLine[] | null; /** Clients fully briefed this cycle */ briefed: number; canApprove?: boolean; /** The creative leads rate each drafted brief */ canRate?: boolean }) {
   const open = useParam("approve");
   const current = rows.flatMap((r) => r.ideas).find((s) => s.id === open) ?? null;
   const byGroup = new Map<DeskGroup, ClientRow[]>(GROUPS.map((g) => [g.id, rows.filter((r) => r.group === g.id)]));
@@ -99,7 +100,7 @@ export function CreativeClientRows({ rows, week, briefed, canApprove = true }: {
             </div>
             <ul className={`grid gap-3 ${g.id === "covered" ? "md:grid-cols-2" : ""}`}>
               {list.map((r) => (
-                <ClientCard key={r.clientId} r={r} canApprove={canApprove} />
+                <ClientCard key={r.clientId} r={r} canApprove={canApprove} canRate={canRate} />
               ))}
             </ul>
           </div>
@@ -221,7 +222,7 @@ function Ring({ w }: { w: WeekLine }) {
 
 // ─── A client ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-function ClientCard({ r, canApprove }: { r: ClientRow; canApprove: boolean }) {
+function ClientCard({ r, canApprove, canRate }: { r: ClientRow; canApprove: boolean; canRate: boolean }) {
   const tone = GROUP_TONE[r.group];
   const days = r.pools.length ? Math.min(...r.pools.map((p) => p.daysLeft)) : null;
   const over = r.group === "over";
@@ -288,7 +289,7 @@ function ClientCard({ r, canApprove }: { r: ClientRow; canApprove: boolean }) {
             </p>
             <div className="grid gap-2.5 xl:grid-cols-2">
               {r.ideas.map((s) => (
-                <BriefCard key={s.id} s={s} canApprove={canApprove} />
+                <BriefCard key={s.id} s={s} canApprove={canApprove} canRate={canRate} />
               ))}
             </div>
           </div>
@@ -363,7 +364,7 @@ const counts = (s: OpenSuggestion) =>
     .map((f) => `${f.new ? `${f.new} new ${FORMAT_ONE[f.format]}${f.new === 1 ? "" : "s"}` : ""}${f.new && f.variations ? " · " : ""}${f.variations ? `${f.variations} variation${f.variations === 1 ? "" : "s"}` : ""}${f.format === "carousel" && f.cards ? ` · ${f.cards} slides` : ""}`)
     .filter(Boolean);
 
-function BriefCard({ s, canApprove }: { s: OpenSuggestion; canApprove: boolean }) {
+function BriefCard({ s, canApprove, canRate = false }: { s: OpenSuggestion; canApprove: boolean; canRate?: boolean }) {
   const router = useRouter();
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
@@ -474,6 +475,8 @@ function BriefCard({ s, canApprove }: { s: OpenSuggestion; canApprove: boolean }
           </button>
         </div>
       )}
+      {/* The creative leads' quick rating: it teaches the brief writer */}
+      {canRate && s.drafted && !done && <BriefRating id={s.id} />}
       {error && <p className="text-xs text-bad">{error}</p>}
     </article>
   );

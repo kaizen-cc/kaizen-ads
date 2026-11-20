@@ -1,4 +1,5 @@
 import type { SpecAsset } from "./brief-spec";
+import { WAIVER_NOTE, waiverFor, type Waiver } from "./asset-waivers-core";
 
 // The asset heads-up. What a brief is made from: Drive links that open, footage for a video, files the client still
 // has to send or shoot. Anything missing makes it "Waiting on assets" (a heads-up that goes with the brief, never a
@@ -7,7 +8,7 @@ import type { SpecAsset } from "./brief-spec";
 // tests/brief-assets.test.ts. The Drive reads and the client's catalogue are gathered on the server.
 
 export type LinkCheck = { url: string; ok: boolean; note?: string | null };
-export type GateItem = { label: string; status: "have" | "need" | "shoot" | "missing" | "unreachable"; note: string | null; url?: string | null };
+export type GateItem = { label: string; status: "have" | "need" | "shoot" | "missing" | "unreachable" | "waived"; note: string | null; url?: string | null };
 export type AssetGate = {
   state: "ready" | "waiting";
   items: GateItem[];
@@ -36,6 +37,8 @@ export type AssetInput = {
   chaser?: string | null;
   /** Business days a client shoot needs before the maker can start */
   shootDays?: number;
+  /** What this client waived or confirmed they don't have: never asked for again */
+  waived?: Waiver[];
 };
 
 const DRIVE = /https?:\/\/(?:drive|docs)\.google\.com\/\S+/gi;
@@ -87,7 +90,19 @@ export function assetGate(i: AssetInput): AssetGate {
   if (i.formats.includes("video") && !hasFootage && !items.some((x) => x.status !== "have" && /\b(footage|video|clip|film|shoot)\b/i.test(x.label)))
     items.push({ label: "Footage for the video", status: "need", note: "Nothing on the client's Drive is video yet.", url: null });
 
-  const waiting = items.filter((x) => x.status !== "have");
+  // Waived or confirmed unavailable for this client: shown as such, never chased (a link that doesn't open still is)
+  const waived = i.waived ?? [];
+  if (waived.length)
+    for (const x of items) {
+      if (x.status === "have" || x.status === "unreachable") continue;
+      const w = waiverFor(x.label, waived);
+      if (w) {
+        x.status = "waived";
+        x.note = WAIVER_NOTE[w.how];
+      }
+    }
+
+  const waiting = items.filter((x) => x.status !== "have" && x.status !== "waived");
   const shoot = waiting.some((x) => x.status === "shoot");
   let risk: string | null = null;
   if (shoot && i.due) {

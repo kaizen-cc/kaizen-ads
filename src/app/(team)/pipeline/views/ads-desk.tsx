@@ -275,7 +275,7 @@ export async function creativeDesk(db: SupabaseClient, me: Me, clients: Creative
     panels: {
       clients: (
         <>
-          <CreativeClientRows rows={clientRows} week={week} briefed={briefed} canApprove={lead} />
+          <CreativeClientRows rows={clientRows} week={week} briefed={briefed} canApprove={lead} canRate={me.role === "head_of_creative" || me.role === "lead_graphic_designer" || me.role === "lead_video_editor"} />
           {!lead && (mine.length > 0 || !head) && <DeskGroup id="mine" title="My clients" aside="Furthest behind first" cards={mine.map(card)} empty="You hold no seat on a creative client yet." />}
           {!lead && team.length > 0 && <DeskGroup id="team" title="Your team's clients" aside="Furthest behind first" cards={team.map(card)} contained />}
         </>

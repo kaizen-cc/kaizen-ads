@@ -1280,6 +1280,10 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   const { dayTools, DAY_TOOLS } = await import("./day-tools");
   for (const t of dayTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
   for (const n of DAY_TOOLS) CHANNEL_EXTRA.add(n);
+  // Better briefs: assets a client waived or doesn't have, and the creative leads' rating of a drafted brief
+  const { briefFeedbackTools, BRIEF_FEEDBACK_TOOLS } = await import("./brief-feedback-tools");
+  for (const t of briefFeedbackTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  for (const n of BRIEF_FEEDBACK_TOOLS) CHANNEL_EXTRA.add(n);
 
   // Rankings across clients: clients on a line, and single emails, ads and posts (each scoped to the person's line)
   for (const t of rankTools(ctx)) tools.push(t);
