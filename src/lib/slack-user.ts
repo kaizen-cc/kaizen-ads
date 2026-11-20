@@ -99,6 +99,10 @@ function explain(error: string | undefined): { ok: false; error: string; needsCo
       return { ok: false, error: "You're not in that client channel in Slack yet. Join it, then send again." };
     case "channel_not_found":
       return { ok: false, error: "Slack can't find that client channel. It may have been renamed, archived or made private without you in it." };
+    case "user_not_found":
+    case "cannot_dm_bot":
+    case "user_disabled":
+      return { ok: false, error: "Slack can't find that person to message. They may have left the workspace." };
     case "is_archived":
       return { ok: false, error: "That client channel is archived in Slack." };
     case "missing_scope":
@@ -128,7 +132,18 @@ export async function postAsUser(
 ): Promise<PostResult> {
   const { data: row } = await createAdminClient().from("slack_user_tokens").select("token").eq("profile_id", profileId).maybeSingle();
   if (!row?.token) return { ok: false, error: "Connect your Slack first, so it goes out from you.", needsConnect: true };
-  return postWith(row.token as string, { channel, text, pdf, thread });
+  const token = row.token as string;
+  // A person (U..., W...): the DM between them, opened as this person (im:write); without that scope Slack still takes
+  // the user's ID and posts to the same DM
+  const to = !thread && /^[UW][A-Z0-9]{6,}$/.test(channel.trim()) ? await openDm(token, channel.trim()) : channel;
+  return postWith(token, { channel: to, text, pdf, thread });
+}
+
+/** The DM channel (D...) between the token's person and this Slack user, else the user's ID as given */
+async function openDm(token: string, user: string): Promise<string> {
+  const r = await call(token, "conversations.open", { users: user, return_im: "false" }).catch(() => null);
+  const id = (r?.channel as { id?: string } | undefined)?.id;
+  return r?.ok && id ? id : user;
 }
 
 /** Post as the Kaizen app itself (its bot): a joint report, or when a person can't. Needs chat:write (files:write for a PDF). */
