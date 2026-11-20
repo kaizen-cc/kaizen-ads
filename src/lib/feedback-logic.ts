@@ -229,11 +229,11 @@ export function classifyScope(r: { aiKind: AiKind | null; aiRail?: Rail | "none"
 /** A group is as careful as its most careful report: approval beats ships-itself; a bug report turns an Ask into a fix. */
 export const widerScope = (a: Scope, b: Scope): Scope => (a === "big_issue" || b === "big_issue" ? "big_issue" : a === "small_bug" || b === "small_bug" ? "small_bug" : "feature");
 
-export const DEFAULT_FIXES_PER_DAY = 15;
+export const DEFAULT_FIXES_PER_DAY = 50;
 export const AUTO_FIX_MAX_ATTEMPTS = 2;
 export const AUTO_FIX_FAILURES_TO_PAUSE = 4; // in a day, across all fixes: something is off, so stop and let a person look
 
-/** How many fixes may start in a day: FEEDBACK_FIXES_PER_DAY when it's a sensible number, 15 otherwise. */
+/** How many fixes may start in a day: FEEDBACK_FIXES_PER_DAY when it's a sensible number, 50 otherwise. */
 export function dailyFixCap(raw: string | null | undefined): number {
   const n = Number(raw);
   return Number.isInteger(n) && n >= 1 && n <= 100 ? n : DEFAULT_FIXES_PER_DAY;

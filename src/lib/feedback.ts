@@ -719,8 +719,9 @@ async function syncGroup(admin: Admin, g: SyncRow): Promise<boolean> {
       ghJson<GhComment[]>(`/issues/${n}/comments?per_page=100`),
       ghJson<GhPull[]>(`/pulls?state=all&head=${owner}:claude/fix-${n}&per_page=5`),
     ]);
-    if (!issue) return false;
-    const pr = pulls?.[0] ?? null;
+    // GitHub didn't answer (an outage, a rate limit): decide nothing now, never read a missing answer as "no pull request"
+    if (!issue || pulls === null || comments === null) return false;
+    const pr = pulls[0] ?? null;
     const prComments = pr ? ((await ghJson<GhComment[]>(`/issues/${pr.number}/comments?per_page=100`)) ?? []) : [];
     const all = [...(comments ?? []), ...prComments];
     let out = fixOutcome({
@@ -733,7 +734,9 @@ async function syncGroup(admin: Admin, g: SyncRow): Promise<boolean> {
     const prUrl = pr?.html_url ?? null;
     // The owner approved it: the workflow's comments after that say whether it merged. Until then the card says Merging;
     // a failed merge shows Couldn't merge with the reason (not the automatic retry a failed first build gets).
-    const { data: last } = await admin.from("app_feedback_events").select("kind, created_at").eq("group_id", id).in("kind", ["merge_approved", "merge_failed"]).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    // Only this build's approval and merge count: a merge that failed on an earlier build (since rebuilt) is history
+    const thisBuild = new Date(Date.parse(g.fix_started_at ?? "1970-01-01T00:00:00Z") - 60_000).toISOString();
+    const { data: last } = await admin.from("app_feedback_events").select("kind, created_at").eq("group_id", id).in("kind", ["merge_approved", "merge_failed"]).gte("created_at", thisBuild).order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (last?.kind === "merge_approved") {
       const mo = mergeOutcome({
         approvedAt: last.created_at as string,
@@ -785,10 +788,13 @@ async function syncGroup(admin: Admin, g: SyncRow): Promise<boolean> {
       const since = new Date(Date.parse(g.fix_started_at ?? "1970-01-01T00:00:00Z") - 10 * 60_000).toISOString();
       const { count: ownerSaid } = await admin.from("app_feedback_events").select("id", { count: "exact", head: true }).eq("group_id", id).in("kind", ["approved", "changes_asked"]).gte("created_at", since);
       const { count: autoApproved } = await admin.from("app_feedback_events").select("id", { count: "exact", head: true }).eq("group_id", id).eq("kind", "merge_approved").gte("created_at", g.fix_started_at ?? since);
-      if (ownerSaid && !autoApproved && pr?.state === "open") {
+      // Everything else that passed every check merges by itself too (owner, Nov 20 2026: approved work goes through as if
+      // it were built by hand). Only a fix that changes the database or a file an automatic fix never ships waits for a yes.
+      const mustAsk = /changes the database|touches files an automatic fix never ships/i.test(out.note ?? "");
+      if ((ownerSaid || !mustAsk) && !autoApproved && pr?.state === "open") {
         const r = await labelIssue(n, [APPROVED_LABEL.name], APPROVED_LABEL, { fresh: true });
         if (!("error" in r)) {
-          await logEvent(admin, id, "merge_approved", "Approved with the ticket: merging once every check passes", { link: prUrl, shared: true });
+          await logEvent(admin, id, "merge_approved", ownerSaid ? "Approved with the ticket: merging once every check passes" : "Every check passed: merging by itself", { link: prUrl, shared: true });
           return false;
         }
       }
