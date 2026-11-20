@@ -1652,7 +1652,7 @@ export function RolesOverview({ roles, agents, items, isExec = true, line = null
  * Settings › AI agents, first level (executives): one card per service line with how many agents it has, how many are
  * online and how many parked, and what the line is. A click opens that line's agents (?tab=agents&line=email).
  */
-export function LinesOverview({ roles, agents, total7 = null }: { roles: Role[]; agents: Agent[]; /** Every AI call's cost this week, including work outside the agents' skills */ total7?: number | null }) {
+export function LinesOverview({ roles, agents, total7 = null, assistant = null }: { roles: Role[]; agents: Agent[]; /** Every AI call's cost this week, including work outside the agents' skills */ total7?: number | null; /** The model and effort every assistant answer runs on (calls and its chat) */ assistant?: Agent | null }) {
   const lines = summarizeLines(roles);
   const parked = roles.filter((r) => r.offline).length;
   const costOfLine = (keys: string[]) => agents.filter((a) => keys.includes(a.roleKey ?? "")).reduce((t, a) => t + a.cost7, 0);
@@ -1749,6 +1749,28 @@ export function LinesOverview({ roles, agents, total7 = null }: { roles: Role[];
           );
         })}
       </ul>
+      {assistant && (
+        <Link
+          href={`/settings?tab=agents&agent=${assistant.key}`}
+          className="group flex min-h-11 items-center justify-between gap-4 rounded-[18px] border border-line bg-surface px-5 py-4 transition-colors hover:border-faint/70"
+        >
+          <span className="flex min-w-0 items-center gap-3">
+            <AgentIcon icon={assistant.icon} size={34} />
+            <span className="min-w-0">
+              <span className="block font-heading text-[16px] leading-tight">{assistant.label}</span>
+              <span className="block text-[12px] text-muted">The model and effort every assistant answer runs on, on calls and in its chat</span>
+            </span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2 text-xs text-muted">
+            <ModelMeter model={assistant.model} />
+            <span className="capitalize text-fg">{assistant.model}</span>
+            <span className="text-faint">· {assistant.effort} effort</span>
+            <span className="transition-transform group-hover:translate-x-0.5" aria-hidden>
+              →
+            </span>
+          </span>
+        </Link>
+      )}
     </div>
   );
 }
