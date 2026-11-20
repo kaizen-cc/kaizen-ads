@@ -10,18 +10,30 @@ export function mentionsGuideline(text: string | null | undefined) {
   return Boolean(text && SIGNAL.test(text));
 }
 
-/** A file name that looks like a guideline file (not just any file that mentions a logo in passing) */
+/** Junk a Drive sync carries along (Mac and Bridge files), never a document */
+const JUNK = /^\.|^(desktop\.ini|thumbs\.db)$/i;
+/** Pictures and video: a photo shoot is never a guideline, unless it's named as a logo */
+const MEDIA = /\.(jpe?g|png|gif|heic|webp|tiff?|mp4|mov|m4v|avi|raw|cr2|nef|arw|dng)$/i;
+/** "brand" as a word (brand, brands, branding, brand kit), never inside a name like "Brandon" */
+const BRAND_WORD = /\bbrand(s|ing)?\b|\bbrand[ _-]?(kit|guide|book|board|assets)/i;
+
+/** A file name that looks like a guideline file (not just any file that mentions a logo in passing, nor a photo) */
 export function isGuidelineFile(name: string | null | undefined) {
-  return Boolean(name && /\bbrand|guide|\bstyle|\blogo|\bfont|palette|identity|\bkit\b/i.test(name));
+  if (!name || JUNK.test(name.trim())) return false;
+  if (/\blogos?\b|\bmonogram|\bwordmark/i.test(name)) return true;
+  if (MEDIA.test(name.trim())) return false;
+  return BRAND_WORD.test(name) || /guideline|\bstyle ?guide|\bfonts?\b|palette|identity|\bbrand ?kit\b|\blookbook/i.test(name);
 }
 
-/** A Drive folder that holds the brand: the client's Headquarters "Brand" and "Guidelines" folders (anything in them counts) */
+/** A Drive folder that holds the brand: the client's Headquarters "Brand", "Logos" or "Guidelines" folders, at any depth */
 export function isBrandFolder(folder: string | null | undefined) {
-  return Boolean(folder && /\bbrand|guideline|\bstyle ?guide|\blogos?\b|identity/i.test(folder));
+  if (!folder) return false;
+  return folder.split("/").some((part) => BRAND_WORD.test(part) || /guidelines?|\bstyle ?guide|\blogos?\b|\bidentity\b/i.test(part));
 }
 
-/** A Drive file that's part of the brand: named like a guideline, or kept in a brand folder */
+/** A Drive file that's part of the brand: named like a guideline, or kept in a brand folder (junk files never) */
 export function isBrandFile(i: { title?: string | null; meta?: unknown }) {
+  if (!i.title || JUNK.test(i.title.trim())) return false;
   const folder = (i.meta as { folder?: string } | null)?.folder ?? null;
   return isGuidelineFile(i.title) || isBrandFolder(folder);
 }

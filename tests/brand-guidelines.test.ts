@@ -134,3 +134,24 @@ describe("brand folders and intake links (Nov 20 2026)", () => {
     expect(linksIn("Will send in slack")).toEqual([]);
   });
 });
+
+describe("never a photo shoot or junk (Michelle Behre's Drive, Nov 20 2026)", () => {
+  const shoot = " Michelle Behre - Headquarters / Images / 2026_08-28 Brandon and Alex - Pendry Natirar Proposal / Posts / THE ENGAGEMENT SESSION";
+  it("a couple named Brandon isn't a brand folder", () => {
+    expect(isBrandFolder(shoot)).toBe(false);
+    expect(isBrandFile({ title: "0006-Michelle Behre Photography_Pendry Natirar-MBG_9740.jpg", meta: { folder: shoot } })).toBe(false);
+    expect(isBrandFile({ title: "Michelle Behre Photo Brandon and Alex Film Lifestyle Photo Collage Instagram Reel.mp4", meta: { folder: shoot } })).toBe(false);
+    expect(isBrandFile({ title: "Michelle Behre Photo_Jude Jacob Color Palette Instagram Story.jpg", meta: { folder: "Images / Story" } })).toBe(false);
+  });
+  it("junk files never count, even in the brand folder", () => {
+    expect(isBrandFile({ title: ".DS_Store", meta: { folder: " Michelle Behre - Headquarters / Logos and Brand Guide" } })).toBe(false);
+    expect(isBrandFile({ title: ".BridgeSort", meta: { folder: "Brand" } })).toBe(false);
+  });
+  it("the real brand folder and guideline files do", () => {
+    const brand = " Michelle Behre - Headquarters / Logos and Brand Guide";
+    expect(isBrandFile({ title: "michelle-behre-monogram-sand-rgb-900px-w-72ppi.png", meta: { folder: brand } })).toBe(true);
+    expect(isBrandFile({ title: "Michelle Behre Photography Brand Style Lookbook.pdf", meta: { folder: brand } })).toBe(true);
+    expect(isBrandFile({ title: "Brand Guidelines ", meta: { folder: " Michelle Behre - Headquarters" } })).toBe(true);
+    expect(isGuidelineFile("michelle-behre-horizontal-wordmark-deep-green-cmyk.pdf")).toBe(true);
+  });
+});
