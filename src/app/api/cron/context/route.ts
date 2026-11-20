@@ -73,8 +73,8 @@ function nyNow() {
  * - suggest: weekdays at 8:30am (the strategist's suggested briefs, ready for the morning)
  * - integrations: every hour (each client's Shopify, WooCommerce, GoHighLevel or HubSpot read; at 9am, the buyers' notes)
  * - bible_upkeep: every hour (the Bible's pages checked every 90 days, website issues read from new Bibles, each
- *   client's onboarding sheet read when it's new or changed; at 9am,
- *   clients paid for creative and given nothing)
+ *   client's onboarding sheet read when it's new or changed, brand guidelines clients shared read for the Head of
+ *   Creative to approve; at 9am, clients paid for creative and given nothing)
  */
 function due(step: string | null) {
   const { weekday, hour, minute } = nyNow();
@@ -436,7 +436,9 @@ export async function GET(request: Request) {
       const errors = await (await import("@/lib/creative-errors")).keepCreativeErrors(admin).catch((e) => String(e));
       // The same for email work (Asana email board and Email Board comments), each comment read once
       const emailErrors = await (await import("@/lib/email-errors")).keepEmailErrors(admin).catch((e) => String(e));
-      return Response.json({ links, issues, packages, sheets, chat, knowledge, errors, emailErrors });
+      // Brand guidelines the clients shared (Drive, Slack, email, calls, the intake form), read for the Head of Creative to approve into the Bible
+      const guidelines = await (await import("@/lib/brand-guidelines")).keepGuidelines(admin).catch((e) => String(e));
+      return Response.json({ links, issues, packages, sheets, chat, knowledge, errors, emailErrors, guidelines });
     }
     if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin));
     if (step === "learnings") return Response.json(await (await import("@/lib/learnings")).consolidateLearnings(admin));

@@ -73,6 +73,7 @@ const KIND: Record<BibleChange["kind"], string> = {
   avatar_change: "Change an avatar",
   avatar_retire: "Retire an avatar",
   question_answer: "Answer to an open question",
+  brand_guideline: "Brand guidelines the client shared",
 };
 
 function ChangeCard({ c, canApprove, client, focused, onDecided }: { c: BibleChange; canApprove: boolean; client: { id: string; slug: string }; focused: boolean; onDecided: (id: string, status: BibleChange["status"] | "pending") => void }) {
@@ -106,6 +107,7 @@ function ChangeCard({ c, canApprove, client, focused, onDecided }: { c: BibleCha
         <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${c.kind === "avatar_retire" ? "bg-bad-soft text-bad" : c.kind === "avatar_add" ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn"}`}>{KIND[c.kind]}</span>
         {title && <span className="font-heading text-[15px]">{title}</span>}
         {c.kind === "avatar_change" && c.proposed && c.proposed.name !== c.avatar && <span className="text-[13px] text-muted">→ {c.proposed.name}</span>}
+        {c.gap && <span className="rounded-full bg-bad-soft px-2.5 py-0.5 text-[11px] font-medium text-bad">The Bible says not shared</span>}
         <span className="ml-auto text-[11.5px] text-faint">
           {c.proposedBy ?? "Someone"} · {fmt(c.createdAt)}
         </span>

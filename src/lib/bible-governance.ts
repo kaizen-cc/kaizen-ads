@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { conversionFor } from "@/lib/kpi/conversions";
 import { applyAvatarChange, avatarKey, avatarsOf, mentionsAvatar, type AvatarKind, type AvatarResults, type ProposedAvatar } from "@/lib/bible-avatars";
+import { isGuidelineRow } from "@/lib/brand-guidelines-core";
 
 // Who may change a client's Brand Bible, and the way everyone else changes it: a proposal the approvers decide.
 // - Edit (the review chat, answering open questions straight in, rebuilding): execs, leads (the Head of Creative among
@@ -41,7 +42,7 @@ export async function approverIds(admin: Admin, clientId: string) {
 
 export type BibleChange = {
   id: string;
-  kind: AvatarKind | "question_answer";
+  kind: AvatarKind | "question_answer" | "brand_guideline";
   avatar: string | null;
   proposed: ProposedAvatar | null;
   questionId: string | null;
@@ -54,13 +55,16 @@ export type BibleChange = {
   decidedAt: string | null;
   note: string | null;
   createdAt: string;
+  /** Brand guidelines read in while the Bible says none were shared */
+  gap?: boolean;
 };
 
 const toChange = (r: Record<string, unknown>): BibleChange => ({
   id: r.id as string,
-  kind: r.kind as BibleChange["kind"],
+  kind: isGuidelineRow(r) ? "brand_guideline" : (r.kind as BibleChange["kind"]),
   avatar: (r.avatar as string | null) ?? null,
-  proposed: (r.proposed as ProposedAvatar | null) ?? null,
+  // A guideline read keeps its bookkeeping there ({ fingerprint, gap }), not a profile
+  proposed: isGuidelineRow(r) ? null : ((r.proposed as ProposedAvatar | null) ?? null),
   questionId: (r.question_id as string | null) ?? null,
   answer: (r.answer as string | null) ?? null,
   reason: (r.reason as string) ?? "",
@@ -71,6 +75,7 @@ const toChange = (r: Record<string, unknown>): BibleChange => ({
   decidedAt: (r.decided_at as string | null) ?? null,
   note: (r.decision_note as string | null) ?? null,
   createdAt: r.created_at as string,
+  gap: isGuidelineRow(r) ? Boolean((r.proposed as { gap?: boolean } | null)?.gap) : undefined,
 });
 
 /** The client's proposals, newest first (pending, then the record of decisions) */
@@ -111,6 +116,7 @@ const KIND_WORDS: Record<BibleChange["kind"], string> = {
   avatar_change: "change an avatar",
   avatar_retire: "retire an avatar",
   question_answer: "answer an open question",
+  brand_guideline: "add the client's brand guidelines",
 };
 
 /** Anyone who works on the client proposes; it goes to the approvers as a notification */
@@ -169,6 +175,22 @@ export async function propose(admin: Admin, me: Staff, clientId: string, p: Prop
 }
 
 /**
+ * Brand guidelines read from what the client shared, waiting on approval: the Head of Creative is told (execs and the
+ * account manager when there's no Head of Creative), critical when the Bible says no guideline was shared.
+ */
+export async function notifyGuidelines(admin: Admin, clientId: string, id: string, gap: boolean, reason: string) {
+  const { data: heads } = await admin.from("profiles").select("id").eq("is_active", true).eq("role", "head_of_creative");
+  const ids = heads?.length ? heads.map((h) => h.id as string) : await approverIds(admin, clientId);
+  await notify(admin, clientId, ids, {
+    title: gap ? "brand guidelines were shared but the Bible says none were" : "brand guidelines to approve",
+    body: reason,
+    key: `bible-change:${id}`,
+    critical: gap,
+    q: `change=${id}`,
+  });
+}
+
+/**
  * An approver decides. Approved: applied to the Bible (avatars) or folded in as the answer (questions), logged in the
  * change log. Rejected: kept with why. Either way the proposer hears.
  */
@@ -189,6 +211,17 @@ export async function decide(admin: Admin, me: Staff, clientId: string, id: stri
       const out = await discussQuestion(admin, clientId, c.questionId, { text: c.answer, by: `${c.proposedBy ?? "Team"} (approved by ${me.fullName})`, via: "team" });
       if (!out.ok) return { ok: false, error: out.error };
       applied = out.answered;
+    } else if (c.kind === "brand_guideline") {
+      // The guidelines read from what the client shared go live in their own section, with the change logged
+      const { data: b } = await admin.from("client_brand_bibles").select("markdown").eq("client_id", clientId).maybeSingle();
+      if (!b?.markdown) return { ok: false, error: "There's no Brand Bible yet." };
+      if (!c.answer) return { ok: false, error: "The proposal has nothing to write in." };
+      const { applyEdits, logChange } = await import("@/lib/bible-sections");
+      const { GUIDELINES_SECTION } = await import("@/lib/brand-guidelines-core");
+      const next = applyEdits(b.markdown as string, [{ section: GUIDELINES_SECTION, markdown: c.answer }]).markdown;
+      const { error } = await admin.from("client_brand_bibles").update({ markdown: logChange(next, `${today}: Brand guidelines added from what the client shared (approved by ${me.fullName})`) }).eq("client_id", clientId);
+      if (error) return { ok: false, error: error.message };
+      applied = true;
     } else {
       const { data: b } = await admin.from("client_brand_bibles").select("markdown").eq("client_id", clientId).maybeSingle();
       if (!b?.markdown) return { ok: false, error: "There's no Brand Bible yet." };
