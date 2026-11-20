@@ -393,11 +393,14 @@ export async function syncSocial(admin: SupabaseClient, clientId: string, opts: 
   const now = new Date().toISOString();
   // Each Page's own token (an Instagram account is read with its Page's when the system user can't), asked once
   const tokens = new Map<string, Promise<{ token: string | null; error: string | null }>>();
+  const bmOf = new Map(accounts.filter((a) => a.platform === "facebook" && a.businessTokenId).map((a) => [a.accountId, a.businessTokenId as string]));
   const tokenFor = (pageId: string) => {
+    // A Page linked through a Business Manager: that Business Manager's token first, Kaizen's way after
+    const via = bmOf.get(pageId) ?? accounts.find((a) => a.platform === "instagram" && a.pageId === pageId)?.businessTokenId ?? null;
     if (!tokens.has(pageId))
       tokens.set(
         pageId,
-        pageAccessToken(account, pageId).then(
+        (via ? import("./business-pages").then((m) => m.pageTokenVia(admin, via, pageId)).then((t) => t ?? pageAccessToken(account, pageId)) : pageAccessToken(account, pageId)).then(
           (token) => ({ token, error: token ? null : "The Meta system user has no access to this Page: assign the Page to the system user in Business Settings." }),
           (e: unknown) => ({ token: null, error: e instanceof SocialReadError && e.permission ? errText(e) : `The Meta system user has no access to this Page (${errText(e).slice(0, 160)}).` }),
         ),
@@ -471,9 +474,10 @@ export type SocialDiscovery = {
  * their name in the Page's, and no other client's name fitting it as well), labeled with the location its name carries.
  * An account a person removed is never added back.
  */
-export async function discoverSocialLinks(admin: SupabaseClient, clientId: string, opts: { apply?: boolean; by?: string | null } = {}): Promise<SocialDiscovery> {
+export async function discoverSocialLinks(admin: SupabaseClient, clientId: string, opts: { apply?: boolean; by?: string | null; /** Look only in this Business Manager's Pages (meta_business_tokens id); left out, every Page Kaizen can see */ bmId?: string | null } = {}): Promise<SocialDiscovery> {
+  const fromBm = opts.bmId !== undefined;
   const [{ pages, error }, { data: c }, { data: names }, { data: had }] = await Promise.all([
-    socialCandidates(admin, clientId),
+    fromBm ? import("./business-pages").then((m) => m.businessManagerPages(admin, opts.bmId ?? null)).then((r) => ({ pages: r.pages.map((p) => ({ id: p.id, name: p.name, ig: p.ig })), error: r.error })) : socialCandidates(admin, clientId),
     admin.from("clients").select("name").eq("id", clientId).maybeSingle(),
     admin.from("clients").select("id, name").is("archived_at", null),
     admin.from("social_links").select("platform, account_id, removed_at").eq("client_id", clientId),
@@ -492,7 +496,7 @@ export async function discoverSocialLinks(admin: SupabaseClient, clientId: strin
     const now = new Date().toISOString();
     const pageOf = new Map(matches.filter((m) => m.page.ig).map((m) => [m.page.ig!.id, m.page.id]));
     await admin.from("social_links").upsert(
-      added.map((a) => ({ client_id: clientId, platform: a.platform, account_id: a.accountId, name: a.name, location: a.location, page_id: a.platform === "instagram" ? (pageOf.get(a.accountId) ?? null) : null, source: "auto", added_by: opts.by ?? null, updated_at: now })),
+      added.map((a) => ({ client_id: clientId, platform: a.platform, account_id: a.accountId, name: a.name, location: a.location, page_id: a.platform === "instagram" ? (pageOf.get(a.accountId) ?? null) : null, source: "auto", added_by: opts.by ?? null, updated_at: now, ...(fromBm ? { business_token_id: opts.bmId ?? null } : {}) })),
       { onConflict: "client_id,platform,account_id", ignoreDuplicates: true },
     );
     // No primary yet: the first Page found becomes it (the sync's status lives there)
@@ -509,7 +513,7 @@ export async function discoverSocialLinks(admin: SupabaseClient, clientId: strin
 }
 
 /** Add a Page (its Instagram comes with it unless one is named) or an Instagram account to a client, with a location */
-export async function addSocialAccount(admin: SupabaseClient, clientId: string, input: { pageId?: string | null; igId?: string | null; location?: string | null; by: string }): Promise<{ ok: true; added: string[] } | { ok: false; error: string }> {
+export async function addSocialAccount(admin: SupabaseClient, clientId: string, input: { pageId?: string | null; igId?: string | null; location?: string | null; by: string; /** The Business Manager it's linked through (meta_business_tokens id); left out, Kaizen's own way */ bmId?: string | null }): Promise<{ ok: true; added: string[] } | { ok: false; error: string }> {
   if (!metaConfigured()) return { ok: false, error: "Meta isn't connected: add META_SYSTEM_USER_TOKEN in Vercel." };
   const pageId = (input.pageId ?? "").replace(/\D/g, "");
   const igOnly = (input.igId ?? "").replace(/\D/g, "");
@@ -522,16 +526,17 @@ export async function addSocialAccount(admin: SupabaseClient, clientId: string, 
     let name: string | null;
     let ig: { id: string; username: string | null } | null;
     try {
-      [name, ig] = await Promise.all([pageName(account, pageId), pageInstagram(account, pageId)]);
+      if (input.bmId !== undefined) ({ name, ig } = await (await import("./business-pages")).pageVia(admin, input.bmId ?? null, pageId));
+      else [name, ig] = await Promise.all([pageName(account, pageId), pageInstagram(account, pageId)]);
     } catch (e) {
-      return { ok: false, error: `Meta can't open that Page with Kaizen's access: ${errText(e).slice(0, 160)}. Ask the client to share it with Kaizen's Business Manager.` };
+      return { ok: false, error: `That Business Manager can't open the Page: ${errText(e).slice(0, 160)}. We need partner access to the client's Business Manager (their Page shared with it).` };
     }
     rows.push({ client_id: clientId, platform: "facebook", account_id: pageId, name, location, page_id: null });
     if (ig && !igOnly) rows.push({ client_id: clientId, platform: "instagram", account_id: ig.id, name: ig.username, location, page_id: pageId });
   }
   if (igOnly) rows.push({ client_id: clientId, platform: "instagram", account_id: igOnly, name: null, location, page_id: pageId || null });
   const { error } = await admin.from("social_links").upsert(
-    rows.map((r) => ({ ...r, source: "manual", added_by: input.by, updated_at: now, removed_at: null, removed_by: null })),
+    rows.map((r) => ({ ...r, source: "manual", added_by: input.by, updated_at: now, removed_at: null, removed_by: null, ...(input.bmId !== undefined ? { business_token_id: input.bmId ?? null } : {}) })),
     { onConflict: "client_id,platform,account_id" },
   );
   if (error) return { ok: false, error: `Saving the link: ${error.message}` };

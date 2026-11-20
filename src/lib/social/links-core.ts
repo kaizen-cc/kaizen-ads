@@ -15,6 +15,9 @@ export type LinkedAccount = {
   /** The last day its numbers were read, and why the last read failed (null when it worked) */
   lastReadAt?: string | null;
   lastError?: string | null;
+  /** The Business Manager it was linked through (meta_business_tokens), and its name; null: found before Business Managers were picked */
+  businessTokenId?: string | null;
+  businessName?: string | null;
 };
 
 /** Where an account stands: reading, waiting for its first read, or needing access (with Meta's reason) */

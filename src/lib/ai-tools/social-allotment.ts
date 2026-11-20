@@ -191,8 +191,13 @@ const boostedPostsTool: AiTool = {
 const socialAccountsTool: AiTool = {
   name: "social_accounts",
   description:
-    "A client's linked Facebook Pages and Instagram accounts, one per location where they have several (each labeled), and what isn't linked. With find: true, looks among the Pages Kaizen's Meta access can see for the ones clearly theirs (every word of their name in the Page's, no other client fitting as well): first call returns what it would link; call again with confirmed: true to link them. Pages that aren't clearly theirs are listed for a person to pick on the client's Social tab; a Page Kaizen can't see needs the client to share it with Kaizen's Business Manager.",
-  input_schema: { type: "object", properties: { client: { type: "string" }, find: { type: "boolean" }, confirmed: { type: "boolean" } }, required: ["client"], additionalProperties: false },
+    "A client's linked Facebook Pages and Instagram accounts, one per location where they have several (each labeled, with the Business Manager each came through), and what isn't linked. With find: true, looks in one Business Manager (business_manager: its name, the same list as the client's Meta ad account; left out, the one their Meta ads go through) for that Business Manager's Pages and the Instagram on each: which ones look like the client's (every word of their name in the Page's, no other client fitting as well) and every other Page it has. First call returns what it would link; call again with confirmed: true to link them (executives, leads and line heads only). When the Business Manager sees none of their Pages, say we need partner access to the client's Business Manager (their Page shared with it).",
+  input_schema: {
+    type: "object",
+    properties: { client: { type: "string" }, find: { type: "boolean" }, business_manager: { type: "string", description: "The Business Manager's name (Kaizen, ZenChange...); left out, the client's Meta one" }, confirmed: { type: "boolean" } },
+    required: ["client"],
+    additionalProperties: false,
+  },
   lines: ["social"],
   run: async (user: Staff, input) => {
     const db = await createClient();
@@ -200,13 +205,28 @@ const socialAccountsTool: AiTool = {
     const { linkedAccounts } = await import("@/lib/social/links");
     const { accountLabel } = await import("@/lib/social/links-core");
     const list = (await linkedAccounts(db, [c.id])).get(c.id) ?? [];
-    const linked = { facebook: list.filter((a) => a.platform === "facebook").map(accountLabel), instagram: list.filter((a) => a.platform === "instagram").map(accountLabel) };
-    if (input.find !== true) return { ok: true, client: c.name, linked, not_linked: [linked.facebook.length ? null : "Facebook", linked.instagram.length ? null : "Instagram"].filter(Boolean), page: `/clients/${c.slug}?service=social` };
+    const label = (a: (typeof list)[number]) => `${accountLabel(a)}${a.businessName ? ` via ${a.businessName}` : ""}`;
+    const linked = { facebook: list.filter((a) => a.platform === "facebook").map(label), instagram: list.filter((a) => a.platform === "instagram").map(label) };
+    if (input.find !== true) return { ok: true, client: c.name, linked, not_linked: [linked.facebook.length ? null : "Facebook", linked.instagram.length ? null : "Instagram"].filter(Boolean), page: `/clients/${c.slug}?tab=team` };
+    const admin = createAdminClient();
+    // The Business Manager: the one named, else the one the client's Meta ads go through, else Kaizen's
+    const { clientBusinessManager } = await import("@/lib/meta-tokens");
+    const bmList = await clientBusinessManager(admin, c.id);
+    if (!bmList) return { ok: false, error: "The Business Managers aren't set up yet: an executive adds them in Settings › Sync health." };
+    const asked = str(input.business_manager)?.toLowerCase() ?? "";
+    const pick = asked ? bmList.options.find((o) => o.name.toLowerCase() === asked) ?? bmList.options.find((o) => o.name.toLowerCase().includes(asked)) : (bmList.options.find((o) => o.id === bmList.selected) ?? bmList.options.find((o) => o.isDefault));
+    if (!pick) return { ok: false, error: `No Business Manager called "${input.business_manager}". They are: ${bmList.options.map((o) => o.name).join(", ")}.` };
+    if (input.confirmed === true) {
+      const { mayEditSetup } = await import("@/lib/setup-access");
+      if (!mayEditSetup(user)) return { ok: false, error: "Only executives, leads and the line heads change a client's social connections." };
+    }
     const { discoverSocialLinks } = await import("@/lib/social/store");
-    const r = await discoverSocialLinks(createAdminClient(), c.id, { apply: input.confirmed === true, by: user.id });
+    const r = await discoverSocialLinks(admin, c.id, { apply: input.confirmed === true, by: user.id, bmId: pick.id });
     const found = r.added.map((a) => `${a.platform === "instagram" ? "Instagram" : "Facebook"} ${a.name ?? a.accountId}${a.location ? ` (${a.location})` : ""}`);
-    if (input.confirmed !== true) return { ok: true, client: c.name, linked, would_link: found, others_to_pick: r.others.slice(0, 20).map((p) => p.name), note: r.error, ask: found.length ? "Say what will be linked and ask before linking (call again with confirmed: true)." : "Nothing is clearly theirs among the Pages Kaizen can see." };
-    return { ok: true, client: c.name, linked_now: found, others_to_pick: r.others.slice(0, 20).map((p) => p.name), note: r.error };
+    const access = r.others.length || found.length ? null : `We can't see any of ${c.name}'s Pages through ${pick.name}: we need partner access to their Business Manager (their Page shared with ${pick.name}).`;
+    if (input.confirmed !== true)
+      return { ok: true, client: c.name, business_manager: pick.name, linked, would_link: found, other_pages_in_it: r.others.slice(0, 20).map((p) => p.name), note: r.error ?? access, ask: found.length ? "Say what will be linked and ask before linking (call again with confirmed: true)." : `Nothing in ${pick.name} is clearly theirs: they can pick a Page on the client's Team & setup, Social connections.` };
+    return { ok: true, client: c.name, business_manager: pick.name, linked_now: found, other_pages_in_it: r.others.slice(0, 20).map((p) => p.name), note: r.error ?? access };
   },
 };
 

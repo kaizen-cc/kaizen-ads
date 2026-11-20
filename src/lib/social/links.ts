@@ -15,13 +15,15 @@ const toAccount = (r: Record<string, unknown>): LinkedAccount => ({
   source: (r.source as LinkedAccount["source"]) ?? "manual",
   lastReadAt: (r.last_read_at as string | null) ?? null,
   lastError: (r.last_error as string | null) ?? null,
+  businessTokenId: (r.business_token_id as string | null) ?? null,
+  businessName: null,
 });
 
 /** Each client's linked accounts, the primary first, then by platform and location */
 export async function linkedAccounts(db: SupabaseClient, clientIds: string[]): Promise<Map<string, LinkedAccount[]>> {
   const out = new Map<string, LinkedAccount[]>();
   if (!clientIds.length) return out;
-  const { data, error } = await db.from("social_links").select("id, client_id, platform, account_id, name, location, page_id, source, last_read_at, last_error").in("client_id", clientIds).is("removed_at", null);
+  const { data, error } = await db.from("social_links").select("id, client_id, platform, account_id, name, location, page_id, source, last_read_at, last_error, business_token_id").in("client_id", clientIds).is("removed_at", null);
   if (error) {
     // Before the migration: the primary alone
     const { data: prim } = await db.from("social_accounts").select("client_id, page_id, page_name, ig_id, ig_username").in("client_id", clientIds);
@@ -33,10 +35,19 @@ export async function linkedAccounts(db: SupabaseClient, clientIds: string[]): P
     }
     return out;
   }
+  // Which Business Manager each came through, by name
+  const bmIds = [...new Set((data ?? []).map((r) => r.business_token_id as string | null).filter((x): x is string => Boolean(x)))];
+  const bmName = new Map<string, string>();
+  if (bmIds.length) {
+    const { data: bms } = await db.from("meta_business_tokens").select("id, name").in("id", bmIds);
+    for (const b of bms ?? []) bmName.set(b.id as string, b.name as string);
+  }
   const rank = (a: LinkedAccount) => (a.source === "primary" ? 0 : 1);
   for (const r of data ?? []) {
     const k = r.client_id as string;
-    out.set(k, [...(out.get(k) ?? []), toAccount(r)]);
+    const a = toAccount(r);
+    a.businessName = a.businessTokenId ? (bmName.get(a.businessTokenId) ?? null) : null;
+    out.set(k, [...(out.get(k) ?? []), a]);
   }
   for (const [k, list] of out) out.set(k, list.sort((a, b) => rank(a) - rank(b) || a.platform.localeCompare(b.platform) || (a.location ?? "").localeCompare(b.location ?? "")));
   return out;
