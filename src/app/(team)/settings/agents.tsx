@@ -1655,7 +1655,10 @@ export function RolesOverview({ roles, agents, items, isExec = true, line = null
  * Settings › AI agents, first level (executives): one card per service line with how many agents it has, how many are
  * online and how many parked, and what the line is. A click opens that line's agents (?tab=agents&line=email).
  */
-export function LinesOverview({ roles, agents, total7 = null, assistant = null }: { roles: Role[]; agents: Agent[]; /** Every AI call's cost this week, including work outside the agents' skills */ total7?: number | null; /** The model and effort every assistant answer runs on (calls and its chat) */ assistant?: Agent | null }) {
+/** The assistant's week, company-wide (execs): its answers' cost and runs, and ElevenLabs voice use with the plan's quota */
+export type AssistantUse = { cost7: number; runs7: number; characters7: number; audioMinutes7: number; quota: { tier: string; used: number; limit: number; resetsAt: string | null } | null };
+
+export function LinesOverview({ roles, agents, total7 = null, assistant = null, assistantUse = null }: { roles: Role[]; agents: Agent[]; /** Every AI call's cost this week, including work outside the agents' skills */ total7?: number | null; /** The model and effort every assistant answer runs on (calls and its chat) */ assistant?: Agent | null; assistantUse?: AssistantUse | null }) {
   const lines = summarizeLines(roles);
   const parked = roles.filter((r) => r.offline).length;
   const costOfLine = (keys: string[]) => agents.filter((a) => keys.includes(a.roleKey ?? "")).reduce((t, a) => t + a.cost7, 0);
@@ -1752,29 +1755,95 @@ export function LinesOverview({ roles, agents, total7 = null, assistant = null }
           );
         })}
       </ul>
-      {assistant && (
-        <Link
-          href={`/settings?tab=agents&agent=${assistant.key}`}
-          className="group flex min-h-11 items-center justify-between gap-4 rounded-[18px] border border-line bg-surface px-5 py-4 transition-colors hover:border-faint/70"
-        >
-          <span className="flex min-w-0 items-center gap-3">
-            <AgentIcon icon={assistant.icon} size={34} />
-            <span className="min-w-0">
-              <span className="block font-heading text-[16px] leading-tight">{assistant.label}</span>
-              <span className="block text-[12px] text-muted">The model and effort every assistant answer runs on, on calls and in its chat</span>
-            </span>
-          </span>
-          <span className="flex shrink-0 items-center gap-2 text-xs text-muted">
-            <ModelMeter model={assistant.model} />
-            <span className="capitalize text-fg">{assistant.model}</span>
-            <span className="text-faint">· {assistant.effort} effort</span>
-            <span className="transition-transform group-hover:translate-x-0.5" aria-hidden>
-              →
-            </span>
-          </span>
-        </Link>
-      )}
+      {assistant && <AssistantCard assistant={assistant} use={assistantUse} week={week} />}
     </div>
+  );
+}
+
+const compact = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+
+/**
+ * The assistant as a card like the lines': what every answer cost this week company-wide (calls and its chat), its
+ * model and effort, and the voice: ElevenLabs characters spoken this week, minutes heard, and the plan's quota used.
+ */
+function AssistantCard({ assistant, use, week }: { assistant: Agent; use: AssistantUse | null; week: number }) {
+  const tint = "#c8102e";
+  const cost = use?.cost7 ?? assistant.cost7;
+  const q = use?.quota ?? null;
+  const pct = q && q.limit > 0 ? Math.min(100, (q.used / q.limit) * 100) : 0;
+  const resets = q?.resetsAt ? new Date(q.resetsAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : null;
+  return (
+    <Link
+      href={`/settings?tab=agents&agent=${assistant.key}`}
+      className="group relative isolate grid min-h-11 gap-5 overflow-hidden rounded-[24px] border border-line bg-surface p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-faint/60 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] md:p-6"
+      style={{ backgroundImage: `radial-gradient(120% 70% at 0% 0%, ${tint}1f, transparent 60%)` }}
+    >
+      <span aria-hidden className="absolute inset-x-6 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${tint}, transparent)` }} />
+      <div className="grid content-start gap-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-heading text-[19px] leading-tight">{assistant.label}</h3>
+            <p className="mt-1.5 flex flex-wrap items-baseline gap-x-1.5">
+              <span className="tabular font-display text-[24px] leading-none" style={{ color: cost >= 0.005 ? undefined : "var(--fg-faint)" }}>
+                {cost >= 0.005 ? money(cost) : "$0"}
+              </span>
+              <span className="text-[10.5px] text-faint">this week, company-wide{cost >= 0.005 ? ` · ${money(cost / 7)} a day` : ""}</span>
+            </p>
+          </div>
+          <span className="shrink-0 rounded-[14px] ring-4 ring-surface">
+            <AgentIcon icon={assistant.icon} size={34} />
+          </span>
+        </div>
+        <p className="text-[13px] leading-relaxed text-muted">Everyone&apos;s personal assistant, and every agent called or chatted with through it: each answer on a call and in its chat.</p>
+        <span className="h-[3px] overflow-hidden rounded-full bg-surface-2" title={week > 0 ? `${Math.round((cost / week) * 100)}% of this week's AI cost` : undefined}>
+          <span className="block h-full rounded-full opacity-80" style={{ width: `${week > 0 && cost >= 0.005 ? Math.max(2, Math.min(100, (cost / week) * 100)) : 0}%`, background: tint }} />
+        </span>
+        <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-line/70 pt-4 text-[11.5px] text-faint">
+          {use && use.runs7 > 0 && (
+            <span>
+              <span className="tabular text-fg">{use.runs7.toLocaleString("en-US")}</span> answers
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1.5">
+            <ModelMeter model={assistant.model} />
+            <span className="capitalize text-fg">{assistant.model}</span> · {assistant.effort} effort
+          </span>
+          <span className="ml-auto transition-transform group-hover:translate-x-0.5" aria-hidden>
+            →
+          </span>
+        </div>
+      </div>
+      <div className="grid content-start gap-3 rounded-[18px] border border-line/70 bg-ink/[0.02] p-4">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-faint">Voice · ElevenLabs</span>
+          {q && <span className="text-[10.5px] capitalize text-faint">{q.tier.replace(/_/g, " ")} plan</span>}
+        </div>
+        <dl className="grid grid-cols-2 gap-3">
+          <div className="grid gap-0.5">
+            <dt className="text-[10.5px] text-faint">Spoken this week</dt>
+            <dd className="tabular font-display text-[22px] leading-none">{use ? compact(use.characters7) : "—"}</dd>
+            <dd className="text-[10.5px] text-faint">characters</dd>
+          </div>
+          <div className="grid gap-0.5">
+            <dt className="text-[10.5px] text-faint">Heard this week</dt>
+            <dd className="tabular font-display text-[22px] leading-none">{use ? use.audioMinutes7.toLocaleString("en-US") : "—"}</dd>
+            <dd className="text-[10.5px] text-faint">minutes on calls</dd>
+          </div>
+        </dl>
+        {q ? (
+          <div className="grid gap-1.5">
+            <span className="h-[5px] overflow-hidden rounded-full bg-surface-2">
+              <span className={`block h-full rounded-full ${pct >= 90 ? "bg-bad" : pct >= 70 ? "bg-warn" : "bg-ok"}`} style={{ width: `${pct > 0 ? Math.max(2, pct) : 0}%` }} />
+            </span>
+            <span className="text-[11px] text-faint">
+              <span className="tabular text-fg">{compact(q.used)}</span> of {compact(q.limit)} credits used this cycle ({Math.round(pct)}%){resets ? ` · resets ${resets}` : ""}
+            </span>
+          </div>
+        ) : (
+          <span className="text-[11px] text-faint">The plan&apos;s quota shows here once ElevenLabs answers.</span>
+        )}
+      </div>
+    </Link>
   );
 }
 

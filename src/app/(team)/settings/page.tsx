@@ -22,7 +22,7 @@ import { nyParts } from "@/lib/kpi/calc";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { ChatMessage, Change, RoleChatMessage } from "./actions";
-import { AgentDetail, AgentsNav, KnowledgeView, LinesOverview, RoleDetail, RolesOverview, type Agent, type Item, type Role } from "./agents";
+import { AgentDetail, AgentsNav, KnowledgeView, LinesOverview, RoleDetail, RolesOverview, type Agent, type AssistantUse, type Item, type Role } from "./agents";
 import { Expenses, rollupFrom, type CostRow } from "./expenses";
 import { YouTubeLearning } from "./youtube";
 import { cachedActivity, cachedCostRollup, cachedLastRuns, type Activity } from "@/lib/ai-agents-cache";
@@ -147,6 +147,9 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
     supabase.from("profiles").select("id, full_name, role, is_active").eq("is_active", true).order("full_name"),
   ]);
   const monthStart = `${nyDay(new Date()).slice(0, 7)}-01`;
+  // The assistant, company-wide (execs only): every answer on a call or in its chat this week (logged as "agent call" and
+  // "agent chat"), priced like the agents, and the voice it spoke and heard (ElevenLabs characters and audio), with the plan's quota
+  const assistantUse = me.isExec && adminConfigured() ? await loadAssistantUse(`${week}T00:00:00-05:00`).catch(() => null) : null;
   const rowUsage = (r: CostRow): Usage => ({ runs: r.runs, failed: r.failed, input: r.input, output: r.output, cacheW: r.cache_w, cacheR: r.cache_r, searches: r.searches });
   const cost7 = new Map<string, number>();
   const mtdByModel = new Map<string, Partial<Record<ModelKey, Usage>>>();
@@ -306,7 +309,7 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
             // Executives see the service lines first and open one (?line=email); a head lands directly in their own line
             const line = me.isExec ? parseLine(askedLine) : null;
             const inLine = line ? roles.filter((r) => lineOfRole(r.key) === line) : roles;
-            if (me.isExec && !(line && inLine.length)) return <LinesOverview roles={roles} agents={list.filter((a) => a.roleKey)} total7={[...cost7.values()].reduce((t, c) => t + c, 0)} assistant={list.find((a) => a.key === "assistant_talk") ?? null} />;
+            if (me.isExec && !(line && inLine.length)) return <LinesOverview roles={roles} agents={list.filter((a) => a.roleKey)} total7={[...cost7.values()].reduce((t, c) => t + c, 0)} assistant={list.find((a) => a.key === "assistant_talk") ?? null} assistantUse={assistantUse} />;
             const overview = <RolesOverview roles={inLine} agents={list.filter((a) => a.roleKey && inLine.some((r) => r.key === a.roleKey))} items={items} isExec={me.isExec} line={line} />;
             if (me.isExec) return overview;
             return (
@@ -1125,4 +1128,33 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
 async function OtherAgents({ mine }: { mine: string[] }) {
   const others = (await talkRoles()).filter((r) => !mine.includes(r.key));
   return <AgentsToTalk roles={others} title="More agents to talk to" sub="Call or chat with any of them about your clients. Their own heads shape what they know." />;
+}
+
+
+/** The assistant's week, company-wide: its answers' cost and runs, and ElevenLabs (characters spoken, audio heard, plan quota) */
+async function loadAssistantUse(since: string): Promise<AssistantUse> {
+  const admin = createAdminClient();
+  const [{ data }, quota] = await Promise.all([
+    admin
+      .from("ai_runs")
+      .select("model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, searches, characters, audio_seconds, ok")
+      .gte("created_at", since)
+      .or("agent_key.eq.assistant_talk,and(agent_key.eq.coach,label.ilike.agent call*),and(agent_key.eq.coach,label.ilike.agent chat*)")
+      .limit(20000),
+    import("@/lib/elevenlabs").then((e) => (e.elevenlabsConfigured() ? e.subscription() : null)).catch(() => null),
+  ]);
+  let cost = 0;
+  let runs = 0;
+  let characters = 0;
+  let audioSeconds = 0;
+  type Row = { model: string | null; input_tokens: number | null; output_tokens: number | null; cache_write_tokens: number | null; cache_read_tokens: number | null; searches: number | null; characters: number | null; audio_seconds: number | null; ok: boolean | null };
+  for (const r of (data ?? []) as Row[]) {
+    characters += Number(r.characters) || 0;
+    audioSeconds += Number(r.audio_seconds) || 0;
+    // A voice row (no model) is ElevenLabs only: not an answer, no Anthropic cost
+    if (!r.model) continue;
+    runs++;
+    cost += costOf(r.model, { runs: 1, failed: r.ok === false ? 1 : 0, input: Number(r.input_tokens) || 0, output: Number(r.output_tokens) || 0, cacheW: Number(r.cache_write_tokens) || 0, cacheR: Number(r.cache_read_tokens) || 0, searches: Number(r.searches) || 0 });
+  }
+  return { cost7: cost, runs7: runs, characters7: characters, audioMinutes7: Math.round(audioSeconds / 60), quota: quota ? { tier: quota.tier, used: quota.used, limit: quota.limit, resetsAt: quota.resetsAt } : null };
 }
