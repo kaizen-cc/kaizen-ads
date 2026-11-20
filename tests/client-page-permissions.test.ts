@@ -23,11 +23,16 @@ describe("the client page: audits", () => {
     expect(g.business).toBe(true);
   });
 
-  it("the whole-business audit: execs, line heads and the client's seated buyers and strategists only", () => {
+  it("the whole-business audit: execs, the Heads of Meta and Google and the client's seated media buyers only", () => {
     expect(mayBusinessAudit({ role: "executive", isExec: true }, []).ok).toBe(true);
-    expect(mayBusinessAudit({ role: "head_of_social" }, []).ok).toBe(true);
-    expect(mayBusinessAudit({ role: "email_strategist" }, ["email_strategist"]).ok).toBe(true);
-    expect(mayBusinessAudit({ role: "email_strategist" }, []).ok).toBe(false);
+    expect(mayBusinessAudit({ role: "head_of_meta" }, []).ok).toBe(true);
+    expect(mayBusinessAudit({ role: "head_of_google" }, []).ok).toBe(true);
+    expect(mayBusinessAudit({ role: "media_buyer" }, ["meta_buyer"]).ok).toBe(true);
+    expect(mayBusinessAudit({ role: "media_buyer" }, []).ok).toBe(false);
+    // The social and email teams never run it (owner, Nov 20 2026), seated or heads
+    expect(mayBusinessAudit({ role: "head_of_social" }, []).ok).toBe(false);
+    expect(mayBusinessAudit({ role: "social_media_manager" }, ["social_manager"]).ok).toBe(false);
+    expect(mayBusinessAudit({ role: "email_strategist" }, ["email_strategist"]).ok).toBe(false);
     for (const role of ["graphic_designer", "video_editor", "email_builder", "copywriter", "customer_success"]) expect(mayBusinessAudit({ role }, [role]).ok).toBe(false);
   });
 
