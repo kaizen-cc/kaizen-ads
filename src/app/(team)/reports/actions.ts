@@ -650,7 +650,7 @@ export async function buildReportAction(clientId: string, ranges: { key: string;
   const unique = resolved.filter((r, i) => resolved.findIndex((x) => x.start === r.start && x.end === r.end) === i);
   try {
     const admin = createAdminClient();
-    const out = await buildReport(admin, await createClient(), me, clientId, unique, [...new Set(platforms)].filter((p) => p === "meta" || p === "google"));
+    const out = await buildReport(admin, await createClient(), me, clientId, unique, [...new Set(platforms)].filter((p) => p === "meta" || p === "google" || p === "tiktok"));
     after(() => draftParts(admin, out.partIds));
     // Built in place of a Monday draft that was waiting: that draft steps aside (skipped and off the page; it stays in
     // the client's history). Only the person's own drafts

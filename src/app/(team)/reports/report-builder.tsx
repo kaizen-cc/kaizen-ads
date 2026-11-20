@@ -261,15 +261,15 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {}, li
                 )}
                 {!searching && !picks.length && <p className="text-xs text-ink/40">Type two letters of a client&apos;s name.</p>}
                 {searching && (
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="grid gap-2 sm:grid-cols-2">
                   {matches.map((c) => (
                     <button key={c.id} type="button" onClick={() => choose(c)} className="group flex min-h-[60px] items-center gap-3 rounded-[14px] border border-ink/[0.07] bg-ink/[0.03] px-3 py-2.5 text-left transition hover:-translate-y-px hover:border-ink/20 hover:bg-ink/[0.06]">
                       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-ink/[0.08] text-[12px] font-semibold text-ink/80 group-hover:bg-brand group-hover:text-white">{initials(c.name)}</span>
-                      <span className="grid min-w-0">
+                      <span className="grid min-w-0 flex-1 gap-1">
                         <span className="truncate text-sm">{c.name}</span>
-                        <span className="flex items-center gap-1.5 text-[11px] text-ink/45">
+                        <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] leading-none text-ink/45">
                           {c.services.map((s) => (
-                            <span key={s.platform} className="flex items-center gap-1">
+                            <span key={s.platform} className="flex shrink-0 items-center gap-1 whitespace-nowrap">
                               <span className="h-1.5 w-1.5 rounded-full" style={{ background: PLATFORM[s.platform].color }} />
                               {PLATFORM[s.platform].short}
                             </span>

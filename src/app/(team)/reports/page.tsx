@@ -14,7 +14,7 @@ import { ReportBuilder, type BuilderClient, type QuickPick } from "./report-buil
 import { BundleCard, Empty, Group, ReportCard, SkippedGroup, type CardBundle, type CardReport, type SkippedItem, type Tag } from "./report-cards";
 import { RegenerateButton, RegenWatcher } from "./regenerate-button";
 import { EmailMark, GoogleAdsMark, MetaMark, SocialMark, TikTokMark } from "@/components/source-logo";
-import { isChannelOnly, teamPlatform } from "@/lib/roles";
+import { adsLinesFor, isChannelOnly, teamPlatform } from "@/lib/roles";
 import { buyerRole, orderSeats, primaryOf, type SeatRow } from "@/lib/buyer-seats";
 import { readHistory } from "@/lib/reports/history";
 import { SendHistory } from "./send-history";
@@ -99,12 +99,14 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const clientIds = [...new Set(accounts.map((a) => a.client_id))];
   // Each team searches and builds for its own line only: execs see both
   const line = me.isExec ? null : teamPlatform(me.role);
+  // Only your own ads lines are offered to build (the server checks it again)
+  const adsLines = adsLinesFor(me);
   // Seats: the buyer seats of the ad clients, and the email and social seats of those clients (the person filter reads them)
   const seatClientIds = [...new Set([...clientIds, ...chanIds])];
   const { data: slots } = admin && seatClientIds.length ? await admin.from("client_assignments").select("client_id, role, profile_id, is_primary, created_at, profiles(full_name)").in("client_id", seatClientIds).in("role", ["meta_buyer", "google_buyer", "tiktok_buyer", ...REPORT_SEATS.email, ...REPORT_SEATS.social]) : { data: [] };
   const [{ data: allTargets }, { data: built }] = admin && clientIds.length
     ? await Promise.all([
-        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id, services, services_extra, services_removed, strategy_only), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", line === "meta" ? ["meta", "tiktok"] : line ? [line] : ["meta", "google", "tiktok"]).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
+        admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id, services, services_extra, services_removed, strategy_only), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", adsLines).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
         admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, sent_at, clients(name), reports(id, platform, status, owner_id, viewed_at, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).gte("created_at", daysAgo(60)).order("created_at", { ascending: false }).limit(150),
       ])
     : [{ data: [] }, { data: [] }];
@@ -135,7 +137,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
     const c = byClient.get(t.client_id);
     if (!c) continue;
     const buys = new Set([...(t.clients.services ?? []), ...(t.clients.services_extra ?? [])].filter((x) => !(t.clients.services_removed ?? []).includes(x)));
-    for (const p of (line === "meta" ? ["meta", "tiktok"] : line ? [line] : ["meta", "google", "tiktok"]) as ("meta" | "google" | "tiktok")[]) {
+    for (const p of (adsLines) as ("meta" | "google" | "tiktok")[]) {
       if (!buys.has(ADS_SERVICE[p]) || c.services.some((x) => x.platform === p)) continue;
       const slot = primaryOf(seatRows, buyerRole(p), t.client_id);
       c.services.push({ platform: p, owner: slot?.profiles?.full_name ?? null, mine: slot?.profile_id === me.id, setup: { state: "missing", what: `${ADS_NAME[p]} is on their services, but no ${ADS_NAME[p]} ad account is connected yet. Add it on the client page.` } });

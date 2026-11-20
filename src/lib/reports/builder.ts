@@ -5,6 +5,7 @@ import { askJson } from "@/lib/ai";
 import { isExecOrLead, type Staff } from "@/lib/auth";
 import { nyParts } from "@/lib/kpi/calc";
 import { canReportOn, reportListeners } from "./access";
+import { adsLinesFor } from "@/lib/roles";
 import { buyerRole, primarySeat, withCoBuyers } from "@/lib/buyer-seats";
 import { channelsLabel, normalizeDelivery, pdfFileName, type Delivery } from "./delivery-core";
 import { isPeriodKey, periodMismatch, resolvePeriod } from "./period";
@@ -68,12 +69,16 @@ export async function buildReport(admin: SupabaseClient, db: SupabaseClient, me:
   // One range per report (several made reports hard to read): only the first is used
   ranges = ranges.slice(0, 1);
   if (!platforms.length) throw new Error("Pick at least one service.");
+  // Only your own line's services (owner, Nov 20 2026): a Meta buyer never builds the Google part, a lead only their line
+  const myLines = adsLinesFor(me) as string[];
+  const other = platforms.filter((p) => !myLines.includes(p));
+  if (other.length) throw new Error(`You can only build reports for your own service line (${other.map(platformName).join(" and ")} isn't yours).`);
   const { data: found } = await admin.from("kpi_targets").select("id, client_id, platform, owner_id, clients(services, services_extra, services_removed, strategy_only)").eq("client_id", clientId).eq("active", true).not("ad_account_id", "is", null).in("platform", platforms);
   // Only the lines the client buys (src/lib/service-gate.ts)
   const targets = (found ?? []).filter((t) => onService({ platform: t.platform as string, clients: t.clients ?? null }));
   if (!targets.length) throw new Error("No ad account with a KPI for those services. Set one on the KPI board.");
   // Anyone on one of the client's accounts can build it (and ask the other buyer for their part)
-  let allowed = isExecOrLead(me);
+  let allowed = me.isExec || isExecOrLead(me);
   for (const t of targets) if (!allowed && (await canReportOn(db, me, t))) allowed = true;
   if (!allowed) throw new Error("You can only build reports for clients you work on.");
 

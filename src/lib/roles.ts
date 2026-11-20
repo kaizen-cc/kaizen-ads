@@ -216,6 +216,15 @@ export const canAlsoSocial = (role: string | null | undefined) => worksAs(role, 
 export const canAlsoDesignEmail = (role: string | null | undefined) => role === "email_builder";
 
 /** The ad platform someone's team works on: the Meta team (buyers and head) Meta, the Google team Google, anyone else null (both) */
+/** The ads lines someone reports on: every one for an exec; the Meta team's Meta and TikTok; Google's Google; TikTok's TikTok */
+export function adsLinesFor(me: { role: string; isExec: boolean }): ("meta" | "google" | "tiktok")[] {
+  if (me.isExec) return ["meta", "google", "tiktok"];
+  if (me.role === "media_buyer" || me.role === "head_of_meta") return ["meta", "tiktok"];
+  if (me.role === "google_buyer" || me.role === "head_of_google") return ["google"];
+  if (me.role === "tiktok_buyer") return ["tiktok"];
+  return [];
+}
+
 export function teamPlatform(role: string): "meta" | "google" | null {
   if (role === "media_buyer" || role === "head_of_meta") return "meta";
   if (role === "google_buyer" || role === "head_of_google") return "google";
