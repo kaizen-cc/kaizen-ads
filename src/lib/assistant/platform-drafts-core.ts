@@ -55,3 +55,10 @@ export function slackSelfNote(d: { where: string; link: string | null; text: str
   const head = `Draft for ${d.where}${d.link ? ` (<${d.link}|open the thread>)` : ""}. Copy it, edit it and send it there:`;
   return `${head}\n\n${d.text}`;
 }
+
+/** A new Slack DM to a teammate as the draft's place: their Slack user is the channel (opened as the sender on send) */
+export function slackDmPlace(slackUserId: string, name: string): { channel: string; thread: null; where: string } | null {
+  const id = slackUserId.trim();
+  if (!/^[UW][A-Z0-9]{6,}$/.test(id)) return null;
+  return { channel: id, thread: null, where: `a DM to ${name.trim() || "them"}` };
+}

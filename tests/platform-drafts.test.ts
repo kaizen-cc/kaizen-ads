@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mimeMessage, rawEmail } from "@/lib/assistant/messages";
-import { composeScopeMessage, draftError, gmailDraftLink, serviceAccountClientId, slackMessageLink, slackSelfNote } from "@/lib/assistant/platform-drafts-core";
+import { composeScopeMessage, draftError, gmailDraftLink, serviceAccountClientId, slackDmPlace, slackMessageLink, slackSelfNote } from "@/lib/assistant/platform-drafts-core";
 
 const decode = (raw: string) => Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 
@@ -92,5 +92,22 @@ describe("the Slack self-DM draft", () => {
     const n = slackSelfNote({ where: "#acme-internal, reply to Dana", link: "https://slack.com/archives/C1/p1", text: "On it.\nWill share Friday." });
     expect(n.startsWith("Draft for #acme-internal, reply to Dana (<https://slack.com/archives/C1/p1|open the thread>)")).toBe(true);
     expect(n.endsWith("\n\nOn it.\nWill share Friday.")).toBe(true);
+  });
+});
+
+describe("a new Slack DM to a teammate", () => {
+  it("their Slack user is the place, with no thread", () => {
+    expect(slackDmPlace("U0123ABCD", "Jesus")).toEqual({ channel: "U0123ABCD", thread: null, where: "a DM to Jesus" });
+    expect(slackDmPlace(" W0123ABCD ", "")).toEqual({ channel: "W0123ABCD", thread: null, where: "a DM to them" });
+  });
+
+  it("no Slack user, or a channel id, is no DM", () => {
+    expect(slackDmPlace("", "Jesus")).toBeNull();
+    expect(slackDmPlace("C0123ABCD", "Jesus")).toBeNull();
+  });
+
+  it("saved to their self-DM, it says who it's for, with no thread link", () => {
+    const place = slackDmPlace("U0123ABCD", "Jesus")!;
+    expect(slackSelfNote({ where: place.where, link: slackMessageLink(place.channel, place.thread), text: "Hey Jesus, how's your day going?" })).toBe("Draft for a DM to Jesus. Copy it, edit it and send it there:\n\nHey Jesus, how's your day going?");
   });
 });
