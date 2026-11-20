@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -47,7 +48,17 @@ export default async function ReviewsPage({ searchParams }: PageProps<"/reviews"
             Scope, budget pace, account changes, open commitments, results and health for every client on {me.isExec ? "every line" : `${REVIEW_LINE_LABEL[lines[0]]}`}. Each one posts as you, in the client&apos;s internal channel only.
           </p>
         </div>
-        {me.isExec && <RedraftAll />}
+        <div className="flex flex-wrap items-start gap-2">
+          <Link href="/scorecard" className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] hover:border-faint md:min-h-9">
+            Scorecard
+          </Link>
+          {me.isExec && (
+            <Link href="/economics" className="inline-flex min-h-11 items-center rounded-full border border-line px-4 text-[13px] hover:border-faint md:min-h-9">
+              Economics
+            </Link>
+          )}
+          {me.isExec && <RedraftAll />}
+        </div>
       </header>
       <OverviewTabs tabs={tabs} panels={panels} />
     </div>

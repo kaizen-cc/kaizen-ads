@@ -22,6 +22,7 @@ const MODULES: { key: string; label: string; load: () => Promise<{ tools: Shared
   { key: "email-segments", label: "Email segments", load: () => import("@/lib/ai-tools/email-segments") },
   { key: "account-watch", label: "Account watch", load: () => import("@/lib/ai-tools/account-watch") },
   { key: "line-review", label: "Weekly review", load: () => import("@/lib/ai-tools/line-review") },
+  { key: "oversight", label: "Scorecard and economics", load: () => import("@/lib/ai-tools/oversight") },
   { key: "email-allotment", label: "Email allotment", load: () => import("@/lib/ai-tools/email-allotment") },
   { key: "social-allotment", label: "Social allotment", load: () => import("@/lib/ai-tools/social-allotment") },
   { key: "youtube", label: "YouTube learning", load: () => import("@/lib/ai-tools/youtube") },

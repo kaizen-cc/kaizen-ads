@@ -107,7 +107,7 @@ export function orderForToday<T extends DayItem>(items: readonly T[]): T[] {
 // ─── Screens and links ──────────────────────────────────────────────────────
 
 /** The places in the app the assistant may open during a call */
-const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next", "/profile", "/watch", "/csuite", "/copy", "/reviews"];
+const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next", "/profile", "/watch", "/csuite", "/copy", "/reviews", "/scorecard", "/economics"];
 
 /**
  * The named places open_screen knows (each screen's own address, with its URL state where a place is a view inside a
@@ -158,6 +158,11 @@ export const SCREEN_PLACES: Record<string, string> = {
   "weekly reviews email": "/reviews?tab=email",
   "weekly reviews social": "/reviews?tab=social",
   "weekly reviews sent": "/reviews?tab=done",
+  // Accountability: the scorecard (execs and line heads) and account economics (execs only)
+  scorecard: "/scorecard",
+  "weekly scorecard": "/scorecard",
+  "account economics": "/economics",
+  economics: "/economics",
   boards: "/board",
   "creative board": "/board",
   "email board": "/board/email",
