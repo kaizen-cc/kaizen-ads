@@ -37,6 +37,7 @@ import { MakerTasks } from "./views/maker-tasks";
 import { isCustomerSuccess, isMaker } from "@/lib/maker-day-core";
 import { makerTasks } from "@/lib/maker-day";
 import { ReadyCallout } from "./views/ready-callout";
+import { NudgeCallout } from "@/components/nudge-callout";
 import { LeadCreativePanel } from "./views/lead-creative-panel";
 import { isCreativeLead } from "@/lib/lead-creative-core";
 
@@ -54,6 +55,10 @@ function Recap({ db, me, hidden }: { db: SupabaseClient; me: Staff; hidden: Hidd
     <>
       <Suspense fallback={<TodayHeroSkeleton />}>
         <TodayHero db={db} me={me} />
+      </Suspense>
+      {/* The escalation ladder: a teammate 48 hours behind, with a message drafted to check in with them (leads) */}
+      <Suspense fallback={null}>
+        <NudgeCallout me={me.id} />
       </Suspense>
       {/* A brief they started and didn't send: waiting for them, on any device (src/lib/brief-drafts.ts) */}
       <Suspense fallback={null}>

@@ -748,19 +748,13 @@ export async function runOwedReplies(admin: Admin) {
     await notify(admin, [o.target_id], {
       key: `owed2:${o.id}`,
       title: `Second notice: still no reply to ${o.from_name}`,
-      body: `${gist}, ${whereOf(o)}. ${o.from_team ? (above.length ? "Your lead has been told it's waiting." : "") : above.length ? "Your lead and the exec team have been told it's waiting." : "The exec team has been told it's waiting."} Reply there, or mark it as not needing a reply in your day.`.replace(/\.\s+\./, "."),
+      body: `${gist}, ${whereOf(o)}. ${above.length ? "If it's still waiting two days after your first notice, your lead gets a note to check in with you." : ""} Reply there, or mark it as not needing a reply in your day.`.replace(/\.\s+\./, "."),
       href: o.url,
       clientId: o.client_id,
       priority,
     });
-    await notify(admin, above, {
-      key: `owed-lead:${o.id}`,
-      title: `${person?.full_name ?? "Someone"} hasn't replied to ${o.from_name}`,
-      body: `${gist}, ${whereOf(o)}, since ${new Date(o.asked_at).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/New_York" })}. ${o.from_team ? "A teammate's ask" : "A client message"}${o.client_id ? "" : ", no client found on it"}. They had a notice and it's still unanswered.`,
-      href: o.url,
-      clientId: o.client_id,
-      priority,
-    });
+    // The lead hears through the escalation ladder (src/lib/escalation-ladder.ts): 48 hours after the first notice with
+    // nothing done, a drafted Slack nudge to send this teammate, never the message itself to answer
     tally.escalated++;
   }
 
@@ -787,7 +781,10 @@ export async function runOwedReplies(admin: Admin) {
   const grouped = await groupPromises(admin).catch(fail);
   const following = await followPromises(admin, who).catch(fail);
   await settleGroups(admin).catch(() => 0);
-  return { scanned, ...tally, promises, grouped, following };
+  // The escalation ladder for every line: 48 hours with nothing done after the owner heard, and their lead gets a
+  // drafted nudge to send them (src/lib/escalation-ladder.ts)
+  const ladder = await (await import("@/lib/escalation-ladder")).runLadder(admin).catch(fail);
+  return { scanned, ...tally, promises, grouped, following, ladder };
 }
 
 // ─── Reading ────────────────────────────────────────────────────────────────
@@ -835,10 +832,9 @@ export async function loadOwedReplies(db: SupabaseClient, me: { id: string; role
       if (c && !isLive(c)) return false;
       if (o.target_id === me.id) return true;
       if (!others || o.status !== "escalated") return false;
-      if (me.isExec) return true;
-      // A lead sees their own team's
-      const role = (o.target as unknown as { role: string } | null)?.role ?? "";
-      return LEAD_OF[role] === me.role;
+      // Execs see every escalated one. A lead's card is the nudge to their teammate (the escalation ladder), not the
+      // message to answer (Nov 20 2026)
+      return me.isExec;
     })
     .map((o) => {
       const c = o.clients as unknown as { name: string; slug: string } | null;

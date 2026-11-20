@@ -521,20 +521,12 @@ export async function followPromises(admin: Admin, who: SlackWho | null) {
         key: `said2:${p.id}`,
         kind: "promise",
         title: `Second notice: you said you'd ${p.what}`,
-        body: `${p.asked_by ?? "They"} is still waiting (asked ${whereOf(p)} on ${nyDay(p.said_at)}). ${above.length ? "Your lead and the exec team have been told." : "The exec team has been told."}`,
+        body: `${p.asked_by ?? "They"} is still waiting (asked ${whereOf(p)} on ${nyDay(p.said_at)}). ${above.length ? "If nothing moves two days after your first notice, your lead gets a note to check in with you." : ""}`.trim(),
         href: p.url,
         clientId: p.client_id,
         priority: "critical",
       });
-      await notify(admin, above, {
-        key: `said-lead:${p.id}`,
-        kind: "promise",
-        title: `${person?.full_name ?? "Someone"} said they'd ${p.what}, and it hasn't happened`,
-        body: `Promised to ${p.asked_by ?? "someone"} ${whereOf(p)} on ${nyDay(p.said_at)}; they had a notice and nothing's moved.`,
-        href: p.url,
-        clientId: p.client_id,
-        priority: "critical",
-      });
+      // The lead hears through the escalation ladder (src/lib/escalation-ladder.ts): a drafted nudge after 48 hours
       tally.escalated++;
       continue;
     }
@@ -660,9 +652,8 @@ export async function loadSaidPromises(db: SupabaseClient, me: { id: string; rol
     })
     .filter((p) => {
       if (p.owner_id === me.id) return true;
-      if (!(me.isExec || me.isLead) || p.status !== "escalated") return false;
-      if (me.isExec) return true;
-      return LEAD_OF[(p.owner as unknown as { role: string } | null)?.role ?? ""] === me.role;
+      // Execs see every escalated one; a lead gets a nudge to send their teammate instead (the escalation ladder)
+      return me.isExec && p.status === "escalated";
     })
     .map((p) => {
       const c = p.clients as unknown as { name: string; slug: string } | null;

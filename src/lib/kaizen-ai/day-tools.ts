@@ -7,7 +7,7 @@ import type { ChatTool, ToolCtx } from "./tools";
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me"] as const;
+export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge"] as const;
 
 export function dayTools(ctx: ToolCtx): ChatTool[] {
   return [
@@ -117,6 +117,40 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
         const { loadSentAsks, sentHref } = await import("@/lib/sent-asks");
         const sent = await loadSentAsks(ctx.db, ctx.me.id);
         return { sent: sent.map((a) => ({ id: a.id, key: `ask:${a.id}`, to: a.to, title: a.title, client: a.client?.name ?? null, status: a.status, due: a.due, checklist: a.checklist, progress: a.checklist.length ? `${a.checklist.filter((i) => i.done).length}/${a.checklist.length}` : null, open: sentHref(a.id) })) };
+      },
+    },
+    {
+      name: "team_nudges",
+      description: "The escalation ladder for a lead or head: teammates with something that sat 48 hours with nothing done (a reply owed, a promise, a ticket past its turnaround, a brief to approve), each with a Slack message drafted to check in with them. Read the draft out, offer to change it, and send only with send_team_nudge after their yes.",
+      input_schema: { type: "object", properties: {}, additionalProperties: false },
+      status: () => "Checking who on your team is behind…",
+      run: async () => {
+        const { loadNudges } = await import("@/lib/escalation-ladder");
+        const ns = await loadNudges(ctx.db, ctx.me.id);
+        return { nudges: ns.map((n) => ({ id: n.id, teammate: n.owner, client: n.client, what: n.what, since: n.since, draft: n.draft })), open: "/pipeline" };
+      },
+    },
+    {
+      name: "send_team_nudge",
+      description: "Sends one nudge from team_nudges to the teammate as a Slack DM from the lead's own Slack (text: the draft as they approved or changed it), or sets it aside (dismiss: true). Only after the lead's clear yes in this turn.",
+      input_schema: { type: "object", properties: { id: { type: "string" }, text: { type: "string" }, dismiss: { type: "boolean" } }, required: ["id"], additionalProperties: false },
+      status: (input) => (input.dismiss ? "Setting it aside…" : "Sending it from your Slack…"),
+      run: async (input) => {
+        const id = clip(input.id, 60);
+        const { sendNudge, dismissNudge } = await import("@/lib/escalation-ladder");
+        if (input.dismiss) {
+          await dismissNudge(ctx.admin, ctx.me.id, id);
+          return { ok: true, dismissed: true };
+        }
+        const { saidYes } = await import("@/lib/assistant/core");
+        if (ctx.said !== undefined && !saidYes(ctx.said)) return { ok: false, note: "Read them the message and ask \"send it?\" first; send on their yes." };
+        if (ctx.me.viewAs) return { ok: false, note: "Not while viewing as someone." };
+        let text = clip(input.text, 3000);
+        if (!text) {
+          const { data } = await ctx.db.from("ladder_nudges").select("draft").eq("id", id).maybeSingle();
+          text = String(data?.draft ?? "");
+        }
+        return sendNudge(ctx.admin, ctx.me.id, id, text);
       },
     },
     {

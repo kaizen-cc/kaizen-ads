@@ -119,6 +119,8 @@ export const SCREEN_PLACES: Record<string, string> = {
   "overview list": "/pipeline",
   // What their assistant sent to teammates (checklists, tasks), with the recipient's progress
   "sent by you": "/pipeline?tab=work#sent",
+  // The escalation ladder's nudges for a lead (teammates 48 hours behind, a message drafted for each)
+  "team nudges": "/pipeline",
   // Emails drafted for the person to send to clients, on their Overview
   "emails ready to send": "/pipeline#emails-ready",
   // The executives' weekly account review, each step its own address
