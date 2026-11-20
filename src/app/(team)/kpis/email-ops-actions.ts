@@ -48,9 +48,13 @@ export async function startEmailSprint(auditId: string, only?: number, opsLine: 
   const me = await requireStaff();
   const line = lineOf(opsLine);
   const supabase = await createClient();
-  const { data: a } = await supabase.from(`${line}_audits`).select("id").eq("id", auditId).maybeSingle();
+  const { data: a } = await supabase.from(`${line}_audits`).select("id, client_id").eq("id", auditId).maybeSingle();
   if (!a) return { ok: false, error: "You don't work on this client." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  // Only an exec, the line's head or the client's strategist (email) or social media manager (social) starts it
+  const { mayAuditOn } = await import("@/lib/line-actions-server");
+  const may = await mayAuditOn(createAdminClient(), { id: me.id, role: me.role, isExec: me.isExec }, a.client_id as string, line === "social" ? "social" : "email");
+  if (!may.ok) return { ok: false, error: may.reason };
   try {
     const { open } = await sprintLib(line);
     const id = await open(createAdminClient(), auditId, me.id, only);

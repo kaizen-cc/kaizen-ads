@@ -2,7 +2,7 @@ import "server-only";
 import type { ChatTool, ToolCtx } from "./tools";
 import { seesAccountNumbers } from "@/lib/ai-access-core";
 import { PRIVATE_WHILE_VIEWING, textAnswer, viewingAs } from "./my-tools";
-import { beforeAfter, describeWrite, driveQuery, eventRow, gmailRow, klaviyoPathOk, mayEditKlaviyo, scopeHelp, short, type KlaviyoMethod } from "./workspace-core";
+import { beforeAfter, describeWrite, driveQuery, eventRow, gmailRow, klaviyoPathOk, scopeHelp, short, type KlaviyoMethod } from "./workspace-core";
 
 // Kaizen AI working where the team works (owner, Nov 19 2026), for everyone and in every chat (the assistant gets every
 // chat tool too): their own Gmail, Drive and Calendar, read as them through the company's Google access (no sign-in),
@@ -154,7 +154,10 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
         if (!seesAccountNumbers(ctx.me) && /metric|report|aggregate/i.test(checked.path)) return { error: "Account numbers aren't part of your view." };
         const { clientNamedForTools } = await import("./tools");
         const c = await clientNamedForTools(ctx, input);
-        if (method !== "GET" && !mayEditKlaviyo(ctx.me)) return { error: "Changing a client's Klaviyo is for the email team, leads and execs. They can still read it." };
+        if (method !== "GET") {
+          const may = await (await import("@/lib/line-actions-server")).mayActOn(ctx.admin, { id: ctx.me.id, role: ctx.me.role, isExec: ctx.me.isExec }, c.id, "email", "change this client's Klaviyo");
+          if (!may.ok) return { error: `${may.reason} Everyone can still read it.` };
+        }
         const { clientKlaviyoKey } = await import("@/lib/klaviyo/store");
         const k = await clientKlaviyoKey(ctx.admin, c.id);
         if ("error" in k) return { error: k.error };

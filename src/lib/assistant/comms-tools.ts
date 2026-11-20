@@ -238,7 +238,7 @@ async function saveDraftToPlatform(ctx: CommsCtx, d: Draft): Promise<{ ok: true;
 export function commsTools(ctx: CommsCtx): ChatTool[] {
   const from = firstNameOf(ctx.me.fullName);
   const via = ctx.roleKey === "assistant" ? "via their assistant" : `via the ${ctx.label}`;
-  return [
+  const tools: ChatTool[] = [
     {
       name: "send_to_teammate",
       description: `Sends a task, an ask or an FYI to a teammate, credited to ${from}: it lands on their Overview (Next for me, cleared when they mark it done), in their bell, and as a Slack message when they've connected Slack. Use it when ${from} asks ("ask Rahul for an update", "tell the head of email", "let Dana know"), when they say yes to a send you proposed, or when they correct who it goes to ("it should be on the Meta buyer": that IS the ask; send what you'd drafted). One yes is enough: never ask them to repeat it. to: a name as heard (spoken variants are fine: "Raul" finds Rahul) or a role ("the Meta buyer", "the strategist", "the account lead"), which on a client goes to whoever sits in that seat for a line the client buys (your own line by default; an empty seat goes to the next owner on the line). If you offered two people and they just say yes, send to the one they named; if it's unclear, ask once in a few words. Then say who you sent it to in a few words.`,
@@ -261,6 +261,11 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         const title = teammateTitle(kind, clip(input.what, 200));
         if (!title) return { sent: false, note: "What should it say? Ask in a few words." };
         const client = await clientOf(ctx, input.client);
+        // On a client, a task or an ask comes from the client's buyer, strategist or social media manager, a head or an exec (an FYI from anyone)
+        if (client) {
+          const may = await (await import("@/lib/line-actions-server")).mayAskOn(ctx.admin, { id: ctx.me.id, role: ctx.me.role, isExec: ctx.me.isExec }, client.id, kind);
+          if (!may.ok) return { sent: false, note: may.reason };
+        }
         const team = client ? await clientTeam(ctx.admin, client.id) : null;
         const r = await recipientFor(ctx.admin, { to: clip(input.to, 120), client: team, agentRole: ctx.roleKey === "assistant" ? null : ctx.roleKey, exclude: ctx.me.id });
         if (!r.ok) return { sent: false, note: r.note, options: r.options };
@@ -466,4 +471,6 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
       },
     },
   ];
+  // While the owner views as someone, nothing goes out as them, from any surface that reuses these (calls, huddles, chats)
+  return ctx.me.viewAs ? tools.map((t) => ({ ...t, run: async () => ({ done: false, error: "While viewing as someone, nothing is sent or saved as them." }) })) : tools;
 }

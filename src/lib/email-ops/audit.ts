@@ -25,6 +25,12 @@ export type AuditStart = { id: string; running: boolean } | { error: string };
 
 /** Starts an audit row for a client (one at a time per client), or says why not. The caller runs it with runEmailAudit. */
 export async function requestEmailAudit(db: SupabaseClient, admin: SupabaseClient, clientId: string, by: string | null, auto = false): Promise<AuditStart> {
+  // A person asking: only an exec, the head of email or the client's email strategist (the system's own audits run as itself)
+  if (!auto && by) {
+    const { mayAuditOn } = await import("@/lib/line-actions-server");
+    const may = await mayAuditOn(admin, by, clientId, "email");
+    if (!may.ok) return { error: may.reason };
+  }
   const why = await notLive(db, clientId);
   if (why) return { error: why };
   const conn = await emailConnection(admin, clientId);

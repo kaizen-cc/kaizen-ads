@@ -17,6 +17,12 @@ export type SocialAuditStart = { id: string; running: boolean } | { error: strin
 
 /** Starts an audit row for a client (one at a time per client), or says why not. The caller runs it with runSocialAudit. */
 export async function requestSocialAudit(db: SupabaseClient, admin: SupabaseClient, clientId: string, by: string | null, auto = false): Promise<SocialAuditStart> {
+  // A person asking: only an exec, the head of social or the client's social media manager (the system's own audits run as itself)
+  if (!auto && by) {
+    const { mayAuditOn } = await import("@/lib/line-actions-server");
+    const may = await mayAuditOn(admin, by, clientId, "social");
+    if (!may.ok) return { error: may.reason };
+  }
   const why = await notLive(db, clientId);
   if (why) return { error: why };
   const { data: link } = await admin.from("social_accounts").select("page_id, ig_id").eq("client_id", clientId).maybeSingle();

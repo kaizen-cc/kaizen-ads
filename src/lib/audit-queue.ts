@@ -3,6 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { notLive } from "@/lib/live-guard";
 import { hasKpiTarget } from "@/lib/kpi/calc";
+import { lineOfPlatform } from "@/lib/line-actions";
+import { mayAuditOn } from "@/lib/line-actions-server";
 
 // Three audits at a time per person, so a burst of clicks doesn't pile up AI and Meta calls. A fourth (and fifth…)
 // waits as "queued" in the order it was asked for; when a slot frees up the person picks which one to start.
@@ -38,8 +40,12 @@ export function auditRefusal(t: { platform: string; ad_account_id: string | null
  */
 export async function requestAudit(db: SupabaseClient, admin: SupabaseClient, me: Staff, ask: { targetId?: string; auditId?: string }): Promise<AuditStart> {
   if (ask.auditId) {
-    const { data: a } = await db.from("account_audits").select("id, status, client_id, clients(name)").eq("id", ask.auditId).maybeSingle();
+    const { data: a } = await db.from("account_audits").select("id, status, client_id, target_id, clients(name)").eq("id", ask.auditId).maybeSingle();
     if (!a) return { error: "You don't work on this client." };
+    const { data: at } = a.target_id ? await admin.from("kpi_targets").select("platform").eq("id", a.target_id as string).maybeSingle() : { data: null };
+    const queuedLine = lineOfPlatform((at?.platform as string | undefined) ?? "meta") ?? "meta";
+    const mayQueued = await mayAuditOn(admin, { id: me.id, role: me.role, isExec: me.isExec }, a.client_id as string, queuedLine);
+    if (!mayQueued.ok) return { error: mayQueued.reason };
     const client = (a.clients as unknown as { name: string } | null)?.name ?? "";
     if (a.status !== "queued") return { status: "running", id: a.id, client };
     if ((await runningFor(admin, me.id)) >= MAX_AUDITS) return { status: "queued", id: a.id, client, full: true };
@@ -51,6 +57,9 @@ export async function requestAudit(db: SupabaseClient, admin: SupabaseClient, me
   if (!t) return { error: "You don't work on this client." };
   const refused = auditRefusal(t);
   if (refused) return { error: refused };
+  // Only an exec, the line's head or the client's buyer on that platform runs it (a Google buyer never runs a Meta audit)
+  const may = await mayAuditOn(admin, { id: me.id, role: me.role, isExec: me.isExec }, t.client_id as string, lineOfPlatform(t.platform as string) ?? "meta");
+  if (!may.ok) return { error: may.reason };
   const why = await notLive(db, t.client_id);
   if (why) return { error: why };
   const client = (t.clients as unknown as { name: string } | null)?.name ?? "";

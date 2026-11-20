@@ -99,6 +99,9 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
           } catch (e) {
             return { started: false, note: `${e instanceof Error ? e.message : "No such client."} Ask which client.` };
           }
+          // Creating a line's requests is the line's: the client's owner on it (buyer, strategist, social media manager), its head or an exec
+          const may = await (await import("@/lib/line-actions-server")).mayActOn(ctx.admin, { id: ctx.me.id, role: ctx.me.role, isExec: ctx.me.isExec }, c.id, cfg.line === "social" ? "social" : cfg.line === "creative" ? "creative" : "email", `create ${cfg.line} requests for this client`);
+          if (!may.ok) return { started: false, note: may.reason };
           let run = await startRun(ctx.admin, asMe(ctx.me), ctx.callId, cfg, { id: c.id, name: c.name }, ctx.said());
           const patch: Patch = {};
           if (input.kind) patch.kind = String(input.kind);

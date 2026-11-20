@@ -776,6 +776,8 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
         const c = await clientOf(ctx, input);
         const { data: a } = await ctx.db.from("social_audits").select("id").eq("client_id", c.id).eq("status", "ready").order("created_at", { ascending: false }).limit(1).maybeSingle();
         if (!a) return { client: c.name, started: false, error: "No finished social audit yet: run one first." };
+        const may = await (await import("@/lib/line-actions-server")).mayAuditOn(ctx.admin, { id: ctx.me.id, role: ctx.me.role, isExec: ctx.me.isExec }, c.id, "social");
+        if (!may.ok) return { client: c.name, started: false, error: may.reason };
         const only = Number.isInteger(input.move) ? Number(input.move) - 1 : undefined;
         const id = await (await import("@/lib/social-ops/sprint")).openSocialSprint(ctx.admin, a.id as string, ctx.me.id, only);
         if (!id) return { client: c.name, started: false, error: "That audit has no moves to follow." };

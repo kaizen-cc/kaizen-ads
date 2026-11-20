@@ -147,6 +147,9 @@ export function askTools(ctx: ToolCtx, agent: { roleKey: string; label: string; 
         const title = clip(input.what, 160);
         const problem = titleProblem(title);
         if (problem) return { done: false, note: problem };
+        // A task for the team on a client comes from its buyer, strategist or social media manager, a head or an exec
+        const may = await (await import("@/lib/line-actions-server")).mayAskOn(ctx.admin, { id: ctx.me.id, role: ctx.me.role, isExec: ctx.me.isExec }, client.id, "task");
+        if (!may.ok) return { done: false, note: may.reason };
         const { clientTeam, recipientFor } = await import("@/lib/assistant/routing-server");
         const team = await clientTeam(ctx.admin, client.id);
         const seatWord = SEATS.includes(String(input.seat)) ? (SEAT_WORDS[String(input.seat)] ?? "") : "";

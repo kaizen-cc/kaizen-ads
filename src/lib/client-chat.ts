@@ -343,6 +343,10 @@ export async function askAboutClient(
   // What this person may do here (src/lib/chat-permissions.ts): the AI only offers and starts what's theirs to do
   const person = await personById(admin, profileId);
   const perms = person ? await permsOn(admin, person, clientId) : clientPerms({ role: null });
+  // Which lines' audits, sprints and team asks are theirs here (everyone else reads and asks): every desk's prompt says so
+  const { lineActionsPrompt } = await import("@/lib/line-actions");
+  const { seatsOnClient } = await import("@/lib/line-actions-server");
+  const lineLine = ` ${lineActionsPrompt(person ?? { role: null }, person ? await seatsOnClient(admin, person.id, clientId) : [])}`;
   // Sounds like a new Google launch: the account read starts now, alongside the answer below, so the launch card has
   // it the moment the launch is set up (kept ten minutes; the launch's own read shares it). Never waits on it. Only for
   // someone who may launch in Google Ads on this client (no read is warmed for a launch that won't start).
@@ -404,7 +408,7 @@ export async function askAboutClient(
     agent: social ? "social_desk" : email ? "email_desk" : "strategist",
     label: `${social ? "social desk" : email ? "email desk" : "client desk"} (${level}${docs.length ? `, ${docs.length} shared` : ""})`,
     clientId,
-    system: (social ? (await import("@/lib/social-ops/chat")).socialDeskSystem(SYSTEM) : email ? (await import("@/lib/email-ops/chat")).emailDeskSystem(SYSTEM) : `${SYSTEM}\n\n${permsPrompt(perms)}`) + (email ? "" : tiktokConfigured() ? `\nTikTok: you can read and discuss its numbers when they're given, but launches and changes in TikTok aren't connected. Asked to change or launch anything on TikTok, set no change or launch and answer: "${READ_ONLY_TEXT}"` : "") + (scope ? `\nThis chat was opened from the client's ${scope.platform === "google" ? "Google Ads" : "Meta"} KPI card: a launch or change they don't name a platform for is on ${scope.platform === "google" ? "Google Ads" : "Meta"}.` : "") + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
+    system: (social ? (await import("@/lib/social-ops/chat")).socialDeskSystem(SYSTEM) : email ? (await import("@/lib/email-ops/chat")).emailDeskSystem(SYSTEM) : `${SYSTEM}\n\n${permsPrompt(perms)}`) + lineLine + (email ? "" : tiktokConfigured() ? `\nTikTok: you can read and discuss its numbers when they're given, but launches and changes in TikTok aren't connected. Asked to change or launch anything on TikTok, set no change or launch and answer: "${READ_ONLY_TEXT}"` : "") + (scope ? `\nThis chat was opened from the client's ${scope.platform === "google" ? "Google Ads" : "Meta"} KPI card: a launch or change they don't name a platform for is on ${scope.platform === "google" ? "Google Ads" : "Meta"}.` : "") + (level === "deep" ? "\nThis is a big question: think it through, use the market and research you're given (say where a point comes from), and give a clear recommendation with the reasoning; up to 12 sentences or a short structured list." : level === "quick" ? "\nThis is a quick question: answer it directly in 1 to 3 sentences." : ""),
     schema: SCHEMA,
     maxTokens: level === "deep" || docs.length ? 16000 : 8000,
     override: { model, effort: route.effort },

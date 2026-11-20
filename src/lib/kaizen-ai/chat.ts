@@ -361,7 +361,9 @@ export async function runTurn(input: TurnInput): Promise<void> {
   const noClientCopy = copyAsked && !client && wantsCopy(userText) ? "This message asks for ad copy but no client is set on the thread. Before writing any copy, ask which client it's for (they can pick it in the header), unless they've said it's generic." : "";
   // What this person may do (src/lib/chat-permissions.ts): on the pinned client, or by role (a buyer: on their own clients)
   const perms = client ? await permsOn(admin, me, client.id) : roleWidePerms(me);
-  const allowedLine = `${permsPrompt(perms)}${!client && buyingPlatform(me) && !me.isExec && !me.role.startsWith("head_of") ? ` A buyer's changes and launches are only on clients where they're the client's ${buyingPlatform(me) === "meta" ? "Meta" : "Google"} buyer.` : ""}`;
+  const { lineActionsPrompt } = await import("@/lib/line-actions");
+  const lineLine = client ? ` ${lineActionsPrompt(me, await (await import("@/lib/line-actions-server")).seatsOnClient(admin, me.id, client.id))}` : "";
+  const allowedLine = `${permsPrompt(perms)}${lineLine}${!client && buyingPlatform(me) && !me.isExec && !me.role.startsWith("head_of") ? ` A buyer's changes and launches are only on clients where they're the client's ${buyingPlatform(me) === "meta" ? "Meta" : "Google"} buyer.` : ""}`;
   system.push({ type: "text", text: [`Today is ${today} (New York). You're talking with the team's ${roleLabel(me.role)}${me.isExec ? " (an executive)" : me.isLead ? " (a lead)" : ""}.`, allowedLine, aiRuleLine, knowledge, noClientCopy, googleLinksHint(userText).replace(/<\/?hint>/g, "")].filter(Boolean).join("\n\n") });
 
   // ─── The answer, with tools on the way ───

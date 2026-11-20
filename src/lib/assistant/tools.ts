@@ -685,6 +685,8 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
         const { data: a } = await ctx.db.from(`${line}_audits`).select("id").eq("client_id", c.id).eq("status", "ready").order("created_at", { ascending: false }).limit(1).maybeSingle();
         if (!a) return { done: false, error: `${c.name} has no finished ${line} audit. Offer to run one first.` };
         const only = Number.isInteger(input.move) ? Number(input.move) - 1 : undefined;
+        const may = await (await import("@/lib/line-actions-server")).mayAuditOn(ctx.admin, { id: ctx.me.id, role: ctx.me.role, isExec: ctx.me.isExec }, c.id, line);
+        if (!may.ok) return { done: false, error: may.reason };
         const id = line === "social" ? await (await import("@/lib/social-ops/sprint")).openSocialSprint(ctx.admin, a.id as string, ctx.me.id, only) : await (await import("@/lib/email-ops/sprint")).openEmailSprint(ctx.admin, a.id as string, ctx.me.id, only);
         if (!id) return { done: false, error: "That audit has no moves to follow." };
         showCard(ctx, { title: `${c.name} ${line} sprint`, detail: only != null ? `Move ${only + 1} added` : "Every move on the plan", href: `/kpis/${line}-sprint/${id}`, external: false, cta: "Open the sprint" });

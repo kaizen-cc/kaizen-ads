@@ -33,9 +33,17 @@ export async function addToActionList(auditId: string, index: number): Promise<R
 
 /** For an audit from before sprints, or one whose sprint was closed: follow it now. */
 export async function startSprint(auditId: string): Promise<R<{ sprintId: string }>> {
-  await requireStaff();
+  const me = await requireStaff();
   if (!(await visibleAudit(auditId))) return { ok: false, error: "You don't work on this client." };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
+  // Only an exec, the line's head or the client's buyer on that platform starts it
+  const admin = createAdminClient();
+  const { data: a } = await admin.from("account_audits").select("client_id, kpi_targets(platform)").eq("id", auditId).maybeSingle();
+  const { mayAuditOn } = await import("@/lib/line-actions-server");
+  const { lineOfPlatform } = await import("@/lib/line-actions");
+  const platform = (a?.kpi_targets as unknown as { platform: string } | null)?.platform ?? "meta";
+  const may = await mayAuditOn(admin, { id: me.id, role: me.role, isExec: me.isExec }, (a?.client_id as string) ?? "", lineOfPlatform(platform) ?? "meta");
+  if (!may.ok) return { ok: false, error: may.reason };
   try {
     const { openSprint } = await import("@/lib/sprints");
     const id = await openSprint(createAdminClient(), auditId);
