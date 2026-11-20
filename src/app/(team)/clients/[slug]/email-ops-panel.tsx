@@ -9,7 +9,7 @@ const BAND = { bad: { label: "Red", tone: "text-bad", ring: "border-bad/40 bg-ba
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" });
 
 /** The client page's Audit and ideas tab: the latest audit and sprint, a way to run one, and the campaign ideas */
-export async function EmailOpsPanel({ clientId }: { clientId: string }) {
+export async function EmailOpsPanel({ clientId, canRun = true }: { clientId: string; /** Running an audit is the client's email strategist's, the head of email's or an exec's */ canRun?: boolean }) {
   const db = await createClient();
   const [audits, sprints, suggestions, { data: board }, { data: me }] = await Promise.all([
     latestAudits(db, [clientId]),
@@ -46,7 +46,7 @@ export async function EmailOpsPanel({ clientId }: { clientId: string }) {
                 {audit.status === "ready" ? "Open the audit" : audit.status === "running" ? "Follow it" : "See why"}
               </Link>
             )}
-            <RunEmailAudit clientId={clientId} label={audit ? "Run again" : "Run an audit"} quiet={Boolean(audit)} />
+            {canRun && <RunEmailAudit clientId={clientId} label={audit ? "Run again" : "Run an audit"} quiet={Boolean(audit)} />}
           </div>
         </div>
         {sprint && (

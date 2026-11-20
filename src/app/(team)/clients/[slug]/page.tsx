@@ -1,4 +1,6 @@
 import type { CreativeDb } from "@/lib/creative-db";
+import { mayEditSetup } from "@/lib/setup-access";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
 import { loadClientKpis } from "@/lib/kpi/client";
 import { servicesOf } from "@/lib/services";
 import { mayAssignSeat } from "@/lib/seat-permissions";
@@ -22,7 +24,6 @@ import { actableLines } from "@/lib/client-lines";
 import { ContactChangesPanel, type RemovedContact } from "./contact-changes-panel";
 import { openChanges } from "@/lib/direction-changes";
 import { contactRequestsFor } from "@/lib/contact-changes";
-import { CONTACT_TEAM_SEATS } from "@/lib/contact-changes-core";
 import { latestAudits } from "@/lib/audit-summary";
 import { changeKey, loadChanges } from "@/lib/account-changes";
 import type { ShotList } from "@/lib/shot-list";
@@ -383,7 +384,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     })
     .sort((a, b) => b.at.localeCompare(a.at));
   const [contactRequests, perms, tiktok, tiktokSeparate, klaviyo, socialAll, googleSync] = await extras;
-  const canChangeContacts = seesAllClients(me) || seatRows.some((a) => a.profile_id === me.id && CONTACT_TEAM_SEATS.includes(a.role));
+  const canChangeContacts = mayEditSetup(me);
 
   // In the market: the competitors this client named first, then what's proven, testing or new in their industry
   // Only the formats this person works in: a designer never sees video examples (the owner's rule)
@@ -422,7 +423,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     .filter((k) => k.accountId && k.target != null)
     .map((k) => {
       const a = auditBy.get(k.id);
-      return { id: k.id, label: `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""}`, status: a?.status ?? "none", auditId: a?.id ?? null };
+      return { id: k.id, label: `${k.platform === "google" ? "Google" : "Meta"}${k.label ? ` · ${k.label}` : ""}`, status: a?.status ?? "none", auditId: a?.id ?? null, platform: k.platform === "google" ? ("google" as const) : ("meta" as const) };
     });
   const sprints = Object.fromEntries(sprintList.map((s) => [s.targetId, s.sprint]));
   const reportable = reportableAll.filter((x) => x.client_id === client.id).map((x) => x.id);
@@ -481,25 +482,34 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
 
   // The heavier panels stream in behind skeletons once the page is up
   const base = { id: client.id as string, slug: client.slug as string, name: client.name as string };
+  // Designers, video editors and the other makers see the creative side of a client only (their tasks, the Brand Bible
+  // and knowledge, the creative allotment, briefs): no spend, KPIs, audits, sprints, campaigns or business numbers.
+  // Left out here on the server, so nothing of it reaches their browser.
+  const numbers = seesAccountNumbers(me);
+  const off = <T,>(v: T): T | null => (numbers ? v : null);
 
   return (
     <ClientView
       execution={
-        hasPlan && adminConfigured() && !channel ? (
+        hasPlan && adminConfigured() && !channel && numbers ? (
           <Streamed>
             <ExecutionStream client={{ ...base, slack_channel_id: (client.slack_channel_id as string | null) ?? null }} me={me} />
           </Streamed>
         ) : null
       }
       business={
-        <Streamed>
-          <BusinessStream clientId={client.id} />
-        </Streamed>
+        numbers ? (
+          <Streamed>
+            <BusinessStream clientId={client.id} />
+          </Streamed>
+        ) : null
       }
       businessAudit={
-        <Streamed h="h-24">
-          <BusinessAuditStream clientId={client.id} meId={me.id} />
-        </Streamed>
+        numbers ? (
+          <Streamed h="h-24">
+            <BusinessAuditStream clientId={client.id} meId={me.id} canRun={perms.business} />
+          </Streamed>
+        ) : null
       }
       patterns={
         channel ? null : (
@@ -529,13 +539,13 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
           </Streamed>
         )
       }
-      campaigns={campaigns}
-      tiktok={tiktokOn ? { data: tiktok, separate: tiktokSeparate } : null}
-      klaviyo={klaviyo}
-      emailOps={klaviyo?.conn && klaviyo.data && acts.includes("email") ? <EmailOpsPanel clientId={client.id} /> : null}
+      campaigns={off(campaigns)}
+      tiktok={tiktokOn && numbers ? { data: tiktok, separate: tiktokSeparate } : null}
+      klaviyo={off(klaviyo)}
+      emailOps={numbers && klaviyo?.conn && klaviyo.data && acts.includes("email") ? <EmailOpsPanel clientId={client.id} canRun={perms.audit.email} /> : null}
       emailScope={acts.includes("email") && !channel ? <EmailScopePanel clientId={client.id} /> : null}
-      social={social}
-      googleSync={googleSync}
+      social={numbers ? social : social ? { ...social, data: null } : social}
+      googleSync={off(googleSync)}
       docs={docs}
       knowledge={knowledge}
       loom={loom}
@@ -551,8 +561,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
           </Streamed>
         ) : null
       }
-      launchRules={launchRules}
-      readiness={readiness}
+      launchRules={numbers ? launchRules : []}
+      readiness={off(readiness)}
       services={{
         track: (client.services ?? []) as string[],
         extra: (client.services_extra ?? []) as string[],
@@ -571,29 +581,29 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       }}
       connections={connections}
       creative={creative}
-      kpis={kpis}
-      audits={audits}
-      changes={changes}
-      sprints={sprints}
-      reportable={reportable}
+      kpis={numbers ? kpis : []}
+      audits={off(audits)}
+      changes={off(changes)}
+      sprints={off(sprints)}
+      reportable={off(reportable)}
       assets={assetGlance}
       shotList={shotList}
       moments={(momentRows ?? []) as MomentRow[]}
       // "Ask about <client>" for everyone (Head of Social, Nov 19 2026): the email and social teams get their own desk
-      chat={{ initial: chatTurns, targets, perms }}
-      fatigue={fatigue}
-      market={market}
+      chat={{ initial: chatTurns, targets: numbers ? targets : [], perms }}
+      fatigue={off(fatigue)}
+      market={numbers ? market : []}
       intake={intake}
       calls={calls}
       client={client}
       packageLabel={packageLabel ?? null}
       packages={packages ?? []}
       brandBible={brandBible}
-      gtm={gtm}
-      googleGtm={googleGtm}
-      googleDeploys={googleDeploys}
-      keywordLists={keywordLists}
-      canDeployGoogle={perms.change.google}
+      gtm={off(gtm)}
+      googleGtm={off(googleGtm)}
+      googleDeploys={numbers ? googleDeploys : []}
+      keywordLists={numbers ? keywordLists : []}
+      canDeployGoogle={numbers && perms.change.google}
       today={nyToday()}
       team={Object.fromEntries(SLOTS.map((slot) => [slot.value, { current: currentIn(slot.value), options: optionsFor(slot), secondaries: secondariesIn(slot.value) }]))}
       contacts={contacts}
@@ -601,7 +611,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       contactChanges={<ContactChangesPanel clientId={client.id} slug={client.slug} requests={contactRequests} removed={removedContacts} contacts={contacts} canEdit={canChangeContacts} />}
       angles={angles ?? []}
       memory={(memory ?? []).map((m) => ({ id: m.id, kind: m.kind, body: m.body, source: m.source, shareReason: m.share_reason, dated: m.dated, by: (m.profiles as unknown as { full_name: string } | null)?.full_name ?? null }))}
-      digest={digest}
+      digest={off(digest)}
       briefingAt={briefing?.generated_at ?? null}
       needsInvite={needsInvite}
       images={images}
@@ -609,7 +619,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       imagesUsed={usage?.images_used ?? 0}
       videosUsed={usage?.videos_used ?? 0}
       fromAsana={{ images: usage?.asana_images ?? 0, videos: usage?.asana_videos ?? 0, waitingImages: usage?.asana_waiting_images ?? 0, waitingVideos: usage?.asana_waiting_videos ?? 0 }}
-      liveWrites={liveWrites}
+      liveWrites={off(liveWrites)}
       billingHistory={billingHistory}
       cycle={{ billingDay: (client.billing_day as number | null) ?? null, source: (client.billing_day_source as string | null) ?? null, start: (usage?.period_start as string | null) ?? null, end: (usage?.period_end as string | null) ?? null, gap: gaps?.get(client.id) ?? null }}
       creativeDb={(client.creative_db as CreativeDb | null) ?? null}

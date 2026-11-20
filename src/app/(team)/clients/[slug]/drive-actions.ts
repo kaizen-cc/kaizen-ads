@@ -1,5 +1,6 @@
 "use server";
 
+import { mayEditSetup, SETUP_REFUSAL } from "@/lib/setup-access";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
@@ -29,7 +30,7 @@ export async function adCreativeDrive(clientId: string): Promise<ClientDriveSumm
  * client can: it's what the ticket's "No Ad Creative folder found" points to. Files that stopped for it go again.
  */
 export async function setAdCreativeFolder(clientId: string, slug: string, link: string): Promise<{ ok: true } | Fail> {
-  await requireStaff();
+  if (!mayEditSetup(await requireStaff())) return { ok: false, error: SETUP_REFUSAL };
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
   if (!(await seen(clientId))) return { ok: false, error: "Client not found." };
   const id = link.trim() ? folderIdOf(link) : null;

@@ -50,7 +50,9 @@ export async function canIdOn(admin: SupabaseClient, profileId: string | null | 
 /** Everything this person may do on this client, for the page (cards, buttons, quick actions, the chat's prompt) */
 export async function permsOn(admin: SupabaseClient, me: Person, clientId: string | null | undefined): Promise<ClientPerms> {
   const buyer = me.role === "media_buyer" || me.role === "google_buyer";
-  return clientPerms(me, buyer ? await seatsOn(admin, me.id, clientId) : []);
+  // Every seat they hold here: the line rule for audits and sprints reads them all
+  const { data: held } = clientId ? await admin.from("client_assignments").select("role").eq("client_id", clientId).eq("profile_id", me.id) : { data: [] };
+  return clientPerms(me, buyer ? await seatsOn(admin, me.id, clientId) : [], (held ?? []).map((r) => r.role as string));
 }
 
 /** The buyer seats this person holds on many clients at once (the KPI board), by client id */

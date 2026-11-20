@@ -8,6 +8,7 @@ import { accountBrief, type ChatTurn, type DeskAction } from "@/lib/handoff";
 import { READ_ONLY_TEXT, tiktokConfigured } from "@/lib/tiktok/core";
 import { addDocs, finishDoc, readDoc, type DocRead } from "@/lib/client-docs";
 import { clientPerms, permsPrompt } from "@/lib/chat-permissions";
+import { seesAccountNumbers } from "@/lib/ai-access-core";
 import { permsOn, personById } from "@/lib/chat-permissions-server";
 
 // The client desk: the AI on each client page, like a receptionist for everything about the client. Anyone who can
@@ -343,6 +344,7 @@ export async function askAboutClient(
   // What this person may do here (src/lib/chat-permissions.ts): the AI only offers and starts what's theirs to do
   const person = await personById(admin, profileId);
   const perms = person ? await permsOn(admin, person, clientId) : clientPerms({ role: null });
+  const numbers = person ? seesAccountNumbers(person) : false;
   // Which lines' audits, sprints and team asks are theirs here (everyone else reads and asks): every desk's prompt says so
   const { lineActionsPrompt } = await import("@/lib/line-actions");
   const { seatsOnClient } = await import("@/lib/line-actions-server");
@@ -361,17 +363,18 @@ export async function askAboutClient(
   const reads: DocRead[] = await Promise.all(docs.map((d) => readDoc(admin, d).catch((e) => ({ id: d.id, label: d.name, text: null, pdf: null, image: null, note: e instanceof Error ? e.message : "Couldn't read it" }))));
   // The brief includes the documents shared before (their summaries)
   const [brief, audits, chat, route, { data: memory }, campaigns, launches] = await Promise.all([
-    email ? import("@/lib/email-ops/chat").then((m) => m.emailBrief(admin, clientId)) : accountBrief(admin, clientId, null, true),
-    email ? Promise.resolve("") : auditsText(admin, clientId),
+    // Makers (designers, editors, email builders and designers, the copywriter) get the creative side only, never account numbers
+    !numbers ? import("@/lib/kaizen-ai/tools").then(async (m) => ({ name: "", text: await m.channelBrief(admin, clientId) })) : email ? import("@/lib/email-ops/chat").then((m) => m.emailBrief(admin, clientId)) : accountBrief(admin, clientId, null, true),
+    email || !numbers ? Promise.resolve("") : auditsText(admin, clientId),
     loadClientChat(admin, clientId, profileId),
     routeMessage(q || "Read what I shared", ceiling, goDeep),
     admin.from("client_memory").select("id, kind, body, dated").eq("client_id", clientId).eq("status", "active").order("created_at", { ascending: false }).limit(80),
     // Every campaign judged on its own result, with purchases and ROAS (as on the KPI card)
-    email ? Promise.resolve("") : import("@/lib/kpi/campaigns").then((m) => m.clientCampaignsText(admin, clientId)).catch(() => ""),
+    email || !numbers ? Promise.resolve("") : import("@/lib/kpi/campaigns").then((m) => m.clientCampaignsText(admin, clientId)).catch(() => ""),
     email ? Promise.resolve({ text: "", latest: null }) : recentLaunches(admin, clientId, profileId).catch(() => ({ text: "", latest: null })),
   ]);
   // The email desk reads the Klaviyo account, the email score, the audit, the sprint and the open ideas
-  const emailData = social ? await (await import("@/lib/social-ops/chat")).socialDeskBlock(admin, clientId).catch(() => "") : email ? await (await import("@/lib/email-ops/chat")).emailDeskBlock(admin, clientId).catch(() => "") : "";
+  const emailData = !numbers ? "" : social ? await (await import("@/lib/social-ops/chat")).socialDeskBlock(admin, clientId).catch(() => "") : email ? await (await import("@/lib/email-ops/chat")).emailDeskBlock(admin, clientId).catch(() => "") : "";
   const recent = launches.latest;
   const scorecard = campaigns
     ? `\n\n<campaigns_scorecard note="last 30 days; each campaign judged on its own result; ones marked left out are run by the client and don't count toward the KPI">\n${campaigns}\n</campaigns_scorecard>`

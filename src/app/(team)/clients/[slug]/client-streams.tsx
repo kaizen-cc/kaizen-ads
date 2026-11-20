@@ -79,7 +79,7 @@ export async function PatternsStream({ clientId }: { clientId: string }) {
 }
 
 /** The full business audit: the latest one, the pushback on it, and whether this person may push back */
-export async function BusinessAuditStream({ clientId, meId }: { clientId: string; meId: string }) {
+export async function BusinessAuditStream({ clientId, meId, canRun = true }: { clientId: string; meId: string; /** Whether this person may run one (src/lib/line-actions.ts) */ canRun?: boolean }) {
   if (!adminConfigured()) return null;
   const admin = createAdminClient();
   const supabase = await createClient();
@@ -100,6 +100,7 @@ export async function BusinessAuditStream({ clientId, meId }: { clientId: string
       pushback={pushback}
       rights={rights}
       asked={asked}
+      canRun={canRun}
     />
   );
 }

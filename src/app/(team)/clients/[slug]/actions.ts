@@ -1,12 +1,13 @@
 "use server";
 
+import { mayEditSetup, SETUP_REFUSAL } from "@/lib/setup-access";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { BOARD_KPIS_TAG } from "@/lib/board-kpis-cache";
 import { after } from "next/server";
 import { backInCycle } from "@/lib/reactivate";
 import { clientReadiness, type Readiness } from "@/lib/readiness";
 import { SERVICES } from "@/lib/services";
-import { isExecOrLead, requireStaff, seesAllClients } from "@/lib/auth";
+import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { lineOfTeam } from "@/lib/roles";
 import { detectIndustries, INDUSTRIES } from "@/lib/industry";
 import { refreshBriefing } from "@/lib/context/briefing";
@@ -36,6 +37,7 @@ function done(slug: string, error?: { message: string } | null): ActionResult {
 /** Execs: status, IDs and channels. RLS enforces exec-only. */
 export async function saveClientDetails(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
   const me = await requireStaff();
+  if (!mayEditSetup(me)) return { ok: false, error: SETUP_REFUSAL };
   const { data: was } = await (await createClient()).from("clients").select("archived_at, status").eq("id", clientId).maybeSingle();
   if (was?.archived_at) return { ok: false, error: "This client is archived. Restore them first." };
   const status = str(form, "status") ?? "active";
@@ -233,7 +235,7 @@ export async function setLaunchRule(id: string, slug: string, active: boolean): 
 }
 
 export async function addContact(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
-  await requireStaff();
+  if (!mayEditSetup(await requireStaff())) return { ok: false, error: SETUP_REFUSAL };
   const supabase = await createClient();
   const { error } = await supabase.rpc("add_client_contact", {
     p_client: clientId,
@@ -245,19 +247,16 @@ export async function addContact(clientId: string, slug: string, form: FormData)
 
 /** Off the client's list (never deleted: kept under Removed, and they can be brought back) */
 export async function removeContact(clientId: string, slug: string, contactId: string): Promise<ActionResult> {
-  await requireStaff();
+  if (!mayEditSetup(await requireStaff())) return { ok: false, error: SETUP_REFUSAL };
   const supabase = await createClient();
   const { error } = await supabase.rpc("remove_client_contact", { p_client: clientId, p_contact: contactId });
   return done(slug, error);
 }
 
-/** Whoever manages contacts, and the client's own account team (they get the notice and its undo) */
+/** Executives and team leads (the owner's rule for Team & setup, Nov 19 2026); the client's account team sees the notice */
 async function mayChangeContacts(me: Awaited<ReturnType<typeof requireStaff>>, clientId: string) {
-  if (seesAllClients(me)) return true;
-  if (!adminConfigured()) return false;
-  const { CONTACT_TEAM_SEATS } = await import("@/lib/contact-changes-core");
-  const { data } = await createAdminClient().from("client_assignments").select("profile_id").eq("client_id", clientId).eq("profile_id", me.id).in("role", [...CONTACT_TEAM_SEATS]).limit(1);
-  return Boolean(data?.length);
+  void clientId;
+  return mayEditSetup(me);
 }
 
 /** A contact taken off, back on the client's list */
@@ -312,6 +311,7 @@ export async function setAngleStatus(slug: string, angleId: string, status: "act
 /** Execs and leads: monthly images / videos. */
 export async function saveAllotment(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
   const me = await requireStaff();
+  if (!mayEditSetup(me)) return { ok: false, error: SETUP_REFUSAL };
   const n = (k: string) => Math.max(0, Math.min(999, Number(form.get(k)) || 0));
   const supabase = await createClient();
   const { error } = await supabase
@@ -342,7 +342,7 @@ export async function saveBillingDay(clientId: string, slug: string, form: FormD
 
 /** Execs: put a client on a sprint package until a date (or change one). The database checks it's an exec. */
 export async function setSprintPackage(clientId: string, slug: string, form: FormData): Promise<ActionResult> {
-  await requireStaff();
+  if (!(await requireStaff()).isExec) return { ok: false, error: "Only an executive sets a sprint package." };
   const until = str(form, "until");
   if (!until || !/^\d{4}-\d{2}-\d{2}$/.test(until)) return { ok: false, error: "Pick the day the sprint ends." };
   const pkg = str(form, "package");
@@ -362,7 +362,7 @@ export async function setSprintPackage(clientId: string, slug: string, form: For
 
 /** Execs: take a client off their creative package now. */
 export async function endCreativePackage(clientId: string, slug: string): Promise<ActionResult> {
-  await requireStaff();
+  if (!(await requireStaff()).isExec) return { ok: false, error: "Only an executive ends a creative package." };
   const supabase = await createClient();
   const { error } = await supabase.rpc("end_creative_package", { p_client: clientId });
   return done(slug, error);
@@ -508,7 +508,7 @@ export async function restoreClient(clientId: string, slug: string): Promise<Act
 
 /** Onboarding is done: the client leaves the onboarding callout on Home. Execs, leads, and the client's own team. */
 export async function markOnboarded(clientId: string, slug: string): Promise<ActionResult> {
-  await requireStaff();
+  if (!mayEditSetup(await requireStaff())) return { ok: false, error: SETUP_REFUSAL };
   const { data: mine } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!mine) return { ok: false, error: "You don't work on this client." };
   if (!adminConfigured()) return { ok: false, error: "Can't save here." };
@@ -648,7 +648,7 @@ export async function clearClientAi(clientId: string) {
 
 /** Execs: put a client on an ongoing creative package from the client page (its allotment follows). */
 export async function setOngoingPackage(clientId: string, slug: string, pkg: string): Promise<ActionResult> {
-  await requireStaff();
+  if (!(await requireStaff()).isExec) return { ok: false, error: "Only an executive sets a creative package." };
   const supabase = await createClient();
   const { error } = await supabase.rpc("set_ongoing_package", { p_client: clientId, p_package: pkg });
   return done(slug, error);
@@ -666,6 +666,7 @@ export async function previewStageEmail(clientId: string, kind: import("@/lib/cl
 
 export async function pushStageEmail(clientId: string, slug: string, kind: import("@/lib/client-emails").ClientEmailKind) {
   const me = await requireStaff();
+  if (!mayEditSetup(me)) return { ok: false as const, error: SETUP_REFUSAL };
   const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!c) return { ok: false as const, error: "Not found." };
   const { pushClientEmail } = await import("@/lib/client-emails");

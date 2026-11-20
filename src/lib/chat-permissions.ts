@@ -20,6 +20,7 @@
 // Ad account actions also pass the client's live-writes switch (live_ad_writes for Meta, live_google_writes for
 // Google) after this; the role is checked first.
 
+import { mayAudit, mayBusinessAudit } from "./line-actions";
 import { formatList, normalizeFormat, type CreativeFormat } from "./creative-formats";
 import { baseRole } from "./roles";
 
@@ -159,9 +160,13 @@ export type ClientPerms = {
   copy: boolean;
   copyWhy: string | null;
   review: boolean;
+  /** Audits, re-audits and sprints this person runs on the client, per line (src/lib/line-actions.ts) */
+  audit: Record<"meta" | "google" | "email" | "social", boolean>;
+  /** The whole-business audit */
+  business: boolean;
 };
 
-export function clientPerms(me: Who, seats: readonly (AdPlatform | "tiktok")[] = []): ClientPerms {
+export function clientPerms(me: Who, seats: readonly (AdPlatform | "tiktok")[] = [], held: readonly string[] = []): ClientPerms {
   const v = (action: "ads.change" | "ads.launch", platform: AdPlatform) => can(me, action, { platform, seats });
   const cm = v("ads.change", "meta"), cg = v("ads.change", "google"), lm = v("ads.launch", "meta"), lg = v("ads.launch", "google");
   const brief = can(me, "brief");
@@ -177,6 +182,8 @@ export function clientPerms(me: Who, seats: readonly (AdPlatform | "tiktok")[] =
     copy: copy.ok,
     copyWhy: copy.reason,
     review: can(me, "creative.review").ok,
+    audit: { meta: mayAudit(me, "meta", held).ok, google: mayAudit(me, "google", held).ok, email: mayAudit(me, "email", held).ok, social: mayAudit(me, "social", held).ok },
+    business: mayBusinessAudit(me, held).ok,
   };
 }
 
@@ -201,6 +208,8 @@ export const ALL_PERMS: ClientPerms = {
   copy: true,
   copyWhy: null,
   review: true,
+  audit: { meta: true, google: true, email: true, social: true },
+  business: true,
 };
 
 /**

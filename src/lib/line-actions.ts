@@ -67,6 +67,15 @@ export function mayAskTeammate(me: LineWho, seats: readonly string[], kind: "tas
   return { ok: false, reason: "Asks and tasks for the team on a client come from the client's buyer, strategist or social media manager, a line head or an exec. You can still share it as an FYI, or ask them to send it." };
 }
 
+/**
+ * The whole-business audit (every line at once): executives, the line heads, and the client's seated buyers,
+ * strategists and social media managers. Designers, editors, builders, copywriters and customer success never run it.
+ */
+export function mayBusinessAudit(me: LineWho, seats: readonly string[]): LineVerdict {
+  if (isExec(me) || String(me.role ?? "").startsWith("head_of_") || OWNER_SEATS.some((s) => seats.includes(s))) return YES;
+  return { ok: false, reason: "Only the client's buyers and strategists, the line heads or an exec can run a full business audit." };
+}
+
 /** The lines this person may act on for a client (for the chat's prompt) */
 export function actingLines(me: LineWho, seats: readonly string[], lines: readonly ActLine[] = ["meta", "google", "email", "social"]): ActLine[] {
   return lines.filter((l) => mayActOnLine(me, l, seats).ok);

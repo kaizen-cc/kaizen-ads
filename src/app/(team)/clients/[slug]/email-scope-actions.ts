@@ -1,9 +1,9 @@
 "use server";
 
+import { mayEditSetup, SETUP_REFUSAL } from "@/lib/setup-access";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth";
-import { seesEmailBoard } from "@/lib/roles";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { SowScope } from "@/lib/email-allotment-core";
@@ -20,7 +20,7 @@ const SOW_TYPES = ["application/pdf", "application/vnd.openxmlformats-officedocu
 async function guard(clientId: string, opts: { package?: boolean } = {}) {
   const me = await requireStaff();
   if (!adminConfigured()) throw new Error("Not set up.");
-  if (opts.package ? !(me.isExec || me.isLead) : !(seesEmailBoard(me) || me.isExec || me.isLead)) throw new Error(opts.package ? "Only an executive or a lead sets a client's package." : "The email team and the executives manage the email scope.");
+  if (opts.package ? !(me.isExec || me.isLead) : !mayEditSetup(me)) throw new Error(opts.package ? "Only an executive or a lead sets a client's package." : SETUP_REFUSAL);
   const db = await createClient();
   const { data: c } = await db.from("clients").select("id, slug").eq("id", clientId).maybeSingle();
   if (!c) throw new Error("That client isn't one you work on.");

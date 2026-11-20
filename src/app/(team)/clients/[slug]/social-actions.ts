@@ -1,5 +1,6 @@
 "use server";
 
+import { mayEditSetup, SETUP_REFUSAL } from "@/lib/setup-access";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { requireStaff } from "@/lib/auth";
@@ -12,8 +13,9 @@ import { createClient } from "@/lib/supabase/server";
 
 type Result = { ok: true; pageName?: string | null } | { ok: false; error: string };
 
-async function mine(clientId: string) {
+async function mine(clientId: string, change = false) {
   const me = await requireStaff();
+  if (change && !mayEditSetup(me)) return { error: SETUP_REFUSAL } as const;
   if (!adminConfigured()) return { error: "Not set up here." } as const;
   const { data } = await (await createClient()).from("clients").select("id, slug").eq("id", clientId).maybeSingle();
   if (!data) return { error: "You don't work on this client." } as const;
@@ -32,7 +34,7 @@ export async function socialPageChoices(clientId: string): Promise<{ ok: true; p
 
 /** Link a Page (and its Instagram account, or a different one by ID) to the client, then read it */
 export async function saveSocialLink(clientId: string, pageId: string, igId: string | null): Promise<Result> {
-  const l = await mine(clientId);
+  const l = await mine(clientId, true);
   if ("error" in l) return { ok: false, error: l.error! };
   const r = await setSocialLink(l.admin, clientId, { pageId: String(pageId).slice(0, 40), igId: igId ? String(igId).slice(0, 40) : null, by: l.me.id });
   if (!r.ok) return r;
@@ -57,7 +59,7 @@ export async function syncSocialNow(clientId: string): Promise<Result> {
 
 /** Link every Page that's clearly theirs (and its Instagram), labeled with its location; the rest come back to pick from */
 export async function findSocialAccounts(clientId: string): Promise<{ ok: true; added: string[]; pages: PageChoice[]; note: string | null } | { ok: false; error: string }> {
-  const l = await mine(clientId);
+  const l = await mine(clientId, true);
   if ("error" in l) return { ok: false, error: l.error! };
   const r = await discoverSocialLinks(l.admin, clientId, { apply: true, by: l.me.id });
   if (r.added.length) {
@@ -75,7 +77,7 @@ export async function findSocialAccounts(clientId: string): Promise<{ ok: true; 
 
 /** Add a Page (with its Instagram) or an Instagram account by ID, for a location */
 export async function addSocialAccountAction(clientId: string, input: { pageId?: string | null; igId?: string | null; location?: string | null }): Promise<{ ok: true; added: string[] } | { ok: false; error: string }> {
-  const l = await mine(clientId);
+  const l = await mine(clientId, true);
   if ("error" in l) return { ok: false, error: l.error! };
   const r = await addSocialAccount(l.admin, clientId, { pageId: input.pageId ? String(input.pageId).slice(0, 40) : null, igId: input.igId ? String(input.igId).slice(0, 40) : null, location: input.location ?? null, by: l.me.id });
   if (!r.ok) return r;
@@ -88,7 +90,7 @@ export async function addSocialAccountAction(clientId: string, input: { pageId?:
 
 /** Take an account off (its numbers are kept; it's never linked again by name) */
 export async function removeSocialAccountAction(clientId: string, linkId: string): Promise<Result> {
-  const l = await mine(clientId);
+  const l = await mine(clientId, true);
   if ("error" in l) return { ok: false, error: l.error! };
   const r = await removeSocialAccount(l.admin, clientId, linkId, l.me.id);
   revalidatePath(`/clients/${l.slug}`);
@@ -97,7 +99,7 @@ export async function removeSocialAccountAction(clientId: string, linkId: string
 
 /** Name an account's location */
 export async function labelSocialAccountAction(clientId: string, linkId: string, location: string): Promise<Result> {
-  const l = await mine(clientId);
+  const l = await mine(clientId, true);
   if ("error" in l) return { ok: false, error: l.error! };
   const r = await labelSocialAccount(l.admin, clientId, linkId, location);
   revalidatePath(`/clients/${l.slug}`);

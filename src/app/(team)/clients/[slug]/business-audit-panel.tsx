@@ -30,7 +30,7 @@ const TONE: Record<string, { label: string; chip: string; dot: string }> = {
 const WHEN: Record<string, string> = { now: "Today", this_week: "This week", next: "Next" };
 const SEV: Record<string, string> = { high: "border-l-bad", medium: "border-l-warn", low: "border-l-line" };
 
-export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushback, rights = NO_RIGHTS, asked = {} }: { clientId: string; /** For links to the client's tasks (read from the address when not given) */ slug?: string | null; latest: BusinessAuditView | null; pushback: Record<string, RebutNote[]>; /** What this person may push back on, per platform (a Google item: the Head of Google too) */ rights?: RebutRights; /** "Why?" messages per item so far */ asked?: Record<string, number> }) {
+export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushback, rights = NO_RIGHTS, asked = {}, canRun = true }: { /** Whether this person may run one: the client's buyers and strategists, the line heads and the execs */ canRun?: boolean; clientId: string; /** For links to the client's tasks (read from the address when not given) */ slug?: string | null; latest: BusinessAuditView | null; pushback: Record<string, RebutNote[]>; /** What this person may push back on, per platform (a Google item: the Head of Google too) */ rights?: RebutRights; /** "Why?" messages per item so far */ asked?: Record<string, number> }) {
   const router = useRouter();
   const path = usePathname();
   const slug = given ?? (path.startsWith("/clients/") ? (path.split("/")[2] ?? null) : null);
@@ -102,9 +102,9 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Full business audit</p>
           <p className="max-w-2xl text-[13.5px] text-muted">Every channel at once: Meta, Google, creative and what the client is telling us, connected. {latest ? `Last run ${new Date(latest.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}${latest.by ? ` by ${latest.by}` : ""}.` : "Not run yet."}</p>
         </div>
-        <button type="button" disabled={Boolean(running)} onClick={start} className="min-h-11 rounded-full bg-fg px-5 text-[13.5px] font-medium text-bg disabled:opacity-60 md:min-h-9">
+        {canRun && <button type="button" disabled={Boolean(running)} onClick={start} className="min-h-11 rounded-full bg-fg px-5 text-[13.5px] font-medium text-bg disabled:opacity-60 md:min-h-9">
           {running ? (running.step ?? "Auditing…") : latest ? "Audit the whole business again" : "Audit the whole business"}
-        </button>
+        </button>}
       </div>
       {error && <p className="rounded-[12px] bg-bad-soft px-4 py-2.5 text-[13px] text-bad">{error}</p>}
       {latest?.status === "failed" && !error && !running && <p className="text-[13px] text-faint">The last one didn&apos;t finish: {latest.error}</p>}

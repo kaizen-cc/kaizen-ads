@@ -1,5 +1,6 @@
 "use server";
 
+import { mayEditSetup, SETUP_REFUSAL } from "@/lib/setup-access";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { requireStaff } from "@/lib/auth";
@@ -13,8 +14,9 @@ import { createClient } from "@/lib/supabase/server";
 type Result = { ok: true } | { ok: false; error: string };
 const KINDS: IntegrationKind[] = ["shopify", "woocommerce", "gohighlevel", "hubspot", "other"];
 
-async function mine(clientId: string) {
+async function mine(clientId: string, change = false) {
   const me = await requireStaff();
+  if (change && !mayEditSetup(me)) return { error: SETUP_REFUSAL } as const;
   if (!adminConfigured()) return { error: "Not set up here." } as const;
   const { data } = await (await createClient()).from("clients").select("id, slug").eq("id", clientId).maybeSingle();
   if (!data) return { error: "You don't work on this client." } as const;
@@ -22,7 +24,7 @@ async function mine(clientId: string) {
 }
 
 export async function connectStore(clientId: string, input: { kind: IntegrationKind; account: string; secret: string; secret2?: string; label?: string }): Promise<Result> {
-  const l = await mine(clientId);
+  const l = await mine(clientId, true);
   if ("error" in l) return { ok: false, error: l.error! };
   if (!KINDS.includes(input.kind)) return { ok: false, error: "Not found." };
   if (!input.account.trim() && input.kind !== "hubspot") return { ok: false, error: input.kind === "gohighlevel" ? "Add the location ID." : input.kind === "other" ? "Name the CRM." : "Add the store address." };
@@ -36,7 +38,7 @@ export async function connectStore(clientId: string, input: { kind: IntegrationK
 }
 
 export async function disconnectStore(clientId: string, id: string): Promise<Result> {
-  const l = await mine(clientId);
+  const l = await mine(clientId, true);
   if ("error" in l) return { ok: false, error: l.error! };
   const { data } = await l.admin.from("client_integrations").select("id").eq("id", id).eq("client_id", clientId).maybeSingle();
   if (!data) return { ok: false, error: "Not found." };

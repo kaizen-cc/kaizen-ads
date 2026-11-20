@@ -1,4 +1,5 @@
 import "server-only";
+import { mayEditSetup, SETUP_REFUSAL } from "@/lib/setup-access";
 import { clientNamed } from "@/lib/client-named";
 import type { Staff } from "@/lib/auth";
 import { seesEmailBoard } from "@/lib/roles";
@@ -71,7 +72,8 @@ const findSow: AiTool = {
   input_schema: { type: "object", properties: { client: { type: "string" } }, required: ["client"], additionalProperties: false },
   lines: ["email"],
   run: async (user: Staff, input) => {
-    if (!seesEmailBoard(user) && !user.isLead) return { ok: false, error: "The email team and the executives manage the email scope." };
+    // The client's scope is Team & setup: executives and team leads (the head of email among them)
+    if (!mayEditSetup(user)) return { ok: false, error: SETUP_REFUSAL };
     const db = await createClient();
     const c = await clientNamed(db, input.client);
     await assertMaySee(await accessFor(user), c.id);
@@ -107,7 +109,8 @@ const adjustScope: AiTool = {
   input_schema: { type: "object", properties: { client: { type: "string" }, what_changed: { type: "string" }, confirmed: { type: "boolean" } }, required: ["client", "what_changed"], additionalProperties: false },
   lines: ["email"],
   run: async (user: Staff, input) => {
-    if (!seesEmailBoard(user) && !user.isLead) return { ok: false, error: "The email team and the executives manage the email scope." };
+    // The client's scope is Team & setup: executives and team leads (the head of email among them)
+    if (!mayEditSetup(user)) return { ok: false, error: SETUP_REFUSAL };
     const db = await createClient();
     const c = await clientNamed(db, input.client);
     await assertMaySee(await accessFor(user), c.id);

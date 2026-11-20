@@ -27,7 +27,7 @@ import { warmLaunchRead } from "./launch-more-actions";
 // remember or change (it updates the knowledge base and says what it did, each with an undo), or run the account
 // audit (the same audit as on the KPI board). Each person has their own thread per client, kept between visits.
 
-export type AuditTarget = { id: string; label: string; status: "none" | "queued" | "running" | "ready" | "failed"; auditId: string | null };
+export type AuditTarget = { id: string; label: string; status: "none" | "queued" | "running" | "ready" | "failed"; auditId: string | null; platform?: "meta" | "google" };
 /** The KPI card a chat was opened from: launches and changes that don't name a platform go to its account */
 export type ChatScope = { platform: "meta" | "google"; targetId?: string | null };
 
@@ -395,6 +395,14 @@ export function ClientChat({
                   {/* Opening the audit is the main thing; running it again is a quiet text link (or the button when there's nothing to open) */}
                   {(() => {
                     const canOpen = Boolean(t.auditId && t.status === "ready");
+                    // Running one is the line's: its buyer on this client, its head or an exec (the server checks too)
+                    const mayRun = perms.audit[t.platform ?? "meta"];
+                    if (!mayRun)
+                      return canOpen ? (
+                        <Link href={`/kpis/audit/${t.auditId}`} className="grid h-10 place-items-center rounded-full border border-ink/10 px-4 text-xs text-ink/70 md:h-8">
+                          Open the audit
+                        </Link>
+                      ) : null;
                     const off = !live || starting === t.id || t.status === "running" || t.status === "queued";
                     const label = starting === t.id ? "Starting…" : t.status === "none" ? "Run an audit" : "Run again";
                     return canOpen ? (

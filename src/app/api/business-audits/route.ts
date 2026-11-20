@@ -17,6 +17,11 @@ export async function POST(request: Request) {
   const { data: c } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!c) return Response.json({ error: "Client not found." }, { status: 404 });
   const admin = createAdminClient();
+  // Only the client's buyers and strategists, the line heads or an exec run it (never a designer, an editor or a builder)
+  const { mayBusinessAudit } = await import("@/lib/line-actions");
+  const { seatsOnClient } = await import("@/lib/line-actions-server");
+  const may = mayBusinessAudit(me, await seatsOnClient(admin, me.id, clientId));
+  if (!may.ok) return Response.json({ error: may.reason }, { status: 403 });
   const { data: running } = await admin.from("business_audits").select("id").eq("client_id", clientId).eq("status", "running").gte("created_at", new Date(Date.now() - 20 * 60_000).toISOString()).limit(1).maybeSingle();
   if (running) return Response.json({ id: running.id });
   const { data: row, error } = await admin.from("business_audits").insert({ client_id: clientId, created_by: me.id, step: "Starting" }).select("id").single();
