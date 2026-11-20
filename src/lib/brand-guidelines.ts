@@ -14,6 +14,8 @@ import { backfillOrder, extractHexColors, GUIDELINE_MARK, googleLinksIn, GUIDELI
 // flagged on the proposal. The first pass reaches back four months, so guidelines already shared are picked up.
 
 const CURSOR = "brand_guidelines";
+/** The Drive file names that can be a brand guideline (a PostgREST or-filter) */
+const GUIDE_TITLES = "title.ilike.%brand%,title.ilike.%guide%,title.ilike.%style%,title.ilike.%logo%,title.ilike.%font%,title.ilike.%palette%,title.ilike.%identity%,title.ilike.%kit%";
 const FIRST_DAYS = 120;
 const SOURCES = ["drive", "slack_external", "slack_internal", "gmail", "call"];
 const day = (iso: string) => String(iso).slice(0, 10);
@@ -47,14 +49,19 @@ type Signal = { key: string; at: string; label: string; text: string; url: strin
 /** Everything the client shared that mentions a guideline, logo, colors or fonts, newest first */
 async function signalsFor(admin: SupabaseClient, clientId: string): Promise<Signal[]> {
   const since = new Date(Date.now() - 365 * 86_400_000).toISOString();
-  const [{ data: items }, { data: calls }, { data: intake }, { data: logos }] = await Promise.all([
+  const [{ data: recent }, { data: guideFiles }, { data: calls }, { data: intake }, { data: logos }] = await Promise.all([
     admin.from("context_items").select("id, source, occurred_at, author, title, body, url, meta").eq("client_id", clientId).in("source", SOURCES).gt("occurred_at", since).order("occurred_at", { ascending: false }).limit(1500),
+    // The guideline files by their names, however old and however much came after them (a busy client's Drive pushed
+    // its September brand guide out of the newest 1,500 items)
+    admin.from("context_items").select("id, source, occurred_at, author, title, body, url, meta").eq("client_id", clientId).eq("source", "drive").or(GUIDE_TITLES).order("occurred_at", { ascending: false }).limit(200),
     admin.from("client_calls").select("id, source, title, occurred_at, url, notes").eq("client_id", clientId).gt("occurred_at", since).order("occurred_at", { ascending: false }).limit(60),
     admin.from("client_intakes").select("id, received_at, answers").eq("client_id", clientId).order("received_at", { ascending: false }).limit(1).maybeSingle(),
     admin.from("client_assets").select("file_id, name, url, created_at").eq("client_id", clientId).ilike("name", "%logo%").order("created_at", { ascending: false }).limit(12),
   ]);
   const out: Signal[] = [];
-  for (const i of items ?? []) {
+  const ids = new Set<string>();
+  const items = [...(guideFiles ?? []), ...(recent ?? [])].filter((i) => !ids.has(i.id as string) && Boolean(ids.add(i.id as string)));
+  for (const i of items) {
     const file = i.source === "drive";
     if (file ? !isGuidelineFile(i.title) && !mentionsGuideline(i.body) : !mentionsGuideline(`${i.title ?? ""} ${i.body ?? ""}`)) continue;
     const where = file ? "Drive file" : i.source === "gmail" ? "Email" : i.source === "call" ? "Call" : i.source === "slack_internal" ? "Slack (internal)" : "Slack (with client)";
@@ -193,7 +200,7 @@ async function registerDocs(admin: SupabaseClient, clientId: string, signals: Si
 async function backfill(admin: SupabaseClient, deadline: number, perRun = 6) {
   const [{ data: clients }, { data: files }, { data: marks }] = await Promise.all([
     admin.from("clients").select("id").is("archived_at", null).in("status", ["onboarding", "active", "paused"]).limit(2000),
-    admin.from("context_items").select("client_id, title, url, occurred_at").eq("source", "drive").or("title.ilike.%brand%,title.ilike.%guide%,title.ilike.%style%,title.ilike.%logo%,title.ilike.%font%,title.ilike.%palette%,title.ilike.%identity%,title.ilike.%kit%").order("occurred_at", { ascending: false }).limit(5000),
+    admin.from("context_items").select("client_id, title, url, occurred_at").eq("source", "drive").or(GUIDE_TITLES).order("occurred_at", { ascending: false }).limit(5000),
     admin.from("sync_state").select("source, cursor_at, last_run_at").like("source", `${CURSOR}:%`).limit(3000),
   ]);
   const latest = latestGuidelineFiles((files ?? []) as { client_id: string; title: string | null; url: string | null; occurred_at: string }[]);
@@ -227,7 +234,7 @@ async function backfill(admin: SupabaseClient, deadline: number, perRun = 6) {
 export async function guidelinesForClient(admin: SupabaseClient, clientId: string) {
   const r = await ingestGuidelines(admin, clientId);
   if (r !== "not_ready") {
-    const { data: files } = await admin.from("context_items").select("client_id, title, url, occurred_at").eq("client_id", clientId).eq("source", "drive").or("title.ilike.%brand%,title.ilike.%guide%,title.ilike.%style%,title.ilike.%logo%,title.ilike.%font%,title.ilike.%palette%,title.ilike.%identity%,title.ilike.%kit%").order("occurred_at", { ascending: false }).limit(200);
+    const { data: files } = await admin.from("context_items").select("client_id, title, url, occurred_at").eq("client_id", clientId).eq("source", "drive").or(GUIDE_TITLES).order("occurred_at", { ascending: false }).limit(200);
     const latest = latestGuidelineFiles((files ?? []) as { client_id: string; title: string | null; url: string | null; occurred_at: string }[]);
     await admin.from("sync_state").upsert({ source: `${CURSOR}:${clientId}`, cursor_at: latest.get(clientId) ?? null, last_run_at: new Date().toISOString(), last_result: { result: r } });
   }
