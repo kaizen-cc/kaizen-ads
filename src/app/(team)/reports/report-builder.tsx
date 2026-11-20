@@ -24,7 +24,8 @@ export type BuilderClient = {
   name: string;
   slug: string;
   hasChannel: boolean;
-  services: { platform: BuilderPlatform; owner: string | null; mine: boolean }[];
+  /** Every service there is to report on for them: the ads accounts, Email and Social (each with what to connect first, if any) */
+  services: { platform: BuilderPlatform; owner: string | null; mine: boolean; setup?: { state: "missing" | "pending" | "failing"; what: string } | null }[];
   /** Email and social: what to connect (or fix) before a report can be built; absent or null when it's connected */
   setup?: { state: "missing" | "pending" | "failing"; what: string } | null;
 };
@@ -115,8 +116,9 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {}, li
   const [custom, setCustom] = useState({ start: "", end: yesterday });
   // The services ticked for the picked client; until they're changed, the buyer's own (or all of them)
   const [ticked, setTicked] = useState<{ id: string; list: string[] } | null>(null);
-  const mine = picked?.services.filter((s) => s.mine).map((s) => s.platform) ?? [];
-  const services = !picked ? [] : ticked?.id === picked.id ? ticked.list : mine.length ? mine : picked.services.map((s) => s.platform);
+  // Only services that are ready to read are ticked for them; one still to connect is shown, and can be ticked to see what's missing
+  const mine = picked?.services.filter((s) => s.mine && !s.setup).map((s) => s.platform) ?? [];
+  const services = !picked ? [] : ticked?.id === picked.id ? ticked.list : mine.length ? mine : picked.services.filter((s) => !s.setup).map((s) => s.platform);
   const setServices = (list: string[]) => picked && setTicked({ id: picked.id, list });
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -153,7 +155,8 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {}, li
   const joint = chosen.length > 1;
   const rangesReady = ranges.length > 0 && (!ranges.includes("custom") || Boolean(custom.start));
   // Email and social: a client that isn't connected yet can't be built until it is
-  const setup = picked?.setup ?? null;
+  // A ticked service that isn't connected yet holds the build, and says what to connect
+  const setup = picked?.setup ?? chosen.find((s) => s.setup)?.setup ?? null;
   const ready = Boolean(picked) && rangesReady && chosen.length > 0 && !setup;
 
   const build = () =>
@@ -161,10 +164,26 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {}, li
       if (!picked) return;
       setError(null);
       const asked = ranges.map((k) => (k === "custom" ? { key: k, start: custom.start, end: custom.end } : { key: k }));
-      const replace = replacing === picked.id ? already.map((a) => a.id) : [];
-      const r = line ? await buildChannelReportAction(picked.id, line, asked[0], replace) : await buildReportAction(picked.id, asked, services, replace);
-      if (!r.ok) return setError(r.error);
-      router.push(`/reports/${r.id}`);
+      const replacing_ = replacing === picked.id;
+      const replaceOf = (pred: (platform: string) => boolean) => (replacing_ ? already.filter((a) => pred(a.platform)).map((a) => a.id) : []);
+      const chan = (p: string) => p === "klaviyo" || p === "social";
+      if (line) {
+        const r = await buildChannelReportAction(picked.id, line, asked[0], replaceOf(() => true));
+        if (!r.ok) return setError(r.error);
+        return router.push(`/reports/${r.id}`);
+      }
+      // One pick, every service: the ads ones as one report (each buyer drafts their part), Email and Social each on their own
+      const ads = services.filter((p) => !chan(p));
+      const lines = services.filter(chan).map((p) => (p === "klaviyo" ? ("email" as const) : ("social" as const)));
+      const results = await Promise.all([
+        ...(ads.length ? [buildReportAction(picked.id, asked, ads, replaceOf((p) => !chan(p)))] : []),
+        ...lines.map((l) => buildChannelReportAction(picked.id, l, asked[0], replaceOf((p) => p === (l === "email" ? "klaviyo" : "social")))),
+      ]);
+      const bad = results.find((x) => !x.ok);
+      const ok = results.filter((x): x is Extract<typeof x, { ok: true }> => x.ok);
+      if (!ok.length) return setError(bad && !bad.ok ? bad.error : "Couldn't build it.");
+      if (bad && !bad.ok) setError(`Part of it built; one service didn't: ${bad.error}`);
+      router.push(ok.length === 1 ? `/reports/${ok[0].id}` : "/reports?view=ready");
     });
 
   return (
@@ -178,7 +197,7 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {}, li
             <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-text">Report builder</span>
             <h2 className="font-heading text-[30px] leading-[1.1] tracking-tight md:text-[36px]">One report, everything they need to see</h2>
             <p className="max-w-xl text-sm text-ink/55">
-              {line ? `Pick the client, the dates and the service. It's written in the voice of whoever runs their ${LINE[line].service.toLowerCase()}, checked by the QA, and ready to send.` : "Pick the client, the dates and the services. Each service is written for its buyer, and the client gets it all as one."}
+              {line ? `Pick the client, the dates and the service. It's written in the voice of whoever runs their ${LINE[line].service.toLowerCase()}, checked by the QA, and ready to send.` : "Find the client, pick the dates, then the services: ads, email and social. Each is written for whoever runs it; the ads ones go to the client as one report."}
             </p>
           </div>
 
@@ -188,7 +207,7 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {}, li
                 <span className="grid h-11 w-11 place-items-center rounded-[12px] bg-gradient-to-br from-brand to-[#7a0a1c] font-heading text-sm text-white">{initials(picked.name)}</span>
                 <span className="grid min-w-0 flex-1">
                   <span className="truncate font-heading text-lg leading-tight">{picked.name}</span>
-                  <span className={`text-xs ${setup ? "text-warn" : "text-ink/50"}`}>{setup ? (setup.state === "pending" ? "Connected, first read still running" : "Not connected yet") : picked.services.map((s) => PLATFORM[s.platform].name).join(" · ")}</span>
+                  <span className={`text-xs ${picked.setup ? "text-warn" : "text-ink/50"}`}>{picked.setup ? (picked.setup.state === "pending" ? "Connected, first read still running" : "Not connected yet") : picked.services.map((s) => PLATFORM[s.platform].name).join(" · ")}</span>
                 </span>
                 <button type="button" onClick={() => closeParams("client")} className="h-9 rounded-full border border-ink/10 px-3.5 text-xs text-ink/60 hover:text-fg max-md:h-11">
                   Change
@@ -255,12 +274,12 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {}, li
                               {PLATFORM[s.platform].short}
                             </span>
                           ))}
-                          {c.setup && <span className="text-warn">· {c.setup.state === "pending" ? "First read running" : "Not connected"}</span>}
+                          {(c.setup ?? c.services.find((x) => x.setup)?.setup) && c.services.every((x) => x.setup) && <span className="text-warn">· Not connected</span>}
                         </span>
                       </span>
                     </button>
                   ))}
-                  {!matches.length && <p className="px-1 text-sm text-ink/45">{line ? `No client by that name that buys ${LINE[line].service}.` : "No client by that name with an ad account to report on."}</p>}
+                  {!matches.length && <p className="px-1 text-sm text-ink/45">{line ? `No client by that name that buys ${LINE[line].service}.` : "No client of yours by that name."}</p>}
                 </div>
                 )}
               </div>
@@ -376,7 +395,7 @@ export function ReportBuilder({ clients, quick = [], yesterday, waiting = {}, li
                       <span className="font-medium">{p.name}</span>
                       <span className="flex items-center gap-1.5 text-[11.5px] text-ink/50">
                         <span className="grid h-4 w-4 place-items-center rounded-full bg-ink/15 text-[8px] font-semibold text-fg">{s.mine ? "Y" : initials(s.owner ?? "?")}</span>
-                        {s.mine ? "You write it" : s.owner ? (line ? `Drafted for ${s.owner} to send` : `${s.owner} approves it`) : line ? "Nobody seated yet: drafted for you" : "No buyer set"}
+                        {s.setup ? (s.setup.state === "pending" ? "First read still running" : "Not connected yet") : s.mine ? "You write it" : s.owner ? (line || s.platform === "klaviyo" || s.platform === "social" ? `Drafted for ${s.owner} to send` : `${s.owner} approves it`) : line || s.platform === "klaviyo" || s.platform === "social" ? "Nobody seated yet: drafted for you" : "No buyer set"}
                       </span>
                     </span>
                     <span className={`grid h-6 w-6 place-items-center rounded-full border text-[11px] ${on ? "border-transparent bg-fg text-bg" : "border-ink/20 text-transparent"}`}>✓</span>

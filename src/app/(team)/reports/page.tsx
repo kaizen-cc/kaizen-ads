@@ -271,32 +271,40 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   // Email and social build in the same builder as ads, one line at a time: the clients that buy the line (with this
   // person's seats; all of the line's for its head, every client on it for an exec), each with its one service and who
   // it's drafted for. A client not connected yet is listed too, and says what to connect when picked
-  let chanBuilder: { line: ChannelLine; clients: BuilderClient[]; quick: QuickPick[]; waiting: typeof waitingFor } | null = null;
-  if (view === "build" && (wp === "klaviyo" || wp === "social")) {
-    const l = lineOfPlatform(wp);
-    const list = chanBy.get(l) ?? [];
-    const ids = list.map((c) => c.id);
-    const [cover, owners] = admin && ids.length ? await Promise.all([coverageFor(admin, l, ids), ownersFor(admin, l, ids)]) : [new Map<string, never>(), new Map<string, string | null>()];
-    const nameOf = (id: string) => seatRows.find((x) => x.profile_id === id)?.profiles?.full_name ?? null;
-    const clients: BuilderClient[] = list.map((c) => {
-      const cv = cover.get(c.id);
-      const ownerId = owners.get(c.id) ?? null;
-      const mine = !ownerId || ownerId === me.id;
-      return { id: c.id, name: c.name, slug: c.slug, hasChannel: c.hasChannel, services: [{ platform: wp, owner: mine ? null : nameOf(ownerId), mine }], setup: !cv || cv.state === "connected" ? null : { state: cv.state, what: cv.what ?? "It isn't connected yet." } };
-    });
-    // Quick create: this person's own connected clients with no report for the month just over
-    const month = lastMonthOf(today);
-    const monthWord = new Date(`${month.start}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
-    const hasMonth = new Set(chanRows.filter((r) => r.platform === wp && r.kind === "monthly" && r.period_start === month.start && r.status !== "skipped").map((r) => r.client_id));
-    const quickChan: QuickPick[] = clients
-      .filter((c) => !c.setup && !hasMonth.has(c.id) && (owners.get(c.id) === me.id || coSeats(c.id, wp).some((x) => x.profile_id === me.id)))
-      .slice(0, 4)
-      .map((c) => ({ clientId: c.id, ranges: ["lastMonth"], services: [wp], reason: `Your client · no ${monthWord} report yet` }));
-    // Their own drafts already waiting on a client: offered before building another
-    const waitingChan: typeof waitingFor = {};
-    for (const r of [...chanMonthly, ...chanWeekly, ...onDemand].filter((r) => r.platform === wp && isMine(r.client_id, r) && ["draft", "queued", "drafting"].includes(r.status))) (waitingChan[r.client_id] ??= []).push({ id: r.id, tag: tagOf(r), platform: plat(r) });
-    chanBuilder = { line: l, clients, quick: quickChan, waiting: waitingChan };
+  // One builder for every line (owner, Nov 20 2026): search the client, then pick the dates and the services. The
+  // clients are this person's own (their line's for a lead, everyone's for an exec): the ads accounts they report on,
+  // plus the clients whose email or social they're seated on (a head: every client on their line). Each service says
+  // who it's drafted for, and one that isn't connected yet says what to connect when it's picked.
+  const merged = new Map<string, BuilderClient>(builderClients.map((c) => [c.id, { ...c, services: [...c.services] }]));
+  const quickAll: QuickPick[] = [...quick];
+  const waitingAll: typeof waitingFor = Object.fromEntries(Object.entries(waitingFor).map(([k, v]) => [k, [...v]]));
+  if (view === "build") {
+    const monthRange = lastMonthOf(today);
+    const monthWord = new Date(`${monthRange.start}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+    for (const l of lines) {
+      const plat = platformOfLine(l) as "klaviyo" | "social";
+      const list = chanBy.get(l) ?? [];
+      const ids = list.map((c) => c.id);
+      if (!ids.length) continue;
+      const [cover, owners] = admin ? await Promise.all([coverageFor(admin, l, ids), ownersFor(admin, l, ids)]) : [new Map<string, never>(), new Map<string, string | null>()];
+      const nameOf = (id: string) => seatRows.find((x) => x.profile_id === id)?.profiles?.full_name ?? null;
+      const hasMonth = new Set(chanRows.filter((r) => r.platform === plat && r.kind === "monthly" && r.period_start === monthRange.start && r.status !== "skipped").map((r) => r.client_id));
+      for (const c of list) {
+        const cv = cover.get(c.id);
+        const ownerId = owners.get(c.id) ?? null;
+        const mine = !ownerId || ownerId === me.id;
+        const setup = !cv || cv.state === "connected" ? null : { state: cv.state, what: cv.what ?? "It isn't connected yet." };
+        const entry = merged.get(c.id) ?? { id: c.id, name: c.name, slug: c.slug, hasChannel: c.hasChannel, services: [] };
+        if (!entry.services.some((x) => x.platform === plat)) entry.services.push({ platform: plat, owner: mine ? null : nameOf(ownerId!), mine, setup });
+        merged.set(c.id, entry);
+        if (!setup && !hasMonth.has(c.id) && quickAll.length < 4 && !quickAll.some((q) => q.clientId === c.id) && (ownerId === me.id || coSeats(c.id, plat).some((x) => x.profile_id === me.id)))
+          quickAll.push({ clientId: c.id, ranges: ["lastMonth"], services: [plat], reason: `Your client · no ${monthWord} report yet` });
+      }
+      for (const r of [...chanMonthly, ...chanWeekly, ...onDemand].filter((r) => r.platform === plat && isMine(r.client_id, r) && ["draft", "queued", "drafting"].includes(r.status))) (waitingAll[r.client_id] ??= []).push({ id: r.id, tag: tagOf(r), platform: plat });
+    }
   }
+  const ORDER = ["meta", "google", "tiktok", "klaviyo", "social"];
+  const allClients = [...merged.values()].map((c) => ({ ...c, services: c.services.sort((a, b) => ORDER.indexOf(a.platform) - ORDER.indexOf(b.platform)) })).sort((a, b) => a.name.localeCompare(b.name));
   const drafts = readyReports.filter((r) => r.status === "draft");
   const stats = [
     { n: drafts.length, label: "ready to review", tone: "text-fg" },
@@ -375,7 +383,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       </nav>
 
       {/* One row for every platform this person reports on: the ads ones, then Email and Social (they scroll sideways on a phone) */}
-      {(platforms.length > 1 || showPeople) && (
+      {view !== "build" && (platforms.length > 1 || showPeople) && (
         <div className="flex flex-wrap items-center gap-2">
           {platforms.length > 1 && (
             <span className="no-scrollbar max-w-full overflow-x-auto rounded-full">
@@ -407,14 +415,10 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
       )}
 
       {view === "build" &&
-        (chanBuilder ? (
-          chanBuilder.clients.length ? (
-            <ReportBuilder key={chanBuilder.line} line={chanBuilder.line} clients={chanBuilder.clients} quick={chanBuilder.quick} yesterday={yesterday} waiting={chanBuilder.waiting} />
-          ) : (
-            <Empty title="No clients yet" body={`The clients that buy ${chanBuilder.line === "email" ? "Email Marketing" : "Social Media"} and have you seated show here, ready to build a report for.`} />
-          )
+        (allClients.length ? (
+          <ReportBuilder clients={allClients} quick={quickAll} yesterday={yesterday} waiting={waitingAll} />
         ) : (
-          <ReportBuilder clients={builderClients} quick={quick} yesterday={yesterday} waiting={waitingFor} />
+          <Empty title="No clients yet" body="The clients you're seated on (or your team's, for a lead) show here, ready to build a report for." />
         ))}
 
       {view !== "build" && (
