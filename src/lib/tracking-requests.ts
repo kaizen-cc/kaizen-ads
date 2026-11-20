@@ -2,7 +2,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTrackingRequest, SOURCE_LABEL, trackingTaskTitle } from "@/lib/tracking-requests-core";
 
-// Requests about a landing page, a tracking setup or a fix, said in Slack, Gmail, Asana or on a call, become a task for
+// Requests about a landing page, a tracking setup or a fix, said in Slack, Gmail, Asana, on a call or in Gemini meeting notes
+// (read from Drive into calls: context_items source "call"), become a task for
 // the Tracking Specialist on their own (agent_asks, tied to the message by source_ref so it's made once). Run hourly
 // with the owed-replies step. Nobody to give it to (no Tracking Specialist yet): nothing is made.
 
@@ -12,7 +13,7 @@ export async function trackingRequests(admin: SupabaseClient, now = new Date()):
   if (!owner) return { made: 0 };
   const since = new Date(now.getTime() - 2 * 86_400_000).toISOString();
   const [{ data: items }, { data: tasks }, { data: calls }] = await Promise.all([
-    admin.from("context_items").select("id, client_id, source, occurred_at, author, title, body, url").in("source", ["slack_external", "slack_internal", "gmail"]).gte("occurred_at", since).limit(2000),
+    admin.from("context_items").select("id, client_id, source, occurred_at, author, title, body, url").in("source", ["slack_external", "slack_internal", "gmail", "call"]).gte("occurred_at", since).limit(2000),
     admin.from("asana_tasks").select("gid, name, notes, url, client_id, asana_created_at").eq("open", true).gte("asana_created_at", since).limit(500),
     admin.from("call_commitments").select("id, client_id, what, why, created_at, status").gte("created_at", since).neq("status", "dismissed").limit(500),
   ]);

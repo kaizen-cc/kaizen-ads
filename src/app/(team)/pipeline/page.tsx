@@ -140,9 +140,10 @@ export default async function Home() {
     const [{ data: hiddenRows }, next, tasks, owedMine] = await Promise.all([hiddenQuery(), loadNextForMe(db, me), supportTasks(db, me).catch(() => []), loadOwedReplies(db, me, false).catch(() => [])]);
     const { OwedReplies } = await import("./views/owed-replies");
     const n = next.now.length + next.decide.length;
-    return (
-      <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
-        <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${n ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : "nothing needs you right now"}`} />
+    const header = <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${n ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : "nothing needs you right now"}`} />;
+    const tracker = me.role === "tracking_specialist";
+    const today = (
+      <>
         <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
         {/* Waiting on you: the Slack and email messages they owe a reply */}
         {owedMine.length > 0 && (
@@ -151,15 +152,36 @@ export default async function Home() {
             <OwedReplies items={owedMine} me={me.id} />
           </section>
         )}
-        {/* Their dashboard under Today: tracking problems, client health, or stuck onboardings (src/lib/oversight) */}
-        <Suspense fallback={null}>
-          <SupportDashboard role={me.role} />
-        </Suspense>
+        {/* Their dashboard under Today: client health or stuck onboardings (src/lib/oversight); the Tracking Specialist's
+            is its own Tracking tab */}
+        {!tracker && (
+          <Suspense fallback={null}>
+            <SupportDashboard role={me.role} />
+          </Suspense>
+        )}
         <HandoffCallout db={db} me={me.id} />
         <MakerTasks tasks={tasks} />
         <WorkUnderToday>
           <NextSection data={next} me={me.id} deploys={[]} />
         </WorkUnderToday>
+      </>
+    );
+    if (!tracker)
+      return (
+        <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
+          {header}
+          {today}
+        </div>
+      );
+    // The Tracking Specialist: Today, and the Tracking tab (?tab=tracking): every paid-ads client's tracking health
+    const [{ trackingHealth }, { createAdminClient }, { TrackingHealth }] = await Promise.all([import("@/lib/tracking-health"), import("@/lib/supabase/admin"), import("./views/tracking-health")]);
+    const health = await trackingHealth(createAdminClient()).catch(() => []);
+    const urgent = health.filter((r) => r.health.tier === "critical").length;
+    const need = health.filter((r) => r.health.tier === "critical" || r.health.tier === "high").length;
+    return (
+      <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
+        {header}
+        <OverviewTabs tabs={[{ id: "today", label: "Today" }, { id: "tracking", label: "Tracking", ...(need ? { count: need, tone: urgent ? ("bad" as const) : ("warn" as const) } : {}) }]} panels={{ today, tracking: <TrackingHealth rows={health} /> }} />
       </div>
     );
   }

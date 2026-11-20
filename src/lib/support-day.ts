@@ -133,67 +133,73 @@ async function stuckCreativeItems(admin: SupabaseClient): Promise<Draft[]> {
   return out;
 }
 
-/** The tracking specialist's: the tracking watchdogs, tracking tasks sent to them, and onboarded clients with no tracking */
+/**
+ * The tracking specialist's, tiered by age (src/lib/tracking-health-core.ts): every flagged potential issue and open
+ * tracking request is important from the start and critical at 2 weeks; tracking not set up is worth a look the first
+ * week after onboarding, important after it, critical at 2 weeks.
+ */
 async function trackingItems(admin: SupabaseClient, me: Staff): Promise<Draft[]> {
-  const { trackingBoard } = await import("@/lib/oversight/support");
-  const [issues, { data: asks }, { data: clients }] = await Promise.all([
-    trackingBoard(admin).catch(() => []),
+  const [{ trackingHealth }, { daysSince, flagTier, notSetUpTier, TIER_SCORE }] = await Promise.all([import("@/lib/tracking-health"), import("@/lib/tracking-health-core")]);
+  const [rows, { data: asks }] = await Promise.all([
+    trackingHealth(admin).catch(() => []),
     admin.from("agent_asks").select("id, title, detail, due_on, created_at, urgent, clients(name, slug), client_id, asker:profiles!agent_asks_asked_by_fkey(full_name)").eq("owner_id", me.id).eq("status", "open").or(`asked_by.neq.${me.id},source_ref.like.trk:%`).limit(80),
-    admin.from("clients").select("id, name, slug, services, services_extra, services_removed, client_onboarding(tracking)").is("archived_at", null).eq("status", "active").limit(1000),
   ]);
   const out: Draft[] = [];
-  for (const f of issues)
-    out.push({
-      key: `dog:${f.id}`,
-      topic: SUPPORT_TOPIC,
-      score: f.severity === "critical" ? 88 : f.severity === "warn" ? 70 : 56,
-      client: f.client,
-      clientSlug: f.slug,
-      clientId: null,
-      stat: { value: f.severity === "critical" ? "Now" : "Watch", label: "caught by the tracking watchdog" },
-      title: f.title,
-      story: f.body ?? f.title,
-      why: f.severity === "critical" ? "Tracking is wrong right now: every decision on this account rests on it." : "Worth checking before it skews the numbers.",
-      evidence: [],
-      action: { label: "Open it", href: `/watch?tab=dogs&client=${f.slug}` },
-    });
-  for (const a of (asks ?? []) as unknown as { id: string; title: string; detail: string | null; due_on: string | null; urgent: boolean | null; clients: { name: string; slug: string } | null; client_id: string | null; asker: { full_name: string } | null }[]) {
-    const late = a.due_on ? a.due_on <= todayNY() : false;
+  for (const r of rows) {
+    for (const f of r.flags) {
+      const d = daysSince(f.openedAt);
+      const tier = flagTier(d);
+      out.push({
+        key: `dog:${f.id}`,
+        topic: SUPPORT_TOPIC,
+        score: TIER_SCORE[tier] + Math.min(6, d / 3),
+        client: r.client,
+        clientSlug: r.slug,
+        clientId: r.clientId,
+        stat: { value: d ? `${d}d` : "Today", label: "since the watchdog flagged it" },
+        title: f.title,
+        story: f.body ?? f.title,
+        why: tier === "critical" ? "Open 2 weeks or more: every decision on this account rests on tracking." : "A potential tracking issue: check it before it skews the numbers.",
+        evidence: [],
+        action: { label: "Open tracking health", href: `/pipeline?tab=tracking&client=${r.slug}` },
+      });
+    }
+    if (r.health.status === "not_set_up") {
+      const d = r.health.daysOnboarded;
+      const tier = notSetUpTier(d);
+      out.push({
+        key: `notrack:${r.clientId}`,
+        topic: SUPPORT_TOPIC,
+        score: TIER_SCORE[tier] + Math.min(6, d / 3),
+        client: r.client,
+        clientSlug: r.slug,
+        clientId: r.clientId,
+        stat: { value: String(d), label: d === 1 ? "day since onboarding" : "days since onboarding" },
+        title: "Tracking not set up",
+        story: `${r.client} runs paid ads with us but their orders, bookings or leads aren't confirmed as tracked, ${d} ${d === 1 ? "day" : "days"} after onboarding.`,
+        why: tier === "critical" ? "Two weeks without tracking: the ad accounts optimize blind." : tier === "high" ? "Over a week without tracking." : "Set it up in their first week.",
+        evidence: [],
+        action: { label: "Open tracking health", href: `/pipeline?tab=tracking&client=${r.slug}` },
+      });
+    }
+  }
+  for (const a of (asks ?? []) as unknown as { id: string; title: string; detail: string | null; due_on: string | null; created_at: string; urgent: boolean | null; clients: { name: string; slug: string } | null; client_id: string | null; asker: { full_name: string } | null }[]) {
+    const d = daysSince(a.created_at);
+    const tier = a.urgent ? (d >= 14 ? "critical" : "high") : flagTier(d);
+    const picked = Boolean(a.detail?.startsWith("Asked in"));
     out.push({
       key: `ask:${a.id}`,
       topic: SUPPORT_TOPIC,
-      score: a.urgent || late ? 82 : 64,
+      score: TIER_SCORE[tier] + Math.min(6, d / 3),
       client: a.clients?.name ?? "Tracking",
       clientSlug: a.clients?.slug ?? "",
       clientId: a.client_id,
-      stat: { value: a.due_on ? a.due_on.slice(5) : "Open", label: a.due_on ? "due" : "task" },
+      stat: { value: d ? `${d}d` : "Today", label: "since it was asked" },
       title: a.title,
       story: a.detail || a.title,
-      why: a.asker?.full_name && !a.detail?.startsWith("Asked in") ? `From ${a.asker.full_name}${a.urgent ? ", marked urgent" : ""}` : "A tracking request picked up from a message, a task or a call",
+      why: picked ? "A tracking request picked up from a message, a task, a call or meeting notes" : `From ${a.asker?.full_name ?? "a teammate"}${a.urgent ? ", marked urgent" : ""}`,
       evidence: [],
       action: { label: "Open your work", href: "/pipeline#next" },
-    });
-  }
-  const { servicesOf } = await import("@/lib/services");
-  for (const c of (clients ?? []) as unknown as { id: string; name: string; slug: string; services: string[] | null; services_extra: string[] | null; services_removed: string[] | null; client_onboarding: { tracking: { status?: string } | null } | { tracking: { status?: string } | null }[] | null }[]) {
-    const svc = servicesOf(c);
-    if (!svc.includes("facebook-ads") && !svc.includes("google-ads")) continue;
-    const ob = Array.isArray(c.client_onboarding) ? c.client_onboarding[0] : c.client_onboarding;
-    const status = ob?.tracking?.status;
-    if (status === "done" || status === "na") continue;
-    out.push({
-      key: `notrack:${c.id}`,
-      topic: SUPPORT_TOPIC,
-      score: 62,
-      client: c.name,
-      clientSlug: c.slug,
-      clientId: c.id,
-      stat: { value: "None", label: "tracking set up" },
-      title: "Onboarded with no tracking set up",
-      story: `${c.name} runs ads with us but their orders, bookings or leads aren't confirmed as tracked.`,
-      why: "Without tracking, the ad accounts optimize blind.",
-      evidence: [],
-      action: { label: "Open the client", href: `/clients/${c.slug}?tab=onboarding` },
     });
   }
   return out;

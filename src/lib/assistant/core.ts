@@ -128,6 +128,8 @@ export const SCREEN_PLACES: Record<string, string> = {
   "waiting on you": "/pipeline#waiting-on-you",
   "reports not sent": "/pipeline#reports-not-sent",
   "client channels": "/pipeline#channel-health",
+  // The Tracking Specialist's Tracking tab: every paid-ads client's tracking health, worst first
+  "tracking health": "/pipeline?tab=tracking",
   // Emails drafted for the person to send to clients, on their Overview
   "emails ready to send": "/pipeline#emails-ready",
   // The executives' weekly account review, each step its own address

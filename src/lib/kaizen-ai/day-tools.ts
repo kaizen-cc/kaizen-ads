@@ -7,7 +7,7 @@ import type { ChatTool, ToolCtx } from "./tools";
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge", "my_team_work", "my_notifications", "mark_notification", "support_board"] as const;
+export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge", "my_team_work", "my_notifications", "mark_notification", "support_board", "tracking_health"] as const;
 
 export function dayTools(ctx: ToolCtx): ChatTool[] {
   return [
@@ -206,6 +206,20 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
         const { todaySnapshot } = await import("@/lib/today-snapshot");
         const snap = await todaySnapshot(ctx.db, ctx.me);
         return { stuck: snap.today.items.filter((i) => i.key.startsWith("stuck:")).map((i) => ({ client: i.client, title: i.title, line: i.story })), open: "/pipeline" };
+      },
+    },
+    {
+      name: "tracking_health",
+      description: "Tracking health for every active client that buys paid ads (Meta, Google, TikTok), worst first: OK, potential issue or not set up; why (watchdog flags, audit findings, platform vs store mismatches, conversion rate drops, open tracking requests); days since onboarding; when last checked. Tiers: a potential issue or open request is important from the start and critical at 2 weeks; not set up is important after 1 week and critical at 2. Optionally one client. open_screen 'tracking health'; each row's open address opens it.",
+      input_schema: { type: "object", properties: { client: { type: "string", description: "Only this client (name)" } }, additionalProperties: false },
+      status: () => "Checking tracking health…",
+      run: async (input) => {
+        const { isSupportRole } = await import("@/lib/roles");
+        if (!(isSupportRole(ctx.me.role) || ctx.me.isExec || ctx.me.isLead || ctx.me.isBuyer)) return { ok: false, note: "Tracking health is for the tracking specialist, buyers, leads and execs." };
+        const { trackingHealth } = await import("@/lib/tracking-health");
+        const want = clip(input.client, 80).toLowerCase();
+        const rows = (await trackingHealth(ctx.admin)).filter((r) => !want || r.client.toLowerCase().includes(want));
+        return { clients: rows.slice(0, 60).map((r) => ({ client: r.client, status: r.health.status, tier: r.health.tier, why: r.health.why, daysOnboarded: r.health.daysOnboarded, openRequests: r.requests.length, lastChecked: r.lastChecked, open: `/pipeline?tab=tracking&client=${r.slug}` })), open: "/pipeline?tab=tracking" };
       },
     },
     {

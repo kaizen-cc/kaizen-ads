@@ -20,4 +20,4 @@ export function trackingTaskTitle(text: string): string {
   return `${kind}: ${clip}`;
 }
 
-export const SOURCE_LABEL: Record<string, string> = { slack_external: "the client's Slack channel", slack_internal: "Slack", gmail: "email", call: "a call", asana: "Asana" };
+export const SOURCE_LABEL: Record<string, string> = { slack_external: "the client's Slack channel", slack_internal: "Slack", gmail: "email", call: "a call or its Gemini meeting notes", asana: "Asana" };
