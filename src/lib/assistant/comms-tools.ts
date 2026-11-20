@@ -448,7 +448,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
     },
     {
       name: "submit_feedback",
-      description: `Files feedback about the app when ${from} says "submit feedback", "report a bug", "I have an idea for…" (to you or any agent): sum it up in one line and confirm ("Got it: <one line>. Filing it."), then run this. It goes down the same path as the in-app report form, with this call's recent lines and the screen they're on attached: a bug goes straight to the fix pipeline; an idea goes to the owner to approve or comment on. Say in a few words where it went.`,
+      description: `Files feedback about the app when ${from} says "submit feedback", "report a bug", "I have an idea for…" (to you or any agent): sum it up in one line and confirm ("Got it: <one line>. Filing it."), then run this. It goes down the same path as the in-app report form, with this call's recent lines and the screen they're on attached: a bug goes straight to the fix pipeline; an idea goes to the owner to approve or comment on, except one the owner (an exec) files, which needs no approval and goes straight to Claude to build. Say in a few words where it went (the result's "where").`,
       input_schema: {
         type: "object",
         properties: {
@@ -466,7 +466,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         const { fileFeedbackFromCall } = await import("@/lib/feedback-call");
         const r = await fileFeedbackFromCall(ctx.db, ctx.admin, ctx.me, { type, message: summary, callId: ctx.callId, roleKey: ctx.roleKey, label: ctx.roleKey === "assistant" ? "assistant" : ctx.label, path: ctx.path ?? null, screen: ctx.screen ?? null, clientId: ctx.clientId ?? null });
         if (!r.ok) return { filed: false, error: r.error };
-        ctx.emit?.({ t: "card", card: { id: `feedback-${r.id.slice(0, 8)}`, title: type === "idea" ? "Your idea is filed" : "Your report is filed", detail: feedbackPath(type).path === "owner" ? "With the owner to approve" : "On its way to a fix", href: "/feedback?tab=mine", external: false, cta: "Open it" } });
+        ctx.emit?.({ t: "card", card: { id: `feedback-${r.id.slice(0, 8)}`, title: type === "idea" ? "Your idea is filed" : "Your report is filed", detail: { owner: "With the owner to approve", build: "On its way to be built", fix: "On its way to a fix" }[feedbackPath(type, ctx.me.isExec).path], href: "/feedback?tab=mine", external: false, cta: "Open it" } });
         return { filed: true, id: r.id, type, where: r.says };
       },
     },

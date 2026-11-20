@@ -177,6 +177,11 @@ describe("feedback from a call", () => {
     expect(feedbackPath("confusing")).toMatchObject({ path: "fix" });
     expect(feedbackPath("idea")).toMatchObject({ path: "owner", mode: "cant" });
   });
+  it("the owner's own idea skips approval and goes straight to a build", () => {
+    expect(feedbackPath("idea", true)).toMatchObject({ path: "build", mode: "cant" });
+    expect(feedbackPath("idea", true).says).not.toMatch(/approve/);
+    expect(feedbackPath("bug", true)).toMatchObject({ path: "fix", mode: "error" });
+  });
   it("an Ask waits on the owner's Overview until it's handled", () => {
     expect(awaitsOwner({ status: "new", scope: "feature", lane: "review" })).toBe(true);
     expect(awaitsOwner({ status: "planned", scope: "feature", lane: "review" })).toBe(false);

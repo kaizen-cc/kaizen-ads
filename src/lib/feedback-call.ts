@@ -11,7 +11,7 @@ import { roleLabel } from "@/lib/roles";
 // Feedback said on a call or in an agent's chat ("submit feedback", "report a bug", "I have an idea for…"), filed down
 // the same path as the in-app report form and "Report this" in a chat: saved as the person, with the call's recent
 // lines (as a transcript in the feedback bucket) and the screen they were on, then read, grouped and routed by the
-// same loop (lib/feedback.ts): a bug to the fix pipeline, an idea to the owner as an Ask.
+// same loop (lib/feedback.ts): a bug to the fix pipeline, an idea to the owner as an Ask (the owner's own straight to a build).
 
 export async function fileFeedbackFromCall(
   db: SupabaseClient,
@@ -41,7 +41,7 @@ export async function fileFeedbackFromCall(
     else console.error("[feedback call] transcript upload", j.error?.message ?? m.error?.message);
   }
 
-  const way = feedbackPath(input.type);
+  const way = feedbackPath(input.type, me.isExec);
   const context = {
     path,
     pattern: routePattern(path),

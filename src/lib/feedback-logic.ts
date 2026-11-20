@@ -455,13 +455,15 @@ export const asksToFileFeedback = (text: string | null | undefined) =>
 
 /**
  * Where feedback goes once filed, the same loop as the in-app form: a bug or something confusing goes to the fix
- * pipeline ("fix"); an idea is an Ask for the owner to approve or comment on ("owner"). As a chat's mode: a bug is
- * "Report this" (error), an idea "Ask for this" (cant).
+ * pipeline ("fix"); an idea is an Ask for the owner to approve or comment on ("owner"), unless the owner (an exec)
+ * filed it: their own idea needs no approval and goes straight to Claude to build ("build"). As a chat's mode: a bug
+ * is "Report this" (error), an idea "Ask for this" (cant).
  */
-export function feedbackPath(type: FeedbackType): { path: "fix" | "owner"; mode: "error" | "cant"; says: string } {
-  return type === "idea"
-    ? { path: "owner", mode: "cant", says: "It goes to the owner to approve or comment on; you'll hear what they decide." }
-    : { path: "fix", mode: "error", says: "It goes straight to the fix pipeline; you'll hear when it's being fixed and when it's live." };
+export function feedbackPath(type: FeedbackType, byOwner = false): { path: "fix" | "owner" | "build"; mode: "error" | "cant"; says: string } {
+  if (type !== "idea") return { path: "fix", mode: "error", says: "It goes straight to the fix pipeline; you'll hear when it's being fixed and when it's live." };
+  return byOwner
+    ? { path: "build", mode: "cant", says: "You're the owner, so it skips approval and goes straight to Claude to build; you'll hear when it's live." }
+    : { path: "owner", mode: "cant", says: "It goes to the owner to approve or comment on; you'll hear what they decide." };
 }
 
 /** An Ask waiting on the owner (a feature request not yet decided): what the Overview lists until it's handled */
