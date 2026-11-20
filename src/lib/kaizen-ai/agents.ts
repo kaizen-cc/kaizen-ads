@@ -27,7 +27,8 @@ export function agentForRole(role: TeamRole): ChatAgent {
   }
 }
 
-const GOOGLE = /\b(google|search terms?|keywords?|rsa|responsive search|sitelinks?|callouts?|pmax|performance max|quality score|impression share|gaql|negatives?)\b/i;
+// "Google" alone means Google Ads, but not Google Docs, Drive, Sheets and the rest of Google's apps
+const GOOGLE = /\b(google(?!\s*(docs?|drive|sheets?|slides?|calendar|meet|forms?|workspace|gmail|chat)\b)|search terms?|keywords?|rsa|responsive search|sitelinks?|callouts?|pmax|performance max|quality score|impression share|gaql|negatives?)\b/i;
 
 /** The agent for this message, and why (shown on the chip) */
 export function pickAgent(text: string, role: TeamRole): { key: ChatAgent; why: string } {
