@@ -17,7 +17,7 @@ import { attachNote, draftFiles, fileViews, mailFiles } from "@/lib/documents/at
 import { composeLinks } from "@/lib/email-drafts/core";
 import { teammateTitle, type TeammateKind } from "./teammates";
 import { placeCallDraft } from "./platform-drafts";
-import { slackDmPlace } from "./platform-drafts-core";
+import { slackDmPlace, slackNewPlace } from "./platform-drafts-core";
 
 // What the assistant and every agent can do for the person with the team and their messages, on a call or in a chat:
 // send a task, an ask or an FYI to any teammate by name or role (send_to_teammate); draft a Slack reply or an email as
@@ -192,7 +192,7 @@ function showDraft(ctx: CommsCtx, d: Draft, status: CallDraft["status"], href = 
     t: "card",
     card: {
       id: `draft-${d.id}`,
-      title: status === "sent" ? "Sent as you" : status === "gmail_draft" ? "Saved as a Gmail draft" : status === "slack_draft" ? "In your Slack, to send" : d.channel === "slack" ? (d.slack && !d.slack.thread ? "Slack DM, drafted" : "Slack reply, drafted") : "Email, drafted",
+      title: status === "sent" ? "Sent as you" : status === "gmail_draft" ? "Saved as a Gmail draft" : status === "slack_draft" ? "In your Slack, to send" : d.channel === "slack" ? (d.slack && !d.slack.thread ? (d.slack.channel ? "Slack DM, drafted" : "Slack message, drafted") : "Slack reply, drafted") : "Email, drafted",
       detail: where,
       href,
       external,
@@ -297,7 +297,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
     },
     {
       name: "draft_message",
-      description: `Drafts a Slack reply, a new Slack DM to a teammate, or an email as ${from}, in their voice (a message to a person; campaign, flow or SMS copy for the email team is never this: that's create_copy_doc): a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), a new direct message to someone on the team ("DM Jesus", "message Dana on Slack": channel slack, dm: their name as heard, text), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). A document goes with an email: make it first (create_document), then pass its document_id in attach (the card can save it to their Gmail drafts with the PDF attached, and offers the PDF to download). After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes. When they'd rather send it themselves ("put it in my drafts", "I'll send it from Gmail"), run save_draft.`,
+      description: `Drafts a Slack reply, a new Slack DM to a teammate, or an email as ${from}, in their voice (a message to a person; campaign, flow or SMS copy for the email team is never this: that's create_copy_doc): a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), a new direct message to someone on the team ("DM Jesus", "message Dana on Slack": channel slack, dm: their name as heard, text), a new Slack message that is neither (an announcement they'll post in a channel, or one just for them to copy: channel slack, new_for: where it's meant to go as said, or "me"; never a thread reply), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). A document goes with an email: make it first (create_document), then pass its document_id in attach (the card can save it to their Gmail drafts with the PDF attached, and offers the PDF to download). After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes. When they'd rather send it themselves ("put it in my drafts", "I'll send it from Gmail"), run save_draft.`,
       input_schema: {
         type: "object",
         properties: {
@@ -308,6 +308,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           about: { type: "string", description: "What the thread is about, a few words" },
           text: { type: "string", description: "The message, as it will be sent" },
           dm: { type: "string", description: "Slack only: a teammate's name (or role) for a new direct message to them, not a reply in a thread" },
+          new_for: { type: "string", description: "Slack only: a new message that isn't a reply or a DM, where it's meant to go as said (\"the OO channel\"), or \"me\" when it's just for them to copy" },
           to: { type: "string", description: "A new email's address (not a reply)" },
           subject: { type: "string", description: "A new email's subject" },
           attach: { type: "array", items: { type: "string" }, description: "An email only: document_id(s) from create_document whose PDF goes with it" },
@@ -335,6 +336,10 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           if (!place) return { drafted: false, note: `${r.to.name} isn't found in Slack (no Slack account matches their work email). Say so in a sentence.` };
           if (!text) return { drafted: false, note: `Write the message to ${firstNameOf(r.to.name)}, then draft it again.` };
           d = { kind: "draft", id, done: true, channel, slack: place, text, client: client?.name ?? null, at: new Date().toISOString() };
+        } else if (channel === "slack" && !input.thread && clip(input.new_for, 80)) {
+          // A new message for them to post themselves: tied to no thread, so their self-DM copy carries no label
+          if (!text) return { drafted: false, note: "Write the message, then draft it again." };
+          d = { kind: "draft", id, done: true, channel, slack: slackNewPlace(clip(input.new_for, 80)), text, client: client?.name ?? null, at: new Date().toISOString() };
         } else if (fresh) {
           const to = clip(input.to, 200);
           if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addressOf(to))) return { drafted: false, note: "That isn't an email address. Ask for it." };
@@ -349,6 +354,9 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
             const clear = all.length === 1 || Boolean(input.from) || Boolean(input.about);
             if (!clear) return { drafted: false, which: all.map((f) => ({ ref: f.ref, from: f.who, about: f.gist, client: f.client, when: f.when })), note: "Several threads fit: name two or three in a few words (who and what) and ask which." };
             pick = all[0];
+            // Picked on "about" alone with no word of it in the thread: an unrelated thread, never a reply there
+            const about = words(clip(input.about, 120));
+            if (!input.from && about.length && !about.some((w) => pick!.gist.toLowerCase().includes(w))) return { drafted: false, which: all.map((f) => ({ ref: f.ref, from: f.who, about: f.gist, client: f.client, when: f.when })), note: "No thread matches that. A new message (not a reply): draft it again with new_for (or dm for a teammate). Otherwise ask which thread." };
           }
           if (!text && pick.owedId) {
             const { draftOwedReply } = await import("@/lib/reply-drafts");
@@ -393,7 +401,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         if (!d) return { saved: false, note: "That draft isn't on this conversation. Draft it again (draft_message), then save it." };
         const r = await saveDraftToPlatform(ctx, d);
         if (!r.ok) return { saved: false, error: r.error, ...(r.needs ? { needs: r.needs } : {}) };
-        return { saved: true, where: r.where, link: r.href, note: d.slack ? `Say it's in their Slack, in their messages to themselves, ready to copy into ${d.slack.thread ? "the thread" : d.slack.where}.` : "Say it's in their Gmail drafts, ready to edit and send there." };
+        return { saved: true, where: r.where, link: r.href, note: d.slack ? `Say it's in their Slack, in their messages to themselves, ready to copy into ${d.slack.thread ? "the thread" : d.slack.where === "your Slack" ? "wherever it goes" : d.slack.where}.` : "Say it's in their Gmail drafts, ready to edit and send there." };
       },
     },
     {
@@ -408,6 +416,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         const d = input.draft_id ? await getDraft(ctx.admin, ctx.callId, clip(input.draft_id, 40)) : await latestDraft(ctx.admin, ctx.callId);
         if (!d) return { sent: false, note: "That draft isn't on this call. Draft it again." };
         if (d.sent) return { sent: true, already: true };
+        if (d.slack && !d.slack.channel) return { sent: false, note: "A new message with no channel to send it to from here: put it in their Slack with save_draft (no yes needed) for them to post." };
         if (d.slack) {
           const { postAsUser } = await import("@/lib/slack-user");
           const r = await postAsUser(ctx.me.id, { channel: d.slack.channel, text: d.text, thread: d.slack.thread ?? undefined });

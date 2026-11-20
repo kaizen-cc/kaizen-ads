@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Draft } from "./handoff-server";
 import { rawEmail } from "./messages";
-import { draftError, gmailDraftLink, serviceAccountClientId, slackMessageLink, slackSelfNote } from "./platform-drafts-core";
+import { draftError, gmailDraftLink, serviceAccountClientId, slackMessageLink, slackSelfText } from "./platform-drafts-core";
 
 // Every assistant and agent puts a drafted message where the person edits and sends it: a real draft in their own
 // Gmail (in the thread for a reply, with the PDFs attached), or a message to themselves in Slack labeled with where it
@@ -66,15 +66,15 @@ export type SlackDraftResult = { ok: true; href: string | null; where: string } 
 
 /**
  * A Slack draft in the person's own self-DM ("message to yourself"), posted with their own token: labeled with where it
- * goes and a link to that thread, so they copy, edit and send it there. Slack has no API for a person's Drafts.
+ * goes and a link to that thread, so they copy, edit and send it there (a new message is the text alone). Slack has no
+ * API for a person's Drafts.
  */
 export async function saveSlackSelfDraft(profileId: string, d: Draft): Promise<SlackDraftResult> {
   if (!d.slack) return { ok: false, error: "That draft isn't a Slack message." };
   const { postAsUser, slackUserToken } = await import("@/lib/slack-user");
   const mine = await slackUserToken(profileId);
   if (!mine?.slackUserId) return { ok: false, error: "Connect your Slack first, so the draft lands in your own messages.", needsConnect: true };
-  const link = slackMessageLink(d.slack.channel, d.slack.thread);
-  const r = await postAsUser(profileId, { channel: mine.slackUserId, text: slackSelfNote({ where: d.slack.where, link, text: d.text }) });
+  const r = await postAsUser(profileId, { channel: mine.slackUserId, text: slackSelfText(d.slack, d.text) });
   if (!r.ok) return { ok: false, error: r.error, needsConnect: r.needsConnect };
   return { ok: true, href: r.permalink ?? slackMessageLink(r.channel, r.ts), where: d.slack.where };
 }

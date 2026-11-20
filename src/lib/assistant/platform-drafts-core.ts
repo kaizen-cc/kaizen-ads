@@ -62,3 +62,20 @@ export function slackDmPlace(slackUserId: string, name: string): { channel: stri
   if (!/^[UW][A-Z0-9]{6,}$/.test(id)) return null;
   return { channel: id, thread: null, where: `a DM to ${name.trim() || "them"}` };
 }
+
+const JUST_ME = /^(?:me|myself|just me|my (?:own )?(?:slack|dms?|self[- ]?dms?|messages))$/i;
+
+/**
+ * A new Slack message that's neither a reply nor a DM (an announcement they'll post in a channel themselves, a note to
+ * copy): no channel and no thread, so it's never tied to some unrelated thread. Where it's meant for is only a hint.
+ */
+export function slackNewPlace(meantFor: string): { channel: ""; thread: null; where: string } {
+  const w = meantFor.trim().replace(/\s+/g, " ").slice(0, 80);
+  return { channel: "", thread: null, where: w && !JUST_ME.test(w) ? w : "your Slack" };
+}
+
+/** What lands in their self-DM: a new message is the text alone (no label, no thread); a reply or DM says where it goes */
+export function slackSelfText(place: { channel: string; thread: string | null; where: string }, text: string): string {
+  if (!place.channel) return text;
+  return slackSelfNote({ where: place.where, link: slackMessageLink(place.channel, place.thread), text });
+}
