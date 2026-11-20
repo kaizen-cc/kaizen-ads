@@ -190,6 +190,13 @@ export async function notifyGuidelines(admin: Admin, clientId: string, id: strin
   });
 }
 
+/** The Bible says no guideline was shared while a guideline file is in the client's context: told once per file set */
+export async function flagGuidelineGap(admin: Admin, clientId: string, key: string, body: string) {
+  const { data: heads } = await admin.from("profiles").select("id").eq("is_active", true).eq("role", "head_of_creative");
+  const ids = heads?.length ? heads.map((h) => h.id as string) : await approverIds(admin, clientId);
+  await notify(admin, clientId, ids, { title: "the Bible says no brand guidelines were shared, but a guideline file is in their Drive", body, key: `guideline-gap:${key}`, critical: true, q: "changes=1" });
+}
+
 /**
  * An approver decides. Approved: applied to the Bible (avatars) or folded in as the answer (questions), logged in the
  * change log. Rejected: kept with why. Either way the proposer hears.

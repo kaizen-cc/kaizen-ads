@@ -440,6 +440,8 @@ export async function GET(request: Request) {
       const guidelines = await (await import("@/lib/brand-guidelines")).keepGuidelines(admin).catch((e) => String(e));
       return Response.json({ links, issues, packages, sheets, chat, knowledge, errors, emailErrors, guidelines });
     }
+    // By hand (execs): the guideline pass plus the back-fill for every client, resumable; each call reads the next few
+    if (step === "guidelines") return Response.json(await (await import("@/lib/brand-guidelines")).keepGuidelines(admin));
     if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin));
     if (step === "learnings") return Response.json(await (await import("@/lib/learnings")).consolidateLearnings(admin));
     if (step === "drift") return Response.json(await (await import("@/lib/agent-evals")).driftCheck(admin));

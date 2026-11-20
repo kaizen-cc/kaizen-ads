@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyEdits, splitBible } from "@/lib/bible-sections";
-import { googleLinksIn, GUIDELINE_MARK, GUIDELINES_SECTION, hasGuidelines, isGuidelineFile, isGuidelineRow, mentionsGuideline, renderGuidelines, saysNotShared, type GuidelineRead } from "@/lib/brand-guidelines-core";
+import { backfillOrder, extractHexColors, latestGuidelineFiles, mergeHexColors, googleLinksIn, GUIDELINE_MARK, GUIDELINES_SECTION, hasGuidelines, isGuidelineFile, isGuidelineRow, mentionsGuideline, renderGuidelines, saysNotShared, type GuidelineRead } from "@/lib/brand-guidelines-core";
 
 describe("brand guideline signals", () => {
   it("catches guidelines, logos, colors and fonts wherever they're shared", () => {
@@ -62,6 +62,48 @@ describe("the guidelines section", () => {
     expect(hasGuidelines(read)).toBe(true);
     expect(hasGuidelines({ found: true, colors: [], fonts: [], logos: [], rules: [] })).toBe(false);
     expect(hasGuidelines({ ...read, found: false })).toBe(false);
+  });
+});
+
+describe("finding guideline files", () => {
+  const items = [
+    { client_id: "a", title: "Brand Guidelines", url: "https://docs.google.com/document/d/1", occurred_at: "2026-09-30T10:00:00Z" },
+    { client_id: "a", title: "Q3 invoice.pdf", url: null, occurred_at: "2026-11-01T10:00:00Z" },
+    { client_id: "a", title: "logo-sand.png", url: null, occurred_at: "2026-10-05T10:00:00Z" },
+    { client_id: "b", title: "Meeting notes", url: null, occurred_at: "2026-10-05T10:00:00Z" },
+  ];
+  it("keeps the newest guideline file per client and ignores other files", () => {
+    const m = latestGuidelineFiles(items);
+    expect(m.get("a")).toBe("2026-10-05T10:00:00Z");
+    expect(m.has("b")).toBe(false);
+  });
+  it("reads each client once, guideline clients first, and again only for a newer file", () => {
+    const latest = latestGuidelineFiles(items);
+    expect(backfillOrder(["b", "a", "c"], [], latest)).toEqual(["a", "b", "c"]);
+    const done = [{ clientId: "a", doneAt: "2026-11-20T00:00:00Z", filesAt: "2026-10-05T10:00:00Z" }];
+    expect(backfillOrder(["a", "b"], done, latest)).toEqual(["b"]);
+    latest.set("a", "2026-11-19T00:00:00Z");
+    expect(backfillOrder(["a", "b"], done, latest)).toEqual(["b", "a"]);
+    expect(backfillOrder(["a", "b", "c"], [], latest, 2)).toHaveLength(2);
+  });
+});
+
+describe("hex colors in a guideline", () => {
+  it("pulls each hex with its label and source, once", () => {
+    const text = "Primary: Deep green #2F4A3A\nSand | #e8dcc4 | background\n#fff (white) and again #2f4a3a\nissue #12345 is not a color";
+    const c = extractHexColors(text, "Drive: Brand Guidelines");
+    expect(c.map((x) => x.hex)).toEqual(["#2F4A3A", "#E8DCC4", "#FFFFFF"]);
+    expect(c[0].name).toBe("Primary: Deep green");
+    expect(c[1].name).toBe("Sand");
+    expect(c[2].name).toBe("white");
+    expect(c.every((x) => x.source === "Drive: Brand Guidelines")).toBe(true);
+  });
+  it("adds only the colors the read missed", () => {
+    const read: GuidelineRead = { found: false, colors: [{ name: "Green", hex: "#2f4a3a", use: "primary", source: "x" }], fonts: [], logos: [], rules: [] };
+    const merged = mergeHexColors(read, extractHexColors("Sand #E8DCC4, Green #2F4A3A", "Drive"));
+    expect(merged.colors.map((x) => x.hex)).toEqual(["#2f4a3a", "#E8DCC4"]);
+    expect(merged.found).toBe(true);
+    expect(hasGuidelines(merged)).toBe(true);
   });
 });
 

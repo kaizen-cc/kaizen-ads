@@ -2,8 +2,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
 import { AiPaused, askJson } from "@/lib/ai";
-import { notifyGuidelines } from "@/lib/bible-governance";
-import { GUIDELINE_MARK, googleLinksIn, GUIDELINES_SECTION, hasGuidelines, isGuidelineFile, mentionsGuideline, renderGuidelines, saysNotShared, type GuidelineRead } from "@/lib/brand-guidelines-core";
+import { flagGuidelineGap, notifyGuidelines } from "@/lib/bible-governance";
+import { backfillOrder, extractHexColors, GUIDELINE_MARK, googleLinksIn, GUIDELINES_SECTION, hasGuidelines, isGuidelineFile, latestGuidelineFiles, mentionsGuideline, mergeHexColors, renderGuidelines, saysNotShared, type GuidelineRead, type Marker } from "@/lib/brand-guidelines-core";
 
 // Brand guidelines into the Brand Bible, as soon as they're shared. Every hour (bible_upkeep) what came in since the
 // last pass is checked for a guideline, logo, colors or fonts: Drive files in the client's folder, Slack and email
@@ -42,7 +42,7 @@ rules: the client's visual and brand rules (logo clear space, what never to do w
 source: where it came from, short, with the date: "Drive: Brand Guidelines doc, Sep 30", "Slack, Oct 6: updated brand kit colors", "Call, Oct 2", "Intake form".
 When two sources disagree, the newest wins (a Slack update after the guide changes the color); keep only the current value and name the newer source.`;
 
-type Signal = { key: string; at: string; label: string; text: string; url: string | null; file: boolean };
+type Signal = { key: string; at: string; label: string; text: string; url: string | null; file: boolean; title?: string | null };
 
 /** Everything the client shared that mentions a guideline, logo, colors or fonts, newest first */
 async function signalsFor(admin: SupabaseClient, clientId: string): Promise<Signal[]> {
@@ -58,7 +58,7 @@ async function signalsFor(admin: SupabaseClient, clientId: string): Promise<Sign
     const file = i.source === "drive";
     if (file ? !isGuidelineFile(i.title) && !mentionsGuideline(i.body) : !mentionsGuideline(`${i.title ?? ""} ${i.body ?? ""}`)) continue;
     const where = file ? "Drive file" : i.source === "gmail" ? "Email" : i.source === "call" ? "Call" : i.source === "slack_internal" ? "Slack (internal)" : "Slack (with client)";
-    out.push({ key: `item:${i.id}`, at: i.occurred_at as string, label: `${where}, ${day(i.occurred_at as string)}${i.author ? ` · ${i.author}` : ""}${i.title ? ` · "${i.title}"` : ""}`, text: String(i.body ?? "").slice(0, 3000), url: (i.url as string | null) ?? null, file });
+    out.push({ key: `item:${i.id}`, at: i.occurred_at as string, label: `${where}, ${day(i.occurred_at as string)}${i.author ? ` · ${i.author}` : ""}${i.title ? ` · "${i.title}"` : ""}`, text: String(i.body ?? "").slice(0, file ? 12_000 : 3000), url: (i.url as string | null) ?? null, file, title: i.title as string | null });
   }
   for (const c of calls ?? []) {
     const notes = String(c.notes ?? "");
@@ -101,12 +101,15 @@ export async function ingestGuidelines(admin: SupabaseClient, clientId: string):
     admin.from("clients").select("name").eq("id", clientId).maybeSingle(),
     admin.from("bible_changes").select("id").eq("client_id", clientId).eq("kind", "question_answer").contains("proposed", { ...GUIDELINE_MARK, fingerprint }).limit(1).maybeSingle(),
   ]);
+  // Every guideline file found is one of the client's documents (once each), whether or not it's been proposed before
+  await registerDocs(admin, clientId, signals);
   if (seen) return "same";
   if (!bible?.markdown || !client) return "no_bible";
   const files = await readFiles(signals);
+  await registerDocs(admin, clientId, files.map((f) => ({ key: f.url, at: new Date().toISOString(), label: "", text: f.text, url: f.url, file: true, title: f.title })));
   const { splitBible } = await import("@/lib/bible-sections");
   const current = splitBible(bible.markdown as string).find((s) => s.title.toLowerCase() === GUIDELINES_SECTION.toLowerCase());
-  const read = await askJson<GuidelineRead>({
+  const asked = await askJson<GuidelineRead>({
     agent: "brandbible",
     clientId,
     label: `brand guidelines ${client.name}`,
@@ -117,12 +120,22 @@ export async function ingestGuidelines(admin: SupabaseClient, clientId: string):
 ${files.map((f) => `\n<guideline_file title="${f.title.replace(/"/g, "'")}" link="${f.url}">\n${f.text}\n</guideline_file>`).join("\n")}
 
 <what_they_shared note="messages, call notes, the intake form and files about their brand, newest first">
-${signals.map((s) => `- ${s.label}${s.url ? ` (${s.url})` : ""}${s.text ? `: ${s.text.replace(/\s+/g, " ").slice(0, 1500)}` : ""}`).join("\n").slice(0, 40_000)}
+${signals.map((s) => `- ${s.label}${s.url ? ` (${s.url})` : ""}${s.text ? `: ${s.text.replace(/\s+/g, " ").slice(0, s.file ? 6000 : 1500)}` : ""}`).join("\n").slice(0, 40_000)}
 </what_they_shared>
 ${current ? `\n<in_the_bible_now>\n${current.body.slice(0, 6000)}\n</in_the_bible_now>\nKeep what's there and still holds; add or update from the material.` : ""}`,
   });
-  if (!hasGuidelines(read)) return "none";
+  // Hex codes written in the files and messages are never missed: any the read left out are added with their source
+  const hexes = [
+    ...files.flatMap((f) => extractHexColors(f.text, `Drive: ${f.title}`)),
+    ...signals.filter((s) => s.text).flatMap((s) => extractHexColors(s.text, s.label.replace(/ · [^·]*$/, "").slice(0, 80))),
+  ];
+  const read = mergeHexColors(asked, hexes);
   const gap = saysNotShared(bible.markdown as string);
+  if (!hasGuidelines(read)) {
+    // A guideline file is there but nothing could be read from it: the Bible still shouldn't say none was shared
+    if (gap && signals.some((s) => s.file && isGuidelineFile(s.title))) await flagGuidelineGap(admin, clientId, `${clientId}:${fingerprint}`, "A brand guideline file is in the client's Drive (see their Documents tab), but nothing could be read from it. Open it and add the colors, fonts and logos to the Bible.");
+    return "none";
+  }
   const sources = [...new Set([...files.map((f) => `${f.title}: ${f.url}`), ...signals.slice(0, 12).map((s) => `${s.label}${s.url ? `: ${s.url}` : ""}`)])];
   const reason = `${gap ? "Flag: the Bible says the brand guideline isn't shared, but the client shared one. " : ""}Read from ${sources.length} place${sources.length === 1 ? "" : "s"} the client shared their brand: ${read.colors.length} colors, ${read.fonts.length} fonts, ${read.logos.length} logos, ${read.rules.length} rules. Approve to write them into the Bible's ${GUIDELINES_SECTION} section.`;
   const { data: row, error } = await admin
@@ -143,6 +156,68 @@ ${current ? `\n<in_the_bible_now>\n${current.body.slice(0, 6000)}\n</in_the_bibl
     .neq("id", row.id);
   await notifyGuidelines(admin, clientId, row.id as string, gap, reason);
   return "proposed";
+}
+
+/** Each guideline file lands in the client's Documents tab as a link to its source, once (matched on the link) */
+async function registerDocs(admin: SupabaseClient, clientId: string, signals: Signal[]) {
+  const files = signals.filter((s) => s.file && s.url && /^https?:\/\//.test(s.url) && isGuidelineFile(s.title));
+  if (!files.length) return 0;
+  const { data: have } = await admin.from("client_documents").select("url").eq("client_id", clientId).eq("kind", "link").not("url", "is", null).limit(1000);
+  const known = new Set((have ?? []).map((d) => String(d.url)));
+  const rows = [];
+  for (const f of files) {
+    if (known.has(f.url!)) continue;
+    known.add(f.url!);
+    rows.push({
+      client_id: clientId,
+      kind: "link",
+      name: String(f.title ?? "Brand guidelines").slice(0, 200),
+      url: f.url,
+      title: String(f.title ?? "Brand guidelines").slice(0, 200),
+      summary: `Brand guideline file found in the client's Drive. Read into the Brand Bible's ${GUIDELINES_SECTION} section for the Head of Creative to approve.`,
+      text: f.text ? f.text.slice(0, 30_000) : null,
+      status: "ready",
+      via: "page",
+    });
+  }
+  if (!rows.length) return 0;
+  const { error } = await admin.from("client_documents").insert(rows);
+  return error ? 0 : rows.length;
+}
+
+/**
+ * The back-fill: every client not archived, read once for guidelines already in the context we sync (not only what's new
+ * since the hourly pass), a few per run inside the time budget. A marker per client (sync_state, one batched read) holds
+ * the newest guideline file it covered, so a client is read once and again only when a newer guideline file shows up.
+ */
+async function backfill(admin: SupabaseClient, deadline: number, perRun = 6) {
+  const [{ data: clients }, { data: files }, { data: marks }] = await Promise.all([
+    admin.from("clients").select("id").is("archived_at", null).in("status", ["onboarding", "active", "paused"]).limit(2000),
+    admin.from("context_items").select("client_id, title, url, occurred_at").eq("source", "drive").or("title.ilike.%brand%,title.ilike.%guide%,title.ilike.%style%,title.ilike.%logo%,title.ilike.%font%,title.ilike.%palette%,title.ilike.%identity%,title.ilike.%kit%").order("occurred_at", { ascending: false }).limit(5000),
+    admin.from("sync_state").select("source, cursor_at, last_run_at").like("source", `${CURSOR}:%`).limit(3000),
+  ]);
+  const latest = latestGuidelineFiles((files ?? []) as { client_id: string; title: string | null; url: string | null; occurred_at: string }[]);
+  const markers: Marker[] = (marks ?? []).map((m) => ({ clientId: String(m.source).slice(CURSOR.length + 1), doneAt: String(m.last_run_at ?? ""), filesAt: m.cursor_at ? String(m.cursor_at) : null }));
+  const todo = backfillOrder((clients ?? []).map((c) => c.id as string), markers, latest);
+  const out: Record<string, number> = { owed: todo.length };
+  let n = 0;
+  for (const id of todo) {
+    if (n >= perRun || Date.now() > deadline) break;
+    try {
+      const r = await ingestGuidelines(admin, id);
+      out[r] = (out[r] ?? 0) + 1;
+      // not_ready (the database refused it) is tried again next run; everything else is done for this client
+      if (r === "not_ready") continue;
+      n++;
+      await admin.from("sync_state").upsert({ source: `${CURSOR}:${id}`, cursor_at: latest.get(id) ?? null, last_run_at: new Date().toISOString(), last_result: { result: r } });
+    } catch (e) {
+      if (e instanceof AiPaused) break;
+      out.failed = (out.failed ?? 0) + 1;
+      console.error("[guidelines backfill]", id, e instanceof Error ? e.message : e);
+    }
+  }
+  out.done = n;
+  return out;
 }
 
 /** The hourly pass: clients with something new about their brand since the last one, read and proposed */
@@ -183,5 +258,7 @@ export async function keepGuidelines(admin: SupabaseClient, budgetMs = 240_000) 
   }
   // Only moves on once every client due was read (a stopped pass reads them again; the fingerprint skips repeats)
   await admin.from("sync_state").upsert({ source: CURSOR, ...(finished ? { cursor_at: started.toISOString() } : {}), last_run_at: new Date().toISOString(), last_result: out });
-  return out;
+  // Whatever time is left reads clients the hourly pass never reached (the back-fill), a few at a time until every client has been read once
+  const back = await backfill(admin, deadline).catch((e) => ({ failed: 1, error: String(e) }));
+  return { ...out, backfill: back };
 }
