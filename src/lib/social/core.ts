@@ -2,6 +2,8 @@
 // failure means. Kept apart from the network and the database so it can be tested and used on the page itself.
 // Read only: nothing here posts, edits or schedules anything on Meta.
 
+import { brandsDiffer } from "./links-core";
+
 export type Platform = "instagram" | "facebook";
 export type PostFormat = "image" | "carousel" | "reel" | "video" | "link" | "text";
 
@@ -249,11 +251,13 @@ const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").t
 /**
  * The Page that is the client's, by name: an exact match first, then one name containing the other (at least 4
  * letters, so a short name doesn't match half the list). When more than one fits equally it's a guess, so none is
- * returned and a person picks. `onlyOneFallback`: a list of one Page (their ad account's only promotable Page) is theirs.
+ * returned and a person picks, as when Pages of two brands carry the client's name. `onlyOneFallback`: a list of one Page (their ad account's only promotable Page) is theirs.
  */
 export function matchPage<T extends { id: string; name: string }>(pages: T[], clientName: string, opts: { onlyOneFallback?: boolean } = {}): T | null {
   const c = norm(clientName);
   if (!c) return null;
+  // Two brands carrying the client's name ("Giant Texas" and "Giant Texas Distillers"): a person picks
+  if (brandsDiffer(pages, clientName)) return null;
   const exact = pages.filter((p) => norm(p.name) === c);
   if (exact.length === 1) return exact[0];
   if (exact.length > 1) return null;
