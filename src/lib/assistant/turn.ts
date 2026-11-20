@@ -1,4 +1,6 @@
 import "server-only";
+import { tipOfTool, tipsFor } from "./tips";
+import type { LoopTool } from "@/lib/agent-call/tool-loop";
 import { aiEnabled } from "@/lib/ai";
 import { TOOLS_RULE } from "@/lib/agent-call/agent-tools";
 import { firstNameOf } from "@/lib/agent-call/core";
@@ -139,7 +141,7 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode, full?
   }
   const actx: AssistantCtx = { me, db: input.db, admin, callId: call.id, said, emit, state: { threadId: call.thread_id ?? null }, path: input.path ?? null, screen: input.context?.screen ?? null, clientId: input.context?.clientId ?? null };
   const tctx = { me, db: input.db, admin, callId: call.id, emit, team, self: ASSISTANT_KEY, said };
-  const tools = tracked(tctx, [...(await timer.time("tools_build", assistantTools(actx))), ...teamTools(tctx)]);
+  const tools = withTipUse(me, admin, tracked(tctx, [...(await timer.time("tools_build", assistantTools(actx))), ...teamTools(tctx)]));
   // A job they're asking for (when none is open), or the specialist whose area this is
   const job = person && team.job?.status !== "open" ? recognizeJob(text) : null;
   const hint = person && !team.line.length && !job ? suggestSpecialist(text) : null;
@@ -203,4 +205,26 @@ async function assistantAnswer(input: Input, team: TeamState, m: TurnMode, full?
     ...(spoken ? [{ role_key: ASSISTANT_KEY, role: "agent", content: spoken, attachments: [], changes: [], created_by: me.id, call_id: call.id, created_at: at.answered }] : []),
   ]);
   return { ended: out.ended && person };
+}
+
+/**
+ * What they can do on this call and what the assistant did for them, kept for the hello's "did you know" tips (things
+ * they haven't tried, or haven't in a while). In the background, never while the owner views the app as someone.
+ */
+function withTipUse(me: Input["me"], admin: Input["admin"], tools: LoopTool[]): LoopTool[] {
+  if (me.viewAs) return tools;
+  const tips = tipsFor(tools.map((t) => t.name));
+  if (tips.length) void Promise.resolve(admin.rpc("assistant_tips_seen", { p: me.id, tips })).catch(() => undefined);
+  return tools.map((t) => {
+    const tip = tipOfTool(t.name);
+    if (!tip) return t;
+    return {
+      ...t,
+      run: async (input: Record<string, unknown>) => {
+        const out = await t.run(input);
+        void Promise.resolve(admin.rpc("assistant_tip_used", { p: me.id, t: tip })).catch(() => undefined);
+        return out;
+      },
+    };
+  });
 }

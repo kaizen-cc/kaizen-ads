@@ -104,10 +104,12 @@ export async function startCall(roleKey: string, opts: { talk?: TalkMode; headsU
   let greeting = greetingFor(me.fullName, role.label as string, mode, topic, seedOf(call.id as string), hour);
   // The assistant: a hello that remembers them (a birthday, how the trip went), unless the line just dropped
   if (roleKey === ASSISTANT_KEY && mode !== "continue") {
-    const memory = await loadMemory(admin, me.id);
-    const hello = assistantGreeting({ name: firstNameOf(me.fullName), memory, today: localDayIn(opts.tz), seed: seedOf(call.id as string), mode, timed: greeting, hour, person: { role: me.role, isExec: me.isExec } });
+    const [memory, { data: tips }] = await Promise.all([loadMemory(admin, me.id), admin.from("assistant_tips").select("tip, seen_at, used_at, tipped_at").eq("profile_id", me.id)]);
+    const hello = assistantGreeting({ name: firstNameOf(me.fullName), memory, today: localDayIn(opts.tz), seed: seedOf(call.id as string), mode, timed: greeting, hour, tips: me.viewAs ? null : tips });
     greeting = hello.text;
     if (hello.followed) await markFollowedUp(admin, me.id, hello.followed);
+    // Told once, then not again for a while
+    if (hello.tipped) await admin.from("assistant_tips").update({ tipped_at: new Date().toISOString() }).eq("profile_id", me.id).eq("tip", hello.tipped);
   }
   // Answering the assistant's ring: the call opens with the heads-up itself ("Hey Santi! Heads up, I just put...")
   if (roleKey === ASSISTANT_KEY && opts.headsUp && /^[0-9a-f-]{36}$/i.test(opts.headsUp)) {
