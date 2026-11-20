@@ -199,11 +199,12 @@ export function spendAnomaly(days: readonly SpendDay[], yesterday: string): Spen
   return null;
 }
 
-/** Month to date spend on course to beat the month's budget by more than 15% (or past it already) */
+/** Month to date spend more than 20% over the month's budget on file, or on course to be (the owner's threshold, Nov 20 2026) */
+export const OVER_BUDGET = 0.2;
 export function overspend(i: { mtd: number; budget: number | null; dayOfMonth: number; daysInMonth: number }): { over: boolean; projected: number } {
   if (!i.budget || i.budget <= 0 || i.dayOfMonth < 1) return { over: false, projected: 0 };
   const projected = (i.mtd / i.dayOfMonth) * i.daysInMonth;
-  return { over: i.mtd > i.budget * 1.02 || (i.dayOfMonth >= 5 && projected > i.budget * 1.15), projected };
+  return { over: i.mtd > i.budget * (1 + OVER_BUDGET) || (i.dayOfMonth >= 5 && projected > i.budget * (1 + OVER_BUDGET)), projected };
 }
 
 // ─── Creative ───────────────────────────────────────────────────────────────

@@ -144,6 +144,8 @@ export const SCREEN_PLACES: Record<string, string> = {
   "account watch billing": "/watch?tab=billing",
   "stripe check": "/watch?tab=billing",
   "account watch paused": "/watch?tab=paused",
+  "account watch watchdogs": "/watch?tab=dogs",
+  watchdogs: "/watch?tab=dogs",
   // The weekly account review (line heads and execs), each line its own tab
   "weekly reviews": "/reviews",
   "weekly review": "/reviews",

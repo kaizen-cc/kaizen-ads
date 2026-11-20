@@ -105,7 +105,9 @@ describe("spend anomalies and overspend", () => {
     expect(spendAnomaly([...days(14, 100), { date: "2026-11-17", spend: 110 }], "2026-11-17")).toBeNull();
   });
   it("projects the month against its budget", () => {
-    expect(overspend({ mtd: 6_000, budget: 9_000, dayOfMonth: 17, daysInMonth: 30 }).over).toBe(true);
+    expect(overspend({ mtd: 6_500, budget: 9_000, dayOfMonth: 17, daysInMonth: 30 }).over).toBe(true);
+    // On course for 17.6% over: inside the 20% the owner set
+    expect(overspend({ mtd: 6_000, budget: 9_000, dayOfMonth: 17, daysInMonth: 30 }).over).toBe(false);
     expect(overspend({ mtd: 4_500, budget: 9_000, dayOfMonth: 17, daysInMonth: 30 }).over).toBe(false);
     expect(overspend({ mtd: 4_500, budget: null, dayOfMonth: 17, daysInMonth: 30 }).over).toBe(false);
   });

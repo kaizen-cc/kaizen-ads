@@ -30,9 +30,11 @@ export default async function WatchPage({ searchParams }: PageProps<"/watch">) {
   const accounts = group("accounts");
   const creative = group("creative");
   const people = group("people");
+  const dogs = group("dogs");
   const critical = (xs: typeof flags) => xs.some((f) => f.severity === "critical");
   const tabs = [
     { id: "idle", label: "Billed but idle", count: idle.length, tone: critical(idle) ? ("bad" as const) : ("warn" as const) },
+    { id: "dogs", label: "Watchdogs", count: dogs.length, tone: critical(dogs) ? ("bad" as const) : ("warn" as const) },
     { id: "accounts", label: "Accounts", count: accounts.length, tone: critical(accounts) ? ("bad" as const) : ("warn" as const) },
     { id: "creative", label: "Creative", count: creative.length, tone: "warn" as const },
     ...(decider ? [{ id: "people", label: "People", count: people.length, tone: "bad" as const }] : []),
@@ -56,6 +58,7 @@ export default async function WatchPage({ searchParams }: PageProps<"/watch">) {
         tabs={tabs}
         panels={{
           idle: <WatchList flags={idle} {...opts} empty="Nothing billed is sitting idle. Every billed service had activity in the last 7 days, or is paused on purpose." />,
+          dogs: <WatchList flags={dogs} {...opts} empty="Nothing caught today: no client pauses, access or payment problems, quiet channels, stuck creative or ads past their date." />,
           accounts: <WatchList flags={accounts} {...opts} empty="Every spending account was touched lately, nothing overtouched, and spend is steady." />,
           creative: <WatchList flags={creative} {...opts} empty="Creative is on pace on every package." />,
           people: <WatchList flags={people} {...opts} empty="Every name in change history is someone we know." />,

@@ -5,6 +5,7 @@ import { hasLine } from "@/lib/service-gate";
 import { cycleElapsed } from "@/lib/allotment";
 import { lineOf } from "@/lib/exec-focus/core";
 import { fireSweep, raiseFire } from "@/lib/exec-focus/server";
+import { isDogKind } from "@/lib/watchdogs/core";
 import {
   LINE_LABEL,
   LINE_SERVICE,
@@ -384,7 +385,12 @@ export async function runAccountWatch(admin: SupabaseClient, now = new Date()) {
 
 // ─── Flags, notifications and Slack ─────────────────────────────────────────
 
-async function applyFindings(admin: SupabaseClient, findings: Finding[], clients: Client[], pauses: Map<string, { until: string; reason: string }>, now: Date) {
+/**
+ * Save findings as flags and tell people once. owns: the flag kinds this run answers for (only those clear themselves
+ * when no longer found); the daily watch owns its own kinds, the watchdogs (src/lib/watchdogs) theirs.
+ */
+export async function applyFindings(admin: SupabaseClient, findings: Finding[], clients: Pick<Client, "id" | "name" | "services" | "services_extra" | "services_removed" | "billed_services">[], pauses: Map<string, { until: string; reason: string }>, now: Date, opts: { owns?: (kind: string) => boolean; noticeSuffix?: string } = {}) {
+  const owns = opts.owns ?? ((k: string) => !isDogKind(k));
   const at = now.toISOString();
   const { data: open } = await admin.from("watch_flags").select("id, key, kind, client_id, line, notified_at, escalated_at").is("resolved_at", null);
   const openBy = new Map((open ?? []).map((f) => [f.key as string, f]));
@@ -403,7 +409,7 @@ async function applyFindings(admin: SupabaseClient, findings: Finding[], clients
     }
     const c = name.get(f.client_id);
     if (!flag.notified_at && f.to.length) {
-      await notify(admin, f.to, { key: `watch:${flag.id}`, title: `${c?.name ?? "A client"}: ${f.title}`, body: f.body, href: f.href, clientId: f.client_id, kind: f.line === "creative" ? "client" : "kpi", critical: f.severity === "critical" });
+      await notify(admin, f.to, { key: `watch:${flag.id}${opts.noticeSuffix ?? ""}`, title: `${c?.name ?? "A client"}: ${f.title}`, body: f.body, href: f.href, clientId: f.client_id, kind: f.line === "creative" ? "client" : "kpi", critical: f.severity === "critical" });
       await admin.from("watch_flags").update({ notified_at: at }).eq("id", flag.id);
       notified++;
       // Billed for a line that's gone idle, spend stopped on a big account: every exec hears the client is on fire
@@ -419,7 +425,7 @@ async function applyFindings(admin: SupabaseClient, findings: Finding[], clients
   const found = new Set(findings.map((f) => f.key));
   let resolved = 0;
   for (const f of open ?? []) {
-    if (found.has(f.key as string) || MANUAL.has(f.kind as string)) continue;
+    if (found.has(f.key as string) || MANUAL.has(f.kind as string) || !owns(f.kind as string)) continue;
     const c = name.get(f.client_id as string);
     const pause = f.line ? pauses.get(`${f.client_id}:${f.line}`) : undefined;
     const gone = !c || (f.line && f.kind === "idle" && !servicesOf(c).includes(f.line as ServiceSlug) && !(c.billed_services ?? {})[f.line as ServiceSlug]);

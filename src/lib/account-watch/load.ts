@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { actableLines, type LineId } from "@/lib/client-lines";
 import { serviceMismatches, type Billed, type Mismatch } from "./core";
+import { DOG_KINDS } from "@/lib/watchdogs/core";
 
 // What the account watch shows: open flags (each person's lines; execs everything), the paused services, the Stripe
 // mapping check and the unrecognized people (execs and leads). Read with the person's own session, so only clients
@@ -25,7 +26,7 @@ export type WatchPause = { id: string; clientId: string; client: string; slug: s
 export type WatchMismatch = Mismatch & { clientId: string; client: string; slug: string };
 
 /** The tabs: billed but idle, accounts (neglect, overtouch, spend), creative, people, and the Stripe check */
-export const WATCH_GROUP: Record<string, "idle" | "accounts" | "creative" | "people"> = {
+export const WATCH_GROUP: Record<string, "idle" | "accounts" | "creative" | "people" | "dogs"> = {
   idle: "idle",
   neglected: "accounts",
   overtouched: "accounts",
@@ -37,6 +38,8 @@ export const WATCH_GROUP: Record<string, "idle" | "accounts" | "creative" | "peo
   creative_quiet: "creative",
   creative_sprint: "creative",
   unrecognized: "people",
+  // The daily watchdogs (src/lib/watchdogs)
+  ...Object.fromEntries(DOG_KINDS.map((k) => [k, "dogs" as const])),
 };
 
 const LINE_OF_SERVICE: Record<string, LineId> = { "facebook-ads": "meta", "google-ads": "google", "tiktok-ads": "tiktok", creative: "creative", "email-marketing": "email", "social-media": "social" };

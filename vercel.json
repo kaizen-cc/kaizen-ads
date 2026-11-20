@@ -35,6 +35,14 @@
       "schedule": "35 * * * *"
     },
     {
+      "path": "/api/cron/context?step=dogs",
+      "schedule": "45 12,18 * * *"
+    },
+    {
+      "path": "/api/cron/context?step=sites",
+      "schedule": "52 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=reviews",
       "schedule": "5 10-17 * * 1"
     },

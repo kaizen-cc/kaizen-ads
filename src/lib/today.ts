@@ -236,6 +236,43 @@ async function youtubeItems(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   return [{ ...base, key: `yt-new:${day}`, topic: "mine", score: 25, stat: { value: "New", label: "from YouTube" }, title: String(data.title ?? "New takeaways from YouTube"), story: String(data.body ?? ""), why: "Methods from the channels we study, on your lines", action: { label: "Read them", href: "/settings?tab=agents&section=youtube&yt=mine" } }];
 }
 
+/**
+ * The daily watchdogs' notices to this person (src/lib/watchdogs): one item per issue while it's open (the notice is
+ * cleared when the issue is fixed), critical ones near the top. Their line decides the topic.
+ */
+async function watchdogItems(db: SupabaseClient, me: Staff): Promise<Draft[]> {
+  const { data, error } = await db
+    .from("notifications")
+    .select("key, title, body, href, client_id, priority, created_at, clients(name, slug)")
+    .eq("profile_id", me.id)
+    .like("key", "watch:%:dog")
+    .is("cleared_at", null)
+    .gte("created_at", new Date(Date.now() - 14 * 86_400_000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(40);
+  if (error) return [];
+  return (data ?? []).map((n) => {
+    const c = n.clients as unknown as { name: string; slug: string } | null;
+    const title = String(n.title ?? "").replace(/^[^:]+: /, "");
+    const critical = n.priority === "critical";
+    const href = (n.href as string | null) ?? (c?.slug ? `/clients/${c.slug}` : "/watch?tab=dogs");
+    return {
+      key: `dog:${String(n.key).split(":")[1]}`,
+      topic: (/[?&]service=email|board\/email/.test(href) ? "email" : /[?&]service=social/.test(href) ? "social" : "accounts") as TopicKey,
+      score: critical ? 88 : 66,
+      client: c?.name ?? "Client",
+      clientSlug: c?.slug ?? "",
+      clientId: (n.client_id as string | null) ?? null,
+      stat: { value: critical ? "Today" : "Watch", label: "caught by the watchdog" },
+      title,
+      story: String(n.body ?? "") || title,
+      why: critical ? "Caught today and it can cost the account: fix it before anything else." : "Caught today: worth handling before it grows.",
+      evidence: [],
+      action: { label: "Open it", href },
+    };
+  });
+}
+
 async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   // A maker's day: their plate (every piece waiting on them, by urgency), what's about to hit their board, and messages
   // and promises that are theirs personally. Nothing else is gathered, and the allowlist drops anything that slips in.
@@ -251,8 +288,8 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     return [...base, ...radar].filter((d) => csItem(d.key));
   }
   // The ads side and the email and social lines, read side by side, then ordered by how likely each client is to leave
-  const [ads, lines, risky, yt] = await Promise.all([gatherAll(db, me), import("@/lib/today-lines").then(({ gatherLines }) => gatherLines(db, me)).catch(() => [] as Draft[]), atRiskNow(db).catch(() => new Set<string>()), youtubeItems(db, me).catch(() => [] as Draft[])]);
-  const out = [...byRetention([...ads, ...lines], risky), ...yt];
+  const [ads, lines, risky, yt, dogs] = await Promise.all([gatherAll(db, me), import("@/lib/today-lines").then(({ gatherLines }) => gatherLines(db, me)).catch(() => [] as Draft[]), atRiskNow(db).catch(() => new Set<string>()), youtubeItems(db, me).catch(() => [] as Draft[]), watchdogItems(db, me).catch(() => [] as Draft[])]);
+  const out = [...byRetention([...ads, ...lines, ...dogs], risky), ...yt];
   return isCreativeRole(me.role) ? forCreative(out) : out;
 }
 

@@ -1125,3 +1125,28 @@ export async function metaInsights(adAccountId: string, params: Record<string, s
   }
   return rows.slice(0, maxRows);
 }
+
+/**
+ * The daily watchdogs' read of one ad account (read only): its status and why it's disabled, whether a payment method
+ * is on file, the live campaigns with their special ad categories and delivery state, and the live ads' names and copy
+ * (for ads still running past their event). Each part fails on its own, so one refused field never blanks the rest.
+ */
+export async function accountHealth(adAccountId: string) {
+  const act = `act_${adAccountId.replace(/^act_/, "")}`;
+  const live = JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE", "WITH_ISSUES"] }]);
+  const [account, campaigns, ads] = await Promise.all([
+    graph<{ name?: string; account_status?: number; disable_reason?: number; funding_source?: string | null }>(act, { fields: "name,account_status,disable_reason,funding_source" }).catch(() => null),
+    graph<Paged<{ id: string; name: string; objective?: string; effective_status?: string; special_ad_categories?: string[]; issues_info?: { error_message?: string; error_summary?: string }[] }>>(`${act}/campaigns`, {
+      fields: "name,objective,effective_status,special_ad_categories,issues_info",
+      filtering: live,
+      limit: "100",
+    }).catch(() => null),
+    graph<Paged<{ id: string; name: string; campaign_id?: string; effective_status?: string; creative?: { body?: string; title?: string } }>>(`${act}/ads`, {
+      fields: "name,campaign_id,effective_status,creative{body,title}",
+      filtering: JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE", "DISAPPROVED", "WITH_ISSUES"] }]),
+      limit: "200",
+    }).catch(() => null),
+  ]);
+  return { account, campaigns: campaigns?.data ?? null, ads: ads?.data ?? null };
+}
+export type AccountHealth = Awaited<ReturnType<typeof accountHealth>>;
