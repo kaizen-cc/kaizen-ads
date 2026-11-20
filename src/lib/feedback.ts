@@ -390,7 +390,22 @@ async function askOwner(admin: Admin, groupId: string) {
   await tellStatus(admin, groupId);
 }
 
-/** Send a group down its path: a fix now (or next, within today's cap), an Ask for the owner, or a look when it's stuck. */
+/**
+ * An Ask the owner filed (any exec reported it) needs no approval from themselves: it's approved and sent to Claude to
+ * build at once, the same as Approve to build on the review card (it merges itself once every check passes).
+ */
+async function ownersAsk(admin: Admin, groupId: string) {
+  const [people, { data: rows }] = await Promise.all([execs(admin), admin.from("app_feedback").select("profile_id").eq("group_id", groupId)]);
+  const by = people.find((p) => (rows ?? []).some((r) => r.profile_id === p.id));
+  if (!by) return false;
+  await admin.from("app_feedback_groups").update({ status: "planned", lane: "build", updated_at: new Date().toISOString() }).eq("id", groupId);
+  await logEvent(admin, groupId, "approved", "Filed by the owner: approved to build", { actor: by.id, shared: true });
+  await startFix(admin, groupId, false, { actor: by.id, ownerApproved: true });
+  await recomputeGroup(admin, groupId);
+  return true;
+}
+
+/** Send a group down its path: a fix now (or next, within today's cap), an Ask for the owner (built at once when the owner filed it), or a look when it's stuck. */
 export async function routeGroup(admin: Admin, groupId: string) {
   const { data: g } = await admin.from("app_feedback_groups").select("id, title, status, scope, scope_reason, lane, fix_state, fix_attempts").eq("id", groupId).maybeSingle();
   if (!g) return;
@@ -417,7 +432,9 @@ export async function routeGroup(admin: Admin, groupId: string) {
       await logEvent(admin, groupId, "queued", d.reason);
       await tellStatus(admin, groupId);
     }
-  } else if (d.action === "ask") await askOwner(admin, groupId);
+  } else if (d.action === "ask") {
+    if (!(await ownersAsk(admin, groupId))) await askOwner(admin, groupId);
+  }
   else if (d.action === "stuck") await needsALook(admin, groupId, g.title as string, d.reason);
 }
 
