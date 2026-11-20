@@ -10,10 +10,16 @@ import { AdImage } from "./ad-image";
 import { ChannelRecap } from "./channel-recap";
 import { loadChannelShare } from "@/lib/channel-reports/share";
 import { cardCampaigns, cardShotIds } from "@/lib/channel-reports/email-cards";
-import type { EmailMetrics } from "@/lib/channel-reports/core";
+import type { EmailMetrics, SocialMetrics } from "@/lib/channel-reports/core";
 
-/** Signed links to the drawn top of each card campaign's email (only what the draft saved: the page never draws) */
+/** Signed links to the drawn top of each card campaign's email (only what the draft saved: the page never draws); a social report's kept post pictures (by post) */
 async function channelShots(clientId: string | null | undefined, metrics: { platform: string; detail?: { campaigns: { id: string; channel: string; revenue: number; date: string | null }[] } | null }): Promise<Record<string, string>> {
+  if (clientId && metrics.platform === "social") {
+    const sm = metrics as unknown as SocialMetrics;
+    const posts = [...sm.posts.slice(0, 6), ...(sm.locations ?? []).map((l) => l.posts[0]).filter((p): p is NonNullable<typeof p> => Boolean(p))];
+    const { postPictureLinks } = await import("@/lib/social/pictures");
+    return postPictureLinks(createAdminClient(), clientId, posts).catch(() => ({}));
+  }
   if (!clientId || metrics.platform !== "klaviyo" || !metrics.detail) return {};
   const m = metrics as unknown as EmailMetrics;
   const ids = m.template === "engagement" ? cardShotIds(m) : cardCampaigns(metrics.detail.campaigns).filter((c) => c.channel !== "sms").map((c) => c.id);

@@ -53,7 +53,7 @@ async function emailShots(input: ChannelPdfInput): Promise<ChannelImages> {
 export async function channelImages(input: ChannelPdfInput): Promise<ChannelImages> {
   const m = input.metrics;
   // Social: each post framed 4:5 whole, never cropped (social-pictures.ts)
-  if (m.platform === "social") return (await import("./social-pictures")).socialPictures(m);
+  if (m.platform === "social") return (await import("./social-pictures")).socialPictures(m, input.clientId ?? null);
   // An email report with its detail shows each card's email (emailShots); an older one shows the campaigns' first pictures
   const jobs: [string, string | null][] = m.detail ? [] : m.campaigns.slice(0, 6).map((c) => [c.id, c.image]);
   const [got, shots] = await Promise.all([Promise.all(jobs.map(([, url]) => within(20_000, picture(url), null))), emailShots(input)]);

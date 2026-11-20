@@ -44,10 +44,28 @@ async function fetchFramed(url: string | null, frame: { w: number; h: number }):
   }
 }
 
-/** The pictures of the posts the report shows (the best three), by post */
-export async function socialPictures(m: SocialMetrics): Promise<Record<string, string | null>> {
-  const posts = m.posts.slice(0, 3);
-  const frame = postFrame(posts.length);
-  const got = await Promise.all(posts.map((p) => within(20_000, fetchFramed(p.thumbnail, frame), null)));
+/**
+ * The pictures of every post card the report draws, by post: the top posts (up to six, two rows of three) and each
+ * location's best post. The picture the sync kept is read first (Meta's own links stop working after a few days), the
+ * post's stored link only when none was kept. Before, only the first three were fetched, so a second row always said
+ * "No preview".
+ */
+export async function socialPictures(m: SocialMetrics, clientId?: string | null): Promise<Record<string, string | null>> {
+  const top = m.posts.slice(0, 6);
+  const extra = (m.locations ?? []).map((l) => l.posts[0]).filter((p): p is NonNullable<typeof p> => Boolean(p));
+  const posts = [...new Map([...top, ...extra].map((p) => [postKey(p), p])).values()];
+  const frame = postFrame(Math.min(3, Math.max(1, top.length)));
+  let kept = new Map<string, Buffer>();
+  if (clientId) {
+    const { adminConfigured, createAdminClient } = await import("@/lib/supabase/admin");
+    if (adminConfigured()) kept = await within(20_000, import("@/lib/social/pictures").then((x) => x.postPictureBytes(createAdminClient(), clientId, posts)), new Map<string, Buffer>()).catch(() => new Map<string, Buffer>());
+  }
+  const got = await Promise.all(
+    posts.map(async (p) => {
+      const buf = kept.get(postKey(p));
+      const fromKept = buf ? await framePicture(buf, frame).catch(() => null) : null;
+      return fromKept ?? within(20_000, fetchFramed(p.thumbnail, frame), null);
+    }),
+  );
   return Object.fromEntries(posts.map((p, i) => [postKey(p), got[i]]));
 }

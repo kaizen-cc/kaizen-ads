@@ -301,6 +301,8 @@ async function readInstagram(admin: SupabaseClient, clientId: string, ig: string
     if (counts.length) await saveGrouped(admin, "social_posts", counts, "client_id,platform,post_id");
     await saveGrouped(admin, "social_posts", posts.map((p) => postRow(clientId, ig, p, now)), "client_id,platform,post_id");
     out.posts = posts.length;
+    // Every post's picture kept while Meta's link still works (the report reads the kept one)
+    await (await import("./pictures")).cachePostPictures(admin, clientId, media.map((p) => ({ platform: p.platform, id: p.id, thumbnail: p.thumbnail, postedAt: p.postedAt }))).catch(() => null);
     // Live stories, kept for the IG stories pool of the social allotment (a quiet gap when Meta won't list them)
     const stories = await igStories(ctx, ig).catch(() => []);
     if (stories.length)
@@ -346,13 +348,18 @@ async function readFacebook(admin: SupabaseClient, clientId: string, page: strin
     const all = await fbPosts(ctx, page, 40, window === "full" ? { since: from } : {});
     const cutoff = shiftDay(today, -14);
     const fresh = window === "full" ? all : all.filter((p) => (p.postedAt ?? "").slice(0, 10) >= cutoff);
-    const ins = await fbPostsInsights(ctx, fresh.slice(0, window === "full" ? 300 : 30).map((p) => p.id)).catch(() => new Map<string, { reach: number | null; views: number | null }>());
+    const got = await fbPostsInsights(ctx, fresh.slice(0, window === "full" ? 300 : 30).map((p) => p.id)).catch((e: unknown) => ({ by: new Map<string, { reach: number | null; views: number | null }>(), error: errText(e) }));
+    const ins = got.by;
+    // Meta gave no post reach at all: kept with the read, so Sync health and the account say why
+    if (got.error && fresh.length) out.skipped.push(`post reach (${got.error})`);
     const posts = fresh.map((p) => {
       const i = ins.get(p.id);
       return i ? { ...p, reach: i.reach, views: i.views, insightsOk: i.reach != null || i.views != null } : p;
     });
     await saveGrouped(admin, "social_posts", posts.map((p) => postRow(clientId, page, p, now)), "client_id,platform,post_id");
     out.posts = posts.length;
+    // Every post's picture kept while Meta's link still works (the report reads the kept one)
+    await (await import("./pictures")).cachePostPictures(admin, clientId, all.map((p) => ({ platform: p.platform, id: p.id, thumbnail: p.thumbnail, postedAt: p.postedAt }))).catch(() => null);
   } catch (e) {
     out.error = errText(e);
     if (e instanceof SocialReadError && e.permission) out.permission = e.permission;

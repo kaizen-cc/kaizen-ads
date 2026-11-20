@@ -283,28 +283,51 @@ export async function fbPosts(ctx: SocialCtx, pageId: string, limit = 40, opts: 
 }
 
 /** Lifetime reach and views for posts, one batched ask per metric (ids=), the current metric first; posts Meta doesn't answer for stay without */
-export async function fbPostsInsights(ctx: SocialCtx, ids: string[]): Promise<Map<string, { reach: number | null; views: number | null }>> {
+export async function fbPostsInsights(ctx: SocialCtx, ids: string[]): Promise<{ by: Map<string, { reach: number | null; views: number | null }>; error: string | null }> {
   const out = new Map<string, { reach: number | null; views: number | null }>();
-  for (let i = 0; i < ids.length; i += 25) {
-    const part = ids.slice(i, i + 25);
-    for (const field of ["reach", "views"] as const) {
+  let error: string | null = null;
+  const put = (id: string, field: "reach" | "views", v: number) => out.set(id, { reach: out.get(id)?.reach ?? null, views: out.get(id)?.views ?? null, [field]: v });
+  const valueOf = (data: { name?: string; values?: { value?: unknown }[] }[] | undefined, metric: string) => {
+    const v = data?.find((d) => d.name === metric)?.values?.[0]?.value;
+    return typeof v === "number" ? v : null;
+  };
+  for (const field of ["reach", "views"] as const) {
+    // A batch of 25 at a time; a batch that fails as a whole (one post Meta won't describe) or answers nothing is asked
+    // again a post at a time, so one post never blanks the rest
+    for (let i = 0; i < ids.length; i += 25) {
+      const part = ids.slice(i, i + 25);
       for (const metric of FB_POST_METRICS[field]) {
+        let any = false;
         try {
-          const r = await viaPage<Record<string, { insights?: { data?: { name?: string; values?: { value?: unknown }[] }[] } }>>(ctx, "fb_insights", "", { ids: part.join(","), fields: `insights.metric(${metric}).period(lifetime)` });
-          let any = false;
+          const r = await viaPage<Record<string, { insights?: { data?: { name?: string; values?: { value?: unknown }[] }[] } }>>(ctx, "fb_insights", "", { ids: part.join(","), fields: `insights.metric(${metric})` });
           for (const id of part) {
-            const v = r[id]?.insights?.data?.find((d) => d.name === metric)?.values?.[0]?.value;
-            if (typeof v === "number") {
-              out.set(id, { reach: out.get(id)?.reach ?? null, views: out.get(id)?.views ?? null, [field]: v });
+            const v = valueOf(r[id]?.insights?.data, metric);
+            if (v != null) {
+              put(id, field, v);
               any = true;
             }
           }
-          if (any) break;
-        } catch {
-          // the older metric name next, or none for these posts
+        } catch (e) {
+          error = error ?? `${metric}: ${e instanceof Error ? e.message : String(e)}`.slice(0, 240);
         }
+        if (!any) {
+          await runBounded(part.slice(0, 12), { limit: 4 }, async (id) => {
+            try {
+              const r = await viaPage<{ data?: { name?: string; values?: { value?: unknown }[] }[] }>(ctx, "fb_insights", `${id}/insights`, { metric });
+              const v = valueOf(r.data, metric);
+              if (v != null) {
+              put(id, field, v);
+              any = true;
+            }
+            } catch (e) {
+              error = error ?? `${metric}: ${e instanceof Error ? e.message : String(e)}`.slice(0, 240);
+            }
+          });
+        }
+        if (any) break;
       }
     }
   }
-  return out;
+  if (!out.size && error) console.error("[social] Facebook post insights", error);
+  return { by: out, error: out.size ? null : error };
 }

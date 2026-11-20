@@ -770,7 +770,7 @@ export function SocialBody({ m, images, look, layout, hot, sections, whiteLabel 
       <Trend m={m} look={look} />
       <Platforms m={m} keys={columnKeys("social", layout)} hot={hot} />
       <TopPosts m={m} images={images} look={look} />
-      <Locations m={m} />
+      <Locations m={m} images={images} />
     </>
   );
 }
@@ -778,7 +778,7 @@ export function SocialBody({ m, images, look, layout, hot, sections, whiteLabel 
 // ─── 8. By location (a Page and Instagram per location), last ───────────────
 
 /** One location's card: its accounts, then followers, reach, interactions, engagement and posts against the period before, and its best post */
-function LocationCard({ l, m, width }: { l: NonNullable<SocialMetrics["locations"]>[number]; m: SocialMetrics; width: number }) {
+function LocationCard({ l, m, width, images }: { l: NonNullable<SocialMetrics["locations"]>[number]; m: SocialMetrics; width: number; images: Images }) {
   const target = engagementBarOf(m);
   const basisNote = rateLabelOf(l.now);
   const vs = basisNote ? null : againstBar(m.insightsRead ? l.now.rate : null, target);
@@ -809,15 +809,22 @@ function LocationCard({ l, m, width }: { l: NonNullable<SocialMetrics["locations
         </PlatformCell>
       </View>
       <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, paddingTop: 7, borderTopWidth: 1, borderTopColor: "#edf1f4" }}>
-        <Text style={{ fontSize: 5.8, fontFamily: "Helvetica-Bold", color: MUTED, textTransform: "uppercase", letterSpacing: 0.5, marginRight: 5 }}>Best post</Text>
-        <Text style={{ flex: 1, fontSize: 6.8, color: INK, maxLines: 1, textOverflow: "ellipsis" }}>{best ? `${captionText(best.caption, 44) || FORMAT_WORD[best.format] || best.format} · ${int(best.interactions)} interactions` : "No posts this period"}</Text>
+        {best ? (
+          <View style={{ marginRight: 7, borderRadius: 6, overflow: "hidden" }}>
+            <Picture p={best} pic={images[postKey(best)]} width={40} height={50} />
+          </View>
+        ) : null}
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 5.8, fontFamily: "Helvetica-Bold", color: MUTED, textTransform: "uppercase", letterSpacing: 0.5 }}>Best post</Text>
+          <Text style={{ fontSize: 6.8, color: INK, marginTop: 2, maxLines: 2, textOverflow: "ellipsis" }}>{best ? `${captionText(best.caption, 70) || FORMAT_WORD[best.format] || best.format} · ${int(best.interactions)} interactions${best.reach != null ? ` · reach ${int(best.reach)}` : ""}` : "No posts this period"}</Text>
+        </View>
       </View>
     </View>
   );
 }
 
 /** Each location on its own (the numbers above are the whole company, every location added up), two to a row */
-function Locations({ m }: { m: SocialMetrics }) {
+function Locations({ m, images }: { m: SocialMetrics; images: Images }) {
   const list = m.locations ?? [];
   if (list.length < 2) return null;
   const w = (INNER - GAP) / 2;
@@ -829,7 +836,7 @@ function Locations({ m }: { m: SocialMetrics }) {
       rows={rows.map((row, r) => (
         <View key={r} wrap={false} style={{ flexDirection: "row", gap: GAP, marginBottom: GAP }}>
           {row.map((l) => (
-            <LocationCard key={l.label} l={l} m={m} width={w} />
+            <LocationCard key={l.label} l={l} m={m} width={w} images={images} />
           ))}
         </View>
       ))}

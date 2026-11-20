@@ -80,7 +80,7 @@ export function ChannelRecap({ r }: { r: Shared }) {
               ))}
             </ul>
 
-            {m.platform === "klaviyo" ? <EmailBody m={m} shots={r.shots ?? {}} /> : <SocialBody m={m} />}
+            {m.platform === "klaviyo" ? <EmailBody m={m} shots={r.shots ?? {}} /> : <SocialBody m={m} pics={r.shots ?? {}} />}
 
             {takeaways.length > 0 && (
               <Block title="Key takeaways">
@@ -233,7 +233,8 @@ function EmailBody({ m, shots }: { m: EmailMetrics; shots: Record<string, string
   );
 }
 
-function SocialBody({ m }: { m: SocialMetrics }) {
+function SocialBody({ m, pics }: { m: SocialMetrics; /** The kept post pictures by post ("platform:id"), Meta's own link the fallback */ pics: Record<string, string> }) {
+  const pic = (p: { platform: string; id: string; thumbnail: string | null }) => pics[`${p.platform}:${p.id}`] ?? p.thumbnail;
   return (
     <>
       {m.platforms.length > 0 && (
@@ -276,10 +277,10 @@ function SocialBody({ m }: { m: SocialMetrics }) {
       {m.posts.length > 0 && (
         <Block title={`Top posts · ${m.postsTotal} published`}>
           <div className="grid gap-4 sm:grid-cols-3">
-            {m.posts.slice(0, 3).map((p) => (
+            {m.posts.slice(0, 6).map((p) => (
               <article key={`${p.platform}:${p.id}`} className="overflow-hidden rounded-xl border border-line bg-surface">
                 <div className="relative aspect-square bg-surface-2">
-                  <AdImage src={p.thumbnail} />
+                  <AdImage src={pic(p)} />
                 </div>
                 <div className="p-4">
                   <p className="line-clamp-2 text-sm font-medium [overflow-wrap:anywhere]">{p.caption ?? `${socialName(p.platform)} ${p.format}`}</p>
@@ -328,7 +329,11 @@ function SocialBody({ m }: { m: SocialMetrics }) {
                   </div>
                 </dl>
                 {l.posts[0] && (
-                  <p className="mt-3 border-t border-line pt-2 text-[12.5px] text-muted [overflow-wrap:anywhere]">
+                  <div className="mt-3 flex items-center gap-3 border-t border-line pt-3">
+                  <div className="relative h-16 w-[52px] shrink-0 overflow-hidden rounded-lg bg-surface-2">
+                    <AdImage src={pic(l.posts[0])} />
+                  </div>
+                  <p className="min-w-0 text-[12.5px] text-muted [overflow-wrap:anywhere]">
                     Best post:{" "}
                     {l.posts[0].permalink ? (
                       <a href={l.posts[0].permalink} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
@@ -337,8 +342,9 @@ function SocialBody({ m }: { m: SocialMetrics }) {
                     ) : (
                       (l.posts[0].caption ?? socialName(l.posts[0].platform)).slice(0, 70)
                     )}{" "}
-                    · {int(l.posts[0].interactions)} interactions
+                    · {int(l.posts[0].interactions)} interactions{l.posts[0].reach != null ? ` · reach ${int(l.posts[0].reach)}` : ""}
                   </p>
+                  </div>
                 )}
               </div>
             ))}
