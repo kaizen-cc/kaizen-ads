@@ -448,7 +448,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
   const shownAgent = live?.agent?.label ?? (agentPick ? AGENT_LABEL[agentPick] : null);
 
   return (
-    <div className="-mx-4 -mt-6 flex h-[calc(100dvh-70px-env(safe-area-inset-bottom)-56px)] min-h-0 overflow-hidden md:-mx-10 md:-my-8 md:h-[100dvh]">
+    <div className="-mx-4 -mt-6 flex h-[calc(100dvh-70px-env(safe-area-inset-bottom)-env(safe-area-inset-top)-56px)] min-h-0 overflow-hidden md:-mx-10 md:-my-8 md:h-[100dvh]">
       {/* Threads */}
       <Rail
         open={listOpen}
@@ -505,7 +505,7 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
             ) : gate && !thread ? (
               <ImportFirst first={me.first} onImport={() => pushParams({ import: "1" })} onSkip={() => void skipImport()} />
             ) : !thread && !messages.length && !live && lastMine && !fresh ? (
-              <PickUp title={lastMine.title} client={lastMine.clients?.name ?? null} at={lastMine.last_message_at} now={now} onPickUp={() => pushParams({ t: lastMine.id })} onFresh={() => setFresh(true)} />
+              <PickUp title={lastMine.title} client={lastMine.clients?.name ?? null} at={lastMine.last_message_at} now={now} onPickUp={() => pushParams({ t: lastMine.id })} onFresh={() => setFresh(true)} onList={() => pushParams({ list: "1" })} />
             ) : !thread && !messages.length && !live ? (
               <Empty first={me.first} line={lineOfTeam(me.role)} on={on} groups={groups} quickIds={quickIds} templates={templates} client={client} homeAgent={homeAgent.label} onUse={applyPrompt} onImport={() => pushParams({ import: "1" })} />
             ) : null}
@@ -1608,7 +1608,7 @@ function ImportFirst({ first, onImport, onSkip }: { first: string; onImport: () 
 }
 
 /** Coming back to Kaizen AI: the last conversation to pick up, or a new one */
-function PickUp({ title, client, at, now, onPickUp, onFresh }: { title: string; client: string | null; at: string; now: number; onPickUp: () => void; onFresh: () => void }) {
+function PickUp({ title, client, at, now, onPickUp, onFresh, onList }: { title: string; client: string | null; at: string; now: number; onPickUp: () => void; onFresh: () => void; /** Phones: every chat (the list is a drawer there) */ onList?: () => void }) {
   const ago = Math.round((now - Date.parse(at)) / 60000);
   const said = ago < 2 ? "just now" : ago < 60 ? `${ago} min ago` : ago < 60 * 24 ? `${Math.round(ago / 60)} h ago` : new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   return (
@@ -1628,6 +1628,11 @@ function PickUp({ title, client, at, now, onPickUp, onFresh }: { title: string; 
         <button type="button" onClick={onFresh} className="h-12 rounded-full border border-line px-6 text-[14px] text-fg hover:bg-ink/[0.04]">
           Start a new conversation
         </button>
+        {onList ? (
+          <button type="button" onClick={onList} className="h-12 rounded-full px-6 text-[14px] text-muted hover:text-fg md:hidden">
+            See all your chats
+          </button>
+        ) : null}
       </div>
     </div>
   );
