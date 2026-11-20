@@ -68,12 +68,15 @@ export function mayAskTeammate(me: LineWho, seats: readonly string[], kind: "tas
 }
 
 /**
- * The whole-business audit (every line at once): executives, the line heads, and the client's seated buyers,
- * strategists and social media managers. Designers, editors, builders, copywriters and customer success never run it.
+ * The whole-business audit reads the paid ads (Meta and Google) with the creative and what the client is telling us, so
+ * it's run by the executives, the Head of Meta and the Head of Google, and the client's seated media buyers (owner,
+ * Nov 20 2026). The email and social teams, designers, editors, builders, copywriters and customer success never run it.
  */
+const BUSINESS_AUDIT_HEADS = ["head_of_meta", "head_of_google"];
+const BUSINESS_AUDIT_SEATS = ["meta_buyer", "google_buyer", "tiktok_buyer"];
 export function mayBusinessAudit(me: LineWho, seats: readonly string[]): LineVerdict {
-  if (isExec(me) || String(me.role ?? "").startsWith("head_of_") || OWNER_SEATS.some((s) => seats.includes(s))) return YES;
-  return { ok: false, reason: "Only the client's buyers and strategists, the line heads or an exec can run a full business audit." };
+  if (isExec(me) || BUSINESS_AUDIT_HEADS.includes(String(me.role ?? "")) || BUSINESS_AUDIT_SEATS.some((s) => seats.includes(s))) return YES;
+  return { ok: false, reason: "The full business audit is run by the client's media buyers, the Head of Meta or Google, or an exec." };
 }
 
 /** The lines this person may act on for a client (for the chat's prompt) */

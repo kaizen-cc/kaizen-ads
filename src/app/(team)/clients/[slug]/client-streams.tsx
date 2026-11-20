@@ -79,8 +79,10 @@ export async function PatternsStream({ clientId }: { clientId: string }) {
 }
 
 /** The full business audit: the latest one, the pushback on it, and whether this person may push back */
-export async function BusinessAuditStream({ clientId, meId, canRun = true }: { clientId: string; meId: string; /** Whether this person may run one (src/lib/line-actions.ts) */ canRun?: boolean }) {
+export async function BusinessAuditStream({ clientId, meId, canRun = true, channels = [] }: { clientId: string; meId: string; /** Whether this person may run one (src/lib/line-actions.ts) */ canRun?: boolean; /** What the client buys that the audit reads, in words (Meta, Google, creative) */ channels?: string[] }) {
   if (!adminConfigured()) return null;
+  // Only a client with paid ads gets one (that's what it audits)
+  if (!channels.some((c) => c === "Meta" || c === "Google")) return null;
   const admin = createAdminClient();
   const supabase = await createClient();
   const [{ data: ba }, { auditRebuttals, rebutRightsOf }, { BusinessAuditPanel }] = await Promise.all([
@@ -88,6 +90,8 @@ export async function BusinessAuditStream({ clientId, meId, canRun = true }: { c
     import("@/lib/audit-rebuttals"),
     import("./business-audit-panel"),
   ]);
+  // Someone who can't run it sees a finished audit, never an empty card with a button that isn't theirs
+  if (!canRun && !ba) return null;
   const { whyCounts } = await import("@/lib/audit-why");
   const [pushback, rights, asked] = await T(
     "business audit",
@@ -101,6 +105,7 @@ export async function BusinessAuditStream({ clientId, meId, canRun = true }: { c
       rights={rights}
       asked={asked}
       canRun={canRun}
+      channels={channels}
     />
   );
 }

@@ -508,7 +508,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       businessAudit={
         numbers ? (
           <Streamed h="h-24">
-            <BusinessAuditStream clientId={client.id} meId={me.id} canRun={perms.business} />
+            <BusinessAuditStream clientId={client.id} meId={me.id} canRun={perms.business} channels={[...(servicesNow.includes("facebook-ads") ? ["Meta"] : []), ...(servicesNow.includes("google-ads") ? ["Google"] : []), ...(servicesNow.includes("creative") ? ["creative"] : [])]} />
           </Streamed>
         ) : null
       }

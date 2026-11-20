@@ -30,7 +30,7 @@ const TONE: Record<string, { label: string; chip: string; dot: string }> = {
 const WHEN: Record<string, string> = { now: "Today", this_week: "This week", next: "Next" };
 const SEV: Record<string, string> = { high: "border-l-bad", medium: "border-l-warn", low: "border-l-line" };
 
-export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushback, rights = NO_RIGHTS, asked = {}, canRun = true }: { /** Whether this person may run one: the client's buyers and strategists, the line heads and the execs */ canRun?: boolean; clientId: string; /** For links to the client's tasks (read from the address when not given) */ slug?: string | null; latest: BusinessAuditView | null; pushback: Record<string, RebutNote[]>; /** What this person may push back on, per platform (a Google item: the Head of Google too) */ rights?: RebutRights; /** "Why?" messages per item so far */ asked?: Record<string, number> }) {
+export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushback, rights = NO_RIGHTS, asked = {}, canRun = true, channels = ["Meta", "Google", "creative"] }: { /** Whether this person may run one: the client's media buyers, the Heads of Meta and Google, and the execs */ canRun?: boolean; /** The client's channels the audit reads, in words */ channels?: string[]; clientId: string; /** For links to the client's tasks (read from the address when not given) */ slug?: string | null; latest: BusinessAuditView | null; pushback: Record<string, RebutNote[]>; /** What this person may push back on, per platform (a Google item: the Head of Google too) */ rights?: RebutRights; /** "Why?" messages per item so far */ asked?: Record<string, number> }) {
   const router = useRouter();
   const path = usePathname();
   const slug = given ?? (path.startsWith("/clients/") ? (path.split("/")[2] ?? null) : null);
@@ -100,7 +100,7 @@ export function BusinessAuditPanel({ clientId, slug: given = null, latest, pushb
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid gap-1">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Full business audit</p>
-          <p className="max-w-2xl text-[13.5px] text-muted">Every channel at once: Meta, Google, creative and what the client is telling us, connected. {latest ? `Last run ${new Date(latest.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}${latest.by ? ` by ${latest.by}` : ""}.` : "Not run yet."}</p>
+          <p className="max-w-2xl text-[13.5px] text-muted">{`Everything we run for them at once: ${[...channels, "what the client is telling us"].join(", ").replace(/, ([^,]*)$/, " and $1")}, connected.`} {latest ? `Last run ${new Date(latest.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}${latest.by ? ` by ${latest.by}` : ""}.` : "Not run yet."}</p>
         </div>
         {canRun && <button type="button" disabled={Boolean(running)} onClick={start} className="min-h-11 rounded-full bg-fg px-5 text-[13.5px] font-medium text-bg disabled:opacity-60 md:min-h-9">
           {running ? (running.step ?? "Auditing…") : latest ? "Audit the whole business again" : "Audit the whole business"}
