@@ -33,7 +33,7 @@ export function EmailRequestChat({ clientId, clientName, seed, onCopy, onBack }:
       if (!a.ok) return setError(a.error);
       setNotice(null);
     }
-    const r = await startCall("email_strategist", { talk: "text" });
+    const r = await startCall("email_strategist", { talk: "text", tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
     if (!r.ok) {
       if (r.needsNotice) return setNotice(r.error);
       return setError(r.error);

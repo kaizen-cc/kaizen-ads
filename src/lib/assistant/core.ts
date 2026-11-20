@@ -3,7 +3,7 @@
 // the order of "what do I need to do today", which screens and links the assistant may open, the personal memory's
 // checks and greetings, and the safety review's reading and audio retention.
 
-import { looksSensitive } from "@/lib/agent-call/core";
+import { AFTER_HOURS_GREETINGS, dayPartOf, isAfterHours, looksSensitive } from "@/lib/agent-call/core";
 
 export const ASSISTANT_KEY = "assistant";
 export const ASSISTANT_LABEL = "Assistant";
@@ -374,7 +374,7 @@ export function assistantGreeting(input: {
   mode?: "continue" | "again" | "soon" | "later_today" | "fresh";
   /** The agents' timing hello for that mode ("Hey again! Good to hear from you so soon"), used for soon and later today */
   timed?: string | null;
-  /** The hour in New York, for a hello that fits the time of day */
+  /** The hour in their own time zone, for a hello that fits the time of day */
   hour?: number;
 }): { text: string; followed: string | null } {
   const { name, memory, today } = input;
@@ -401,7 +401,8 @@ export function assistantGreeting(input: {
     const lead = [`Hey ${name}! Random one before we start: I've been thinking since we last talked,`, `Hi ${name}! Quick one first, totally unrelated:`, `Hey ${name}! Before anything else, I've been curious:`];
     return { text: `${lead[seed % lead.length]} ${casual.ask}`, followed: null };
   }
-  // A fresh start: a hello that fits the time of day (a morning call usually wants the day's rundown)
+  // A fresh start: a hello that fits the time of day in their time zone (a morning call usually wants the day's
+  // rundown); after work hours, one of the playful "you caught me off the clock" lines
   const h = input.hour ?? 12;
   const plain =
     h < 12
@@ -409,6 +410,14 @@ export function assistantGreeting(input: {
       : h < 17
         ? [`Hey ${name}, it's your assistant. What can I do for you?`, `Hi ${name}! What are we tackling this afternoon?`]
         : [`Hey ${name}, working late? What can I help you wrap up?`, `Evening, ${name}. Want a quick look at what's left for today, or tomorrow's plan?`];
+  if (isAfterHours(h)) {
+    const part = dayPartOf(h);
+    const late = AFTER_HOURS_GREETINGS[part === "afternoon" ? "evening" : part].map((l) => l.replace("{name}", name));
+    // Past midnight the day's rundown doesn't fit: only the late-night lines
+    const all = part === "late" ? late : [...plain, ...late];
+    const line = all[seed % all.length];
+    return { text: line.charAt(0).toUpperCase() + line.slice(1), followed: null };
+  }
   return { text: plain[seed % plain.length], followed: null };
 }
 
