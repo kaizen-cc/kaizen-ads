@@ -826,7 +826,9 @@ export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
             return out;
           },
         };
-  const all = [...own, ...lookupTools(ctx), ...profileTools(ctx), ...transferTools(ctx), ...viewAsTools(ctx), ...comms, ...cardTools, ...rest.map(docCards)];
+  // Role-filtered: the support positions' assistants carry nothing creative (src/lib/assistant/role-briefs.ts)
+  const { toolFitsRole } = await import("./role-briefs");
+  const all = [...own, ...lookupTools(ctx), ...profileTools(ctx), ...transferTools(ctx), ...viewAsTools(ctx), ...comms, ...cardTools, ...rest.map(docCards)].filter((t) => toolFitsRole(ctx.me.role, t.name));
   const guarded = ctx.me.viewAs ? all.map((t) => (NO_WHILE_VIEWING.has(t.name) ? { ...t, run: async () => ({ done: false, error: VIEWING_NOTE }) } : t)) : all;
   return carryYes(ctx, cctx, guarded);
 }

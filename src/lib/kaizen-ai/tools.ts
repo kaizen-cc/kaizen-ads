@@ -1310,7 +1310,9 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   // The add-on tools (src/lib/ai-tools: image generation, research, email design, list cleaning...) and the deck are
   // for the email and social teams too; each checks its own rights and team
   for (const t of extra) CHANNEL_EXTRA.add(t.name);
-  return toolsFor(ctx.me, tools);
+  // Role-filtered: the support positions get nothing creative (src/lib/assistant/role-briefs.ts)
+  const { toolFitsRole } = await import("@/lib/assistant/role-briefs");
+  return toolsFor(ctx.me, tools).filter((t) => toolFitsRole(ctx.me.role, t.name));
 }
 
 /**

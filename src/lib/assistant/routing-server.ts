@@ -38,7 +38,16 @@ export type Recipient = { id: string; name: string; why: string | null };
 export type RecipientResult = { ok: true; to: Recipient } | { ok: false; note: string; options?: string[] };
 
 /** Words that name a role rather than a person */
-export const ROLE_WORDS = /\b(buyer|strategist|manager|lead|designer|builder|editor|copy ?writer|coordinator|head of|account|success|team)\b/i;
+/** A support position named in words ("the tracking specialist", "tracking team", "onboarding specialist", "client success") */
+export function supportRoleIn(words: string): string | null {
+  const t = words.toLowerCase();
+  if (/\btracking\b/.test(t)) return "tracking_specialist";
+  if (/\bonboarding (?:specialist|team|person)\b/.test(t)) return "onboarding_specialist";
+  if (/\b(?:client|customer) success\b|\bcs coordinator\b/.test(t)) return "customer_success";
+  return null;
+}
+
+export const ROLE_WORDS = /\b(buyer|strategist|manager|lead|designer|builder|editor|copy ?writer|coordinator|head of|account|success|team|specialist)\b/i;
 
 const LINE_WORD: Record<Line, string> = { meta: "Meta ads", google: "Google ads", tiktok: "TikTok ads", email: "email", social: "organic social", creative: "creative", account: "account management" };
 
@@ -49,6 +58,14 @@ const LINE_WORD: Record<Line, string> = { meta: "Meta ads", google: "Google ads"
  */
 export async function recipientFor(admin: SupabaseClient, input: { to: string; client: ClientTeam | null; agentRole: string | null; exclude: string }): Promise<RecipientResult> {
   const team = await activeTeam(admin);
+  // The support positions hold no client seat: "the tracking specialist" ("check this tracking"), "the onboarding
+  // specialist", "the client success coordinator" go straight to whoever holds that role
+  const support = supportRoleIn(input.to);
+  if (support) {
+    const holders = team.filter((p) => p.role === support && p.id !== input.exclude);
+    if (holders.length === 1) return { ok: true, to: { id: holders[0].id, name: holders[0].fullName, why: null } };
+    if (holders.length > 1) return { ok: false, note: "Several teammates hold that role: ask which one in a few words.", options: holders.map((p) => p.fullName) };
+  }
   // A role ("the Meta media buyer") goes through the client's seats first, so a word in it never fuzzy-matches a name
   const roleWords = ROLE_WORDS.test(input.to);
   const byName = roleWords ? ({ kind: "none" } as const) : resolveTeammate(input.to, team, { exclude: input.exclude });

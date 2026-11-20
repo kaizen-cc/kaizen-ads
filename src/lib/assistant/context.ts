@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { extraTeams, roleLabel } from "@/lib/roles";
+import { roleBriefBlock } from "./role-briefs";
 import { orderForToday, type DayItem } from "./core";
 
 // What the assistant knows about the person it's talking with, read with their own session (their rights decide):
@@ -137,6 +138,8 @@ export async function myContext(db: SupabaseClient, admin: SupabaseClient, me: S
   const line = (i: WorkItem) => `- ${i.client ? `${i.client}: ` : ""}${i.title}${i.why ? `. ${i.why}` : ""}${i.href ? ` [open: ${i.href}]` : ""}`;
   const text = [
     `<who>${me.fullName}, ${roleLabel(me.role)}${me.isExec ? " (executive)" : me.isLead ? " (lead)" : ""}${teams.length ? `; also on the ${teams.join(" and ")} team${teams.length > 1 ? "s" : ""}` : ""}.</who>`,
+    // What their role is for, what matters and what to leave alone: every assistant talks their role's work
+    roleBriefBlock(me.role),
     `<clients count="${byClient.size}">\n${[...byClient].slice(0, 60).map(([c, r]) => `- ${c}: ${r.join(", ")}`).join("\n") || "(no seats on clients)"}\n</clients>`,
     `<their_day critical="${critical.length}" total="${day.length}">\nIn order: critical first, then simple to complex.\n${day.slice(0, 30).map(line).join("\n") || "(nothing on them right now)"}${day.length > 30 ? `\n…and ${day.length - 30} more (use my_work)` : ""}${day.length < items.length ? `\nOutside their focus: ${items.length - day.length} more under Everything else (my_work with only: everything_else), only if they ask.` : ""}\n</their_day>`,
     `<connectors>${connectors.length ? `Connected: ${connectors.join(", ")}.` : "None connected."}</connectors>`,

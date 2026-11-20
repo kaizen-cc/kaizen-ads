@@ -784,7 +784,9 @@ export async function runOwedReplies(admin: Admin) {
   // The escalation ladder for every line: 48 hours with nothing done after the owner heard, and their lead gets a
   // drafted nudge to send them (src/lib/escalation-ladder.ts)
   const ladder = await (await import("@/lib/escalation-ladder")).runLadder(admin).catch(fail);
-  return { scanned, ...tally, promises, grouped, following, ladder };
+  // Landing page, tracking setup and fix requests said anywhere become the Tracking Specialist's tasks
+  const tracking = await (await import("@/lib/tracking-requests")).trackingRequests(admin).catch(fail);
+  return { scanned, ...tally, promises, grouped, following, ladder, tracking };
 }
 
 // ─── Reading ────────────────────────────────────────────────────────────────

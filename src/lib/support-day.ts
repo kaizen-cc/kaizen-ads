@@ -138,7 +138,7 @@ async function trackingItems(admin: SupabaseClient, me: Staff): Promise<Draft[]>
   const { trackingBoard } = await import("@/lib/oversight/support");
   const [issues, { data: asks }, { data: clients }] = await Promise.all([
     trackingBoard(admin).catch(() => []),
-    admin.from("agent_asks").select("id, title, detail, due_on, created_at, urgent, clients(name, slug), client_id, asker:profiles!agent_asks_asked_by_fkey(full_name)").eq("owner_id", me.id).eq("status", "open").neq("asked_by", me.id).limit(80),
+    admin.from("agent_asks").select("id, title, detail, due_on, created_at, urgent, clients(name, slug), client_id, asker:profiles!agent_asks_asked_by_fkey(full_name)").eq("owner_id", me.id).eq("status", "open").or(`asked_by.neq.${me.id},source_ref.like.trk:%`).limit(80),
     admin.from("clients").select("id, name, slug, services, services_extra, services_removed, client_onboarding(tracking)").is("archived_at", null).eq("status", "active").limit(1000),
   ]);
   const out: Draft[] = [];
@@ -169,7 +169,7 @@ async function trackingItems(admin: SupabaseClient, me: Staff): Promise<Draft[]>
       stat: { value: a.due_on ? a.due_on.slice(5) : "Open", label: a.due_on ? "due" : "task" },
       title: a.title,
       story: a.detail || a.title,
-      why: `From ${a.asker?.full_name ?? "a teammate"}${a.urgent ? ", marked urgent" : ""}`,
+      why: a.asker?.full_name && !a.detail?.startsWith("Asked in") ? `From ${a.asker.full_name}${a.urgent ? ", marked urgent" : ""}` : "A tracking request picked up from a message, a task or a call",
       evidence: [],
       action: { label: "Open your work", href: "/pipeline#next" },
     });
