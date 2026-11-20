@@ -243,7 +243,12 @@ export async function keepPresentations(admin: SupabaseClient) {
   }
   const { data: due } = await admin.from("client_presentations").select("client_id, clients!inner(name, status, created_at, reonboarded_at)").eq("status", "draft").eq("clients.status", "onboarding").or(inFlow, { referencedTable: "clients" }).lt("send_after", new Date().toISOString());
   const { autoOutreach } = await import("@/lib/client-outreach");
-  for (const d of due ?? []) {
+  // The owner, Nov 20 2026: "keep the notification about the brand bible to the client dormant, but we still need the
+  // brandbible developed". The Bible and its presentation keep being built; nothing about it goes to the client on its
+  // own until app_settings.bible_client_notice is switched on. A person can still send one by hand.
+  const { data: notice } = await admin.from("app_settings").select("value").eq("key", "bible_client_notice").maybeSingle();
+  const noticeOn = (notice?.value as { on?: boolean } | null)?.on === true;
+  for (const d of noticeOn ? (due ?? []) : []) {
     // Not sent on its own to a real client until the portal is launched to them: it waits for a person to send it
     if (!(await autoOutreach(admin, d.client_id as string))) continue;
     const r = await sendPresentation(admin, d.client_id as string, null);

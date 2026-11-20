@@ -28,7 +28,7 @@ export default async function BrandBiblePage({ params }: { params: Promise<{ slu
   if (!client) notFound();
   const { data: b } = await supabase
     .from("client_brand_bibles")
-    .select("status, version, markdown, read_this_first, overview, team_notes, open_questions, generated_at, reviewed_at, learnings, review_chat, review_bank, profiles!client_brand_bibles_reviewed_by_fkey(full_name)")
+    .select("status, version, markdown, read_this_first, overview, team_notes, open_questions, generated_at, reviewed_at, learnings, review_chat, review_bank, built_from_intake, profiles!client_brand_bibles_reviewed_by_fkey(full_name)")
     .eq("client_id", client.id)
     .maybeSingle();
   if (!b?.markdown) notFound();
@@ -111,6 +111,7 @@ export default async function BrandBiblePage({ params }: { params: Promise<{ slu
         lastExport: pack ? { at: pack.created_at, reason: pack.reason } : null,
         sheet: sheet ? { url: sheet.url as string, name: sheet.name as string, editedAt: sheet.modified_at as string | null, readAt: sheet.read_at as string | null, error: sheet.error as string | null, parts: (["bible", "meta", "google"] as const).filter((k) => Boolean(sheet[k])) } : null,
         generatedAt: b.generated_at,
+        builtFromIntake: (b.built_from_intake as boolean | null | undefined) ?? null,
         reviewedAt: b.reviewed_at,
         reviewedBy: (b.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
         learnings: (b.learnings ?? []) as { at: string; kind: string; text: string }[],

@@ -14,7 +14,7 @@ import type { BibleTargets } from "@/lib/ai";
 import { Layer } from "../layer";
 import type { BibleQuestion } from "@/lib/bible-questions";
 import { BibleQuestions } from "./bible-questions";
-import { AvatarFooter, AvatarGovernanceBar, ChangesPanel, ProposeAvatarSheet, type Governance } from "./bible-avatars";
+import { AvatarFooter, AvatarGovernanceBar, ChangesPanel, ProposeAvatarSheet, SuggestChange, type Governance } from "./bible-avatars";
 import { avatarsOf, BIBLE_EDITORS } from "@/lib/bible-avatars";
 import type { WebsiteIssue } from "@/lib/website-issues";
 import { ExportButton, IssuesPanel, LinksPanel, SheetPanel, type BibleLink, type OnboardingSheetInfo } from "./bible-upkeep";
@@ -55,6 +55,8 @@ type Bible = {
   /** The account, last packaged */
   lastExport: { at: string; reason: string } | null;
   generatedAt: string | null;
+  /** Built without the intake form (it was late): a makeshift Bible from calls, emails, Slack and the website */
+  builtFromIntake?: boolean | null;
   reviewedAt: string | null;
   reviewedBy: string | null;
   learnings: { at: string; kind: string; text: string }[];
@@ -407,7 +409,7 @@ function SectionBody({ sec, questions, client, bank, gov, canEdit }: { sec: Bibl
     return (
       <div className="grid gap-6">
         {intro && <Prose text={intro} />}
-        <AvatarGovernanceBar canEdit={canEdit} />
+        <AvatarGovernanceBar canEdit={canEdit} client={client} />
         {current.length > 0 && <div className="grid gap-3 lg:grid-cols-2">{current.map(card)}</div>}
         {retired.length > 0 && (
           <details className="group rounded-[18px] border border-line bg-bg/40 px-4 py-3">
@@ -811,6 +813,11 @@ export function BibleViewer({ client, bible, canEdit, governance }: { client: { 
         <span className="hidden text-faint md:inline">/</span>
         <span className="hidden font-heading text-[14px] md:inline">Brand Bible</span>
         <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] ${reviewed ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn"}`}>{reviewed ? "Reviewed" : "Draft"}</span>
+        {bible.builtFromIntake === false && (
+          <span title="The intake form was late, so this was built from calls, emails, Slack and their website. It's rebuilt when the form comes in." className="shrink-0 rounded-full bg-ink/[0.07] px-2.5 py-0.5 text-[11px] text-muted">
+            Makeshift: from history
+          </span>
+        )}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <Link
             href={`/clients/${client.slug}/brand-bible/presentation`}
@@ -835,6 +842,16 @@ export function BibleViewer({ client, bible, canEdit, governance }: { client: { 
           </button>
         </div>
       </div>
+
+      {/* Read only for everyone who can't edit it (the makers): a change is a suggestion a lead approves */}
+      {!canEdit && (
+        <div className="flex flex-wrap items-center gap-3 rounded-[18px] border border-line bg-surface px-4 py-3">
+          <p className="min-w-0 flex-1 text-[13px] leading-relaxed text-muted">
+            <span className="text-fg">Read only.</span> Nothing here changes by accident: suggest a change and a lead or the Head of Creative approves it.
+          </p>
+          <SuggestChange client={client} />
+        </div>
+      )}
 
       {/* Cover */}
       <section className="relative isolate overflow-hidden rounded-[28px] border border-line bg-deep px-5 py-7 md:px-10 md:py-10">

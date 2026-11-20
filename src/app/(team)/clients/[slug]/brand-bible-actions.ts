@@ -86,6 +86,11 @@ export async function clarifyBrandBible(clientId: string, slug: string, message:
   const me = await requireStaff();
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
   if (!(await canEditBible(createAdminClient(), me, clientId))) return { ok: false, error: NOT_EDITOR };
+  return clarifyAs(me, clientId, slug, message);
+}
+
+/** The review chat's edit, as this person (the caller checked they may edit, or that they approved the change) */
+async function clarifyAs(me: Awaited<ReturnType<typeof requireStaff>>, clientId: string, slug: string, message: string): Promise<{ ok: true; chat: BibleTurn[] } | { ok: false; error: string }> {
   const text = message.trim().slice(0, 8000);
   if (!text) return { ok: false, error: "Write something first." };
   const supabase = await createClient();
@@ -305,7 +310,16 @@ export async function decideBibleChange(clientId: string, slug: string, id: stri
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
   const { data: client } = await (await createClient()).from("clients").select("id").eq("id", clientId).maybeSingle();
   if (!client) return { ok: false, error: "You don't work on this client." };
-  const r = await decide(createAdminClient(), me, clientId, id, approve, note);
+  const admin = createAdminClient();
+  const { data: before } = await admin.from("bible_changes").select("kind, answer, reason, proposed_by_name, status").eq("id", id).maybeSingle();
+  const r = await decide(admin, me, clientId, id, approve, note);
+  // A suggested edit, approved: written in by the Bible's editor as the approver, the change logged
+  if (r.ok && approve && before?.kind === "edit_suggestion" && before.status === "pending") {
+    const out = await clarifyAs(me, clientId, slug, `Apply this approved change to the Bible, suggested by ${before.proposed_by_name ?? "the team"} and approved by ${me.fullName}: ${before.answer}${before.reason ? ` (Why: ${before.reason})` : ""}${note.trim() ? ` Approver's note: ${note.trim()}` : ""}`);
+    revalidatePath(`/clients/${slug}`);
+    revalidatePath(`/clients/${slug}/brand-bible`);
+    return out.ok ? { ok: true, applied: true } : { ok: false, error: `Approved, but it couldn't be written in: ${out.error} Ask in the review chat.` };
+  }
   revalidatePath(`/clients/${slug}`);
   revalidatePath(`/clients/${slug}/brand-bible`);
   return r;

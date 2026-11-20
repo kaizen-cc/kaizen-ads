@@ -8,8 +8,10 @@ import { isGuidelineRow } from "@/lib/brand-guidelines-core";
 // Who may change a client's Brand Bible, and the way everyone else changes it: a proposal the approvers decide.
 // - Edit (the review chat, answering open questions straight in, rebuilding): execs, leads (the Head of Creative among
 //   them) and the client's account manager (their coordinator). Everyone else reads it.
-// - Approve proposals (avatars added, changed or retired; answers from people who can't edit): execs, the Head of
-//   Creative and the client's account manager.
+// - Approve proposals (avatars added, changed or retired; answers and suggested edits from people who can't edit):
+//   execs, the Head of Creative, the creative leads (lead graphic designer, lead video editor) and the client's account
+//   manager. The makers (designers, editors, the copywriter, email builders and designers) read it and suggest: the
+//   creative team was afraid of changing a Bible by accident (Nov 20 2026).
 // Enforced here and in the database (private.can_edit_bible on client_brand_bibles updates).
 
 type Admin = SupabaseClient;
@@ -27,14 +29,14 @@ export async function canEditBible(admin: Admin, me: Staff, clientId: string) {
 
 /** Execs, the Head of Creative and the client's account manager decide proposals */
 export async function canApproveBible(admin: Admin, me: Staff, clientId: string) {
-  if (me.isExec || me.role === "head_of_creative") return true;
+  if (me.isExec || me.role === "head_of_creative" || me.role === "lead_graphic_designer" || me.role === "lead_video_editor") return true;
   return isAccountManager(admin, me.id, clientId);
 }
 
 /** Everyone who decides this client's proposals */
 export async function approverIds(admin: Admin, clientId: string) {
   const [{ data: heads }, { data: ams }] = await Promise.all([
-    admin.from("profiles").select("id, is_exec, role").eq("is_active", true).or("is_exec.eq.true,role.eq.head_of_creative"),
+    admin.from("profiles").select("id, is_exec, role").eq("is_active", true).or("is_exec.eq.true,role.eq.head_of_creative,role.eq.lead_graphic_designer,role.eq.lead_video_editor"),
     admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", "coordinator"),
   ]);
   return [...new Set([...(heads ?? []).map((h) => h.id as string), ...(ams ?? []).map((a) => a.profile_id as string)])];
@@ -42,7 +44,7 @@ export async function approverIds(admin: Admin, clientId: string) {
 
 export type BibleChange = {
   id: string;
-  kind: AvatarKind | "question_answer" | "brand_guideline";
+  kind: AvatarKind | "question_answer" | "brand_guideline" | "edit_suggestion";
   avatar: string | null;
   proposed: ProposedAvatar | null;
   questionId: string | null;
@@ -109,7 +111,9 @@ export type Proposal =
   | { kind: "avatar_add"; proposed: ProposedAvatar; reason: string; evidence: string }
   | { kind: "avatar_change"; avatar: string; proposed: ProposedAvatar; reason: string; evidence: string }
   | { kind: "avatar_retire"; avatar: string; reason: string; evidence: string }
-  | { kind: "question_answer"; questionId: string; answer: string; reason?: string; evidence?: string };
+  | { kind: "question_answer"; questionId: string; answer: string; reason?: string; evidence?: string }
+  /** Anything else in the Bible, in words: what to change and why (a maker's way to change it) */
+  | { kind: "edit_suggestion"; answer: string; reason: string; evidence?: string };
 
 const KIND_WORDS: Record<BibleChange["kind"], string> = {
   avatar_add: "add an avatar",
@@ -117,6 +121,7 @@ const KIND_WORDS: Record<BibleChange["kind"], string> = {
   avatar_retire: "retire an avatar",
   question_answer: "answer an open question",
   brand_guideline: "add the client's brand guidelines",
+  edit_suggestion: "change the Bible",
 };
 
 /** Anyone who works on the client proposes; it goes to the approvers as a notification */
@@ -145,6 +150,10 @@ export async function propose(admin: Admin, me: Staff, clientId: string, p: Prop
   }
   let questionId: string | null = null;
   let answer: string | null = null;
+  if (p.kind === "edit_suggestion") {
+    answer = clip(p.answer, 4000);
+    if (!answer) return { ok: false, error: "Say what should change." };
+  }
   if (p.kind === "question_answer") {
     const { data: q } = await admin.from("bible_questions").select("id, stage").eq("id", p.questionId).eq("client_id", clientId).maybeSingle();
     if (!q || q.stage === "answered") return { ok: false, error: "That question isn't open anymore." };
@@ -164,7 +173,7 @@ export async function propose(admin: Admin, me: Staff, clientId: string, p: Prop
     .single();
   if (error || !row) return { ok: false, error: error?.message ?? "Couldn't save it." };
   const who = (await approverIds(admin, clientId)).filter((id) => id !== me.id);
-  const what = p.kind === "avatar_add" ? `add "${proposed!.name}"` : p.kind === "avatar_change" ? `change "${avatar}"` : p.kind === "avatar_retire" ? `retire "${avatar}"` : "answer an open question";
+  const what = p.kind === "avatar_add" ? `add "${proposed!.name}"` : p.kind === "avatar_change" ? `change "${avatar}"` : p.kind === "avatar_retire" ? `retire "${avatar}"` : p.kind === "edit_suggestion" ? `change the Bible: "${(answer ?? "").slice(0, 200)}"` : "answer an open question";
   await notify(admin, clientId, who, {
     title: `a Brand Bible change to approve`,
     body: `${me.fullName} proposes to ${what}.${reason ? ` Why: ${reason.slice(0, 300)}` : ""}`,
@@ -202,7 +211,7 @@ export async function flagGuidelineGap(admin: Admin, clientId: string, key: stri
  * change log. Rejected: kept with why. Either way the proposer hears.
  */
 export async function decide(admin: Admin, me: Staff, clientId: string, id: string, approve: boolean, note: string): Promise<{ ok: true; applied: boolean } | { ok: false; error: string }> {
-  if (!(await canApproveBible(admin, me, clientId))) return { ok: false, error: "Only execs, the Head of Creative and the client's account manager approve Bible changes." };
+  if (!(await canApproveBible(admin, me, clientId))) return { ok: false, error: "Only execs, the Head of Creative, the creative leads and the client's account manager approve Bible changes." };
   const { data: r } = await admin.from("bible_changes").select("*").eq("id", id).eq("client_id", clientId).maybeSingle();
   if (!r) return { ok: false, error: "That proposal isn't there." };
   if (r.status !== "pending") return { ok: false, error: `It was already ${r.status}.` };
@@ -218,6 +227,10 @@ export async function decide(admin: Admin, me: Staff, clientId: string, id: stri
       const out = await discussQuestion(admin, clientId, c.questionId, { text: c.answer, by: `${c.proposedBy ?? "Team"} (approved by ${me.fullName})`, via: "team" });
       if (!out.ok) return { ok: false, error: out.error };
       applied = out.answered;
+    } else if (c.kind === "edit_suggestion") {
+      // A suggested edit, approved: the caller writes it in with the Bible's own editor (the review chat), as the approver
+      if (!c.answer) return { ok: false, error: "The suggestion is empty." };
+      applied = false;
     } else if (c.kind === "brand_guideline") {
       // The guidelines read from what the client shared go live in their own section, with the change logged
       const { data: b } = await admin.from("client_brand_bibles").select("markdown").eq("client_id", clientId).maybeSingle();

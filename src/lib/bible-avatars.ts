@@ -9,7 +9,7 @@ export type ProposedAvatar = { name: string; tier: "Proven" | "Likely" | "Hypoth
 
 /** Who may edit a Bible and who decides proposals, in words for the page (roles, never names) */
 export const BIBLE_EDITORS = "Execs, leads, the Head of Creative and the client's account manager";
-export const BIBLE_APPROVERS = "Execs, the Head of Creative and the client's account manager";
+export const BIBLE_APPROVERS = "Execs, the Head of Creative, the creative leads and the client's account manager";
 
 /** A name for matching: no letter prefix ("B · "), no tier, lowercase words */
 export function avatarKey(name: string) {

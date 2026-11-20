@@ -55,12 +55,59 @@ export function AvatarFooter({ name, retired, results }: { name: string; retired
 }
 
 /** Who edits and who approves, said once at the top of the avatars, with the way to propose a new one */
-export function AvatarGovernanceBar({ canEdit }: { canEdit: boolean }) {
+/**
+ * Read-only for the makers (designers, editors, the copywriter, builders): any change is a suggestion, in their words,
+ * that a lead or the Head of Creative approves (and the Bible's editor writes in). The form opens with ?suggest=1.
+ */
+export function SuggestChange({ client }: { client: { id: string; slug: string } }) {
+  const router = useRouter();
+  const open = useParam("suggest") === "1";
+  const [what, setWhat] = useState("");
+  const [why, setWhy] = useState("");
+  const [busy, start] = useTransition();
+  if (!open)
+    return (
+      <button type="button" onClick={() => pushParams({ suggest: "1" })} className="h-11 shrink-0 rounded-full border border-line px-4 text-[13px] text-muted hover:border-faint hover:text-fg max-md:w-full md:h-9">
+        Suggest a change
+      </button>
+    );
+  const send = () =>
+    start(async () => {
+      const r = await proposeBibleChange(client.id, client.slug, { kind: "edit_suggestion", answer: what, reason: why });
+      if (!r.ok) {
+        toast({ tone: "bad", title: r.error });
+        return;
+      }
+      toast({ tone: "ok", title: "Sent for approval: the Bible changes only once a lead approves it." });
+      setWhat("");
+      setWhy("");
+      closeParams("suggest");
+      router.refresh();
+    });
+  return (
+    <div className="grid w-full gap-2 rounded-[16px] border border-line bg-bg/60 p-3">
+      <p className="text-[12.5px] text-muted">Your suggestion goes to the approvers. Nothing in the Bible changes until one of them approves it.</p>
+      <textarea value={what} onChange={(e) => setWhat(e.target.value)} rows={3} maxLength={4000} placeholder="What should change (e.g. the tone section says playful, but their last 10 posts are dry and factual)" className="w-full resize-none rounded-[12px] border border-line bg-transparent px-3 py-2 text-[16px] text-fg outline-none focus:border-faint md:text-[13.5px]" />
+      <input value={why} onChange={(e) => setWhy(e.target.value)} maxLength={500} placeholder="Why, and where you saw it" className="h-11 rounded-[12px] border border-line bg-transparent px-3 text-[16px] text-fg outline-none focus:border-faint md:h-9 md:text-[13.5px]" />
+      <div className="flex flex-wrap gap-2">
+        <button type="button" disabled={busy || !what.trim() || !why.trim()} onClick={send} className="h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 md:h-9">
+          {busy ? "Sending…" : "Send for approval"}
+        </button>
+        <button type="button" onClick={() => closeParams("suggest")} className="h-11 rounded-full px-3 text-[13px] text-muted hover:text-fg md:h-9">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function AvatarGovernanceBar({ canEdit, client }: { canEdit: boolean; client?: { id: string; slug: string } }) {
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-[18px] border border-line bg-bg/40 px-4 py-3">
       <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-muted">
-        <span className="text-fg">Avatars change only by approval.</span> Anyone on the client proposes; {BIBLE_APPROVERS.toLowerCase()} approve. {canEdit ? "You can edit this Bible." : `${BIBLE_EDITORS} edit it; you can read it and propose.`}
+        <span className="text-fg">Avatars change only by approval.</span> Anyone on the client proposes; {BIBLE_APPROVERS.toLowerCase()} approve. {canEdit ? "You can edit this Bible." : `${BIBLE_EDITORS} edit it; you read it and suggest changes, which they approve.`}
       </p>
+      {!canEdit && client && <SuggestChange client={client} />}
       <button type="button" onClick={() => pushParams({ propose: "add", avatar: null })} className="h-11 shrink-0 rounded-full bg-fg px-4 text-[13px] text-bg max-md:w-full md:h-9">
         + Propose an avatar
       </button>
@@ -74,6 +121,7 @@ const KIND: Record<BibleChange["kind"], string> = {
   avatar_retire: "Retire an avatar",
   question_answer: "Answer to an open question",
   brand_guideline: "Brand guidelines the client shared",
+  edit_suggestion: "Suggested change",
 };
 
 function ChangeCard({ c, canApprove, client, focused, onDecided }: { c: BibleChange; canApprove: boolean; client: { id: string; slug: string }; focused: boolean; onDecided: (id: string, status: BibleChange["status"] | "pending") => void }) {
