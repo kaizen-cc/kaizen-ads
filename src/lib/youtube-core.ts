@@ -417,6 +417,8 @@ export function geminiErrorKind(status: number, message: string): "unavailable" 
   const m = message.toLowerCase();
   if (status === 401 || status === 403 || /api key|permission denied|api_key_invalid|unauthenticated/.test(m)) return "key";
   if (status === 429 || status >= 500) return "retry";
+  // About the model, not the video ("models/x is no longer available to new users", "model not found"): the next model
+  if (/\bmodels?\b/.test(m) && /no longer|not found|not supported|deprecated|update your code/.test(m)) return "retry";
   if (/private|unavailable|not found|age|restricted|cannot be accessed|could not (be )?(read|process|access)|invalid video|no longer|removed|unsupported/.test(m)) return "unavailable";
   return "retry";
 }

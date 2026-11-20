@@ -61,7 +61,7 @@ const geminiKey = () => process.env.GEMINI_API_KEY?.trim() || null;
 /** A current Flash model (Google's alias for the newest one), unless GEMINI_MODEL names another */
 const geminiModel = () => process.env.GEMINI_MODEL?.trim() || "gemini-flash-latest";
 /** The models tried in order: the chosen one, then a stable Flash when it's overloaded */
-const geminiModels = () => [...new Set([geminiModel(), "gemini-2.5-flash"])];
+const geminiModels = () => [...new Set([geminiModel(), "gemini-3.8-flash", "gemini-flash-lite-latest"])];
 /** Whether Gemini is set up to transcribe (for the page's setup line) */
 export const geminiConnected = () => Boolean(geminiKey());
 /** Videos Gemini transcribes per cron run, at most (the cost cap; the rest wait for the next run) */
@@ -256,7 +256,8 @@ async function geminiOnce(admin: Admin, key: string, model: string, videoId: str
     } else {
       const text = (j?.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
       const transcript = cleanGeminiTranscript(text);
-      result = transcript ? { transcript, problem: null, error: null } : { transcript: null, problem: "no_speech", error: "Gemini found no speech in it" };
+      // Kept with the video when it finds none: what Gemini actually said, so a wrong "no speech" is visible
+      result = transcript ? { transcript, problem: null, error: null } : { transcript: null, problem: "no_speech", error: `Gemini found no speech in it (it answered: "${text.replace(/\s+/g, " ").trim().slice(0, 160) || "nothing"}", finish: ${j?.candidates?.[0]?.finishReason ?? "?"})` };
     }
   } catch (e) {
     result = { transcript: null, problem: "retry", error: e instanceof Error ? e.message : String(e) };
@@ -534,7 +535,7 @@ export async function processVideo(admin: Admin, row: VideoRow, gate: GeminiGate
         if (g.problem === "unavailable") return update(admin, row.id, { ...about, status: "failed", blocked: "unavailable", error: `${UNAVAILABLE}${g.error ? ` (${g.error})` : ""}`.slice(0, 400) });
         if (g.problem === "retry" && row.attempts < 4) return update(admin, row.id, { ...about, status: "queued", next_at: new Date(Date.now() + 30 * 60_000 * row.attempts).toISOString(), error: `Gemini: ${g.error ?? "try again"}`.slice(0, 300) });
         geminiFailed = true;
-        geminiError = g.problem === "key" ? `The Gemini key was refused (${g.error ?? ""}). Check GEMINI_API_KEY.` : g.problem === "no_speech" ? "Gemini found no speech in it." : null;
+        geminiError = g.problem === "key" ? `The Gemini key was refused (${g.error ?? ""}). Check GEMINI_API_KEY.` : g.problem === "no_speech" ? (g.error ?? "Gemini found no speech in it.").slice(0, 400) : null;
         continue;
       }
       if (step === "service") {

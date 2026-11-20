@@ -47,6 +47,8 @@ describe("gemini answers", () => {
     expect(geminiErrorKind(403, "Permission denied")).toBe("key");
     expect(geminiErrorKind(429, "Resource exhausted")).toBe("retry");
     expect(geminiErrorKind(503, "The model is overloaded")).toBe("retry");
+    // A retired model is about the model, never the video: the next model is tried
+    expect(geminiErrorKind(404, "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash")).toBe("retry");
   });
   it("prices Gemini on its own rates", () => {
     expect(costOf("gemini-flash", { ...emptyUsage(), input: 1_000_000, output: 100_000 })).toBeCloseTo(0.8, 5);
