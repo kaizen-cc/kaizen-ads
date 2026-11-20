@@ -7,10 +7,11 @@ import { type ImportCounts } from "@/lib/kaizen-ai/imports-summary";
 // server key (only execs reach it). Only people who ever started an import are counted; everyone else is "not yet".
 // Before the projects migration, projects and documents read as none.
 
-export async function importsByPerson(admin: SupabaseClient): Promise<Map<string, ImportCounts>> {
+export async function importsByPerson(admin: SupabaseClient): Promise<Map<string, ImportCounts> | null> {
   const out = new Map<string, ImportCounts>();
   const { data: runs, error } = await admin.from("ai_imports").select("profile_id").limit(5000);
-  if (error) return out;
+  // Couldn't read: show nothing rather than "not imported" for everyone
+  if (error) return null;
   const ids = [...new Set((runs ?? []).map((r) => r.profile_id as string))];
   const count = async (q: PromiseLike<{ count: number | null; error: unknown }>) => {
     const { count: n, error: e } = await q;
