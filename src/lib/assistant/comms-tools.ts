@@ -255,7 +255,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
   const tools: ChatTool[] = [
     {
       name: "send_to_teammate",
-      description: `Sends a task, an ask or an FYI to a teammate, credited to ${from}: it lands on their Overview (Next for me, cleared when they mark it done), in their bell, and as a Slack message when they've connected Slack. Use it when ${from} asks ("ask Rahul for an update", "tell the head of email", "let Dana know"), when they say yes to a send you proposed, or when they correct who it goes to ("it should be on the Meta buyer": that IS the ask; send what you'd drafted). One yes is enough: never ask them to repeat it. to: a name as heard (spoken variants are fine: "Raul" finds Rahul) or a role ("the Meta buyer", "the strategist", "the account lead"), which on a client goes to whoever sits in that seat for a line the client buys (your own line by default; an empty seat goes to the next owner on the line). If you offered two people and they just say yes, send to the one they named; if it's unclear, ask once in a few words. Then say who you sent it to in a few words.`,
+      description: `Sends a task, an ask or an FYI to a teammate, credited to ${from}: it lands on their Overview (Next for me, cleared when they mark it done), in their bell, and as a Slack message when they've connected Slack. Use it when ${from} asks ("ask Rahul for an update", "tell the head of email", "let Dana know"), when they say yes to a send you proposed, or when they correct who it goes to ("it should be on the Meta buyer": that IS the ask; send what you'd drafted). One yes is enough: never ask them to repeat it. to: a name as heard (spoken variants are fine: "Raul" finds Rahul) or a role ("the Meta buyer", "the strategist", "the account lead"), which on a client goes to whoever sits in that seat for a line the client buys (your own line by default; an empty seat goes to the next owner on the line). If you offered two people and they just say yes, send to the one they named; if it's unclear, ask once in a few words. Then say who you sent it to in a few words. Handing over something already on ${from}'s plate ("give this to Dana", "delegate that"): pass item (a my_day key, a reminder's id as ask:<id>, or a promise:/suggestion: ref) so it leaves ${from}'s dashboard and stays with the new owner only.`,
       input_schema: {
         type: "object",
         properties: {
@@ -265,6 +265,8 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           context: { type: "string", description: "Anything they need with it (one to three sentences)" },
           client: { type: "string", description: "The client it's about, if any" },
           due: { type: "string", description: "YYYY-MM-DD, if a day was said" },
+          checklist: { type: "array", items: { type: "string" }, description: "Several steps for them: each one a line they tick off (they tick and reply on their Overview; the sender sees the progress under Sent by you)" },
+          item: { type: "string", description: "What's being handed over from their own plate, when it is: a my_day key, ask:<id> for one of their reminders or tasks, or a promise:/suggestion: ref" },
         },
         required: ["to", "what"],
         additionalProperties: false,
@@ -285,14 +287,19 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         if (!r.ok) return { sent: false, note: r.note, options: r.options };
         const detail = clip(input.context, 800);
         const due = DAY.test(String(input.due ?? "")) ? String(input.due) : null;
+        // Handing over something on their own plate: tied back to it, and it leaves their dashboard (creative team, Nov 20
+        // 2026: a task delegated through the assistant kept resurfacing on the old owner's dashboard)
+        const handed = await (await import("@/lib/handover")).handedItem(ctx.db, ctx.me.id, clip(input.item, 200));
+        const sentList = (Array.isArray(input.checklist) ? input.checklist : []).map((t) => clip(t, 200)).filter(Boolean).slice(0, 40).map((text) => ({ text, done: false }));
         const { data, error } = await ctx.admin
           .from("agent_asks")
-          .insert({ kind: "task", owner_id: r.to.id, asked_by: ctx.me.id, role_key: ctx.roleKey, call_id: ctx.callId, client_id: client?.id ?? null, title, detail: detail ? `${kind === "fyi" ? "FYI" : kind === "ask" ? "Asked" : "Task"} ${via}: ${detail}` : `${kind === "fyi" ? "FYI" : kind === "ask" ? "Asked" : "Task"} ${via}`, due_on: due })
+          .insert({ kind: "task", owner_id: r.to.id, asked_by: ctx.me.id, role_key: ctx.roleKey, call_id: ctx.callId, client_id: client?.id ?? null, title, detail: detail ? `${kind === "fyi" ? "FYI" : kind === "ask" ? "Asked" : "Task"} ${via}: ${detail}` : `${kind === "fyi" ? "FYI" : kind === "ask" ? "Asked" : "Task"} ${via}`, due_on: due, ...(handed ? { source_ref: handed.ref } : {}), ...(sentList.length ? { checklist: sentList } : handed?.checklist ? { checklist: handed.checklist } : {}) })
           .select("id")
           .single();
         if (error || !data) return { sent: false, error: "It didn't save on our side. Try it again now (no need to ask them again)." };
+        if (handed) await handed.clear(ctx.admin, r.to.name);
         const told = r.to.id === ctx.me.id ? { slack: false } : await tellTeammate(ctx.admin, { ownerId: r.to.id, askId: data.id as string, title: `${from}${client ? ` on ${client.name}` : ""}: ${title}`, body: `${detail || title} (${via.replace("their", `${from}'s`)})` });
-        return { sent: true, to: firstNameOf(r.to.name), routed: r.to.why ?? undefined, on: "their Overview and bell", slack: told.slack, note: r.to.why ? "Say who it went to and why, in a few words." : "Say who it went to, in a few words." };
+        return { sent: true, to: firstNameOf(r.to.name), routed: r.to.why ?? undefined, on: "their Overview and bell", open: (await import("@/lib/sent-asks")).sentHref(data.id as string), slack: told.slack, note: r.to.why ? "Say who it went to and why, in a few words." : "Say who it went to, in a few words." };
       },
     },
     {

@@ -15,6 +15,7 @@ import type { OpenSuggestion } from "@/lib/suggestions";
 import { SuggestionSheet } from "./suggested-briefs";
 import { SuggestBriefsButton } from "@/components/allotment-brief-actions";
 import { SaveIdeaStar } from "@/components/save-idea-star";
+import { CommentButton } from "@/components/item-comments";
 import { bucketKey } from "@/lib/today-counts";
 
 // Next for me, drawn to sit under the recap hero: a lit header with today's numbers in one strip, then each group as
@@ -497,6 +498,8 @@ function PlainRow({ it, showClient, onBrief, onReviewed, onRemove }: { it: NextI
               </span>
             )}
             {it.ask?.checklist?.length ? <AskChecklist id={it.ask.id} items={it.ask.checklist} /> : null}
+            {/* A reminder or task from someone: reply on it here; the sender sees the same thread */}
+            {it.ask && <span className="justify-self-start"><CommentButton target={{ key: `ask:${it.ask.id}`, clientId: null, title: it.title, href: "/pipeline#next" }} /></span>}
             {it.feedback && <OwnerAskActions groupId={it.feedback.groupId} onApproved={() => onReviewed(it)} />}
             {it.ask?.transcriptCallId && (
               <TranscriptButton callId={it.ask.transcriptCallId} label="Download the call's transcript" className="min-h-11 justify-self-start rounded-full text-[12.5px] text-ink/60 transition-colors hover:text-fg sm:min-h-8" />

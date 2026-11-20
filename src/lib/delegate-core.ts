@@ -54,13 +54,14 @@ export const cleanDue = (d: unknown): string | null => (DAY.test(String(d ?? "")
 export type Delegation = { askId: string; to: string; status: "open" | "done" | "dismissed" };
 
 /**
- * The original item after delegating: it shows "Delegated to <name>" while the task is open and clears once the
- * teammate marks it done. Only the delegator's own delegations count.
+ * The original item after delegating: it leaves the delegator's dashboard at once and stays with the new owner only
+ * (creative team, Nov 20 2026: a delegated task kept resurfacing on the old owner's dashboard). The label is kept for
+ * anywhere that still names who has it. Only if the teammate sets the task aside does it come back to the delegator.
  */
 export function delegationState(ref: string | undefined, rows: readonly { source_ref: string | null; status: string; ownerName: string | null; id: string }[]): { hide: boolean; label: string | null } {
   if (!ref) return { hide: false, label: null };
   const mine = rows.filter((r) => r.source_ref === ref);
   const open = mine.find((r) => r.status === "open");
-  if (open) return { hide: false, label: `Delegated to ${open.ownerName ?? "a teammate"}` };
+  if (open) return { hide: true, label: `Delegated to ${open.ownerName ?? "a teammate"}` };
   return { hide: mine.some((r) => r.status === "done"), label: null };
 }

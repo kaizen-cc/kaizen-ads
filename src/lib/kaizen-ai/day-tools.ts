@@ -7,7 +7,7 @@ import type { ChatTool, ToolCtx } from "./tools";
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item"] as const;
+export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me"] as const;
 
 export function dayTools(ctx: ToolCtx): ChatTool[] {
   return [
@@ -106,6 +106,17 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
         }
         const r = await addComment(ctx.admin, { id: ctx.me.id, fullName: ctx.me.fullName }, { key, clientId, title: item ? [item.client, item.title].filter(Boolean).join(": ") : (t?.title ?? null), body: clip(input.text, 2000), waiting: typeof input.waiting === "boolean" ? input.waiting : null, dueAt: item?.due ?? null });
         return r.ok ? { ok: true } : { ok: false, note: r.error };
+      },
+    },
+    {
+      name: "sent_by_me",
+      description: "The reminders, checklists and tasks the person (or their assistant) sent to teammates: who has each, how far through its checklist they are (each item ticked or not), and whether it's done. Comments on each are item_comments with key ask:<id>. open_screen 'sent by you' shows them, each one's open address opens it.",
+      input_schema: { type: "object", properties: {}, additionalProperties: false },
+      status: () => "Checking what you sent…",
+      run: async () => {
+        const { loadSentAsks, sentHref } = await import("@/lib/sent-asks");
+        const sent = await loadSentAsks(ctx.db, ctx.me.id);
+        return { sent: sent.map((a) => ({ id: a.id, key: `ask:${a.id}`, to: a.to, title: a.title, client: a.client?.name ?? null, status: a.status, due: a.due, checklist: a.checklist, progress: a.checklist.length ? `${a.checklist.filter((i) => i.done).length}/${a.checklist.length}` : null, open: sentHref(a.id) })) };
       },
     },
     {

@@ -145,7 +145,8 @@ describe("delegating an item", () => {
   it("shows Delegated to while open and clears once done", () => {
     const ref = itemRef("promise", "abc");
     const row = (status: string) => [{ id: "k", source_ref: ref, status, ownerName: "Ana Designer" }];
-    expect(delegationState(ref, row("open"))).toEqual({ hide: false, label: "Delegated to Ana Designer" });
+    expect(delegationState(ref, row("open"))).toEqual({ hide: true, label: "Delegated to Ana Designer" });
+    expect(delegationState(ref, row("dismissed"))).toEqual({ hide: false, label: null });
     expect(delegationState(ref, row("done"))).toEqual({ hide: true, label: null });
     expect(delegationState(ref, [])).toEqual({ hide: false, label: null });
   });

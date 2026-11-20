@@ -108,6 +108,11 @@ async function ownersOf(admin: SupabaseClient, key: string): Promise<string[]> {
     const { data } = await admin.from("owed_replies").select("target_id").eq("id", id).maybeSingle();
     return data?.target_id ? [data.target_id as string] : [];
   }
+  // A reminder, checklist or task one person sent another: both ends
+  if (kind === "ask") {
+    const { data } = await admin.from("agent_asks").select("owner_id, asked_by").eq("id", id).maybeSingle();
+    return [data?.owner_id as string | undefined, data?.asked_by as string | undefined].filter((x): x is string => Boolean(x));
+  }
   if (kind === "said") {
     const { data } = await admin.from("message_promises").select("owner_id").eq("id", id).maybeSingle();
     return data?.owner_id ? [data.owner_id as string] : [];

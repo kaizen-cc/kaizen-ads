@@ -32,21 +32,35 @@ export async function markAskDone(id: string): Promise<{ ok: true } | { ok: fals
   return { ok: true };
 }
 
-/** One item of a checklist reminder ticked or unticked (their own session: only their own); all ticked marks it done */
+/**
+ * One item of a checklist ticked or unticked, by whoever has it or whoever sent it (both ends of a checklist one
+ * person's assistant sent another); all ticked marks it done. The other end hears in the app when it's all done.
+ */
 export async function tickAskItem(id: string, index: number, done: boolean): Promise<{ ok: true; allDone: boolean } | { ok: false; error: string }> {
   const me = await requireStaff();
   const db = await createClient();
-  const { data, error } = await db.from("agent_asks").select("checklist").eq("id", id).eq("owner_id", me.id).maybeSingle();
-  if (error || !data) return { ok: false, error: "That reminder isn't there any more." };
+  // Read with their own session: the owner and the sender can read it (RLS)
+  const { data, error } = await db.from("agent_asks").select("checklist, owner_id, asked_by, title, status").eq("id", id).maybeSingle();
+  if (error || !data || (data.owner_id !== me.id && data.asked_by !== me.id)) return { ok: false, error: "That reminder isn't there any more." };
   const { cleanItems, tickItem } = await import("@/lib/agent-call/ask-rules");
   const items = tickItem(cleanItems(data.checklist), index, done);
   const allDone = items.length > 0 && items.every((i) => i.done);
-  const { error: e } = await db
+  // The owner writes with their own session; the sender's tick is written by the server once they're shown to be the sender
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const writer = data.owner_id === me.id ? db : createAdminClient();
+  const { error: e } = await writer
     .from("agent_asks")
-    .update({ checklist: items, ...(allDone ? { status: "done", done_at: new Date().toISOString() } : {}) })
-    .eq("id", id)
-    .eq("owner_id", me.id);
+    .update({ checklist: items, ...(allDone ? { status: "done", done_at: new Date().toISOString() } : data.status === "done" ? { status: "open", done_at: null } : {}) })
+    .eq("id", id);
   if (e) return { ok: false, error: "Couldn't save that. Try again." };
+  // All done: the other end hears it in the app (never Slack: team work stays in the OS)
+  if (allDone && data.status !== "done" && data.owner_id !== data.asked_by) {
+    const other = data.owner_id === me.id ? (data.asked_by as string) : (data.owner_id as string);
+    const { sentHref } = await import("@/lib/sent-asks");
+    await createAdminClient()
+      .from("notifications")
+      .upsert({ profile_id: other, kind: "agent", title: `${me.fullName} finished: ${String(data.title).slice(0, 200)}`, body: "Every item on the checklist is ticked.", href: other === data.asked_by ? sentHref(id) : "/pipeline#next", key: `ask-done:${id}`, priority: "normal", read_at: null, actor_id: me.id }, { onConflict: "profile_id,key" });
+  }
   if (allDone) revalidatePath("/pipeline");
   return { ok: true, allDone };
 }

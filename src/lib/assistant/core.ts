@@ -116,6 +116,8 @@ export const SCREEN_PLACES: Record<string, string> = {
   overview: "/pipeline",
   // The Overview as a list (the person's own layout; the overview_layout tool switches it)
   "overview list": "/pipeline",
+  // What their assistant sent to teammates (checklists, tasks), with the recipient's progress
+  "sent by you": "/pipeline?tab=work#sent",
   // Emails drafted for the person to send to clients, on their Overview
   "emails ready to send": "/pipeline#emails-ready",
   // The executives' weekly account review, each step its own address

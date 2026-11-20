@@ -163,7 +163,7 @@ export function askTools(ctx: ToolCtx, agent: { roleKey: string; label: string; 
           const { tellTeammate } = await import("@/lib/assistant/handoff-server");
           await tellTeammate(ctx.admin, { ownerId: r.to.id, askId: id, title: `${client.name}: ${title}`, body: `From ${from} via the ${agent.label}${input.context ? `: ${clip(input.context, 400)}` : ""}` });
         }
-        return { done: true, asked: firstNameOf(r.to.name), client: client.name, due, routed: r.to.why ?? undefined, note: r.to.why ? "Say who you sent it to and why in a few words." : undefined };
+        return { done: true, asked: firstNameOf(r.to.name), client: client.name, due, open: r.to.id !== ctx.me.id ? (await import("@/lib/sent-asks")).sentHref(id) : undefined, routed: r.to.why ?? undefined, note: r.to.why ? "Say who you sent it to and why in a few words." : undefined };
       },
     },
   ];

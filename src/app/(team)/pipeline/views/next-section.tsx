@@ -2,7 +2,9 @@ import type { Deploy } from "@/lib/google-deploy";
 import type { NextForMe } from "@/lib/next-for-me";
 import type { PatternsState } from "@/lib/patterns";
 import { PatternsPanel } from "@/components/patterns-view";
+import { Suspense } from "react";
 import { NextList } from "./next-list";
+import { SentAsks } from "./sent-asks";
 
 /**
  * Next for me, on the Overview under the recap: everything on the signed-in person (tickets, decisions, their
@@ -13,6 +15,10 @@ export function NextSection({ data, me, deploys = [], patterns = null, canBrief 
   return (
     <section id="next" aria-labelledby="next-title" className="grid scroll-mt-24 gap-6">
       <NextList data={data} me={me} />
+      {/* What their assistant sent to teammates: the recipient's progress, tickable and commentable from here too */}
+      <Suspense fallback={null}>
+        <SentAsks me={me} />
+      </Suspense>
       {deploys.length > 0 && (
         <div className="grid gap-3">
           <div>
