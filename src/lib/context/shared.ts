@@ -43,6 +43,9 @@ export async function saveItems(admin: SupabaseClient, items: ContextItem[]) {
     const { error } = await admin.from("context_items").upsert(unique.slice(i, i + 500), { onConflict: "source,external_id" });
     if (error) throw new Error(`Saving context: ${error.message}`);
   }
+  // New Slack, Gmail or call notes for these clients: their open items are due a done-check on the next pass
+  const touched = [...new Set(unique.filter((i) => ["slack_internal", "slack_external", "gmail", "call"].includes(String(i.source))).map((i) => i.client_id as string | null).filter((c): c is string => Boolean(c)))];
+  if (touched.length) await (await import("@/lib/done-check")).markClientsDue(admin, touched).catch(() => null);
 }
 
 export async function getCursor(admin: SupabaseClient, source: string, fallbackDays = 30) {

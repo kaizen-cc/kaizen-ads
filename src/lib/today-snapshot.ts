@@ -33,6 +33,12 @@ export async function readSnapshot(db: SupabaseClient, me: Staff): Promise<Snaps
   ]);
   const markOf = new Map((marks ?? []).map((m) => [m.key as string, m.status as string]));
   for (const s of snoozed ?? []) markOf.set(s.key as string, "snoozed");
+  // Closed automatically when Slack, Gmail or call notes showed it done (src/lib/done-check.ts): off everyone's day
+  if (data) {
+    const keys = ((data.data as Today).items ?? []).map((i) => i.key);
+    const { closedKeys } = await import("@/lib/done-check");
+    for (const k of await closedKeys(db, keys).catch(() => new Set<string>())) markOf.set(k, "done");
+  }
   const hiddenKeys = new Set((hidden ?? []).map((h) => h.key as string));
   // A review saved before the counts were kept on it gets them worked out from its items
   return data ? { today: applyMarks(withLooks(current(data.data as Today)), markOf, hiddenKeys), delta: (data.delta as Delta | null) ?? null, computedAt: data.computed_at as string } : null;

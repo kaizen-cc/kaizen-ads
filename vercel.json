@@ -39,6 +39,10 @@
       "schedule": "45 12,18 * * *"
     },
     {
+      "path": "/api/cron/context?step=done",
+      "schedule": "35 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=sites",
       "schedule": "52 * * * *"
     },

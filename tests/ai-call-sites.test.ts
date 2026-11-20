@@ -199,6 +199,7 @@ const UTILITY: Record<string, { labels: string[]; why: string }> = {
   "src/lib/lesson-sharing.ts": { labels: ["share lesson"], why: "decides which other clients a lesson fits" },
   "src/lib/youtube.ts": { labels: ["youtube takeaways", "youtube lines", "youtube ask"], why: "reads public marketing videos into takeaways for every line; no client is the subject" },
   "src/lib/market.ts": { labels: ["brands to watch", "check market brands", "describe market brands"], why: "market brands across all clients" },
+  "src/lib/done-check.ts": { labels: ["done check"], why: "a small classifier: is one item on someone's day done, from its client's messages (precision-first guardrails in done-check-core)" },
   "src/lib/message-promises.ts": { labels: ["promises in messages", "promise follow-through", "promise client match"], why: "extracts and checks promises in batches, and matches them to clients across the whole client list" },
   "src/lib/owed-replies.ts": { labels: ["owed replies"], why: "classifies which messages wait on a reply, in batches" },
   "src/lib/patterns.ts": { labels: ["cross-client patterns"], why: "patterns across a business model, unnamed" },

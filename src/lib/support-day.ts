@@ -30,8 +30,12 @@ export async function supportDay(db: SupabaseClient, me: Staff, gathered: Draft[
   if (role === "onboarding_specialist" || role === "customer_success") extra.push(...(await blockerItems(admin).catch(() => [])));
   if (role === "customer_success") extra.push(...(await reportItems(admin).catch(() => [])), ...(await stuckCreativeItems(admin).catch(() => [])));
   if (role === "tracking_specialist") extra.push(...(await trackingItems(admin, me).catch(() => [])));
+  // Closed automatically when Slack, Gmail or call notes showed it done (src/lib/done-check.ts)
+  const all = [...kept, ...extra];
+  const { closedKeys } = await import("@/lib/done-check");
+  const closed = await closedKeys(admin, all.map((d) => d.key)).catch(() => new Set<string>());
   // One list, critical first: everything sits in one topic so the review goes by urgency alone
-  return [...kept, ...extra].map((d) => ({ ...d, topic: SUPPORT_TOPIC }));
+  return all.filter((d) => !closed.has(d.key)).map((d) => ({ ...d, topic: SUPPORT_TOPIC }));
 }
 
 /** Every onboarding client's blockers: intake form, onboarding call, client assets */

@@ -39,6 +39,7 @@ import { isCustomerSuccess, isMaker } from "@/lib/maker-day-core";
 import { makerTasks } from "@/lib/maker-day";
 import { ReadyCallout } from "./views/ready-callout";
 import { NudgeCallout } from "@/components/nudge-callout";
+import { AutoClosed } from "@/components/auto-closed";
 import { LeadCreativePanel } from "./views/lead-creative-panel";
 import { isCreativeLead } from "@/lib/lead-creative-core";
 import { hasMyTeam } from "@/lib/my-team";
@@ -73,6 +74,10 @@ function Recap({ db, me, hidden }: { db: SupabaseClient; me: Staff; hidden: Hidd
     <>
       <Suspense fallback={<TodayHeroSkeleton />}>
         <TodayHero db={db} me={me} />
+      </Suspense>
+      {/* Closed automatically: Slack, email or call notes showed these done, each with its quote and Reopen */}
+      <Suspense fallback={null}>
+        <AutoClosed db={db} me={me} />
       </Suspense>
       {/* The escalation ladder: a teammate 48 hours behind, with a message drafted to check in with them (leads) */}
       <Suspense fallback={null}>

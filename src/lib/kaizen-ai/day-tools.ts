@@ -7,7 +7,7 @@ import type { ChatTool, ToolCtx } from "./tools";
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge", "my_team_work", "my_notifications", "mark_notification", "support_board", "tracking_health"] as const;
+export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge", "my_team_work", "my_notifications", "mark_notification", "support_board", "tracking_health", "auto_closed", "reopen_auto_closed"] as const;
 
 export function dayTools(ctx: ToolCtx): ChatTool[] {
   return [
@@ -220,6 +220,29 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
         const want = clip(input.client, 80).toLowerCase();
         const rows = (await trackingHealth(ctx.admin)).filter((r) => !want || r.client.toLowerCase().includes(want));
         return { clients: rows.slice(0, 60).map((r) => ({ client: r.client, status: r.health.status, tier: r.health.tier, why: r.health.why, daysOnboarded: r.health.daysOnboarded, openRequests: r.requests.length, lastChecked: r.lastChecked, open: `/pipeline?tab=tracking&client=${r.slug}` })), open: "/pipeline?tab=tracking" };
+      },
+    },
+    {
+      name: "auto_closed",
+      description: "Items that closed themselves because Slack, email or call and Gemini notes showed them done (\"why did this close?\"): each with the quote that closed it, where and when it was said, and when it closed. Optionally only one client. Reopen one with reopen_auto_closed.",
+      input_schema: { type: "object", properties: { client: { type: "string" }, days: { type: "integer" } }, additionalProperties: false },
+      status: () => "Checking what closed itself…",
+      run: async (input) => {
+        const { recentAutoClosed } = await import("@/lib/done-check");
+        const { closedNote } = await import("@/lib/done-check-core");
+        const want = clip(input.client, 80).toLowerCase();
+        const list = (await recentAutoClosed(ctx.db, { id: ctx.me.id, role: ctx.me.role, isExec: ctx.me.isExec || ctx.me.isLead }, Math.min(30, Number(input.days) || 7))).filter((i) => !want || (i.client ?? "").toLowerCase().includes(want));
+        return { closed: list.map((i) => ({ key: i.key, client: i.client, item: i.title, why: closedNote(i.quote, i.source ?? "", i.saidAt ?? i.closedAt), link: i.link, closedAt: i.closedAt })), open: "/pipeline#closed-automatically" };
+      },
+    },
+    {
+      name: "reopen_auto_closed",
+      description: "Reopens an item that closed itself by mistake (by its key from auto_closed): it comes back for everyone and its source goes back to how it was (tracking back to not set up, the alert open again, the task open, the Asana task reopened). Do it when they say it was wrong.",
+      input_schema: { type: "object", properties: { key: { type: "string" } }, required: ["key"], additionalProperties: false },
+      status: () => "Reopening it…",
+      run: async (input) => {
+        const { reopenAutoClosed } = await import("@/app/(team)/done-check-actions");
+        return reopenAutoClosed(clip(input.key, 200));
       },
     },
     {

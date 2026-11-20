@@ -127,6 +127,7 @@ function due(step: string | null) {
   if (step === "bible_upkeep") return true; // hourly (vercel.json): links, website issues, creative packages with nothing made
   if (step === "learnings") return true; // nightly (vercel.json): the team's learnings classified, merged, settled and retired
   if (step === "drift") return true; // weekly (vercel.json): replay what the week's learning changes did to each agent
+  if (step === "done") return hour >= 7 && hour <= 21; // hourly (vercel.json), 7am to 9pm: items on anyone's day closed when Slack, Gmail or call notes show them done
   if (step === "dogs") return hour >= 7 && hour <= 18; // twice a day (vercel.json): the daily watchdogs, same-day notices to the account owner and the line's head
   if (step === "sites") return true; // hourly (vercel.json): web design clients' sites up or down; Mondays the page check
   if (step === "reviews") return weekday === "Mon" && hour >= 6 && hour <= 12; // hourly on Mondays (vercel.json): the line heads' weekly account reviews, drafted a batch at a time
@@ -419,6 +420,7 @@ export async function GET(request: Request) {
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     // The account watch: billed but idle, neglected or overtouched accounts, spend anomalies, creative behind, unknown people
     if (step === "dogs") return Response.json(await (await import("@/lib/watchdogs/run")).runWatchdogs(admin));
+    if (step === "done") return Response.json(await (await import("@/lib/done-check")).runDoneChecks(admin, { budget: Number(new URL(request.url).searchParams.get("budget")) || 80 }));
     if (step === "sites") return Response.json(await (await import("@/lib/watchdogs/run")).runSiteChecks(admin));
     if (step === "reviews") return Response.json(await (await import("@/lib/line-review/build")).runWeeklyReviews(admin, { batch: 40 }));
     if (step === "watch") return Response.json(await (await import("@/lib/account-watch/run")).runAccountWatch(admin));
