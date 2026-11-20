@@ -6,6 +6,39 @@
 
 export const LADDER_HOURS = 48;
 
+/**
+ * Each signal carries its own wait. An unanswered client message (Slack or email) reaches the Client Success
+ * Coordinator after 12 business hours (weekdays 8am to 6pm New York); everything else climbs to the line's lead after
+ * 48 hours.
+ */
+export type Wait = { hours: number; business?: boolean };
+export const CLIENT_REPLY_WAIT: Wait = { hours: 12, business: true };
+export const DEFAULT_WAIT: Wait = { hours: LADDER_HOURS };
+/** The Client Success Coordinator: who an unanswered client message climbs to */
+export const CLIENT_REPLY_ROLE = "customer_success";
+
+const nyClock = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", hour12: false });
+/** Business hours (weekdays 8am to 6pm New York) between two moments, to the quarter hour, up to two weeks */
+export function businessHoursBetween(from: Date, to: Date): number {
+  let n = 0;
+  const step = 15 * 60_000;
+  const end = Math.min(to.getTime(), from.getTime() + 14 * 86_400_000);
+  for (let t = from.getTime(); t < end; t += step) {
+    const parts = nyClock.formatToParts(new Date(t));
+    const wd = parts.find((p) => p.type === "weekday")?.value;
+    const h = Number(parts.find((p) => p.type === "hour")?.value) % 24;
+    if (wd !== "Sat" && wd !== "Sun" && h >= 8 && h < 18) n += 0.25;
+  }
+  return n;
+}
+
+/** Whether an item has waited long enough on its own rule */
+export function waitedOut(since: string, wait: Wait = DEFAULT_WAIT, now = new Date()): boolean {
+  const t = Date.parse(since);
+  if (!Number.isFinite(t)) return false;
+  return wait.business ? businessHoursBetween(new Date(t), now) >= wait.hours : hasClimbed(since, now, wait.hours);
+}
+
 export type Line = "creative" | "email" | "social" | "meta" | "google";
 
 /** Who each role answers to, nearest first: a maker's lead, then the line's head. Execs and heads answer to nobody here. */
@@ -72,8 +105,10 @@ const first = (name: string) => name.trim().split(/\s+/)[0] || name;
  * friendly, never a dump of the work: what it is, how long it's been, and an ask for an update or a hand.
  */
 export function nudgeDraft(o: { teammate: string; what: string; client?: string | null; hours: number; kind?: string }): string {
-  const days = Math.max(2, Math.round(o.hours / 24));
   const about = o.client ? `${o.client}: ${o.what}` : o.what;
+  // A client waiting on a reply: same day, in hours
+  if (o.kind === "client_reply") return `Hey ${first(o.teammate)}, ${about} is still waiting on a reply from us (about ${Math.max(1, Math.round(o.hours))} hours now). Can you get back to them today? If you're stuck on what to say, tell me and I'll help.`;
+  const days = Math.max(2, Math.round(o.hours / 24));
   return `Hey ${first(o.teammate)}, checking in on ${about}. It's been about ${days} days with nothing moving on it. Where are you at? If you're stuck or swamped, tell me and I'll help you sort it out today.`;
 }
 

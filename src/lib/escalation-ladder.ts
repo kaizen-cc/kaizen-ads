@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { hasClimbed, leadFor, LINE_OF_ROLE, nudgeDraft, nudgeKey } from "@/lib/escalation-ladder-core";
+import { CLIENT_REPLY_ROLE, CLIENT_REPLY_WAIT, leadFor, LINE_OF_ROLE, nudgeDraft, nudgeKey, waitedOut, type Wait } from "@/lib/escalation-ladder-core";
 
 // The one escalation ladder every line routes through (rules in ./escalation-ladder-core.ts): owed replies, things
 // said yes to, creative stuck past its turnaround, briefs waiting on an approval. The owner hears first (each source
@@ -19,13 +19,17 @@ export type LadderItem = {
   since: string;
   href?: string | null;
   kind: "owed" | "said" | "ticket" | "brief" | "other";
+  /** How long it waits before it climbs (48 hours unless the signal says otherwise) */
+  wait?: Wait;
+  /** Who it climbs to instead of the owner's lead (a client waiting on a reply: the Client Success Coordinator) */
+  toRole?: string;
 };
 
 export type Nudge = { id: string; itemKey: string; ownerId: string; owner: string; client: string | null; what: string; draft: string; href: string | null; since: string; kind: string; status: string };
 
 /** Climbs whatever has waited 48 hours: a nudge card for the owner's lead (one per item), and the lead hears in the app */
 export async function climbLadder(admin: SupabaseClient, items: LadderItem[], now = new Date()): Promise<{ nudged: number }> {
-  const due = items.filter((i) => hasClimbed(i.since, now));
+  const due = items.filter((i) => waitedOut(i.since, i.wait, now));
   if (!due.length) return { nudged: 0 };
   const { pausedKeys } = await import("@/lib/item-comments");
   const [paused, { data: people }, { data: have }] = await Promise.all([
@@ -41,10 +45,12 @@ export async function climbLadder(admin: SupabaseClient, items: LadderItem[], no
     if (paused.has(i.key) || done.has(nudgeKey(i.key))) continue;
     const owner = byId.get(i.ownerId);
     if (!owner) continue;
-    const lead = leadFor(owner.role, active, owner.id);
+    // A signal with its own rung (a client waiting on a reply: the Client Success Coordinator), else the owner's lead
+    const rung = i.toRole ? (active.find((a) => a.role === i.toRole && a.id !== owner.id) ?? null) : null;
+    const lead = rung ?? (i.toRole && !waitedOut(i.since, undefined, now) ? null : leadFor(owner.role, active, owner.id));
     if (!lead) continue;
     const hours = (now.getTime() - Date.parse(i.since)) / 3_600_000;
-    const draft = nudgeDraft({ teammate: owner.name, what: i.what, client: i.client ?? null, hours });
+    const draft = nudgeDraft({ teammate: owner.name, what: i.what, client: i.client ?? null, hours, kind: rung ? "client_reply" : i.kind });
     const { data: row, error } = await admin
       .from("ladder_nudges")
       .insert({ key: nudgeKey(i.key), item_key: i.key, kind: i.kind, line: LINE_OF_ROLE[owner.role] ?? null, client_id: i.clientId, owner_id: owner.id, lead_id: lead.id, what: i.what.slice(0, 300), client_name: i.client ?? null, href: i.href ?? null, since: i.since, draft })
@@ -54,7 +60,7 @@ export async function climbLadder(admin: SupabaseClient, items: LadderItem[], no
     nudged++;
     await admin
       .from("notifications")
-      .upsert({ profile_id: lead.id, kind: "nudge", title: `${owner.name} is behind: ${i.what}`.slice(0, 300), body: `Nothing done in ${Math.round(hours / 24)} days. A message to nudge them is drafted for you to send from your Slack.`, href: `/pipeline?nudge=${row.id}`, key: `nudge:${row.id}`, client_id: i.clientId, priority: "normal", read_at: null }, { onConflict: "profile_id,key" })
+      .upsert({ profile_id: lead.id, kind: "nudge", title: `${owner.name} is behind: ${i.what}`.slice(0, 300), body: `${rung ? `Unanswered for ${Math.round(hours)} hours.` : `Nothing done in ${Math.round(hours / 24)} days.`} A message to nudge them is drafted for you to send from your Slack.`, href: `/pipeline?nudge=${row.id}`, key: `nudge:${row.id}`, client_id: i.clientId, priority: "normal", read_at: null }, { onConflict: "profile_id,key" })
       .then(({ error: e }) => e && console.error("[ladder] notice", e.message));
   }
   return { nudged };
@@ -116,7 +122,7 @@ const H48 = () => new Date(Date.now() - 48 * 3_600_000).toISOString();
 export async function runLadder(admin: SupabaseClient): Promise<{ nudged: number; resolved: number }> {
   const cutoff = H48();
   const [owed, said, tickets, emails, briefs] = await Promise.all([
-    admin.from("owed_replies").select("id, target_id, from_name, client_id, nudged_at, url, clients(name)").in("status", ["nudged", "escalated"]).not("nudged_at", "is", null).limit(300),
+    admin.from("owed_replies").select("id, target_id, from_name, from_team, client_id, asked_at, nudged_at, url, clients(name)").in("status", ["watching", "nudged", "escalated"]).limit(300),
     admin.from("message_promises").select("id, owner_id, what, client_id, notified_at, due_at, url, clients(name)").in("status", ["overdue", "escalated"]).limit(300),
     admin.from("board_requests").select("id, number, title, client_id, assignee_id, stage, stage_due_at, clients(name)").neq("stage", "launched").not("assignee_id", "is", null).lte("stage_due_at", new Date().toISOString()).limit(300),
     admin.from("email_board").select("id, number, title, client_id, assignee_id, stage_due_at, stage, clients(name)").not("assignee_id", "is", null).lte("stage_due_at", new Date().toISOString()).limit(300),
@@ -124,7 +130,12 @@ export async function runLadder(admin: SupabaseClient): Promise<{ nudged: number
   ]);
   const name = (r: { clients?: unknown }) => ((r.clients as { name?: string } | null)?.name ?? null);
   const items: LadderItem[] = [];
-  for (const o of owed.data ?? []) items.push({ key: `owed:${o.id}`, kind: "owed", ownerId: o.target_id as string, clientId: (o.client_id as string | null) ?? null, client: name(o), what: `a reply to ${o.from_name}`, since: o.nudged_at as string, href: (o.url as string | null) ?? null });
+  for (const o of owed.data ?? []) {
+    // A client waiting on a reply: the owner hears first, then after 12 business hours the Client Success Coordinator
+    if (!o.from_team && o.client_id) items.push({ key: `owed:${o.id}`, kind: "owed", ownerId: o.target_id as string, clientId: o.client_id as string, client: name(o), what: `a reply to ${o.from_name}`, since: o.asked_at as string, href: (o.url as string | null) ?? null, wait: CLIENT_REPLY_WAIT, toRole: CLIENT_REPLY_ROLE });
+    // A teammate's ask: the owner's lead, 48 hours after their first notice
+    else if (o.nudged_at) items.push({ key: `owed:${o.id}`, kind: "owed", ownerId: o.target_id as string, clientId: (o.client_id as string | null) ?? null, client: name(o), what: `a reply to ${o.from_name}`, since: o.nudged_at as string, href: (o.url as string | null) ?? null });
+  }
   for (const p of said.data ?? []) items.push({ key: `said:${p.id}`, kind: "said", ownerId: p.owner_id as string, clientId: (p.client_id as string | null) ?? null, client: name(p), what: String(p.what), since: ((p.notified_at ?? p.due_at) as string), href: (p.url as string | null) ?? null });
   // Waiting on the client (with them for review, ready to send to them) or done isn't on the maker
   const onUs = (stage: unknown) => !/client_review|ready_for_client|ready_for_launch|launched|sent|scheduled|done|approved/.test(String(stage ?? ""));

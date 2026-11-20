@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasClimbed, ladderFor, leadFor, nudgeDraft, nudgeKey } from "@/lib/escalation-ladder-core";
+import { businessHoursBetween, CLIENT_REPLY_WAIT, hasClimbed, ladderFor, leadFor, nudgeDraft, nudgeKey, waitedOut } from "@/lib/escalation-ladder-core";
 
 const team = [
   { id: "hoc", role: "head_of_creative" },
@@ -37,5 +37,20 @@ describe("the escalation ladder", () => {
   });
   it("keeps one nudge per item", () => {
     expect(nudgeKey("owed:1")).toBe("nudge:owed:1");
+  });
+});
+
+describe("a client waiting on a reply", () => {
+  it("counts business hours only (weekdays 8am to 6pm New York)", () => {
+    // Fri 4pm ET to Mon 10am ET: 2 hours Friday, 2 hours Monday
+    expect(businessHoursBetween(new Date("2026-11-20T21:00:00Z"), new Date("2026-11-23T15:00:00Z"))).toBe(4);
+  });
+  it("reaches the Client Success Coordinator after 12 business hours", () => {
+    // Mon 9am ET; Tue 11am ET is 9 + 3 = 12 business hours
+    expect(waitedOut("2026-11-23T14:00:00Z", CLIENT_REPLY_WAIT, new Date("2026-11-24T15:40:00Z"))).toBe(false);
+    expect(waitedOut("2026-11-23T14:00:00Z", CLIENT_REPLY_WAIT, new Date("2026-11-24T16:00:00Z"))).toBe(true);
+  });
+  it("drafts a same-day nudge in hours", () => {
+    expect(nudgeDraft({ teammate: "Sam Lee", what: "a reply to Dana", client: "Acme", hours: 26, kind: "client_reply" })).toContain("about 26 hours");
   });
 });
