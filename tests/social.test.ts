@@ -51,7 +51,7 @@ describe("reading Meta's answers", () => {
 });
 
 describe("finding the client's Page", () => {
-  const pages = [{ id: "1", name: "Joe's Pizza" }, { id: "2", name: "Joes Pizza Catering" }, { id: "3", name: "Acme Gym" }];
+  const pages = [{ id: "1", name: "Joe's Pizza" }, { id: "2", name: "Joe's Pizza - Downtown" }, { id: "3", name: "Acme Gym" }];
   it("prefers an exact name, ignoring case, spaces and punctuation", () => {
     expect(matchPage(pages, "Joes Pizza")?.id).toBe("1");
     expect(matchPage(pages, "ACME GYM")?.id).toBe("3");
@@ -61,6 +61,12 @@ describe("finding the client's Page", () => {
   });
   it("doesn't guess between equal fits", () => {
     expect(matchPage([{ id: "1", name: "Blue Fox Spa" }, { id: "2", name: "Blue Fox Gym" }], "Blue Fox")).toBeNull();
+  });
+  it("doesn't guess between two brands carrying the client's name (Giant Texas and Giant Texas Distillers)", () => {
+    const two = [{ id: "1", name: "Giant Texas" }, { id: "2", name: "Giant Texas Distillers" }];
+    expect(matchPage(two, "Giant Texas")).toBeNull();
+    expect(matchPage(two, "Giant Texas Distillers")?.id).toBe("2");
+    expect(matchPage([{ id: "1", name: "Joe's Pizza" }, { id: "2", name: "Joes Pizza Catering" }], "Joes Pizza")).toBeNull();
   });
   it("takes a list of one only when asked", () => {
     expect(matchPage([{ id: "7", name: "Totally Different" }], "Acme")).toBeNull();

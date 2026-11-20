@@ -25,6 +25,13 @@ describe("a client's Pages, one per location", () => {
     expect(clientPages(pages, "Tejas Beer", others("Tejas Beer")).map((m) => m.page.id)).toEqual(["1"]);
     expect(clientPages(pages, "Tejas Brewery", others("Tejas Brewery")).map((m) => m.page.id)).toEqual(["2"]);
   });
+  it("links none when Pages of two brands carry the client's name (Giant Texas and Giant Texas Distillers)", () => {
+    const pages = [page("1", "Giant Texas"), page("2", "Giant Texas Distillers"), page("3", "Mama Betty's Tex-Mex - Parmer Ln")];
+    expect(clientPages(pages, "Giant Texas")).toEqual([]);
+    expect(clientPages(pages, "Giant Texas Distillers").map((m) => m.page.id)).toEqual(["2"]);
+    expect(clientPages(pages, "Giant Texas", ["Giant Texas Distillers"]).map((m) => m.page.id)).toEqual(["1"]);
+    expect(clientPages([page("1", "Mama Betty's Tex-Mex - Parmer Ln"), page("2", "Mama Betty's Tex-Mex (Burnett)")], "Mama Betty's").length).toBe(2);
+  });
   it("matches a plural against a singular and needs every word", () => {
     expect(clientPages([page("1", "EP Window Film")], "EP Window Films").length).toBe(1);
     expect(clientPages([page("1", "Window World")], "EP Window Films").length).toBe(0);

@@ -96,19 +96,36 @@ export function locationOf(pageName: string, clientName: string): string | null 
   return rest || null;
 }
 
+/** The brand a Page's name gives, without the location after a dash or a bar or in brackets ("Mama Betty's Tex-Mex - Parmer Ln" → "Mama Betty's Tex-Mex") */
+export function pageBrand(pageName: string): string {
+  const s = pageName.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  return s.split(/\s+[-–—|·]\s+|\s*\|\s*/)[0]?.trim() || s;
+}
+
+/**
+ * Whether the Pages carrying the client's name are different brands ("Giant Texas" and "Giant Texas Distillers" for the
+ * client Giant Texas): a name can't tell which is theirs, so it's a person's pick. One brand's locations ("Mama Betty's
+ * Tex-Mex - Parmer Ln", "… - Burnett Rd") are one brand.
+ */
+export function brandsDiffer(pages: readonly { name: string }[], clientName: string): boolean {
+  const mine = nameWords(clientName);
+  if (!mine.length) return false;
+  return new Set(pages.filter((p) => fits(p.name, mine)).map((p) => nameWords(pageBrand(p.name)).join(" "))).size > 1;
+}
+
 /**
  * The Pages that are clearly this client's: every word of its name is in the Page's name, and no other client's name
  * fits the Page as well or better (a Page that could be either "Tejas Beer" or "Tejas Brewery" is a person's pick, not a
- * guess). Each with the location its name carries.
+ * guess), and they're all one brand (Pages of two brands carrying the name, none is linked). Each with the location its
+ * name carries.
  */
 export function clientPages<T extends { id: string; name: string }>(pages: readonly T[], clientName: string, otherClients: readonly string[] = []): { page: T; location: string | null }[] {
   const mine = nameWords(clientName);
   if (!mine.length) return [];
   const others = otherClients.map(nameWords).filter((w) => w.length && w.join(" ") !== mine.join(" "));
-  return pages
-    .filter((p) => fits(p.name, mine))
-    .filter((p) => !others.some((o) => o.length >= mine.length && fits(p.name, o)))
-    .map((page) => ({ page, location: locationOf(page.name, clientName) }));
+  const fit = pages.filter((p) => fits(p.name, mine)).filter((p) => !others.some((o) => o.length >= mine.length && fits(p.name, o)));
+  if (brandsDiffer(fit, clientName)) return [];
+  return fit.map((page) => ({ page, location: locationOf(page.name, clientName) }));
 }
 
 export type DayRow = { platform: string; date: string; account_id?: string | null } & Record<string, unknown>;
