@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { activeTeam, clientTeam } from "@/lib/assistant/routing-server";
+import { clientTeam } from "@/lib/assistant/routing-server";
 import { tellTeammate } from "@/lib/assistant/handoff-server";
 import { cleanDue, delegateCandidates, delegatedDetail, delegatedTitle, delegationState } from "@/lib/delegate-core";
 
@@ -8,8 +8,10 @@ type Me = { id: string; fullName: string; role: string; isExec: boolean };
 
 /** The people the delegator can hand an item to, the client's seat holders first */
 export async function loadDelegates(admin: SupabaseClient, me: Me, clientId: string | null) {
-  const [team, ct] = await Promise.all([activeTeam(admin), clientId ? clientTeam(admin, clientId) : Promise.resolve(null)]);
-  return delegateCandidates({ id: me.id, role: me.role, isExec: me.isExec }, team.map((p) => ({ id: p.id, name: p.fullName, role: String(p.role) })), ct?.seats.map((s) => s.profileId) ?? []);
+  // Everyone active on the team, signed in yet or not (a teammate who hasn't opened Kaizen OS still gets the task and its
+  // Slack DM): only signed-in people were offered, which left new teammates out of the list
+  const [{ data: team }, ct] = await Promise.all([admin.from("profiles").select("id, full_name, role").eq("is_active", true).not("full_name", "is", null).limit(500), clientId ? clientTeam(admin, clientId) : Promise.resolve(null)]);
+  return delegateCandidates({ id: me.id, role: me.role, isExec: me.isExec }, ((team ?? []) as { id: string; full_name: string; role: string }[]).map((p) => ({ id: p.id, name: p.full_name, role: String(p.role) })), ct?.seats.map((s) => s.profileId) ?? []);
 }
 
 /**
