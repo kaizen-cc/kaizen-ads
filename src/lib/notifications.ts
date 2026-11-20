@@ -15,14 +15,24 @@ export type Notice = { id: string; kind: string; title: string; body: string | n
  * execs'. They're left off a designer's, editor's or the Head of Creative's bell (still on record, as every notice is).
  */
 export const NOT_FOR_CREATIVE = ["kpi", "sprint", "connection"];
+/**
+ * The support positions never get creative notices (a change of direction, an ad needing a new creative, a creative
+ * request sent) nor Brand Bible ones (dormant for them until onboarding runs through Kaizen OS)
+ */
+export const NOT_FOR_SUPPORT = ["direction", "fatigue", "ticket", "bible"];
+const SUPPORT_SKIP_KEYS = ["bible-change:%", "bible-review:%", "guideline-gap:%", "bible:%"];
 
-export async function loadNotifications(db: SupabaseClient, limit = 40, opts: { skipKinds?: string[] } = {}): Promise<{ items: Notice[]; unread: number }> {
+export async function loadNotifications(db: SupabaseClient, limit = 40, opts: { skipKinds?: string[]; skipKeys?: string[] } = {}): Promise<{ items: Notice[]; unread: number }> {
   const skip = opts.skipKinds?.length ? `(${opts.skipKinds.join(",")})` : null;
   let list = db.from("notifications").select("id, kind, title, body, href, priority, created_at, read_at, key, actor:profiles!notifications_actor_id_fkey(full_name)").eq("alert", true).is("cleared_at", null);
   let unread = db.from("notifications").select("id", { count: "exact", head: true }).eq("alert", true).is("read_at", null).is("cleared_at", null);
   if (skip) {
     list = list.not("kind", "in", skip);
     unread = unread.not("kind", "in", skip);
+  }
+  for (const k of opts.skipKeys ?? []) {
+    list = list.not("key", "like", k);
+    unread = unread.not("key", "like", k);
   }
   const [{ data }, { count }] = await Promise.all([
     // Only alerts: something on this person to act on. Updates are kept but left to the daily review and the Overview
@@ -61,6 +71,9 @@ export const GROUPS: { key: GroupKey; label: string; about: string; managersOnly
   { key: "leadership", label: "Across the agency", about: "New clients starting, first rounds ready for review, and connections about to stop working", managersOnly: true },
   { key: "recap", label: "Daily recap reminders", about: "A nudge at 11am and 3pm if you haven't been through today's recap" },
 ];
+/** What a support position's bell leaves out */
+export const supportSkip = { skipKinds: NOT_FOR_SUPPORT, skipKeys: SUPPORT_SKIP_KEYS };
+
 export const KIND_GROUP: Record<string, GroupKey> = { assigned: "on_you", contradiction: "on_you", handoff: "on_you", reply: "on_you", client: "on_you", ticket: "work", promise: "clients", fatigue: "clients", bible: "clients", kpi: "clients", sprint: "clients", onboarding: "leadership", newclient: "leadership", connection: "leadership", recap: "recap", feedback: "work", connector: "on_you", direction: "on_you", agent: "on_you", fire: "leadership", comment: "on_you", nudge: "on_you" };
 
 export const DEFAULT_PREFS: NoticePrefs = {

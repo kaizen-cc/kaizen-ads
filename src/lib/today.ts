@@ -285,7 +285,9 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   if (isCustomerSuccess(me.role)) {
     const { csRadar } = await import("@/lib/maker-day");
     const [base, radar] = await Promise.all([gatherAll(db, me).catch(() => [] as Draft[]), csRadar(db).catch(() => [] as Draft[])]);
-    return [...base, ...radar].filter((d) => csItem(d.key));
+    // Each support role's own day, nothing creative, critical first (src/lib/support-day.ts)
+    const { supportDay } = await import("@/lib/support-day");
+    return supportDay(db, me, [...base, ...radar].filter((d) => csItem(d.key) || d.key.startsWith("ask:")));
   }
   // The ads side and the email and social lines, read side by side, then ordered by how likely each client is to leave
   const [ads, lines, risky, yt, dogs] = await Promise.all([gatherAll(db, me), import("@/lib/today-lines").then(({ gatherLines }) => gatherLines(db, me)).catch(() => [] as Draft[]), atRiskNow(db).catch(() => new Set<string>()), youtubeItems(db, me).catch(() => [] as Draft[]), watchdogItems(db, me).catch(() => [] as Draft[])]);

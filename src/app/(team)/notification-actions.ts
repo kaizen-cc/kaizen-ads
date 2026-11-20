@@ -1,7 +1,8 @@
 "use server";
 
 import { getViewer, requireStaff } from "@/lib/auth";
-import { loadNotifications, NOT_FOR_CREATIVE, withDefaults, type NoticePrefs } from "@/lib/notifications";
+import { loadNotifications, NOT_FOR_CREATIVE, supportSkip, withDefaults, type NoticePrefs } from "@/lib/notifications";
+import { isSupportRole } from "@/lib/roles";
 import { isCreativeRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/server";
 
@@ -18,7 +19,9 @@ export async function myNotifications() {
   // Whoever the app answers as (the teammate, while the owner views as them)
   const me = await getViewer();
   const skipKinds = me.kind === "staff" && isCreativeRole(me.role) ? NOT_FOR_CREATIVE : [];
-  const [list, { data: prefs }] = await Promise.all([loadNotifications(db, 40, { skipKinds }), db.from("notification_prefs").select("settings").maybeSingle()]);
+  // The support positions: nothing creative, and no Brand Bible notices until onboarding runs through Kaizen OS
+  const opts = me.kind === "staff" && isSupportRole(me.role) ? supportSkip : { skipKinds };
+  const [list, { data: prefs }] = await Promise.all([loadNotifications(db, 40, opts), db.from("notification_prefs").select("settings").maybeSingle()]);
   return { ...list, popups: withDefaults(prefs?.settings).popups };
 }
 

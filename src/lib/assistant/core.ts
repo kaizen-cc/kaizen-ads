@@ -124,6 +124,10 @@ export const SCREEN_PLACES: Record<string, string> = {
   "team nudges": "/pipeline",
   // The creative leads' "My team": every editor's or designer's plate
   "my team": "/pipeline?tab=team",
+  // The support positions' boards on their Overview
+  "waiting on you": "/pipeline#waiting-on-you",
+  "reports not sent": "/pipeline#reports-not-sent",
+  "client channels": "/pipeline#channel-health",
   // Emails drafted for the person to send to clients, on their Overview
   "emails ready to send": "/pipeline#emails-ready",
   // The executives' weekly account review, each step its own address

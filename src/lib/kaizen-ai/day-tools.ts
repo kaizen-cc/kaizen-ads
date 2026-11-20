@@ -7,7 +7,7 @@ import type { ChatTool, ToolCtx } from "./tools";
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge", "my_team_work", "my_notifications", "mark_notification"] as const;
+export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge", "my_team_work", "my_notifications", "mark_notification", "support_board"] as const;
 
 export function dayTools(ctx: ToolCtx): ChatTool[] {
   return [
@@ -185,6 +185,27 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
       run: async (input) => {
         const { error } = await ctx.db.from("notifications").update({ read_at: input.read ? new Date().toISOString() : null }).eq("profile_id", ctx.me.id).eq("id", clip(input.id, 60));
         return error ? { ok: false, note: "Couldn't change it." } : { ok: true };
+      },
+    },
+    {
+      name: "support_board",
+      description: "For the support positions: reports not sent across the company (by owner and client), every client Slack channel's unanswered messages (how long, who owes them), creatives stuck on the Asana Creative board (Ready for copy over 48 hours, sent to the client with no reply), and onboarding blockers (intake form, onboarding call, client assets). The Client Success Coordinator reads all four; the Onboarding Specialist the blockers. open is where it is on screen.",
+      input_schema: { type: "object", properties: { board: { type: "string", enum: ["reports", "channels", "stuck", "blockers"] } }, required: ["board"], additionalProperties: false },
+      status: () => "Reading the board…",
+      run: async (input) => {
+        const { isSupportRole } = await import("@/lib/roles");
+        if (!isSupportRole(ctx.me.role) && !ctx.me.isExec) return { ok: false, note: "This board is for the support positions and execs." };
+        if (input.board === "blockers") {
+          const { onboardingBoard } = await import("@/lib/oversight/support");
+          return { blockers: (await onboardingBoard(ctx.admin)).map((r) => ({ client: r.client, daysIn: r.state.daysIn, blockers: r.state.blockers })), open: "/pipeline" };
+        }
+        if (ctx.me.role !== "customer_success" && !ctx.me.isExec) return { ok: false, note: "Reports, channels and stuck creatives are the Client Success Coordinator's." };
+        const x = await import("@/lib/oversight/support-extra");
+        if (input.board === "reports") return { notSent: await x.reportsNotSent(ctx.admin), note: "The coordinator builds reports for anyone but never sends one; a nudge to each owner is drafted on the Overview.", open: "/pipeline#reports-not-sent" };
+        if (input.board === "channels") return { channels: (await x.channelHealth(ctx.admin)).map((c) => ({ channel: c.channel, client: c.client, oldestHours: Math.round(c.oldestHours), waiting: c.messages.map((m) => ({ from: m.from, gist: m.gist, hours: Math.round(m.hours), owes: m.owes })) })), open: "/pipeline#channel-health" };
+        const { todaySnapshot } = await import("@/lib/today-snapshot");
+        const snap = await todaySnapshot(ctx.db, ctx.me);
+        return { stuck: snap.today.items.filter((i) => i.key.startsWith("stuck:")).map((i) => ({ client: i.client, title: i.title, line: i.story })), open: "/pipeline" };
       },
     },
     {

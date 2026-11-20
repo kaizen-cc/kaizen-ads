@@ -121,12 +121,14 @@ const H48 = () => new Date(Date.now() - 48 * 3_600_000).toISOString();
  */
 export async function runLadder(admin: SupabaseClient): Promise<{ nudged: number; resolved: number }> {
   const cutoff = H48();
-  const [owed, said, tickets, emails, briefs] = await Promise.all([
+  const reportCutoff = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10);
+  const [owed, said, tickets, emails, briefs, reports] = await Promise.all([
     admin.from("owed_replies").select("id, target_id, from_name, from_team, client_id, asked_at, nudged_at, url, clients(name)").in("status", ["watching", "nudged", "escalated"]).limit(300),
     admin.from("message_promises").select("id, owner_id, what, client_id, notified_at, due_at, url, clients(name)").in("status", ["overdue", "escalated"]).limit(300),
     admin.from("board_requests").select("id, number, title, client_id, assignee_id, stage, stage_due_at, clients(name)").neq("stage", "launched").not("assignee_id", "is", null).lte("stage_due_at", new Date().toISOString()).limit(300),
     admin.from("email_board").select("id, number, title, client_id, assignee_id, stage_due_at, stage, clients(name)").not("assignee_id", "is", null).lte("stage_due_at", new Date().toISOString()).limit(300),
     admin.from("creative_suggestions").select("id, client_id, created_at, status, trigger_key, clients(name)").eq("status", "open").not("trigger_key", "is", null).lte("created_at", cutoff).limit(200),
+    admin.from("reports").select("id, kind, platform, period_end, owner_id, client_id, clients!inner(name, archived_at)").in("status", ["draft", "submitted"]).is("hidden_at", null).is("clients.archived_at", null).not("owner_id", "is", null).lte("period_end", reportCutoff).limit(300),
   ]);
   const name = (r: { clients?: unknown }) => ((r.clients as { name?: string } | null)?.name ?? null);
   const items: LadderItem[] = [];
@@ -153,6 +155,10 @@ export async function runLadder(admin: SupabaseClient): Promise<{ nudged: number
       if (owner) items.push({ key: `brief:${b.id}`, kind: "brief", ownerId: owner, clientId: b.client_id as string, client: name(b), what: "approving a drafted brief", since: b.created_at as string, href: `/requests/new?approve=${b.id}` });
     }
   }
+  // A report not sent 3 days after its period: the Client Success Coordinator nudges whoever owns sending it
+  if (!reports.error)
+    for (const r of reports.data ?? [])
+      items.push({ key: `report:${r.id}`, kind: "other", ownerId: r.owner_id as string, clientId: r.client_id as string, client: name(r), what: `the ${r.platform} ${r.kind} report (period ended ${r.period_end})`, since: `${r.period_end}T22:00:00Z`, href: `/reports/${r.id}`, wait: { hours: 0 }, toRole: "customer_success" });
   const { nudged } = await climbLadder(admin, items);
   // Taken care of: the item isn't open any more, so its nudge leaves the lead's Overview
   const open = new Set(items.map((i) => i.key));

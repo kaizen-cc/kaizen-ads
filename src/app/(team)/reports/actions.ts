@@ -21,6 +21,7 @@ import type { ChannelLayout } from "@/lib/channel-reports/layout";
 import { tidyTeamFindings } from "@/lib/channel-reports/social-notes";
 import type { UploadedFile } from "@/lib/reports/upload-csv";
 import { appendLog, canBringBack, isSkipReason, latestSkip, skipEntry, unskipEntry, type LogEntry } from "@/lib/reports/skip-log";
+import { NO_SEND_NOTE, NO_SEND_ROLES } from "@/lib/reports/send";
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -462,6 +463,8 @@ export async function regenProgress(ids: string[]): Promise<{ id: string; status
  * both, and remember that choice for this client. Monthly: submit your part (it goes out when every part is in).
  */
 export async function sendReport(id: string, delivery?: Delivery, note?: string): Promise<Result<{ note: string; needsConnect?: boolean }>> {
+  // The Client Success Coordinator builds reports but never sends them (src/lib/reports/send.ts deliver checks too)
+  if (NO_SEND_ROLES.has((await requireStaff()).role)) return { ok: false, error: NO_SEND_NOTE };
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   if (ok.r.status === "posted") return { ok: false, error: "It's already gone out. Resend it from the history." };
@@ -497,6 +500,8 @@ export async function sendReport(id: string, delivery?: Delivery, note?: string)
 
 /** Monthly: send my part to the client now instead of waiting on the other buyer (theirs follows on its own) */
 export async function sendMyPartNow(id: string, delivery?: Delivery): Promise<Result<{ note: string }>> {
+  // The Client Success Coordinator builds reports but never sends them (src/lib/reports/send.ts deliver checks too)
+  if (NO_SEND_ROLES.has((await requireStaff()).role)) return { ok: false, error: NO_SEND_NOTE };
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   if (ok.r.kind !== "monthly") return { ok: false, error: "Only a monthly recap has parts to wait on." };
@@ -681,6 +686,8 @@ export async function buildReportAction(clientId: string, ranges: { key: string;
 
 /** A buyer approves their part of a built report. */
 export async function approveMyPart(id: string): Promise<Result<{ sent: boolean; waitingOn: string[] }>> {
+  // The Client Success Coordinator builds reports but never sends them (src/lib/reports/send.ts deliver checks too)
+  if (NO_SEND_ROLES.has((await requireStaff()).role)) return { ok: false, error: NO_SEND_NOTE };
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   const { approvePart } = await import("@/lib/reports/builder");
@@ -773,6 +780,8 @@ export async function builtMessage(bundleId: string, fresh = false): Promise<Res
 
 /** The builder approves the message and where it goes (Slack, email or both): now, or as soon as the last part is approved. */
 export async function approveBuiltMessage(bundleId: string, message: string, delivery?: Delivery): Promise<Result<{ sent: boolean; waitingOn: string[] }>> {
+  // The Client Success Coordinator builds reports but never sends them (src/lib/reports/send.ts deliver checks too)
+  if (NO_SEND_ROLES.has((await requireStaff()).role)) return { ok: false, error: NO_SEND_NOTE };
   const ok = await myBundle(bundleId);
   if (!ok) return { ok: false, error: "Not found." };
   const d = normalizeDelivery(delivery ?? null);
@@ -847,6 +856,8 @@ export async function deliveryForSend(sendId: string): Promise<Result<{ options:
 
 /** Sends a report again, exactly as it went, by the channel (or channels) and to the people picked now */
 export async function resendReport(sendId: string, delivery: Delivery, note?: string): Promise<Result<{ note: string }>> {
+  // The Client Success Coordinator builds reports but never sends them (src/lib/reports/send.ts deliver checks too)
+  if (NO_SEND_ROLES.has((await requireStaff()).role)) return { ok: false, error: NO_SEND_NOTE };
   const ok = await mySend(sendId);
   if (!ok) return { ok: false, error: "Not found." };
   const d = normalizeDelivery(delivery);

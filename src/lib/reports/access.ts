@@ -20,7 +20,8 @@ export async function reportableTargets(db: SupabaseClient, me: Staff) {
   if (line) q = line === "meta" ? q.in("platform", ["meta", "tiktok"]) : q.eq("platform", line);
   const { data } = await q;
   const rows = (data ?? []) as unknown as (T & { label: string | null; clients: { name: string } })[];
-  if (isExecOrLead(me)) return rows;
+  // The Client Success Coordinator builds any account's report (sending stays with its owner: src/lib/reports/send.ts)
+  if (isExecOrLead(me) || me.role === "customer_success") return rows;
   const mine = await assignedClients(db, me.id);
   return rows.filter((t) => t.owner_id === me.id || onSeat(mine, t));
 }
@@ -44,7 +45,7 @@ async function assignedClients(db: SupabaseClient, profileId: string) {
 export async function canReportOn(db: SupabaseClient, me: Staff, t: T) {
   if (!canSeeReports(me)) return false;
   const line = lineOf(me);
-  if (me.isExec) return true;
+  if (me.isExec || me.role === "customer_success") return true;
   if (isExecOrLead(me)) return !line || line === t.platform || (line === "meta" && t.platform === "tiktok");
   if (t.owner_id === me.id) return true;
   return onSeat(await assignedClients(db, me.id), t);

@@ -137,12 +137,20 @@ export default async function Home() {
   // (The support positions: Customer Success Coordinator, Onboarding and Tracking Specialists; their Asana tasks under it)
   if (isCustomerSuccess(me.role)) {
     const { supportTasks } = await import("@/lib/maker-day");
-    const [{ data: hiddenRows }, next, tasks] = await Promise.all([hiddenQuery(), loadNextForMe(db, me), supportTasks(db, me).catch(() => [])]);
+    const [{ data: hiddenRows }, next, tasks, owedMine] = await Promise.all([hiddenQuery(), loadNextForMe(db, me), supportTasks(db, me).catch(() => []), loadOwedReplies(db, me, false).catch(() => [])]);
+    const { OwedReplies } = await import("./views/owed-replies");
     const n = next.now.length + next.decide.length;
     return (
       <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
         <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${n ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : "nothing needs you right now"}`} />
         <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
+        {/* Waiting on you: the Slack and email messages they owe a reply */}
+        {owedMine.length > 0 && (
+          <section id="waiting-on-you" className="grid gap-3">
+            <h2 className="font-heading text-xl">Waiting on you</h2>
+            <OwedReplies items={owedMine} me={me.id} />
+          </section>
+        )}
         {/* Their dashboard under Today: tracking problems, client health, or stuck onboardings (src/lib/oversight) */}
         <Suspense fallback={null}>
           <SupportDashboard role={me.role} />

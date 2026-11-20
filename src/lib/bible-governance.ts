@@ -21,6 +21,16 @@ async function isAccountManager(admin: Admin, profileId: string, clientId: strin
   return Boolean(data);
 }
 
+const SUPPORT = ["customer_success", "onboarding_specialist", "tracking_specialist"];
+/**
+ * The support positions' Brand Bible notices and approvals stay dormant until onboarding runs through Kaizen OS
+ * (app_settings.onboarding_in_os on): the owner's brief, Nov 20 2026. Bibles keep being built either way.
+ */
+async function supportBibleOn(admin: Admin) {
+  const { data } = await admin.from("app_settings").select("value").eq("key", "onboarding_in_os").maybeSingle();
+  return (data?.value as { on?: boolean } | null)?.on === true;
+}
+
 /** Execs, leads and the client's account manager edit the Bible; everyone else reads it and proposes */
 export async function canEditBible(admin: Admin, me: Staff, clientId: string) {
   if (me.isExec || me.isLead) return true;
@@ -30,6 +40,7 @@ export async function canEditBible(admin: Admin, me: Staff, clientId: string) {
 /** Execs, the Head of Creative and the client's account manager decide proposals */
 export async function canApproveBible(admin: Admin, me: Staff, clientId: string) {
   if (me.isExec || me.role === "head_of_creative" || me.role === "lead_graphic_designer" || me.role === "lead_video_editor") return true;
+  if (SUPPORT.includes(me.role) && !(await supportBibleOn(admin))) return false;
   return isAccountManager(admin, me.id, clientId);
 }
 
@@ -39,7 +50,11 @@ export async function approverIds(admin: Admin, clientId: string) {
     admin.from("profiles").select("id, is_exec, role").eq("is_active", true).or("is_exec.eq.true,role.eq.head_of_creative,role.eq.lead_graphic_designer,role.eq.lead_video_editor"),
     admin.from("client_assignments").select("profile_id").eq("client_id", clientId).eq("role", "coordinator"),
   ]);
-  return [...new Set([...(heads ?? []).map((h) => h.id as string), ...(ams ?? []).map((a) => a.profile_id as string)])];
+  const ids = [...new Set([...(heads ?? []).map((h) => h.id as string), ...(ams ?? []).map((a) => a.profile_id as string)])];
+  if (await supportBibleOn(admin)) return ids;
+  const { data: support } = await admin.from("profiles").select("id").in("id", ids).in("role", SUPPORT);
+  const off = new Set((support ?? []).map((p) => p.id as string));
+  return ids.filter((id) => !off.has(id));
 }
 
 export type BibleChange = {

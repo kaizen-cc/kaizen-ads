@@ -116,7 +116,13 @@ const dashboardOf = (c: SendArgs["client"]) => reportCtaUrl(c, siteUrl());
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
 /** Sends a report where the buyer chose, then keeps the send (and the PDF as it went) in the history */
+/** The Client Success Coordinator builds reports for anyone but never sends one (enforced here, where every send goes) */
+export const NO_SEND_ROLES = new Set(["customer_success"]);
+export const NO_SEND_NOTE = "The Client Success Coordinator builds reports but doesn't send them: the report's owner sends it.";
+
 export async function deliver(admin: SupabaseClient, sent: SendArgs): Promise<SendOutcome> {
+  const { data: who } = await admin.from("profiles").select("role").eq("id", sent.by.id).maybeSingle();
+  if (who && NO_SEND_ROLES.has(String(who.role))) return { ok: false, sendId: null, went: [], slack: null, email: null, error: NO_SEND_NOTE };
   // A white label client: the message as it goes (and as it's kept) never names the agency or links its site
   const wl = isWhiteLabel(sent.client.client_type);
   // The message always opens with @here, never with a person's mention (whoever the buyer's draft opened with)
