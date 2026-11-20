@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { PersonAvatar } from "@/components/person-avatar";
 import { ROLES, TEAMS, TIERS, canAlsoDesignEmail, extraTeams, homeTeam, roleLabel, teamsOfferedFor, tierOf, type Team, type TeamRole, type Tier } from "@/lib/roles";
+import type { Usage } from "@/lib/activity";
+import { importSummary, type ImportCounts } from "@/lib/kaizen-ai/imports-summary";
 import { invitePerson, sendInvite, setActive, setRole, setSwitch, setTeams } from "./actions";
 
 export type Person = {
@@ -22,7 +24,9 @@ export type Person = {
   invitedAt?: string | null;
   clientCount: number;
   /** Execs only: when they were last on and how much they use Kaizen OS */
-  usage?: { lastActive: string | null; lastSignIn: string | null; perWeek: string | null; thisWeek: string | null } | null;
+  usage?: Usage | null;
+  /** Execs only: what they've imported into Kaizen AI from Claude (null when it couldn't be read) */
+  aiImports?: ImportCounts | null;
 };
 
 const select = "h-11 min-w-0 rounded-[8px] border border-line bg-bg px-3 text-sm outline-none transition-colors hover:border-faint/60 focus:border-brand-text/70 md:h-10";
@@ -162,6 +166,11 @@ function Row({ p, canEdit, isMe }: { p: Person; canEdit: boolean; isMe: boolean 
             {p.usage.lastSignIn && <span>· Signed in {p.usage.lastSignIn}</span>}
             {p.usage.perWeek && <span>· ~{p.usage.perWeek} a week</span>}
             {p.usage.thisWeek && <span>· {p.usage.thisWeek} this week</span>}
+            {p.aiImports && (
+              <span className={importSummary(p.aiImports) ? "text-ok" : undefined}>
+                · {importSummary(p.aiImports) ? `Kaizen AI: imported ${importSummary(p.aiImports)}` : "Nothing imported into Kaizen AI"}
+              </span>
+            )}
             <Link href={`/team/${p.id}`} className="inline-flex min-h-11 items-center text-muted underline-offset-2 hover:text-fg hover:underline sm:min-h-0">
               Activity →
             </Link>
