@@ -40,6 +40,8 @@ export type ToolCtx = {
   threadId?: string;
   said?: string;
   agent?: string;
+  /** On a call or the assistant's chat: show a card there right away (else cards go on the Kaizen AI message) */
+  emit?: (e: import("@/lib/agent-call/core").CallEvent) => void;
 };
 
 /** A tool plus the line shown while it runs */
@@ -1264,6 +1266,9 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   // Where the team works: their own Gmail, Drive and Calendar, and hands-on work in a client's Klaviyo (writes after a yes)
   const { workspaceTools } = await import("./workspace-tools");
   for (const t of workspaceTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  // Internal calls on Google Calendar: find a time with teammates, book it as them on their yes, move or cancel it
+  const { calendarTools } = await import("@/lib/assistant/calendar-tools");
+  for (const t of calendarTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
   // Figma, read with their own token (Figma's hosted connector admits only apps Figma approved)
   const { figmaTools } = await import("./figma-tools");
   for (const t of figmaTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);

@@ -332,7 +332,7 @@ function CallExtras({ v, compact }: { v: CallView; compact: boolean }) {
       {sc?.sharing && <SharingBar onStop={sc.onStop} looking={sc.looking} />}
       {sc?.asked && !sc.sharing && <ShareAsk agent={v.agent.roleKey === "assistant" ? "your assistant" : `the ${v.agent.label}`} onShare={sc.onShare} onCancel={sc.onCancel} />}
       {v.uploadAsk && v.onUpload && <UploadPanel ask={v.uploadAsk} busy={v.uploading ?? null} onFiles={v.onUpload} onClose={() => v.onCloseUpload?.()} />}
-      {cards.length > 0 && v.onOpenCard && <CardsStrip cards={cards} compact={compact} onOpen={v.onOpenCard} onDismiss={(id) => v.onDismissCard?.(id)} callId={v.callId ?? null} onApprove={v.onType ? () => v.onType?.("Yes, send it.") : undefined} />}
+      {cards.length > 0 && v.onOpenCard && <CardsStrip cards={cards} compact={compact} onOpen={v.onOpenCard} onDismiss={(id) => v.onDismissCard?.(id)} callId={v.callId ?? null} onApprove={v.onType ? () => v.onType?.("Yes, send it.") : undefined} onSay={v.onType ? (t) => v.onType?.(t) : undefined} />}
     </div>
   );
 }

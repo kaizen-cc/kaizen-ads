@@ -801,6 +801,8 @@ export type CallCard = {
   document?: CallDocument;
   /** Campaign, flow or SMS copy (create_copy_doc): read it, open the document view, approve it */
   copy?: CallCopyDoc;
+  /** Choices to tap (times for a call): each says its words for the person, as if they'd typed them */
+  choices?: { label: string; say: string }[];
 };
 
 /** Copy written for the email team, shown on the call or chat as a document card */

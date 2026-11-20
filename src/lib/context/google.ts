@@ -49,6 +49,13 @@ export const googleDriveToken = (user: string) => tokenFor(user, DRIVE_SCOPE);
 /** Their own calendar, read only (works once calendar.readonly is added to the domain-wide delegation) */
 export const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 export const googleCalendarToken = (user: string) => tokenFor(user, CALENDAR_SCOPE);
+/**
+ * Booking as them (the assistant scheduling an internal call on their yes): create, move and cancel events on their own
+ * calendar, so they're the organizer and Google sends the invites. Works once calendar.events is added to the
+ * domain-wide delegation; free/busy and their timezone are read with calendar.readonly.
+ */
+export const CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+export const googleCalendarEventsToken = (user: string) => tokenFor(user, CALENDAR_EVENTS_SCOPE);
 
 /** A Drive read token as GOOGLE_DRIVE_USER, for opening reference files linked in requests. */
 export const driveToken = () => {

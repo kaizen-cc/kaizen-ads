@@ -354,7 +354,7 @@ function Extras({ v, compact, large = false }: { v: ChatView; compact: boolean; 
       {sc.sharing && <SharingBar onStop={sc.onStop} looking={sc.looking} />}
       {sc.asked && !sc.sharing && <ShareAsk agent="your assistant" onShare={sc.onShare} onCancel={sc.onCancel} />}
       {v.uploadAsk && <UploadPanel ask={v.uploadAsk} busy={v.uploading} onFiles={v.onUpload} onClose={v.onCloseUpload} />}
-      {v.cards.length > 0 && <CardsStrip cards={v.cards} compact={compact} onOpen={v.onOpenCard} onDismiss={v.onDismissCard} callId={v.callId} onApprove={() => v.onSend("Yes, send it.")} />}
+      {v.cards.length > 0 && <CardsStrip cards={v.cards} compact={compact} onOpen={v.onOpenCard} onDismiss={v.onDismissCard} callId={v.callId} onApprove={() => v.onSend("Yes, send it.")} onSay={(t) => v.onSend(t)} />}
     </div>
   );
 }

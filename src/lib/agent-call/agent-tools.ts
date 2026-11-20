@@ -31,7 +31,7 @@ export async function agentTools(input: {
   screen?: string | null;
   clientId?: string | null;
 }): Promise<ChatTool[]> {
-  const ctx: ToolCtx = { me: input.me, db: input.db, admin: input.admin, clientId: null, messageId: crypto.randomUUID(), cards: [], files: [] };
+  const ctx: ToolCtx = { me: input.me, db: input.db, admin: input.admin, clientId: null, messageId: crypto.randomUUID(), cards: [], files: [], said: input.said ?? undefined, emit: input.emit, agent: input.roleKey };
   const base = await chatTools(ctx).catch((e) => {
     console.error("[agent tools]", e instanceof Error ? e.message : e);
     return [] as ChatTool[];

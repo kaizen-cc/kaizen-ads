@@ -83,7 +83,7 @@ export const CARD_TOOLS: ReadonlySet<string> = new Set([
  * words are the yes, so these run when asked. They only reach the team (a reminder, a task on someone's Overview),
  * never a client.
  */
-export const ASKED_ACTIONS: ReadonlySet<string> = new Set(["report_style", "remind_me", "ask_teammate", "send_to_teammate", "draft_message", "save_draft", "flag_client_risk", "submit_feedback", "create_document", "keep_for_later"]);
+export const ASKED_ACTIONS: ReadonlySet<string> = new Set(["report_style", "remind_me", "ask_teammate", "send_to_teammate", "draft_message", "save_draft", "flag_client_risk", "submit_feedback", "create_document", "keep_for_later", "find_meeting_time", "book_meeting", "reschedule_meeting", "cancel_meeting"]);
 
 const CONFIRM_NOTE = "This makes, sends or spends something: say in one sentence what it will do and ask first; call it with confirmed: true only after the person clearly says yes to this exact run.";
 

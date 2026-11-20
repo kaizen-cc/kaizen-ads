@@ -263,7 +263,20 @@ async function screenFor(ctx: AssistantCtx, input: Record<string, unknown>): Pro
 // ─── The tools ──────────────────────────────────────────────────────────────
 
 export async function assistantTools(ctx: AssistantCtx): Promise<LoopTool[]> {
-  const tctx: ToolCtx = { me: ctx.me, db: ctx.db, admin: ctx.admin, clientId: null, messageId: crypto.randomUUID(), cards: [], files: [] };
+  const tctx: ToolCtx = {
+    me: ctx.me,
+    db: ctx.db,
+    admin: ctx.admin,
+    clientId: null,
+    messageId: crypto.randomUUID(),
+    cards: [],
+    files: [],
+    emit: ctx.emit,
+    // What they said this turn (a tool that checks their own yes reads it; a carried yes updates it)
+    get said() {
+      return ctx.said;
+    },
+  };
   // Files uploaded on this call are attachments for the chat tools (a launch sheet, a PDF)
   const { data: callRow } = await ctx.admin.from("ai_role_calls").select("uploads").eq("id", ctx.callId).maybeSingle();
   tctx.files = (((callRow?.uploads ?? []) as { path: string; name: string; mime: string; bytes: number; kind: string }[]) ?? []).map((u) => ({ path: u.path, name: u.name, mime: u.mime, bytes: u.bytes, kind: u.kind })) as ToolCtx["files"];
