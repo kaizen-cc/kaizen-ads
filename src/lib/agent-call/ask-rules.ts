@@ -69,3 +69,9 @@ export function mergeItems(had: CheckItem[], add: CheckItem[]): CheckItem[] {
 export function tickItem(items: CheckItem[], index: number, done: boolean): CheckItem[] {
   return items.map((it, i) => (i === index ? { ...it, done } : it));
 }
+
+/** One item taken off a checklist (matched by its words, so a list that moved since it was drawn still loses the right one) */
+export function removeItem(items: CheckItem[], text: string): CheckItem[] {
+  const t = text.trim().toLowerCase();
+  return items.filter((it) => it.text.trim().toLowerCase() !== t);
+}
