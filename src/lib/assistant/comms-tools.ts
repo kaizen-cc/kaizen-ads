@@ -265,6 +265,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           context: { type: "string", description: "Anything they need with it (one to three sentences)" },
           client: { type: "string", description: "The client it's about, if any" },
           due: { type: "string", description: "YYYY-MM-DD, if a day was said" },
+          urgent: { type: "boolean", description: "Time-sensitive (\"I need this in the next hour\", \"urgent\"): from an exec, a line head or a creative lead it rings their assistant as an urgent alert" },
           checklist: { type: "array", items: { type: "string" }, description: "Several steps for them: each one a line they tick off (they tick and reply on their Overview; the sender sees the progress under Sent by you)" },
           item: { type: "string", description: "What's being handed over from their own plate, when it is: a my_day key, ask:<id> for one of their reminders or tasks, or a promise:/suggestion: ref" },
         },
@@ -293,7 +294,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         const sentList = (Array.isArray(input.checklist) ? input.checklist : []).map((t) => clip(t, 200)).filter(Boolean).slice(0, 40).map((text) => ({ text, done: false }));
         const { data, error } = await ctx.admin
           .from("agent_asks")
-          .insert({ kind: "task", owner_id: r.to.id, asked_by: ctx.me.id, role_key: ctx.roleKey, call_id: ctx.callId, client_id: client?.id ?? null, title, detail: detail ? `${kind === "fyi" ? "FYI" : kind === "ask" ? "Asked" : "Task"} ${via}: ${detail}` : `${kind === "fyi" ? "FYI" : kind === "ask" ? "Asked" : "Task"} ${via}`, due_on: due, ...(handed ? { source_ref: handed.ref } : {}), ...(sentList.length ? { checklist: sentList } : handed?.checklist ? { checklist: handed.checklist } : {}) })
+          .insert({ kind: "task", owner_id: r.to.id, asked_by: ctx.me.id, role_key: ctx.roleKey, call_id: ctx.callId, client_id: client?.id ?? null, title, detail: detail ? `${kind === "fyi" ? "FYI" : kind === "ask" ? "Asked" : "Task"} ${via}: ${detail}` : `${kind === "fyi" ? "FYI" : kind === "ask" ? "Asked" : "Task"} ${via}`, due_on: due, urgent: input.urgent === true, ...(handed ? { source_ref: handed.ref } : {}), ...(sentList.length ? { checklist: sentList } : handed?.checklist ? { checklist: handed.checklist } : {}) })
           .select("id")
           .single();
         if (error || !data) return { sent: false, error: "It didn't save on our side. Try it again now (no need to ask them again)." };

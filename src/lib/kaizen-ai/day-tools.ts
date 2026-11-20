@@ -7,7 +7,7 @@ import type { ChatTool, ToolCtx } from "./tools";
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge", "my_team_work"] as const;
+export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge", "my_team_work", "my_notifications", "mark_notification"] as const;
 
 export function dayTools(ctx: ToolCtx): ChatTool[] {
   return [
@@ -164,6 +164,27 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
         const who = clip(input.person, 80).toLowerCase();
         const team = (await loadMyTeam(ctx.admin, ctx.me.role, ctx.me.id)).filter((m) => !who || m.name.toLowerCase().includes(who));
         return { team: team.map((m) => ({ name: m.name, role: m.role, openTasks: m.tasks.length, overdue: m.overdue, onThemNow: m.onThem, tasks: m.tasks.slice(0, 15).map((t) => ({ client: t.client, title: t.title, stage: t.stageLabel, due: t.due, onThem: t.onThem })), briefsInProgress: m.briefs.map((b) => `${b.client ? `${b.client}: ` : ""}${b.title}`), open: `/pipeline?tab=team&person=${m.id}` })) };
+      },
+    },
+    {
+      name: "my_notifications",
+      description: "The person's latest notifications (the bell): each with its id, title, what it says, when, and whether it's read. Use it for 'what did I miss', 'read me my notifications'. open_screen 'notifications' opens the settings; the bell is on every page.",
+      input_schema: { type: "object", properties: { unread: { type: "boolean", description: "Only the unread ones" } }, additionalProperties: false },
+      status: () => "Reading your notifications…",
+      run: async (input) => {
+        const { loadNotifications } = await import("@/lib/notifications");
+        const list = await loadNotifications(ctx.db, 30);
+        return { unread: list.unread, items: list.items.filter((n) => !input.unread || !n.read).map((n) => ({ id: n.id, title: n.title, body: n.body, at: n.createdAt, read: n.read, urgent: n.priority === "critical", open: n.href })) };
+      },
+    },
+    {
+      name: "mark_notification",
+      description: "Marks one of the person's notifications (by id from my_notifications) read or unread again, so it waits for later like a new one.",
+      input_schema: { type: "object", properties: { id: { type: "string" }, read: { type: "boolean" } }, required: ["id", "read"], additionalProperties: false },
+      status: (input) => (input.read ? "Marking it read…" : "Marking it unread…"),
+      run: async (input) => {
+        const { error } = await ctx.db.from("notifications").update({ read_at: input.read ? new Date().toISOString() : null }).eq("profile_id", ctx.me.id).eq("id", clip(input.id, 60));
+        return error ? { ok: false, note: "Couldn't change it." } : { ok: true };
       },
     },
     {

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { clearNotices, markRead, myNotifications, restoreNotices } from "@/app/(team)/notification-actions";
+import { clearNotices, markRead, markUnread, myNotifications, restoreNotices } from "@/app/(team)/notification-actions";
 import { enableRequest } from "@/app/(team)/settings/connector-actions";
 import { submitHandled } from "@/app/handled/actions";
 import type { Notice } from "@/lib/notifications";
@@ -93,7 +93,34 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
     };
   }, [load]);
 
+  // A notification previewed in place: hover a moment on a computer, press and hold on a phone. The preview shows it in
+  // full with Open and Mark as unread (or read); a long press never opens it by accident.
+  const [peek, setPeek] = useState<string | null>(null);
+  const peekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const held = useRef(false);
+  const startPeek = (id: string, ms: number, touch = false) => {
+    if (peekTimer.current) clearTimeout(peekTimer.current);
+    peekTimer.current = setTimeout(() => {
+      if (touch) held.current = true;
+      setPeek(id);
+      if (touch && typeof navigator !== "undefined" && "vibrate" in navigator) navigator.vibrate?.(8);
+    }, ms);
+  };
+  const stopPeek = () => {
+    if (peekTimer.current) clearTimeout(peekTimer.current);
+    peekTimer.current = null;
+  };
+  const toggleRead = (n: Notice) => {
+    const read = !n.read;
+    setItems((xs) => xs.map((x) => (x.id === n.id ? { ...x, read } : x)));
+    setUnread((u) => Math.max(0, u + (read ? -1 : 1)));
+    void (read ? markRead(n.id) : markUnread(n.id));
+  };
   const go = async (n: Notice) => {
+    if (held.current) {
+      held.current = false;
+      return;
+    }
     setOpen(false);
     if (!n.read) {
       setItems((xs) => xs.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
@@ -290,8 +317,25 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                     </div>
                     <ul>
                       {(list as Notice[]).map((n) => (
-                        <li key={n.id} className="group relative">
-                          <button type="button" onClick={() => void go(n)} className={`flex w-full gap-3 pl-4 text-left ${sheet ? "pr-14" : "pr-4"} transition-colors hover:bg-surface-2 ${sheet ? "py-3.5 active:bg-surface-2" : "py-3"} ${n.read ? "opacity-60" : ""}`}>
+                        <li
+                          key={n.id}
+                          className="group relative"
+                          onMouseEnter={() => !sheet && startPeek(n.id, 450)}
+                          onMouseLeave={() => {
+                            stopPeek();
+                            if (!sheet) setPeek((p) => (p === n.id ? null : p));
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => void go(n)}
+                            onPointerDown={(e) => e.pointerType !== "mouse" && startPeek(n.id, 450, true)}
+                            onPointerUp={stopPeek}
+                            onPointerCancel={stopPeek}
+                            onPointerMove={(e) => e.pointerType !== "mouse" && Math.abs(e.movementY) > 4 && stopPeek()}
+                            onContextMenu={(e) => peek === n.id && e.preventDefault()}
+                            aria-describedby={peek === n.id ? `peek-${n.id}` : undefined}
+                            className={`flex w-full gap-3 pl-4 text-left ${sheet ? "pr-14" : "pr-4"} transition-colors hover:bg-surface-2 ${sheet ? "py-3.5 active:bg-surface-2" : "py-3"} ${n.read ? "opacity-60" : ""}`}>
                             <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full ${n.priority === "critical" && !n.read ? "bg-brand/20 text-brand-text" : "bg-surface-2 text-muted"}`}>
                               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                                 <path d={KIND_ICON[n.kind] ?? KIND_ICON.ticket} />
@@ -302,11 +346,29 @@ export function NotificationBell({ placement = "side" }: { placement?: "side" | 
                                 <span className={`min-w-0 break-words leading-snug ${sheet ? "text-[15px]" : "text-[13.5px]"} ${n.read ? "" : "font-medium"}`}>{n.title}</span>
                                 <span className={`shrink-0 pt-0.5 text-[10.5px] text-faint ${sheet ? "" : "group-hover:opacity-0"}`}>{ago(n.createdAt)}</span>
                               </span>
-                              {n.body && <span className={`line-clamp-2 text-muted ${sheet ? "text-[13px]" : "text-xs"}`}>{n.body}</span>}
+                              {n.body && <span className={`${peek === n.id ? "whitespace-pre-wrap" : "line-clamp-2"} text-muted ${sheet ? "text-[13px]" : "text-xs"}`}>{n.body}</span>}
                               {n.actor && <span className="text-[10.5px] text-faint">by {n.actor}</span>}
                             </span>
                             {!n.read && <span className={`mt-2 h-2 w-2 shrink-0 rounded-full ${n.priority === "critical" ? "bg-brand" : "bg-fg/40"} ${sheet ? "" : "group-hover:opacity-0"}`} />}
                           </button>
+                          {peek === n.id && (
+                            <div id={`peek-${n.id}`} className="-mt-1 flex flex-wrap items-center gap-2 pb-3 pl-[60px] pr-4">
+                              <span className="w-full text-[10.5px] text-faint">{new Date(n.createdAt).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}</span>
+                              {n.href && (
+                                <button type="button" onClick={() => void go(n)} className={`rounded-full bg-fg px-3.5 text-xs font-medium text-bg ${sheet ? "h-11" : "h-8 max-md:h-11"}`}>
+                                  Open
+                                </button>
+                              )}
+                              <button type="button" onClick={() => toggleRead(n)} className={`rounded-full border border-line px-3 text-xs text-fg hover:bg-surface-2 ${sheet ? "h-11" : "h-8 max-md:h-11"}`}>
+                                {n.read ? "Mark as unread" : "Mark as read"}
+                              </button>
+                              {sheet && (
+                                <button type="button" onClick={() => setPeek(null)} className="h-11 rounded-full px-3 text-xs text-muted hover:text-fg">
+                                  Close
+                                </button>
+                              )}
+                            </div>
+                          )}
                           {askOf(n.key) && (
                             <div className="-mt-1 flex gap-2 pb-3 pl-[60px] pr-4">
                               <button

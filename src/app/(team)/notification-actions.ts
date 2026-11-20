@@ -31,6 +31,12 @@ export async function markRead(id?: string) {
   await q;
 }
 
+/** Marks one notification unread again (from its preview in the bell), so it waits like a new one */
+export async function markUnread(id: string) {
+  const me = await requireStaff();
+  await (await createClient()).from("notifications").update({ read_at: null }).eq("profile_id", me.id).eq("id", id);
+}
+
 /** Clears notifications off the bell: the ones given, or all of them. They stay on record (cleared_at), so "Undo"
  *  brings them back. Clearing also counts as reading. */
 export async function clearNotices(ids?: string[]) {
