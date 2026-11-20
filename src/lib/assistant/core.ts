@@ -185,6 +185,12 @@ export const SCREEN_PLACES: Record<string, string> = {
   team: "/team",
   settings: "/settings",
   "settings ai agents": "/settings?tab=agents",
+  // YouTube learning: the channels the agents study and their takeaways (each view its own address)
+  "youtube learning": "/settings?tab=agents&section=youtube",
+  "youtube takeaways to decide": "/settings?tab=agents&section=youtube&yt=decide",
+  "youtube takeaways for me": "/settings?tab=agents&section=youtube&yt=mine",
+  "youtube videos": "/settings?tab=agents&section=youtube&yt=all",
+  "youtube channels": "/settings?tab=agents&section=youtube&yt=sources",
   "settings team": "/settings?tab=team",
   "settings raw data": "/settings?tab=data",
   "settings sync health": "/settings?tab=sync",

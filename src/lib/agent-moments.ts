@@ -143,6 +143,9 @@ export const AGENT_MOMENTS: Record<string, Moment[]> = {
     { title: "Writes the Google Ads go-to-market strategy: campaigns, keyword groups and negatives, geo, ad copy, the asset library, the 90-day roadmap", where: "Client page · Google Ads · Strategy", trigger: "auto", when: "Right after the research", labels: ["google gtm strategy"] },
   ],
   market: [
+    { title: "Reads each new video from the YouTube channels the agents study into attributed takeaways, each with its lines, the roles it matters to, why, and the moment it's said", where: "Settings · AI agents · YouTube", trigger: "auto", when: "Every 30 minutes for new uploads, and when someone has a video summarized", labels: ["youtube takeaways"] },
+    { title: "Suggests which lines a YouTube channel teaches, from its description and latest titles", where: "Settings · AI agents · YouTube", trigger: "auto", when: "When a channel is added with no lines, or on Suggest lines", labels: ["youtube lines"] },
+    { title: "Answers what the channels we study said about a topic, from their transcripts, cited to the video and moment", where: "Kaizen AI · the assistant · agent calls", trigger: "click", when: "When someone asks what a channel said about something", labels: ["youtube ask"] },
     { title: "Reads each live market ad: why it works and what to take from it", where: "Ideas · In the market", trigger: "auto", when: "After each Motion sync (8:30am), or the first time someone hovers an ad", labels: ["read a market ad"] },
     { title: "Describes each brand on its own terms", where: "Ideas · In the market", trigger: "auto", when: "With each Motion sync", labels: ["describe market brands", "sort market brands"] },
     { title: "Places each brand in its country, so inspiration is US brands only", where: "Ideas · In the market · Shot lists · Client presentation", trigger: "auto", when: "With each Motion sync, for brands not placed yet", labels: ["place market brands"] },

@@ -187,6 +187,10 @@
       "schedule": "7,22,37,52 * * * *"
     },
     {
+      "path": "/api/cron/context?step=youtube",
+      "schedule": "12,42 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=email_sow",
       "schedule": "41 * * * *"
     },

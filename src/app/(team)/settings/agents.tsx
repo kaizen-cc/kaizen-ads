@@ -1474,14 +1474,17 @@ const roleStats = (role: Role, skills: Agent[]) => ({
 });
 
 /** The AI agents section: the agents, the knowledge every one of them reads, and what they cost */
-export function AgentsNav({ section, isExec = true }: { section: string; /** A head trains their own line's agent only: no strategy, shared knowledge, changes or expenses */ isExec?: boolean }) {
-  const tabs = [
-    ["agents", "Agents"],
-    ["knowledge", "Knowledge"],
-    ["changes", "Changes"],
-    ["expenses", "Expenses"],
-  ] as const;
-  if (!isExec) return null;
+export function AgentsNav({ section, isExec = true }: { section: string; /** A head trains their own line's agent only: no strategy, shared knowledge, changes or expenses (YouTube is everyone's) */ isExec?: boolean }) {
+  // YouTube (the channels the agents study, and their takeaways) is for everyone; the rest is the execs'
+  const tabs = (
+    [
+      ["agents", "Agents"],
+      ["youtube", "YouTube"],
+      ["knowledge", "Knowledge"],
+      ["changes", "Changes"],
+      ["expenses", "Expenses"],
+    ] as const
+  ).filter(([k]) => isExec || k === "agents" || k === "youtube");
   const on = tabs.some(([k]) => k === section) ? section : "agents";
   return (
     <nav className="flex w-full gap-1 justify-self-start rounded-full border border-line bg-surface p-1 md:w-fit" aria-label="AI agents">

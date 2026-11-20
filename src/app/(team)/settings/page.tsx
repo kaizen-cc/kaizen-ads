@@ -24,6 +24,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { ChatMessage, Change, RoleChatMessage } from "./actions";
 import { AgentDetail, AgentsNav, KnowledgeView, LinesOverview, RoleDetail, RolesOverview, type Agent, type Item, type Role } from "./agents";
 import { Expenses, rollupFrom, type CostRow } from "./expenses";
+import { YouTubeLearning } from "./youtube";
 import { cachedActivity, cachedCostRollup, cachedLastRuns, type Activity } from "@/lib/ai-agents-cache";
 import { addUsage, costOf, emptyUsage, type ModelKey, type Usage } from "@/lib/ai-costs";
 import { roleLabel, type TeamRole } from "@/lib/roles";
@@ -102,8 +103,31 @@ async function TalkOnly({ me, role }: { me: Staff; role: string | null }) {
   return <AgentsToTalk roles={roles} />;
 }
 
-async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, section: askedSection, range, by }: { me: Staff; open: string | null; role: string | null; line: string | null; section: string; range: string; by: string }) {
-  if (!trainableRoles(me).length || (askedRole && !canTrainAgent(me, askedRole) && canTalkToAgent(me, askedRole))) return <TalkOnly me={me} role={askedRole} />;
+/** Settings › AI agents › YouTube: the channels the agents study and their takeaways, for everyone (deciding is the heads' and execs') */
+async function YouTubeSection({ me, view }: { me: Staff; view: string | null }) {
+  const { loadYouTube } = await import("@/lib/youtube");
+  const { canManageSources } = await import("@/lib/youtube-core");
+  const data = await loadYouTube(await createClient(), me);
+  const v = view === "decide" || view === "mine" || view === "all" || view === "sources" ? view : null;
+  return (
+    <div className="grid gap-6">
+      <AgentsNav section="youtube" isExec={me.isExec} />
+      <YouTubeLearning data={data} view={v} deciding={canManageSources(me)} />
+    </div>
+  );
+}
+
+async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, section: askedSection, range, by, yt = null }: { me: Staff; open: string | null; role: string | null; line: string | null; section: string; range: string; by: string; yt?: string | null }) {
+  if (askedSection === "youtube" && !askedAgent && !askedRole) return <YouTubeSection me={me} view={yt} />;
+  if (!trainableRoles(me).length || (askedRole && !canTrainAgent(me, askedRole) && canTalkToAgent(me, askedRole)))
+    return askedRole ? (
+      <TalkOnly me={me} role={askedRole} />
+    ) : (
+      <div className="grid gap-6">
+        <AgentsNav section="agents" isExec={false} />
+        <TalkOnly me={me} role={null} />
+      </div>
+    );
   const supabase = await createClient();
   // A head sees only their line's agent and its skills, and none of the exec-only sections (strategy, shared
   // knowledge, the heads' changes, expenses)
@@ -1045,6 +1069,7 @@ export default async function Settings({ searchParams }: PageProps<"/settings">)
           section={typeof sp.section === "string" ? sp.section : "agents"}
           range={typeof sp.range === "string" ? sp.range : "mtd"}
           by={typeof sp.by === "string" ? sp.by : "agents"}
+          yt={typeof sp.yt === "string" ? sp.yt : null}
         />
       )}
       {tab === "team" && (

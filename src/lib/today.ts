@@ -212,6 +212,24 @@ async function atRiskNow(db: SupabaseClient): Promise<Set<string>> {
 }
 
 /** Every item for this person right now, scored. */
+/**
+ * YouTube learning on someone's day: the takeaways waiting for their call (a line head or exec), else the ones shared
+ * with their lines today. One quiet item, never ahead of a client.
+ */
+async function youtubeItems(db: SupabaseClient, me: Staff): Promise<Draft[]> {
+  const { canManageSources } = await import("@/lib/youtube-core");
+  const day = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const base = { clientSlug: "", clientId: null, client: "YouTube learning", evidence: [] as string[] };
+  if (canManageSources(me)) {
+    const n = await (await import("@/lib/youtube")).youtubeWaiting(db, me);
+    if (!n) return [];
+    return [{ ...base, key: `yt-decide:${day}`, topic: "mine", score: 40, stat: { value: String(n), label: n === 1 ? "takeaway waiting" : "takeaways waiting" }, title: `${n} YouTube takeaway${n === 1 ? "" : "s"} waiting for your call`, story: "From the channels the agents study. Accept each into the agents' learning, call in an agent to work it into the playbook, or dismiss it. Agents use only what's accepted.", why: "Agents learn only what a line head or an exec accepts", action: { label: "Decide", href: "/settings?tab=agents&section=youtube&yt=decide" } }];
+  }
+  const { data } = await db.from("notifications").select("title, body").eq("profile_id", me.id).eq("key", `yt:${day}`).maybeSingle();
+  if (!data) return [];
+  return [{ ...base, key: `yt-new:${day}`, topic: "mine", score: 25, stat: { value: "New", label: "from YouTube" }, title: String(data.title ?? "New takeaways from YouTube"), story: String(data.body ?? ""), why: "Methods from the channels we study, on your lines", action: { label: "Read them", href: "/settings?tab=agents&section=youtube&yt=mine" } }];
+}
+
 async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
   // A maker's day: their plate (every piece waiting on them, by urgency), what's about to hit their board, and messages
   // and promises that are theirs personally. Nothing else is gathered, and the allowlist drops anything that slips in.
@@ -227,8 +245,8 @@ async function gather(db: SupabaseClient, me: Staff): Promise<Draft[]> {
     return [...base, ...radar].filter((d) => csItem(d.key));
   }
   // The ads side and the email and social lines, read side by side, then ordered by how likely each client is to leave
-  const [ads, lines, risky] = await Promise.all([gatherAll(db, me), import("@/lib/today-lines").then(({ gatherLines }) => gatherLines(db, me)).catch(() => [] as Draft[]), atRiskNow(db).catch(() => new Set<string>())]);
-  const out = byRetention([...ads, ...lines], risky);
+  const [ads, lines, risky, yt] = await Promise.all([gatherAll(db, me), import("@/lib/today-lines").then(({ gatherLines }) => gatherLines(db, me)).catch(() => [] as Draft[]), atRiskNow(db).catch(() => new Set<string>()), youtubeItems(db, me).catch(() => [] as Draft[])]);
+  const out = [...byRetention([...ads, ...lines], risky), ...yt];
   return isCreativeRole(me.role) ? forCreative(out) : out;
 }
 

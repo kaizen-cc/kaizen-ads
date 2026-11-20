@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, type AgentKey } from "@/lib/ai";
+import { ROLE_SKILLS, roleOfAgent } from "@/lib/agent-access";
 import { immediateScope, learnedBlock, pickWinner, rankLearnings, widenScope, type ClientPlace, type Learning, type LearningKind, type LearningScope } from "@/lib/learning-rank";
 
 // What the agents learn from the team pushing back (a disagreement with a creative review note, a rebuttal of an audit
@@ -9,6 +10,18 @@ import { immediateScope, learnedBlock, pickWinner, rankLearnings, widenScope, ty
 // contradictions settled or put to an exec, stale ones retired), and every call reads only the few that fit it.
 
 export type LearningSource = "creative_review_disagreements" | "audit_rebuttals" | "copy_rule_overrides" | "audit_item_messages" | "brief_corrections" | "copy_feedback";
+
+/** The skill a call about these learnings runs as: a role agent's lessons (role:<key>) are tidied on its first skill */
+const skillOf = (agentKey: string) => (agentKey.startsWith("role:") ? (ROLE_SKILLS[agentKey.slice(5)]?.[0] ?? agentKey) : agentKey) as AgentKey;
+
+/**
+ * The keys a call reads learnings under: its own skills, plus their role agents ("role:media_buyer"), where lessons for
+ * the whole agent are filed (a takeaway from YouTube accepted by a line head or an exec reaches every skill of it)
+ */
+export function learningKeys(agents: readonly string[]): string[] {
+  const roles = agents.map((a) => roleOfAgent(a)).filter((r): r is string => Boolean(r)).map((r) => `role:${r}`);
+  return [...new Set([...agents, ...roles])];
+}
 
 /**
  * The agent that learns from each kind of pushback, unless the caller names it (a Google audit's rebuttal teaches the
@@ -169,7 +182,7 @@ export async function learningsBlock(admin: SupabaseClient, agents: AgentKey[], 
  */
 export async function learningsFor(admin: SupabaseClient, agents: AgentKey[], clientId: string | null, task?: string | null): Promise<{ block: string; used: Learning[] }> {
   try {
-    let q = admin.from("agent_learnings").select(COLS).in("agent_key", agents).eq("status", "active").order("last_seen", { ascending: false }).limit(400);
+    let q = admin.from("agent_learnings").select(COLS).in("agent_key", learningKeys(agents)).eq("status", "active").order("last_seen", { ascending: false }).limit(400);
     q = clientId ? q.or(`client_id.eq.${clientId},scope.neq.client`) : q.neq("scope", "client");
     const { data } = await q;
     const list = ((data ?? []) as unknown as Row[]).map(toLearning);
@@ -231,7 +244,7 @@ export async function consolidateLearnings(admin: SupabaseClient, opts: { classi
   }
   // 2. Stale: nothing new in 120 days
   const stale = new Date(Date.now() - 120 * 86_400_000).toISOString();
-  const { data: old } = await admin.from("agent_learnings").update({ status: "retired", note: "No new evidence in 120 days", updated_at: new Date().toISOString() }).eq("status", "active").lt("last_seen", stale).select("id");
+  const { data: old } = await admin.from("agent_learnings").update({ status: "retired", note: "No new evidence in 120 days", updated_at: new Date().toISOString() }).eq("status", "active").lt("last_seen", stale).or("source_table.is.null,source_table.neq.youtube_takeaways").select("id");
   out.retired += old?.length ?? 0;
   // 3. Per agent
   const { data: keys } = await admin.from("agent_learnings").select("agent_key").eq("status", "active").not("classified_at", "is", null);
@@ -246,7 +259,7 @@ export async function consolidateLearnings(admin: SupabaseClient, opts: { classi
       const clientCode = new Map<string, string>();
       for (const r of rows) if (r.client_id && !clientCode.has(r.client_id)) clientCode.set(r.client_id, `C${clientCode.size + 1}`);
       const res = await askJson<{ duplicates: { ids: string[]; lesson: string; condition: string }[]; contradictions: { a: string; b: string; why: string }[] }>({
-        agent: agentKey as AgentKey,
+        agent: skillOf(agentKey),
         label: `learning consolidate ${agentKey}`,
         bare: true,
         schema: CONSOLIDATE,
@@ -337,7 +350,8 @@ export async function loadLearnings(admin: SupabaseClient, agentKey: string): Pr
   const { data } = await admin
     .from("agent_learnings")
     .select(`${COLS}, note, conflict_with, clients(name, slug)`)
-    .eq("agent_key", agentKey)
+    // Its own, and its role agent's (lessons for the whole agent, like an accepted YouTube takeaway)
+    .in("agent_key", learningKeys([agentKey]))
     .neq("status", "merged")
     .order("status")
     .order("last_seen", { ascending: false })
@@ -352,7 +366,7 @@ export async function loadLearnings(admin: SupabaseClient, agentKey: string): Pr
   ]);
   const ticket = new Map([...(dis ?? []), ...(ovr ?? [])].map((x) => [x.id as string, (x.requests as unknown as { number: number } | null)?.number ?? null]));
   const slug = new Map((reb ?? []).map((x) => [x.id as string, (x.clients as unknown as { slug: string } | null)?.slug ?? null]));
-  const NAMES: Record<string, string> = { creative_review_disagreements: "Disagreed with a review note", copy_rule_overrides: "Copy flag rebutted or approved past", audit_rebuttals: "Audit finding pushed back on", brief_corrections: "A brief corrected", copy_feedback: "Copy edited or commented on" };
+  const NAMES: Record<string, string> = { creative_review_disagreements: "Disagreed with a review note", copy_rule_overrides: "Copy flag rebutted or approved past", audit_rebuttals: "Audit finding pushed back on", brief_corrections: "A brief corrected", copy_feedback: "Copy edited or commented on", youtube_takeaways: "A YouTube takeaway, accepted" };
   return rows.map((r) => ({
     id: r.id,
     scope: r.scope,
@@ -370,7 +384,8 @@ export async function loadLearnings(admin: SupabaseClient, agentKey: string): Pr
     sources: (r.sources ?? []).slice(0, 6).map((s) => {
       const n = ticket.get(s.id);
       const sl = slug.get(s.id);
-      return { label: `${NAMES[s.table] ?? s.table}${n ? ` · #${n}` : ""}`, href: n ? `/board?t=${n}` : sl ? `/clients/${sl}?tab=kpis` : null };
+      const url = (s as { url?: string }).url;
+      return { label: `${NAMES[s.table] ?? s.table}${n ? ` · #${n}` : ""}`, href: n ? `/board?t=${n}` : sl ? `/clients/${sl}?tab=kpis` : (url ?? null) };
     }),
   }));
 }

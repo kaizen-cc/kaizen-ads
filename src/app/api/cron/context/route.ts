@@ -100,6 +100,7 @@ function due(step: string | null) {
   if (step === "docs") return true; // every 30 minutes (vercel.json)
   if (step === "email_sow") return hour >= 6 && hour <= 21; // hourly (vercel.json): email clients' SOWs found and read, the SOW month's requests drafted, very-behind allotments flagged
   if (step === "social_learn") return true; // hourly (vercel.json): calls, Slack and Gmail read for the organic social agents' lessons (pending approval)
+  if (step === "youtube") return true; // every 30 minutes (vercel.json): channels checked every few hours, new videos read into takeaways, the day's notices
   if (step === "loom") return true; // every 15 minutes (vercel.json): the Loom queue, shared folders daily, the senior buyer's teachings consolidated
   if (step === "remind") return !["Sat", "Sun"].includes(weekday) && [11, 15].includes(hour);
   if (step === "notify") return true; // every 10 minutes (vercel.json): critical notifications still unread go out by email
@@ -335,6 +336,17 @@ export async function GET(request: Request) {
       // Contradictions nobody was told about yet: the bell of everyone who rules on them
       const told = await (await import("@/lib/insight-conflicts")).notifyContradictions(admin).catch((e) => String(e));
       return Response.json({ folders, atlassian, tokenExpiry, queue, attribution, insights, prospects, suggested, thumbs, told });
+    }
+    if (step === "youtube") {
+      // YouTube learning (Settings › AI agents › YouTube): channels not checked for a few hours read for new uploads,
+      // queued videos read and distilled a few at a time within the budget, and new takeaways shared in the app
+      const { aiEnabled } = await import("@/lib/ai");
+      if (!aiEnabled()) return Response.json({ skipped: "The AI isn't connected" });
+      const yt = await import("@/lib/youtube");
+      const sources = await yt.checkSources(admin, { budgetMs: 60_000 }).catch((e) => String(e));
+      const queue = await yt.processYouTubeQueue(admin, { budgetMs: 420_000, parallel: 3 }).catch((e) => String(e));
+      const shared = await yt.shareTakeaways(admin).catch((e) => String(e));
+      return Response.json({ sources, queue, shared });
     }
     if (step === "social_learn") {
       const { aiEnabled } = await import("@/lib/ai");
