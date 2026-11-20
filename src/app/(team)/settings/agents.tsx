@@ -1771,7 +1771,7 @@ function AssistantCard({ assistant, use, week }: { assistant: Agent; use: Assist
   const cost = use?.cost7 ?? assistant.cost7;
   const q = use?.quota ?? null;
   const pct = q && q.limit > 0 ? Math.min(100, (q.used / q.limit) * 100) : 0;
-  const resets = q?.resetsAt ? new Date(q.resetsAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : null;
+  const resets = q?.resetsAt ? new Date(q.resetsAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" }) : null;
   return (
     <Link
       href={`/settings?tab=agents&agent=${assistant.key}`}
