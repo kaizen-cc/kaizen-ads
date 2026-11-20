@@ -8,6 +8,7 @@ import { AssistantRinger } from "@/components/assistant-ringer";
 import { FeedbackBubble } from "@/components/feedback-bubble";
 import { DirectionSheet } from "@/components/direction-sheet";
 import { CommentsSheet } from "@/components/item-comments";
+import { AsanaTaskSheet } from "@/components/asana-task-sheet";
 import { Suspense } from "react";
 import { after } from "next/server";
 import { PeopleProvider } from "@/components/people-provider";
@@ -62,6 +63,10 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
       {/* Comments on any Overview or Today item: the sheet opens over any page (?comments=<key>) */}
       <Suspense fallback={null}>
         <CommentsSheet />
+      </Suspense>
+      {/* An Asana task, opened over any page and changed straight in Asana (?task=<gid>) */}
+      <Suspense fallback={null}>
+        <AsanaTaskSheet />
       </Suspense>
       </AgentCallProvider>
       </PeopleProvider>

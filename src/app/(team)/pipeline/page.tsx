@@ -58,6 +58,13 @@ const department = (me: Staff) => (me.role === "head_of_creative" ? "Creative" :
 // page's time
 export const maxDuration = 300;
 
+/** My tasks: the person's open Asana tasks, live */
+async function MyTasksSection({ db, me }: { db: SupabaseClient; me: Staff }) {
+  const [{ myAsanaTasks }, { MyAsanaTasks }] = await Promise.all([import("@/lib/asana-live"), import("@/components/my-asana-tasks")]);
+  const tasks = await myAsanaTasks(me.email, db).catch(() => []);
+  return <MyAsanaTasks tasks={tasks} />;
+}
+
 type HiddenRow = { key: string; how: string; label: string | null; href: string | null; hidden_at: string };
 
 /** The daily recap's way in, streamed in after the rest of the page, and under it what this person cleared off their board (kept, so anything can be put back) */
@@ -71,6 +78,12 @@ function Recap({ db, me, hidden }: { db: SupabaseClient; me: Staff; hidden: Hidd
       <Suspense fallback={null}>
         <NudgeCallout me={me.id} />
       </Suspense>
+      {/* My tasks: their next Asana tasks, each opening its preview to change it in Asana (src/lib/asana-live.ts) */}
+      {!isMaker(me.role) && !isCustomerSuccess(me.role) && (
+        <Suspense fallback={null}>
+          <MyTasksSection db={db} me={me} />
+        </Suspense>
+      )}
       {/* A brief they started and didn't send: waiting for them, on any device (src/lib/brief-drafts.ts) */}
       <Suspense fallback={null}>
         <UnfinishedCallout db={db} me={me} />

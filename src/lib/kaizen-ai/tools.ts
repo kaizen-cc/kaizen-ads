@@ -1280,6 +1280,10 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   const { dayTools, DAY_TOOLS } = await import("./day-tools");
   for (const t of dayTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
   for (const n of DAY_TOOLS) CHANNEL_EXTRA.add(n);
+  // Their own Asana: next tasks, and any change written straight back (src/lib/asana-live.ts)
+  const { asanaLiveTools, ASANA_LIVE_TOOLS } = await import("./asana-live-tools");
+  for (const t of asanaLiveTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  for (const n of ASANA_LIVE_TOOLS) CHANNEL_EXTRA.add(n);
   // Better briefs: assets a client waived or doesn't have, and the creative leads' rating of a drafted brief
   const { briefFeedbackTools, BRIEF_FEEDBACK_TOOLS } = await import("./brief-feedback-tools");
   for (const t of briefFeedbackTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);

@@ -1,5 +1,8 @@
+"use client";
+
 import type { MakerTask } from "@/lib/maker-day";
 import { daysBetween, whenLabel } from "@/lib/maker-day-core";
+import { openAsanaTask } from "@/components/asana-task-sheet";
 
 /**
  * A maker's tasks, under their recap (graphic designers and video editors): every open piece assigned to them, their
@@ -28,6 +31,14 @@ export function MakerTasks({ tasks, title = "Your tasks", empty = "Nothing assig
                 <a
                   href={t.href}
                   {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
+                  onClick={(e) => {
+                    // An Asana task opens its preview, where it's changed straight in Asana
+                    const gid = t.kind === "asana" ? t.key.split(":")[2] : null;
+                    if (gid && /^\d+$/.test(gid) && !e.metaKey && !e.ctrlKey) {
+                      e.preventDefault();
+                      openAsanaTask(gid);
+                    }
+                  }}
                   className={`flex min-h-14 flex-col gap-1.5 bg-surface px-4 py-3 transition-colors hover:bg-surface-2 sm:flex-row sm:items-center sm:gap-4 md:px-5 ${t.onThem ? "" : "opacity-70"}`}
                 >
                   <span className="grid min-w-0 flex-1 gap-0.5">
