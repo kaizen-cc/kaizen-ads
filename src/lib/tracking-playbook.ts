@@ -312,8 +312,8 @@ How to write the fix: numbered steps, each with where to click or what to check,
 
 /** Channels the Tracking Engineer can learn from on YouTube (Settings › AI agents › YouTube, line "tracking") */
 export const TRACKING_CHANNELS = [
-  { title: "Measureschool", handle: "MeasureSchool", why: "GTM, GA4 and server-side tagging tutorials" },
+  { title: "MeasureSchool", handle: "MeasureSchool", why: "GTM, GA4 and server-side tagging tutorials" },
   { title: "Analytics Mania", handle: "AnalyticsMania", why: "GTM and GA4 deep dives and debugging" },
-  { title: "Stape", handle: "stape-io", why: "Server-side GTM, Meta CAPI and first-party tracking" },
+  { title: "Stape", handle: "Stape", why: "Server-side GTM, Meta CAPI and first-party tracking" },
   { title: "Loves Data", handle: "LovesData", why: "GA4 and Google Ads measurement" },
 ];

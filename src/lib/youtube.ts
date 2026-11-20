@@ -60,6 +60,8 @@ const transcriptKey = () => process.env.YOUTUBE_TRANSCRIPT_API_KEY?.trim() || nu
 const geminiKey = () => process.env.GEMINI_API_KEY?.trim() || null;
 /** A current Flash model (Google's alias for the newest one), unless GEMINI_MODEL names another */
 const geminiModel = () => process.env.GEMINI_MODEL?.trim() || "gemini-flash-latest";
+/** The models tried in order: the chosen one, then a stable Flash when it's overloaded */
+const geminiModels = () => [...new Set([geminiModel(), "gemini-2.5-flash"])];
 /** Whether Gemini is set up to transcribe (for the page's setup line) */
 export const geminiConnected = () => Boolean(geminiKey());
 /** Videos Gemini transcribes per cron run, at most (the cost cap; the rest wait for the next run) */
@@ -206,26 +208,34 @@ export type GeminiRead = { transcript: string | null; problem: "unavailable" | "
 
 /**
  * A public YouTube video transcribed by Gemini's video understanding (the watch URL as file_data), every call logged in
- * ai_runs with its tokens so Settings › AI agents shows what it costs
- */
-/**
+ * ai_runs with its tokens so Settings › AI agents shows what it costs. When the model is overloaded ("high demand", a
+ * rate limit), the next Flash model is tried before the video waits for a later run.
  * clip: read only the first MAX_SECONDS (a channel's video whose length the server couldn't learn), so a three-hour
  * livestream costs an hour at most; a video added on purpose is read whole
  */
 export async function geminiTranscript(admin: Admin, videoId: string, opts: { clip?: boolean } = {}): Promise<GeminiRead> {
   const key = geminiKey();
   if (!key) return { transcript: null, problem: "key", error: "No Gemini key" };
+  let last: GeminiRead = { transcript: null, problem: "retry", error: "No Gemini model answered" };
+  for (const model of geminiModels()) {
+    last = await geminiOnce(admin, key, model, videoId, Boolean(opts.clip));
+    if (last.problem !== "retry") return last;
+  }
+  return last;
+}
+
+async function geminiOnce(admin: Admin, key: string, model: string, videoId: string, clip: boolean): Promise<GeminiRead> {
   const started = Date.now();
   let usage = { in: 0, out: 0 };
   let result: GeminiRead;
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel())}:generateContent`, {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: "POST",
       cache: "no-store",
-      signal: AbortSignal.timeout(300_000),
+      signal: AbortSignal.timeout(240_000),
       headers: { "content-type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ file_data: { file_uri: videoUrl(videoId) }, ...(opts.clip ? { video_metadata: { end_offset: `${MAX_SECONDS}s` } } : {}) }, { text: GEMINI_PROMPT }] }],
+        contents: [{ role: "user", parts: [{ file_data: { file_uri: videoUrl(videoId) }, ...(clip ? { video_metadata: { end_offset: `${MAX_SECONDS}s` } } : {}) }, { text: GEMINI_PROMPT }] }],
         // Low resolution: the words are in the audio, and the frames are most of a video's tokens
         generationConfig: { temperature: 0, maxOutputTokens: 60_000, mediaResolution: "MEDIA_RESOLUTION_LOW" },
       }),
@@ -253,7 +263,7 @@ export async function geminiTranscript(admin: Admin, videoId: string, opts: { cl
   }
   const { error } = await admin
     .from("ai_runs")
-    .insert({ agent_key: "market", label: "youtube transcript", model: "gemini-flash", ms: Date.now() - started, input_tokens: usage.in, output_tokens: usage.out, ok: Boolean(result.transcript) || result.problem === "no_speech", error: result.error, actor: "auto" });
+    .insert({ agent_key: "market", label: "youtube transcript", model: `gemini-flash${model === geminiModel() ? "" : ` (${model})`}`, ms: Date.now() - started, input_tokens: usage.in, output_tokens: usage.out, ok: Boolean(result.transcript) || result.problem === "no_speech", error: result.error, actor: "auto" });
   if (error) console.error("[youtube] couldn't log the Gemini run:", error.message);
   return result;
 }
