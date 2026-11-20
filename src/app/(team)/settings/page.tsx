@@ -26,7 +26,7 @@ import { AgentDetail, AgentsNav, KnowledgeView, LinesOverview, RoleDetail, Roles
 import { Expenses, rollupFrom, type CostRow } from "./expenses";
 import { YouTubeLearning } from "./youtube";
 import { cachedActivity, cachedCostRollup, cachedLastRuns, type Activity } from "@/lib/ai-agents-cache";
-import { addUsage, costOf, emptyUsage, type ModelKey, type Usage } from "@/lib/ai-costs";
+import { addUsage, costOf, emptyUsage, isGemini, type ModelKey, type Usage } from "@/lib/ai-costs";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import { DataInspector } from "./data-inspector";
 import { KnowledgePanel } from "@/components/knowledge-panel";
@@ -156,7 +156,8 @@ async function Agents({ me, open: askedAgent, role: askedRole, line: askedLine, 
   for (const r of costRows) {
     const k = r.agent ?? "?";
     if (r.day >= week) cost7.set(k, (cost7.get(k) ?? 0) + costOf(r.model, rowUsage(r)));
-    if (r.day >= monthStart) {
+    // (Gemini's runs count in the week's cost, not in the Claude model picker's month)
+    if (r.day >= monthStart && !isGemini(r.model)) {
       const m = (["opus", "sonnet", "haiku"].includes(r.model ?? "") ? r.model : "opus") as ModelKey;
       const by = mtdByModel.get(k) ?? {};
       by[m] = addUsage(by[m] ?? emptyUsage(), rowUsage(r));

@@ -11,6 +11,12 @@ export const PRICES: Record<ModelKey, { in: number; out: number; cacheW: number;
   sonnet: { in: 2, out: 10, cacheW: 2.5, cacheR: 0.1 },
   haiku: { in: 0.1, out: 0.5, cacheW: 0.125, cacheR: 0.01 },
 };
+/**
+ * Google Gemini Flash (YouTube transcripts, logged as model "gemini-flash"): dollars per million tokens, video and
+ * audio input included (ai.google.dev/gemini-api/docs/pricing, Flash tier)
+ */
+export const GEMINI_PRICE = { in: 0.5, out: 3 };
+export const isGemini = (m: string | null | undefined) => String(m ?? "").startsWith("gemini");
 /** Web search: $10 per 1,000 searches (web fetch has no fee beyond its tokens) */
 export const SEARCH_PRICE = 0.01;
 
@@ -29,6 +35,7 @@ const modelOf = (m: string | null | undefined): ModelKey => (m === "haiku" || m 
 
 /** What these tokens cost on this model (Haiku's long-prompt tier aside) */
 export function costOf(model: string | null | undefined, u: Usage) {
+  if (isGemini(model)) return (u.input * GEMINI_PRICE.in + u.output * GEMINI_PRICE.out) / 1e6;
   const p = PRICES[modelOf(model)];
   return (u.input * p.in + u.output * p.out + u.cacheW * p.cacheW + u.cacheR * p.cacheR) / 1e6 + u.searches * SEARCH_PRICE;
 }

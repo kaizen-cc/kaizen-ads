@@ -6,7 +6,7 @@ import { useState, useTransition } from "react";
 import { field } from "@/components/ui";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import type { SourceView, TakeawayView, VideoView, YouTubePage } from "@/lib/youtube";
-import { agentsForTakeaway, YT_LINE_LABEL, YT_LINES, type YtLine } from "@/lib/youtube-core";
+import { agentsForTakeaway, BLOCKED_LABEL, YT_LINE_LABEL, YT_LINES, type YtLine } from "@/lib/youtube-core";
 import {
   acceptYouTubeTakeaway,
   addYouTubeSource,
@@ -183,6 +183,13 @@ function SourceCard({ s, canManage }: { s: SourceView; canManage: boolean }) {
           </div>
         ))}
       </dl>
+      {(s.blocked.key > 0 || s.blocked.unavailable > 0 || s.blocked.long > 0) && (
+        <div className="flex flex-wrap gap-1.5">
+          {s.blocked.key > 0 && <span className="rounded-full border border-dashed border-warn/60 bg-warn-soft px-2.5 py-1 text-[11.5px] text-warn">{BLOCKED_LABEL.key} · {s.blocked.key}</span>}
+          {s.blocked.unavailable > 0 && <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11.5px] text-muted">{BLOCKED_LABEL.unavailable} · {s.blocked.unavailable}</span>}
+          {s.blocked.long > 0 && <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11.5px] text-muted" title="Add one by its link to read it anyway">{BLOCKED_LABEL.long} · {s.blocked.long}</span>}
+        </div>
+      )}
       {s.error && <p className="rounded-[10px] bg-warn-soft px-3 py-2 text-[12px] text-warn">{s.error}</p>}
       {canManage && (
         <div className="flex flex-wrap gap-1.5">
@@ -327,7 +334,7 @@ function VideoCard({ v, show }: { v: VideoView; show: TakeawayView[] }) {
           // eslint-disable-next-line @next/next/no-img-element
           <img src={v.thumbnail} alt="" className="h-full w-full object-cover" loading="lazy" />
         )}
-        {STATUS[v.status] && <span className="absolute left-2 top-2 rounded-full bg-deep/85 px-2 py-0.5 text-[10.5px] text-fg backdrop-blur">{STATUS[v.status]}</span>}
+        {(v.blocked || STATUS[v.status]) && <span className="absolute left-2 top-2 rounded-full bg-deep/85 px-2 py-0.5 text-[10.5px] text-fg backdrop-blur">{v.blocked ? BLOCKED_LABEL[v.blocked] : STATUS[v.status]}</span>}
       </a>
       <div className="grid min-w-0 content-start gap-3">
         <div>
@@ -335,7 +342,7 @@ function VideoCard({ v, show }: { v: VideoView; show: TakeawayView[] }) {
             {v.title ?? "A YouTube video"}
           </a>
           <p className="mt-0.5 text-[12px] text-faint">
-            {[v.channel, when(v.publishedAt), v.onDemand ? "asked for on demand" : null].filter(Boolean).join(" · ")}
+            {[v.channel, when(v.publishedAt), v.onDemand ? "asked for on demand" : null, v.via === "gemini" ? "transcribed by Gemini" : v.via === "paste" ? "transcript pasted" : null].filter(Boolean).join(" · ")}
           </p>
         </div>
         {v.summary && <p className="text-[13px] leading-relaxed text-muted">{v.summary}</p>}
@@ -345,7 +352,7 @@ function VideoCard({ v, show }: { v: VideoView; show: TakeawayView[] }) {
             <PasteTranscript id={v.id} />
           </div>
         )}
-        {v.status === "failed" && v.error && <p className="text-[12.5px] text-bad">{v.error}</p>}
+        {(v.status === "failed" || v.blocked === "long") && v.error && <p className={`text-[12.5px] ${v.blocked ? "text-muted" : "text-bad"}`}>{v.error}</p>}
         {show.length > 0 && (
           <ul className="grid gap-3">
             {show.map((t) => (
@@ -413,6 +420,25 @@ function SummarizeBox() {
   );
 }
 
+// ─── Setup ───────────────────────────────────────────────────────────────────
+
+/** Where transcripts come from: Gemini connected, or the one step to connect it */
+function Setup({ gemini, waiting }: { gemini: boolean; waiting: number }) {
+  return (
+    <section className={`flex flex-col gap-2 rounded-[18px] border px-4 py-3 sm:flex-row sm:items-center sm:gap-4 ${gemini ? "border-line bg-surface" : "border-dashed border-warn/60 bg-warn-soft"}`}>
+      <span className="inline-flex items-center gap-2 text-[13px] font-medium">
+        <span aria-hidden className={`h-2 w-2 rounded-full ${gemini ? "bg-ok" : "bg-warn"}`} />
+        {gemini ? "Gemini connected" : "Gemini not connected"}
+      </span>
+      <p className="text-[12.5px] text-muted">
+        {gemini
+          ? "Videos with no captions YouTube will share are transcribed by Gemini: a few each run, none past an hour unless added by link. Its cost shows under Expenses."
+          : `Create a key in Google AI Studio (aistudio.google.com › Get API key) and add it to Vercel as GEMINI_API_KEY.${waiting ? ` ${waiting} video${waiting === 1 ? " waits" : "s wait"} for it and are read as soon as it's set.` : ""}`}
+      </p>
+    </section>
+  );
+}
+
 // ─── The section ────────────────────────────────────────────────────────────
 
 const VIEWS: { key: YtView; label: string }[] = [
@@ -454,6 +480,8 @@ export function YouTubeLearning({ data, view: asked, deciding }: { data: YouTube
           ))}
         </dl>
       </section>
+
+      <Setup gemini={data.gemini} waiting={data.sources.reduce((n, s) => n + s.blocked.key, 0)} />
 
       {data.canManage && <AddSource />}
 

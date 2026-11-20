@@ -3,6 +3,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import {
   agentsForTakeaway,
+  cleanGeminiTranscript,
+  geminiErrorKind,
+  nextTranscriptStep,
   canDecide,
   channelIdFromPage,
   channelUrl,
@@ -37,9 +40,10 @@ import {
 //
 // Reading YouTube without signing in: a channel's new uploads come from the YouTube Data API when YOUTUBE_API_KEY is
 // set, else from the channel's public RSS feed. A @handle is resolved to its channel id once, from the channel page.
-// The transcript comes from the caption track the watch page lists (YouTube sometimes refuses it to a server), else
-// from a transcript service when YOUTUBE_TRANSCRIPT_API_KEY is set (Supadata). A video with neither is kept as
-// "no transcript": anyone can paste its transcript (YouTube's "Show transcript") and it's read like the rest.
+// The transcript, in the owner's order: the free caption track the watch page lists (YouTube often refuses it to a
+// server), then Google Gemini reading the public video (GEMINI_API_KEY; a few videos per run, none past an hour unless
+// added on purpose, every call logged in ai_runs with its tokens), then a transcript service when
+// YOUTUBE_TRANSCRIPT_API_KEY is set (Supadata), then a person pasting it (YouTube's "Show transcript").
 
 type Admin = SupabaseClient;
 
@@ -52,6 +56,13 @@ const BACKFILL = 5;
 
 const apiKey = () => process.env.YOUTUBE_API_KEY?.trim() || null;
 const transcriptKey = () => process.env.YOUTUBE_TRANSCRIPT_API_KEY?.trim() || null;
+const geminiKey = () => process.env.GEMINI_API_KEY?.trim() || null;
+/** A current Flash model (Google's alias for the newest one), unless GEMINI_MODEL names another */
+const geminiModel = () => process.env.GEMINI_MODEL?.trim() || "gemini-flash-latest";
+/** Whether Gemini is set up to transcribe (for the page's setup line) */
+export const geminiConnected = () => Boolean(geminiKey());
+/** Videos Gemini transcribes per cron run, at most (the cost cap; the rest wait for the next run) */
+export const GEMINI_PER_RUN = 4;
 
 async function get(url: string, opts: { headers?: Record<string, string>; ms?: number } = {}) {
   return fetch(url, { cache: "no-store", headers: opts.headers ?? PAGE_HEADERS, signal: AbortSignal.timeout(opts.ms ?? 20_000) });
@@ -132,11 +143,11 @@ function jsonAfter(html: string, marker: string): unknown {
   return null;
 }
 
-export type VideoRead = { title: string | null; channel: string | null; channelId: string | null; description: string | null; publishedAt: string | null; seconds: number | null; thumbnail: string | null; transcript: string | null; found: boolean; via: "captions" | "service" | null };
+export type VideoRead = { title: string | null; channel: string | null; channelId: string | null; description: string | null; publishedAt: string | null; seconds: number | null; thumbnail: string | null; transcript: string | null; found: boolean; playable: string | null };
 
-/** A video's title, channel, description and transcript; transcript null when neither YouTube nor the service gives it */
+/** A video's title, channel, description, length and (when YouTube hands the captions to a server) transcript */
 export async function readVideo(id: string): Promise<VideoRead> {
-  const out: VideoRead = { title: null, channel: null, channelId: null, description: null, publishedAt: null, seconds: null, thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`, transcript: null, found: false, via: null };
+  const out: VideoRead = { title: null, channel: null, channelId: null, description: null, publishedAt: null, seconds: null, thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`, transcript: null, found: false, playable: null };
   type Player = {
     playabilityStatus?: { status?: string };
     videoDetails?: { title?: string; author?: string; channelId?: string; shortDescription?: string; lengthSeconds?: string };
@@ -149,6 +160,7 @@ export async function readVideo(id: string): Promise<VideoRead> {
     if (r.ok) {
       const html = await r.text();
       const p = jsonAfter(html, "ytInitialPlayerResponse") as Player | null;
+      out.playable = p?.playabilityStatus?.status ?? null;
       const d = p?.videoDetails;
       if (d?.title) {
         out.found = true;
@@ -176,29 +188,84 @@ export async function readVideo(id: string): Promise<VideoRead> {
         const cues = parseCaptions(await r.text());
         if (cues.length) {
           out.transcript = transcriptOf(cues);
-          out.via = "captions";
           break;
         }
       } catch {}
     }
   }
-  // A transcript service, when YouTube won't give the captions to a server
-  const key = transcriptKey();
-  if (!out.transcript && key) {
-    try {
-      const r = await get(`https://api.supadata.ai/v1/youtube/transcript?videoId=${id}`, { headers: { "x-api-key": key }, ms: 45_000 });
-      const j = (await r.json().catch(() => null)) as { content?: { text?: string; offset?: number }[] | string } | null;
-      if (r.ok && j?.content) {
-        const cues = Array.isArray(j.content) ? j.content.map((c) => ({ at: (c.offset ?? 0) / 1000, text: (c.text ?? "").trim() })).filter((c) => c.text) : [{ at: 0, text: j.content }];
-        if (cues.length) {
-          out.transcript = transcriptOf(cues);
-          out.via = "service";
-          out.found = true;
-        }
-      }
-    } catch {}
-  }
   return out;
+}
+
+const GEMINI_PROMPT = `Transcribe the spoken words of this video faithfully and in full, in the language spoken.
+Start each paragraph with its timestamp in square brackets, [m:ss] (or [h:mm:ss] past an hour), a new paragraph about every 30 seconds.
+Spoken words only: no summary, no descriptions of what's on screen, no speaker labels unless two people talk, nothing invented or tidied up. Skip music-only stretches.
+If nobody speaks in the video, answer exactly: NO_SPEECH`;
+
+export type GeminiRead = { transcript: string | null; problem: "unavailable" | "key" | "retry" | "no_speech" | null; error: string | null };
+
+/**
+ * A public YouTube video transcribed by Gemini's video understanding (the watch URL as file_data), every call logged in
+ * ai_runs with its tokens so Settings › AI agents shows what it costs
+ */
+export async function geminiTranscript(admin: Admin, videoId: string): Promise<GeminiRead> {
+  const key = geminiKey();
+  if (!key) return { transcript: null, problem: "key", error: "No Gemini key" };
+  const started = Date.now();
+  let usage = { in: 0, out: 0 };
+  let result: GeminiRead;
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(geminiModel())}:generateContent`, {
+      method: "POST",
+      cache: "no-store",
+      signal: AbortSignal.timeout(300_000),
+      headers: { "content-type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ file_data: { file_uri: videoUrl(videoId) } }, { text: GEMINI_PROMPT }] }],
+        // Low resolution: the words are in the audio, and the frames are most of a video's tokens
+        generationConfig: { temperature: 0, maxOutputTokens: 60_000, mediaResolution: "MEDIA_RESOLUTION_LOW" },
+      }),
+    });
+    type Answer = {
+      candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
+      error?: { message?: string; status?: string };
+      promptFeedback?: { blockReason?: string };
+    };
+    const j = (await r.json().catch(() => null)) as Answer | null;
+    usage = { in: j?.usageMetadata?.promptTokenCount ?? 0, out: (j?.usageMetadata?.candidatesTokenCount ?? 0) + (j?.usageMetadata?.thoughtsTokenCount ?? 0) };
+    if (!r.ok || j?.error) {
+      const message = j?.error?.message ?? `Gemini answered ${r.status}`;
+      result = { transcript: null, problem: geminiErrorKind(r.status, message), error: message.slice(0, 300) };
+    } else if (j?.promptFeedback?.blockReason) {
+      result = { transcript: null, problem: "unavailable", error: `Gemini wouldn't read it (${j.promptFeedback.blockReason})` };
+    } else {
+      const text = (j?.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+      const transcript = cleanGeminiTranscript(text);
+      result = transcript ? { transcript, problem: null, error: null } : { transcript: null, problem: "no_speech", error: "Gemini found no speech in it" };
+    }
+  } catch (e) {
+    result = { transcript: null, problem: "retry", error: e instanceof Error ? e.message : String(e) };
+  }
+  const { error } = await admin
+    .from("ai_runs")
+    .insert({ agent_key: "market", label: "youtube transcript", model: "gemini-flash", ms: Date.now() - started, input_tokens: usage.in, output_tokens: usage.out, ok: Boolean(result.transcript) || result.problem === "no_speech", error: result.error, actor: "auto" });
+  if (error) console.error("[youtube] couldn't log the Gemini run:", error.message);
+  return result;
+}
+
+/** A transcript service (Supadata), when its key is set */
+async function serviceTranscript(id: string): Promise<string | null> {
+  const key = transcriptKey();
+  if (!key) return null;
+  try {
+    const r = await get(`https://api.supadata.ai/v1/youtube/transcript?videoId=${id}`, { headers: { "x-api-key": key }, ms: 45_000 });
+    const j = (await r.json().catch(() => null)) as { content?: { text?: string; offset?: number }[] | string } | null;
+    if (!r.ok || !j?.content) return null;
+    const cues = Array.isArray(j.content) ? j.content.map((c) => ({ at: (c.offset ?? 0) / 1000, text: (c.text ?? "").trim() })).filter((c) => c.text) : [{ at: 0, text: j.content }];
+    return cues.length ? transcriptOf(cues) : null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Sources ────────────────────────────────────────────────────────────────
@@ -214,6 +281,9 @@ export async function addSource(admin: Admin, input: string, opts: { lines?: str
     const { data, error } = await admin.from("youtube_sources").insert({ kind: "video", url: videoUrl(ref.id), lines, added_by: opts.by }).select("id").single();
     if (error || !data) return { ok: false, error: error?.message ?? "Couldn't save it." };
     await queueVideos(admin, [{ videoId: ref.id }], { sourceId: data.id as string, by: opts.by });
+    // Added on purpose: read even past an hour (a channel's long video skipped before is read now)
+    await admin.from("youtube_videos").update({ allow_long: true }).eq("video_id", ref.id);
+    await admin.from("youtube_videos").update({ status: "queued", next_at: new Date().toISOString(), attempts: 0, blocked: null, error: null }).eq("video_id", ref.id).eq("blocked", "long");
     return { ok: true, id: data.id as string, kind: "video", title: null, queued: 1 };
   }
   let ch: ChannelInfo;
@@ -274,10 +344,10 @@ export async function checkSource(admin: Admin, id: string, opts: { backfill?: n
     const { data: have } = await admin.from("youtube_videos").select("video_id, published_at").eq("source_id", id).order("published_at", { ascending: false, nullsFirst: false }).limit(50);
     const known = new Set((have ?? []).map((v) => v.video_id as string));
     const newest = (have ?? [])[0]?.published_at as string | undefined;
-    let fresh = feed.videos.filter((v) => !known.has(v.videoId) && (!newest || (v.publishedAt ?? "") > newest));
+    let fresh = feed.videos.filter((v) => !known.has(v.videoId) && !("short" in v && v.short) && (!newest || (v.publishedAt ?? "") > newest));
     // A brand-new subscription reads its latest few, not the whole feed
     if (!known.size) fresh = fresh.slice(0, opts.backfill ?? BACKFILL);
-    // Shorts and very short clips teach little: kept off by title (the transcript step skips what's too thin)
+    // Shorts teach little (and would spend Gemini on nothing): left out; the transcript step skips what's too thin
     const queued = await queueVideos(admin, fresh.map((v) => ({ ...v, channelTitle: v.channelTitle ?? feed.title ?? (s.title as string | null) })), { sourceId: id, by: (s.added_by as string | null) ?? null });
     const { count } = await admin.from("youtube_videos").select("id", { count: "exact", head: true }).eq("source_id", id);
     await admin.from("youtube_sources").update({ last_checked_at: now, error: null, video_count: count ?? 0, ...(feed.title && !s.title ? { title: feed.title.slice(0, 200) } : {}) }).eq("id", id);
@@ -339,7 +409,9 @@ export async function suggestLines(admin: Admin, id: string) {
 
 // ─── Reading and distilling ─────────────────────────────────────────────────
 
-type VideoRow = { id: string; video_id: string; url: string; source_id: string | null; title: string | null; channel_title: string | null; description: string | null; transcript: string | null; attempts: number; created_at: string; published_at: string | null; on_demand: boolean };
+type VideoRow = { id: string; video_id: string; url: string; source_id: string | null; title: string | null; channel_title: string | null; description: string | null; transcript: string | null; attempts: number; created_at: string; published_at: string | null; on_demand: boolean; allow_long?: boolean; transcript_via?: string | null; duration_seconds?: number | null };
+/** How many Gemini transcriptions this run still has room for (shared by the run's parallel workers) */
+export type GeminiGate = { left: number };
 
 const DISTILL = {
   type: "object",
@@ -415,27 +487,60 @@ ${v.transcript.slice(0, TRANSCRIPT_CHARS)}
   return { summary: String(out.summary ?? "").trim().slice(0, 1200), takeaways, worthIt: Boolean(out.worth_it) };
 }
 
-const NO_TRANSCRIPT = "YouTube didn't share this video's captions with the server. Paste its transcript (on YouTube: … › Show transcript) and it's read like the rest.";
+const NO_TRANSCRIPT = "No captions YouTube would share and nothing Gemini could read. Paste its transcript (on YouTube: … › Show transcript) and it's read like the rest.";
+const WAITING_KEY = "Waiting for the Gemini key: once it's set, this video is transcribed automatically. Or paste its transcript.";
+const UNAVAILABLE = "Video unavailable: private, removed or age-restricted, so it can't be read.";
+const TOO_LONG = "Over an hour, so it isn't transcribed automatically. Add it by its link to read it anyway.";
 
-/** One video: read, distilled, its takeaways saved (shared later, a person's day at a time) */
-export async function processVideo(admin: Admin, row: VideoRow) {
+/** One video: read (captions, then Gemini, the service, or a paste), distilled, its takeaways saved (shared later) */
+export async function processVideo(admin: Admin, row: VideoRow, gate: GeminiGate = { left: 0 }) {
   try {
     const page = row.transcript ? null : await readVideo(row.video_id);
-    const transcript = row.transcript ?? page?.transcript ?? null;
-    const about = { title: row.title ?? page?.title ?? null, channel_title: row.channel_title ?? page?.channel ?? null, description: row.description ?? page?.description ?? null, published_at: row.published_at ?? page?.publishedAt ?? null };
-    if (!transcript) {
-      // A brand-new upload may not have its captions yet: look again later, a few times
+    let transcript = row.transcript ?? page?.transcript ?? null;
+    let via = row.transcript ? (row.transcript_via ?? "paste") : page?.transcript ? "captions" : null;
+    const seconds = page?.seconds ?? row.duration_seconds ?? null;
+    const about = { title: row.title ?? page?.title ?? null, channel_title: row.channel_title ?? page?.channel ?? null, description: row.description ?? page?.description ?? null, published_at: row.published_at ?? page?.publishedAt ?? null, duration_seconds: seconds };
+    let geminiFailed = false;
+    let geminiError: string | null = null;
+    while (!transcript) {
+      const step = nextTranscriptStep({ playable: page?.playable ?? null, seconds, allowLong: Boolean(row.allow_long), geminiKey: Boolean(geminiKey()), geminiLeft: gate.left, serviceKey: Boolean(transcriptKey()), geminiFailed });
+      if (step === "unavailable") return update(admin, row.id, { ...about, status: "failed", blocked: "unavailable", error: UNAVAILABLE });
+      if (step === "long") return update(admin, row.id, { ...about, status: "skipped", blocked: "long", error: TOO_LONG });
+      // This run's Gemini cap is spent: the next run picks it up (the claim's attempt doesn't count)
+      if (step === "later") return update(admin, row.id, { ...about, status: "queued", attempts: Math.max(0, row.attempts - 1), next_at: new Date(Date.now() + 25 * 60_000).toISOString(), error: null });
+      if (step === "gemini") {
+        gate.left--;
+        const g = await geminiTranscript(admin, row.video_id);
+        if (g.transcript) {
+          transcript = g.transcript;
+          via = "gemini";
+          break;
+        }
+        if (g.problem === "unavailable") return update(admin, row.id, { ...about, status: "failed", blocked: "unavailable", error: `${UNAVAILABLE}${g.error ? ` (${g.error})` : ""}`.slice(0, 400) });
+        if (g.problem === "retry" && row.attempts < 4) return update(admin, row.id, { ...about, status: "queued", next_at: new Date(Date.now() + 30 * 60_000 * row.attempts).toISOString(), error: `Gemini: ${g.error ?? "try again"}`.slice(0, 300) });
+        geminiFailed = true;
+        geminiError = g.problem === "key" ? `The Gemini key was refused (${g.error ?? ""}). Check GEMINI_API_KEY.` : g.problem === "no_speech" ? "Gemini found no speech in it." : null;
+        continue;
+      }
+      if (step === "service") {
+        transcript = await serviceTranscript(row.video_id);
+        if (transcript) {
+          via = "service";
+          break;
+        }
+      }
+      // Nothing could read it: without any key, a fresh upload is looked at again for its captions a few times
       const fresh = Date.now() - new Date(row.created_at).getTime() < DAY;
-      if (fresh && row.attempts < 4) return update(admin, row.id, { ...about, status: "queued", next_at: new Date(Date.now() + 3 * 3_600_000).toISOString(), error: "Waiting for captions" });
-      return update(admin, row.id, { ...about, status: page?.found === false ? "failed" : "no_transcript", error: page?.found === false ? "YouTube didn't show this video (private, removed or age-restricted)." : NO_TRANSCRIPT });
+      if (step === "wait-key" && fresh && row.attempts < 4) return update(admin, row.id, { ...about, status: "queued", blocked: null, next_at: new Date(Date.now() + 3 * 3_600_000).toISOString(), error: "Waiting for captions" });
+      return update(admin, row.id, { ...about, status: "no_transcript", blocked: step === "wait-key" ? "key" : null, error: step === "wait-key" ? WAITING_KEY : (geminiError ?? NO_TRANSCRIPT) });
     }
-    if (transcript.length < 400) return update(admin, row.id, { ...about, transcript, status: "skipped", error: "Too short to teach anything (a Short or a clip)." });
+    if (transcript.length < 400) return update(admin, row.id, { ...about, transcript, transcript_via: via, blocked: null, status: "skipped", error: "Too short to teach anything (a Short or a clip)." });
     const lines = await sourceLines(admin, row.source_id);
-    const d = await distill({ title: about.title, channel: about.channel_title, description: about.description, transcript, seconds: page?.seconds ?? null }, lines);
+    const d = await distill({ title: about.title, channel: about.channel_title, description: about.description, transcript, seconds }, lines);
     await admin.from("youtube_takeaways").delete().eq("video_row", row.id).eq("status", "pending");
     if (d.takeaways.length)
       await admin.from("youtube_takeaways").insert(d.takeaways.map((t) => ({ video_row: row.id, takeaway: t.takeaway, why: t.why || null, lines: t.lines, roles: t.roles, at_seconds: t.atSeconds })));
-    await update(admin, row.id, { ...about, transcript, summary: d.summary || null, status: d.worthIt && d.takeaways.length ? "done" : "skipped", error: d.worthIt ? null : "Nothing a marketer could act on.", shared_at: d.takeaways.length ? null : new Date().toISOString() });
+    await update(admin, row.id, { ...about, transcript, transcript_via: via, blocked: null, summary: d.summary || null, status: d.worthIt && d.takeaways.length ? "done" : "skipped", error: d.worthIt ? null : "Nothing a marketer could act on.", shared_at: d.takeaways.length ? null : new Date().toISOString() });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (row.attempts < 4) return update(admin, row.id, { status: "queued", next_at: new Date(Date.now() + 15 * 60_000 * row.attempts).toISOString(), error: msg.slice(0, 300) });
@@ -443,9 +548,19 @@ export async function processVideo(admin: Admin, row: VideoRow) {
   }
 }
 
+/** Once the Gemini key is set: the videos that waited for it go back in the queue (a handful a run) */
+export async function requeueForKey(admin: Admin, max = 20) {
+  if (!geminiKey()) return 0;
+  const { data } = await admin.from("youtube_videos").select("id").eq("blocked", "key").order("created_at", { ascending: false }).limit(max);
+  const ids = (data ?? []).map((v) => v.id as string);
+  if (ids.length) await admin.from("youtube_videos").update({ status: "queued", blocked: null, error: null, attempts: 0, next_at: new Date().toISOString(), updated_at: new Date().toISOString() }).in("id", ids);
+  return ids.length;
+}
+
 /** The worker: claims due videos a few at a time until the budget runs out (a long queue goes through over several runs) */
-export async function processYouTubeQueue(admin: Admin, { budgetMs = 300_000, parallel = 3 }: { budgetMs?: number; parallel?: number } = {}) {
+export async function processYouTubeQueue(admin: Admin, { budgetMs = 300_000, parallel = 3, geminiMax = GEMINI_PER_RUN }: { budgetMs?: number; parallel?: number; geminiMax?: number } = {}) {
   const until = Date.now() + budgetMs;
+  const gate: GeminiGate = { left: geminiMax };
   let done = 0;
   // A distillation takes up to a couple of minutes: stop claiming while there's still time for one to finish
   while (Date.now() < until - 120_000) {
@@ -457,7 +572,7 @@ export async function processYouTubeQueue(admin: Admin, { budgetMs = 300_000, pa
       claimed.push(r);
     }
     if (!claimed.length) break;
-    await Promise.all(claimed.map((r) => processVideo(admin, r)));
+    await Promise.all(claimed.map((r) => processVideo(admin, r, gate)));
     done += claimed.length;
   }
   const { count } = await admin.from("youtube_videos").select("id", { count: "exact", head: true }).in("status", ["queued", "reading"]);
@@ -614,7 +729,7 @@ export async function callInBrief(admin: Admin, me: Me, id: string, roleKey?: st
 export async function pasteTranscript(admin: Admin, id: string, text: string) {
   const transcript = text.replace(/\r/g, "").trim();
   if (transcript.length < 400) return { ok: false as const, error: "That's too short to be the transcript." };
-  await update(admin, id, { transcript: transcript.slice(0, 200_000), status: "queued", next_at: new Date().toISOString(), attempts: 0, error: null });
+  await update(admin, id, { transcript: transcript.slice(0, 200_000), transcript_via: "paste", blocked: null, status: "queued", next_at: new Date().toISOString(), attempts: 0, error: null });
   return { ok: true as const };
 }
 
@@ -631,8 +746,9 @@ export async function summarizeVideo(admin: Admin, input: string, by: string | n
   if (had?.status === "done" || had?.status === "skipped") return { ok: true as const, ...(await videoView(admin, had.id as string)) };
   if (!had) await queueVideos(admin, [{ videoId: ref.id }], { onDemand: true, by });
   const { data: row } = await admin.from("youtube_videos").select("*").eq("video_id", ref.id).single();
-  await admin.from("youtube_videos").update({ status: "reading", attempts: ((row?.attempts as number) ?? 0) + 1 }).eq("id", row!.id);
-  await processVideo(admin, { ...(row as VideoRow), attempts: ((row?.attempts as number) ?? 0) + 1 });
+  // Asked for on purpose: read even past an hour, with one Gemini transcription of its own
+  await admin.from("youtube_videos").update({ status: "reading", allow_long: true, attempts: ((row?.attempts as number) ?? 0) + 1 }).eq("id", row!.id);
+  await processVideo(admin, { ...(row as VideoRow), allow_long: true, attempts: ((row?.attempts as number) ?? 0) + 1 }, { left: 1 });
   const v = await videoView(admin, row!.id as string);
   if (v.status !== "done" && v.status !== "skipped") return { ok: false as const, error: v.error ?? "Couldn't read it.", video: v };
   return { ok: true as const, ...v };
@@ -689,10 +805,10 @@ export async function askChannels(admin: Admin, question: string, channel?: stri
 
 // ─── The page ───────────────────────────────────────────────────────────────
 
-export type SourceView = { id: string; kind: "channel" | "video"; url: string; title: string | null; handle: string | null; thumbnail: string | null; about: string | null; lines: YtLine[]; suggested: YtLine[]; active: boolean; lastChecked: string | null; error: string | null; videos: number; newVideos: number; takeaways: number; addedBy: string | null };
+export type SourceView = { id: string; kind: "channel" | "video"; url: string; title: string | null; handle: string | null; thumbnail: string | null; about: string | null; lines: YtLine[]; suggested: YtLine[]; active: boolean; lastChecked: string | null; error: string | null; videos: number; newVideos: number; takeaways: number; addedBy: string | null; blocked: { key: number; unavailable: number; long: number } };
 export type TakeawayView = { id: string; takeaway: string; why: string | null; lines: YtLine[]; roles: string[]; link: string; status: string; decidedBy: string | null; calledRole: string | null; mine: boolean; canDecide: boolean };
-export type VideoView = { id: string; videoId: string; url: string; title: string | null; channel: string | null; thumbnail: string | null; publishedAt: string | null; summary: string | null; status: string; error: string | null; sourceId: string | null; onDemand: boolean; takeaways: TakeawayView[] };
-export type YouTubePage = { sources: SourceView[]; videos: VideoView[]; waiting: number; forMe: number; canManage: boolean };
+export type VideoView = { id: string; videoId: string; url: string; title: string | null; channel: string | null; thumbnail: string | null; publishedAt: string | null; summary: string | null; status: string; error: string | null; sourceId: string | null; onDemand: boolean; blocked: "key" | "unavailable" | "long" | null; via: string | null; takeaways: TakeawayView[] };
+export type YouTubePage = { sources: SourceView[]; videos: VideoView[]; waiting: number; forMe: number; canManage: boolean; gemini: boolean };
 
 /** Everything the YouTube section shows, for this person (what's shared with them, what's theirs to decide) */
 export async function loadYouTube(db: SupabaseClient, me: Me & { isLead?: boolean }): Promise<YouTubePage> {
@@ -700,7 +816,7 @@ export async function loadYouTube(db: SupabaseClient, me: Me & { isLead?: boolea
   const week = new Date(Date.now() - 7 * DAY).toISOString();
   const [{ data: src }, { data: vids }, { data: me2 }] = await Promise.all([
     db.from("youtube_sources").select("id, kind, url, title, handle, thumbnail_url, about, lines, suggested_lines, active, last_checked_at, error, video_count, profiles:added_by(full_name)").order("created_at", { ascending: false }),
-    db.from("youtube_videos").select("id, video_id, url, title, channel_title, thumbnail_url, published_at, summary, status, error, source_id, on_demand, created_at, added_by").order("created_at", { ascending: false }).limit(120),
+    db.from("youtube_videos").select("id, video_id, url, title, channel_title, thumbnail_url, published_at, summary, status, error, source_id, on_demand, created_at, added_by, blocked, transcript_via").order("created_at", { ascending: false }).limit(120),
     db.from("profiles").select("exec_focus").eq("id", me.id).maybeSingle(),
   ]);
   const ids = (vids ?? []).map((v) => v.id as string);
@@ -743,6 +859,8 @@ export async function loadYouTube(db: SupabaseClient, me: Me & { isLead?: boolea
       error: (v.error as string | null) ?? null,
       sourceId: (v.source_id as string | null) ?? null,
       onDemand: Boolean(v.on_demand),
+      blocked: (v.blocked as VideoView["blocked"]) ?? null,
+      via: (v.transcript_via as string | null) ?? null,
       takeaways: byVideo.get(v.id as string) ?? [],
     }));
   const sources: SourceView[] = (src ?? []).map((s) => {
@@ -764,10 +882,11 @@ export async function loadYouTube(db: SupabaseClient, me: Me & { isLead?: boolea
       newVideos: mineV.filter((v) => (v.created_at as string) >= week).length,
       takeaways: mineV.reduce((n, v) => n + (byVideo.get(v.id as string)?.length ?? 0), 0),
       addedBy: (s.profiles as unknown as { full_name: string } | null)?.full_name ?? null,
+      blocked: { key: mineV.filter((v) => v.blocked === "key").length, unavailable: mineV.filter((v) => v.blocked === "unavailable").length, long: mineV.filter((v) => v.blocked === "long").length },
     };
   });
   const all = videos.flatMap((v) => v.takeaways);
-  return { sources, videos, waiting: all.filter((t) => t.status === "pending" && t.canDecide).length, forMe: all.filter((t) => t.mine && t.status !== "dismissed").length, canManage: canManageSources(me) };
+  return { sources, videos, waiting: all.filter((t) => t.status === "pending" && t.canDecide).length, forMe: all.filter((t) => t.mine && t.status !== "dismissed").length, canManage: canManageSources(me), gemini: geminiConnected() };
 }
 
 /** For the day's recap: takeaways waiting for this person's call (a line head or exec) */

@@ -344,9 +344,11 @@ export async function GET(request: Request) {
       if (!aiEnabled()) return Response.json({ skipped: "The AI isn't connected" });
       const yt = await import("@/lib/youtube");
       const sources = await yt.checkSources(admin, { budgetMs: 60_000 }).catch((e) => String(e));
+      // The Gemini key just set: the videos that waited for it go back in the queue
+      const requeued = await yt.requeueForKey(admin).catch((e) => String(e));
       const queue = await yt.processYouTubeQueue(admin, { budgetMs: 420_000, parallel: 3 }).catch((e) => String(e));
       const shared = await yt.shareTakeaways(admin).catch((e) => String(e));
-      return Response.json({ sources, queue, shared });
+      return Response.json({ sources, requeued, queue, shared });
     }
     if (step === "social_learn") {
       const { aiEnabled } = await import("@/lib/ai");

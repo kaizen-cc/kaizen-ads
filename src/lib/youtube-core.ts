@@ -81,7 +81,7 @@ const tag = (xml: string, name: string) => {
   return m ? decodeEntities(m[1]).trim() : null;
 };
 
-export type FeedVideo = { videoId: string; title: string; publishedAt: string | null; description: string | null; thumbnail: string | null; channelTitle: string | null; channelId: string | null };
+export type FeedVideo = { videoId: string; title: string; publishedAt: string | null; description: string | null; thumbnail: string | null; channelTitle: string | null; channelId: string | null; short: boolean };
 export type Feed = { channelTitle: string | null; channelId: string | null; videos: FeedVideo[] };
 
 /** A channel's RSS feed (youtube.com/feeds/videos.xml?channel_id=…): its name and latest uploads, newest first */
@@ -95,9 +95,12 @@ export function parseFeed(xml: string): Feed {
     const videoId = tag(e, "yt:videoId");
     if (!videoId || !VIDEO_ID.test(videoId)) continue;
     const cid = tag(e, "yt:channelId");
+    const title = tag(e, "title") ?? tag(e, "media:title") ?? "";
     videos.push({
       videoId,
-      title: tag(e, "title") ?? tag(e, "media:title") ?? "",
+      title,
+      // A Short (its link is /shorts/, or the title says so): too thin to teach, never read from a channel
+      short: /youtube\.com\/shorts\//.test(e) || /#shorts?\b/i.test(title),
       publishedAt: tag(e, "published"),
       description: tag(e, "media:description"),
       thumbnail: e.match(/<media:thumbnail url="([^"]+)"/)?.[1] ?? null,
@@ -366,3 +369,50 @@ export function noticeText(items: readonly NoticeTakeaway[], opts: { digest?: bo
   const ask = decide ? ` ${decide} wait${decide === 1 ? "s" : ""} for your call: accept into the agents' learning, call in an agent, or dismiss.` : "";
   return { title, body: `From ${names}${more}.${ask}` };
 }
+
+// ─── Transcripts: which source next ─────────────────────────────────────────
+
+/** Past this a channel's video isn't transcribed (cost), unless it was added on purpose: about an hour */
+export const MAX_SECONDS = 62 * 60;
+
+export type TranscriptStep = "gemini" | "service" | "wait-key" | "long" | "unavailable" | "later" | "paste";
+
+/**
+ * Where a video's transcript comes from when the free captions track gave none, in the owner's order: Gemini (when
+ * its key is set and this run's cap has room), then the transcript service (when its key is set), then a person
+ * pasting it. A private, removed or age-restricted video stops here; a channel's video past an hour waits for someone
+ * to add it on purpose; with no key at all it waits for the Gemini key.
+ */
+export function nextTranscriptStep(v: { playable: string | null; seconds: number | null; allowLong: boolean; geminiKey: boolean; geminiLeft: number; serviceKey: boolean; geminiFailed?: boolean }): TranscriptStep {
+  if (v.playable === "ERROR" || v.playable === "LOGIN_REQUIRED" || v.playable === "UNPLAYABLE") return "unavailable";
+  if (!v.allowLong && v.seconds && v.seconds > MAX_SECONDS) return "long";
+  if (v.geminiKey && !v.geminiFailed) return v.geminiLeft > 0 ? "gemini" : "later";
+  if (v.serviceKey) return "service";
+  return v.geminiKey ? "paste" : "wait-key";
+}
+
+/** Gemini's answer as a transcript: code fences and preambles dropped; null when it found no speech */
+export function cleanGeminiTranscript(raw: string | null | undefined): string | null {
+  let t = String(raw ?? "").trim();
+  t = t.replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/, "").trim();
+  if (!t || /^NO_SPEECH\b/i.test(t)) return null;
+  // Anything before the first time mark is the model talking, not the video
+  const first = t.search(/\[\d{1,2}:\d{2}(?::\d{2})?\]/);
+  if (first > 0 && first < 300) t = t.slice(first);
+  return t.length >= 40 ? t : null;
+}
+
+/**
+ * What a Gemini error means: 'unavailable' (the video is private, removed or age-restricted: Gemini can't open it),
+ * 'key' (the key is missing, wrong or not allowed), 'retry' (a rate limit, an overload, a timeout: try again later)
+ */
+export function geminiErrorKind(status: number, message: string): "unavailable" | "key" | "retry" {
+  const m = message.toLowerCase();
+  if (status === 401 || status === 403 || /api key|permission denied|api_key_invalid|unauthenticated/.test(m)) return "key";
+  if (status === 429 || status >= 500) return "retry";
+  if (/private|unavailable|not found|age|restricted|cannot be accessed|could not (be )?(read|process|access)|invalid video|no longer|removed|unsupported/.test(m)) return "unavailable";
+  return "retry";
+}
+
+/** What a blocked video's state reads as on its card */
+export const BLOCKED_LABEL: Record<"key" | "unavailable" | "long", string> = { key: "Waiting for the Gemini key", unavailable: "Video unavailable", long: "Over an hour" };
