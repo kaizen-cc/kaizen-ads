@@ -4,7 +4,7 @@ import { etToday, shiftDay } from "@/lib/channel-kpis/calc";
 import { promisedPosts, socialAccountScore, type SocialAccountScore, type SocialDayRow, type SocialPostRow } from "./social-score";
 import { socialAllotmentPace, type SocialAllotment } from "./social-allotment-core";
 import { linkedAccounts, isLinkedRow } from "./social/links";
-import { linkKey, mergeAccountDays, type DayRow, type LinkedAccount } from "./social/links-core";
+import { linkKey, locationGroups, mergeAccountDays, type DayRow, type LinkedAccount } from "./social/links-core";
 
 // Loads each client's social account score from the synced Meta tables (src/lib/social/store.ts): the last 60 days of
 // days and 45 of posts, only the linked accounts' rows. Pass a person's session (RLS limits it to their clients) or the
@@ -82,17 +82,34 @@ export async function loadSocialScores(db: SupabaseClient, clientIds: string[], 
       platforms: a?.platforms ?? null,
     });
     if (!s) continue;
-    // More than one account on a platform (a Page per location): each scored on its own as well, for the breakdown
-    const list = linked.get(id) ?? [];
-    if (list.filter((x) => x.platform === "facebook").length > 1 || list.filter((x) => x.platform === "instagram").length > 1) {
-      s.accounts = list
-        .map((acc) => {
-          const mine = (r: Record<string, unknown>) => r.platform === acc.platform && r.account_id === acc.accountId;
-          const one = socialAccountScore({ days: (rawDays.get(id) ?? []).filter(mine).map(toDay), posts: (rawPosts.get(id) ?? []).filter(mine).map(toPost), today, engagementTarget: targets.get(id) ?? null, promisedPerMonth: tierPosts ?? promised.get(id) ?? null });
-          const pl = one?.platforms[0] ?? null;
-          return { platform: acc.platform, accountId: acc.accountId, name: acc.name, location: acc.location, score: one?.score ?? null, band: one?.band ?? null, followers: pl?.numbers.followers ?? null, reach: pl?.numbers.reach ?? null, rate: pl?.numbers.rate ?? null, posts: pl?.numbers.posts ?? 0 };
+    // A client with a Page and Instagram per location: each location (its accounts together) scored on its own as well,
+    // for the breakdown under the company's score
+    const groups = locationGroups(linked.get(id) ?? []);
+    if (groups.length > 1) {
+      s.accounts = groups
+        .map((g) => {
+          const keysOf = new Set(g.accounts.map((acc) => linkKey(acc.platform, acc.accountId)));
+          const mine = (r: Record<string, unknown>) => keysOf.has(linkKey(String(r.platform), String(r.account_id ?? "")));
+          const gd = mergeAccountDays((rawDays.get(id) ?? []).filter(mine) as DayRow[], ["followers", "follows_gained", "follows_lost", "reach", "views", "interactions", "profile_views"]).map(toDay);
+          const one = socialAccountScore({ days: gd, posts: (rawPosts.get(id) ?? []).filter(mine).map(toPost), today, engagementTarget: targets.get(id) ?? null, promisedPerMonth: tierPosts ?? promised.get(id) ?? null });
+          const sum = (f: (p: NonNullable<typeof one>["platforms"][number]) => number | null) => (one?.platforms.length ? one.platforms.reduce((n, p) => n + (f(p) ?? 0), 0) : null);
+          const reach = sum((p) => p.numbers.reach);
+          const inter = sum((p) => p.numbers.interactions);
+          return {
+            platform: [...new Set(g.accounts.map((acc) => (acc.platform === "instagram" ? "Instagram" : "Facebook")))].join(" + "),
+            accountId: g.key,
+            name: g.accounts.map((acc) => acc.name).filter(Boolean).join(" · ") || null,
+            location: g.label,
+            score: one?.score ?? null,
+            band: one?.band ?? null,
+            followers: sum((p) => p.numbers.followers),
+            reach,
+            // Interactions over reach on the location's sums, never an average of its platforms' rates
+            rate: reach && inter != null ? inter / reach : null,
+            posts: one?.platforms.reduce((n, p) => n + p.numbers.posts, 0) ?? 0,
+          };
         })
-        .sort((x, y) => x.platform.localeCompare(y.platform) || (y.reach ?? 0) - (x.reach ?? 0));
+        .sort((x, y) => (y.reach ?? 0) - (x.reach ?? 0));
     }
     out.set(id, s);
   }

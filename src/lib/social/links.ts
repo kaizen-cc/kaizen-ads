@@ -13,13 +13,15 @@ const toAccount = (r: Record<string, unknown>): LinkedAccount => ({
   location: (r.location as string | null) ?? null,
   pageId: (r.page_id as string | null) ?? null,
   source: (r.source as LinkedAccount["source"]) ?? "manual",
+  lastReadAt: (r.last_read_at as string | null) ?? null,
+  lastError: (r.last_error as string | null) ?? null,
 });
 
 /** Each client's linked accounts, the primary first, then by platform and location */
 export async function linkedAccounts(db: SupabaseClient, clientIds: string[]): Promise<Map<string, LinkedAccount[]>> {
   const out = new Map<string, LinkedAccount[]>();
   if (!clientIds.length) return out;
-  const { data, error } = await db.from("social_links").select("id, client_id, platform, account_id, name, location, page_id, source").in("client_id", clientIds).is("removed_at", null);
+  const { data, error } = await db.from("social_links").select("id, client_id, platform, account_id, name, location, page_id, source, last_read_at, last_error").in("client_id", clientIds).is("removed_at", null);
   if (error) {
     // Before the migration: the primary alone
     const { data: prim } = await db.from("social_accounts").select("client_id, page_id, page_name, ig_id, ig_username").in("client_id", clientIds);

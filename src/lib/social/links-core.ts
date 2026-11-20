@@ -4,7 +4,44 @@
 // several accounts added up per platform and day.
 
 export type LinkPlatform = "facebook" | "instagram";
-export type LinkedAccount = { id: string; platform: LinkPlatform; accountId: string; name: string | null; location: string | null; pageId: string | null; source: "primary" | "auto" | "manual" };
+export type LinkedAccount = {
+  id: string;
+  platform: LinkPlatform;
+  accountId: string;
+  name: string | null;
+  location: string | null;
+  pageId: string | null;
+  source: "primary" | "auto" | "manual";
+  /** The last day its numbers were read, and why the last read failed (null when it worked) */
+  lastReadAt?: string | null;
+  lastError?: string | null;
+};
+
+/** Where an account stands: reading, waiting for its first read, or needing access (with Meta's reason) */
+export function accountStatus(a: Pick<LinkedAccount, "lastReadAt" | "lastError">, now = Date.now()): { state: "reading" | "pending" | "access"; text: string } {
+  if (a.lastError) return { state: "access", text: a.lastError };
+  if (a.lastReadAt && now - Date.parse(a.lastReadAt) < 3 * 86_400_000) return { state: "reading", text: "Linked and reading" };
+  if (a.lastReadAt) return { state: "access", text: "Not read in the last 3 days" };
+  return { state: "pending", text: "Waiting for its first read" };
+}
+
+export type LocationGroup = { key: string; label: string; accounts: LinkedAccount[] };
+
+/**
+ * The client's locations: accounts sharing a location label are one location (its Facebook Page and its Instagram
+ * paired); an account with no label stands alone under its own name. Ordered by label.
+ */
+export function locationGroups(accounts: readonly LinkedAccount[]): LocationGroup[] {
+  const by = new Map<string, LocationGroup>();
+  for (const a of accounts) {
+    const label = a.location?.trim() || (a.platform === "instagram" && a.name ? `@${a.name.replace(/^@/, "")}` : (a.name ?? a.accountId));
+    const key = a.location?.trim() ? `loc:${a.location.trim().toLowerCase()}` : `acct:${a.platform}:${a.accountId}`;
+    const g = by.get(key) ?? { key, label, accounts: [] };
+    g.accounts.push(a);
+    by.set(key, g);
+  }
+  return [...by.values()].sort((x, y) => x.label.localeCompare(y.label));
+}
 
 /** "platform:account" for a set of linked accounts */
 export const linkKey = (platform: string, accountId: string | null | undefined) => `${platform}:${accountId ?? ""}`;
@@ -106,3 +143,6 @@ export function accountLabel(a: Pick<LinkedAccount, "platform" | "name" | "locat
   const n = a.platform === "instagram" && a.name ? `@${a.name.replace(/^@/, "")}` : a.name;
   return `${p}${a.location ? ` · ${a.location}` : ""}${n ? ` (${n})` : ""}`;
 }
+
+/** Who changes a client's social connections: Team & setup's rule (src/lib/setup-access.ts), executives, leads and the line heads */
+export const canConnectSocial = (me: { isExec?: boolean; isLead?: boolean; role?: string | null }) => Boolean(me.isExec || me.isLead || String(me.role ?? "").startsWith("head_of_"));

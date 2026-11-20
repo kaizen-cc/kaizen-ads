@@ -419,6 +419,12 @@ export async function syncSocial(admin: SupabaseClient, clientId: string, opts: 
         return { a, out: await readFacebook(admin, clientId, a.accountId, { account, pageToken: t.token }, window, today, now, fullFrom) };
       }),
   );
+  // Each account's own state, for the Social connections card (linked and reading, or what access it needs)
+  await Promise.all(
+    reads
+      .filter((r) => /^[0-9a-f-]{36}$/i.test(r.a.id))
+      .map((r) => admin.from("social_links").update(r.out.error ? { last_error: r.out.error.slice(0, 300) } : { last_read_at: now, last_error: null }).eq("id", r.a.id).then(() => undefined, () => undefined)),
+  );
   const perms = [...new Set(reads.map((r) => r.out.permission).filter((x): x is string => Boolean(x)))];
   const failed = (p: string) => reads.filter((r) => r.a.platform === p && r.out.error).map((r) => (accounts.filter((x) => x.platform === p).length > 1 ? `${accountLabel(r.a)}: ${r.out.error}` : r.out.error));
   const igError = failed("instagram").length ? `Instagram: ${failed("instagram").join(" · ")}` : null;

@@ -770,6 +770,69 @@ export function SocialBody({ m, images, look, layout, hot, sections, whiteLabel 
       <Trend m={m} look={look} />
       <Platforms m={m} keys={columnKeys("social", layout)} hot={hot} />
       <TopPosts m={m} images={images} look={look} />
+      <Locations m={m} />
     </>
+  );
+}
+
+// ─── 8. By location (a Page and Instagram per location), last ───────────────
+
+/** One location's card: its accounts, then followers, reach, interactions, engagement and posts against the period before, and its best post */
+function LocationCard({ l, m, width }: { l: NonNullable<SocialMetrics["locations"]>[number]; m: SocialMetrics; width: number }) {
+  const target = engagementBarOf(m);
+  const basisNote = rateLabelOf(l.now);
+  const vs = basisNote ? null : againstBar(m.insightsRead ? l.now.rate : null, target);
+  const cw = (width - 26) / 3;
+  const best = l.posts[0] ?? null;
+  return (
+    <View style={{ width, backgroundColor: "#ffffff", borderWidth: 1, borderColor: LINE, borderRadius: 10, padding: 12 }}>
+      <Text style={{ fontSize: 10, fontFamily: "Helvetica-Bold" }}>{pdfText(l.label)}</Text>
+      <Text style={{ fontSize: 6.4, color: MUTED, marginTop: 1.5, maxLines: 2 }}>{pdfText(l.accounts.join(" · "))}</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 9, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#edf1f4", rowGap: 2 }}>
+        <PlatformCell title="Followers" value={int(l.now.followers)} width={cw}>
+          {l.now.followerChange != null ? <Text style={{ fontSize: 6.4, fontFamily: "Helvetica-Bold", color: l.now.followerChange < 0 ? BAD.fg : l.now.followerChange > 0 ? GOOD.fg : MUTED }}>{signed(l.now.followerChange)} net</Text> : null}
+        </PlatformCell>
+        <PlatformCell title="Reach" value={int(l.now.reach)} width={cw}>
+          <Chip mv={moveOf(l.now.reach, l.before.reach)} />
+        </PlatformCell>
+        <PlatformCell title="Interactions" value={int(l.now.interactions)} width={cw}>
+          <Chip mv={moveOf(l.now.interactions, l.before.interactions)} />
+        </PlatformCell>
+        <PlatformCell title="Engagement" value={m.insightsRead ? pct(l.now.rate) : "–"} width={cw} color={vs ? (vs.met ? GOOD.fg : BAD.fg) : INK}>
+          <Text style={{ fontSize: 6.2, color: MUTED, maxLines: 1 }}>{basisNote ?? (vs ? `${pct(target, 0)} target · ${vs.text}` : `${pct(target, 0)} target`)}</Text>
+        </PlatformCell>
+        <PlatformCell title="Posts" value={int(l.postsTotal)} width={cw}>
+          <Text style={{ fontSize: 6.2, color: MUTED }}>{int(l.before.posts)} last {priorWordOf(m.kind)}</Text>
+        </PlatformCell>
+        <PlatformCell title="Views" value={int(l.now.views)} width={cw}>
+          <Chip mv={moveOf(l.now.views, l.before.views)} />
+        </PlatformCell>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, paddingTop: 7, borderTopWidth: 1, borderTopColor: "#edf1f4" }}>
+        <Text style={{ fontSize: 5.8, fontFamily: "Helvetica-Bold", color: MUTED, textTransform: "uppercase", letterSpacing: 0.5, marginRight: 5 }}>Best post</Text>
+        <Text style={{ flex: 1, fontSize: 6.8, color: INK, maxLines: 1, textOverflow: "ellipsis" }}>{best ? `${captionText(best.caption, 44) || FORMAT_WORD[best.format] || best.format} · ${int(best.interactions)} interactions` : "No posts this period"}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** Each location on its own (the numbers above are the whole company, every location added up), two to a row */
+function Locations({ m }: { m: SocialMetrics }) {
+  const list = m.locations ?? [];
+  if (list.length < 2) return null;
+  const w = (INNER - GAP) / 2;
+  const rows: (typeof list)[] = [];
+  for (let i = 0; i < list.length; i += 2) rows.push(list.slice(i, i + 2));
+  return (
+    <Rows
+      head={<Head title="By location" sub={`Each location's own accounts, ${m.main.label} against ${m.compare.label}. Everything above is the whole company.`} />}
+      rows={rows.map((row, r) => (
+        <View key={r} wrap={false} style={{ flexDirection: "row", gap: GAP, marginBottom: GAP }}>
+          {row.map((l) => (
+            <LocationCard key={l.label} l={l} m={m} width={w} />
+          ))}
+        </View>
+      ))}
+    />
   );
 }

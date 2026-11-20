@@ -58,6 +58,7 @@ import { emailClientState, providerName } from "@/lib/email-providers/core";
 import { emailTabs } from "./email-tabs";
 import { ALL_LINES, type LineId } from "@/lib/client-lines";
 import { socialTabs } from "./social-tabs";
+import { SocialLink } from "./social-link";
 import type { ClientSocial, SocialLinkView } from "@/lib/social/store";
 import { socialSummary } from "@/lib/social/summary";
 import { DocsPanel } from "./docs-panel";
@@ -190,7 +191,7 @@ export type ClientViewProps = {
   liveWrites?: LiveWritesData | null;
   creativeDb?: CreativeDb | null;
   /** buyerTools: the media-buying tabs (Google policy and ideas to apply); the creative team doesn't get them */
-  can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean; seats?: string[]; buyerTools?: boolean };
+  can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean; seats?: string[]; buyerTools?: boolean; /** Executives, leads and the Head of Social: the client's social connections */ socialConnect?: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
   /** The email or organic social team's line of work: the page then leaves out everything paid ads (their panels, KPIs, creative, launches, audits) */
   line?: "email" | "social" | null;
@@ -727,6 +728,11 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                       />
                     </Section>
                   )}
+                  {has.social && social && (
+                    <Section title="Social connections" description="Every Facebook Page and Instagram account they have, one per location where there are several. Give a location's Page and Instagram the same location to pair them. Reports show the whole company, then each location.">
+                      <SocialLink clientId={client.id} link={social.link ?? null} canEdit={Boolean(can.socialConnect) && !demo} />
+                    </Section>
+                  )}
                   {liveWrites && (
                     <Section title="Live changes in their ad accounts" description="Meta and Google Ads are switched on separately, client by client, by an exec. Off, every change stays a plan to do by hand.">
                       <LiveWritesPanel data={liveWrites} clientId={client.id} slug={client.slug} canEdit={can.admin && !demo} toggle={setLiveAdWrites.bind(null, client.id, client.slug)} />
@@ -1176,7 +1182,7 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
                   label: "Social",
                   tone: social?.link && (social.link.state === "failing" || (social.link.state === "missing" && social.link.error)) ? ("bad" as const) : social?.data && social.data.health.some((h) => h.tone === "bad") ? ("warn" as const) : null,
                   note: social?.data?.followersNow != null ? `${social.data.followersNow.toLocaleString("en-US")} followers` : social?.link?.state === "missing" || !social?.link ? "Link accounts" : "Facebook and Instagram",
-                  tabs: socialTabs({ data: social?.data ?? null, link: social?.link ?? null, clientId: client.id, canEdit: !demo && !ro("social") }),
+                  tabs: socialTabs({ data: social?.data ?? null, link: social?.link ?? null, clientId: client.id, canEdit: !demo && !ro("social"), canConnect: Boolean(can.socialConnect) && !demo, slug: client.slug }),
                 },
               ]
             : []),

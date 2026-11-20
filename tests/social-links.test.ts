@@ -55,3 +55,31 @@ describe("an account in words", () => {
     expect(accountLabel({ platform: "facebook", name: "McIntyre's", location: null })).toBe("Facebook (McIntyre's)");
   });
 });
+
+describe("a client's locations", () => {
+  const acct = (id: string, platform: "facebook" | "instagram", name: string, location: string | null) => ({ id, platform, accountId: id, name, location, pageId: null, source: "manual" as const });
+  it("pairs a location's Page and Instagram by their label, and keeps an unlabeled account on its own", async () => {
+    const { locationGroups } = await import("@/lib/social/links-core");
+    const g = locationGroups([acct("1", "facebook", "Mama Betty's - Parmer Ln", "Parmer"), acct("2", "instagram", "mama.bettys", "parmer "), acct("3", "facebook", "Mama Betty's - Burnett Rd", "Burnett"), acct("4", "instagram", "other.account", null)]);
+    expect(g.map((x) => [x.label, x.accounts.map((a) => a.id)])).toEqual([
+      ["@other.account", ["4"]],
+      ["Burnett", ["3"]],
+      ["Parmer", ["1", "2"]],
+    ]);
+  });
+  it("says where each account stands", async () => {
+    const { accountStatus } = await import("@/lib/social/links-core");
+    const now = Date.parse("2026-11-19T12:00:00Z");
+    expect(accountStatus({ lastReadAt: "2026-11-19T09:00:00Z", lastError: null }, now).state).toBe("reading");
+    expect(accountStatus({ lastReadAt: null, lastError: null }, now).state).toBe("pending");
+    expect(accountStatus({ lastReadAt: null, lastError: "The Meta system user has no access to this Page" }, now)).toEqual({ state: "access", text: "The Meta system user has no access to this Page" });
+    expect(accountStatus({ lastReadAt: "2026-11-10T09:00:00Z", lastError: null }, now).state).toBe("access");
+  });
+  it("lets executives, leads and the Head of Social change the connections", async () => {
+    const { canConnectSocial } = await import("@/lib/social/links-core");
+    expect(canConnectSocial({ isExec: true })).toBe(true);
+    expect(canConnectSocial({ isLead: true, role: "head_of_meta" })).toBe(true);
+    expect(canConnectSocial({ role: "head_of_social" })).toBe(true);
+    expect(canConnectSocial({ role: "social_media_manager" })).toBe(false);
+  });
+});

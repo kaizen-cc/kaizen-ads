@@ -292,6 +292,59 @@ function SocialBody({ m }: { m: SocialMetrics }) {
                       View post
                     </a>
                   )}
+      {(m.locations?.length ?? 0) > 1 && (
+        <Block title="By location">
+          <p className="mb-3 text-[13px] text-muted">Each location&apos;s own accounts. Everything above is the whole company, every location added up.</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {m.locations!.map((l) => (
+              <div key={l.label} className="rounded-xl border border-line bg-surface p-5">
+                <p className="font-heading text-base">{l.label}</p>
+                <p className="mt-0.5 text-[12px] text-faint [overflow-wrap:anywhere]">{l.accounts.join(" · ")}</p>
+                <dl className="mt-3 grid grid-cols-2 gap-3 text-[13px] tabular-nums sm:grid-cols-3">
+                  <div>
+                    <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Followers</dt>
+                    <dd>
+                      {int(l.now.followers)} <span className={(l.now.followerChange ?? 0) < 0 ? "text-bad" : "text-ok"}>{signed(l.now.followerChange)}</span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Reach</dt>
+                    <dd>{int(l.now.reach)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Interactions</dt>
+                    <dd>{int(l.now.interactions)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Engagement</dt>
+                    <dd>
+                      {m.insightsRead ? pct(l.now.rate) : "–"}
+                      {rateLabelOf(l.now) ? <span className="ml-1 text-[11px] font-normal text-faint">{rateLabelOf(l.now)}</span> : null}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] tracking-[0.08em] text-faint uppercase">Posts</dt>
+                    <dd>{int(l.postsTotal)}</dd>
+                  </div>
+                </dl>
+                {l.posts[0] && (
+                  <p className="mt-3 border-t border-line pt-2 text-[12.5px] text-muted [overflow-wrap:anywhere]">
+                    Best post:{" "}
+                    {l.posts[0].permalink ? (
+                      <a href={l.posts[0].permalink} target="_blank" rel="noopener noreferrer" className="text-brand hover:underline">
+                        {(l.posts[0].caption ?? socialName(l.posts[0].platform)).slice(0, 70)}
+                      </a>
+                    ) : (
+                      (l.posts[0].caption ?? socialName(l.posts[0].platform)).slice(0, 70)
+                    )}{" "}
+                    · {int(l.posts[0].interactions)} interactions
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </Block>
+      )}
                 </div>
               </article>
             ))}

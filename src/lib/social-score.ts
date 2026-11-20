@@ -219,7 +219,7 @@ export type SocialAccountScore = {
   checks: SocialCheck[];
   weighingDown: SocialDrag[];
   unmeasured: SocialAccountCheckKey[];
-  /** Each linked account on its own, when a platform has more than one (a Page per location), biggest reach first */
+  /** Each location on its own (its Page and Instagram together), when the client has more than one; biggest reach first. `platform` names the location's platforms ("Facebook + Instagram") */
   accounts?: { platform: string; accountId: string; name: string | null; location: string | null; score: number | null; band: SocialBand | null; followers: number | null; reach: number | null; rate: number | null; posts: number }[];
   /** Where the cadence's promise came from */
   promised: { perMonth: number; fromPackage: boolean };

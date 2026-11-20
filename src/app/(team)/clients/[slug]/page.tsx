@@ -1,3 +1,4 @@
+import { canConnectSocial } from "@/lib/social/links-core";
 import type { CreativeDb } from "@/lib/creative-db";
 import { mayEditSetup } from "@/lib/setup-access";
 import { seesAccountNumbers } from "@/lib/ai-access-core";
@@ -623,7 +624,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       billingHistory={billingHistory}
       cycle={{ billingDay: (client.billing_day as number | null) ?? null, source: (client.billing_day_source as string | null) ?? null, start: (usage?.period_start as string | null) ?? null, end: (usage?.period_end as string | null) ?? null, gap: gaps?.get(client.id) ?? null }}
       creativeDb={(client.creative_db as CreativeDb | null) ?? null}
-      can={{ admin: me.isExec, contacts: seesAllClients(me), allot: me.isExec || me.isLead, assign: isExecOrLead(me), seats: SLOTS.filter((s) => mayAssignSeat(me, s.value, servicesOf({ services: client.services, services_extra: client.services_extra, services_removed: client.services_removed }))).map((s) => s.value), buyerTools: !isCreativeRole(me.role) && !channel }}
+      can={{ socialConnect: canConnectSocial(me), admin: me.isExec, contacts: seesAllClients(me), allot: me.isExec || me.isLead, assign: isExecOrLead(me), seats: SLOTS.filter((s) => mayAssignSeat(me, s.value, servicesOf({ services: client.services, services_extra: client.services_extra, services_removed: client.services_removed }))).map((s) => s.value), buyerTools: !isCreativeRole(me.role) && !channel }}
     />
   );
 }

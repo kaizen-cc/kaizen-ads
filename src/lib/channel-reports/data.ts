@@ -379,15 +379,34 @@ export async function loadSocialMetrics(admin: SupabaseClient, clientId: string,
   ]);
   // Only the linked accounts' rows (an account taken off keeps its history, unread); several locations' accounts are
   // one platform for the client, their days added up per platform and day
-  const keys = (await (await import("@/lib/social/links")).linkedKeys(admin, [clientId])).get(clientId) ?? new Set([`facebook:${link?.page_id ?? ""}`, `instagram:${link?.ig_id ?? ""}`]);
+  const accounts = (await (await import("@/lib/social/links")).linkedAccounts(admin, [clientId])).get(clientId) ?? [];
+  const keys = accounts.length ? new Set(accounts.map((a) => `${a.platform}:${a.accountId}`)) : new Set([`facebook:${link?.page_id ?? ""}`, `instagram:${link?.ig_id ?? ""}`]);
   const current = (r: { platform: string; account_id?: string | null }) => keys.has(`${r.platform}:${r.account_id ?? ""}`);
-  const { mergeAccountDays } = await import("@/lib/social/links-core");
-  const dayRows = mergeAccountDays((allDays ?? []).filter(current) as { platform: string; date: string }[], ["followers", "follows_gained", "follows_lost", "reach", "views", "profile_views", "accounts_engaged", "interactions"]) as Record<string, unknown>[];
-  const postRows = (allPosts ?? []).filter(current);
-  if (error || (!dayRows.length && !postRows.length)) return null;
-  const days: SocialDay[] = dayRows.map((d) => ({ platform: d.platform as Platform, date: d.date as string, followers: numOrNull(d.followers), gained: numOrNull(d.follows_gained), lost: numOrNull(d.follows_lost), reach: numOrNull(d.reach), views: numOrNull(d.views), profileViews: numOrNull(d.profile_views), engaged: numOrNull(d.accounts_engaged), interactions: numOrNull(d.interactions) }));
-  const posts: SocialPost[] = postRows.map((p) => ({ id: p.post_id as string, platform: p.platform as Platform, format: ((p.format as string | null) ?? "image") as PostFormat, caption: (p.caption as string | null) ?? null, permalink: (p.permalink as string | null) ?? null, thumbnail: (p.thumbnail_url as string | null) ?? null, postedAt: (p.posted_at as string | null) ?? null, likes: numOrNull(p.likes), comments: numOrNull(p.comments), shares: numOrNull(p.shares), saves: numOrNull(p.saves), reach: numOrNull(p.reach), views: numOrNull(p.views), interactions: numOrNull(p.interactions), insightsOk: Boolean(p.insights_ok) }));
-  const m = socialMetrics({ kind, main, compare, days, posts, names: { instagram: (link?.ig_username as string | null) ? `@${link!.ig_username}` : null, facebook: (link?.page_name as string | null) ?? null } });
+  const { mergeAccountDays, locationGroups, accountLabel } = await import("@/lib/social/links-core");
+  const DAY_FIELDS = ["followers", "follows_gained", "follows_lost", "reach", "views", "profile_views", "accounts_engaged", "interactions"];
+  const toDays = (rows: Record<string, unknown>[]): SocialDay[] =>
+    (mergeAccountDays(rows as { platform: string; date: string }[], DAY_FIELDS) as Record<string, unknown>[]).map((d) => ({ platform: d.platform as Platform, date: d.date as string, followers: numOrNull(d.followers), gained: numOrNull(d.follows_gained), lost: numOrNull(d.follows_lost), reach: numOrNull(d.reach), views: numOrNull(d.views), profileViews: numOrNull(d.profile_views), engaged: numOrNull(d.accounts_engaged), interactions: numOrNull(d.interactions) }));
+  const toPosts = (rows: Record<string, unknown>[]): SocialPost[] => rows.map((p) => ({ id: p.post_id as string, platform: p.platform as Platform, format: ((p.format as string | null) ?? "image") as PostFormat, caption: (p.caption as string | null) ?? null, permalink: (p.permalink as string | null) ?? null, thumbnail: (p.thumbnail_url as string | null) ?? null, postedAt: (p.posted_at as string | null) ?? null, likes: numOrNull(p.likes), comments: numOrNull(p.comments), shares: numOrNull(p.shares), saves: numOrNull(p.saves), reach: numOrNull(p.reach), views: numOrNull(p.views), interactions: numOrNull(p.interactions), insightsOk: Boolean(p.insights_ok) }));
+  const linkedDays = (allDays ?? []).filter(current) as Record<string, unknown>[];
+  const linkedPosts = (allPosts ?? []).filter(current) as Record<string, unknown>[];
+  if (error || (!linkedDays.length && !linkedPosts.length)) return null;
+  // The whole company: every location's accounts added up per platform and day (rates are worked out on the sums)
+  const days = toDays(linkedDays);
+  const posts = toPosts(linkedPosts);
+  const names = { instagram: (link?.ig_username as string | null) ? `@${link!.ig_username}` : null, facebook: (link?.page_name as string | null) ?? null };
+  const m = socialMetrics({ kind, main, compare, days, posts, names });
+  // A client with a Page and Instagram per location: each location worked out the same way on its own accounts
+  const groups = locationGroups(accounts);
+  if (groups.length > 1) {
+    m.locations = groups.map((g) => {
+      const mine = new Set(g.accounts.map((a) => `${a.platform}:${a.accountId}`));
+      const own = (r: Record<string, unknown>) => mine.has(`${r.platform}:${r.account_id ?? ""}`);
+      const fb = g.accounts.find((a) => a.platform === "facebook");
+      const ig = g.accounts.find((a) => a.platform === "instagram");
+      const one = socialMetrics({ kind, main, compare, days: toDays(linkedDays.filter(own)), posts: toPosts(linkedPosts.filter(own)), names: { facebook: fb?.name ?? null, instagram: ig?.name ? `@${ig.name.replace(/^@/, "")}` : null } });
+      return { label: g.label, accounts: g.accounts.map(accountLabel), now: one.now, before: one.before, platforms: one.platforms, postsTotal: one.postsTotal, posts: one.posts.slice(0, 3) };
+    });
+  }
   const row = await readTarget(admin, clientId, "social");
   // The client's engagement target was set on reach: a rate over views or followers is never held to it
   const onReach = (n: { rate: number | null; rateBasis?: string | null }) => (n.rateBasis && n.rateBasis !== "reach" ? null : n.rate);

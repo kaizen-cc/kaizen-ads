@@ -384,14 +384,14 @@ function PostsTab({ d }: { d: ClientSocial }) {
  * underlined tab bar, the open tab in ?tab=): Overview and Posts. Without numbers yet, one Overview tab says why and
  * offers the link.
  */
-export type SocialTabInput = { data: ClientSocial | null; link: SocialLinkView | null; clientId: string; canEdit: boolean };
+export type SocialTabInput = { data: ClientSocial | null; link: SocialLinkView | null; clientId: string; canEdit: boolean; /** Executives, leads and the Head of Social: changes the connections (in Team & setup, and here) */ canConnect?: boolean; slug?: string };
 
 /** One Social tab's body (a client component, so the server only passes the data and which tab) */
-export function SocialTab({ data, link, clientId, canEdit, tab }: SocialTabInput & { tab: "overview" | "posts" | "empty" }) {
+export function SocialTab({ data, link, clientId, canConnect = false, tab }: SocialTabInput & { tab: "overview" | "posts" | "empty" }) {
   const text = data ? null : link?.error ? null : !link || link.state === "missing" ? "Link their Facebook Page and Instagram account to start reading." : link.state === "pending" ? "Linked. The first 90 days are being read; the numbers show here once they're in." : "Nothing has been read yet. Sync now, or wait for the next run.";
   return (
     <div className="grid gap-5">
-      <Intro data={data} link={link} clientId={clientId} canEdit={canEdit} />
+      <Intro data={data} link={link} clientId={clientId} canEdit={canConnect} />
       {data && tab === "overview" ? <OverviewTab d={data} /> : data && tab === "posts" ? <PostsTab d={data} /> : text ? <p className="text-sm text-faint">{text}</p> : null}
     </div>
   );

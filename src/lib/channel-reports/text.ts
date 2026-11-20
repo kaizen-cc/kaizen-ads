@@ -160,6 +160,13 @@ export function socialText(m: SocialMetrics): string {
   out.push(`Reach by week (ending ${m.main.end}): ${m.trend.map((t) => `${t.label} ${int(t.value)}`).join(", ")}`);
   if (m.gaps.length) out.push(`Days with no data: ${m.gaps.join(", ")}`);
   out.push(`Supporting: ${socialSupport(m).map((s) => `${s.label} ${s.value}`).join("; ")}`);
+  if (m.locations?.length) {
+    out.push(`By location (${m.locations.length} locations; every number above is the whole company, all of them added up):`);
+    for (const l of m.locations)
+      out.push(
+        `- ${l.label} (${l.accounts.join(", ")}): ${int(l.now.followers)} followers (${signed(l.now.followerChange)}), reach ${int(l.now.reach)} (before ${int(l.before.reach)}), interactions ${int(l.now.interactions)} (before ${int(l.before.interactions)}), ${l.now.rate != null ? `engagement ${pct(l.now.rate)}${rateLabelOf(l.now) ? ` ${rateLabelOf(l.now)}` : ""}` : "no engagement rate"}, ${l.postsTotal} posts${l.posts[0] ? `; best post "${(l.posts[0].caption ?? l.posts[0].format).slice(0, 70)}" with ${int(l.posts[0].interactions)} interactions` : ""}`,
+      );
+  }
   return out.join("\n");
 }
 

@@ -466,7 +466,12 @@ export type SocialMetrics = {
   overrides?: { key: "reach" | "views" | "interactions" | "followers"; value: number; by: string; at: string; why?: string }[];
   refreshNote?: RefreshNote;
   stated?: StatedMark;
+  /** A client with a Page and Instagram per location: each location's numbers (the report's own are the whole company, every location added up), last in the report */
+  locations?: SocialLocation[] | null;
 };
+
+/** One location of a multi-location client, worked out like the whole report from that location's accounts only */
+export type SocialLocation = { label: string; accounts: string[]; now: SocialNumbers; before: SocialNumbers; platforms: SocialPlatformNumbers[]; postsTotal: number; posts: SocialPostLite[] };
 
 export type SocialInput = {
   kind: ChannelKind;

@@ -3,13 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import type { SocialLinkView } from "@/lib/social/store";
-import type { LinkedAccount } from "@/lib/social/links-core";
+import { accountStatus, locationGroups, type LinkedAccount } from "@/lib/social/links-core";
 import { addSocialAccountAction, findSocialAccounts, labelSocialAccountAction, removeSocialAccountAction, syncSocialNow, type PageChoice } from "./social-actions";
 
-// The client's social accounts for the Social tab (Head of Social, Nov 19 2026): every Facebook Page and Instagram
-// account, one per location where a client has several (Mama Betty's Parmer and Burnett), each labeled. The social
-// team adds, removes and labels them here; "Find their Pages" links every Page that's clearly theirs among those
-// Kaizen's Meta access can see, and lists the rest to pick from. A platform with nothing linked says so plainly.
+// The client's social connections (Team & setup, and the Social tab): every Facebook Page and Instagram account, one
+// per location where a client has several (Mama Betty's Parmer and Burnett), shown by location with a location's Page
+// and Instagram paired (they share its label), each with its state: linked and reading, waiting for its first read, or
+// what access it needs. Executives, leads and the Head of Social add, remove and label them (owner, Nov 19 2026); "Find
+// their Pages" links every Page that's clearly theirs among those Kaizen's Meta access can see and lists the rest to
+// pick from. A platform with nothing linked says "Not linked" plainly.
 
 const btn = "inline-flex min-h-11 items-center rounded-full border border-line px-3.5 text-[12.5px] text-muted transition-colors hover:text-fg disabled:opacity-60 md:min-h-9";
 const field = "min-h-11 rounded-[12px] border border-line bg-surface px-3 text-[14px] text-fg placeholder:text-faint outline-none focus:border-brand/60 md:min-h-9 md:text-[13px]";
@@ -22,15 +24,22 @@ function Glyph({ platform }: { platform: "facebook" | "instagram" }) {
   );
 }
 
-function AccountRow({ a, canEdit, onLabel, onRemove, pending }: { a: LinkedAccount; canEdit: boolean; onLabel: (v: string) => void; onRemove: () => void; pending: boolean }) {
+const STATE_TONE = { reading: "bg-ok", pending: "bg-faint", access: "bg-bad" } as const;
+
+function AccountRow({ a, canEdit, onLabel, onRemove, pending, listId }: { a: LinkedAccount; canEdit: boolean; onLabel: (v: string) => void; onRemove: () => void; pending: boolean; listId: string }) {
   const [loc, setLoc] = useState(a.location ?? "");
   const name = a.platform === "instagram" && a.name ? `@${a.name.replace(/^@/, "")}` : (a.name ?? a.accountId);
+  const st = accountStatus(a);
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[14px] border border-line bg-bg/40 px-3 py-2.5">
       <Glyph platform={a.platform} />
       <span className="grid min-w-0 flex-1 gap-0.5">
         <span className="truncate text-[13.5px] text-fg">{name}</span>
-        <span className="text-[11px] text-faint">{a.source === "primary" ? "Main account" : a.source === "auto" ? "Found by name" : "Added by hand"}</span>
+        <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-faint" title={st.text}>
+          <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATE_TONE[st.state]}`} />
+          <span className={`truncate ${st.state === "access" ? "text-bad" : ""}`}>{st.state === "access" ? `Needs access: ${st.text}` : st.text}</span>
+          <span className="shrink-0">· {a.source === "primary" ? "main" : a.source === "auto" ? "found by name" : "added by hand"}</span>
+        </span>
       </span>
       {canEdit ? (
         <input
@@ -39,6 +48,7 @@ function AccountRow({ a, canEdit, onLabel, onRemove, pending }: { a: LinkedAccou
           onBlur={() => loc.trim() !== (a.location ?? "") && onLabel(loc)}
           onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
           placeholder="Location"
+          list={listId}
           aria-label={`Location of ${name}`}
           className={`${field} w-full sm:w-40`}
         />
@@ -109,22 +119,17 @@ export function SocialLink({ clientId, link, canEdit, openByDefault = false }: {
       router.refresh();
     });
 
-  const group = (title: string, platform: "facebook" | "instagram", list: LinkedAccount[]) => (
-    <div className="grid gap-2">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">{title}</p>
-      {list.length ? (
-        <ul className="grid gap-2">
-          {list.map((a) => (
-            <AccountRow key={a.id} a={a} canEdit={canEdit} pending={pending} onLabel={(v) => act(() => labelSocialAccountAction(clientId, a.id, v))} onRemove={() => act(() => removeSocialAccountAction(clientId, a.id), "Taken off. Its numbers are kept, and it won't be linked again by name.")} />
-          ))}
-        </ul>
-      ) : (
-        <p className="flex items-center gap-3 rounded-[14px] border border-dashed border-line px-3 py-2.5 text-[13px] text-muted">
-          <Glyph platform={platform} />
-          Not linked
-        </p>
-      )}
-    </div>
+  const listId = `social-locations-${clientId}`;
+  const labels = [...new Set(accounts.map((a) => a.location?.trim()).filter((x): x is string => Boolean(x)))];
+  const groups = locationGroups(accounts);
+  const row = (a: LinkedAccount) => (
+    <AccountRow key={a.id} a={a} canEdit={canEdit} pending={pending} listId={listId} onLabel={(v) => act(() => labelSocialAccountAction(clientId, a.id, v))} onRemove={() => act(() => removeSocialAccountAction(clientId, a.id), "Taken off. Its numbers are kept, and it won't be linked again by name.")} />
+  );
+  const notLinked = (platform: "facebook" | "instagram") => (
+    <p className="flex items-center gap-3 rounded-[14px] border border-dashed border-line px-3 py-2.5 text-[13px] text-muted">
+      <Glyph platform={platform} />
+      {platform === "facebook" ? "Facebook" : "Instagram"}: Not linked
+    </p>
   );
 
   return (
@@ -151,16 +156,34 @@ export function SocialLink({ clientId, link, canEdit, openByDefault = false }: {
         )}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        {group("Facebook Pages", "facebook", fb)}
-        {group("Instagram accounts", "instagram", ig)}
-      </div>
+      <datalist id={listId}>
+        {labels.map((l) => (
+          <option key={l} value={l} />
+        ))}
+      </datalist>
+      {(!fb.length || !ig.length) && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {!fb.length && notLinked("facebook")}
+          {!ig.length && notLinked("instagram")}
+        </div>
+      )}
+      {groups.length > 0 && (
+        <div className="grid gap-3">
+          {groups.map((g) => (
+            <div key={g.key} className="grid gap-2">
+              {groups.length > 1 && <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">{g.label}</p>}
+              <ul className="grid gap-2 md:grid-cols-2">{g.accounts.map(row)}</ul>
+            </div>
+          ))}
+          {groups.length > 1 && <p className="text-[11.5px] text-faint">{groups.length} locations. Reports show the whole company, then each location.</p>}
+        </div>
+      )}
 
       {open && canEdit && (
         <div className="grid gap-3 rounded-[14px] border border-line bg-bg/40 p-3.5" style={{ animation: "card-in .2s cubic-bezier(.2,.8,.2,1) both" }}>
           <label className="grid gap-1.5 text-[12px] text-muted">
-            Location (for the account you add next)
-            <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Parmer, Burnett, Downtown" className={field} />
+            Location (for the account you add next; the same location pairs a Page and an Instagram)
+            <input value={location} onChange={(e) => setLocation(e.target.value)} list={listId} placeholder="e.g. Parmer, Burnett, Downtown" className={field} />
           </label>
           {pages === null ? (
             <button type="button" onClick={find} disabled={pending} className={`${btn} justify-self-start`}>

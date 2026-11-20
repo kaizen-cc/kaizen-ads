@@ -218,7 +218,7 @@ export function SocialAccountSheet({ r, month, onClose, onStep }: { r: ChannelRo
 
 /** A client with a Page or Instagram per location: each account's score and numbers, the client's score above rolls them up */
 function Locations({ r, pick }: { r: ChannelRow; pick: PlatformPick }) {
-  const list = (r.socialScore?.accounts ?? []).filter((a) => pick === "all" || a.platform === pick);
+  const list = (r.socialScore?.accounts ?? []).filter((a) => pick === "all" || a.platform.toLowerCase().includes(pick));
   if (list.length < 2) return null;
   return (
     <section className="grid gap-3 rounded-[20px] border border-line bg-surface p-4 md:p-5">
@@ -231,7 +231,7 @@ function Locations({ r, pick }: { r: ChannelRow; pick: PlatformPick }) {
                 {a.location ?? (a.platform === "instagram" && a.name ? `@${a.name}` : (a.name ?? "Unnamed"))}
               </span>
               <span className="truncate text-[11px] text-faint">
-                {PLATFORM_LABEL[a.platform as SocialPlatform] ?? a.platform} · {num(a.followers)} followers · reach {num(a.reach)} · {pctText(a.rate)} · {a.posts} posts
+                {a.platform} · {num(a.followers)} followers · reach {num(a.reach)} · {pctText(a.rate)} · {a.posts} posts
               </span>
             </span>
             <span className={`tabular font-heading text-[22px] leading-none ${a.band ? BAND_TONE[a.band].text : "text-faint"}`}>{a.score ?? "n/a"}</span>

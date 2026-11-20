@@ -527,6 +527,11 @@ function Card({ r, reading, active, onOpen }: { r: ChannelRow; reading: ReadStat
             {r.line !== "email" && (
               <div className="mt-auto grid gap-2 pt-1">
                 <SupportChips r={r} />
+                {r.line === "social" && (r.socialScore?.accounts?.length ?? 0) > 1 && (
+                  <span className="inline-flex h-6 w-fit items-center rounded-full border border-line px-2 text-[11px] text-muted" title="The score and numbers are the whole company; open the card for each location">
+                    {r.socialScore!.accounts!.length} locations
+                  </span>
+                )}
                 {r.line === "social" && r.boosted && (
                   <span className="tabular inline-flex h-6 w-fit items-center gap-1.5 rounded-full border border-brand/30 bg-brand/[0.07] px-2 text-[11px]" title="Posts the ads team is boosting, last 30 days">
                     <span className="text-brand-text">Boosted</span>
