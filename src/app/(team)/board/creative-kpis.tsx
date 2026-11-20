@@ -174,7 +174,7 @@ const meanOf = (xs: (number | null)[]) => {
  * The Creative Team KPIs' Design or Video tab: only the people whose role belongs there (`members`, worked out from
  * roles on the server; the Head of Creative and execs never), and the team numbers worked out from them alone.
  */
-export function CreativeKpisView({ k, canDismiss, switcher = false, tab = "design", members }: { k: CreativeKpis; canDismiss: boolean; switcher?: boolean; tab?: "design" | "video"; members?: string[] }) {
+export function CreativeKpisView({ k, canDismiss, switcher = false, tab = "design", members, focused = false }: { k: CreativeKpis; canDismiss: boolean; switcher?: boolean; tab?: "design" | "video"; members?: string[]; /** A creative lead: winners and tiring ads live under Ideas, not here */ focused?: boolean }) {
   const total = k.split.copy + k.split.creative;
   const copyShare = total ? Math.round((k.split.copy / total) * 100) : 0;
   const on = members ? new Set(members) : null;
@@ -354,7 +354,19 @@ export function CreativeKpisView({ k, canDismiss, switcher = false, tab = "desig
         </div>
       </div>
 
-      {/* The ads */}
+      {/* The ads (a creative lead finds them under Ideas: their KPIs stay about the team's work) */}
+      {focused ? (
+        <p className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
+          Winners and tiring ads live under Ideas:
+          <Link href="/winners" className="rounded-full border border-line px-3 py-1 hover:text-fg">
+            Winners
+          </Link>
+          <Link href="/fatigue" className="rounded-full border border-line px-3 py-1 hover:text-fg">
+            Tiring ads
+          </Link>
+        </p>
+      ) : (
+      <>
       <Section
         kicker="In the ad accounts"
         title="Winners to build on"
@@ -392,6 +404,8 @@ export function CreativeKpisView({ k, canDismiss, switcher = false, tab = "desig
           <p className="rounded-[18px] bg-ok-soft px-4 py-3 text-[13px] text-ok">No ad is tiring.</p>
         )}
       </Section>
+      </>
+      )}
 
       <p className="text-[11px] text-faint">
         Business days. Production from the Creative board&apos;s history{k.source.asana ? "" : " (no history read yet)"} and the Board&apos;s tickets; allotments from each client&apos;s billing cycle; results from the ad accounts (profitable winners only).

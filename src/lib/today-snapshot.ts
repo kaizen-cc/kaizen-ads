@@ -24,12 +24,15 @@ const current = (t: Today): Today => {
 export async function readSnapshot(db: SupabaseClient, me: Staff): Promise<Snapshot | null> {
   // The saved review, and what this person has done since in either place (the recap's marks and what they cleared off
   // the Overview), so a Done in one shows in the other at once rather than at the next rebuild
-  const [{ data }, { data: marks }, { data: hidden }] = await Promise.all([
+  const [{ data }, { data: marks }, { data: hidden }, { data: snoozed }] = await Promise.all([
     db.from("today_snapshots").select("data, delta, computed_at").eq("profile_id", me.id).eq("day", reviewDay()).maybeSingle(),
     db.from("daily_items").select("key, status").eq("profile_id", me.id).in("status", ["saved", "done", "dismissed"]),
     db.from("hidden_items").select("key").eq("profile_id", me.id),
+    // Snoozed until a later day: off the review until then, back on its own
+    db.from("daily_items").select("key").eq("profile_id", me.id).gt("snoozed_until", reviewDay()),
   ]);
   const markOf = new Map((marks ?? []).map((m) => [m.key as string, m.status as string]));
+  for (const s of snoozed ?? []) markOf.set(s.key as string, "snoozed");
   const hiddenKeys = new Set((hidden ?? []).map((h) => h.key as string));
   // A review saved before the counts were kept on it gets them worked out from its items
   return data ? { today: applyMarks(withLooks(current(data.data as Today)), markOf, hiddenKeys), delta: (data.delta as Delta | null) ?? null, computedAt: data.computed_at as string } : null;

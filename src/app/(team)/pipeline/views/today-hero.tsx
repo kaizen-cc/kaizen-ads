@@ -7,6 +7,8 @@ import { todaySnapshot } from "@/lib/today-snapshot";
 import { TodayLive } from "./today-live";
 import { TodayLoading } from "./today-loading";
 import { HoverCard } from "@/components/hover-card";
+import { LayoutSwitch } from "./layout-switch";
+import { TodayList } from "./today-list";
 
 // The way into the daily recap, at the top of the Overview: today in three numbers, a start button, a jump into any
 // topic, and the person's list (what they saved for later). Built once a day (with its loading moment), then shown
@@ -86,7 +88,9 @@ function List({ title, buckets, more }: { title: string; buckets: (Bucket & { to
 }
 
 export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
-  const snap = await todaySnapshot(db, me);
+  const [snap, { data: prof }] = await Promise.all([todaySnapshot(db, me), db.from("profiles").select("overview_layout").eq("id", me.id).maybeSingle()]);
+  // Cards unless the person switched the list on (kept on their profile, so it follows them)
+  const layout: "cards" | "list" = prof?.overview_layout === "list" ? "list" : "cards";
   const t = snap.today;
   const looks = t.looks;
   const delta = snap.delta;
@@ -96,6 +100,9 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
   const rows = groups.flatMap((g) => g.buckets.map((b) => ({ ...b, topic: g.topic })));
   const first = rows.reduce<(typeof rows)[number] | null>((a, b) => (!a || b.items[0].score > a.items[0].score ? b : a), null);
   const top = first?.items[0];
+  // What's new since they last looked (never opened in their recap), so the button reads the same at 9am and at 3pm
+  const fresh = t.items.filter((i) => i.state === "new").length;
+  const cta = fresh ? `Review ${fresh} new notification${fresh === 1 ? "" : "s"}` : looks.total || t.resolved.length ? "Review notifications" : "Open";
   return (
     <section className="relative grid gap-5 overflow-hidden rounded-[24px] border border-line bg-deep p-5 md:p-7">
       <div aria-hidden className="pointer-events-none absolute -left-24 -top-32 h-[340px] w-[340px] rounded-full blur-[110px]" style={{ background: looks.byTier.critical ? "rgba(200,16,46,0.45)" : "rgba(90,110,255,0.3)" }} />
@@ -184,12 +191,23 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
             })}
           </div>
           <Link href="/today" className="inline-flex h-12 w-full items-center justify-center gap-2 whitespace-nowrap rounded-full bg-fg px-6 sm:ml-auto sm:w-auto sm:flex-none text-[15px] font-semibold text-bg shadow-[0_10px_40px_-10px_rgba(255,255,255,0.4)] hover:bg-ink/90">
-            {looks.total || t.resolved.length ? "Start your day" : "Open"} <span aria-hidden>→</span>
+            {cta} <span aria-hidden>→</span>
           </Link>
         </div>
       </div>
 
-      {groups.length > 0 && (
+      <div className="relative flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] uppercase tracking-[0.16em] text-ink/40">{layout === "list" ? "Everything on your day" : "View"}</span>
+        <LayoutSwitch layout={layout} />
+      </div>
+
+      {layout === "list" && (
+        <div className="relative">
+          <TodayList sections={groups.map((g) => ({ topic: g.topic, label: TOPICS[g.topic].label, blurb: TOPICS[g.topic].blurb, items: g.items }))} />
+        </div>
+      )}
+
+      {layout === "cards" && groups.length > 0 && (
         <div className="relative flex flex-wrap gap-2">
           <span className="w-full pr-1 text-[11px] uppercase tracking-[0.16em] text-ink/40 md:w-auto md:self-center">Jump to</span>
           {groups.map(({ topic: k }) => {
@@ -208,7 +226,7 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
         </div>
       )}
 
-      {saved.length > 0 && (
+      {layout === "cards" && saved.length > 0 && (
         <div className="relative grid gap-2 border-t border-ink/10 pt-4">
           <p className="text-[11px] uppercase tracking-[0.16em] text-ink/45">Your list · saved for later</p>
           <ul className="grid gap-1.5 md:grid-cols-2">

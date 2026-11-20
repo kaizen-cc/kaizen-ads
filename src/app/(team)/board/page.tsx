@@ -13,6 +13,8 @@ import { BoardTabs, CreativeKpisView } from "./creative-kpis";
 import { DirectionFlagsProvider } from "@/components/direction-parts";
 import { loadTaskFlags } from "@/lib/direction-changes";
 import { clientsWithLine } from "@/lib/service-gate";
+import { isCreativeLead } from "@/lib/lead-creative-core";
+import { isLeadMaker } from "@/lib/roles";
 
 // Writing a video script with the AI can take a minute
 export const maxDuration = 800; // room for the AI creative review that starts at review, and for planning a launch (video uploads to Meta)
@@ -26,7 +28,8 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
   // The Creative Team KPIs (execs and leads only): Design, Video and Copy, the tab in the address (?view=kpis&tab=; an
   // older ?view=copy-kpis link is the Copy tab). Each tab shows only the people whose role belongs there, by role
   // (never the Head of Creative, an exec or whoever is looking).
-  if ((view === "kpis" || view === "copy-kpis") && lead) {
+  // The lead graphic designer and lead video editor read the KPIs too (their team's numbers; dismissing stays with leads)
+  if ((view === "kpis" || view === "copy-kpis") && (lead || isLeadMaker(me.role))) {
     const { tabOf, membersOf } = await import("@/lib/team-kpis-core");
     const tab = tabOf("creative", view, tabParam);
     const p = period === "30" || period === "90" ? period : "cycle";
@@ -37,7 +40,10 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
       return <CopyKpisView k={await cachedCopyKpis(p)} switcher={seesEmailBoard(me)} members={members} />;
     }
     const { cachedCreativeKpis } = await import("@/lib/board-kpis-cache");
-    return <CreativeKpisView k={await cachedCreativeKpis(p)} canDismiss={lead} switcher={seesEmailBoard(me)} tab={tab} members={members} />;
+    // A lead maker opens their own tab first (the lead video editor: Video)
+    const own = !tabParam && me.role === "lead_video_editor" ? "video" : tab;
+    const membersOwn = own === tab ? members : [...membersOf("creative", own, (people ?? []) as { id: string; role: string; is_exec: boolean }[], [], me.id)];
+    return <CreativeKpisView k={await cachedCreativeKpis(p)} canDismiss={lead} switcher={seesEmailBoard(me)} tab={own as typeof tab} members={membersOwn} focused={isCreativeLead(me.role)} />;
   }
   // Execs and leads: the KPI tabs worked out while they look at the Board, so switching to them is instant
   if (lead)

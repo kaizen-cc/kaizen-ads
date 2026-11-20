@@ -37,6 +37,8 @@ import { MakerTasks } from "./views/maker-tasks";
 import { isCustomerSuccess, isMaker } from "@/lib/maker-day-core";
 import { makerTasks } from "@/lib/maker-day";
 import { ReadyCallout } from "./views/ready-callout";
+import { LeadCreativePanel } from "./views/lead-creative-panel";
+import { isCreativeLead } from "@/lib/lead-creative-core";
 
 const department = (me: Staff) => (me.role === "head_of_creative" ? "Creative" : me.role === "head_of_google" ? "Google" : "Meta");
 
@@ -178,6 +180,12 @@ export default async function Home() {
             today: (
               <>
                 <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
+                {/* The lead graphic designer and lead video editor: their allotment, the team's KPIs and video production, up front */}
+                {isCreativeLead(me.role) && (
+                  <Suspense fallback={null}>
+                    <LeadCreativePanel me={me} />
+                  </Suspense>
+                )}
                 {/* Briefs the system drafted for a client's Meta buyer to approve (the creative leads have theirs in Clients) */}
                 <Suspense fallback={null}>
                   <ReadyCallout db={db} me={me} />
@@ -376,6 +384,14 @@ export default async function Home() {
       }
       recap={recap}
       next={nextSection}
+      // The Head of Creative: allotments, KPIs and video production up front, without the ideas and delivery themes
+      lead={
+        isCreativeLead(me.role) ? (
+          <Suspense fallback={null}>
+            <LeadCreativePanel me={me} />
+          </Suspense>
+        ) : undefined
+      }
     />
   );
 }

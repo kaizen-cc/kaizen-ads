@@ -80,3 +80,42 @@ export function revalidateDay() {
   revalidatePath("/pipeline");
   revalidatePath("/today");
 }
+
+/** Tomorrow in New York, as a date: the day a snoozed item comes back */
+export function tomorrowNY(now = new Date()): string {
+  const today = now.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const d = new Date(`${today}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Snooze to tomorrow: the item leaves this person's Overview and recap (under every key it has there) and comes back on
+ * its own the next day. Nothing about the item itself changes for anyone else.
+ */
+export async function snoozeItem(db: SupabaseClient, meId: string, key: string, snap: MarkSnapshot = {}, until = tomorrowNY()) {
+  const now = new Date().toISOString();
+  const keys = recapKeysOf(key);
+  const { data: cur } = await db.from("daily_items").select("key, status, topic, client_id, snapshot").eq("profile_id", meId).in("key", keys);
+  const curOf = new Map((cur ?? []).map((c) => [c.key as string, c]));
+  await db.from("daily_items").upsert(
+    keys.map((k) => {
+      const c = curOf.get(k);
+      const topic = snap.topic ?? (c?.topic as string | undefined) ?? "mine";
+      return {
+        profile_id: meId,
+        key: k,
+        topic,
+        client_id: snap.clientId ?? (c?.client_id as string | null | undefined) ?? null,
+        snapshot: snap.title || snap.client ? { client: snap.client ?? "", title: snap.title ?? "", topic } : ((c?.snapshot as object | null) ?? { topic }),
+        // Snoozing keeps a saved item saved; anything else reads as seen (it was looked at)
+        status: c?.status === "saved" ? "saved" : "seen",
+        snoozed_until: until,
+        updated_at: now,
+      };
+    }),
+    { onConflict: "profile_id,key" },
+  );
+  revalidateDay();
+  return until;
+}

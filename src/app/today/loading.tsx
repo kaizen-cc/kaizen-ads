@@ -1,6 +1,6 @@
 import { LogoLoader } from "@/components/logo-loader";
 
-// Shown the instant "Start your day" is clicked, while the review opens: the recap's own dark stage, so the click
+// Shown the instant "Review new notifications" is clicked, while the review opens: the recap's own dark stage, so the click
 // answers at once and the first card fades in over it.
 export default function Loading() {
   return (

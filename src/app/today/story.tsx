@@ -11,6 +11,7 @@ import { bucketsOf, countLooks, isOpenMark, lookHeadline, openOf, QUIET_TOPIC, r
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { acknowledge, setItem } from "./actions";
 import { DoneBurst } from "@/components/done-burst";
+import { ItemQuickActions } from "@/components/item-quick-actions";
 import { ScorecardView } from "@/components/production";
 import type { Scorecard } from "@/lib/production";
 
@@ -852,6 +853,10 @@ function ItemBody({ i, status, big = false, onChoose, onAct, onNext }: { i: Toda
             Next →
           </button>
         )}
+      </div>
+      {/* The quick actions every item has, on the Overview's list too: Snooze to tomorrow, Delegate, Comment */}
+      <div className="force-dark relative">
+        <ItemQuickActions item={{ key: i.key, href: i.action.href ?? null, snap: { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId } }} hide={["done"]} onGone={() => onNext?.()} />
       </div>
       {i.pause && i.clientId && (
         <div className="relative">

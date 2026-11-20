@@ -1271,6 +1271,11 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   const { asanaTools } = await import("./asana-tools");
   for (const t of asanaTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
 
+  // Their own day: what's on their Overview, and Done, Snooze to tomorrow and Delegate on any item; their layout
+  const { dayTools, DAY_TOOLS } = await import("./day-tools");
+  for (const t of dayTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  for (const n of DAY_TOOLS) CHANNEL_EXTRA.add(n);
+
   // Rankings across clients: clients on a line, and single emails, ads and posts (each scoped to the person's line)
   for (const t of rankTools(ctx)) tools.push(t);
   // The team KPI boards (Email Team KPIs, Creative Team KPIs): execs, the Head of Email and the creative leads only

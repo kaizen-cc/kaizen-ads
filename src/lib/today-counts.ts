@@ -190,7 +190,8 @@ export function applyMarks<T extends { items: (Countable & { key: string; state:
   const items = t.items.flatMap((i) => {
     const m = marks.get(i.key);
     const h = hideKeyOf(i.key);
-    if (m === "done" || m === "dismissed" || (h && hidden.has(h))) {
+    // Snoozed to a later day: gone until then, back on its own (src/lib/item-state.ts snoozeItem)
+    if (m === "done" || m === "dismissed" || m === "snoozed" || (h && hidden.has(h))) {
       changed = true;
       return [];
     }
@@ -204,4 +205,12 @@ export function applyMarks<T extends { items: (Countable & { key: string; state:
 /** A snapshot saved before the counts were kept on it: worked out from its items. */
 export function withLooks<T extends { items: Countable[]; looks?: Looks | null }>(t: T): T & { looks: Looks } {
   return t.looks && t.looks.byTopic && t.looks.byTier ? (t as T & { looks: Looks }) : { ...t, looks: countLooks(t.items ?? []) };
+}
+
+/**
+ * One key per thing, whoever sees it: a message waiting on you (`owed:`) and the same message on a lead's day
+ * (`owed-lead:`) are one item. Comments, delegations and anything else shared between people key on this.
+ */
+export function stableKeyOf(key: string): string {
+  return hideKeyOf(recapKeysOf(key)[0]) ?? key;
 }

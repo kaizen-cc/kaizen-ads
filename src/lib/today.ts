@@ -70,6 +70,8 @@ export type TodayItem = {
   state: "new" | "seen" | "saved"; // what this person has done with it so far
   carried: boolean; // came up on an earlier day and is still open
   image?: string | null;
+  /** When it's due (a ticket's turnaround, an Asana due date), for the Overview's list view */
+  due?: string | null;
 };
 export type Resolved = { key: string; topic: TopicKey; client: string; title: string; by: string | null; what: string };
 /** counts: items by tier (kept for older readers); looks: what every screen shows, counted by client (src/lib/today-counts.ts) */
@@ -110,6 +112,8 @@ export function topicsFor(me: Staff): Set<TopicKey> {
   if (me.isCoordinator) ["promises", "onboarding", "allotments"].forEach((k) => t.add(k as TopicKey));
   // Each lead sees their own line: no ad accounts for the Head of Creative, no Meta ads wearing out for the Head of Google
   if (me.role === "head_of_creative") t.delete("accounts");
+  // The creative leads' Overview is KPIs, allotments and production; tiring ads live under Ideas (Nov 20 2026)
+  if (me.role === "head_of_creative") t.delete("ads");
   // The Head of Google: Google only (Meta ads wearing out, creative briefs and allotments aren't theirs)
   if (me.role === "head_of_google") ["ads", "briefs", "allotments"].forEach((k) => t.delete(k as TopicKey));
   // Email and organic social: execs both, each line's team its own (an ads person seated on a line gets its items
@@ -144,6 +148,7 @@ async function mine(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       why: late ? "Late work on your plate" : "Due today",
       evidence: [],
       action: { label: "Open the ticket", href: `/board?t=${r.number}` },
+      due: (r.stage_due_at as string | null) ?? null,
     });
   }
   for (const t of tasks ?? []) {
@@ -158,6 +163,7 @@ async function mine(db: SupabaseClient, me: Staff): Promise<Draft[]> {
       clientId: (t.client_id as string | null) ?? null,
       stat: late ? { value: day(String(t.due_on) + "T12:00:00Z"), label: "was due (in Asana)" } : { value: "Today", label: "due today (in Asana)" },
       title: t.name as string,
+      due: String(t.due_on),
       story: `In Asana's ${t.section ?? "board"} column, assigned to you.`,
       why: late ? "Overdue in Asana" : "Due today",
       evidence: [],
@@ -723,7 +729,7 @@ async function forExec(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<
 export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
   const [all, { data: mine }, { data: hiddenRows }] = await Promise.all([
     gather(db, me).then((d) => (me.isExec ? forExec(db, me, d) : d)),
-    db.from("daily_items").select("key, status, snapshot, first_seen_at").eq("profile_id", me.id),
+    db.from("daily_items").select("key, status, snapshot, first_seen_at, snoozed_until").eq("profile_id", me.id),
     db.from("hidden_items").select("key").eq("profile_id", me.id),
   ]);
   // What they cleared off their Overview (Done or Dismiss there) leaves their day too, so the counts match
@@ -732,7 +738,10 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
     const as = hideKeyOf(key);
     return Boolean(as && hidden.has(as));
   };
-  const drafts = all.filter((d) => !asHidden(d.key));
+  // Snoozed to a later day: off their day until then (src/lib/item-state.ts snoozeItem)
+  const todayNY = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  const snoozed = new Set((mine ?? []).filter((m) => m.snoozed_until && String(m.snoozed_until) > todayNY).map((m) => m.key as string));
+  const drafts = all.filter((d) => !asHidden(d.key) && !snoozed.has(d.key));
   const state = new Map((mine ?? []).map((m) => [m.key as string, m]));
   const startOfDay = new Date(new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }) + "T04:00:00Z").toISOString();
   const items: TodayItem[] = drafts
@@ -747,7 +756,8 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
     .map((i) => (i.alt || !i.clientSlug || i.action.href?.startsWith(`/clients/${i.clientSlug}`) ? i : { ...i, alt: { label: "Client page", href: `/clients/${i.clientSlug}` } }))
     .sort((a, b) => b.score - a.score);
   // Seen or saved before, not acted on by this person, and gone now: someone else took care of it
-  const live = new Set(drafts.map((d) => d.key));
+  // (a snoozed item is still open: it isn't "taken care of")
+  const live = new Set([...drafts.map((d) => d.key), ...snoozed]);
   const gone = (mine ?? []).filter((m) => ["seen", "saved"].includes(m.status as string) && !live.has(m.key as string));
   const resolved = await whatHappened(db, gone.map((g) => ({ key: g.key as string, snapshot: g.snapshot as { client?: string; title?: string; topic?: TopicKey } })));
   const counts = { critical: 0, high: 0, normal: 0 };

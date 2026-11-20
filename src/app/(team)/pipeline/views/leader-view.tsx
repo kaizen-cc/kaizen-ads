@@ -36,9 +36,9 @@ export type LeaderData = {
  * in Delivery), their line's Clients (their own accounts first, then the team's), Ideas, Audits & sprints (only what's
  * critical or stale) and Setup, and My work (Next for me: what waits on their review or launch is in its "Now").
  */
-export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?: React.ReactNode; next?: React.ReactNode; /** What Next for me holds now */ nextCount?: number; /** Their line's Clients, Ideas, Audits and Setup tabs (./ads-desk.tsx) */ desk?: import("./ads-desk").Desk | null }) {
+export function LeaderView(d: LeaderData & { /** A creative lead's allotments, KPIs and production (./lead-creative-panel.tsx): shown under the recap, and the ideas and delivery themes leave */ lead?: React.ReactNode; handoffs?: React.ReactNode; recap?: React.ReactNode; next?: React.ReactNode; /** What Next for me holds now */ nextCount?: number; /** Their line's Clients, Ideas, Audits and Setup tabs (./ads-desk.tsx) */ desk?: import("./ads-desk").Desk | null }) {
   const working = d.stats.teamActive > 0;
-  const themes = buildThemes(d, {
+  const allThemes = buildThemes(d, {
     production: d.production,
     // The Head of Creative: no ad accounts here, so nothing reads as a client at risk
     calm: d.department === "Creative",
@@ -66,6 +66,9 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
     },
   });
 
+  // A creative lead: only what's theirs to act on; ideas (winners, tiring ads, patterns) live under Ideas, and delivery
+  // is the panel up front
+  const themes = d.lead ? allThemes.filter((t) => t.id === "risk" || t.id === "new") : allThemes;
   return (
     <div className="mx-auto grid max-w-6xl gap-8">
       <PageHeader
@@ -95,6 +98,7 @@ export function LeaderView(d: LeaderData & { handoffs?: React.ReactNode; recap?:
           today: (
             <>
               {d.recap}
+              {d.lead}
               {d.desk?.today}
               {d.handoffs}
               <Themes themes={themes} />

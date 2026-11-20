@@ -114,6 +114,8 @@ const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/
  */
 export const SCREEN_PLACES: Record<string, string> = {
   overview: "/pipeline",
+  // The Overview as a list (the person's own layout; the overview_layout tool switches it)
+  "overview list": "/pipeline",
   // Emails drafted for the person to send to clients, on their Overview
   "emails ready to send": "/pipeline#emails-ready",
   // The executives' weekly account review, each step its own address

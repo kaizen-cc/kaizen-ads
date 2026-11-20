@@ -172,3 +172,10 @@ Where the support positions start (Nov 20 2026):
 - **Shared tools:** Kaizen AI, the assistant (calls and chat) and Feedback, like everyone.
 - **Never shown:** Boards, the KPI board, Ideas and the Ads Lab.
 - **Teams:** they can be tagged onto any team (an Onboarding Specialist also on the social team can hold the social media manager seat).
+
+## AI first rounds, then approval straight to launch (added Nov 20 2026, not built yet)
+
+From the creative team's wishlist call. Two steps, in this order:
+
+1. **AI first-round assets from approved briefs.** Once a brief is approved, the first round of designs (and, later, video cuts) is generated from it: the brief, the client's Brand Bible, their proven winners and assets. Designers move to QA (checking, fixing and finishing what the AI made) and to training it (their fixes become the lessons the next first round learns from).
+2. **Client portal approval leads to auto-launch.** When the client approves a piece in the portal, it's launched into their ad accounts automatically (Meta and Google, the launcher's rules: existing or cloned ad sets, Kaizen naming), and the buyers review what went live instead of building it by hand.

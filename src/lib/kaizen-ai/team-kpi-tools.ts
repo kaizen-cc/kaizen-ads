@@ -12,6 +12,8 @@ export function teamBoardsFor(me: { role: string; isExec: boolean; isLead: boole
   if (me.isExec) return ["email", "creative"];
   if (me.role === "head_of_email") return ["email"];
   if (me.isLead && me.role !== "head_of_social") return ["creative"];
+  // The lead graphic designer and lead video editor read their team's numbers too
+  if (me.role === "lead_graphic_designer" || me.role === "lead_video_editor") return ["creative"];
   return [];
 }
 
