@@ -127,6 +127,7 @@ function due(step: string | null) {
   if (step === "bible_upkeep") return true; // hourly (vercel.json): links, website issues, creative packages with nothing made
   if (step === "learnings") return true; // nightly (vercel.json): the team's learnings classified, merged, settled and retired
   if (step === "drift") return true; // weekly (vercel.json): replay what the week's learning changes did to each agent
+  if (step === "reviews") return weekday === "Mon" && hour >= 6 && hour <= 12; // hourly on Mondays (vercel.json): the line heads' weekly account reviews, drafted a batch at a time
   if (step === "history") return true; // every 10 minutes (vercel.json): a client's whole email history and earlier calls, once
   if (step === "calls") return (businessHours || hour === 18) || (hour % 3 === 0 && minute < 30);
   return false;
@@ -408,6 +409,7 @@ export async function GET(request: Request) {
     }
     if (step === "audits") return Response.json(await (await import("@/lib/auto-audits")).autoAudits(admin));
     // The account watch: billed but idle, neglected or overtouched accounts, spend anomalies, creative behind, unknown people
+    if (step === "reviews") return Response.json(await (await import("@/lib/line-review/build")).runWeeklyReviews(admin, { batch: 40 }));
     if (step === "watch") return Response.json(await (await import("@/lib/account-watch/run")).runAccountWatch(admin));
     if (step === "bibles") return Response.json(await (await import("@/lib/brand-bible")).autoBibles(admin, 3));
     if (step === "presentations") {

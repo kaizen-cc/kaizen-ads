@@ -16,6 +16,7 @@ import { loadCallPromises, loadOnboarding, loadSuggestions } from "@/lib/suggest
 import { formatsFor } from "@/lib/creative-formats";
 import { loadWatchList } from "@/lib/fatigue";
 import { HandoffCallout } from "@/components/handoff-callout";
+import { ReviewsCallout } from "@/components/reviews-callout";
 import { WatchCallout } from "./views/watch-panel";
 import { LeaderView } from "./views/leader-view";
 import { PulseView } from "./views/pulse-view";
@@ -145,7 +146,12 @@ export default async function Home() {
         today={base.today}
         greeting={base.greeting}
         firstName={base.firstName}
-        recap={<Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />}
+        recap={
+          <>
+            <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
+            <ReviewsCallout db={db} me={me} />
+          </>
+        }
         work={<NextSection data={next} me={me.id} />}
         workCount={next.now.length + next.decide.length}
       />
@@ -308,6 +314,7 @@ export default async function Home() {
         elsewhere={elsewhere}
         handoffs={
           <>
+            <ReviewsCallout db={db} me={me} />
             <WatchCallout db={db} me={me} />
             <HandoffCallout db={db} me={me.id} />
           </>
@@ -361,7 +368,12 @@ export default async function Home() {
       owed={owed}
       patterns={patterns}
       looks={looks}
-      handoffs={<HandoffCallout db={db} me={me.id} />}
+      handoffs={
+        <>
+          <ReviewsCallout db={db} me={me} />
+          <HandoffCallout db={db} me={me.id} />
+        </>
+      }
       recap={recap}
       next={nextSection}
     />

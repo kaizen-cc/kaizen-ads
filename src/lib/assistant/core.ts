@@ -106,7 +106,7 @@ export function orderForToday<T extends DayItem>(items: readonly T[]): T[] {
 // ─── Screens and links ──────────────────────────────────────────────────────
 
 /** The places in the app the assistant may open during a call */
-const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next", "/profile", "/watch", "/csuite", "/copy"];
+const APP_PREFIXES = ["/pipeline", "/board", "/clients", "/kpis", "/reports", "/ai", "/ideas", "/lab", "/settings", "/feedback", "/assistant", "/requests", "/winners", "/market", "/notifications", "/fatigue", "/team", "/next", "/profile", "/watch", "/csuite", "/copy", "/reviews"];
 
 /**
  * The named places open_screen knows (each screen's own address, with its URL state where a place is a view inside a
@@ -142,6 +142,15 @@ export const SCREEN_PLACES: Record<string, string> = {
   "account watch billing": "/watch?tab=billing",
   "stripe check": "/watch?tab=billing",
   "account watch paused": "/watch?tab=paused",
+  // The weekly account review (line heads and execs), each line its own tab
+  "weekly reviews": "/reviews",
+  "weekly review": "/reviews",
+  "weekly reviews rollup": "/reviews",
+  "weekly reviews meta": "/reviews?tab=meta",
+  "weekly reviews google": "/reviews?tab=google",
+  "weekly reviews email": "/reviews?tab=email",
+  "weekly reviews social": "/reviews?tab=social",
+  "weekly reviews sent": "/reviews?tab=done",
   boards: "/board",
   "creative board": "/board",
   "email board": "/board/email",
