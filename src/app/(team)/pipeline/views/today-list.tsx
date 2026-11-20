@@ -36,7 +36,7 @@ function statusOf(i: TodayItem): string {
   return i.carried ? "From before" : "Seen";
 }
 
-export function TodayList({ sections }: { sections: ListSection[] }) {
+export function TodayList({ sections, badges = {} }: { sections: ListSection[]; /** Comments and "waiting on client", per item key */ badges?: Record<string, { comments: number; waiting: boolean }> }) {
   const openParam = useParam("open");
   const open = new Set((openParam ?? "").split(",").filter(Boolean));
   const [gone, setGone] = useState<Record<string, string>>({});
@@ -95,7 +95,7 @@ export function TodayList({ sections }: { sections: ListSection[] }) {
                             </Link>
                             <ItemQuickActions
                               compact
-                              item={{ key: i.key, href: hrefOf(i), snap: { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId } }}
+                              item={{ key: i.key, href: hrefOf(i), dueAt: i.due ?? null, comments: badges[i.key]?.comments, waiting: badges[i.key]?.waiting, snap: { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId } }}
                               onGone={(how, note) => setGone((g) => ({ ...g, [i.key]: note ?? (how === "done" ? "Done" : "Cleared") }))}
                             />
                           </span>
@@ -104,7 +104,7 @@ export function TodayList({ sections }: { sections: ListSection[] }) {
                             {due ? due.text : "—"}
                           </span>
                           <span role="cell" className="text-[12px] text-ink/60">
-                            {TIER_WORD[i.tier]} · {statusOf(i)}
+                            {badges[i.key]?.waiting ? "Waiting on client" : `${TIER_WORD[i.tier]} · ${statusOf(i)}`}
                           </span>
                         </>
                       )}

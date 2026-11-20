@@ -476,12 +476,19 @@ export async function followPromises(admin: Admin, who: SlackWho | null) {
   for (let i = 0; i < look.length; i += 8) for (const [k, v] of await movement(admin, look.slice(i, i + 8), who, names)) moves.set(k, v);
 
   const { data: execs } = await admin.from("profiles").select("id").eq("is_active", true).eq("role", "executive");
+  // Marked "waiting on client" in its comments: no reminder and no escalation until something new happens
+  const { pausedKeys } = await import("@/lib/item-comments");
+  const paused = await pausedKeys(admin, look.map((p) => `said:${p.id}`)).catch(() => new Set<string>());
   for (const p of look) {
     tally.checked++;
     const m = moves.get(p.id);
     if (m && m.state !== "nothing") {
       await closeMoving(admin, p, { ...m, state: m.state }, byId.get(p.owner_id)?.full_name ?? "Someone");
       tally.moving++;
+      continue;
+    }
+    if (paused.has(`said:${p.id}`)) {
+      await admin.from("message_promises").update({ checked_at: nowIso }).eq("id", p.id);
       continue;
     }
     if (p.status === "open") {

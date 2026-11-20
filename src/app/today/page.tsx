@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+import { CommentsSheet } from "@/components/item-comments";
 import type { Metadata } from "next";
 import { after } from "next/server";
 import { requireStaff } from "@/lib/auth";
@@ -45,6 +47,10 @@ export default async function TodayPage() {
       score={score}
       />
       </CreativeFormatsProvider>
+      {/* Comments on any item (?comments=<key>): outside the team layout, so its sheet is mounted here too */}
+      <Suspense fallback={null}>
+        <CommentsSheet />
+      </Suspense>
     </>
   );
 }

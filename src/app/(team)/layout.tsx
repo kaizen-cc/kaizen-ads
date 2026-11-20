@@ -7,6 +7,7 @@ import { ActivityTracker } from "@/components/activity-tracker";
 import { AssistantRinger } from "@/components/assistant-ringer";
 import { FeedbackBubble } from "@/components/feedback-bubble";
 import { DirectionSheet } from "@/components/direction-sheet";
+import { CommentsSheet } from "@/components/item-comments";
 import { Suspense } from "react";
 import { after } from "next/server";
 import { PeopleProvider } from "@/components/people-provider";
@@ -57,6 +58,10 @@ export default async function TeamLayout({ children }: LayoutProps<"/">) {
       {/* A client changed direction: the sheet opens over any page (?direction=<id>) */}
       <Suspense fallback={null}>
         <DirectionSheet />
+      </Suspense>
+      {/* Comments on any Overview or Today item: the sheet opens over any page (?comments=<key>) */}
+      <Suspense fallback={null}>
+        <CommentsSheet />
       </Suspense>
       </AgentCallProvider>
       </PeopleProvider>

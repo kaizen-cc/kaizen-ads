@@ -7,7 +7,7 @@ import type { ChatTool, ToolCtx } from "./tools";
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout"] as const;
+export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item"] as const;
 
 export function dayTools(ctx: ToolCtx): ChatTool[] {
   return [
@@ -72,6 +72,40 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
         if (!r.ok) return { ok: false, note: r.error };
         await markItem(ctx.db, ctx.me.id, key, "dismissed", s, { label: `Delegated to ${r.to}: ${title}`.slice(0, 300) });
         return { ok: true, delegatedTo: r.to };
+      },
+    },
+    {
+      name: "item_comments",
+      description: "The comment thread on one item of the day (by its key from my_day): what teammates added ('waiting on the client's answer') and whether it's marked waiting on the client (its reminders and escalations paused). Everyone the item reaches shares the thread. open is the address that opens it on screen (open_screen).",
+      input_schema: { type: "object", properties: { key: { type: "string" } }, required: ["key"], additionalProperties: false },
+      status: () => "Reading the comments…",
+      run: async (input) => {
+        const key = clip(input.key, 200);
+        const { loadThread } = await import("@/lib/item-comments");
+        const t = await loadThread(ctx.db, key);
+        return { waitingOnClient: t.waiting, waitingBy: t.waitingBy, comments: t.comments.slice(-20).map((c) => ({ by: c.author, kind: c.kind, text: c.body, at: c.at })), open: `/pipeline?comments=${encodeURIComponent(t.key)}` };
+      },
+    },
+    {
+      name: "comment_on_item",
+      description: "Adds a comment to an item of the person's day (by its key from my_day), as them, and/or marks it waiting on the client (waiting: true pauses its reminders and escalations until the client writes, sends a new asset, or it's due; false takes the mark off). Everyone the item reaches sees it and the people on it hear in the app (never Slack). Write the comment the way they said it.",
+      input_schema: { type: "object", properties: { key: { type: "string" }, text: { type: "string", description: "The comment" }, waiting: { type: "boolean", description: "Mark (true) or unmark (false) waiting on the client" } }, required: ["key"], additionalProperties: false },
+      status: () => "Adding the comment…",
+      run: async (input) => {
+        const key = clip(input.key, 200);
+        const { todaySnapshot } = await import("@/lib/today-snapshot");
+        const snap = await todaySnapshot(ctx.db, ctx.me);
+        const item = snap.today.items.find((i) => i.key === key);
+        const { loadThread, addComment } = await import("@/lib/item-comments");
+        const t = item ? null : await loadThread(ctx.db, key);
+        const clientId = item?.clientId ?? t?.clientId ?? null;
+        if (!item && !t?.comments.length) return { ok: false, note: "That item isn't on their day: read my_day for its key." };
+        if (clientId) {
+          const { data } = await ctx.db.from("clients").select("id").eq("id", clientId).maybeSingle();
+          if (!data) return { ok: false, note: "They can't see that client." };
+        }
+        const r = await addComment(ctx.admin, { id: ctx.me.id, fullName: ctx.me.fullName }, { key, clientId, title: item ? [item.client, item.title].filter(Boolean).join(": ") : (t?.title ?? null), body: clip(input.text, 2000), waiting: typeof input.waiting === "boolean" ? input.waiting : null, dueAt: item?.due ?? null });
+        return r.ok ? { ok: true } : { ok: false, note: r.error };
       },
     },
     {

@@ -4,16 +4,17 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { delegateOptions } from "@/app/(team)/delegate-actions";
 import { delegateQuickItem, doneQuickItem, snoozeQuickItem, type QuickSnap } from "@/app/(team)/item-actions";
+import { CommentButton } from "./item-comments";
 
 // The same four quick actions on every Overview and Today item, wherever it's drawn: Done, Snooze to tomorrow,
 // Delegate and Comment. Each one takes the item off this person's screen at once (onGone) and the server's word follows.
 
-export type QuickItem = { key: string; snap: QuickSnap; href?: string | null };
-type Which = "done" | "snooze" | "delegate";
+export type QuickItem = { key: string; snap: QuickSnap; href?: string | null; dueAt?: string | null; comments?: number; waiting?: boolean };
+type Which = "done" | "snooze" | "delegate" | "comment";
 
 const pill = "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full px-3.5 text-[13px] transition-colors sm:min-h-8 sm:px-3 sm:text-[12px] disabled:opacity-50";
 
-export function ItemQuickActions({ item, onGone, hide = [], comment, compact = false }: { item: QuickItem; onGone?: (how: Which, note?: string) => void; hide?: Which[]; comment?: React.ReactNode; compact?: boolean }) {
+export function ItemQuickActions({ item, onGone, hide = [], compact = false, tone = "auto" }: { item: QuickItem; onGone?: (how: Which, note?: string) => void; hide?: Which[]; compact?: boolean; tone?: "auto" | "dark" }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
@@ -36,7 +37,7 @@ export function ItemQuickActions({ item, onGone, hide = [], comment, compact = f
         </button>
       )}
       {!hide.includes("delegate") && <DelegatePicker item={item} open={open} setOpen={setOpen} onDone={(to) => onGone?.("delegate", `Delegated to ${to}`)} />}
-      {comment}
+      {!hide.includes("comment") && <CommentButton tone={tone} target={{ key: item.key, clientId: item.snap.clientId, title: [item.snap.client, item.snap.title].filter(Boolean).join(": "), href: item.href ?? null, dueAt: item.dueAt ?? null }} count={item.comments ?? 0} waiting={item.waiting ?? false} />}
     </div>
   );
 }

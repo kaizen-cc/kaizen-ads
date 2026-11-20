@@ -704,6 +704,9 @@ export async function runOwedReplies(admin: Admin) {
     if (!cur || String(r.at) < cur) seenAt.set(r.key as string, String(r.at));
   }
   const { data: execs } = await admin.from("profiles").select("id, role").eq("is_active", true).eq("role", "executive");
+  // Marked "waiting on client" in its comments: it doesn't go up until something new happens
+  const { pausedKeys } = await import("@/lib/item-comments");
+  const paused = await pausedKeys(admin, keys).catch(() => new Set<string>());
   for (const o of nudged) {
     // Looked at every run, so a reply closes it (and its notice) within the hour, not only when it's about to escalate
     const how = await isAnswered(o, who, teamEmails, context);
@@ -713,6 +716,10 @@ export async function runOwedReplies(admin: Admin) {
       continue;
     }
     const seen = seenAt.get(`owed:${o.id}`);
+    if (paused.has(`owed:${o.id}`)) {
+      await admin.from("owed_replies").update({ checked_at: stamp }).eq("id", o.id);
+      continue;
+    }
     const ready = seen ? workingHours(new Date(seen)) >= ESCALATE_SEEN : workingHours(new Date(o.nudged_at)) >= ESCALATE_UNSEEN;
     if (!ready) {
       await admin.from("owed_replies").update({ checked_at: stamp }).eq("id", o.id);

@@ -856,7 +856,7 @@ function ItemBody({ i, status, big = false, onChoose, onAct, onNext }: { i: Toda
       </div>
       {/* The quick actions every item has, on the Overview's list too: Snooze to tomorrow, Delegate, Comment */}
       <div className="force-dark relative">
-        <ItemQuickActions item={{ key: i.key, href: i.action.href ?? null, snap: { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId } }} hide={["done"]} onGone={() => onNext?.()} />
+        <ItemQuickActions item={{ key: i.key, href: i.action.href ?? null, snap: { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId } }} hide={["done"]} tone="dark" onGone={(how) => how !== "comment" && onNext?.()} />
       </div>
       {i.pause && i.clientId && (
         <div className="relative">

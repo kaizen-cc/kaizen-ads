@@ -89,6 +89,7 @@ function List({ title, buckets, more }: { title: string; buckets: (Bucket & { to
 
 export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
   const [snap, { data: prof }] = await Promise.all([todaySnapshot(db, me), db.from("profiles").select("overview_layout").eq("id", me.id).maybeSingle()]);
+  const { threadBadges } = await import("@/lib/item-comments");
   // Cards unless the person switched the list on (kept on their profile, so it follows them)
   const layout: "cards" | "list" = prof?.overview_layout === "list" ? "list" : "cards";
   const t = snap.today;
@@ -203,7 +204,7 @@ export async function TodayHero({ db, me }: { db: SupabaseClient; me: Staff }) {
 
       {layout === "list" && (
         <div className="relative">
-          <TodayList sections={groups.map((g) => ({ topic: g.topic, label: TOPICS[g.topic].label, blurb: TOPICS[g.topic].blurb, items: g.items }))} />
+          <TodayList badges={await threadBadges(db, t.items.map((i) => i.key)).catch(() => ({}))} sections={groups.map((g) => ({ topic: g.topic, label: TOPICS[g.topic].label, blurb: TOPICS[g.topic].blurb, items: g.items }))} />
         </div>
       )}
 
