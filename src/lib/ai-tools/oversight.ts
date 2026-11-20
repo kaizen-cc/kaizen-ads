@@ -47,4 +47,23 @@ const economicsTool: AiTool = {
   },
 };
 
-export const tools: AiTool[] = [scorecardTool, economicsTool];
+const supportTool: AiTool = {
+  name: "support_dashboard",
+  description:
+    "The support positions' dashboards (on their Overview under Today). part 'tracking': open tracking problems across accounts (audits that found tracking issues, platform conversions vs the store's orders, conversion rate drops, spend with no results or landing page views, leads with no CRM sync, lost access, integrations losing authorization). 'client_health': per client, reply time in client channels, clients waiting on us, days since our last update, and sentiment from their own messages (a rough read), low sentiment first. 'onboarding': onboarding clients with intake (no delivery dates until it's in), assets, access and weekly check-in, and days stuck. Defaults to the person's own part. open_screen place 'overview' shows it.",
+  input_schema: { type: "object", properties: { part: { type: "string", enum: ["tracking", "client_health", "onboarding"] } }, additionalProperties: false },
+  run: async (user, input) => {
+    const own = user.role === "tracking_specialist" ? "tracking" : user.role === "customer_success" ? "client_health" : user.role === "onboarding_specialist" ? "onboarding" : null;
+    const part = str(input.part) ?? own;
+    if (!part) return { ok: false, error: "Say which: tracking, client_health or onboarding." };
+    const { isCreativeRole } = await import("@/lib/roles");
+    if (isCreativeRole(user.role)) return { ok: false, error: "Account numbers aren't part of your view." };
+    const admin = createAdminClient();
+    const s = await import("@/lib/oversight/support");
+    if (part === "tracking") return { ok: true, page: "/pipeline", issues: (await s.trackingBoard(admin)).slice(0, 40).map((r) => ({ client: r.client, kind: r.kind, severity: r.severity, title: r.title, why: r.body })) };
+    if (part === "client_health") return { ok: true, page: "/pipeline", sentimentNote: "Sentiment is read from words in the client's messages: guessing.", clients: (await s.csBoard(admin)).filter((r) => r.rank > 0).slice(0, 40).map((r) => ({ client: r.client, sentiment: r.sentiment.now, trend: r.sentiment.trend, replyHours: r.replyHours == null ? null : Math.round(r.replyHours), waiting: r.waiting, daysSinceOurUpdate: r.quietDays })) };
+    return { ok: true, page: "/pipeline", onboardings: (await s.onboardingBoard(admin)).map((r) => ({ client: r.client, daysIn: r.state.daysIn, stuck: r.state.stuck, intake: r.state.intake, assets: r.state.assets, access: r.state.access, daysSinceCheckIn: r.state.checkInDays, blockers: r.state.blockers })) };
+  },
+};
+
+export const tools: AiTool[] = [scorecardTool, economicsTool, supportTool];

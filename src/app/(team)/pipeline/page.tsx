@@ -17,6 +17,7 @@ import { formatsFor } from "@/lib/creative-formats";
 import { loadWatchList } from "@/lib/fatigue";
 import { HandoffCallout } from "@/components/handoff-callout";
 import { ReviewsCallout } from "@/components/reviews-callout";
+import { SupportDashboard } from "@/components/support-dashboard";
 import { WatchCallout } from "./views/watch-panel";
 import { LeaderView } from "./views/leader-view";
 import { PulseView } from "./views/pulse-view";
@@ -132,6 +133,10 @@ export default async function Home() {
       <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
         <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${n ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : "nothing needs you right now"}`} />
         <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
+        {/* Their dashboard under Today: tracking problems, client health, or stuck onboardings (src/lib/oversight) */}
+        <Suspense fallback={null}>
+          <SupportDashboard role={me.role} />
+        </Suspense>
         <HandoffCallout db={db} me={me.id} />
         <MakerTasks tasks={tasks} />
         <WorkUnderToday>
