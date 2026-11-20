@@ -52,6 +52,7 @@ export async function runSocialAudit(admin: SupabaseClient, auditId: string) {
     const { data: c } = await admin.from("clients").select("industry, industry_detail").eq("id", clientId).maybeSingle();
     const floor = socialRuleFindings(read.score);
     await progress(admin, auditId, "Writing the audit", 50);
+    let shown = 50;
     const result = await askJson<SocialAuditResult>({
       agent: "social_audit",
       label: "social account audit",
@@ -59,7 +60,14 @@ export async function runSocialAudit(admin: SupabaseClient, auditId: string) {
       system: SOCIAL_AUDIT_SYSTEM,
       schema: SOCIAL_AUDIT_SCHEMA as unknown as Record<string, unknown>,
       maxTokens: 16000,
-      onText: (t) => void progress(admin, auditId, "Writing the audit", Math.min(90, 50 + Math.round(t.length / 250))),
+      // One write per point of progress (at most ~40), never one per streamed chunk: that was ~1,000 writes an audit and slowed the whole app
+      onText: (t) => {
+        const pct = Math.min(90, 50 + Math.round(t.length / 250));
+        if (pct > shown) {
+          shown = pct;
+          void progress(admin, auditId, "Writing the audit", pct);
+        }
+      },
       prompt: `${read.digest}\n\n<industry>${(c?.industry_detail as string | null) ?? (c?.industry as string | null) ?? "not set"} (no industry benchmark is read for organic social: do not invent one)</industry>\n\n<what_the_numbers_prove note="rule-based, from the score">\n${floor.map((f) => `- [${f.severity}] ${f.title}: ${f.evidence.join(" ")}`).join("\n") || "(nothing under its bar)"}\n</what_the_numbers_prove>\n\n${ctx?.text ?? ""}\n\nAudit ${read.name}'s organic social today. Say in the diagnosis whether the account is being posted to steadily, from the posts given.`,
     });
     // The verdict's status always follows the real score, whatever the AI said

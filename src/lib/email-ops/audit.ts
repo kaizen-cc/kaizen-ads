@@ -68,6 +68,7 @@ export async function runEmailAudit(admin: SupabaseClient, auditId: string) {
     const floor = ruleFindings(score, k.keyFlows.map((f) => ({ label: f.label, state: f.state, critical: f.id === "welcome" || f.id === "abandoned" })));
 
     await progress(admin, auditId, "Writing the audit", 50);
+    let shown = 50;
     const result = await askJson<EmailAuditResult>({
       agent: "email_audit",
       label: "email account audit",
@@ -75,7 +76,14 @@ export async function runEmailAudit(admin: SupabaseClient, auditId: string) {
       system: forProvider(EMAIL_AUDIT_SYSTEM, k.providerName),
       schema: EMAIL_AUDIT_SCHEMA as unknown as Record<string, unknown>,
       maxTokens: 16000,
-      onText: (t) => void progress(admin, auditId, "Writing the audit", Math.min(90, 50 + Math.round(t.length / 250))),
+      // One write per point of progress (at most ~40), never one per streamed chunk: that was ~1,000 writes an audit and slowed the whole app
+      onText: (t) => {
+        const pct = Math.min(90, 50 + Math.round(t.length / 250));
+        if (pct > shown) {
+          shown = pct;
+          void progress(admin, auditId, "Writing the audit", pct);
+        }
+      },
       prompt: `${digest}\n\n<what_the_numbers_prove note="rule-based, from the score and the key flows">\n${floor.map((f) => `- [${f.severity}] ${f.title}: ${f.evidence.join(" ")}`).join("\n") || "(nothing under its bar)"}\n</what_the_numbers_prove>\n\n${changes ? `${changes}\n\n` : ""}${segments ? `<segments note="who the campaigns went to and how each list and segment did, with advice from the rules and from similar clients">\n${segmentDigest(segments, moneyFor(k.currency))}\n</segments>\n\n` : ""}${ctx?.text ?? ""}\n\nAudit ${name}'s email account today. Say in the diagnosis whether anyone has been working in the account lately, from the changes given.`,
     });
     // The verdict's status always follows the real score, whatever the AI said
