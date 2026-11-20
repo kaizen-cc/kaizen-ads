@@ -11,6 +11,8 @@ export type TeamRole =
   | "lead_video_editor"
   | "copywriter"
   | "customer_success"
+  | "onboarding_specialist"
+  | "tracking_specialist"
   | "head_of_social"
   | "social_media_manager"
   | "head_of_email"
@@ -32,7 +34,9 @@ export const ROLES: { value: TeamRole; label: string; tier: Tier }[] = [
   { value: "lead_graphic_designer", label: "Lead graphic designer", tier: "member" },
   { value: "lead_video_editor", label: "Lead video editor", tier: "member" },
   { value: "copywriter", label: "Copywriter", tier: "member" },
-  { value: "customer_success", label: "Customer success", tier: "member" },
+  { value: "customer_success", label: "Customer success coordinator", tier: "member" },
+  { value: "onboarding_specialist", label: "Onboarding specialist", tier: "member" },
+  { value: "tracking_specialist", label: "Tracking specialist", tier: "member" },
   { value: "head_of_social", label: "Head of Organic Social", tier: "leader" },
   { value: "social_media_manager", label: "Social media manager", tier: "member" },
   { value: "head_of_email", label: "Head of Email", tier: "leader" },
@@ -94,6 +98,18 @@ export const lineOfTeam = (role: string | null | undefined): "email" | "social" 
  */
 export const isChannelOnly = (role: string | null | undefined) => lineOfTeam(role) !== null;
 
+/**
+ * The support positions (owner, Nov 20 2026): Customer Success Coordinator, Onboarding Specialist, Tracking Specialist.
+ * Their Overview is Today only (their plate, their Asana tasks, what's next); they see every client with its services
+ * like the execs, read only (no audits, no setup changes); no Boards, KPI board, Ideas or Ads Lab; Kaizen AI, the
+ * assistant and Feedback as everyone. Reports: the Customer Success Coordinator and the Onboarding Specialist only.
+ */
+export const SUPPORT_ROLES: readonly TeamRole[] = ["customer_success", "onboarding_specialist", "tracking_specialist"];
+export const isSupportRole = (role: string | null | undefined) => SUPPORT_ROLES.includes(role as TeamRole);
+const SUPPORT_REPORTS: readonly string[] = ["customer_success", "onboarding_specialist"];
+/** The menu items a support position never gets */
+export const SUPPORT_HIDDEN = ["/board", "/board?view=kpis", "/kpis", "/lab"];
+
 /** Who works with client reports: executives and the media buyers (the heads of Meta and Google, Meta and Google buyers) */
 export const REPORT_ROLES: readonly TeamRole[] = ["executive", "head_of_meta", "head_of_google", "media_buyer", "google_buyer"];
 
@@ -101,7 +117,7 @@ export const REPORT_ROLES: readonly TeamRole[] = ["executive", "head_of_meta", "
  * Whether someone sees client reports at all (the Reports page, a client's Reports tab, report links and notices):
  * executives, media buyers and the email and social teams (their own clients only). The creative team, the copywriter and customer success never do.
  */
-export const canSeeReports = (p: { role: string | null | undefined; isExec?: boolean | null }) => Boolean(p.isExec) || REPORT_ROLES.includes(p.role as TeamRole) || (isChannelOnly(p.role) && !NO_KPIS.includes(String(p.role)));
+export const canSeeReports = (p: { role: string | null | undefined; isExec?: boolean | null }) => Boolean(p.isExec) || REPORT_ROLES.includes(p.role as TeamRole) || SUPPORT_REPORTS.includes(String(p.role)) || (isChannelOnly(p.role) && !NO_KPIS.includes(String(p.role)));
 
 /** The email team's makers (owner, Nov 19 2026): their Overview is their plate, so no KPIs or Reports for them */
 export const NO_KPIS: readonly string[] = ["email_designer", "email_builder"];
@@ -161,7 +177,7 @@ export const TEAMS: { value: Team; label: string }[] = [
 export function homeTeam(role: string | null | undefined): Team | null {
   if (isEmailRole(role)) return "email";
   if (isSocialRole(role)) return "social";
-  if (!role || role === "executive" || role === "coordinator" || role === "customer_success") return null;
+  if (!role || role === "executive" || role === "coordinator" || isSupportRole(role)) return null;
   return "ads";
 }
 
@@ -179,6 +195,8 @@ export function teamsOfferedFor(role: string | null | undefined): Team[] {
   // (An email builder who also designs email keeps its own "Designs email" badge: that's a craft, not another team)
   if (r === "email_designer" || r === "email_builder") return ["ads", "social"];
   if (r === "social_media_manager") return ["email"];
+  // The support positions can be on any team (an onboarding specialist who's also on the social team)
+  if (isSupportRole(r)) return ["ads", "email", "social"];
   return [];
 }
 
@@ -206,6 +224,8 @@ export function canHold(slot: { value: string; eligible: readonly TeamRole[] }, 
     return (AD_MAKERS(p.role) || p.role === "social_media_manager") && (p.teams ?? []).includes("email");
   }
   if (slot.value === "graphic_designer" && (p.role === "email_designer" || p.role === "email_builder")) return t.has("ads");
+  // A support position on the social team can hold the social media manager seat
+  if (slot.value === "social_manager" && isSupportRole(p.role)) return t.has("social");
   return slot.eligible.includes(p.role as TeamRole) || (Boolean(p.also_buys) && (slot.value === "meta_buyer" || slot.value === "google_buyer" || slot.value === "tiktok_buyer"));
 }
 

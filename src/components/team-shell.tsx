@@ -14,7 +14,7 @@ import { BriefJobsIndicator, BriefJobsRoot } from "./brief-jobs";
 import { MediaJobsIndicator, MediaJobsRoot } from "./media-jobs";
 import { PersonAvatar } from "@/components/person-avatar";
 import { ViewAsBar, ViewAsControl } from "@/components/view-as";
-import { channelNavOk } from "@/lib/roles";
+import { channelNavOk, isSupportRole, SUPPORT_HIDDEN } from "@/lib/roles";
 import { useAgentCall } from "./agent-call-provider";
 
 type Tier = "exec" | "lead" | "member";
@@ -261,7 +261,7 @@ export function TeamShell({ name, fullName, meId, roles, tier, creative = null, 
   // The email and social teams get only Overview, Clients, KPIs, Reports and Kaizen AI (Feedback and Settings sit apart);
   // the email team also gets Boards (their Email Board)
   // The makers and customer success have no Ideas (their Overview is their plate): gone from the sidebar and the tab bar
-  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i) && (!channel || channelNavOk(i.href, role)) && !(noIdeas(role) && isIdeasPath(i.href))) })).filter((g) => g.items.length);
+  const groups = GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => can(i) && (!channel || channelNavOk(i.href, role)) && !(noIdeas(role) && isIdeasPath(i.href)) && !(isSupportRole(role) && SUPPORT_HIDDEN.includes(i.href))) })).filter((g) => g.items.length);
   const settings = can(SETTINGS) ? SETTINGS : null;
   // The tab bar on phones: home (the Overview), the board, clients and KPIs (the creative team: their own
   // KPIs, or Ideas); everything else is in the menu

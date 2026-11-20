@@ -142,3 +142,33 @@ Klaviyo is connected per client and read today (campaigns, flows, lists, daily e
 4. **Email KPIs**: open, click, revenue per recipient and flow revenue against targets on the KPI board, audits for email accounts, and email in the weekly report.
 5. **Full development of the client Email tab** (built so far, Nov 12 2026: tabs like Meta and Google, 90-day revenue, revenue per recipient and deliverability score charts with the scrub, campaigns with previews, flows, audience, deliverability, account health). Next: targets and status like the Meta and Google performance card (on target, getting there, off), flow-by-flow performance over time and the gaps in key flows, segment and list health, campaign calendar (sent and planned), A/B results, SMS as its own view, benchmarks against Kaizen's other email clients, and Act-on-this-first items that open the brief or ticket to fix them.
 6. **Email agents, fully built** (Email Strategist, Email Creative and Email Builder, parked today with skill shells): write their cores and skills from the email team's playbooks (roles, not names), give them the Klaviyo context and tools (read today; drafts in Klaviyo once write is on), connect them to their moments in the app (email strategy and calendar, email briefs and copy, template design and build, account audits and the Email tab's findings), test each change against evals, then switch them on line by line. An email lead position so the email team trains its own agents, like the heads of Meta, Google and Creative.
+
+## Every role, developed one at a time (added Nov 20 2026)
+
+The owner's plan: go through **each type of role** in Kaizen OS and develop its view further, so the OS keeps fitting
+each person's day better and better. One role per pass, with someone in that role walking through their day.
+For each one:
+
+- **Their Overview:** what they need first thing, what's on their plate, and what's about to land on them.
+- **Their pages:** what they open, what they never need (taken out), and what's missing.
+- **Their actions:** what they can do from the OS instead of another tool (Asana, Slack, Drive, the ad platforms).
+- **Their assistant and Kaizen AI:** the tools and knowledge their role needs, and the words they use.
+- **Their measures:** how they and their lead see that the work is going well (targets, never client-facing scores).
+
+The roles, in no fixed order:
+
+- **Executives**
+- **Ads:** Head of Meta, Head of Google, Meta and Google media buyers
+- **Creative:** Head of Creative, lead graphic designer, lead video editor, graphic designers, video editors, the copywriter
+- **Email:** Head of Email, email strategists, email designers, email builders
+- **Organic social:** Head of Organic Social, social media managers
+- **Support:** Customer Success Coordinator, Onboarding Specialist, Tracking Specialist (added Nov 20 2026)
+
+Where the support positions start (Nov 20 2026):
+
+- **Overview:** Today only, with their own open Asana tasks (read live from all of Asana) and what's next.
+- **Clients:** every client with its services broken down, like the execs, read only. No audits and no setup changes.
+- **Reports:** the Customer Success Coordinator and the Onboarding Specialist only.
+- **Shared tools:** Kaizen AI, the assistant (calls and chat) and Feedback, like everyone.
+- **Never shown:** Boards, the KPI board, Ideas and the Ads Lab.
+- **Teams:** they can be tagged onto any team (an Onboarding Specialist also on the social team can hold the social media manager seat).

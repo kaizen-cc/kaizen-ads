@@ -126,6 +126,46 @@ async function creativeTasks(db: SupabaseClient, me: Pick<Staff, "id">): Promise
   return byDue(out);
 }
 
+/**
+ * A support position's tasks (Customer Success Coordinator, Onboarding Specialist, Tracking Specialist): every open
+ * Asana task assigned to them anywhere in the workspace, read live by their email (their work lives in onboarding and
+ * client projects the boards don't mirror), overdue first. Matched to a client by name where the project or task says.
+ */
+export async function supportTasks(db: SupabaseClient, me: Pick<Staff, "id" | "email">): Promise<MakerTask[]> {
+  const { asana, asanaConfigured } = await import("@/lib/asana");
+  if (!asanaConfigured() || !me.email) return [];
+  const ws = (await asana<{ gid: string }[]>("/workspaces").catch(() => null))?.data[0]?.gid;
+  if (!ws) return [];
+  type T = { gid: string; name: string; due_on: string | null; permalink_url?: string; memberships?: { project?: { name?: string }; section?: { name?: string } }[] };
+  const res = await asana<T[]>("/tasks", { assignee: me.email, workspace: ws, completed_since: "now", limit: "100", opt_fields: "name,due_on,permalink_url,memberships.project.name,memberships.section.name" }).catch(() => null);
+  if (!res) return [];
+  const { data: clients } = await db.from("clients").select("id, name, slug").is("archived_at", null).limit(1000);
+  const named = ((clients ?? []) as { id: string; name: string; slug: string }[]).filter((c) => c.name.length >= 4).sort((a, b) => b.name.length - a.name.length);
+  const out: MakerTask[] = res.data
+    .filter((t) => t.name?.trim())
+    .map((t) => {
+      const project = t.memberships?.find((m) => m.project?.name)?.project?.name ?? "";
+      const section = t.memberships?.find((m) => m.section?.name)?.section?.name ?? null;
+      const hay = `${project} ${t.name}`.toLowerCase();
+      const c = named.find((x) => hay.includes(x.name.toLowerCase())) ?? null;
+      return {
+        key: `mine:asana:${t.gid}`,
+        kind: "asana" as const,
+        client: c?.name ?? project,
+        clientSlug: c?.slug ?? "",
+        clientId: c?.id ?? null,
+        title: t.name,
+        stage: null,
+        stageLabel: section ?? project ?? "Asana",
+        due: t.due_on ?? null,
+        revisions: 0,
+        href: t.permalink_url ?? `https://app.asana.com/0/0/${t.gid}`,
+        onThem: true,
+      };
+    });
+  return byDue(out);
+}
+
 /** Their plate as recap items: each piece waiting on them, overdue first, then today, revisions, this week, the rest */
 export async function makerPlate(db: SupabaseClient, me: Pick<Staff, "id" | "role">): Promise<TodayDraft[]> {
   const today = nyToday();

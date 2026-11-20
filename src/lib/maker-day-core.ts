@@ -16,8 +16,11 @@ export function makerKind(role: string | null | undefined): MakerKind | null {
 }
 export const isMaker = (role: string | null | undefined) => makerKind(role) !== null;
 
-/** Customer success: the makers' Today-only shape, keeping the client-facing signals they act on */
-export const isCustomerSuccess = (role: string | null | undefined) => role === "customer_success";
+/**
+ * The support positions (Customer Success Coordinator, Onboarding Specialist, Tracking Specialist): the makers'
+ * Today-only shape, keeping the client-facing signals they act on (src/lib/roles.ts SUPPORT_ROLES)
+ */
+export const isCustomerSuccess = (role: string | null | undefined) => role === "customer_success" || role === "onboarding_specialist" || role === "tracking_specialist";
 
 /** No Ideas (the sidebar, /ideas, /winners, /market and the assistant's way there): the makers and customer success */
 export const noIdeas = (role: string | null | undefined) => isMaker(role) || isCustomerSuccess(role);

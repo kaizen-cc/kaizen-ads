@@ -110,14 +110,17 @@ export default async function Home() {
 
   // Customer success: the same Today-only shape, with My work folded in under the day: the client-facing things they
   // act on (approvals waiting, replies owed, new clients, what's heading to a client), never an account's numbers
+  // (The support positions: Customer Success Coordinator, Onboarding and Tracking Specialists; their Asana tasks under it)
   if (isCustomerSuccess(me.role)) {
-    const [{ data: hiddenRows }, next] = await Promise.all([hiddenQuery(), loadNextForMe(db, me)]);
+    const { supportTasks } = await import("@/lib/maker-day");
+    const [{ data: hiddenRows }, next, tasks] = await Promise.all([hiddenQuery(), loadNextForMe(db, me), supportTasks(db, me).catch(() => [])]);
     const n = next.now.length + next.decide.length;
     return (
       <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
         <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={`${roleLabel(me.role)} · ${n ? `${n} ${n === 1 ? "thing needs" : "things need"} you` : "nothing needs you right now"}`} />
         <Recap db={db} me={me} hidden={(hiddenRows ?? []) as HiddenRow[]} />
         <HandoffCallout db={db} me={me.id} />
+        <MakerTasks tasks={tasks} />
         <WorkUnderToday>
           <NextSection data={next} me={me.id} deploys={[]} />
         </WorkUnderToday>

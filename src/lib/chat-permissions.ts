@@ -81,7 +81,7 @@ function whoCanBrief(format: CreativeFormat | null) {
 export function briefFormats(me: Who): CreativeFormat[] {
   if (isExec(me)) return formatList({ role: me.role ?? "", isExec: true });
   const r = roleOf(me);
-  if (r === "copywriter" || r === "customer_success" || r === "member" || r === "coordinator" || !r) return [];
+  if (r === "copywriter" || r === "customer_success" || r === "onboarding_specialist" || r === "tracking_specialist" || r === "member" || r === "coordinator" || !r) return [];
   if (r === "graphic_designer" || r === "video_editor") return formatList(r);
   if (["head_of_creative", "head_of_meta", "head_of_google", "media_buyer", "google_buyer"].includes(r)) return formatList({ role: r, isLead: true });
   return [];

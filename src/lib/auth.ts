@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
-import { canSeeReports, isCreativeRole, isLeadMaker, type TeamRole } from "@/lib/roles";
+import { canSeeReports, isCreativeRole, isLeadMaker, isSupportRole, type TeamRole } from "@/lib/roles";
 import { createSessionClient } from "@/lib/supabase/session";
 import { activeViewAs, STAFF_COLUMNS, type StaffRow } from "@/lib/view-as";
 
@@ -136,7 +136,7 @@ export async function requireContact() {
 }
 
 /** Execs, leads, customer success and the copywriter work across every client. */
-export const seesAllClients = (s: Staff) => s.isExec || s.isLead || s.isCoordinator || s.isCopywriter;
+export const seesAllClients = (s: Staff) => s.isExec || s.isLead || s.isCoordinator || s.isCopywriter || isSupportRole(s.role);
 
 /**
  * Every client is an option for them (to see and request creative for): everyone above, plus a lead graphic designer or

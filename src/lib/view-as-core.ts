@@ -162,7 +162,7 @@ export function roleView(role: TeamRole): { role: string; tier: string; places: 
   ];
   const places = all.filter((i) => i.ok && (!channel || i.href === "/settings" || channelNavOk(i.href, role))).map((i) => i.label);
   const clients =
-    exec || lead || role === "customer_success" || role === "copywriter"
+    exec || lead || role === "customer_success" || role === "onboarding_specialist" || role === "tracking_specialist" || role === "copywriter"
       ? "Every client"
       : role === "head_of_email"
         ? "Every client buying email marketing (plus any they're assigned to)"

@@ -1,5 +1,5 @@
 import { isMaker, noIdeas } from "./maker-day-core";
-import { isChannelOnly, seesEmailBoard } from "./roles";
+import { isChannelOnly, isSupportRole, seesEmailBoard } from "./roles";
 import { mayTransferAny } from "./seat-transfer-core";
 
 // What an assistant or Kaizen AI may reach for the person it works for: never wider than what they could open in the
@@ -49,6 +49,7 @@ export function mayOpen(href: string, me: AccessWho): Gate {
   const under = (base: string) => p === base || p.startsWith(`${base}/`);
   if ((under("/ideas") || under("/winners") || under("/market")) && noIdeas(me.role)) return no("Ideas, Winners and Market aren't part of your view.");
   if (p === "/pipeline" && q.get("tab") === "ideas" && noIdeas(me.role)) return no("Ideas aren't part of your view.");
+  if ((under("/board") || under("/kpis") || under("/lab")) && isSupportRole(me.role)) return no("Boards, the KPI board and the Ads Lab aren't part of your view.");
   if (under("/csuite") || under("/safety")) return me.isExec ? OK : no("That page is for the executives.");
   if (under("/lab")) return me.isExec || me.isLead ? OK : no("The Ads Lab is for the executives and leaders.");
   if (under("/team/handoffs")) return mayTransferAny(me) ? OK : no("Handoffs are for the executives and the line heads.");

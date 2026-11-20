@@ -63,6 +63,8 @@ export function editDistance(a: string, b: string): number {
 /** Role words people say ("the account manager", "head of email") to the roles they mean */
 const ROLE_WORDS: { re: RegExp; roles: TeamRole[] }[] = [
   { re: /\b(account manager|customer success|cs)\b/, roles: ["customer_success"] },
+  { re: /\b(onboarding specialist|onboarding)\b/, roles: ["onboarding_specialist"] },
+  { re: /\b(tracking specialist|tracking|pixel|capi)\b/, roles: ["tracking_specialist"] },
   { re: /\bhead of (meta|paid social|ads)\b/, roles: ["head_of_meta"] },
   { re: /\bhead of google\b/, roles: ["head_of_google"] },
   { re: /\bhead of creative\b/, roles: ["head_of_creative"] },
