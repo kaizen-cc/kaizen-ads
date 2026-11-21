@@ -138,6 +138,11 @@ describe("delegating an item", () => {
     expect(c[0].onClient).toBe(true);
     expect(delegateCandidates({ id: "x", role: "executive", isExec: true }, team).length).toBe(5);
   });
+  it("offers an executive by role everyone, even without the exec flag", () => {
+    const all = [...team, { id: "cs", name: "Fabiola", role: "customer_success" }, { id: "em", name: "Mali", role: "email_strategist" }];
+    expect(delegateCandidates({ id: "x", role: "executive", isExec: false }, all).map((p) => p.id)).toEqual(expect.arrayContaining(["cs", "em"]));
+    expect(delegateCandidates({ id: "x", role: "executive", isExec: false }, all).length).toBe(7);
+  });
   it("credits the delegator and keeps no dashes", () => {
     expect(delegatedTitle("Dana", "Brief ready: Sierra Dreams BFCM close (1 video, 5 images)")).toBe("Dana: Brief: Sierra Dreams BFCM close (1 video, 5 images)");
     expect(delegatedDetail({ from: "Dana", note: "use the — BFCM offer" })).not.toMatch(/—/);
