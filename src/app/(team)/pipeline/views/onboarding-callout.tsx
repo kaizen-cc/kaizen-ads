@@ -13,6 +13,7 @@ import { closeThen, pushParams, useParam } from "@/lib/url-state";
 import { SuggestionSheet } from "./suggested-briefs";
 import { SaveIdeaStar } from "@/components/save-idea-star";
 import { businessDaysSince } from "@/lib/waited-days";
+import { AssignSelect } from "../../clients/assign-select";
 
 // New and returning clients, front and center for execs and leads: where each one is (intake, first round,
 // production), with the first round one click away. Deliberately louder than everything else on Home.
@@ -62,7 +63,7 @@ export function OnboardingCallout({ state, clients, bare = false }: { state: Onb
           make), then the rest, whose card is their account setup */}
       <div className="grid gap-3 lg:grid-cols-2">
         {[...creative, ...other].map((c) => (
-          <ClientCard key={c.clientId} c={c} creativeView={Boolean(state.creativeView)} onOpen={(f) => pushParams({ first: f.id })} />
+          <ClientCard key={c.clientId} c={c} creativeView={Boolean(state.creativeView)} buyers={state.buyers} onOpen={(f) => pushParams({ first: f.id })} />
         ))}
       </div>
 
@@ -91,7 +92,7 @@ const WRITE_SECONDS = 90;
 
 const waited = (days: number) => (days === 0 ? "today" : days === 1 ? "1 day" : `${days} days`);
 
-function ClientCard({ c, creativeView, onOpen }: { c: OnboardingCard; creativeView: boolean; onOpen: (s: OpenSuggestion) => void }) {
+function ClientCard({ c, creativeView, buyers, onOpen }: { c: OnboardingCard; creativeView: boolean; buyers?: { id: string; name: string }[]; onOpen: (s: OpenSuggestion) => void }) {
   const router = useRouter();
   const [started, setStarted] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -209,6 +210,16 @@ function ClientCard({ c, creativeView, onOpen }: { c: OnboardingCard; creativeVi
       </ol>
 
       {c.setup && !creativeView && <Setup s={c.setup} />}
+
+      {/* Their media buyer, set right here (it was only on the Clients pages, so a new client's buyer couldn't be found from the Overview) */}
+      {c.buyer?.show && !creativeView && buyers && (
+        <div className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-surface/60 px-3 py-1.5">
+          <span className="shrink-0 text-xs font-medium">Media buyer</span>
+          <span className="min-w-0 max-w-[60%] flex-1">
+            <AssignSelect clientId={c.clientId} slot="meta_buyer" label={`${c.name}'s Meta buyer`} current={c.buyer.current} options={buyers} canEdit />
+          </span>
+        </div>
+      )}
 
       {writing && (
         <div className="grid gap-1.5 rounded-[12px] border border-brand/25 bg-brand-soft/30 px-3 py-2.5">
