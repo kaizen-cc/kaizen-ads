@@ -35,3 +35,16 @@ describe("the closed note", () => {
     expect(closedNote("tracking is set up and verified", "slack_internal", "2026-11-18T15:00:00Z")).toBe('Closed automatically: "tracking is set up and verified" (Slack, Nov 18)');
   });
 });
+
+import { subjectOf } from "@/lib/done-check-core";
+describe("what an item's messages are about", () => {
+  it("reads tracking messages first for a tracking item", () => {
+    const re = subjectOf("notrack", "Tracking not set up")!;
+    expect(re.test("CAPI is live and purchases are flowing")).toBe(true);
+    expect(re.test("love the new creatives")).toBe(false);
+  });
+  it("uses the item's own words otherwise", () => {
+    const re = subjectOf("ask", "Send the November report to Acme")!;
+    expect(re.test("sent the november report this morning")).toBe(true);
+  });
+});

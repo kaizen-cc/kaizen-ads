@@ -62,12 +62,18 @@ export async function openCheckables(admin: Admin): Promise<Checkable[]> {
   return out;
 }
 
-/** What was said about a client after `since`, newest first: their Slack (ours and theirs), Gmail, call and Gemini notes */
-async function evidenceFor(admin: Admin, clientId: string, since: string): Promise<Evidence[]> {
+/**
+ * What was said about a client after `since`: their Slack (ours and theirs), Gmail, call and Gemini notes. A busy
+ * client says a lot, so the messages about this item's subject come first (tracking words for a tracking item, the
+ * item's own words otherwise), then the newest.
+ */
+async function evidenceFor(admin: Admin, clientId: string, since: string, about: RegExp | null): Promise<Evidence[]> {
   const from = new Date(Math.max(Date.parse(since), Date.now() - 60 * DAY)).toISOString();
-  const { data } = await admin.from("context_items").select("source, occurred_at, author, title, body, url").eq("client_id", clientId).in("source", ["slack_internal", "slack_external", "gmail", "call"]).gte("occurred_at", from).order("occurred_at", { ascending: false }).limit(30);
+  const { data } = await admin.from("context_items").select("source, occurred_at, author, title, body, url").eq("client_id", clientId).in("source", ["slack_internal", "slack_external", "gmail", "call"]).gte("occurred_at", from).order("occurred_at", { ascending: false }).limit(200);
+  const rows = data ?? [];
+  const picked = about ? [...rows.filter((d) => about.test(`${d.title ?? ""} ${d.body ?? ""}`)), ...rows.filter((d) => !about.test(`${d.title ?? ""} ${d.body ?? ""}`))].slice(0, 30) : rows.slice(0, 30);
   let n = 0;
-  return (data ?? []).map((d) => ({ n: ++n, at: d.occurred_at as string, source: d.source as string, author: (d.author as string | null) ?? null, text: `${d.title ? `${d.title}: ` : ""}${String(d.body ?? "")}`.replace(/\s+/g, " ").slice(0, 700), url: (d.url as string | null) ?? null }));
+  return picked.map((d) => ({ n: ++n, at: d.occurred_at as string, source: d.source as string, author: (d.author as string | null) ?? null, text: `${d.title ? `${d.title}: ` : ""}${String(d.body ?? "")}`.replace(/\s+/g, " ").slice(0, 700), url: (d.url as string | null) ?? null }));
 }
 
 const SCHEMA = {
@@ -79,7 +85,8 @@ const SCHEMA = {
 
 /** One item, read against its client's messages since it opened */
 export async function classify(admin: Admin, item: Checkable): Promise<{ verdict: Verdict; ev: Evidence | null } | null> {
-  const evidence = await evidenceFor(admin, item.clientId, item.since);
+  const { subjectOf } = await import("@/lib/done-check-core");
+  const evidence = await evidenceFor(admin, item.clientId, item.since, subjectOf(item.kind, item.title));
   if (!evidence.length) return { verdict: { state: "nothing", quote: "", evidence: null, sure: true }, ev: null };
   const means = DONE_MEANS[item.kind] ?? "it's done";
   try {

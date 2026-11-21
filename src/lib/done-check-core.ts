@@ -53,5 +53,19 @@ export const DONE_MEANS: Record<string, string> = {
   asana: "this task is done",
 };
 
+const TRACKING_WORDS = /\b(tracking|tracked|pixel|capi|conversions? api|gtm|tag manager|ga4|google analytics|purchase event|lead event|conversion|events? (?:firing|fire|set ?up)|server[- ]side|utm)\b/i;
+const STOP = new Set(["the", "and", "for", "with", "from", "that", "this", "client", "their", "your", "not", "set", "has", "have"]);
+const escape = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "");
+
+/** What the messages about an item mention: tracking words for tracking items, else the item's own main words */
+export function subjectOf(kind: string, title: string): RegExp | null {
+  if (kind === "notrack" || /track|pixel|capi|conversion|ga4|gtm/i.test(title)) return TRACKING_WORDS;
+  if (kind === "onboard_intake") return /\b(intake|form|questionnaire)\b/i;
+  if (kind === "onboard_call") return /\b(onboarding call|kickoff|kick-off|call|meeting|booked|calendar)\b/i;
+  if (kind === "onboard_assets") return /\b(assets?|logos?|photos?|footage|drive|brand files?|uploaded)\b/i;
+  const words = title.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 3 && !STOP.has(w)).slice(0, 6).map(escape);
+  return words.length ? new RegExp(`\\b(${words.join("|")})`, "i") : null;
+}
+
 /** Kinds whose evidence is about tracking (the Tracking Specialist sees their auto-closes) */
 export const TRACKING_KINDS = new Set(["notrack", "dog"]);
