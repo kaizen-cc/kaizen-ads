@@ -14,6 +14,8 @@ import { ALLOTMENT_RULE, allotmentLine, usageCounts, MAX_VARIATIONS, slidesOf, t
 import type { SuggestionKind } from "@/lib/suggestion-kinds";
 import { LIVE, isLive } from "@/lib/live";
 import { baseRole } from "@/lib/roles";
+import { metaSeatPicker, type SeatRow } from "@/lib/buyer-seats";
+import { servicesOf } from "@/lib/services";
 import { applySeed, seedBlock, type QuickBrief } from "@/lib/quick-brief";
 import { assetsBlock, loadAssets, loadCatalog } from "@/lib/client-assets";
 import { linkBriefAssets, linkHaveLines } from "@/lib/asset-links";
@@ -1191,10 +1193,14 @@ export type OnboardingCard = {
   writingSince: string | null; // the strategist started writing it at
   writeError: string | null; // why the last try failed
   setup: OnboardingSheet | null; // the Account Overview sheet's onboarding checklist
+  /** Their Meta buyer seat, set right on the card: shown when they buy Meta ads or someone already holds it */
+  buyer?: { current: { id: string; name: string } | null; show: boolean };
 };
 export type OnboardingState = {
   clients: OnboardingCard[];
   unmatched: { id: string; name: string | null; at: string }[];
+  /** Who may hold a Meta buyer seat: the card's picker */
+  buyers?: { id: string; name: string }[];
   /** The Head of Creative's view: first rounds and production only, never the intake form or the account setup (the account manager's) */
   creativeView?: boolean;
 };
@@ -1207,7 +1213,7 @@ export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingStat
   const [{ data: clients }, { data: unmatched }] = await Promise.all([
     db
       .from("clients")
-      .select("id, name, slug, created_at, reonboarded_at, creative_package, industry_detail, first_round_started_at, first_round_error, onboarding_sheet")
+      .select("id, name, slug, created_at, reonboarded_at, creative_package, industry_detail, first_round_started_at, first_round_error, onboarding_sheet, services, services_extra, services_removed")
       // Also active clients the Account Overview sheet's Onboarding tab says aren't fully set up yet
       .or(["status.eq.onboarding", "and(status.eq.active,onboarding_sheet->>progress.not.ilike.*complete*)", ...(waitingIds.length ? [`id.in.(${waitingIds.join(",")})`] : [])].join(","))
       .is("archived_at", null)
@@ -1216,12 +1222,16 @@ export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingStat
     db.from("client_intakes").select("id, business_name, received_at").eq("status", "unmatched").order("received_at", { ascending: false }).limit(10),
   ]);
   const ids = (clients ?? []).map((c) => c.id);
-  const [{ data: intakes }, { data: rounds }] = ids.length
+  const [{ data: intakes }, { data: rounds }, { data: seats }, { data: staff }] = ids.length
     ? await Promise.all([
         db.from("client_intakes").select("client_id, status, received_at, summary").in("client_id", ids).order("received_at", { ascending: false }),
         db.from("creative_suggestions").select(OPEN_COLS + ", status, request_numbers").eq("kind", "onboarding").in("client_id", ids).in("status", ["open", "approved"]).order("created_at", { ascending: true }),
+        // Their Meta buyer seat, and who could take it: a new client's media buyer is set right on its card
+        db.from("client_assignments").select("client_id, profile_id, role, is_primary, created_at").eq("role", "meta_buyer").in("client_id", ids),
+        db.from("profiles").select("id, full_name, role, also_buys, also_social, also_designs_email, teams").eq("is_active", true).order("full_name"),
       ])
-    : [{ data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }];
+  const picker = metaSeatPicker((seats ?? []) as SeatRow[], (staff ?? []) as { id: string; full_name: string; role: string }[]);
   const open = await toOpen(db, ((rounds ?? []) as unknown as Record<string, unknown>[]).filter((r) => r.status === "open"));
   return {
     clients: (clients ?? []).map((c) => {
@@ -1248,8 +1258,13 @@ export async function loadOnboarding(db: SupabaseClient): Promise<OnboardingStat
         writingSince: c.first_round_started_at && Date.now() - Date.parse(c.first_round_started_at) < 15 * 60_000 ? (c.first_round_started_at as string) : null,
         writeError: (c.first_round_error as string | null) ?? null,
         setup: (c.onboarding_sheet as OnboardingSheet | null) ?? null,
+        buyer: (() => {
+          const current = picker.current(c.id);
+          return { current, show: Boolean(current) || servicesOf(c).includes("facebook-ads") };
+        })(),
       };
     }),
+    buyers: picker.options,
     unmatched: (unmatched ?? []).map((u) => ({ id: u.id, name: u.business_name, at: u.received_at })),
   };
 }

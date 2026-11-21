@@ -152,3 +152,19 @@ function fakeDb(initial: SeatRow[]) {
   };
   return db as unknown as SupabaseClient & { rows: Row[] };
 }
+
+describe("the Meta buyer picker on an onboarding card", () => {
+  const staff = [
+    { id: "pat", full_name: "Pat Buyer", role: "media_buyer" },
+    { id: "hm", full_name: "Head Meta", role: "head_of_meta" },
+    { id: "gil", full_name: "Gil Google", role: "google_buyer" },
+    { id: "dee", full_name: "Dee Designer", role: "graphic_designer" },
+  ];
+  it("shows who holds the seat on each client, and offers only people who may buy Meta", async () => {
+    const { metaSeatPicker } = await import("@/lib/buyer-seats");
+    const picker = metaSeatPicker(rows, staff);
+    expect(picker.current(ACME)).toEqual({ id: "pat", name: "Pat Buyer" });
+    expect(picker.current("c-crowdwear")).toBeNull();
+    expect(picker.options.map((o) => o.id)).toEqual(["pat", "hm"]);
+  });
+});

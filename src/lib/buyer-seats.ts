@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { SLOTS, canHold } from "@/lib/roles";
 
 // Several people can hold one seat on a client (two Meta buyers, say): client_assignments has a row each, and
 // is_primary tells the primary (true) from the secondaries (false). The primary is the one a task picks when it needs a
@@ -44,6 +45,24 @@ export function orderSeats<T extends SeatRow>(rows: readonly T[]): T[] {
 /** The primary holder's row of a seat (the first one when none is marked), or null when nobody holds it */
 export function primaryOf<T extends SeatRow>(rows: readonly T[], role: string, clientId?: string | null): T | null {
   return orderSeats(rows.filter((r) => r.role === role && (clientId == null || r.client_id === clientId)))[0] ?? null;
+}
+
+/**
+ * The Meta buyer seat as an onboarding card on the Overview offers it (a new client needs a media buyer, and the
+ * Overview is where execs see it first): who holds it on each client, and the active people who may.
+ */
+export function metaSeatPicker(
+  rows: readonly (SeatRow & { name?: string | null })[],
+  staff: readonly { id: string; full_name: string; role: string; also_buys?: boolean | null; also_social?: boolean | null; also_designs_email?: boolean | null; teams?: readonly string[] | null }[],
+) {
+  const slot = SLOTS.find((s) => s.value === "meta_buyer")!;
+  return {
+    current: (clientId: string) => {
+      const a = primaryOf(rows, "meta_buyer", clientId);
+      return a ? { id: a.profile_id, name: a.name ?? staff.find((p) => p.id === a.profile_id)?.full_name ?? "Unknown" } : null;
+    },
+    options: staff.filter((p) => canHold(slot, p)).map((p) => ({ id: p.id, name: p.full_name })),
+  };
 }
 
 /** Everyone on a seat, primary first, each once */
