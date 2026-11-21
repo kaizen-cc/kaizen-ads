@@ -94,4 +94,38 @@ describe("tracking as a state: the newest word decides", () => {
     for (const t of ["Tracking is broken in two places:", "We're fixing that tracking now.", "we're setting up conversion tracking on your intake form", "Is the pixel working?", "tracking should be live tomorrow", "Tracking is the #1 priority, and it's stalled"])
       expect(stateConfirmed([e(1, "2026-11-18T12:00:00Z", t)])).toBeNull();
   });
+  it("never closes on the phrasings that falsely closed on Nov 20 (conditions, plans, negations, curly apostrophes)", () => {
+    for (const t of [
+      "Meta’s peer data shows *0% checkout-entry rate* on both campaigns, so the checkout event isn’t firing.",
+      "Lead flow and call tracking are working, but no revenue is visible yet from the campaign.",
+      "Kyle promised the client fixed tracking plus a report and Loom by Wednesday.",
+      "Tracking: the web team fixed the homepage buttons and waiver links on Nov 10.",
+      "Mark’s plan is $5 → $6.50/day until tracking and offers are fixed.",
+      "The team walked through the 90-day agreement, Slack updates and tracking setup.",
+      "We’re preparing the tracking setup for the upcoming VIP early access offer campaign.",
+      "They were asked to share all the pages they are pushing so tracking can be set up.",
+      "Kyle proposed a separate ad account and pixel for apparel while keeping the existing setup for bedding.",
+      "This allows our team to manage and verify the > tracking setup needed to monitor your campaigns effectively.",
+      "This is the pixel: <https://business.facebook.com/latest/settings/events_dataset_and_pixel/?business_id=1>",
+      "We can also look into retargeting website visitors, provided the tracking is properly set up.",
+      "There's just no Meta Pixel set up yet.",
+      "Before we reactivate the campaign, I'll wait for to implement the tracking setup in WordPress.",
+      "Please ping me once the pixel is setup on all the posh pages.",
+      "I have access to the Ad account but I do not see tracking set up for the website.",
+      "Richard updated the tracking today, but Complete Registration still isn’t showing in Ads Manager",
+      "Confirm pixel and conversion tracking is firing on BestTicketsVIP",
+      "Get the Zombie event campaign back up with tracking verified on the Zombie landing page",
+      "hey <@U06QNJD9DG8> is tracking ready here",
+      "That's on us, and getting tracking done this week is how we close the gap",
+      "_Must happen by Fri 10/23_ • <@U0C2WQW7Q02> get lead tracking working on the private-events pages",
+      "On the email side, revenue tracking is now live, showing $5,300 in the last 30 days",
+      "Clare tested the funnels end to end and tracking is ready, pending confirmation that the client has launched",
+      "We moved to Toast in August and need to make sure all tracking is working",
+    ])
+      expect(stateConfirmed([e(1, "2026-11-18T12:00:00Z", t)])).toBeNull();
+  });
+  it("closes on plain confirmations inside longer messages", () => {
+    for (const t of ["tracking is ready. Form submissions are tracked as \"Lead\" Pixel ID: 1669620706647924", "Launch is pending: access and tracking are done, but the client has not shared content", "Tracking is set up.", "team, the pixel is now working.", "Yes tracking is done <@U06Q1MF678U>", "<!here> tracking ready for the new website :)", "<@U06PZPLGX4J> I’m lost here, the tracking was done a while ago. Did something change?"])
+      expect(stateConfirmed([e(1, "2026-11-18T12:00:00Z", t)])?.quote).toBeTruthy();
+  });
 });

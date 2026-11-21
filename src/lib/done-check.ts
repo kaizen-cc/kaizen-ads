@@ -139,12 +139,14 @@ export async function classify(admin: Admin, item: Checkable): Promise<{ verdict
       prompt: `Client: ${item.client}\nThe work: ${item.title}\nDone means: ${means}\nOpened: ${item.since.slice(0, 10)}\n\nWhat was said since (newest first):\n${evidence.map((e) => `${e.n}. [${e.at.slice(0, 10)} · ${e.source}${e.author ? ` · ${e.author}${byTracker(e.author) ? " (Tracking Specialist)" : ""}` : ""}] ${e.text}`).join("\n")}`,
     });
     const v = guard(out, evidence, item.since, { latestWins: isState });
-    // Tracking is a state with plain words for "it's working": the newest confirmation closes it unless something later
-    // says it broke, whatever the model's caution (src/lib/done-check-core.ts stateConfirmed)
-    if (tracking && v.state !== "done") {
+    // Tracking is a state with plain words for "it's working", so a fixed rule decides it, not the model: the newest plain
+    // confirmation (no plan, condition or negation) closes it unless something later says it broke, and a model's "done"
+    // that the rule doesn't find stays moving (src/lib/done-check-core.ts stateConfirmed)
+    if (tracking) {
       const { stateConfirmed } = await import("@/lib/done-check-core");
       const hit = stateConfirmed(evidence);
       if (hit) return { verdict: { state: "done", quote: hit.quote, evidence: hit.ev.n, sure: true }, ev: hit.ev };
+      if (v.state === "done") return { verdict: { ...v, state: "moving" }, ev: null };
     }
     return { verdict: v, ev: v.evidence != null ? (evidence.find((e) => e.n === v.evidence) ?? null) : null };
   } catch (e) {
@@ -256,7 +258,7 @@ export async function reopen(admin: Admin, key: string, by: string): Promise<{ o
   if (!r?.closed_at || r.reopened_at) return { ok: false, error: "That wasn't closed automatically (or it's already reopened)." };
   const prev = (r.prev ?? {}) as Record<string, unknown>;
   const now = new Date().toISOString();
-  if (r.kind === "notrack") await admin.from("client_onboarding").update({ tracking: prev.tracking ?? null, updated_at: now }).eq("client_id", r.client_id);
+  if (r.kind === "notrack") await admin.from("client_onboarding").update({ tracking: prev.tracking ?? {}, updated_at: now }).eq("client_id", r.client_id);
   if (r.kind === "dog") await admin.from("watch_flags").update({ resolved_at: null, resolution: null }).eq("id", String(r.key).slice(4));
   if (r.kind === "ask") await admin.from("agent_asks").update({ status: "open", done_at: null }).eq("id", String(r.key).slice(4));
   if (r.kind === "asana" && prev.asana) {

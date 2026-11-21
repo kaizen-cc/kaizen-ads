@@ -22,26 +22,51 @@ export const norm = (s: string) =>
 /** Words that undo a "done": not yet, waiting, planned, an open question */
 const HEDGE = /\b(not (?:yet|quite|working|firing|set ?up|done|live|fixed)|isn'?t (?:working|firing|set|done|live|fixed|tracking|sending)|aren'?t|haven'?t|hasn'?t|didn'?t|doesn'?t|won'?t|can'?t|still (?:not|broken|missing|waiting|need)|need(?:s)? to|should|will|going to|gonna|plan(?:ning)? to|tomorrow|next week|later|almost|partially|mostly|i think|maybe|might|hopefully|trying|working on|in progress|\?)/i;
 
-/** A message saying it's broken (but "not broken" isn't) */
-export const BROKEN = /(?<!\bnot |n't |never )\b(broken|not (?:firing|working|tracking|sending|recording|showing|reaching)|isn'?t (?:firing|working|sending|tracking|showing|reaching|recording)|aren'?t (?:firing|showing|coming through)|stopped (?:firing|working|tracking|sending)|double[- ]counting|no (?:server|capi) events|sent nothing|conversions are zero|zero conversions)\b/i;
+/** Curly apostrophes as straight ones ("isn’t" = "isn't"), so the checks below read Slack's typography */
+export const apos = (s: string) => s.replace(/[’‘`]/g, "'");
 
-/** A sentence saying tracking is set up and working now */
-const CONFIRM = /\b(?:tracking|pixel|capi|conversions? api|purchase (?:event|tracking)|lead (?:event|tracking)|ga4|gtm|events?)\b[^.!?\n]{0,40}\b(?:fixed|ready|working|works|set ?up|done|live|verified|firing|ok|okay|good to go)\b|\b(?:fixed|verified)\b[^.!?\n]{0,25}\b(?:tracking|pixel|capi)\b|\btested it and it[’']?s (?:ok|okay|working|fine)\b/i;
+/** A message saying it's broken (but "not broken" isn't) */
+const BROKEN_RE = /(?<!\bnot |n't |never )\b(broken|not (?:firing|working|tracking|sending|recording|showing|reaching)|(?:is|are|was|were)n'?t (?:firing|working|sending|tracking|showing|reaching|recording|coming through)|still not (?:seeing|showing|firing|working|getting)|stopped (?:firing|working|tracking|sending)|double[- ]counting|no (?:server|capi) events|sent nothing|conversions are zero|zero conversions|(?:won'?t|doesn'?t|don'?t) (?:work|fire|track))\b/i;
+export const BROKEN = { test: (s: string) => BROKEN_RE.test(apos(s)) };
+
+/** What tracking is called ("call tracking" isn't conversion tracking) */
+const SUBJ = String.raw`(?<!call )(?:tracking|pixel|capi|conversions? api|ga4|gtm|(?:purchase|lead|checkout|conversion) (?:events?|tracking))`;
+/** A clause saying it IS set up and working: the thing, then (is/are) a done word, right next to each other */
+const CONFIRM = new RegExp(
+  String.raw`\b${SUBJ}\s+(?:is\s+|are\s+|was\s+|were\s+|'s\s+|has been\s+|have been\s+)?(?:now\s+|all\s+|fully\s+|properly\s+)?(?:fixed|ready|working|set up|done|live|verified|firing|good to go)\b` +
+    String.raw`|\b(?:we|i|we've|i've|we have|i have|has|have)\s+(?:fixed|verified)\s+(?:the\s+)?${SUBJ}\b` +
+    String.raw`|\btested it and it'?s (?:ok|okay|working|fine)\b`,
+  "i",
+);
+/** Words that make a clause a condition, a plan or a doubt rather than a fact ("once the pixel is set up", "no pixel set up yet") */
+const NOT_A_FACT =
+  /\b(no|not|never|without|yet|once|until|unless|if|provided|when|can|could|would|should|will|must|need|needs|needed|wait|waiting|promised|preparing|pending|before|planning|plan|going to|soon|hopefully|maybe|think|confirm|check|checking|ensure|make sure|get|getting|let's|please|email|klaviyo)\b|\bwith\s+(?:\w+\s+)?(?:tracking|pixel)\b|\b(?:is|are|was|has|did)\s+(?:the\s+|all\s+)?(?:tracking|pixel|capi|ga4|gtm)\b|\?/i;
+
+/** One clause that confirms tracking, or null: sentences split at . ! ? ; : and at "but" */
+export function confirmingClause(text: string): string | null {
+  const clauses = apos(text)
+    .replace(/<[@#!][^>]*>/g, " ")
+    .replace(/<?https?:\/\/\S+/g, " ")
+    .split(/(?<=[.!?\n;:])\s+|,?\s+but\s+/i);
+  for (const c of clauses) {
+    if (!CONFIRM.test(c) || BROKEN.test(c)) continue;
+    if (NOT_A_FACT.test(c.replace(/\bnot broken\b/gi, ""))) continue;
+    return c.replace(/\s+/g, " ").trim().slice(0, 300);
+  }
+  return null;
+}
 
 /**
- * Tracking is a state, so for a tracking item the newest word decides, without a model: the newest message with a
- * sentence confirming it's set up and working (and no hedge or breakage in that sentence) closes it, unless a later
- * message reports it broken. Returns the closing evidence and sentence, or null.
+ * Tracking is a state, so for a tracking item the newest word decides, without a model: walking newest first, a
+ * message reporting it broken stops the walk (stays open); the first message with a clause plainly saying it's set
+ * up and working closes it. Returns the closing evidence and clause, or null.
  */
 export function stateConfirmed(evidence: readonly Evidence[]): { ev: Evidence; quote: string } | null {
   const newest = [...evidence].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   for (const e of newest) {
     if (BROKEN.test(e.text)) return null;
-    const sentence = e.text
-      .replace(/<[@#!][^>]*>/g, " ")
-      .split(/(?<=[.!?\n])\s+/)
-      .find((x) => CONFIRM.test(x) && !HEDGE.test(x) && !BROKEN.test(x));
-    if (sentence) return { ev: e, quote: sentence.replace(/\s+/g, " ").trim().slice(0, 300) };
+    const quote = confirmingClause(e.text);
+    if (quote) return { ev: e, quote };
   }
   return null;
 }
@@ -59,7 +84,7 @@ export function guard(v: Verdict, evidence: readonly Evidence[], since: string, 
   const inText = ev ? norm(ev.text).includes(quote) : evidence.some((e) => norm(e.text).includes(quote));
   const after = ev ? Date.parse(ev.at) >= Date.parse(since) : false;
   if (!v.sure || quote.length < 8 || !inText || !after) return { ...v, state: quote && inText ? "moving" : "nothing" };
-  if (HEDGE.test(v.quote) || BROKEN.test(v.quote)) return { ...v, state: "moving" };
+  if (HEDGE.test(apos(v.quote)) || BROKEN.test(v.quote)) return { ...v, state: "moving" };
   if (opts.latestWins && ev && evidence.some((e) => Date.parse(e.at) > Date.parse(ev.at) && BROKEN.test(e.text))) return { ...v, state: "moving" };
   return v;
 }
