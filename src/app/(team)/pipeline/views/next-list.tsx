@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
 import { markAsksDone, markAskDone, markBibleReviewed, removeAskGroupItem, removeAsks, tickAskGroupItem, tickAskItem } from "../next-actions";
-import { delegateNextItem, delegateOptions } from "@/app/(team)/delegate-actions";
+import { delegateAskLine, delegateNextItem, delegateOptions } from "@/app/(team)/delegate-actions";
 import { approveFeedback, commentFeedback } from "@/app/(team)/feedback/actions";
 import { TranscriptButton } from "@/components/assistant-call-parts";
 import { closeThen, pushParams, useParam } from "@/lib/url-state";
@@ -624,6 +624,12 @@ function AskGroupCard({ it, group, onDone, onRemove }: { it: NextItem; group: As
       router.refresh();
     });
   };
+  // A line delegated to a teammate: gone from here at once; the last one clears the card
+  const gone = (n: number) => {
+    setRemoved((r) => [...r, n]);
+    const rest = left.filter((k) => k !== n);
+    if (!rest.length || rest.every((k) => ticks[k])) onDone();
+  };
   const all = () => {
     setTicks(group.items.map(() => true));
     start(async () => {
@@ -675,6 +681,8 @@ function AskGroupCard({ it, group, onDone, onRemove }: { it: NextItem; group: As
                     {line.note && <span className="text-[12px] text-ink/45">{line.note}</span>}
                   </span>
                 </label>
+                {/* Each line to its own teammate: only this line goes, the rest stay here (issue #99) */}
+                {!ticks[n] && <DelegatePicker small clientId={group.client?.id ?? null} label={`Hand over: ${line.text.slice(0, 40)}`} send={(to, note, due) => delegateAskLine({ askId: line.askId, line: line.index === null ? null : placeOf(n)! + 1, title: line.text, to, note, due })} onSent={() => gone(n)} />}
                 <button type="button" onClick={() => removeLine(n)} aria-label={`Remove "${line.text}"`} title="Not needed any more, or it won't be done: take it off your list" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-ink/35 transition-colors hover:bg-ink/[0.06] hover:text-fg sm:h-8 sm:w-8">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <path d="M6 6l12 12M18 6 6 18" />
@@ -814,6 +822,11 @@ function AskChecklist({ id, items }: { id: string; items: { text: string; done: 
  * item then reads "Delegated to ..." and clears when they mark it done.
  */
 function DelegateButton({ item, delegate }: { item: NextItem; delegate: NonNullable<NextItem["delegate"]> }) {
+  return <DelegatePicker clientId={delegate.clientId} label={`Hand it over: ${item.client}`} send={(to, note, due) => delegateNextItem({ ref: delegate.ref, clientId: delegate.clientId, title: delegate.title, to, note, due })} />;
+}
+
+/** The Delegate picker itself: who (the client's seats first), an optional note and due date, then send */
+function DelegatePicker({ clientId, label, send: sendTo, onSent, small = false }: { clientId: string | null; label: string; send: (to: string, note: string, due: string) => Promise<{ ok: true; to: string } | { ok: false; error: string }>; onSent?: () => void; small?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [people, setPeople] = useState<{ id: string; name: string; role: string; onClient: boolean }[] | null>(null);
@@ -824,18 +837,19 @@ function DelegateButton({ item, delegate }: { item: NextItem; delegate: NonNulla
   const [pending, start] = useTransition();
   const show = () => {
     setOpen((o) => !o);
-    if (!people) delegateOptions(delegate.clientId).then(setPeople).catch(() => setPeople([]));
+    if (!people) delegateOptions(clientId).then(setPeople).catch(() => setPeople([]));
   };
   const send = () =>
     start(async () => {
-      const r = await delegateNextItem({ ref: delegate.ref, clientId: delegate.clientId, title: delegate.title, to, note, due });
+      const r = await sendTo(to, note, due);
       if (!r.ok) return setError(r.error);
       setOpen(false);
+      onSent?.();
       router.refresh();
     });
   return (
     <span className="relative flex flex-col sm:inline-flex">
-      <button type="button" onClick={show} aria-expanded={open} className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full px-4 text-[13px] text-ink/60 transition-colors hover:bg-ink/[0.06] hover:text-fg sm:min-h-9">
+      <button type="button" onClick={show} aria-expanded={open} className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full text-ink/60 transition-colors hover:bg-ink/[0.06] hover:text-fg ${small ? "px-3 text-[12px] sm:min-h-8" : "px-4 text-[13px] sm:min-h-9"}`}>
         Delegate
       </button>
       {open && (
@@ -862,7 +876,7 @@ function DelegateButton({ item, delegate }: { item: NextItem; delegate: NonNulla
           </label>
           {error && <p className="text-[12px] text-[var(--bad)]">{error}</p>}
           <button type="button" disabled={!to || pending} onClick={send} className="h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 sm:h-9">
-            {pending ? "Sending..." : `Hand it over: ${item.client}`}
+            {pending ? "Sending..." : label}
           </button>
         </div>
       )}

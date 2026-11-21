@@ -75,3 +75,21 @@ export function removeItem(items: CheckItem[], text: string): CheckItem[] {
   const t = text.trim().toLowerCase();
   return items.filter((it) => it.text.trim().toLowerCase() !== t);
 }
+
+/**
+ * One line of a checklist handed to a teammate (an item ref "ask:<id>#<n>", n counted from 1): that line alone goes,
+ * the rest stay with the owner. Handing over a client's whole follow-ups reminder sent every line to the first person
+ * picked (issue #99). close: nothing open is left, so the reminder itself is done.
+ */
+export function handOverLine(items: CheckItem[], n: number): { line: CheckItem; rest: CheckItem[]; close: boolean } | null {
+  const line = Number.isInteger(n) ? items[n - 1] : undefined;
+  if (!line) return null;
+  const rest = items.filter((_, i) => i !== n - 1);
+  return { line, rest, close: rest.every((i) => i.done) };
+}
+
+/** "ask:<id>" or "ask:<id>#<n>" (one line of its checklist, from 1) */
+export function askRefOf(item: string): { id: string; line: number | null } | null {
+  const m = /^ask:([^#\s]+)(?:#(\d+))?$/.exec(item.trim());
+  return m ? { id: m[1], line: m[2] ? Number(m[2]) : null } : null;
+}
