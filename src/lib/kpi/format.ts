@@ -31,3 +31,13 @@ export function deviationTone(x: number | null | undefined) {
   if (x <= 0.15) return "text-warn";
   return "text-bad";
 }
+
+/**
+ * Where every account on the board is: judged (the four status tiles), no KPI set, or not reporting yet (no spend
+ * or the platform can't see it). The three always add up to the total, so the tiles' sum and the account count agree.
+ */
+export function boardBreakdown(statuses: Status[]) {
+  const judged = statuses.filter((s) => s === "excellent" || s === "good" || s === "close" || s === "off").length;
+  const unset = statuses.filter((s) => s === "unset").length;
+  return { total: statuses.length, judged, unset, notReporting: statuses.length - judged - unset };
+}
