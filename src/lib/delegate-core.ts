@@ -24,7 +24,9 @@ const DOWN: Record<string, readonly string[]> = {
  * everyone for an exec, never the delegator. People holding a seat on the client come first.
  */
 export function delegateCandidates(me: { id: string; role: string; isExec: boolean }, team: readonly Candidate[], clientSeatIds: readonly string[] = []): (Candidate & { onClient: boolean })[] {
-  const allowed = me.isExec ? null : new Set(DOWN[me.role] ?? ["graphic_designer", "video_editor", "copywriter", "media_buyer", "google_buyer"]);
+  // An executive by role counts as an exec even without the is_exec flag (as line-actions and chat-permissions do): the
+  // flag alone left execs with only designers, editors, copywriters and buyers, missing teammates like account managers
+  const allowed = me.isExec || me.role === "executive" ? null : new Set(DOWN[me.role] ?? ["graphic_designer", "video_editor", "copywriter", "media_buyer", "google_buyer"]);
   const seat = new Set(clientSeatIds);
   return team
     .filter((p) => p.id !== me.id && (!allowed || allowed.has(p.role)))
