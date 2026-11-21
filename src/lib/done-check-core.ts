@@ -23,7 +23,28 @@ export const norm = (s: string) =>
 const HEDGE = /\b(not (?:yet|quite|working|firing|set ?up|done|live|fixed)|isn'?t (?:working|firing|set|done|live|fixed|tracking|sending)|aren'?t|haven'?t|hasn'?t|didn'?t|doesn'?t|won'?t|can'?t|still (?:not|broken|missing|waiting|need)|need(?:s)? to|should|will|going to|gonna|plan(?:ning)? to|tomorrow|next week|later|almost|partially|mostly|i think|maybe|might|hopefully|trying|working on|in progress|\?)/i;
 
 /** A message saying it's broken (but "not broken" isn't) */
-export const BROKEN = /(?<!\bnot |n't |never )\b(broken|not (?:firing|working|tracking|sending|recording)|isn'?t (?:firing|working|sending|tracking)|stopped (?:firing|working|tracking|sending)|double[- ]counting|no (?:server|capi) events|sent nothing)\b/i;
+export const BROKEN = /(?<!\bnot |n't |never )\b(broken|not (?:firing|working|tracking|sending|recording|showing|reaching)|isn'?t (?:firing|working|sending|tracking|showing|reaching|recording)|aren'?t (?:firing|showing|coming through)|stopped (?:firing|working|tracking|sending)|double[- ]counting|no (?:server|capi) events|sent nothing|conversions are zero|zero conversions)\b/i;
+
+/** A sentence saying tracking is set up and working now */
+const CONFIRM = /\b(?:tracking|pixel|capi|conversions? api|purchase (?:event|tracking)|lead (?:event|tracking)|ga4|gtm|events?)\b[^.!?\n]{0,40}\b(?:fixed|ready|working|works|set ?up|done|live|verified|firing|ok|okay|good to go)\b|\b(?:fixed|verified)\b[^.!?\n]{0,25}\b(?:tracking|pixel|capi)\b|\btested it and it[’']?s (?:ok|okay|working|fine)\b/i;
+
+/**
+ * Tracking is a state, so for a tracking item the newest word decides, without a model: the newest message with a
+ * sentence confirming it's set up and working (and no hedge or breakage in that sentence) closes it, unless a later
+ * message reports it broken. Returns the closing evidence and sentence, or null.
+ */
+export function stateConfirmed(evidence: readonly Evidence[]): { ev: Evidence; quote: string } | null {
+  const newest = [...evidence].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  for (const e of newest) {
+    if (BROKEN.test(e.text)) return null;
+    const sentence = e.text
+      .replace(/<[@#!][^>]*>/g, " ")
+      .split(/(?<=[.!?\n])\s+/)
+      .find((x) => CONFIRM.test(x) && !HEDGE.test(x) && !BROKEN.test(x));
+    if (sentence) return { ev: e, quote: sentence.replace(/\s+/g, " ").trim().slice(0, 300) };
+  }
+  return null;
+}
 
 /**
  * The model's verdict, held to the guardrails: a "done" needs a quote found in one of the evidence messages (Slack

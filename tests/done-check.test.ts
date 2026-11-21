@@ -78,3 +78,20 @@ describe("the Tracking Specialist's real confirmations", () => {
     expect(done("Tracking fixed!", "tracking   fixed <@U1> thanks")).toBe("done");
   });
 });
+
+import { stateConfirmed } from "@/lib/done-check-core";
+describe("tracking as a state: the newest word decides", () => {
+  const e = (n: number, at: string, text: string): Evidence => ({ n, at, source: "slack_internal", author: "Tracking", text, url: null });
+  it("closes on the newest confirmation", () => {
+    for (const t of ["Tracking fixed <@U07ABC>", "tracking is ready for checkpilot.co", "the pixel is now working", "tracking is working fine", "<!here> After a very long and HARD meeting with the client, tracking is not broken, we tested it and it’s ok. My theory is, they're receiving traffic", "the tracking was done a while ago. Did something change?"])
+      expect(stateConfirmed([e(1, "2026-11-18T12:00:00Z", t)])?.quote).toBeTruthy();
+  });
+  it("stays open when a later message says it broke", () => {
+    expect(stateConfirmed([e(1, "2026-11-12T12:00:00Z", "Complete Registration still isn't showing in Ads Manager"), e(2, "2026-11-11T12:00:00Z", "Tracking fixed")])).toBeNull();
+    expect(stateConfirmed([e(1, "2026-11-16T12:00:00Z", "The site isn't sending landing page views back to the pixel"), e(2, "2026-10-28T12:00:00Z", "tracking is ready")])).toBeNull();
+  });
+  it("never closes on breakage, plans or work in progress", () => {
+    for (const t of ["Tracking is broken in two places:", "We're fixing that tracking now.", "we're setting up conversion tracking on your intake form", "Is the pixel working?", "tracking should be live tomorrow", "Tracking is the #1 priority, and it's stalled"])
+      expect(stateConfirmed([e(1, "2026-11-18T12:00:00Z", t)])).toBeNull();
+  });
+});

@@ -127,7 +127,7 @@ function due(step: string | null) {
   if (step === "bible_upkeep") return true; // hourly (vercel.json): links, website issues, creative packages with nothing made
   if (step === "learnings") return true; // nightly (vercel.json): the team's learnings classified, merged, settled and retired
   if (step === "drift") return true; // weekly (vercel.json): replay what the week's learning changes did to each agent
-  if (step === "done") return hour >= 7 && hour <= 21; // hourly (vercel.json), 7am to 9pm: items on anyone's day closed when Slack, Gmail or call notes show them done
+  if (step === "done") return hour >= 7 && hour <= 23; // hourly (vercel.json), 7am to 11pm: items on anyone's day closed when Slack, Gmail or call notes show them done
   if (step === "dogs") return hour >= 7 && hour <= 18; // twice a day (vercel.json): the daily watchdogs, same-day notices to the account owner and the line's head
   if (step === "sites") return true; // hourly (vercel.json): web design clients' sites up or down; Mondays the page check
   if (step === "reviews") return weekday === "Mon" && hour >= 6 && hour <= 12; // hourly on Mondays (vercel.json): the line heads' weekly account reviews, drafted a batch at a time

@@ -139,6 +139,13 @@ export async function classify(admin: Admin, item: Checkable): Promise<{ verdict
       prompt: `Client: ${item.client}\nThe work: ${item.title}\nDone means: ${means}\nOpened: ${item.since.slice(0, 10)}\n\nWhat was said since (newest first):\n${evidence.map((e) => `${e.n}. [${e.at.slice(0, 10)} · ${e.source}${e.author ? ` · ${e.author}${byTracker(e.author) ? " (Tracking Specialist)" : ""}` : ""}] ${e.text}`).join("\n")}`,
     });
     const v = guard(out, evidence, item.since, { latestWins: isState });
+    // Tracking is a state with plain words for "it's working": the newest confirmation closes it unless something later
+    // says it broke, whatever the model's caution (src/lib/done-check-core.ts stateConfirmed)
+    if (tracking && v.state !== "done") {
+      const { stateConfirmed } = await import("@/lib/done-check-core");
+      const hit = stateConfirmed(evidence);
+      if (hit) return { verdict: { state: "done", quote: hit.quote, evidence: hit.ev.n, sure: true }, ev: hit.ev };
+    }
     return { verdict: v, ev: v.evidence != null ? (evidence.find((e) => e.n === v.evidence) ?? null) : null };
   } catch (e) {
     console.error("[done-check]", item.key, e instanceof Error ? e.message : e);
