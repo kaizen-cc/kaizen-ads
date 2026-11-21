@@ -92,6 +92,11 @@ describe("what the assistant may open", () => {
     expect(safeAppPath("/clients/crust-pizza?tab=ads")).toBe("/clients/crust-pizza?tab=ads");
     expect(safeAppPath("/board?t=412")).toBe("/board?t=412");
   });
+  it("opens a call's safety review (the link on an urgent safety item)", () => {
+    const href = "/safety/489dc1ee-be7e-4de9-88ea-f6b92626b5bc";
+    expect(safeAppPath(href)).toBe(href);
+    expect(safeLink(href)).toEqual({ href, external: false });
+  });
   it("refuses anything else", () => {
     for (const h of ["//evil.com", "https://evil.com", "/api/agent-call/turn", "/clients/../api", "javascript:alert(1)", "/clients/x y"]) expect(safeAppPath(h), h).toBeNull();
   });
