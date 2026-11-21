@@ -321,7 +321,7 @@ function socialNumbersOut(n: import("@/lib/social-score").PlatformNumbers) {
 }
 
 /** The tools the email and organic social teams get (the email one only for the email team) */
-const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "team_kpis", "email_marketing", "kpi_board", "organic_social", "social_score", "run_social_audit", "start_social_sprint", "search_client", "recent_calls", "read_call", "rank_clients", "top_emails", "email_detail", "top_posts", "search_my_kaizen_ai", "read_my_kaizen_ai", "read_google_file"]);
+const CHANNEL_TOOLS = new Set(["list_clients", "get_client_context", "team_kpis", "email_marketing", "kpi_board", "organic_social", "social_score", "run_social_audit", "start_social_sprint", "search_client", "recent_calls", "read_call", "rank_clients", "top_emails", "email_detail", "top_posts", "search_my_kaizen_ai", "read_my_kaizen_ai", "read_google_file", "export_to_google_doc", "export_to_google_sheet"]);
 /** Per turn: the add-on tools loaded for this person, which the email and social teams get as well */
 const CHANNEL_EXTRA = new Set<string>(["make_deck"]);
 

@@ -156,4 +156,10 @@ describe("Kaizen AI quick actions and tools", () => {
     expect(plan("head_of_meta")).toEqual(["meta", "team"]);
     expect(plan("executive")).toEqual(["meta", "google", "team"]);
   });
+
+  it("the email and social teams can save a Google Doc or Sheet and read a shared Drive file", async () => {
+    const { toolsFor } = await import("@/lib/kaizen-ai/tools");
+    const all = ["export_to_google_doc", "export_to_google_sheet", "read_google_file", "account_metrics"].map((name) => ({ name }));
+    for (const role of ["head_of_email", "email_strategist", "head_of_social"]) expect(toolsFor(who(role), all).map((t) => t.name)).toEqual(["export_to_google_doc", "export_to_google_sheet", "read_google_file"]);
+  });
 });
