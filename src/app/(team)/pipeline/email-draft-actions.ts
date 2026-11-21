@@ -40,6 +40,35 @@ export async function dismissEmailDraft(id: string, status: "dismissed" | "sent"
   return { ok: true };
 }
 
+/**
+ * The chat on a draft being reviewed: what to change, in the person's words; the rewrite comes back to the sheet
+ * (subject and body) for them to keep editing or save. Nothing is saved here.
+ */
+export async function reviseEmailDraft(
+  id: string,
+  draft: { subject: string; body: string },
+  ask: string,
+  history: { role: "me" | "ai"; text: string }[] = [],
+): Promise<{ ok: true; reply: string; subject: string; body: string } | { ok: false; error: string }> {
+  const me = await requireStaff();
+  const text = String(ask ?? "").trim().slice(0, 1500);
+  if (!text) return { ok: false, error: "Say what to change." };
+  const db = await createClient();
+  const { data: d } = await db.from("client_email_drafts").select("id, owner_id, client_id, clients(name)").eq("id", id).maybeSingle();
+  if (!d || d.owner_id !== me.id) return { ok: false, error: "That draft isn't yours." };
+  try {
+    const { reviseDraft } = await import("@/lib/email-drafts/server");
+    const client = (d.clients as unknown as { name?: string } | null)?.name ?? "the client";
+    const turns = (Array.isArray(history) ? history : []).filter((m) => m && (m.role === "me" || m.role === "ai") && typeof m.text === "string");
+    const r = await reviseDraft({ client, clientId: d.client_id as string, subject: String(draft?.subject ?? ""), body: String(draft?.body ?? ""), ask: text, history: turns, sender: me.fullName });
+    if (!r) return { ok: false, error: "AI isn't connected right now." };
+    return { ok: true, ...r };
+  } catch (e) {
+    console.error("[email drafts] revise", e instanceof Error ? e.message : e);
+    return { ok: false, error: "The AI couldn't rewrite it just now. Try again." };
+  }
+}
+
 export async function scanForEmails(): Promise<{ ok: true; added: number } | { ok: false; error: string }> {
   const me = await requireStaff();
   try {

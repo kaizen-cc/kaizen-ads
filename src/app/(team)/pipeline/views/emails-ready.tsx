@@ -4,11 +4,12 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { DRAFT_KIND_LABEL, composeLinks, type DraftKind } from "@/lib/email-drafts/core";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
-import { dismissEmailDraft, editEmailDraft, openEmailDraft, scanForEmails } from "../email-draft-actions";
+import { dismissEmailDraft, editEmailDraft, openEmailDraft, reviseEmailDraft, scanForEmails } from "../email-draft-actions";
 import { closeReviewTodo } from "../../csuite/actions";
 
 // "Emails ready to send": each drafted email with who it's to, why it was drafted, and Open draft (into their Gmail, or
-// a prefilled compose), Edit (a sheet, in the address so back closes it), Dismiss. Never sends anything.
+// a prefilled compose), Edit (a sheet, in the address so back closes it, with a chat to have the AI rework it), Dismiss.
+// Never sends anything.
 
 type Draft = { id: string; client: string; kind: string; subject: string; body: string; to: string[]; reason: string | null; opened: boolean; files?: { id: string; name: string }[] };
 
@@ -19,14 +20,24 @@ export function EmailsReady({ drafts }: { drafts: Draft[] }) {
   const editing = useParam("draft");
   const current = drafts.find((d) => d.id === editing) ?? null;
 
-  const open = (d: Draft) =>
+  // The tab opens on the click itself and is pointed at the draft once it's in Gmail: opened only after the wait, the
+  // browser took it for a popup and blocked it, so Open draft looked like it did nothing
+  const open = (d: Draft) => {
+    const tab = window.open("about:blank", "_blank");
     start(async () => {
-      const r = await openEmailDraft(d.id);
-      if (!r.ok) return setNote(r.error);
-      window.open(r.href, "_blank", "noopener");
+      const r = await openEmailDraft(d.id).catch(() => ({ ok: false as const, error: "It couldn't open just now. Try again." }));
+      if (!r.ok) {
+        tab?.close();
+        return setNote(r.error);
+      }
+      if (tab) {
+        tab.opener = null;
+        tab.location.href = r.href;
+      } else window.open(r.href, "_blank", "noopener");
       setNote(r.where === "gmail" ? "It's in your Gmail drafts, ready to send." : "Opened in a new compose window.");
       router.refresh();
     });
+  };
 
   return (
     <section id="emails-ready" aria-label="Emails ready to send" className="grid gap-3 rounded-[18px] border border-line bg-surface p-4 md:p-5">
@@ -39,7 +50,7 @@ export function EmailsReady({ drafts }: { drafts: Draft[] }) {
           disabled={pending}
           onClick={() =>
             start(async () => {
-              const r = await scanForEmails();
+              const r = await scanForEmails().catch(() => ({ ok: false as const, error: "It took too long to look. Try again in a minute." }));
               setNote(r.ok ? (r.added ? `${r.added} new ${r.added === 1 ? "draft" : "drafts"}.` : "Nothing new needs an email.") : r.error);
               router.refresh();
             })
@@ -104,6 +115,22 @@ function EditSheet({ d, onClose, onSaved }: { d: Draft; onClose: () => void; onS
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [chat, setChat] = useState<{ role: "me" | "ai"; text: string }[]>([]);
+  const [ask, setAsk] = useState("");
+  const [thinking, think] = useTransition();
+  const sendAsk = () => {
+    const text = ask.trim();
+    if (!text || thinking) return;
+    setAsk("");
+    setChat((c) => [...c, { role: "me", text }]);
+    think(async () => {
+      const r = await reviseEmailDraft(d.id, { subject, body }, text, chat).catch(() => ({ ok: false as const, error: "The AI couldn't rewrite it just now. Try again." }));
+      if (!r.ok) return setChat((c) => [...c, { role: "ai", text: r.error }]);
+      setSubject(r.subject);
+      setBody(r.body);
+      setChat((c) => [...c, { role: "ai", text: r.reply }]);
+    });
+  };
   const field = "w-full rounded-xl border border-line bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand-text/70";
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-fg/25 md:items-center" onClick={onClose} role="presentation">
@@ -119,6 +146,31 @@ function EditSheet({ d, onClose, onSaved }: { d: Draft; onClose: () => void; onS
         </div>
         <input value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="Subject" className={field} />
         <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={12} aria-label="Message" className={`${field} leading-relaxed`} />
+        {/* Talk to the AI about it: a big change in a sentence ("shorter, and lead with the offer"); it rewrites above */}
+        <div className="grid gap-2 rounded-2xl bg-surface-2/50 p-3">
+          {chat.length > 0 && (
+            <ul className="grid max-h-40 gap-1.5 overflow-y-auto text-xs" aria-live="polite">
+              {chat.map((m, i) => (
+                <li key={i} className={m.role === "me" ? "justify-self-end rounded-xl bg-surface px-2.5 py-1.5" : "text-muted"}>
+                  {m.text}
+                </li>
+              ))}
+              {thinking && <li className="text-faint">Rewriting…</li>}
+            </ul>
+          )}
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              sendAsk();
+            }}
+          >
+            <input value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="Ask the AI to change it: shorter, warmer, lead with the offer…" aria-label="Ask the AI to change this email" className={`${field} min-w-0 flex-1`} />
+            <button type="submit" disabled={thinking || !ask.trim()} className="inline-flex h-11 shrink-0 items-center rounded-full border border-line px-4 text-sm text-muted hover:text-fg disabled:opacity-50 md:h-auto">
+              {thinking ? "…" : "Ask"}
+            </button>
+          </form>
+        </div>
         {error && <p className="text-sm text-bad">{error}</p>}
         <div className="flex flex-wrap justify-end gap-2">
           <button
@@ -135,7 +187,7 @@ function EditSheet({ d, onClose, onSaved }: { d: Draft; onClose: () => void; onS
           </a>
           <button
             type="button"
-            disabled={pending}
+            disabled={pending || thinking}
             onClick={() =>
               start(async () => {
                 const r = await editEmailDraft(d.id, subject, body);
