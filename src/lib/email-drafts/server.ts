@@ -4,7 +4,7 @@ import { aiEnabled, askJson } from "@/lib/ai";
 import type { Staff } from "@/lib/auth";
 import { clientRecipients } from "@/lib/client-emails";
 import { LIVE } from "@/lib/live";
-import { composeLinks, draftKey, parseDraftItems, pickOwner, type DraftItem, type SourceKind } from "./core";
+import { composeLinks, draftKey, parseDraftItems, parseRevision, pickOwner, type DraftItem, type Revision, type SourceKind } from "./core";
 
 // Client emails drafted from conversations: recent calls and meeting notes (Gemini's included), what was promised on
 // them, and the client's Slack and email, read for anything that needs an email to the client (a promise, a follow-up,
@@ -146,16 +146,61 @@ export async function scanClient(admin: SupabaseClient, clientId: string, o: { s
   return { added: saved.length, drafts: saved };
 }
 
-/** Every client this person sits on (or every live client for an exec asking for all), scanned one at a time */
-export async function scanForPerson(admin: SupabaseClient, me: Pick<Staff, "id" | "isExec">, o: { all?: boolean; max?: number } = {}) {
+/**
+ * Every client this person sits on (or every live client for an exec asking for all), a few at a time. Why not one at
+ * a time: each client is its own AI read, and 15 of them in a row ran past the page's time limit, so Look for more
+ * failed with nothing to show. Now 4 run together and no new client starts once `budgetMs` has passed (what's left is
+ * read next time), so it always answers in time.
+ */
+export async function scanForPerson(admin: SupabaseClient, me: Pick<Staff, "id" | "isExec">, o: { all?: boolean; max?: number; budgetMs?: number } = {}) {
   const ids = o.all && me.isExec
     ? ((await admin.from("clients").select("id").is("archived_at", null).in("status", [...LIVE])).data ?? []).map((r) => r.id as string)
     : [...new Set(((await admin.from("client_assignments").select("client_id").eq("profile_id", me.id)).data ?? []).map((r) => r.client_id as string))];
+  const list = ids.slice(0, o.max ?? 25);
+  const stopAt = Date.now() + (o.budgetMs ?? 150_000);
   let added = 0;
-  for (const id of ids.slice(0, o.max ?? 25)) added += (await scanClient(admin, id, { createdBy: me.id }).catch(() => ({ added: 0 }))).added;
+  let scanned = 0;
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(4, list.length) }, async () => {
+      while (next < list.length && Date.now() < stopAt) {
+        const id = list[next++];
+        added += (await scanClient(admin, id, { createdBy: me.id }).catch(() => ({ added: 0 }))).added;
+        scanned++;
+      }
+    }),
+  );
   await admin.from("sync_state").upsert({ source: `email-drafts:${me.id}`, last_run_at: new Date().toISOString(), cursor_at: new Date().toISOString() });
-  return { clients: Math.min(ids.length, o.max ?? 25), added };
+  return { clients: scanned, added };
 }
+
+/**
+ * The chat under a draft being reviewed: the person says what to change ("make it shorter", "lead with the new offer",
+ * "it's for Sam, not the owner") and the AI rewrites the whole email in Kaizen's voice, answering in a line. Only what
+ * the client's notes support; nothing is saved or sent until the person saves it.
+ */
+export async function reviseDraft(i: { client: string; clientId: string | null; subject: string; body: string; ask: string; history: { role: "me" | "ai"; text: string }[]; sender: string }): Promise<Revision | null> {
+  if (!aiEnabled()) return null;
+  const prompt = [
+    `An email from ${i.sender.split(" ")[0] || "the sender"} at Kaizen to the client ${i.client}, being reviewed before it goes out.`,
+    `Current subject: ${clip(i.subject, 200)}`,
+    `Current body:\n${String(i.body).slice(0, 8000)}`,
+    i.history.length ? `The conversation so far:\n${i.history.slice(-8).map((m) => `${m.role === "me" ? "Them" : "You"}: ${clip(m.text, 600)}`).join("\n")}` : "",
+    `What they want now: ${clip(i.ask, 1500)}`,
+    "Rewrite the email to do what they ask, as big a change as they ask for, keeping everything else that still fits. Give the full new subject and body, and reply: one short line to them saying what you changed (or a question back when the ask is unclear, with the email unchanged).",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const out = await askJson<unknown>({ agent: "calls", label: "client email revise", system: SYSTEM, prompt, schema: REVISE_SCHEMA, clientId: i.clientId, maxTokens: 4000 });
+  return parseRevision(out, { subject: i.subject, body: i.body });
+}
+
+const REVISE_SCHEMA = {
+  type: "object",
+  properties: { reply: { type: "string" }, subject: { type: "string" }, body: { type: "string" } },
+  required: ["reply", "subject", "body"],
+  additionalProperties: false,
+};
 
 /** Whether this person's clients were scanned in the last `hours` */
 export async function scannedRecently(admin: SupabaseClient, profileId: string, hours = 20): Promise<boolean> {

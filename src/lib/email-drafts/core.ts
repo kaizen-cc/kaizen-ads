@@ -116,3 +116,20 @@ export function composeLinks(d: { to: readonly string[]; subject: string; body: 
     mailto: `mailto:${to}?${[q("subject", d.subject), q("body", d.body.slice(0, 1800))].join("&")}`,
   };
 }
+
+export type Revision = { reply: string; subject: string; body: string };
+
+/**
+ * The AI's rewrite of a draft under review, cleaned like any draft. A missing or too-short subject or body keeps the
+ * current one (a question back changes nothing); the reply is one line to the person.
+ */
+export function parseRevision(raw: unknown, current: { subject: string; body: string }): Revision {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const subject = oneLine(o.subject, 200);
+  const body = cleanDraftText(o.body, 8000);
+  return {
+    reply: oneLine(o.reply, 400) || "Done.",
+    subject: subject || current.subject,
+    body: body.length >= 20 ? body : current.body,
+  };
+}
