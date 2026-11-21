@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { END_MARKER, endMarkerFilter, stripEndMarker } from "@/lib/agent-call/core";
+import { BACKGROUND_CHATTER_RULE, END_MARKER, PRIVACY_END_MARKER, endMarkerFilter, stripEndMarker } from "@/lib/agent-call/core";
+import { assistantModality } from "@/lib/agent-call/modality";
+import { voiceSystem } from "@/lib/agent-call/server";
 import { canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
 import {
   assistantGreeting,
@@ -215,6 +217,26 @@ describe("hanging up on goodbye", () => {
   it("gives back a held tail that turned out not to be the marker", () => {
     expect(run(["Look at [[", "this"])).toEqual({ out: "Look at [[this", ended: false });
     expect(run(["Ends with [["])).toEqual({ out: "Ends with [[", ended: false });
+  });
+  it("tells a goodbye from a hang-up after background chatter with no clear yes", () => {
+    const f = endMarkerFilter();
+    const out = ["I'll hang up for now, call me back anytime. ", "[[END_CALL", ":no_clear", "_yes]]"].map((p) => f.feed(p)).join("") + f.flush();
+    expect(out).toBe("I'll hang up for now, call me back anytime. ");
+    expect(f.ended).toBe(true);
+    expect(f.forPrivacy).toBe(true);
+    const g = endMarkerFilter();
+    g.feed(`Bye!${END_MARKER}`);
+    expect(g.ended).toBe(true);
+    expect(g.forPrivacy).toBe(false);
+    expect(stripEndMarker(`Okay, hanging up. ${PRIVACY_END_MARKER}`)).toEqual({ text: "Okay, hanging up.", ended: true });
+  });
+  it("on a call (not a chat), asks whether they're still there when it hears background chatter", () => {
+    expect(BACKGROUND_CHATTER_RULE).toContain("Are you still there?");
+    expect(BACKGROUND_CHATTER_RULE).toContain(PRIVACY_END_MARKER);
+    expect(assistantModality("voice")).toContain(BACKGROUND_CHATTER_RULE);
+    expect(assistantModality("text")).not.toContain(BACKGROUND_CHATTER_RULE);
+    expect(voiceSystem("Copywriter", "copywriter", "Sam", false, "", "voice")).toContain(BACKGROUND_CHATTER_RULE);
+    expect(voiceSystem("Copywriter", "copywriter", "Sam", false, "", "text")).not.toContain(BACKGROUND_CHATTER_RULE);
   });
   it("strips a whole reply", () => {
     expect(stripEndMarker(`Bye now! ${END_MARKER}`)).toEqual({ text: "Bye now!", ended: true });

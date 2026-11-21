@@ -1,4 +1,4 @@
-import { CONCISE_RULE, SPOKEN_RULE } from "./core";
+import { BACKGROUND_CHATTER_RULE, CONCISE_RULE, SPOKEN_RULE } from "./core";
 
 // One brain, two ways to talk. A conversation with an agent runs through the same turn pipeline whether it's a voice
 // call or a typed chat: the same system rules, tools, routing, gates, memory, notes and review. The only thing the
@@ -76,7 +76,9 @@ ${SPOKEN_RULE}
 How you speak:
 - Short spoken sentences. No markdown, lists, bullets, links, emojis or code. Several points go in a sentence: "Three things. First… Then… And last…".
 - Numbers as people say them ("about twelve hundred dollars", "a two point four ROAS"). Never read a table out.
-- Write names as they're spelled (Klaviyo, Cloudbeds): the voice already says them right. Never spell a name out phonetically.`);
+- Write names as they're spelled (Klaviyo, Cloudbeds): the voice already says them right. Never spell a name out phonetically.
+
+${BACKGROUND_CHATTER_RULE}`);
 }
 
 /** A specialist's (or a directly called agent's) way of talking, by mode */
