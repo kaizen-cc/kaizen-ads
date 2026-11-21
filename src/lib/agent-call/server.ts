@@ -6,7 +6,7 @@ import { AiUnavailable, MODEL_IDS, aiBusy, getAgent, type Effort, type ModelKey,
 import type { Staff } from "@/lib/auth";
 import { loadRolePlaybook, type RolePlaybook } from "@/lib/role-playbook";
 import { TOOLS_RULE, agentTools } from "./agent-tools";
-import { CALL_LIMIT_SECONDS, DISTRESS_RULE, END_CALL_RULE, LEARNINGS_SCHEMA, endMarkerFilter, endReasonFor, stripEndMarker, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type EndReason, type LearnedItem, type Learning, type ResumeMode } from "./core";
+import { BACKGROUND_CHATTER_RULE, CALL_LIMIT_SECONDS, DISTRESS_RULE, END_CALL_RULE, LEARNINGS_SCHEMA, endMarkerFilter, endReasonFor, stripEndMarker, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type EndReason, type LearnedItem, type Learning, type ResumeMode } from "./core";
 import { agentModality, keptLine, parseModeLog, stillOpen, streamShaping, talkModeOf, type ModeStep, type TalkMode } from "./modality";
 import { callHistory, longTurnText } from "./history";
 import { focusFor } from "./role-focus";
@@ -101,7 +101,7 @@ If it belongs to another agent, say which one. You can't create agents or skills
 
 ${DISTRESS_RULE}
 
-${conference || END_CALL_RULE}`;
+${conference || (mode === "voice" ? `${END_CALL_RULE}\n\n${BACKGROUND_CHATTER_RULE}` : END_CALL_RULE)}`;
 
 const RESUME_NOTE: Record<ResumeMode, string> = {
   continue: "The call dropped a moment ago and they called straight back: carry on exactly where you were, as if nothing happened. You've already apologised for the cut-off in your greeting.",
@@ -610,6 +610,8 @@ export async function streamAnswer(input: {
     if (CUTS.size > 500) CUTS.clear();
     CUTS.set(fk.callId, wasCut);
   }
+  // Hung up after background chatter with no clear yes to "are you still there?": logged for review
+  if (marker.forPrivacy) console.warn("[agent call] hung up: background chatter, no clear yes", input.filler?.callId ?? "");
   return { reply: stripEndMarker(reply).text, ended: marker.ended, error, used, model, effort, started };
 }
 

@@ -947,32 +947,53 @@ export const CONCISE_CHAT_RULE = `Be brief, as a firm rule: a few short lines by
 /** What ends a call from the agent's side: written at the very end of its goodbye, never spoken */
 export const END_MARKER = "[[END_CALL]]";
 
+/** How every end marker starts (the plain goodbye's and the privacy hang-up's): the stream is cut from here on */
+const END_MARKER_START = "[[END_CALL";
+
+/** Ends a call that seemed to be picking up background chatter with no clear yes to "are you still there?" (logged) */
+export const PRIVACY_END_MARKER = "[[END_CALL:no_clear_yes]]";
+
+/** Whether a reply hung up because nobody clearly answered after background chatter (the reason logged for review) */
+export const endedForPrivacy = (text: string) => text.includes(PRIVACY_END_MARKER);
+
+/**
+ * Calls only: a mic left open records whoever is in the room. Words that don't seem meant for the agent get one short
+ * "are you still there?", and without a clear yes the call hangs up, so a private conversation isn't recorded.
+ */
+export const BACKGROUND_CHATTER_RULE = `Background chatter: what you hear is transcribed from their microphone, so it can pick up people talking nearby, a TV, or them talking to someone else. If what you hear doesn't seem meant for you (a side conversation, people talking to each other, fragments that don't follow from the call), don't answer it or comment on what was said: just ask, in a few words, "Are you still there?". If their next words are a clear yes ("yes", "yeah, I'm here", "sorry, go on", or they carry on talking to you), carry on. If they aren't (more chatter, something unrelated, nothing clear), say a very short goodbye ("I'll hang up for now, call me back anytime.") and then write ${PRIVACY_END_MARKER} at the very end.`;
+
 export const END_CALL_RULE = `Hanging up: when they're clearly wrapping up the whole call ("ok that's all, thanks", "ok bye", "talk later", "that's it for now"), say a very short goodbye (a few words) and then write ${END_MARKER} at the very end. Never write it for a "bye" inside a longer thought, a thanks mid-conversation, or when they're still asking something.`;
 
 /** Gentle support when someone is struggling, on every call */
 export const DISTRESS_RULE = `If they sound genuinely distressed or unsafe (not just busy or annoyed), pause the work. Be kind and brief, ask how they're doing, suggest talking with someone they trust or their lead, and if they may be in danger, urge them to call their local emergency number (988 in the US).`;
 
 /**
- * Takes the agent's reply as it streams and holds back the end marker: text is passed on as it comes, except a tail
- * that could be the start of the marker (held until it's clearly not); once the marker appears, what comes before it
- * is passed on, the rest is dropped and `ended` is set.
+ * Takes the agent's reply as it streams and holds back the end marker (either kind): text is passed on as it comes,
+ * except a tail that could be the start of a marker (held until it's clearly not); once a marker appears, what comes
+ * before it is passed on, the rest is dropped and `ended` is set (`forPrivacy` too when it was the privacy hang-up).
  */
 export function endMarkerFilter() {
   let held = "";
   let ended = false;
+  /** The marker and what came after it (enough to tell which marker it was) */
+  let tail = "";
   return {
     feed(delta: string): string {
-      if (ended) return "";
+      if (ended) {
+        if (tail.length < 64) tail += delta;
+        return "";
+      }
       const s = held + delta;
-      const at = s.indexOf(END_MARKER);
+      const at = s.indexOf(END_MARKER_START);
       if (at >= 0) {
         ended = true;
         held = "";
+        tail = s.slice(at);
         return s.slice(0, at);
       }
       let keep = 0;
-      for (let k = Math.min(END_MARKER.length - 1, s.length); k > 0; k--)
-        if (END_MARKER.startsWith(s.slice(s.length - k))) {
+      for (let k = Math.min(END_MARKER_START.length - 1, s.length); k > 0; k--)
+        if (END_MARKER_START.startsWith(s.slice(s.length - k))) {
           keep = k;
           break;
         }
@@ -988,12 +1009,16 @@ export function endMarkerFilter() {
     get ended() {
       return ended;
     },
+    /** It ended on the privacy hang-up (background chatter, no clear yes) */
+    get forPrivacy() {
+      return ended && endedForPrivacy(tail);
+    },
   };
 }
 
 /** A whole reply without the end marker, and whether it was there */
 export function stripEndMarker(text: string): { text: string; ended: boolean } {
-  const at = text.indexOf(END_MARKER);
+  const at = text.indexOf(END_MARKER_START);
   return at < 0 ? { text, ended: false } : { text: text.slice(0, at).trimEnd(), ended: true };
 }
 
