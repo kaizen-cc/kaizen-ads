@@ -20,14 +20,24 @@ const todayNY = () => new Date().toLocaleDateString("en-CA", { timeZone: "Americ
 /** Everything open that a message could settle, across every role */
 export async function openCheckables(admin: Admin): Promise<Checkable[]> {
   const out: Checkable[] = [];
-  const { data: clients } = await admin.from("clients").select("id, name").is("archived_at", null).limit(3000);
+  const { data: clients } = await admin.from("clients").select("id, name, created_at").is("archived_at", null).limit(3000);
   const nameOf = new Map((clients ?? []).map((c) => [c.id as string, c.name as string]));
+  const createdOf = new Map((clients ?? []).map((c) => [c.id as string, c.created_at as string]));
   const { data: tracker } = await admin.from("profiles").select("id").eq("is_active", true).eq("role", "tracking_specialist").limit(1);
   const trackerId = (tracker?.[0]?.id as string | undefined) ?? null;
   // Tracking not set up (the Tracking tab and their day)
   const { trackingHealth } = await import("@/lib/tracking-health");
   for (const r of await trackingHealth(admin).catch(() => [])) {
-    if (r.health.status === "not_set_up" || r.health.why.some((w) => w.startsWith("Tracking not set up"))) out.push({ key: `notrack:${r.clientId}`, kind: "notrack", clientId: r.clientId, ownerId: trackerId, title: "Tracking not set up", client: r.client, since: new Date(Date.now() - (r.health.daysOnboarded + 1) * DAY).toISOString() });
+    if (r.health.status === "not_set_up" || r.health.why.some((w) => w.startsWith("Tracking not set up"))) out.push({
+        key: `notrack:${r.clientId}`,
+        kind: "notrack",
+        clientId: r.clientId,
+        ownerId: trackerId,
+        title: "Tracking not set up",
+        client: r.client,
+        // A state, not an event: the client's whole history counts (from when they joined, at least 180 days back)
+        since: new Date(Math.min(Date.parse(createdOf.get(r.clientId) ?? new Date().toISOString()), Date.now() - 180 * DAY)).toISOString(),
+      });
   }
   const [{ data: flags }, { data: asks }, { data: tasks }] = await Promise.all([
     admin.from("watch_flags").select("id, kind, client_id, title, opened_at").is("resolved_at", null).not("client_id", "is", null).limit(800),
@@ -62,18 +72,40 @@ export async function openCheckables(admin: Admin): Promise<Checkable[]> {
   return out;
 }
 
+/** Words a message about tracking uses, for filtering in the query (ilike) */
+const TRACKING_LIKE = ["tracking", "tracked", "pixel", "capi", "conversion api", "conversions api", "gtm", "tag manager", "ga4", "google analytics", "conversion", "purchase event", "thank you page", "thank-you page", "events firing"];
+
 /**
- * What was said about a client after `since`: their Slack (ours and theirs), Gmail, call and Gemini notes. A busy
- * client says a lot, so the messages about this item's subject come first (tracking words for a tracking item, the
- * item's own words otherwise), then the newest.
+ * What was said about a client after `since`: their Slack (ours and theirs), Gmail, call and Gemini notes. A tracking
+ * item reads only the messages about tracking (filtered in the query, so a busy client's older confirmation isn't lost
+ * under newer chatter), across its whole window; anything else reads the last 60 days, the messages about its subject
+ * first, then the newest.
  */
-async function evidenceFor(admin: Admin, clientId: string, since: string, about: RegExp | null): Promise<Evidence[]> {
-  const from = new Date(Math.max(Date.parse(since), Date.now() - 60 * DAY)).toISOString();
-  const { data } = await admin.from("context_items").select("source, occurred_at, author, title, body, url").eq("client_id", clientId).in("source", ["slack_internal", "slack_external", "gmail", "call"]).gte("occurred_at", from).order("occurred_at", { ascending: false }).limit(200);
-  const rows = data ?? [];
-  const picked = about ? [...rows.filter((d) => about.test(`${d.title ?? ""} ${d.body ?? ""}`)), ...rows.filter((d) => !about.test(`${d.title ?? ""} ${d.body ?? ""}`))].slice(0, 30) : rows.slice(0, 30);
+async function evidenceFor(admin: Admin, clientId: string, since: string, about: RegExp | null, tracking: boolean): Promise<Evidence[]> {
+  const sel = "source, occurred_at, author, title, body, url";
+  let rows: { source: string; occurred_at: string; author: string | null; title: string | null; body: string | null; url: string | null }[];
+  if (tracking) {
+    const or = TRACKING_LIKE.map((w) => `body.ilike.%${w}%`).join(",");
+    const { data } = await admin.from("context_items").select(sel).eq("client_id", clientId).in("source", ["slack_internal", "slack_external", "gmail", "call"]).gte("occurred_at", since).or(or).order("occurred_at", { ascending: false }).limit(30);
+    rows = (data ?? []) as typeof rows;
+  } else {
+    const from = new Date(Math.max(Date.parse(since), Date.now() - 60 * DAY)).toISOString();
+    const { data } = await admin.from("context_items").select(sel).eq("client_id", clientId).in("source", ["slack_internal", "slack_external", "gmail", "call"]).gte("occurred_at", from).order("occurred_at", { ascending: false }).limit(200);
+    const all = (data ?? []) as typeof rows;
+    rows = about ? [...all.filter((d) => about.test(`${d.title ?? ""} ${d.body ?? ""}`)), ...all.filter((d) => !about.test(`${d.title ?? ""} ${d.body ?? ""}`))].slice(0, 30) : all.slice(0, 30);
+  }
   let n = 0;
-  return picked.map((d) => ({ n: ++n, at: d.occurred_at as string, source: d.source as string, author: (d.author as string | null) ?? null, text: `${d.title ? `${d.title}: ` : ""}${String(d.body ?? "")}`.replace(/\s+/g, " ").slice(0, 700), url: (d.url as string | null) ?? null }));
+  return rows.map((d) => ({ n: ++n, at: d.occurred_at, source: d.source, author: d.author ?? null, text: `${d.title ? `${d.title}: ` : ""}${String(d.body ?? "")}`.replace(/\s+/g, " ").slice(0, 700), url: d.url ?? null }));
+}
+
+/** The Tracking Specialist's names (full and first), to mark their own messages in the evidence */
+let trackerNames: { at: number; names: string[] } | null = null;
+async function trackingNames(admin: Admin): Promise<string[]> {
+  if (trackerNames && Date.now() - trackerNames.at < 600_000) return trackerNames.names;
+  const { data } = await admin.from("profiles").select("full_name, display_name, email").eq("is_active", true).eq("role", "tracking_specialist");
+  const names = (data ?? []).flatMap((p) => [p.full_name, p.display_name, p.email, String(p.full_name ?? "").split(" ")[0]].filter((x): x is string => Boolean(x && String(x).length > 2)).map((x) => String(x).toLowerCase()));
+  trackerNames = { at: Date.now(), names };
+  return names;
 }
 
 const SCHEMA = {
@@ -85,8 +117,12 @@ const SCHEMA = {
 
 /** One item, read against its client's messages since it opened */
 export async function classify(admin: Admin, item: Checkable): Promise<{ verdict: Verdict; ev: Evidence | null } | null> {
-  const { subjectOf } = await import("@/lib/done-check-core");
-  const evidence = await evidenceFor(admin, item.clientId, item.since, subjectOf(item.kind, item.title));
+  const { subjectOf, STATE_KINDS } = await import("@/lib/done-check-core");
+  const isState = STATE_KINDS.has(item.kind);
+  const tracking = item.kind === "notrack" || (item.kind === "dog" && /track|pixel|capi|conversion|ga4|gtm/i.test(item.title));
+  const evidence = await evidenceFor(admin, item.clientId, item.since, subjectOf(item.kind, item.title), tracking);
+  const trackers = tracking ? await trackingNames(admin) : [];
+  const byTracker = (a: string | null) => Boolean(a && trackers.some((t) => a.toLowerCase().includes(t)));
   if (!evidence.length) return { verdict: { state: "nothing", quote: "", evidence: null, sure: true }, ev: null };
   const means = DONE_MEANS[item.kind] ?? "it's done";
   try {
@@ -98,11 +134,11 @@ export async function classify(admin: Admin, item: Checkable): Promise<{ verdict
       override: { model: "haiku", effort: "low" },
       maxTokens: 600,
       system:
-        "You check whether a piece of work is finished, from what the team and the client said afterwards. done: a message says plainly that it IS finished now (\"tracking is set up and verified\", \"pixel fixed\", \"CAPI is live\", \"sent the report\", \"got the intake\", \"assets are uploaded\"), about this client and this thing. moving: someone is on it, or it's partly there, planned, or said with any doubt. nothing: no sign. When unsure, never say done: say moving. quote: the exact words from ONE message that show it, copied character for character (empty for nothing). evidence: that message's number. sure: true only when the quote leaves no doubt.",
+        `You check whether a piece of work is finished, from what the team and the client said afterwards. done: a message says plainly that it IS finished now ("tracking is set up and verified", "Tracking fixed", "tracking is ready", "the pixel is now working", "tracking is working fine", "tracking is not broken, we tested it and it's ok", "CAPI is live", "sent the report", "got the intake", "assets are uploaded"), about this client and this thing. moving: someone is on it, or it's partly there, planned, or said with any doubt. nothing: no sign. When unsure, never say done: say moving.${isState ? " This is a state, so the LATEST relevant message wins: if the newest message about it says it's fixed, set up, working or tested ok, it's done; if a newer message says it's broken again, it's moving. Messages marked (Tracking Specialist) are from the person who owns tracking: their word that it's fixed or working counts strongly." : ""} quote: the exact words from ONE message that show it, copied as written (empty for nothing). evidence: that message's number. sure: true only when the quote leaves no doubt.`,
       schema: SCHEMA,
-      prompt: `Client: ${item.client}\nThe work: ${item.title}\nDone means: ${means}\nOpened: ${item.since.slice(0, 10)}\n\nWhat was said since (newest first):\n${evidence.map((e) => `${e.n}. [${e.at.slice(0, 10)} · ${e.source}${e.author ? ` · ${e.author}` : ""}] ${e.text}`).join("\n")}`,
+      prompt: `Client: ${item.client}\nThe work: ${item.title}\nDone means: ${means}\nOpened: ${item.since.slice(0, 10)}\n\nWhat was said since (newest first):\n${evidence.map((e) => `${e.n}. [${e.at.slice(0, 10)} · ${e.source}${e.author ? ` · ${e.author}${byTracker(e.author) ? " (Tracking Specialist)" : ""}` : ""}] ${e.text}`).join("\n")}`,
     });
-    const v = guard(out, evidence, item.since);
+    const v = guard(out, evidence, item.since, { latestWins: isState });
     return { verdict: v, ev: v.evidence != null ? (evidence.find((e) => e.n === v.evidence) ?? null) : null };
   } catch (e) {
     console.error("[done-check]", item.key, e instanceof Error ? e.message : e);

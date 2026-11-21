@@ -9,26 +9,42 @@ export type Evidence = { n: number; at: string; source: string; author: string |
 
 export type Verdict = { state: DoneState; quote: string; evidence: number | null; sure: boolean };
 
-const norm = (s: string) => s.toLowerCase().replace(/[“”"'’`]/g, "").replace(/\s+/g, " ").trim();
+/** Text as compared: no Slack mentions, links or punctuation, lowercase, single spaces ("Tracking fixed <@U123>" = "tracking fixed") */
+export const norm = (s: string) =>
+  s
+    .replace(/<[@#!][^>]*>/g, " ")
+    .replace(/https?:\/\/\S+/g, " ")
+    .toLowerCase()
+    .replace(/['’`]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 
-/** Words that undo a "done": still broken, not yet, waiting, an open question */
-const HEDGE = /\b(not (?:yet|quite|working|firing|set ?up|done|live|fixed)|isn'?t|aren'?t|wasn'?t|haven'?t|hasn'?t|didn'?t|doesn'?t|don'?t|won'?t|can'?t|still (?:not|broken|missing|waiting|need)|need(?:s)? to|should|will|going to|gonna|plan(?:ning)? to|tomorrow|next week|later|almost|partially|mostly|some(?:what)?|i think|maybe|might|hopefully|should be|trying|working on|in progress|\?)/i;
+/** Words that undo a "done": not yet, waiting, planned, an open question */
+const HEDGE = /\b(not (?:yet|quite|working|firing|set ?up|done|live|fixed)|isn'?t (?:working|firing|set|done|live|fixed|tracking|sending)|aren'?t|haven'?t|hasn'?t|didn'?t|doesn'?t|won'?t|can'?t|still (?:not|broken|missing|waiting|need)|need(?:s)? to|should|will|going to|gonna|plan(?:ning)? to|tomorrow|next week|later|almost|partially|mostly|i think|maybe|might|hopefully|trying|working on|in progress|\?)/i;
+
+/** A message saying it's broken (but "not broken" isn't) */
+export const BROKEN = /(?<!\bnot |n't |never )\b(broken|not (?:firing|working|tracking|sending|recording)|isn'?t (?:firing|working|sending|tracking)|stopped (?:firing|working|tracking|sending)|double[- ]counting|no (?:server|capi) events|sent nothing)\b/i;
 
 /**
- * The model's verdict, held to the guardrails: a "done" needs a quote found word for word in one of the evidence
- * messages, that message dated after the item opened, the model sure, and no hedge in the quote. Otherwise it's at most
- * "moving" (a real quote that hedges) or "nothing".
+ * The model's verdict, held to the guardrails: a "done" needs a quote found in one of the evidence messages (Slack
+ * mentions, links and punctuation aside), that message dated after the item opened, the model sure, and no hedge or
+ * breakage in the quote. For a state (tracking is set up), the newest word wins: a later message saying it's broken
+ * makes it moving. Otherwise it's at most "moving" (a real quote that hedges) or "nothing".
  */
-export function guard(v: Verdict, evidence: readonly Evidence[], since: string): Verdict {
+export function guard(v: Verdict, evidence: readonly Evidence[], since: string, opts: { latestWins?: boolean } = {}): Verdict {
   if (v.state !== "done") return { ...v, state: v.state === "moving" ? "moving" : "nothing" };
   const quote = norm(v.quote);
   const ev = v.evidence != null ? evidence.find((e) => e.n === v.evidence) : null;
   const inText = ev ? norm(ev.text).includes(quote) : evidence.some((e) => norm(e.text).includes(quote));
   const after = ev ? Date.parse(ev.at) >= Date.parse(since) : false;
   if (!v.sure || quote.length < 8 || !inText || !after) return { ...v, state: quote && inText ? "moving" : "nothing" };
-  if (HEDGE.test(v.quote)) return { ...v, state: "moving" };
+  if (HEDGE.test(v.quote) || BROKEN.test(v.quote)) return { ...v, state: "moving" };
+  if (opts.latestWins && ev && evidence.some((e) => Date.parse(e.at) > Date.parse(ev.at) && BROKEN.test(e.text))) return { ...v, state: "moving" };
   return v;
 }
+
+/** Kinds that are a state (true until something says otherwise): the latest word wins and the whole history counts */
+export const STATE_KINDS = new Set(["notrack", "dog"]);
 
 const SOURCE_WORD: Record<string, string> = { slack_internal: "Slack", slack_external: "Slack", gmail: "email", call: "call notes", drive: "notes" };
 export const sourceWord = (s: string) => SOURCE_WORD[s] ?? s;
