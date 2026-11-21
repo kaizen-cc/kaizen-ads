@@ -9,7 +9,7 @@ import type { Agg, Pacing, Status, Trend } from "@/lib/kpi/calc";
 import { CONVERSIONS } from "@/lib/kpi/conversions";
 import { conversionValue } from "@/lib/kpi/conversion-value";
 import { onCard } from "@/lib/buyer-seats";
-import { STATUS, deviationTone, kpiValue, money } from "@/lib/kpi/format";
+import { STATUS, boardBreakdown, deviationTone, kpiValue, money } from "@/lib/kpi/format";
 import { freshness } from "@/lib/dates";
 import { addKpiTarget, archiveKpiTarget, disregardAdAccount, exploreKpi, linkAdAccount, pullClientKpis, saveAccountNotes, saveKpiTarget, setExtraMetrics, type NoteKey } from "./actions";
 import { ClientChat } from "../clients/[slug]/client-chat";
@@ -2043,6 +2043,8 @@ export function KpiBoard({
   const setup = count("setup") + count("idle");
   // No KPI set: out of the status tiles (never judged), counted on their own
   const unset = count("unset");
+  // Every account the tiles are drawn from: the tiles only hold the judged ones, so the rest are counted beside them
+  const tally = boardBreakdown(base.map((r) => r.status));
   const synced = freshness(lastSync);
 
   return (
@@ -2143,6 +2145,14 @@ export function KpiBoard({
           </div>
         </div>
       </div>
+
+      {tally.total > tally.judged && (
+        <p className="-mt-4 text-xs text-faint">
+          {tally.total} {tally.total === 1 ? "account" : "accounts"}: {tally.judged} judged against a KPI above
+          {tally.unset > 0 && ` · ${tally.unset} with no KPI set`}
+          {tally.notReporting > 0 && ` · ${tally.notReporting} not reporting yet (no spend, or ${platformLabel(platform)} can't see the ad account)`}
+        </p>
+      )}
 
       {platform === "meta" && (unlinked.length > 0 || disregarded.length > 0) && <Unlinked accounts={unlinked} disregarded={disregarded} clients={clients} />}
 
