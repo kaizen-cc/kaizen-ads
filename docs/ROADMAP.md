@@ -55,6 +55,9 @@ Where things stand on 2026-10-31 and what comes next, in order. The target is th
 
 ## Now: open items (feedback from Kyle and earlier sessions)
 
+### Monday, Nov 23 2026
+- **Owner's updates through the assistant go all the way through, database changes included.** Feedback sent through the assistant becomes a Claude fix that merges itself, but any fix with a database change fails at merge: the `SUPABASE_DB_URL` repository secret was never set (#113 was merged by hand on Nov 22 for this reason). The owner adds the secret (Supabase → Connect → Session pooler string, port 5432, with the database password → GitHub → Settings → Secrets and variables → Actions → `SUPABASE_DB_URL`). Then run the daily Checks and one Claude fix that carries a migration to confirm both reach the database, so an update sent through the assistant lands exactly as one sent from a Claude Code session.
+
 ### Client portal
 18. **The portal as the client's home**, not only creative approvals: the dashboard, reports, setup and creative in one experience, designed for the wow factor (in progress).
 
