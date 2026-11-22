@@ -303,7 +303,7 @@ export async function scopeMonths(admin: Db, clientId: string): Promise<ScopeMon
  * "they picked Option B", "December is 5 campaigns"), reading the SOW, the months as they stand and the notes kept so
  * far. Nothing is written: the person sees the changes and applies them.
  */
-export async function proposeScopeChanges(admin: Db, clientId: string, turns: ScopeTurn[]): Promise<{ reply: string; note: string; changes: ScopeChange[] }> {
+export async function proposeScopeChanges(admin: Db, clientId: string, turns: ScopeTurn[], images: import("@/lib/chat-images").ChatImage[] = []): Promise<{ reply: string; note: string; changes: ScopeChange[] }> {
   const [{ askJson }, months, { data: sow }, { data: notes }, { data: c }] = await Promise.all([
     import("@/lib/ai"),
     scopeMonths(admin, clientId),
@@ -318,6 +318,7 @@ export async function proposeScopeChanges(admin: Db, clientId: string, turns: Sc
     clientId,
     schema: CHANGE_SCHEMA,
     maxTokens: 3000,
+    images,
     system: `You help Kaizen's email team keep a client's email scope right, month by month: campaign emails, SMS messages, flows (each counts once) and flow emails, each a range (min to max). The person tells you what the client actually signed or decided; you propose changes to the months and they apply them.
 Actions: "set" changes a month's numbers (or adds a month), "unsigned" marks a month pitched but not signed (it holds no allotment, stays visible and can be reopened), "removed" takes a month off (also reopenable), "reopen" brings an unsigned or removed month back as it was.
 The common case: the SOW pitches a longer roadmap (month 2, month 3, an ongoing tier) but the client is only moving forward with the sprint or month 1. Then we're only on the hook for what they signed: the other months are "unsigned", never deleted. "They picked Option B" means the months follow Option B's numbers in the SOW.

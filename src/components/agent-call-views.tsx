@@ -66,6 +66,8 @@ export type CallView = {
   canSend?: boolean;
   onSend?: () => void;
   onType?: (text: string) => void;
+  /** A screenshot or file pasted into "Type it instead": sent at once with what's typed */
+  onTypeFiles?: (text: string, files: File[]) => Promise<void>;
   /** A long turn sent, a slow answer being retried, or one that didn't go through (with Retry) */
   stall?: StallState;
   onRetry?: () => void;
@@ -214,6 +216,15 @@ function SendBar({ v, compact }: { v: CallView; compact: boolean }) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => e.key === "Escape" && setTyping(false)}
+          onPaste={(e) => {
+            const files = [...e.clipboardData.files].filter((f) => f.size > 0).slice(0, 6);
+            if (!files.length || !v.onTypeFiles) return;
+            e.preventDefault();
+            const text = draft;
+            setDraft("");
+            setTyping(false);
+            v.onTypeFiles(text, files).catch(() => setDraft(text));
+          }}
           enterKeyHint="send"
           autoComplete="off"
           placeholder="Type it instead"

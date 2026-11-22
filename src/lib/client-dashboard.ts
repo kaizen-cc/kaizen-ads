@@ -96,7 +96,7 @@ const S = { type: "string" };
 const SCHEMA = { type: "object", properties: { answer: S, flag: { type: "boolean" }, topic: S }, required: ["answer", "flag", "topic"], additionalProperties: false };
 
 /** A client's question about their numbers, answered from the dashboard's data; a worry goes to their buyer */
-export async function askDashboard(admin: SupabaseClient, clientId: string, who: { name: string; contactId: string | null }, question: string, range: { start: string; end: string }) {
+export async function askDashboard(admin: SupabaseClient, clientId: string, who: { name: string; contactId: string | null }, question: string, range: { start: string; end: string }, images: import("@/lib/chat-images").ChatImage[] = []) {
   const [{ data: c }, parts, { data: b }, { data: earlier }] = await Promise.all([
     admin.from("clients").select("name, slug").eq("id", clientId).single(),
     dashboardData(admin, clientId, range),
@@ -114,6 +114,7 @@ export async function askDashboard(admin: SupabaseClient, clientId: string, who:
 flag: true when the question shows a concern, frustration, confusion about performance or a request for change ("why did conversions drop?", "this seems expensive", "can we try X?"), so their buyer hears it today; false for a plain look-up. topic: when flagged, a few words for the buyer ("conversion rate drop"), else "".`,
     schema: SCHEMA,
     maxTokens: 2000,
+    images,
     prompt: [
       `<client>${c.name}</client>`,
       `<dates>${range.start} to ${range.end} (compared with the same number of days before)</dates>`,
@@ -121,6 +122,7 @@ flag: true when the question shows a concern, frustration, confusion about perfo
       b?.read_this_first ? `<about_them_internal_never_quote>\n${String(b.read_this_first).slice(0, 3000)}\n</about_them_internal_never_quote>` : "",
       earlier?.length ? `<earlier_questions>\n${earlier.reverse().map((q) => `Q: ${q.question}\nA: ${q.answer}`).join("\n")}\n</earlier_questions>` : "",
       `Their question: ${question.trim().slice(0, 1500)}`,
+      images.length ? `(${images.length} screenshot${images.length === 1 ? " is" : "s are"} attached: look at ${images.length === 1 ? "it" : "them"} and answer from what you see.)` : "",
     ]
       .filter(Boolean)
       .join("\n\n"),

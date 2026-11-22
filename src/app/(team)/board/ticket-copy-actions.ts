@@ -83,7 +83,7 @@ export async function startProduction(requestId: string): Promise<{ ok: true; co
   return { ok: true, copy: started.ok };
 }
 
-export async function chatCopyDraft(requestId: string, text: string): Promise<Result> {
+export async function chatCopyDraft(requestId: string, text: string, pictures: string[] = []): Promise<Result> {
   const me = await requireStaff();
   const t = text.trim().slice(0, 2000);
   if (!t) return { ok: false, error: "Say what to change." };
@@ -92,7 +92,7 @@ export async function chatCopyDraft(requestId: string, text: string): Promise<Re
   const { data: r } = await (await createClient()).from("requests").select("id").eq("id", requestId).maybeSingle();
   if (!r) return { ok: false, error: "Ticket not found." };
   try {
-    await chatTicketCopy(createAdminClient(), requestId, t, { id: me.id, name: me.fullName });
+    await chatTicketCopy(createAdminClient(), requestId, t, { id: me.id, name: me.fullName }, (await import("@/lib/chat-images")).chatImagesFrom(pictures));
     return { ok: true, state: await copyDraft(requestId) };
   } catch (e) {
     return fail(e);

@@ -79,13 +79,14 @@ export async function rereadSowNow(clientId: string): Promise<{ ok: true } | Fai
 }
 
 /** Adjust with AI: what the AI would change, from the conversation (nothing is written) */
-export async function proposeScope(clientId: string, turns: { role: "you" | "ai"; text: string }[]): Promise<{ ok: true; reply: string; note: string; changes: import("@/lib/email-sow").ScopeChange[] } | Fail> {
+export async function proposeScope(clientId: string, turns: { role: "you" | "ai"; text: string }[], pictures: string[] = []): Promise<{ ok: true; reply: string; note: string; changes: import("@/lib/email-sow").ScopeChange[] } | Fail> {
   try {
     const { admin } = await guard(clientId);
     const clean = turns.filter((t) => t.text?.trim()).slice(-16).map((t) => ({ role: t.role === "ai" ? ("ai" as const) : ("you" as const), text: t.text.slice(0, 3000) }));
+    const images = (await import("@/lib/chat-images")).chatImagesFrom(pictures);
     if (!clean.length) return { ok: false, error: "Say what changed." };
     const { proposeScopeChanges } = await import("@/lib/email-sow");
-    return { ok: true, ...(await proposeScopeChanges(admin, clientId, clean)) };
+    return { ok: true, ...(await proposeScopeChanges(admin, clientId, clean, images)) };
   } catch (e) {
     return fail(e);
   }

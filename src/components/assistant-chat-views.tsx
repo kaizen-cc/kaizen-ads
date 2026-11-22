@@ -1,7 +1,7 @@
 "use client";
 
 import { assistantTitle } from "@/lib/agent-look";
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CallCard, CallProgress, LearnedItem, UploadAsk } from "@/lib/agent-call/core";
 import type { ChatLine } from "@/lib/agent-call/chat-engine";
 import type { Speaker } from "@/lib/agent-call/engine";
@@ -43,6 +43,8 @@ export type ChatView = {
   callId: string | null;
   screen: { can: boolean; sharing: boolean; asked: boolean; looking: boolean; onShare: () => void; onStop: () => void; onCancel: () => void };
   onSend: (text: string) => void;
+  /** A message with screenshots or files pasted, dropped or attached (rejects when the upload fails) */
+  onSendFiles?: (text: string, files: File[]) => Promise<void>;
   onStop: () => void;
   onClose: () => void;
   onCall: () => void;
@@ -147,6 +149,14 @@ function Bubble({ l, v, dim = false }: { l: ChatLine; v: ChatView; dim?: boolean
   if (l.who === "you")
     return (
       <div className={`ml-auto max-w-[85%] whitespace-pre-wrap break-words rounded-[18px] rounded-br-[6px] px-3.5 py-2 text-[14.5px] leading-relaxed md:text-[14px] ${l.note ? "border border-dashed border-line text-muted" : "bg-surface-2 text-fg"} ${dim ? "opacity-60" : ""}`}>
+        {l.images?.length ? (
+          <span className={`flex flex-wrap justify-end gap-1.5 ${l.text ? "mb-1.5" : ""}`}>
+            {l.images.map((src) => (
+              // eslint-disable-next-line @next/next/no-img-element -- a local preview of what they pasted
+              <img key={src} src={src} alt="What you shared" className="max-h-40 max-w-full rounded-[12px] border border-line object-contain" />
+            ))}
+          </span>
+        ) : null}
         {l.text}
       </div>
     );
@@ -188,6 +198,12 @@ export const PhoneGlyph = ({ size = 16 }: { size?: number }) => (
   </svg>
 );
 
+const ClipIcon = () => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+  </svg>
+);
+
 /** The input: type (Enter sends, Shift+Enter a new line), or dictate with the mic; Stop while an answer is written */
 function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
   // What was typed and not sent comes back (the window is only drawn in the browser, so storage is there)
@@ -216,8 +232,35 @@ function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
   }, [draft]);
+  // Screenshots and files to send with the message: pasted (Ctrl/Cmd+V), dropped on the box, or picked with the clip
+  const [files, setFiles] = useState<File[]>([]);
+  const [sending, setSending] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const addFiles = (list: FileList | File[] | null | undefined) => {
+    const add = [...(list ?? [])].filter((f) => f.size > 0 && f.size <= 50 * 1024 * 1024);
+    if (add.length) setFiles((cur) => [...cur, ...add].slice(0, 8));
+  };
+  const thumbs = useMemo(() => files.map((f) => (f.type.startsWith("image/") ? URL.createObjectURL(f) : null)), [files]);
+  useEffect(() => () => thumbs.forEach((u) => u && URL.revokeObjectURL(u)), [thumbs]);
+  const canFiles = Boolean(v.onSendFiles);
   const send = () => {
     if (dict.on) void dict.stop(false);
+    if (files.length && v.onSendFiles) {
+      const text = draft;
+      const sendThese = files;
+      setSending(true);
+      setFiles([]);
+      setDraft("");
+      base.current = "";
+      v.onSendFiles(text, sendThese)
+        .catch(() => {
+          // Didn't go through: back in the box to try again
+          setFiles(sendThese);
+          setDraft((d) => d || text);
+        })
+        .finally(() => setSending(false));
+      return;
+    }
     if (!draft.trim()) return;
     v.onSend(draft);
     setDraft("");
@@ -238,10 +281,38 @@ function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
           )}
         </div>
       )}
+      {files.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-1" aria-label="Attached to your message">
+          {files.map((f, i) => (
+            <span key={`${f.name}-${i}`} className="group relative">
+              {thumbs[i] ? (
+                // eslint-disable-next-line @next/next/no-img-element -- a local preview of what they pasted
+                <img src={thumbs[i]!} alt={f.name || "Screenshot"} className="h-16 w-16 rounded-[12px] border border-line object-cover" />
+              ) : (
+                <span className="grid h-16 w-28 place-items-center rounded-[12px] border border-line bg-surface px-2 text-center text-[11px] leading-tight text-muted">
+                  <span className="line-clamp-3 break-all">{f.name}</span>
+                </span>
+              )}
+              <button type="button" onClick={() => setFiles((cur) => cur.filter((_, k) => k !== i))} aria-label={`Remove ${f.name || "screenshot"}`} className="absolute -right-2 -top-2 grid h-7 w-7 place-items-center rounded-full border border-line bg-bg text-[13px] text-muted shadow hover:text-fg md:h-6 md:w-6">
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {(sending || v.uploading) && !v.uploadAsk && <p className="px-1 text-[12px] text-muted" aria-live="polite">{v.uploading ?? "Adding your files…"}</p>}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           send();
+        }}
+        onDragOver={(e) => {
+          if (canFiles && e.dataTransfer.types.includes("Files")) e.preventDefault();
+        }}
+        onDrop={(e) => {
+          if (!canFiles || !e.dataTransfer.files.length) return;
+          e.preventDefault();
+          addFiles(e.dataTransfer.files);
         }}
         className={`flex items-end gap-1.5 rounded-[22px] border bg-surface p-1.5 pl-3.5 transition-colors focus-within:border-faint ${dict.on ? "border-brand/50" : "border-line"}`}
       >
@@ -257,6 +328,11 @@ function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
             setDraft(e.target.value);
             if (!dict.on) base.current = e.target.value;
           }}
+          onPaste={(e) => {
+            if (!canFiles || !e.clipboardData.files.length) return;
+            e.preventDefault();
+            addFiles(e.clipboardData.files);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !phone) {
               e.preventDefault();
@@ -268,6 +344,14 @@ function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
           disabled={v.connecting}
           className="max-h-[140px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent py-2.5 text-[16px] leading-snug text-fg outline-none placeholder:text-faint md:min-h-[36px] md:py-2 md:text-[14px]"
         />
+        {canFiles && (
+          <>
+            <input ref={picker} type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+            <button type="button" onClick={() => picker.current?.click()} disabled={v.connecting || sending} aria-label="Attach a screenshot or file" title="Attach a screenshot or file (or paste one)" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-muted transition hover:bg-surface-2 hover:text-fg active:scale-95 disabled:opacity-40 md:h-9 md:w-9">
+              <ClipIcon />
+            </button>
+          </>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -286,12 +370,12 @@ function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
           {dict.on && <span aria-hidden className="absolute inset-0 animate-ping rounded-full bg-brand opacity-25" />}
           <MicIcon />
         </button>
-        {v.busy && !draft.trim() ? (
+        {v.busy && !draft.trim() && !files.length ? (
           <button type="button" onClick={v.onStop} aria-label="Stop the answer" title="Stop" className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line text-fg transition hover:border-faint active:scale-95 md:h-9 md:w-9">
             <span aria-hidden className="h-3 w-3 rounded-[3px] bg-current" />
           </button>
         ) : (
-          <button type="submit" disabled={!draft.trim() || v.connecting} aria-label="Send" title="Send (Enter)" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand text-white transition hover:bg-brand-hover active:scale-95 disabled:opacity-35 md:h-9 md:w-9">
+          <button type="submit" disabled={(!draft.trim() && !files.length) || v.connecting || sending} aria-label="Send" title="Send (Enter)" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand text-white transition hover:bg-brand-hover active:scale-95 disabled:opacity-35 md:h-9 md:w-9">
             <SendIcon />
           </button>
         )}

@@ -300,7 +300,7 @@ const REVISE_SCHEMA = obj({ reply: S, message: S, sections: SECTIONS, lesson: S 
 const PERIOD_RULE = `The report's dates are set by the app, never by you: don't write numbers for other dates into the report as if they were its period. Numbers you look up for other dates are only for comparisons, and always say their dates.`;
 
 /** The owner asks for a change; the report is rewritten, the QA runs again, and a lasting preference is remembered */
-export async function reviseChannelReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { echo?: boolean; byId?: string | null; /** An export the owner attached in the chat: read with the ask, kept as data pulled */ file?: { name: string; text: string } } = {}) {
+export async function reviseChannelReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { /** Screenshots pasted with the ask */ images?: import("@/lib/chat-images").ChatImage[]; echo?: boolean; byId?: string | null; /** An export the owner attached in the chat: read with the ask, kept as data pulled */ file?: { name: string; text: string } } = {}) {
   const c = await context(admin, reportId);
   const m = c.r.metrics;
   if (!m) throw new Error("It hasn't been written yet.");
@@ -321,10 +321,12 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
     tools,
     maxRounds: 6,
     maxTokens: 16000,
+    images: opts.images ?? [],
     prompt: `<today timezone="America/New_York">${today}</today>\n<report_period>${rangeLabel(period, today)} (${period.start} to ${period.end}), compared with ${rangeLabel(prev, today)}. The PDF is drawn by the app for exactly these dates.</report_period>\n\n${sourcesBlock(c, m, c.r.work?.text ?? "", "")}\n\n<current_message>\n${c.r.message ?? ""}\n</current_message>\n<current_sections>\n${JSON.stringify(c.r.sections ?? {})}\n</current_sections>\n\n<conversation>\n${chat
       .slice(-10)
       .map((t) => `${t.role === "user" ? "Owner" : "You"}: ${t.text}`)
-      .join("\n")}\n</conversation>${opts.file ? `\n\n<attached_file name="${opts.file.name.replace(/"/g, "'")}">\n${opts.file.text.slice(0, 40_000)}\n</attached_file>` : ""}\n\nThe owner asks: ${ask.trim().slice(0, 2000)}`,
+      .join("\n")}\n</conversation>${opts.file ? `\n\n<attached_file name="${opts.file.name.replace(/"/g, "'")}">\n${opts.file.text.slice(0, 40_000)}\n</attached_file>` : ""}\n\nThe owner asks: ${ask.trim().slice(0, 2000)}${(opts.images ?? []).length ? `
+(${opts.images!.length} screenshot${opts.images!.length === 1 ? " is" : "s are"} attached: look at ${opts.images!.length === 1 ? "it" : "them"} and answer from what you see.)` : ""}`,
   });
   const now = new Date().toISOString();
   const data = pulled.map((x) => `[${x.label}]\n${x.data}`).join("\n\n").slice(0, 20_000);

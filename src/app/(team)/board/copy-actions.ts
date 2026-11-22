@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { AiUnavailable, askJson, clientContext, contextBlock, COPY_CHAT_SCHEMA, COPY_CHAT_SYSTEM, type CopyLesson, type CopyViolation } from "@/lib/ai";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
 import { can } from "@/lib/chat-permissions";
+import { chatImagesFrom, imagesNote } from "@/lib/chat-images";
 import { adsHash, blockers, isDismissed, type Ad, type Dismissed } from "@/lib/copy";
 import { draftCopy, learnFromCopy, storeCopyCheck } from "@/lib/copy-draft";
 import { onReachedClient } from "@/lib/client-revision";
@@ -337,9 +338,10 @@ export async function copyChat(requestId: string): Promise<ChatMessage[]> {
  * Copy review talks to the agent that wrote the copy. It answers, rewrites the whole set when that's what's asked (in the
  * background, with progress), and keeps any rule meant for this client from now on as client memory.
  */
-export async function chatWithCopywriter(requestId: string, text: string): Promise<{ ok: true; messages: ChatMessage[]; rewriting: boolean } | { ok: false; error: string }> {
+export async function chatWithCopywriter(requestId: string, text: string, pictures: string[] = []): Promise<{ ok: true; messages: ChatMessage[]; rewriting: boolean } | { ok: false; error: string }> {
   const me = await requireStaff();
   if (!text.trim()) return { ok: false, error: "Write something first." };
+  const images = chatImagesFrom(pictures);
   const supabase = await createClient();
   const { data: r } = await supabase.from("board_requests").select("id, number, client_id, angle_id, title, brief, angle_name").eq("id", requestId).maybeSingle();
   if (!r) return { ok: false, error: "Ticket not found." };
@@ -362,6 +364,7 @@ export async function chatWithCopywriter(requestId: string, text: string): Promi
       clientId: r.client_id,
       system: COPY_CHAT_SYSTEM,
       schema: COPY_CHAT_SCHEMA,
+      images,
       prompt: `${ctx ? contextBlock(ctx, undefined, { allotment: false }) : "<client>the client</client>"}
 
 <ticket>
@@ -378,7 +381,7 @@ ${ads.map((a, i) => `Ad ${i + 1} [${a.kind} · ${a.formula}]\nPrimary text: ${a.
 ${[...history.slice(-12), mine].map((m) => `${m.role === "user" ? (m.by ?? "Copy review") : "You"}: ${m.text}`).join("\n")}
 </conversation>
 
-Answer the last message.`,
+Answer the last message.${imagesNote(images.length)}`,
     });
   } catch (e) {
     return { ok: false, error: e instanceof AiUnavailable ? e.message : "The Copywriter didn't answer." };

@@ -82,15 +82,15 @@ const CLARIFY_RULES = `You are reviewing this client's Brand Bible with someone 
 - changeNote: one line for the change log ("" when nothing changed).`;
 
 /** The review chat: the team answers open questions and corrects the Bible; the strategist's answers edit it in place. */
-export async function clarifyBrandBible(clientId: string, slug: string, message: string): Promise<{ ok: true; chat: BibleTurn[] } | { ok: false; error: string }> {
+export async function clarifyBrandBible(clientId: string, slug: string, message: string, pictures: string[] = []): Promise<{ ok: true; chat: BibleTurn[] } | { ok: false; error: string }> {
   const me = await requireStaff();
   if (!adminConfigured()) return { ok: false, error: "Server key missing." };
   if (!(await canEditBible(createAdminClient(), me, clientId))) return { ok: false, error: NOT_EDITOR };
-  return clarifyAs(me, clientId, slug, message);
+  return clarifyAs(me, clientId, slug, message, (await import("@/lib/chat-images")).chatImagesFrom(pictures));
 }
 
 /** The review chat's edit, as this person (the caller checked they may edit, or that they approved the change) */
-async function clarifyAs(me: Awaited<ReturnType<typeof requireStaff>>, clientId: string, slug: string, message: string): Promise<{ ok: true; chat: BibleTurn[] } | { ok: false; error: string }> {
+async function clarifyAs(me: Awaited<ReturnType<typeof requireStaff>>, clientId: string, slug: string, message: string, images: import("@/lib/chat-images").ChatImage[] = []): Promise<{ ok: true; chat: BibleTurn[] } | { ok: false; error: string }> {
   const text = message.trim().slice(0, 8000);
   if (!text) return { ok: false, error: "Write something first." };
   const supabase = await createClient();
@@ -116,8 +116,9 @@ async function clarifyAs(me: Awaited<ReturnType<typeof requireStaff>>, clientId:
       clientId,
       override: { model: "sonnet", effort: "medium" },
       system: `${CLARIFY_RULES}\n\n<brand_bible client="${client.name}">\n${b.markdown}\n</brand_bible>\n\n<read_this_first>\n${b.read_this_first ?? ""}\n</read_this_first>`,
-      prompt: `${ctx ? `${contextBlock({ ...ctx, brandBible: null }, undefined, { allotment: false })}\n\n` : ""}Open questions right now:\n${questions.map((q, i) => `${i + 1}. ${q.question} (${q.who})`).join("\n") || "None."}\n\nThe chat so far:\n${[...chat.slice(-16), mine].map((t) => `${t.role === "user" ? (t.by ?? "Team") : "You"}: ${t.text}`).join("\n\n")}\n\nToday is ${day}. Answer the last message.`,
+      prompt: `${ctx ? `${contextBlock({ ...ctx, brandBible: null }, undefined, { allotment: false })}\n\n` : ""}Open questions right now:\n${questions.map((q, i) => `${i + 1}. ${q.question} (${q.who})`).join("\n") || "None."}\n\nThe chat so far:\n${[...chat.slice(-16), mine].map((t) => `${t.role === "user" ? (t.by ?? "Team") : "You"}: ${t.text}`).join("\n\n")}\n\nToday is ${day}. Answer the last message.${images.length ? ` (${images.length} screenshot${images.length === 1 ? " is" : "s are"} attached: look at ${images.length === 1 ? "it" : "them"} and answer from what you see.)` : ""}`,
       schema: CLARIFY_SCHEMA,
+      images,
       // Whole sections come back, so there has to be room (streamed)
       maxTokens: 32000,
       onText: () => {},

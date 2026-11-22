@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, researchWeb } from "@/lib/ai";
+import type { ChatImage } from "@/lib/chat-images";
 import type { Level, Route } from "@/lib/ai-router";
 import { allWinners } from "@/lib/industry";
 import { industryLabel } from "@/lib/industries";
@@ -242,8 +243,16 @@ export async function tableTurn(admin: SupabaseClient, threadId: string, seat: S
     if (research) await admin.from("lab_messages").update({ data: { ...data, research: research.slice(0, 30000) } }).eq("id", asked.id);
   }
 
+  // Screenshots the exec pasted with their last message: every seat that answers it sees them
+  const pictures: ChatImage[] = [];
+  for (const p of ((data as { images?: string[] }).images ?? []).slice(0, 6)) {
+    const got = await admin.storage.from("ai-files").download(p).catch(() => null);
+    if (got?.data) pictures.push({ mediaType: "image/jpeg", data: Buffer.from(await got.data.arrayBuffer()).toString("base64") });
+  }
+
   const out = await askJson<TurnOut>({
     agent: "lab",
+    images: pictures,
     label: `lab round table (${route?.level ?? "set"})`,
     system: route?.level === "quick" ? `${system}\n\nThis one is a quick question: one seat answers it in a sentence or two and hands back to the exec.` : system,
     schema: TURN_SCHEMA,

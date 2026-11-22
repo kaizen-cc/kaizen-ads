@@ -263,6 +263,12 @@ export function PlanTalk({ slug, brand, chat: initial, locked, onReactions }: { 
                           void send();
                         }
                       }}
+                      onPaste={(e) => {
+                        const pasted = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/")).map((f, i) => (f.name && f.name !== "image.png" ? f : new File([f], `screenshot-${Date.now()}-${i + 1}.${(f.type.split("/")[1] || "png").replace("jpeg", "jpg")}`, { type: f.type })));
+                        if (!pasted.length) return;
+                        e.preventDefault();
+                        setFiles((cur) => [...cur, ...pasted].slice(0, 6));
+                      }}
                       rows={1}
                       placeholder="Write a message"
                       className="max-h-[30vh] min-h-11 w-full resize-none bg-transparent px-1 py-2.5 text-[15px] leading-relaxed outline-none [field-sizing:content]"

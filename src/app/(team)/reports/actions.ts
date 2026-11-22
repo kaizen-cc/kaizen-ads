@@ -31,7 +31,7 @@ type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 const isChannel = (platform: unknown) => platform === "klaviyo" || platform === "social";
 
 /** The writer for this report's platform: the AI changes the report and the message, the QA checks them again */
-async function reviseAny(admin: ReturnType<typeof createAdminClient>, id: string, ask: string, by: string, opts: { echo?: boolean; byId?: string | null } = {}) {
+async function reviseAny(admin: ReturnType<typeof createAdminClient>, id: string, ask: string, by: string, opts: { echo?: boolean; byId?: string | null; images?: import("@/lib/chat-images").ChatImage[] } = {}) {
   const { data } = await admin.from("reports").select("platform").eq("id", id).maybeSingle();
   if (isChannel(data?.platform)) return (await import("@/lib/channel-reports/write")).reviseChannelReport(admin, id, ask, by, opts);
   return reviseReport(admin, id, ask, by, opts);
@@ -293,7 +293,7 @@ async function movePeriod(id: string, me: Staff, p: { key: PeriodKey; label: str
 }
 
 /** Asks the AI to change the report ("add lead quality", "shorter"); what the client always wants is remembered. */
-export async function reviseWithAi(id: string, ask: string): Promise<Result<{ chat: ChatTurn[]; message: string; sections: Sections; qa: Qa | null; lesson: string | null; redrawing?: boolean; openId?: string }>> {
+export async function reviseWithAi(id: string, ask: string, pictures: string[] = []): Promise<Result<{ chat: ChatTurn[]; message: string; sections: Sections; qa: Qa | null; lesson: string | null; redrawing?: boolean; openId?: string }>> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   if (!ask.trim()) return { ok: false, error: "Say what to change." };
@@ -323,7 +323,7 @@ export async function reviseWithAi(id: string, ask: string): Promise<Result<{ ch
     return { ok: true, chat: next, message: (cur?.message as string) ?? "", sections: cur?.sections as Sections, qa: (cur?.qa as Qa | null) ?? null, lesson: null, redrawing: true };
   }
   try {
-    const out = await reviseAny(createAdminClient(), id, ask, ok.me.fullName, { byId: ok.me.id });
+    const out = await reviseAny(createAdminClient(), id, ask, ok.me.fullName, { byId: ok.me.id, images: (await import("@/lib/chat-images")).chatImagesFrom(pictures) });
     done(id);
     return { ok: true, ...out };
   } catch (e) {

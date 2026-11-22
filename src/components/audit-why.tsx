@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { AttachButton, ChatImageStrip, useChatImages } from "@/components/chat-images";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import type { WhyKind, WhyMessage } from "@/lib/audit-why";
 import { askWhyAction, loadWhy, teachWhy } from "@/app/(team)/kpis/why-actions";
@@ -21,6 +22,7 @@ export function AuditWhy({ kind, auditId, itemKey, count = 0, agent = "auditor" 
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [thinking, setThinking] = useState(false);
+  const pics = useChatImages();
   const [teaching, startTeach] = useTransition();
   const [loading, startLoad] = useTransition();
   const end = useRef<HTMLDivElement>(null);
@@ -42,16 +44,21 @@ export function AuditWhy({ kind, auditId, itemKey, count = 0, agent = "auditor" 
   }, [open, thinking, messages?.length]);
 
   const ask = async () => {
-    const q = text.trim();
+    const sentPics = pics.urls;
+    const q = text.trim() || (sentPics.length ? "Look at the attached screenshot." : "");
     if (!q || thinking) return;
     setError(null);
     setText("");
+    pics.clear();
     // The question shows at once; the answer follows
     setMessages((m) => [...(m ?? []), { id: `q-${Date.now()}`, role: "person", body: q, by: "You", at: new Date().toISOString(), lesson: null, taught: false }]);
     setThinking(true);
-    const r = await askWhyAction(kind, auditId, itemKey, q);
+    const r = await askWhyAction(kind, auditId, itemKey, q, sentPics);
     setThinking(false);
-    if (!r.ok) return setError(r.error);
+    if (!r.ok) {
+      pics.restore(sentPics);
+      return setError(r.error);
+    }
     setMessages((m) => [...(m ?? []), r.answer]);
   };
 
@@ -140,7 +147,9 @@ export function AuditWhy({ kind, auditId, itemKey, count = 0, agent = "auditor" 
 
       {error && <p className="text-[12px] text-bad">{error}</p>}
 
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+      <ChatImageStrip chat={pics} />
+      <div className={`grid gap-2 rounded-[12px] sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-end ${pics.over ? "ring-2 ring-brand-text/50" : ""}`} {...pics.box}>
+        <AttachButton chat={pics} disabled={thinking} />
         <textarea
           data-chat
           value={text}
@@ -155,7 +164,7 @@ export function AuditWhy({ kind, auditId, itemKey, count = 0, agent = "auditor" 
           placeholder="Why this? Or say why you disagree…"
           className="min-h-11 w-full resize-none rounded-[12px] border border-line bg-surface px-3 py-2 text-[13px] leading-relaxed outline-none focus:border-faint"
         />
-        <button type="button" disabled={!text.trim() || thinking} onClick={() => void ask()} className="min-h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 md:min-h-9">
+        <button type="button" disabled={(!text.trim() && !pics.urls.length) || thinking} onClick={() => void ask()} className="min-h-11 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50 md:min-h-9">
           {thinking ? "Asking…" : "Ask"}
         </button>
       </div>

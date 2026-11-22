@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ReportThis } from "@/components/report-this";
 import { CallButton } from "@/components/call-button";
+import { AttachButton, ChatImageStrip, useChatImages } from "@/components/chat-images";
 import { askAboutBrief, briefChat, type BriefChatMessage } from "./brief-chat-actions";
 import { card, label } from "./ticket-parts";
 import type { Ticket } from "./types";
@@ -22,6 +23,7 @@ export function BriefChat({ ticket, demo = false }: { ticket: Ticket; demo?: boo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
+  const pics = useChatImages();
 
   useEffect(() => {
     if (demo) return;
@@ -36,10 +38,12 @@ export function BriefChat({ ticket, demo = false }: { ticket: Ticket; demo?: boo
   }, [messages, busy, open]);
 
   const send = async (q = text) => {
-    const t = q.trim();
+    const sentPics = pics.urls;
+    const t = q.trim() || (sentPics.length ? "What do you see in this?" : "");
     if (!t || busy) return;
     setError(null);
     setText("");
+    pics.clear();
     setOpen(true);
     const before = messages ?? [];
     const mine: BriefChatMessage = { role: "user", text: t, at: new Date().toISOString(), by: "You" };
@@ -51,11 +55,12 @@ export function BriefChat({ ticket, demo = false }: { ticket: Ticket; demo?: boo
       setBusy(false);
       return;
     }
-    const r = await askAboutBrief(ticket.id, t, before);
+    const r = await askAboutBrief(ticket.id, t, before, sentPics);
     setBusy(false);
     if (!r.ok) {
       setError(r.error);
       setText(t);
+      pics.restore(sentPics);
       setMessages(before);
       return;
     }
@@ -116,8 +121,12 @@ export function BriefChat({ ticket, demo = false }: { ticket: Ticket; demo?: boo
           e.preventDefault();
           void send();
         }}
-        className="flex items-end gap-2"
+        className="grid gap-2"
+        {...pics.box}
       >
+        <ChatImageStrip chat={pics} />
+        <div className={`flex items-end gap-2 rounded-[12px] ${pics.over ? "ring-2 ring-brand-text/50" : ""}`}>
+        <AttachButton chat={pics} disabled={busy} />
         <textarea
           data-chat
           value={text}
@@ -129,13 +138,14 @@ export function BriefChat({ ticket, demo = false }: { ticket: Ticket; demo?: boo
             }
           }}
           rows={1}
-          placeholder="Ask anything about the brief"
+          placeholder="Ask anything about the brief, or paste a screenshot"
           aria-label="Ask about the brief"
           className="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-[12px] border border-line bg-bg px-3.5 py-2.5 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:text-base"
         />
-        <button disabled={busy || !text.trim()} className="h-11 shrink-0 rounded-[12px] bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40">
+        <button disabled={busy || (!text.trim() && !pics.urls.length)} className="h-11 shrink-0 rounded-[12px] bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40">
           Ask
         </button>
+        </div>
       </form>
     </section>
   );

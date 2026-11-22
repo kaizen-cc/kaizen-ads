@@ -180,7 +180,7 @@ const SCHEMA = {
 };
 
 /** Ask the agent that wrote the item; the question and its answer are kept on the item's thread. */
-export async function askWhy(admin: SupabaseClient, o: { kind: WhyKind; auditId: string; itemKey: string; item: Item; question: string; by: string }) {
+export async function askWhy(admin: SupabaseClient, o: { kind: WhyKind; auditId: string; itemKey: string; item: Item; question: string; by: string; images?: import("@/lib/chat-images").ChatImage[] }) {
   const question = o.question.trim().slice(0, 2000);
   const history = await whyThread(admin, o.auditId, o.itemKey);
   const { data: asked, error } = await admin
@@ -199,6 +199,7 @@ export async function askWhy(admin: SupabaseClient, o: { kind: WhyKind; auditId:
     maxTokens: 6000,
     // Someone is waiting on it: think, but not for minutes
     override: { effort: "medium" },
+    images: o.images ?? [],
     prompt: `${ctx ? contextBlock(ctx) : ""}
 
 <what_the_audit_read>
@@ -213,7 +214,8 @@ ${o.item.summary}
 ${o.item.text}
 </the_item>
 ${history.length ? `\n<the_thread_so_far>\n${history.map((m) => `${m.role === "agent" ? "You" : "Team"}: ${m.body}`).join("\n\n")}\n</the_thread_so_far>\n` : ""}
-Team: ${question}`,
+Team: ${question}${o.images?.length ? `
+(${o.images.length} screenshot${o.images.length === 1 ? " is" : "s are"} attached: look at ${o.images.length === 1 ? "it" : "them"} and answer from what you see.)` : ""}`,
   });
   const clean = (s: string) => s.replace(/\s*—\s*/g, ", ").trim();
   const lesson = out.disagrees && o.item.teach ? clean(out.lesson).slice(0, 1000) : "";

@@ -1,6 +1,7 @@
 "use server";
 
 import { AiUnavailable, askJson, clientContext, contextBlock, getAgent } from "@/lib/ai";
+import { chatImagesFrom, imagesNote } from "@/lib/chat-images";
 import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -28,8 +29,9 @@ export async function briefChat(requestId: string): Promise<{ messages: BriefCha
 }
 
 /** Ask about the brief. history: the conversation as the browser has it (used when it isn't stored yet). */
-export async function askAboutBrief(requestId: string, text: string, history: BriefChatMessage[] = []): Promise<{ ok: true; messages: BriefChatMessage[] } | { ok: false; error: string }> {
+export async function askAboutBrief(requestId: string, text: string, history: BriefChatMessage[] = [], pictures: string[] = []): Promise<{ ok: true; messages: BriefChatMessage[] } | { ok: false; error: string }> {
   const me = await requireStaff();
+  const images = chatImagesFrom(pictures);
   const q = text.trim().slice(0, 2000);
   if (!q) return { ok: false, error: "Ask a question." };
   const db = await createClient();
@@ -48,6 +50,7 @@ export async function askAboutBrief(requestId: string, text: string, history: Br
       system: SYSTEM,
       schema: SCHEMA,
       maxTokens: 4000,
+      images,
       prompt: `${contextBlock(ctx, undefined, sources)}
 
 <creative_ticket>
@@ -62,7 +65,7 @@ Brief:
 ${r.brief ?? "(no brief)"}
 </creative_ticket>
 ${earlier.length ? `\n<conversation>\n${earlier.map((m) => `${m.role === "user" ? "Maker" : "You"}: ${m.text}`).join("\n")}\n</conversation>\n` : ""}
-The maker asks: ${q}`,
+The maker asks: ${q}${imagesNote(images.length)}`,
     });
     const now = Date.now();
     const mine: BriefChatMessage = { role: "user", text: q, at: new Date(now).toISOString(), by: me.fullName };

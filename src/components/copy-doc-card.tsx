@@ -1,20 +1,23 @@
 "use client";
 
+import { useState } from "react";
 import type { CallCard, CallCopyDoc } from "@/lib/agent-call/core";
 
 // Campaign, flow or SMS copy shown on a call or in the chat as a document: each email's subject, preview text, body
 // sections, button and design notes, wrapping (never sideways). Open shows it full screen to comment on lines, ask for
-// changes and approve; once approved and requested, the Google Doc and Asana links sit on the card.
+// changes and approve; once approved and requested, the Google Doc and Asana links sit on the card. The copy folds away
+// (tap the title or the chevron) so a long doc doesn't take over the chat; the title and Open stay.
 
 const KIND: Record<CallCopyDoc["kind"], string> = { campaign: "Email campaign", flow: "Email flow", sms: "SMS", creative: "Ad creative brief", social: "Organic social" };
 
 export function CopyDocCardView({ card, onOpen, onDismiss, wide = true }: { card: CallCard & { copy: CallCopyDoc }; onOpen: (c: CallCard) => void; onDismiss?: () => void; wide?: boolean }) {
   const c = card.copy;
+  const [open, setOpen] = useState(true);
   return (
     <li className={`relative grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 overflow-hidden rounded-[18px] border border-line bg-surface p-4 shadow-sm ${wide ? "sm:col-span-2" : ""}`} aria-label={`${KIND[c.kind]}: ${c.title}`}>
       <span aria-hidden className="pointer-events-none absolute -right-12 -top-14 h-32 w-32 rounded-full bg-brand opacity-[0.08] blur-2xl" />
-      <div className="relative flex items-start gap-3">
-        <span className="grid min-w-0 flex-1 gap-0.5">
+      <div className="relative flex items-start gap-1">
+        <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="grid min-w-0 flex-1 gap-0.5 text-left">
           <span className="text-[10.5px] font-medium uppercase tracking-[0.14em] text-brand-text">
             {KIND[c.kind]} · {c.emails.length} {c.kind === "sms" ? "text" : c.kind === "social" ? "post" : c.kind === "creative" ? "concept" : "email"}
             {c.emails.length === 1 ? "" : "s"}
@@ -23,16 +26,21 @@ export function CopyDocCardView({ card, onOpen, onDismiss, wide = true }: { card
           </span>
           <span className="text-[15px] font-semibold leading-snug text-fg [overflow-wrap:anywhere]">{c.title}</span>
           {c.client && <span className="text-[12px] text-faint">{c.client}</span>}
-        </span>
+        </button>
+        <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} aria-label={open ? "Collapse the copy" : "Show the copy"} title={open ? "Collapse" : "Show the copy"} className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-faint transition-colors hover:bg-surface-2 hover:text-fg md:h-8 md:w-8">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className={`transition-transform ${open ? "rotate-180" : ""}`}>
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
         {onDismiss && (
-          <button type="button" onClick={onDismiss} aria-label={`Hide ${c.title}`} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-faint transition-colors hover:bg-surface-2 hover:text-fg">
+          <button type="button" onClick={onDismiss} aria-label={`Hide ${c.title}`} className="grid h-11 w-11 shrink-0 md:h-8 md:w-8 place-items-center rounded-full text-faint transition-colors hover:bg-surface-2 hover:text-fg">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
               <path d="M6 6l12 12M18 6L6 18" />
             </svg>
           </button>
         )}
       </div>
-      <div className="relative grid max-h-[26rem] gap-3 overflow-y-auto pr-1">
+      {open && <div className={`relative grid gap-3 overflow-y-auto pr-1 ${wide ? "max-h-[26rem]" : "max-h-[min(18rem,40dvh)]"}`}>
         {c.emails.map((e, i) => (
           <section key={i} className="grid gap-1.5 rounded-[14px] border border-line bg-bg/40 p-3">
             <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-faint">{e.name}</p>
@@ -48,7 +56,7 @@ export function CopyDocCardView({ card, onOpen, onDismiss, wide = true }: { card
             {e.designNotes.length > 0 && <p className="text-[11.5px] text-faint [overflow-wrap:anywhere]">Design: {e.designNotes.join(" · ")}</p>}
           </section>
         ))}
-      </div>
+      </div>}
       <div className="relative flex flex-wrap items-center gap-2">
         <a
           href={card.href}

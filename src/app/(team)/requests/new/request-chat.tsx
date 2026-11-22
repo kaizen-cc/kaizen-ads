@@ -381,8 +381,15 @@ export function RequestChat({ clientId, clientName, onUse, onPreview, onBack, on
                 void send();
               }
             }}
+            onPaste={(e) => {
+              const pasted = [...e.clipboardData.files];
+              if (pasted.length) {
+                e.preventDefault();
+                void files.add(pasted);
+              }
+            }}
             rows={1}
-            placeholder={state.turns.length ? "Answer, refine, or paste a reference link…" : "Describe the creative you want…"}
+            placeholder={state.turns.length ? "Answer, refine, or paste a link or screenshot…" : "Describe the creative you want…"}
             className="min-h-11 flex-1 resize-none rounded-[14px] border border-line bg-bg px-4 py-2.5 text-[16px] outline-none placeholder:text-faint focus:border-brand-text/60 md:text-[14.5px]"
           />
           {/* Send shows only once there's something to send; moving on is the page's Continue */}

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LogoLoader } from "@/components/logo-loader";
+import { AttachButton, ChatImageStrip, useChatImages } from "@/components/chat-images";
 import type { DashboardHistory, DashboardPart } from "@/lib/client-dashboard";
 import { askAboutNumbers, dashboardFor, dashboardHistoryFor } from "./actions";
 
@@ -837,16 +838,20 @@ function Ask({ slug, range, asked, setAsked }: { slug: string; range: Range; ask
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
+  const pics = useChatImages();
   useEffect(() => {
     end.current?.scrollIntoView({ block: "nearest" });
   }, [asked.length, busy]);
   const send = async (text: string) => {
-    if (!text.trim() || busy) return;
+    const sentPics = text === q ? pics.urls : [];
+    if ((!text.trim() && !sentPics.length) || busy) return;
+    if (!text.trim()) text = "What does this screenshot show, and what should I make of it?";
     setBusy(true);
     setError(null);
-    const r = await askAboutNumbers(slug, text, range);
+    const r = await askAboutNumbers(slug, text, range, sentPics);
     setBusy(false);
     if (!r.ok) return setError(r.error);
+    pics.clear();
     if (r.row) setAsked([...asked, r.row as Asked]);
     setQ("");
   };
@@ -892,9 +897,12 @@ function Ask({ slug, range, asked, setAsked }: { slug: string; range: Range; ask
           e.preventDefault();
           void send(q);
         }}
-        className="border-t border-line p-3"
+        className="grid gap-2 border-t border-line p-3"
+        {...pics.box}
       >
-        <div className="flex items-end gap-2 rounded-[20px] border border-line bg-bg p-1.5 focus-within:border-brand-text/60">
+        <ChatImageStrip chat={pics} />
+        <div className={`flex items-end gap-2 rounded-[20px] border bg-bg p-1.5 focus-within:border-brand-text/60 ${pics.over ? "border-brand-text/60" : "border-line"}`}>
+          <AttachButton chat={pics} disabled={busy} />
           <textarea data-chat
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -905,10 +913,10 @@ function Ask({ slug, range, asked, setAsked }: { slug: string; range: Range; ask
               }
             }}
             rows={1}
-            placeholder="e.g. Why did conversions drop last week?"
+            placeholder="e.g. Why did conversions drop last week? (paste a screenshot to show us)"
             className="max-h-40 min-h-11 w-full resize-none bg-transparent px-2.5 py-2.5 text-[15px] outline-none [field-sizing:content]"
           />
-          <button type="submit" disabled={busy || !q.trim()} className="h-11 shrink-0 rounded-full bg-brand px-5 text-[14px] font-medium text-white disabled:opacity-40">
+          <button type="submit" disabled={busy || (!q.trim() && !pics.urls.length)} className="h-11 shrink-0 rounded-full bg-brand px-5 text-[14px] font-medium text-white disabled:opacity-40">
             Ask
           </button>
         </div>

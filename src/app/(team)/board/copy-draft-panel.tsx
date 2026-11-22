@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { AttachButton, ChatImageStrip, useChatImages } from "@/components/chat-images";
 import { ReportThis } from "@/components/report-this";
 import type { CreativeCopy } from "@/lib/ticket-copy";
 import { chatCopyDraft, copyDraft, startCopyDraft, undoCopyDraft, type CopyDraftState } from "./ticket-copy-actions";
@@ -114,6 +115,7 @@ function CopyBody({ c }: { c: CreativeCopy }) {
 export function CopyDraftPanel({ ticket, demo = false, starting = false }: { ticket: Ticket; demo?: boolean; /** Start production just started the copywriter (its first save may not be in yet) */ starting?: boolean }) {
   const [state, setState] = useState<CopyDraftState | null>(demo ? DEMO : null);
   const [text, setText] = useState("");
+  const pics = useChatImages();
   const [busy, setBusy] = useState<null | "chat" | "undo" | "start">(null);
   const [error, setError] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
@@ -151,10 +153,12 @@ export function CopyDraftPanel({ ticket, demo = false, starting = false }: { tic
     setState(r.state);
   };
   const send = async () => {
-    const t = text.trim();
+    const sentPics = pics.urls;
+    const t = text.trim() || (sentPics.length ? "Look at the attached screenshot." : "");
     if (!t || busy) return;
     setError(null);
     setText("");
+    pics.clear();
     setChatOpen(true);
     setBusy("chat");
     if (demo) {
@@ -162,10 +166,11 @@ export function CopyDraftPanel({ ticket, demo = false, starting = false }: { tic
       setBusy(null);
       return;
     }
-    const r = await chatCopyDraft(ticket.id, t);
+    const r = await chatCopyDraft(ticket.id, t, sentPics);
     setBusy(null);
     if (!r.ok) {
       setText(t);
+      pics.restore(sentPics);
       return setError(r.error);
     }
     setState(r.state);
@@ -263,13 +268,17 @@ export function CopyDraftPanel({ ticket, demo = false, starting = false }: { tic
           {error && <p className="text-xs text-bad">{error}</p>}
           {error && !demo && <ReportThis chat="ticket-copy" messageId={`error-${messageKey(messages.length, error)}`} threadId={ticket.id} error={error} turns={turns} clientSlug={ticket.clientSlug} />}
           {state.setup ? (
+            <>
+            <ChatImageStrip chat={pics} />
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 void send();
               }}
-              className="flex items-end gap-2"
+              className={`flex items-end gap-2 rounded-[12px] ${pics.over ? "ring-2 ring-brand-text/50" : ""}`}
+              {...pics.box}
             >
+              <AttachButton chat={pics} disabled={Boolean(busy)} />
               <textarea
                 data-chat
                 value={text}
@@ -285,10 +294,11 @@ export function CopyDraftPanel({ ticket, demo = false, starting = false }: { tic
                 aria-label="Message the copywriter"
                 className="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-[12px] border border-line bg-bg px-3.5 py-2.5 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 max-md:text-base"
               />
-              <button disabled={Boolean(busy) || !text.trim()} className="h-11 shrink-0 rounded-[12px] bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40">
+              <button disabled={Boolean(busy) || (!text.trim() && !pics.urls.length)} className="h-11 shrink-0 rounded-[12px] bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40">
                 Send
               </button>
             </form>
+            </>
           ) : (
             <p className="text-xs text-faint">The chat with the copywriter turns on once its database update is applied.</p>
           )}

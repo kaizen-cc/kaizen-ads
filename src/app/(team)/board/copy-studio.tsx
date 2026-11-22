@@ -9,6 +9,7 @@ import type { Design } from "./design-actions";
 import { cachedMedia, loadMedia } from "./media-cache";
 import { AdPreview, previewMedia } from "@/components/ad-preview";
 import type { Dismissed } from "@/lib/copy";
+import { AttachButton, ChatImageStrip, useChatImages } from "@/components/chat-images";
 import type { Ticket } from "./types";
 import { ReportThis } from "@/components/report-this";
 import { messageKey } from "@/lib/chat-report";
@@ -111,6 +112,7 @@ function Chat({ ticket, demo, disabled, onRewriting }: { ticket: Ticket; demo: b
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
+  const pics = useChatImages();
   useEffect(() => {
     if (demo) return;
     let live = true;
@@ -125,10 +127,12 @@ function Chat({ ticket, demo, disabled, onRewriting }: { ticket: Ticket; demo: b
   }, [messages, busy]);
 
   const send = async () => {
-    const t = text.trim();
+    const sentPics = pics.urls;
+    const t = text.trim() || (sentPics.length ? "Look at the attached screenshot." : "");
     if (!t || busy) return;
     setError(null);
     setText("");
+    pics.clear();
     const mine: ChatMessage = { role: "user", text: t, by: "You", at: new Date().toISOString() };
     setMessages((m) => [...(m ?? []), mine]);
     setBusy(true);
@@ -141,11 +145,12 @@ function Chat({ ticket, demo, disabled, onRewriting }: { ticket: Ticket; demo: b
       setBusy(false);
       return;
     }
-    const r = await chatWithCopywriter(ticket.id, t);
+    const r = await chatWithCopywriter(ticket.id, t, sentPics);
     setBusy(false);
     if (!r.ok) {
       setError(r.error);
       setText(t);
+      pics.restore(sentPics);
       setMessages((m) => (m ?? []).filter((x) => x !== mine));
       return;
     }
@@ -195,7 +200,9 @@ function Chat({ ticket, demo, disabled, onRewriting }: { ticket: Ticket; demo: b
       <div className="grid gap-1.5">
         {error && <p className="text-xs text-bad">{error}</p>}
         {error && !demo && <ReportThis chat="copy-studio" messageId={`error-${messageKey(messages?.length ?? 0, error)}`} threadId={ticket.id} error={error} turns={reportTurns} state={reportState} clientSlug={ticket.clientSlug} />}
-        <div className="flex items-end gap-2">
+        <ChatImageStrip chat={pics} />
+        <div className={`flex items-end gap-2 rounded-[10px] ${pics.over ? "ring-2 ring-brand-text/50" : ""}`} {...pics.box}>
+          <AttachButton chat={pics} disabled={disabled || busy} />
           <textarea data-chat
             value={text}
             disabled={disabled}
@@ -207,10 +214,10 @@ function Chat({ ticket, demo, disabled, onRewriting }: { ticket: Ticket; demo: b
               }
             }}
             rows={2}
-            placeholder={disabled ? "The copy is approved." : "e.g. They never call it a discount. Lead with the teachers, not the price."}
+            placeholder={disabled ? "The copy is approved." : "e.g. They never call it a discount. Lead with the teachers. (Paste a screenshot to show it.)"}
             className="min-w-0 flex-1 resize-none rounded-[10px] border border-line bg-bg px-3 py-2 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 disabled:opacity-60"
           />
-          <button disabled={busy || disabled || !text.trim()} onClick={send} className="h-10 rounded-brand bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40 max-md:h-11">
+          <button disabled={busy || disabled || (!text.trim() && !pics.urls.length)} onClick={send} className="h-10 rounded-brand bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40 max-md:h-11">
             Send
           </button>
         </div>

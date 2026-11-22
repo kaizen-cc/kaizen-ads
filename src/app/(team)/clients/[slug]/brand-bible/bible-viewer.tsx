@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { AttachButton, ChatImageStrip, useChatImages } from "@/components/chat-images";
 import { Markdown } from "@/components/markdown";
 import { audiencesOf, kindOf, quotesOf, REVIEW_BANK, reviewBankOf, splitBible, statsOf, subsectionOf, type BibleSection, type Quote } from "@/lib/bible-sections";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
@@ -564,6 +565,7 @@ function BibleChat({
   const [busy, start] = useTransition();
   const end = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
+  const pics = useChatImages();
 
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
@@ -573,19 +575,23 @@ function BibleChat({
   }, [seed]);
 
   const send = (msg = text) => {
-    if (!msg.trim() || busy) return;
+    const sentPics = pics.urls;
+    if ((!msg.trim() && !sentPics.length) || busy) return;
+    msg = msg.trim() || "Look at the attached screenshot.";
+    pics.clear();
     const now = new Date().toISOString();
     setTurns((t) => [...t, { role: "user", text: msg.trim(), at: now }]);
     setText("");
     setError(null);
     start(async () => {
-      const r = await clarifyBrandBible(clientId, slug, msg);
+      const r = await clarifyBrandBible(clientId, slug, msg, sentPics);
       if (r.ok) {
         setTurns(r.chat);
         router.refresh();
       } else {
         setError(r.error);
         setTurns((t) => t.slice(0, -1));
+        pics.restore(sentPics);
         setText(msg);
       }
     });
@@ -676,7 +682,9 @@ function BibleChat({
           )}
           {error && <p className="px-1 text-[12px] text-bad">{error}</p>}
           {error && <ReportThis chat="brand-bible" messageId={`error-${messageKey(turns.length, error)}`} threadId={clientId} error={error} turns={reportTurns} state={reportState} clientSlug={slug} />}
-          <div className="flex items-end gap-2 rounded-[18px] border border-line bg-bg px-3 py-2 focus-within:border-faint">
+          <ChatImageStrip chat={pics} />
+          <div className={`flex items-end gap-2 rounded-[18px] border bg-bg px-3 py-2 focus-within:border-faint ${pics.over ? "border-brand-text/60" : "border-line"}`} {...pics.box}>
+            <AttachButton chat={pics} disabled={busy} />
             <textarea data-chat
               ref={box}
               value={text}
@@ -688,10 +696,10 @@ function BibleChat({
                 }
               }}
               rows={2}
-              placeholder="Answer a question, or correct anything in the Bible…"
+              placeholder="Answer a question, correct anything, or paste a screenshot…"
               className="max-h-40 min-h-11 flex-1 resize-none bg-transparent py-1.5 text-[16px] leading-relaxed outline-none placeholder:text-faint md:text-[13.5px]"
             />
-            <button type="button" disabled={busy || !text.trim()} onClick={() => send()} className="h-11 shrink-0 rounded-full bg-brand px-4 text-[13px] font-medium text-white disabled:opacity-40 md:h-9">
+            <button type="button" disabled={busy || (!text.trim() && !pics.urls.length)} onClick={() => send()} className="h-11 shrink-0 rounded-full bg-brand px-4 text-[13px] font-medium text-white disabled:opacity-40 md:h-9">
               Send
             </button>
           </div>

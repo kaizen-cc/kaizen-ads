@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChatSession, type ChatLine } from "@/lib/agent-call/chat-engine";
 import { ackCallNotice, endCall, startCall } from "@/app/(team)/settings/call-actions";
 import { Spark } from "@/app/(team)/requests/new/parts";
+import { AttachButton, ChatImageStrip, sendPicturesThrough, useChatImages } from "@/components/chat-images";
 
 /**
  * "Talk it through" on the email request form: a typed conversation with the Email Strategist, the same pipeline as a
@@ -21,6 +22,7 @@ export function EmailRequestChat({ clientId, clientName, seed, onCopy, onBack }:
   const [ready, setReady] = useState(false);
   const session = useRef<ChatSession | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const pics = useChatImages();
   const copyRef = useRef(onCopy);
   useEffect(() => {
     copyRef.current = onCopy;
@@ -71,10 +73,25 @@ export function EmailRequestChat({ clientId, clientName, seed, onCopy, onBack }:
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [lines.length, busy]);
 
-  const send = () => {
-    if (!text.trim() || !session.current) return;
-    session.current.send(text);
+  const send = async () => {
+    const s = session.current;
+    if ((!text.trim() && !pics.urls.length) || !s) return;
+    if (!pics.urls.length) {
+      s.send(text);
+      setText("");
+      return;
+    }
+    const sent = pics.urls;
+    const said = text;
     setText("");
+    pics.clear();
+    try {
+      await sendPicturesThrough(s, said, sent);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The picture didn't go through.");
+      setText(said);
+      pics.restore(sent);
+    }
   };
 
   return (
@@ -112,6 +129,14 @@ export function EmailRequestChat({ clientId, clientName, seed, onCopy, onBack }:
               } ${l.note ? "italic opacity-70" : ""}`}
             >
               {l.speaker && l.who === "agent" && <span className="mb-0.5 block text-[11px] font-medium uppercase tracking-[0.12em] text-faint">{l.speaker.label}</span>}
+              {l.images?.length ? (
+                <span className="mb-1 flex flex-wrap gap-1.5">
+                  {l.images.map((u, i) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={i} src={u} alt="Attached screenshot" className="max-h-40 max-w-full rounded-[10px]" />
+                  ))}
+                </span>
+              ) : null}
               {l.text}
               {l.streaming && <span className="ml-1 inline-block h-3 w-1.5 animate-pulse rounded-sm bg-faint align-middle" />}
             </p>
@@ -123,7 +148,9 @@ export function EmailRequestChat({ clientId, clientName, seed, onCopy, onBack }:
 
       {error && <p className="rounded-[12px] bg-bad-soft px-3 py-2 text-[13px] text-bad">{error}</p>}
 
-      <div className="flex items-end gap-2">
+      <ChatImageStrip chat={pics} />
+      <div className={`flex items-end gap-2 rounded-[16px] ${pics.over ? "ring-2 ring-brand-text/50" : ""}`} {...pics.box}>
+        <AttachButton chat={pics} disabled={!ready} />
         <label htmlFor="email-chat" className="sr-only">
           Message the Email Strategist
         </label>
@@ -135,13 +162,13 @@ export function EmailRequestChat({ clientId, clientName, seed, onCopy, onBack }:
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              send();
+              void send();
             }
           }}
-          placeholder="Two campaigns for the holiday sale, or a welcome flow…"
+          placeholder="Two campaigns for the holiday sale, or a welcome flow… (paste a screenshot to show it)"
           className="max-h-40 min-h-12 flex-1 resize-none rounded-[16px] border border-line bg-bg px-4 py-3 text-[16px] leading-snug text-fg outline-none transition-colors focus:border-faint md:text-[14.5px]"
         />
-        <button type="button" onClick={send} disabled={!text.trim() || !ready} className="inline-flex min-h-12 shrink-0 items-center rounded-full bg-brand px-5 text-[14px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] disabled:opacity-50">
+        <button type="button" onClick={() => void send()} disabled={(!text.trim() && !pics.urls.length) || !ready} className="inline-flex min-h-12 shrink-0 items-center rounded-full bg-brand px-5 text-[14px] font-medium text-white transition hover:bg-brand-hover active:scale-[0.98] disabled:opacity-50">
           Send
         </button>
       </div>

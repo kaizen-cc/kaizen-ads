@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AttachButton, ChatImageStrip, useChatImages } from "@/components/chat-images";
 import { applyScope, proposeScope } from "./email-scope-actions";
 
 // "Adjust with AI" on the SOW card: the person says what the client actually signed or decided ("they only signed the
@@ -21,18 +22,24 @@ export function ScopeChat({ clientId, onApplied }: { clientId: string; onApplied
   const [text, setText] = useState("");
   const [busy, setBusy] = useState<null | "think" | "apply">(null);
   const [error, setError] = useState<string | null>(null);
+  const pics = useChatImages();
   const [proposal, setProposal] = useState<{ note: string; changes: Change } | null>(null);
 
   const send = async () => {
-    if (!text.trim()) return;
-    const next = [...turns, { role: "you" as const, text: text.trim() }];
+    if (!text.trim() && !pics.urls.length) return;
+    const sentPics = pics.urls;
+    const next = [...turns, { role: "you" as const, text: text.trim() || "(see the attached screenshot)" }];
     setTurns(next);
     setText("");
+    pics.clear();
     setBusy("think");
     setError(null);
-    const res = await proposeScope(clientId, next);
+    const res = await proposeScope(clientId, next, sentPics);
     setBusy(null);
-    if (!res.ok) return setError(res.error);
+    if (!res.ok) {
+      pics.restore(sentPics);
+      return setError(res.error);
+    }
     setTurns([...next, { role: "ai", text: res.reply }]);
     setProposal(res.changes.length ? { note: res.note, changes: res.changes } : null);
   };
@@ -100,7 +107,9 @@ export function ScopeChat({ clientId, onApplied }: { clientId: string; onApplied
         </div>
       )}
       {error && <p className="text-[12.5px] text-bad">{error}</p>}
-      <div className="flex items-end gap-2">
+      <ChatImageStrip chat={pics} />
+      <div className={`flex items-end gap-2 rounded-[14px] ${pics.over ? "ring-2 ring-brand-text/50" : ""}`} {...pics.box}>
+        <AttachButton chat={pics} disabled={busy !== null} />
         <textarea
           value={text}
           rows={1}
@@ -112,10 +121,10 @@ export function ScopeChat({ clientId, onApplied }: { clientId: string; onApplied
             }
           }}
           aria-label="What changed"
-          placeholder="They only signed the 1-month sprint…"
+          placeholder="They only signed the 1-month sprint… (paste a screenshot)"
           className="max-h-32 min-h-11 flex-1 resize-none rounded-[14px] border border-line bg-bg px-3.5 py-2.5 text-[16px] leading-snug text-fg outline-none focus:border-faint md:text-[13.5px]"
         />
-        <button type="button" onClick={() => void send()} disabled={!text.trim() || busy !== null} className="min-h-11 shrink-0 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50">
+        <button type="button" onClick={() => void send()} disabled={(!text.trim() && !pics.urls.length) || busy !== null} className="min-h-11 shrink-0 rounded-full bg-fg px-4 text-[13px] font-medium text-bg disabled:opacity-50">
           Send
         </button>
       </div>

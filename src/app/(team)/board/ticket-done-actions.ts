@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { AiUnavailable, askJson } from "@/lib/ai";
+import { chatImagesFrom, imagesNote } from "@/lib/chat-images";
 import { requireStaff } from "@/lib/auth";
 import type { LaunchPlan, Overrides } from "@/lib/launcher";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
@@ -76,7 +77,7 @@ The copy is what the client approved: you can't change its words here. When they
 Everything is created paused, per Kaizen's rules; turning it on happens in Ads Manager.`;
 
 /** A message to the media buyer AI: it answers and, when it should, plans the launch again with the change */
-export async function launchChat(launchId: string, text: string, history: LaunchChatMessage[] = []): Promise<{ ok: true; messages: LaunchChatMessage[]; launch: LaunchView | null } | { ok: false; error: string }> {
+export async function launchChat(launchId: string, text: string, history: LaunchChatMessage[] = [], pictures: string[] = []): Promise<{ ok: true; messages: LaunchChatMessage[]; launch: LaunchView | null } | { ok: false; error: string }> {
   await requireStaff();
   const t = text.trim().slice(0, 1500);
   if (!t) return { ok: false, error: "Say what to change." };
@@ -93,6 +94,7 @@ export async function launchChat(launchId: string, text: string, history: Launch
       system: SYSTEM,
       schema: SCHEMA,
       maxTokens: 4000,
+      images: chatImagesFrom(pictures),
       prompt: `<plan>
 Ad set now: ${p.adsetId} (${p.mode === "clone" ? `a new ad set "${p.newAdsetName ?? ""}" cloned from it` : "adding to it"})
 Daily budget: ${p.budget?.value ?? p.budget?.current ?? "unchanged"}
@@ -106,7 +108,7 @@ Why the plan: ${p.reason}
 ${adsets.map((a) => `- ${a.id}: ${a.name} · campaign ${a.campaign} · ${a.status} · ${a.objective}${a.daily ? ` · $${a.daily}/day` : ""}`).join("\n")}
 </ad_sets>
 ${history.length ? `<conversation>\n${history.slice(-10).map((m) => `${m.role === "user" ? "Buyer" : "You"}: ${m.text}`).join("\n")}\n</conversation>\n` : ""}
-The buyer says: ${t}`,
+The buyer says: ${t}${imagesNote(chatImagesFrom(pictures).length)}`,
     });
     const changes: string[] = [];
     if (out.change) {

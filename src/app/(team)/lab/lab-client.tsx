@@ -9,6 +9,7 @@ import type { ClientNumbers, ProposedTest } from "@/lib/lab";
 import { pushParams, useParam } from "@/lib/url-state";
 import { KnowledgePanel } from "@/components/knowledge-panel";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
+import { ChatImageStrip, useChatImages } from "@/components/chat-images";
 import { ReportThis } from "@/components/report-this";
 import { messageKey } from "@/lib/chat-report";
 import { addLoomLinks, addTestNote, followTest, createTest, decideTest, deleteSource, deleteThread, deployLearning, draftDeploy, dropTest, iterateTest, sendToTable, startTest, tableSpeaks, type Attachment } from "./actions";
@@ -146,6 +147,8 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
   const router = useRouter();
   const [text, setText] = useState("");
   const [shared, setShared] = useState<Attachment[]>([]);
+  // Screenshots pasted, dropped or picked for the next message: seen by every seat that answers it
+  const pics = useChatImages();
   const [adding, setAdding] = useState<null | "link" | "paste">(null);
   const [draftUrl, setDraftUrl] = useState("");
   const [draftDoc, setDraftDoc] = useState({ title: "", body: "", kind: "doc" as Attachment["kind"] });
@@ -232,7 +235,9 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
   }, [threadId]);
 
   const addFiles = async (files: FileList | File[]) => {
-    const list = [...files].slice(0, 4);
+    const images = [...files].filter((f) => f.type.startsWith("image/"));
+    if (images.length) void pics.add(images);
+    const list = [...files].filter((f) => !f.type.startsWith("image/")).slice(0, 4);
     const read = await Promise.all(
       list.map(async (f) => ({
         kind: (/\.(srt|vtt)$/i.test(f.name) || /transcript|call|meeting/i.test(f.name) ? "transcript" : "doc") as Attachment["kind"],
@@ -247,8 +252,9 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
   // The exec can speak at any time: what they say is saved, and a new round starts that reads everything so far
   const send = async () => {
     const msg = text.trim();
-    if ((!msg && !shared.length) || sending) return;
+    if ((!msg && !shared.length && !pics.urls.length) || sending) return;
     const out = shared;
+    const sentPics = pics.urls;
     const temp: LabMessage = {
       id: `sending-${Date.now()}`,
       role: "user",
@@ -256,17 +262,18 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
       author: null,
       body: msg,
       tests: [],
-      attachments: out.map((a, i) => ({ id: String(i), kind: a.kind, title: a.title || a.url, url: a.url || null })),
+      attachments: [...out.map((a, i) => ({ id: String(i), kind: a.kind, title: a.title || a.url, url: a.url || null })), ...(sentPics.length ? [{ id: "shots", kind: "image", title: sentPics.length === 1 ? "Screenshot" : `${sentPics.length} screenshots`, url: null as string | null }] : [])],
       at: new Date().toISOString(),
     };
     setText("");
     setShared([]);
+    pics.clear();
     setAdding(null);
     setError(null);
     setLocal((l) => [...l, temp]);
     round.current++;
     setSending(out.some((a) => a.url) ? "reading" : "sending");
-    const r = await sendToTable(tidRef.current, msg, out, deep);
+    const r = await sendToTable(tidRef.current, msg, out, deep, sentPics);
     setSending(null);
     setDeep(false);
     if (r.ok) setMood(r.message.level ? { level: r.message.level, research: Boolean(r.message.research) } : null);
@@ -274,6 +281,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
       setLocal((l) => l.filter((m) => m.id !== temp.id));
       setText(msg);
       setShared(out);
+      pics.restore(sentPics);
       return setError(r.error);
     }
     setLocal((l) => l.map((m) => (m.id === temp.id ? { ...temp, id: r.message.id, body: r.message.body, attachments: r.message.attachments, at: r.message.at } : m)));
@@ -432,6 +440,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
           {error && <p className="px-1 text-xs text-bad">{error}</p>}
           {error && <ReportThis chat="ads-lab" messageId={`error-${messageKey(thread.length, error)}`} threadId={tid} error={error} turns={reportTurns} state={reportState} />}
 
+          <ChatImageStrip chat={pics} />
           {shared.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {shared.map((a, i) => (
@@ -515,6 +524,12 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
                   }
                 }}
                 onPaste={(e) => {
+                  const shots = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+                  if (shots.length) {
+                    e.preventDefault();
+                    void pics.add(shots);
+                    return;
+                  }
                   const t = e.clipboardData.getData("text");
                   if (/^https?:\/\/\S+$/.test(t.trim()) && !text.trim()) {
                     e.preventDefault();
@@ -522,7 +537,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
                   }
                 }}
                 rows={2}
-                placeholder={shared.length ? "What should the table look at in this?" : "Share an idea, or paste a link…"}
+                placeholder={shared.length || pics.urls.length ? "What should the table look at in this?" : "Share an idea, paste a link or a screenshot…"}
                 className="max-h-48 min-h-[48px] resize-none bg-transparent px-3.5 pt-3 text-sm outline-none placeholder:text-faint"
               />
               <div className="flex flex-wrap items-center gap-1 px-2 pb-2">
@@ -533,8 +548,8 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
                     <path d="M21 12.5 12.6 21a5 5 0 0 1-7.1-7.1L14 5.4a3.3 3.3 0 0 1 4.7 4.7l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.7-7.7" />
                   </svg>
-                  File
-                  <input type="file" multiple accept=".txt,.md,.markdown,.csv,.srt,.vtt,.json,text/plain" className="hidden" onChange={(e) => e.target.files && void addFiles(e.target.files)} />
+                  File or screenshot
+                  <input type="file" multiple accept="image/*,.txt,.md,.markdown,.csv,.srt,.vtt,.json,text/plain" className="hidden" onChange={(e) => e.target.files && void addFiles(e.target.files)} />
                 </label>
                 <ToolButton onClick={() => setAdding(adding === "paste" ? null : "paste")} on={adding === "paste"} icon="M8 4h8v3H8zM6 6H5a1 1 0 0 0-1 1v13a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-1M8 12h8M8 16h5">
                   <span className="md:hidden">Paste</span>
@@ -552,7 +567,7 @@ function RoundTable({ threads, threadId, messages, tests, clients, sources, read
                 </button>
               </div>
             </div>
-            <button disabled={(!text.trim() && !shared.length) || Boolean(sending)} className="h-12 shrink-0 rounded-brand bg-brand px-4 text-sm font-medium text-white disabled:opacity-40 md:px-5">
+            <button disabled={(!text.trim() && !shared.length && !pics.urls.length) || Boolean(sending)} className="h-12 shrink-0 rounded-brand bg-brand px-4 text-sm font-medium text-white disabled:opacity-40 md:px-5">
               Send
             </button>
           </div>

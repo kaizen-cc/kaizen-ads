@@ -9,7 +9,7 @@ import type { JobView } from "@/lib/assistant/team";
 // chat window reads its state. Turns go one at a time, in order (a second message waits for the first answer).
 
 /** A line of the chat. `streaming` while the agent is still writing it; `note` for a line the person didn't type (an upload) */
-export type ChatLine = { id: number; who: "you" | "agent"; text: string; speaker?: Speaker | null; streaming?: boolean; note?: boolean };
+export type ChatLine = { id: number; who: "you" | "agent"; text: string; speaker?: Speaker | null; streaming?: boolean; note?: boolean; /** Pictures they pasted or attached with this message (local previews) */ images?: string[] };
 
 export type ChatHooks = {
   /** A line was added or changed (matched by id) */
@@ -56,6 +56,13 @@ export class ChatSession {
     if (!t || this.closed) return;
     this.hooks.onLine({ id: ++this.lineId, who: "you", text: t });
     this.enqueue(t, null);
+  }
+
+  /** A message with pictures they pasted or attached: shown with its previews, the first picture seen with the turn */
+  sendWithPictures(text: string, said: string, frame: string | null, images: string[]) {
+    if (this.closed) return;
+    this.hooks.onLine({ id: ++this.lineId, who: "you", text: text.trim(), images });
+    this.enqueue(said, frame);
   }
 
   /** A turn the person didn't type (files they uploaded, a screenshot): shown as a short note, answered like a message */

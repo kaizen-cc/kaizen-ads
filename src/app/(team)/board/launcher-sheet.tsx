@@ -2,6 +2,7 @@
 
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
+import { AttachButton, ChatImageStrip, useChatImages } from "@/components/chat-images";
 import { ReportThis } from "@/components/report-this";
 import { LaunchPanel } from "./launch-panel";
 import { launchFor, type LaunchView } from "./launch-actions";
@@ -23,6 +24,7 @@ export function LauncherSheet({ ticket, isExec, onClose, demo = false }: { ticke
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const pics = useChatImages();
   const end = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,17 +52,20 @@ export function LauncherSheet({ ticket, isExec, onClose, demo = false }: { ticke
   }, [onClose]);
 
   const send = async () => {
-    const t = text.trim();
+    const sentPics = pics.urls;
+    const t = text.trim() || (sentPics.length ? "Look at the attached screenshot." : "");
     if (!t || busy || !launch) return;
     setError(null);
     setText("");
+    pics.clear();
     const before = messages;
     setMessages([...before, { role: "user", text: t, at: new Date().toISOString() }]);
     setBusy(true);
-    const r = await launchChat(launch.id, t, before);
+    const r = await launchChat(launch.id, t, before, sentPics);
     setBusy(false);
     if (!r.ok) {
       setMessages(before);
+      pics.restore(sentPics);
       setText(t);
       return setError(r.error);
     }
@@ -114,13 +119,16 @@ export function LauncherSheet({ ticket, isExec, onClose, demo = false }: { ticke
             </ul>
             <div className="grid gap-1.5">
               {error && <p className="text-xs text-bad">{error}</p>}
+              <ChatImageStrip chat={pics} />
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
                   void send();
                 }}
-                className="flex items-end gap-2"
+                className={`flex items-end gap-2 rounded-[12px] ${pics.over ? "ring-2 ring-brand-text/50" : ""}`}
+                {...pics.box}
               >
+                <AttachButton chat={pics} disabled={!canChat || busy} />
                 <textarea
                   data-chat
                   value={text}
@@ -133,11 +141,11 @@ export function LauncherSheet({ ticket, isExec, onClose, demo = false }: { ticke
                     }
                   }}
                   rows={2}
-                  placeholder={canChat ? "e.g. Put it in the prospecting campaign at $50 a day" : launch?.status === "launched" ? "Launched: changes are made in Ads Manager." : "The plan is on its way…"}
+                  placeholder={canChat ? "e.g. Put it in the prospecting campaign at $50 a day (or paste a screenshot)" : launch?.status === "launched" ? "Launched: changes are made in Ads Manager." : "The plan is on its way…"}
                   aria-label="Message the media buyer"
                   className="min-h-11 min-w-0 flex-1 resize-none rounded-[12px] border border-line bg-bg px-3.5 py-2.5 text-sm outline-none placeholder:text-faint focus:border-brand-text/60 disabled:opacity-60 max-md:text-base"
                 />
-                <button disabled={busy || !canChat || !text.trim()} className="h-11 shrink-0 rounded-[12px] bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40">
+                <button disabled={busy || !canChat || (!text.trim() && !pics.urls.length)} className="h-11 shrink-0 rounded-[12px] bg-fg px-4 text-sm font-medium text-bg disabled:opacity-40">
                   Send
                 </button>
               </form>

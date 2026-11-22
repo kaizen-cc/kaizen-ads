@@ -393,7 +393,7 @@ function datesBlock(r: { period_start: string; period_end: string; kind: string 
 const PERIOD_RULE = `The report's dates are set by the app, never by you: don't write numbers for other dates into the report as if they were its period. If the buyer wants the whole report for other dates, tell them to pick them in the period menu at the top (or ask "change the dates to Nov 2 to 8"), which redraws every page with fresh numbers. Numbers you look up for other dates are only for comparisons, and always say their dates.`;
 
 /** The buyer asks for a change; the report is rewritten, the QA runs again, and a lasting preference is remembered. */
-export async function reviseReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { echo?: boolean; /** Who is asking (their profile id), recorded on numbers they give in the chat */ byId?: string | null } = {}) {
+export async function reviseReport(admin: SupabaseClient, reportId: string, ask: string, by: string, opts: { /** Screenshots pasted with the ask */ images?: import("@/lib/chat-images").ChatImage[]; echo?: boolean; /** Who is asking (their profile id), recorded on numbers they give in the chat */ byId?: string | null } = {}) {
   const c = await context(admin, reportId);
   const metrics = c.r.metrics as ReportMetrics;
   const work = ((c.r as unknown as { work?: { text?: string } }).work?.text) ?? "";
@@ -410,10 +410,12 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
     tools,
     maxRounds: 6,
     maxTokens: 16000,
+    images: opts.images ?? [],
     prompt: `${datesBlock(c.r as { period_start: string; period_end: string; kind: string })}\n\n${sourcesBlock(c, metrics, work, "")}\n\n<current_message>\n${c.r.message ?? ""}\n</current_message>\n<current_sections>\n${JSON.stringify(c.r.sections ?? {})}\n</current_sections>\n\n<conversation>\n${chat
       .slice(-10)
       .map((t) => `${t.role === "user" ? "Buyer" : "You"}: ${t.text}`)
-      .join("\n")}\n</conversation>\n\nThe buyer asks: ${ask.trim().slice(0, 2000)}`,
+      .join("\n")}\n</conversation>\n\nThe buyer asks: ${ask.trim().slice(0, 2000)}${(opts.images ?? []).length ? `
+(${opts.images!.length} screenshot${opts.images!.length === 1 ? " is" : "s are"} attached: look at ${opts.images!.length === 1 ? "it" : "them"} and answer from what you see.)` : ""}`,
   });
   const now = new Date().toISOString();
   const data = pulled.map((x) => `[${x.label}]\n${x.data}`).join("\n\n").slice(0, 20_000);

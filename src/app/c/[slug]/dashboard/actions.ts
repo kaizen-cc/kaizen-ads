@@ -39,14 +39,14 @@ export async function dashboardHistoryFor(slug: string) {
   return { ok: true as const, history: await dashboardHistory(l.admin, l.client.id) };
 }
 
-export async function askAboutNumbers(slug: string, question: string, range: { start: string; end: string }) {
+export async function askAboutNumbers(slug: string, question: string, range: { start: string; end: string }, pictures: string[] = []) {
   const l = await load(slug);
   if ("error" in l) return { ok: false as const, error: l.error! };
   if (!question.trim()) return { ok: false as const, error: "Ask something first." };
   if (!valid(range)) return { ok: false as const, error: "Pick dates up to two years apart." };
   try {
     const { askDashboard } = await import("@/lib/client-dashboard");
-    const row = await askDashboard(l.admin, l.client.id, l.who, question, range);
+    const row = await askDashboard(l.admin, l.client.id, l.who, question, range, (await import("@/lib/chat-images")).chatImagesFrom(pictures));
     return { ok: true as const, row };
   } catch (e) {
     const { AiUnavailable } = await import("@/lib/ai");

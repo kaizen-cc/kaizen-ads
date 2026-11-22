@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
+import { AttachButton, ChatImageStrip, useChatImages } from "@/components/chat-images";
 import { SlackConnect } from "@/components/slack-connect";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
@@ -475,15 +476,20 @@ export function ReportStudio({
       await saveReport(report.id, { extras: v });
     });
   };
+  const pics = useChatImages();
   const tweak = async (text: string) => {
-    if (!text.trim() || asking) return;
+    const sentPics = pics.urls;
+    if ((!text.trim() && !sentPics.length) || asking) return;
+    if (!text.trim()) text = "Look at the attached screenshot.";
     setAsking(true);
     setAsk("");
+    pics.clear();
     setNote(null);
     setChatError(null);
-    const r = await reviseWithAi(report.id, text);
+    const r = await reviseWithAi(report.id, text, sentPics);
     setAsking(false);
     if (!r.ok) {
+      pics.restore(sentPics);
       setNote({ ok: false, text: r.error });
       if (!("openId" in r && r.openId)) setChatError(r.error);
       // The dates asked for already have a report on this account: open that one
@@ -1377,8 +1383,10 @@ export function ReportStudio({
             e.preventDefault();
             void send(ask);
           }}
-          className="grid gap-2 rounded-[14px] border border-line bg-bg p-2 focus-within:border-brand-text/60"
+          className={`grid gap-2 rounded-[14px] border bg-bg p-2 focus-within:border-brand-text/60 ${pics.over ? "border-brand-text/60" : "border-line"}`}
+          {...pics.box}
         >
+          <ChatImageStrip chat={pics} />
           {/* An Ads Manager export, read here first so the buyer sees what's in it before it's used */}
           {attached && (
             <div className={`flex items-center gap-2.5 rounded-[12px] border px-2.5 py-2 ${attached.error ? "border-bad/40 bg-bad-soft/40" : "border-line bg-surface-2"}`}>
@@ -1405,10 +1413,12 @@ export function ReportStudio({
               }
             }}
             rows={big ? 4 : 3}
-            placeholder={attached ? (ch ? "What should the AI do with it? (optional)" : "Anything else to change once it's redrawn? (optional)") : step === "message" ? "e.g. make the message warmer, or mention Tuesday's call" : ch ? (ch.metrics.platform === "klaviyo" ? "e.g. compare the campaigns with last month, or add what they said on Tuesday's call" : "e.g. say why the top post worked, or add what they said on Tuesday's call") : "e.g. pull last month's top 3 ads from Motion, or add what they said on Tuesday's call"}
+            placeholder={pics.urls.length ? "What should the AI do with the screenshot?" : attached ? (ch ? "What should the AI do with it? (optional)" : "Anything else to change once it's redrawn? (optional)") : step === "message" ? "e.g. make the message warmer, or mention Tuesday's call" : ch ? (ch.metrics.platform === "klaviyo" ? "e.g. compare the campaigns with last month, or add what they said on Tuesday's call" : "e.g. say why the top post worked, or add what they said on Tuesday's call") : "e.g. pull last month's top 3 ads from Motion, or add what they said on Tuesday's call"}
             className={`w-full resize-none bg-transparent px-1.5 py-1 leading-relaxed outline-none ${big ? "text-[15px]" : "text-sm"} [field-sizing:content] ${big ? "max-h-[30vh] min-h-[104px]" : "max-h-[22vh] min-h-[72px]"}`}
           />
           <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2">
+            <AttachButton chat={pics} disabled={asking} />
             {canAttach && (
               <label title={ch ? "Attach an export (.csv)" : "Attach an Ads Manager export (.csv)"} className={`grid h-11 w-11 shrink-0 cursor-pointer place-items-center rounded-full border border-line text-muted transition-colors hover:text-fg focus-within:border-brand-text/60 md:h-9 md:w-9 ${asking ? "pointer-events-none opacity-40" : ""}`}>
                 <input
@@ -1426,8 +1436,9 @@ export function ReportStudio({
                 <ClipIcon />
               </label>
             )}
+            </span>
             <span className="text-[11px] text-faint max-md:hidden">Enter to send · Shift+Enter for a new line</span>
-            <button type="submit" disabled={(!ask.trim() && !(attached && !attached.error)) || asking} className="ml-auto h-9 shrink-0 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-40 max-md:h-11">
+            <button type="submit" disabled={(!ask.trim() && !pics.urls.length && !(attached && !attached.error)) || asking} className="ml-auto h-9 shrink-0 rounded-full bg-fg px-4 text-sm text-bg disabled:opacity-40 max-md:h-11">
               {attached && !attached.error ? "Use file" : "Change"}
             </button>
           </div>

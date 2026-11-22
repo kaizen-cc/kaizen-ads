@@ -645,6 +645,59 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
   }, [agent, lines, makeChat]);
 
   const chatSend = useCallback((text: string) => chat.current?.send(text), []);
+  /**
+   * A message with screenshots or files they pasted, dropped or attached in the chat (Nov 22 2026: paste a screenshot
+   * for context). Uploaded with the call's files (described, so later turns know them), then sent with the message:
+   * the first picture is seen with this turn, the rest are listed for it.
+   */
+  const chatSendFiles = useCallback(async (text: string, files: File[]) => {
+    const id = callId.current;
+    const c = chat.current;
+    const live = call.current;
+    if (!id || (!c && !live) || !files.length) return;
+    const previews = files.filter((f) => f.type.startsWith("image/")).map((f) => URL.createObjectURL(f));
+    setUploading(`Adding ${files.length === 1 ? (files[0].name || "your screenshot") : `${files.length} files`}…`);
+    try {
+      const named = await Promise.all(files.map((f, i) => fitPicture(f.name && f.name !== "image.png" ? f : new File([f], `screenshot-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}${i ? `-${i + 1}` : ""}.${(f.type.split("/")[1] || "png").replace("jpeg", "jpg")}`, { type: f.type }))));
+      const slots = await callUploadSlots(
+        id,
+        named.map((f) => ({ name: f.name, mime: f.type || "application/octet-stream", bytes: f.size, frames: 0 })),
+      );
+      if (!slots.ok) throw new Error(slots.error);
+      const supabase = createClient();
+      await Promise.all(
+        named.map(async (f, i) => {
+          const { error } = await supabase.storage.from("ai-files").uploadToSignedUrl(slots.slots[i].path, slots.slots[i].token, f, { contentType: f.type || "application/octet-stream" });
+          if (error) throw new Error(`${f.name} didn't upload.`);
+        }),
+      );
+      const done = await callUploadsDone(
+        id,
+        named.map((f, i) => ({ path: slots.slots[i].path, name: f.name, mime: f.type || "application/octet-stream", bytes: f.size })),
+        "files",
+        null,
+      );
+      if (!done.ok) throw new Error(done.error);
+      const pic = named.findIndex((f) => f.type.startsWith("image/"));
+      const names = done.files.map((f) => f.name).join(", ");
+      const said = `${text.trim() || (pic >= 0 ? "Take a look at this." : "Take a look at what I just added.")}
+
+(Attached: ${names}.${pic >= 0 && done.files.length > 1 ? ` The first picture is shown with this message; the others are described with the files from this conversation.` : ""})`;
+      const frame = pic >= 0 ? (done.files[pic]?.path ?? null) : null;
+      // In the chat with its previews; on a voice call (typed or pasted there) as a short note on the transcript
+      if (c) c.sendWithPictures(text.trim() || (previews.length ? "" : `📎 ${names}`), said, frame, previews);
+      else {
+        previews.forEach((u) => URL.revokeObjectURL(u));
+        live?.inject(said, `${text.trim() ? `${text.trim()} ` : ""}📎 ${names}`, frame);
+      }
+    } catch (e) {
+      previews.forEach((u) => URL.revokeObjectURL(u));
+      setError(e instanceof Error ? e.message : "The file didn't go through.");
+      throw e;
+    } finally {
+      setUploading(null);
+    }
+  }, []);
   const chatStop = useCallback(() => chat.current?.stop(), []);
 
   /** The chat carries on as a call (from the tap itself: browsers only play sound after one) */
@@ -896,6 +949,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
         canSend,
         onSend: () => call.current?.sendNow(),
         onType: (text) => call.current?.sendText(text),
+        onTypeFiles: (text, files) => chatSendFiles(text, files),
         stall,
         onRetry: () => call.current?.retry(),
         callId: liveId,
@@ -950,6 +1004,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
           callId: liveId,
           screen: screenControls,
           onSend: chatSend,
+          onSendFiles: chatSendFiles,
           onStop: chatStop,
           onClose: () => void hangUp(false, "chat_close"),
           onCall: () => toVoice(),
@@ -992,4 +1047,26 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
         )}
     </CallCtx.Provider>
   );
+}
+
+/**
+ * A picture the model can read with the turn: PNG, JPEG or WebP under ~4MB. A big retina screenshot or another kind of
+ * image (a GIF, HEIC the browser can draw) is redrawn as a JPEG at most 2000px wide; anything else is left as it is.
+ */
+async function fitPicture(f: File): Promise<File> {
+  if (!f.type.startsWith("image/")) return f;
+  if (/^image\/(png|jpeg|webp)$/.test(f.type) && f.size <= 4_000_000) return f;
+  try {
+    const bmp = await createImageBitmap(f);
+    const scale = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    canvas.getContext("2d")?.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((ok) => canvas.toBlob(ok, "image/jpeg", 0.86));
+    if (!blob) return f;
+    return new File([blob], f.name.replace(/\.[a-z0-9]+$/i, "") + ".jpg", { type: "image/jpeg" });
+  } catch {
+    return f;
+  }
 }

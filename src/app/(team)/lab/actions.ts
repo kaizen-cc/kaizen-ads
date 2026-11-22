@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { AiUnavailable, aiEnabled, getAgent } from "@/lib/ai";
 import { routeMessage, type Level } from "@/lib/ai-router";
 import { isExecOrLead, requireStaff } from "@/lib/auth";
+import { chatImagesFrom } from "@/lib/chat-images";
 import { clientNumbers, proposeDeploy, readSource, tableTurn, windowSince, type ProposedTest, type Seat, type TableTurn } from "@/lib/lab";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -34,11 +35,12 @@ export type SentMessage = { id: string; body: string; attachments: { id: string;
  * links and videos are read first, so the seats answer with them in hand. Everything shared stays in the lab's
  * library for every conversation after. The table answers turn by turn after this (tableSpeaks).
  */
-export async function sendToTable(threadId: string | null, text: string, attachments: Attachment[] = [], goDeep = false): Promise<Result<{ threadId: string; message: SentMessage }>> {
+export async function sendToTable(threadId: string | null, text: string, attachments: Attachment[] = [], goDeep = false, pictures: string[] = []): Promise<Result<{ threadId: string; message: SentMessage }>> {
   const me = await lead();
   const body = text.trim();
   const shared = attachments.filter((a) => a.url.trim() || a.body.trim()).slice(0, 6);
-  if (!body && !shared.length) return { ok: false, error: "Write something or share something first." };
+  const shots = chatImagesFrom(pictures);
+  if (!body && !shared.length && !shots.length) return { ok: false, error: "Write something or share something first." };
   for (const a of shared) if (a.url.trim() && !/^https?:\/\/\S+\.\S+/i.test(a.url.trim())) return { ok: false, error: `"${a.url}" doesn't look like a link.` };
   const supabase = await createClient();
   try {
@@ -62,8 +64,19 @@ export async function sendToTable(threadId: string | null, text: string, attachm
     }
     await Promise.all(saved.map((x) => readSource(db, x.id)));
     const { data: read } = saved.length ? await db.from("lab_sources").select("id, kind, title, url, status").in("id", saved.map((x) => x.id)) : { data: [] };
+    // Pasted screenshots are kept with the message, so every seat that answers it (and later rounds) can see them
+    const imagePaths: string[] = [];
+    for (const s of shots) {
+      const path = `lab/${id}/${crypto.randomUUID()}.jpg`;
+      const { error: upErr } = await db.storage.from("ai-files").upload(path, Buffer.from(s.data, "base64"), { contentType: s.mediaType });
+      if (!upErr) imagePaths.push(path);
+    }
     const lines = (read ?? []).map((x) => `[Shared ${x.kind === "video" ? "a video" : x.kind === "transcript" ? "a call transcript" : x.kind === "link" ? "a link" : "a doc"}: "${x.title}"${x.status === "failed" ? " (couldn't be read)" : ""}]`);
-    const attached = (read ?? []).map((x) => ({ id: x.id as string, kind: x.kind as string, title: x.title as string, url: x.url as string | null, failed: x.status === "failed" }));
+    const attached: SentMessage["attachments"] = (read ?? []).map((x) => ({ id: x.id as string, kind: x.kind as string, title: x.title as string, url: x.url as string | null, failed: x.status === "failed" }));
+    if (imagePaths.length) {
+      attached.push({ id: `shot-${imagePaths.length}`, kind: "image", title: imagePaths.length === 1 ? "Screenshot" : `${imagePaths.length} screenshots`, url: null });
+      lines.push(`[Shared ${imagePaths.length === 1 ? "a screenshot" : `${imagePaths.length} screenshots`}]`);
+    }
     // How much this round deserves: the whole table answers it at that level (never above the Ads Lab's setting)
     const route = await routeMessage(body || lines.join("\n"), await getAgent("lab"), goDeep);
     const { data: posted, error } = await supabase
@@ -73,7 +86,7 @@ export async function sendToTable(threadId: string | null, text: string, attachm
         role: "user",
         author_id: me.id,
         body: [body, ...lines].filter(Boolean).join("\n").slice(0, 8000),
-        data: { ...(attached.length ? { attachments: attached } : {}), route },
+        data: { ...(attached.length ? { attachments: attached } : {}), ...(imagePaths.length ? { images: imagePaths } : {}), route },
       })
       .select("id, body, created_at")
       .single();

@@ -91,6 +91,6 @@ export function withFrame(text: string, frame: Frame | null): string | unknown[]
   if (!frame) return text;
   return [
     { type: "image", source: { type: "base64", media_type: frame.mediaType, data: frame.data } },
-    { type: "text", text: `${text}\n\n<their_screen>The picture above is their screen right now. Answer what they asked about it, in a few spoken sentences: what you see that matters, not a description of everything.</their_screen>` },
+    { type: "text", text: `${text}\n\n<their_screen>The picture above is what they shared: their screen, or a screenshot or image they pasted. Answer what they asked about it, in a few spoken sentences: what you see that matters, not a description of everything.</their_screen>` },
   ];
 }

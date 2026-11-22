@@ -130,7 +130,7 @@ Write the copy that goes on the creative: ${shape.kind === "frames" ? `a headlin
 }
 
 /** The maker's message: the copywriter answers and, when it should, changes the copy in place (the old one kept for undo) */
-export async function chatTicketCopy(admin: SupabaseClient, requestId: string, text: string, by: { id: string; name: string }) {
+export async function chatTicketCopy(admin: SupabaseClient, requestId: string, text: string, by: { id: string; name: string }, images: import("@/lib/chat-images").ChatImage[] = []) {
   const { r, shape } = await readTicket(admin, requestId);
   const { row, setup } = await readDraft(admin, requestId);
   if (!setup) throw new AiUnavailable("The copy chat turns on once the database update for it is applied.");
@@ -146,6 +146,7 @@ export async function chatTicketCopy(admin: SupabaseClient, requestId: string, t
     system: `${CHAT_SYSTEM}\n\n${TICKET_COPY_SYSTEM}`,
     schema: chatSchema(shape),
     maxTokens: 8000,
+    images,
     prompt: `${contextBlock(ctx, undefined, sources)}
 
 ${ticketBlock(r, shape)}
@@ -154,7 +155,8 @@ ${ticketBlock(r, shape)}
 ${current ? copyText(current) : "(none written yet)"}
 </current_copy>
 ${earlier.length ? `\n<conversation>\n${earlier.map((m) => `${m.role === "user" ? "Maker" : "You"}: ${m.text}`).join("\n")}\n</conversation>\n` : ""}
-The maker says: ${text}
+The maker says: ${text}${images.length ? `
+(${images.length} screenshot${images.length === 1 ? " is" : "s are"} attached: look at ${images.length === 1 ? "it" : "them"} and answer from what you see.)` : ""}
 ${shape.kind === "script" ? "instructions: when rewriting, everything the script rewrite must change, as instructions to the script writer (it also gets the current script and keeps the rest). \"\" when not rewriting." : "versions: the whole copy after your change (every version, every slide), unchanged parts word for word; when not rewriting, the current copy as it is."}`,
   });
   let next: CreativeCopy | null = current;

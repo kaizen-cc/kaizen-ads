@@ -30,7 +30,7 @@ export async function loadWhy(kind: WhyKind, auditId: string, itemKey: string): 
 }
 
 /** Ask the agent that wrote the item */
-export async function askWhyAction(kind: WhyKind, auditId: string, itemKey: string, question: string): Promise<{ ok: true; answer: WhyMessage } | { ok: false; error: string }> {
+export async function askWhyAction(kind: WhyKind, auditId: string, itemKey: string, question: string, pictures: string[] = []): Promise<{ ok: true; answer: WhyMessage } | { ok: false; error: string }> {
   const me = await requireStaff();
   if (!valid(kind, auditId, itemKey)) return { ok: false, error: "Not found." };
   if (!question.trim()) return { ok: false, error: "Ask a question first." };
@@ -38,7 +38,7 @@ export async function askWhyAction(kind: WhyKind, auditId: string, itemKey: stri
   const item = await whyItem(await createClient(), kind, auditId, itemKey);
   if (!item) return { ok: false, error: "Not found." };
   try {
-    const r = await askWhy(createAdminClient(), { kind, auditId, itemKey, item, question, by: me.id });
+    const r = await askWhy(createAdminClient(), { kind, auditId, itemKey, item, question, by: me.id, images: (await import("@/lib/chat-images")).chatImagesFrom(pictures) });
     return { ok: true, answer: { id: r.answerId ?? `local-${Date.now()}`, role: "agent", body: r.answer, by: null, at: r.at, lesson: r.lesson, taught: false } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "The agent couldn't answer. Try again." };
