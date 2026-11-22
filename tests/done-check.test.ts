@@ -114,6 +114,12 @@ describe("tracking as a state: the newest word decides", () => {
       "I have access to the Ad account but I do not see tracking set up for the website.",
       "Richard updated the tracking today, but Complete Registration still isn’t showing in Ads Manager",
       "Confirm pixel and conversion tracking is firing on BestTicketsVIP",
+      "The client is ready to move into lead generation with roughly $1,000 of remaining budget over about two weeks, after the video creative is aligned and the pixel fixed.",
+      "Clare Inyang notifies the client that Meta tracking is ready and ask",
+      "We'll relaunch as soon as the pixel is verified",
+      "Tracking needs to be set up on the new booking page",
+      "The pixel will be live once the developer pushes the update",
+      "Launch waits until tracking is set up",
       "Get the Zombie event campaign back up with tracking verified on the Zombie landing page",
       "hey <@U06QNJD9DG8> is tracking ready here",
       "That's on us, and getting tracking done this week is how we close the gap",
@@ -125,7 +131,7 @@ describe("tracking as a state: the newest word decides", () => {
       expect(stateConfirmed([e(1, "2026-11-18T12:00:00Z", t)])).toBeNull();
   });
   it("closes on plain confirmations inside longer messages", () => {
-    for (const t of ["tracking is ready. Form submissions are tracked as \"Lead\" Pixel ID: 1669620706647924", "Launch is pending: access and tracking are done, but the client has not shared content", "Tracking is set up.", "team, the pixel is now working.", "Yes tracking is done <@U06Q1MF678U>", "<!here> tracking ready for the new website :)", "<@U06PZPLGX4J> I’m lost here, the tracking was done a while ago. Did something change?"])
+    for (const t of ["tracking is ready. Form submissions are tracked as \"Lead\" Pixel ID: 1669620706647924", "Launch is pending: access and tracking are done, but the client has not shared content", "Tracking is set up.", "team, the pixel is now working.", "Yes tracking is done <@U06Q1MF678U>", "FYI Tracking is done", "Fabi says tracking was done a while ago.", "<!here> tracking ready for the new website :)", "<@U06PZPLGX4J> I’m lost here, the tracking was done a while ago. Did something change?"])
       expect(stateConfirmed([e(1, "2026-11-18T12:00:00Z", t)])?.quote).toBeTruthy();
   });
 });

@@ -40,7 +40,7 @@ const CONFIRM = new RegExp(
 );
 /** Words that make a clause a condition, a plan or a doubt rather than a fact ("once the pixel is set up", "no pixel set up yet") */
 const NOT_A_FACT =
-  /\b(no|not|never|without|yet|once|until|unless|if|provided|when|can|could|would|should|will|must|need|needs|needed|wait|waiting|promised|preparing|pending|before|planning|plan|going to|soon|hopefully|maybe|think|confirm|check|checking|ensure|make sure|get|getting|let's|please|email|klaviyo)\b|\bwith\s+(?:\w+\s+)?(?:tracking|pixel)\b|\b(?:is|are|was|has|did)\s+(?:the\s+|all\s+)?(?:tracking|pixel|capi|ga4|gtm)\b|\?/i;
+  /\b(no|not|never|without|yet|once|until|unless|if|provided|when|can|could|would|should|will|must|need|needs|needed|wait|waiting|promised|preparing|pending|before|planning|plan|going to|soon|hopefully|maybe|think|confirm|check|checking|ensure|make sure|get|getting|let's|please|email|klaviyo|as soon as|needs to be|will be|notify|notifies|tell|tells|inform|informs|ask|asks)\b|\bwith\s+(?:\w+\s+)?(?:tracking|pixel)\b|\b(?:is|are|was|has|did)\s+(?:the\s+|all\s+)?(?:tracking|pixel|capi|ga4|gtm)\b|\?/i;
 
 /** One clause that confirms tracking, or null: sentences split at . ! ? ; : and at "but" */
 export function confirmingClause(text: string): string | null {
@@ -49,7 +49,11 @@ export function confirmingClause(text: string): string | null {
     .replace(/<?https?:\/\/\S+/g, " ")
     .split(/(?<=[.!?\n;:])\s+|,?\s+but\s+/i);
   for (const c of clauses) {
-    if (!CONFIRM.test(c) || BROKEN.test(c)) continue;
+    const m = CONFIRM.exec(c);
+    if (!m || BROKEN.test(c)) continue;
+    // "after the video creative is aligned and the pixel fixed": a condition word before the done word, with no comma
+    // between them, makes it a future condition ("After a long meeting, tracking is not broken" still counts)
+    if (/\b(after|once|when|until|as soon as|before)\b/i.test(c.slice(0, m.index).split(",").pop() ?? "")) continue;
     if (NOT_A_FACT.test(c.replace(/\bnot broken\b/gi, ""))) continue;
     return c.replace(/\s+/g, " ").trim().slice(0, 300);
   }
