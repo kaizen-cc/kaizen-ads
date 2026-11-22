@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
 import { AI_BUCKET } from "@/lib/kaizen-ai/files";
+import { safetyAlertKey } from "./safety-alert";
 import { audioDeleteAfter, audioDue, parseSafetyReview, SAFETY_SCHEMA, timedTranscript } from "@/lib/assistant/core";
 
 // The safety review every call gets once it ends (people are told before their first call that calls are recorded
@@ -91,7 +92,7 @@ export async function reviewCallSafety(admin: SupabaseClient, callId: string): P
           title: `A call needs a look: ${result.categories.map((c) => c.replace(/_/g, " ")).join(", ")}`,
           body: `${result.summary}${result.distress ? " The caller may need support." : ""}`.slice(0, 600),
           href: `/safety/${callId}`,
-          key: `call-safety:${callId}`,
+          key: safetyAlertKey(callId),
           priority: result.severity === "high" || result.distress ? "critical" : "normal",
           read_at: null,
         })),

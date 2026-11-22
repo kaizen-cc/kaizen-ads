@@ -5,13 +5,15 @@ import { requireStaff } from "@/lib/auth";
 import { AUDIO_BUCKET } from "@/lib/agent-call/safety";
 import type { SafetyMoment } from "@/lib/assistant/core";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { SafetyComments, SafetyResolutionPanel, type SafetyComment, type SafetyResolution } from "./safety-alert";
 import { SafetyPlayer, type AudioPart, type TimedLine } from "./safety-player";
 
 export const metadata: Metadata = { title: "Call review" };
 
 // A call the safety review flagged, for the executives only: what was flagged and why, the moments to skip to, the
 // timed transcript and the call's audio (kept about 90 days for a flagged call). The caller isn't told about the flag.
-// Opening it marks it seen.
+// Opening it marks it seen. Every exec lands on this same page: one exec dismissing the alert resolves it for all of
+// them, and the comments at the bottom are shared.
 
 export default async function SafetyCallPage({ params }: PageProps<"/safety/[callId]">) {
   const { callId } = await params;
@@ -40,6 +42,14 @@ export default async function SafetyCallPage({ params }: PageProps<"/safety/[cal
     );
     parts = signed.filter((p): p is AudioPart => Boolean(p)).sort((a, b) => a.start - b.start);
   }
+  // The shared resolution and comments (none until the database update for them is applied)
+  const { data: notes } = await admin.from("call_safety_comments").select("id, body, created_at, profiles:author_id(full_name)").eq("call_id", callId).order("created_at").limit(200);
+  const comments: SafetyComment[] = ((notes ?? []) as unknown as { id: string; body: string; created_at: string; profiles: { full_name: string } | null }[]).map((c) => ({ id: c.id, who: c.profiles?.full_name ?? "An executive", body: c.body, at: c.created_at }));
+  let resolution: SafetyResolution = null;
+  if (review.resolved_at) {
+    const { data: by } = review.resolved_by ? await admin.from("profiles").select("full_name").eq("id", review.resolved_by as string).maybeSingle() : { data: null };
+    resolution = { at: review.resolved_at as string, who: (by?.full_name as string | undefined) ?? "an executive", note: (review.resolution as string | null) ?? null };
+  }
   const moments = (review.moments ?? []) as SafetyMoment[];
   const when = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(call.started_at as string));
   return (
@@ -48,7 +58,7 @@ export default async function SafetyCallPage({ params }: PageProps<"/safety/[cal
         Back to the Overview
       </Link>
       <section className="rounded-[22px] border border-bad/30 bg-bad-soft/30 p-5 sm:p-6">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-bad">Flagged by the safety review · executives only</p>
+        <p className="text-[11px] uppercase tracking-[0.16em] text-bad">Flagged by the safety review · executives only{resolution ? " · resolved" : ""}</p>
         <h1 className="mt-1 font-heading text-[24px] leading-tight">
           {who}&apos;s call with the {call.role_key === "assistant" ? "assistant" : String(call.role_key).replace(/_/g, " ")}
         </h1>
@@ -67,7 +77,9 @@ export default async function SafetyCallPage({ params }: PageProps<"/safety/[cal
         {review.distress && <p className="mt-2 text-[13.5px] leading-relaxed text-warn">The caller may need support. Reach out kindly and privately.</p>}
         <p className="mt-3 text-[12px] text-faint">The caller isn&apos;t told about this flag. The audio is deleted about 90 days after the review.</p>
       </section>
+      <SafetyResolutionPanel callId={callId} resolution={resolution} />
       <SafetyPlayer parts={parts} moments={moments} lines={lines} audioGone={Boolean(review.audio_deleted_at)} />
+      <SafetyComments callId={callId} comments={comments} />
     </div>
   );
 }
