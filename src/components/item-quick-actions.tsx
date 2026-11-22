@@ -1,22 +1,46 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { delegateOptions } from "@/app/(team)/delegate-actions";
 import { delegateQuickItem, doneQuickItem, snoozeQuickItem, type QuickSnap } from "@/app/(team)/item-actions";
 import { CommentButton } from "./item-comments";
 
-// The same four quick actions on every Overview and Today item, wherever it's drawn: Done, Snooze to tomorrow,
-// Delegate and Comment. Each one takes the item off this person's screen at once (onGone) and the server's word follows.
+// The quick actions on every Overview and Today item, kept simple (Nov 22 2026: too many choices per item): only Done and
+// Later show; everything else (Hand off, Comment, and whatever the item adds, like the client page or "Not for me") sits
+// behind one "⋯ More" that opens in the flow under the buttons, never floating, so a card that clips can't cut it off.
+// Each action takes the item off this person's screen at once (onGone) and the server's word follows.
 
 export type QuickItem = { key: string; snap: QuickSnap; href?: string | null; dueAt?: string | null; comments?: number; waiting?: boolean };
 type Which = "done" | "snooze" | "delegate" | "comment";
 
 const pill = "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full px-3.5 text-[13px] transition-colors sm:min-h-8 sm:px-3 sm:text-[12px] disabled:opacity-50";
 
-export function ItemQuickActions({ item, onGone, hide = [], compact = false, tone = "auto" }: { item: QuickItem; onGone?: (how: Which, note?: string) => void; hide?: Which[]; compact?: boolean; tone?: "auto" | "dark" }) {
+export function ItemQuickActions({
+  item,
+  onGone,
+  hide = [],
+  compact = false,
+  tone = "auto",
+  later,
+  extra,
+  inline = false,
+}: {
+  item: QuickItem;
+  onGone?: (how: Which, note?: string) => void;
+  hide?: Which[];
+  compact?: boolean;
+  tone?: "auto" | "dark";
+  /** Replaces the plain "Later" (snooze to tomorrow), e.g. the story's own Save for later */
+  later?: { label: string; on: boolean; run: () => void };
+  /** More choices for the "⋯ More" panel */
+  extra?: ReactNode;
+  /** Its buttons join the parent's row (the parent's flex-wrap), so More's panel opens full width under it */
+  inline?: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [more, setMore] = useState(false);
   const [open, setOpen] = useState(false);
   const run = (how: Which, fn: () => Promise<unknown>, note?: string) =>
     start(async () => {
@@ -24,26 +48,45 @@ export function ItemQuickActions({ item, onGone, hide = [], compact = false, ton
       await fn();
       router.refresh();
     });
+  const dark = tone === "dark";
+  const quiet = dark ? "border border-white/25 text-white/85 hover:bg-white/10" : "border border-ink/15 text-ink/75 hover:border-ink/35 hover:text-fg";
+  // A thread already going (or waiting on the client) is worth seeing without opening More
+  const talk = (item.comments ?? 0) > 0 || item.waiting;
   return (
-    <div className={`flex flex-wrap items-center gap-1 ${compact ? "" : "pt-1"}`} onClick={(e) => e.stopPropagation()}>
+    <div className={inline ? "contents" : `flex flex-wrap items-center gap-1.5 ${compact ? "" : "pt-1"}`} onClick={(e) => e.stopPropagation()}>
       {!hide.includes("done") && (
-        <button type="button" disabled={pending} onClick={() => run("done", () => doneQuickItem(item.key, item.snap))} className={`${pill} bg-fg font-medium text-bg hover:bg-ink/85`}>
+        <button type="button" disabled={pending} onClick={() => run("done", () => doneQuickItem(item.key, item.snap))} className={`${pill} font-medium ${dark ? "border border-[#5be3a5]/50 text-[#5be3a5] hover:bg-[#5be3a5]/10" : "bg-fg text-bg hover:bg-ink/85"}`}>
           ✓ Done
         </button>
       )}
-      {!hide.includes("snooze") && (
-        <button type="button" disabled={pending} title="Hide it until tomorrow; it comes back on its own" onClick={() => run("snooze", () => snoozeQuickItem(item.key, item.snap), "Back tomorrow")} className={`${pill} border border-ink/15 text-ink/75 hover:border-ink/35 hover:text-fg`}>
-          Snooze to tomorrow
+      {later ? (
+        <button type="button" onClick={later.run} title="Off your screen for now; it comes back tomorrow if it's still open" className={`${pill} ${later.on ? (dark ? "border border-white bg-white/15 text-white" : "border border-fg bg-ink/10 text-fg") : quiet}`}>
+          {later.on ? "Later ✓" : later.label}
         </button>
+      ) : (
+        !hide.includes("snooze") && (
+          <button type="button" disabled={pending} title="Off your screen until tomorrow; it comes back on its own" onClick={() => run("snooze", () => snoozeQuickItem(item.key, item.snap), "Back tomorrow")} className={`${pill} ${quiet}`}>
+            Later
+          </button>
+        )
       )}
-      {!hide.includes("delegate") && <DelegatePicker item={item} open={open} setOpen={setOpen} onDone={(to) => onGone?.("delegate", `Delegated to ${to}`)} />}
-      {!hide.includes("comment") && <CommentButton tone={tone} target={{ key: item.key, clientId: item.snap.clientId, title: [item.snap.client, item.snap.title].filter(Boolean).join(": "), href: item.href ?? null, dueAt: item.dueAt ?? null }} count={item.comments ?? 0} waiting={item.waiting ?? false} />}
+      <button type="button" aria-expanded={more} aria-label="More choices" onClick={() => setMore(!more)} className={`${pill} ${more ? (dark ? "bg-white/15 text-white" : "bg-ink/10 text-fg") : dark ? "text-white/70 hover:text-white" : "text-ink/60 hover:text-fg"}`}>
+        {more ? "Less" : "⋯ More"}
+        {!more && talk && <span className={`rounded-full px-1.5 text-[10.5px] ${item.waiting ? "bg-[#f2b14c]/20 text-[#f2b14c]" : dark ? "bg-white/15" : "bg-ink/10"}`}>{item.waiting ? "waiting on client" : `💬 ${item.comments}`}</span>}
+      </button>
+      {more && (
+        <div className={`order-last mt-1 flex w-full basis-full flex-wrap items-center gap-1.5 rounded-2xl p-2 ${dark ? "bg-white/[0.06]" : "bg-ink/[0.04]"}`}>
+          {!hide.includes("delegate") && <DelegatePicker item={item} open={open} setOpen={setOpen} tone={tone} onDone={(to) => onGone?.("delegate", `Handed to ${to}`)} />}
+          {!hide.includes("comment") && <CommentButton tone={tone} target={{ key: item.key, clientId: item.snap.clientId, title: [item.snap.client, item.snap.title].filter(Boolean).join(": "), href: item.href ?? null, dueAt: item.dueAt ?? null }} count={item.comments ?? 0} waiting={item.waiting ?? false} />}
+          {extra}
+        </div>
+      )}
     </div>
   );
 }
 
 /** Delegate: pick a teammate (the client's seat holders first), an optional note and due date */
-function DelegatePicker({ item, open, setOpen, onDone }: { item: QuickItem; open: boolean; setOpen: (o: boolean) => void; onDone: (to: string) => void }) {
+function DelegatePicker({ item, open, setOpen, onDone, tone = "auto" }: { item: QuickItem; open: boolean; setOpen: (o: boolean) => void; onDone: (to: string) => void; tone?: "auto" | "dark" }) {
   const router = useRouter();
   const [people, setPeople] = useState<{ id: string; name: string; role: string; onClient: boolean }[] | null>(null);
   const [to, setTo] = useState("");
@@ -72,8 +115,8 @@ function DelegatePicker({ item, open, setOpen, onDone }: { item: QuickItem; open
   const field = "h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[14px] text-fg sm:h-9 sm:text-[13px]";
   return (
     <span className="contents">
-      <button type="button" onClick={toggle} aria-expanded={open} className={`${pill} border border-ink/15 text-ink/75 hover:border-ink/35 hover:text-fg`}>
-        Delegate
+      <button type="button" onClick={toggle} aria-expanded={open} className={`${pill} border ${tone === "dark" ? "border-white/25 text-white/85 hover:bg-white/10" : "border-ink/15 text-ink/75 hover:border-ink/35 hover:text-fg"}`}>
+        Hand off
       </button>
       {open && (
         <div ref={form} className="order-last mt-1 grid w-full basis-full scroll-my-4 gap-2 rounded-2xl border border-ink/15 bg-deep p-3 sm:max-w-sm">

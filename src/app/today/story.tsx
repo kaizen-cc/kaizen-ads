@@ -768,7 +768,7 @@ function Overview({ b, mine, dive, onChoose, onAct, onNext }: { b: Bucket; mine:
           <div className="relative flex flex-wrap items-center gap-2">
             {unsaved.length > 1 && (
               <button type="button" onClick={() => unsaved.forEach((i) => onChoose(i, "saved"))} className="h-11 rounded-full border border-white/25 px-4 text-sm text-white/85 hover:bg-white/10">
-                Save all {unsaved.length} for later
+                All {unsaved.length} later
               </button>
             )}
             {onNext && (
@@ -834,35 +834,38 @@ function ItemBody({ i, status, big = false, onChoose, onAct, onNext }: { i: Toda
             {i.action.label} ↗
           </a>
         )}
-        {i.alt && (
-          <a href={i.alt.href} target="_blank" rel="noreferrer" className="inline-flex h-11 w-full items-center justify-center rounded-full border border-white/25 px-4 text-sm text-white/85 hover:bg-white/10 md:w-auto md:justify-start">
-            {i.alt.label} ↗
-          </a>
-        )}
         <button type="button" onClick={() => onChoose("done")} className="h-11 flex-1 rounded-full border border-[#5be3a5]/50 px-4 text-sm text-[#5be3a5] hover:bg-[#5be3a5]/10 md:flex-none">
           ✓ Done
         </button>
-        <button type="button" onClick={() => onChoose("saved")} className={`h-11 flex-1 rounded-full border px-4 text-sm md:flex-none ${status === "saved" ? "border-white bg-white/15" : "border-white/25 text-white/85 hover:bg-white/10"}`}>
-          {status === "saved" ? "Saved ✓" : "Save for later"}
-        </button>
-        <button type="button" onClick={() => onChoose("dismissed")} className="h-11 rounded-full px-3 text-sm text-white/50 hover:text-white">
-          {i.dismiss ?? "Not for me"}
-        </button>
+        <div className="force-dark contents">
+          <ItemQuickActions
+            inline
+            tone="dark"
+            hide={["snooze", "done"]}
+            item={{ key: i.key, href: i.action.href ?? null, snap: { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId } }}
+            onGone={(how) => how !== "comment" && onNext?.()}
+            later={{ label: "Later", on: status === "saved", run: () => onChoose("saved") }}
+            extra={
+              <>
+                {i.alt && (
+                  <a href={i.alt.href} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center rounded-full border border-white/25 px-3.5 text-[13px] text-white/85 hover:bg-white/10 sm:min-h-8 sm:px-3 sm:text-[12px]">
+                    {i.alt.label} ↗
+                  </a>
+                )}
+                <button type="button" onClick={() => onChoose("dismissed")} className="inline-flex min-h-11 items-center rounded-full px-3 text-[13px] text-white/60 hover:text-white sm:min-h-8 sm:text-[12px]">
+                  {i.dismiss ?? "Not for me"}
+                </button>
+                {i.pause && i.clientId && <LinePauseControl clientId={i.clientId} service={i.pause.service} label="Paused: hide until..." tone="dark" onPaused={onNext ?? undefined} />}
+              </>
+            }
+          />
+        </div>
         {onNext && (
           <button type="button" onClick={onNext} className="ml-auto h-11 rounded-full px-3 text-sm text-white/70 hover:text-white">
             Next →
           </button>
         )}
       </div>
-      {/* The quick actions every item has, on the Overview's list too: Snooze to tomorrow, Delegate, Comment */}
-      <div className="force-dark relative">
-        <ItemQuickActions item={{ key: i.key, href: i.action.href ?? null, snap: { topic: i.topic, client: i.client, title: i.title, clientId: i.clientId } }} hide={["done"]} tone="dark" onGone={(how) => how !== "comment" && onNext?.()} />
-      </div>
-      {i.pause && i.clientId && (
-        <div className="relative">
-          <LinePauseControl clientId={i.clientId} service={i.pause.service} label="Paused: hide until..." tone="dark" onPaused={onNext ?? undefined} />
-        </div>
-      )}
     </>
   );
 }
