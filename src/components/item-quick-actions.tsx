@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { delegateOptions } from "@/app/(team)/delegate-actions";
 import { delegateQuickItem, doneQuickItem, snoozeQuickItem, type QuickSnap } from "@/app/(team)/item-actions";
 import { CommentButton } from "./item-comments";
@@ -63,14 +63,20 @@ function DelegatePicker({ item, open, setOpen, onDone }: { item: QuickItem; open
       onDone(r.to);
       router.refresh();
     });
+  // The form sits in the flow under the buttons (never floating), so a card or detail panel that clips its overflow grows
+  // or scrolls to fit it instead of cutting it off; it's brought into view when it opens
+  const form = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open) form.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [open]);
   const field = "h-11 rounded-brand border border-ink/15 bg-transparent px-2 text-[14px] text-fg sm:h-9 sm:text-[13px]";
   return (
-    <span className="relative flex w-full flex-col sm:inline-flex sm:w-auto">
+    <span className="contents">
       <button type="button" onClick={toggle} aria-expanded={open} className={`${pill} border border-ink/15 text-ink/75 hover:border-ink/35 hover:text-fg`}>
         Delegate
       </button>
       {open && (
-        <div className="z-30 mt-2 grid w-full gap-2 rounded-2xl border border-ink/15 bg-deep p-3 shadow-xl sm:absolute sm:left-0 sm:top-full sm:w-72">
+        <div ref={form} className="order-last mt-1 grid w-full basis-full scroll-my-4 gap-2 rounded-2xl border border-ink/15 bg-deep p-3 sm:max-w-sm">
           <label className="grid gap-1 text-[12px] text-ink/60">
             Who
             <select value={to} onChange={(e) => setTo(e.target.value)} className={field}>
