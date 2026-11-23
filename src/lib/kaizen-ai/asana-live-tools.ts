@@ -15,7 +15,7 @@ export function asanaLiveTools(ctx: ToolCtx): ChatTool[] {
   const find = async (words: string) => {
     if (/^\d{6,25}$/.test(words)) return { gid: words, name: null as string | null };
     const { myAsanaTasks } = await import("@/lib/asana-live");
-    const tasks = await myAsanaTasks(ctx.me.email, ctx.db);
+    const tasks = await myAsanaTasks(ctx.me.email, ctx.db, ctx.me.id);
     const w = words.toLowerCase().split(/\s+/).filter((x) => x.length > 2);
     const scored = tasks.map((t) => ({ t, n: w.filter((x) => `${t.name} ${t.client ?? ""} ${t.project ?? ""}`.toLowerCase().includes(x)).length })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
     if (!scored.length) return null;
@@ -31,7 +31,7 @@ export function asanaLiveTools(ctx: ToolCtx): ChatTool[] {
       run: async (input) => {
         const { myAsanaTasks } = await import("@/lib/asana-live");
         const q = clip(input.search, 80).toLowerCase();
-        const tasks = (await myAsanaTasks(ctx.me.email, ctx.db)).filter((t) => !q || `${t.name} ${t.client ?? ""} ${t.project ?? ""}`.toLowerCase().includes(q));
+        const tasks = (await myAsanaTasks(ctx.me.email, ctx.db, ctx.me.id)).filter((t) => !q || `${t.name} ${t.client ?? ""} ${t.project ?? ""}`.toLowerCase().includes(q));
         const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
         return { overdue: tasks.filter((t) => t.due && t.due < today).length, tasks: tasks.slice(0, 25).map((t) => ({ gid: t.gid, name: t.name, client: t.client ?? t.project, section: t.section, due: t.due, open: `/pipeline?task=${t.gid}` })) };
       },

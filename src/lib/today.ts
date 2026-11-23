@@ -766,7 +766,7 @@ async function ownedDay(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
   const [moved, team, asana, lineAccounts, pulse] = await Promise.all([
     transferredTo(admin, me.id, have).catch(() => []),
     leadItems(admin, me.id).catch(() => []),
-    asanaCards(db, me.email).catch(() => []),
+    asanaCards(db, me).catch(() => []),
     lead && line ? accounts(admin, [line], drafts, { execRule: false, creativeSide: line === "creative" }).catch(() => []) : Promise.resolve([]),
     lead ? leadPulse(admin, me.id).catch(() => []) : Promise.resolve([]),
   ]);

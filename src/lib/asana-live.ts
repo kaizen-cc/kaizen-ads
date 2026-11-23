@@ -40,32 +40,61 @@ async function allWorkspaces(): Promise<string[]> {
   return workspaces;
 }
 
+type ListTask = RawTask & { parent?: { name?: string } | null; assignee_section?: { name?: string } | null };
+
+const toLive = (clients: { id: string; name: string; slug: string }[]) => (t: ListTask): LiveTask => {
+  const project = t.memberships?.find((m) => m.project?.name)?.project?.name ?? (t.parent?.name ? `Subtask of ${t.parent.name}` : null);
+  // Their own My tasks section first (Asana's "Recently assigned", "Do today"...), else the project's
+  const section = t.assignee_section?.name ?? t.memberships?.find((m) => m.section?.name)?.section?.name ?? null;
+  const hay = `${project ?? ""} ${t.name}`.toLowerCase();
+  const c = clients.find((x) => hay.includes(x.name.toLowerCase())) ?? null;
+  return { gid: t.gid, name: t.name, due: t.due_on, project, section, client: c?.name ?? null, clientSlug: c?.slug ?? null, url: t.permalink_url ?? `https://app.asana.com/0/0/${t.gid}` };
+};
+
 /**
- * Someone's open Asana tasks: EVERY task assigned to them (every workspace and project, their personal "My tasks",
- * subtasks), every page of it (rate limits are waited out in src/lib/asana.ts), overdue first then by due date, undated
- * last. Read once per request.
+ * Someone's open Asana tasks. Connected with their own Asana (src/lib/asana-user.ts): exactly their Asana > My tasks
+ * in every workspace (private tasks, subtasks and project tasks, every page), with My tasks' own sections. Not
+ * connected: what the shared token sees assigned to their email (no private tasks). Overdue first, then by date,
+ * undated last. Read once per request.
  */
-export const myAsanaTasks = cache(async (email: string | null, db?: SupabaseClient): Promise<LiveTask[]> => {
-  if (!asanaConfigured() || !email) return [];
-  const ws = await allWorkspaces().catch(() => [] as string[]);
-  if (!ws.length) return [];
+export const myAsanaView = cache(async (email: string | null, db?: SupabaseClient, profileId?: string | null): Promise<{ tasks: LiveTask[]; connected: boolean }> => {
+  const { adminConfigured, createAdminClient } = await import("@/lib/supabase/admin");
   const { asanaAll } = await import("@/lib/asana");
-  const lists = await Promise.all(ws.map((w) => asanaAll<RawTask & { parent?: { name?: string } | null }>("/tasks", { assignee: email, workspace: w, completed_since: "now", opt_fields: "name,due_on,completed,permalink_url,parent.name,memberships.project.name,memberships.section.name" }).catch(() => [])));
   const clients = db ? (((await db.from("clients").select("id, name, slug").is("archived_at", null).limit(1000)).data ?? []) as { id: string; name: string; slug: string }[]).filter((c) => c.name.length >= 4).sort((a, b) => b.name.length - a.name.length) : [];
-  const seen = new Set<string>();
-  return sortTasks(
-    lists
-      .flat()
-      .filter((t) => t.name?.trim() && !t.completed && !seen.has(t.gid) && seen.add(t.gid))
-      .map((t) => {
-        const project = t.memberships?.find((m) => m.project?.name)?.project?.name ?? (t.parent?.name ? `Subtask of ${t.parent.name}` : null);
-        const section = t.memberships?.find((m) => m.section?.name)?.section?.name ?? null;
-        const hay = `${project ?? ""} ${t.name}`.toLowerCase();
-        const c = clients.find((x) => hay.includes(x.name.toLowerCase())) ?? null;
-        return { gid: t.gid, name: t.name, due: t.due_on, project, section, client: c?.name ?? null, clientSlug: c?.slug ?? null, url: t.permalink_url ?? `https://app.asana.com/0/0/${t.gid}` };
+  const fields = "name,due_on,completed,permalink_url,parent.name,assignee_section.name,memberships.project.name,memberships.section.name";
+  const shared = async (): Promise<ListTask[]> => {
+    if (!process.env.ASANA_TOKEN || !email) return [];
+    const ws = await allWorkspaces().catch(() => [] as string[]);
+    return (await Promise.all(ws.map((w) => asanaAll<ListTask>("/tasks", { assignee: email, workspace: w, completed_since: "now", opt_fields: fields }).catch(() => [])))).flat();
+  };
+  const mine = async (): Promise<ListTask[]> => {
+    const ws = ((await asana<{ gid: string }[]>("/workspaces", { limit: "100" }).catch(() => ({ data: [] as { gid: string }[] }))).data ?? []).map((w) => w.gid);
+    const lists = await Promise.all(
+      ws.map(async (w) => {
+        const list = await asana<{ gid: string }>("/users/me/user_task_list", { workspace: w }).catch(() => null);
+        return list?.data?.gid ? asanaAll<ListTask>(`/user_task_lists/${list.data.gid}/tasks`, { completed_since: "now", opt_fields: fields }).catch(() => []) : [];
       }),
-  );
+    );
+    return lists.flat();
+  };
+  let connected = false;
+  let raw: ListTask[] = [];
+  if (profileId && adminConfigured()) {
+    const { withMyAsana } = await import("@/lib/asana-user");
+    raw = await withMyAsana(createAdminClient(), profileId, async (c) => {
+      connected = c;
+      return c ? mine() : shared();
+    });
+  } else raw = await shared();
+  const seen = new Set<string>();
+  const tasks = sortTasks(raw.filter((t) => t.name?.trim() && !t.completed && !seen.has(t.gid) && seen.add(t.gid)).map(toLive(clients)));
+  return { tasks, connected };
 });
+
+/** Someone's open Asana tasks (see myAsanaView) */
+export async function myAsanaTasks(email: string | null, db?: SupabaseClient, profileId?: string | null): Promise<LiveTask[]> {
+  return (await myAsanaView(email, db, profileId)).tasks;
+}
 
 /**
  * Who on the team Asana doesn't know by their work email (so their "Next for me in Asana" would be empty): every
@@ -156,7 +185,9 @@ export async function updateTask(admin: SupabaseClient, me: Staff, gid: string, 
   if (Object.keys(body).length) await asanaUpdate(`/tasks/${gid}`, body);
   if (patch.section) await asanaWrite(`/sections/${patch.section}/addTask`, { task: gid });
   const note = changeNote(patch, before ?? null, me.fullName);
-  if (note) await asanaWrite(`/tasks/${gid}/stories`, { text: note }).catch(() => null);
+  // Changed as themselves (their own Asana): Asana already says it was them, no note needed
+  const { asanaIsUser } = await import("@/lib/asana");
+  if (note && !asanaIsUser()) await asanaWrite(`/tasks/${gid}/stories`, { text: note }).catch(() => null);
   // The OS's copy, at once (the next sync confirms it)
   const cache: Record<string, unknown> = {};
   if (patch.name !== undefined) cache.name = patch.name;

@@ -1,4 +1,5 @@
 import "server-only";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Stage } from "@/lib/stages";
 import { changedRows } from "@/lib/unchanged";
@@ -13,13 +14,23 @@ import { mapAttachments, mapSubtasks, readList, type AsanaAttachment, type Asana
 // e.g. reviewing a new client's intake), and creative requests briefed in Kaizen OS and sent to the Creative board built
 // exactly like the Google Form's (src/lib/asana-request.ts).
 
-export const asanaConfigured = () => Boolean(process.env.ASANA_TOKEN);
+export const asanaConfigured = () => Boolean(process.env.ASANA_TOKEN) || Boolean(asanaAs.getStore());
+
+/**
+ * A person's own Asana (src/lib/asana-user.ts): inside asanaAsUser(token, fn), every read and write here goes out with
+ * their token, so they see their private tasks and what they change is theirs; outside it, the shared ASANA_TOKEN.
+ */
+const asanaAs = new AsyncLocalStorage<string>();
+export const asanaAsUser = <T>(token: string, fn: () => Promise<T>): Promise<T> => asanaAs.run(token, fn);
+/** Whether this call runs as a person (their own token), not the shared one */
+export const asanaIsUser = () => Boolean(asanaAs.getStore());
+const bearer = () => asanaAs.getStore() ?? process.env.ASANA_TOKEN;
 const API = "https://app.asana.com/api/1.0";
 
 export async function asana<T>(path: string, params: Record<string, string> = {}): Promise<{ data: T; next_page?: { offset: string } | null }> {
   const url = `${API}${path}${Object.keys(params).length ? `?${new URLSearchParams(params)}` : ""}`;
   for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${process.env.ASANA_TOKEN}`, Accept: "application/json" }, cache: "no-store" });
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${bearer()}`, Accept: "application/json" }, cache: "no-store" });
     if (res.status === 429) {
       await new Promise((r) => setTimeout(r, Number(res.headers.get("retry-after") ?? 5) * 1000));
       continue;
@@ -39,7 +50,7 @@ export async function asana<T>(path: string, params: Record<string, string> = {}
 
 export async function asanaWrite<T>(path: string, data: Record<string, unknown>): Promise<T> {
   for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(`${API}${path}`, { method: "POST", headers: { Authorization: `Bearer ${process.env.ASANA_TOKEN}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ data }), cache: "no-store" });
+    const res = await fetch(`${API}${path}`, { method: "POST", headers: { Authorization: `Bearer ${bearer()}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ data }), cache: "no-store" });
     if (res.status === 429) {
       await new Promise((r) => setTimeout(r, Number(res.headers.get("retry-after") ?? 5) * 1000));
       continue;
@@ -54,7 +65,7 @@ export async function asanaWrite<T>(path: string, data: Record<string, unknown>)
 /** A change to something in Asana (PUT): a task's name, notes, fields. Never a delete. */
 export async function asanaUpdate<T>(path: string, data: Record<string, unknown>): Promise<T> {
   for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(`${API}${path}`, { method: "PUT", headers: { Authorization: `Bearer ${process.env.ASANA_TOKEN}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ data }), cache: "no-store" });
+    const res = await fetch(`${API}${path}`, { method: "PUT", headers: { Authorization: `Bearer ${bearer()}`, Accept: "application/json", "Content-Type": "application/json" }, body: JSON.stringify({ data }), cache: "no-store" });
     if (res.status === 429) {
       await new Promise((r) => setTimeout(r, Number(res.headers.get("retry-after") ?? 5) * 1000));
       continue;

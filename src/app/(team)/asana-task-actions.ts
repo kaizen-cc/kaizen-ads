@@ -24,13 +24,13 @@ async function guard(gid: string) {
   return { me, detail, may } as const;
 }
 
-export async function asanaTask(gid: string): Promise<R<{ task: TaskDetail; canEdit: boolean }>> {
+async function asanaTaskInner(gid: string): Promise<R<{ task: TaskDetail; canEdit: boolean }>> {
   const g = await guard(gid);
   if ("error" in g) return { ok: false, error: g.error ?? "Couldn't open it." };
   return { ok: true, task: g.detail, canEdit: g.may };
 }
 
-export async function saveAsanaTask(gid: string, patch: AsanaPatch): Promise<R<{ task: TaskDetail }>> {
+async function saveAsanaTaskInner(gid: string, patch: AsanaPatch): Promise<R<{ task: TaskDetail }>> {
   const g = await guard(gid);
   if ("error" in g) return { ok: false, error: g.error ?? "Couldn't change it." };
   if (!g.may) return { ok: false, error: "You can change tasks that are yours, on clients you work on, or your team's." };
@@ -49,7 +49,7 @@ export async function saveAsanaTask(gid: string, patch: AsanaPatch): Promise<R<{
   return { ok: true, task: await taskDetail(gid) };
 }
 
-export async function commentAsanaTask(gid: string, text: string): Promise<R<{ task: TaskDetail }>> {
+async function commentAsanaTaskInner(gid: string, text: string): Promise<R<{ task: TaskDetail }>> {
   const g = await guard(gid);
   if ("error" in g) return { ok: false, error: g.error ?? "Couldn't comment." };
   if (!g.may) return { ok: false, error: "You can comment on tasks that are yours, on clients you work on, or your team's." };
@@ -63,7 +63,7 @@ export async function commentAsanaTask(gid: string, text: string): Promise<R<{ t
   return { ok: true, task: await taskDetail(gid) };
 }
 
-export async function subtaskAsanaTask(gid: string, op: { add?: string; tick?: { gid: string; done: boolean } }): Promise<R<{ task: TaskDetail }>> {
+async function subtaskAsanaTaskInner(gid: string, op: { add?: string; tick?: { gid: string; done: boolean } }): Promise<R<{ task: TaskDetail }>> {
   const g = await guard(gid);
   if ("error" in g) return { ok: false, error: g.error ?? "Couldn't change it." };
   if (!g.may) return { ok: false, error: "You can change tasks that are yours, on clients you work on, or your team's." };
@@ -79,4 +79,25 @@ export async function subtaskAsanaTask(gid: string, op: { add?: string; tick?: {
     return { ok: false, error: "Asana didn't take it. Try again." };
   }
   return { ok: true, task: await taskDetail(gid) };
+}
+
+// Each one runs as the person in Asana when they've connected their own (src/lib/asana-user.ts): they see their
+// private tasks and what they change is theirs; otherwise the shared connection, as before
+async function asMe<T>(fn: () => Promise<T>): Promise<T> {
+  const me = await requireStaff();
+  const { withMyAsana } = await import("@/lib/asana-user");
+  return withMyAsana(createAdminClient(), me.id, () => fn());
+}
+
+export async function asanaTask(gid: string) {
+  return asMe(() => asanaTaskInner(gid));
+}
+export async function saveAsanaTask(gid: string, patch: AsanaPatch) {
+  return asMe(() => saveAsanaTaskInner(gid, patch));
+}
+export async function commentAsanaTask(gid: string, text: string) {
+  return asMe(() => commentAsanaTaskInner(gid, text));
+}
+export async function subtaskAsanaTask(gid: string, op: { add?: string; tick?: { gid: string; done: boolean } }) {
+  return asMe(() => subtaskAsanaTaskInner(gid, op));
 }

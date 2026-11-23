@@ -115,11 +115,17 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
 // ─── Next for me in Asana ─────────────────────────────────────────────────────
 
 /** Every open Asana task assigned to this person, overdue first, then today, then soon, then undated */
-export async function asanaCards(db: SupabaseClient, email: string | null): Promise<ExecCard[]> {
-  const { myAsanaTasks } = await import("@/lib/asana-live");
+export async function asanaCards(db: SupabaseClient, me: { id: string; email: string | null }): Promise<ExecCard[]> {
+  const { myAsanaView } = await import("@/lib/asana-live");
+  const { asanaOAuthConfigured } = await import("@/lib/asana-user");
   const today = nyDay();
-  const tasks = await myAsanaTasks(email, db).catch(() => []);
-  return tasks.map((t) => {
+  const { tasks, connected } = await myAsanaView(me.email, db, me.id).catch(() => ({ tasks: [], connected: false }));
+  // Not connected with their own Asana: what the shared connection sees (no private tasks), and the way to connect
+  const connect: ExecCard[] =
+    !connected && asanaOAuthConfigured()
+      ? [{ key: "asana:connect", tab: "asana", kind: "approval", client: null, clientId: null, title: "Connect your Asana to see all your tasks (private ones too)", detail: "This shows only what Kaizen's shared Asana connection can see. Connect yours once and this block mirrors your Asana My tasks, and what you change here is yours in Asana.", severity: "high", action: { label: "Connect Asana", href: "/api/asana/connect?next=%2Fpipeline%3Fblock%3Dasana" } }]
+      : [];
+  return [...connect, ...tasks.map((t) => {
     const late = Boolean(t.due && t.due < today);
     return {
       key: `asana:${t.gid}`,
@@ -135,7 +141,7 @@ export async function asanaCards(db: SupabaseClient, email: string | null): Prom
       action: { label: "Open", href: `/pipeline?block=asana&task=${t.gid}` },
       stat: t.url,
     };
-  });
+  })];
 }
 
 // ─── Escalated ───────────────────────────────────────────────────────────────
@@ -351,7 +357,7 @@ export async function loadExecModel(db: SupabaseClient, me: Staff, drafts: reado
   const focus = await loadExecFocus(db, me.id);
   const [needs, rows, fires] = await Promise.all([needsMe(db, admin, me, drafts).catch(() => []), rung3Rows(admin, focus).catch(() => []), liveFires(admin).catch(() => [])]);
   const fireRows: FireRow[] = fires.map((f) => ({ clientId: f.clientId, client: f.client, clientSlug: f.clientSlug, why: f.why, href: f.href, line: f.line, at: f.at }));
-  const [acc, pul, sys, asana] = await Promise.all([accounts(admin, focus, drafts).catch(() => []), pulse(admin, fireRows).catch(() => []), me.canViewAs ? system(admin).catch(() => []) : Promise.resolve([]), asanaCards(db, me.email).catch(() => [])]);
+  const [acc, pul, sys, asana] = await Promise.all([accounts(admin, focus, drafts).catch(() => []), pulse(admin, fireRows).catch(() => []), me.canViewAs ? system(admin).catch(() => []) : Promise.resolve([]), asanaCards(db, me).catch(() => [])]);
   return { needs, escalated: groupEscalated(rows, fireRows), accounts: acc, asana, pulse: pul, system: sortCards(sys) };
 }
 
