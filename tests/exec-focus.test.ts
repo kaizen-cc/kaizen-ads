@@ -151,27 +151,36 @@ describe("fire rules", () => {
     // A teammate saying it isn't the client
     expect(fireOf({ kind: "client_message", text: "we want to cancel", fromClient: false }).fire).toBe(false);
   });
-  it("a risk flag", () => {
-    expect(fireOf({ kind: "risk_flag" })).toEqual({ fire: true, why: "flagged as probably leaving" });
+  it("only the owner's four: a client leaving is a fire at once; furious alone waits a business day", () => {
+    expect(fireOf({ kind: "risk_flag" })).toEqual({ fire: true, why: "said they may cancel or leave" });
+    expect(fireOf({ kind: "client_message", text: "This is completely unacceptable, we're furious", fromClient: true }).fire).toBe(false);
   });
-  it("billed but idle, and spend stopped on a big account", () => {
-    expect(fireOf({ kind: "watch", watchKind: "idle", severity: "critical", billed: true, line: "facebook-ads" })).toEqual({ fire: true, why: "billed for Meta with nothing running" });
-    expect(fireOf({ kind: "watch", watchKind: "idle", severity: "warn", billed: false, line: "facebook-ads" }).fire).toBe(false);
-    expect(fireOf({ kind: "watch", watchKind: "spend_stopped", severity: "critical", spend30: BIG_ACCOUNT_30D, line: "google-ads" }).fire).toBe(true);
-    expect(fireOf({ kind: "watch", watchKind: "spend_stopped", severity: "critical", spend30: 2_000, line: "google-ads" }).fire).toBe(false);
+  it("an angry client message unanswered for more than one business day", () => {
+    expect(fireOf({ kind: "angry_unanswered", text: "This is completely unacceptable", businessHours: 11 }).fire).toBe(true);
+    expect(fireOf({ kind: "angry_unanswered", text: "This is completely unacceptable", businessHours: 6 }).fire).toBe(false);
+    expect(fireOf({ kind: "angry_unanswered", text: "Can you send the invoice?", businessHours: 40 }).fire).toBe(false);
+  });
+  it("an ad account disabled, its payment failed or its spend stopped", () => {
+    expect(fireOf({ kind: "watch", watchKind: "payment_issue", severity: "critical", line: "facebook-ads" })).toEqual({ fire: true, why: "Meta ad account payment failed" });
+    expect(fireOf({ kind: "watch", watchKind: "delivery_issue", severity: "critical", accountStatus: 2, line: "facebook-ads" })).toEqual({ fire: true, why: "Meta ad account disabled" });
+    // Risk review or disapproved ads: not a fire
+    expect(fireOf({ kind: "watch", watchKind: "delivery_issue", severity: "critical", accountStatus: 7, line: "facebook-ads" }).fire).toBe(false);
+    expect(fireOf({ kind: "watch", watchKind: "delivery_issue", severity: "critical", line: "facebook-ads" }).fire).toBe(false);
+    expect(fireOf({ kind: "watch", watchKind: "spend_stopped", severity: "critical", spend30: BIG_ACCOUNT_30D, line: "google-ads" })).toEqual({ fire: true, why: "Google spend stopped" });
+    // A tiny account going quiet isn't a fire
+    expect(fireOf({ kind: "watch", watchKind: "spend_stopped", severity: "critical", dailyAverage: 10, line: "google-ads" }).fire).toBe(false);
+    // Nothing else the watch finds is a fire any more
+    expect(fireOf({ kind: "watch", watchKind: "idle", severity: "critical", billed: true, line: "facebook-ads" }).fire).toBe(false);
     expect(fireOf({ kind: "watch", watchKind: "overspend", severity: "warn", spend30: 50_000 }).fire).toBe(false);
   });
-  it("tracking broken", () => {
-    expect(fireOf({ kind: "tracking", spend7: 1_500, results7: 0, tracksConversions: true }).fire).toBe(true);
-    expect(fireOf({ kind: "tracking", spend7: 1_500, results7: 3, tracksConversions: true }).fire).toBe(false);
-    expect(fireOf({ kind: "tracking", spend7: 400, results7: 0, tracksConversions: true }).fire).toBe(false);
+  it("tracking on its own is no longer a fire", () => {
+    expect(fireOf({ kind: "tracking", spend7: 1_500, results7: 0, tracksConversions: true }).fire).toBe(false);
   });
-  it("the main KPI far off for a week, only on a top-spend or at-risk client", () => {
-    expect(fireOf({ kind: "kpi", deviation: 0.6, days: 7, topSpend: true, atRisk: false }).fire).toBe(true);
-    expect(fireOf({ kind: "kpi", deviation: 0.6, days: 7, topSpend: false, atRisk: true }).fire).toBe(true);
-    expect(fireOf({ kind: "kpi", deviation: 0.6, days: 7, topSpend: false, atRisk: false }).fire).toBe(false);
-    expect(fireOf({ kind: "kpi", deviation: 0.4, days: 14, topSpend: true, atRisk: true }).fire).toBe(false);
-    expect(fireOf({ kind: "kpi", deviation: 0.9, days: 3, topSpend: true, atRisk: true }).fire).toBe(false);
+  it("an account severely off target for 2+ weeks with nothing in motion", () => {
+    expect(fireOf({ kind: "kpi", deviation: 0.6, days: 14 }).fire).toBe(true);
+    expect(fireOf({ kind: "kpi", deviation: 0.6, days: 14, inMotion: true }).fire).toBe(false);
+    expect(fireOf({ kind: "kpi", deviation: 0.6, days: 7 }).fire).toBe(false);
+    expect(fireOf({ kind: "kpi", deviation: 0.4, days: 14 }).fire).toBe(false);
   });
   it("how far worse a KPI is", () => {
     expect(kpiWorse({ value: 60, target: 40, roas: false })).toBeCloseTo(0.5);

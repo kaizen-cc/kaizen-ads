@@ -13,10 +13,12 @@ const COUNT: Record<Tone, string> = { bad: "bg-bad-soft text-bad", warn: "bg-war
 const ACCENT: Record<Tone, string> = { bad: "var(--color-bad)", warn: "var(--color-warn)", ok: "var(--color-ok)", brand: "var(--color-brand-text)", quiet: "var(--color-muted)" };
 
 /** The tab strip and the open tab's panel. `follow`: a param that belongs to a tab (an open theme), so it opens there */
-export function OverviewTabs({ tabs, panels, follow }: { tabs: { id: string; label: string; count?: number; tone?: Tone }[]; panels: Record<string, React.ReactNode>; follow?: Record<string, string> }) {
+export function OverviewTabs({ tabs, panels, follow, initial }: { tabs: { id: string; label: string; count?: number; tone?: Tone }[]; panels: Record<string, React.ReactNode>; follow?: Record<string, string>; initial?: string }) {
   const asked = useParam("tab");
   const followed = useFollowed(follow);
-  const current = tabs.find((t) => t.id === asked)?.id ?? followed ?? tabs[0]?.id;
+  // `initial`: the tab it opens on without ?tab= (an exec's: the one holding the most critical thing)
+  const home = tabs.find((t) => t.id === initial)?.id ?? tabs[0]?.id;
+  const current = tabs.find((t) => t.id === asked)?.id ?? followed ?? home;
   // Older links point at /pipeline#next (Next for me): open the tab that holds it
   const hasWork = tabs.some((t) => t.id === "work");
   useEffect(() => {
@@ -25,7 +27,7 @@ export function OverviewTabs({ tabs, panels, follow }: { tabs: { id: string; lab
   return (
     <div className="grid gap-6">
       <nav role="tablist" aria-label="Overview" className="no-scrollbar sticky top-[calc(3.5rem+env(safe-area-inset-top))] z-20 -mx-4 flex gap-1 overflow-x-auto border-b border-line bg-bg/85 px-4 py-2 backdrop-blur-md md:mx-0 md:rounded-full md:border md:top-3 md:w-fit md:max-w-full md:bg-surface/80 md:p-1">
-        {tabs.map((t, i) => {
+        {tabs.map((t) => {
           const on = t.id === current;
           return (
             <button
@@ -34,7 +36,7 @@ export function OverviewTabs({ tabs, panels, follow }: { tabs: { id: string; lab
               role="tab"
               aria-selected={on}
               onClick={() => {
-                pushParams({ tab: i === 0 ? null : t.id, theme: null, ideas: null });
+                pushParams({ tab: t.id === home ? null : t.id, theme: null, ideas: null });
                 window.scrollTo({ top: 0, behavior: "smooth" });
               }}
               className={`inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full px-4 text-[13.5px] transition-colors md:min-h-9 ${on ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}

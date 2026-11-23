@@ -26,6 +26,7 @@ export const TIPS: readonly Tip[] = [
   { key: "ad_changes", tools: ["plan_ad_changes"], text: "you can tell me the budget or ad changes you want and I'll plan them for you to approve before anything goes live?" },
   { key: "launch", tools: ["launch_sheet", "launch_reply", "ticket_launch", "confirm_launch"], text: "you can launch ads through me? I'll build the launch plan with you and nothing goes live until you confirm." },
   { key: "copy", tools: ["write_ad_copy", "ticket_copy", "create_copy_doc", "approve_copy_doc", "get_copy_library"], text: "I can write ad copy for a ticket or a whole copy doc, using the copy that's worked for that client before?" },
+  { key: "execview", tools: ["exec_overview", "exec_escalation_action"], text: "I can read your Overview tab by tab (what needs you, what's escalated, what's on fire) and nudge a lead or take stuck work over for you?" },
   { key: "autoclose", tools: ["auto_closed", "reopen_auto_closed"], text: "things on your day close themselves when Slack, email or call notes show they're done? Ask me why one closed, or tell me to reopen it." },
   { key: "asana", tools: ["my_asana_tasks", "update_asana_task"], text: "you can ask me what's next on your Asana, or have me move a task's due date, tick it off or comment on it, straight in Asana?" },
   { key: "support", tools: ["support_board", "tracking_health"], text: "you can ask me which reports haven't gone out, which client channels are waiting on us, or which onboardings are blocked?" },

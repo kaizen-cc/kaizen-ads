@@ -18,12 +18,7 @@ import { loadWatchList } from "@/lib/fatigue";
 import { HandoffCallout } from "@/components/handoff-callout";
 import { ReviewsCallout } from "@/components/reviews-callout";
 import { SupportDashboard } from "@/components/support-dashboard";
-import { WatchCallout } from "./views/watch-panel";
 import { LeaderView } from "./views/leader-view";
-import { PulseView } from "./views/pulse-view";
-import type { SharedTopics } from "./views/overview-topics";
-import { lineInFocus, type FocusLine } from "@/lib/exec-focus/core";
-import { loadExecFocus } from "@/lib/exec-focus/server";
 import { PageHeader } from "./views/shared";
 import { NextSection } from "./views/next-section";
 import { OverviewTabs, WorkUnderToday } from "./views/overview-tabs";
@@ -100,6 +95,20 @@ function Recap({ db, me, hidden }: { db: SupabaseClient; me: Staff; hidden: Hidd
       <HiddenLog items={hidden.map((r) => ({ key: r.key, how: r.how as "done" | "dismissed", label: r.label, href: r.href, at: r.hidden_at }))} />
     </>
   );
+}
+
+/** An exec's Overview: the recap's cards in their tabs, opening on the most critical */
+async function ExecOverview({ db, me, base }: { db: SupabaseClient; me: Staff; base: { greeting: string; firstName: string; today: string } }) {
+  const [{ ExecHome }, core, snap] = await Promise.all([import("./views/exec-home"), import("@/lib/exec-overview-core"), todaySnapshot(db, me)]);
+  const tabs = Object.fromEntries(core.EXEC_TABS.map((t) => [t, [] as import("@/lib/exec-overview-core").ExecCard[]])) as Record<import("@/lib/exec-overview-core").ExecTab, import("@/lib/exec-overview-core").ExecCard[]>;
+  for (const i of snap.today.items) if (i.exec && i.exec.tab in tabs) tabs[i.exec.tab].push(i.exec);
+  tabs.needs = core.sortNeeds(tabs.needs);
+  for (const t of ["escalated", "accounts", "system"] as const) tabs[t] = core.sortCards(tabs[t]);
+  const owner = Boolean(me.canViewAs);
+  if (!owner) tabs.system = [];
+  const fires = tabs.escalated.filter((c) => c.severity === "fire").length;
+  const header = core.headerParts({ needs: tabs.needs.length, fires, stuck: tabs.escalated.length - fires, accounts: tabs.accounts.length });
+  return <ExecHome {...base} tabs={tabs} opening={core.openingTab(tabs)} owner={owner} header={header} />;
 }
 
 /** The Google team: ideas taken to their clients from Ideas › Google, waiting on a decision or to be applied */
@@ -227,6 +236,11 @@ export default async function Home() {
       />
     );
   }
+  // Execs (owner, Nov 23 2026): Needs me, Escalated, Accounts and Pulse (the owner also System), the same cards as
+  // their morning recap (src/lib/exec-overview.ts). Nothing below rung 3 of the ladder reaches them except a fire;
+  // everything else is on client pages, the boards and the assistant.
+  if (me.isExec) return <ExecOverview db={db} me={me} base={base} />;
+
   const assignedQuery = () => db.from("client_assignments").select("client_id").eq("profile_id", me.id);
 
   // Team members (designers, editors, buyers, the copywriter, customer success): their recap and their Next for me.
@@ -347,60 +361,6 @@ export default async function Home() {
   // Next for me, under the themes. The patterns for their clients are already in the themes (every client's)
   const deploys = await googleDeploys(db, me, [...new Set((assigned ?? []).map((m) => m.client_id as string))]);
   const nextSection = <NextSection data={next} me={me.id} deploys={deploys} />;
-
-  if (me.isExec) {
-    // Their focus lines up front; the rest under a quiet "Everything else", out of the counts (no focus set: everything)
-    const focus = await loadExecFocus(db, me.id);
-    const on = (l: FocusLine) => !focus.length || lineInFocus(l, focus);
-    const kpiOn = kpiLines.map((k, i) => (k && on(lines[i]) ? k : null)).filter((k): k is KpiPulse => Boolean(k));
-    const kpiOff = kpiLines.map((k, i) => (k && !on(lines[i]) ? k : null)).filter((k): k is KpiPulse => Boolean(k));
-    const creative = on("creative");
-    const perf = on("creative_performance");
-    const lined = Boolean(focus.length);
-    const elsewhere: SharedTopics | null = lined
-      ? {
-          attention: creative ? [] : h.attention,
-          kpis: kpiOff,
-          fatigue: perf ? null : fatigueShown,
-          suggestions: creative ? null : suggestionsShown,
-          patterns: perf ? null : patterns,
-          clients: creative ? undefined : h.clients,
-          monthElapsed: h.monthElapsed,
-          clientOptions,
-        }
-      : null;
-    return (
-      <PulseView
-        {...base}
-        vitals={h.vitals}
-        attention={creative ? h.attention : []}
-        phases={h.phases}
-        clients={creative ? h.clients : []}
-        team={h.team}
-        monthElapsed={h.monthElapsed}
-        kpis={kpiOn}
-        production={creative ? production : null}
-        suggestions={creative ? suggestionsShown : null}
-        fatigue={perf ? fatigueShown : null}
-        onboarding={onboarding}
-        clientOptions={clientOptions}
-        callPromises={callPromises}
-        owed={owed}
-        patterns={perf ? patterns : null}
-        looks={looks}
-        elsewhere={elsewhere}
-        handoffs={
-          <>
-            <ReviewsCallout db={db} me={me} />
-            <WatchCallout db={db} me={me} />
-            <HandoffCallout db={db} me={me.id} />
-          </>
-        }
-        recap={recap}
-        next={nextSection}
-      />
-    );
-  }
 
   // Leaders (Head of Creative / Meta / Google)
   const dept = department(me);

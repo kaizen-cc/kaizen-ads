@@ -1,30 +1,39 @@
 import { soundsLikeChurn } from "@/lib/client-risk";
 
-// "This client is on fire": the few things every exec hears about, whatever their focus. Kept conservative on purpose,
-// so the alert still means something: a client saying they're leaving or furious, billed for a line that's gone idle,
-// an account spending with tracking broken or spend stopped on a big account, the main KPI far off for a week on a
-// top-spend or at-risk client, a missed launch or deadline the client escalated. Each one is critical, says in one line
-// why, and goes out once per client per day. Pure: no database.
+// "This client is on fire": the only things every exec hears about at once, skipping the ladder, whatever their focus.
+// The owner's list, exactly (Nov 23 2026), and nothing else is a fire:
+//   1. the client says they're leaving or cancelling
+//   2. an ad account disabled, spend stopped, or a payment failed
+//   3. an angry client message unanswered for more than one business day
+//   4. an account severely off target for 2+ weeks with nothing in motion (no sprint, audit or plan moving)
+// Each one says in one line why, and goes out once per client per day. Pure: no database.
 
 /** A big account: this much spend in the last 30 days */
 export const BIG_ACCOUNT_30D = 10_000;
-/** Tracking looks broken: this much spent in 7 days with nothing tracked */
+/** Kept for older readers: tracking is no longer a fire on its own */
 export const TRACKING_SPEND_7D = 1_000;
-/** The main KPI this much worse than target over the last 7 days */
+/** The main KPI this much worse than target... */
 export const KPI_FIRE_DEVIATION = 0.5;
-export const KPI_FIRE_DAYS = 7;
+/** ...for this long */
+export const KPI_FIRE_DAYS = 14;
+/** One business day, in business hours (weekdays 8am to 6pm New York) */
+export const ANGRY_BUSINESS_HOURS = 10;
+/** Spend stopped only counts on an account that was really spending (a day's average before it stopped) */
+export const STOPPED_MIN_DAILY = 30;
 
 export type FireSignal =
-  /** What a client said (an unanswered message, a change of direction, a call) */
+  /** What a client said (an unanswered message, a change of direction, a call): leaving or cancelling is a fire at once */
   | { kind: "client_message"; text: string; fromClient: boolean }
-  /** A teammate flagged the client as probably leaving */
+  /** A note that the client said they may leave (src/lib/client-risk.ts, written from what the client said) */
   | { kind: "risk_flag"; note?: string | null }
-  /** An account watch finding */
-  | { kind: "watch"; watchKind: string; severity: string; billed?: boolean; spend30?: number; line?: string | null }
-  /** An ad account's last 7 days */
+  /** An angry client message nobody has answered: a fire after one business day */
+  | { kind: "angry_unanswered"; text: string; businessHours: number }
+  /** An account watch finding: disabled, payment failed, spend stopped */
+  | { kind: "watch"; watchKind: string; severity: string; billed?: boolean; spend30?: number; dailyAverage?: number; accountStatus?: number | null; line?: string | null }
+  /** Kept for older callers: never a fire on its own now */
   | { kind: "tracking"; spend7: number; results7: number; tracksConversions: boolean }
-  /** The main KPI against target */
-  | { kind: "kpi"; deviation: number; days: number; topSpend: boolean; atRisk: boolean };
+  /** The main KPI against target, and whether anything is in motion on the account */
+  | { kind: "kpi"; deviation: number; days: number; inMotion?: boolean; topSpend?: boolean; atRisk?: boolean };
 
 export type Fire = { fire: true; why: string } | { fire: false };
 
@@ -47,29 +56,39 @@ export function messageFire(text: string | null | undefined): string | null {
   return null;
 }
 
-const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+/** An angry message (furious, or an escalated miss), not a cancellation */
+export const isAngry = (text: string | null | undefined) => {
+  const why = messageFire(text);
+  return Boolean(why && why !== "said they may cancel or leave");
+};
+
+/** Meta account_status for disabled, closing or closed */
+const DEAD_ACCOUNT = new Set([2, 100, 101]);
+
 const LINE_WORD: Record<string, string> = { meta: "Meta", google: "Google", tiktok: "TikTok", "facebook-ads": "Meta", "google-ads": "Google", "tiktok-ads": "TikTok", creative: "creative", "email-marketing": "email", email: "email", "social-media": "social", social: "social" };
 
-/** Whether a signal means the client is on fire, and why in a few words */
+/** Whether a signal means the client is on fire, and why in a few words (only the owner's four) */
 export function fireOf(s: FireSignal): Fire {
   switch (s.kind) {
     case "client_message": {
       if (!s.fromClient) return NOT;
-      const why = messageFire(s.text);
-      return why ? { fire: true, why } : NOT;
+      return soundsLikeChurn(s.text) ? { fire: true, why: "said they may cancel or leave" } : NOT;
     }
     case "risk_flag":
-      return { fire: true, why: "flagged as probably leaving" };
+      return { fire: true, why: "said they may cancel or leave" };
+    case "angry_unanswered":
+      return isAngry(s.text) && s.businessHours >= ANGRY_BUSINESS_HOURS ? { fire: true, why: `angry message unanswered for ${Math.max(1, Math.floor(s.businessHours / 10))}+ business ${s.businessHours >= 20 ? "days" : "day"}` } : NOT;
     case "watch": {
-      const w = LINE_WORD[s.line ?? ""] ?? "a service";
-      if (s.watchKind === "idle" && s.billed && s.severity === "critical") return { fire: true, why: `billed for ${w} with nothing running` };
-      if (s.watchKind === "spend_stopped" && (s.spend30 ?? 0) >= BIG_ACCOUNT_30D) return { fire: true, why: `${w} spend stopped on a ${money(s.spend30 ?? 0)}/month account` };
+      const w = LINE_WORD[s.line ?? ""] ?? "the";
+      if (s.watchKind === "payment_issue") return { fire: true, why: `${w} ad account payment failed` };
+      if (s.watchKind === "delivery_issue" && s.accountStatus != null && DEAD_ACCOUNT.has(Number(s.accountStatus))) return { fire: true, why: `${w} ad account disabled` };
+      if (s.watchKind === "spend_stopped" && (s.dailyAverage ?? (s.spend30 ?? 0) / 30) >= STOPPED_MIN_DAILY) return { fire: true, why: `${w} spend stopped` };
       return NOT;
     }
     case "tracking":
-      return s.tracksConversions && s.spend7 >= TRACKING_SPEND_7D && s.results7 === 0 ? { fire: true, why: `${money(s.spend7)} spent in 7 days with no conversions tracked` } : NOT;
+      return NOT;
     case "kpi":
-      return s.deviation >= KPI_FIRE_DEVIATION && s.days >= KPI_FIRE_DAYS && (s.topSpend || s.atRisk) ? { fire: true, why: `main KPI ${Math.round(s.deviation * 100)}% off target for ${s.days}+ days${s.atRisk ? " on an at-risk client" : " on a top-spend account"}` } : NOT;
+      return s.deviation >= KPI_FIRE_DEVIATION && s.days >= KPI_FIRE_DAYS && !s.inMotion ? { fire: true, why: `main KPI ${Math.round(s.deviation * 100)}% off target for ${s.days}+ days with nothing in motion` } : NOT;
   }
 }
 

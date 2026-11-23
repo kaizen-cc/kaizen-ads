@@ -20,7 +20,8 @@ export async function myNotifications() {
   const me = await getViewer();
   const skipKinds = me.kind === "staff" && isCreativeRole(me.role) ? NOT_FOR_CREATIVE : [];
   // The support positions: nothing creative, and no Brand Bible notices until onboarding runs through Kaizen OS
-  const opts = me.kind === "staff" && isSupportRole(me.role) ? supportSkip : { skipKinds };
+  // Execs: fires only, the rest in the morning recap and their Overview (src/lib/exec-overview.ts)
+  const opts = me.kind === "staff" && me.isExec ? { onlyFire: true } : me.kind === "staff" && isSupportRole(me.role) ? supportSkip : { skipKinds };
   const [list, { data: prefs }] = await Promise.all([loadNotifications(db, 40, opts), db.from("notification_prefs").select("settings").maybeSingle()]);
   return { ...list, popups: withDefaults(prefs?.settings).popups };
 }

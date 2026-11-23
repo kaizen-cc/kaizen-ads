@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SuggestionSheet } from "@/app/(team)/pipeline/views/suggested-briefs";
 import { BriefPreviewButton } from "@/components/quick-brief-sheet";
 import type { Resolved, Tier, TodayItem, TopicKey } from "@/lib/today";
-import { bucketsOf, countLooks, isOpenMark, lookHeadline, openOf, QUIET_TOPIC, rowStat, topicGroups, TIER_ORDER, type Bucket } from "@/lib/today-counts";
+import { bucketsOf, countLooks, EXEC_TOPICS, isOpenMark, lookHeadline, openOf, QUIET_TOPIC, rowStat, topicGroups, TIER_ORDER, type Bucket } from "@/lib/today-counts";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { acknowledge, setItem } from "./actions";
 import { DoneBurst } from "@/components/done-burst";
@@ -19,7 +19,7 @@ import type { Scorecard } from "@/lib/production";
 // that matters. Pick a client to see its overview right there and act on it, save the whole topic for later, or deep
 // dive through them one by one. Topics play most critical first; any topic can be jumped to. Arrows or space move on.
 
-type Card = { kind: "intro" } | { kind: "score" } | { kind: "resolved"; rs: Resolved[] } | { kind: "topic"; topic: TopicKey; items: TodayItem[] } | { kind: "end" };
+type Card = { kind: "intro" } | { kind: "score" } | { kind: "resolved"; rs: Resolved[] } | { kind: "topic"; topic: TopicKey; items: TodayItem[]; more?: number } | { kind: "end" };
 type Mark = "seen" | "saved" | "done" | "dismissed";
 
 const TIER: Record<Tier, { label: string; glow: string; accent: string; chip: string }> = {
@@ -56,7 +56,8 @@ export function Story({
   const [items] = useState(itemsAtStart);
   const [resolved] = useState(resolvedAtStart);
   // Topics, most critical first (the most urgent item in each decides), each with its items most urgent first
-  const allGroups = useMemo(() => topicGroups(items).map(({ topic, items }) => ({ topic, items })), [items]);
+  // An exec's tabs play at most 5 cards each, like their Overview; the rest are a tap away there
+  const allGroups = useMemo(() => topicGroups(items).map(({ topic, items }) => (EXEC_TOPICS.includes(topic) ? { topic, items: items.slice(0, 5), more: Math.max(0, items.length - 5) } : { topic, items })), [items]);
   // An exec's "Everything else" isn't played through or counted: it opens only when they pick it
   const groups = useMemo(() => allGroups.filter((g) => g.topic !== QUIET_TOPIC), [allGroups]);
   // Counted by client (src/lib/today-counts.ts): everything about one client in a topic is one look, the same numbers
@@ -320,6 +321,11 @@ export function Story({
               onSaveAll={() => void saveAll(card.items)}
               onNext={() => go(1)}
             />
+          )}
+          {card.kind === "topic" && (card.more ?? 0) > 0 && (
+            <Link href={`/pipeline?tab=${card.topic}&all=${card.topic}`} className="relative mt-3 inline-flex min-h-11 items-center rounded-full border border-white/20 px-4 text-sm text-white/75 hover:bg-white/10">
+              {card.more} more on your Overview →
+            </Link>
           )}
 
           {card.kind === "end" && (

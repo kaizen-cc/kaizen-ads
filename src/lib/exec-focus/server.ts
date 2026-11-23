@@ -2,8 +2,8 @@ import "server-only";
 import { onService } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
-import { cleanFocus, clientLines, type FocusLine } from "./core";
-import { fireKey, fireOf, fireTitle, kpiWorse, KPI_FIRE_DEVIATION, topSpenders, type FireSignal } from "./fire";
+import { cleanFocus, clientLines, lineOf, type FocusLine } from "./core";
+import { fireKey, fireOf, fireTitle, kpiWorse, KPI_FIRE_DEVIATION, type FireSignal } from "./fire";
 
 // Exec focus, the database side: reading an exec's focus, telling every exec when a client is on fire (once per client
 // per day), and the daily sweep for the fire rules that need numbers (the main KPI far off, tracking broken).
@@ -41,15 +41,20 @@ export type FireInput = { clientId: string; signal: FireSignal; href?: string | 
 export async function raiseFire(admin: SupabaseClient, i: FireInput): Promise<boolean> {
   const f = fireOf(i.signal);
   if (!f.fire || !i.clientId) return false;
+  return notifyFire(admin, { clientId: i.clientId, client: i.client ?? null, why: f.why, href: i.href ?? null, body: i.body ?? null, line: i.line ?? null });
+}
+
+/** The alert itself: every exec, critical, the only thing that rings an exec's bell (once per client per day) */
+export async function notifyFire(admin: SupabaseClient, i: { clientId: string; client: string | null; why: string; href: string | null; body?: string | null; line?: FocusLine | null }): Promise<boolean> {
   const [{ data: c }, { data: execs }] = await Promise.all([
     i.client ? Promise.resolve({ data: { name: i.client, slug: null as string | null } }) : admin.from("clients").select("name, slug").eq("id", i.clientId).maybeSingle(),
     admin.from("profiles").select("id").eq("is_exec", true).eq("is_active", true).not("joined_at", "is", null),
   ]);
   if (!execs?.length) return false;
   const name = (c?.name as string | undefined) ?? "A client";
-  const href = i.href ?? (c?.slug ? `/clients/${c.slug}` : "/pipeline");
+  const href = i.href ?? (c?.slug ? `/clients/${c.slug}` : "/pipeline?tab=escalated");
   const key = fireKey(i.clientId);
-  const base = execs.map((e) => ({ profile_id: e.id as string, kind: "fire", title: fireTitle(name, f.why), body: (i.body ?? "").slice(0, 1000) || null, href, client_id: i.clientId, key, priority: "critical" }));
+  const base = execs.map((e) => ({ profile_id: e.id as string, kind: "fire", title: fireTitle(name, i.why), body: (i.body ?? "").slice(0, 1000) || null, href, client_id: i.clientId, key, priority: "critical" }));
   const { error } = await admin.from("notifications").upsert(base.map((r) => ({ ...r, fire: true, line: i.line ?? null })), { onConflict: "profile_id,key", ignoreDuplicates: true });
   // The columns aren't there yet (the migration hasn't run): still tell them
   if (error && /fire|line/.test(error.message)) await admin.from("notifications").upsert(base, { onConflict: "profile_id,key", ignoreDuplicates: true });
@@ -58,11 +63,59 @@ export async function raiseFire(admin: SupabaseClient, i: FireInput): Promise<bo
 
 type Win = { spend?: number; results?: number; value?: number | null };
 
+/** A client on fire right now, by the owner's four rules (src/lib/exec-focus/fire.ts), one per client */
+export type LiveFire = { clientId: string; client: string; clientSlug: string | null; why: string; href: string | null; line: FocusLine | null; rule: 1 | 2 | 3 | 4; body: string | null; at: string | null };
+
+const DAY = 86_400_000;
+
 /**
- * The daily sweep for the fire rules that need numbers: an account spending with no conversions tracked for a week,
- * and the main KPI 50%+ worse than target for 7+ days on a top-spend or at-risk client. One alert per client per day.
+ * Every client on fire right now, read live: (1) said they're leaving or cancelling (the last 14 days), (2) an ad
+ * account disabled, its payment failed or its spend stopped, (3) an angry client message unanswered for more than one
+ * business day, (4) the main KPI 50%+ off target for 2+ weeks with nothing in motion. One per client, the first rule
+ * that holds. The Overview's Escalated tab and the bell read the same list.
  */
-export async function fireSweep(admin: SupabaseClient): Promise<{ fired: number }> {
+export async function liveFires(admin: SupabaseClient, now = new Date()): Promise<LiveFire[]> {
+  const day14 = new Date(now.getTime() - 14 * DAY).toISOString();
+  const [{ data: clients }, { data: notes }, { data: flags }, { data: owed }, { soundsLikeChurn }, { businessHoursBetween }, { isAngry }] = await Promise.all([
+    admin.from("clients").select("id, name, slug").is("archived_at", null).in("status", LIVE as unknown as string[]).limit(3000),
+    admin.from("client_memory").select("client_id, body, created_at").eq("status", "active").like("body", "At risk (said%").gte("created_at", day14).order("created_at", { ascending: false }).limit(300),
+    admin.from("watch_flags").select("id, kind, client_id, line, title, body, detail, opened_at").is("resolved_at", null).in("kind", ["payment_issue", "delivery_issue", "spend_stopped"]).limit(500),
+    admin.from("owed_replies").select("id, client_id, body, gist, asked_at, url, from_name").eq("from_team", false).in("status", ["watching", "nudged", "escalated"]).not("client_id", "is", null).gte("asked_at", new Date(now.getTime() - 30 * DAY).toISOString()).limit(800),
+    import("@/lib/client-risk"),
+    import("@/lib/escalation-ladder-core"),
+    import("./fire"),
+  ]);
+  const live = new Map((clients ?? []).map((c) => [c.id as string, c as { id: string; name: string; slug: string | null }]));
+  const out = new Map<string, LiveFire>();
+  const add = (f: Omit<LiveFire, "client" | "clientSlug">) => {
+    const c = live.get(f.clientId);
+    if (!c || out.has(f.clientId)) return;
+    out.set(f.clientId, { ...f, client: c.name, clientSlug: c.slug ?? null, href: f.href ?? (c.slug ? `/clients/${c.slug}` : null) });
+  };
+  // 1. Leaving or cancelling: what the client said (a note written from it, or a message still waiting on us)
+  for (const n of notes ?? []) add({ clientId: n.client_id as string, why: "said they may cancel or leave", href: null, line: null, rule: 1, body: String(n.body ?? "").slice(0, 400), at: n.created_at as string });
+  for (const o of owed ?? []) if (soundsLikeChurn(`${o.body ?? ""} ${o.gist ?? ""}`)) add({ clientId: o.client_id as string, why: "said they may cancel or leave", href: (o.url as string | null) ?? null, line: null, rule: 1, body: String(o.gist ?? o.body ?? "").slice(0, 400), at: o.asked_at as string });
+  // 2. The ad account: disabled, payment failed, spend stopped
+  for (const f of flags ?? []) {
+    const d = (f.detail ?? {}) as { account_status?: number | null; average?: number };
+    const fire = fireOf({ kind: "watch", watchKind: f.kind as string, severity: "critical", line: f.line as string | null, accountStatus: d.account_status ?? null, dailyAverage: Number(d.average ?? 0) || undefined, spend30: Number(d.average ?? 0) * 30 });
+    if (fire.fire) add({ clientId: f.client_id as string, why: fire.why, href: null, line: lineOf(f.line as string | null), rule: 2, body: String(f.title ?? ""), at: f.opened_at as string });
+  }
+  // 3. Angry and unanswered for more than a business day
+  for (const o of owed ?? []) {
+    const text = `${o.body ?? ""} ${o.gist ?? ""}`;
+    if (!isAngry(text)) continue;
+    const bh = businessHoursBetween(new Date(o.asked_at as string), now);
+    const fire = fireOf({ kind: "angry_unanswered", text, businessHours: bh });
+    if (fire.fire) add({ clientId: o.client_id as string, why: fire.why, href: (o.url as string | null) ?? null, line: null, rule: 3, body: `${o.from_name ?? "The client"}: ${String(o.gist ?? o.body ?? "").slice(0, 300)}`, at: o.asked_at as string });
+  }
+  // 4. Severely off target for two weeks with nothing in motion
+  for (const k of await kpiFires(admin, now).catch(() => [])) add(k);
+  return [...out.values()].sort((a, b) => a.rule - b.rule);
+}
+
+/** Rule 4: the main KPI 50%+ worse than target over both the last 7 and 14 days, with no sprint, audit or plan moving */
+async function kpiFires(admin: SupabaseClient, now: Date): Promise<Omit<LiveFire, "client" | "clientSlug">[]> {
   const { data: targets } = await admin
     .from("kpi_targets")
     .select("id, client_id, platform, conversion, target, clients!inner(name, slug, archived_at, status, services, services_extra, services_removed, strategy_only)")
@@ -70,56 +123,69 @@ export async function fireSweep(admin: SupabaseClient): Promise<{ fired: number 
     .not("target", "is", null)
     .is("clients.archived_at", null)
     .in("clients.status", LIVE)
-    // Only the lines the client buys (src/lib/service-gate.ts)
     .then((r) => ({ ...r, data: (r.data ?? []).filter(onService) }));
   const ids = (targets ?? []).map((t) => t.id as string);
-  if (!ids.length) return { fired: 0 };
-  const [{ data: snaps }, { RISK_DAYS, RISK_PREFIX, atRiskClients }] = await Promise.all([admin.from("kpi_snapshots").select("target_id, status, windows").in("target_id", ids), import("@/lib/client-risk")]);
-  const { data: notes } = await admin
-    .from("client_memory")
-    .select("client_id, body, created_at")
-    .eq("status", "active")
-    .like("body", `${RISK_PREFIX} (said%`)
-    .gte("created_at", new Date(Date.now() - RISK_DAYS * 86_400_000).toISOString())
-    .limit(300);
-  const atRisk = atRiskClients((notes ?? []) as { client_id: string; body: string; created_at: string }[]);
-  const snapOf = new Map((snaps ?? []).map((s) => [s.target_id as string, s]));
-  const spend = new Map<string, number>();
-  for (const t of targets ?? []) {
-    const w = (snapOf.get(t.id as string)?.windows ?? {}) as Record<string, Win>;
-    spend.set(t.id as string, Number(w.d30?.spend ?? 0));
-  }
-  const top = topSpenders(spend);
-  let fired = 0;
-  const done = new Set<string>();
-  for (const t of targets ?? []) {
-    const clientId = t.client_id as string;
-    if (done.has(clientId)) continue;
-    const s = snapOf.get(t.id as string);
-    if (!s) continue;
-    const w = (s.windows ?? {}) as Record<string, Win>;
-    const c = t.clients as unknown as { name: string; slug: string };
+  if (!ids.length) return [];
+  const { data: snaps } = await admin.from("kpi_snapshots").select("target_id, status, windows").in("target_id", ids).eq("status", "off");
+  const off = new Map((snaps ?? []).map((s) => [s.target_id as string, s]));
+  const offTargets = (targets ?? []).filter((t) => off.has(t.id as string));
+  if (!offTargets.length) return [];
+  const motion = await motionByTarget(admin, offTargets.map((t) => ({ id: t.id as string, clientId: t.client_id as string })), now);
+  const out: Omit<LiveFire, "client" | "clientSlug">[] = [];
+  for (const t of offTargets) {
+    const w = (off.get(t.id as string)?.windows ?? {}) as Record<string, Win>;
     const roas = t.conversion === "roas" || t.conversion === "tiktok_roas";
-    const line = (t.platform === "google" ? "google" : t.platform === "tiktok" ? "tiktok" : "meta") as FocusLine;
-    const href = `/kpis?target=${t.id}`;
-    const d7 = w.d7 ?? {};
-    const tracking: FireSignal = { kind: "tracking", spend7: Number(d7.spend ?? 0), results7: Number(d7.results ?? 0), tracksConversions: !roas && t.target != null };
-    if (await raiseFire(admin, { clientId, client: c.name, signal: tracking, href, line, body: "Check the pixel, the conversion event and the landing page before anything else." })) {
-      fired++;
-      done.add(clientId);
-      continue;
-    }
-    if (s.status !== "off") continue;
-    const worse7 = kpiWorse({ value: d7.value, target: Number(t.target), roas, results: d7.results });
+    const worse7 = kpiWorse({ value: w.d7?.value, target: Number(t.target), roas, results: w.d7?.results });
     const worse14 = kpiWorse({ value: w.d14?.value, target: Number(t.target), roas, results: w.d14?.results });
-    if (worse7 == null || worse7 < KPI_FIRE_DEVIATION) continue;
-    const days = worse14 != null && worse14 >= KPI_FIRE_DEVIATION ? 14 : 7;
-    const kpi: FireSignal = { kind: "kpi", deviation: worse7, days, topSpend: top.has(t.id as string), atRisk: atRisk.has(clientId) };
-    if (await raiseFire(admin, { clientId, client: c.name, signal: kpi, href, line, body: `${Number(d7.spend ?? 0) ? `$${Math.round(Number(d7.spend)).toLocaleString("en-US")} spent in the last 7 days. ` : ""}Open the account and agree a plan today.` })) {
-      fired++;
-      done.add(clientId);
-    }
+    if (worse7 == null || worse14 == null || worse7 < KPI_FIRE_DEVIATION || worse14 < KPI_FIRE_DEVIATION) continue;
+    const fire = fireOf({ kind: "kpi", deviation: Math.min(worse7, worse14), days: 14, inMotion: Boolean(motion.get(t.id as string)) });
+    if (!fire.fire) continue;
+    const line = (t.platform === "google" ? "google" : t.platform === "tiktok" ? "tiktok" : "meta") as FocusLine;
+    out.push({ clientId: t.client_id as string, why: fire.why, href: `/kpis?target=${t.id}`, line, rule: 4, body: `${Number(w.d14?.spend ?? 0) ? `$${Math.round(Number(w.d14?.spend)).toLocaleString("en-US")} spent in 14 days. ` : ""}Nobody has a sprint, audit or plan moving on it.`, at: null });
   }
+  return out;
+}
+
+/**
+ * What's in motion on each ad account (by KPI target): a sprint that's moving, an audit a person ran in the last 2
+ * weeks, or the client's execution plan worked on in the last 2 weeks. Null when nothing is.
+ */
+export async function motionByTarget(admin: SupabaseClient, targets: { id: string; clientId: string }[], now = new Date()): Promise<Map<string, string | null>> {
+  const ids = targets.map((t) => t.id);
+  const clientIds = [...new Set(targets.map((t) => t.clientId))];
+  if (!ids.length) return new Map();
+  const day14 = new Date(now.getTime() - 14 * DAY).toISOString();
+  const [{ data: sprints }, { data: audits }, { data: plans }, { inMotion }] = await Promise.all([
+    admin.from("optimization_sprints").select("id, target_id, status, started_at").in("target_id", ids).eq("status", "active"),
+    admin.from("account_audits").select("target_id, created_at, auto").in("target_id", ids).gte("created_at", day14),
+    admin.from("client_execution_plans").select("client_id, updated_at").in("client_id", clientIds).gte("updated_at", day14),
+    import("@/lib/exec-overview-core"),
+  ]);
+  const planned = new Set((plans ?? []).map((p) => p.client_id as string));
+  // The last sprint action a person ticked off, per sprint (the automatic checks don't count)
+  const sprintIds = (sprints ?? []).map((s) => s.id as string);
+  const { data: acts } = sprintIds.length ? await admin.from("sprint_actions").select("sprint_id, done_at").in("sprint_id", sprintIds).not("done_by", "is", null).gte("done_at", new Date(now.getTime() - 7 * DAY).toISOString()) : { data: [] };
+  const lastAct = new Map<string, string>();
+  for (const a of acts ?? []) if (!lastAct.has(a.sprint_id as string) || String(a.done_at) > lastAct.get(a.sprint_id as string)!) lastAct.set(a.sprint_id as string, a.done_at as string);
+  const out = new Map<string, string | null>();
+  for (const t of targets) {
+    const m = inMotion(
+      {
+        sprints: (sprints ?? []).filter((s) => s.target_id === t.id).map((s) => ({ status: s.status as string, startedAt: s.started_at as string | null, lastActionAt: lastAct.get(s.id as string) ?? null })),
+        audits: (audits ?? []).filter((a) => a.target_id === t.id).map((a) => ({ createdAt: a.created_at as string, auto: a.auto as boolean | null })),
+      },
+      now,
+    );
+    out.set(t.id, m ?? (planned.has(t.clientId) ? "The plan was worked on in the last 2 weeks" : null));
+  }
+  return out;
+}
+
+/** The fires, every exec told: once per client per day while it holds */
+export async function fireSweep(admin: SupabaseClient): Promise<{ fired: number }> {
+  const fires = await liveFires(admin);
+  let fired = 0;
+  for (const f of fires) if (await notifyFire(admin, { clientId: f.clientId, client: f.client, why: f.why, href: f.href, body: f.body, line: f.line }).catch(() => false)) fired++;
   return { fired };
 }
 

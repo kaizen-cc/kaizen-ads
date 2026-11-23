@@ -18,7 +18,7 @@ export type LadderItem = {
   /** Since when nothing has been done (the first notice, the due date, the turnaround) */
   since: string;
   href?: string | null;
-  kind: "owed" | "said" | "ticket" | "brief" | "other";
+  kind: "owed" | "said" | "ticket" | "brief" | "launch" | "fatigue" | "other";
   /** How long it waits before it climbs (48 hours unless the signal says otherwise) */
   wait?: Wait;
   /** Who it climbs to instead of the owner's lead (a client waiting on a reply: the Client Success Coordinator) */
@@ -69,7 +69,8 @@ export async function climbLadder(admin: SupabaseClient, items: LadderItem[], no
 /** The item behind a nudge is taken care of: its card leaves the lead's Overview */
 export async function resolveNudges(admin: SupabaseClient, itemKeys: string[]) {
   if (!itemKeys.length) return;
-  await admin.from("ladder_nudges").update({ status: "resolved", resolved_at: new Date().toISOString() }).in("item_key", itemKeys).eq("status", "open");
+  // Sent nudges too: the lead's message went out, and now the item is done
+  for (let i = 0; i < itemKeys.length; i += 200) await admin.from("ladder_nudges").update({ status: "resolved", resolved_at: new Date().toISOString() }).in("item_key", itemKeys.slice(i, i + 200)).in("status", ["open", "sent"]);
 }
 
 /** The lead's open nudges, newest first (their own session reads them: RLS keeps them to the lead) */
@@ -119,15 +120,17 @@ const H48 = () => new Date(Date.now() - 48 * 3_600_000).toISOString();
  * notice), creative and email board tickets past their turnaround, and briefs drafted for a buyer to approve. Then the
  * nudges whose item is taken care of leave the leads' Overviews. Run with the owed-replies step (hourly).
  */
-export async function runLadder(admin: SupabaseClient): Promise<{ nudged: number; resolved: number }> {
+export async function runLadder(admin: SupabaseClient): Promise<{ nudged: number; resolved: number; up?: number; down?: number; fired?: number }> {
   const cutoff = H48();
   const reportCutoff = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10);
-  const [owed, said, tickets, emails, briefs, reports] = await Promise.all([
+  const [owed, said, tickets, emails, briefs, launches, fatigue, reports] = await Promise.all([
     admin.from("owed_replies").select("id, target_id, from_name, from_team, client_id, asked_at, nudged_at, url, clients(name)").in("status", ["watching", "nudged", "escalated"]).limit(300),
     admin.from("message_promises").select("id, owner_id, what, client_id, notified_at, due_at, url, clients(name)").in("status", ["overdue", "escalated"]).limit(300),
     admin.from("board_requests").select("id, number, title, client_id, assignee_id, stage, stage_due_at, clients(name)").neq("stage", "launched").not("assignee_id", "is", null).lte("stage_due_at", new Date().toISOString()).limit(300),
     admin.from("email_board").select("id, number, title, client_id, assignee_id, stage_due_at, stage, clients(name)").not("assignee_id", "is", null).lte("stage_due_at", new Date().toISOString()).limit(300),
     admin.from("creative_suggestions").select("id, client_id, created_at, status, trigger_key, clients(name)").eq("status", "open").not("trigger_key", "is", null).lte("created_at", cutoff).limit(200),
+    admin.from("board_requests").select("id, number, title, client_id, buyer_id, stage_due_at, clients(name)").eq("stage", "ready_for_launch").is("deleted_at", null).not("buyer_id", "is", null).lte("stage_due_at", new Date().toISOString()).limit(200),
+    admin.from("ad_fatigue").select("client_id, ad_id, ad_name, first_flagged_at, request_numbers, clients(name)").eq("state", "open").lte("first_flagged_at", cutoff).limit(300),
     admin.from("reports").select("id, kind, platform, period_end, owner_id, client_id, clients!inner(name, archived_at)").in("status", ["draft", "submitted"]).is("hidden_at", null).is("clients.archived_at", null).not("owner_id", "is", null).lte("period_end", reportCutoff).limit(300),
   ]);
   const name = (r: { clients?: unknown }) => ((r.clients as { name?: string } | null)?.name ?? null);
@@ -155,6 +158,19 @@ export async function runLadder(admin: SupabaseClient): Promise<{ nudged: number
       if (owner) items.push({ key: `brief:${b.id}`, kind: "brief", ownerId: owner, clientId: b.client_id as string, client: name(b), what: "approving a drafted brief", since: b.created_at as string, href: `/requests/new?approve=${b.id}` });
     }
   }
+  // A launch ready and past its date: the buyer's, climbing to the head of the line, then the paid-ads exec
+  if (!launches.error) for (const t of launches.data ?? []) items.push({ key: `launch:${t.id}`, kind: "launch", ownerId: t.buyer_id as string, clientId: (t.client_id as string | null) ?? null, client: name(t), what: `launching #${t.number} ${t.title}`, since: t.stage_due_at as string, href: `/board?t=${t.number}` });
+  // An ad wearing out with no refresh asked for: the client's Meta buyer's
+  const tired = fatigue.error ? [] : (fatigue.data ?? []).filter((f) => !((f.request_numbers as number[] | null) ?? []).length);
+  if (tired.length) {
+    const { data: buyers } = await admin.from("client_assignments").select("client_id, profile_id").eq("role", "meta_buyer").in("client_id", [...new Set(tired.map((f) => f.client_id as string))]);
+    const buyerOf = new Map<string, string>();
+    for (const b of buyers ?? []) if (!buyerOf.has(b.client_id as string)) buyerOf.set(b.client_id as string, b.profile_id as string);
+    for (const f of tired) {
+      const owner = buyerOf.get(f.client_id as string);
+      if (owner) items.push({ key: `fatigue:${f.client_id}:${f.ad_id}`, kind: "fatigue", ownerId: owner, clientId: f.client_id as string, client: name(f), what: `refreshing a tired ad (${String(f.ad_name ?? "an ad").slice(0, 60)})`, since: f.first_flagged_at as string, href: `/pipeline?tab=ideas` });
+    }
+  }
   // A report not sent 3 days after its period: the Client Success Coordinator nudges whoever owns sending it
   if (!reports.error)
     for (const r of reports.data ?? [])
@@ -162,8 +178,88 @@ export async function runLadder(admin: SupabaseClient): Promise<{ nudged: number
   const { nudged } = await climbLadder(admin, items);
   // Taken care of: the item isn't open any more, so its nudge leaves the lead's Overview
   const open = new Set(items.map((i) => i.key));
-  const { data: nudges } = await admin.from("ladder_nudges").select("item_key").eq("status", "open").limit(500);
+  const { data: nudges } = await admin.from("ladder_nudges").select("item_key").in("status", ["open", "sent"]).limit(2000);
   const done = (nudges ?? []).map((n) => n.item_key as string).filter((k) => !open.has(k));
   await resolveNudges(admin, done);
-  return { nudged, resolved: done.length };
+  // Rung 3: 48 hours more with the lead and nothing moving reaches the execs (src/lib/exec-overview-core.ts)
+  const climbed = await runRung3(admin).catch((e) => {
+    console.error("[ladder] rung 3", e instanceof Error ? e.message : e);
+    return { up: 0, down: 0 };
+  });
+  // Fires skip the ladder: every exec hears at once (once per client per day)
+  const { fireSweep } = await import("@/lib/exec-focus/server");
+  const fires = await fireSweep(admin).catch(() => ({ fired: 0 }));
+  return { nudged, resolved: done.length, ...climbed, fired: fires.fired };
+}
+
+/**
+ * The last touch on each item: a comment, a ticket moved on either board, someone marking it saved or done. Any of
+ * these after an item reached the lead counts as movement and resets the clock to the execs.
+ */
+async function touches(admin: SupabaseClient, keys: string[]): Promise<Map<string, number>> {
+  const at = new Map<string, number>();
+  const bump = (k: string, iso: unknown) => {
+    const t = Date.parse(String(iso ?? ""));
+    if (Number.isFinite(t) && t > (at.get(k) ?? 0)) at.set(k, t);
+  };
+  const tickets = keys.filter((k) => k.startsWith("ticket:") || k.startsWith("launch:")).map((k) => k.split(":")[1]);
+  const emails = keys.filter((k) => k.startsWith("email:")).map((k) => k.split(":")[1]);
+  for (let i = 0; i < keys.length; i += 200) {
+    const part = keys.slice(i, i + 200);
+    const [{ data: cs }, { data: ds }] = await Promise.all([
+      admin.from("item_comments").select("key, created_at").in("key", part).order("created_at", { ascending: false }).limit(1000),
+      admin.from("daily_items").select("key, updated_at").in("key", part).in("status", ["saved", "done"]).limit(1000),
+    ]);
+    for (const c of cs ?? []) bump(c.key as string, c.created_at);
+    for (const d of ds ?? []) bump(d.key as string, d.updated_at);
+  }
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  if (tickets.length) {
+    const { data } = await admin.from("request_events").select("request_id, created_at").in("request_id", tickets.slice(0, 300)).gte("created_at", since).limit(2000);
+    for (const e of data ?? []) {
+      bump(`ticket:${e.request_id}`, e.created_at);
+      bump(`launch:${e.request_id}`, e.created_at);
+    }
+  }
+  if (emails.length) {
+    const { data } = await admin.from("email_ticket_events").select("ticket_id, created_at").in("ticket_id", emails.slice(0, 300)).gte("created_at", since).limit(2000);
+    for (const e of data ?? []) bump(`email:${e.ticket_id}`, e.created_at);
+  }
+  return at;
+}
+
+/**
+ * Rung 3: an item at the lead's rung with nothing moving for 48 more hours (no touch, the lead's nudge not sent) reaches
+ * the execs of its line; a touch brings it back down, and waiting on the client pauses it. An item an exec took over
+ * stays with them.
+ */
+export async function runRung3(admin: SupabaseClient, now = new Date()): Promise<{ up: number; down: number }> {
+  const { atRung3 } = await import("@/lib/exec-overview-core");
+  const { data } = await admin.from("ladder_nudges").select("id, item_key, created_at, sent_at, moved_at, exec_at, taken_by").in("status", ["open", "sent"]).limit(2000);
+  const rows = (data ?? []) as { id: string; item_key: string; created_at: string; sent_at: string | null; moved_at: string | null; exec_at: string | null; taken_by: string | null }[];
+  if (!rows.length) return { up: 0, down: 0 };
+  const { pausedKeys } = await import("@/lib/item-comments");
+  const keys = [...new Set(rows.map((r) => r.item_key))];
+  const [paused, touched] = await Promise.all([pausedKeys(admin, keys), touches(admin, keys)]);
+  let up = 0;
+  let down = 0;
+  const iso = now.toISOString();
+  for (const r of rows) {
+    const t = touched.get(r.item_key);
+    // Only a touch after it reached the lead is movement
+    const moved = t && t > Date.parse(r.created_at) && t > Date.parse(r.moved_at ?? "1970-01-01") ? new Date(t).toISOString() : null;
+    const movedAt = moved ?? r.moved_at;
+    const exec = !r.taken_by && atRung3({ createdAt: r.created_at, sentAt: r.sent_at, movedAt }, paused.has(r.item_key), now);
+    const patch: Record<string, string | null> = {};
+    if (moved) patch.moved_at = moved;
+    if (exec && !r.exec_at) patch.exec_at = iso;
+    if (!exec && r.exec_at) patch.exec_at = null;
+    if (!Object.keys(patch).length) continue;
+    if ("exec_at" in patch) {
+      if (patch.exec_at) up++;
+      else down++;
+    }
+    await admin.from("ladder_nudges").update(patch).eq("id", r.id);
+  }
+  return { up, down };
 }

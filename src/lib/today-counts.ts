@@ -6,7 +6,12 @@ import type { Tier, TodayItem, TopicKey } from "@/lib/today";
 // gather as one "Team" row. A client's row is as urgent as its most urgent item. Pure: no database, no server-only.
 
 export const TIER_ORDER: Tier[] = ["critical", "high", "normal"];
-export const TOPIC_KEYS: TopicKey[] = ["fire", "mine", "radar", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments", "elsewhere"];
+export const TOPIC_KEYS: TopicKey[] = ["fire", "mine", "radar", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments", "elsewhere", "needs", "escalated", "pulse", "system"];
+/** An exec's day plays in its tabs' order, whatever is most critical: Needs me, Escalated, Accounts, Pulse, System */
+export const EXEC_TOPICS: TopicKey[] = ["needs", "escalated", "accounts", "pulse", "system"];
+const execRank = (t: TopicKey) => (EXEC_TOPICS.includes(t) ? EXEC_TOPICS.indexOf(t) : 99);
+/** Topics only an exec's day has (Accounts is everyone's): their presence means the tabs' order applies */
+const EXEC_ONLY: TopicKey[] = ["needs", "escalated", "pulse", "system"];
 /** An exec's "Everything else": outside their focus, shown last and left out of every total */
 export const QUIET_TOPIC: TopicKey = "elsewhere";
 const RANK: Record<Tier, number> = { critical: 2, high: 1, normal: 0 };
@@ -36,12 +41,13 @@ export function bucketsOf<T extends Countable>(list: T[]): Bucket<T>[] {
 export function topicGroups<T extends Countable>(items: T[]): { topic: TopicKey; items: T[]; buckets: Bucket<T>[] }[] {
   const m = new Map<TopicKey, T[]>();
   for (const i of items) m.set(i.topic, [...(m.get(i.topic) ?? []), i]);
+  const rank = [...m.keys()].some((t) => EXEC_ONLY.includes(t)) ? execRank : () => 0;
   return [...m.entries()]
     .map(([topic, list]) => {
       const sorted = [...list].sort((a, b) => b.score - a.score);
       return { topic, items: sorted, buckets: bucketsOf(sorted) };
     })
-    .sort((a, b) => Number(a.topic === QUIET_TOPIC) - Number(b.topic === QUIET_TOPIC) || b.items[0].score - a.items[0].score);
+    .sort((a, b) => Number(a.topic === QUIET_TOPIC) - Number(b.topic === QUIET_TOPIC) || rank(a.topic) - rank(b.topic) || b.items[0].score - a.items[0].score);
 }
 
 export type Looks = {
@@ -123,6 +129,14 @@ export function lookHeadline(topic: TopicKey, n: number): string {
       return `${n} ${s(n, "client has", "clients have")} ads ready for a refresh`;
     case "allotments":
       return `${n} ${s(n, "client is", "clients are")} behind on creative`;
+    case "needs":
+      return `${n} ${s(n, "thing needs", "things need")} you`;
+    case "escalated":
+      return `${n} stuck past a lead, or on fire`;
+    case "pulse":
+      return "The agency at a glance";
+    case "system":
+      return `${n} ${s(n, "thing", "things")} in Kaizen OS itself`;
   }
 }
 
@@ -155,6 +169,14 @@ export function lookChip(topic: TopicKey, n: number): string {
       return `${n} ${s(n, "client", "clients")} with ads ready for a refresh`;
     case "allotments":
       return `${n} ${s(n, "client", "clients")} behind on creative`;
+    case "needs":
+      return `${n} ${s(n, "needs", "need")} you`;
+    case "escalated":
+      return `${n} escalated`;
+    case "pulse":
+      return "pulse";
+    case "system":
+      return `${n} system`;
   }
 }
 

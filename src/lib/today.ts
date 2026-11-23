@@ -23,7 +23,7 @@ import { csItem, forMaker, isCustomerSuccess, isMaker } from "@/lib/maker-day-co
 // item they saw that someone else has since acted on comes back once as "taken care of", with who and what.
 
 export type Tier = "critical" | "high" | "normal";
-export type TopicKey = "fire" | "mine" | "radar" | "promises" | "onboarding" | "accounts" | "email" | "social" | "work" | "briefs" | "ads" | "allotments" | "elsewhere";
+export type TopicKey = "fire" | "mine" | "radar" | "promises" | "onboarding" | "accounts" | "email" | "social" | "work" | "briefs" | "ads" | "allotments" | "elsewhere" | "needs" | "escalated" | "pulse" | "system";
 export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   fire: { label: "On fire", blurb: "Clients we could lose, across every team" },
   mine: { label: "Your work", blurb: "Tickets and tasks on you" },
@@ -40,6 +40,11 @@ export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   allotments: { label: "Allotments", blurb: "Clients behind on creative" },
   // An exec's day: what's outside their focus, quiet and uncounted, for when they want it
   elsewhere: { label: "Everything else", blurb: "Outside your focus, when you want it" },
+  // An exec's day (src/lib/exec-overview.ts): the same four tabs as their Overview, the owner's System last
+  needs: { label: "Needs me", blurb: "Replies, promises, tasks and approvals on you" },
+  escalated: { label: "Escalated", blurb: "Stuck past a lead for 48 hours, and fires" },
+  pulse: { label: "Pulse", blurb: "The agency at a glance, nothing to do" },
+  system: { label: "System", blurb: "Kaizen OS itself: checks, fixes, feedback" },
 };
 
 export type TodayItem = {
@@ -72,10 +77,12 @@ export type TodayItem = {
   image?: string | null;
   /** When it's due (a ticket's turnaround, an Asana due date), for the Overview's list view */
   due?: string | null;
+  /** An exec's card (src/lib/exec-overview-core.ts): the lead to nudge, the drafted message, the account's numbers */
+  exec?: import("@/lib/exec-overview-core").ExecCard;
 };
 export type Resolved = { key: string; topic: TopicKey; client: string; title: string; by: string | null; what: string };
 /** counts: items by tier (kept for older readers); looks: what every screen shows, counted by client (src/lib/today-counts.ts) */
-export type Today = { items: TodayItem[]; resolved: Resolved[]; counts: Record<Tier, number>; looks: Looks };
+export type Today = { items: TodayItem[]; resolved: Resolved[]; counts: Record<Tier, number>; looks: Looks; shape?: "exec" };
 
 const tierOf = (score: number): Tier => (score >= 80 ? "critical" : score >= 60 ? "high" : "normal");
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
@@ -723,45 +730,14 @@ async function whatHappened(db: SupabaseClient, keys: { key: string; snapshot: {
   return out;
 }
 
-/** A client on fire today, as the first thing on an exec's day */
-async function fireItems(db: SupabaseClient, me: Staff): Promise<Draft[]> {
-  const day = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-  const { data, error } = await db.from("notifications").select("key, title, body, href, client_id, clients(name, slug)").eq("profile_id", me.id).like("key", `fire:%:${day}`).limit(20);
-  if (error) return [];
-  return (data ?? []).map((n) => {
-    const c = n.clients as unknown as { name: string; slug: string } | null;
-    const title = String(n.title ?? "");
-    return {
-      key: n.key as string,
-      topic: "fire" as const,
-      score: 99,
-      client: c?.name ?? "Client",
-      clientSlug: c?.slug ?? "",
-      clientId: (n.client_id as string | null) ?? null,
-      stat: { value: "On fire", label: "every exec was told" },
-      title,
-      story: String(n.body ?? "") || title,
-      why: title.replace(/^.*? is on fire: /, ""),
-      evidence: [],
-      action: { label: "Open it", href: (n.href as string | null) ?? (c?.slug ? `/clients/${c.slug}` : "/pipeline") },
-    };
-  });
-}
-
 /**
- * An exec's day: clients on fire first, then their focus lines and anything on them; the rest moves to the quiet
- * "Everything else" (uncounted). An exec with no focus set sees everything, as before.
+ * An exec's day (owner, Nov 23 2026): only what's on them, what climbed past a lead (rung 3) or is on fire, accounts in
+ * their focus off target with nothing in motion, the pulse, and (the owner) the system. Everything else leaves their
+ * day (src/lib/exec-overview.ts).
  */
 async function forExec(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise<Draft[]> {
-  const { loadExecFocus, linesByClient, onFireToday } = await import("@/lib/exec-focus/server");
-  const { splitForExec } = await import("@/lib/exec-focus/core");
-  const [focus, fire, onFire] = await Promise.all([loadExecFocus(db, me.id), fireItems(db, me).catch(() => []), onFireToday(db).catch(() => new Set<string>())]);
-  if (!focus.length) return [...fire, ...drafts];
-  const clientLines = await linesByClient(db, drafts.map((d) => d.clientId ?? "")).catch(() => new Map());
-  const { mine, elsewhere } = splitForExec(drafts, focus, { onFire, clientLines });
-  // A client on fire leads: their other items climb with them
-  const lead = mine.map((d) => (d.clientId && onFire.has(d.clientId) ? { ...d, score: Math.max(d.score, 90) } : d));
-  return [...fire, ...lead, ...elsewhere.map((d) => ({ ...d, topic: "elsewhere" as const, from: d.topic }))];
+  const { execDrafts } = await import("@/lib/exec-overview");
+  return execDrafts(db, me, drafts);
 }
 
 /** Today's recap for this person: open items most critical first (with what they've done with each), and what got resolved. */
@@ -801,5 +777,5 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
   const resolved = await whatHappened(db, gone.map((g) => ({ key: g.key as string, snapshot: g.snapshot as { client?: string; title?: string; topic?: TopicKey } })));
   const counts = { critical: 0, high: 0, normal: 0 };
   for (const i of items) counts[i.tier]++;
-  return { items, resolved, counts, looks: countLooks(items) };
+  return { items, resolved, counts, looks: countLooks(items), ...(me.isExec ? { shape: "exec" as const } : {}) };
 }

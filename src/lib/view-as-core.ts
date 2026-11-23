@@ -140,7 +140,7 @@ export function representativeFor<T extends { id: string; role: string; full_nam
  * What a role sees, in words (for the assistant: "what does a social manager see?"). The places follow the sidebar's
  * rules (components/team-shell.tsx) and the client access follows private.can_see_client() in the database.
  */
-export function roleView(role: TeamRole): { role: string; tier: string; places: string[]; clients: string; reports: boolean; paidAds: boolean } {
+export function roleView(role: TeamRole): { role: string; tier: string; places: string[]; clients: string; reports: boolean; paidAds: boolean; overview?: string } {
   const exec = role === "executive";
   // profiles.is_lead: the Heads of Meta, Creative and Google (the Heads of Email and Social aren't, by design)
   const lead = role === "head_of_meta" || role === "head_of_creative" || role === "head_of_google";
@@ -171,5 +171,9 @@ export function roleView(role: TeamRole): { role: string; tier: string; places: 
           : isLeadMaker(role)
             ? "Every client (to see and request creative for)"
             : "Only the clients they're assigned to";
-  return { role: roleLabel(role), tier, places: [...places, "Feedback"], clients, reports, paidAds: !channel };
+  // An exec's Overview and recap (Nov 23 2026, src/lib/exec-overview.ts): four tabs, nothing below rung 3 but fires
+  const overview = exec
+    ? "Four tabs (the owner a fifth): Needs me (replies, promises, Asana tasks and approvals on them), Escalated (only what sat 48h with the owner, then 48h with the line's lead with nothing moving, plus fires), Accounts (their focus lines off target with nothing in motion, 5 worst), Pulse (read only: clients on fire, each lead's backlog, the week's numbers); the owner also System. Their bell rings for fires only; the rest is in their morning recap."
+    : undefined;
+  return { role: roleLabel(role), tier, places: [...places, "Feedback"], clients, reports, paidAds: !channel, ...(overview ? { overview } : {}) };
 }

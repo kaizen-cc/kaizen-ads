@@ -7,14 +7,14 @@ import type { ChatTool, ToolCtx } from "./tools";
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
-export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge", "my_team_work", "my_notifications", "mark_notification", "support_board", "tracking_health", "auto_closed", "reopen_auto_closed"] as const;
+export const DAY_TOOLS = ["my_day", "day_item_action", "overview_layout", "item_comments", "comment_on_item", "sent_by_me", "team_nudges", "send_team_nudge", "my_team_work", "my_notifications", "mark_notification", "support_board", "tracking_health", "auto_closed", "reopen_auto_closed", "exec_overview", "exec_escalation_action"] as const;
 
 export function dayTools(ctx: ToolCtx): ChatTool[] {
-  return [
+  const tools: ChatTool[] = [
     {
       name: "my_day",
       description: "What's on the person's own day (their Overview and recap): every open item with its key, topic, client, title, due date, tier and whether it's new since they last looked. Use it for 'what's on my plate', 'what's new', before acting on an item, or to find an item's key. Optionally only one topic or client. open_screen 'overview' shows it.",
-      input_schema: { type: "object", properties: { topic: { type: "string", description: "Only this topic (mine, promises, onboarding, accounts, email, social, work, briefs, ads, allotments)" }, client: { type: "string", description: "Only this client (name)" } }, additionalProperties: false },
+      input_schema: { type: "object", properties: { topic: { type: "string", description: "Only this topic (mine, promises, onboarding, accounts, email, social, work, briefs, ads, allotments; an exec's day: needs, escalated, accounts, pulse, system)" }, client: { type: "string", description: "Only this client (name)" } }, additionalProperties: false },
       status: () => "Reading your day…",
       run: async (input) => {
         const { todaySnapshot } = await import("@/lib/today-snapshot");
@@ -25,7 +25,9 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
         return {
           new: snap.today.items.filter((i) => i.state === "new").length,
           total: snap.today.items.length,
-          items: items.slice(0, 40).map((i) => ({ key: i.key, topic: i.topic, client: i.client, clientId: i.clientId, title: i.title, due: i.due ?? null, tier: i.tier, status: i.state, why: i.why })),
+          items: items.slice(0, 40).map((i) => ({ key: i.key, topic: i.topic, client: i.client, clientId: i.clientId, title: i.title, due: i.due ?? null, tier: i.tier, status: i.state, why: i.why, ...(i.exec ? { detail: i.exec.detail, open: `/pipeline?tab=${i.exec.tab}` } : {}) })),
+          // An exec's day is their Overview's tabs (exec_overview has the whole picture)
+          ...(ctx.me.isExec ? { tabs: "needs, escalated, accounts, pulse" + (ctx.me.canViewAs ? ", system" : "") } : {}),
           open: "/pipeline",
         };
       },
@@ -246,6 +248,53 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
       },
     },
     {
+      name: "exec_overview",
+      description: "An exec's Overview (execs only), tab by tab: Needs me (what's on them: replies, promises, Asana tasks, approvals, work they took over), Escalated (only what sat 48h with its owner then 48h with the line's lead with nothing moving, one card per client, plus fires: client leaving, ad account disabled/payment failed/spend stopped, angry message unanswered a business day, an account far off target 2+ weeks with nothing in motion), Accounts (their focus lines off target with nothing in motion), Pulse (read only) and, for the owner, System. Each card has its key, what it is, and for Escalated the lead and a drafted nudge. Use it for 'what needs me', 'what's escalated', 'what's on fire'. open_screen 'needs me', 'escalated', 'accounts to step into', 'pulse' or 'system' opens each tab.",
+      input_schema: { type: "object", properties: { tab: { type: "string", enum: ["needs", "escalated", "accounts", "pulse", "system"] } }, additionalProperties: false },
+      status: () => "Reading your Overview…",
+      run: async (input) => {
+        if (!ctx.me.isExec) return { ok: false, note: "Only execs have this Overview; use my_day." };
+        const { todaySnapshot } = await import("@/lib/today-snapshot");
+        const { headerParts, sortCards, sortNeeds, TAB_LABEL } = await import("@/lib/exec-overview-core");
+        const snap = await todaySnapshot(ctx.db, ctx.me);
+        const cards = snap.today.items.flatMap((i) => (i.exec ? [i.exec] : []));
+        const of = (t: string) => cards.filter((c) => c.tab === t);
+        const tabs = { needs: sortNeeds(of("needs")), escalated: sortCards(of("escalated")), accounts: sortCards(of("accounts")), pulse: of("pulse"), ...(ctx.me.canViewAs ? { system: sortCards(of("system")) } : {}) } as Record<string, typeof cards>;
+        const fires = tabs.escalated.filter((c) => c.severity === "fire").length;
+        const header = headerParts({ needs: tabs.needs.length, fires, stuck: tabs.escalated.length - fires, accounts: tabs.accounts.length })
+          .map((h) => h.text)
+          .join(" · ");
+        const pick = input.tab ? { [String(input.tab)]: tabs[String(input.tab)] ?? [] } : tabs;
+        return {
+          header: header || "All clear",
+          tabs: Object.fromEntries(
+            Object.entries(pick).map(([t, list]) => [
+              TAB_LABEL[t as keyof typeof TAB_LABEL] ?? t,
+              { count: list.length, open: `/pipeline?tab=${t}`, cards: list.slice(0, 15).map((c) => ({ key: c.key, client: c.client, title: c.title, detail: c.detail, severity: c.severity, due: c.due ?? null, lead: c.lead?.name ?? null, nudgeDraft: c.draft ?? null, link: c.action.href })) },
+            ]),
+          ),
+        };
+      },
+    },
+    {
+      name: "exec_escalation_action",
+      description: "Acts on an Escalated card for an exec (by its key from exec_overview): nudge_lead sends the lead a message in Kaizen OS (their bell and Overview; never Slack), in the exec's words or the drafted one; take_it moves the stuck work to the exec's own Needs me and stops it climbing. Say what happened in a few words.",
+      input_schema: { type: "object", properties: { key: { type: "string" }, action: { type: "string", enum: ["nudge_lead", "take_it"] }, message: { type: "string", description: "The nudge, as the exec said it (else the drafted one)" } }, required: ["key", "action"], additionalProperties: false },
+      status: (input) => (input.action === "take_it" ? "Taking it over…" : "Nudging the lead…"),
+      run: async (input) => {
+        if (!ctx.me.isExec) return { ok: false, note: "Only an exec can do that." };
+        if (ctx.me.viewAs) return { ok: false, note: "Not while viewing as someone." };
+        const { todaySnapshot } = await import("@/lib/today-snapshot");
+        const snap = await todaySnapshot(ctx.db, ctx.me);
+        const card = snap.today.items.find((i) => i.exec && i.key === clip(input.key, 200))?.exec;
+        if (!card || card.tab !== "escalated" || !card.nudgeIds?.length) return { ok: false, note: "That isn't an Escalated card with stuck work (a fire has no lead to nudge): read exec_overview again." };
+        const { nudgeLeadAsExec, takeEscalated } = await import("@/lib/exec-overview-actions");
+        if (input.action === "take_it") return { ...(await takeEscalated(ctx.admin, ctx.me.id, card.nudgeIds)), open: "/pipeline?tab=needs" };
+        if (!card.lead) return { ok: false, note: "No lead on that card." };
+        return { ...(await nudgeLeadAsExec(ctx.admin, { id: ctx.me.id, name: ctx.me.fullName }, { nudgeIds: card.nudgeIds, leadId: card.lead.id, text: clip(input.message, 2000) || card.draft || "", client: card.client })), lead: card.lead.name };
+      },
+    },
+    {
       name: "overview_layout",
       description: "Switches the person's Overview between cards (the default) and the list view (one row per item: client, what it is, due date, status). Kept on their profile, on every device. Then open_screen 'overview'.",
       input_schema: { type: "object", properties: { layout: { type: "string", enum: ["cards", "list"] } }, required: ["layout"], additionalProperties: false },
@@ -259,4 +308,6 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
       },
     },
   ];
+  // An exec's Overview tools reach execs only (so only they hear the tip about them)
+  return tools.filter((t) => ctx.me.isExec || !t.name.startsWith("exec_"));
 }

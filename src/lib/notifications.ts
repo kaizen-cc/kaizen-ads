@@ -22,13 +22,18 @@ export const NOT_FOR_CREATIVE = ["kpi", "sprint", "connection"];
 export const NOT_FOR_SUPPORT = ["direction", "fatigue", "ticket", "bible"];
 const SUPPORT_SKIP_KEYS = ["bible-change:%", "bible-review:%", "guideline-gap:%", "bible:%"];
 
-export async function loadNotifications(db: SupabaseClient, limit = 40, opts: { skipKinds?: string[]; skipKeys?: string[] } = {}): Promise<{ items: Notice[]; unread: number }> {
+export async function loadNotifications(db: SupabaseClient, limit = 40, opts: { skipKinds?: string[]; skipKeys?: string[]; onlyFire?: boolean } = {}): Promise<{ items: Notice[]; unread: number }> {
   const skip = opts.skipKinds?.length ? `(${opts.skipKinds.join(",")})` : null;
   let list = db.from("notifications").select("id, kind, title, body, href, priority, created_at, read_at, key, actor:profiles!notifications_actor_id_fkey(full_name)").eq("alert", true).is("cleared_at", null);
   let unread = db.from("notifications").select("id", { count: "exact", head: true }).eq("alert", true).is("read_at", null).is("cleared_at", null);
   if (skip) {
     list = list.not("kind", "in", skip);
     unread = unread.not("kind", "in", skip);
+  }
+  // An exec's bell rings for fires only (owner, Nov 23 2026); everything else waits for their morning recap
+  if (opts.onlyFire) {
+    list = list.eq("fire", true);
+    unread = unread.eq("fire", true);
   }
   for (const k of opts.skipKeys ?? []) {
     list = list.not("key", "like", k);
@@ -135,7 +140,7 @@ export async function emailNotifications(admin: SupabaseClient) {
   const cutoff = new Date(Date.now() - 5 * 60_000).toISOString();
   const { data } = await admin
     .from("notifications")
-    .select("id, profile_id, kind, title, body, href, priority, key, profiles!notifications_profile_id_fkey(email, full_name)")
+    .select("id, profile_id, kind, title, body, href, priority, key, fire, profiles!notifications_profile_id_fkey(email, full_name, is_exec)")
     .is("read_at", null)
     .is("cleared_at", null)
     .is("emailed_at", null)
@@ -157,7 +162,10 @@ export async function emailNotifications(admin: SupabaseClient) {
   for (const id of ids) {
     const mine = data.filter((n) => n.profile_id === id);
     const pref = prefOf(id);
+    // An exec is emailed fires only, like their bell (owner, Nov 23 2026); the rest is in their morning recap
+    const exec = Boolean((mine[0].profiles as unknown as { is_exec?: boolean } | null)?.is_exec);
     const send = mine.filter((n) => {
+      if (exec && !n.fire) return false;
       const mode = pref.groups[KIND_GROUP[n.kind as string] ?? "work"].email;
       return mode === "all" || (mode === "critical" && n.priority === "critical");
     });

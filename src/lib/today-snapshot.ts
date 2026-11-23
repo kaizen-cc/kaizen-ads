@@ -66,4 +66,9 @@ export async function buildSnapshot(db: SupabaseClient, me: Staff, prev?: Snapsh
  * Today's review for this request: the saved one, else built now. Shared by everything on the page that shows its
  * numbers (the "Your day" card and the theme cards), so they read one review and agree, and it's built at most once.
  */
-export const todaySnapshot = cache(async (db: SupabaseClient, me: Staff): Promise<Snapshot> => (await readSnapshot(db, me)) ?? (await buildSnapshot(db, me, null)));
+export const todaySnapshot = cache(async (db: SupabaseClient, me: Staff): Promise<Snapshot> => {
+  const saved = await readSnapshot(db, me);
+  // An exec's day saved before the exec recap (Nov 23 2026) is built again in its new shape
+  if (saved && (!me.isExec || saved.today.shape === "exec")) return saved;
+  return buildSnapshot(db, me, saved);
+});

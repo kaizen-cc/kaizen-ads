@@ -134,6 +134,12 @@ export const SCREEN_PLACES: Record<string, string> = {
   "my tasks": "/pipeline#my-tasks",
   // Items that closed themselves (Slack, email or call notes showed them done), each with Reopen
   "closed automatically": "/pipeline#closed-automatically",
+  // An exec's Overview tabs (src/lib/exec-overview.ts)
+  "needs me": "/pipeline?tab=needs",
+  escalated: "/pipeline?tab=escalated",
+  "accounts to step into": "/pipeline?tab=accounts",
+  pulse: "/pipeline?tab=pulse",
+  system: "/pipeline?tab=system",
   // Emails drafted for the person to send to clients, on their Overview
   "emails ready to send": "/pipeline#emails-ready",
   // The executives' weekly account review, each step its own address
