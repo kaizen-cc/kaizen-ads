@@ -223,3 +223,27 @@ export function addedLines(before: Loose, after: Loose): string[] {
     .filter((s) => !was.has(norm(s)))
     .slice(0, 8);
 }
+
+// ─── The last report as it went out ───────────────────────────────────────────────────────────────────────────────
+
+type SentReport = { period_start?: string | null; message?: string | null; sections?: unknown; chat?: unknown } | null | undefined;
+const clipTo = (t: string, n: number) => (t.length > n ? `${t.slice(0, n)}…` : t);
+
+/**
+ * The client's last report on this line as it was sent (after every edit the buyer made), and what the buyer asked the
+ * AI to change on it: the next draft follows its shape and applies those asks again, so every change carries into next
+ * week's report whether or not it was saved as a style rule. Its numbers and dates never carry (they come from the data).
+ */
+export function lastSentBlock(last: SentReport): string {
+  if (!last || (!last.message?.trim() && !last.sections)) return "";
+  const s = (last.sections ?? {}) as Record<string, unknown>;
+  const shape = Object.entries(s)
+    .filter(([k, v]) => !["stories", "takeaways", "teamNotes", "cardNotes", "overrides"].includes(k) && (Array.isArray(v) ? v.length : typeof v === "string" ? v.trim() : false))
+    .map(([k, v]) => (Array.isArray(v) ? `${k}: ${v.length} ${v.length === 1 ? "point" : "points"}\n${v.map((x) => `  - ${clipTo(String(x), 220)}`).join("\n")}` : `${k}: ${clipTo(String(v), 400)}`))
+    .join("\n");
+  const charts = Array.isArray(s.stories) ? (s.stories as { title?: string }[]).map((x) => x?.title).filter(Boolean) : [];
+  const asks = (Array.isArray(last.chat) ? (last.chat as { role?: string; text?: string }[]) : []).filter((t) => t?.role === "user" && t.text?.trim()).map((t) => clipTo(String(t.text).trim(), 300)).slice(-12);
+  return `<last_report_as_sent period_start="${last.period_start ?? ""}">
+How the buyer sent this client's last report, after all their edits. Follow its shape: the same sections, order, number of points, length, tone and kinds of comparisons, and the same trend charts unless the data has none. Never reuse its numbers, dates or one-off news: those come from <numbers> and the work log.${last.message?.trim() ? `\nThe message as sent:\n${clipTo(last.message.trim(), 2500)}` : ""}${shape ? `\nThe sections as sent:\n${clipTo(shape, 3500)}` : ""}${charts.length ? `\nTrend charts: ${charts.join("; ")}` : ""}${asks.length ? `\nWhat the buyer asked the AI to change on it (apply the ones about format, structure, metrics or tone again now, so they don't have to ask twice; skip one-off fixes about that week's facts):\n${asks.map((a) => `- ${a}`).join("\n")}` : ""}
+</last_report_as_sent>`;
+}

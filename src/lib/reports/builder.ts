@@ -293,6 +293,7 @@ export async function deliverBuilt(admin: SupabaseClient, bundleId: string, by: 
     if (!out.ok) throw new Error(out.error ?? "It didn't go out.");
     const now = new Date().toISOString();
     await admin.from("report_bundles").update({ status: "sent", sent_at: now, delivered: { ...(out.slack && "channel" in out.slack ? { slack: out.slack } : {}), ...(out.email?.to.length ? { email: out.email.to } : {}) } }).eq("id", bundleId);
+    await (await import("./share")).freezeLayout(admin, { bundleId }).catch(() => null);
     await admin.from("reports").update({ status: "posted", posted_at: now, posted_by: by }).eq("bundle_id", bundleId).eq("status", "submitted");
     // The automatic weekly or monthly on the same accounts and dates was covered by this one: set aside, logged
     await coverScheduled(admin, bundleId, by, (me?.full_name as string | null) ?? null).catch(() => {});

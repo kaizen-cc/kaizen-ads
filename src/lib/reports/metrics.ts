@@ -44,6 +44,11 @@ export type Period = {
   hookRate?: number | null;
   /** Every event the account counted in the period (its action type → how many), so any of them can be a tile (see EventMetric) */
   actions?: Record<string, number>;
+  /** Every click (Meta's "Clicks (all)": likes, profile taps, link clicks…), and the people reached and how often (Meta,
+   *  read for the period itself: reach can't be added up from days) */
+  clicksAll?: number;
+  reach?: number | null;
+  frequency?: number | null;
 };
 
 /** result: what this campaign is optimized for ("Purchase", "Post engagement"), counted the way the KPI board counts it */
@@ -88,6 +93,12 @@ export type ReportMetrics = {
   goalParts?: GoalPart[];
   /** The events counted in the report's periods, by their names ("offsite_conversion.fb_pixel_add_to_cart" → "Adds to cart (pixel)") */
   eventLabels?: Record<string, string>;
+  /** Every event the account knows, counted in this period or not: what its campaigns are optimized for (Subscribe, even
+   *  at none this week) and everything counted in the weeks read. The metric picker offers each one. */
+  knownEvents?: string[];
+  /** The KPI is set to an event (purchases) that no campaign running in the period goes after, and none were counted: the
+   *  report counts what the campaigns are optimized for instead. This is the KPI's own label, for the note. */
+  kpiFallback?: string;
   /** Day by day in the main period (the client dashboard's chart), when asked for */
   daily?: { date: string; spend: number; results: number; revenue: number; clicks: number; impressions: number }[];
   /** Where performance is weak and why (set when the report is drafted) */
@@ -203,7 +214,9 @@ export function period(rows: { date: string; impressions?: number | string | nul
     }
   }
   const impressions = rows.filter((r) => inside(r.date)).reduce((n, r) => n + (Number(r.impressions) || 0), 0);
+  const clicksAll = rows.filter((r) => inside(r.date)).reduce((n, r) => n + (Number((r as { clicks?: number | string | null }).clicks) || 0), 0);
   return {
+    ...(clicksAll ? { clicksAll } : {}),
     ...(video ? { views6s: Math.round(views6s), hookRate: impressions ? r2((views6s / impressions) * 100) : null } : {}),
     label: p.label,
     start: p.start,
@@ -283,6 +296,7 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
   // Each campaign's goal for the results-by-goal breakdown, whatever the KPI counts (a ROAS KPI's too)
   const split = new Map<string, GoalOf>();
   let read = new Map<string, string[]>();
+  let fallback: string | null = null;
   if (platform === "meta" && t.ad_account_id) {
     const account = String(t.ad_account_id).replace(/^act_/, "");
     const [got, { data: named }] = await Promise.all([goalsFor(admin, account, platform, t.campaign_results), admin.from("campaign_goals").select("campaign_id, label").eq("ad_account_id", account)]);
@@ -312,6 +326,11 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
     if (t.conversion === "campaign_goal") {
       if (read.size && anyReal) goals = new Map([...read.entries()].map(([id, types]) => [id, isResult(types) ? types : []]));
       else if (read.size) goals = read;
+    } else if (t.conversion !== "custom" && read.size && anyReal && kpiMismatch(read, spent, all, ps.main, kpiConv.types ?? [])) {
+      // The KPI names an event (purchases) that no campaign running in the period goes after, and none came in: the
+      // report counts what the campaigns are optimized for (a Subscribe campaign's subscriptions), never "0 purchases"
+      goals = new Map([...read.entries()].map(([id, types]) => [id, isResult(types) ? types : []]));
+      fallback = conversionLabel(t.conversion, t.custom_action);
     }
   }
   // A KPI set to a custom event that was never picked can't count anything: each campaign's own result instead
@@ -456,22 +475,36 @@ export async function reportMetrics(admin: SupabaseClient, base: Target, kind: "
   const gaps: string[] = [];
   for (let d = ps.main.start; d <= ps.main.end; d = shift(d, 1)) if (!dates.has(d) && !(file && !file.daily)) gaps.push(d);
   const compare = period(allBefore, daysBefore, ps.compare, conv, type, valueType);
+  // Reach and frequency for the report's own dates, read live from Meta (they can't be added up from days)
+  if (platform === "meta" && t.ad_account_id && !file && !opts.lite) {
+    const ids = [...new Set(all.filter((r) => Number(r.spend) > 0 && r.date >= ps.compare.start && r.date <= ps.main.end).map((r) => String(r.campaign_id)))];
+    const [a, b] = await Promise.all([reachOf(String(t.ad_account_id), ps.main, ids), reachOf(String(t.ad_account_id), ps.compare, ids)]);
+    if (a) Object.assign(main, a);
+    if (b) Object.assign(compare, b);
+  }
   // Results by goal: each campaign's part of the result it goes after (Google: its main kind of conversion action)
   const goalSplit = platform === "google" ? googleGoals(all, ps.main) : split;
   const parts: GoalPart[] = goalSplit.size ? goalParts(all, goalSplit, ps, allBefore) : [];
   const through = [...days].map((d) => d.date).sort().at(-1) ?? null;
+  // Every event the account knows: what each campaign running lately is optimized for (offered even at none this period),
+  // and everything counted in the weeks read
+  const recent = new Set(all.filter((r) => r.date >= ps.compare.start).map((r) => String(r.campaign_id)));
+  const known = [...new Set([...[...read.entries()].filter(([id]) => recent.has(id)).map(([, types]) => types[0]).filter((x): x is string => Boolean(x) && !NOT_A_RESULT.test(x)), ...all.flatMap((r) => Object.keys((r.actions ?? {}) as Record<string, number>))])].slice(0, 120);
   return {
     platform,
     kind,
     conversion: resultName,
     roasKpi: Boolean(conv.roas),
-    target: t.target == null ? null : Number(t.target),
+    // A KPI target is for the KPI's own event: none when the report counts the campaigns' goals in its place
+    target: t.target == null || fallback ? null : Number(t.target),
+    ...(fallback ? { kpiFallback: fallback } : {}),
+    knownEvents: known,
     monthlyBudget: t.monthly_budget == null || Number(t.monthly_budget) < 20 ? null : Number(t.monthly_budget),
     main,
     compare,
     mtd: ps.mtd ? period(all, days, ps.mtd, conv, type, valueType) : null,
     mtdCompare: ps.mtdCompare ? period(all, days, ps.mtdCompare, conv, type, valueType) : null,
-    eventLabels: Object.fromEntries([...new Set([...Object.keys(main.actions ?? {}), ...Object.keys(compare.actions ?? {})])].map((k) => [k, actionLabel(k)])),
+    eventLabels: Object.fromEntries([...new Set([...Object.keys(main.actions ?? {}), ...Object.keys(compare.actions ?? {}), ...known])].map((k) => [k, actionLabel(k)])),
     campaigns,
     ...(leftOut.length ? { leftOut } : {}),
     topAds,
@@ -572,7 +605,7 @@ export function metricsText(m: ReportMetrics) {
   const line = (p: Period) =>
     `${p.label}: spend ${money(p.spend)}, ${p.results} ${m.conversion.toLowerCase()}, cost per result ${money(p.costPerResult)}${m.roasKpi && p.revenue ? `, revenue ${money(p.revenue)}, ROAS ${p.roas ?? "—"}` : ""}, impressions ${p.impressions.toLocaleString("en-US")}, link clicks ${p.clicks.toLocaleString("en-US")}, CTR ${p.ctr ?? "—"}%, CPC ${money(p.cpc)}, CPM ${money(p.cpm)} (${p.days} days with data)`;
   return [
-    `Platform: ${m.platform === "google" ? "Google Ads" : m.platform === "tiktok" ? "TikTok Ads (read only in Kaizen OS: nothing was changed in TikTok from here)" : "Meta Ads"}. KPI: ${m.conversion}${m.roasKpi ? " (judged on ROAS)" : ""}${m.target != null ? `, target ${m.roasKpi ? `${m.target}x ROAS` : money(m.target)}` : `, no KPI target set yet, so never call the results on, off or close to target${m.benchmark ? ` (for reference only, the ${m.benchmark.vertical} industry benchmark is ${m.roasKpi ? `${m.benchmark.value}x ROAS` : money(m.benchmark.value)}, ${m.benchmark.source} ${m.benchmark.year})` : ""}`}${m.monthlyBudget ? `, monthly budget ${money(m.monthlyBudget)}` : ""}. Data through ${m.dataThrough ?? "?"}.`,
+    `Platform: ${m.platform === "google" ? "Google Ads" : m.platform === "tiktok" ? "TikTok Ads (read only in Kaizen OS: nothing was changed in TikTok from here)" : "Meta Ads"}. KPI: ${m.conversion}${m.roasKpi ? " (judged on ROAS)" : ""}${m.kpiFallback ? ` (the KPI board says ${m.kpiFallback}, but no campaign running in this period goes after that and none came in, so results are what the campaigns are optimized for; say so plainly if it matters, never report zero ${m.kpiFallback.toLowerCase()} as the result)` : ""}${m.target != null ? `, target ${m.roasKpi ? `${m.target}x ROAS` : money(m.target)}` : `, no KPI target set yet, so never call the results on, off or close to target${m.benchmark ? ` (for reference only, the ${m.benchmark.vertical} industry benchmark is ${m.roasKpi ? `${m.benchmark.value}x ROAS` : money(m.benchmark.value)}, ${m.benchmark.source} ${m.benchmark.year})` : ""}`}${m.monthlyBudget ? `, monthly budget ${money(m.monthlyBudget)}` : ""}. Data through ${m.dataThrough ?? "?"}.`,
     line(m.main),
     ...(m.main.views6s != null ? [`TikTok video in ${m.main.label}: ${m.main.views6s.toLocaleString("en-US")} 6-second views, hook rate ${m.main.hookRate ?? "n/a"}% (6-second views over impressions); ${m.compare.label}: ${(m.compare.views6s ?? 0).toLocaleString("en-US")} 6-second views, hook rate ${m.compare.hookRate ?? "n/a"}%.`] : []),
     // Not a ROAS KPI: purchase value is context only, never the story (the client is judged on its own result)
@@ -639,4 +672,34 @@ export async function trendSeries(admin: SupabaseClient, t: Target, metric: Metr
     out.push({ label: r.label, start: r.start, end: r.end, value: metricNumber(m.main, metric) });
   }
   return out;
+}
+
+/** The KPI names one event and no campaign that spent in the period goes after it, and it counted none of it */
+export function kpiMismatch(goals: Map<string, string[]>, spent: Set<string>, rows: { date: string; campaign_id?: string | number | null; actions?: unknown }[], main: { start: string; end: string }, kpiTypes: string[]): boolean {
+  if (!kpiTypes.length) return false;
+  const want = new Set(kpiTypes);
+  const running = [...goals.entries()].filter(([id]) => spent.has(id));
+  if (!running.length || running.some(([, types]) => types.some((x) => want.has(x)))) return false;
+  const counted = rows.some((r) => r.date >= main.start && r.date <= main.end && kpiTypes.some((k) => Number(((r.actions ?? {}) as Record<string, number>)[k]) > 0));
+  return !counted;
+}
+
+const reachCache = new Map<string, { at: number; v: { reach: number | null; frequency: number | null } | null }>();
+/** People reached and how often, over exactly these dates and these campaigns (Meta, read only; kept 30 minutes) */
+async function reachOf(account: string, p: { start: string; end: string }, ids: string[]) {
+  if (!ids.length) return null;
+  const key = `${account}|${p.start}|${p.end}|${ids.sort().join(",")}`;
+  const hit = reachCache.get(key);
+  if (hit && Date.now() - hit.at < 30 * 60_000) return hit.v;
+  try {
+    const { metaInsights, metaConfigured } = await import("@/lib/context/meta");
+    if (!metaConfigured()) return null;
+    const rows = (await metaInsights(account, { level: "account", time_range: JSON.stringify({ since: p.start, until: p.end }), fields: "reach,frequency", filtering: JSON.stringify([{ field: "campaign.id", operator: "IN", value: ids.slice(0, 500) }]) }, 5)) as unknown as { reach?: string; frequency?: string }[];
+    const r = rows[0];
+    const v = r ? { reach: r.reach != null ? Number(r.reach) : null, frequency: r.frequency != null ? Math.round(Number(r.frequency) * 100) / 100 : null } : null;
+    reachCache.set(key, { at: Date.now(), v });
+    return v;
+  } catch {
+    return null;
+  }
 }

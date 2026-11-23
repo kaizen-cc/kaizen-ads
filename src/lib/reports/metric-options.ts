@@ -1,4 +1,4 @@
-import { eventName, metricKeysFor, metricLabel, type MetricKey } from "./format";
+import { PERIOD_ONLY, eventName, metricKeysFor, metricLabel, type MetricKey } from "./format";
 import type { ReportMetrics } from "./metrics";
 
 // What the "Show in this tile" picker offers on a report: every metric the report has data for, grouped, searchable. Ads:
@@ -7,7 +7,7 @@ import type { ReportMetrics } from "./metrics";
 
 export type MetricOption = { key: string; label: string; group: string; hint?: string | null };
 
-const ADS_GROUP: Record<string, string> = { results: "Results", cost_per_result: "Results", revenue: "Results", roas: "Results", spend: "Spend and delivery", impressions: "Spend and delivery", cpm: "Spend and delivery", clicks: "Clicks", ctr: "Clicks", cpc: "Clicks", views_6s: "Video", hook_rate: "Video" };
+const ADS_GROUP: Record<string, string> = { results: "Results", cost_per_result: "Results", revenue: "Results", roas: "Results", spend: "Spend and delivery", impressions: "Spend and delivery", cpm: "Spend and delivery", reach: "Spend and delivery", frequency: "Spend and delivery", clicks: "Clicks", ctr: "Clicks", cpc: "Clicks", clicks_all: "Clicks", ctr_all: "Clicks", cpc_all: "Clicks", views_6s: "Video", hook_rate: "Video" };
 /** Events already shown as a standard metric (TikTok's 6-second views), or noise nobody reports on */
 const SKIP_EVENT = /^(tiktok_video_6s|conversions)$/;
 
@@ -17,11 +17,17 @@ const n = (v: number) => (v >= 100 ? Math.round(v).toLocaleString("en-US") : Str
  * Every metric an ads report can show. where: "columns" (the scorecard of campaigns and ads) offers the standard ones only,
  * since a campaign's row doesn't carry every event; tiles and the line under them offer every event the period counted.
  */
-export function adsMetricOptions(m: Pick<ReportMetrics, "conversion" | "main" | "compare"> & { eventLabels?: Record<string, string> }, platform: string, where: "tiles" | "table" | "columns"): MetricOption[] {
-  const base: MetricOption[] = metricKeysFor(platform).map((k) => ({ key: k, label: metricLabel(m, k), group: ADS_GROUP[k] ?? "More" }));
+export function adsMetricOptions(m: Pick<ReportMetrics, "conversion" | "main" | "compare"> & { eventLabels?: Record<string, string>; knownEvents?: string[] }, platform: string, where: "tiles" | "table" | "columns"): MetricOption[] {
+  // Reach and frequency only where the report read them (Meta); clicks (all) where the days carry them
+  const has = (k: string) => (k === "reach" || k === "frequency" ? m.main.reach != null || m.compare.reach != null : k.endsWith("_all") ? m.main.clicksAll != null || m.compare.clicksAll != null : true);
+  const base: MetricOption[] = metricKeysFor(platform)
+    .filter((k) => (where === "columns" ? !PERIOD_ONLY.includes(k) : has(k)))
+    .map((k) => ({ key: k, label: metricLabel(m, k), group: ADS_GROUP[k] ?? "More" }));
   if (where === "columns") return base;
   const counts = new Map<string, number>();
   for (const p of [m.main, m.compare]) for (const [k, v] of Object.entries(p?.actions ?? {})) if (v > 0 && !SKIP_EVENT.test(k)) counts.set(k, Math.max(counts.get(k) ?? 0, p === m.main ? v : 0));
+  // What the campaigns are optimized for, and the account's other events, offered at none this period too
+  for (const k of m.knownEvents ?? []) if (!SKIP_EVENT.test(k) && !counts.has(k)) counts.set(k, 0);
   const events = [...counts].sort((a, z) => z[1] - a[1] || a[0].localeCompare(z[0]));
   const named = (t: string) => eventName(t, m.eventLabels);
   return [
@@ -43,7 +49,8 @@ export function searchOptions(options: MetricOption[], query: string): MetricOpt
   const scored = options
     .map((o, i) => {
       const name = words(o.label);
-      const all = [...name, ...words(o.group)];
+      // The event's own name in the ad account too ("subscribe_total" for "Subscriptions")
+      const all = [...name, ...words(o.group), ...words(o.key.replace(/^[nc]:/, "").replace(/[._]+/g, " "))];
       if (!q.every((w) => all.some((x) => x.startsWith(w)))) return null;
       const lead = name[0]?.startsWith(q[0]) ? 0 : 1;
       return { o, rank: lead * 1000 + i };

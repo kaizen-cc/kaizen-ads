@@ -45,7 +45,8 @@ describe("event metrics on an ads report", () => {
     expect(isEventMetric("x:lead")).toBe(false);
     expect(isEventMetric("n:<script>")).toBe(false);
     expect(isMetricKey("cpm")).toBe(true);
-    expect(isMetricKey("frequency")).toBe(false);
+    expect(isMetricKey("frequency")).toBe(true);
+    expect(isMetricKey("bogus_metric")).toBe(false);
   });
 });
 

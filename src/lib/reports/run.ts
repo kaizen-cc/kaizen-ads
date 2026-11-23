@@ -15,7 +15,7 @@ import { jointMessage, metaFirst, recapIntro, riderReady, tiktokJoins, waitingPa
 import { tiktokConfigured } from "@/lib/tiktok/core";
 import { periodsFor, type ReportMetrics } from "./metrics";
 import { platformName, type ReportLayout } from "./format";
-import { layoutOf } from "./share";
+import { freezeLayout, layoutOf } from "./share";
 import { draftReport, type Sections } from "./write";
 import { freshen } from "./regenerate";
 import { reportListeners } from "./access";
@@ -239,6 +239,7 @@ export async function sendWeekly(admin: SupabaseClient, id: string, by: { id: st
   });
   if (!out.ok) return out;
   const slack = out.slack && "channel" in out.slack ? out.slack : null;
+  await freezeLayout(admin, { ids: [id, ...joined.map((j) => j.id)] }).catch(() => null);
   await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id, slack_channel: slack?.channel ?? null, slack_ts: slack?.ts ?? null, updated_at: new Date().toISOString() }).in("id", [id, ...joined.map((j) => j.id)]);
   return out;
 }
@@ -415,6 +416,7 @@ async function deliverLatePart(admin: SupabaseClient, id: string, by: { id: stri
   }
   if (logged) await logClientEmail(admin, { clientId: b.client_id as string, kind: "recap", ...logged, to: sentTo, by: by.id });
   delivered.email = sentTo;
+  await freezeLayout(admin, { ids: [id, ...riders.map((x) => x.id)] }).catch(() => null);
   await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id }).in("id", [id, ...riders.map((x) => x.id)]);
   await keepRecapSend(admin, { clientId: b.client_id as string, name: r.client.name, bundleId: r.bundle_id!, reportId: id, platform: riders.length ? null : r.platform, start: r.period_start, end: r.period_end, month, text, bytes, filename, delivered, by: by.id, parts: [r, ...riders], whiteLabel: wl });
 }
@@ -520,6 +522,7 @@ export async function deliverBundle(admin: SupabaseClient, bundleId: string, by:
     if (logged) await logClientEmail(admin, { clientId: b.client_id as string, kind: "recap", ...logged, to: sentTo, by: by.id });
     delivered.email = sentTo;
     await admin.from("report_bundles").update({ status: "sent", sent_at: new Date().toISOString(), delivered }).eq("id", bundleId);
+    await freezeLayout(admin, { bundleId }).catch(() => null);
     await admin.from("reports").update({ status: "posted", posted_at: new Date().toISOString(), posted_by: by.id }).eq("bundle_id", bundleId).eq("status", "submitted");
     await keepRecapSend(admin, { clientId: b.client_id as string, name: client.name, bundleId, platform: parts.length === 1 ? parts[0].platform : null, start: parts[0].period_start, end: parts[0].period_end, month, text, bytes, filename, delivered, by: by.id, parts, whiteLabel: wl });
 

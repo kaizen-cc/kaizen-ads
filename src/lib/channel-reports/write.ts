@@ -1,4 +1,5 @@
 import "server-only";
+import { lastSentBlock } from "@/lib/reports/style-core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, askJsonWithTools, clientContext, contextBlock } from "@/lib/ai";
 import type { ChatTurn, Qa, QaFlag, Sections } from "@/lib/reports/write";
@@ -122,7 +123,7 @@ async function context(admin: SupabaseClient, reportId: string) {
   const { styleRules } = await import("@/lib/reports/style");
   const { lineOfPlatform } = await import("@/lib/reports/style-core");
   const style = await styleRules(admin, row.client_id, lineOfPlatform(row.platform));
-  const { data: last } = await admin.from("reports").select("period_start, sections").eq("client_id", row.client_id).eq("platform", row.platform).eq("kind", row.kind).lt("period_start", row.period_start).in("status", ["posted", "submitted"]).order("period_start", { ascending: false }).limit(1).maybeSingle();
+  const { data: last } = await admin.from("reports").select("period_start, sections, message, chat").eq("client_id", row.client_id).eq("platform", row.platform).eq("kind", row.kind).lt("period_start", row.period_start).in("status", ["posted", "submitted"]).order("period_start", { ascending: false }).limit(1).maybeSingle();
   return { r: row, client: row.clients.name, whiteLabel: isWhiteLabel(row.clients.client_type), owner: row.profiles?.full_name ?? null, prefs: style.map((x) => x.text), last };
 }
 type Ctx = Awaited<ReturnType<typeof context>>;
@@ -176,6 +177,7 @@ function sourcesBlock(c: Ctx, metrics: Metrics, work: string, voice: string, cli
     `<${ROLE[lineOfPlatform(c.r.platform)].replace(" ", "_")}>${c.owner ?? `the ${ROLE[lineOfPlatform(c.r.platform)]}`}</${ROLE[lineOfPlatform(c.r.platform)].replace(" ", "_")}>`,
     `<numbers>\n${channelMetricsText(m)}\n</numbers>`,
     `<work_log period="${c.r.period_start} to ${c.r.period_end}">\n${work}\n</work_log>`,
+    lastSentBlock(c.last as Parameters<typeof lastSentBlock>[0]),
     lastNext.length ? `<what_the_last_report_said_was_next>\n${lastNext.map((x) => `- ${x}`).join("\n")}\n</what_the_last_report_said_was_next>` : "",
     m.platform === "social" ? teamFindingsPrompt(c.r.sections) : "",
     c.r.extras ? `<added_by_the_owner>\n${c.r.extras}\n</added_by_the_owner>` : "",

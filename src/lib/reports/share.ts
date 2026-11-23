@@ -96,3 +96,19 @@ export async function loadBundle(admin: SupabaseClient, token: string) {
     fileName: whiteLabel ? whiteLabelFileName(client, built ? "built" : "monthly", periodLabel) : `${client} - ${built ? "Report" : "Monthly recap"} - ${periodLabel}.pdf`,
   };
 }
+
+/**
+ * A report going out keeps the metrics it was drawn with: one still following its account's layout gets that layout
+ * written on it, so the sent record (its PDF, its live page) never changes when the client's layout changes later.
+ */
+export async function freezeLayout(admin: SupabaseClient, where: { ids?: string[]; bundleId?: string }) {
+  let q = admin.from("reports").select("id, layout, kpi_targets(report_layout)").is("layout", null).not("target_id", "is", null);
+  if (where.ids?.length) q = q.in("id", where.ids);
+  else if (where.bundleId) q = q.eq("bundle_id", where.bundleId);
+  else return;
+  const { data } = await q;
+  for (const r of (data ?? []) as unknown as { id: string; kpi_targets: { report_layout: ReportLayout | null } | null }[]) {
+    const l = r.kpi_targets?.report_layout;
+    if (l) await admin.from("reports").update({ layout: l }).eq("id", r.id).is("layout", null);
+  }
+}

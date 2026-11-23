@@ -108,7 +108,11 @@ export function pdfDisposition(name: string, inline = false) {
 // ─── The report's layout: which metrics the buyer chose ─────────────────────
 
 /** Every number a report can show, in a tile, a row of the key metrics table, or a column of the campaign table */
-export const METRIC_KEYS = ["spend", "results", "cost_per_result", "revenue", "roas", "ctr", "clicks", "cpc", "cpm", "impressions", "views_6s", "hook_rate"] as const;
+export const METRIC_KEYS = ["spend", "results", "cost_per_result", "revenue", "roas", "ctr", "clicks", "cpc", "cpm", "impressions", "views_6s", "hook_rate", "reach", "frequency", "clicks_all", "ctr_all", "cpc_all"] as const;
+/** Account-level only: a campaign's or an ad's row in the scorecard doesn't carry them, so they're tiles and key metrics */
+export const PERIOD_ONLY: readonly string[] = ["reach", "frequency", "clicks_all", "ctr_all", "cpc_all"];
+/** The metrics a trend chart can draw (week or month by week, from the synced days) */
+export const STORY_METRICS = ["spend", "results", "cost_per_result", "revenue", "roas", "ctr", "clicks", "cpc", "cpm", "impressions", "views_6s", "hook_rate"] as const;
 export type BaseMetric = (typeof METRIC_KEYS)[number];
 /**
  * Any event the account counted, as a metric of its own: "n:<action type>" its count (add to carts, leads, landing page
@@ -142,7 +146,7 @@ export const metricKeysFor = (platform: string | null | undefined): MetricKey[] 
  *  it travels in the Slack or email message that carries the report */
 export type ReportLayout = { tiles?: MetricKey[]; table?: MetricKey[]; columns?: MetricKey[]; campaigns?: { hide?: string[]; add?: string[]; results?: Record<string, string> }; notes?: boolean };
 
-type Nums = { actions?: Record<string, number> | null; spend: number; results: number; costPerResult: number | null; revenue?: number; roas: number | null; ctr: number | null; clicks?: number; cpc?: number | null; cpm?: number | null; impressions?: number; views6s?: number; hookRate?: number | null };
+type Nums = { actions?: Record<string, number> | null; reach?: number | null; frequency?: number | null; clicksAll?: number; spend: number; results: number; costPerResult: number | null; revenue?: number; roas: number | null; ctr: number | null; clicks?: number; cpc?: number | null; cpm?: number | null; impressions?: number; views6s?: number; hookRate?: number | null };
 
 export function metricLabel(m: Pick<ReportMetrics, "conversion">, k: MetricKey, short = false) {
   if (isEventMetric(k)) {
@@ -152,10 +156,10 @@ export function metricLabel(m: Pick<ReportMetrics, "conversion">, k: MetricKey, 
     return k.startsWith("c:") ? `Cost per ${one}` : name;
   }
   const one = singular(m.conversion);
-  return { spend: "Spend", results: m.conversion, cost_per_result: short ? `Per ${one}` : `Cost per ${one}`, revenue: "Revenue", roas: "ROAS", ctr: short ? "CTR" : "Click-through rate", clicks: "Link clicks", cpc: "CPC", cpm: "CPM", impressions: "Impressions", views_6s: short ? "6s views" : "6-second views", hook_rate: "Hook rate" }[k];
+  return { spend: "Spend", results: m.conversion, cost_per_result: short ? `Per ${one}` : `Cost per ${one}`, revenue: "Revenue", roas: "ROAS", ctr: short ? "CTR" : "Click-through rate", clicks: "Link clicks", cpc: "CPC", cpm: "CPM", impressions: "Impressions", views_6s: short ? "6s views" : "6-second views", hook_rate: "Hook rate", reach: "Reach", frequency: "Frequency", clicks_all: "Clicks (all)", ctr_all: short ? "CTR (all)" : "Click-through rate (all)", cpc_all: "CPC (all)" }[k];
 }
 
-export const BETTER: Record<BaseMetric, "up" | "down" | "none"> = { spend: "none", results: "up", cost_per_result: "down", revenue: "up", roas: "up", ctr: "up", clicks: "up", cpc: "down", cpm: "down", impressions: "up", views_6s: "up", hook_rate: "up" };
+export const BETTER: Record<BaseMetric, "up" | "down" | "none"> = { spend: "none", results: "up", cost_per_result: "down", revenue: "up", roas: "up", ctr: "up", clicks: "up", cpc: "down", cpm: "down", impressions: "up", views_6s: "up", hook_rate: "up", reach: "up", frequency: "none", clicks_all: "up", ctr_all: "up", cpc_all: "down" };
 
 /** Whether a rise is good news for this metric: more of an event is, a higher cost per event isn't */
 export const betterOf = (k: MetricKey): "up" | "down" | "none" => (isEventMetric(k) ? (k.startsWith("c:") ? "down" : "up") : BETTER[k]);
@@ -168,7 +172,7 @@ export function metricNumber(p: Nums, k: MetricKey): number | null {
     if (k.startsWith("n:")) return n;
     return n > 0 ? Math.round((p.spend / n) * 100) / 100 : null;
   }
-  const v = { spend: p.spend, results: p.results, cost_per_result: p.costPerResult, revenue: p.revenue ?? null, roas: p.roas, ctr: p.ctr, clicks: p.clicks ?? null, cpc: p.cpc ?? null, cpm: p.cpm ?? null, impressions: p.impressions ?? null, views_6s: p.views6s ?? null, hook_rate: p.hookRate ?? null }[k];
+  const v = { spend: p.spend, results: p.results, cost_per_result: p.costPerResult, revenue: p.revenue ?? null, roas: p.roas, ctr: p.ctr, clicks: p.clicks ?? null, cpc: p.cpc ?? null, cpm: p.cpm ?? null, impressions: p.impressions ?? null, views_6s: p.views6s ?? null, hook_rate: p.hookRate ?? null, reach: p.reach ?? null, frequency: p.frequency ?? null, clicks_all: p.clicksAll ?? null, ctr_all: p.clicksAll != null && p.impressions ? Math.round((p.clicksAll / p.impressions) * 10000) / 100 : null, cpc_all: p.clicksAll ? Math.round((p.spend / p.clicksAll) * 100) / 100 : null }[k];
   return v == null || !Number.isFinite(v) ? null : v;
 }
 
@@ -179,9 +183,10 @@ export function metricText(p: Nums, k: MetricKey) {
 /** A number as its metric shows it ($, %, x or a count) */
 export function formatMetric(k: MetricKey, n: number | null) {
   if (isEventMetric(k)) return k.startsWith("c:") ? money(n) : count(n);
-  if (["spend", "cost_per_result", "revenue", "cpc", "cpm"].includes(k)) return money(n);
+  if (["spend", "cost_per_result", "revenue", "cpc", "cpm", "cpc_all"].includes(k)) return money(n);
   if (k === "roas") return multiple(n);
-  if (k === "ctr" || k === "hook_rate") return percent(n);
+  if (k === "frequency") return n == null ? "–" : n.toFixed(2);
+  if (k === "ctr" || k === "hook_rate" || k === "ctr_all") return percent(n);
   return count(n);
 }
 

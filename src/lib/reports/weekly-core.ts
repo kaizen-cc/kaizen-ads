@@ -108,7 +108,8 @@ export type WeeklyTile = { key: MetricKey; label: string; value: string; before:
 export function weeklyValue(k: MetricKey, n: number | null) {
   if (n == null || !Number.isFinite(n)) return "–";
   if (isEventMetric(k)) return k.startsWith("c:") ? `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : Math.round(n).toLocaleString("en-US");
-  if (["spend", "cost_per_result", "revenue", "cpc", "cpm"].includes(k)) return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (k === "frequency") return n.toFixed(2);
+  if (["spend", "cost_per_result", "revenue", "cpc", "cpm", "cpc_all"].includes(k)) return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   if (k === "roas") return multiple(n);
   if (k === "ctr" || k === "hook_rate") return percent(n);
   return count(n);

@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, askJsonWithTools, type AgentKey } from "@/lib/ai";
 import { reportTools, toolsLine, type Pulled } from "./tools";
 import { metricsText, reportMetrics, trendSeries, type ReportMetrics, type TrendPoint } from "./metrics";
-import { METRIC_KEYS, leftOutText, reportBasis, type MetricKey, type ReportLayout } from "./format";
+import { STORY_METRICS, leftOutText, reportBasis, type MetricKey, type ReportLayout } from "./format";
 import { voiceOf, workDone } from "./work";
 import { diagnose, diagnosisText, opportunityFor } from "./diagnose";
 import { daysIn, previousPeriod, rangeLabel, todayIn } from "./period";
@@ -15,7 +15,7 @@ import { applyManual, type ManualResults } from "./manual";
 import { leftOutNames as leftOutNamesOf } from "./campaign-scope";
 import { openWithHere } from "./slack-text";
 import type { UploadedFile } from "./upload-csv";
-import { lineOfPlatform, rulesBlock, type StyleLine, type StyleSource } from "./style-core";
+import { lastSentBlock, lineOfPlatform, rulesBlock, type StyleLine, type StyleSource } from "./style-core";
 import { styleRules, teachStyle, type Who } from "./style";
 import { styleAsks } from "./style-data";
 import type { MetaTarget } from "./custom-analysis";
@@ -54,7 +54,7 @@ export type ChatTurn = { role: "user" | "assistant"; text: string; at: string; b
 const S = { type: "string" };
 const LIST = { type: "array", items: S };
 const obj = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
-const STORY = obj({ title: S, metric: { type: "string", enum: [...METRIC_KEYS] }, grain: { type: "string", enum: ["week", "month"] }, periods: { type: "integer" }, see: S, why: S, next: S });
+const STORY = obj({ title: S, metric: { type: "string", enum: [...STORY_METRICS] }, grain: { type: "string", enum: ["week", "month"] }, periods: { type: "integer" }, see: S, why: S, next: S });
 const SECTIONS = obj({ headline: S, summary: S, did: LIST, doing: LIST, next: LIST, highlights: LIST, stories: { type: "array", items: STORY }, takeaways: { type: "array", items: obj({ title: S, text: S }) } });
 /** The weekly PDF's takeaway cards: written from the numbers, plain and specific (the narrative travels in the message) */
 const TAKEAWAY_RULES = `takeaways: exactly three cards for the PDF, read from the numbers alone (the work and the plan stay in the message, not here). Each: title (a bold claim of 3 to 7 words, e.g. "More purchases, lower CPA", "Cheaper traffic, slightly lower CTR", "Creative efficiency leader") and text (one or two sentences with the real numbers and what they're compared to, e.g. "Purchases increased from 7 to 12 (+71.4%), while CPA fell from $245.78 to $140.35 (-42.9%)."). Cover the KPI and its cost first, then traffic or efficiency, then the best ad (or campaign) by the KPI. Plain and specific: no hype, no exclamation marks, no adjectives the numbers don't earn, no advice. Percent changes to one decimal.`;
@@ -130,7 +130,7 @@ async function context(admin: SupabaseClient, reportId: string) {
   const owner = (r.profiles as unknown as { full_name: string } | null)?.full_name ?? null;
   // This client's report style for the line (versioned, newest wins): see style.ts
   const style = await styleRules(admin, r.client_id as string, lineOfPlatform(r.platform as string));
-  const { data: last } = await admin.from("reports").select("period_start, sections").eq("target_id", r.target_id).eq("kind", r.kind).lt("period_start", r.period_start).in("status", ["posted", "submitted"]).order("period_start", { ascending: false }).limit(1).maybeSingle();
+  const { data: last } = await admin.from("reports").select("period_start, sections, message, chat").eq("target_id", r.target_id).eq("kind", r.kind).lt("period_start", r.period_start).in("status", ["posted", "submitted"]).order("period_start", { ascending: false }).limit(1).maybeSingle();
   // The campaigns left out of this report alone: the report's own layout, else the one the client's reports start from
   const layout = ((r as unknown as { layout?: ReportLayout | null }).layout ?? (r.kpi_targets as unknown as { report_layout?: ReportLayout | null } | null)?.report_layout ?? null) as ReportLayout | null;
   return { r, client, whiteLabel, target, owner, prefs: style.map((x) => x.text), style, last, leftOut: await leftOutNames(admin, target), leave: leftOutNamesOf(layout?.campaigns?.hide), uploads: await uploadsOf(admin, reportId) };
@@ -250,6 +250,7 @@ function sourcesBlock(c: Awaited<ReturnType<typeof context>>, metrics: ReportMet
     leftOutText({ leftOut: [...(metrics.leftOut ?? []), ...((((c.r as unknown as { extra_metrics?: ReportMetrics[] | null }).extra_metrics ?? []) as ReportMetrics[]).flatMap((m) => m.leftOut ?? []))] }, c.leftOut),
     `<work_log period="${c.r.period_start} to ${c.r.period_end}">\n${work}\n</work_log>`,
     diagnosisText(metrics.diagnosis, metrics.opportunity),
+    lastSentBlock(c.last as Parameters<typeof lastSentBlock>[0]),
     lastNext.length ? `<what_the_last_report_said_was_next>\n${lastNext.map((x) => `- ${x}`).join("\n")}\n</what_the_last_report_said_was_next>` : "",
     c.r.extras ? `<added_by_the_buyer>\n${c.r.extras}\n</added_by_the_buyer>` : "",
     rulesBlock(c.style),

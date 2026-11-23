@@ -70,7 +70,9 @@ export async function saveReport(id: string, patch: { message?: string; extras?:
   }
   if (patch.extras !== undefined) update.extras = patch.extras.slice(0, 6000);
   // What the sections were before this save: what the buyer changed by hand teaches the client's report style
-  const before = patch.sections !== undefined ? ((await createAdminClient().from("reports").select("sections").eq("id", id).single()).data?.sections ?? null) : null;
+  // (the sections and the message both: a buyer who always trims the Slack message teaches that too)
+  const was = patch.sections !== undefined || patch.message !== undefined ? (await createAdminClient().from("reports").select("sections, message").eq("id", id).single()).data : null;
+  const before = was ? { ...((was.sections as Record<string, unknown> | null) ?? {}), message: was.message ?? "" } : null;
   if (patch.sections !== undefined) {
     // An organic social report's team notes and entered figures are cleaned, and each figure is stamped with who entered it and when
     if (ok.r.platform === "social") {
@@ -81,11 +83,12 @@ export async function saveReport(id: string, patch: { message?: string; extras?:
   await createAdminClient().from("reports").update(update).eq("id", id);
   // Lasting preferences in the edit (a section cut, items trimmed, a line they always add) become this client's style,
   // after the save so it never waits on the AI
-  if (patch.sections !== undefined && before) {
+  if (before && was) {
+    const afterAll = { ...((patch.sections ?? was.sections ?? {}) as Record<string, unknown>), message: patch.message ?? was.message ?? "" };
     const by = { id: ok.me.id, name: ok.me.fullName };
     after(async () => {
       const [{ learnFromEdit }, { lineOfPlatform }] = await Promise.all([import("@/lib/reports/style"), import("@/lib/reports/style-core")]);
-      await learnFromEdit(createAdminClient(), { clientId: ok.r.client_id as string, line: lineOfPlatform(ok.r.platform as string), reportId: id, before, after: patch.sections, by }).catch((e) => console.error("[report style] learn from edit", e instanceof Error ? e.message : e));
+      await learnFromEdit(createAdminClient(), { clientId: ok.r.client_id as string, line: lineOfPlatform(ok.r.platform as string), reportId: id, before, after: afterAll, by }).catch((e) => console.error("[report style] learn from edit", e instanceof Error ? e.message : e));
     });
   }
   done(id);
