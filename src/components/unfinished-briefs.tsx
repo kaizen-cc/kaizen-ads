@@ -12,8 +12,8 @@ import { deleteBriefDraftAction } from "@/app/(team)/requests/new/draft-store";
 
 export type UnfinishedBrief = { id: string; client: string | null; title: string | null; updatedAt: string };
 
-const ago = (iso: string) => {
-  const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
+export const ago = (iso: string, now: number) => {
+  const m = Math.max(0, Math.round((now - Date.parse(iso)) / 60_000));
   if (m < 1) return "just now";
   if (m < 60) return `${m} min ago`;
   const h = Math.round(m / 60);
@@ -21,6 +21,13 @@ const ago = (iso: string) => {
   const d = Math.round(h / 24);
   return d === 1 ? "yesterday" : `${d} days ago`;
 };
+
+/** How long ago, in its own span: the minute can turn between the server drawing the card and the browser picking it
+ * up, which is fine to show a moment late, so React is told not to treat that as a mismatch (it crashed the page). */
+function Ago({ iso }: { iso: string }) {
+  const [now] = useState(() => Date.now());
+  return <span suppressHydrationWarning>{ago(iso, now)}</span>;
+}
 
 export function UnfinishedBriefs({ drafts, compact = false }: { drafts: UnfinishedBrief[]; compact?: boolean }) {
   const router = useRouter();
@@ -47,7 +54,7 @@ export function UnfinishedBriefs({ drafts, compact = false }: { drafts: Unfinish
           <div className="grid min-w-0 gap-0.5">
             <span className="truncate text-[15px] font-medium text-fg">{first.title || "Untitled brief"}</span>
             <span className="text-[12.5px] text-muted">
-              {first.client ?? "No client yet"} · edited {ago(first.updatedAt)}
+              {first.client ?? "No client yet"} · edited <Ago iso={first.updatedAt} />
             </span>
           </div>
           <div className="grid grid-cols-[1fr_auto_auto] gap-2 sm:flex sm:shrink-0">
@@ -69,7 +76,7 @@ export function UnfinishedBriefs({ drafts, compact = false }: { drafts: Unfinish
                 <Link href={`/requests/new?resume=${d.id}`} className="grid min-w-0 flex-1 py-2">
                   <span className="truncate text-[14px] text-fg">{d.title || "Untitled brief"}</span>
                   <span className="text-[12px] text-faint">
-                    {d.client ?? "No client yet"} · {ago(d.updatedAt)}
+                    {d.client ?? "No client yet"} · <Ago iso={d.updatedAt} />
                   </span>
                 </Link>
                 <button type="button" onClick={() => remove(d.id)} disabled={busy} aria-label={`Delete ${d.title || "this draft"}`} className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-faint hover:text-bad md:h-8 md:w-8">
