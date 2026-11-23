@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import { asana, asanaConfigured, asanaUpdate, asanaWrite } from "@/lib/asana";
@@ -31,25 +32,53 @@ type RawTask = {
   custom_fields?: { gid: string; name: string; resource_subtype?: string; type?: string; enum_options?: { gid: string; name: string; enabled?: boolean }[]; enum_value?: { gid: string; name: string } | null; text_value?: string | null; number_value?: number | null; date_value?: { date?: string } | null; display_value?: string | null; is_formula_field?: boolean }[];
 };
 
-/** Someone's open Asana tasks (assigned to them), overdue first then by due date */
-export async function myAsanaTasks(email: string | null, db?: SupabaseClient): Promise<LiveTask[]> {
+/** Every Asana workspace the token sees (most teams have one; personal "My tasks" live in it too) */
+let workspaces: string[] | null = null;
+async function allWorkspaces(): Promise<string[]> {
+  if (workspaces) return workspaces;
+  workspaces = ((await asana<{ gid: string }[]>("/workspaces", { limit: "100" })).data ?? []).map((w) => w.gid);
+  return workspaces;
+}
+
+/**
+ * Someone's open Asana tasks: EVERY task assigned to them (every workspace and project, their personal "My tasks",
+ * subtasks), every page of it (rate limits are waited out in src/lib/asana.ts), overdue first then by due date, undated
+ * last. Read once per request.
+ */
+export const myAsanaTasks = cache(async (email: string | null, db?: SupabaseClient): Promise<LiveTask[]> => {
   if (!asanaConfigured() || !email) return [];
-  const w = await ws().catch(() => null);
-  if (!w) return [];
-  const res = await asana<RawTask[]>("/tasks", { assignee: email, workspace: w, completed_since: "now", limit: "100", opt_fields: "name,due_on,completed,permalink_url,memberships.project.name,memberships.section.name" }).catch(() => null);
-  if (!res) return [];
+  const ws = await allWorkspaces().catch(() => [] as string[]);
+  if (!ws.length) return [];
+  const { asanaAll } = await import("@/lib/asana");
+  const lists = await Promise.all(ws.map((w) => asanaAll<RawTask & { parent?: { name?: string } | null }>("/tasks", { assignee: email, workspace: w, completed_since: "now", opt_fields: "name,due_on,completed,permalink_url,parent.name,memberships.project.name,memberships.section.name" }).catch(() => [])));
   const clients = db ? (((await db.from("clients").select("id, name, slug").is("archived_at", null).limit(1000)).data ?? []) as { id: string; name: string; slug: string }[]).filter((c) => c.name.length >= 4).sort((a, b) => b.name.length - a.name.length) : [];
+  const seen = new Set<string>();
   return sortTasks(
-    res.data
-      .filter((t) => t.name?.trim() && !t.completed)
+    lists
+      .flat()
+      .filter((t) => t.name?.trim() && !t.completed && !seen.has(t.gid) && seen.add(t.gid))
       .map((t) => {
-        const project = t.memberships?.find((m) => m.project?.name)?.project?.name ?? null;
+        const project = t.memberships?.find((m) => m.project?.name)?.project?.name ?? (t.parent?.name ? `Subtask of ${t.parent.name}` : null);
         const section = t.memberships?.find((m) => m.section?.name)?.section?.name ?? null;
         const hay = `${project ?? ""} ${t.name}`.toLowerCase();
         const c = clients.find((x) => hay.includes(x.name.toLowerCase())) ?? null;
         return { gid: t.gid, name: t.name, due: t.due_on, project, section, client: c?.name ?? null, clientSlug: c?.slug ?? null, url: t.permalink_url ?? `https://app.asana.com/0/0/${t.gid}` };
       }),
   );
+});
+
+/**
+ * Who on the team Asana doesn't know by their work email (so their "Next for me in Asana" would be empty): every
+ * active teammate's email against every workspace's users.
+ */
+export async function asanaUnmapped(admin: SupabaseClient): Promise<{ id: string; name: string; email: string; role: string }[]> {
+  if (!asanaConfigured()) return [];
+  const ws = await allWorkspaces();
+  const { asanaAll } = await import("@/lib/asana");
+  const users = (await Promise.all(ws.map((w) => asanaAll<{ gid: string; email?: string }>(`/workspaces/${w}/users`, { opt_fields: "email" }).catch(() => [])))).flat();
+  const known = new Set(users.map((u) => String(u.email ?? "").toLowerCase()).filter(Boolean));
+  const { data } = await admin.from("profiles").select("id, full_name, email, role").eq("is_active", true).not("joined_at", "is", null);
+  return ((data ?? []) as { id: string; full_name: string; email: string | null; role: string }[]).filter((p) => p.email && !known.has(p.email.toLowerCase())).map((p) => ({ id: p.id, name: p.full_name, email: String(p.email), role: p.role }));
 }
 
 /** One task in full: fields, its project's sections, subtasks, comments and attachments */

@@ -24,11 +24,10 @@ async function adminOr(db: SupabaseClient): Promise<SupabaseClient> {
 
 async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, drafts: readonly TodayDraft[]): Promise<ExecCard[]> {
   const today = nyDay();
-  const [{ loadOwedReplies }, { loadSaidPromises }, { myAsanaTasks }] = await Promise.all([import("@/lib/owed-replies"), import("@/lib/message-promises"), import("@/lib/asana-live")]);
-  const [owed, said, tasks, { data: safety }, { data: conflicts }] = await Promise.all([
+  const [{ loadOwedReplies }, { loadSaidPromises }] = await Promise.all([import("@/lib/owed-replies"), import("@/lib/message-promises")]);
+  const [owed, said, { data: safety }, { data: conflicts }] = await Promise.all([
     loadOwedReplies(db, me, false).catch(() => []),
     loadSaidPromises(db, me).catch(() => []),
-    myAsanaTasks(me.email, db).catch(() => []),
     admin.from("call_safety_reviews").select("call_id, severity, distress, categories, reviewed_at").eq("flagged", true).is("resolved_at", null).order("reviewed_at", { ascending: false }).limit(20),
     admin.from("agent_learnings").select("id, agent_key, lesson, updated_at").eq("status", "conflict").limit(20),
   ]);
@@ -62,21 +61,6 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
       severity: p.status === "escalated" ? "critical" : "high",
       due: p.dueAt,
       action: { label: "Open it", href: p.url },
-    });
-  // Their Asana tasks, due or overdue
-  for (const t of tasks.filter((x) => x.due && x.due <= today))
-    cards.push({
-      key: `asana:${t.gid}`,
-      tab: "needs",
-      kind: "asana",
-      client: t.client,
-      clientId: null,
-      clientSlug: t.clientSlug,
-      title: t.name,
-      detail: `${[t.client ?? t.project, t.section].filter(Boolean).join(" · ")}${t.due && t.due < today ? ` · overdue since ${short(`${t.due}T12:00:00Z`)}` : " · due today"}`,
-      severity: t.due && t.due < today ? "high" : "normal",
-      due: t.due ? `${t.due}T21:00:00Z` : null,
-      action: { label: "Open the task", href: `/pipeline?block=needs&task=${t.gid}` },
     });
   // Approvals only an exec gives: call safety reviews, agent learnings in conflict
   const flagged = (safety ?? []) as { call_id: string; severity: string | null; distress: boolean | null; categories: string[] | null; reviewed_at: string | null }[];
@@ -112,12 +96,39 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
   // Their own tickets and tasks from the recap (what they transferred away leaves), and what was transferred to them,
   // including stuck work they took over from Escalated (src/lib/item-owners.ts)
   const { ownDay, transferredTo } = await import("@/lib/item-owners");
-  const own = await ownDay(admin, me.id, drafts.filter((x) => x.topic === "mine")).catch(() => drafts.filter((x) => x.topic === "mine"));
+  const mineDrafts = drafts.filter((x) => x.topic === "mine" && !/^mine:asana:/.test(x.key));
+  const own = await ownDay(admin, me.id, mineDrafts).catch(() => mineDrafts);
   const { stableKeyOf } = await import("@/lib/today-counts");
   const moved = await transferredTo(admin, me.id, new Set([...cards.map((c) => stableKeyOf(c.key)), ...own.map((d) => stableKeyOf(d.key))]), "needs").catch(() => []);
   for (const d of [...own, ...moved])
     cards.push({ key: d.key, tab: "needs", kind: d.topic === "mine" ? "mine" : "taken", client: d.client === "Team" ? null : d.client, clientId: d.clientId, clientSlug: d.clientSlug || null, title: d.title, detail: d.story.slice(0, 160), severity: d.score >= 80 ? "critical" : d.score >= 60 ? "high" : "normal", due: d.due ?? null, action: { label: d.action.label, href: d.action.href ?? null } });
   return sortNeeds(cards);
+}
+
+// ─── Next for me in Asana ─────────────────────────────────────────────────────
+
+/** Every open Asana task assigned to this person, overdue first, then today, then soon, then undated */
+export async function asanaCards(db: SupabaseClient, email: string | null): Promise<ExecCard[]> {
+  const { myAsanaTasks } = await import("@/lib/asana-live");
+  const today = nyDay();
+  const tasks = await myAsanaTasks(email, db).catch(() => []);
+  return tasks.map((t) => {
+    const late = Boolean(t.due && t.due < today);
+    return {
+      key: `asana:${t.gid}`,
+      tab: "asana" as const,
+      kind: "asana" as const,
+      client: t.client,
+      clientId: null,
+      clientSlug: t.clientSlug,
+      title: t.name,
+      detail: [t.client ?? t.project, t.section, t.due ? (late ? `overdue since ${short(`${t.due}T12:00:00Z`)}` : t.due === today ? "due today" : `due ${short(`${t.due}T12:00:00Z`)}`) : "no date"].filter(Boolean).join(" · "),
+      severity: late ? ("high" as const) : t.due === today ? ("normal" as const) : ("normal" as const),
+      due: t.due ? `${t.due}T21:00:00Z` : null,
+      action: { label: "Open", href: `/pipeline?block=asana&task=${t.gid}` },
+      stat: t.url,
+    };
+  });
 }
 
 // ─── Escalated ───────────────────────────────────────────────────────────────
@@ -166,7 +177,7 @@ function accountLine(d: TodayDraft): string | null {
   return null;
 }
 
-async function accounts(admin: SupabaseClient, focus: readonly string[], drafts: readonly TodayDraft[]): Promise<ExecCard[]> {
+export async function accounts(admin: SupabaseClient, focus: readonly string[], drafts: readonly TodayDraft[], opts: { execRule?: boolean } = { execRule: true }): Promise<ExecCard[]> {
   const mine = drafts
     .map((d) => ({ d, line: accountLine(d) }))
     // Off target only (not "close to"), on a line in their focus
@@ -179,7 +190,7 @@ async function accounts(admin: SupabaseClient, focus: readonly string[], drafts:
   const targets = mine.filter((x) => x.d.key.startsWith("kpi:")).map((x) => ({ id: x.d.key.slice(4), clientId: x.d.clientId ?? "" }));
   const { motionByTarget, accountsForExecs } = await import("@/lib/exec-focus/server");
   // Ad accounts reach an exec only at 50%+ off for over 7 days with nothing in motion; before that they're the lead's
-  const reach = targets.length ? await accountsForExecs(admin, now).catch(() => new Map<string, { worse: number; days: number }>()) : new Map<string, { worse: number; days: number }>();
+  const reach = targets.length && opts.execRule !== false ? await accountsForExecs(admin, now).catch(() => new Map<string, { worse: number; days: number }>()) : new Map<string, { worse: number; days: number }>();
   const week = new Date(day7).toISOString();
   const [ads, { data: es }, { data: ss }, { data: ea }, { data: sa }, { data: eActs }, { data: sActs }] = await Promise.all([
     motionByTarget(admin, targets, now).catch(() => new Map<string, string | null>()),
@@ -202,7 +213,7 @@ async function accounts(admin: SupabaseClient, focus: readonly string[], drafts:
     const motion = d.key.startsWith("kpi:") ? (ads.get(d.key.slice(4)) ?? null) : line === "email" ? (d.clientId && email.has(d.clientId) ? "A sprint or audit is moving" : null) : line === "social" ? (d.clientId && social.has(d.clientId) ? "A sprint or audit is moving" : null) : null;
     // The team is handling it: off the exec's screen
     if (motion) continue;
-    if (d.key.startsWith("kpi:") && !reach.has(d.key.slice(4))) continue;
+    if (opts.execRule !== false && d.key.startsWith("kpi:") && !reach.has(d.key.slice(4))) continue;
     const k = `${d.clientId ?? d.client}:${line}`;
     if (seen.has(k)) continue;
     seen.add(k);
@@ -301,6 +312,11 @@ async function system(admin: SupabaseClient): Promise<ExecCard[]> {
       severity: f.fix_state === "checks_failed" ? "critical" : "high",
       action: { label: f.fix_pr_url ? "Open the fix" : "Open feedback", href: f.fix_pr_url ?? "/feedback" },
     });
+  // Teammates Asana doesn't know by their work email: their "Next for me in Asana" would be empty
+  const { asanaUnmapped } = await import("@/lib/asana-live");
+  const unmapped = await asanaUnmapped(admin).catch(() => []);
+  if (unmapped.length)
+    cards.push({ key: `system:asana:${nyDay()}`, tab: "system", kind: "system", client: null, clientId: null, title: `${unmapped.length} ${s(unmapped.length, "teammate isn't", "teammates aren't")} matched to Asana`, detail: `${unmapped.slice(0, 6).map((u) => `${u.name} (${u.email})`).join(", ")}${unmapped.length > 6 ? ` and ${unmapped.length - 6} more` : ""}: invite their work email to Asana, or change it in Settings`, severity: "high", action: { label: "Open the team", href: "/settings?tab=team" } });
   const stuck = (untriaged ?? []).length;
   if (stuck)
     cards.push({ key: `system:triage:${nyDay()}`, tab: "system", kind: "system", client: null, clientId: null, title: `${stuck} feedback ${s(stuck, "report hasn't", "reports haven't")} been triaged`, detail: `Oldest from ${short(String((untriaged ?? [])[(untriaged ?? []).length - 1]?.created_at ?? new Date().toISOString()))}: the feedback pipeline may be stuck`, severity: stuck >= 5 ? "critical" : "high", action: { label: "Open feedback", href: "/feedback" } });
@@ -318,11 +334,11 @@ export async function loadExecModel(db: SupabaseClient, me: Staff, drafts: reado
   const focus = await loadExecFocus(db, me.id);
   const [needs, rows, fires] = await Promise.all([needsMe(db, admin, me, drafts).catch(() => []), rung3Rows(admin, focus).catch(() => []), liveFires(admin).catch(() => [])]);
   const fireRows: FireRow[] = fires.map((f) => ({ clientId: f.clientId, client: f.client, clientSlug: f.clientSlug, why: f.why, href: f.href, line: f.line, at: f.at }));
-  const [acc, pul, sys] = await Promise.all([accounts(admin, focus, drafts).catch(() => []), pulse(admin, fireRows).catch(() => []), me.canViewAs ? system(admin).catch(() => []) : Promise.resolve([])]);
-  return { needs, escalated: groupEscalated(rows, fireRows), accounts: acc, pulse: pul, system: sortCards(sys) };
+  const [acc, pul, sys, asana] = await Promise.all([accounts(admin, focus, drafts).catch(() => []), pulse(admin, fireRows).catch(() => []), me.canViewAs ? system(admin).catch(() => []) : Promise.resolve([]), asanaCards(db, me.email).catch(() => [])]);
+  return { needs, escalated: groupEscalated(rows, fireRows), accounts: acc, asana, pulse: pul, system: sortCards(sys) };
 }
 
-const TAB_TOPIC: Record<ExecTab, TopicKey> = { needs: "needs", escalated: "escalated", accounts: "accounts", pulse: "pulse", system: "system" };
+const TAB_TOPIC: Record<ExecTab, TopicKey> = { needs: "needs", escalated: "escalated", accounts: "accounts", asana: "asana", pulse: "pulse", system: "system" };
 
 /** A card as a recap item (the story plays the same cards, tab by tab) */
 export function cardToDraft(c: ExecCard): TodayDraft {
@@ -334,6 +350,8 @@ export function cardToDraft(c: ExecCard): TodayDraft {
         : 84
       : c.tab === "needs"
         ? Math.min(95, (overdue ? 86 : c.due ? 72 : 64) + (c.severity === "critical" ? 6 : 0))
+        : c.tab === "asana"
+          ? overdue ? 74 : c.due ? 58 : 45
         : c.tab === "accounts"
           ? c.severity === "critical"
             ? 82
@@ -363,7 +381,7 @@ export function cardToDraft(c: ExecCard): TodayDraft {
     stat,
     title: c.title,
     story: c.detail,
-    why: c.tab === "escalated" ? (c.severity === "fire" ? "A fire: every exec sees it at once" : "48 hours with the lead and nothing moving") : c.tab === "accounts" ? "Off target with nothing in motion" : c.tab === "needs" ? "On you" : c.tab === "system" ? "Kaizen OS itself" : "For the picture",
+    why: c.tab === "asana" ? "Yours in Asana" : c.tab === "escalated" ? (c.severity === "fire" ? "A fire: every exec sees it at once" : "48 hours with the lead and nothing moving") : c.tab === "accounts" ? "Off target with nothing in motion" : c.tab === "needs" ? "On you" : c.tab === "system" ? "Kaizen OS itself" : "For the picture",
     evidence: [],
     // A card with no link of its own (Nudge the lead) opens on the Overview, where its composer is
     action: { label: c.action.label, href: c.action.href ?? `/pipeline?block=${c.tab}` },
@@ -375,5 +393,33 @@ export function cardToDraft(c: ExecCard): TodayDraft {
 /** An exec's day: the model's cards, tab by tab (the recap plays Needs me, Escalated, Accounts, Pulse, System) */
 export async function execDrafts(db: SupabaseClient, me: Staff, drafts: readonly TodayDraft[]): Promise<TodayDraft[]> {
   const m = await loadExecModel(db, me, drafts);
-  return [...m.needs, ...m.escalated, ...m.accounts, ...m.pulse, ...m.system].map(cardToDraft);
+  return [...m.needs, ...m.escalated, ...m.accounts, ...m.asana, ...m.pulse, ...m.system].map(cardToDraft);
+}
+
+/**
+ * A lead's Pulse, read only: their team's backlog (their own linked items, stuck with a teammate 48 hours) and what
+ * climbed past them to the execs this week
+ */
+export async function leadPulse(admin: SupabaseClient, leadId: string): Promise<ExecCard[]> {
+  const week = new Date(Date.now() - 7 * DAY).toISOString();
+  const [{ data: open }, { count: climbed }] = await Promise.all([
+    admin.from("ladder_nudges").select("owner_id, owner:profiles!ladder_nudges_owner_id_fkey(full_name)").eq("lead_id", leadId).in("status", ["open", "sent"]).limit(500),
+    admin.from("ladder_nudges").select("id", { count: "exact", head: true }).eq("lead_id", leadId).gte("exec_at", week),
+  ]);
+  const by = new Map<string, number>();
+  for (const r of (open ?? []) as unknown as { owner: { full_name: string } | null }[]) by.set(r.owner?.full_name ?? "A teammate", (by.get(r.owner?.full_name ?? "A teammate") ?? 0) + 1);
+  const people = [...by.entries()].sort((a, b) => b[1] - a[1]);
+  return [
+    {
+      key: `pulse:line:${leadId}:${nyDay()}`,
+      tab: "pulse",
+      kind: "pulse",
+      client: null,
+      clientId: null,
+      title: `Your team: ${(open ?? []).length} ${s((open ?? []).length, "item", "items")} stuck 48 hours, ${climbed ?? 0} climbed past you to the execs this week`,
+      detail: people.length ? people.slice(0, 5).map(([n, k]) => `${first(n)} ${k}`).join(" · ") : "Nothing stuck with your team",
+      severity: (climbed ?? 0) >= 5 ? "high" : "normal",
+      action: { label: "", href: null },
+    },
+  ];
 }

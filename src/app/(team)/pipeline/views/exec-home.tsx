@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { ItemQuickActions } from "@/components/item-quick-actions";
 import { capTab, TAB_LABEL, type ExecCard, type ExecTab } from "@/lib/exec-overview-core";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { nudgeLead, takeItOver } from "../../exec-actions";
+import { openAsanaTask } from "@/components/asana-task-sheet";
 
 // The executive Overview's blocks (owner, Nov 23 2026), under the Wrapped hero: Needs me, Escalated, Accounts, Pulse
 // and (the owner) System, each a designed block with its own color, a big number, one line and its sub-chips. A tap
@@ -17,6 +18,7 @@ const EMPTY: Record<ExecTab, { title: string; line: string }> = {
   needs: { title: "You're clear", line: "No replies, promises, tasks or approvals on you right now." },
   escalated: { title: "Nothing stuck past a lead", line: "Your leads are moving everything. Fires would show here the moment they happen." },
   accounts: { title: "Your accounts are handled", line: "Nothing in your lines is off target without someone already on it." },
+  asana: { title: "Nothing open in Asana", line: "No open Asana tasks are assigned to you." },
   pulse: { title: "Quiet", line: "Nothing to report across the agency." },
   system: { title: "All systems normal", line: "Checks passing, fixes merged, feedback flowing." },
 };
@@ -25,15 +27,17 @@ const BLURB: Record<ExecTab, string> = {
   needs: "Replies, promises, tasks and approvals on you",
   escalated: "Stuck 48 hours past a lead, and fires",
   accounts: "Your lines, off target, nothing in motion",
+  asana: "Every open Asana task that's yours",
   pulse: "The agency at a glance, nothing to do",
   system: "Kaizen OS itself: checks, fixes, feedback",
 };
 
-type Tone = { accent: string; glow: string };
+export type Tone = { accent: string; glow: string };
 const TONE: Record<ExecTab, Tone> = {
   needs: { accent: "#ff6b78", glow: "rgba(178,30,44,0.45)" },
   escalated: { accent: "#ff4d5e", glow: "rgba(200,16,46,0.5)" },
   accounts: { accent: "#f2b14c", glow: "rgba(224,150,40,0.4)" },
+  asana: { accent: "#f37c86", glow: "rgba(240,106,106,0.38)" },
   pulse: { accent: "#9aa8ff", glow: "rgba(90,110,255,0.3)" },
   system: { accent: "#5be3a5", glow: "rgba(40,180,120,0.32)" },
 };
@@ -65,6 +69,15 @@ function chips(tab: ExecTab, cards: ExecCard[]): string[] {
     const L: Record<string, string> = { meta: "Meta", google: "Google", tiktok: "TikTok", email: "Email", social: "Social", creative: "Creative" };
     return [...by.entries()].map(([l, k]) => `${k} ${L[l] ?? l}`);
   }
+  if (tab === "asana") {
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const week = new Date(Date.now() + 7 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const day = (c: ExecCard) => (c.due ? c.due.slice(0, 10) : null);
+    const late = count((c) => Boolean(day(c) && day(c)! < today));
+    const now = count((c) => day(c) === today);
+    const soon = count((c) => Boolean(day(c) && day(c)! > today && day(c)! <= week));
+    return [late && `${late} overdue`, now && `${now} today`, soon && `${soon} this week`].filter((x): x is string => Boolean(x));
+  }
   if (tab === "pulse")
     return [count((c) => c.severity === "fire") && n(count((c) => c.severity === "fire"), "client on fire", "clients on fire"), count((c) => c.key.startsWith("pulse:team:")) && n(count((c) => c.key.startsWith("pulse:team:")), "lead", "leads"), "this week"].filter((x): x is string => Boolean(x));
   return [
@@ -74,47 +87,97 @@ function chips(tab: ExecTab, cards: ExecCard[]): string[] {
   ].filter((x): x is string => Boolean(x));
 }
 
-export function ExecBlocks({ tabs, owner }: { tabs: Record<ExecTab, ExecCard[]>; owner: boolean }) {
-  const order: ExecTab[] = owner ? ["needs", "escalated", "accounts", "pulse", "system"] : ["needs", "escalated", "accounts", "pulse"];
-  const open = useParam("block");
-  const toggle = (t: ExecTab) => {
-    if (open === t) closeParams("block", "all");
-    else pushParams({ block: t, all: null });
+/** One block: a list of items (Needs me, Escalated…) or a panel the role already had (Clients, Setup, Tracking…) */
+export type BlockDef = {
+  id: string;
+  label: string;
+  blurb: string;
+  tone: Tone;
+  cards?: ExecCard[];
+  panel?: React.ReactNode;
+  /** The big number (items: how many; a panel: its own count, or none) */
+  count?: number;
+  chips?: string[];
+  empty?: { title: string; line: string };
+  /** Read only (Pulse): a note above its items, and its number isn't a to-do count */
+  note?: string;
+};
+
+/**
+ * Everyone's Overview blocks (owner, Nov 23 2026): designed blocks with their own color, a big number, one line and
+ * sub-chips. A tap opens a block right there (its items, 5 then "N more", or its panel), a tap again folds it; the open
+ * block is in the address (?block=, ?all=), so back folds it.
+ */
+/** Older addresses still open the right block: an anchor (#my-tasks, #next...) and ?tab= (a tab became a block) */
+const HASH_BLOCK: Record<string, string[]> = {
+  "my-tasks": ["asana"],
+  next: ["p-next", "work"],
+  sent: ["p-next"],
+  "waiting-on-you": ["needs", "p-desk"],
+  "reports-not-sent": ["p-desk"],
+  "channel-health": ["p-desk"],
+};
+
+const subscribeHash = (on: () => void) => {
+  window.addEventListener("hashchange", on);
+  return () => window.removeEventListener("hashchange", on);
+};
+
+export function Blocks({ blocks }: { blocks: BlockDef[] }) {
+  const asked = useParam("block");
+  const tab = useParam("tab");
+  // The address's anchor, read the same on the server (none) and in the browser, so nothing jumps on load
+  const anchor = useSyncExternalStore(subscribeHash, () => window.location.hash.slice(1) || null, () => null);
+  const [leftAnchor, setLeftAnchor] = useState(false);
+  const hash = leftAnchor ? null : anchor;
+  const ids = blocks.map((b) => b.id);
+  const alias = (x: string | null) => (x ? (ids.includes(x) ? x : ids.includes(`p-${x}`) ? `p-${x}` : null) : null);
+  const open = asked ?? alias(tab) ?? (hash ? ((HASH_BLOCK[hash] ?? []).find((id) => ids.includes(id)) ?? null) : null);
+  // Opened from an anchor: bring the thing it names into view once the block has opened
+  useEffect(() => {
+    if (hash && open) window.setTimeout(() => document.getElementById(hash)?.scrollIntoView({ block: "start", behavior: "smooth" }), 120);
+  }, [hash, open]);
+  const toggle = (id: string) => {
+    setLeftAnchor(true);
+    if (open === id) {
+      if (asked) closeParams("block", "all");
+      else pushParams({ tab: null, all: null });
+    } else pushParams({ block: id, all: null, tab: null });
   };
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <style>{`@keyframes block-in { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }`}</style>
-      {order.map((t, i) => {
-        const cards = tabs[t];
-        // Pulse is a read: its number is the clients on fire, never a to-do count
-        const count = t === "pulse" ? cards.filter((c) => c.severity === "fire").length : cards.length;
+      {blocks.map((bl, i) => {
+        const count = bl.count ?? bl.cards?.length;
         const calm = count === 0;
-        const tone = calm ? CALM : TONE[t];
-        const isOpen = open === t;
+        const tone = calm ? CALM : bl.tone;
+        const isOpen = open === bl.id;
         return (
           <section
-            key={t}
-            id={`block-${t}`}
-            style={{ ["--glow" as string]: tone.glow, ["--accent" as string]: tone.accent, animation: `block-in .45s ${0.06 * i}s cubic-bezier(.2,.8,.2,1) both` }}
+            key={bl.id}
+            id={`block-${bl.id}`}
+            style={{ ["--glow" as string]: tone.glow, ["--accent" as string]: tone.accent, animation: `block-in .45s ${0.05 * i}s cubic-bezier(.2,.8,.2,1) both` }}
             className={`relative isolate overflow-hidden rounded-[26px] border bg-deep shadow-[0_30px_70px_-40px_rgba(0,0,0,0.9)] transition-colors ${isOpen ? "border-ink/15 md:col-span-2" : "border-ink/[0.07] hover:border-ink/15"}`}
           >
             <span aria-hidden className={`pointer-events-none absolute -left-16 -top-24 -z-10 h-[260px] w-[260px] rounded-full blur-[80px] ${calm ? "opacity-40" : "opacity-80"}`} style={{ background: "var(--glow)" }} />
             <span aria-hidden className="pointer-events-none absolute inset-x-6 top-0 -z-10 h-px opacity-60" style={{ background: "linear-gradient(90deg, var(--accent), transparent)" }} />
-            <button type="button" onClick={() => toggle(t)} aria-expanded={isOpen} className="group grid min-h-[170px] w-full content-between gap-5 p-6 text-left md:min-h-[200px] md:p-7">
+            <button type="button" onClick={() => toggle(bl.id)} aria-expanded={isOpen} className="group grid min-h-[170px] w-full content-between gap-5 p-6 text-left md:min-h-[200px] md:p-7">
               <span className="flex items-center justify-between gap-3">
-                <span className="text-[12px] font-semibold uppercase tracking-[0.18em] text-ink/60">{TAB_LABEL[t]}</span>
+                <span className="text-[12px] font-semibold uppercase tracking-[0.18em] text-ink/60">{bl.label}</span>
                 <span className={`grid h-9 w-9 place-items-center rounded-full border border-ink/10 text-ink/50 transition duration-300 group-hover:border-ink/30 group-hover:text-fg ${isOpen ? "rotate-90" : "group-hover:translate-x-0.5"}`}>→</span>
               </span>
               <span className="grid gap-3">
                 <span className="flex items-end gap-3">
-                  <span className="tabular font-display text-6xl leading-none tracking-tight md:text-7xl" style={{ color: "var(--accent)" }}>
-                    {calm ? "✓" : count}
-                  </span>
-                  <span className="min-w-0 pb-1.5 text-[15px] leading-snug text-ink/80">{calm ? EMPTY[t].title : BLURB[t]}</span>
+                  {count != null && (
+                    <span className="tabular font-display text-6xl leading-none tracking-tight md:text-7xl" style={{ color: "var(--accent)" }}>
+                      {calm ? "✓" : count}
+                    </span>
+                  )}
+                  <span className="min-w-0 pb-1.5 text-[15px] leading-snug text-ink/80">{calm && bl.empty ? bl.empty.title : bl.blurb}</span>
                 </span>
-                {chips(t, cards).length > 0 && (
+                {(bl.chips ?? []).length > 0 && (
                   <span className="flex flex-wrap gap-1.5">
-                    {chips(t, cards).map((c) => (
+                    {(bl.chips ?? []).map((c) => (
                       <span key={c} className="rounded-full bg-ink/[0.06] px-2.5 py-1 text-[11.5px] text-ink/65">
                         {c}
                       </span>
@@ -125,7 +188,7 @@ export function ExecBlocks({ tabs, owner }: { tabs: Record<ExecTab, ExecCard[]>;
             </button>
             {isOpen && (
               <div className="border-t border-ink/[0.07] p-3 md:p-5" style={{ animation: "block-in .3s cubic-bezier(.2,.8,.2,1) both" }}>
-                <BlockItems tab={t} cards={cards} />
+                {bl.panel ?? <BlockItems id={bl.id} cards={bl.cards ?? []} empty={bl.empty?.line ?? "Nothing here right now."} note={bl.note} />}
               </div>
             )}
           </section>
@@ -135,15 +198,55 @@ export function ExecBlocks({ tabs, owner }: { tabs: Record<ExecTab, ExecCard[]>;
   );
 }
 
-function BlockItems({ tab, cards }: { tab: ExecTab; cards: ExecCard[] }) {
+/** An exec's blocks: Needs me, Escalated, Accounts, Next for me in Asana, Pulse and (the owner) System */
+export function ExecBlocks({ tabs, owner }: { tabs: Record<ExecTab, ExecCard[]>; owner: boolean }) {
+  const order: ExecTab[] = owner ? ["needs", "escalated", "accounts", "asana", "pulse", "system"] : ["needs", "escalated", "accounts", "asana", "pulse"];
+  return (
+    <Blocks
+      blocks={order.map((t) => ({
+        id: t,
+        label: TAB_LABEL[t],
+        blurb: BLURB[t],
+        tone: TONE[t],
+        cards: tabs[t],
+        // Pulse is a read: its number is the clients on fire, never a to-do count
+        count: t === "pulse" ? tabs[t].filter((c) => c.severity === "fire").length : tabs[t].length,
+        chips: chips(t, tabs[t]),
+        empty: EMPTY[t],
+        note: t === "pulse" ? "The agency at a glance. Nothing here is a to-do." : undefined,
+      }))}
+    />
+  );
+}
+
+/** Colors for everyone's other blocks */
+export const BLOCK_TONE: Record<string, Tone> = {
+  ...TONE,
+  team: { accent: "#c49bff", glow: "rgba(150,90,255,0.34)" },
+  work: { accent: "#6fb6ff", glow: "rgba(60,140,255,0.34)" },
+  briefs: { accent: "#7fe0c8", glow: "rgba(40,190,160,0.3)" },
+  panel: { accent: "#9aa8ff", glow: "rgba(90,110,255,0.28)" },
+};
+
+/** The sub-chips of a block of items: how urgent, how late, how many clients */
+export function itemChips(id: string, cards: ExecCard[]): string[] {
+  if (id in BLURB) return chips(id as ExecTab, cards);
+  const now = Date.now();
+  const crit = cards.filter((c) => c.severity === "critical" || c.severity === "fire").length;
+  const late = cards.filter((c) => c.due && Date.parse(c.due) < now).length;
+  const clients = new Set(cards.map((c) => c.client).filter(Boolean)).size;
+  return [crit && `${crit} critical`, late && `${late} overdue`, clients > 1 && `${clients} clients`].filter((x): x is string => Boolean(x));
+}
+
+function BlockItems({ id, cards, empty, note }: { id: string; cards: ExecCard[]; empty: string; note?: string }) {
   // "N more" lives in the address too (?all=<block>)
-  const all = useParam("all") === tab;
+  const all = useParam("all") === id;
   const { shown, more } = capTab(cards);
   const list = all ? cards : shown;
-  if (!cards.length) return <p className="px-2 py-4 text-sm text-ink/60">{EMPTY[tab].line}</p>;
+  if (!cards.length) return <p className="px-2 py-4 text-sm text-ink/60">{empty}</p>;
   return (
     <div className="grid gap-3">
-      {tab === "pulse" && <p className="px-1 text-sm text-ink/55">The agency at a glance. Nothing here is a to-do.</p>}
+      {note && <p className="px-1 text-sm text-ink/55">{note}</p>}
       <ul className="grid gap-3">
         {list.map((c) => (
           <li key={c.key}>
@@ -152,7 +255,7 @@ function BlockItems({ tab, cards }: { tab: ExecTab; cards: ExecCard[] }) {
         ))}
       </ul>
       {more > 0 && (
-        <button type="button" onClick={() => pushParams({ all: all ? null : tab })} className="min-h-11 justify-self-start rounded-full border border-ink/15 px-4 text-sm text-ink/70 hover:border-ink/30 hover:text-fg">
+        <button type="button" onClick={() => pushParams({ all: all ? null : id })} className="min-h-11 justify-self-start rounded-full border border-ink/15 px-4 text-sm text-ink/70 hover:border-ink/30 hover:text-fg">
           {all ? "Show fewer" : `${more} more`}
         </button>
       )}
@@ -175,11 +278,13 @@ function Card({ card }: { card: ExecCard }) {
           <h3 className={`text-[15.5px] font-medium leading-snug ${card.severity === "fire" ? "text-bad" : "text-fg"}`}>{card.title}</h3>
           <p className="mt-1 text-[13.5px] leading-relaxed text-muted">{card.detail}</p>
         </div>
-        {card.stat && <span className="tabular shrink-0 rounded-full bg-bad-soft px-2.5 py-1 text-[12px] text-bad">{card.stat}</span>}
+        {card.stat && card.kind !== "asana" && <span className="tabular shrink-0 rounded-full bg-bad-soft px-2.5 py-1 text-[12px] text-bad">{card.stat}</span>}
       </div>
       {!readOnly && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          {escalated && card.lead && card.draft ? (
+          {card.kind === "asana" ? (
+            <AsanaOpen gid={card.key.slice("asana:".length)} url={card.stat ?? null} />
+          ) : escalated && card.lead && card.draft ? (
             <button type="button" onClick={() => setComposing((v) => !v)} aria-expanded={composing} className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand/90 sm:min-h-8 sm:text-[12px]">
               {composing ? "Close" : "Nudge the lead"}
             </button>
@@ -296,5 +401,21 @@ function Go({ href, label }: { href: string; label: string }) {
     >
       {going ? "Opening..." : label}
     </Link>
+  );
+}
+
+/** An Asana task: its preview opens in place (done, due date, reassign, fields, subtasks, comments, written to Asana) */
+function AsanaOpen({ gid, url }: { gid: string; url: string | null }) {
+  return (
+    <>
+      <button type="button" onClick={() => openAsanaTask(gid)} className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand/90 sm:min-h-8 sm:text-[12px]">
+        Open
+      </button>
+      {url && (
+        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full border border-ink/15 px-3.5 text-[13px] text-ink/75 hover:border-ink/35 hover:text-fg sm:min-h-8 sm:px-3 sm:text-[12px]">
+          Open in Asana ↗
+        </a>
+      )}
+    </>
   );
 }

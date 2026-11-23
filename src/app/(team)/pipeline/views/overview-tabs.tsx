@@ -3,6 +3,20 @@
 import { useEffect, useState } from "react";
 import { tintFor } from "@/lib/colors";
 import { pushParams, replaceParams, useParam } from "@/lib/url-state";
+import { Blocks, BLOCK_TONE } from "./exec-home";
+
+/** What each panel block holds, in one line */
+const PANEL_BLURB: Record<string, string> = {
+  clients: "Your clients, worst first",
+  accounts: "Your ad accounts against target",
+  ideas: "Ideas and briefs for your clients",
+  audits: "Audits and sprints",
+  setup: "Clients still to connect",
+  team: "Every teammate's plate",
+  tracking: "Every paid-ads client's tracking health",
+  desk: "Your board: what's waiting on you",
+  plates: "Who's on what",
+};
 
 // The Overview in a few tabs (Today, Clients, Ideas, Audits and sprints, Setup: what fits the role), so each part is a
 // short, actionable page instead of one endless scroll. The open tab lives in the address (?tab=), so back returns to
@@ -13,7 +27,7 @@ const COUNT: Record<Tone, string> = { bad: "bg-bad-soft text-bad", warn: "bg-war
 const ACCENT: Record<Tone, string> = { bad: "var(--color-bad)", warn: "var(--color-warn)", ok: "var(--color-ok)", brand: "var(--color-brand-text)", quiet: "var(--color-muted)" };
 
 /** The tab strip and the open tab's panel. `follow`: a param that belongs to a tab (an open theme), so it opens there */
-export function OverviewTabs({ tabs, panels, follow, initial }: { tabs: { id: string; label: string; count?: number; tone?: Tone }[]; panels: Record<string, React.ReactNode>; follow?: Record<string, string>; initial?: string }) {
+export function OverviewTabs({ tabs, panels, follow, initial, asBlocks = false, skip = [] }: { tabs: { id: string; label: string; count?: number; tone?: Tone }[]; panels: Record<string, React.ReactNode>; follow?: Record<string, string>; initial?: string; /** Everyone's Overview (Nov 23 2026): each tab as a designed block that opens in place */ asBlocks?: boolean; skip?: string[] }) {
   const asked = useParam("tab");
   const followed = useFollowed(follow);
   // `initial`: the tab it opens on without ?tab= (an exec's: the one holding the most critical thing)
@@ -24,6 +38,14 @@ export function OverviewTabs({ tabs, panels, follow, initial }: { tabs: { id: st
   useEffect(() => {
     if (hasWork && window.location.hash === "#next" && !new URLSearchParams(window.location.search).get("tab")) replaceParams({ tab: "work" });
   }, [hasWork]);
+  if (asBlocks)
+    return (
+      <Blocks
+        blocks={tabs
+          .filter((t) => !skip.includes(t.id) && panels[t.id] != null)
+          .map((t) => ({ id: `p-${t.id}`, label: t.label, blurb: PANEL_BLURB[t.id] ?? "Open it here", tone: BLOCK_TONE[t.id] ?? BLOCK_TONE.panel, panel: panels[t.id], ...(t.count ? { count: t.count } : {}) }))}
+      />
+    );
   return (
     <div className="grid gap-6">
       <nav role="tablist" aria-label="Overview" className="no-scrollbar sticky top-[calc(3.5rem+env(safe-area-inset-top))] z-20 -mx-4 flex gap-1 overflow-x-auto border-b border-line bg-bg/85 px-4 py-2 backdrop-blur-md md:mx-0 md:rounded-full md:border md:top-3 md:w-fit md:max-w-full md:bg-surface/80 md:p-1">

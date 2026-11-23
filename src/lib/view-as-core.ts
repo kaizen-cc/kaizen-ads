@@ -1,4 +1,5 @@
-import { noIdeas } from "@/lib/maker-day-core";
+import { isCustomerSuccess, isMaker, noIdeas } from "@/lib/maker-day-core";
+import { isLadderLead } from "@/lib/escalation-ladder-core";
 import { canSeeReports, channelNavOk, isChannelOnly, isCreativeRole, isLeadMaker, ROLES, roleLabel, type TeamRole } from "@/lib/roles";
 
 // View as: the owner sees the app exactly as one teammate (or one role) sees it, read only. The pure parts live here
@@ -140,7 +141,7 @@ export function representativeFor<T extends { id: string; role: string; full_nam
  * What a role sees, in words (for the assistant: "what does a social manager see?"). The places follow the sidebar's
  * rules (components/team-shell.tsx) and the client access follows private.can_see_client() in the database.
  */
-export function roleView(role: TeamRole): { role: string; tier: string; places: string[]; clients: string; reports: boolean; paidAds: boolean; overview?: string } {
+export function roleView(role: TeamRole): { role: string; tier: string; places: string[]; clients: string; reports: boolean; paidAds: boolean; overview: string } {
   const exec = role === "executive";
   // profiles.is_lead: the Heads of Meta, Creative and Google (the Heads of Email and Social aren't, by design)
   const lead = role === "head_of_meta" || role === "head_of_creative" || role === "head_of_google";
@@ -172,8 +173,16 @@ export function roleView(role: TeamRole): { role: string; tier: string; places: 
             ? "Every client (to see and request creative for)"
             : "Only the clients they're assigned to";
   // An exec's Overview and recap (Nov 23 2026, src/lib/exec-overview.ts): four tabs, nothing below rung 3 but fires
+  // Everyone's Overview (Nov 23 2026): the Wrapped hero, then designed blocks that open in place, 5 items each
+  const leadRole = isLadderLead(role) || lead;
   const overview = exec
-    ? "Four tabs (the owner a fifth): Needs me (replies, promises, Asana tasks and approvals on them), Escalated (only what sat 48h with the owner, then 48h with the line's lead with nothing moving, plus fires), Accounts (their focus lines off target with nothing in motion, 5 worst), Pulse (read only: clients on fire, each lead's backlog, the week's numbers); the owner also System. Their bell rings for fires only; the rest is in their morning recap."
-    : undefined;
-  return { role: roleLabel(role), tier, places: [...places, "Feedback"], clients, reports, paidAds: !channel, ...(overview ? { overview } : {}) };
+    ? "The Wrapped hero, then blocks: Needs me (replies, promises and approvals on them), Escalated (only what sat 48h with its owner, then 48h with the line's lead with nothing moving, plus fires: a client leaving, an ad account disabled or unpaid or stopped, an angry message unanswered a business day), Accounts (their focus lines 50%+ off for over 7 days with nothing in motion), Next for me in Asana, Pulse (read only); the owner also System. Their bell rings for fires only; the rest is in their morning recap."
+    : leadRole
+      ? "The Wrapped hero, then blocks: Needs me, My team (a teammate's item stuck 48 hours, each its own item: Nudge them, Take it over, Later), My accounts (their line's clients off target with nothing in motion), My work, Next for me in Asana, Pulse (their team's backlog and what climbed past them), then their line's panels (Clients, Ideas, Audits and sprints, Setup, Next for me) as blocks."
+      : isCustomerSuccess(role)
+        ? "The Wrapped hero, then blocks: Needs me, My work, Next for me in Asana, and their board (the Tracking Specialist: Tracking) as a block."
+        : isMaker(role)
+          ? "The Wrapped hero, then blocks: Needs me, My work (tickets and tasks, late first), Next for me in Asana."
+          : "The Wrapped hero, then blocks: Needs me (replies, promises, approvals), My accounts (their clients, worst first), Ideas, Next for me in Asana, then their line's panels (Clients, Audits and sprints, Setup, Next for me) as blocks.";
+  return { role: roleLabel(role), tier, places: [...places, "Feedback"], clients, reports, paidAds: !channel, overview };
 }

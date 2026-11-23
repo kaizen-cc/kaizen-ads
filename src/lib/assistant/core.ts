@@ -139,6 +139,9 @@ export const SCREEN_PLACES: Record<string, string> = {
   escalated: "/pipeline?block=escalated",
   "accounts to step into": "/pipeline?block=accounts",
   pulse: "/pipeline?block=pulse",
+  // Every open Asana task assigned to the person, as a block on their Overview
+  "next for me in asana": "/pipeline?block=asana",
+  "my asana": "/pipeline?block=asana",
   system: "/pipeline?block=system",
   // Emails drafted for the person to send to clients, on their Overview
   "emails ready to send": "/pipeline#emails-ready",

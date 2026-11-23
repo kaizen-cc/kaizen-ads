@@ -23,7 +23,7 @@ import { csItem, forMaker, isCustomerSuccess, isMaker } from "@/lib/maker-day-co
 // item they saw that someone else has since acted on comes back once as "taken care of", with who and what.
 
 export type Tier = "critical" | "high" | "normal";
-export type TopicKey = "fire" | "mine" | "radar" | "promises" | "onboarding" | "accounts" | "email" | "social" | "work" | "briefs" | "ads" | "allotments" | "elsewhere" | "needs" | "escalated" | "pulse" | "system" | "team";
+export type TopicKey = "fire" | "mine" | "radar" | "promises" | "onboarding" | "accounts" | "email" | "social" | "work" | "briefs" | "ads" | "allotments" | "elsewhere" | "needs" | "escalated" | "pulse" | "system" | "team" | "asana";
 export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   fire: { label: "On fire", blurb: "Clients we could lose, across every team" },
   mine: { label: "Your work", blurb: "Tickets and tasks on you" },
@@ -34,7 +34,7 @@ export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   accounts: { label: "Accounts", blurb: "Results against target" },
   email: { label: "Email", blurb: "Email accounts, plans, reports and ideas" },
   social: { label: "Social", blurb: "Social accounts, posting and reports" },
-  work: { label: "Late work", blurb: "Work running late on our side" },
+  work: { label: "My work", blurb: "Tickets and tasks on you, late first" },
   briefs: { label: "Ideas", blurb: "Briefs the strategist suggests" },
   ads: { label: "Ads", blurb: "Ads ready for a refresh" },
   allotments: { label: "Allotments", blurb: "Clients behind on creative" },
@@ -47,6 +47,7 @@ export const TOPICS: Record<TopicKey, { label: string; blurb: string }> = {
   system: { label: "System", blurb: "Kaizen OS itself: checks, fixes, feedback" },
   // A lead's own items, each linked to a teammate's that sat 48 hours with nothing moving (the ladder's second rung)
   team: { label: "Your team", blurb: "A teammate's work stuck for 48 hours" },
+  asana: { label: "Next for me in Asana", blurb: "Every open Asana task assigned to you" },
 };
 
 export type TodayItem = {
@@ -84,7 +85,7 @@ export type TodayItem = {
 };
 export type Resolved = { key: string; topic: TopicKey; client: string; title: string; by: string | null; what: string };
 /** counts: items by tier (kept for older readers); looks: what every screen shows, counted by client (src/lib/today-counts.ts) */
-export type Today = { items: TodayItem[]; resolved: Resolved[]; counts: Record<Tier, number>; looks: Looks; shape?: "exec" };
+export type Today = { items: TodayItem[]; resolved: Resolved[]; counts: Record<Tier, number>; looks: Looks; shape?: "exec" | "blocks" };
 
 const tierOf = (score: number): Tier => (score >= 80 ? "critical" : score >= 60 ? "high" : "normal");
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
@@ -750,12 +751,36 @@ async function ownedDay(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
   const { adminConfigured, createAdminClient } = await import("@/lib/supabase/admin");
   const admin = adminConfigured() ? createAdminClient() : db;
   const { ownDay, transferredTo } = await import("@/lib/item-owners");
-  const mine = await ownDay(admin, me.id, drafts).catch(() => drafts);
+  // Asana tasks live in their own block ("Next for me in Asana"), never also in My work
+  const mine = (await ownDay(admin, me.id, drafts).catch(() => drafts)).filter((d) => !d.key.startsWith("mine:asana:"));
   const { stableKeyOf } = await import("@/lib/today-counts");
   const have = new Set(mine.map((d) => stableKeyOf(d.key)));
-  const [moved, team] = await Promise.all([transferredTo(admin, me.id, have).catch(() => []), leadItems(admin, me.id).catch(() => [])]);
-  return [...mine, ...moved, ...team];
+  const { asanaCards, accounts, leadPulse, cardToDraft } = await import("@/lib/exec-overview");
+  const { LINE_OF_ROLE, LADDER } = await import("@/lib/escalation-ladder-core");
+  // A lead (anyone a teammate's work climbs to): their line's accounts off target with nothing in motion (their own
+  // "step in" items, never the buyer's) and their line's pulse
+  const lead = Object.values(LADDER).some((rungs) => rungs.includes(me.role));
+  const line = LINE_OF_ROLE[me.role];
+  const [moved, team, asana, lineAccounts, pulse] = await Promise.all([
+    transferredTo(admin, me.id, have).catch(() => []),
+    leadItems(admin, me.id).catch(() => []),
+    asanaCards(db, me.email).catch(() => []),
+    lead && line ? accounts(admin, [line], drafts, { execRule: false }).catch(() => []) : Promise.resolve([]),
+    lead ? leadPulse(admin, me.id).catch(() => []) : Promise.resolve([]),
+  ]);
+  return [...mine, ...moved, ...team, ...[...asana, ...lineAccounts, ...pulse].map(cardToDraft)].map(inBlock);
 }
+
+/**
+ * Everyone's Overview and recap in the same blocks (owner, Nov 23 2026): Needs me (replies, promises, new clients, a
+ * fire), My work (tickets and tasks, late work, what's coming), Accounts, Ideas, Your team, Next for me in Asana, Pulse.
+ * The item keeps the topic it came from.
+ */
+const BLOCK_OF: Partial<Record<TopicKey, TopicKey>> = { promises: "needs", fire: "needs", onboarding: "needs", mine: "work", radar: "work", email: "accounts", social: "accounts", ads: "accounts", allotments: "accounts" };
+const inBlock = (d: Draft): Draft => {
+  const b = BLOCK_OF[d.topic];
+  return b ? { ...d, topic: b, from: d.topic } : d;
+};
 
 /** A lead's rung-2 items: their own, linked to the teammate's item that sat 48 hours, never that item itself */
 async function leadItems(admin: SupabaseClient, me: string): Promise<Draft[]> {
@@ -819,5 +844,5 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
   const resolved = await whatHappened(db, gone.map((g) => ({ key: g.key as string, snapshot: g.snapshot as { client?: string; title?: string; topic?: TopicKey } })));
   const counts = { critical: 0, high: 0, normal: 0 };
   for (const i of items) counts[i.tier]++;
-  return { items, resolved, counts, looks: countLooks(items), ...(me.isExec ? { shape: "exec" as const } : {}) };
+  return { items, resolved, counts, looks: countLooks(items), shape: me.isExec ? ("exec" as const) : ("blocks" as const) };
 }

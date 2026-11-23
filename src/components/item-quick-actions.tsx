@@ -152,7 +152,7 @@ function DelegatePicker({ item, open, setOpen, onDone, tone = "auto" }: { item: 
 }
 
 /** Linked escalation items and read-only cards aren't tasks of their own: no owner to transfer or date to change */
-const LINKED = /^(lead|esc|step|pulse|system|approve):/;
+const LINKED = /^(lead|esc|step|pulse|system|approve|asana|mine:asana):/;
 
 /**
  * Items are living tasks (owner, Nov 23 2026): Transfer owner (it moves to the teammate, leaves this day, shows on

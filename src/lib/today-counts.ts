@@ -6,12 +6,14 @@ import type { Tier, TodayItem, TopicKey } from "@/lib/today";
 // gather as one "Team" row. A client's row is as urgent as its most urgent item. Pure: no database, no server-only.
 
 export const TIER_ORDER: Tier[] = ["critical", "high", "normal"];
-export const TOPIC_KEYS: TopicKey[] = ["fire", "mine", "radar", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments", "elsewhere", "needs", "escalated", "pulse", "system", "team"];
+export const TOPIC_KEYS: TopicKey[] = ["fire", "mine", "radar", "promises", "onboarding", "accounts", "email", "social", "work", "briefs", "ads", "allotments", "elsewhere", "needs", "escalated", "pulse", "system", "team", "asana"];
 /** An exec's day plays in its tabs' order, whatever is most critical: Needs me, Escalated, Accounts, Pulse, System */
-export const EXEC_TOPICS: TopicKey[] = ["needs", "escalated", "accounts", "pulse", "system"];
-const execRank = (t: TopicKey) => (EXEC_TOPICS.includes(t) ? EXEC_TOPICS.indexOf(t) : 99);
-/** Topics only an exec's day has (Accounts is everyone's): their presence means the tabs' order applies */
-const EXEC_ONLY: TopicKey[] = ["needs", "escalated", "pulse", "system"];
+export const EXEC_TOPICS: TopicKey[] = ["needs", "escalated", "accounts", "asana", "pulse", "system"];
+/** Everyone's blocks, in the order their Overview and recap show them (owner, Nov 23 2026) */
+export const BLOCK_ORDER: TopicKey[] = ["needs", "escalated", "team", "work", "accounts", "briefs", "asana", "pulse", "system"];
+const execRank = (t: TopicKey) => (BLOCK_ORDER.includes(t) ? BLOCK_ORDER.indexOf(t) : 99);
+/** Topics only a block day has: their presence means the blocks' order applies */
+const EXEC_ONLY: TopicKey[] = ["needs", "escalated", "pulse", "system", "asana", "team"];
 /** An exec's "Everything else": outside their focus, shown last and left out of every total */
 export const QUIET_TOPIC: TopicKey = "elsewhere";
 const RANK: Record<Tier, number> = { critical: 2, high: 1, normal: 0 };
@@ -139,6 +141,8 @@ export function lookHeadline(topic: TopicKey, n: number): string {
       return `${n} ${s(n, "thing", "things")} in Kaizen OS itself`;
     case "team":
       return `${n} ${s(n, "teammate's item has", "teammates' items have")} sat 48 hours with nothing moving`;
+    case "asana":
+      return `${n} open Asana ${s(n, "task is", "tasks are")} yours`;
   }
 }
 
@@ -181,6 +185,8 @@ export function lookChip(topic: TopicKey, n: number): string {
       return `${n} system`;
     case "team":
       return `${n} stuck on your team`;
+    case "asana":
+      return `${n} in Asana`;
   }
 }
 

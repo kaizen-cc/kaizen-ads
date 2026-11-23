@@ -4,9 +4,9 @@
 // (Accounts), and a read-only Pulse; the owner also sees System. At most 5 cards a tab, the rest behind a tap. Nothing
 // below rung 3 reaches an exec except a fire.
 
-export type ExecTab = "needs" | "escalated" | "accounts" | "pulse" | "system";
-export const EXEC_TABS: readonly ExecTab[] = ["needs", "escalated", "accounts", "pulse", "system"];
-export const TAB_LABEL: Record<ExecTab, string> = { needs: "Needs me", escalated: "Escalated", accounts: "Accounts", pulse: "Pulse", system: "System" };
+export type ExecTab = "needs" | "escalated" | "accounts" | "asana" | "pulse" | "system";
+export const EXEC_TABS: readonly ExecTab[] = ["needs", "escalated", "accounts", "asana", "pulse", "system"];
+export const TAB_LABEL: Record<ExecTab, string> = { needs: "Needs me", escalated: "Escalated", accounts: "Accounts", asana: "Next for me in Asana", pulse: "Pulse", system: "System" };
 export const isExecTab = (x: unknown): x is ExecTab => typeof x === "string" && (EXEC_TABS as readonly string[]).includes(x);
 /** Cards shown on a tab before "N more" */
 export const TAB_CAP = 5;

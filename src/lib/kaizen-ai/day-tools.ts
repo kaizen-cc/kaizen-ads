@@ -14,7 +14,7 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
     {
       name: "my_day",
       description: "What's on the person's own day (their Overview and recap): every open item with its key, topic, client, title, due date, tier and whether it's new since they last looked. Use it for 'what's on my plate', 'what's new', before acting on an item, or to find an item's key. Optionally only one topic or client. open_screen 'overview' shows it.",
-      input_schema: { type: "object", properties: { topic: { type: "string", description: "Only this topic (mine, promises, onboarding, accounts, email, social, work, briefs, ads, allotments; an exec's day: needs, escalated, accounts, pulse, system)" }, client: { type: "string", description: "Only this client (name)" } }, additionalProperties: false },
+      input_schema: { type: "object", properties: { topic: { type: "string", description: "Only this block: needs, team, work, accounts, briefs (ideas), asana, pulse; an exec: needs, escalated, accounts, asana, pulse, system" }, client: { type: "string", description: "Only this client (name)" } }, additionalProperties: false },
       status: () => "Reading your day…",
       run: async (input) => {
         const { todaySnapshot } = await import("@/lib/today-snapshot");
@@ -272,7 +272,7 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
     {
       name: "exec_overview",
       description: "An exec's Overview (execs only), tab by tab: Needs me (what's on them: replies, promises, Asana tasks, approvals, work they took over), Escalated (only what sat 48h with its owner then 48h with the line's lead with nothing moving, one card per client, plus fires: client leaving, ad account disabled/payment failed/spend stopped, angry message unanswered a business day, an account far off target 2+ weeks with nothing in motion), Accounts (their focus lines off target with nothing in motion), Pulse (read only) and, for the owner, System. Each card has its key, what it is, and for Escalated the lead and a drafted nudge. Use it for 'what needs me', 'what's escalated', 'what's on fire'. open_screen 'needs me', 'escalated', 'accounts to step into', 'pulse' or 'system' opens that block on their Overview.",
-      input_schema: { type: "object", properties: { tab: { type: "string", enum: ["needs", "escalated", "accounts", "pulse", "system"] } }, additionalProperties: false },
+      input_schema: { type: "object", properties: { tab: { type: "string", enum: ["needs", "escalated", "accounts", "asana", "pulse", "system"] } }, additionalProperties: false },
       status: () => "Reading your Overview…",
       run: async (input) => {
         if (!ctx.me.isExec) return { ok: false, note: "Only execs have this Overview; use my_day." };
@@ -281,7 +281,7 @@ export function dayTools(ctx: ToolCtx): ChatTool[] {
         const snap = await todaySnapshot(ctx.db, ctx.me);
         const cards = snap.today.items.flatMap((i) => (i.exec ? [i.exec] : []));
         const of = (t: string) => cards.filter((c) => c.tab === t);
-        const tabs = { needs: sortNeeds(of("needs")), escalated: sortCards(of("escalated")), accounts: sortCards(of("accounts")), pulse: of("pulse"), ...(ctx.me.canViewAs ? { system: sortCards(of("system")) } : {}) } as Record<string, typeof cards>;
+        const tabs = { needs: sortNeeds(of("needs")), escalated: sortCards(of("escalated")), accounts: sortCards(of("accounts")), asana: of("asana"), pulse: of("pulse"), ...(ctx.me.canViewAs ? { system: sortCards(of("system")) } : {}) } as Record<string, typeof cards>;
         const fires = tabs.escalated.filter((c) => c.severity === "fire").length;
         const header = headerParts({ needs: tabs.needs.length, fires, stuck: tabs.escalated.length - fires, accounts: tabs.accounts.length })
           .map((h) => h.text)

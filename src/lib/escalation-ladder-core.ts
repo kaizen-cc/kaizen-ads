@@ -114,3 +114,6 @@ export function nudgeDraft(o: { teammate: string; what: string; client?: string 
 
 /** The stable key a nudge is kept under (one per item and teammate) */
 export const nudgeKey = (itemKey: string) => `nudge:${itemKey}`.slice(0, 200);
+
+/** Whether a role is a lead on the ladder (a teammate's stuck work climbs to them) */
+export const isLadderLead = (role: string | null | undefined): boolean => Object.values(LADDER).some((rungs) => rungs.includes(String(role ?? "")));

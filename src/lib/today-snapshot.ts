@@ -68,7 +68,7 @@ export async function buildSnapshot(db: SupabaseClient, me: Staff, prev?: Snapsh
  */
 export const todaySnapshot = cache(async (db: SupabaseClient, me: Staff): Promise<Snapshot> => {
   const saved = await readSnapshot(db, me);
-  // An exec's day saved before the exec recap (Nov 23 2026) is built again in its new shape
-  if (saved && (!me.isExec || saved.today.shape === "exec")) return saved;
+  // A day saved before the block Overview (Nov 23 2026) is built again in its new shape
+  if (saved && saved.today.shape === (me.isExec ? "exec" : "blocks")) return saved;
   return buildSnapshot(db, me, saved);
 });

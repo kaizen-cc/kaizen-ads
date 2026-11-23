@@ -29,7 +29,7 @@ const LOOK_AT = 30;
  *   Setup            the clients still to connect
  * It reads nothing from the ad tables.
  */
-export async function ChannelHome({ me, line, today, greeting, firstName, recap = null, work = null, workCount = 0 }: { me: Me; line: Line; today: string; greeting: string; firstName: string; /** Their day (the recap's way in), above their clients */ recap?: React.ReactNode; /** My work, under the day (no separate tab) */ work?: React.ReactNode; workCount?: number }) {
+export async function ChannelHome({ me, line, today, greeting, firstName, recap = null, work = null, workCount = 0, panelsOnly = false }: { panelsOnly?: boolean; me: Me; line: Line; today: string; greeting: string; firstName: string; /** Their day (the recap's way in), above their clients */ recap?: React.ReactNode; /** My work, under the day (no separate tab) */ work?: React.ReactNode; workCount?: number }) {
   const db = await createClient();
   const [board, owed] = await Promise.all([loadChannelBoard(db, line, me), owedByClient(db, me)]);
   const ids = board.rows.map((r) => r.clientId);
@@ -197,6 +197,8 @@ export async function ChannelHome({ me, line, today, greeting, firstName, recap 
     ideas: <IdeaDeck ideas={ideas} />,
   };
 
+  // Everyone's block Overview (Nov 23 2026): the line's tabs as blocks, under the person's own item blocks
+  if (panelsOnly) return <OverviewTabs asBlocks skip={["today", "work"]} tabs={tabs} panels={panels} />;
   return (
     <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
       {header}
