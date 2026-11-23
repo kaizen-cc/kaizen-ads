@@ -82,3 +82,14 @@ export function slackSelfText(place: { channel: string; thread: string | null; w
   if (!place.channel) return text;
   return slackSelfNote({ where: place.where, link: slackMessageLink(place.channel, place.thread), text });
 }
+
+/**
+ * Their own self-DM ("message to yourself") among their direct messages (conversations.list types=im): the one whose
+ * user is them. Never the Slackbot DM or someone else's, which is where a post to their bare user ID can land.
+ */
+export function selfDmChannel(ims: readonly { id?: string; user?: string; is_user_deleted?: boolean }[], selfId: string): string | null {
+  const me = selfId.trim();
+  if (!me) return null;
+  const hit = ims.find((c) => c.user === me && typeof c.id === "string" && /^D[A-Z0-9]{6,}$/.test(c.id));
+  return hit?.id ?? null;
+}

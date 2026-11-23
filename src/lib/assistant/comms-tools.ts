@@ -438,22 +438,43 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           text: d.text,
           ...(files.length ? { attached: files.map((f) => f.name) } : {}),
           ...(askedFiles > files.length ? { not_attached: askedFiles - files.length, why: "Those documents weren't found or aren't theirs to attach. Make the document first (create_document) and attach its document_id." } : {}),
-          note: "It's on screen to edit. Read it back in a sentence or two, then ask if you should send it (send only on their yes, send_message) or put it in their Gmail drafts / Slack to send themselves (save_draft, no yes needed).",
+          note: "It's on screen to edit. Read it back in a sentence or two, then ask if you should send it (send only on their yes, send_message) or put it in their Gmail drafts / Slack to send themselves (save_draft, no yes needed; several drafts at once: every draft_id in draft_ids).",
         };
       },
     },
     {
       name: "save_draft",
-      description: `Puts a drafted message (draft_message) where ${from} edits and sends it themselves. Email: a real draft in their own Gmail (a reply sits in its thread; to, cc, subject and any attached PDFs included), with a link straight to it. Slack: Slack has no way for an app to write into someone's Slack Drafts, so it's posted to their own self-DM (their "message to yourself", with their own connected Slack) labeled with where it goes and a link to the thread; they copy it, edit it and send it there. Nothing reaches anyone else, so it needs no "send it?": run it when they ask ("put it in my Gmail drafts", "drop it in my Slack"). Then say where it is in a few words; the card links to it. If it can't, say the reason it gives in a sentence.`,
-      input_schema: { type: "object", properties: { draft_id: { type: "string", description: "The draft's id (leave out for the latest draft on this call)" } }, additionalProperties: false },
+      description: `Puts a drafted message (draft_message) where ${from} edits and sends it themselves. Email: a real draft in their own Gmail (a reply sits in its thread; to, cc, subject and any attached PDFs included), with a link straight to it. Slack: Slack has no way for an app to write into someone's Slack Drafts, so it's posted to their own self-DM (their "message to yourself", with their own connected Slack) labeled with where it goes and a link to the thread; they copy it, edit it and send it there. Several drafts ("put them both in my Slack"): pass every one's id in draft_ids; each is saved as its own message and answered on its own. Nothing reaches anyone else, so it needs no "send it?": run it when they ask ("put it in my Gmail drafts", "drop it in my Slack"). Then say where each is in a few words; the cards link to them. If one can't be saved, say which and the reason it gives in a sentence.`,
+      input_schema: {
+        type: "object",
+        properties: {
+          draft_id: { type: "string", description: "The draft's id (leave out for the latest draft on this call)" },
+          draft_ids: { type: "array", items: { type: "string" }, description: "Several drafts' ids, each saved as its own message" },
+        },
+        additionalProperties: false,
+      },
       status: () => "Saving it to your drafts…",
       run: async (input) => {
         if (!ctx.callId) return { saved: false, note: "Draft it first (draft_message), then save it." };
-        const d = input.draft_id ? await getDraft(ctx.admin, ctx.callId, clip(input.draft_id, 40)) : await latestDraft(ctx.admin, ctx.callId);
-        if (!d) return { saved: false, note: "That draft isn't on this conversation. Draft it again (draft_message), then save it." };
-        const r = await saveDraftToPlatform(ctx, d);
-        if (!r.ok) return { saved: false, error: r.error, ...(r.needs ? { needs: r.needs } : {}) };
-        return { saved: true, where: r.where, link: r.href, note: d.slack ? `Say it's in their Slack, in their messages to themselves, ready to copy into ${d.slack.thread ? "the thread" : d.slack.where === "your Slack" ? "wherever it goes" : d.slack.where}.` : "Say it's in their Gmail drafts, ready to edit and send there." };
+        const ids = [...new Set([...(Array.isArray(input.draft_ids) ? input.draft_ids : []), input.draft_id].map((x) => clip(x, 40)).filter(Boolean))].slice(0, 6);
+        const saveOne = async (d: Draft) => {
+          const r = await saveDraftToPlatform(ctx, d);
+          if (!r.ok) return { saved: false, draft_id: d.id, error: r.error, ...(r.needs ? { needs: r.needs } : {}) };
+          return { saved: true, draft_id: d.id, where: r.where, link: r.href, note: d.slack ? `Say it's in their Slack, in their messages to themselves, ready to copy into ${d.slack.thread ? "the thread" : d.slack.where === "your Slack" ? "wherever it goes" : d.slack.where}.` : "Say it's in their Gmail drafts, ready to edit and send there." };
+        };
+        if (ids.length <= 1) {
+          const d = ids[0] ? await getDraft(ctx.admin, ctx.callId, ids[0]) : await latestDraft(ctx.admin, ctx.callId);
+          if (!d) return { saved: false, note: "That draft isn't on this conversation. Draft it again (draft_message), then save it." };
+          return saveOne(d);
+        }
+        // One at a time, each its own message: one failing never hides whether the others landed
+        const results: Record<string, unknown>[] = [];
+        for (const id of ids) {
+          const d = await getDraft(ctx.admin, ctx.callId, id);
+          results.push(d ? await saveOne(d) : { saved: false, draft_id: id, error: "That draft isn't on this conversation. Draft it again (draft_message), then save it." });
+        }
+        const ok = results.filter((r) => r.saved).length;
+        return { saved: ok === results.length, results, note: ok === results.length ? "Each is saved as its own message: say where in a few words." : `${ok} of ${results.length} saved: say which landed and which didn't, with the reason, in a sentence.` };
       },
     },
     {

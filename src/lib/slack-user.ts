@@ -158,6 +158,42 @@ async function openDm(token: string, user: string): Promise<string> {
   return r?.ok && id ? id : user;
 }
 
+/**
+ * Post to this person's own self-DM ("message to yourself"). Their self-DM's real channel (D...) first: opened as them
+ * (im:write) or found among their DMs (im:read, which a read connection has). A post to their bare user ID without it
+ * can land in their Slackbot DM instead, so that's the last resort only.
+ */
+export async function postToSelf(profileId: string, text: string): Promise<PostResult> {
+  const { data: row } = await createAdminClient().from("slack_user_tokens").select("token, scopes, slack_user_id").eq("profile_id", profileId).maybeSingle();
+  if (!row?.token || !row.slack_user_id) return { ok: false, error: "Connect your Slack first, so the draft lands in your own messages.", needsConnect: true };
+  const token = row.token as string;
+  const me = String(row.slack_user_id);
+  const scopes = String(row.scopes ?? "").split(/[\s,]+/);
+  const channel = (await selfDm(token, me, scopes)) ?? me;
+  return postWith(token, { channel, text });
+}
+
+/** Their self-DM's channel (D...), or null when the token can neither open nor list DMs */
+async function selfDm(token: string, me: string, scopes: string[]): Promise<string | null> {
+  if (scopes.includes("im:write")) {
+    const r = await call(token, "conversations.open", { users: me, return_im: "false" }).catch(() => null);
+    const id = (r?.channel as { id?: string } | undefined)?.id;
+    if (r?.ok && id) return id;
+  }
+  if (!scopes.includes("im:read")) return null;
+  const { selfDmChannel } = await import("@/lib/assistant/platform-drafts-core");
+  let cursor = "";
+  for (let page = 0; page < 10; page++) {
+    const r = await slackRead<{ ok: boolean; error?: string; channels?: { id?: string; user?: string }[]; response_metadata?: { next_cursor?: string } }>(token, "conversations.list", { types: "im", limit: "1000", ...(cursor ? { cursor } : {}) }).catch(() => null);
+    if (!r?.ok) return null;
+    const hit = selfDmChannel(r.channels ?? [], me);
+    if (hit) return hit;
+    cursor = r.response_metadata?.next_cursor ?? "";
+    if (!cursor) return null;
+  }
+  return null;
+}
+
 /** Post as the Kaizen app itself (its bot): a joint report, or when a person can't. Needs chat:write (files:write for a PDF). */
 /** A Slack person or direct message rather than a channel */
 export const isPersonChannel = (channel: string) => /^[UWD][A-Z0-9]{6,}$/.test(channel.trim());
