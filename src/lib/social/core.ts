@@ -382,3 +382,36 @@ export const socialCostMs = (w: SocialWindow) => (w === "full" ? 150_000 : 40_00
 
 /** Strip anything that looks like a token from an error before it's kept */
 export const cleanError = (s: string) => s.replace(/(access_token=|EA[A-Za-z0-9]{20,})[^\s&"']*/g, "[token]").slice(0, 400);
+
+// ─── Paging ────────────────────────────────────────────────────────────────
+
+export type Paging = { cursors?: { after?: string | null } | null; next?: string | null } | null | undefined;
+const PAGING_KEYS = ["after", "until", "since", "__paging_token", "__previous"] as const;
+
+/**
+ * The parameters for the next page of a list Meta answered (McIntyre's North Star, Nov 2026: its Facebook posts stopped
+ * at the first page). Meta pages some lists by cursor (paging.cursors.after) and a Page's posts often by time (an until
+ * and a __paging_token in paging.next, with no cursor): both are read from the next link, the cursor alone otherwise.
+ * null: there's no next page.
+ */
+export function nextPageParams(paging: Paging): Record<string, string> | null {
+  if (!paging?.next) return null;
+  const out: Record<string, string> = {};
+  try {
+    const q = new URL(paging.next).searchParams;
+    for (const k of PAGING_KEYS) {
+      const v = q.get(k);
+      if (v) out[k] = v;
+    }
+  } catch {
+    // a next link that isn't a URL: the cursor below
+  }
+  if (!out.after && paging.cursors?.after) out.after = paging.cursors.after;
+  return Object.keys(out).length ? out : null;
+}
+
+/** Stepping back by time when Meta gives no next page but the window isn't covered yet: posts before the oldest one seen */
+export function untilBefore(oldestIso: string | null | undefined): Record<string, string> | null {
+  const t = oldestIso ? Date.parse(oldestIso) : NaN;
+  return Number.isFinite(t) ? { until: String(Math.floor(t / 1000) - 1) } : null;
+}

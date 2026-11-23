@@ -1,7 +1,7 @@
 import "server-only";
 import { metaGraph, metaGraphAs } from "@/lib/context/meta";
 import { runBounded } from "@/lib/bounded";
-import { FB_METRICS, FB_POST_METRICS, IG_POST_METRIC_SETS, IG_SERIES_METRICS, IG_TOTAL_METRICS, invalidMetric, missingPermission, parseFbPosts, parseIgMedia, parseIgPostInsights, parseIgStories, daysBetween, parseSeries, parseTotals, shiftDay, type FbField, type MetaCallKind, type PageRef, type PostInsights, type SocialPost, type SocialStory } from "./core";
+import { FB_METRICS, FB_POST_METRICS, IG_POST_METRIC_SETS, IG_SERIES_METRICS, IG_TOTAL_METRICS, invalidMetric, missingPermission, parseFbPosts, parseIgMedia, parseIgPostInsights, parseIgStories, daysBetween, nextPageParams, parseSeries, parseTotals, shiftDay, untilBefore, type Paging, type FbField, type MetaCallKind, type PageRef, type PostInsights, type SocialPost, type SocialStory } from "./core";
 
 // Meta's Graph API for a client's Facebook Page and Instagram business account, read only (GET calls). Reads use
 // Kaizen's Meta system user (the Business Manager's token the client picked when it has one). Page insights need the
@@ -179,17 +179,23 @@ export async function igDayTotals(ctx: SocialCtx, igId: string, day: string): Pr
 /** The last `limit` posts with their public counts; with `since`, page back until the posts are older than that day (at most `max`) */
 export async function igMedia(ctx: SocialCtx, igId: string, limit = 50, opts: { since?: string; max?: number } = {}): Promise<SocialPost[]> {
   const fields = "id,caption,media_type,media_product_type,like_count,comments_count,timestamp,permalink,thumbnail_url,media_url";
-  const out: SocialPost[] = [];
-  let after: string | null = null;
-  for (let page = 0; page < 20; page++) {
-    const r: { paging?: { cursors?: { after?: string }; next?: string } } = await viaIg(ctx, "ig_media", `${igId}/media`, { fields, limit: String(limit), ...(after ? { after } : {}) });
+  const out = new Map<string, SocialPost>();
+  let page: Record<string, string> = {};
+  const seen = new Set<string>();
+  for (let n = 0; n < 20; n++) {
+    const r: { paging?: Paging } = await viaIg(ctx, "ig_media", `${igId}/media`, { fields, limit: String(limit), ...page });
     const posts = parseIgMedia(r);
-    out.push(...posts);
-    after = r.paging?.next ? (r.paging.cursors?.after ?? null) : null;
+    const fresh = posts.filter((p) => !out.has(p.id));
+    for (const p of posts) out.set(p.id, p);
     const oldest = posts.map((p) => p.postedAt ?? "").filter(Boolean).sort()[0] ?? "";
-    if (!opts.since || !after || !posts.length || oldest.slice(0, 10) < opts.since || out.length >= (opts.max ?? 500)) break;
+    if (!opts.since || !fresh.length || (oldest && oldest.slice(0, 10) < opts.since) || out.size >= (opts.max ?? 500)) break;
+    const next = nextPageParams(r.paging);
+    const key = JSON.stringify(next);
+    if (!next || seen.has(key)) break;
+    seen.add(key);
+    page = next;
   }
-  return out;
+  return [...out.values()];
 }
 
 /** The account's live stories (each listed only for its 24 hours, so the 3-hourly sync catches every one) */
@@ -269,17 +275,24 @@ export async function fbSeries(ctx: SocialCtx, pageId: string, field: FbField, f
 /** The Page's recent published posts with reactions, comments and shares; with `since`, page back until older than that day (at most `max`) */
 export async function fbPosts(ctx: SocialCtx, pageId: string, limit = 40, opts: { since?: string; max?: number } = {}): Promise<SocialPost[]> {
   const fields = "message,created_time,full_picture,permalink_url,status_type,attachments{media_type},shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)";
-  const out: SocialPost[] = [];
-  let after: string | null = null;
-  for (let page = 0; page < 20; page++) {
-    const r: { paging?: { cursors?: { after?: string }; next?: string } } = await viaPage(ctx, "fb_posts", `${pageId}/published_posts`, { fields, limit: String(limit), ...(after ? { after } : {}) });
+  const out = new Map<string, SocialPost>();
+  let page: Record<string, string> = {};
+  const seen = new Set<string>();
+  for (let n = 0; n < 25; n++) {
+    const r: { paging?: Paging } = await viaPage(ctx, "fb_posts", `${pageId}/published_posts`, { fields, limit: String(limit), ...page });
     const posts = parseFbPosts(r);
-    out.push(...posts);
-    after = r.paging?.next ? (r.paging.cursors?.after ?? null) : null;
+    const fresh = posts.filter((p) => !out.has(p.id));
+    for (const p of posts) out.set(p.id, p);
     const oldest = posts.map((p) => p.postedAt ?? "").filter(Boolean).sort()[0] ?? "";
-    if (!opts.since || !after || !posts.length || oldest.slice(0, 10) < opts.since || out.length >= (opts.max ?? 500)) break;
+    if (!opts.since || !fresh.length || (oldest && oldest.slice(0, 10) < opts.since) || out.size >= (opts.max ?? 500)) break;
+    // The next page as Meta gave it (cursor or time), else stepping back from the oldest post seen
+    const next = nextPageParams(r.paging) ?? untilBefore(oldest);
+    const key = JSON.stringify(next);
+    if (!next || seen.has(key)) break;
+    seen.add(key);
+    page = next;
   }
-  return out;
+  return [...out.values()];
 }
 
 /** Lifetime reach and views for posts, one batched ask per metric (ids=), the current metric first; posts Meta doesn't answer for stay without */
