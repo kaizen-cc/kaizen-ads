@@ -191,6 +191,8 @@ export type ClientViewProps = {
   /** Live changes in their ad accounts, Meta and Google Ads switched separately, with the accounts each one opens */
   liveWrites?: LiveWritesData | null;
   creativeDb?: CreativeDb | null;
+  /** This cycle's delivered (the Creative Database) and in motion (Asana), for the package card */
+  allotmentUsage?: import("./package-panel").Usage | null;
   /** buyerTools: the media-buying tabs (Google policy and ideas to apply); the creative team doesn't get them */
   can: { admin: boolean; contacts: boolean; allot: boolean; assign: boolean; seats?: string[]; buyerTools?: boolean; /** Executives, leads and the Head of Social: the client's social connections */ socialConnect?: boolean };
   demo?: boolean; // design preview: the refresh only plays its animation
@@ -255,7 +257,7 @@ export type ClientViewProps = {
 };
 
 /** The client page itself, given its data (the page loads it; the design preview passes samples). */
-export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, can, demo = false, line = null, acts = [...ALL_LINES], connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, emailOps = null, emailScope = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null, contactChanges = null, direction = null }: ClientViewProps) {
+export function ClientView({ client, packageLabel, packages, brandBible = null, gtm = null, googleGtm = null, googleDeploys = [], keywordLists = [], canDeployGoogle = false, business = null, execution = null, today, team, contacts, angles, memory, digest, briefingAt, needsInvite, images, videos, imagesUsed, videosUsed, fromAsana, cycle = null, billingHistory = [], liveWrites = null, creativeDb = null, allotmentUsage = null, can, demo = false, line = null, acts = [...ALL_LINES], connections, creative = null, kpis = null, audits = null, changes = null, sprints = null, reportable = null, assets = null, shotList = null, moments = [], chat = null, fatigue = null, market = [], intake, calls, readiness = null, services = null, launchRules = [], campaigns = null, tiktok = null, klaviyo = null, social = null, emailOps = null, emailScope = null, googleSync = null, docs = null, reports = null, playbook = null, setup = null, emails = null, notices = null, reportLogo = null, businessAudit = null, patterns = null, knowledge = [], loom = null, contactChanges = null, direction = null }: ClientViewProps) {
   // A sprint whose end date passed is off, even before the nightly job switches it off
   const until = client.creative_package_until ?? null;
   const active = client.creative_package && (!until || until >= today);
@@ -1227,6 +1229,8 @@ export function ClientView({ client, packageLabel, packages, brandBible = null, 
             fromAsana={fromAsana}
             cycle={cycle}
             creativeDb={creativeDb}
+            usage={allotmentUsage}
+            clientId={client.id}
             packages={packages}
             can={{ exec: can.admin, allot: can.allot }}
             setSprint={setSprintPackage.bind(null, client.id, client.slug)}

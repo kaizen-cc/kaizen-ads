@@ -1,6 +1,9 @@
 "use client";
 
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Section } from "@/components/ui";
+import { linkCreativeDb, readCreativeDbNow } from "./creative-db-actions";
 import { allotmentPool, untilLabel } from "@/lib/allotment";
 import type { CreativeDb } from "@/lib/creative-db";
 
@@ -16,35 +19,78 @@ const daysBetween = (a: string, b: string) => Math.round((new Date(`${b}T12:00:0
 const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 const both = (images: number, videos: number) => [images ? n(images, "image", "images") : null, videos ? n(videos, "video", "videos") : null].filter(Boolean).join(" and ");
 
-/** The client's Creative Database (finished work, ready for the client) beside the count, which follows work in motion. */
-function DbCheck({ db, imagesUsed, videosUsed }: { db: CreativeDb; imagesUsed: number; videosUsed: number }) {
-  if (db.error)
-    return (
-      <p className="text-[11px] text-faint">
-        Couldn&apos;t read the{" "}
-        <a href={db.url} target="_blank" rel="noreferrer" className="underline hover:text-fg">
-          Creative Database
-        </a>
-        : {db.error}
-      </p>
-    );
-  const ahead = db.month.newImages > imagesUsed || db.month.newVideos > videosUsed;
+/**
+ * Where the count comes from, this cycle only: delivered (the client's Creative Database, every version) and in motion
+ * (Asana and tickets, not delivered yet). The sheet can be linked or replaced, and read now. No rolling windows.
+ */
+function UsageBreakdown({ clientId, db, usage, canLink }: { clientId: string | null; db: CreativeDb | null; usage: Usage | null; canLink: boolean }) {
+  const router = useRouter();
+  const [, start] = useTransition();
+  const [link, setLink] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState<null | "link" | "read">(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const done = (r: { ok: true; name: string } | { ok: false; error: string }) => {
+    setBusy(null);
+    setMsg(r.ok ? { ok: true, text: `Read ${r.name}.` } : { ok: false, text: r.error });
+    if (r.ok) {
+      setEditing(false);
+      start(() => router.refresh());
+    }
+  };
+  const sheet = usage?.source === "sheet";
   return (
-    <div className="grid gap-1 rounded-[10px] border border-line px-3 py-2 text-[11px] leading-relaxed text-muted">
-      <a href={db.url} target="_blank" rel="noreferrer" className="font-medium text-fg hover:underline">
-        Creative Database ↗
-      </a>
-      <span>
-        Delivered this month: {n(db.month.newImages, "new image", "new images")}, {n(db.month.newVideos, "new video", "new videos")}.
+    <div className="grid gap-1.5 rounded-[10px] border border-line px-3 py-2.5 text-[12px] leading-relaxed text-muted">
+      {usage && (
+        <>
+          <span>
+            <span className="text-fg">Delivered this cycle:</span> {sheet ? both(usage.delivered.images, usage.delivered.videos) || "nothing yet" : "no Creative Database read, so counted from the briefs"}
+            {sheet && <span className="text-faint"> (Creative Database, every version)</span>}
+          </span>
+          <span>
+            <span className="text-fg">In motion:</span> {both(usage.motion.images, usage.motion.videos) || "nothing"} <span className="text-faint">(Asana, not delivered yet)</span>
+          </span>
+        </>
+      )}
+      {db?.error && <span className="text-warn">Couldn&apos;t read the Creative Database: {db.error}</span>}
+      <span className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
+        {db?.url ? (
+          <a href={db.url} target="_blank" rel="noreferrer" className="font-medium text-fg hover:underline">
+            {db.name || "Creative Database"} ↗
+          </a>
+        ) : (
+          <span className="text-warn">No Creative Database linked</span>
+        )}
+        {db?.readAt && <span className="text-faint">read {new Date(db.readAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>}
+        {clientId && db?.url && (
+          <button type="button" disabled={busy !== null} onClick={() => { setBusy("read"); void readCreativeDbNow(clientId).then(done); }} className="min-h-10 text-faint underline-offset-2 hover:text-fg hover:underline disabled:opacity-50 md:min-h-0">
+            {busy === "read" ? "Reading…" : "Read now"}
+          </button>
+        )}
+        {clientId && canLink && !editing && (
+          <button type="button" onClick={() => setEditing(true)} className="min-h-10 text-faint underline-offset-2 hover:text-fg hover:underline md:min-h-0">
+            {db?.url ? "Replace link" : "Link it"}
+          </button>
+        )}
       </span>
-      <span>
-        Last 45 days: {n(db.last45.newImages + db.last45.newVideos, "new creative", "new creatives")} ({db.last45.newImages} images, {db.last45.newVideos} videos),{" "}
-        {db.last45.allImages + db.last45.allVideos} with variations.
-      </span>
-      {ahead && <span className="text-warn">The database shows more delivered this month than is counted above. A request may be missing from Kaizen OS and Asana.</span>}
+      {clientId && editing && (
+        <span className="flex flex-wrap items-center gap-2">
+          <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" className="h-11 min-w-0 flex-1 rounded-[8px] border border-line bg-bg px-2.5 text-[16px] outline-none focus:border-brand/60 md:h-8 md:text-xs" />
+          <button type="button" disabled={busy !== null || !link.trim()} onClick={() => { setBusy("link"); void linkCreativeDb(clientId, link).then(done); }} className="h-10 rounded-full bg-fg px-4 text-[11px] font-medium text-bg disabled:opacity-50 md:h-7 md:px-3">
+            {busy === "link" ? "Reading…" : "Save and read"}
+          </button>
+          <button type="button" onClick={() => setEditing(false)} className="min-h-10 text-[11px] text-faint hover:text-fg md:min-h-0">
+            Cancel
+          </button>
+        </span>
+      )}
+      {msg && <span className={msg.ok ? "text-ok" : "text-bad"}>{msg.text}</span>}
     </div>
   );
 }
+
+/** This cycle's breakdown of the count (client_allotment_usage) */
+export type Usage = { delivered: { images: number; videos: number }; motion: { images: number; videos: number }; source: "sheet" | "briefs"; shared: boolean };
 
 function Meter({ name, cap, used }: { name: string; cap: number; used: number }) {
   // The shared allotment helper: per pool, and an overage shown as one, never clamped
@@ -79,11 +125,12 @@ export function PackagePanel({
   videos,
   imagesUsed,
   videosUsed,
-  fromAsana,
   cycle = null,
   creativeDb,
   can,
   setupHref,
+  usage = null,
+  clientId = null,
 }: {
   active: boolean;
   packageLabel: string | null;
@@ -105,6 +152,9 @@ export function PackagePanel({
   saveAllotment?: (form: FormData) => Promise<Result>;
   /** Team & setup, where Services sets the package */
   setupHref?: string;
+  /** This cycle's delivered (the sheet) and in motion (Asana) */
+  usage?: Usage | null;
+  clientId?: string | null;
 }) {
   const sprint = active && until;
   const left = sprint ? daysBetween(today, until) + 1 : 0;
@@ -164,17 +214,8 @@ export function PackagePanel({
         </p>
         <Meter name="Images & carousels" cap={images} used={imagesUsed} />
         <Meter name="Videos" cap={videos} used={videosUsed} />
-        {fromAsana && (fromAsana.images > 0 || fromAsana.videos > 0) && (
-          <p className="-mt-1 text-[11px] text-faint">
-            Includes {both(fromAsana.images, fromAsana.videos)} in production or delivered in Asana this {cycle?.billingDay ? "cycle" : "month"}
-          </p>
-        )}
-        {fromAsana && ((fromAsana.waitingImages ?? 0) > 0 || (fromAsana.waitingVideos ?? 0) > 0) && (
-          <p className="-mt-1 text-[11px] text-warn">
-            {both(fromAsana.waitingImages ?? 0, fromAsana.waitingVideos ?? 0)} of these briefed in Asana and not started yet: they count from the moment they&apos;re briefed
-          </p>
-        )}
-        {creativeDb && <DbCheck db={creativeDb} imagesUsed={imagesUsed} videosUsed={videosUsed} />}
+        {usage?.shared && <p className="-mt-1 text-[11px] text-faint">A shared allotment: every location drawing from it counts here.</p>}
+        <UsageBreakdown clientId={clientId} db={creativeDb ?? null} usage={usage} canLink={can.exec || can.allot} />
       </div>
 
       {cycle?.billingDay ? (

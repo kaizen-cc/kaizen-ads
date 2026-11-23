@@ -3,10 +3,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { driveToken } from "@/lib/context/google";
 import { compact } from "@/lib/context/shared";
 
-// Each client's Creative Database (a Google Sheet in their Drive folder, "<Client> - Creative Database") logs what the
-// team delivered, ready for the client: date, creative type, how many new deliverables and how many in all with
-// variations. It's read with the Account Overview sheet (12pm and 5pm ET) as a cross-check on the allotment count,
-// which comes from tickets and Asana tasks (what's in motion). The sheet only has finished work, so it trails.
+// Each client's Creative Database (a Google Sheet, "<Client> - Creative Database") is the source of truth for what the
+// team DELIVERED (owner, Nov 23 2026): date created, creative type, new deliverables and "QTY of Total Creative
+// (including variations)", which is what counts (every version counts). Its dated rows are kept on the client, so the
+// allotment counts what was delivered inside the billing cycle; Asana and tickets give only what's in motion
+// (client_allotment_usage). Read with the Account Overview sheet (12pm and 5pm ET), and on demand from the allotment
+// card. A sheet can be linked by hand (clients.creative_db_sheet_id) when its name doesn't match the client's.
 
 export type DbCount = { newImages: number; newVideos: number; allImages: number; allVideos: number; rows: number };
 /** One delivered row, kept so the allotment counts it inside the client's billing cycle: d day, v video, n new, a in all with variations */
@@ -48,11 +50,18 @@ async function readSheet(token: string, id: string) {
   if (!tab) throw new Error("No tabs");
   const { values = [] } = await google<{ values?: string[][] }>(token, `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(`'${tab}'`)}?valueRenderOption=FORMATTED_VALUE`);
   // The header row is the one naming the creative type (the first row also carries the how-to text)
-  const h = values.findIndex((r) => r.some((c) => /creative type/i.test(c)));
-  if (h < 0) throw new Error("Couldn't find the header row");
-  const col = (re: RegExp) => values[h].findIndex((c) => re.test(c));
-  const [cDate, cType, cNew, cAll] = [col(/date created/i), col(/creative type/i), col(/new deliverables/i), col(/total creative/i)];
-  if (cDate < 0 || cNew < 0) throw new Error("Couldn't find the date or new deliverables columns");
+  // (Rows under it that are the template's samples, "File" / "Ad Title" / "m/d/yyyy", have no real date and are skipped)
+  const h = values.findIndex((r) => r.some((c) => /creative\s*type|type of creative/i.test(c)) && r.some((c) => /date/i.test(c)));
+  if (h < 0) throw new Error("Couldn't find the header row (Date Created, Creative Type)");
+  const col = (...res: RegExp[]) => {
+    for (const re of res) {
+      const i = values[h].findIndex((c) => re.test(c));
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
+  const [cDate, cType, cNew, cAll] = [col(/date created/i, /^\s*date\b/i, /date/i), col(/creative\s*type/i, /type/i), col(/new deliverables/i, /\bnew\b/i), col(/total creative/i, /including variations/i, /\btotal\b/i)];
+  if (cDate < 0 || (cNew < 0 && cAll < 0)) throw new Error("Couldn't find the date and quantity columns");
   const [y, m] = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }).split("-").map(Number);
   const monthStart = Date.UTC(y, m - 1, 1);
   const since45 = Date.now() - 45 * 86_400_000;
@@ -65,7 +74,7 @@ async function readSheet(token: string, id: string) {
     const d = dateOf(r[cDate]);
     if (!d) continue;
     const video = /video|reel|ugc/i.test(r[cType] ?? "");
-    const fresh = num(r[cNew]);
+    const fresh = cNew >= 0 ? num(r[cNew]) : 0;
     const all = cAll >= 0 ? Math.max(num(r[cAll]), fresh) : fresh;
     if (!fresh && !all) continue;
     if (d.getTime() >= since100) rows.push({ d: d.toISOString().slice(0, 10), v: video, n: fresh, a: all });
@@ -87,6 +96,45 @@ async function readSheet(token: string, id: string) {
   return { month, last45, rows: rows.slice(-400) };
 }
 
+/** Read one sheet into the client's record (the counts, and the dated rows the allotment counts) */
+async function storeRead(admin: SupabaseClient, token: string, clientId: string, sheet: { id: string; name: string; webViewLink: string }): Promise<{ ok: true } | { ok: false; error: string }> {
+  const now = new Date().toISOString();
+  try {
+    const counts = await readSheet(token, sheet.id);
+    const db: CreativeDb = { sheetId: sheet.id, url: sheet.webViewLink, name: sheet.name, readAt: now, ...counts };
+    await admin.from("clients").update({ creative_db: db }).eq("id", clientId);
+    return { ok: true };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    await admin.from("clients").update({ creative_db: { sheetId: sheet.id, url: sheet.webViewLink, name: sheet.name, readAt: now, month: zero(), last45: zero(), error } satisfies CreativeDb }).eq("id", clientId);
+    return { ok: false, error };
+  }
+}
+
+/** A sheet by its id (a link pasted on the client page) */
+async function sheetById(token: string, id: string) {
+  return google<{ id: string; name: string; webViewLink: string }>(token, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true&fields=id,name,webViewLink`);
+}
+
+/** The sheet id in a Google Sheets link (or the id itself) */
+export function sheetIdOf(link: string): string | null {
+  const m = link.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]{20,})/) ?? link.match(/^([A-Za-z0-9_-]{25,})$/);
+  return m ? m[1] : null;
+}
+
+/** Read one client's Creative Database now (the allotment card's Read now, and after a link is set) */
+export async function readClientCreativeDb(admin: SupabaseClient, clientId: string): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+  const token = await driveToken();
+  const { data: c } = await admin.from("clients").select("id, name, creative_db_sheet_id, creative_db").eq("id", clientId).maybeSingle();
+  if (!c) return { ok: false, error: "No such client." };
+  const id = (c.creative_db_sheet_id as string | null) ?? ((c.creative_db as CreativeDb | null)?.sheetId ?? null);
+  if (!id) return { ok: false, error: "No Creative Database linked yet: paste its link." };
+  const sheet = await sheetById(token, id).catch((e: unknown) => e as Error);
+  if (sheet instanceof Error) return { ok: false, error: `Google won't open that sheet (${sheet.message.slice(0, 120)}). Share it with the Drive user, or check the link.` };
+  const r = await storeRead(admin, token, clientId, sheet);
+  return r.ok ? { ok: true, name: sheet.name } : r;
+}
+
 /** Finds every client's Creative Database in Drive and reads it. */
 export async function syncCreativeDatabases(admin: SupabaseClient) {
   const token = await driveToken();
@@ -102,33 +150,28 @@ export async function syncCreativeDatabases(admin: SupabaseClient) {
     pageToken = page.nextPageToken ?? "";
   } while (pageToken);
 
-  const { data: clients } = await admin.from("clients").select("id, name").eq("creative_package", true).is("archived_at", null);
-  const now = new Date().toISOString();
+  const { data: clients } = await admin.from("clients").select("id, name, creative_db_sheet_id").eq("creative_package", true).is("archived_at", null);
   const out = { sheets: files.length, read: 0, failed: [] as string[], noSheet: [] as string[] };
   for (const c of clients ?? []) {
     const key = compact(c.name as string);
-    // "<Client> - Creative Database"; the most recently edited when there are several
-    // The sheet named exactly for this client first; a longer name (a location of theirs: "Crust Pizza - Gleannloch
-    // Farms") only when there's no exact one, so a parent never reads a location's sheet
+    // A sheet linked by hand wins; then the sheet named exactly for this client; a longer name (a location of theirs:
+    // "Crust Pizza - Gleannloch Farms") only when there's no exact one, so a parent never reads a location's sheet
     const named = (f: { name: string }) => compact(f.name.replace(/creative database.*/i, ""));
     const newest = (a: { modifiedTime: string }, b: { modifiedTime: string }) => b.modifiedTime.localeCompare(a.modifiedTime);
-    const sheet = files.filter((f) => key.length >= 3 && named(f) === key).sort(newest)[0] ?? files.filter((f) => key.length >= 3 && named(f).startsWith(key) && !(clients ?? []).some((o) => o.id !== c.id && compact(o.name as string).length > key.length && named(f).startsWith(compact(o.name as string)))).sort(newest)[0];
+    const linked = (c.creative_db_sheet_id as string | null) ?? null;
+    const sheet =
+      (linked ? (files.find((f) => f.id === linked) ?? (await sheetById(token, linked).catch(() => null))) : null) ??
+      files.filter((f) => key.length >= 3 && named(f) === key).sort(newest)[0] ??
+      files.filter((f) => key.length >= 3 && named(f).startsWith(key) && !(clients ?? []).some((o) => o.id !== c.id && compact(o.name as string).length > key.length && named(f).startsWith(compact(o.name as string)))).sort(newest)[0];
     if (!sheet) {
       out.noSheet.push(c.name as string);
       continue;
     }
-    try {
-      // Two reads a sheet: paced under the Sheets per-minute read quota
-      await wait(1_200);
-      const counts = await readSheet(token, sheet.id);
-      const db: CreativeDb = { sheetId: sheet.id, url: sheet.webViewLink, name: sheet.name, readAt: now, ...counts };
-      await admin.from("clients").update({ creative_db: db }).eq("id", c.id);
-      out.read++;
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      await admin.from("clients").update({ creative_db: { sheetId: sheet.id, url: sheet.webViewLink, name: sheet.name, readAt: now, month: zero(), last45: zero(), error } satisfies CreativeDb }).eq("id", c.id);
-      out.failed.push(`${c.name}: ${error}`);
-    }
+    // Two reads a sheet: paced under the Sheets per-minute read quota
+    await wait(1_200);
+    const r = await storeRead(admin, token, c.id as string, sheet);
+    if (r.ok) out.read++;
+    else out.failed.push(`${c.name}: ${r.error}`);
   }
   return out;
 }
