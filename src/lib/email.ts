@@ -22,6 +22,9 @@ export function fromWithName(from: string, name?: string) {
 
 export type SendResult = { ok: true; id?: string } | { ok: false; error: string };
 
+/** A subject on one line: breaks and tabs become spaces, runs of spaces one, at most 300 characters */
+export const oneLine = (s: unknown) => String(s ?? "").replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim().slice(0, 300);
+
 export async function sendEmail(params: {
   to: string | string[];
   subject: string;
@@ -40,7 +43,8 @@ export async function sendEmail(params: {
   const body = JSON.stringify({
     from: fromWithName(process.env.RESEND_FROM_EMAIL || DEFAULT_FROM, params.fromName || SENDER_NAME),
     to: params.to,
-    subject: params.subject,
+    // One line: Resend refuses a subject with a line break in it (a client or campaign name can carry one)
+    subject: oneLine(params.subject),
     html: params.html,
     text: params.text,
     reply_to: params.replyTo ?? DEFAULT_REPLY_TO,

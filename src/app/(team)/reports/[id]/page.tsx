@@ -55,10 +55,21 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   // Not yet sent: its numbers are worked out again from the synced data (and its text follows them when they moved), so the
   // studio never shows numbers the account has since revised. A sent report is a record and is left alone.
   let current = first;
-  if (adminConfigured() && (first.status === "draft" || first.status === "submitted") && first.metrics) {
-    if (isChannel) await (await import("@/lib/channel-reports/refresh")).refreshChannelForStudio(createAdminClient(), id, { id: me.id, name: me.fullName }).catch(() => null);
-    else await refreshForStudio(createAdminClient(), id, { id: me.id, name: me.fullName }).catch(() => null);
-    current = (await readReport()).data ?? first;
+  // A draft whose writing stopped partway (numbers, no text: an outage mid-write) is written again now, and the studio
+  // shows it being written instead of a page that waits forever for a PDF with nothing to draw
+  if (adminConfigured() && first.status === "draft" && !first.sections && !me.viewAs) {
+    const { data: healed } = await createAdminClient().from("reports").update({ status: "queued", regenerated_at: new Date().toISOString(), error: null, updated_at: new Date().toISOString() }).eq("id", id).eq("status", "draft").is("sections", null).select("id").maybeSingle();
+    if (healed) {
+      current = { ...first, status: "queued" };
+      const { regenerateNow } = await import("@/lib/reports/regenerate");
+      after(() => regenerateNow(createAdminClient(), id).catch(() => undefined));
+    }
+  } else if (adminConfigured() && (first.status === "draft" || first.status === "submitted") && first.metrics) {
+    // At most a few seconds: a slow database (an outage) never holds the page; the refresh finishes behind it
+    const refresh = isChannel ? (await import("@/lib/channel-reports/refresh")).refreshChannelForStudio(createAdminClient(), id, { id: me.id, name: me.fullName }) : refreshForStudio(createAdminClient(), id, { id: me.id, name: me.fullName });
+    const finished = await Promise.race([refresh.then(() => true).catch(() => true), new Promise<false>((res) => setTimeout(() => res(false), 8_000))]);
+    if (finished) current = (await readReport()).data ?? first;
+    else after(() => refresh.then(() => undefined).catch(() => undefined));
   }
   const r = current;
   // Its buyer opening it for the first time: the heads of the line see it's been looked at

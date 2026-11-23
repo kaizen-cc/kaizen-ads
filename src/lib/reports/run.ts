@@ -114,9 +114,11 @@ export async function draftQueued(admin: SupabaseClient, budgetMs = 600_000, opt
   const recent = (at: string | null) => Boolean(at && Date.now() - Date.parse(at) < 6 * 3_600_000);
   let done = 0;
   while (Date.now() < until - 150_000) {
-    // Queued ones, and any stuck mid-draft for 20 minutes (a timeout), monthly first (they're critical)
+    // Queued ones, any stuck mid-draft for 20 minutes (a timeout), and any left a draft with no text for 15 (an outage
+    // mid-write: numbers saved, the words never), monthly first (they're critical)
     const stuck = new Date(Date.now() - 20 * 60_000).toISOString();
-    let q = admin.from("reports").select("id, status, updated_at, target_id, regenerated_at, platform, clients(services, services_extra, services_removed, strategy_only)").in("platform", ["meta", "google", "tiktok"]).or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck})`);
+    const textless = new Date(Date.now() - 15 * 60_000).toISOString();
+    let q = admin.from("reports").select("id, status, updated_at, target_id, regenerated_at, platform, clients(services, services_extra, services_removed, strategy_only)").in("platform", ["meta", "google", "tiktok"]).or(`status.eq.queued,and(status.eq.drafting,updated_at.lt.${stuck}),and(status.eq.draft,sections.is.null,updated_at.lt.${textless})`);
     if (opts.regenerated) q = q.gte("regenerated_at", new Date(Date.now() - 6 * 3_600_000).toISOString());
     const { data: found } = await q.order("kind", { ascending: true }).order("created_at").limit(60);
     // A queued report on a line the client no longer buys waits, kept, until the service is back (src/lib/service-gate.ts)

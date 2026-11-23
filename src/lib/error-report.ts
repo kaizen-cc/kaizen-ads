@@ -19,7 +19,8 @@ const normalize = (s: string | null | undefined) =>
     .replace(/\d+/g, "#")
     .slice(0, 300);
 
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+// Anything (a diagnosis missing a field, an error without a message): the reporter must never crash and lose the error
+const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 /** The key one error is grouped under (error_events.fingerprint): the same for every time it happens. */
 export const errorFingerprint = (kind: string, message: string, path: string | null) =>
@@ -130,7 +131,7 @@ export async function reportError(input: {
       fixUrl = (await createFixIssue(fingerprint, "automatically", true).catch(() => ({ url: undefined }))).url ?? null;
     }
     const handled = d?.handled ?? "Recorded; the person saw a friendly error page and their work is safe.";
-    const subject = `[Kaizen OS] ${sev === "high" ? "🔴 " : sev === "low" ? "" : "🟠 "}${count > 1 ? `${count}× ` : ""}${input.message.slice(0, 80)}`;
+    const subject = `[Kaizen OS] ${sev === "high" ? "🔴 " : sev === "low" ? "" : "🟠 "}${count > 1 ? `${count}× ` : ""}${String(input.message ?? "Unknown error").slice(0, 80)}`;
     const fixHref = fixUrl ?? opsLink("fix", fingerprint);
     const fixLabel = fixUrl ? (sev === "low" ? "Claude is fixing it (merges itself if the checks pass)" : "Claude is already on it") : "Have Claude fix it";
     const text = [

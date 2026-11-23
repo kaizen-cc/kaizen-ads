@@ -98,15 +98,46 @@ export function PdfPreview({
     documentRef.current = documentFor;
   });
 
-  // The document and its pictures, from the server (once, and when the report itself changes there)
+  // The document and its pictures, from the server (once, and when the report itself changes there). Never waits
+  // silently: 90 seconds at most, one more try by itself when the server or database hiccups (a 5xx, a dropped
+  // connection), then a plain message with Retry.
+  const [attempt, setAttempt] = useState(0);
+  const [stage, setStage] = useState("Loading the report's numbers…");
   useEffect(() => {
     let live = true;
-    void (async () => {
+    const once = async () => {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 90_000);
       try {
-        const res = await fetch(source, { cache: "no-store" });
+        const res = await fetch(source, { cache: "no-store", signal: ctrl.signal });
+        if (res.status >= 500) throw Object.assign(new Error("The server is slow to answer right now."), { retry: true });
         if (!res.ok) throw new Error((await res.text()).slice(0, 200) || "The report couldn't be loaded");
-        const b = (await res.json()) as Base;
-        if (live) setBase(b);
+        return (await res.json()) as Base;
+      } catch (e) {
+        if (ctrl.signal.aborted) throw Object.assign(new Error("Loading the report took over 90 seconds."), { retry: true });
+        if (e instanceof TypeError) throw Object.assign(new Error("The connection dropped while loading the report."), { retry: true });
+        throw e;
+      } finally {
+        clearTimeout(t);
+      }
+    };
+    void (async () => {
+      setFailed(null);
+      setStage("Loading the report's numbers…");
+      try {
+        let b: Base;
+        try {
+          b = await once();
+        } catch (e) {
+          if (!(e as { retry?: boolean }).retry || !live) throw e;
+          setStage("Trying again…");
+          await new Promise((res) => setTimeout(res, 3_000));
+          b = await once();
+        }
+        if (live) {
+          setStage("Drawing the pages…");
+          setBase(b);
+        }
       } catch (e) {
         if (live) setFailed(e instanceof Error ? e.message : "The report couldn't be loaded");
       }
@@ -114,7 +145,7 @@ export function PdfPreview({
     return () => {
       live = false;
     };
-  }, [source, baseKey]);
+  }, [source, baseKey, attempt]);
 
   // The download: the same document with the buyer's changes, without the preview's click targets
   const makerRef = useRef(onMaker);
@@ -141,7 +172,8 @@ export function PdfPreview({
       try {
         const [{ pdf }, pdfjs] = await Promise.all([import("@react-pdf/renderer"), import("pdfjs-dist")]);
         pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
-        const blob = await pdf(await documentRef.current(base, true)).toBlob();
+        // Drawing never spins for ever either: 90 seconds, then the message and Retry
+        const blob = await Promise.race([pdf(await documentRef.current(base, true)).toBlob(), new Promise<never>((_, no) => setTimeout(() => no(new Error("Drawing the PDF took over 90 seconds.")), 90_000))]);
         const task = pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) });
         const doc = await task.promise;
         const width = Math.min(RENDER_MAX, Math.round((wrap.current?.clientWidth || 800) * (window.devicePixelRatio || 1)));
@@ -196,13 +228,30 @@ export function PdfPreview({
       )}
       {drawing && pages &&<span className="pointer-events-none sticky top-20 z-10 justify-self-end rounded-full bg-fg px-3 py-1 text-[11.5px] text-bg shadow-lg">Updating…</span>}
       {!pages && !failed && (
-        <div className="grid aspect-[8.5/11] place-items-center rounded-[6px] bg-white">
+        <div className="grid aspect-[8.5/11] place-content-center justify-items-center gap-3 rounded-[6px] bg-white">
           <span className="h-1.5 w-24 overflow-hidden rounded-full bg-[#ececee]">
             <span className="block h-full w-1/2 animate-[ai-sweep_1.4s_ease-in-out_infinite] rounded-full bg-[#c8102e]" />
           </span>
+          <span className="text-[12px] text-[#6b6b6b]">{stage}</span>
         </div>
       )}
-      {failed && <p className="rounded-[12px] border border-bad/40 bg-bad-soft/40 px-4 py-3 text-[13px] text-bad">{failed}</p>}
+      {failed && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-bad/40 bg-bad-soft/40 px-4 py-3 text-[13px] text-bad">
+          <span>{failed}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setFailed(null);
+              setPages(null);
+              setBase(null);
+              setAttempt((n) => n + 1);
+            }}
+            className="h-11 shrink-0 rounded-full bg-fg px-4 text-[13px] text-bg md:h-9"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {pages?.map((p, i) => (
         <div key={i} className="relative overflow-hidden rounded-[4px] bg-white shadow-[0_30px_80px_-30px_rgba(0,0,0,0.7)]" style={{ aspectRatio: `1 / ${p.ratio}` }}>
           <Drawn canvas={p.canvas} />
