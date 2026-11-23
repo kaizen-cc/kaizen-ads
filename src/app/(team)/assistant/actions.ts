@@ -6,6 +6,7 @@ import { after } from "next/server";
 import { requireStaff } from "@/lib/auth";
 import { AUDIO_BUCKET } from "@/lib/agent-call/safety";
 import { CALL_LIMIT_SECONDS, audioPartPath, isVoiceId } from "@/lib/agent-call/core";
+import { parseModeLog, stillOpen, talkModeOf } from "@/lib/agent-call/modality";
 import { cleanAssistantName, pickedColor } from "@/lib/agent-look";
 import { ConnectorError } from "@/lib/connector-http";
 import { mergeVoices, optionOf, type Voice, type VoiceOption } from "@/lib/voices";
@@ -29,10 +30,12 @@ async function myCall(callId: string, graceSeconds = 600) {
   const me = await requireStaff();
   if (!/^[0-9a-f-]{36}$/.test(callId)) return null;
   const admin = createAdminClient();
-  const { data: call } = await admin.from("ai_role_calls").select("id, profile_id, role_key, started_at, ended_at, uploads, audio_parts, safety_reviewed_at").eq("id", callId).maybeSingle();
+  const { data: call } = await admin.from("ai_role_calls").select("id, profile_id, role_key, started_at, ended_at, uploads, audio_parts, safety_reviewed_at, mode, last_turn_at, mode_log").eq("id", callId).maybeSingle();
   if (!call || call.profile_id !== me.id) return null;
   if (call.ended_at && Date.now() - Date.parse(call.ended_at as string) > graceSeconds * 1000) return null;
-  if (Date.now() - Date.parse(call.started_at as string) > (CALL_LIMIT_SECONDS + graceSeconds) * 1000) return null;
+  // Still taking turns: a call within its thirty minutes, or a chat that's still going (chats last hours; Nov 23 2026 a
+  // screenshot pasted into a chat started 1h44m earlier was refused as "This call has ended")
+  if (!call.ended_at && !stillOpen({ mode: talkModeOf(call.mode), startedAt: call.started_at as string, lastTurnAt: (call.last_turn_at as string | null) ?? null, log: parseModeLog(call.mode_log), callLimitSeconds: CALL_LIMIT_SECONDS + graceSeconds })) return null;
   return { me, admin, call };
 }
 

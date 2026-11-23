@@ -277,6 +277,8 @@ function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
   // Screenshots and files to send with the message: pasted (Ctrl/Cmd+V), dropped on the box, or picked with the clip
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
+  // Why the last attachment didn't go (shown right above the box, not only in the header)
+  const [fileError, setFileError] = useState<string | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   const addFiles = (list: FileList | File[] | null | undefined) => {
     const add = [...(list ?? [])].filter((f) => f.size > 0 && f.size <= 50 * 1024 * 1024);
@@ -294,8 +296,10 @@ function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
       setFiles([]);
       setDraft("");
       base.current = "";
+      setFileError(null);
       v.onSendFiles(text, sendThese)
-        .catch(() => {
+        .catch((e: unknown) => {
+          setFileError(e instanceof Error && e.message ? `${e.message} Try again.` : "That didn't go through. Try again.");
           // Didn't go through: back in the box to try again
           setFiles(sendThese);
           setDraft((d) => d || text);
@@ -341,6 +345,11 @@ function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
             </span>
           ))}
         </div>
+      )}
+      {fileError && !sending && (
+        <p role="alert" className="px-1 text-[12px] text-bad">
+          {fileError}
+        </p>
       )}
       {(sending || v.uploading) && !v.uploadAsk && <p className="px-1 text-[12px] text-muted" aria-live="polite">{v.uploading ?? "Adding your files…"}</p>}
       <form
