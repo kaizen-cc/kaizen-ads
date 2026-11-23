@@ -51,6 +51,11 @@ export function chips(tab: ExecTab, cards: ExecCard[]): string[] {
     return [...by.entries()].map(([l, k]) => `${k} ${L[l] ?? l}`);
   }
   if (tab === "asana") {
+    const setup = cards.find((c) => c.key === "asana:connect");
+    if (setup) {
+      const shown = cards.length - 1;
+      return [setup.action.href ? "Connect Asana" : "Being set up", shown ? `${shown} from the shared view` : "nothing visible yet"];
+    }
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
     const week = new Date(Date.now() + 7 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
     const day = (c: ExecCard) => (c.due ? c.due.slice(0, 10) : null);
@@ -87,3 +92,10 @@ export function itemChips(id: string, cards: ExecCard[]): string[] {
   return [crit && `${crit} critical`, late && `${late} overdue`, clients > 1 && `${clients} clients`].filter((x): x is string => Boolean(x));
 }
 
+
+/** The Asana block while their own Asana isn't connected: a word, not a count of what the shared view sees */
+export function asanaLabel(id: string, cards: ExecCard[]): { bigLabel?: string } {
+  if (id !== "asana") return {};
+  const setup = cards.find((c) => c.key === "asana:connect");
+  return setup ? { bigLabel: setup.action.href ? "Connect" : "Soon" } : {};
+}

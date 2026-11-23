@@ -6,7 +6,7 @@ import { BLOCK_ORDER } from "@/lib/today-counts";
 import { todaySnapshot } from "@/lib/today-snapshot";
 import type { ExecCard, ExecTab } from "@/lib/exec-overview-core";
 import { Blocks, type BlockDef } from "./exec-home";
-import { BLOCK_TONE, itemChips } from "./exec-blocks";
+import { asanaLabel, BLOCK_TONE, itemChips } from "./exec-blocks";
 import { HiddenLog } from "./hidden-log";
 import { PageHeader } from "./shared";
 import { TodayHero, TodayHeroSkeleton } from "./today-hero";
@@ -81,6 +81,7 @@ export async function RoleOverview({ db, me, kind, base, subtitle, folded = {}, 
       cards,
       // Pulse is a read, never a to-do count
       count: t === "pulse" ? undefined : cards.length,
+      ...asanaLabel(t, cards),
       chips: itemChips(t, cards),
       empty: EMPTY[t],
       note: t === "pulse" ? "Your line at a glance. Nothing here is a to-do." : undefined,

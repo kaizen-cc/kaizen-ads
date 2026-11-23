@@ -68,7 +68,8 @@ export async function buildSnapshot(db: SupabaseClient, me: Staff, prev?: Snapsh
  */
 export const todaySnapshot = cache(async (db: SupabaseClient, me: Staff): Promise<Snapshot> => {
   const saved = await readSnapshot(db, me);
-  // A day saved before the block Overview (Nov 23 2026) is built again in its new shape
-  if (saved && saved.today.shape === (me.isExec ? "exec" : "blocks")) return saved;
+  // A day saved in an older shape is built again (src/lib/today.ts DAY_SHAPE_VERSION)
+  const { dayShape } = await import("@/lib/today");
+  if (saved && saved.today.shape === dayShape(me)) return saved;
   return buildSnapshot(db, me, saved);
 });

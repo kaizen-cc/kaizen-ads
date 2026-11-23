@@ -25,15 +25,24 @@ export function asanaLiveTools(ctx: ToolCtx): ChatTool[] {
   return [
     {
       name: "my_asana_tasks",
-      description: "The person's open Asana tasks (assigned to them), overdue first then by due date: name, client or project, section, due date, and the address that opens its preview on the Overview (open_screen 'my tasks', or the task's open address). Use for \"what's next on my Asana?\", \"what's overdue?\".",
+      description: "The person's open Asana tasks (assigned to them), overdue first then by due date: name, client or project, section, due date, and the address that opens its preview on the Overview (open_screen 'my tasks', or the task's open address). Use for \"what's next on my Asana?\", \"what's overdue?\". When connected is false, it's only the shared view: say so and offer the connect link, never \"nothing open\".",
       input_schema: { type: "object", properties: { search: { type: "string", description: "Only tasks whose name, client or project has these words" } }, additionalProperties: false },
       status: () => "Reading your Asana…",
       run: async (input) => {
-        const { myAsanaTasks } = await import("@/lib/asana-live");
+        const { myAsanaView } = await import("@/lib/asana-live");
+        const { asanaOAuthConfigured } = await import("@/lib/asana-user");
         const q = clip(input.search, 80).toLowerCase();
-        const tasks = (await myAsanaTasks(ctx.me.email, ctx.db, ctx.me.id)).filter((t) => !q || `${t.name} ${t.client ?? ""} ${t.project ?? ""}`.toLowerCase().includes(q));
+        const view = await myAsanaView(ctx.me.email, ctx.db, ctx.me.id);
+        const tasks = view.tasks.filter((t) => !q || `${t.name} ${t.client ?? ""} ${t.project ?? ""}`.toLowerCase().includes(q));
         const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-        return { overdue: tasks.filter((t) => t.due && t.due < today).length, tasks: tasks.slice(0, 25).map((t) => ({ gid: t.gid, name: t.name, client: t.client ?? t.project, section: t.section, due: t.due, open: `/pipeline?task=${t.gid}` })) };
+        // Their own Asana not connected: never "nothing open" (the shared view can't see their private tasks); tell them
+        // how to connect, and that these are only what the shared view sees
+        const notConnected = view.connected
+          ? null
+          : asanaOAuthConfigured()
+            ? { note: "Their own Asana isn't connected, so this is only what Kaizen's shared Asana view can see (never their private tasks). Never say they have nothing open: offer to connect it.", connect: "/api/asana/connect?next=%2Fpipeline%3Fblock%3Dasana" }
+            : { note: "Their own Asana connection is still being set up, so this is only what Kaizen's shared Asana view can see (never their private tasks). Never say they have nothing open." };
+        return { connected: view.connected, ...(notConnected ?? {}), overdue: tasks.filter((t) => t.due && t.due < today).length, tasks: tasks.slice(0, 25).map((t) => ({ gid: t.gid, name: t.name, client: t.client ?? t.project, section: t.section, due: t.due, open: `/pipeline?task=${t.gid}` })), open: "/pipeline?block=asana" };
       },
     },
     {

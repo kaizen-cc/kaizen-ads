@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { ItemQuickActions } from "@/components/item-quick-actions";
 import { capTab, TAB_LABEL, type ExecCard, type ExecTab } from "@/lib/exec-overview-core";
-import { BLURB, TONE, chips, type Tone } from "./exec-blocks";
+import { asanaLabel, BLURB, TONE, chips, type Tone } from "./exec-blocks";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { nudgeLead, takeItOver } from "../../exec-actions";
 import { openAsanaTask } from "@/components/asana-task-sheet";
@@ -45,6 +45,8 @@ export type BlockDef = {
   note?: string;
   /** One design per block: its own list (a lead's clients) stands for the items, which only count */
   cardsHidden?: boolean;
+  /** A word in place of the big number ("Connect" while their own Asana isn't connected), never a ✓ */
+  bigLabel?: string;
 };
 
 /**
@@ -93,7 +95,7 @@ export function Blocks({ blocks }: { blocks: BlockDef[] }) {
       <style>{`@keyframes block-in { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }`}</style>
       {blocks.map((bl, i) => {
         const count = bl.count ?? bl.cards?.length;
-        const calm = count === 0;
+        const calm = count === 0 && !bl.bigLabel;
         const tone = calm ? CALM : bl.tone;
         const isOpen = open === bl.id;
         return (
@@ -112,10 +114,16 @@ export function Blocks({ blocks }: { blocks: BlockDef[] }) {
               </span>
               <span className="grid gap-3">
                 <span className="flex items-end gap-3">
-                  {count != null && (
-                    <span className="tabular font-display text-6xl leading-none tracking-tight md:text-7xl" style={{ color: "var(--accent)" }}>
-                      {calm ? "✓" : count}
+                  {bl.bigLabel ? (
+                    <span className="font-display text-4xl leading-none tracking-tight md:text-5xl" style={{ color: "var(--accent)" }}>
+                      {bl.bigLabel}
                     </span>
+                  ) : (
+                    count != null && (
+                      <span className="tabular font-display text-6xl leading-none tracking-tight md:text-7xl" style={{ color: "var(--accent)" }}>
+                        {calm ? "✓" : count}
+                      </span>
+                    )
                   )}
                   <span className="min-w-0 pb-1.5 text-[15px] leading-snug text-ink/80">{calm && bl.empty ? bl.empty.title : bl.blurb}</span>
                 </span>
@@ -160,6 +168,7 @@ export function ExecBlocks({ tabs, owner }: { tabs: Record<ExecTab, ExecCard[]>;
         chips: chips(t, tabs[t]),
         empty: EMPTY[t],
         note: t === "pulse" ? "The agency at a glance. Nothing here is a to-do." : undefined,
+        ...asanaLabel(t, tabs[t]),
       }))}
     />
   );
@@ -348,3 +357,4 @@ function AsanaOpen({ gid, url }: { gid: string; url: string | null }) {
     </>
   );
 }
+

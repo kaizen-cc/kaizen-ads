@@ -87,7 +87,14 @@ export type TodayItem = {
 };
 export type Resolved = { key: string; topic: TopicKey; client: string; title: string; by: string | null; what: string };
 /** counts: items by tier (kept for older readers); looks: what every screen shows, counted by client (src/lib/today-counts.ts) */
-export type Today = { items: TodayItem[]; resolved: Resolved[]; counts: Record<Tier, number>; looks: Looks; shape?: "exec" | "blocks" };
+export type Today = { items: TodayItem[]; resolved: Resolved[]; counts: Record<Tier, number>; looks: Looks; shape?: string };
+
+/**
+ * The shape a saved day is built in. Bump DAY_SHAPE_VERSION whenever what an item or a block holds changes, so every
+ * day saved before is built again on its next look (a read-only View as included), never shown stale.
+ */
+export const DAY_SHAPE_VERSION = 3;
+export const dayShape = (me: { isExec: boolean }) => `${me.isExec ? "exec" : "blocks"}:${DAY_SHAPE_VERSION}`;
 
 const tierOf = (score: number): Tier => (score >= 80 ? "critical" : score >= 60 ? "high" : "normal");
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
@@ -911,5 +918,5 @@ export async function loadToday(db: SupabaseClient, me: Staff): Promise<Today> {
   const resolved = await whatHappened(db, gone.map((g) => ({ key: g.key as string, snapshot: g.snapshot as { client?: string; title?: string; topic?: TopicKey } })));
   const counts = { critical: 0, high: 0, normal: 0 };
   for (const i of items) counts[i.tier]++;
-  return { items, resolved, counts, looks: countLooks(items), shape: me.isExec ? ("exec" as const) : ("blocks" as const) };
+  return { items, resolved, counts, looks: countLooks(items), shape: dayShape(me) };
 }

@@ -115,16 +115,27 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
 // ─── Next for me in Asana ─────────────────────────────────────────────────────
 
 /** Every open Asana task assigned to this person, overdue first, then today, then soon, then undated */
-export async function asanaCards(db: SupabaseClient, me: { id: string; email: string | null }): Promise<ExecCard[]> {
+/** The owner's one step to turn on everyone's own Asana (the System block and their Asana block say it) */
+export const ASANA_SETUP_STEP = "In Asana (app.asana.com/0/my-apps) create an app, add the redirect URL https://app.kaizenmarketing.agency/api/asana/callback, choose Full permissions, then put its Client ID and Client secret in Vercel (Production) as ASANA_CLIENT_ID and ASANA_CLIENT_SECRET and redeploy.";
+
+export async function asanaCards(db: SupabaseClient, me: { id: string; email: string | null; canViewAs?: boolean }): Promise<ExecCard[]> {
   const { myAsanaView } = await import("@/lib/asana-live");
   const { asanaOAuthConfigured } = await import("@/lib/asana-user");
   const today = nyDay();
   const { tasks, connected } = await myAsanaView(me.email, db, me.id).catch(() => ({ tasks: [], connected: false }));
-  // Not connected with their own Asana: what the shared connection sees (no private tasks), and the way to connect
-  const connect: ExecCard[] =
-    !connected && asanaOAuthConfigured()
-      ? [{ key: "asana:connect", tab: "asana", kind: "approval", client: null, clientId: null, title: "Connect your Asana to see all your tasks (private ones too)", detail: "This shows only what Kaizen's shared Asana connection can see. Connect yours once and this block mirrors your Asana My tasks, and what you change here is yours in Asana.", severity: "high", action: { label: "Connect Asana", href: "/api/asana/connect?next=%2Fpipeline%3Fblock%3Dasana" } }]
-      : [];
+  // Not connected with their own Asana: never "nothing open" (that would be the shared view speaking for them). The way
+  // to connect comes first, then whatever the shared connection sees, marked as such. Not set up yet: say so (the
+  // owner gets the exact step)
+  const ready = asanaOAuthConfigured();
+  const connect: ExecCard[] = connected
+    ? []
+    : [
+        ready
+          ? { key: "asana:connect", tab: "asana", kind: "approval", client: null, clientId: null, title: "Connect your Asana to see all your tasks (private ones too)", detail: tasks.length ? "Below is only what Kaizen's shared Asana view can see. Connect yours once and this block mirrors your Asana My tasks, and what you change here is yours in Asana." : "Kaizen's shared Asana view can't see your tasks (private ones never). Connect yours once and this block mirrors your Asana My tasks.", severity: "high", action: { label: "Connect Asana", href: "/api/asana/connect?next=%2Fpipeline%3Fblock%3Dasana" } }
+          : me.canViewAs
+            ? { key: "asana:connect", tab: "asana", kind: "approval", client: null, clientId: null, title: "Turn on everyone's own Asana: one step left", detail: ASANA_SETUP_STEP, severity: "high", action: { label: "Open Asana apps", href: "https://app.asana.com/0/my-apps" } }
+            : { key: "asana:connect", tab: "asana", kind: "approval", client: null, clientId: null, title: "Your Asana connection is being set up", detail: tasks.length ? "Soon you'll connect your own Asana here and see all your tasks, private ones too. Below is only what Kaizen's shared Asana view can see." : "Soon you'll connect your own Asana here and see all your tasks, private ones too. Kaizen's shared Asana view can't see yours yet.", severity: "normal", action: { label: "", href: null } },
+      ];
   return [...connect, ...tasks.map((t) => {
     const late = Boolean(t.due && t.due < today);
     return {
@@ -135,7 +146,7 @@ export async function asanaCards(db: SupabaseClient, me: { id: string; email: st
       clientId: null,
       clientSlug: t.clientSlug,
       title: t.name,
-      detail: [t.client ?? t.project, t.section, t.due ? (late ? `overdue since ${short(`${t.due}T12:00:00Z`)}` : t.due === today ? "due today" : `due ${short(`${t.due}T12:00:00Z`)}`) : "no date"].filter(Boolean).join(" · "),
+      detail: [t.client ?? t.project, t.section, t.due ? (late ? `overdue since ${short(`${t.due}T12:00:00Z`)}` : t.due === today ? "due today" : `due ${short(`${t.due}T12:00:00Z`)}`) : "no date", connected ? null : "from the shared Asana view"].filter(Boolean).join(" · "),
       severity: late ? ("high" as const) : t.due === today ? ("normal" as const) : ("normal" as const),
       due: t.due ? `${t.due}T21:00:00Z` : null,
       action: { label: "Open", href: `/pipeline?block=asana&task=${t.gid}` },
@@ -342,6 +353,9 @@ async function system(admin: SupabaseClient): Promise<ExecCard[]> {
       severity: f.fix_state === "checks_failed" ? "critical" : "high",
       action: { label: f.fix_pr_url ? "Open the fix" : "Open feedback", href: f.fix_pr_url ?? "/feedback" },
     });
+  // Everyone's own Asana isn't switched on yet: the owner's one step
+  const { asanaOAuthConfigured } = await import("@/lib/asana-user");
+  if (!asanaOAuthConfigured()) cards.push({ key: "system:asana-oauth", tab: "system", kind: "system", client: null, clientId: null, title: "Everyone's own Asana isn't switched on yet", detail: ASANA_SETUP_STEP, severity: "critical", action: { label: "Open Asana apps", href: "https://app.asana.com/0/my-apps" } });
   // Teammates Asana doesn't know by their work email: their "Next for me in Asana" would be empty
   const { asanaUnmapped } = await import("@/lib/asana-live");
   const unmapped = await asanaUnmapped(admin).catch(() => []);
