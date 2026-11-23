@@ -152,3 +152,24 @@ describe("every order system in the location split", () => {
     expect(allLocationsLabel(null, "Placed Order")).toBe("Placed Order orders (all locations)");
   });
 });
+
+describe("each flow counts every order system", () => {
+  it("adds the other systems' flow days on top of the primary's, and a day only they earned on", async () => {
+    const { combineFlowDays } = await import("@/lib/channel-reports/email-sources");
+    const base = { recipients: 100, delivered: 98, opensUnique: 40, clicksUnique: 5 };
+    const rows = [
+      { flowId: "welcome", date: "2026-11-18", conversions: 3, revenue: 90, ...base },
+      { flowId: "winback", date: "2026-11-18", conversions: 1, revenue: 20, ...base },
+    ];
+    const per = [
+      { flow_id: "welcome", metric_id: "SMvxJW", date: "2026-11-18", conversions: 3, revenue: 90 }, // the primary: already in rows
+      { flow_id: "welcome", metric_id: "Ycwy2j", date: "2026-11-18", conversions: 2, revenue: 55.5 },
+      { flow_id: "postpurchase", metric_id: "Ycwy2j", date: "2026-11-19", conversions: 1, revenue: 30 },
+    ];
+    const out = combineFlowDays(rows, per, ["SMvxJW", "Ycwy2j"]);
+    expect(out.find((r) => r.flowId === "welcome")).toMatchObject({ conversions: 5, revenue: 145.5, recipients: 100 });
+    expect(out.find((r) => r.flowId === "winback")).toMatchObject({ conversions: 1, revenue: 20 });
+    expect(out.find((r) => r.flowId === "postpurchase")).toMatchObject({ conversions: 1, revenue: 30, recipients: 0 });
+    expect(combineFlowDays(rows, per, ["SMvxJW"])).toBe(rows);
+  });
+});

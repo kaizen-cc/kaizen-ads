@@ -10,7 +10,7 @@ import { campaignsIn, channelPeriods, emailMetrics, heroImage, platformOfLine, s
 import { conversionMetricsOf, revenueTarget, type ConversionMetric } from "@/lib/email-metrics";
 import { monthSoFar } from "@/lib/reports/period";
 import { locationBreakdown, type LocationBreakdown, type LocationRow } from "@/lib/klaviyo/locations";
-import { combineDays, mirroredOverlap, revenueSourceIds, revenueSources, type MetricDay } from "./email-sources";
+import { combineDays, combineFlowDays, mirroredOverlap, revenueSourceIds, revenueSources, type MetricDay } from "./email-sources";
 import { campaignPicks } from "./email-cards";
 import type { CampaignExtra } from "./email-engagement";
 import { parseAudiencesJson, type CampaignAudiences } from "@/lib/klaviyo/audiences";
@@ -188,13 +188,22 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
     openRate: numOrNull(c.open_rate),
     clickRate: numOrNull(c.click_rate),
   }));
+  // The other counted order systems' 30 and 90 days per flow (klaviyo_flow_metrics), added to the primary's
+  const flowExtra = new Map<string, { r30: number; r90: number }>();
+  if (sourcesRead && sourcesRead.ids.length > 1) {
+    const { data: fm } = await admin.from("klaviyo_flow_metrics").select("flow_id, metric_id, revenue_30, revenue_90").eq("client_id", clientId).in("metric_id", sourcesRead.ids.slice(1));
+    for (const r of fm ?? []) {
+      const had = flowExtra.get(r.flow_id as string) ?? { r30: 0, r90: 0 };
+      flowExtra.set(r.flow_id as string, { r30: had.r30 + num(r.revenue_30), r90: had.r90 + num(r.revenue_90) });
+    }
+  }
   const flowViews: FlowLite[] = (flows ?? []).map((f) => ({
     id: f.flow_id as string,
     name: (f.name as string | null) ?? "(untitled)",
     status: (f.status as string | null) ?? null,
     trigger: (f.trigger_type as string | null) ?? null,
-    revenue30: num(f.revenue_30),
-    revenue90: num(f.revenue_90),
+    revenue30: Math.round((num(f.revenue_30) + (flowExtra.get(f.flow_id as string)?.r30 ?? 0)) * 100) / 100,
+    revenue90: Math.round((num(f.revenue_90) + (flowExtra.get(f.flow_id as string)?.r90 ?? 0)) * 100) / 100,
     recipients30: num(f.recipients_30),
     recipients90: num(f.recipients_90),
     openRate30: numOrNull(f.open_rate_30),
@@ -232,7 +241,12 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
   const [images, smsBodies, flowDays, upcoming] = await Promise.all([
     opts.images === false ? undefined : emailImages(admin, clientId, sentIds.filter((id) => !textIds.has(id))).catch(() => undefined),
     smsTexts(admin, clientId, [...textIds]).catch(() => ({}) as Record<string, string>),
-    readFlowDays(admin, clientId, compare.start, main.end),
+    readFlowDays(admin, clientId, compare.start, main.end).then(async (fd) => {
+      // Every counted order system per flow, when there are several (the primary's days alone otherwise)
+      if (!fd || !sourcesRead) return fd;
+      const { data: per, error: perError } = await admin.from("klaviyo_flow_metric_daily").select("flow_id, metric_id, date, conversions, revenue").eq("client_id", clientId).in("metric_id", sourcesRead.ids).gte("date", compare.start).lte("date", main.end).limit(20_000);
+      return perError || !per?.length ? fd : combineFlowDays(fd, per as { flow_id: string; metric_id: string; date: string }[], sourcesRead.ids);
+    }),
     readUpcoming(admin, clientId, main.end, camps ?? []),
   ]);
   const m = emailMetrics({

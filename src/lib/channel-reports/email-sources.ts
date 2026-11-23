@@ -201,3 +201,35 @@ export function combineDays<T extends { date: string; revenue: number; campaignR
     };
   });
 }
+
+/**
+ * Each flow's days with every revenue source added up (Crust's flows: their Toast orders and their POS orders), so the
+ * flow table matches the flows total and the headline. `rows` are the primary's days (klaviyo_flow_daily); the other
+ * counted systems (the ids after the first, from klaviyo_flow_metric_daily) are added on top. Sends, opens and clicks
+ * stay as read; a flow day only another system earned on is added with its money alone.
+ */
+export function combineFlowDays<T extends { flowId: string; date: string; conversions: number; revenue: number; recipients: number; delivered: number; opensUnique: number; clicksUnique: number }>(rows: T[], perMetric: { flow_id: string; date: string; metric_id: string; conversions?: unknown; revenue?: unknown }[], ids: string[]): T[] {
+  const others = ids.slice(1);
+  if (!others.length || !perMetric.length) return rows;
+  const sum = new Map<string, { conversions: number; revenue: number }>();
+  for (const r of perMetric) {
+    if (!others.includes(r.metric_id)) continue;
+    const k = `${r.flow_id}|${r.date}`;
+    const had = sum.get(k) ?? { conversions: 0, revenue: 0 };
+    sum.set(k, { conversions: had.conversions + n(r.conversions), revenue: had.revenue + n(r.revenue) });
+  }
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const seen = new Set<string>();
+  const out = rows.map((row) => {
+    const k = `${row.flowId}|${row.date}`;
+    seen.add(k);
+    const s = sum.get(k);
+    return s ? { ...row, conversions: row.conversions + s.conversions, revenue: r2(row.revenue + s.revenue) } : row;
+  });
+  for (const [k, s] of sum) {
+    if (seen.has(k)) continue;
+    const [flowId, date] = k.split("|");
+    out.push({ flowId, date, conversions: s.conversions, revenue: r2(s.revenue), recipients: 0, delivered: 0, opensUnique: 0, clicksUnique: 0 } as T);
+  }
+  return out;
+}

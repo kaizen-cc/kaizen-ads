@@ -439,7 +439,11 @@ function metricTableRows(clientId: string, m: MetricRead, ctx: { campaigns: { id
   } else if (m.store) {
     for (let d = ctx.from; d <= ctx.to; d = shift(d, 1)) days.push({ client_id: clientId, metric_id: m.id, date: d, ...storeOf(d), updated_at: ctx.now });
   }
-  return { campaigns, flows, days };
+  // Each flow's day under this metric, so the report adds every order system up per flow (klaviyo_flow_metric_daily)
+  const flowDays = (m.series ?? []).flatMap((f) =>
+    f.days.filter((d) => d.date >= ctx.from && d.date <= ctx.to && (d.stats.revenue || d.stats.conversions)).map((d) => ({ client_id: clientId, flow_id: f.id, metric_id: m.id, date: d.date, conversions: r2(d.stats.conversions), revenue: r2(d.stats.revenue), updated_at: ctx.now })),
+  );
+  return { campaigns, flows, days, flowDays };
 }
 
 /** The per-metric tables: written quietly, so a database without their migration keeps syncing the primary as before */
@@ -451,6 +455,12 @@ async function saveMetrics(admin: SupabaseClient, clientId: string, reads: Metri
       ["klaviyo_flow_metrics", rows.flows, "client_id,flow_id,metric_id"],
       ["klaviyo_metric_daily", rows.days, "client_id,metric_id,date"],
     ];
+    // A flow's days under this metric: the read's days cleared first (a day that fell to nothing keeps no old money);
+    // quietly, so a database without the table keeps syncing
+    if (m.series) {
+      const { error } = await admin.from("klaviyo_flow_metric_daily").delete().eq("client_id", clientId).eq("metric_id", m.id).gte("date", ctx.from).lte("date", ctx.to);
+      if (!error) for (let i = 0; i < rows.flowDays.length; i += 500) await admin.from("klaviyo_flow_metric_daily").upsert(rows.flowDays.slice(i, i + 500), { onConflict: "client_id,metric_id,flow_id,date" });
+    }
     for (const [table, all, conflict] of parts) {
       const list = await onlyChanged(admin, table, all, conflict);
       for (let i = 0; i < list.length; i += 500) {
