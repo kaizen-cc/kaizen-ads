@@ -46,6 +46,8 @@ export type ChatView = {
   /** A message with screenshots or files pasted, dropped or attached (rejects when the upload fails) */
   onSendFiles?: (text: string, files: File[]) => Promise<void>;
   onStop: () => void;
+  /** Take back a queued message (its text comes back) */
+  onUnqueue?: (id: number) => string | null;
   onClose: () => void;
   onCall: () => void;
   onLink: (href: string) => void;
@@ -158,6 +160,31 @@ function Bubble({ l, v, dim = false }: { l: ChatLine; v: ChatView; dim?: boolean
           </span>
         ) : null}
         {l.text}
+        {l.queued && (
+          <span className="mt-1.5 flex items-center justify-end gap-1 text-[11.5px] text-muted">
+            <span className="mr-auto inline-flex items-center gap-1">
+              <span aria-hidden className="h-1.5 w-1.5 animate-pulse rounded-full bg-faint" />
+              Queued, sends after this answer
+            </span>
+            {v.onUnqueue && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const text = v.onUnqueue?.(l.id);
+                    if (text) window.dispatchEvent(new CustomEvent("assistant-chat-edit", { detail: text }));
+                  }}
+                  className="inline-flex min-h-9 items-center rounded-full px-2 hover:bg-surface hover:text-fg md:min-h-7"
+                >
+                  Edit
+                </button>
+                <button type="button" onClick={() => v.onUnqueue?.(l.id)} aria-label="Remove this queued message" className="inline-flex min-h-9 items-center rounded-full px-2 hover:bg-surface hover:text-fg md:min-h-7">
+                  Remove
+                </button>
+              </>
+            )}
+          </span>
+        )}
       </div>
     );
   const sp = l.speaker;
@@ -214,6 +241,21 @@ function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
     writeDraft(key, draft);
   }, [key, draft]);
   const box = useRef<HTMLTextAreaElement>(null);
+  // "Edit" on a queued message brings its text back here to change and send again
+  useEffect(() => {
+    const onEdit = (e: Event) => {
+      const text = String((e as CustomEvent).detail ?? "");
+      if (!text) return;
+      setDraft((d) => {
+        const next = d.trim() ? `${d.trimEnd()}\n${text}` : text;
+        base.current = next;
+        return next;
+      });
+      box.current?.focus();
+    };
+    window.addEventListener("assistant-chat-edit", onEdit);
+    return () => window.removeEventListener("assistant-chat-edit", onEdit);
+  }, []);
   const join = (a: string, b: string) => (a && b ? `${a.replace(/\s+$/, "")} ${b.trim()}` : `${a}${b.trim()}`);
   const dict = useDictation({
     callId: v.callId,
@@ -370,12 +412,14 @@ function Composer({ v, phone }: { v: ChatView; phone: boolean }) {
           {dict.on && <span aria-hidden className="absolute inset-0 animate-ping rounded-full bg-brand opacity-25" />}
           <MicIcon />
         </button>
-        {v.busy && !draft.trim() && !files.length ? (
+        {/* While it answers: Stop stays, and anything typed is queued to send after this answer */}
+        {v.busy && (
           <button type="button" onClick={v.onStop} aria-label="Stop the answer" title="Stop" className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-line text-fg transition hover:border-faint active:scale-95 md:h-9 md:w-9">
             <span aria-hidden className="h-3 w-3 rounded-[3px] bg-current" />
           </button>
-        ) : (
-          <button type="submit" disabled={(!draft.trim() && !files.length) || v.connecting || sending} aria-label="Send" title="Send (Enter)" className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand text-white transition hover:bg-brand-hover active:scale-95 disabled:opacity-35 md:h-9 md:w-9">
+        )}
+        {(!v.busy || draft.trim() || files.length > 0) && (
+          <button type="submit" disabled={(!draft.trim() && !files.length) || v.connecting || sending} aria-label={v.busy ? "Queue this message" : "Send"} title={v.busy ? "Queue it: sends after this answer (Enter)" : "Send (Enter)"} className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand text-white transition hover:bg-brand-hover active:scale-95 disabled:opacity-35 md:h-9 md:w-9">
             <SendIcon />
           </button>
         )}

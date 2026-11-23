@@ -534,6 +534,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
               next[i] = l;
               return next;
             }),
+          onRemove: (id) => setChatLines((cur) => cur.filter((x) => x.id !== id)),
           onBusy: setChatBusy,
           onError: setError,
           onLearned: (items) => setLearned((cur) => [...cur, ...items]),
@@ -710,6 +711,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
     }
   }, []);
   const chatStop = useCallback(() => chat.current?.stop(), []);
+  const chatUnqueue = useCallback((id: number) => chat.current?.unqueue(id) ?? null, []);
 
   /** The chat carries on as a call (from the tap itself: browsers only play sound after one) */
   const toVoice = useCallback(() => {
@@ -1017,6 +1019,7 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
           onSend: chatSend,
           onSendFiles: chatSendFiles,
           onStop: chatStop,
+          onUnqueue: chatUnqueue,
           onClose: () => void hangUp(false, "chat_close"),
           onCall: () => toVoice(),
           onLink: openHref,

@@ -9,11 +9,13 @@ import type { JobView } from "@/lib/assistant/team";
 // chat window reads its state. Turns go one at a time, in order (a second message waits for the first answer).
 
 /** A line of the chat. `streaming` while the agent is still writing it; `note` for a line the person didn't type (an upload) */
-export type ChatLine = { id: number; who: "you" | "agent"; text: string; speaker?: Speaker | null; streaming?: boolean; note?: boolean; /** Pictures they pasted or attached with this message (local previews) */ images?: string[] };
+export type ChatLine = { id: number; who: "you" | "agent"; text: string; speaker?: Speaker | null; streaming?: boolean; note?: boolean; /** Pictures they pasted or attached with this message (local previews) */ images?: string[]; /** Sent while an answer was still being written: waits its turn, can be taken back until then */ queued?: boolean };
 
 export type ChatHooks = {
   /** A line was added or changed (matched by id) */
   onLine: (l: ChatLine) => void;
+  /** A queued message taken back before its turn */
+  onRemove?: (id: number) => void;
   onBusy: (busy: boolean) => void;
   onError: (msg: string | null) => void;
   onLearned?: (items: LearnedItem[]) => void;
@@ -41,6 +43,9 @@ export class ChatSession {
   private turn: AbortController | null = null;
   private closed = false;
   private pending = 0;
+  /** Queued messages not answered yet (by their line id), and the ones taken back */
+  private waiting = new Map<number, ChatLine>();
+  private dropped = new Set<number>();
 
   /** `firstId`: line ids continue after the history already shown */
   constructor(
@@ -54,8 +59,10 @@ export class ChatSession {
   send(text: string) {
     const t = text.trim();
     if (!t || this.closed) return;
-    this.hooks.onLine({ id: ++this.lineId, who: "you", text: t });
-    this.enqueue(t, null);
+    // While an answer is being written it waits its turn, shown as queued (and can be taken back until then)
+    const line: ChatLine = { id: ++this.lineId, who: "you", text: t, ...(this.pending > 0 ? { queued: true } : {}) };
+    this.hooks.onLine(line);
+    this.enqueue(t, null, line);
   }
 
   /** A message with pictures they pasted or attached: shown with its previews, the first picture seen with the turn */
@@ -72,6 +79,16 @@ export class ChatSession {
     this.enqueue(text, frame);
   }
 
+  /** Take back a queued message before its turn (it leaves the thread); false when it has already started */
+  unqueue(id: number): string | null {
+    const line = this.waiting.get(id);
+    if (!line) return null;
+    this.waiting.delete(id);
+    this.dropped.add(id);
+    this.hooks.onRemove?.(id);
+    return line.text;
+  }
+
   /** Stop the answer being written (what's written so far stays) */
   stop() {
     this.turn?.abort();
@@ -82,11 +99,19 @@ export class ChatSession {
     this.turn?.abort();
   }
 
-  private enqueue(text: string, frame: string | null) {
+  private enqueue(text: string, frame: string | null, line?: ChatLine) {
     this.pending++;
     this.hooks.onBusy(true);
+    if (line?.queued) this.waiting.set(line.id, line);
     this.queue = this.queue
-      .then(() => this.ask(text, frame))
+      .then(() => {
+        if (line && this.dropped.has(line.id)) return;
+        if (line?.queued) {
+          this.waiting.delete(line.id);
+          this.hooks.onLine({ ...line, queued: false });
+        }
+        return this.ask(text, frame);
+      })
       .catch(() => undefined)
       .finally(() => {
         this.pending--;
