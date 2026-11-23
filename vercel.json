@@ -35,6 +35,10 @@
       "schedule": "35 * * * *"
     },
     {
+      "path": "/api/cron/context?step=stepins",
+      "schedule": "25 */2 * * *"
+    },
+    {
       "path": "/api/cron/context?step=dogs",
       "schedule": "45 12,18 * * *"
     },

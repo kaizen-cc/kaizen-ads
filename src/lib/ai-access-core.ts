@@ -52,6 +52,7 @@ export function mayOpen(href: string, me: AccessWho): Gate {
   if ((under("/board") || under("/kpis") || under("/lab")) && isSupportRole(me.role)) return no("Boards, the KPI board and the Ads Lab aren't part of your view.");
   if (under("/reviews")) return me.isExec || ["head_of_meta", "head_of_google", "head_of_email", "head_of_social"].includes(String(me.role)) ? OK : no("Weekly reviews are for the line heads and the executives.");
   if (under("/scorecard")) return me.isExec || ["head_of_meta", "head_of_google", "head_of_email", "head_of_social"].includes(String(me.role)) ? OK : no("The scorecard is for the line heads and the executives.");
+  if (under("/stepins")) return me.isExec ? OK : no("Step-ins are for the executives.");
   if (under("/economics")) return me.isExec ? OK : no("Billing and the company's money are for the executives.");
   if (under("/csuite") || under("/safety")) return me.isExec ? OK : no("That page is for the executives.");
   if (under("/lab")) return me.isExec || me.isLead ? OK : no("The Ads Lab is for the executives and leaders.");

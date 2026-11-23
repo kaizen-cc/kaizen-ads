@@ -18,6 +18,7 @@ import { loadWatchList } from "@/lib/fatigue";
 import { HandoffCallout } from "@/components/handoff-callout";
 import { ReviewsCallout } from "@/components/reviews-callout";
 import { SupportDashboard } from "@/components/support-dashboard";
+import { StepinsSection } from "@/components/stepins/section";
 import { LeaderView } from "./views/leader-view";
 import { PageHeader } from "./views/shared";
 import { NextSection } from "./views/next-section";
@@ -115,6 +116,10 @@ async function ExecOverview({ db, me, base }: { db: SupabaseClient; me: Staff; b
       <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={line} />
       <Suspense fallback={<TodayHeroSkeleton />}>
         <TodayHero db={db} me={me} />
+      </Suspense>
+      {/* This week's step-ins: the accounts where an exec steps in (src/lib/stepins) */}
+      <Suspense fallback={null}>
+        <StepinsSection db={db} me={me} />
       </Suspense>
       <ExecBlocks tabs={tabs} owner={owner} />
     </div>
