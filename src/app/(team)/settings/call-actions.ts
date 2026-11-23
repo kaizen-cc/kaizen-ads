@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
-import { CALL_LIMIT_SECONDS, assistantVoiceFor, decide, firstNameOf, greetingFor, handoverLine, isEndReason, isVoiceId, leftUnfinished, localDayIn, localHourIn, pendingOf, resumeModeFor, seedOf, statusOf, voiceFor, type Decision, type EndTrigger, type LearnedItem, type ResumeMode } from "@/lib/agent-call/core";
+import { CALL_LIMIT_SECONDS, assistantVoiceFor, decide, firstNameOf, greetingFor, handoverLine, keepsHandoverLine, isEndReason, isVoiceId, leftUnfinished, localDayIn, localHourIn, pendingOf, resumeModeFor, seedOf, statusOf, voiceFor, type Decision, type EndTrigger, type LearnedItem, type ResumeMode } from "@/lib/agent-call/core";
 import { CHAT_LIMIT_SECONDS, parseModeLog, stillOpen, talkModeOf, type TalkMode } from "@/lib/agent-call/modality";
 import { currentTopic, endReasonOf, saveEndReason, summarizeCall, sweepOpenCalls } from "@/lib/agent-call/server";
 import { reviewCallSafety } from "@/lib/agent-call/safety";
@@ -244,7 +244,10 @@ export async function switchCallMode(callId: string, to: TalkMode): Promise<Swit
     .eq("id", callId);
   if (e) return { ok: false, error: "Couldn't switch. Try again." };
   const line = handoverLine(topic);
-  await admin.from("ai_role_chats").insert({ role_key: call.role_key, role: "agent", content: line, attachments: [], changes: [], created_by: me.id, call_id: callId });
+  // Kept in the conversation only after a real pause: mid-conversation the switch carries straight on (no repeated line)
+  const { data: lastRow } = await admin.from("ai_role_chats").select("role, content, created_at").eq("call_id", callId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const last = lastRow ? { at: Date.parse(lastRow.created_at as string), role: lastRow.role as string, content: String(lastRow.content ?? "") } : null;
+  if (keepsHandoverLine(last, Date.now())) await admin.from("ai_role_chats").insert({ role_key: call.role_key, role: "agent", content: line, attachments: [], changes: [], created_by: me.id, call_id: callId });
   return { ok: true, line, sttToken, limitSeconds: talk === "voice" ? CALL_LIMIT_SECONDS : CHAT_LIMIT_SECONDS, since, lines: talk === "text" ? await threadLines(admin, callId) : [] };
 }
 

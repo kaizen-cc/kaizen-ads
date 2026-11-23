@@ -258,6 +258,16 @@ async function connectSlack(ctx: CommsCtx, state: "missing" | "reconnect") {
 
 // ─── The tools ──────────────────────────────────────────────────────────────
 
+/** The first name of a teammate whose address appears among these recipients, or null (a client's contacts aren't teammates) */
+async function teammateNamed(ctx: CommsCtx, to: string): Promise<string | null> {
+  const emails = [...to.matchAll(/[^\s<>,;"]+@[^\s<>,;"]+/g)].map((m) => m[0].toLowerCase());
+  if (!emails.length) return null;
+  const { data } = await ctx.admin.from("profiles").select("full_name, email").in("email", emails).limit(1);
+  const hit = (data ?? [])[0];
+  if (hit) return firstNameOf(hit.full_name as string);
+  return emails.some((e) => e.endsWith("@kaizenmarketing.agency")) ? (emails.find((e) => e.endsWith("@kaizenmarketing.agency")) ?? "").split("@")[0] : null;
+}
+
 export function commsTools(ctx: CommsCtx): ChatTool[] {
   const from = firstNameOf(ctx.me.fullName);
   const via = ctx.roleKey === "assistant" ? "via their assistant" : `via the ${ctx.label}`;
@@ -313,8 +323,28 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
       },
     },
     {
+      name: "find_email_address",
+      description: `Finds someone's email address before you ever ask for it: a client's contact or anyone ${from} has emailed. It looks in order: the client's contacts in Kaizen OS, ${from}'s whole Gmail (from, to and cc, by name and by the client's domain, every folder), the client's Slack channel members; when nothing turns up it offers a likely address from the client's pattern (firstname@theirdomain.com) as a suggestion to confirm. Run it for every person named for an email you don't have the address of, before drafting. Only ask ${from} when it finds nothing, and then say where it looked and offer the suggestion.`,
+      input_schema: { type: "object", properties: { name: { type: "string", description: "The person, as said" }, client: { type: "string", description: "The client they're with, if any" } }, required: ["name"], additionalProperties: false },
+      status: (input) => `Looking for ${clip(input.name, 40) || "their"} address…`,
+      run: async (input) => {
+        const name = clip(input.name, 80);
+        if (!name) return { note: "Whose address?" };
+        const client = await clientOf(ctx, input.client);
+        const { findAddress } = await import("./find-address");
+        const r = await findAddress({ db: ctx.db, admin: ctx.admin, mailbox: ctx.me.email, name, client: client ? { id: client.id, name: client.name } : null });
+        if (r.found.length) return { found: r.found, note: r.found.length > 1 ? "More than one fits: say both in a few words and ask which." : "Use it; say where it came from in a few words only if it matters." };
+        return {
+          found: [],
+          looked: r.looked,
+          suggestion: r.suggestion ?? undefined,
+          note: r.suggestion ? `Not found in: ${r.looked.join("; ")}. Offer the suggestion (${r.suggestion.why}) and ask them to confirm it, together with any other open question, in one message.` : `Not found in: ${r.looked.join("; ")}. Say where you looked and ask for it, together with any other open question, in one message.`,
+        };
+      },
+    },
+    {
       name: "draft_message",
-      description: `Drafts a Slack reply, a new Slack DM to a teammate, or an email as ${from}, in their voice (a message to a person; campaign, flow or SMS copy for the email team is never this: that's create_copy_doc): a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), a new direct message to someone on the team ("DM Jesus", "message Dana on Slack": channel slack, dm: their name as heard, text), a new Slack message that is neither (an announcement they'll post in a channel, or one just for them to copy: channel slack, new_for: where it's meant to go as said, or "me"; never a thread reply), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). A document goes with an email: make it first (create_document), then pass its document_id in attach (the card can save it to their Gmail drafts with the PDF attached, and offers the PDF to download). After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes. When they'd rather send it themselves ("put it in my drafts", "I'll send it from Gmail"), run save_draft.`,
+      description: `Drafts a Slack reply, a new Slack DM to a teammate, or an email as ${from}, in their voice (a message to a person; campaign, flow or SMS copy for the email team is never this: that's create_copy_doc): a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), a new direct message to someone on the team ("DM Jesus", "message Dana on Slack": channel slack, dm: their name as heard, text), a new Slack message that is neither (an announcement they'll post in a channel, or one just for them to copy: channel slack, new_for: where it's meant to go as said, or "me"; never a thread reply), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). A document goes with an email: make it first (create_document), then pass its document_id in attach (the card can save it to their Gmail drafts with the PDF attached, and offers the PDF to download). An email to a client goes to that client's contacts (find_email_address for each person named; never ask for an address it hasn't looked for); never address it to someone on the Kaizen team unless ${from} named them as a recipient. After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes. When they'd rather send it themselves ("put it in my drafts", "I'll send it from Gmail"), run save_draft.`,
       input_schema: {
         type: "object",
         properties: {
@@ -359,7 +389,12 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           d = { kind: "draft", id, done: true, channel, slack: slackNewPlace(clip(input.new_for, 80)), text, client: client?.name ?? null, at: new Date().toISOString() };
         } else if (fresh) {
           const to = clip(input.to, 200);
-          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addressOf(to))) return { drafted: false, note: "That isn't an email address. Ask for it." };
+          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addressOf(to))) return { drafted: false, note: "That isn't an email address. Look it up with find_email_address first; ask only if it finds nothing." };
+          // A client's email never goes to someone on the team unless they were named as a recipient
+          if (client) {
+            const internal = await teammateNamed(ctx, to);
+            if (internal && !ctx.said().toLowerCase().includes(internal.toLowerCase())) return { drafted: false, note: `${internal} is on the Kaizen team, not ${client.name}. A client email goes to the client's contacts: run find_email_address for the people named, then draft it to them.` };
+          }
           if (!text) return { drafted: false, note: "Write the email's text, then draft it again." };
           d = { kind: "draft", id, done: true, channel, email: { mailbox: ctx.me.email, threadId: null, to, subject: clip(input.subject, 200) || "(no subject)" }, text, client: client?.name ?? null, at: new Date().toISOString() };
         } else {

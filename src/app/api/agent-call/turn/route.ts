@@ -6,7 +6,7 @@ import { parseCallContext } from "@/lib/agent-call/call-context";
 import { talkModeOf } from "@/lib/agent-call/modality";
 import { PASTE_CHARS } from "@/lib/assistant/long-text";
 import { callTimer } from "@/lib/agent-call/timing";
-import { isRepeatTurn } from "@/lib/agent-call/transcript";
+import { isRepeatTurn, repeatKey, REPEAT_WINDOW_MS } from "@/lib/agent-call/transcript";
 import { requireStaff } from "@/lib/auth";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -32,6 +32,31 @@ async function lastSaid(admin: ReturnType<typeof createAdminClient>, callId: unk
   return data ? { text: String(data.content ?? ""), at: Date.parse(String(data.created_at)) } : null;
 }
 
+/**
+ * Claims this turn's words on the call, atomically: false when the very same words were claimed moments ago (a
+ * transcript sent twice, a double send). The database checks and sets in one statement, so it holds across servers.
+ */
+async function claimTurn(admin: ReturnType<typeof createAdminClient>, callId: string, text: string, now: number): Promise<boolean> {
+  const key = repeatKey(text);
+  if (!key) return true;
+  const cutoff = new Date(now - REPEAT_WINDOW_MS).toISOString();
+  const { data, error } = await admin
+    .from("ai_role_calls")
+    .update({ last_said_key: key, last_said_at: new Date(now).toISOString() })
+    .eq("id", callId)
+    .or(`last_said_key.is.null,last_said_key.neq.${key},last_said_at.lt.${cutoff}`)
+    .select("id");
+  // Before the migration (no such columns): this server's own check above is all there is
+  if (error) return true;
+  return (data ?? []).length > 0;
+}
+
+/** A turn that didn't go through can be said again right away: its claim is let go */
+async function releaseTurn(admin: ReturnType<typeof createAdminClient>, callId: string, text: string) {
+  const key = repeatKey(text);
+  if (key) await admin.from("ai_role_calls").update({ last_said_key: null }).eq("id", callId).eq("last_said_key", key);
+}
+
 export async function POST(request: Request) {
   const startedAt = Date.now();
   const timer = callTimer(startedAt);
@@ -48,7 +73,8 @@ export async function POST(request: Request) {
   // turn runner decides what the model reads (longTurnText: whole up to sixty thousand characters)
   const text = String(body?.text ?? "").trim().slice(0, STORED_CHARS);
   // The same words again moments later (the transcriber sent a turn twice, or a resend): answered once, not twice
-  if (isRepeatTurn(text, last, startedAt)) {
+  // Claimed on the call at the start (not after the answer): two copies in flight at once, on any server, answer once
+  if (isRepeatTurn(text, last, startedAt) || !(await claimTurn(admin, call.id, text, startedAt))) {
     console.log(`[agent call timing] call=${call.id} role=${call.role_key} repeat dropped`);
     return new Response(`${JSON.stringify({ t: "done" })}\n`, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" } });
   }
@@ -83,6 +109,7 @@ export async function POST(request: Request) {
         })
         .catch((e) => {
           console.error("[agent call] turn", e instanceof Error ? e.message : e);
+          void releaseTurn(admin, call.id, text).catch(() => undefined);
           emit({ t: "error", message: "Sorry, something went wrong on my side. Say that again?" });
         })
         .finally(() => {

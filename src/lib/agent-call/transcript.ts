@@ -78,3 +78,25 @@ export function isRepeatTurn(text: string, last: { text: string; at: number } | 
   if (a.split(" ").length < 4) return false;
   return a === norm(last.text) && now - last.at >= 0 && now - last.at <= windowMs;
 }
+
+/**
+ * The key a turn is claimed under (null for a short line, which is never treated as a repeat): the same words give the
+ * same key, so two copies of one utterance arriving at once claim the same slot and only the first is answered.
+ */
+export function repeatKey(text: string): string | null {
+  const a = norm(text);
+  if (a.split(" ").length < 4) return null;
+  // A small, filter-safe fingerprint (FNV-1a, 32 bits, twice with different seeds)
+  const fnv = (seed: number) => {
+    let h = seed >>> 0;
+    for (let i = 0; i < a.length; i++) {
+      h ^= a.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h.toString(16).padStart(8, "0");
+  };
+  return `${fnv(2166136261)}${fnv(374761393)}`;
+}
+
+/** Whether two moments are close enough for the same words to be one utterance sent twice */
+export const withinRepeat = (now: number, then: number, windowMs = REPEAT_WINDOW_MS) => now - then >= 0 && now - then <= windowMs;

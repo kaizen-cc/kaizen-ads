@@ -303,6 +303,19 @@ export function handoverLine(topic: string | null | undefined): string {
   return t ? `Picking up where we left off: ${t}.` : "Picking up where we left off. Go ahead.";
 }
 
+/** How long a pause makes a mode switch a picking-up (shorter: the conversation is still going, no line) */
+export const HANDOVER_GAP_MS = 10 * 60_000;
+
+/**
+ * Whether a mode switch writes "Picking up where we left off" into the conversation: only after a real pause, and never
+ * right after another one (switching chat to call and back mid-conversation wrote it twice, Nov 23 2026).
+ */
+export function keepsHandoverLine(last: { at: number; role: string; content: string } | null | undefined, now: number): boolean {
+  if (!last) return false;
+  if (last.role !== "user" && /^picking up where we left off/i.test(last.content.trim())) return false;
+  return now - last.at > HANDOVER_GAP_MS;
+}
+
 /**
  * Whether the last conversation left something open (a job still running, or the agent's last line was a question or
  * an offer): only then does a quick "hey again" mention the topic.

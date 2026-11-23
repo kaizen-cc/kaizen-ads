@@ -36,7 +36,31 @@ export type DocContent = {
 };
 
 /** A price that's stored: a package record's (service_tiers) or the client's current Stripe billing (via Track) */
-export type StoredPrice = { label: string; amount: number; cadence: "month" | "one_time"; source: "package" | "stripe" };
+export type StoredPrice = { label: string; amount: number; cadence: "month" | "one_time"; source: "package" | "stripe" | "confirmed" };
+
+/** Every amount written in a text ("$1,750", "1750", "1.75k", "$2k"), as numbers */
+export function amountsIn(text: string): number[] {
+  return [...text.toLowerCase().matchAll(/\$?(\d[\d,]*(?:\.\d+)?)\s*(k\b)?/g)].map((m) => Number(m[1].replace(/,/g, "")) * (m[2] ? 1000 : 1)).filter((n) => Number.isFinite(n) && n > 0);
+}
+
+/**
+ * Prices the person confirmed in the conversation (Basic at $1,000/mo, Silver at $1,750/mo), so every document made
+ * from it carries them instead of "Price to confirm". Kept only when the person said that amount (in what they wrote
+ * this turn), or they're an executive (who sets prices); anything else stays a placeholder.
+ */
+export function confirmedPrices(raw: unknown, said: string, isExec: boolean): StoredPrice[] {
+  const heardAmounts = amountsIn(said);
+  const out: StoredPrice[] = [];
+  for (const r of Array.isArray(raw) ? raw.slice(0, 12) : []) {
+    const o = (r ?? {}) as Record<string, unknown>;
+    const amount = Number(String(o.amount ?? "").replace(/[$,\s]/g, ""));
+    const label = String(o.item ?? "").trim().slice(0, 120);
+    if (!label || !Number.isFinite(amount) || amount <= 0) continue;
+    if (!isExec && !heardAmounts.some((h) => Math.abs(h - amount) < 0.005)) continue;
+    out.push({ label, amount, cadence: String(o.cadence ?? "").toLowerCase().startsWith("one") ? "one_time" : "month", source: "confirmed" });
+  }
+  return out;
+}
 
 /** Plain text, one line, cut at a word to at most n characters; dashes used as punctuation become commas */
 export function line(v: unknown, n: number): string {

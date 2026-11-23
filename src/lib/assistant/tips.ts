@@ -6,7 +6,7 @@
 export type Tip = { key: string; text: string; tools: readonly string[] };
 
 export const TIPS: readonly Tip[] = [
-  { key: "drafts", tools: ["draft_message", "save_draft", "my_email_drafts", "draft_promise_update"], text: "you can have me draft Slack and email messages in your voice? I'll leave them as drafts for you to check and send." },
+  { key: "drafts", tools: ["draft_message", "save_draft", "my_email_drafts", "draft_promise_update", "find_email_address"], text: "you can have me draft Slack and email messages in your voice? I'll leave them as drafts for you to check and send." },
   { key: "send", tools: ["send_message"], text: "once you've okayed a reply, I can send it on Slack or email for you, straight from our chat?" },
   { key: "search", tools: ["search_my_slack", "search_my_email", "search_my_gmail", "read_my_slack_thread", "read_my_email_thread", "read_gmail_thread", "read_waiting_message"], text: "I can dig through your Slack and email for you? Ask what a client said about something and I'll find the thread." },
   { key: "teammate", tools: ["send_to_teammate", "ask_teammate", "sent_by_me"], text: "I can send a teammate a reminder or a checklist for you? They tick it off on their end and you see how far they've got." },

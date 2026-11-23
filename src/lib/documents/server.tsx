@@ -38,14 +38,17 @@ export type PackageFacts = {
 export async function packageFacts(admin: SupabaseClient, clientId: string | null, service: unknown, tier: string | null): Promise<PackageFacts> {
   const svc = serviceOf(service);
   const keys = serviceKeys(svc);
-  const [{ data: tiers }, { data: pick }, { data: billedRow }, { data: knowledge }] = await Promise.all([
+  // The email and social tiers (Basic, Silver, Gold...) and their prices live in their own package tables
+  const channel = svc.slug === "email-marketing" ? "email_packages" : svc.slug === "social-media" ? "social_packages" : null;
+  const [{ data: tiers }, { data: pick }, { data: billedRow }, { data: knowledge }, { data: channelPkgs }] = await Promise.all([
     admin.from("service_tiers").select("id, service, label, includes, price_monthly, price_one_time, price_note, sort_order").in("service", keys).order("sort_order"),
     clientId ? admin.from("client_service_tiers").select("tier_id, note").eq("client_id", clientId).in("service", keys).maybeSingle() : Promise.resolve({ data: null }),
     clientId ? admin.from("clients").select("billed_services").eq("id", clientId).maybeSingle() : Promise.resolve({ data: null }),
     admin.from("ai_knowledge").select("title, body, agent_key").eq("active", true).or(`agent_key.eq.${svc.slug === "email-marketing" ? "email_strategist" : "strategist"},agent_key.is.null`).limit(200),
+    channel ? admin.from(channel).select("*").eq("active", true).order("sort_order") : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ]);
   type Tier = { id: string; label: string; includes: string | null; price_monthly: number | null; price_one_time: number | null; price_note: string | null };
-  const rows = (tiers ?? []) as Tier[];
+  const rows = [...((tiers ?? []) as Tier[]), ...((channelPkgs ?? []) as Record<string, unknown>[]).map(channelTier)];
   const mine = pick?.tier_id ? rows.find((t) => t.id === pick.tier_id) : null;
   const billed = ((billedRow?.billed_services ?? {}) as Partial<Record<ServiceSlug, { amount: number }>>)[svc.slug as ServiceSlug];
   // Only the tier asked for (or the client's) and the client's own billing count as its prices
@@ -57,6 +60,16 @@ export async function packageFacts(admin: SupabaseClient, clientId: string | nul
     knowledge: packageKnowledge((knowledge ?? []) as KnowledgeItem[], tier ?? mine?.label ?? null),
     stored: storedPrices(wanted.length ? wanted : rows, billed ?? null, svc.label),
   };
+}
+
+/** An email or social package as a tier: its label, what it includes and its monthly price */
+function channelTier(p: Record<string, unknown>): { id: string; label: string; includes: string | null; price_monthly: number | null; price_one_time: number | null; price_note: string | null } {
+  const n = (k: string) => (p[k] == null ? null : Number(p[k]));
+  const parts =
+    typeof p.includes === "string" && p.includes
+      ? [p.includes]
+      : [n("campaigns") != null ? `${n("campaigns")} campaigns a month` : "", n("sms") ? `${n("sms")} SMS` : "", n("flows") != null ? `${n("flows")} flows` : "", n("posts") != null ? `${n("posts")} posts a month` : "", n("months") ? `${n("months")} months` : ""].filter(Boolean);
+  return { id: `pkg:${String(p.key ?? p.label)}`, label: String(p.label ?? p.key ?? ""), includes: parts.join(", ") || null, price_monthly: n("price_monthly"), price_one_time: n("setup_fee"), price_note: (p.price_note as string | null | undefined) ?? (p.note as string | null | undefined) ?? null };
 }
 
 export type MadeDocument = { id: string; version: number; title: string; kind: DocContent["kind"]; fileName: string; placeholders: string[]; href: string; download: string; client: string | null };
@@ -76,11 +89,13 @@ export async function makeDocument(opts: {
   service?: unknown;
   dataFigures?: number[];
   id?: string | null;
+  /** Prices the person confirmed in the conversation (src/lib/documents/core.ts confirmedPrices) */
+  confirmed?: StoredPrice[];
 }): Promise<MadeDocument> {
   const { admin, me, client } = opts;
   const prior = opts.id ? await admin.from("kaizen_documents").select("id, version, path, bucket, client_document_id, profile_id").eq("id", opts.id).maybeSingle() : { data: null };
   const facts = await packageFacts(admin, client?.id ?? null, opts.service, null);
-  const { doc, placeholders } = cleanDocument(opts.loose, { stored: facts.stored, dataFigures: opts.dataFigures, client: client?.name ?? null, preparedBy: me.fullName });
+  const { doc, placeholders } = cleanDocument(opts.loose, { stored: [...facts.stored, ...(opts.confirmed ?? [])], dataFigures: opts.dataFigures, client: client?.name ?? null, preparedBy: me.fullName });
   if (!hasBody(doc)) throw new Error("The document has nothing in it yet: write its summary and sections, then make it again.");
 
   const { agencyLogo, reportBrand } = await import("@/lib/reports/brand-server");

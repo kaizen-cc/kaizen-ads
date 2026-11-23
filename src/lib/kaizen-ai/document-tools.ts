@@ -102,7 +102,7 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
     },
     {
       name: "create_document",
-      description: `Makes a Kaizen-branded PDF (the look of Kaizen's reports: Kaizen's mark beside the client's logo, a period band, clean sections and tables) from content you write: sow (a Scope of Work), proposal, handoff (a handoff or recap of what we did and the wins) or one_pager. It's kept with the client's documents and shown as a card to open, download, or edit the text and draw again. Write the finished content in one call. For a Scope of Work, read package_details first and build deliverables, cadence, inclusions and exclusions from it; pricing lines only carry a price that's stored (leave price out otherwise: it's drawn as "${PRICE_PLACEHOLDER}"). For a handoff, read client_wins and the handoff doc first; put the headline numbers in stats and list them in data_figures. Plain words, no em dashes, roles not names. To change one you made, pass its document_id with the whole new content. To attach it to an email, give its document_id to draft_message (attach).`,
+      description: `Makes a Kaizen-branded PDF (the look of Kaizen's reports: Kaizen's mark beside the client's logo, a period band, clean sections and tables) from content you write: sow (a Scope of Work), proposal, handoff (a handoff or recap of what we did and the wins) or one_pager. It's kept with the client's documents and shown as a card to open, download, or edit the text and draw again. Write the finished content in one call. For a Scope of Work, read package_details first and build deliverables, cadence, inclusions and exclusions from it; pricing lines only carry a price that's stored (package_details has every tier's) or one the person confirmed in this conversation (also list those in confirmed_prices, every time); leave price out otherwise: it's drawn as "${PRICE_PLACEHOLDER}". Read what they asked for: an SOW "to pitch" ongoing work is a pitch proposal (lead with the tier they'd start on, the milestones as the path to the next tier), not a record of a signed scope. For a handoff, read client_wins and the handoff doc first; put the headline numbers in stats and list them in data_figures. Plain words, no em dashes, roles not names. To change one you made, pass its document_id with the whole new content. To attach it to an email, give its document_id to draft_message (attach).`,
       input_schema: {
         type: "object",
         properties: {
@@ -123,6 +123,7 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
           next_steps: ITEMS,
           data_figures: { type: "array", items: { type: "number" }, description: "Dollar figures quoted from their own data (revenue won), so they aren't taken for prices" },
           document_id: { type: "string", description: "A document you made, to draw again with this content" },
+          confirmed_prices: { type: "array", items: { type: "object", properties: { item: { type: "string" }, amount: { type: "number" }, cadence: { type: "string", enum: ["month", "one_time"] } }, required: ["item", "amount"] }, description: "Prices the person confirmed in this conversation (\"Basic is $1,000 a month\"): they're printed instead of a placeholder. Pass every one they confirmed, each time you draw it again." },
         },
         required: ["kind", "title"],
         additionalProperties: false,
@@ -138,7 +139,9 @@ export function documentTools(ctx: ToolCtx): ChatTool[] {
         }
         const figures = (Array.isArray(input.data_figures) ? input.data_figures : []).map(Number).filter((n) => Number.isFinite(n) && n > 0).slice(0, 30);
         const { makeDocument } = await import("@/lib/documents/server");
-        const made = await makeDocument({ admin: ctx.admin, me: { id: ctx.me.id, fullName: ctx.me.fullName }, client: c ? { id: c.id, name: c.name } : null, loose: input, service: input.service, dataFigures: figures, id });
+        const { confirmedPrices } = await import("@/lib/documents/core");
+        const confirmed = confirmedPrices(input.confirmed_prices, ctx.said ?? "", Boolean(ctx.me.isExec));
+        const made = await makeDocument({ admin: ctx.admin, me: { id: ctx.me.id, fullName: ctx.me.fullName }, client: c ? { id: c.id, name: c.name } : null, loose: input, service: input.service, dataFigures: figures, id, confirmed });
         card({ type: "document", id: made.id, kind: made.kind, title: made.title, client: made.client, version: made.version, href: made.href, download: made.download, placeholders: made.placeholders });
         return {
           made: true,
