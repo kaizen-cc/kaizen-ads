@@ -692,14 +692,16 @@ async function reachOf(account: string, p: { start: string; end: string }, ids: 
   const hit = reachCache.get(key);
   if (hit && Date.now() - hit.at < 30 * 60_000) return hit.v;
   try {
-    const { metaInsights, metaConfigured } = await import("@/lib/context/meta");
+    const { metaInsights, metaConfigured, withMetaAccount } = await import("@/lib/context/meta");
     if (!metaConfigured()) return null;
-    const rows = (await metaInsights(account, { level: "account", time_range: JSON.stringify({ since: p.start, until: p.end }), fields: "reach,frequency", filtering: JSON.stringify([{ field: "campaign.id", operator: "IN", value: ids.slice(0, 500) }]) }, 5)) as unknown as { reach?: string; frequency?: string }[];
+    // Read with the account's own connection (an account shared through a client's Business Manager has its own token)
+    const rows = (await withMetaAccount(account, () => metaInsights(account, { level: "account", time_range: JSON.stringify({ since: p.start, until: p.end }), fields: "reach,frequency", filtering: JSON.stringify([{ field: "campaign.id", operator: "IN", value: ids.slice(0, 500) }]) }, 5))) as unknown as { reach?: string; frequency?: string }[];
     const r = rows[0];
     const v = r ? { reach: r.reach != null ? Number(r.reach) : null, frequency: r.frequency != null ? Math.round(Number(r.frequency) * 100) / 100 : null } : null;
     reachCache.set(key, { at: Date.now(), v });
     return v;
-  } catch {
+  } catch (e) {
+    console.error("[report reach]", account, e instanceof Error ? e.message : e);
     return null;
   }
 }
