@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyError, isNavigationSignal } from "@/lib/error-triage";
+import { actionFailedText, classifyError, isNavigationSignal } from "@/lib/error-triage";
 
 describe("isNavigationSignal", () => {
   it("recognises Next.js redirect and not-found signals", () => {
@@ -14,5 +14,14 @@ describe("isNavigationSignal", () => {
     expect(isNavigationSignal("Failed after NEXT_REDIRECT")).toBe(false);
     expect(isNavigationSignal(null)).toBe(false);
     expect(classifyError("Failed to fetch")?.kind).toBe("network");
+  });
+});
+
+describe("actionFailedText", () => {
+  it("puts a failed action request in plain words", () => {
+    expect(actionFailedText(new Error("An unexpected response was received from the server."))).toMatch(/didn't finish/);
+    expect(actionFailedText(new TypeError("Failed to fetch"))).toMatch(/connection dropped/);
+    expect(actionFailedText(new Error('Server Action "abc" was not found on the server.'))).toMatch(/Refresh the page/);
+    expect(actionFailedText(undefined)).toMatch(/try again/);
   });
 });

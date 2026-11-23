@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AttachButton, ChatImageStrip, useChatImages } from "@/components/chat-images";
 import { SlackConnect } from "@/components/slack-connect";
+import { actionFailedText } from "@/lib/error-triage";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
 import { PdfPreview, type PdfField, type PdfMaker } from "./pdf-preview";
@@ -486,7 +487,9 @@ export function ReportStudio({
     pics.clear();
     setNote(null);
     setChatError(null);
-    const r = await reviseWithAi(report.id, text, sentPics);
+    // A request that fails outright (a timeout or crash page, an update since the tab opened) throws instead of returning
+    // an error: the chat says so and is free again, with the pictures back
+    const r = await reviseWithAi(report.id, text, sentPics).catch((e: unknown) => ({ ok: false as const, error: actionFailedText(e) }));
     setAsking(false);
     if (!r.ok) {
       pics.restore(sentPics);
@@ -512,7 +515,7 @@ export function ReportStudio({
   const [fixing, setFixing] = useState(false);
   const followNumbers = async () => {
     setFixing(true);
-    const r = await updateTextToNumbers(report.id);
+    const r = await updateTextToNumbers(report.id).catch((e: unknown) => ({ ok: false as const, error: actionFailedText(e) }));
     setFixing(false);
     if (!r.ok) return setNote({ ok: false, text: r.error });
     setSectionsState(r.sections);
@@ -556,7 +559,7 @@ export function ReportStudio({
     setAsk("");
     setNote(null);
     setChatError(null);
-    const r = await uploadReportCsv(report.id, { name: file.name, text: file.text }, text);
+    const r = await uploadReportCsv(report.id, { name: file.name, text: file.text }, text).catch((e: unknown) => ({ ok: false as const, error: actionFailedText(e) }));
     setAsking(false);
     if (!r.ok) {
       setAsk(text);
@@ -577,7 +580,7 @@ export function ReportStudio({
     if (on) setLayoutState({ ...layout, campaigns: { ...(layout?.campaigns ?? {}), hide: [...new Set([...hide, name])] } });
     setAsking(true);
     setNote({ ok: true, text: on ? `Leaving ${name} out: working every number out again…` : `Bringing ${name} back: working every number out again…` });
-    const r = await setCampaignLeftOut(report.id, { name }, on);
+    const r = await setCampaignLeftOut(report.id, { name }, on).catch((e: unknown) => ({ ok: false as const, error: actionFailedText(e) }));
     setAsking(false);
     if (!r.ok) {
       setLayoutState(was);

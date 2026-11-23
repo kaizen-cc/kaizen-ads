@@ -45,3 +45,15 @@ export function classifyError(message: string, stack?: string | null): AutoHandl
   }
   return null;
 }
+
+/**
+ * What to tell someone when a server action's request itself failed (it threw in the browser instead of returning
+ * { ok: false }): a timeout or crash page from the host, or an old version answering ("An unexpected response was
+ * received from the server."), a dropped connection, or an update since the tab opened.
+ */
+export function actionFailedText(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e ?? "");
+  if (STALE.test(m)) return "Kaizen OS was updated since this page opened. Refresh the page and try again.";
+  if (isNetworkError(m)) return "The connection dropped before it finished. Check your connection and try again.";
+  return "The server didn't finish that (it may have taken too long). Nothing was lost: try again, or refresh the page if it keeps happening.";
+}
