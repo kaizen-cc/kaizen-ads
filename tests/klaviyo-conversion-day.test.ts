@@ -139,3 +139,14 @@ describe("the report's own numbers count every revenue source", () => {
     expect(combineDays(rows, [], ["a"])).toBe(rows);
   });
 });
+
+describe("every order system in the location split", () => {
+  it("adopts the one likely location property; none or several: its orders become one line of their own", async () => {
+    const { likelyLocationProp, allLocationsLabel } = await import("@/lib/klaviyo/locations");
+    expect(likelyLocationProp([{ prop: "Restaurant Name", likely: true }, { prop: "Source", likely: false }])).toBe("Restaurant Name");
+    expect(likelyLocationProp([{ prop: "a", likely: true }, { prop: "b", likely: true }])).toBeNull();
+    expect(likelyLocationProp([])).toBeNull();
+    expect(allLocationsLabel("API", "Placed Order")).toBe("API orders (all locations)");
+    expect(allLocationsLabel(null, "Placed Order")).toBe("Placed Order orders (all locations)");
+  });
+});

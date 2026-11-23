@@ -402,3 +402,15 @@ export function locationWindow(range: LocationRange, today: string): { start: st
   }
   return { start: back(range === "7d" ? 6 : 29), end: today };
 }
+
+/**
+ * A ranked order system whose orders carry no location (a POS's API sending only totals): its orders are still read, as
+ * one line of their own, "<system> orders (all locations)", so the location section adds up to every source.
+ */
+export const allLocationsLabel = (integration: string | null | undefined, name: string) => `${(integration ?? "").trim() || name} orders (all locations)`;
+
+/** The location property to use for a ranked metric that has none: the one the check found likely, when only one is */
+export function likelyLocationProp(candidates: { prop: string; likely: boolean }[] | undefined): string | null {
+  const likely = (candidates ?? []).filter((c) => c.likely);
+  return likely.length === 1 ? likely[0].prop : null;
+}

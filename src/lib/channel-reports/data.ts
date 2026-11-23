@@ -378,7 +378,9 @@ async function locationsFor(admin: SupabaseClient, clientId: string, main: Windo
   const all = await readLocationRowsIn(admin, clientId, cfg.metrics.map((m) => m.id), [compare.start, main.start].sort()[0], main.end);
   const rows = all ? all.filter((r) => r.date >= main.start && r.date <= main.end) : null;
   const sendDay = (c: CampaignLite) => new Date(c.sendTime ?? "").toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-  const breakdown = rows && rows.length ? locationBreakdown({ metrics: cfg.metrics, rows, campaigns: campaigns.map((c) => ({ id: c.id, name: c.name, sendDay: sendDay(c) })), maxColumns: 6, currency }) : null;
+  // Two systems both called "Placed Order" (Toast's and a POS's) are named by their system in the section
+  const named = cfg.metrics.map((m) => (m.integration && cfg.metrics.some((o) => o.id !== m.id && o.name.trim().toLowerCase() === m.name.trim().toLowerCase()) ? { ...m, name: `${m.name} (${m.integration})` } : m));
+  const breakdown = rows && rows.length ? locationBreakdown({ metrics: named, rows, campaigns: campaigns.map((c) => ({ id: c.id, name: c.name, sendDay: sendDay(c) })), maxColumns: 6, currency }) : null;
   // The primary's campaign revenue is on the campaigns; the others' in klaviyo_campaign_metrics
   const attributed: Record<string, number> = {};
   const primary = cfg.metrics[0];

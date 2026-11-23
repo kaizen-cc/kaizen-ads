@@ -4,7 +4,7 @@ import { encryptionKey, unseal } from "@/lib/meta-token-core";
 import { conversionMetricsOf, type ConversionMetric } from "@/lib/email-metrics";
 import { KlaviyoError, locationAggregate, metricEventsPage } from "./api";
 import { dayIn, redactKey } from "./core";
-import { dayStartUtc, detectLocationProps, locationPropsOf, looksMultiLocation, parseEventsPage, parseLocationAggregate, resolveMessages, rollupEvents, UNKNOWN_LOCATION, type LocationCandidate, type LocationRoute, type LocationRow } from "./locations";
+import { dayStartUtc, detectLocationProps, locationPropsOf, looksMultiLocation, parseEventsPage, parseLocationAggregate, resolveMessages, rollupEvents, UNKNOWN_LOCATION, type LocationCandidate, type LocationRoute, type LocationRow, allLocationsLabel, likelyLocationProp } from "./locations";
 
 // Multi-location clients' orders by restaurant (klaviyo_location_daily), read from Klaviyo once a day for the clients a
 // lead or an exec flagged, and the check that suggests the flag. Klaviyo's metric aggregates are tried first, grouped by
@@ -148,7 +148,7 @@ async function saveDays(admin: SupabaseClient, clientId: string, metricId: strin
 }
 
 /** One day of a metric's orders from the Events API, every page (up to the cap); says whether it was cut short */
-async function eventsDay(key: string, metricId: string, prop: string, day: string, tz: string | null, budget: { pages: number }): Promise<{ rows: LocationRow[]; cut: boolean }> {
+async function eventsDay(key: string, metricId: string, prop: string, day: string, tz: string | null, budget: { pages: number }, fixed: string | null = null): Promise<{ rows: LocationRow[]; cut: boolean }> {
   const all: ReturnType<typeof parseEventsPage> = [];
   let at: Parameters<typeof metricEventsPage>[1] | null = { metricId, fromIso: dayStartUtc(day, tz), toIso: dayStartUtc(shift(day, 1), tz) };
   let pages = 0;
@@ -157,7 +157,7 @@ async function eventsDay(key: string, metricId: string, prop: string, day: strin
     pages++;
     budget.pages--;
     // Only this day: an event a time zone edge puts on the next day is read with that day
-    all.push(...parseEventsPage(json, prop, (iso) => dayIn(iso, tz)).filter((e) => e.date === day));
+    all.push(...parseEventsPage(json, prop, (iso) => dayIn(iso, tz)).filter((e) => e.date === day).map((e) => (fixed ? { ...e, location: fixed } : e)));
     at = next;
   }
   return { rows: rollupEvents(metricId, all), cut: Boolean(at) };
@@ -176,8 +176,34 @@ export async function syncLocations(admin: SupabaseClient, clientId: string, giv
   const key = given?.key ?? keyOf(conn);
   if (!key) return { ok: false, rows: 0, error: "The saved key can't be read." };
   const props = locationPropsOf(conn.location_props);
-  const metrics = metricsOf(conn).filter((m) => props[m.id]);
   const memo = await readMemo(admin, clientId);
+  // A ranked order system with no location picked (one ranked after the check ran): its likely location property is
+  // found and kept; with none, its orders are read as one "<system> orders (all locations)" line, never dropped
+  const fixed: Record<string, string> = {};
+  const missing = metricsOf(conn).filter((m) => !props[m.id]);
+  if (missing.length) {
+    const detected = { ...(memo.detected ?? {}) };
+    for (const m of missing) {
+      if (!detected[m.id]) {
+        try {
+          const nowIso = new Date().toISOString().replace(/\.\d+Z$/, "+00:00");
+          const fromIso = new Date(Date.now() - 14 * 86_400_000).toISOString().replace(/\.\d+Z$/, "+00:00");
+          const { json } = await metricEventsPage(key, { metricId: m.id, fromIso, toIso: nowIso, size: SAMPLE_SIZE, attributions: false });
+          const events = (Array.isArray((json as { data?: unknown[] })?.data) ? (json as { data: unknown[] }).data : []).map((e) => ((e as { attributes?: { event_properties?: Record<string, unknown> } }).attributes?.event_properties ?? null));
+          detected[m.id] = detectLocationProps(events);
+        } catch {
+          detected[m.id] = [];
+        }
+      }
+      const prop = likelyLocationProp(detected[m.id]);
+      if (prop) props[m.id] = prop;
+      else fixed[m.id] = allLocationsLabel(m.integration, m.name);
+    }
+    memo.detected = detected;
+    // The properties found are kept on the connection, as if picked on the card (a lead can still change them there)
+    if (missing.some((m) => props[m.id])) await admin.from("klaviyo_connections").update({ location_props: props }).eq("client_id", clientId);
+  }
+  const metrics = metricsOf(conn).filter((m) => props[m.id] || fixed[m.id]);
   if (!metrics.length) {
     const error = "No location property picked for any conversion metric.";
     await writeMemo(admin, clientId, { ...memo, error, at: new Date().toISOString() });
@@ -198,9 +224,11 @@ export async function syncLocations(admin: SupabaseClient, clientId: string, giv
   const campaignMap = (camps ?? []).map((c) => ({ campaignId: c.campaign_id as string, messageId: (c.message_id as string | null) ?? null }));
 
   for (const m of metrics) {
-    const prop = props[m.id];
+    const prop = props[m.id] ?? "";
+    const label = fixed[m.id] ?? null;
     try {
-      if (route !== "events") {
+      // Orders with no location are read one by one with their one label (Klaviyo has nothing to group them by)
+      if (route !== "events" && !label) {
         const from = covered[m.id] ? shift(today, -(RECENT_DAYS - 1)) : floor;
         let rows: LocationRow[] | null = null;
         try {
@@ -232,7 +260,7 @@ export async function syncLocations(admin: SupabaseClient, clientId: string, giv
       let earliest = covered[m.id] ?? null;
       for (const day of days) {
         if (budget.pages <= 0 || Date.now() > deadline) break;
-        const { rows, cut } = await eventsDay(key, m.id, prop, day, tz, budget);
+        const { rows, cut } = await eventsDay(key, m.id, prop, day, tz, budget, label);
         if (cut) {
           // Out of this run's pages mid-day: the day is read whole on a later run, never saved half
           if (budget.pages <= 0) break;
@@ -305,7 +333,7 @@ export async function readLocationRowsIn(db: SupabaseClient, clientId: string, m
 export async function locationConfig(admin: SupabaseClient, clientId: string): Promise<{ metrics: ConversionMetric[] } | null> {
   const { data, error } = await admin.from("klaviyo_connections").select("conversion_metric_id, conversion_metric_name, conversion_metrics, multi_location, location_props").eq("client_id", clientId).maybeSingle();
   if (error || !data || !data.multi_location) return null;
-  const props = locationPropsOf(data.location_props);
-  const metrics = metricsOf(data as unknown as Conn).filter((m) => props[m.id]);
+  // Every ranked order system: one with no location property is read as its own "(all locations)" line (syncLocations)
+  const metrics = metricsOf(data as unknown as Conn);
   return metrics.length ? { metrics } : null;
 }
