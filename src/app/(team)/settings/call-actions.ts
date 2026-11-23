@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { canTalkToAgent, canTrainAgent } from "@/lib/agent-access";
 import { CALL_LIMIT_SECONDS, assistantVoiceFor, decide, firstNameOf, greetingFor, handoverLine, keepsHandoverLine, isEndReason, isVoiceId, leftUnfinished, localDayIn, localHourIn, pendingOf, resumeModeFor, seedOf, statusOf, voiceFor, type Decision, type EndTrigger, type LearnedItem, type ResumeMode } from "@/lib/agent-call/core";
-import { CHAT_LIMIT_SECONDS, parseModeLog, stillOpen, talkModeOf, type TalkMode } from "@/lib/agent-call/modality";
+import { CHAT_LIMIT_SECONDS, modeSince, parseModeLog, stillOpen, talkModeOf, type TalkMode } from "@/lib/agent-call/modality";
 import { currentTopic, endReasonOf, saveEndReason, summarizeCall, sweepOpenCalls } from "@/lib/agent-call/server";
 import { reviewCallSafety } from "@/lib/agent-call/safety";
 import { ASSISTANT_KEY, ASSISTANT_LABEL, assistantGreeting } from "@/lib/assistant/core";
@@ -258,13 +258,32 @@ async function personalVoice(admin: ReturnType<typeof createAdminClient>, profil
   return (data?.assistant_voice as string | null) ?? null;
 }
 
+/**
+ * The call carries on past the hour (never cut mid-sentence): the same conversation gets a fresh hour from now, logged
+ * on it like a switch to voice, and a new listening token. No line is added: it simply goes on.
+ */
+export async function extendCall(callId: string): Promise<{ ok: true; since: string; sttToken: string | null } | Fail> {
+  const me = await requireStaff();
+  if (!/^[0-9a-f-]{36}$/.test(callId)) return { ok: false, error: "That conversation isn't there." };
+  const admin = createAdminClient();
+  const { data: call } = await admin.from("ai_role_calls").select("profile_id, role_key, ended_at, mode, mode_log").eq("id", callId).maybeSingle();
+  if (!call || call.profile_id !== me.id || call.ended_at || !canTalkToAgent(me, call.role_key as string)) return { ok: false, error: "This call has ended." };
+  const since = new Date().toISOString();
+  const log = [...parseModeLog(call.mode_log), { mode: "voice" as const, at: since }].slice(-200);
+  const { error } = await admin.from("ai_role_calls").update({ mode: "voice", mode_log: log }).eq("id", callId);
+  if (error) return { ok: false, error: "Couldn't carry the call on." };
+  const sttToken = await realtimeSttToken(CALL_LIMIT_SECONDS + 60).catch(() => null);
+  return { ok: true, since, sttToken };
+}
+
 /** A new speech to text token mid-call (the first one is single use: a dropped connection needs another) */
 export async function renewSttToken(callId: string): Promise<{ ok: true; token: string } | Fail> {
   const me = await requireStaff();
   const admin = createAdminClient();
-  const { data: call } = await admin.from("ai_role_calls").select("profile_id, role_key, started_at, ended_at").eq("id", callId).maybeSingle();
+  const { data: call } = await admin.from("ai_role_calls").select("profile_id, role_key, started_at, ended_at, mode_log").eq("id", callId).maybeSingle();
   if (!call || call.profile_id !== me.id || call.ended_at || !canTalkToAgent(me, call.role_key as string)) return { ok: false, error: "This call has ended." };
-  const left = CALL_LIMIT_SECONDS - (Date.now() - new Date(call.started_at as string).getTime()) / 1000;
+  const since = modeSince({ mode: "voice", startedAt: call.started_at as string, log: parseModeLog(call.mode_log) });
+  const left = CALL_LIMIT_SECONDS - (Date.now() - since) / 1000;
   if (left <= 0) return { ok: false, error: "This call has ended." };
   try {
     return { ok: true, token: await realtimeSttToken(left + 30) };

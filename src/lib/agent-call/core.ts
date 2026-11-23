@@ -6,7 +6,10 @@
 import type { JobView } from "@/lib/assistant/team";
 
 /** The longest a call runs, in seconds; the screen shows the time left and hangs up at the end */
-export const CALL_LIMIT_SECONDS = 30 * 60;
+export const CALL_LIMIT_SECONDS = 60 * 60;
+/** Five minutes before the hour: the agent says so once, and keeps notes; past the hour the call carries straight on */
+export const CALL_WARN_SECONDS = CALL_LIMIT_SECONDS - 5 * 60;
+export const CALL_WARN_LINE = "Just so you know, we've got about five minutes left on this call. I'm keeping notes, and if we go over I'll carry straight on in a fresh one, same conversation.";
 
 // ─── Voices ─────────────────────────────────────────────────────────────────
 

@@ -7,7 +7,7 @@ import type { Staff } from "@/lib/auth";
 import { loadRolePlaybook, type RolePlaybook } from "@/lib/role-playbook";
 import { TOOLS_RULE, agentTools } from "./agent-tools";
 import { BACKGROUND_CHATTER_RULE, CALL_LIMIT_SECONDS, DISTRESS_RULE, END_CALL_RULE, LEARNINGS_SCHEMA, endMarkerFilter, endReasonFor, stripEndMarker, firstNameOf, parseLearnings, parseTopic, pendingItems, pendingOf, type CallEvent, type EndReason, type LearnedItem, type Learning, type ResumeMode } from "./core";
-import { agentModality, keptLine, parseModeLog, stillOpen, streamShaping, talkModeOf, type ModeStep, type TalkMode } from "./modality";
+import { agentModality, keptLine, modeSince, parseModeLog, stillOpen, streamShaping, talkModeOf, type ModeStep, type TalkMode } from "./modality";
 import { callHistory, longTurnText } from "./history";
 import { focusFor } from "./role-focus";
 import { callConnectors, noConnectors, type CallConnectors } from "./call-connectors";
@@ -700,11 +700,11 @@ export async function sweepOpenCalls(admin: SupabaseClient, opts: { profileId?: 
   for (const c of res.data ?? []) {
     if (opts.keep && c.id === opts.keep) continue;
     const mode = talkModeOf(c.mode);
-    // A chat still in use isn't swept by the clock (only when its person starts something else)
-    if (!opts.profileId && mode === "text" && stillOpen({ mode, startedAt: c.started_at as string, lastTurnAt: (c.last_turn_at as string | null) ?? null, log: parseModeLog(c.mode_log), callLimitSeconds: CALL_LIMIT_SECONDS })) continue;
+    // A chat still in use, or a call carried on into a new hour, isn't swept by the clock (only when its person starts something else)
+    if (!opts.profileId && stillOpen({ mode, startedAt: c.started_at as string, lastTurnAt: (c.last_turn_at as string | null) ?? null, log: parseModeLog(c.mode_log), callLimitSeconds: CALL_LIMIT_SECONDS })) continue;
     const start = Date.parse(c.started_at as string);
     const last = c.last_turn_at ? Date.parse(c.last_turn_at as string) : start;
-    const cap = mode === "text" ? Number.MAX_SAFE_INTEGER : start + CALL_LIMIT_SECONDS * 1000;
+    const cap = mode === "text" ? Number.MAX_SAFE_INTEGER : modeSince({ mode, startedAt: c.started_at as string, log: parseModeLog(c.mode_log) }) + CALL_LIMIT_SECONDS * 1000;
     const end = new Date(Math.min(Math.max(last, start), cap, Date.now())).toISOString();
     const pending = pendingOf((c.learned ?? []) as LearnedItem[]).length;
     const { error: e } = await admin

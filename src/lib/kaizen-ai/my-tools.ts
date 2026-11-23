@@ -47,6 +47,27 @@ export function textAnswer(text: string, input: Record<string, unknown>): Record
 export function myTools(ctx: ToolCtx): ChatTool[] {
   const tools: ChatTool[] = [
     {
+      name: "remember",
+      description:
+        "Saves something about the person to their own memory, which every one of their chats and calls reads from then on (only they see it; they can see and forget it on their assistant's page): how they like to work (\"keep drafts short\", \"numbers first\"), a preference, or a lesson for every client (\"always lead subject lines with the offer\": topic work). Never a client's details (those stay in that client's chats), secrets or health. Say in a few words that you'll remember it.",
+      input_schema: {
+        type: "object",
+        properties: { topic: { type: "string", enum: ["preference", "work", "routine", "uses", "goals", "focus", "other"] }, body: { type: "string", description: "One short sentence, in the second person (\"You like drafts short.\")" } },
+        required: ["topic", "body"],
+        additionalProperties: false,
+      },
+      status: () => "Remembering that…",
+      run: async (input) => {
+        if (viewingAs(ctx)) return { error: "While viewing as someone, nothing is saved to their memory." };
+        const { cleanMemory } = await import("@/lib/assistant/core");
+        const notes = cleanMemory({ notes: [{ kind: "fact", topic: input.topic, body: input.body }] });
+        if (!notes.length) return { saved: false, note: "That isn't something kept (a client's details, secrets, health). Say so kindly." };
+        const { saveNotes } = await import("@/lib/assistant/memory");
+        await saveNotes(ctx.admin, ctx.me.id, notes, null);
+        return { saved: true, where: "Their assistant's page, under what it knows (they can forget it there)" };
+      },
+    },
+    {
       name: "search_my_kaizen_ai",
       description:
         "Searches the person's own Kaizen AI chats, the Claude chats and projects they imported, and the documents in their Kaizen AI projects: by title (e.g. a thread called \"Kore Outdoor 284 NEW\") and by what was said in them. Words match anywhere (accents and case aside); put a phrase in quotes to match it as written. Returns the matching threads and projects with a passage of each; read one whole with read_my_kaizen_ai.",

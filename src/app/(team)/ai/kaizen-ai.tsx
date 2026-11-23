@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { MEMORY_PAGE } from "@/lib/kaizen-ai/memory-core";
 import { answerState, setTabStatus } from "@/lib/tab-status";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -1518,7 +1520,17 @@ function Composer({
             </div>
           </div>
         </div>
-        <p className="mt-1.5 hidden text-center text-[11px] text-faint md:block">Kaizen AI can be wrong. It never changes an ad account or messages a client without you confirming.</p>
+        <p className="mt-1.5 text-center text-[11px] leading-snug text-faint">
+          {/* Memory across all their chats (src/lib/kaizen-ai/memory-core.ts): said plainly, with where to see or forget it */}
+          <span className="inline-flex items-center gap-1">
+            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-ok" />
+            Memory on across your chats ·{" "}
+            <Link href={MEMORY_PAGE} className="underline decoration-line underline-offset-2 transition-colors hover:text-fg">
+              see or forget
+            </Link>
+          </span>
+          <span className="hidden md:inline"> · Kaizen AI can be wrong. It never changes an ad account or messages a client without you confirming.</span>
+        </p>
         {saving ? (
           <SaveTemplate
             prompt={text}

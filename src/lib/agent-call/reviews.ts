@@ -11,7 +11,7 @@ import { CALL_LIMIT_SECONDS, pendingOf, type LearnedItem } from "./core";
 export type CallReview = { callId: string; roleKey: string; roleLabel: string; icon: string | null; startedAt: string; items: LearnedItem[] };
 
 export async function loadCallReviews(admin: SupabaseClient, me: Staff, roleKey?: string): Promise<CallReview[]> {
-  let q = admin.from("ai_role_calls").select("id, role_key, started_at, ended_at, learned").eq("profile_id", me.id).is("reviewed_at", null).order("started_at", { ascending: false }).limit(20);
+  let q = admin.from("ai_role_calls").select("id, role_key, started_at, ended_at, last_turn_at, learned").eq("profile_id", me.id).is("reviewed_at", null).order("started_at", { ascending: false }).limit(20);
   if (roleKey) q = q.in("role_key", [roleKey, "assistant"]);
   const { data, error } = await q;
   if (error || !data?.length) return [];
@@ -19,7 +19,7 @@ export async function loadCallReviews(admin: SupabaseClient, me: Staff, roleKey?
   const stale = Date.now() - (CALL_LIMIT_SECONDS + 120) * 1000;
   // An assistant call's items were taught to the specialist it called in: the review is that agent's
   const agentOf = (c: { role_key: unknown; learned: unknown }) => (c.role_key === "assistant" ? (((c.learned ?? []) as LearnedItem[]).find((l) => l.role)?.role ?? "") : (c.role_key as string));
-  const rows = data.filter((c) => (c.ended_at || Date.parse(c.started_at as string) < stale) && canTrainAgent(me, agentOf(c)) && (!roleKey || agentOf(c) === roleKey));
+  const rows = data.filter((c) => (c.ended_at || Math.max(Date.parse(c.started_at as string), Date.parse(String(c.last_turn_at ?? "")) || 0) < stale) && canTrainAgent(me, agentOf(c)) && (!roleKey || agentOf(c) === roleKey));
   const ready = rows.map((c) => ({ c: { ...c, role_key: agentOf(c) }, items: pendingOf((c.learned ?? []) as LearnedItem[]) })).filter((x) => x.items.length);
   if (!ready.length) return [];
   const { data: roles } = await admin.from("ai_roles").select("key, label, icon").in("key", [...new Set(ready.map((x) => x.c.role_key as string))]);

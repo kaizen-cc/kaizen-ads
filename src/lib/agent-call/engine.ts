@@ -901,6 +901,22 @@ export class Call {
     go();
   }
 
+  /** Whether nothing is being said or worked on right now (the call is just listening) */
+  idle() {
+    return !this.closed && this.st.phase === "listening" && this.st.commit === null && !this.turn && !this.playing && !this.queue.length;
+  }
+
+  /** The agent says a line of its own (the five minutes left), once it has finished what it's saying */
+  announce(text: string) {
+    if (this.closed) return;
+    const go = () => {
+      if (this.closed) return;
+      if (!this.idle()) return void setTimeout(go, 500);
+      this.say(text, null);
+    };
+    go();
+  }
+
   /** Send what's been heard so far, now (the Send button, or Enter on a computer) */
   sendNow() {
     this.dispatch({ t: "send" });

@@ -4,12 +4,12 @@ import { answerState, setTabStatus } from "@/lib/tab-status";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { ackCallNotice, endCall, openAssistantChat, startCall, switchCallMode, takeChatHeadsUps, type ChatHeadsUp, type ThreadLine } from "@/app/(team)/settings/call-actions";
+import { ackCallNotice, endCall, extendCall, openAssistantChat, startCall, switchCallMode, takeChatHeadsUps, type ChatHeadsUp, type ThreadLine } from "@/app/(team)/settings/call-actions";
 import { assistantCallNotes, audioUploadSlot, callUploadSlots, callUploadsDone, screenFrameSaved, screenFrameSlot } from "@/app/(team)/assistant/actions";
 import { lookPlan } from "@/lib/agent-call/call-context";
 import { openPlan } from "@/lib/agent-call/open-link";
 import { canShareScreen, grabFrame, startScreenShare, stopScreenShare } from "@/lib/agent-call/screen-share";
-import { CALL_LIMIT_SECONDS, type CallCard, type CallProgress, type EndTrigger, type LearnedItem, type StallState, type UploadAsk } from "@/lib/agent-call/core";
+import { CALL_LIMIT_SECONDS, CALL_WARN_LINE, CALL_WARN_SECONDS, type CallCard, type CallProgress, type EndTrigger, type LearnedItem, type StallState, type UploadAsk } from "@/lib/agent-call/core";
 import { ChatSession, type ChatLine } from "@/lib/agent-call/chat-engine";
 import type { TalkMode } from "@/lib/agent-call/modality";
 import { Call, chime, type Line, type Phase, type Speaker } from "@/lib/agent-call/engine";
@@ -273,13 +273,37 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
     hangUpRef.current = hangUp;
   }, [hangUp]);
 
-  // The clock, and hanging up at the limit
+  // The clock: five minutes before the hour the agent says so (once); at the hour the call carries straight on in a
+  // fresh hour of the same conversation, once nobody is mid-sentence (it hangs up only if that can't be done)
+  const warned = useRef(false);
+  const extending = useRef(false);
   useEffect(() => {
     if (stage !== "call" || !startedAt) return;
+    warned.current = false;
     const t = setInterval(() => {
       const n = Date.now();
       setNow(n);
-      if ((n - startedAt) / 1000 >= CALL_LIMIT_SECONDS) void hangUpRef.current(false, "limit");
+      const s = (n - startedAt) / 1000;
+      if (s >= CALL_WARN_SECONDS && s < CALL_LIMIT_SECONDS && !warned.current) {
+        warned.current = true;
+        call.current?.announce(CALL_WARN_LINE);
+      }
+      if (s < CALL_LIMIT_SECONDS || extending.current) return;
+      const id = callId.current;
+      if (!id || !call.current) return void hangUpRef.current(false, "limit");
+      // Never cut off mid-sentence: wait for a quiet moment (the server keeps the call open a minute past the hour)
+      if (!call.current.idle() && s < CALL_LIMIT_SECONDS + 50) return;
+      extending.current = true;
+      void extendCall(id)
+        .then((r) => {
+          if (r.ok) {
+            setStartedAt(Date.parse(r.since));
+          } else void hangUpRef.current(false, "limit");
+        })
+        .catch(() => void hangUpRef.current(false, "limit"))
+        .finally(() => {
+          extending.current = false;
+        });
     }, 1000);
     return () => clearInterval(t);
   }, [stage, startedAt]);

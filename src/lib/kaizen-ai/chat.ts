@@ -325,7 +325,7 @@ export async function runTurn(input: TurnInput): Promise<void> {
   // The email and social teams and the makers get no ad copy context (it's built from ad performance)
   const channelOnly = isChannelOnly(me.role);
   const copyAsked = !channelOnly && seesAccountNumbers(me) && (agent === "copy" || wantsCopy(userText));
-  const [brief, knowledge, convo, copyCtx, aiRule, project] = await Promise.all([
+  const [brief, knowledge, convo, copyCtx, aiRule, project, memory] = await Promise.all([
     client ? (channelOnly || !seesAccountNumbers(me) ? channelBrief(admin, client.id) : clientBrief(admin, client.id)).catch((e) => `(The client's context couldn't be read: ${e instanceof Error ? e.message : "unknown"})`) : Promise.resolve(""),
     knowledgeFor(agent, label, userText.slice(0, 6000), client?.id ?? null).catch(() => ""),
     history(admin, recent),
@@ -334,6 +334,9 @@ export async function runTurn(input: TurnInput): Promise<void> {
     client ? import("@/lib/ai-content-rule").then(({ loadAiRule }) => loadAiRule(admin, client!.id)) : Promise.resolve(null),
     // The project's instructions and knowledge, read with the person's own access (none when they can't see it)
     projectId ? projectContext(db, projectId, `${thread.title}\n${userText}`).catch(() => null) : Promise.resolve(null),
+    // Memory across all their chats: their own memory everywhere, and with a client pinned what they discussed about it
+    // in their other chats and calls (never while the owner views as them: it's private to them)
+    me.viewAs ? Promise.resolve("") : import("./memory").then(({ memoryBlock }) => memoryBlock(admin, me, client ? { id: client.id, name: client.name } : null, thread.id)).catch(() => ""),
   ]);
   const aiRuleLine = aiRule && !aiRule.allowed && aiRule.rule ? `<ai_content_rule>\n${noAiContentRule(aiRule.rule)}\n</ai_content_rule>` : "";
   for (const [id, files] of convo.updated) await admin.from("ai_messages").update({ attachments: files }).eq("id", id);
@@ -366,7 +369,7 @@ export async function runTurn(input: TurnInput): Promise<void> {
   const { lineActionsPrompt } = await import("@/lib/line-actions");
   const lineLine = client ? ` ${lineActionsPrompt(me, await (await import("@/lib/line-actions-server")).seatsOnClient(admin, me.id, client.id))}` : "";
   const allowedLine = `${permsPrompt(perms)}${lineLine}${!client && buyingPlatform(me) && !me.isExec && !me.role.startsWith("head_of") ? ` A buyer's changes and launches are only on clients where they're the client's ${buyingPlatform(me) === "meta" ? "Meta" : "Google"} buyer.` : ""}`;
-  system.push({ type: "text", text: [`Today is ${today} (New York). You're talking with the team's ${roleLabel(me.role)}${me.isExec ? " (an executive)" : me.isLead ? " (a lead)" : ""}.`, allowedLine, aiRuleLine, knowledge, noClientCopy, googleLinksHint(userText).replace(/<\/?hint>/g, "")].filter(Boolean).join("\n\n") });
+  system.push({ type: "text", text: [`Today is ${today} (New York). You're talking with the team's ${roleLabel(me.role)}${me.isExec ? " (an executive)" : me.isLead ? " (a lead)" : ""}.`, allowedLine, aiRuleLine, memory, knowledge, noClientCopy, googleLinksHint(userText).replace(/<\/?hint>/g, "")].filter(Boolean).join("\n\n") });
 
   // ─── The answer, with tools on the way ───
   const { data: placeholder } = await admin.from("ai_messages").insert({ thread_id: thread.id, role: "assistant", content: "", agent_key: agent, model }).select("id").single();
