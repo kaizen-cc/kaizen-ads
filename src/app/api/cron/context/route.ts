@@ -97,6 +97,7 @@ function due(step: string | null) {
   if (step === "sprints") return true; // hourly; each sprint's own next check decides
   if (step === "asana") return true; // every 5 minutes (vercel.json), so the mirror keeps up with Asana
   if (step === "sheet") return [12, 17].includes(hour);
+  if (step === "creative_db") return true; // every 15 minutes (vercel.json): each client's Creative Database, the source of truth for delivered creative
   if (step === "docs") return true; // every 30 minutes (vercel.json)
   if (step === "email_sow") return hour >= 6 && hour <= 21; // hourly (vercel.json): email clients' SOWs found and read, the SOW month's requests drafted, very-behind allotments flagged
   if (step === "social_learn") return true; // hourly (vercel.json): calls, Slack and Gmail read for the organic social agents' lessons (pending approval)
@@ -251,6 +252,12 @@ export async function GET(request: Request) {
       const matched = await matchShotUploads(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
       const moments = await keepMoments(admin).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
       return Response.json({ shots, matched, moments });
+    }
+    if (step === "creative_db") {
+      // Every creative client's Creative Database, read now and paced under Google's per-minute limit: delivered this
+      // cycle comes from it (client_allotment_usage), so the allotments are never a schedule behind
+      const { syncCreativeDatabases } = await import("@/lib/creative-db");
+      return Response.json(googleConfigured() ? await syncCreativeDatabases(admin) : { skipped: "Google isn't connected" });
     }
     if (step === "sheet") {
       const { sheetConfigured, syncAccountSheet } = await import("@/lib/account-sheet");

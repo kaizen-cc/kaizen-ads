@@ -163,6 +163,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/context?step=creative_db",
+      "schedule": "4,19,34,49 * * * *"
+    },
+    {
       "path": "/api/cron/context?step=sheet",
       "schedule": "2 16,17,21,22 * * *"
     },
