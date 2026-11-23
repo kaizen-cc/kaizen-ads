@@ -1,5 +1,6 @@
 "use client";
 
+import { answerState, setTabStatus } from "@/lib/tab-status";
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
@@ -509,6 +510,16 @@ export function AgentCallProvider({ assistantColor = null, assistantName: givenN
     },
     [openHref, uploadAudio, stopShare],
   );
+
+  // The tab's dot (Kyle, Nov 23 2026): grey while the assistant writes, then green, or yellow if it asks them something
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (chatBusy) setTabStatus("assistant", "thinking");
+    else if (wasBusy.current) setTabStatus("assistant", answerState([...chatLines].reverse().find((l) => l.who === "agent")?.text ?? "", Boolean(error)));
+    wasBusy.current = chatBusy;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the answer starts or ends
+  }, [chatBusy]);
+  useEffect(() => () => setTabStatus("assistant", null), []);
 
   /** The chat with the assistant: its window, then its conversation (the open one picked up, else a new one) */
   const makeChat = useCallback(

@@ -1,5 +1,6 @@
 "use client";
 
+import { answerState, setTabStatus } from "@/lib/tab-status";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { captureFrames, extractAudio } from "@/lib/uploads/video-prep";
@@ -322,6 +323,9 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
     }
     setEditing(null);
     setLive({ thread: thread?.id ?? null, text: "", tools: [], cards: [], agent: null, error: null, busy: true });
+    setTabStatus("kaizen-ai", "thinking");
+    let answer = "";
+    let failed = false;
     let threadId = thread?.id ?? null;
     const payload = {
       threadId,
@@ -350,10 +354,16 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
         setLive((l) => (l ? { ...l, thread: e.id } : l));
       } else if (e.t === "client") setThread((th) => (th ? { ...th, client_id: e.id, client_confirmed: e.confirmed, clients: { name: e.name, slug: e.slug } } : th));
       else if (e.t === "agent") setLive((l) => (l ? { ...l, agent: { label: e.label, why: e.why } } : l));
-      else if (e.t === "text") setLive((l) => (l ? { ...l, text: l.text + e.d } : l));
+      else if (e.t === "text") {
+        answer += e.d;
+        setLive((l) => (l ? { ...l, text: l.text + e.d } : l));
+      }
       else if (e.t === "tool") setLive((l) => (l ? { ...l, tools: l.tools.some((x) => x.id === e.run.id) ? l.tools.map((x) => (x.id === e.run.id ? e.run : x)) : [...l.tools, e.run] } : l));
       else if (e.t === "card") setLive((l) => (l ? { ...l, cards: [...l.cards, e.card] } : l));
-      else if (e.t === "error") setLive((l) => (l ? { ...l, error: e.message } : l));
+      else if (e.t === "error") {
+        failed = true;
+        setLive((l) => (l ? { ...l, error: e.message } : l));
+      }
     };
     try {
       const res = await fetch("/api/ai/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: ac.signal });
@@ -373,8 +383,13 @@ export function KaizenAi({ me, on, initialThreads, initialTemplates, initialThre
         }
       }
     } catch (e) {
-      if (!ac.signal.aborted) setLive((l) => (l ? { ...l, error: e instanceof Error ? e.message : "Something went wrong." } : l));
+      if (!ac.signal.aborted) {
+        failed = true;
+        setLive((l) => (l ? { ...l, error: e instanceof Error ? e.message : "Something went wrong." } : l));
+      }
     }
+    // The tab's dot: green when the answer's in, yellow if it asks them something (cleared if they stopped it)
+    setTabStatus("kaizen-ai", ac.signal.aborted ? null : answerState(answer, failed));
     // Saved on the server: read it back (ids, picture links), then the thread list
     if (threadId) {
       // A stop lets the server save what it had first
