@@ -214,9 +214,17 @@ export async function accounts(admin: SupabaseClient, focus: readonly string[], 
   const audited = (rows: { client_id: string; auto?: boolean | null }[] | null) => new Set((rows ?? []).filter((r) => !r.auto).map((r) => r.client_id));
   const email = new Set([...moving(es as never), ...audited(ea as never)]);
   const social = new Set([...moving(ss as never), ...audited(sa as never)]);
+  // An account in trouble shows once: in the step-in deck (owner, Nov 23 2026). For execs, the Accounts block leaves out
+  // ad accounts (every one that reaches an exec is a step-in card) and any client with an open step-in
+  const stepped = new Set<string>();
+  if (opts.execRule !== false) {
+    const { data: open } = await admin.from("exec_stepins").select("client_id").eq("status", "open").limit(1000);
+    for (const r of open ?? []) stepped.add(r.client_id as string);
+  }
   const seen = new Set<string>();
   const cards: ExecCard[] = [];
   for (const { d, line } of [...mine].sort((a, b) => b.d.score - a.d.score)) {
+    if (opts.execRule !== false && (d.key.startsWith("kpi:") || (d.clientId && stepped.has(d.clientId)))) continue;
     const motion = d.key.startsWith("kpi:") ? (ads.get(d.key.slice(4)) ?? null) : line === "email" ? (d.clientId && email.has(d.clientId) ? "A sprint or audit is moving" : null) : line === "social" ? (d.clientId && social.has(d.clientId) ? "A sprint or audit is moving" : null) : null;
     // The team is handling it: off the exec's screen
     if (motion) continue;

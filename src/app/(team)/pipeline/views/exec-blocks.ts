@@ -6,7 +6,7 @@ import type { ExecCard, ExecTab } from "@/lib/exec-overview-core";
 export const BLURB: Record<ExecTab, string> = {
   needs: "Replies, promises, tasks and approvals on you",
   escalated: "Stuck 48 hours past a lead, and fires",
-  accounts: "Your lines, off target, nothing in motion",
+  accounts: "Email, social and creative off target, nothing moving (ad accounts are step-ins)",
   asana: "Every open Asana task that's yours",
   pulse: "The agency at a glance, nothing to do",
   system: "Kaizen OS itself: checks, fixes, feedback",

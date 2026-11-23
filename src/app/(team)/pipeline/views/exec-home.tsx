@@ -18,7 +18,7 @@ import { openAsanaTask } from "@/components/asana-task-sheet";
 const EMPTY: Record<ExecTab, { title: string; line: string }> = {
   needs: { title: "You're clear", line: "No replies, promises, tasks or approvals on you right now." },
   escalated: { title: "Nothing stuck past a lead", line: "Your leads are moving everything. Fires would show here the moment they happen." },
-  accounts: { title: "Your accounts are handled", line: "Nothing in your lines is off target without someone already on it." },
+  accounts: { title: "Your accounts are handled", line: "Nothing else in your lines is off target without someone on it. Ad accounts in trouble are in the step-ins above." },
   asana: { title: "Nothing open in Asana", line: "No open Asana tasks are assigned to you." },
   pulse: { title: "Quiet", line: "Nothing to report across the agency." },
   system: { title: "All systems normal", line: "Checks passing, fixes merged, feedback flowing." },
