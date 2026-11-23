@@ -6,6 +6,7 @@ import { ConnectorIcon } from "@/app/(team)/ai/connectors-ui";
 import type { RequestGroup } from "@/lib/connectors/requests-core";
 import { appSetupFor, appStepText, AUTH_KINDS, browseHref, chatConnectHref, connectionsHref, keyFrom, type AuthKind, type Connector } from "@/lib/connectors/shared";
 import { ROLES } from "@/lib/roles";
+import { slackConnectHref, slackFlash, type SlackAccountState } from "@/lib/slack-account-core";
 import { closeThen, pushParams, replaceParams, useParam } from "@/lib/url-state";
 import { addCustomConnector, checkConnectorUrl, declineRequest, deleteConnector, directory, enableRequest, markCatalogSeen, offerFromRegistry, saveConnector, type DirectoryItem } from "./connector-actions";
 
@@ -907,11 +908,13 @@ function Requests({ groups, onNeedsApp }: { groups: RequestGroup[]; onNeedsApp: 
  * Your accounts: what you've connected, at a glance. Connecting, reconnecting and disconnecting live in Kaizen AI's plug
  * menu now (like Claude), so each row opens it there. Links from before (?connector=, ?connected=) still land here.
  */
-export function MyConnections({ items, isExec }: { items: MineItem[]; isExec: boolean }) {
+export function MyConnections({ items, isExec, slack }: { items: MineItem[]; isExec: boolean; slack: { state: SlackAccountState; since: string | null } }) {
   const focus = useParam("connector");
   const connected = useParam("connected");
   const error = useParam("connect_error");
-  const flash = error ?? (connected ? `${items.find((i) => i.key === connected)?.name ?? "It"} is connected. Switch it on in any Kaizen AI chat from the plug button.` : null);
+  const slackNote = slackFlash(useParam("slack"), useParam("reason"));
+  const flash = error ?? (connected ? `${items.find((i) => i.key === connected)?.name ?? "It"} is connected. Switch it on in any Kaizen AI chat from the plug button.` : (slackNote?.text ?? null));
+  const flashBad = Boolean(error) || (!connected && Boolean(slackNote?.bad));
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -923,13 +926,14 @@ export function MyConnections({ items, isExec }: { items: MineItem[]; isExec: bo
         </a>
       </div>
       {flash ? (
-        <div className={`flex items-center justify-between gap-3 rounded-[14px] px-4 py-2.5 text-[13px] text-fg ${error ? "bg-bad-soft/50" : "bg-ok-soft/60"}`}>
+        <div className={`flex items-center justify-between gap-3 rounded-[14px] px-4 py-2.5 text-[13px] text-fg ${flashBad ? "bg-bad-soft/50" : "bg-ok-soft/60"}`}>
           {flash}
-          <button type="button" onClick={() => replaceParams({ connected: null, connect_error: null })} className="grid h-11 w-11 shrink-0 place-items-center rounded-full hover:bg-ink/[0.05]" aria-label="Dismiss">
+          <button type="button" onClick={() => replaceParams({ connected: null, connect_error: null, slack: null, reason: null })} className="grid h-11 w-11 shrink-0 place-items-center rounded-full hover:bg-ink/[0.05]" aria-label="Dismiss">
             <CloseIcon />
           </button>
         </div>
       ) : null}
+      <SlackRow state={slack.state} since={slack.since} />
       {!items.length ? (
         <div className="grid justify-items-center gap-3 rounded-[20px] border border-dashed border-line px-6 py-14 text-center">
           <p className="font-heading text-[19px] text-fg">Nothing enabled for you yet</p>
@@ -960,6 +964,28 @@ export function MyConnections({ items, isExec }: { items: MineItem[]; isExec: bo
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/** Their own Slack: connected natively (not a Kaizen AI connector), so it has its own row, always there for everyone */
+function SlackRow({ state, since }: { state: SlackAccountState; since: string | null }) {
+  return (
+    <div className="overflow-hidden rounded-[20px] border border-line bg-surface">
+      <a href={slackConnectHref()} className="flex min-h-[64px] items-center gap-3.5 px-4 py-3 transition hover:bg-ink/[0.03] md:px-5">
+        <ConnectorIcon name="Slack" url={null} size={36} />
+        <span className="grid min-w-0 flex-1 gap-0.5">
+          <span className="truncate text-[14.5px] font-semibold text-fg">Slack</span>
+          <span className={`truncate text-[12px] ${state === "posting" ? "text-bad" : "text-faint"}`}>
+            {state === "reading"
+              ? [since ? `Connected ${when(since)}` : "Connected", "your assistant can search your channels and DMs"].join(" · ")
+              : state === "posting"
+                ? "Connected for posting only: reconnect so your assistant can read your channels and DMs"
+                : "Not connected: lets your assistant search your channels and DMs, and post as you"}
+          </span>
+        </span>
+        <span className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-line px-4 text-[13px] text-fg">{state === "not_connected" ? "Connect" : "Reconnect"}</span>
+      </a>
     </div>
   );
 }
