@@ -49,4 +49,10 @@ describe("dismissing a safety alert", () => {
     expect(sql).toMatch(/drop policy if exists "call safety comments: execs read"/);
     expect(sql).toMatch(/private\.is_exec\(\)/);
   });
+  it("is applied again by a new migration (the first one's database step couldn't connect)", () => {
+    const first = read("supabase/migrations/20261125090000_safety_alert_shared.sql");
+    const again = read("supabase/migrations/20261127090000_safety_alert_shared_apply.sql");
+    const statements = (sql: string) => sql.split("\n").filter((l) => l.trim() && !l.startsWith("--") && !l.startsWith("notify")).join("\n");
+    expect(statements(again)).toBe(statements(first));
+  });
 });
