@@ -1,4 +1,5 @@
 import { requireStaff } from "@/lib/auth";
+import { SlowError, withTimeout } from "@/lib/fail-fast";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 
 // POST /api/assistant/heads-up: the open app's light poll for "the assistant calls you about urgent items".
@@ -7,6 +8,9 @@ import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
 //   { action: "end", id, outcome }              the ring was answered, declined, or missed after ten seconds
 //   { action: "read", ids }                     heads-ups seen in the chat
 // Staff only, each person's own heads-ups. The logic is in lib/assistant/heads-up-server.
+
+// A poll: it answers in seconds or not at all, so a struggling database never holds a function for minutes
+export const maxDuration = 15;
 
 export async function POST(request: Request) {
   let me: Awaited<ReturnType<typeof requireStaff>>;
@@ -33,10 +37,12 @@ export async function POST(request: Request) {
       return Response.json({ ok: true, unread: await hu.unreadHeadsUps(admin, me.id) });
     }
     const path = typeof body.path === "string" ? body.path : null;
-    return Response.json(await hu.beat(admin, me.id, { visible: body.visible !== false, inCall: body.inCall === true, path }));
+    return Response.json(await withTimeout(hu.beat(admin, me.id, { visible: body.visible !== false, inCall: body.inCall === true, path }), 8000));
   } catch (e) {
     // Before the migration (or a blip): the app carries on without heads-ups
     console.error("[heads-up]", e instanceof Error ? e.message : e);
+    // Slow: a 503 tells the open app to back off; anything else carries on without heads-ups
+    if (e instanceof SlowError) return Response.json({ ring: null, unread: [] }, { status: 503 });
     return Response.json({ ring: null, unread: [] });
   }
 }

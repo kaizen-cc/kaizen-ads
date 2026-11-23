@@ -36,7 +36,7 @@
     },
     {
       "path": "/api/cron/context?step=stepins",
-      "schedule": "25 */2 * * *"
+      "schedule": "22 */2 * * *"
     },
     {
       "path": "/api/cron/context?step=dogs",
@@ -44,7 +44,7 @@
     },
     {
       "path": "/api/cron/context?step=done",
-      "schedule": "35 * * * *"
+      "schedule": "37 * * * *"
     },
     {
       "path": "/api/cron/context?step=sites",
@@ -132,7 +132,7 @@
     },
     {
       "path": "/api/cron/context?step=docs",
-      "schedule": "12,42 * * * *"
+      "schedule": "16,46 * * * *"
     },
     {
       "path": "/api/cron/context?step=calls",
@@ -148,7 +148,7 @@
     },
     {
       "path": "/api/cron/context?step=verticals",
-      "schedule": "35 * * * *"
+      "schedule": "57 * * * *"
     },
     {
       "path": "/api/cron/context?step=market",
@@ -196,7 +196,7 @@
     },
     {
       "path": "/api/cron/context?step=integrations",
-      "schedule": "52 * * * *"
+      "schedule": "54 * * * *"
     },
     {
       "path": "/api/cron/context?step=creative_drive",
@@ -208,19 +208,19 @@
     },
     {
       "path": "/api/cron/context?step=youtube",
-      "schedule": "12,42 * * * *"
+      "schedule": "14,44 * * * *"
     },
     {
       "path": "/api/cron/context?step=email_sow",
-      "schedule": "41 * * * *"
+      "schedule": "44 * * * *"
     },
     {
       "path": "/api/cron/context?step=social_learn",
-      "schedule": "47 * * * *"
+      "schedule": "51 * * * *"
     },
     {
       "path": "/api/cron/context?step=slack_seats",
-      "schedule": "50 * * * *"
+      "schedule": "56 * * * *"
     }
   ]
 }

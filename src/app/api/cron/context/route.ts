@@ -353,7 +353,7 @@ export async function GET(request: Request) {
       const sources = await yt.checkSources(admin, { budgetMs: 60_000 }).catch((e) => String(e));
       // The Gemini key just set: the videos that waited for it go back in the queue
       const requeued = await yt.requeueForKey(admin).catch((e) => String(e));
-      const queue = await yt.processYouTubeQueue(admin, { budgetMs: 420_000, parallel: 3 }).catch((e) => String(e));
+      const queue = await yt.processYouTubeQueue(admin, { budgetMs: 240_000, parallel: 3 }).catch((e) => String(e));
       const shared = await yt.shareTakeaways(admin).catch((e) => String(e));
       // The Tracking Engineer, on the same beat: its playbook filed once, and clients with a tracking flag or a sudden
       // conversion-rate drop checked (a few a run, each at most weekly), the tracking specialists told in the app
@@ -366,7 +366,7 @@ export async function GET(request: Request) {
       const { aiEnabled } = await import("@/lib/ai");
       if (!aiEnabled()) return Response.json({ skipped: "The AI isn't connected" });
       // What clients and the team said about each social account: lessons for the Social Strategist, waiting for the Head of Social or an exec
-      return Response.json(await (await import("@/lib/social-training")).harvestSocialLearnings(admin, { budgetMs: 600_000 }));
+      return Response.json(await (await import("@/lib/social-training")).harvestSocialLearnings(admin, { budgetMs: 300_000 }));
     }
     if (step === "email_sow") {
       const { aiEnabled } = await import("@/lib/ai");
@@ -374,7 +374,7 @@ export async function GET(request: Request) {
       const { sowPass } = await import("@/lib/email-sow");
       // Clients very behind on their email allotment: their strategist and the Head of Email, once a cycle (and in its last week)
       const pace = await (await import("@/lib/email-pace-alerts")).emailPaceAlerts(admin).catch((e) => String(e));
-      return Response.json({ ...(await sowPass(admin, Date.now() + 600_000)), pace });
+      return Response.json({ ...(await sowPass(admin, Date.now() + 300_000)), pace });
     }
     if (step === "docs") {
       const { watchDocs } = await import("@/lib/context/docs");
@@ -393,11 +393,11 @@ export async function GET(request: Request) {
       const { weekday, hour } = nyNow();
       // Each part is its own try, so one failing does not stop the others
       const part = async <T,>(work: () => Promise<T>) => work().catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
-      const audits = await part(async () => (await import("@/lib/email-ops/auto-audits")).autoEmailAudits(admin, 420_000));
+      const audits = await part(async () => (await import("@/lib/email-ops/auto-audits")).autoEmailAudits(admin, 240_000));
       const sprints = await part(async () => (await import("@/lib/email-ops/sprint")).checkDueEmailSprints(admin));
       const suggestions = !["Sat", "Sun"].includes(weekday) && hour >= 7 && hour <= 10 ? await part(async () => (await import("@/lib/email-ops/suggestions")).refreshSuggestions(admin, 240_000)) : { skipped: "weekday mornings only" };
       // The social line, the same way: red social accounts audit themselves, each social sprint's due check runs
-      const socialAudits = await part(async () => (await import("@/lib/social-ops/auto-audits")).autoSocialAudits(admin, 300_000));
+      const socialAudits = await part(async () => (await import("@/lib/social-ops/auto-audits")).autoSocialAudits(admin, 180_000));
       const socialSprints = await part(async () => (await import("@/lib/social-ops/sprint")).checkDueSocialSprints(admin));
       return Response.json({ audits, sprints, suggestions, socialAudits, socialSprints });
     }
@@ -412,7 +412,7 @@ export async function GET(request: Request) {
     if (step === "creative_drive") {
       // The queue first (new creative), then files already in Drive moved to where the layout says (avatar / angle / concept)
       const lib = await import("@/lib/creative-drive");
-      const queue = await lib.processDriveQueue(admin, { limit: 200, budgetMs: 480_000 });
+      const queue = await lib.processDriveQueue(admin, { limit: 200, budgetMs: 240_000 });
       const relayout = await lib.relayoutDrive(admin, { budgetMs: 150_000 }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
       // Each client's Ad Creatives folder, found and set on its own (new clients as soon as their Drive folder is known)
       const adCreatives = await lib.fillAdCreativeFolders(admin, { limit: 120, budgetMs: 90_000 }).catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
@@ -422,7 +422,7 @@ export async function GET(request: Request) {
     // The account watch: billed but idle, neglected or overtouched accounts, spend anomalies, creative behind, unknown people
     if (step === "stepins") return Response.json(await (await import("@/lib/stepins/run")).runStepins(admin));
     if (step === "dogs") return Response.json(await (await import("@/lib/watchdogs/run")).runWatchdogs(admin));
-    if (step === "done") return Response.json(await (await import("@/lib/done-check")).runDoneChecks(admin, { budget: Number(new URL(request.url).searchParams.get("budget")) || 80 }));
+    if (step === "done") return Response.json(await (await import("@/lib/done-check")).runDoneChecks(admin, { budget: Number(new URL(request.url).searchParams.get("budget")) || 40 }));
     if (step === "sites") return Response.json(await (await import("@/lib/watchdogs/run")).runSiteChecks(admin));
     if (step === "reviews") return Response.json(await (await import("@/lib/line-review/build")).runWeeklyReviews(admin, { batch: 40 }));
     if (step === "watch") return Response.json(await (await import("@/lib/account-watch/run")).runAccountWatch(admin));
@@ -441,7 +441,7 @@ export async function GET(request: Request) {
     if (step === "history") {
       const { googleConfigured, pullEmailHistory } = await import("@/lib/context/google");
       if (!googleConfigured()) return Response.json({ skipped: "Google not set up" });
-      return Response.json(await pullEmailHistory(admin, Date.now() + 640_000));
+      return Response.json(await pullEmailHistory(admin, Date.now() + 300_000));
     }
     if (step === "bible_write") {
       const id = new URL(request.url).searchParams.get("client");
@@ -479,7 +479,7 @@ export async function GET(request: Request) {
       return Response.json({ client: c.name, ...(await (await import("@/lib/brand-guidelines")).guidelinesForClient(admin, c.id as string)) });
     }
     if (step === "guidelines") return Response.json(await (await import("@/lib/brand-guidelines")).keepGuidelines(admin));
-    if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin));
+    if (step === "ledger") return Response.json(await (await import("@/lib/ledger")).runLedger(admin, 300_000));
     if (step === "learnings") return Response.json(await (await import("@/lib/learnings")).consolidateLearnings(admin));
     if (step === "drift") return Response.json(await (await import("@/lib/agent-evals")).driftCheck(admin));
     if (step === "patterns") {

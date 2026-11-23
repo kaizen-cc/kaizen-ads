@@ -72,10 +72,18 @@ export async function deliverHeadsUps(admin: SupabaseClient, profileId: string, 
 }
 
 /** The open app says it's there; what's waiting is decided; a ring comes back, with what's unread in the chat */
+// Presence is good for two minutes, so the same answer is not written again within a minute (one instance's memory)
+const lastPresence = new Map<string, { at: number; key: string }>();
+
 export async function beat(admin: SupabaseClient, profileId: string, input: { visible: boolean; inCall: boolean; path: string | null }): Promise<{ ring: HeadsUpView | null; unread: HeadsUpView[] }> {
   const at = new Date().toISOString();
   const presence: Presence = { lastSeen: at, visible: input.visible, inCall: input.inCall };
-  await admin.from("staff_presence").upsert({ profile_id: profileId, last_seen: at, visible: input.visible, in_call: input.inCall, path: input.path?.slice(0, 300) ?? null });
+  const key = `${input.visible}|${input.inCall}|${input.path ?? ""}`;
+  const prev = lastPresence.get(profileId);
+  if (!prev || prev.key !== key || Date.now() - prev.at > 60_000) {
+    lastPresence.set(profileId, { at: Date.now(), key });
+    await admin.from("staff_presence").upsert({ profile_id: profileId, last_seen: at, visible: input.visible, in_call: input.inCall, path: input.path?.slice(0, 300) ?? null });
+  }
   const ring = await deliverHeadsUps(admin, profileId, isActive(presence, Date.now()) ? presence : null).catch((e) => {
     console.error("[heads-up] deliver", e instanceof Error ? e.message : e);
     return null;

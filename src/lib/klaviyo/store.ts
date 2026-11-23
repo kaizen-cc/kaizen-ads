@@ -14,6 +14,7 @@ import { runBounded } from "@/lib/bounded";
 import { connectedElsewhere, elsewhereMessage, emailConnection, emailConnections } from "@/lib/email-providers/which";
 import { isEmailProvider, providerHasFlows, providerName, type EmailProvider } from "@/lib/email-providers/core";
 import { adminConfigured, createAdminClient } from "@/lib/supabase/admin";
+import { changedRows, readAllRows } from "@/lib/unchanged";
 
 // Klaviyo in Kaizen OS: each client's connection (a read-only private API key, encrypted at rest), the daily sync
 // (campaigns, flows, lists and segments, the account's totals per day), and what the client page and the agents read.
@@ -246,7 +247,35 @@ export const dayRow = (clientId: string, d: ReturnType<typeof rollupDays>[number
 const PULSE_COLUMNS = ["audiences_detail", "message_id", "store_revenue", "store_orders", "sms_revenue", "subscribed", "unsubscribed"];
 const missingColumn = (msg: string) => /column|schema cache/i.test(msg);
 
-export async function save(admin: SupabaseClient, table: string, rows: Record<string, unknown>[], conflict: string) {
+const MOVES = ["updated_at", "computed_at", "synced_at", "fetched_at"];
+
+/**
+ * The rows that are new or differ from what's stored: every run reads the same recent window again, and rewriting an
+ * unchanged row is a new tuple, WAL and index writes. When the stored rows can't be read (a column that isn't there
+ * yet), every row is kept.
+ */
+export async function onlyChanged(admin: SupabaseClient, table: string, rows: Record<string, unknown>[], conflict: string): Promise<Record<string, unknown>[]> {
+  if (!rows.length || !rows.every((r) => r.client_id)) return rows;
+  const keys = conflict.split(",");
+  const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((k) => !MOVES.includes(k));
+  const clientId = rows[0].client_id as string;
+  if (!rows.every((r) => r.client_id === clientId)) return rows;
+  const dates = rows.map((r) => r.date).filter((d): d is string => typeof d === "string").sort();
+  try {
+    const stored = await readAllRows((a, b) => {
+      let q = admin.from(table).select(cols.join(", ")).eq("client_id", clientId);
+      if (dates.length === rows.length) q = q.gte("date", dates[0]).lte("date", dates[dates.length - 1]);
+      return q.order(keys[keys.length - 1]).range(a, b);
+    }, 50_000);
+    const byKey = new Map(stored.map((s) => [keys.map((k) => String(s[k])).join("|"), s]));
+    return changedRows(rows, byKey, (r) => keys.map((k) => String(r[k])).join("|"), MOVES);
+  } catch {
+    return rows;
+  }
+}
+
+export async function save(admin: SupabaseClient, table: string, allRows: Record<string, unknown>[], conflict: string) {
+  const rows = await onlyChanged(admin, table, allRows, conflict);
   for (let i = 0; i < rows.length; i += 500) {
     const part = rows.slice(i, i + 500);
     let { error: e } = await admin.from(table).upsert(part, { onConflict: conflict });
@@ -422,7 +451,8 @@ async function saveMetrics(admin: SupabaseClient, clientId: string, reads: Metri
       ["klaviyo_flow_metrics", rows.flows, "client_id,flow_id,metric_id"],
       ["klaviyo_metric_daily", rows.days, "client_id,metric_id,date"],
     ];
-    for (const [table, list, conflict] of parts) {
+    for (const [table, all, conflict] of parts) {
+      const list = await onlyChanged(admin, table, all, conflict);
       for (let i = 0; i < list.length; i += 500) {
         const { error } = await admin.from(table).upsert(list.slice(i, i + 500), { onConflict: conflict });
         if (error) return;
@@ -1153,7 +1183,10 @@ export async function readKlaviyoHistory(admin: SupabaseClient, clientId: string
             ["klaviyo_campaign_metrics", rows.campaigns, "client_id,campaign_id,metric_id"],
             ["klaviyo_metric_daily", rows.days, "client_id,metric_id,date"],
           ];
-          for (const [table, list, conflict] of parts) for (let i = 0; i < list.length; i += 500) await admin.from(table).upsert(list.slice(i, i + 500), { onConflict: conflict });
+          for (const [table, all, conflict] of parts) {
+            const list = await onlyChanged(admin, table, all, conflict);
+            for (let i = 0; i < list.length; i += 500) await admin.from(table).upsert(list.slice(i, i + 500), { onConflict: conflict });
+          }
         }
       }
       cursor = w.start;

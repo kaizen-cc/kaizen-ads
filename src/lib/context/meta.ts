@@ -4,6 +4,7 @@ import { createHmac } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { accountFromPath, bareAccount, isWriteCall, redactTokens } from "@/lib/meta-token-core";
+import { changedRows, readAllRows } from "@/lib/unchanged";
 import { compact } from "./shared";
 import { isLive, LIVE } from "@/lib/live";
 import { CONVERSION_FIELDS, META_ATTRIBUTION, META_READ_FROM, META_REPORT_TIME, PURCHASE_TYPES, foldConversions } from "@/lib/kpi/conversions";
@@ -407,8 +408,14 @@ async function syncDaily(admin: SupabaseClient, clientId: string, adAccountId: s
       metrics: foldConversions(r),
       updated_at: new Date().toISOString(),
     }));
-  for (let i = 0; i < records.length; i += 500) {
-    const { error } = await admin.from("meta_ad_daily").upsert(records.slice(i, i + 500), { onConflict: "ad_id,date" });
+  // The last days are re-read every run but mostly come back the same: only new and changed days are written
+  let toSave = records;
+  if (last && !backfill && records.length) {
+    const stored = await readAllRows((a, b) => admin.from("meta_ad_daily").select("ad_id, date, ad_name, adset_id, adset_name, campaign_id, campaign_name, metrics").eq("client_id", clientId).eq("ad_account_id", adAccountId).gte("date", ymd(since)).order("date").order("ad_id").range(a, b));
+    toSave = changedRows(records, new Map(stored.map((s) => [`${s.ad_id}|${s.date}`, s])), (r) => `${r.ad_id}|${r.date}`, ["updated_at"]);
+  }
+  for (let i = 0; i < toSave.length; i += 500) {
+    const { error } = await admin.from("meta_ad_daily").upsert(toSave.slice(i, i + 500), { onConflict: "ad_id,date" });
     if (error) throw new Error(`Saving Meta days: ${error.message}`);
   }
   if (backfill) await admin.from("clients").update({ meta_backfilled_at: new Date().toISOString() }).eq("id", clientId);

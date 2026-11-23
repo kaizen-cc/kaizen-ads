@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { backoffDelay } from "@/lib/fail-fast";
 import { BEAT_MS, RING_MS, ringLeft, ringStep, type RingState } from "@/lib/assistant/ring-core";
 import { setUnreadHeadsUps } from "@/lib/assistant/heads-up-store";
 import { AgentGlyph } from "./assistant-call-parts";
@@ -18,7 +19,7 @@ type HeadsUp = { id: string; line: string; href: string | null; items: { title: 
 type Beat = { ring: HeadsUp | null; unread: { id: string }[] };
 
 const post = (body: Record<string, unknown>) =>
-  fetch("/api/assistant/heads-up", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), cache: "no-store" })
+  fetch("/api/assistant/heads-up", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), cache: "no-store", signal: AbortSignal.timeout(10_000) })
     .then((r) => (r.ok ? (r.json() as Promise<Beat>) : null))
     .catch(() => null);
 
@@ -112,18 +113,28 @@ export function AssistantRinger() {
     let stop = false;
     const tick = async () => {
       const r = await post({ action: "beat", visible: true, inCall: liveRef.current, path: pathRef.current });
-      if (stop || !r) return;
+      if (stop || !r) return false;
       applyUnread(r.unread ?? []);
       if (r.ring && stateRef.current.phase === "idle" && !liveRef.current) {
         setRing(r.ring);
         dispatch({ type: "ring", id: r.ring.id, now: Date.now() });
       }
+      return true;
     };
-    void tick();
-    const t = setInterval(() => void tick(), BEAT_MS);
+    // One beat at a time; a failed or slow answer doubles the wait (up to five minutes), a good one resets it
+    let failures = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const loop = async () => {
+      const started = Date.now();
+      const ok = await tick();
+      if (stop) return;
+      failures = ok && Date.now() - started < 5000 ? 0 : failures + 1;
+      timer = setTimeout(() => void loop(), backoffDelay(BEAT_MS, failures));
+    };
+    void loop();
     return () => {
       stop = true;
-      clearInterval(t);
+      clearTimeout(timer);
     };
   }, [visible, applyUnread]);
 

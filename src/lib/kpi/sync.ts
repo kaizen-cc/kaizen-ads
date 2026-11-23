@@ -1,6 +1,7 @@
 import "server-only";
 import { tracker, type Tracker } from "@/lib/progress";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { changedRows, readAllRows } from "@/lib/unchanged";
 import { REVISE_DAYS, accountActivity, asyncReport, linkAdAccounts, metaConfigured, type InsightRow } from "@/lib/context/meta";
 import { digits, googleActivity, googleAdsConfigured, googleAdsMissing, syncGoogleCampaigns } from "@/lib/context/google-ads";
 import { pool } from "@/lib/context/run";
@@ -60,8 +61,15 @@ export async function syncMetaCampaigns(admin: SupabaseClient, account: string) 
       action_values: toMap(r.action_values),
       updated_at: now.toISOString(),
     }));
-  for (let i = 0; i < records.length; i += 500) {
-    const { error } = await admin.from("meta_campaign_daily").upsert(records.slice(i, i + 500), { onConflict: "campaign_id,date" });
+  // The last days are re-read every run but mostly come back the same: only the changed ones are written (a full re-read
+  // after a change to what a read returns writes everything, which is how the old rows get their new updated_at)
+  let toSave = records;
+  if (last && !stale && records.length) {
+    const stored = await readAllRows((a, b) => admin.from("meta_campaign_daily").select("campaign_id, date, campaign_name, spend, impressions, clicks, link_clicks, unique_link_clicks, actions, action_values").eq("ad_account_id", account).gte("date", ymd(since)).order("date").order("campaign_id").range(a, b));
+    toSave = changedRows(records, new Map(stored.map((s) => [`${s.campaign_id}|${s.date}`, s])), (r) => `${r.campaign_id}|${r.date}`, ["updated_at"]);
+  }
+  for (let i = 0; i < toSave.length; i += 500) {
+    const { error } = await admin.from("meta_campaign_daily").upsert(toSave.slice(i, i + 500), { onConflict: "campaign_id,date" });
     if (error) throw new Error(`Saving campaign days: ${error.message}`);
   }
   // A day Meta no longer returns (a deleted campaign) has nothing more to read: marked done so it isn't read again

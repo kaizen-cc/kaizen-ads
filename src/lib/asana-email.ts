@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { asana, asanaAll, asanaWrite } from "@/lib/asana";
 import { resolveAsanaProject, type ProjectSource } from "@/lib/asana-project";
 import { emailStageForColumn, EMAIL_BOARD_ORDER, isDoneColumn, ownerFor, pickEmailProject, type EmailKind, type EmailStage } from "@/lib/email-board-core";
+import { changedRows } from "@/lib/unchanged";
 import { cleanTitle, normalizePriority, type PriorityLevel } from "@/lib/task-title";
 import { mapAttachments, mapSubtasks, readList, type AsanaAttachment, type AsanaSubtask } from "@/lib/asana-context";
 
@@ -66,12 +67,13 @@ export async function syncAsanaEmail(admin: Admin) {
     const [{ data: clients }, { data: people }, { data: mirror }] = await Promise.all([
       admin.from("clients").select("id, name, kaizen_id").is("archived_at", null),
       admin.from("profiles").select("id, email, full_name").eq("is_active", true),
-      admin.from("email_asana_tasks").select("gid, section, moves"),
+      admin.from("email_asana_tasks").select("gid, name, section, stage, client_id, kind, priority, assignee_name, assignee_email, profile_id, due_on, start_on, created_by_name, url, fields, moves, open, asana_created_at, asana_modified_at, completed_at"),
     ]);
     const byKaizen = new Map((clients ?? []).filter((c) => c.kaizen_id != null).map((c) => [String(c.kaizen_id), c.id as string]));
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
     const before = new Map((mirror ?? []).map((m) => [m.gid as string, m]));
     const seen: string[] = [];
+    const rows: Record<string, unknown>[] = [];
     for (const task of tasks) {
       const section = task.memberships.find((m) => m.project?.gid === project)?.section?.name ?? null;
       const fields = Object.fromEntries(task.custom_fields.filter((f) => f.display_value).map((f) => [f.name, f.display_value!]));
@@ -86,7 +88,7 @@ export async function syncAsanaEmail(admin: Admin) {
       const prev = before.get(task.gid);
       const moves = ((prev?.moves ?? []) as { from: string | null; to: string | null; at: string }[]).slice();
       if (prev && prev.section !== section) moves.push({ from: (prev.section as string | null) ?? null, to: section, at: new Date().toISOString() });
-      await admin.from("email_asana_tasks").upsert({
+      rows.push({
         gid: task.gid,
         name: task.name,
         notes: task.notes?.slice(0, 20000) ?? null,
@@ -112,7 +114,11 @@ export async function syncAsanaEmail(admin: Admin) {
       });
       seen.push(task.gid);
     }
-    const gone = (mirror ?? []).map((m) => m.gid as string).filter((g) => !seen.includes(g));
+    // Only the tasks that changed are written (notes ride on asana_modified_at)
+    const changedTasks = changedRows(rows, new Map((mirror ?? []).map((m) => [m.gid as string, m as Record<string, unknown>])), (r) => r.gid as string, ["synced_at", "notes"]);
+    for (let i = 0; i < changedTasks.length; i += 100) await admin.from("email_asana_tasks").upsert(changedTasks.slice(i, i + 100), { onConflict: "gid" });
+    const seenSet = new Set(seen);
+    const gone = (mirror ?? []).filter((m) => m.open && !seenSet.has(m.gid as string)).map((m) => m.gid as string);
     for (let i = 0; i < gone.length; i += 200) await admin.from("email_asana_tasks").update({ open: false, synced_at: new Date().toISOString() }).in("gid", gone.slice(i, i + 200));
     const histories = await readHistory(admin).catch(() => 0);
     await admin.from("sync_state").upsert({ source: "asana_email", cursor_at: new Date().toISOString(), last_run_at: new Date().toISOString(), last_result: { ok: true, project, tasks: seen.length, closed: gone.length, histories } });

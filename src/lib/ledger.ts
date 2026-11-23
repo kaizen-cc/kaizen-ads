@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson } from "@/lib/ai";
+import { changedRows } from "@/lib/unchanged";
 import { conversionFor } from "@/lib/kpi/conversions";
 import type { PeerInfo, VerticalInfo } from "@/lib/peer-match";
 
@@ -61,6 +62,20 @@ function verdictOf(a: { spend: number; results: number; revenue: number; live: b
   return { verdict: a.live ? "testing" : "inconclusive", reason: a.spend < t ? "Not enough spend to judge yet" : `$${(cpr ?? 0).toFixed(2)} per ${k.label.replace(/s$/, "")} so far, target $${t}` };
 }
 
+/** Moves on every rebuild by design: not a change */
+const LEDGER_IGNORE = ["updated_at", "verdict_at"] as const;
+const LEDGER_COLS = "kind, key, title, detail, first_seen, last_seen, live, spend, results, revenue, impressions, clicks, cost_per_result, roas, result_label, target, verdict, verdict_reason, ads";
+/** What the client's playbook holds now (paged: PostgREST stops at 1000 rows) */
+async function readStored(admin: Admin, clientId: string) {
+  const all: Record<string, unknown>[] = [];
+  for (let from = 0; from < 50_000; from += 1000) {
+    const { data } = await admin.from("client_ledger").select(LEDGER_COLS).eq("client_id", clientId).eq("platform", "meta").order("kind").order("key").range(from, from + 999);
+    all.push(...((data ?? []) as unknown as Record<string, unknown>[]));
+    if (!data || data.length < 1000) break;
+  }
+  return all as (Record<string, unknown> & { kind: string; key: string; verdict?: string; detail?: unknown })[];
+}
+
 /** Rebuild one client's playbook from everything their Meta ads have done. Returns what turned into a winner or loser. */
 export async function buildLedger(admin: Admin, clientId: string) {
   const kpis = await kpiOf(admin, clientId);
@@ -79,11 +94,11 @@ export async function buildLedger(admin: Admin, clientId: string) {
   if (!rows.length) return { creatives: 0, changed: [] as string[] };
 
   // What each ad said and showed: from the synced snapshots (newest wins) and the Hall of Fame
-  const [{ data: snaps }, { data: fame }, { data: launches }, { data: prior }, { data: angles }] = await Promise.all([
+  const [{ data: snaps }, { data: fame }, { data: launches }, prior, { data: angles }] = await Promise.all([
     admin.from("meta_snapshots").select("ads, fetched_at").eq("client_id", clientId).order("fetched_at", { ascending: true }).limit(400),
     admin.from("hall_of_fame").select("ad_id, creative").eq("client_id", clientId),
     admin.from("launches").select("result, request_id, board_requests(angle_name, format, number)").eq("client_id", clientId).not("result", "is", null),
-    admin.from("client_ledger").select("kind, key, verdict, detail").eq("client_id", clientId),
+    readStored(admin, clientId),
     admin.from("angles").select("name, description").eq("client_id", clientId),
   ]);
   type Creative = { text?: string; headline?: string; description?: string; texts?: string[]; headlines?: string[]; descriptions?: string[]; image?: string; thumbnail?: string; cta?: string; link?: string; format?: string };
@@ -96,7 +111,7 @@ export async function buildLedger(admin: Admin, clientId: string) {
     const r = l.board_requests as unknown as { angle_name: string | null; format: string | null; number: number } | null;
     for (const a of ((l.result as { ads?: { adId: string | null }[] } | null)?.ads ?? [])) if (a.adId) fromTicket.set(a.adId, { angle: r?.angle_name ?? null, format: r?.format ?? null, ticket: r?.number ?? null });
   }
-  const before = new Map((prior ?? []).map((p) => [`${p.kind}|${p.key}`, p]));
+  const before = new Map(prior.map((p) => [`${p.kind}|${p.key}`, p]));
 
   // Add each ad up, and each ad set
   const byAd = new Map<string, Agg & { name: string; adset: string; adsetId: string; campaign: string; campaignId: string }>();
@@ -206,8 +221,13 @@ export async function buildLedger(admin: Admin, clientId: string) {
   }
   for (const [name, a] of byAngle) out.push(row("angle", name.toLowerCase(), name, a, { name, description: (angles ?? []).find((x) => x.name.toLowerCase() === name.toLowerCase())?.description ?? null }));
 
-  for (let i = 0; i < out.length; i += 500) {
-    const { error } = await admin.from("client_ledger").upsert(out.slice(i, i + 500).map((r) => Object.fromEntries(Object.entries(r).filter(([, v]) => v !== undefined))), { onConflict: "client_id,platform,kind,key" });
+  // Only what actually changed is written (a rewrite is a new row, WAL and index writes). One row always goes in with a
+  // fresh updated_at, which is how runLedger knows when this client was last rebuilt.
+  const clean = out.map((r) => Object.fromEntries(Object.entries(r).filter(([, v]) => v !== undefined)));
+  const toWrite = changedRows(clean, before, (r) => `${r.kind}|${r.key}`, LEDGER_IGNORE);
+  if (!toWrite.length && clean.length) toWrite.push(clean[0]);
+  for (let i = 0; i < toWrite.length; i += 500) {
+    const { error } = await admin.from("client_ledger").upsert(toWrite.slice(i, i + 500), { onConflict: "client_id,platform,kind,key" });
     if (error) throw new Error(error.message);
   }
   return { creatives: byAd.size, changed };
@@ -295,9 +315,14 @@ export async function writeLearnings(admin: Admin, clientId: string, changed: st
 export async function runLedger(admin: Admin, budgetMs = 600_000) {
   const until = Date.now() + budgetMs;
   const { data: clients } = await admin.from("clients").select("id, name").not("meta_ad_account_id", "is", null).is("archived_at", null);
-  const { data: last } = await admin.from("client_ledger").select("client_id, updated_at").order("updated_at", { ascending: false }).limit(5000);
+  // Each client's last rebuild: its newest row, off the (client_id, updated_at) index
   const seen = new Map<string, string>();
-  for (const l of last ?? []) if (!seen.has(l.client_id as string)) seen.set(l.client_id as string, l.updated_at as string);
+  await Promise.all(
+    (clients ?? []).map(async (c) => {
+      const { data } = await admin.from("client_ledger").select("updated_at").eq("client_id", c.id).order("updated_at", { ascending: false }).limit(1);
+      if (data?.[0]) seen.set(c.id as string, data[0].updated_at as string);
+    }),
+  );
   const order = [...(clients ?? [])].sort((a, b) => (seen.get(a.id) ?? "").localeCompare(seen.get(b.id) ?? ""));
   let done = 0;
   const errors: string[] = [];

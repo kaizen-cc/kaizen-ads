@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Stage } from "@/lib/stages";
+import { changedRows } from "@/lib/unchanged";
 import { cleanTitle, normalizePriority, type PriorityLevel } from "@/lib/task-title";
 import { mapAttachments, mapSubtasks, readList, type AsanaAttachment, type AsanaSubtask } from "@/lib/asana-context";
 
@@ -306,12 +307,13 @@ export async function syncAsana(admin: SupabaseClient) {
     const [{ data: clients }, { data: people }, { data: mirror }] = await Promise.all([
       admin.from("clients").select("id, name, kaizen_id").is("archived_at", null),
       admin.from("profiles").select("id, email, full_name").eq("is_active", true),
-      admin.from("asana_tasks").select("gid, section, moves, request_id, counted_month, counted_at"),
+      admin.from("asana_tasks").select("gid, name, section, stage, counted_month, counted_at, client_id, client_ref, platform, format, priority, assignee_name, assignee_email, profile_id, due_on, start_on, created_by_name, url, fields, moves, asana_created_at, asana_modified_at, open, completed_at, request_id"),
     ]);
     const byKaizen = new Map((clients ?? []).filter((c) => c.kaizen_id != null).map((c) => [String(c.kaizen_id), c.id as string]));
     const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
     const before = new Map((mirror ?? []).map((m) => [m.gid as string, m]));
     const seen: string[] = [];
+    const rows: Record<string, unknown>[] = [];
     let skipped = 0;
 
     for (const task of tasks) {
@@ -333,7 +335,7 @@ export async function syncAsana(admin: SupabaseClient) {
       const email = task.assignee?.email?.toLowerCase() ?? null;
       const profile = (people ?? []).find((p) => (email && p.email?.toLowerCase() === email) || (task.assignee?.name && p.full_name.toLowerCase().startsWith(task.assignee.name.toLowerCase())));
       const prev = before.get(task.gid);
-      const moves = (prev?.moves ?? []) as { from: string | null; to: string | null; at: string }[];
+      const moves = [...((prev?.moves ?? []) as { from: string | null; to: string | null; at: string }[])];
       if (prev && prev.section !== section) moves.push({ from: prev.section as string | null, to: section, at: new Date().toISOString() });
       // The allotment month: set once, when it's first seen in production or delivered (a brief waiting in the Creative
       // Brief column hasn't drawn on anything yet). Delivered: the month it was completed. In production: the month it
@@ -343,7 +345,7 @@ export async function syncAsana(admin: SupabaseClient) {
       const countedMonth = (prev?.counted_month as string | null) ?? (inProduction ? monthOf(task.completed ? (task.completed_at ?? task.modified_at) : task.modified_at) : null);
       // The moment it counted, so it falls in the client's billing cycle (not just the calendar month)
       const countedAt = (prev?.counted_at as string | null) ?? (inProduction ? (task.completed ? (task.completed_at ?? task.modified_at) : task.modified_at) : null);
-      await admin.from("asana_tasks").upsert({
+      rows.push({
         gid: task.gid,
         name: task.name,
         notes: task.notes?.slice(0, 20000) ?? null,
@@ -376,8 +378,14 @@ export async function syncAsana(admin: SupabaseClient) {
       seen.push(task.gid);
       t.tick(task.name.slice(0, 60));
     }
+    // Only the tasks that changed are written (every rewrite is a new row, WAL and index writes); the notes ride on
+    // asana_modified_at, so they are not compared
+    const changedTasks = changedRows(rows, new Map((mirror ?? []).map((m) => [m.gid as string, m as Record<string, unknown>])), (r) => r.gid as string, ["synced_at", "notes"]);
+    for (let i = 0; i < changedTasks.length; i += 100) await admin.from("asana_tasks").upsert(changedTasks.slice(i, i + 100), { onConflict: "gid" });
     // Completed or gone from the board in Asana: off the mirror (migrated ones keep their link)
-    const gone = (mirror ?? []).filter((m) => !seen.includes(m.gid as string)).map((m) => m.gid as string);
+    const seenSet = new Set(seen);
+    // Only rows still marked open: closed ones are not rewritten every run
+    const gone = (mirror ?? []).filter((m) => m.open && !seenSet.has(m.gid as string)).map((m) => m.gid as string);
     for (let i = 0; i < gone.length; i += 200) await admin.from("asana_tasks").update({ open: false, synced_at: new Date().toISOString() }).in("gid", gone.slice(i, i + 200));
     t.on("Counting new images and videos for the allotments");
     const counted = await countUnits(admin).catch(() => 0);

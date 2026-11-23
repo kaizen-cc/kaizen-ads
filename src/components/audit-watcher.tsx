@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
+import { backoffDelay } from "@/lib/fail-fast";
 import { toast } from "./toasts";
 
 type Feed = {
@@ -39,15 +40,21 @@ export function AuditWatcher() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     let alive = true;
+    let failures = 0;
     const poll = async () => {
+      // A hidden tab doesn't poll; it checks again the moment it's back in view
+      if (document.visibilityState === "hidden") return;
       let feed: Feed | null = null;
+      const started = Date.now();
       try {
-        const res = await fetch("/api/audits/feed", { cache: "no-store" });
+        const res = await fetch("/api/audits/feed", { cache: "no-store", signal: AbortSignal.timeout(10_000) });
         if (res.ok) feed = (await res.json()) as Feed;
       } catch {
         feed = null;
       }
       if (!alive) return;
+      // Errors and slow answers double the wait (up to five minutes); a good answer resets it
+      failures = feed && Date.now() - started < 5000 ? 0 : failures + 1;
       if (feed) {
         // The first look only learns what already finished; it doesn't announce it
         const first = seen.current === null;
@@ -88,7 +95,12 @@ export function AuditWatcher() {
       }
       // Quick while something's running or waiting; slow otherwise
       const busy = feed && (feed.running.length || feed.queued.length);
-      timer = setTimeout(poll, busy ? 6000 : 45000);
+      timer = setTimeout(poll, backoffDelay(busy ? 6000 : 90000, failures));
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      clearTimeout(timer);
+      timer = setTimeout(poll, 500);
     };
     const nudge = () => {
       clearTimeout(timer);
@@ -96,7 +108,9 @@ export function AuditWatcher() {
     };
     void poll();
     window.addEventListener("kz-audits", nudge);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
+      document.removeEventListener("visibilitychange", onVisible);
       alive = false;
       clearTimeout(timer);
       window.removeEventListener("kz-audits", nudge);
