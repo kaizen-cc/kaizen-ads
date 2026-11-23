@@ -20,7 +20,7 @@ import { isLeadMaker } from "@/lib/roles";
 export const maxDuration = 800; // room for the AI creative review that starts at review, and for planning a launch (video uploads to Meta)
 
 export default async function Board({ searchParams }: PageProps<"/board">) {
-  const { t, view, period, tab: tabParam } = await searchParams;
+  const { t, view, period, tab: tabParam, ads } = await searchParams;
   const [me, supabase] = await Promise.all([requireStaff(), createClient()]);
   // Boards: the email team works on the Email Board only
   if (!seesCreativeBoard(me) && seesEmailBoard(me)) redirect("/board/email");
@@ -43,7 +43,7 @@ export default async function Board({ searchParams }: PageProps<"/board">) {
     // A lead maker opens their own tab first (the lead video editor: Video)
     const own = !tabParam && me.role === "lead_video_editor" ? "video" : tab;
     const membersOwn = own === tab ? members : [...membersOf("creative", own, (people ?? []) as { id: string; role: string; is_exec: boolean }[], [], me.id)];
-    return <CreativeKpisView k={await cachedCreativeKpis(p)} canDismiss={lead} switcher={seesEmailBoard(me)} tab={own as typeof tab} members={membersOwn} focused={isCreativeLead(me.role)} />;
+    return <CreativeKpisView k={await cachedCreativeKpis(p)} canDismiss={lead} switcher={seesEmailBoard(me)} tab={own as typeof tab} members={membersOwn} focused={isCreativeLead(me.role) && ads !== "1"} />;
   }
   // Execs and leads: the KPI tabs worked out while they look at the Board, so switching to them is instant
   if (lead)

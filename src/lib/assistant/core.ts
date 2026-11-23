@@ -231,7 +231,7 @@ export const SCREEN_PLACES: Record<string, string> = {
   "ads lab": "/lab",
   market: "/market",
   winners: "/winners",
-  fatigue: "/fatigue",
+  fatigue: "/board?view=kpis&ads=1#tiring",
   feedback: "/feedback",
   notifications: "/notifications",
   team: "/team",

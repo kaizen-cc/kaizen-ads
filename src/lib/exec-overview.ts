@@ -264,7 +264,7 @@ export async function accounts(admin: SupabaseClient, focus: readonly string[], 
 async function pulse(admin: SupabaseClient, fires: readonly FireRow[]): Promise<ExecCard[]> {
   const week = new Date(Date.now() - 7 * DAY).toISOString();
   const [{ data: open }, { data: climbed }, { count: closed }, { roleLabel }] = await Promise.all([
-    admin.from("ladder_nudges").select("lead_id, lead:profiles!ladder_nudges_lead_id_fkey(full_name, role)").in("status", ["open", "sent"]).limit(2000),
+    admin.from("ladder_nudges").select("lead_id, lead:profiles!ladder_nudges_lead_id_fkey(full_name, role), owner:profiles!ladder_nudges_owner_id_fkey(full_name)").in("status", ["open", "sent"]).limit(2000),
     admin.from("ladder_nudges").select("lead_id").gte("exec_at", week).limit(2000),
     admin.from("done_checks").select("key", { count: "exact", head: true }).gte("closed_at", week).is("reopened_at", null),
     import("@/lib/roles"),
@@ -273,10 +273,12 @@ async function pulse(admin: SupabaseClient, fires: readonly FireRow[]): Promise<
   // Clients at risk of leaving, company-wide
   for (const f of fires) cards.push({ key: `pulse:fire:${f.clientId}`, tab: "pulse", kind: "pulse", client: f.client, clientId: f.clientId, clientSlug: f.clientSlug ?? null, title: `${f.client}: ${f.why}`, detail: "On fire: every exec sees it in Escalated", severity: "fire", action: { label: "Open it", href: f.href } });
   // Team health: each lead's backlog, and how much climbed past them this week
-  const lead = new Map<string, { name: string; role: string; open: number; climbed: number }>();
-  for (const r of (open ?? []) as unknown as { lead_id: string; lead: { full_name: string; role: string } | null }[]) {
-    const l = lead.get(r.lead_id) ?? { name: r.lead?.full_name ?? "A lead", role: r.lead?.role ?? "", open: 0, climbed: 0 };
+  const lead = new Map<string, { name: string; role: string; open: number; climbed: number; by: Map<string, number> }>();
+  for (const r of (open ?? []) as unknown as { lead_id: string; lead: { full_name: string; role: string } | null; owner: { full_name: string } | null }[]) {
+    const l = lead.get(r.lead_id) ?? { name: r.lead?.full_name ?? "A lead", role: r.lead?.role ?? "", open: 0, climbed: 0, by: new Map<string, number>() };
     l.open++;
+    const who = first(r.owner?.full_name ?? "A teammate");
+    l.by.set(who, (l.by.get(who) ?? 0) + 1);
     lead.set(r.lead_id, l);
   }
   for (const r of climbed ?? []) {
@@ -291,9 +293,14 @@ async function pulse(admin: SupabaseClient, fires: readonly FireRow[]): Promise<
       client: null,
       clientId: null,
       title: `${l.role ? roleLabel(l.role as Parameters<typeof roleLabel>[0]) : "Lead"} (${first(l.name)}): ${l.open} behind on their team`,
-      detail: l.climbed ? `${l.climbed} climbed past them to the execs this week` : "Nothing climbed past them this week",
+      // Who on their team the stuck items sit with, right on the card: Pulse is a read, so no button (Nov 23 2026: "See
+      // the team" had no link and fell back to the Overview)
+      detail: [
+        [...l.by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([n, k]) => `${n} ${k}`).join(" · "),
+        l.climbed ? `${l.climbed} climbed past them to the execs this week` : "Nothing climbed past them this week",
+      ].filter(Boolean).join(". "),
       severity: l.climbed >= 5 ? "high" : "normal",
-      action: { label: "See the team", href: null },
+      action: { label: "", href: null },
     });
   const climbedN = (climbed ?? []).length;
   cards.push({

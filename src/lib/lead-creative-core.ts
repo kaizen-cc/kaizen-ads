@@ -17,7 +17,7 @@ export function leadPools(role: string | null | undefined): CreativePool[] {
 /** Where the things taken off their Overview live now */
 export const MOVED_TO_IDEAS = [
   { label: "Winners", href: "/winners" },
-  { label: "Tiring ads", href: "/fatigue" },
+  { label: "Tiring ads", href: "/board?view=kpis&ads=1#tiring" },
   { label: "Ideas", href: "/ideas" },
 ] as const;
 

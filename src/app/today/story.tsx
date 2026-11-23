@@ -835,11 +835,11 @@ function ItemBody({ i, status, big = false, onChoose, onAct, onNext }: { i: Toda
               {i.action.label}
             </BriefPreviewButton>
           </span>
-        ) : (
+        ) : i.action.label && i.action.href ? (
           <a href={i.action.href} target="_blank" rel="noreferrer" className={primary}>
             {i.action.label} ↗
           </a>
-        )}
+        ) : null}
         <button type="button" onClick={() => onChoose("done")} className="h-11 flex-1 rounded-full border border-[#5be3a5]/50 px-4 text-sm text-[#5be3a5] hover:bg-[#5be3a5]/10 md:flex-none">
           ✓ Done
         </button>

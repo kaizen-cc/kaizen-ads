@@ -290,12 +290,13 @@ export function CreativeKpisView({ k, canDismiss, switcher = false, tab = "desig
       </Section>
 
       {/* Clients */}
-      <div className="grid gap-12 lg:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)] lg:gap-8">
+      {/* Allotments get the whole width (Head of Creative, Nov 23 2026: "too squeezed and hard to read"); the rest sits below */}
+      <div className="grid gap-12 lg:gap-8">
         <Section id="allotments" kicker="Clients" title="Allotments this billing cycle">
           {k.allotments.length ? <AllotmentList rows={k.allotments} canDismiss={canDismiss} /> : <p className="rounded-[18px] border border-line bg-surface px-4 py-6 text-center text-[14px] text-muted">No client is on a creative package.</p>}
         </Section>
 
-        <div className="grid content-start gap-12 lg:gap-8">
+        <div className="grid content-start gap-12 lg:grid-cols-2 lg:gap-8">
           <Section kicker="Quality" title="Where changes come from">
             <div className="grid gap-4 rounded-[22px] border border-line bg-surface p-5">
               {total ? (
@@ -361,7 +362,7 @@ export function CreativeKpisView({ k, canDismiss, switcher = false, tab = "desig
           <Link href="/winners" className="rounded-full border border-line px-3 py-1 hover:text-fg">
             Winners
           </Link>
-          <Link href="/fatigue" className="rounded-full border border-line px-3 py-1 hover:text-fg">
+          <Link href="/board?view=kpis&ads=1#tiring" className="rounded-full border border-line px-3 py-1 hover:text-fg">
             Tiring ads
           </Link>
         </p>
