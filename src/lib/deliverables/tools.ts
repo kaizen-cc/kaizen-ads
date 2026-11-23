@@ -102,6 +102,18 @@ export function deliverableTools(ctx: DeliverableCtx): LoopTool[] {
           // Creating a line's requests is the line's: the client's owner on it (buyer, strategist, social media manager), its head or an exec
           const may = await (await import("@/lib/line-actions-server")).mayActOn(ctx.admin, { id: ctx.me.id, role: ctx.me.role, isExec: ctx.me.isExec }, c.id, cfg.line === "social" ? "social" : cfg.line === "creative" ? "creative" : "email", `create ${cfg.line} requests for this client`);
           if (!may.ok) return { started: false, note: may.reason };
+          // A client whose team supplies the content (their sheet): no plan, brief or copy. Ask only for the sheet
+          if (cfg.line === "email") {
+            const { suppliesContent } = await import("@/lib/email-supplied");
+            const sup = await suppliesContent(ctx.admin, c.id).catch(() => ({ on: false, sheet: null }));
+            if (sup.on)
+              return {
+                started: false,
+                client_supplies_content: true,
+                last_sheet: sup.sheet,
+                note: `${c.name}'s team supplies the content (images, copy and CTA links) in a Google Sheet. Don't plan, brief or write copy: ask only for their sheet link${sup.sheet ? " (or confirm last week's)" : ""} and an optional note, then call send_client_sheet. It goes straight to their designer and counts against the allotment.`,
+              };
+          }
           let run = await startRun(ctx.admin, asMe(ctx.me), ctx.callId, cfg, { id: c.id, name: c.name }, ctx.said());
           const patch: Patch = {};
           if (input.kind) patch.kind = String(input.kind);

@@ -19,11 +19,11 @@ export default async function NewEmailRequest({ searchParams }: PageProps<"/boar
   if (!seesEmailBoard(me)) redirect("/requests/new");
   const { client, idea, doc } = await searchParams;
   const db = await createClient();
-  const { data } = await db.from("clients").select("id, name, slug, services, services_extra, services_removed, industry_detail, industry, strategy_only").is("archived_at", null).in("status", ["active", "onboarding"]).order("name");
+  const { data } = await db.from("clients").select("id, name, slug, services, services_extra, services_removed, industry_detail, industry, strategy_only, email_supplies_content, email_supplies_sheet").is("archived_at", null).in("status", ["active", "onboarding"]).order("name");
   const clients = (data ?? [])
     // Strategy-only email (no copy or design) never gets requests
     .filter((c) => (servicesOf(c) as string[]).includes("email-marketing") && !((c.strategy_only ?? []) as string[]).includes("email-marketing"))
-    .map((c) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string, industry: ((c.industry_detail ?? c.industry) as string | null) ?? null }));
+    .map((c) => ({ id: c.id as string, name: c.name as string, slug: c.slug as string, industry: ((c.industry_detail ?? c.industry) as string | null) ?? null, supplies: c.email_supplies_content ? { sheet: (c.email_supplies_sheet as string | null) ?? null } : null }));
   const [allotments, { data: seats }] = await Promise.all([
     emailAllotments(db, clients.map((c) => c.id)),
     db.from("client_assignments").select("client_id, profiles(full_name)").eq("role", "email_strategist").eq("is_primary", true),

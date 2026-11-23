@@ -115,3 +115,46 @@ export async function sendPreview(docId: string): Promise<{ ok: true; preview: S
     return fail(e);
   }
 }
+
+// ─── Client supplies the content ─────────────────────────────────────────────
+
+/** Read the client's own campaign sheet: the emails in it, for the ticket's summary and the count */
+export async function readClientSheet(clientId: string, url: string): Promise<{ ok: true; sheet: Extract<import("@/lib/email-supplied").SheetRead, { ok: true }> } | Fail> {
+  try {
+    const { me, db } = await who();
+    await client(db, clientId);
+    if (!/^https:\/\/(docs|drive)\.google\.com\//.test(url.trim())) return { ok: false, error: "Paste the Google Sheet's link." };
+    const { readSuppliedSheet } = await import("@/lib/email-supplied");
+    const r = await readSuppliedSheet(clientId, url.trim(), me.email);
+    return r.ok ? { ok: true, sheet: r } : { ok: false, error: r.say };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Send the client's sheet straight to their email designer: one Asana task in Ready for Design, every field filled */
+export async function sendClientSheet(input: { clientId: string; url: string; count: number; channel: "email" | "sms"; name: string; note: string; priority: string; emails: { name: string; send: string; subject: string; cta: string }[]; summary: string | null }): Promise<{ ok: true; task: { name: string; url: string }; designer: string | null; note: string | null } | Fail> {
+  try {
+    const { me, db, admin } = await who();
+    await client(db, input.clientId);
+    if (!/^https:\/\/(docs|drive)\.google\.com\//.test(input.url.trim())) return { ok: false, error: "Paste the Google Sheet's link." };
+    const { createSuppliedRequest } = await import("@/lib/deliverables/server");
+    const { sheetLines } = await import("@/lib/email-supplied");
+    const urgency = (["urgent", "high", "normal", "low"] as const).find((u) => u === input.priority) ?? "normal";
+    const r = await createSuppliedRequest(admin, me, {
+      clientId: input.clientId,
+      sheetUrl: input.url.trim(),
+      count: input.count,
+      channel: input.channel,
+      shortName: input.name.trim().slice(0, 80) || "Weekly campaigns",
+      note: input.note.trim().slice(0, 1000) || null,
+      urgency,
+      emailsText: input.emails.length ? sheetLines(input.emails) : null,
+      summary: input.summary,
+    });
+    if (!r.ok) return r;
+    return { ok: true, task: { name: r.task.name, url: r.task.url }, designer: r.designer, note: r.designerMissing ?? r.task.followerMissing };
+  } catch (e) {
+    return fail(e);
+  }
+}

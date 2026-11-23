@@ -15,6 +15,7 @@ import { Progress, Spark, Stepper } from "@/app/(team)/requests/new/parts";
 import { CopyDocView } from "@/app/(team)/copy/[id]/copy-doc-view";
 import { approveCopy, loadCopy, requestCopy } from "@/app/(team)/copy/actions";
 import { EmailRequestChat } from "./email-request-chat";
+import { SuppliedRequest } from "./supplied-request";
 import { planRequest, sendPreview, startFor, writeCopy, type SendPreview } from "./actions";
 
 // The email request, built like the creative request (Client, Start, Write, Review) with the one thing email adds: the
@@ -27,7 +28,7 @@ import { planRequest, sendPreview, startFor, writeCopy, type SendPreview } from 
 // the client's HQ Drive under Email Marketing. Send: the one batched Asana request, every field shown before it's made.
 // Each step lives in the address (back returns to it); the request in progress is kept in this browser per client.
 
-type ClientOption = { id: string; name: string; slug: string; industry: string | null };
+type ClientOption = { id: string; name: string; slug: string; industry: string | null; /** Client supplies the content (their sheet) */ supplies?: { sheet: string | null } | null };
 type StepKey = "client" | "start" | "plan" | "copy" | "send";
 const STEPS: { key: StepKey; label: string }[] = [
   { key: "client", label: "Client" },
@@ -401,6 +402,9 @@ function StartStep({
 }) {
   const [data, setData] = useState<StartData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A client who supplies their own content starts on their sheet; planning with the strategist is one click away
+  const [normal, setNormal] = useState(false);
+  const supplied = Boolean(client.supplies) && !normal && !chat;
   const { start, live, activeRole } = useAgentCall();
   const picked = useRef(false);
   useEffect(() => {
@@ -451,7 +455,9 @@ function StartStep({
         </div>
       </div>
 
-      {chat ? (
+      {supplied ? (
+        <SuppliedRequest clientId={client.id} clientName={client.name} lastSheet={client.supplies?.sheet ?? null} onPlanNormally={() => setNormal(true)} />
+      ) : chat ? (
         <EmailRequestChat clientId={client.id} clientName={client.name} seed={null} onCopy={onDoc} onBack={() => onChat(false)} />
       ) : (
         <div className="grid gap-3 sm:grid-cols-3">
@@ -463,7 +469,7 @@ function StartStep({
 
       {error && <p className="rounded-[14px] bg-bad-soft px-4 py-3 text-[13.5px] text-bad">{error}</p>}
 
-      {data && data.drafts.length > 0 && (
+      {!supplied && data && data.drafts.length > 0 && (
         <section className="grid gap-3">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">Copy waiting for review</p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -480,7 +486,7 @@ function StartStep({
         </section>
       )}
 
-      {!data && !error && (
+      {!supplied && !data && !error && (
         <div className="grid gap-2 sm:grid-cols-3" aria-busy="true">
           {[0, 1, 2].map((i) => (
             <span key={i} className="h-28 animate-pulse rounded-[18px] bg-surface-2/60" />
@@ -488,7 +494,7 @@ function StartStep({
         </div>
       )}
 
-      {groups.map((g) => (
+      {!supplied && groups.map((g) => (
         <section key={g.key} className="grid gap-3">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">{g.key === "similar" && data?.industry ? `Worked for similar ${data.industry} brands` : SOURCE[g.key]}</p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">

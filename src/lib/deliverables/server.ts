@@ -299,6 +299,120 @@ export async function createRequests(admin: Admin, db: SupabaseClient, me: Me, r
   return { ok: true, doc: approvedDoc.docUrl, tasks: made, fieldsMissing: [...missingAll], followerMissing: follow.missing };
 }
 
+/** A seat's person on the client (primary first) and their Asana user, by their email or the mirror's mapping */
+async function seatAsanaUser(admin: Admin, clientId: string, role: string, mirror: string | null): Promise<{ name: string | null; user: string | null }> {
+  const { data: seats } = await admin.from("client_assignments").select("role, profile_id, is_primary, created_at, profiles(full_name, email)").eq("client_id", clientId).eq("role", role);
+  const { primaryOf } = await import("@/lib/buyer-seats");
+  const s = primaryOf((seats ?? []) as unknown as Parameters<typeof primaryOf>[0], role) as unknown as { profile_id: string; profiles: { full_name: string; email: string | null } | null } | null;
+  if (!s?.profiles) return { name: null, user: null };
+  const emails = [s.profiles.email];
+  if (mirror) {
+    const { data: m } = await admin.from(mirror).select("assignee_email").eq("profile_id", s.profile_id).not("assignee_email", "is", null).limit(1).maybeSingle();
+    if (m?.assignee_email) emails.push(m.assignee_email as string);
+  }
+  const { asana } = await import("@/lib/asana");
+  for (const e of [...new Set(emails.filter(Boolean) as string[])]) {
+    const u = await asana<{ gid: string }>(`/users/${encodeURIComponent(e)}`, { opt_fields: "gid" }).catch(() => null);
+    if (u?.data?.gid) return { name: s.profiles.full_name, user: u.data.gid };
+  }
+  return { name: s.profiles.full_name, user: null };
+}
+
+export type SuppliedResult = { ok: true; task: Request; designer: string | null; designerMissing: string | null } | { ok: false; error: string };
+
+/**
+ * Client supplies the content: one Asana task in the Email Marketing project, straight to "Ready for Design" (the
+ * Email Requests column when there's none), assigned to the client's email designer (auto-assign, as the board does),
+ * the strategist following, every field filled with the client's sheet as the Copy link, and the emails read from the
+ * sheet in the description. It counts against the allotment from its name ("(N)") like any batch, and the mirror tracks
+ * its moves through the board.
+ */
+export async function createSuppliedRequest(
+  admin: Admin,
+  me: Me,
+  p: { clientId: string; sheetUrl: string; count: number; channel: "email" | "sms"; shortName: string; note: string | null; urgency: "urgent" | "high" | "normal" | "low"; emailsText: string | null; summary: string | null },
+): Promise<SuppliedResult> {
+  const cfg = lineOf("email");
+  if (!cfg) return { ok: false, error: "The email line isn't set up." };
+  const { asanaConfigured, asana, asanaWrite } = await import("@/lib/asana");
+  if (!asanaConfigured()) return { ok: false, error: "Asana isn't connected (ASANA_TOKEN)." };
+  const project = await projectFor(admin, cfg);
+  if (!project) return { ok: false, error: noProject(cfg) };
+  const [facts, sections, fields, follow, designer] = await Promise.all([
+    clientFacts(admin, p.clientId, "email"),
+    asana<{ gid: string; name: string }[]>(`/projects/${project}/sections`, { opt_fields: "name" }).then((r) => r.data).catch(() => null),
+    projectFields(project),
+    strategistFollower(admin, cfg, p.clientId),
+    seatAsanaUser(admin, p.clientId, "email_designer", cfg.asana.mirror ?? null),
+  ]);
+  if (!sections) return { ok: false, error: "Asana wouldn't open the Email Marketing project." };
+  const fallback = requestSection(sections, cfg.asana.section);
+  const section = sections.find((x) => looseName(x.name) === looseName("Ready for Design")) ?? (fallback.ok ? fallback.section : null);
+  if (!section) return { ok: false, error: 'No "Ready for Design" or "Email Requests" column in the Email Marketing project.' };
+  const kind = cfg.kinds.find((k) => k.key === (p.channel === "sms" ? "sms" : "campaign")) ?? cfg.kinds[0];
+  const count = Math.max(1, Math.min(kind.max, Math.round(p.count) || 1));
+  const purpose = ["Client supplies the content: their team provides the images, copy and CTA links in the sheet linked in Copy. Build from the sheet as it is.", p.summary, p.note ? `Note: ${p.note}` : null].filter(Boolean).join("\n");
+  const input = { client: { name: facts.name, kaizenId: facts.kaizenId, website: facts.website, hqUrl: facts.hqUrl, figma: facts.figma, platform: facts.platform }, kind, shortName: p.shortName, count, docUrl: p.sheetUrl, purpose, urgency: p.urgency };
+  const name = cfg.asana.taskName(input);
+  const wanted = cfg.asana.fields(input);
+  const { custom_fields, missing } = mapAsanaFields(fields, wanted);
+  const notes = [
+    "Client supplies the content: images, copy and CTA links are in their sheet. No copy doc, no brief: build from the sheet.",
+    `Sheet: ${p.sheetUrl}`,
+    p.summary ?? "",
+    p.emailsText ? `In the sheet:\n${p.emailsText}` : "",
+    p.note ? `Note: ${p.note}` : "",
+    [facts.hqUrl && `Client HQ: ${facts.hqUrl}`, facts.figma && `Figma: ${facts.figma}`, facts.website && `Website: ${facts.website}`, facts.platform && `Platform: ${facts.platform}`].filter(Boolean).join("\n"),
+    `Requested by ${me.fullName} in Kaizen OS.`,
+    missing.length ? missing.map((m) => `${m.name}: ${m.value}`).join("\n") : "",
+    follow.missing ?? "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const base: Record<string, unknown> = { name, notes: notes.slice(0, 60000), projects: [project], ...(Object.keys(custom_fields).length ? { custom_fields } : {}) };
+  const followers = [...new Set([follow.follower, me.email].filter(Boolean) as string[])];
+  let task: { gid: string; permalink_url?: string };
+  try {
+    task = await asanaWrite("/tasks?opt_fields=permalink_url", { ...base, ...(designer.user ? { assignee: designer.user } : {}), ...(followers.length ? { followers } : {}) });
+  } catch {
+    try {
+      task = await asanaWrite("/tasks?opt_fields=permalink_url", base);
+    } catch (e) {
+      return { ok: false, error: `Asana refused the task: ${e instanceof Error ? e.message : "unknown"}` };
+    }
+  }
+  await asanaWrite(`/sections/${section.gid}/addTask`, { task: task.gid }).catch((e) => console.error("[supplied request] column", e instanceof Error ? e.message : e));
+  const url = task.permalink_url ?? `https://app.asana.com/0/${project}/${task.gid}`;
+  const { emailStageForColumn } = await import("@/lib/email-board-core");
+  const now = new Date().toISOString();
+  await admin.from("email_asana_tasks").upsert({
+    gid: task.gid,
+    name,
+    notes: notes.slice(0, 20000),
+    section: section.name,
+    stage: emailStageForColumn(section.name) ?? "ready_for_design",
+    client_id: p.clientId,
+    kind: "batch",
+    priority: p.urgency === "urgent" || p.urgency === "high" ? p.urgency : null,
+    assignee_name: designer.user ? designer.name : null,
+    created_by_name: me.fullName,
+    url,
+    fields: Object.fromEntries(wanted.filter((f) => f.value).map((f) => [f.name, f.value])),
+    open: true,
+    asana_created_at: now,
+    asana_modified_at: now,
+    synced_at: now,
+  });
+  // The sheet is remembered for next week's request
+  await admin.from("clients").update({ email_supplies_sheet: p.sheetUrl }).eq("id", p.clientId);
+  return {
+    ok: true,
+    task: { name, url, gid: task.gid, follower: follow.follower, followerMissing: follow.missing },
+    designer: designer.user ? designer.name : null,
+    designerMissing: designer.user ? null : designer.name ? `${designer.name} wasn't found in Asana, so the task is unassigned.` : "No email designer is on this client, so the task is unassigned.",
+  };
+}
+
 /** A fix to a request already made: fields by name, the description (replaced or added to), or its column. Never a delete. */
 export async function updateRequest(admin: Admin, cfg: LineConfig, gid: string, change: { fields?: WantedField[]; description?: string; append?: boolean; section?: string; name?: string }) {
   const { asana, asanaUpdate, asanaWrite } = await import("@/lib/asana");

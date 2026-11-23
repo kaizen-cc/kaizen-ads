@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { emailAllotments } from "@/lib/email-request";
 import type { SowScope } from "@/lib/email-allotment-core";
 import { EmailScopeEditor } from "./email-scope-editor";
+import { SuppliesToggle } from "./supplies-toggle";
 
 /**
  * The client page's Allotment and SOW tab (Email): this cycle's email allotment (campaigns and flows, delivered and in
@@ -15,15 +16,18 @@ export async function EmailScopePanel({ clientId }: { clientId: string }) {
   const db = await createClient();
   const from = new Date();
   from.setMonth(from.getMonth() - 2);
-  const [allotments, { data: sows }, { data: months }, { data: notes }] = await Promise.all([
+  const [allotments, { data: sows }, { data: months }, { data: notes }, { data: supply }] = await Promise.all([
     emailAllotments(db, [clientId]),
     db.from("client_sows").select("id, name, url, source, found_in, scope, status, note, read_at, created_at").eq("client_id", clientId).eq("line", "email").order("created_at", { ascending: false }).limit(4),
     db.from("email_scope_months").select("month, campaigns, campaigns_min, sms, sms_min, flows, flow_emails, flow_emails_min, label, notes, source, drafted_at, status, status_note").eq("client_id", clientId).gte("month", `${from.toISOString().slice(0, 7)}-01`).order("month").limit(24),
     db.from("email_scope_notes").select("note, via, created_at, profiles(full_name)").eq("client_id", clientId).order("created_at", { ascending: false }).limit(8),
+    db.from("clients").select("email_supplies_content, email_supplies_sheet").eq("id", clientId).maybeSingle(),
   ]);
   const r = (max: unknown, min: unknown) => (max == null ? "0" : min != null && Number(min) < Number(max) ? `${min}-${max}` : String(max));
   const active = (sows ?? []).find((s) => s.status !== "replaced") ?? null;
   return (
+    <div className="grid gap-6">
+    <SuppliesToggle clientId={clientId} on={Boolean(supply?.email_supplies_content)} sheet={(supply?.email_supplies_sheet as string | null) ?? null} canEdit={me.isExec || me.isLead || me.role === "head_of_email"} />
     <EmailScopeEditor
       clientId={clientId}
       allotment={allotments[clientId] ?? null}
@@ -59,5 +63,6 @@ export async function EmailScopePanel({ clientId }: { clientId: string }) {
       log={(notes ?? []).map((n) => ({ note: n.note as string, via: n.via as string, at: n.created_at as string, by: (n.profiles as unknown as { full_name: string } | null)?.full_name ?? null }))}
       canEdit={seesEmailBoard(me) || me.isExec || me.isLead}
     />
+    </div>
   );
 }

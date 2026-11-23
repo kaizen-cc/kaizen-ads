@@ -18,6 +18,7 @@ import { str, type AiTool } from "./types";
 //   find_email_sow       look again for the client's SOW in what Kaizen reads (Drive, Gmail, documents) and read it
 //   draft_sow_requests   draft this SOW month's requests now (copy and all) for the client's Email Strategist
 //   adjust_email_scope   change the SOW's months from what the person says (only the sprint signed, another option)
+//   send_client_sheet    a client who supplies their own content: their sheet straight to the designer
 // The request form: open_screen place 'new email request'; the tab: the client page, Email, Allotment and SOW.
 
 const emailAllotment: AiTool = {
@@ -126,4 +127,40 @@ const adjustScope: AiTool = {
   },
 };
 
-export const tools: AiTool[] = [emailAllotment, findSow, draftSow, adjustScope];
+const sendClientSheet: AiTool = {
+  name: "send_client_sheet",
+  description:
+    "For a client whose team supplies the content (images, copy and CTA links in their Google Sheet): send the sheet straight to the client's email designer as one Asana task in Ready for Design, every field filled, counting against the allotment. No plan, brief or copy. First call without confirmed: it reads the sheet and returns the emails in it; say them and ask. Call again with confirmed: true to send. sheet_url: their Google Sheet (leave out to reuse last week's); count: emails in it when the sheet can't be read; note: anything for the designer.",
+  input_schema: { type: "object", properties: { client: { type: "string" }, sheet_url: { type: "string" }, count: { type: "integer" }, note: { type: "string" }, priority: { type: "string", enum: ["low", "normal", "high", "urgent"] }, confirmed: { type: "boolean" } }, required: ["client"], additionalProperties: false },
+  lines: ["email"],
+  run: async (user: Staff, input) => {
+    if (!seesEmailBoard(user)) return { ok: false, error: "Email requests are for the email team and the executives." };
+    const db = await createClient();
+    const c = await clientNamed(db, input.client);
+    const admin = createAdminClient();
+    const { suppliesContent, readSuppliedSheet, sheetLines } = await import("@/lib/email-supplied");
+    const sup = await suppliesContent(admin, c.id);
+    const url = str(input.sheet_url) ?? sup.sheet;
+    if (!url) return { ok: false, error: "Ask for their Google Sheet's link." };
+    const read = await readSuppliedSheet(c.id, url, user.email ?? null).catch(() => null);
+    const emails = read?.ok ? read.emails : [];
+    const count = Math.max(1, Math.min(5, Number(input.count) || emails.length || 1));
+    if (input.confirmed !== true)
+      return { ok: true, client: c.name, supplies_content: sup.on, sheet: url, read: read?.ok ? { title: read.title, summary: read.summary, emails } : { error: read && !read.ok ? read.say : "Couldn't read it" }, count, ask: "Say what's in the sheet and ask before sending (call again with confirmed: true)." };
+    const { createSuppliedRequest } = await import("@/lib/deliverables/server");
+    const r = await createSuppliedRequest(admin, { id: user.id, fullName: user.fullName, email: user.email ?? null }, {
+      clientId: c.id,
+      sheetUrl: url,
+      count,
+      channel: read?.ok && read.channel === "sms" ? "sms" : "email",
+      shortName: (read?.ok && read.title ? read.title : "Weekly campaigns").slice(0, 80),
+      note: str(input.note) ?? null,
+      urgency: (["low", "normal", "high", "urgent"] as const).find((p) => p === input.priority) ?? "normal",
+      emailsText: emails.length ? sheetLines(emails) : null,
+      summary: read?.ok ? read.summary : null,
+    });
+    return r.ok ? { ok: true, task: r.task.name, url: r.task.url, designer: r.designer, note: r.designerMissing } : r;
+  },
+};
+
+export const tools: AiTool[] = [emailAllotment, findSow, draftSow, adjustScope, sendClientSheet];

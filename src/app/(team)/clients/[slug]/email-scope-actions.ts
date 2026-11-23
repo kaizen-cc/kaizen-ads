@@ -168,3 +168,17 @@ export async function draftScopeNow(clientId: string): Promise<{ ok: true } | Fa
     return fail(e);
   }
 }
+
+/** Client supplies the content (their sheet): email leads and executives switch it per client */
+export async function setSuppliesContent(clientId: string, on: boolean): Promise<{ ok: true } | Fail> {
+  try {
+    const me = await requireStaff();
+    if (!(me.isExec || me.isLead || me.role === "head_of_email")) return { ok: false, error: "The Head of Email, a lead or an executive switches this." };
+    const { admin, slug } = await guard(clientId);
+    await admin.from("clients").update({ email_supplies_content: on }).eq("id", clientId);
+    revalidatePath(`/clients/${slug}`);
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
