@@ -81,6 +81,8 @@ export type StudioReport = {
   skip?: { log: LogEntry[]; canBringBack: boolean };
   /** Where it was last saved in the client's Drive (and when), if it was */
   driveSave?: DriveSave | null;
+  /** An email report: the account's deliverability score, for the team only (never in anything the client sees) */
+  deliverability?: { score: number; from: string; to: string; parts: { label: string; grade: string }[] } | null;
   /** The metrics the buyer chose (or this client's layout from the last report); null: the defaults */
   layout: ReportLayout | null;
   qa: Qa | null;
@@ -1787,6 +1789,16 @@ export function ReportStudio({
                     </svg>
                     Edit
                   </button>
+                )}
+                {/* Internal: the account's deliverability, for the team; it never goes in the PDF, the email, Slack or the client's link */}
+                {report.deliverability && (
+                  <span
+                    title={`Internal, not in the client's report. Deliverability over ${report.deliverability.from} to ${report.deliverability.to}: ${report.deliverability.parts.map((p) => `${p.label} ${p.grade}`).join(", ")}`}
+                    className={`inline-flex h-11 items-center gap-1.5 rounded-full border px-3 text-[12.5px] md:h-9 ${report.deliverability.score >= 80 ? "border-ok/40 text-ok" : report.deliverability.score >= 60 ? "border-warn/40 text-warn" : "border-bad/40 text-bad"}`}
+                  >
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">Internal</span>
+                    Deliverability {report.deliverability.score}
+                  </span>
                 )}
                 {!busy && <RegenerateButton kind="one" variant="header" id={report.id} label={`${client.name}'s report`} sent={sent} approved={report.status === "submitted"} />}
                 <button type="button" disabled={downloading || busy || !sections} onClick={() => void downloadPdf()} aria-label="Download PDF" title="Download PDF" className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-line px-3.5 text-sm text-muted transition-colors hover:border-faint hover:text-fg disabled:opacity-50 md:h-9">

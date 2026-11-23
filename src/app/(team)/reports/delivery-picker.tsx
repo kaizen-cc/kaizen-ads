@@ -178,7 +178,7 @@ export function DeliveryPicker({
                       {saving === r.email ? "Saving…" : "Save as contact"}
                     </button>
                   )}
-                  {savedNow.has(r.email) && <span className="shrink-0 px-1 text-[11px] text-good">Saved</span>}
+                  {savedNow.has(r.email) && <span className="shrink-0 px-1 text-[11px] text-ok">Saved</span>}
                   <button type="button" disabled={disabled} aria-label={`Remove ${r.email}`} onClick={() => drop(r.email)} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-faint hover:bg-surface hover:text-fg md:h-7 md:w-7">
                     ×
                   </button>

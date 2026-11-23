@@ -185,6 +185,9 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
           extras: r.extras ?? "",
           skip: { log: parseLog((logRow as { log?: unknown } | null)?.log), canBringBack: canBringBack(r.kind, r.period_end, today) },
           driveSave: (driveRow as { drive_save?: DriveSave | null } | null)?.drive_save ?? null,
+          // An email report: the account's deliverability score for the team (internal: never in the PDF, the email,
+          // Slack or the client's link), the same score the Email board shows
+          deliverability: r.platform === "klaviyo" && adminConfigured() ? await deliverabilityFor(r.client_id as string) : null,
           manual: (r as { manual_results?: ManualEntered | null }).manual_results?.lines?.length ? (r as { manual_results: ManualEntered }).manual_results : null,
           layout: isChannel ? null : layoutOf({ status: r.status, layout: r.layout as ReportLayout | null, kpi_targets: r.kpi_targets as unknown as { report_layout: ReportLayout | null } | null }),
           qa: (r.qa as Qa | null) ?? null,
@@ -218,4 +221,13 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
       />
     </div>
   );
+}
+
+/** The deliverability score the Email board shows for this client, its window and its parts, for the studio's internal badge */
+async function deliverabilityFor(clientId: string): Promise<{ score: number; from: string; to: string; parts: { label: string; grade: string }[] } | null> {
+  const { loadEmailScore } = await import("@/lib/email-score-load");
+  const s = await loadEmailScore(createAdminClient(), clientId).catch(() => null);
+  const d = s?.deliverability;
+  if (!s || !d) return null;
+  return { score: d.score, from: s.window.from, to: s.window.to, parts: d.parts.map((p) => ({ label: p.label, grade: String(p.grade) })) };
 }
