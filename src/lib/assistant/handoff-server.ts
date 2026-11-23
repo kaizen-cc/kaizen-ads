@@ -67,6 +67,11 @@ export async function getDraft(admin: SupabaseClient, callId: string, id: string
   return ((await memo(admin, callId)).find((w) => w.kind === "draft" && w.id === id) as Draft | undefined) ?? null;
 }
 
+/** Every draft on the call, oldest first */
+export async function allDrafts(admin: SupabaseClient, callId: string): Promise<Draft[]> {
+  return (await memo(admin, callId)).filter((w): w is Draft => w.kind === "draft");
+}
+
 /** The newest draft on the call that hasn't gone out */
 export async function latestDraft(admin: SupabaseClient, callId: string): Promise<Draft | null> {
   const drafts = (await memo(admin, callId)).filter((w): w is Draft => w.kind === "draft" && !(w as Draft).sent);

@@ -11,7 +11,7 @@ import { feedbackPath, spokenFeedbackType, type FeedbackType } from "@/lib/feedb
 import { riskNote, RISK_PREFIX } from "@/lib/client-risk";
 import { saidYes } from "./core";
 import { clientTeam, recipientFor } from "./routing-server";
-import { carriedYes, getDraft, latestDraft, putDraft, tellTeammate, type Draft } from "./handoff-server";
+import { allDrafts, carriedYes, getDraft, latestDraft, putDraft, tellTeammate, type Draft } from "./handoff-server";
 import { addressOf, reSubject, rawEmail, replyTo, slackPlace } from "./messages";
 import { attachNote, draftFiles, fileViews, mailFiles } from "@/lib/documents/attach";
 import { composeLinks } from "@/lib/email-drafts/core";
@@ -237,14 +237,20 @@ async function keepClientDraft(ctx: CommsCtx, clientId: string, d: Draft): Promi
  * A call draft into the person's own Gmail drafts (email) or Slack self-DM (Slack), marked on the call and shown on the
  * card with its link. Their own mailbox only. Never sends.
  */
-async function saveDraftToPlatform(ctx: CommsCtx, d: Draft): Promise<{ ok: true; where: string; href: string | null } | { ok: false; error: string; needs?: "slack" | "google_admin" }> {
+async function saveDraftToPlatform(ctx: CommsCtx, d: Draft): Promise<{ ok: true; where: string; href: string | null; unsure?: boolean } | { ok: false; error: string; needs?: "slack" | "google_admin" }> {
   const r = await placeCallDraft(ctx.admin, ctx.me, ctx.callId!, d);
   if (!r.ok) {
     if (r.needsConnect) await connectSlack(ctx, "reconnect");
     return { ok: false, error: r.error, needs: r.needsConnect ? "slack" : r.scope ? "google_admin" : undefined };
   }
   showDraft(ctx, r.draft, d.slack ? "slack_draft" : "gmail_draft", r.href ?? "/assistant", Boolean(r.href));
-  return { ok: true, where: r.where, href: r.href };
+  // An older Slack connection can't find their own self-DM: it may have landed in their DM with Slackbot instead, and
+  // reconnecting (one tap) makes it land in "message to yourself" every time
+  if (r.unsure) {
+    const [{ needsConnection }, { showConnect }] = await Promise.all([import("@/lib/personal-connections-core"), import("@/lib/personal-connections")]);
+    showConnect(ctx.emit, needsConnection("slack", "missing_scope"));
+  }
+  return { ok: true, where: r.where, href: r.href, unsure: r.unsure };
 }
 
 /** Slack needs connecting (or reconnecting): the card on screen, and the needs_connection answer */
@@ -445,15 +451,35 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
     {
       name: "save_draft",
       description: `Puts a drafted message (draft_message) where ${from} edits and sends it themselves. Email: a real draft in their own Gmail (a reply sits in its thread; to, cc, subject and any attached PDFs included), with a link straight to it. Slack: Slack has no way for an app to write into someone's Slack Drafts, so it's posted to their own self-DM (their "message to yourself", with their own connected Slack) labeled with where it goes and a link to the thread; they copy it, edit it and send it there. Nothing reaches anyone else, so it needs no "send it?": run it when they ask ("put it in my Gmail drafts", "drop it in my Slack"). Then say where it is in a few words; the card links to it. If it can't, say the reason it gives in a sentence.`,
-      input_schema: { type: "object", properties: { draft_id: { type: "string", description: "The draft's id (leave out for the latest draft on this call)" } }, additionalProperties: false },
-      status: () => "Saving it to your drafts…",
+      input_schema: {
+        type: "object",
+        properties: {
+          draft_id: { type: "string", description: "The draft's id (leave out for the latest draft on this call)" },
+          all: { type: "boolean", description: "true to save every draft on this conversation that isn't saved or sent yet, each as its own message (\"put them all in my Slack\")" },
+        },
+        additionalProperties: false,
+      },
+      status: (input) => (input.all ? "Saving them to your drafts…" : "Saving it to your drafts…"),
       run: async (input) => {
         if (!ctx.callId) return { saved: false, note: "Draft it first (draft_message), then save it." };
-        const d = input.draft_id ? await getDraft(ctx.admin, ctx.callId, clip(input.draft_id, 40)) : await latestDraft(ctx.admin, ctx.callId);
-        if (!d) return { saved: false, note: "That draft isn't on this conversation. Draft it again (draft_message), then save it." };
-        const r = await saveDraftToPlatform(ctx, d);
-        if (!r.ok) return { saved: false, error: r.error, ...(r.needs ? { needs: r.needs } : {}) };
-        return { saved: true, where: r.where, link: r.href, note: d.slack ? `Say it's in their Slack, in their messages to themselves, ready to copy into ${d.slack.thread ? "the thread" : d.slack.where === "your Slack" ? "wherever it goes" : d.slack.where}.` : "Say it's in their Gmail drafts, ready to edit and send there." };
+        // Several drafts on screen ("put them in my Slack"): each one saved on its own
+        const list = input.all === true ? (await allDrafts(ctx.admin, ctx.callId)).filter((x) => !x.sent && !x.saved) : [input.draft_id ? await getDraft(ctx.admin, ctx.callId, clip(input.draft_id, 40)) : await latestDraft(ctx.admin, ctx.callId)].filter((x): x is Draft => Boolean(x));
+        if (!list.length) return { saved: false, note: input.all ? "Every draft on this conversation is already saved or sent." : "That draft isn't on this conversation. Draft it again (draft_message), then save it." };
+        const done: { where: string; link: string | null; to: string }[] = [];
+        let unsure = false;
+        for (const d of list) {
+          const r = await saveDraftToPlatform(ctx, d);
+          if (!r.ok) return { saved: done.length > 0, saved_count: done.length, error: r.error, ...(r.needs ? { needs: r.needs } : {}) };
+          if (r.unsure) unsure = true;
+          done.push({ where: r.where, link: r.href, to: d.slack?.where ?? d.email?.to ?? "" });
+        }
+        const d = list[list.length - 1];
+        const where = unsure
+          ? "Say it was posted with their Slack, and if it isn't under their messages to themselves it's in their DM with Slackbot; the Reconnect card on screen (one tap) makes drafts land in their own self-DM every time."
+          : d.slack
+            ? `Say it's in their Slack, in their messages to themselves, ready to copy into ${d.slack.thread ? "the thread" : d.slack.where === "your Slack" ? "wherever it goes" : d.slack.where}.`
+            : "Say it's in their Gmail drafts, ready to edit and send there.";
+        return { saved: true, saved_count: done.length, drafts: done, note: done.length > 1 ? `${done.length} drafts saved, each on its own. ${where}` : where };
       },
     },
     {

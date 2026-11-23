@@ -62,7 +62,27 @@ export function emailOfDraft(d: Draft, fromName: string): EmailToDraft | null {
   return { mailbox: e.mailbox, fromName, to: e.to, cc: e.cc ?? null, subject: e.subject, body: d.text, threadId: e.threadId, inReplyTo: e.inReplyTo ?? null, references: e.references ?? null, files: d.attachments ?? [] };
 }
 
-export type SlackDraftResult = { ok: true; href: string | null; where: string } | { ok: false; error: string; needsConnect?: boolean };
+export type SlackDraftResult = { ok: true; href: string | null; where: string; /** Not confirmed to be their own self-DM (an older connection without im:read) */ unsure?: boolean } | { ok: false; error: string; needsConnect?: boolean };
+
+/**
+ * Their own self-DM ("message to yourself"): the DM whose other person is themselves. Posting to their own user ID with
+ * their token doesn't reliably land there (Slack can put it in another DM, Slackbot's), so it's looked up by id; that
+ * needs im:read. Null when the token can't list DMs (an older connection) or it isn't found.
+ */
+async function selfDmId(token: string, scopes: string[], me: string): Promise<string | null> {
+  if (!scopes.includes("im:read")) return null;
+  const { slackRead } = await import("@/lib/slack-user");
+  let cursor = "";
+  for (let page = 0; page < 5; page++) {
+    const r = await slackRead<{ ok: boolean; channels?: { id: string; user?: string }[]; response_metadata?: { next_cursor?: string } }>(token, "conversations.list", { types: "im", limit: "200", exclude_archived: "true", ...(cursor ? { cursor } : {}) }).catch(() => null);
+    if (!r?.ok) return null;
+    const hit = (r.channels ?? []).find((c) => c.user === me);
+    if (hit) return hit.id;
+    cursor = r.response_metadata?.next_cursor ?? "";
+    if (!cursor) break;
+  }
+  return null;
+}
 
 /**
  * A Slack draft in the person's own self-DM ("message to yourself"), posted with their own token: labeled with where it
@@ -74,12 +94,14 @@ export async function saveSlackSelfDraft(profileId: string, d: Draft): Promise<S
   const { postAsUser, slackUserToken } = await import("@/lib/slack-user");
   const mine = await slackUserToken(profileId);
   if (!mine?.slackUserId) return { ok: false, error: "Connect your Slack first, so the draft lands in your own messages.", needsConnect: true };
-  const r = await postAsUser(profileId, { channel: mine.slackUserId, text: slackSelfText(d.slack, d.text) });
+  // Their own self-DM, found by id; an older connection that can't list DMs posts to their user ID as before, flagged
+  const self = await selfDmId(mine.token, mine.scopes, mine.slackUserId);
+  const r = await postAsUser(profileId, { channel: self ?? mine.slackUserId, text: slackSelfText(d.slack, d.text) });
   if (!r.ok) return { ok: false, error: r.error, needsConnect: r.needsConnect };
-  return { ok: true, href: r.permalink ?? slackMessageLink(r.channel, r.ts), where: d.slack.where };
+  return { ok: true, href: r.permalink ?? slackMessageLink(r.channel, r.ts), where: d.slack.where, ...(self ? {} : { unsure: true }) };
 }
 
-export type PlacedCallDraft = { ok: true; draft: Draft; where: string; href: string | null } | { ok: false; error: string; scope?: boolean; needsConnect?: boolean };
+export type PlacedCallDraft = { ok: true; draft: Draft; where: string; href: string | null; unsure?: boolean } | { ok: false; error: string; scope?: boolean; needsConnect?: boolean };
 
 /**
  * A draft on a call or chat saved where the person sends it: Gmail (their own mailbox only; marked on the call and on
@@ -92,7 +114,7 @@ export async function placeCallDraft(admin: SupabaseClient, me: { id: string; em
     if (!r.ok) return { ok: false, error: r.error, needsConnect: r.needsConnect };
     const next: Draft = { ...d, saved: { to: "slack", href: r.href } };
     await putDraft(admin, callId, next);
-    return { ok: true, draft: next, where: "your Slack (a message to yourself)", href: r.href };
+    return { ok: true, draft: next, where: "your Slack (a message to yourself)", href: r.href, ...(r.unsure ? { unsure: true } : {}) };
   }
   const email = emailOfDraft(d, me.fullName);
   if (!email) return { ok: false, error: "That draft has nothing to save." };

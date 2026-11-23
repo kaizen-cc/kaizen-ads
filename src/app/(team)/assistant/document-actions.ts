@@ -97,7 +97,7 @@ export async function openCallDraftInGmail(callId: string, draftId: string): Pro
  * The draft card's Save button: an email into the person's own Gmail drafts (in its thread, files attached), a Slack
  * message into their own self-DM labeled with where it goes. Never sends. Only the call's own person.
  */
-export async function saveCallDraftToPlatform(callId: string, draftId: string): Promise<{ ok: true; to: "gmail" | "slack"; href: string | null } | (Fail & { scope?: boolean; needsConnect?: boolean })> {
+export async function saveCallDraftToPlatform(callId: string, draftId: string): Promise<{ ok: true; to: "gmail" | "slack"; href: string | null; unsure?: boolean } | (Fail & { scope?: boolean; needsConnect?: boolean })> {
   const me = await requireStaff();
   const admin = createAdminClient();
   const { data: call } = await admin.from("ai_role_calls").select("profile_id").eq("id", callId).maybeSingle();
@@ -107,5 +107,5 @@ export async function saveCallDraftToPlatform(callId: string, draftId: string): 
   if (!d) return { ok: false, error: "That draft isn't on this conversation any more." };
   const r = await placeCallDraft(admin, me, callId, d);
   if (!r.ok) return { ok: false, error: r.error, scope: r.scope, needsConnect: r.needsConnect };
-  return { ok: true, to: d.slack ? "slack" : "gmail", href: r.href };
+  return { ok: true, to: d.slack ? "slack" : "gmail", href: r.href, unsure: r.unsure ?? false };
 }
