@@ -6,7 +6,8 @@ import { BLOCK_ORDER } from "@/lib/today-counts";
 import { todaySnapshot } from "@/lib/today-snapshot";
 import type { ExecCard, ExecTab } from "@/lib/exec-overview-core";
 import { AutoClosed } from "@/components/auto-closed";
-import { Blocks, BLOCK_TONE, itemChips, type BlockDef } from "./exec-home";
+import { Blocks, type BlockDef } from "./exec-home";
+import { BLOCK_TONE, itemChips } from "./exec-blocks";
 import { HiddenLog } from "./hidden-log";
 import { PageHeader } from "./shared";
 import { TodayHero, TodayHeroSkeleton } from "./today-hero";
@@ -40,7 +41,9 @@ const EMPTY: Partial<Record<TopicKey, { title: string; line: string }>> = {
 function cardOf(i: TodayItem): ExecCard {
   if (i.exec) return i.exec;
   const kind: ExecCard["kind"] = i.key.startsWith("lead:") ? "stuck" : /^owed/.test(i.key) ? "owed" : /^said/.test(i.key) ? "said" : "mine";
-  const href = i.action.href ?? (i.clientSlug ? `/clients/${i.clientSlug}` : null);
+  // A saved recap from before an update can carry an item without its action: never let one item break the page
+  const act = (i as Partial<TodayItem>).action;
+  const href = act?.href ?? (i.clientSlug ? `/clients/${i.clientSlug}` : null);
   return {
     key: i.key,
     tab: i.topic as ExecTab,
@@ -52,7 +55,7 @@ function cardOf(i: TodayItem): ExecCard {
     detail: i.story,
     severity: i.tier === "critical" ? "critical" : i.tier === "high" ? "high" : "normal",
     due: i.due ?? null,
-    action: { label: i.action.label, href },
+    action: { label: act?.label ?? "Open", href },
   };
 }
 

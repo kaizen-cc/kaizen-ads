@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { tintFor } from "@/lib/colors";
 import { pushParams, replaceParams, useParam } from "@/lib/url-state";
-import { Blocks, BLOCK_TONE } from "./exec-home";
+import { Blocks } from "./exec-home";
+import { BLOCK_TONE } from "./exec-blocks";
 
 /** What each panel block holds, in one line */
 const PANEL_BLURB: Record<string, string> = {
