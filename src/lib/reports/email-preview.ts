@@ -6,6 +6,7 @@ import { portalUrl } from "@/lib/site";
 import { platformName } from "./format";
 import type { ReportMetrics } from "./metrics";
 import { buildReportEmail } from "./delivery-core";
+import { jointMessage } from "./joint-core";
 import { greetingFor, reportCtaUrl, type Contact } from "./cc-core";
 import { reportCc } from "./cc";
 import { forClient, isWhiteLabel, WHITE_LABEL_FROM } from "./white-label";
@@ -26,6 +27,8 @@ type Row = {
   bundle_id: string | null;
   owner_id: string | null;
   metrics: ReportMetrics | null;
+  message: string | null;
+  joined_to: string | null;
   sections: { headline?: string | null; summary?: string | null; did?: string[] | null; next?: string[] | null } | null;
   client_id: string;
   clients: { name: string; slug: string | null; portal_live: boolean | null; client_type: string | null } | null;
@@ -39,8 +42,12 @@ const rangeLabel = (start: string, end: string) => {
 };
 const monthOf = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 
-export async function reportEmailPreview(admin: SupabaseClient, id: string, by: { fullName: string; email: string | null }, to: Contact[], note: string | null): Promise<EmailPreview | null> {
-  const cols = "id, kind, platform, period_start, period_end, bundle_id, owner_id, client_id, metrics, sections, clients(name, slug, portal_live, client_type)";
+/**
+ * `message`: the message as it is on screen right now (the studio passes it so a hand edit not yet saved is drawn too);
+ * without it, the report's saved message. The email's body IS that message, as the send builds it.
+ */
+export async function reportEmailPreview(admin: SupabaseClient, id: string, by: { fullName: string; email: string | null }, to: Contact[], note: string | null, message?: string | null): Promise<EmailPreview | null> {
+  const cols = "id, kind, platform, period_start, period_end, bundle_id, owner_id, client_id, metrics, sections, message, joined_to, clients(name, slug, portal_live, client_type)";
   const { data } = await admin.from("reports").select(cols).eq("id", id).maybeSingle();
   const r = data as unknown as Row | null;
   if (!r?.clients) return null;
@@ -72,6 +79,10 @@ export async function reportEmailPreview(admin: SupabaseClient, id: string, by: 
   }
 
   const c = r.clients;
+  // The message the send carries: a built report's approved one (on its bundle), else this report's with any part riding on it
+  const own = message ?? (r.kind === "built" && r.bundle_id ? (((await admin.from("report_bundles").select("message").eq("id", r.bundle_id).maybeSingle()).data?.message as string | null) ?? null) : r.message);
+  const riders = r.kind === "built" ? [] : rows.filter((x) => x.id !== r.id && x.joined_to === r.id);
+  const body = riders.length ? jointMessage(own, riders) : (own ?? "");
   const mail = buildReportEmail({
     client: c.name,
     kind: r.kind,
@@ -83,7 +94,8 @@ export async function reportEmailPreview(admin: SupabaseClient, id: string, by: 
     dashboard,
     note,
     whiteLabel: wl,
+    message: wl ? forClient(body, true) : body,
   });
-  const html = emailHtml({ preheader: mail.preheader, kicker: mail.kicker, title: mail.title, highlight: mail.highlight, hello: mail.hello, lines: mail.lines, bullets: mail.bullets, cta: mail.cta ?? undefined, note: mail.note, ...(wl ? { whiteLabel: true } : {}) });
+  const html = emailHtml({ preheader: mail.preheader, kicker: mail.kicker, title: mail.title, highlight: mail.highlight, hello: mail.hello, lines: mail.lines, blocks: mail.blocks, bullets: mail.bullets, cta: mail.cta ?? undefined, note: mail.note, ...(wl ? { whiteLabel: true } : {}) });
   return { fromName, fromAddress, subject: mail.subject, html, attached: true, cc };
 }

@@ -25,6 +25,8 @@ export type EmailParts = {
   /** Numbered steps, each a bold line and a short explanation */
   steps?: { title: string; text?: string }[];
   bullets?: string[];
+  /** A body written as headings, paragraphs and bullets in order (a report's message), *bold* and _italic_ kept */
+  blocks?: ({ kind: "heading"; text: string } | { kind: "para"; text: string } | { kind: "list"; items: string[] })[];
   cta?: { label: string; url: string };
   note?: string;
   /** A white label client's email: the same layout in a neutral slate, with no agency logo, name or footer */
@@ -45,6 +47,17 @@ export function emailHtml(p: EmailParts) {
   const bullets = p.bullets?.length
     ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:4px 0 20px">${p.bullets.map((b) => `<tr><td valign="top" width="20" style="padding:0 0 8px;color:${RED};font:700 15px/1.5 ${FONT}">•</td><td style="padding:0 0 8px;font:15px/1.5 ${FONT};color:${BODY}">${esc(b)}</td></tr>`).join("")}</table>`
     : "";
+  // *bold* and _italic_ as the message wrote them (after escaping, so nothing else can become markup)
+  const marked = (t: string) => esc(t).replace(/(https?:\/\/[^\s<)]+)/g, `<a href="$1" style="color:${RED}">$1</a>`).replace(/\*([^*\n]+)\*/g, `<b style="color:${INK}">$1</b>`).replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,;:!?])/g, "$1<i>$2</i>");
+  const blocks = (p.blocks ?? [])
+    .map((b) =>
+      b.kind === "heading"
+        ? `<p style="margin:22px 0 8px;font:700 16px/1.4 ${HEAD};color:${INK}">${esc(b.text.replace(/\*/g, ""))}</p>`
+        : b.kind === "list"
+          ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:2px 0 14px">${b.items.map((x) => `<tr><td valign="top" width="20" style="padding:0 0 8px;color:${RED};font:700 15px/1.6 ${FONT}">•</td><td style="padding:0 0 8px;font:15px/1.6 ${FONT};color:${BODY}">${marked(x)}</td></tr>`).join("")}</table>`
+          : `<p style="margin:0 0 14px;font:15px/1.6 ${FONT};color:${BODY}">${marked(b.text)}</p>`,
+    )
+    .join("");
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"></head><body style="margin:0;padding:0;background:#fafafa">
 ${p.preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(p.preheader)}</div>` : ""}
 <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#fafafa"><tr><td align="center" style="padding:32px 14px">
@@ -55,7 +68,7 @@ ${p.kicker ? `<p style="margin:0 0 12px;font:600 11px/1.4 ${FONT};letter-spacing
 <h1 style="margin:0 0 18px;font:700 26px/1.25 ${HEAD};color:#000000;letter-spacing:-.01em">${titled}</h1>
 ${p.hello ? `<p style="margin:0 0 12px;font:15px/1.55 ${FONT};color:${INK}">${esc(p.hello)}</p>` : ""}
 ${(p.lines ?? []).map((l) => `<p style="margin:0 0 14px;font:15px/1.6 ${FONT};color:${BODY}">${esc(l)}</p>`).join("")}
-${steps}${bullets}
+${blocks}${steps}${bullets}
 ${p.cta ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:6px 0 4px"><tr><td style="background:${RED};border-radius:4px"><a href="${esc(p.cta.url)}" style="display:inline-block;padding:14px 26px;font:600 15px/1 ${FONT};color:#ffffff;text-decoration:none">${esc(p.cta.label)}</a></td></tr></table>` : ""}
 ${p.note ? `<p style="margin:20px 0 0;font:12.5px/1.55 ${FONT};color:${MUTED}">${esc(p.note)}</p>` : ""}
 </td></tr>
@@ -69,6 +82,7 @@ export function emailText(p: EmailParts) {
     p.hello,
     p.hello ? "" : null,
     ...(p.lines ?? []).flatMap((l) => [l, ""]),
+    ...(p.blocks ?? []).flatMap((b) => (b.kind === "list" ? [...b.items.map((x) => `• ${x.replace(/\*([^*\n]+)\*/g, "$1")}`), ""] : [b.text.replace(/\*([^*\n]+)\*/g, "$1"), ""])),
     ...(p.steps ?? []).map((s, i) => `${i + 1}. ${s.title}${s.text ? `: ${s.text}` : ""}`),
     p.steps?.length ? "" : null,
     ...(p.bullets ?? []).map((b) => `• ${b}`),

@@ -1,4 +1,6 @@
 import "server-only";
+import { chatThumbs } from "@/lib/chat-thumbs";
+import { OUTPUTS_RULE, outputsCheck } from "./outputs-core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, askJsonWithTools, type AgentKey } from "@/lib/ai";
 import { reportTools, toolsLine, type Pulled } from "./tools";
@@ -49,7 +51,7 @@ export type Sections = {
 export type QaFlag = { severity: "fix" | "check" | "alert"; issue: string; where: string; suggestion: string };
 export type Qa = { verdict: "clean" | "check" | "fix"; flags: QaFlag[]; checkedAt: string };
 /** pulled: what the AI looked up for this answer (shown under it); data: what came back, kept so the QA can check it */
-export type ChatTurn = { role: "user" | "assistant"; text: string; at: string; by?: string; pulled?: string[]; data?: string };
+export type ChatTurn = { role: "user" | "assistant"; text: string; at: string; by?: string; pulled?: string[]; data?: string; /** Small copies of the screenshots pasted with it, shown in the thread */ images?: string[] };
 
 const S = { type: "string" };
 const LIST = { type: "array", items: S };
@@ -406,7 +408,7 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
     agent: agentFor(c.r.platform),
     label: "revise report",
     clientId: c.r.client_id,
-    system: `${writerSystem(c.r.kind as Kind, c.r.platform, c.whiteLabel)}\n\n${REVISE_SYSTEM}\n${PERIOD_RULE}\n\n${toolsLine(tools)}`,
+    system: `${writerSystem(c.r.kind as Kind, c.r.platform, c.whiteLabel)}\n\n${REVISE_SYSTEM}\n${OUTPUTS_RULE}\n${PERIOD_RULE}\n\n${toolsLine(tools)}`,
     schema: REVISE_SCHEMA,
     tools,
     maxRounds: 6,
@@ -420,18 +422,21 @@ export async function reviseReport(admin: SupabaseClient, reportId: string, ask:
   });
   const now = new Date().toISOString();
   const data = pulled.map((x) => `[${x.label}]\n${x.data}`).join("\n\n").slice(0, 20_000);
-  const next: ChatTurn[] = [
-    ...chat,
-    // Already in the chat when the ask also moved the report's dates (this is its second half, after the redraw)
-    ...(opts.echo === false ? [] : [{ role: "user" as const, text: ask.trim(), at: now, by }]),
-    { role: "assistant" as const, text: out.reply, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
-  ].slice(-40);
   out.sections = await fillStories(admin, c.target, out.sections, metrics.main.end, c.leave, c.uploads);
   if (c.whiteLabel) {
     out.message = forClient(out.message, true);
     out.sections = scrubSections(out.sections);
   }
   out.message = openWithHere(out.message);
+  // Read back what's being saved against what was there: the chat says which outputs changed, from the text itself
+  const check = outputsCheck({ message: c.r.message, sections: c.r.sections }, out);
+  const thumbs = await chatThumbs(opts.images).catch(() => []);
+  const next: ChatTurn[] = [
+    ...chat,
+    // Already in the chat when the ask also moved the report's dates (this is its second half, after the redraw)
+    ...(opts.echo === false ? [] : [{ role: "user" as const, text: ask.trim(), at: now, by, ...(thumbs.length ? { images: thumbs } : {}) }]),
+    { role: "assistant" as const, text: `${out.reply.trim()}\n\n${check.line}`, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
+  ].slice(-40);
   await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), chat: next, updated_at: now }).eq("id", reportId);
 
   if (out.lesson.trim()) await rememberPref(admin, c.r.client_id, out.lesson.trim(), { line: lineOfPlatform(c.r.platform as string), by: { id: opts.byId ?? null, name: by }, reportId, source: "studio_ask" }).catch(() => null);

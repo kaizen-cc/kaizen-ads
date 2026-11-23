@@ -1,4 +1,6 @@
 import "server-only";
+import { chatThumbs } from "@/lib/chat-thumbs";
+import { OUTPUTS_RULE, outputsCheck } from "@/lib/reports/outputs-core";
 import { lastSentBlock } from "@/lib/reports/style-core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { askJson, askJsonWithTools, clientContext, contextBlock } from "@/lib/ai";
@@ -318,7 +320,7 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
     agent: "reporter",
     label: "revise channel report",
     clientId: c.r.client_id,
-    system: `${forSource(writerSystem(c.r.kind, c.r.platform, c.whiteLabel), c.r.metrics)}\n\n${REVISE_SYSTEM}\n${PERIOD_RULE}\n\n${channelToolsLine(c.r.platform)}`,
+    system: `${forSource(writerSystem(c.r.kind, c.r.platform, c.whiteLabel), c.r.metrics)}\n\n${REVISE_SYSTEM}\n${OUTPUTS_RULE}\n${PERIOD_RULE}\n\n${channelToolsLine(c.r.platform)}`,
     schema: c.r.platform === "social" ? SOCIAL_REVISE_SCHEMA : engagementTemplate(c.r.metrics) ? ENGAGEMENT_REVISE_SCHEMA : REVISE_SCHEMA,
     tools,
     maxRounds: 6,
@@ -332,11 +334,6 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
   });
   const now = new Date().toISOString();
   const data = pulled.map((x) => `[${x.label}]\n${x.data}`).join("\n\n").slice(0, 20_000);
-  const next: ChatTurn[] = [
-    ...chat,
-    ...(opts.echo === false ? [] : [{ role: "user" as const, text: ask.trim(), at: now, by }]),
-    { role: "assistant" as const, text: out.reply, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
-  ].slice(-40);
   out.sections = carryTeamFindings(c.r.sections, plain(out.sections));
   out.message = noEmDashes(out.message);
   if (c.whiteLabel) {
@@ -345,6 +342,14 @@ export async function reviseChannelReport(admin: SupabaseClient, reportId: strin
   }
   out.message = withTitle(out.message, channelTitle(c.client, c.r.kind, m));
   out.message = openWithHere(out.message);
+  // Read back what's being saved against what was there: the chat says which outputs changed, from the text itself
+  const check = outputsCheck({ message: c.r.message, sections: c.r.sections }, out);
+  const thumbs = await chatThumbs(opts.images).catch(() => []);
+  const next: ChatTurn[] = [
+    ...chat,
+    ...(opts.echo === false ? [] : [{ role: "user" as const, text: ask.trim(), at: now, by, ...(thumbs.length ? { images: thumbs } : {}) }]),
+    { role: "assistant" as const, text: `${out.reply.trim()}\n\n${check.line}`, at: now, ...(pulled.length ? { pulled: pulled.map((x) => x.label), data } : {}) },
+  ].slice(-40);
   await admin.from("reports").update({ message: out.message, sections: out.sections, message_basis: reportBasis(out.sections, c.r.extras), chat: next, updated_at: now }).eq("id", reportId);
   if (out.lesson.trim()) await (await import("@/lib/reports/write")).rememberPref(admin, c.r.client_id, out.lesson.trim(), { line: (await import("@/lib/reports/style-core")).lineOfPlatform(c.r.platform), by: { id: opts.byId ?? null, name: by }, reportId, source: "studio_ask" }).catch(() => null);
   const qa = await qaChannelReport(admin, reportId).catch(() => null);

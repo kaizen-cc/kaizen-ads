@@ -5,7 +5,7 @@ import { drive, driveWriteConfigured } from "@/lib/creative-drive";
 import { monthLabel } from "./format";
 import { rangeLabel, todayIn } from "./period";
 import { isWhiteLabel } from "./white-label";
-import { reportFileName, safeFileName, type DriveSave } from "./drive-save-core";
+import { contentBasis, reportFileName, safeFileName, type DriveSave } from "./drive-save-core";
 import { loadReport } from "./share";
 import { renderReportPdf } from "./pdf";
 
@@ -28,13 +28,14 @@ function plainError(message: string) {
 export async function saveReportToDrive(admin: SupabaseClient, reportId: string, by: { id: string; fullName: string }, now = new Date()): Promise<SaveResult> {
   const { data: r } = await admin
     .from("reports")
-    .select("id, client_id, platform, kind, period_start, period_end, bundle_id, clients(name, slug, client_type, drive_folder_id)")
+    .select("id, client_id, platform, kind, period_start, period_end, bundle_id, sections, message, extras, clients(name, slug, client_type, drive_folder_id)")
     .eq("id", reportId)
     .maybeSingle();
   if (!r) return { ok: false, error: "Report not found." };
   const client = r.clients as unknown as { name: string; slug: string; client_type: string | null; drive_folder_id: string | null } | null;
   if (!client) return { ok: false, error: "This report has no client." };
   const fixHref = `/clients/${client.slug}`;
+  const basis = contentBasis(r as { sections?: unknown; message?: string | null; extras?: string | null });
   const clientFolder = client.drive_folder_id ? folderIdOf(client.drive_folder_id) : "";
   if (!clientFolder) return { ok: false, error: `${client.name} has no Drive folder yet. Add it on the client page, then save again.`, fixHref };
   if (!driveWriteConfigured()) return { ok: false, error: "Drive isn't connected yet (an admin needs to add the Google service account and the Drive user in the app's settings)." };
@@ -66,7 +67,7 @@ export async function saveReportToDrive(admin: SupabaseClient, reportId: string,
     } catch (e) {
       return { ok: false, error: `The PDF couldn't be drawn: ${e instanceof Error ? e.message.slice(0, 200) : "unknown error"}` };
     }
-    return upload(admin, reportId, { clientFolder, name, fixHref, by, now }, drawn);
+    return upload(admin, reportId, { clientFolder, name, fixHref, by, now, basis }, drawn);
   }
   let input;
   if (joint) {
@@ -84,11 +85,11 @@ export async function saveReportToDrive(admin: SupabaseClient, reportId: string,
     return { ok: false, error: `The PDF couldn't be drawn: ${e instanceof Error ? e.message.slice(0, 200) : "unknown error"}` };
   }
 
-  return upload(admin, reportId, { clientFolder, name, fixHref, by, now }, pdf);
+  return upload(admin, reportId, { clientFolder, name, fixHref, by, now, basis }, pdf);
 }
 
 /** The PDF into the client's reports folder (a new version of the same file when it's there), recorded on the report */
-async function upload(admin: SupabaseClient, reportId: string, at: { clientFolder: string; name: string; fixHref: string; by: { id: string; fullName: string }; now: Date }, pdf: Uint8Array): Promise<SaveResult> {
+async function upload(admin: SupabaseClient, reportId: string, at: { clientFolder: string; name: string; fixHref: string; by: { id: string; fullName: string }; now: Date; basis: string }, pdf: Uint8Array): Promise<SaveResult> {
   const { clientFolder, name, fixHref, by, now } = at;
   let file: { id: string; webViewLink?: string };
   let newVersion = false;
@@ -101,7 +102,7 @@ async function upload(admin: SupabaseClient, reportId: string, at: { clientFolde
     return { ok: false, error: plainError(e instanceof Error ? e.message : String(e)), fixHref };
   }
 
-  const save: DriveSave = { url: file.webViewLink ?? `https://drive.google.com/file/d/${file.id}/view`, name, at: now.toISOString(), by: by.id, byName: by.fullName };
+  const save: DriveSave = { url: file.webViewLink ?? `https://drive.google.com/file/d/${file.id}/view`, name, at: now.toISOString(), by: by.id, byName: by.fullName, basis: at.basis };
   const { error } = await admin.from("reports").update({ drive_save: save }).eq("id", reportId);
   return { ok: true, save, newVersion, recorded: !error };
 }

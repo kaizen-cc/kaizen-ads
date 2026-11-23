@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AttachButton, ChatImageStrip, useChatImages } from "@/components/chat-images";
 import { SlackConnect } from "@/components/slack-connect";
+import { contentBasis, driveBehind } from "@/lib/reports/drive-save-core";
 import { actionFailedText } from "@/lib/error-triage";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import { Layer } from "../clients/[slug]/layer";
@@ -328,6 +329,8 @@ export function ReportStudio({
   const [driveError, setDriveError] = useState<{ text: string; href?: string } | null>(null);
   const [qa, setQa] = useState<Qa | null>(report.qa);
   const [chat, setChat] = useState<ChatTurn[]>(report.chat);
+  // A screenshot from the thread, opened big
+  const [shot, setShot] = useState<string | null>(null);
   const [ask, setAsk] = useState("");
   const [asking, setAsking] = useState(false);
   // The AI chat's last request failed: its error, so it can be reported from the chat
@@ -728,6 +731,16 @@ export function ReportStudio({
             "Open"
           )}{" "}
           · {new Date(driveSave.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })}
+          {/* A Drive copy is the report as it was when saved: after a change, it says so and saves the new version in one tap */}
+          {driveBehind(driveSave, contentBasis({ sections, message: built ? report.message : message, extras })) && (
+            <>
+              {" "}
+              · <span className="text-warn">Changed since.</span>{" "}
+              <button type="button" disabled={savingDrive} onClick={() => void saveDrive()} className="text-fg underline underline-offset-4 disabled:opacity-40">
+                Save this version
+              </button>
+            </>
+          )}
         </p>
       )}
       {driveError && (
@@ -1333,8 +1346,25 @@ export function ReportStudio({
           )}
         </div>
       )}
+      {shot && (
+        <div role="dialog" aria-modal="true" aria-label="Screenshot" tabIndex={-1} ref={(el) => el?.focus()} onKeyDown={(e) => e.key === "Escape" && setShot(null)} onClick={() => setShot(null)} className="fixed inset-0 z-[80] grid cursor-zoom-out place-items-center bg-black/70 p-4 outline-none">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={shot} alt="Screenshot sent in the chat" className="max-h-[90vh] max-w-full rounded-[12px] object-contain shadow-2xl" />
+        </div>
+      )}
       {chat.map((t, i) => (
         <div key={i} className={`grid max-w-[88%] gap-1.5 ${t.role === "user" ? "justify-self-end" : ""}`}>
+          {/* The screenshots sent with it, kept in the thread */}
+          {t.images?.length ? (
+            <div className={`flex flex-wrap gap-1.5 ${t.role === "user" ? "justify-end" : ""}`}>
+              {t.images.map((src, k) => (
+                <button key={k} type="button" onClick={() => setShot(src)} aria-label="Open the screenshot" className="overflow-hidden rounded-[10px] border border-line bg-surface-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt="Screenshot sent with this message" className="block max-h-40 w-auto max-w-[220px] object-contain" />
+                </button>
+              ))}
+            </div>
+          ) : null}
           <p className={`whitespace-pre-wrap rounded-[14px] px-3.5 py-2.5 leading-relaxed ${big ? "text-[15px]" : "text-[13.5px]"} ${t.role === "user" ? "bg-fg text-bg" : "bg-surface-2 text-fg"}`}>{t.text}</p>
           {/* Where it looked, so the buyer knows where a number came from */}
           {t.pulled?.length ? (
@@ -1882,7 +1912,7 @@ export function ReportStudio({
               ))}
             </div>}
             {format === "email" ? (
-              <EmailFrame reportId={report.id} to={(recipients.length ? recipients : monthly ? (delivery?.contacts ?? []) : []).map((r) => ({ email: r.email, name: r.name ?? null }))} note={monthly || built ? "" : emailNote} file={fileName} />
+              <EmailFrame reportId={report.id} to={(recipients.length ? recipients : monthly ? (delivery?.contacts ?? []) : []).map((r) => ({ email: r.email, name: r.name ?? null }))} note={monthly || built ? "" : emailNote} file={fileName} message={monthly ? null : message || null} />
             ) : format === "pdf" ? (
               sections ? (
                 <PdfPreview

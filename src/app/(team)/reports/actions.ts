@@ -991,11 +991,13 @@ export async function saveToDrive(id: string): Promise<Result<{ save: DriveSave;
 }
 
 /** The email as it will go (who it's from, the subject, its HTML), for the studio's Message step */
-export async function previewReportEmail(id: string, to: { email: string; name?: string | null }[], note?: string): Promise<Result<{ preview: import("@/lib/reports/email-preview").EmailPreview }>> {
+export async function previewReportEmail(id: string, to: { email: string; name?: string | null }[], note?: string, message?: string | null): Promise<Result<{ preview: import("@/lib/reports/email-preview").EmailPreview }>> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   const { reportEmailPreview } = await import("@/lib/reports/email-preview");
-  const preview = await reportEmailPreview(createAdminClient(), id, { fullName: ok.me.fullName ?? "Kaizen", email: ok.me.email }, normalizeDelivery({ channels: ["email"], recipients: to }).recipients, note?.slice(0, 600) || null);
+  // The message on screen (a hand edit not saved yet included): the email's body is that message
+  const live = typeof message === "string" ? message.slice(0, 20_000) : null;
+  const preview = await reportEmailPreview(createAdminClient(), id, { fullName: ok.me.fullName ?? "Kaizen", email: ok.me.email }, normalizeDelivery({ channels: ["email"], recipients: to }).recipients, note?.slice(0, 600) || null, live);
   return preview ? { ok: true, preview } : { ok: false, error: "The email couldn't be drawn." };
 }
 

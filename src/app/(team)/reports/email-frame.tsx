@@ -7,15 +7,17 @@ import type { EmailPreview } from "@/lib/reports/email-preview";
 // The report's email as the client's mail app will show it: From, To, Cc, Subject, the body the send really builds
 // (drawn on the server by the same builders, in a frame that runs nothing) and the PDF attached (always).
 
-export function EmailFrame({ reportId, to, note, file }: { reportId: string; to: { email: string; name: string | null }[]; note: string; file: string }) {
+// The body IS the report's message: it's passed in as it stands on screen, so every change (the AI's, a hand edit) is
+// drawn here at once and the email never shows an older version than the Slack message beside it.
+export function EmailFrame({ reportId, to, note, file, message }: { reportId: string; to: { email: string; name: string | null }[]; note: string; file: string; message: string | null }) {
   const toKey = to.map((r) => `${r.email}:${r.name ?? ""}`).join(",");
-  const key = `${reportId}|${toKey}|${note}`;
+  const key = `${reportId}|${toKey}|${note}|${message ?? ""}`;
   const [state, setState] = useState<{ key: string; preview: EmailPreview | null; error: string | null } | null>(null);
   useEffect(() => {
     let live = true;
     // A line typed in the note is drawn once the typing pauses
     const t = setTimeout(() => {
-      void previewReportEmail(reportId, to, note)
+      void previewReportEmail(reportId, to, note, message)
         .then((r) => live && setState({ key, preview: r.ok ? r.preview : null, error: r.ok ? null : r.error }))
         .catch(() => live && setState({ key, preview: null, error: "The email couldn't be drawn." }));
     }, 300);
@@ -25,7 +27,7 @@ export function EmailFrame({ reportId, to, note, file }: { reportId: string; to:
     };
     // `to` is read through its key: a new array with the same people doesn't draw the email again
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, reportId, note]);
+  }, [key, reportId, note, message]);
   const shown = state?.preview ?? null;
   const error = state?.key === key ? state.error : null;
 

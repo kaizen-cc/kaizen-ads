@@ -79,7 +79,7 @@ export type SendArgs = {
   kind: string;
   platform: string | null;
   period: { start: string | null; end: string | null; label: string };
-  /** The Slack message (the email has its own short text) */
+  /** The message: the Slack post, and the email's body too (turned from Slack's formatting into the email's) */
   message: string;
   pdf: { bytes: Uint8Array; filename: string; title: string };
   parts: SendPart[];
@@ -159,7 +159,7 @@ export async function deliver(admin: SupabaseClient, sent: SendArgs): Promise<Se
   if (d.channels.includes("email")) {
     // One email to every contact picked (To), the team in Cc, the PDF always attached
     const to = d.recipients.map((r) => r.email);
-    const e = buildReportEmail({ client: a.client.name, kind: a.kind, periodLabel: a.period.label, parts: a.parts, from: { name: a.by.fullName, email: a.by.email }, first: firstNameFor(d.recipients), dashboard: dashboardOf(a.client), note: a.note, whiteLabel: wl, serviceLabel: a.serviceLabel, keyLines: a.keyLines });
+    const e = buildReportEmail({ client: a.client.name, kind: a.kind, periodLabel: a.period.label, parts: a.parts, from: { name: a.by.fullName, email: a.by.email }, first: firstNameFor(d.recipients), dashboard: dashboardOf(a.client), note: a.note, whiteLabel: wl, serviceLabel: a.serviceLabel, keyLines: a.keyLines, message: a.message });
     const failed: { email: string; error: string }[] = [];
     let sent: string[] = [];
     let cc: string[] = [];
@@ -167,7 +167,7 @@ export async function deliver(admin: SupabaseClient, sent: SendArgs): Promise<Se
     else if (!emailReady()) for (const r of d.recipients) failed.push({ email: r.email, error: "Email isn't set up (RESEND_API_KEY missing)." });
     else {
       cc = await reportCc(admin, { clientId: a.client.id, platforms: a.parts.map((p) => p.platform), owners: a.owners ?? [], to }).catch(() => []);
-      const html = emailHtml({ preheader: e.preheader, kicker: e.kicker, title: e.title, highlight: e.highlight, hello: e.hello, lines: e.lines, bullets: e.bullets, cta: e.cta ?? undefined, note: e.note, ...(wl ? { whiteLabel: true } : {}) });
+      const html = emailHtml({ preheader: e.preheader, kicker: e.kicker, title: e.title, highlight: e.highlight, hello: e.hello, lines: e.lines, blocks: e.blocks, bullets: e.bullets, cta: e.cta ?? undefined, note: e.note, ...(wl ? { whiteLabel: true } : {}) });
       const res = await sendEmail({ to, cc, subject: e.subject, html, text: e.text, replyTo: e.replyTo ?? undefined, attachments: [{ filename: a.pdf.filename, content: b64(a.pdf.bytes) }], ...(wl ? { fromName: WHITE_LABEL_FROM } : {}) });
       if (res.ok) {
         sent = to;

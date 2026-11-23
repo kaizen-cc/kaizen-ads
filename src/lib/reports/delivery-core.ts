@@ -121,6 +121,12 @@ export type ReportEmailInput = {
   /** A channel report (email or social): the service it is for, and its own key numbers in place of the ad tiles */
   serviceLabel?: string | null;
   keyLines?: string[] | null;
+  /**
+   * The report's message (the one the Slack post carries): when there is one it IS the email's body, turned from Slack's
+   * formatting into the email's, so every change to it (the AI's, a hand edit, a refresh) is in the email too and the two
+   * can never say different things.
+   */
+  message?: string | null;
 };
 
 export type ReportEmail = {
@@ -133,6 +139,8 @@ export type ReportEmail = {
   hello: string;
   lines: string[];
   bullets: string[];
+  /** The message's own headings, paragraphs and bullets, in order (empty when the email is drawn from the sections) */
+  blocks: EmailBlock[];
   cta: { label: string; url: string } | null;
   note: string;
   text: string;
@@ -145,13 +153,16 @@ export function buildReportEmail(p: ReportEmailInput): ReportEmail {
   if (!p.whiteLabel) return mail;
   // The backstop: whatever the buyer or the report said, a white label client's email never names the agency
   const clean = (t: string) => scrubAgency(t);
-  return { ...mail, subject: clean(mail.subject), preheader: clean(mail.preheader), kicker: clean(mail.kicker), title: clean(mail.title), hello: clean(mail.hello), lines: mail.lines.map(clean), bullets: mail.bullets.map(clean), note: clean(mail.note), text: clean(mail.text) };
+  const blocks = mail.blocks.map((b): EmailBlock => (b.kind === "list" ? { kind: "list", items: b.items.map(clean) } : { ...b, text: clean(b.text) }));
+  return { ...mail, subject: clean(mail.subject), preheader: clean(mail.preheader), kicker: clean(mail.kicker), title: clean(mail.title), hello: clean(mail.hello), lines: mail.lines.map(clean), bullets: mail.bullets.map(clean), blocks, note: clean(mail.note), text: clean(mail.text) };
 }
 
 function writeReportEmail(p: ReportEmailInput): ReportEmail {
   const wl = Boolean(p.whiteLabel);
   const joint = p.parts.length > 1;
   const subject = p.serviceLabel ? `${p.client} ${p.serviceLabel} ${KIND_WORD[p.kind] ?? "report"} · ${p.periodLabel}` : reportSubject(p.client, p.kind, p.periodLabel);
+  const fromMessage = messageBlocks(p.message);
+  if (fromMessage.length) return messageEmail(p, subject, fromMessage);
   const lines = joint ? p.parts.flatMap((x) => summaryLines(x.sections).slice(0, 1).map((l) => `${platformName(x.platform)}: ${l}`)) : summaryLines(p.parts[0]?.sections);
   const bullets = p.keyLines ?? p.parts.flatMap((x) => keyNumbers(x.metrics, joint ? platformName(x.platform).replace(" Ads", "") : undefined));
   const firstName = p.from.name.split(" ")[0] || (wl ? "Your account team" : "The Kaizen team");
@@ -176,6 +187,7 @@ function writeReportEmail(p: ReportEmailInput): ReportEmail {
     hello,
     lines: allLines,
     bullets,
+    blocks: [],
     cta,
     note,
     text,
@@ -184,3 +196,96 @@ function writeReportEmail(p: ReportEmailInput): ReportEmail {
 
 /** The PDF's file name, safe for every mail app */
 export const pdfFileName = (client: string, what: string, period: string) => `${client} - ${what} - ${period}.pdf`.replace(/[\\/:*?"<>|]/g, "-");
+
+// ─── The message as the email's body ────────────────────────────────────────────────────────────────────────────────
+
+/** A part of the email's body: a heading ("*What happened*"), a paragraph, or a list of bullets */
+export type EmailBlock = { kind: "heading"; text: string } | { kind: "para"; text: string } | { kind: "list"; items: string[] };
+
+const GREETING = /^(?:hi|hey|hello|good (?:morning|afternoon|evening)|dear)\b[^.!?\n]{0,60}[,!:]?$/i;
+const SIGN_OFF = /^(?:best|thanks|thank you|many thanks|cheers|talk soon|speak soon|regards|warmly)\b[^.\n]{0,40}[,!.]?$/i;
+const BULLET = /^\s*(?:[•◦▪‣·–-]|\*(?=\s)|\d{1,2}[.)])\s+(.+)$/;
+const HEADING = /^\*([^*\n]{1,140})\*:?$/;
+
+/** Slack's own markup out (mentions, @here, channel links, emoji codes, <url|label> links), its *bold* and _italic_ kept */
+export function slackToPlain(t: string): string {
+  return t
+    .replace(/<!(?:here|channel|everyone)(?:\|[^>]*)?>/g, "")
+    .replace(/<@[A-Z0-9]+(?:\|([^>]+))?>/g, (_m, name: string | undefined) => (name ? `@${name}` : ""))
+    .replace(/<#[A-Z0-9]+\|([^>]+)>/g, "#$1")
+    .replace(/<((?:https?|mailto):[^|>]+)\|([^>]+)>/g, (_m, url: string, label: string) => (label.trim() === url.trim() ? url : `${label} (${url})`))
+    .replace(/<((?:https?|mailto):[^>]+)>/g, "$1")
+    .replace(/(^|\s):[a-z0-9_+-]{2,40}:(?=\s|$)/g, "$1")
+    .replace(/[ \t]+$/gm, "");
+}
+
+/** The *bold* and _italic_ markers taken off, for the plain-text email and the inbox preview */
+export const unmark = (t: string) => t.replace(/\*([^*\n]+)\*/g, "$1").replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,;:!?])/g, "$1$2");
+
+/**
+ * The Slack message turned into the email's body: its headings, paragraphs and bullets in the order written, every one
+ * of them (nothing is cut to fit). What only belongs in Slack goes: @here, the title line the post opens with (the email
+ * has its own title), and the greeting and sign-off (the email has its own, addressed to whoever it goes to).
+ */
+export function messageBlocks(message: string | null | undefined): EmailBlock[] {
+  let lines = slackToPlain(String(message ?? "")).split(/\r?\n/).map((l) => l.trim());
+  const firstReal = () => lines.findIndex((l) => l !== "");
+  // The post's title line ("Atomic Wings Weekly Report | November 16 to 22"): short, no sentence, names the report
+  let i = firstReal();
+  if (i >= 0 && lines[i].length <= 140 && !/[.!?]$/.test(lines[i]) && (/\s[|·]\s/.test(lines[i]) || /\b(?:report|recap|update|wrap[- ]?up)\b/i.test(lines[i])) && !GREETING.test(lines[i])) lines = lines.slice(i + 1);
+  // The greeting, when it's one of the first lines
+  i = firstReal();
+  if (i >= 0 && GREETING.test(unmark(lines[i]))) lines = lines.slice(i + 1);
+  // The sign-off and the name under it
+  const real = lines.map((l, k) => (l ? k : -1)).filter((k) => k >= 0);
+  const tail = real.slice(-2);
+  const off = tail.find((k) => SIGN_OFF.test(unmark(lines[k])));
+  if (off != null && real.at(-1)! - off <= 1 && lines[off].length <= 40) lines = lines.slice(0, off);
+
+  const out: EmailBlock[] = [];
+  for (const line of lines) {
+    if (!line) continue;
+    const b = BULLET.exec(line);
+    const h = HEADING.exec(line);
+    const last = out.at(-1);
+    if (b) {
+      if (last?.kind === "list") last.items.push(b[1].trim());
+      else out.push({ kind: "list", items: [b[1].trim()] });
+    } else if (h) out.push({ kind: "heading", text: h[1].trim().replace(/:$/, "") });
+    else out.push({ kind: "para", text: line });
+  }
+  return out;
+}
+
+/** The body as plain text: headings on their own line, bullets as "• " */
+export function blocksText(blocks: EmailBlock[]): string[] {
+  return blocks.flatMap((b) => (b.kind === "list" ? [...b.items.map((x) => `• ${unmark(x)}`), ""] : [unmark(b.text), ""]));
+}
+
+function messageEmail(p: ReportEmailInput, subject: string, body: EmailBlock[]): ReportEmail {
+  const wl = Boolean(p.whiteLabel);
+  const firstName = p.from.name.split(" ")[0] || (wl ? "Your account team" : "The Kaizen team");
+  const hello = p.first ? `Hi ${p.first},` : "Hi team,";
+  const sign = wl ? firstName : `${firstName}, Kaizen Marketing`;
+  const note = [p.note?.trim() || "", "Any questions, just reply to this email.", sign].filter(Boolean).join(" ");
+  const cta = p.dashboard && !wl ? { label: "See every number on your dashboard", url: p.dashboard } : null;
+  const blocks: EmailBlock[] = [...body, { kind: "para", text: "The full report is attached as a PDF." }];
+  const firstPara = body.find((b) => b.kind === "para") as { text: string } | undefined;
+  const text = [hello, "", ...blocksText(blocks), ...(cta ? [`${cta.label}: ${cta.url}`, ""] : []), ...(p.note?.trim() ? [p.note.trim(), ""] : []), "Any questions, just reply to this email.", "", firstName, ...(wl ? [] : ["Kaizen Marketing"])].join("\n");
+  return {
+    whiteLabel: wl,
+    subject,
+    replyTo: p.from.email && isEmail(p.from.email) ? p.from.email : null,
+    preheader: firstPara ? unmark(firstPara.text).slice(0, 180) : `${p.client} · ${p.periodLabel}`,
+    kicker: p.client,
+    title: `Your ${KIND_WORD[p.kind] ?? "report"}: ${p.periodLabel}`,
+    highlight: p.periodLabel,
+    hello,
+    lines: [],
+    bullets: [],
+    blocks,
+    cta,
+    note,
+    text,
+  };
+}
