@@ -58,6 +58,9 @@ Where things stand on 2026-10-31 and what comes next, in order. The target is th
 ### Monday, Nov 23 2026
 - **Owner's updates through the assistant go all the way through, database changes included.** Feedback sent through the assistant becomes a Claude fix that merges itself, but any fix with a database change fails at merge: the `SUPABASE_DB_URL` repository secret was never set (#113 was merged by hand on Nov 22 for this reason). The owner adds the secret (Supabase → Connect → Session pooler string, port 5432, with the database password → GitHub → Settings → Secrets and variables → Actions → `SUPABASE_DB_URL`). Then run the daily Checks and one Claude fix that carries a migration to confirm both reach the database, so an update sent through the assistant lands exactly as one sent from a Claude Code session.
 
+### Tuesday, Nov 24 2026
+- **Everyone's own Asana in Kaizen OS.** "Next for me in Asana" must mirror each person's Asana My tasks (private tasks too), which needs each person to connect their own Asana; the code is live (ed74712f: Connect card, per-person sign-in, writes as them) but waits on the Asana app. The owner creates it: app.asana.com/0/my-apps, Create new app "Kaizen OS", OAuth redirect URL `https://app.kaizenmarketing.agency/api/asana/callback`, then adds `ASANA_CLIENT_ID` and `ASANA_CLIENT_SECRET` to Vercel (Production) and redeploys. Then the owner connects first to confirm his My tasks appear (private ones included) and a change from Kaizen OS lands in Asana as him, and the team is told to tap Connect Asana on their Overview.
+
 ### Client portal
 18. **The portal as the client's home**, not only creative approvals: the dashboard, reports, setup and creative in one experience, designed for the wow factor (in progress).
 
