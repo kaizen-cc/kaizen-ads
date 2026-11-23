@@ -112,7 +112,8 @@ export function revenueSources(input: { metrics: ConversionMetric[]; sides: Sour
     const store = s.store.now;
     return {
       id: m.id,
-      name: m.name,
+      // Two systems that both call it "Placed Order" (E11EVEN: Speakeasy's and Shopify's) are told apart by their integration
+      name: m.integration && picked.some((o) => o.m.id !== m.id && o.m.name.trim().toLowerCase() === m.name.trim().toLowerCase()) ? `${m.name} (${m.integration})` : m.name,
       primary: i === 0,
       revenue: s.revenue,
       orders: s.conversions,

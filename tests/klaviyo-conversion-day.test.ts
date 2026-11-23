@@ -73,3 +73,21 @@ describe("every order system email earns through is read, the biggest first", ()
     expect(autoRank([shopify, { id: "TvLwnd", name: "Placed Order", integration: "Speakeasy" }], [speakeasy], 100)).toBeNull();
   });
 });
+
+describe("two order systems with the same name", () => {
+  it("are told apart by their integration in the report", async () => {
+    const { revenueSources } = await import("@/lib/channel-reports/email-sources");
+    const pair = (now: number, before = 0) => ({ now, before });
+    const out = revenueSources({
+      metrics: [
+        { id: "TvLwnd", name: "Placed Order", integration: "Speakeasy", revenueSource: true },
+        { id: "TiNzwR", name: "Placed Order", integration: "Shopify", revenueSource: true },
+      ],
+      sides: [
+        { id: "TvLwnd", name: "Placed Order", revenue: pair(2000, 1500), conversions: pair(120, 90), store: pair(9000, 8000) },
+        { id: "TiNzwR", name: "Placed Order", revenue: pair(1302, 1100), conversions: pair(12, 10), store: pair(6000, 5000) },
+      ],
+    });
+    expect(out?.sources.map((s) => [s.name, s.primary])).toEqual([["Placed Order (Speakeasy)", true], ["Placed Order (Shopify)", false]]);
+  });
+});
