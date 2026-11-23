@@ -104,7 +104,7 @@ export default async function ReportPage({ params }: PageProps<"/reports/[id]">)
   const offers = sendOptions({ kind: r.kind, start: r.period_start, end: r.period_end });
   const targetId = target?.id ?? null;
   const [delivery, history, { data: keyRow }, { data: driveRow }, { data: logRow }, { data: pastSends }, { data: prevDrive }, { data: tokenRow }] = await Promise.all([
-    admin && !sentNow ? clientDelivery(admin, r.client_id as string).catch(() => null) : Promise.resolve(null),
+    admin && !sentNow ? clientDelivery(admin, r.client_id as string, lineOfPlatform(String(r.platform))).catch(() => null) : Promise.resolve(null),
     admin ? readHistory(admin, { reportId: r.id, bundleId: r.bundle_id, limit: 40 }, today) : Promise.resolve([]),
     db.from("reports").select("period_key").eq("id", id).maybeSingle().then((x) => (x.error ? { data: null } : x)),
     // Where it was saved in the client's Drive (a column that may not exist yet: read apart so the page never fails on it)

@@ -46,7 +46,7 @@ const monthOf = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en
  * `message`: the message as it is on screen right now (the studio passes it so a hand edit not yet saved is drawn too);
  * without it, the report's saved message. The email's body IS that message, as the send builds it.
  */
-export async function reportEmailPreview(admin: SupabaseClient, id: string, by: { fullName: string; email: string | null }, to: Contact[], note: string | null, message?: string | null): Promise<EmailPreview | null> {
+export async function reportEmailPreview(admin: SupabaseClient, id: string, by: { fullName: string; email: string | null }, to: Contact[], note: string | null, message?: string | null, copied: string[] = []): Promise<EmailPreview | null> {
   const cols = "id, kind, platform, period_start, period_end, bundle_id, owner_id, client_id, metrics, sections, message, joined_to, clients(name, slug, portal_live, client_type)";
   const { data } = await admin.from("reports").select(cols).eq("id", id).maybeSingle();
   const r = data as unknown as Row | null;
@@ -63,7 +63,9 @@ export async function reportEmailPreview(admin: SupabaseClient, id: string, by: 
   // A white label client's sender shows no address (it's the agency's domain)
   const fromAddress = wl ? null : (sender.match(/<([^>]+)>/)?.[1] ?? null);
   const first = greetingFor(to);
-  const cc = await reportCc(admin, { clientId: r.client_id, platforms: rows.map((x) => x.platform), owners: rows.map((x) => x.owner_id), to: to.map((x) => x.email) }).catch(() => [] as string[]);
+  const team = await reportCc(admin, { clientId: r.client_id, platforms: rows.map((x) => x.platform), owners: rows.map((x) => x.owner_id), to: to.map((x) => x.email) }).catch(() => [] as string[]);
+  // As the send builds it: the people the sender copied, then the team (nobody twice, nobody in To)
+  const cc = [...new Set([...copied, ...team])].filter((e) => !to.some((x) => x.email === e));
   const dashboard = reportCtaUrl(r.clients, portalUrl());
 
   // An email or social report: its own service and key numbers in the email, as its send builds it

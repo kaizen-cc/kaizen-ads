@@ -21,7 +21,7 @@ import { jointMessage, jointNote, type JointInfo, type JointNote } from "@/lib/r
 import type { ChatTurn, Qa, Sections } from "@/lib/reports/write";
 import { ManualResults, type ManualEntered } from "./manual-results";
 import { reportFileName, type DriveSave } from "@/lib/reports/drive-save-core";
-import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, editSentReport, loadCampaignEvents, refreshSlackMessage, regenerate, reopenReport, reviseWithAi, saveLayout, saveManualResults, saveReport, saveToDrive, sendMyPartNow, sendReport, setCampaignLeftOut, setReportCampaignExcluded, uploadReportCsv } from "./actions";
+import { approveBuiltMessage, approveMyPart, builtMessage, changePeriod, checkAgain, editSentReport, loadCampaignEvents, refreshSlackMessage, regenerate, saveReportContact, reopenReport, reviseWithAi, saveLayout, saveManualResults, saveReport, saveToDrive, sendMyPartNow, sendReport, setCampaignLeftOut, setReportCampaignExcluded, uploadReportCsv } from "./actions";
 import { parseAdsCsv, uploadSummary } from "@/lib/reports/upload-csv";
 import { keepTextAsIs, updateTextToNumbers } from "./actions";
 import { noteText } from "@/lib/reports/refresh-core";
@@ -642,8 +642,15 @@ export function ReportStudio({
   // A built report already approved to go out can't change how: only Drive is left to do
   const choice: SendOption = built && bundle?.messageApproved && !sent && offers.includes("drive") ? "drive" : picked;
   const [recipients, setRecipients] = useState<Delivery["recipients"]>(delivery?.initial.recipients ?? []);
+  // People copied (Cc) by the sender, remembered with To for this client's line (the team is copied by the send itself)
+  const [cc, setCc] = useState<Delivery["recipients"]>(delivery?.initial.cc ?? []);
+  const pickPeople = (d: Delivery) => {
+    setRecipients(d.recipients);
+    setCc(d.cc ?? []);
+  };
+  const saveAsContact = async (r: { email: string; name?: string | null }) => saveReportContact(report.id, r.email, r.name ?? null);
   // One channel at a time: a recap's saved channel (report_bundles.delivery) is just the one picked
-  const route: Delivery = { channels: channelsFor(choice), recipients };
+  const route: Delivery = { channels: channelsFor(choice), recipients, ...(cc.length ? { cc } : {}) };
   const toDrive = choice === "drive";
   const [emailNote, setEmailNote] = useState("");
   const viaSlack = choice === "slack";
@@ -1912,7 +1919,15 @@ export function ReportStudio({
               ))}
             </div>}
             {format === "email" ? (
-              <EmailFrame reportId={report.id} to={(recipients.length ? recipients : monthly ? (delivery?.contacts ?? []) : []).map((r) => ({ email: r.email, name: r.name ?? null }))} note={monthly || built ? "" : emailNote} file={fileName} message={monthly ? null : message || null} />
+              <>
+              {/* Who it goes to, right where the email is read: To and Cc, the same choice the send step uses */}
+              {!monthly && !built && !sent && (
+                <div className="rounded-[14px] border border-line bg-surface p-3">
+                  <DeliveryPicker channels={false} value={{ channels: ["email"], recipients, ...(cc.length ? { cc } : {}) }} onChange={pickPeople} onSaveContact={saveAsContact} options={delivery ?? { contacts: [], initial: route, slackChannel: client.hasChannel, emailReady: true }} disabled={channelsLocked} />
+                </div>
+              )}
+              <EmailFrame cc={cc.map((r) => r.email)} reportId={report.id} to={(recipients.length ? recipients : monthly ? (delivery?.contacts ?? []) : []).map((r) => ({ email: r.email, name: r.name ?? null }))} note={monthly || built ? "" : emailNote} file={fileName} message={monthly ? null : message || null} />
+              </>
             ) : format === "pdf" ? (
               sections ? (
                 <PdfPreview
@@ -2028,7 +2043,7 @@ export function ReportStudio({
           {viaEmail && routeOpen && (
             <section className="grid gap-3 rounded-[18px] border border-line bg-surface p-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">Email to</p>
-              <DeliveryPicker channels={false} value={route} onChange={(d) => setRecipients(d.recipients)} options={delivery ?? { contacts: [], initial: route, slackChannel: client.hasChannel, emailReady: true }} disabled={channelsLocked} />
+              <DeliveryPicker channels={false} value={route} onChange={pickPeople} onSaveContact={saveAsContact} options={delivery ?? { contacts: [], initial: route, slackChannel: client.hasChannel, emailReady: true }} disabled={channelsLocked} />
               {!monthly && !built && (
                 <label className="grid gap-1.5">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-faint">A line for the email (optional)</span>

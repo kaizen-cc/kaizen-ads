@@ -8,7 +8,8 @@ import { scrubAgency } from "./white-label";
 
 export type Channel = "slack" | "email";
 export type Recipient = { email: string; name?: string | null };
-export type Delivery = { channels: Channel[]; recipients: Recipient[] };
+/** recipients: the email's To. cc: people the sender copies (the team the send copies by itself is added on top) */
+export type Delivery = { channels: Channel[]; recipients: Recipient[]; cc?: Recipient[] };
 
 const EMAIL = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[a-z]{2,}$/i;
 export const isEmail = (s: unknown): s is string => typeof s === "string" && s.length <= 254 && EMAIL.test(s.trim());
@@ -18,17 +19,23 @@ export function normalizeDelivery(input: unknown, fallback: Delivery = { channel
   const d = (input ?? {}) as { channels?: unknown; recipients?: unknown };
   const channels = Array.isArray(d.channels) ? [...new Set(d.channels.filter((c): c is Channel => c === "slack" || c === "email"))] : fallback.channels;
   const seen = new Set<string>();
-  const recipients: Recipient[] = [];
-  for (const r of Array.isArray(d.recipients) ? d.recipients : fallback.recipients) {
-    const raw = typeof r === "string" ? { email: r } : (r as Recipient | null);
-    const email = String(raw?.email ?? "").trim().toLowerCase();
-    if (!isEmail(email) || seen.has(email)) continue;
-    seen.add(email);
-    const name = typeof raw?.name === "string" && raw.name.trim() ? raw.name.trim().slice(0, 120) : null;
-    recipients.push({ email, name });
-    if (recipients.length >= 50) break;
-  }
-  return { channels: channels.length ? channels : fallback.channels, recipients };
+  const read = (list: unknown, max: number) => {
+    const out: Recipient[] = [];
+    for (const r of Array.isArray(list) ? list : []) {
+      const raw = typeof r === "string" ? { email: r } : (r as Recipient | null);
+      const email = String(raw?.email ?? "").trim().toLowerCase();
+      if (!isEmail(email) || seen.has(email)) continue;
+      seen.add(email);
+      const name = typeof raw?.name === "string" && raw.name.trim() ? raw.name.trim().slice(0, 120) : null;
+      out.push({ email, name });
+      if (out.length >= max) break;
+    }
+    return out;
+  };
+  // To first: someone in both stays in To
+  const recipients = read(Array.isArray(d.recipients) ? d.recipients : fallback.recipients, 50);
+  const cc = read((d as { cc?: unknown }).cc ?? fallback.cc, 20);
+  return { channels: channels.length ? channels : fallback.channels, recipients, ...(cc.length ? { cc } : {}) };
 }
 
 /** What's missing before it can go: an empty answer means it's ready */
@@ -288,4 +295,29 @@ function messageEmail(p: ReportEmailInput, subject: string, body: EmailBlock[]):
     note,
     text,
   };
+}
+
+// ─── Who it went to before ──────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The people this client's report emails went to before (To and Cc of past sends), most often first, that aren't on
+ * this one yet and aren't the team: offered as one-tap adds ("Eddie usually sees the report"). At most six.
+ */
+export function pastRecipients(sends: { to?: unknown; cc?: unknown }[], now: Delivery, team: Set<string>): Recipient[] {
+  const on = new Set([...now.recipients, ...(now.cc ?? [])].map((r) => r.email));
+  const count = new Map<string, number>();
+  for (const s of sends)
+    for (const e of [...(Array.isArray(s.to) ? s.to : []), ...(Array.isArray(s.cc) ? s.cc : [])]) {
+      const email = String(typeof e === "string" ? e : ((e as { email?: unknown } | null)?.email ?? "")).trim().toLowerCase();
+      if (!isEmail(email) || on.has(email) || team.has(email)) continue;
+      count.set(email, (count.get(email) ?? 0) + 1);
+    }
+  return [...count.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 6).map(([email]) => ({ email, name: null }));
+}
+
+/** The delivery remembered for one service line (ads, email, social), else the client's own; null when neither */
+export function lineDelivery(byLine: unknown, line: string | null | undefined): Delivery | null {
+  const m = byLine && typeof byLine === "object" ? (byLine as Record<string, unknown>) : {};
+  const hit = line ? m[line] : null;
+  return hit && typeof hit === "object" ? normalizeDelivery(hit) : null;
 }

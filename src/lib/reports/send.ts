@@ -6,7 +6,7 @@ import { logClientEmail } from "@/lib/client-emails";
 import { postAsApp, postAsUser } from "@/lib/slack-user";
 import { siteUrl } from "@/lib/site";
 import type { ReportMetrics } from "./metrics";
-import { buildReportEmail, channelsLabel, normalizeDelivery, type Channel, type Delivery, type Recipient } from "./delivery-core";
+import { buildReportEmail, channelsLabel, normalizeDelivery, type Channel, type Delivery, type Recipient, lineDelivery, pastRecipients } from "./delivery-core";
 import { defaultRecipients, firstNameFor, recipientsToUse, reportCtaUrl, withoutRemoved } from "./cc-core";
 import { reportCc } from "./cc";
 import { forClient, isWhiteLabel, WHITE_LABEL_FROM } from "./white-label";
@@ -21,16 +21,18 @@ const BUCKET = "report-sends";
 export const emailReady = () => Boolean(process.env.RESEND_API_KEY);
 
 /** The client's contacts (primary first) and how they last got their reports, for the send step */
-export async function clientDelivery(admin: SupabaseClient, clientId: string) {
-  const [{ data: links }, prefs, { data: client }] = await Promise.all([
+export async function clientDelivery(admin: SupabaseClient, clientId: string, line: string | null = null) {
+  const [{ data: links }, prefs, { data: client }, past] = await Promise.all([
     admin.from("contact_clients").select("is_primary, created_at, removed_at, contacts(email, full_name, is_active)").eq("client_id", clientId),
     admin
       .from("client_report_prefs")
-      .select("channels, recipients, delivery_updated_at")
+      .select("channels, recipients, delivery_updated_at, delivery_by_line")
       .eq("client_id", clientId)
       .maybeSingle()
-      .then((r) => (r.error ? { data: null } : r)),
+      .then(async (r) => (r.error ? await admin.from("client_report_prefs").select("channels, recipients, delivery_updated_at").eq("client_id", clientId).maybeSingle().then((x) => (x.error ? { data: null } : x)) : r)),
     admin.from("clients").select("slack_channel_id").eq("id", clientId).maybeSingle(),
+    // Who this client's report emails went to before (the last 30 sends), for the "sent to before" suggestions
+    admin.from("report_sends").select("email").eq("client_id", clientId).not("email", "is", null).order("created_at", { ascending: false }).limit(30).then((r) => (r.error ? { data: [] } : r)),
   ]);
   const all = (links ?? []) as unknown as { is_primary: boolean; created_at: string | null; removed_at: string | null; contacts: { email: string; full_name: string | null; is_active: boolean } | null }[];
   // Taken off the client: out of the list, and out of a choice remembered from before
@@ -39,7 +41,10 @@ export async function clientDelivery(admin: SupabaseClient, clientId: string) {
     .filter((l) => !l.removed_at && l.contacts?.email && l.contacts.is_active !== false)
     .map((l) => ({ email: l.contacts!.email.toLowerCase(), name: l.contacts!.full_name, primary: Boolean(l.is_primary), addedAt: l.created_at ?? null }))
     .sort((a, b) => Number(b.primary) - Number(a.primary));
-  const row = prefs.data as { channels?: string[] | null; recipients?: Recipient[] | null; delivery_updated_at?: string | null } | null;
+  const base = prefs.data as { channels?: string[] | null; recipients?: Recipient[] | null; delivery_updated_at?: string | null; delivery_by_line?: Record<string, { at?: string }> | null } | null;
+  // This service line's own choice first (the email team sends to Juan, Eddie and Lino; the ads team to Juan alone)
+  const forLine = lineDelivery(base?.delivery_by_line, line);
+  const row = forLine ? { ...forLine, delivery_updated_at: base?.delivery_by_line?.[line!]?.at ?? base?.delivery_updated_at ?? null } : base;
   const kept = row && (row.recipients?.length || (row.channels?.length && !(row.channels.length === 1 && row.channels[0] === "slack"))) ? normalizeDelivery(row) : null;
   const saved = kept ? { ...kept, recipients: withoutRemoved(kept.recipients, removed) } : null;
   const slackChannel = Boolean(client?.slack_channel_id);
@@ -48,8 +53,12 @@ export async function clientDelivery(admin: SupabaseClient, clientId: string) {
   const remembered = saved?.recipients.length ? recipientsToUse(contacts, saved.recipients, row?.delivery_updated_at) : everyone;
   // No choice saved yet: Slack when they have a channel, else email to every contact
   const fallback: Delivery = slackChannel ? { channels: ["slack"], recipients: everyone } : { channels: contacts.length ? ["email"] : ["slack"], recipients: everyone };
-  const initial: Delivery = saved ? { channels: saved.channels, recipients: remembered } : fallback;
-  return { contacts, saved, initial, slackChannel, emailReady: emailReady() };
+  const initial: Delivery = saved ? { channels: saved.channels, recipients: remembered, ...(saved.cc?.length ? { cc: withoutRemoved(saved.cc, removed) } : {}) } : fallback;
+  // Addresses past report emails went to that this one doesn't have yet (never the team, never someone taken off)
+  const { data: staff } = await admin.from("profiles").select("email").not("email", "is", null);
+  const team = new Set([...(staff ?? []).map((p) => String(p.email).toLowerCase()), ...removed]);
+  const suggested = pastRecipients(((past.data ?? []) as { email: { to?: unknown; cc?: unknown } | null }[]).map((s) => s.email ?? {}), initial, team).map((r) => ({ ...r, name: contacts.find((c) => c.email === r.email)?.name ?? null }));
+  return { contacts, saved, initial, suggested, slackChannel, emailReady: emailReady() };
 }
 
 /** The addresses taken off a client (and not on it some other way) */
@@ -65,11 +74,20 @@ export async function removedContactEmails(admin: SupabaseClient, clientId: stri
 }
 
 /** Remembers how this client gets their reports (the channels and who the email goes to), for the next one */
-export async function rememberDelivery(admin: SupabaseClient, clientId: string, d: Delivery, by: string | null) {
+export async function rememberDelivery(admin: SupabaseClient, clientId: string, d: Delivery, by: string | null, line: string | null = null) {
+  const at = new Date().toISOString();
   const { data } = await admin.from("client_report_prefs").select("client_id").eq("client_id", clientId).maybeSingle();
-  const row = { channels: d.channels, recipients: d.recipients, delivery_updated_by: by, delivery_updated_at: new Date().toISOString() };
+  const row = { channels: d.channels, recipients: d.recipients, delivery_updated_by: by, delivery_updated_at: at };
   if (data) await admin.from("client_report_prefs").update(row).eq("client_id", clientId);
   else await admin.from("client_report_prefs").insert({ client_id: clientId, notes: [], ...row });
+  // And for this service line: To, Cc and channels as they went, so next week's report on this line starts the same
+  if (line) {
+    const { data: was } = await admin.from("client_report_prefs").select("delivery_by_line").eq("client_id", clientId).maybeSingle();
+    if (was) {
+      const byLine = { ...((was.delivery_by_line as Record<string, unknown> | null) ?? {}), [line]: { channels: d.channels, recipients: d.recipients, cc: d.cc ?? [], at, by } };
+      await admin.from("client_report_prefs").update({ delivery_by_line: byLine }).eq("client_id", clientId);
+    }
+  }
 }
 
 export type SendPart = { platform: "meta" | "google" | "tiktok" | "klaviyo" | "social"; metrics: ReportMetrics | null; sections: { headline?: string | null; summary?: string | null } | null };
@@ -166,7 +184,9 @@ export async function deliver(admin: SupabaseClient, sent: SendArgs): Promise<Se
     if (!d.recipients.length) failed.push({ email: "", error: "No one to send it to." });
     else if (!emailReady()) for (const r of d.recipients) failed.push({ email: r.email, error: "Email isn't set up (RESEND_API_KEY missing)." });
     else {
-      cc = await reportCc(admin, { clientId: a.client.id, platforms: a.parts.map((p) => p.platform), owners: a.owners ?? [], to }).catch(() => []);
+      const team = await reportCc(admin, { clientId: a.client.id, platforms: a.parts.map((p) => p.platform), owners: a.owners ?? [], to }).catch(() => [] as string[]);
+      // The people the sender copied, then the team the send copies by itself (nobody twice, nobody in To)
+      cc = [...new Set([...(d.cc ?? []).map((r) => r.email), ...team])].filter((e) => !to.includes(e));
       const html = emailHtml({ preheader: e.preheader, kicker: e.kicker, title: e.title, highlight: e.highlight, hello: e.hello, lines: e.lines, blocks: e.blocks, bullets: e.bullets, cta: e.cta ?? undefined, note: e.note, ...(wl ? { whiteLabel: true } : {}) });
       const res = await sendEmail({ to, cc, subject: e.subject, html, text: e.text, replyTo: e.replyTo ?? undefined, attachments: [{ filename: a.pdf.filename, content: b64(a.pdf.bytes) }], ...(wl ? { fromName: WHITE_LABEL_FROM } : {}) });
       if (res.ok) {

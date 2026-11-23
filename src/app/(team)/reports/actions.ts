@@ -484,7 +484,7 @@ export async function sendReport(id: string, delivery?: Delivery, note?: string)
       const out = isChannel(ok.r.platform) ? await (await import("@/lib/channel-reports/send")).sendChannelReport(admin, id, by, d, note?.slice(0, 600) ?? null) : await sendWeekly(admin, id, by, d, note?.slice(0, 600) ?? null);
       if (!out.ok) return { ok: false, error: out.error ?? "It didn't go out.", ...(out.needsConnect ? { needsConnect: true } : {}) } as { ok: false; error: string };
       const { rememberDelivery, sentNote } = await import("@/lib/reports/send");
-      await rememberDelivery(admin, ok.r.client_id as string, d, ok.me.id).catch(() => null);
+      await rememberDelivery(admin, ok.r.client_id as string, d, ok.me.id, (await import("@/lib/reports/style-core")).lineOfPlatform(String(ok.r.platform))).catch(() => null);
       done(id);
       revalidatePath("/reports");
       return { ok: true, note: sentNote(out, "the client") };
@@ -493,7 +493,7 @@ export async function sendReport(id: string, delivery?: Delivery, note?: string)
     const d = delivery ? normalizeDelivery(delivery) : null;
     if (d?.channels.includes("email") && !d.recipients.length) return { ok: false, error: "Add at least one email address to send it to." };
     const out = await submitMonthly(admin, id, ok.me, d);
-    if (d) await (await import("@/lib/reports/send")).rememberDelivery(admin, ok.r.client_id as string, d, ok.me.id).catch(() => null);
+    if (d) await (await import("@/lib/reports/send")).rememberDelivery(admin, ok.r.client_id as string, d, ok.me.id, (await import("@/lib/reports/style-core")).lineOfPlatform(String(ok.r.platform))).catch(() => null);
     done(id);
     const how = channelsPhrase(d?.channels ?? ["slack", "email"]);
     return { ok: true, note: out.sent ? `It went to the client ${how}.` : `Approved. It goes to the client ${how} as soon as ${out.waitingOn.join(" and ")} approve${out.waitingOn.length === 1 ? "s" : ""}.` };
@@ -515,7 +515,7 @@ export async function sendMyPartNow(id: string, delivery?: Delivery): Promise<Re
     const { sendPartNow } = await import("@/lib/reports/run");
     const admin = createAdminClient();
     await sendPartNow(admin, id, ok.me, d);
-    if (d) await (await import("@/lib/reports/send")).rememberDelivery(admin, ok.r.client_id as string, d, ok.me.id).catch(() => null);
+    if (d) await (await import("@/lib/reports/send")).rememberDelivery(admin, ok.r.client_id as string, d, ok.me.id, (await import("@/lib/reports/style-core")).lineOfPlatform(String(ok.r.platform))).catch(() => null);
     done(id);
     return { ok: true, note: "Sent to the client. The other part goes out on its own when its buyer approves it." };
   } catch (e) {
@@ -991,13 +991,13 @@ export async function saveToDrive(id: string): Promise<Result<{ save: DriveSave;
 }
 
 /** The email as it will go (who it's from, the subject, its HTML), for the studio's Message step */
-export async function previewReportEmail(id: string, to: { email: string; name?: string | null }[], note?: string, message?: string | null): Promise<Result<{ preview: import("@/lib/reports/email-preview").EmailPreview }>> {
+export async function previewReportEmail(id: string, to: { email: string; name?: string | null }[], note?: string, message?: string | null, cc: string[] = []): Promise<Result<{ preview: import("@/lib/reports/email-preview").EmailPreview }>> {
   const ok = await mine(id);
   if (!ok) return { ok: false, error: "Not found." };
   const { reportEmailPreview } = await import("@/lib/reports/email-preview");
   // The message on screen (a hand edit not saved yet included): the email's body is that message
   const live = typeof message === "string" ? message.slice(0, 20_000) : null;
-  const preview = await reportEmailPreview(createAdminClient(), id, { fullName: ok.me.fullName ?? "Kaizen", email: ok.me.email }, normalizeDelivery({ channels: ["email"], recipients: to }).recipients, note?.slice(0, 600) || null, live);
+  const preview = await reportEmailPreview(createAdminClient(), id, { fullName: ok.me.fullName ?? "Kaizen", email: ok.me.email }, normalizeDelivery({ channels: ["email"], recipients: to }).recipients, note?.slice(0, 600) || null, live, normalizeDelivery({ channels: ["email"], recipients: [], cc }).cc?.map((r) => r.email) ?? []);
   return preview ? { ok: true, preview } : { ok: false, error: "The email couldn't be drawn." };
 }
 
@@ -1105,4 +1105,21 @@ export async function uploadReportCsv(id: string, file: { name: string; text: st
     });
   done(id);
   return { ok: true, chat: next, summary, redrawing: marked.length > 0 };
+}
+
+/**
+ * An address typed on a report's email, saved as one of the client's contacts (the studio's "Save as contact"): the
+ * same as adding it on the client page, with the same permission.
+ */
+export async function saveReportContact(id: string, email: string, name: string | null): Promise<{ ok: boolean; error?: string }> {
+  const ok = await mine(id);
+  if (!ok) return { ok: false, error: "Not found." };
+  const address = String(email ?? "").trim().toLowerCase();
+  const { isEmail } = await import("@/lib/reports/delivery-core");
+  if (!isEmail(address)) return { ok: false, error: "That doesn't look like an email address." };
+  const { mayEditSetup } = await import("@/lib/setup-access");
+  if (!mayEditSetup(await requireStaff())) return { ok: false, error: "Only someone who can edit the client's setup can add a contact. It still goes to them on this report." };
+  const supabase = await (await import("@/lib/supabase/server")).createClient();
+  const { error } = await supabase.rpc("add_client_contact", { p_client: ok.r.client_id as string, p_email: address, p_name: name?.trim() ? name.trim().slice(0, 120) : null });
+  return error ? { ok: false, error: error.message } : { ok: true };
 }

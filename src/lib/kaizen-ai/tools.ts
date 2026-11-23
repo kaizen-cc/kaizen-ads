@@ -876,6 +876,34 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
       },
     },
     {
+      name: "set_report_recipients",
+      description: "Sets who a client's report email goes to on one service line (ads, email or social): To and Cc, remembered so every next report on that line starts with them (the same as picking them in the report's Email tab). Any valid addresses; the team is copied by the send itself. Use it when someone says who should get the report (\"Eddie usually sees it, send to Juan, Eddie and Lino\"). Returns who it goes to now.",
+      input_schema: {
+        type: "object",
+        properties: {
+          client: CLIENT,
+          line: { type: "string", enum: ["ads", "email", "social"], description: "Which line's reports (default ads)" },
+          to: { type: "array", items: { type: "string" }, description: "Email addresses the report goes to" },
+          cc: { type: "array", items: { type: "string" }, description: "Email addresses copied on it" },
+        },
+        required: ["client", "to"],
+        additionalProperties: false,
+      },
+      status: (input, client) => `Setting who gets ${nameFor(ctx, input) ?? client ?? "the client"}'s report…`,
+      run: async (input) => {
+        const c = await clientOf(ctx, input);
+        const line = ["ads", "email", "social"].includes(String(input.line)) ? String(input.line) : "ads";
+        const { normalizeDelivery } = await import("@/lib/reports/delivery-core");
+        const { clientDelivery, rememberDelivery } = await import("@/lib/reports/send");
+        const now = await clientDelivery(ctx.admin, c.id, line);
+        const d = normalizeDelivery({ channels: [...new Set([...now.initial.channels, "email"])], recipients: input.to, cc: input.cc ?? [] });
+        if (!d.recipients.length) throw new Error("Give at least one valid address to send it to.");
+        await rememberDelivery(ctx.admin, c.id, d, ctx.me.id, line);
+        card({ type: "list", title: `${c.name} · ${line} report email`, items: [...d.recipients.map((r) => ({ title: `To: ${r.email}` })), ...(d.cc ?? []).map((r) => ({ title: `Cc: ${r.email}` }))] });
+        return { to: d.recipients.map((r) => r.email), cc: (d.cc ?? []).map((r) => r.email), line, note: "Remembered: the next report on this line starts with these people (the team is copied too)." };
+      },
+    },
+    {
       name: "get_copy_library",
       description:
         "A client's Copy library: every primary text, headline and description that has run in their Meta ads, and every Google RSA headline and description, sitelink and callout (with Google's Best / Good / Low rating and pins), with its numbers added up across the ads that used it (spend, CTR, conversions, cost per result or ROAS against the KPI) and a badge (winner, solid, tired, not proven), best first. Use it to reuse what's proven, to write variations of a winning line, to carry what converts on one platform to the other, or to see what's wearing out. Filter by platform, type, badge, angle or words.",
