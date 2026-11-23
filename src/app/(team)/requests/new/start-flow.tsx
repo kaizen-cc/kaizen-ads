@@ -539,7 +539,7 @@ export function StartPage({
                 title={s.title ?? "Untitled"}
                 signal={s.subtitle}
                 why={typeof s.data.why === "string" ? s.data.why : typeof s.data.detail === "string" ? s.data.detail : null}
-                foot={s.motion ? "" : `Saved ${new Date(s.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
+                foot={s.motion ? "" : `Saved ${new Date(s.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" })}`}
                 busy={false}
                 disabled={!canBrief || s.id.startsWith("tmp-")}
                 action="Brief on this"
