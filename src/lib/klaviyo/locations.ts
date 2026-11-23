@@ -410,7 +410,10 @@ export function locationWindow(range: LocationRange, today: string): { start: st
 export const allLocationsLabel = (integration: string | null | undefined, name: string) => `${(integration ?? "").trim() || name} orders (all locations)`;
 
 /** The location property to use for a ranked metric that has none: the one the check found likely, when only one is */
-export function likelyLocationProp(candidates: { prop: string; likely: boolean }[] | undefined): string | null {
+export function likelyLocationProp(candidates: { prop: string; likely: boolean; samples?: string[] }[] | undefined): string | null {
   const likely = (candidates ?? []).filter((c) => c.likely);
-  return likely.length === 1 ? likely[0].prop : null;
+  if (likely.length <= 1) return likely[0]?.prop ?? null;
+  // Several (a POS sending StoreId and StoreName): the one holding names, not numbers, so the section reads "Tomball", not "17"
+  const named = likely.filter((c) => (c.samples ?? []).some((s) => /[a-z]/i.test(String(s))));
+  return named.length === 1 ? named[0].prop : null;
 }

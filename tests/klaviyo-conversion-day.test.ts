@@ -145,6 +145,8 @@ describe("every order system in the location split", () => {
     const { likelyLocationProp, allLocationsLabel } = await import("@/lib/klaviyo/locations");
     expect(likelyLocationProp([{ prop: "Restaurant Name", likely: true }, { prop: "Source", likely: false }])).toBe("Restaurant Name");
     expect(likelyLocationProp([{ prop: "a", likely: true }, { prop: "b", likely: true }])).toBeNull();
+    // Crust's POS sends both an id and a name: the name is the location
+    expect(likelyLocationProp([{ prop: "StoreId", likely: true, samples: ["32", "17"] }, { prop: "StoreName", likely: true, samples: ["Tomball", "Sulphur"] }, { prop: "Source", likely: false, samples: ["OLO"] }])).toBe("StoreName");
     expect(likelyLocationProp([])).toBeNull();
     expect(allLocationsLabel("API", "Placed Order")).toBe("API orders (all locations)");
     expect(allLocationsLabel(null, "Placed Order")).toBe("Placed Order orders (all locations)");
