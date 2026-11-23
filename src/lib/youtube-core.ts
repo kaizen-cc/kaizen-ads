@@ -425,3 +425,44 @@ export function geminiErrorKind(status: number, message: string): "unavailable" 
 
 /** What a blocked video's state reads as on its card */
 export const BLOCKED_LABEL: Record<"key" | "unavailable" | "long", string> = { key: "Waiting for the Gemini key", unavailable: "Video unavailable", long: "Over an hour" };
+
+// ─── Scoped decisions (owner, Nov 23 2026) ───────────────────────────────────
+// Each exec and line head decides only takeaways (and agent learnings in conflict) on lines they oversee: every line
+// the item touches must be theirs. Unassigned or cross-line ones (no single exec oversees all their lines) go to the
+// owner only. By role and focus, never by name.
+
+/** The lines a person oversees: an exec's by their focus (none set: every line), a head's by the lines they head */
+export function linesOverseen(p: { role: string | null | undefined; isExec?: boolean | null; execFocus?: readonly string[] | null }): YtLine[] {
+  if (p.isExec) return p.execFocus?.length ? YT_LINES.filter((l) => FOCUS_OF[l].some((f) => p.execFocus!.includes(f))) : [...YT_LINES];
+  return YT_LINES.filter((l) => LINE_HEADS[l].includes(String(p.role ?? "")));
+}
+
+/** The lines an agent's learnings are about, by the agent's role (none: it goes to the owner) */
+export const AGENT_LINES: Record<string, readonly YtLine[]> = {
+  media_buyer: ["meta"],
+  tiktok_buyer: ["meta"],
+  google_buyer: ["google"],
+  strategist: ["meta", "creative"],
+  creative_director: ["creative"],
+  copywriter: ["creative"],
+  email_strategist: ["email"],
+  email_creative: ["email"],
+  email_builder: ["email"],
+  social_strategist: ["social"],
+  tracking_engineer: ["tracking"],
+};
+
+/**
+ * Whether this person sees an item on these lines to decide: they oversee every one of its lines, or (the owner) it
+ * has no line or no single exec oversees all of them. `execFoci`: every active exec's focus.
+ */
+export function decidesScoped(me: { role: string | null | undefined; isExec?: boolean | null; execFocus?: readonly string[] | null; isOwner?: boolean | null }, lines: readonly YtLine[], execFoci: readonly (readonly string[] | null)[]): boolean {
+  if (!lines.length) return Boolean(me.isOwner);
+  const mine = linesOverseen(me);
+  if (lines.every((l) => mine.includes(l))) return true;
+  if (!me.isOwner) return false;
+  return !execFoci.some((f) => {
+    const theirs = linesOverseen({ role: "executive", isExec: true, execFocus: f });
+    return lines.every((l) => theirs.includes(l));
+  });
+}

@@ -45,18 +45,19 @@ const ask: AiTool = {
 const list: AiTool = {
   name: "youtube_takeaways",
   description:
-    "Takeaways from the YouTube channels the agents study. which: 'decide' (a line head or exec: the ones waiting for their call, each with its id for youtube_decide), 'mine' (shared with this person's lines), 'all'. To show them, open_screen place 'youtube takeaways to decide' or 'youtube takeaways for me'.",
-  input_schema: { type: "object", properties: { which: { type: "string", enum: ["decide", "mine", "all"] } }, additionalProperties: false },
+    "Takeaways from the YouTube channels the agents study. which: 'decide' (a line head or exec: the ones waiting for their call on the lines they oversee, each with its id for youtube_decide; seeAll: true adds the rest they may decide), 'mine' (shared with this person's lines), 'all'. To show them, open_screen place 'youtube takeaways to decide' or 'youtube takeaways for me'.",
+  input_schema: { type: "object", properties: { which: { type: "string", enum: ["decide", "mine", "all"] }, seeAll: { type: "boolean" } }, additionalProperties: false },
   run: async (user: Staff, input) => {
     const { loadYouTube } = await import("@/lib/youtube");
+    const seeAll = input.seeAll === true;
     const which = str(input.which) ?? (canManageSources(user) ? "decide" : "mine");
     const data = await loadYouTube(await createClient(), user);
     const rows = data.videos.flatMap((v) =>
       v.takeaways
-        .filter((t) => (which === "decide" ? t.canDecide && t.status === "pending" : which === "mine" ? t.mine && t.status !== "dismissed" : true))
+        .filter((t) => (which === "decide" ? t.canDecide && t.status === "pending" && (seeAll || t.scoped) : which === "mine" ? t.mine && t.status !== "dismissed" : true))
         .map((t) => ({ id: t.id, video: v.title, channel: v.channel, takeaway: t.takeaway, why: t.why, lines: t.lines, link: t.link, status: t.status })),
     );
-    return { ok: true, which, waitingForYou: data.waiting, takeaways: rows.slice(0, 40), page: `/settings?tab=agents&section=youtube&yt=${which}` };
+    return { ok: true, which, waitingForYou: data.waiting, takeaways: rows.slice(0, 40), page: `/settings?tab=agents&section=youtube&yt=${which}${seeAll ? "&ytall=1" : ""}` };
   },
 };
 

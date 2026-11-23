@@ -78,7 +78,13 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
       due: flagged[flagged.length - 1].reviewed_at,
       action: { label: "Review", href: `/safety/${flagged[0].call_id}` },
     });
-  const conflict = (conflicts ?? []) as { id: string; agent_key: string; lesson: string; updated_at: string }[];
+  // Only the agents on lines this exec oversees (by the agent's role, never a name); unassigned and cross-line ones
+  // are the owner's (src/lib/youtube-core.ts decidesScoped)
+  const allConflicts = (conflicts ?? []) as { id: string; agent_key: string; lesson: string; updated_at: string }[];
+  const [{ decideScope }, { AGENT_LINES }] = await Promise.all([import("@/lib/youtube"), import("@/lib/youtube-core")]);
+  const [inScope, { data: agentRoles }] = await Promise.all([decideScope(db, me), allConflicts.length ? admin.from("ai_agents").select("key, role_key").in("key", [...new Set(allConflicts.map((c) => c.agent_key))]) : Promise.resolve({ data: [] as { key: string; role_key: string | null }[] })]);
+  const roleOf = new Map(((agentRoles ?? []) as { key: string; role_key: string | null }[]).map((a) => [a.key, a.role_key ?? a.key]));
+  const conflict = allConflicts.filter((c) => inScope(AGENT_LINES[roleOf.get(c.agent_key) ?? c.agent_key] ?? []));
   if (conflict.length)
     cards.push({
       key: `approve:learnings:${today}`,

@@ -822,7 +822,7 @@ export async function askChannels(admin: Admin, question: string, channel?: stri
 // ─── The page ───────────────────────────────────────────────────────────────
 
 export type SourceView = { id: string; kind: "channel" | "video"; url: string; title: string | null; handle: string | null; thumbnail: string | null; about: string | null; lines: YtLine[]; suggested: YtLine[]; active: boolean; lastChecked: string | null; error: string | null; videos: number; newVideos: number; takeaways: number; addedBy: string | null; blocked: { key: number; unavailable: number; long: number } };
-export type TakeawayView = { id: string; takeaway: string; why: string | null; lines: YtLine[]; roles: string[]; link: string; status: string; decidedBy: string | null; calledRole: string | null; mine: boolean; canDecide: boolean };
+export type TakeawayView = { id: string; takeaway: string; why: string | null; lines: YtLine[]; roles: string[]; link: string; status: string; decidedBy: string | null; calledRole: string | null; mine: boolean; canDecide: boolean; /** On lines this person oversees (their own call); the rest only under "See all" */ scoped: boolean };
 export type VideoView = { id: string; videoId: string; url: string; title: string | null; channel: string | null; thumbnail: string | null; publishedAt: string | null; summary: string | null; status: string; error: string | null; sourceId: string | null; onDemand: boolean; blocked: "key" | "unavailable" | "long" | null; via: string | null; takeaways: TakeawayView[] };
 export type YouTubePage = { sources: SourceView[]; videos: VideoView[]; waiting: number; forMe: number; canManage: boolean; gemini: boolean };
 
@@ -838,6 +838,7 @@ export async function loadYouTube(db: SupabaseClient, me: Me & { isLead?: boolea
   const ids = (vids ?? []).map((v) => v.id as string);
   const { data: tk } = ids.length ? await db.from("youtube_takeaways").select("id, video_row, takeaway, why, lines, roles, at_seconds, status, called_role, profiles:decided_by(full_name)").in("video_row", ids).order("created_at") : { data: [] };
   const person: Person = { id: me.id, role: me.role, isExec: me.isExec, execFocus: (me2?.exec_focus as string[] | null) ?? [] };
+  const inScope = await decideScope(db, me);
   const byVideo = new Map<string, TakeawayView[]>();
   const videoIdOf = new Map((vids ?? []).map((v) => [v.id as string, v.video_id as string]));
   for (const t of tk ?? []) {
@@ -856,6 +857,7 @@ export async function loadYouTube(db: SupabaseClient, me: Me & { isLead?: boolea
       calledRole: (t.called_role as string | null) ?? null,
       mine: r.team.length + r.execs.length > 0,
       canDecide: canDecide(me, lines),
+      scoped: inScope(lines),
     });
     byVideo.set(t.video_row as string, list);
   }
@@ -902,11 +904,26 @@ export async function loadYouTube(db: SupabaseClient, me: Me & { isLead?: boolea
     };
   });
   const all = videos.flatMap((v) => v.takeaways);
-  return { sources, videos, waiting: all.filter((t) => t.status === "pending" && t.canDecide).length, forMe: all.filter((t) => t.mine && t.status !== "dismissed").length, canManage: canManageSources(me), gemini: geminiConnected() };
+  return { sources, videos, waiting: all.filter((t) => t.status === "pending" && t.canDecide && t.scoped).length, forMe: all.filter((t) => t.mine && t.status !== "dismissed").length, canManage: canManageSources(me), gemini: geminiConnected() };
 }
 
 /** For the day's recap: takeaways waiting for this person's call (a line head or exec) */
 export async function youtubeWaiting(db: SupabaseClient, me: Me): Promise<number> {
-  const { data } = await db.from("youtube_takeaways").select("lines").eq("status", "pending").limit(300);
-  return (data ?? []).filter((t) => canDecide(me, cleanLines(t.lines as string[]))).length;
+  const [{ data }, inScope] = await Promise.all([db.from("youtube_takeaways").select("lines").eq("status", "pending").limit(1000), decideScope(db, me)]);
+  return (data ?? []).filter((t) => {
+    const lines = cleanLines(t.lines as string[]);
+    return canDecide(me, lines) && inScope(lines);
+  }).length;
+}
+
+/**
+ * Which decisions are this person's own (owner, Nov 23 2026): takeaways and agent learnings on lines they oversee
+ * (src/lib/youtube-core.ts decidesScoped), the owner also the unassigned and cross-line ones
+ */
+export async function decideScope(db: SupabaseClient, me: { id: string; role: string; isExec: boolean }): Promise<(lines: readonly YtLine[]) => boolean> {
+  const { decidesScoped } = await import("@/lib/youtube-core");
+  const [{ data: mine }, { data: execs }] = await Promise.all([db.from("profiles").select("exec_focus, can_view_as").eq("id", me.id).maybeSingle(), db.from("profiles").select("exec_focus").eq("is_exec", true).eq("is_active", true)]);
+  const person = { role: me.role, isExec: me.isExec, execFocus: (mine?.exec_focus as string[] | null) ?? [], isOwner: Boolean(mine?.can_view_as) };
+  const foci = (execs ?? []).map((e) => (e.exec_focus as string[] | null) ?? []);
+  return (lines) => decidesScoped(person, lines, foci);
 }

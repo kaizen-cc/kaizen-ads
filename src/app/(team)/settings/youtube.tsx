@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { pushParams, useParam } from "@/lib/url-state";
 import { field } from "@/components/ui";
 import { roleLabel, type TeamRole } from "@/lib/roles";
 import type { SourceView, TakeawayView, VideoView, YouTubePage } from "@/lib/youtube";
@@ -451,10 +452,13 @@ const VIEWS: { key: YtView; label: string }[] = [
 
 export function YouTubeLearning({ data, view: asked, deciding }: { data: YouTubePage; view: YtView | null; /** Can decide on any line (an exec or a line head) */ deciding: boolean }) {
   const views = VIEWS.filter((v) => v.key !== "decide" || deciding);
+  const seeAll = useParam("ytall") === "1";
   const view: YtView = asked && views.some((v) => v.key === asked) ? asked : deciding && data.waiting ? "decide" : "mine";
   const channels = data.sources.filter((s) => s.kind === "channel");
   const read = data.videos.filter((v) => v.status === "done").length;
-  const pick = (v: VideoView): TakeawayView[] => (view === "decide" ? v.takeaways.filter((t) => t.canDecide && t.status === "pending") : view === "mine" ? v.takeaways.filter((t) => t.mine && t.status !== "dismissed") : v.takeaways);
+  // Your call opens on your own lines; "See all" (?ytall=1) shows every takeaway you may decide (owner, Nov 23 2026)
+  const pick = (v: VideoView): TakeawayView[] => (view === "decide" ? v.takeaways.filter((t) => t.canDecide && t.status === "pending" && (seeAll || t.scoped)) : view === "mine" ? v.takeaways.filter((t) => t.mine && t.status !== "dismissed") : v.takeaways);
+  const outside = data.videos.reduce((n, v) => n + v.takeaways.filter((t) => t.canDecide && t.status === "pending" && !t.scoped).length, 0);
   const list = data.videos.map((v) => ({ v, show: pick(v) })).filter(({ v, show }) => show.length || (view === "all" && v.status !== "skipped"));
   return (
     <div className="grid gap-6">
@@ -500,6 +504,14 @@ export function YouTubeLearning({ data, view: asked, deciding }: { data: YouTube
         ))}
       </nav>
 
+      {view === "decide" && outside > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-[13px] text-muted">
+          <span>{seeAll ? "Every takeaway you may decide" : "Only your lines"}</span>
+          <button type="button" onClick={() => pushParams({ ytall: seeAll ? null : "1" })} className="inline-flex h-11 items-center rounded-full border border-line px-4 text-fg hover:border-ink/30 md:h-8 md:px-3">
+            {seeAll ? "Only my lines" : `See all (${outside} more)`}
+          </button>
+        </div>
+      )}
       {view === "sources" ? (
         data.sources.length ? (
           <ul className="grid gap-4 md:grid-cols-2">
