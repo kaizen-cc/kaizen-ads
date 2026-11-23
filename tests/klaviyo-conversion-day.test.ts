@@ -91,3 +91,20 @@ describe("two order systems with the same name", () => {
     expect(out?.sources.map((s) => [s.name, s.primary])).toEqual([["Placed Order (Speakeasy)", true], ["Placed Order (Shopify)", false]]);
   });
 });
+
+describe("Crust Pizza Co.: Toast and a POS's API add up; Toast's two metrics don't", () => {
+  const toastPlaced = { id: "SMvxJW", name: "Placed Order", integration: null };
+  const found = [
+    { id: "WPD55w", name: "Prepared Order", integration: "Toast", revenue: 52929.01, orders: 1296 },
+    { id: "Ycwy2j", name: "Placed Order", integration: "API", revenue: 17134.24, orders: 486 },
+  ];
+  it("adds the other system and leaves the same system's second metric out", () => {
+    const next = autoRank([toastPlaced], found, 30000, new Map([["SMvxJW", "Toast"], ["WPD55w", "Toast"], ["Ycwy2j", "API"]]));
+    expect(next?.map((m) => m.id)).toEqual(["SMvxJW", "Ycwy2j"]);
+    expect(next?.[0].integration).toBe("Toast");
+  });
+  it("two unranked metrics of one new system: only the bigger is added", () => {
+    const next = autoRank([toastPlaced], [{ id: "a", name: "Placed Order", integration: "Square", revenue: 900, orders: 9 }, { id: "b", name: "Completed Order", integration: "Square", revenue: 800, orders: 8 }], 5000, new Map([["SMvxJW", "Toast"]]));
+    expect(next?.map((m) => m.id)).toEqual(["SMvxJW", "a"]);
+  });
+});

@@ -57,11 +57,24 @@ export const SOURCES_EVERY_MS = 7 * 86_400_000;
  * weekly check's unranked order metrics with their attributed revenue, `primaryRevenue` the primary's own (the synced
  * days). Null when nothing changes. A ranking a lead or an exec set by hand is never touched (the caller checks).
  */
-export function autoRank(current: ConversionMetric[], found: SourcesMemo["found"], primaryRevenue: number | null): ConversionMetric[] | null {
+export function autoRank(current: ConversionMetric[], found: SourcesMemo["found"], primaryRevenue: number | null, integrationOf: Map<string, string | null> = new Map()): ConversionMetric[] | null {
   const have = new Set(current.map((m) => m.id));
-  const fresh = (found ?? []).filter((f) => f && f.id && !have.has(f.id) && Number(f.revenue) > 0);
+  // Another order system adds its sales (Toast next to a POS's API, Shopify next to Speakeasy); a second metric of the
+  // SAME system (Toast's "Prepared Order" next to its "Placed Order") is the same orders at another step: never added by
+  // itself, so nothing is counted twice. A lead can still rank it by hand on the Klaviyo card.
+  const sys = (i: string | null | undefined) => (i ?? "").trim().toLowerCase();
+  const systems = new Set(current.map((m) => sys(m.integration ?? integrationOf.get(m.id))).filter(Boolean));
+  const fresh: SourcesMemo["found"] = [];
+  for (const f of [...(found ?? [])].sort((a, b) => Number(b.revenue) - Number(a.revenue))) {
+    if (!f?.id || have.has(f.id) || !(Number(f.revenue) > 0)) continue;
+    const s = sys(f.integration ?? integrationOf.get(f.id));
+    if (s && systems.has(s)) continue;
+    if (s) systems.add(s);
+    fresh.push(f);
+  }
   if (!fresh.length || !current.length) return null;
-  const [primary, ...rest] = current;
+  const [primary0, ...rest] = current;
+  const primary = { ...primary0, integration: primary0.integration ?? integrationOf.get(primary0.id) ?? null };
   const top = [{ m: primary, revenue: primaryRevenue ?? 0 }, ...fresh.map((f) => ({ m: { id: f.id, name: f.name, integration: f.integration ?? null, revenueSource: true } as ConversionMetric, revenue: Number(f.revenue) }))]
     // The most revenue first; a tie keeps the primary where it is
     .sort((a, b) => b.revenue - a.revenue || (a.m.id === primary.id ? -1 : b.m.id === primary.id ? 1 : 0))

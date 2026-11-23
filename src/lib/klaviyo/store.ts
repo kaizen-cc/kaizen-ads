@@ -324,7 +324,7 @@ async function checkUnrankedSources(admin: SupabaseClient, conn: ConnRow, key: s
  * Applies autoRank from the last weekly check: the connection's ranked list (and primary) updated in place, so this read
  * reads every order system with revenue. Only for a ranking nobody set by hand.
  */
-async function rankBySources(admin: SupabaseClient, conn: ConnRow) {
+async function rankBySources(admin: SupabaseClient, conn: ConnRow, key: string) {
   const { autoRank } = await import("./sources");
   const { data } = await admin.from("sync_state").select("last_result").eq("source", `klaviyo-sources:${conn.client_id}`).maybeSingle();
   const found = ((data?.last_result as { found?: unknown } | null)?.found ?? []) as import("./sources").SourcesMemo["found"];
@@ -333,7 +333,9 @@ async function rankBySources(admin: SupabaseClient, conn: ConnRow) {
   const { data: days } = await admin.from("klaviyo_daily").select("revenue").eq("client_id", conn.client_id).gte("date", since);
   const primary30 = (days ?? []).reduce((t, d) => t + (Number(d.revenue) || 0), 0);
   const current = conversionMetricsOf(conn.conversion_metrics, { id: conn.conversion_metric_id, name: conn.conversion_metric_name ?? null });
-  const next = autoRank(current, found, primary30);
+  // Which system each metric comes from (Toast, Shopify, an API...), so one system's metrics are never added twice
+  const integrationOf = new Map((await listMetrics(key)).map((m) => [m.id, m.integration] as const));
+  const next = autoRank(current, found, primary30, integrationOf);
   if (!next) return;
   const { error } = await admin.from("klaviyo_connections").update({ conversion_metrics: next, conversion_metric_id: next[0].id, conversion_metric_name: next[0].name.slice(0, 120) }).eq("client_id", conn.client_id).eq("conversion_metric_manual", false);
   if (!error) Object.assign(conn, { conversion_metrics: next, conversion_metric_id: next[0].id, conversion_metric_name: next[0].name });
@@ -463,7 +465,9 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   });
   // Nobody ranked the metrics by hand: an order system email earns through joins the ranking by itself, the one with the
   // most attributed revenue first (E11EVEN: Shopify's Placed Order and the Speakeasy integration's), see autoRank
-  if (!conn.conversion_metric_manual && conn.conversion_metric_id) await rankBySources(admin, conn).catch(() => null);
+  if (!conn.conversion_metric_manual && conn.conversion_metric_id) await rankBySources(admin, conn, key).catch((e) => {
+    if (isAuth(e)) throw e;
+  });
   // The metric that counts as the sale: one picked on the Klaviyo card (or ranked) holds; otherwise Placed Order, found by itself
   const ranked = Array.isArray(conn.conversion_metrics) && conn.conversion_metrics.length > 0;
   const picked = (conn.conversion_metric_manual || ranked) && conn.conversion_metric_id ? conn.conversion_metric_id : null;
