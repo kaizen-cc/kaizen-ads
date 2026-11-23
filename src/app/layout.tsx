@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { AutoGrow } from "@/components/auto-grow";
+import { ExternalLinks } from "@/components/external-links";
 import { Poppins } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
@@ -54,6 +55,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full font-sans">
         {children}
         <AutoGrow />
+        {/* Links that leave Kaizen OS open in a new tab, everywhere */}
+        <ExternalLinks />
         {/* A newer version is live: offer a refresh. Errors in the browser get reported. */}
         <UpdateBar />
         <ErrorListener />
