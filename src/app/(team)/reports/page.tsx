@@ -53,13 +53,15 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const channelOnly = !me.isExec && isChannelOnly(me.role);
   // The accounts this person reports on (their own; their line's for a lead; all for an exec): what they see and can draft
   const accounts = channelOnly ? [] : await reportableTargets(db, me);
-  const SELECT = "id, kind, platform, status, qa, posted_at, viewed_at, owner_id, client_id, period_start, period_end, bundle_id, clients(name, slug), profiles!reports_owner_id_fkey(full_name)";
+  const SELECT = "id, kind, platform, status, qa, posted_at, viewed_at, owner_id, client_id, period_start, period_end, bundle_id, clients!inner(name, slug, archived_at), profiles!reports_owner_id_fkey(full_name)";
   let q = db
     .from("reports")
     .select(SELECT)
     .in("kind", ["weekly", "monthly", "custom"])
     .in("platform", ["meta", "google", "tiktok"])
     .is("hidden_at", null)
+    // An archived client's reports never list (archiving also sets its unsent ones aside)
+    .is("clients.archived_at", null)
     .gte("created_at", daysAgo(60))
     .order("created_at");
   if (!me.isExec) q = q.in("target_id", accounts.length ? accounts.map((a) => a.id) : ["00000000-0000-0000-0000-000000000000"]);
@@ -75,7 +77,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   // Email and social reports live in the same table (no ad account behind them): read by the server, kept to the person's clients
   const { data: chanData } =
     admin && chanIds.length
-      ? await admin.from("reports").select(SELECT).in("kind", ["weekly", "monthly", "custom"]).in("platform", lines.map(platformOfLine)).in("client_id", chanIds).is("hidden_at", null).gte("created_at", daysAgo(120)).order("created_at")
+      ? await admin.from("reports").select(SELECT).in("kind", ["weekly", "monthly", "custom"]).in("platform", lines.map(platformOfLine)).in("client_id", chanIds).is("hidden_at", null).is("clients.archived_at", null).gte("created_at", daysAgo(120)).order("created_at")
       : { data: [] };
   const adsRows = (adsRes.data ?? []) as unknown as Row[];
   const chanRows = ((chanData ?? []) as unknown as Row[]).filter((r) => chanBy.get(lineOfPlatform(r.platform as "klaviyo" | "social"))?.some((c) => c.id === r.client_id));
@@ -107,7 +109,7 @@ export default async function ReportsPage({ searchParams }: PageProps<"/reports"
   const [{ data: allTargets }, { data: built }] = admin && clientIds.length
     ? await Promise.all([
         admin.from("kpi_targets").select("client_id, platform, owner_id, clients!inner(name, slug, archived_at, slack_channel_id, services, services_extra, services_removed, strategy_only), profiles!kpi_targets_owner_id_fkey(full_name)").in("client_id", clientIds).in("platform", adsLines).eq("active", true).not("ad_account_id", "is", null).is("clients.archived_at", null),
-        admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, sent_at, clients(name), reports(id, platform, status, owner_id, viewed_at, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).gte("created_at", daysAgo(60)).order("created_at", { ascending: false }).limit(150),
+        admin.from("report_bundles").select("id, client_id, status, ranges, created_by, created_at, sent_at, clients!inner(name, archived_at), reports(id, platform, status, owner_id, viewed_at, profiles!reports_owner_id_fkey(full_name))").eq("kind", "built").is("hidden_at", null).is("clients.archived_at", null).gte("created_at", daysAgo(60)).order("created_at", { ascending: false }).limit(150),
       ])
     : [{ data: [] }, { data: [] }];
   // The buyer seats, primary first. A secondary buyer's accounts are theirs to report on like the owner's: their
