@@ -9,7 +9,9 @@ import { compact } from "@/lib/context/shared";
 // which comes from tickets and Asana tasks (what's in motion). The sheet only has finished work, so it trails.
 
 export type DbCount = { newImages: number; newVideos: number; allImages: number; allVideos: number; rows: number };
-export type CreativeDb = { sheetId: string; url: string; name: string; readAt: string; month: DbCount; last45: DbCount; error?: string };
+/** One delivered row, kept so the allotment counts it inside the client's billing cycle: d day, v video, n new, a in all with variations */
+export type DbRow = { d: string; v: boolean; n: number; a: number };
+export type CreativeDb = { sheetId: string; url: string; name: string; readAt: string; month: DbCount; last45: DbCount; rows?: DbRow[]; error?: string };
 
 const zero = (): DbCount => ({ newImages: 0, newVideos: 0, allImages: 0, allVideos: 0, rows: 0 });
 const num = (v: string | undefined) => {
@@ -25,11 +27,18 @@ function dateOf(v: string | undefined) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-async function google<T>(token: string, url: string) {
-  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
-  const body = (await res.json()) as T & { error?: { message: string } };
-  if (!res.ok) throw new Error(body.error?.message ?? String(res.status));
-  return body;
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** A Google call, waiting out the Sheets per-minute read quota (a 429) up to twice instead of failing the client */
+async function google<T>(token: string, url: string): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
+    const body = (await res.json()) as T & { error?: { message: string } };
+    if (res.ok) return body;
+    const quota = res.status === 429 || /quota/i.test(body.error?.message ?? "");
+    if (!quota || attempt >= 2) throw new Error(body.error?.message ?? String(res.status));
+    await wait(30_000 * (attempt + 1));
+  }
 }
 
 /** One sheet's counts: this month (New York) and the last 45 days, new creatives and all with variations. */
@@ -47,8 +56,11 @@ async function readSheet(token: string, id: string) {
   const [y, m] = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }).split("-").map(Number);
   const monthStart = Date.UTC(y, m - 1, 1);
   const since45 = Date.now() - 45 * 86_400_000;
+  // Rows from the last 100 days are kept dated, so the allotment counts each client's own billing cycle exactly
+  const since100 = Date.now() - 100 * 86_400_000;
   const month = zero();
   const last45 = zero();
+  const rows: DbRow[] = [];
   for (const r of values.slice(h + 1)) {
     const d = dateOf(r[cDate]);
     if (!d) continue;
@@ -56,6 +68,7 @@ async function readSheet(token: string, id: string) {
     const fresh = num(r[cNew]);
     const all = cAll >= 0 ? Math.max(num(r[cAll]), fresh) : fresh;
     if (!fresh && !all) continue;
+    if (d.getTime() >= since100) rows.push({ d: d.toISOString().slice(0, 10), v: video, n: fresh, a: all });
     for (const [bucket, inIt] of [
       [month, d.getTime() >= monthStart],
       [last45, d.getTime() >= since45],
@@ -71,7 +84,7 @@ async function readSheet(token: string, id: string) {
       }
     }
   }
-  return { month, last45 };
+  return { month, last45, rows: rows.slice(-400) };
 }
 
 /** Finds every client's Creative Database in Drive and reads it. */
@@ -95,14 +108,18 @@ export async function syncCreativeDatabases(admin: SupabaseClient) {
   for (const c of clients ?? []) {
     const key = compact(c.name as string);
     // "<Client> - Creative Database"; the most recently edited when there are several
-    const sheet = files
-      .filter((f) => key.length >= 3 && compact(f.name.replace(/creative database.*/i, "")).startsWith(key))
-      .sort((a, b) => b.modifiedTime.localeCompare(a.modifiedTime))[0];
+    // The sheet named exactly for this client first; a longer name (a location of theirs: "Crust Pizza - Gleannloch
+    // Farms") only when there's no exact one, so a parent never reads a location's sheet
+    const named = (f: { name: string }) => compact(f.name.replace(/creative database.*/i, ""));
+    const newest = (a: { modifiedTime: string }, b: { modifiedTime: string }) => b.modifiedTime.localeCompare(a.modifiedTime);
+    const sheet = files.filter((f) => key.length >= 3 && named(f) === key).sort(newest)[0] ?? files.filter((f) => key.length >= 3 && named(f).startsWith(key) && !(clients ?? []).some((o) => o.id !== c.id && compact(o.name as string).length > key.length && named(f).startsWith(compact(o.name as string)))).sort(newest)[0];
     if (!sheet) {
       out.noSheet.push(c.name as string);
       continue;
     }
     try {
+      // Two reads a sheet: paced under the Sheets per-minute read quota
+      await wait(1_200);
       const counts = await readSheet(token, sheet.id);
       const db: CreativeDb = { sheetId: sheet.id, url: sheet.webViewLink, name: sheet.name, readAt: now, ...counts };
       await admin.from("clients").update({ creative_db: db }).eq("id", c.id);

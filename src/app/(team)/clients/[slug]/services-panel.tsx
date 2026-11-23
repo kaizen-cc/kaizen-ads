@@ -79,6 +79,7 @@ export function ServicesPanel({
   strategyOnly = [],
   email = null,
   social = null,
+  pool = null,
 }: {
   clientId: string;
   slug: string;
@@ -103,6 +104,8 @@ export function ServicesPanel({
   email?: EmailTierValue | null;
   /** Social's tier, platforms and this cycle's allotment */
   social?: SocialTierValue | null;
+  /** The creative allotment this client draws from (a location sharing its parent's), and the ones it could */
+  pool?: { current: string | null; options: { id: string; name: string }[] } | null;
 }) {
   const router = useRouter();
   const [mine, setMine] = useState(
@@ -187,6 +190,7 @@ export function ServicesPanel({
                       slug={slug}
                       creative={creative}
                       packages={packages}
+                      pool={pool}
                       strategy={strategyOnly.includes("creative")}
                       canEdit={canSetPackage}
                     />

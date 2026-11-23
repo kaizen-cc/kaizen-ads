@@ -21,7 +21,8 @@ export type PackageGap = { missed: { start: string; end: string } | null; atRisk
 
 /** For each client on a creative package: the last full period with nothing made, and whether this one is at risk */
 export async function packageGaps(admin: SupabaseClient, onlyClient?: string): Promise<Map<string, PackageGap>> {
-  let q = admin.from("clients").select("id, name, billing_day, created_at, creative_package_until").eq("creative_package", true).is("archived_at", null).in("status", ["active", "onboarding"]);
+  // A location drawing from its parent's allotment (allotment_pool_id) is covered by the parent's: never flagged alone
+  let q = admin.from("clients").select("id, name, billing_day, created_at, creative_package_until").eq("creative_package", true).is("archived_at", null).is("allotment_pool_id", null).in("status", ["active", "onboarding"]);
   if (onlyClient) q = q.eq("id", onlyClient);
   const { data: clients } = await q;
   const out = new Map<string, PackageGap>();
@@ -56,10 +57,40 @@ export async function packageGaps(admin: SupabaseClient, onlyClient?: string): P
   return out;
 }
 
+/**
+ * A client with creative and no allotment set (0 images and 0 videos, or none at all) is "not set", never shown as
+ * everything over: the Head of Creative hears it once, to set their package (or link them to the allotment they draw
+ * from) in Services on the client page.
+ */
+export async function flagAllotmentNotSet(admin: SupabaseClient) {
+  const { data: rows } = await admin.from("client_allotment_usage").select("client_id, pool_client_id, allotment_set");
+  const unset = (rows ?? []).filter((r) => r.allotment_set === false && r.pool_client_id === r.client_id).map((r) => r.client_id as string);
+  if (!unset.length) return { unset: 0 };
+  const [{ data: clients }, { data: heads }] = await Promise.all([
+    admin.from("clients").select("id, name, slug, creative_package_note").in("id", unset),
+    admin.from("profiles").select("id").eq("is_active", true).eq("role", "head_of_creative"),
+  ]);
+  const out = (clients ?? []).flatMap((c) =>
+    (heads ?? []).map((h) => ({
+      profile_id: h.id,
+      kind: "client",
+      title: `${c.name}: creative allotment not set`.slice(0, 200),
+      body: `They have creative, but no monthly allotment is set${c.creative_package_note ? ` (the package says: ${String(c.creative_package_note).slice(0, 160)})` : ""}. Set their package in Services on the client page, or link them to the allotment they draw from.`,
+      href: `/clients/${c.slug}?tab=team`,
+      client_id: c.id,
+      key: `allot-unset:${c.id}`,
+      priority: "normal",
+    })),
+  );
+  if (out.length) await admin.from("notifications").upsert(out, { onConflict: "profile_id,key", ignoreDuplicates: true });
+  return { unset: unset.length };
+}
+
 /** Daily: the head of creative and the leads hear about each client paid for creative and given nothing */
 export async function flagPackageGaps(admin: SupabaseClient) {
+  const unset = await flagAllotmentNotSet(admin).catch((e) => ({ error: String(e) }));
   const gaps = await packageGaps(admin);
-  if (!gaps.size) return { flagged: 0 };
+  if (!gaps.size) return { flagged: 0, unset };
   const [{ data: clients }, { data: people }] = await Promise.all([
     admin.from("clients").select("id, name, slug").in("id", [...gaps.keys()]),
     admin.from("profiles").select("id").eq("is_active", true).or("role.eq.head_of_creative,is_lead.eq.true"),
@@ -74,5 +105,5 @@ export async function flagPackageGaps(admin: SupabaseClient) {
     );
   });
   if (rows.length) await admin.from("notifications").upsert(rows, { onConflict: "profile_id,key", ignoreDuplicates: true });
-  return { flagged: gaps.size };
+  return { flagged: gaps.size, unset };
 }

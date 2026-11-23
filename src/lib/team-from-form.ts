@@ -198,7 +198,10 @@ standard: the set package's key if the answer is exactly one set package with no
     if (!c) return null;
     read = { ...c, summary: answer };
   }
-  await admin.from("client_allotments").upsert({ client_id: clientId, images_per_month: read.images, videos_per_month: read.videos, updated_at: new Date().toISOString() }, { onConflict: "client_id" });
+  // No numbers in it ("allocate some from the corporate allotment", "to be decided"): never a 0/0 allotment, which would
+  // show everything as over. The package is noted and the allotment left not set: the Head of Creative is told daily
+  // (src/lib/package-gaps.ts) to set it or link the client to the allotment it draws from
+  if (read.images + read.videos > 0) await admin.from("client_allotments").upsert({ client_id: clientId, images_per_month: read.images, videos_per_month: read.videos, updated_at: new Date().toISOString() }, { onConflict: "client_id" });
   await admin.from("clients").update({ creative_package: true, creative_package_key: "custom", creative_package_note: `Custom: ${read.summary}`.slice(0, 300) }).eq("id", clientId);
   return { images: read.images, videos: read.videos, summary: read.summary };
 }

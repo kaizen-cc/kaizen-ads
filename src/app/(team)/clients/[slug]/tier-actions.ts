@@ -160,3 +160,24 @@ export async function setCreativeTier(clientId: string, slug: string, t: { tier:
     return fail(e);
   }
 }
+
+/**
+ * A location that draws from another client's creative allotment (its parent's): it shares that pool, both show the
+ * pool's cap and every member's use counts against it, in the pool owner's billing cycle. Null: its own allotment again.
+ */
+export async function setAllotmentPool(clientId: string, slug: string, poolClientId: string | null): Promise<Result> {
+  try {
+    const { admin } = await guard(clientId, true);
+    if (poolClientId) {
+      if (poolClientId === clientId) return { ok: false, error: "A client can't draw from itself." };
+      const { data: p } = await admin.from("clients").select("id, allotment_pool_id, creative_package").eq("id", poolClientId).maybeSingle();
+      if (!p) return { ok: false, error: "That client isn't there." };
+      if (p.allotment_pool_id) return { ok: false, error: "That client draws from another one's allotment itself: pick the one that holds it." };
+    }
+    // Keep the creative package on, so its work keeps counting (against the pool)
+    await admin.from("clients").update({ allotment_pool_id: poolClientId, ...(poolClientId ? { creative_package: true } : {}) }).eq("id", clientId);
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}

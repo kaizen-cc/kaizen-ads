@@ -20,7 +20,7 @@ import {
   type SocialPlatformKey,
   type SocialTierKey,
 } from "@/lib/social-allotment-core";
-import { setCreativeTier, setEmailTier, setSocialExtraVideos, setSocialPlatforms, setSocialTier, setStrategyOnly } from "./tier-actions";
+import { setAllotmentPool, setCreativeTier, setEmailTier, setSocialExtraVideos, setSocialPlatforms, setSocialTier, setStrategyOnly } from "./tier-actions";
 
 // The tier pickers in the Services panel, the one place every service's tier is set (owner, Nov 19 2026):
 //   Email: 3-Month Initial Setup (its start month, then the ongoing tier), a Sprint (its own numbers until a day, then
@@ -366,6 +366,7 @@ export function CreativeTier({
   packages,
   strategy,
   canEdit,
+  pool = null,
 }: {
   clientId: string;
   slug: string;
@@ -373,16 +374,20 @@ export function CreativeTier({
   packages: { key: string; label: string; images: number; videos: number }[];
   strategy: boolean;
   canEdit: boolean;
+  /** Draws from another client's allotment (a location sharing its parent's) */
+  pool?: { current: string | null; options: { id: string; name: string }[] } | null;
 }) {
-  const current = strategy ? STRATEGY : creative.active && creative.until ? "sprint" : creative.active ? (creative.key ?? "custom") : "";
-  const [open, setOpen] = useState<null | "custom" | "sprint">(null);
+  const poolName = pool?.current ? (pool.options.find((o) => o.id === pool.current)?.name ?? "another client") : null;
+  const current = strategy ? STRATEGY : poolName ? "pool" : creative.active && creative.until ? "sprint" : creative.active ? (creative.key ?? "custom") : "";
+  const [open, setOpen] = useState<null | "custom" | "sprint" | "pool">(null);
+  const [poolPick, setPoolPick] = useState(pool?.current ?? "");
   const [images, setImages] = useState("");
   const [videos, setVideos] = useState("");
   const [until, setUntil] = useState("");
   const [sprintKey, setSprintKey] = useState(packages[0]?.key ?? "custom");
   const { pending, error, run, shown, saved } = useSave();
   const both = (i: number, v: number) => [i && `${i} images`, v && `${v} videos`].filter(Boolean).join(" + ") || "no allotment";
-  const summary = strategy ? "Strategy only, no design: no allotment or briefs" : creative.label ? `${creative.label}${creative.until ? ` (sprint until ${dayLabel(creative.until)})` : ""}` : "No package set";
+  const summary = strategy ? "Strategy only, no design: no allotment or briefs" : poolName ? `Shares ${poolName}'s allotment` : creative.label ? `${creative.label}${creative.until ? ` (sprint until ${dayLabel(creative.until)})` : ""}` : "No package set";
 
   if (!canEdit) return <span className="text-xs text-muted">{summary}</span>;
 
@@ -393,13 +398,14 @@ export function CreativeTier({
       items: [
         { value: "sprint", label: "Sprint", detail: current === "sprint" ? summary : "A package or numbers until a day", more: true },
         { value: "custom", label: "Custom numbers", detail: current === "custom" && creative.label ? creative.label : "Images and videos a month, set by hand", more: true },
+        { value: "pool", label: "Shares another client's allotment", detail: poolName ? `Shares ${poolName}'s` : "A location drawing from its parent's", more: true },
         { value: STRATEGY, label: "Strategy only", detail: "No design: no allotment, no briefs" },
       ],
     },
   ];
 
   const pick = (v: string) => {
-    if (v === "custom" || v === "sprint") return setOpen(v);
+    if (v === "custom" || v === "sprint" || v === "pool") return setOpen(v);
     setOpen(null);
     if (v === STRATEGY) return run(() => setStrategyOnly(clientId, slug, "creative", true), undefined, STRATEGY);
     if (v) run(() => setCreativeTier(clientId, slug, { tier: "package", key: v }), undefined, v);
@@ -411,7 +417,7 @@ export function CreativeTier({
         <TierMenu label="Creative package" value={open ?? shown ?? current} groups={groups} onPick={pick} disabled={pending} empty={creative.label && current === "" ? summary : "Pick a package"} />
         <Status pending={pending} saved={saved && !open} error={error} />
       </span>
-      {(current === STRATEGY || current === "sprint" || current === "custom") && !open && <span className="text-[11px] leading-snug text-faint">{summary}</span>}
+      {(current === STRATEGY || current === "sprint" || current === "custom" || current === "pool") && !open && <span className="text-[11px] leading-snug text-faint">{summary}</span>}
       {open && (
         <Panel note={open === "sprint" ? "It ends on its day and the client holds no creative allotment after it, unless a package is picked again." : undefined}>
           {open === "sprint" && (
@@ -423,7 +429,20 @@ export function CreativeTier({
               <Pills label="Package" value={sprintKey} options={[...packages.map((pk) => ({ value: pk.key, label: pk.label })), { value: "custom", label: "Custom" }]} onChange={setSprintKey} />
             </>
           )}
-          {(open === "custom" || sprintKey === "custom") && (
+          {open === "pool" && (
+            <label className="flex items-center gap-1.5 text-[11px] text-faint">
+              Draws from
+              <select value={poolPick} onChange={(e) => setPoolPick(e.target.value)} className="min-h-10 max-w-[220px] rounded-[8px] border border-line bg-bg px-2 text-xs text-fg md:min-h-8">
+                <option value="">Its own allotment</option>
+                {(pool?.options ?? []).map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {open !== "pool" && (open === "custom" || sprintKey === "custom") && (
             <>
               <Num label="Images" value={images} onChange={setImages} />
               <Num label="Videos" value={videos} onChange={setVideos} />
@@ -435,7 +454,9 @@ export function CreativeTier({
             onClick={() =>
               run(
                 () =>
-                  open === "custom"
+                  open === "pool"
+                    ? setAllotmentPool(clientId, slug, poolPick || null)
+                    : open === "custom"
                     ? setCreativeTier(clientId, slug, { tier: "custom", images: Number(images) || 0, videos: Number(videos) || 0 })
                     : setCreativeTier(clientId, slug, { tier: "sprint", until, key: sprintKey === "custom" ? null : sprintKey, images: Number(images) || 0, videos: Number(videos) || 0 }),
                 () => setOpen(null),

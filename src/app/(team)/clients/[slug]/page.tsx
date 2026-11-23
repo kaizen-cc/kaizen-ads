@@ -227,7 +227,7 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
     [{ count: imageCount }, { count: videoCount }, { count: designs }, { data: newestAsset }, { data: shot }, { data: momentRows }],
     reportableAll,
     readinessInitial,
-    [{ data: tierList }, { data: tierPicks }, socialAllot],
+    [{ data: tierList }, { data: tierPicks }, socialAllot, { data: poolRows }],
     { data: ruleRows },
     campaigns,
     [{ data: docRows }, knowledge, { data: repRows }, loom],
@@ -298,6 +298,8 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
       supabase.from("client_service_tiers").select("service, tier_id").eq("client_id", client.id),
       // This cycle's social allotment (used/cap per pool), shown under the Social tier
       servicesNow.includes("social-media") ? import("@/lib/social-allotment").then((m) => m.socialAllotments(supabase, [client.id])).then((r) => r[client.id] ?? null).catch(() => null) : Promise.resolve(null),
+      // The creative allotments this client could draw from (a location sharing its parent's), and its own pool
+      supabase.from("clients").select("id, name, allotment_pool_id").eq("creative_package", true).is("archived_at", null).order("name"),
     ])),
     // Where this client's new ads go, as their buyers taught the launcher
     t("launch rules", supabase.from("launch_rules").select("id, rule, from_adset, to_adset, via, active, created_at, profiles(full_name)").eq("client_id", client.id).order("created_at", { ascending: false }).limit(30)),
@@ -571,6 +573,10 @@ export default async function ClientPage({ params, searchParams }: PageProps<"/c
         tiers: tierList ?? [],
         chosen: Object.fromEntries((tierPicks ?? []).filter((x) => x.tier_id).map((x) => [x.service as string, x.tier_id as string])),
         strategyOnly: ((client.strategy_only ?? []) as string[]).filter(Boolean),
+        pool: {
+          current: ((poolRows ?? []).find((r) => r.id === client.id)?.allotment_pool_id as string | null | undefined) ?? null,
+          options: (poolRows ?? []).filter((r) => r.id !== client.id && !r.allotment_pool_id).map((r) => ({ id: r.id as string, name: r.name as string })),
+        },
         email: { key: (client.email_package_key as string | null) ?? null, setupStart: (client.email_setup_start as string | null) ?? null, custom: (client.email_custom ?? null) as Record<string, number | string | null> | null },
         social: {
           key: (client.social_package_key as string | null) ?? null,
