@@ -42,6 +42,8 @@ export type BlockDef = {
   empty?: { title: string; line: string };
   /** Read only (Pulse): a note above its items, and its number isn't a to-do count */
   note?: string;
+  /** One design per block: its own list (a lead's clients) stands for the items, which only count */
+  cardsHidden?: boolean;
 };
 
 /**
@@ -130,8 +132,8 @@ export function Blocks({ blocks }: { blocks: BlockDef[] }) {
             {isOpen && (
               <div className="border-t border-ink/[0.07] p-3 md:p-5" style={{ animation: "block-in .3s cubic-bezier(.2,.8,.2,1) both" }}>
                 {/* The block's items, then what the role already had for it, folded in (their clients, the board) */}
-                {(bl.cards?.length || !bl.panel) && <BlockItems id={bl.id} cards={bl.cards ?? []} empty={bl.empty?.line ?? "Nothing here right now."} note={bl.note} />}
-                {bl.panel && <div className={bl.cards?.length ? "mt-5 border-t border-ink/[0.07] pt-5" : ""}>{bl.panel}</div>}
+                {!bl.cardsHidden && (bl.cards?.length || !bl.panel) && <BlockItems id={bl.id} cards={bl.cards ?? []} empty={bl.empty?.line ?? "Nothing here right now."} note={bl.note} />}
+                {bl.panel && <div className={bl.cards?.length && !bl.cardsHidden ? "mt-5 border-t border-ink/[0.07] pt-5" : ""}>{bl.panel}</div>}
               </div>
             )}
           </section>

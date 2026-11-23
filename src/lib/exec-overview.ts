@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Staff } from "@/lib/auth";
 import type { TodayDraft, TopicKey } from "@/lib/today";
+import { isInternalClient } from "@/lib/internal-clients";
 import { execHears, groupEscalated, sortCards, sortNeeds, type ExecCard, type ExecTab, type FireRow, type Rung3Row } from "@/lib/exec-overview-core";
 
 // The executive Overview and morning recap (owner, Nov 23 2026; the rules in ./exec-overview-core.ts). One model, built
@@ -188,7 +189,8 @@ export async function accounts(admin: SupabaseClient, focus: readonly string[], 
   const mine = drafts
     .map((d) => ({ d, line: accountLine(d, opts.creativeSide) }))
     // Off target only (not "close to"), on a line in their focus
-    .filter((x): x is { d: TodayDraft; line: string } => Boolean(x.line && (!focus.length || focus.includes(x.line)) && !(x.d.key.startsWith("kpi:") && / close to target/.test(x.d.title))));
+    // Kaizen's own sandbox is never an account to step into
+    .filter((x): x is { d: TodayDraft; line: string } => Boolean(x.line && (!focus.length || focus.includes(x.line)) && !(x.d.key.startsWith("kpi:") && / close to target/.test(x.d.title)) && !isInternalClient(x.d.client, x.d.clientSlug)));
   if (!mine.length) return [];
   const now = new Date();
   const day14 = new Date(now.getTime() - 14 * DAY).toISOString();

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { isInternalClient } from "@/lib/internal-clients";
 import { HoverCard } from "@/components/hover-card";
 import { ChannelSpark } from "@/components/channel-spark";
 import { ChannelStatusPill, ConnectCta, Gauge, SupportChips, TONE, mainCaption, mainText, targetText } from "@/components/channel-parts";
@@ -391,7 +392,9 @@ export function DeskCard({ c }: { c: DeskCardData }) {
 }
 
 /** A group of DeskCards; `contained` keeps a long list in its own scrolling area so the page stays short */
-export function DeskGroup({ id, title, aside, cards, contained = false, empty }: { id: string; title: string; aside?: string; cards: DeskCardData[]; contained?: boolean; empty?: string }) {
+export function DeskGroup({ id, title, aside, cards: all, contained = false, empty }: { id: string; title: string; aside?: string; cards: DeskCardData[]; contained?: boolean; empty?: string }) {
+  // Kaizen's own sandbox is never a client on anyone's list
+  const cards = all.filter((c) => !isInternalClient(c.name));
   const list = (
     <ul className={GRID}>
       {cards.map((c) => (

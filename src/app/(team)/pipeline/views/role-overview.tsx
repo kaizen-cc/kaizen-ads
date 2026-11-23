@@ -86,6 +86,8 @@ export async function RoleOverview({ db, me, kind, base, subtitle, extras, folde
       empty: EMPTY[t],
       note: t === "pulse" ? "Your line at a glance. Nothing here is a to-do." : undefined,
       panel: folded[t],
+      // My accounts with the role's own client list folded in: that list is the one design shown
+      cardsHidden: t === "accounts" && Boolean(folded[t]),
     };
   });
   for (const o of own) blocks.push({ id: `p-${o.id}`, label: o.label, blurb: o.blurb, tone: BLOCK_TONE.panel, panel: o.node, ...(o.count != null ? { count: o.count } : {}) });

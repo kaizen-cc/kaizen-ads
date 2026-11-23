@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { Fragment, useState, useTransition } from "react";
 import { closeParams, pushParams, useParam } from "@/lib/url-state";
 import type { OpenSuggestion } from "@/lib/suggestions";
 import type { Brand } from "@/lib/overview-desk-load";
@@ -13,6 +13,7 @@ import { SuggestionSheet } from "./suggested-briefs";
 import { approveAllDraftedBriefs, approveDraftedBrief } from "../draft-actions";
 import { declineSuggestion } from "../suggestion-actions";
 import { BriefRating } from "@/components/brief-rating";
+import { isInternalClient } from "@/lib/internal-clients";
 
 // The creative leads' Clients tab (the head of creative every pool, the lead graphic designer images, the lead video
 // editor video). A hero for the week (what to brief at a healthy pace against a usual week, the briefs ready, Approve
@@ -76,36 +77,38 @@ const CHIP_TONE: Record<SourceChip["tone"], string> = {
 const REASONS = ["Not the right time", "Already handled", "Wrong angle", "Brief isn't strong enough", "The reason isn't real"];
 const FORMAT_ONE = { image: "image", video: "video", carousel: "carousel" } as const;
 
+/** Worst first: over allotment, behind, on pace, covered */
+const ORDER: DeskGroup[] = ["over", "now", "pace", "covered"];
+/** How far behind a client is: what's missing this cycle and due this week */
+const behind = (r: ClientRow) => r.pools.reduce((n, p) => n + p.missing + p.dueThisWeek + p.over, 0);
+
 export function CreativeClientRows({ rows, week, briefed, canApprove = true, canRate = false }: { rows: ClientRow[]; week: WeekLine[] | null; /** Clients fully briefed this cycle */ briefed: number; canApprove?: boolean; /** The creative leads rate each drafted brief */ canRate?: boolean }) {
   const open = useParam("approve");
   const current = rows.flatMap((r) => r.ideas).find((s) => s.id === open) ?? null;
-  const byGroup = new Map<DeskGroup, ClientRow[]>(GROUPS.map((g) => [g.id, rows.filter((r) => r.group === g.id)]));
+  // One list, one design (owner, Nov 23 2026): worst first (over allotment, then the furthest behind, then on pace,
+  // then covered), each client once, Kaizen's own sandbox left out; a small header where the state changes
+  const seen = new Set<string>();
+  const list = rows
+    .filter((r) => !isInternalClient(r.client, r.slug) && !seen.has(r.clientId) && seen.add(r.clientId))
+    .sort((x, y) => ORDER.indexOf(x.group) - ORDER.indexOf(y.group) || behind(y) - behind(x) || x.client.localeCompare(y.client));
+  const byGroup = new Map<DeskGroup, ClientRow[]>(GROUPS.map((g) => [g.id, list.filter((r) => r.group === g.id)]));
   return (
-    <section id="allotments" className="grid scroll-mt-24 gap-8">
-      <Hero rows={rows} week={week} briefed={briefed} byGroup={byGroup} canApprove={canApprove} />
-      {rows.length === 0 && <p className="rounded-[20px] border border-dashed border-line px-5 py-8 text-center text-sm text-muted">No client in your slice has a creative allotment this cycle.</p>}
-      {GROUPS.map((g) => {
-        const list = byGroup.get(g.id) ?? [];
-        if (!list.length) return null;
-        const tone = GROUP_TONE[g.id];
-        return (
-          <div key={g.id} id={`group-${g.id}`} className="grid scroll-mt-24 gap-3">
-            <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1 px-1">
-              <h3 className="flex items-center gap-2.5 font-heading text-[20px] leading-none">
-                <span aria-hidden className={`h-2.5 w-2.5 rounded-full ${tone.dot}`} />
-                {g.label}
-                <span className="tabular text-[15px] text-faint">{list.length}</span>
-              </h3>
-              <p className="text-[12.5px] text-faint">{g.blurb}</p>
-            </div>
-            <ul className={`grid gap-3 ${g.id === "covered" ? "md:grid-cols-2" : ""}`}>
-              {list.map((r) => (
-                <ClientCard key={r.clientId} r={r} canApprove={canApprove} canRate={canRate} />
-              ))}
-            </ul>
-          </div>
-        );
-      })}
+    <section id="allotments" className="grid scroll-mt-24 gap-6">
+      <Hero rows={list} week={week} briefed={briefed} byGroup={byGroup} canApprove={canApprove} />
+      {list.length === 0 && <p className="rounded-[20px] border border-dashed border-line px-5 py-8 text-center text-sm text-muted">No client in your slice has a creative allotment this cycle.</p>}
+      <ul className="grid gap-2">
+        {list.map((r, i) => (
+          <Fragment key={r.clientId}>
+            {(i === 0 || list[i - 1].group !== r.group) && (
+              <li id={`group-${r.group}`} className="flex scroll-mt-24 items-center gap-2 px-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-faint first:pt-0">
+                <span aria-hidden className={`h-2 w-2 rounded-full ${GROUP_TONE[r.group].dot}`} />
+                {GROUPS.find((g) => g.id === r.group)?.label} · {byGroup.get(r.group)?.length ?? 0}
+              </li>
+            )}
+            <ClientCard r={r} canApprove={canApprove} canRate={canRate} />
+          </Fragment>
+        ))}
+      </ul>
       {current && <SuggestionSheet key={current.id} s={current} onClose={() => closeParams("approve")} />}
     </section>
   );
@@ -222,12 +225,46 @@ function Ring({ w }: { w: WeekLine }) {
 
 // ─── A client ──────────────────────────────────────────────────────────────────────────────────────────────────
 
+/** The single most urgent thing about a client, for its collapsed row */
+function topFlag(r: ClientRow): string | null {
+  if (r.group === "over") return r.noBriefsWhy ?? "Over the allotment this cycle";
+  const w = r.watch.find((x) => x.severity === "critical") ?? r.watch[0];
+  if (w) return w.title;
+  if (r.fresh) return `${r.fresh}: needs new hooks and visuals`;
+  if (r.ideas.length) return `${r.ideas.length} ${r.ideas.length === 1 ? "brief" : "briefs"} ready`;
+  const due = r.pools.reduce((n, p) => n + p.dueThisWeek, 0);
+  if (due) return `${due} this week to stay on pace`;
+  return r.noBriefsWhy;
+}
+
 function ClientCard({ r, canApprove, canRate }: { r: ClientRow; canApprove: boolean; canRate: boolean }) {
   const tone = GROUP_TONE[r.group];
   const days = r.pools.length ? Math.min(...r.pools.map((p) => p.daysLeft)) : null;
   const over = r.group === "over";
+  // Collapsed by default; a tap opens the full card right here, and the open client is in the address (?cl=)
+  const open = useParam("cl") === r.clientId;
+  const toggle = () => (open ? closeParams("cl") : pushParams({ cl: r.clientId }));
+  const flag = topFlag(r);
+  if (!open)
+    return (
+      <li>
+        <button type="button" onClick={toggle} aria-expanded={false} className="relative flex min-h-14 w-full flex-wrap items-center gap-x-3 gap-y-2 overflow-hidden rounded-[18px] border border-line bg-surface px-4 py-3 pl-5 text-left transition-colors hover:border-ink/25 md:flex-nowrap">
+          <span aria-hidden className="absolute inset-y-0 left-0 w-1" style={{ background: tone.ring }} />
+          <BrandChip name={r.client} color={r.brand.color} logo={r.brand.logo} light={r.brand.light} size="sm" />
+          <span className="min-w-0 flex-1 truncate font-heading text-[16px]">{r.client}</span>
+          <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11.5px] font-medium ${tone.pill}`}>{tone.label}</span>
+          <span className="flex w-full items-center gap-3 md:w-auto">
+            {r.pools.map((p) => (
+              <MiniPool key={p.pool} p={p} />
+            ))}
+          </span>
+          {flag && <span className="w-full truncate text-[12.5px] text-muted md:w-auto md:max-w-[34%]">{flag}</span>}
+          {days != null && <span className="shrink-0 text-[12px] text-faint">{resetIn(days)}</span>}
+        </button>
+      </li>
+    );
   return (
-    <li className="relative isolate overflow-hidden rounded-[24px] border border-line bg-surface">
+    <li className="relative isolate overflow-hidden rounded-[24px] border border-ink/20 bg-surface">
       <span aria-hidden className="pointer-events-none absolute inset-0 -z-10" style={{ backgroundImage: `radial-gradient(110% 70% at 0% 0%, color-mix(in srgb, ${r.brand.color ?? tone.ring} 11%, transparent), transparent 62%)` }} />
       <span aria-hidden className="absolute inset-y-0 left-0 w-1" style={{ background: tone.ring }} />
       <div className="grid gap-4 p-4 pl-5 md:p-6 md:pl-7">
@@ -240,6 +277,9 @@ function ClientCard({ r, canApprove, canRate }: { r: ClientRow; canApprove: bool
           <span className="flex w-full items-center gap-2 sm:w-auto">
             <span className={`rounded-full px-2.5 py-1 text-[11.5px] font-medium ${tone.pill}`}>{tone.label}</span>
             {days != null && <span className="text-[12px] text-faint">{resetIn(days)}</span>}
+            <button type="button" onClick={toggle} aria-expanded className="ml-1 grid h-11 w-11 place-items-center rounded-full border border-line text-muted hover:text-fg md:h-8 md:w-8" aria-label="Fold this client">
+              ↑
+            </button>
           </span>
         </div>
 
@@ -479,5 +519,26 @@ function BriefCard({ s, canApprove, canRate = false }: { s: OpenSuggestion; canA
       {canRate && s.drafted && !done && <BriefRating id={s.id} />}
       {error && <p className="text-xs text-bad">{error}</p>}
     </article>
+  );
+}
+
+/** A pool in the collapsed row: x/y and a thin bar (delivered, then in motion) */
+function MiniPool({ p }: { p: PoolLine }) {
+  const cap = Math.max(1, p.cap);
+  const done = Math.min(100, (p.delivered / cap) * 100);
+  const moving = Math.min(100 - done, (p.inMotion / cap) * 100);
+  return (
+    <span className="grid min-w-[92px] flex-1 gap-1 md:flex-none">
+      <span className="flex items-baseline justify-between gap-2 text-[11px] text-faint">
+        <span className="uppercase tracking-[0.12em]">{POOL_LABEL[p.pool]}</span>
+        <span className={`tabular ${p.over ? "text-warn" : "text-fg"}`}>
+          {p.delivered + p.inMotion}/{p.cap}
+        </span>
+      </span>
+      <span className="flex h-1.5 overflow-hidden rounded-full bg-ink/[0.08]">
+        <span className="bg-ok" style={{ width: `${done}%` }} />
+        <span className="bg-brand/60" style={{ width: `${moving}%` }} />
+      </span>
+    </span>
   );
 }
