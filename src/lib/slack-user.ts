@@ -74,6 +74,17 @@ export async function disconnect(profileId: string) {
   await admin.from("slack_user_tokens").delete().eq("profile_id", profileId);
 }
 
+/**
+ * A read-only Slack call as this person (their own connection, so it lists what they can post to), else as the Kaizen
+ * app. For the report send step's channel and thread picker.
+ */
+export async function slackReadAs(profileId: string, method: "users.conversations" | "conversations.history" | "conversations.info" | "conversations.replies", params: Record<string, string>): Promise<SlackBody | null> {
+  const { data: row } = await createAdminClient().from("slack_user_tokens").select("token").eq("profile_id", profileId).maybeSingle();
+  const token = (row?.token as string | undefined) ?? process.env.SLACK_BOT_TOKEN;
+  if (!token) return null;
+  return call(token, method, params).catch(() => null);
+}
+
 async function call(token: string, method: string, params: Record<string, string>): Promise<SlackBody> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await fetch(`https://slack.com/api/${method}`, {
@@ -120,7 +131,8 @@ function explain(error: string | undefined): { ok: false; error: string; needsCo
   }
 }
 
-type PostResult = { ok: true; ts: string; channel: string; permalink?: string } | { ok: false; error: string; needsConnect?: boolean };
+/** threadMissing: a thread was asked for but is gone (deleted, or the channel's history doesn't have it), so it posted in the channel */
+type PostResult = { ok: true; ts: string; channel: string; permalink?: string; thread?: string; threadMissing?: boolean } | { ok: false; error: string; needsConnect?: boolean };
 
 /**
  * Post a message to a channel as this person. Text is Slack mrkdwn. With a PDF, the file and the
@@ -128,7 +140,7 @@ type PostResult = { ok: true; ts: string; channel: string; permalink?: string } 
  */
 export async function postAsUser(
   profileId: string,
-  { channel, text, pdf, thread }: { channel: string; text: string; pdf?: { filename: string; title: string; bytes: Uint8Array }; /** Reply in this thread */ thread?: string },
+  { channel, text, pdf, thread, broadcast }: { channel: string; text: string; pdf?: { filename: string; title: string; bytes: Uint8Array }; /** Reply in this thread */ thread?: string; /** The reply also shown in the channel */ broadcast?: boolean },
 ): Promise<PostResult> {
   const { data: row } = await createAdminClient().from("slack_user_tokens").select("token").eq("profile_id", profileId).maybeSingle();
   if (!row?.token) return { ok: false, error: "Connect your Slack first, so it goes out from you.", needsConnect: true };
@@ -136,7 +148,7 @@ export async function postAsUser(
   // A person (U..., W...): the DM between them, opened as this person (im:write); without that scope Slack still takes
   // the user's ID and posts to the same DM
   const to = !thread && /^[UW][A-Z0-9]{6,}$/.test(channel.trim()) ? await openDm(token, channel.trim()) : channel;
-  return postWith(token, { channel: to, text, pdf, thread });
+  return postWith(token, { channel: to, text, pdf, thread, broadcast });
 }
 
 /** The DM channel (D...) between the token's person and this Slack user, else the user's ID as given */
@@ -150,7 +162,7 @@ async function openDm(token: string, user: string): Promise<string> {
 /** A Slack person or direct message rather than a channel */
 export const isPersonChannel = (channel: string) => /^[UWD][A-Z0-9]{6,}$/.test(channel.trim());
 
-export async function postAsApp(args: { channel: string; text: string; pdf?: { filename: string; title: string; bytes: Uint8Array } }): Promise<PostResult> {
+export async function postAsApp(args: { channel: string; text: string; pdf?: { filename: string; title: string; bytes: Uint8Array }; thread?: string; broadcast?: boolean }): Promise<PostResult> {
   // Team members hear from Kaizen OS in Kaizen OS (bell, Overview, email), never as a Slack DM from the app. A person
   // (U..., W...) or a direct message (D...) is refused; client channels still get their client notices.
   if (isPersonChannel(args.channel)) return { ok: false, error: "Team messages stay in Kaizen OS." };
@@ -171,14 +183,18 @@ export async function slackIdentity(profileId: string): Promise<{ name: string; 
   return { name: p.display_name || p.real_name || body.user.real_name || "", image: p.image_192 || p.image_72 || null };
 }
 
-async function postWith(token: string, { channel, text, pdf, thread }: { channel: string; text: string; pdf?: { filename: string; title: string; bytes: Uint8Array }; thread?: string }): Promise<PostResult> {
+async function postWith(token: string, { channel, text, pdf, thread: asked, broadcast }: { channel: string; text: string; pdf?: { filename: string; title: string; bytes: Uint8Array }; thread?: string; broadcast?: boolean }): Promise<PostResult> {
   try {
+    // A thread that's gone (deleted, or not in this channel) posts in the channel instead, and says so
+    const live = asked ? await threadExists(token, channel, asked) : false;
+    const thread = asked && live ? asked : undefined;
+    const missing = Boolean(asked && !live);
     if (!pdf) {
-      const sent = await call(token, "chat.postMessage", { channel, text, unfurl_links: "false", unfurl_media: "false", ...(thread ? { thread_ts: thread } : {}) });
+      const sent = await call(token, "chat.postMessage", { channel, text, unfurl_links: "false", unfurl_media: "false", ...(thread ? { thread_ts: thread, ...(broadcast ? { reply_broadcast: "true" } : {}) } : {}) });
       if (!sent.ok) return explain(sent.error);
       const ts = String(sent.ts ?? "");
       const ch = String(sent.channel ?? channel);
-      return { ok: true, ts, channel: ch, permalink: await permalink(token, ch, ts) };
+      return { ok: true, ts, channel: ch, permalink: await permalink(token, ch, ts), ...(thread ? { thread } : {}), ...(missing ? { threadMissing: true } : {}) };
     }
 
     // 1. Ask Slack where to put the file
@@ -199,15 +215,25 @@ async function postWith(token: string, { channel, text, pdf, thread }: { channel
       files: JSON.stringify([{ id: fileId, title: pdf.title }]),
       channel_id: channel,
       initial_comment: text,
+      // The PDF and its message go into the thread too
+      ...(thread ? { thread_ts: thread } : {}),
     });
     if (!done.ok) return explain(done.error);
+    // A file reply can't be broadcast by itself: "also send to the channel" adds a short pointer to it there
+    if (thread && broadcast) await call(token, "chat.postMessage", { channel, thread_ts: thread, reply_broadcast: "true", text: text.split("\n").find((l) => l.trim() && !/^<!here>\s*$/.test(l.trim()))?.slice(0, 300) ?? "The report is in the thread." }).catch(() => null);
 
     // The share happens a moment after Slack answers, so the message's ts may not be known yet: look a few times
     const ts = await shareTs(token, fileId, channel);
-    return { ok: true, ts, channel, permalink: ts ? await permalink(token, channel, ts) : undefined };
+    return { ok: true, ts, channel, permalink: ts ? await permalink(token, channel, ts) : undefined, ...(thread ? { thread } : {}), ...(missing ? { threadMissing: true } : {}) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? `Couldn't reach Slack: ${e.message}` : "Couldn't reach Slack." };
   }
+}
+
+/** Whether a thread's first message is still there in this channel (one quick read) */
+async function threadExists(token: string, channel: string, ts: string): Promise<boolean> {
+  const r = await call(token, "conversations.replies", { channel, ts, limit: "1" }).catch(() => null);
+  return Boolean(r?.ok && Array.isArray(r.messages) && (r.messages as unknown[]).length);
 }
 
 type Shares = Record<string, { ts: string }[]>;

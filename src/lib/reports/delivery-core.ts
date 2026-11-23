@@ -8,8 +8,14 @@ import { scrubAgency } from "./white-label";
 
 export type Channel = "slack" | "email";
 export type Recipient = { email: string; name?: string | null };
-/** recipients: the email's To. cc: people the sender copies (the team the send copies by itself is added on top) */
-export type Delivery = { channels: Channel[]; recipients: Recipient[]; cc?: Recipient[] };
+/**
+ * Where the Slack post goes, when not the client's own channel as a new message: another channel, and/or a reply in a
+ * thread (a client who asked for every weekly report in one standing thread), optionally also shown in the channel.
+ */
+export type SlackTarget = { channel?: string | null; channelName?: string | null; thread?: string | null; threadLabel?: string | null; broadcast?: boolean };
+
+/** recipients: the email's To. cc: people the sender copies (the team the send copies by itself is added on top). slack: where the post goes */
+export type Delivery = { channels: Channel[]; recipients: Recipient[]; cc?: Recipient[]; slack?: SlackTarget };
 
 const EMAIL = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[a-z]{2,}$/i;
 export const isEmail = (s: unknown): s is string => typeof s === "string" && s.length <= 254 && EMAIL.test(s.trim());
@@ -35,7 +41,8 @@ export function normalizeDelivery(input: unknown, fallback: Delivery = { channel
   // To first: someone in both stays in To
   const recipients = read(Array.isArray(d.recipients) ? d.recipients : fallback.recipients, 50);
   const cc = read((d as { cc?: unknown }).cc ?? fallback.cc, 20);
-  return { channels: channels.length ? channels : fallback.channels, recipients, ...(cc.length ? { cc } : {}) };
+  const slack = slackTargetOf((d as { slack?: unknown }).slack ?? fallback.slack);
+  return { channels: channels.length ? channels : fallback.channels, recipients, ...(cc.length ? { cc } : {}), ...(slack ? { slack } : {}) };
 }
 
 /** What's missing before it can go: an empty answer means it's ready */
@@ -320,4 +327,38 @@ export function lineDelivery(byLine: unknown, line: string | null | undefined): 
   const m = byLine && typeof byLine === "object" ? (byLine as Record<string, unknown>) : {};
   const hit = line ? m[line] : null;
   return hit && typeof hit === "object" ? normalizeDelivery(hit) : null;
+}
+
+// ─── Where in Slack ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+const CHANNEL_ID = /^[CG][A-Z0-9]{6,20}$/;
+const TS = /^\d{9,11}\.\d{6}$/;
+
+/** A Slack target as given, cleaned: a real channel id and message ts only; null when it says nothing */
+export function slackTargetOf(input: unknown): SlackTarget | null {
+  const t = (input ?? {}) as Record<string, unknown>;
+  const channel = typeof t.channel === "string" && CHANNEL_ID.test(t.channel.trim()) ? t.channel.trim() : null;
+  const thread = typeof t.thread === "string" && TS.test(t.thread.trim()) ? t.thread.trim() : null;
+  if (!channel && !thread) return null;
+  const text = (v: unknown, n: number) => (typeof v === "string" && v.trim() ? v.trim().replace(/\s+/g, " ").slice(0, n) : null);
+  return { channel, channelName: text(t.channelName, 80), thread, threadLabel: thread ? text(t.threadLabel, 120) : null, broadcast: Boolean(thread && t.broadcast) };
+}
+
+/**
+ * A Slack message link, read: its channel and the thread it belongs to. "…/archives/C07JZ87E1N2/p1795460770177329" is
+ * the message 1795460770.177329; a reply's link carries its thread as ?thread_ts=…, and that thread is the one to post in.
+ */
+export function parseSlackLink(url: string): { channel: string; thread: string } | null {
+  const m = /\/archives\/([CG][A-Z0-9]{6,20})\/p(\d{10})(\d{6})/.exec(String(url ?? "").trim());
+  if (!m) return null;
+  const replyOf = /[?&]thread_ts=(\d{9,11}\.\d{6})/.exec(url)?.[1] ?? null;
+  return { channel: m[1], thread: replyOf ?? `${m[2]}.${m[3]}` };
+}
+
+/** "Posting in #aldecoa › thread: Weekly email reports…", as the send step and the note after it say it */
+export function slackWhere(t: SlackTarget | null | undefined, fallbackName: string | null): string {
+  const name = t?.channelName ?? fallbackName;
+  const ch = name ? `#${name.replace(/^#/, "")}` : "the client's channel";
+  if (!t?.thread) return `Posting in ${ch}`;
+  return `Posting in ${ch} › thread${t.threadLabel ? `: ${t.threadLabel}` : ""}${t.broadcast ? " (also sent to the channel)" : ""}`;
 }

@@ -28,9 +28,10 @@ import { noteText } from "@/lib/reports/refresh-core";
 import { RegenerateButton, UndoRegenerate } from "./regenerate-button";
 import { NextStepsAct } from "./next-steps-act";
 import type { WriteStatus } from "@/lib/write-status-core";
-import { channelsLabel, channelsPhrase, type Delivery } from "@/lib/reports/delivery-core";
+import { channelsLabel, channelsPhrase, type Delivery, type SlackTarget } from "@/lib/reports/delivery-core";
 import { forClient } from "@/lib/reports/white-label";
 import { DeliveryPicker, type DeliveryOptions } from "./delivery-picker";
+import { SlackWhere } from "./slack-where";
 import { PeriodPicker } from "./period-picker";
 import { SkipButton, SkipHistory, SkippedBanner } from "./skip-report";
 import type { LogEntry } from "@/lib/reports/skip-log";
@@ -644,13 +645,15 @@ export function ReportStudio({
   const [recipients, setRecipients] = useState<Delivery["recipients"]>(delivery?.initial.recipients ?? []);
   // People copied (Cc) by the sender, remembered with To for this client's line (the team is copied by the send itself)
   const [cc, setCc] = useState<Delivery["recipients"]>(delivery?.initial.cc ?? []);
+  // Where the Slack post goes (another channel, a standing thread): remembered for this client's line with the send
+  const [slackTarget, setSlackTarget] = useState<SlackTarget | null>(delivery?.initial.slack ?? null);
   const pickPeople = (d: Delivery) => {
     setRecipients(d.recipients);
     setCc(d.cc ?? []);
   };
   const saveAsContact = async (r: { email: string; name?: string | null }) => saveReportContact(report.id, r.email, r.name ?? null);
   // One channel at a time: a recap's saved channel (report_bundles.delivery) is just the one picked
-  const route: Delivery = { channels: channelsFor(choice), recipients, ...(cc.length ? { cc } : {}) };
+  const route: Delivery = { channels: channelsFor(choice), recipients, ...(cc.length ? { cc } : {}), ...(slackTarget ? { slack: slackTarget } : {}) };
   const toDrive = choice === "drive";
   const [emailNote, setEmailNote] = useState("");
   const viaSlack = choice === "slack";
@@ -2038,6 +2041,9 @@ export function ReportStudio({
               </OptionCard>
             )}
           </div>
+
+          {/* Slack: where it posts (the client's channel, another one, or a standing thread) */}
+          {viaSlack && routeOpen && !monthly && <SlackWhere reportId={report.id} value={slackTarget} onChange={setSlackTarget} disabled={channelsLocked} />}
 
           {/* Email: who it goes to, a line from the buyer, and the email as they'll get it */}
           {viaEmail && routeOpen && (

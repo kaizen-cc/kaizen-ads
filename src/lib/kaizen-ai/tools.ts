@@ -877,7 +877,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
     },
     {
       name: "set_report_recipients",
-      description: "Sets who a client's report email goes to on one service line (ads, email or social): To and Cc, remembered so every next report on that line starts with them (the same as picking them in the report's Email tab). Any valid addresses; the team is copied by the send itself. Use it when someone says who should get the report (\"Eddie usually sees it, send to Juan, Eddie and Lino\"). Returns who it goes to now.",
+      description: "Sets where a client's report goes on one service line (ads, email or social), remembered so every next report on that line goes the same way (the same as picking it on the report's Send step): the email's To and Cc (any valid addresses; the team is copied by the send itself), and/or where the Slack post goes: a Slack thread link to reply in (the client asked for every weekly report in one thread: \"send it in the weekly report thread\"), optionally also shown in the channel, or \"channel\" to go back to a new message in the client's channel. Returns where it goes now.",
       input_schema: {
         type: "object",
         properties: {
@@ -885,22 +885,36 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
           line: { type: "string", enum: ["ads", "email", "social"], description: "Which line's reports (default ads)" },
           to: { type: "array", items: { type: "string" }, description: "Email addresses the report goes to" },
           cc: { type: "array", items: { type: "string" }, description: "Email addresses copied on it" },
+          slack_thread_link: { type: "string", description: "A Slack message link (Copy link on the thread's first message) to post every report as a reply there; \"channel\" for the client's channel again" },
+          also_to_channel: { type: "boolean", description: "With a thread: the reply also shown in the channel" },
         },
-        required: ["client", "to"],
+        required: ["client"],
         additionalProperties: false,
       },
-      status: (input, client) => `Setting who gets ${nameFor(ctx, input) ?? client ?? "the client"}'s report…`,
+      status: (input, client) => `Setting where ${nameFor(ctx, input) ?? client ?? "the client"}'s report goes…`,
       run: async (input) => {
         const c = await clientOf(ctx, input);
         const line = ["ads", "email", "social"].includes(String(input.line)) ? String(input.line) : "ads";
-        const { normalizeDelivery } = await import("@/lib/reports/delivery-core");
+        const { normalizeDelivery, parseSlackLink, slackWhere } = await import("@/lib/reports/delivery-core");
         const { clientDelivery, rememberDelivery } = await import("@/lib/reports/send");
         const now = await clientDelivery(ctx.admin, c.id, line);
-        const d = normalizeDelivery({ channels: [...new Set([...now.initial.channels, "email"])], recipients: input.to, cc: input.cc ?? [] });
-        if (!d.recipients.length) throw new Error("Give at least one valid address to send it to.");
+        const linkIn = typeof input.slack_thread_link === "string" ? input.slack_thread_link.trim() : "";
+        const parsed = linkIn && linkIn !== "channel" ? parseSlackLink(linkIn) : null;
+        if (linkIn && linkIn !== "channel" && !parsed) throw new Error("That isn't a Slack message link: in Slack, the thread's first message › Copy link.");
+        const emailing = Array.isArray(input.to) && input.to.length > 0;
+        const slack = linkIn === "channel" ? undefined : parsed ? { ...parsed, broadcast: Boolean(input.also_to_channel) } : now.initial.slack;
+        const d = normalizeDelivery({
+          channels: [...new Set([...now.initial.channels, ...(emailing ? ["email"] : []), ...(parsed ? ["slack"] : [])])],
+          recipients: emailing ? input.to : now.initial.recipients,
+          cc: emailing ? (input.cc ?? []) : (now.initial.cc ?? []),
+          slack,
+        });
+        if (emailing && !d.recipients.length) throw new Error("Give at least one valid address to send it to.");
+        if (!emailing && !linkIn) throw new Error("Say who the email goes to, or give the Slack thread link.");
         await rememberDelivery(ctx.admin, c.id, d, ctx.me.id, line);
-        card({ type: "list", title: `${c.name} · ${line} report email`, items: [...d.recipients.map((r) => ({ title: `To: ${r.email}` })), ...(d.cc ?? []).map((r) => ({ title: `Cc: ${r.email}` }))] });
-        return { to: d.recipients.map((r) => r.email), cc: (d.cc ?? []).map((r) => r.email), line, note: "Remembered: the next report on this line starts with these people (the team is copied too)." };
+        const where = d.channels.includes("slack") ? slackWhere(d.slack, null) : null;
+        card({ type: "list", title: `${c.name} · ${line} report`, items: [...(where ? [{ title: `Slack: ${where}` }] : []), ...d.recipients.map((r) => ({ title: `To: ${r.email}` })), ...(d.cc ?? []).map((r) => ({ title: `Cc: ${r.email}` }))] });
+        return { slack: where, to: d.recipients.map((r) => r.email), cc: (d.cc ?? []).map((r) => r.email), line, note: "Remembered: the next report on this line goes the same way (the team is copied on email too)." };
       },
     },
     {

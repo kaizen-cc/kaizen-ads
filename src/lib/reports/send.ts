@@ -53,7 +53,9 @@ export async function clientDelivery(admin: SupabaseClient, clientId: string, li
   const remembered = saved?.recipients.length ? recipientsToUse(contacts, saved.recipients, row?.delivery_updated_at) : everyone;
   // No choice saved yet: Slack when they have a channel, else email to every contact
   const fallback: Delivery = slackChannel ? { channels: ["slack"], recipients: everyone } : { channels: contacts.length ? ["email"] : ["slack"], recipients: everyone };
-  const initial: Delivery = saved ? { channels: saved.channels, recipients: remembered, ...(saved.cc?.length ? { cc: withoutRemoved(saved.cc, removed) } : {}) } : fallback;
+  const chosen: Delivery = saved ? { channels: saved.channels, recipients: remembered, ...(saved.cc?.length ? { cc: withoutRemoved(saved.cc, removed) } : {}) } : fallback;
+  // Where in Slack this line's reports go (a standing thread the client asked for), kept whatever else was chosen
+  const initial: Delivery = forLine?.slack ? { ...chosen, slack: forLine.slack } : chosen;
   // Addresses past report emails went to that this one doesn't have yet (never the team, never someone taken off)
   const { data: staff } = await admin.from("profiles").select("email").not("email", "is", null);
   const team = new Set([...(staff ?? []).map((p) => String(p.email).toLowerCase()), ...removed]);
@@ -84,7 +86,7 @@ export async function rememberDelivery(admin: SupabaseClient, clientId: string, 
   if (line) {
     const { data: was } = await admin.from("client_report_prefs").select("delivery_by_line").eq("client_id", clientId).maybeSingle();
     if (was) {
-      const byLine = { ...((was.delivery_by_line as Record<string, unknown> | null) ?? {}), [line]: { channels: d.channels, recipients: d.recipients, cc: d.cc ?? [], at, by } };
+      const byLine = { ...((was.delivery_by_line as Record<string, unknown> | null) ?? {}), [line]: { channels: d.channels, recipients: d.recipients, cc: d.cc ?? [], ...(d.slack ? { slack: d.slack } : {}), at, by } };
       await admin.from("client_report_prefs").update({ delivery_by_line: byLine }).eq("client_id", clientId);
     }
   }
@@ -123,7 +125,7 @@ export type SendOutcome = {
   ok: boolean;
   sendId: string | null;
   went: Channel[];
-  slack: { channel: string; ts?: string; as?: string } | { error: string } | null;
+  slack: { channel: string; ts?: string; as?: string; thread?: string; threadMissing?: boolean } | { error: string } | null;
   email: { to: string[]; cc?: string[]; failed: { email: string; error: string }[]; subject: string } | null;
   error?: string;
   needsConnect?: boolean;
@@ -155,20 +157,25 @@ export async function deliver(admin: SupabaseClient, sent: SendArgs): Promise<Se
   let needsConnect = false;
 
   if (d.channels.includes("slack")) {
-    if (!a.client.slack_channel_id) slack = { error: "This client has no Slack channel set." };
+    // Where the buyer chose (another channel, a standing thread), else the client's channel as a new message
+    const where = d.slack ?? null;
+    const channelId = where?.channel || a.client.slack_channel_id;
+    const thread = where?.thread ?? undefined;
+    const broadcast = Boolean(where?.broadcast);
+    if (!channelId) slack = { error: "This client has no Slack channel set." };
     else {
       const dash = dashboardOf(a.client);
       const text = `${a.message.trim()}${dash && !a.message.includes(dash) ? `\n\n<${dash}|See every number on your live dashboard>` : ""}`;
-      let out = a.slackAs === "app" ? await postAsApp({ channel: a.client.slack_channel_id, text, pdf: a.pdf }) : await postAsUser(a.slackUserId ?? a.by.id, { channel: a.client.slack_channel_id, text, pdf: a.pdf });
+      let out = a.slackAs === "app" ? await postAsApp({ channel: channelId, text, pdf: a.pdf, thread, broadcast }) : await postAsUser(a.slackUserId ?? a.by.id, { channel: channelId, text, pdf: a.pdf, thread, broadcast });
       if (!out.ok && "needsConnect" in out && out.needsConnect) needsConnect = true;
       // A joint report that couldn't attach its PDF still goes, from the app (and so does a built one whose buyer can't post)
       let viaApp = a.slackAs === "app";
       if (!out.ok && (a.slackAs === "app" || a.appFallback != null)) {
-        out = await postAsApp({ channel: a.client.slack_channel_id, text: wl ? forClient(`${text}${a.appFallback ?? ""}`, true) : `${text}${a.appFallback ?? ""}` });
+        out = await postAsApp({ channel: channelId, text: wl ? forClient(`${text}${a.appFallback ?? ""}`, true) : `${text}${a.appFallback ?? ""}`, thread, broadcast });
         viaApp = true;
       }
       if (out.ok) {
-        slack = { channel: out.channel, ts: out.ts, as: viaApp ? "app" : "buyer" };
+        slack = { channel: out.channel, ts: out.ts, as: viaApp ? "app" : "buyer", ...(out.thread ? { thread: out.thread } : {}), ...(out.threadMissing ? { threadMissing: true } : {}) };
         went.push("slack");
       } else slack = { error: out.error };
     }
@@ -247,7 +254,11 @@ export function sentNote(o: SendOutcome, clientName: string) {
   const where = channelsLabel(o.went);
   const to = o.email?.to.length ? ` to ${o.email.to.join(", ")}${o.email.cc?.length ? ` (copying ${o.email.cc.join(", ")})` : ""}` : "";
   const base = o.went.length ? `Sent to ${clientName} by ${where.toLowerCase()}${o.went.includes("email") ? to : ""}.` : "It didn't go out.";
-  return o.error ? `${base} ${o.error}` : base;
+  const s = o.slack && "channel" in o.slack ? o.slack : null;
+  // The standing thread was gone: it went to the channel itself, and the buyer hears it
+  const thread = s?.threadMissing ? " The Slack thread it was set to go in is gone, so it posted in the channel instead: pick the new thread on the send step." : s?.thread ? " It went in the thread." : "";
+  const out = `${base}${thread}`;
+  return o.error ? `${out} ${o.error}` : out;
 }
 
 export type SendRow = {
