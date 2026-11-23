@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CallCopyDoc } from "@/lib/agent-call/core";
 import { findOrCreateFolder, folderIdOf } from "@/lib/creative-drive-paths";
-import { changedLines, copyLines, COPY_SCHEMA, docKindsFor, copyDocHtml, copyDocName, EMAIL_FOLDER, normalizeCopy, setCopyLine, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
+import { changedLines, copyFieldProblems, copyLines, COPY_SCHEMA, liftSectionLabels, docKindsFor, copyDocHtml, copyDocName, EMAIL_FOLDER, normalizeCopy, setCopyLine, toLooseCopy, type CopyComment, type CopyContent, type CopyStatus } from "./core";
 
 // Copy documents on the server: saved (each change a new version, the old ones kept), read through the person's own
 // session, revised by the AI copywriter from a note or the open comments, approved into a Google Doc in the client's
@@ -93,7 +93,9 @@ export function copyCard(d: CopyDoc): CallCopyDoc {
  * that changes goes back to a draft: the new words need approving again.
  */
 export async function saveCopyDoc(admin: Admin, db: SupabaseClient, me: Me, p: { client: { id: string } | null; loose: Record<string, unknown>; id?: string | null; why?: string | null; callId?: string | null; origin?: Record<string, unknown> | null }): Promise<CopyDoc> {
-  const content = normalizeCopy(p.loose);
+  // Headlines are copy, never section labels ("Hero", "Intro", "Next"): lifted where the writer put the headline in the
+  // body, and any email still short of real copy is rewritten before the document is saved
+  const content = await realHeadlines(admin, liftSectionLabels(normalizeCopy(p.loose)), p.client?.id ?? null);
   if (!content.emails.length) throw new Error("Write at least one email (subject, preview text, sections, button).");
   const now = new Date().toISOString();
   if (p.id) {
@@ -116,6 +118,32 @@ export async function saveCopyDoc(admin: Admin, db: SupabaseClient, me: Me, p: {
     .single();
   if (error || !data) throw new Error("The copy didn't save. Try again.");
   return rowToDoc(data as unknown as Record<string, unknown>);
+}
+
+/**
+ * The emails whose Headline, Sub-headline or block headlines aren't real copy, rewritten by the copywriter (only those
+ * emails, only those fields, from the copy already there). Throws when it still can't, so the writer (or the call's
+ * agent) writes it again rather than a document with "Headline: Hero" reaching the designer.
+ */
+async function realHeadlines(admin: Admin, c: CopyContent, clientId: string | null): Promise<CopyContent> {
+  const bad = copyFieldProblems(c);
+  if (!bad.length) return c;
+  const { askJson } = await import("@/lib/ai");
+  const out = await askJson<Record<string, unknown>>({
+    agent: "email_copy",
+    label: "copy doc headline repair",
+    clientId,
+    schema: COPY_SCHEMA,
+    maxTokens: 12000,
+    system: `You are Kaizen Marketing's email copywriter fixing a copy document before it goes to the designer. In each email the first section is the hero: its heading is the Headline (customer-facing copy, e.g. "Where the land meets the sea") and its body is the Sub-headline. Every other section's heading is that block's real headline. A heading is never the section's role or a label (Hero, Intro, The idea, The feel, Next, Close, CTA, Block): write a real headline from that section's own copy. Fix only the problems listed; keep every other word as it is. Return the whole document. No em dashes.`,
+    prompt: `<copy kind="${c.kind}">\n${JSON.stringify(toLooseCopy(c))}\n</copy>\n\n<problems>\n${bad.map((b) => `Email ${b.email + 1} (${c.emails[b.email]?.name}): ${b.problems.join("; ")}`).join("\n")}\n</problems>`,
+  });
+  const fixed = liftSectionLabels(normalizeCopy({ ...out, kind: c.kind }));
+  // Only the emails that had problems take the rewrite; the rest stay exactly as written
+  const merged: CopyContent = { ...c, emails: c.emails.map((e, i) => (bad.some((b) => b.email === i) && fixed.emails[i] ? fixed.emails[i] : e)) };
+  const still = copyFieldProblems(merged);
+  if (still.length) throw new Error(`The copy still has section labels or missing headlines where the designer needs real copy (${still.map((b) => `email ${b.email + 1}: ${b.problems.join(", ")}`).join("; ")}). Write each Headline, Sub-headline and block headline as customer-facing copy.`);
+  return merged;
 }
 
 /** What changed in the latest version (anchors), for the view's highlights */
@@ -185,7 +213,7 @@ export async function learnFromCopyFeedback(admin: Admin, feedbackId: string) {
 // ─── Revising with the AI copywriter ────────────────────────────────────────
 
 const REVISE_SYSTEM = `You are Kaizen Marketing's email copywriter, working with the Email Strategist. You revise campaign, flow and SMS copy for the email team (never a message to a person): keep what works, change exactly what's asked, and keep the client's voice and rules (claims, discounts, words to avoid, imagery rules like real photos only).
-Each email: a subject under 55 characters, preview text that adds to the subject, the body as short sections written to be designed (a hero headline and line, then short sections), one button, and design notes for the designer. Texts: body only, under 160 characters, the brand name first, one {link}.
+Each email: a subject under 55 characters, preview text that adds to the subject, the body as sections written to be designed (the first is the hero: its heading is the Headline and its body the Sub-headline; then each block with a real headline and its copy; every heading is customer-facing copy, never a label like Hero, Intro, The idea or Next), one button, and design notes for the designer. Texts: body only, under 160 characters, the brand name first, one {link}.
 Return the whole document, every email, changed or not. Roles, never names. No em dashes. No emojis unless the client's own emails use them.`;
 
 /** The AI copywriter's next version: from a note ("make the subject punchier"), the open comments, or both */

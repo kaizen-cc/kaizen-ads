@@ -103,6 +103,67 @@ export function normalizeCopy(input: Record<string, unknown>): CopyContent {
   };
 }
 
+// ─── Headlines, never section labels ──────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A section's role or label written where the headline goes ("Hero", "Intro", "The idea", "Next", "CTA", "Block 2"):
+ * never customer-facing copy. The designer gets it as "Headline: Hero" otherwise.
+ */
+export const SECTION_LABEL = /^(?:the\s+)?(?:hero(?:\s+section)?|intro(?:duction)?|idea|feel|vibe|next(?:\s+steps?)?|close|closing|outro|opening|cta|call\s+to\s+action|button|header|headline|sub-?headline|body|body\s+copy|copy|footer|main|story|offer|section(?:\s*\d+)?|block(?:\s*\d+)?|ps|p\.s\.|sign[-\s]?off|signature|image|visual|banner|summary|recap|details|info)\s*:?$/i;
+export const isSectionLabel = (heading: string) => SECTION_LABEL.test(heading.trim());
+
+/**
+ * Labels out of the copy, where it can be done without rewriting: a labelled hero whose body is one short line (the
+ * writer put the headline in the body) gets that line as its Headline, and a labelled section right after it gives its
+ * copy as the Sub-headline. Other labelled headings are cleared (the label kept as a design note).
+ */
+export function liftSectionLabels(c: CopyContent): CopyContent {
+  if (!(c.kind === "campaign" || c.kind === "flow")) return c;
+  const short = (t: string) => t.length <= 90 && t.split(/\s+/).length <= 12 && !/\n/.test(t);
+  return {
+    ...c,
+    emails: c.emails.map((e) => {
+      const sections = e.sections.map((x) => ({ ...x }));
+      const notes = [...e.designNotes];
+      const hero = sections[0];
+      if (hero && isSectionLabel(hero.heading) && hero.body && short(hero.body)) {
+        hero.heading = hero.body;
+        hero.body = "";
+        const next = sections[1];
+        if (next && isSectionLabel(next.heading)) {
+          hero.body = next.body;
+          sections.splice(1, 1);
+        }
+      }
+      for (const x of sections) {
+        if (x.heading && isSectionLabel(x.heading)) {
+          notes.push(`Block "${x.heading}"`);
+          x.heading = "";
+        }
+      }
+      return { ...e, sections: sections.filter((x) => x.heading || x.body), designNotes: [...new Set(notes)].slice(0, 12) };
+    }),
+  };
+}
+
+/** The emails whose copy fields still aren't real copy: a hero with no Headline or Sub-headline, a labelled or missing block headline */
+export function copyFieldProblems(c: CopyContent): { email: number; problems: string[] }[] {
+  if (!(c.kind === "campaign" || c.kind === "flow")) return [];
+  return c.emails
+    .map((e, i) => {
+      const p: string[] = [];
+      const [hero, ...rest] = e.sections;
+      if (!hero?.heading || isSectionLabel(hero.heading)) p.push("the Headline is missing or a label");
+      if (!hero?.body) p.push("the Sub-headline is missing");
+      rest.forEach((x, j) => {
+        if (!x.heading || isSectionLabel(x.heading)) p.push(`block ${j + 1} has no real headline`);
+      });
+      if (!e.subject) p.push("no subject line");
+      return { email: i, problems: p };
+    })
+    .filter((x) => x.problems.length);
+}
+
 /** Back to the loose shape the tool takes (a revision starts from the current content) */
 export function toLooseCopy(c: CopyContent): Record<string, unknown> {
   return {
@@ -502,7 +563,19 @@ export const COPY_EMAIL_SCHEMA = {
     timing: { type: "string", description: "A flow step's timing (Right away, 2 days later); a campaign's send if it differs" },
     subject: { type: "string", description: "Under 55 characters; empty for a text" },
     preview: { type: "string", description: "Preview text that adds to the subject; empty for a text" },
-    sections: { type: "array", items: { type: "object", properties: { heading: { type: "string" }, body: { type: "string" } }, required: ["heading", "body"], additionalProperties: false }, description: "The body in order: a hero headline and line, then short sections, written to be designed" },
+    sections: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          heading: { type: "string", description: "The headline the reader sees, as customer-facing copy (\"Where the land meets the sea\"). Never the section's role or a label (Hero, Intro, The idea, Next, CTA): a note for the designer goes in design_notes" },
+          body: { type: "string", description: "The copy under that headline. In the first section (the hero) it's the sub-headline" },
+        },
+        required: ["heading", "body"],
+        additionalProperties: false,
+      },
+      description: "The email in order. The first section is the hero: its heading is the Headline and its body the Sub-headline. Then each block: a real headline and its copy",
+    },
     cta: { type: "object", properties: { label: { type: "string" }, url: { type: "string" } }, required: ["label", "url"], additionalProperties: false },
     design_notes: { ...LIST, description: "For the designer: layout, imagery ([real photos only] etc.), where the button sits" },
   },

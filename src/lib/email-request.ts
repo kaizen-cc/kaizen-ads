@@ -213,7 +213,7 @@ export async function planEmails(admin: Db, clientId: string, input: { kind: Ema
 // ─── The copywriter's copy document ─────────────────────────────────────────
 
 const WRITE_SYSTEM = `You are Kaizen Marketing's email copywriter, working with the Email Strategist. You write the whole copy document for one request from the plan you're given: every campaign in the batch, or every message of the flow, in order.
-Each email: a subject under 55 characters, preview text that adds to the subject, the body as short sections written to be designed (a hero headline and line, then short sections), one button with its link (the client's website page when known), and design notes for the designer. Texts: body only (one section), under 160 characters, the brand name first, one {link}.
+Each email: a subject under 55 characters, preview text that adds to the subject, the body as sections written to be designed (the first is the hero: its heading is the Headline and its body the Sub-headline; then each block with a real headline and its copy; every heading is customer-facing copy, never a label like Hero, Intro, The idea or Next), one button with its link (the client's website page when known), and design notes for the designer. Texts: body only (one section), under 160 characters, the brand name first, one {link}.
 Keep the client's voice and rules (claims, discounts, words to avoid, imagery rules like real photos only). Roles, never names. No em dashes. No emojis unless the client's own emails use them.`;
 
 /** The Copywriter writes the request's copy from the plan, as a new copy document (or the next version of one) */
