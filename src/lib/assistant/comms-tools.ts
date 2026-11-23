@@ -16,6 +16,7 @@ import { addressOf, reSubject, rawEmail, replyTo, slackPlace } from "./messages"
 import { attachNote, draftFiles, fileViews, mailFiles } from "@/lib/documents/attach";
 import { composeLinks } from "@/lib/email-drafts/core";
 import { teammateTitle, type TeammateKind } from "./teammates";
+import { channelKey, groupDmIds, isJustMe, slackChannelPlace, slackGroupPlace, tagMentions } from "./platform-drafts-core";
 import { placeCallDraft } from "./platform-drafts";
 import { slackDmPlace, slackNewPlace } from "./platform-drafts-core";
 
@@ -170,6 +171,76 @@ async function teammateSlackId(ctx: CommsCtx, profileId: string): Promise<string
   const found = await findSlackUser(String(p.email)).catch(() => null);
   if (found?.id) await ctx.admin.from("profiles").update({ slack_user_id: found.id }).eq("id", profileId);
   return found?.id ?? null;
+}
+
+/**
+ * Someone to DM, by name: a teammate (name or role), else a client contact (the client's, when one is named), found in
+ * Slack by their email (a Slack Connect guest or a member of a shared channel)
+ */
+async function slackPersonNamed(ctx: CommsCtx, name: string, client: { id: string; name: string } | null): Promise<{ ok: true; person: { id: string; name: string } } | { ok: false; note: string; options?: string[] }> {
+  const r = await recipientFor(ctx.admin, { to: name, client: null, agentRole: null, exclude: ctx.me.id });
+  if (r.ok) {
+    const id = await teammateSlackId(ctx, r.to.id);
+    if (!id) return { ok: false, note: `${r.to.name} isn't found in Slack (no Slack account matches their work email). Say so in a sentence.` };
+    return { ok: true, person: { id, name: firstNameOf(r.to.name) } };
+  }
+  if (r.options?.length) return { ok: false, note: r.note, options: r.options };
+  // A client contact: their email, then their Slack user
+  let q = ctx.db.from("contact_clients").select("client_id, contacts(full_name, email)").is("removed_at", null);
+  if (client) q = q.eq("client_id", client.id);
+  const { data } = await q.limit(400);
+  const want = name.toLowerCase();
+  const hits = ((data ?? []) as unknown as { contacts: { full_name: string | null; email: string | null } | null }[])
+    .map((x) => x.contacts)
+    .filter((c): c is { full_name: string; email: string } => Boolean(c?.full_name && c.email))
+    .filter((c) => c.full_name.toLowerCase() === want || c.full_name.toLowerCase().split(/\s+/)[0] === want);
+  const unique = [...new Map(hits.map((h) => [h.email.toLowerCase(), h])).values()];
+  if (unique.length > 1) return { ok: false, note: "More than one contact has that name: ask which (and the client) in a few words.", options: unique.map((h) => h.full_name) };
+  if (!unique.length) return { ok: false, note: `No teammate or client contact called "${name}" is on file. Ask who they meant in a few words.` };
+  const { findSlackUser } = await import("@/lib/profile-slack");
+  const found = await findSlackUser(unique[0].email).catch(() => null);
+  if (!found?.id) return { ok: false, note: `${unique[0].full_name} isn't in Slack with us (no Slack account matches their email). Offer an email instead.` };
+  return { ok: true, person: { id: found.id, name: unique[0].full_name.split(/\s+/)[0] } };
+}
+
+/** A channel as said ("the OO channel", "La Jetée's internal channel"): the client's own channels first, then by name */
+async function channelNamed(ctx: CommsCtx, said: string, client: { id: string; name: string } | null): Promise<{ id: string; name: string } | null> {
+  if (client) {
+    const { data: c } = await ctx.db.from("clients").select("slack_channel_id, internal_slack_channel_id").eq("id", client.id).maybeSingle();
+    const internal = /\binternal\b/i.test(said);
+    const id = (internal ? c?.internal_slack_channel_id : c?.slack_channel_id) as string | null | undefined;
+    if (id) return { id, name: `${client.name}${internal ? " internal" : ""}` };
+  }
+  const key = channelKey(said);
+  if (!key) return null;
+  const { listChannels } = await import("@/lib/context/slack");
+  const all = await listChannels().catch(() => []);
+  const hit = all.find((ch) => ch.name === key) ?? all.find((ch) => ch.name.replace(/-/g, "") === key.replace(/-/g, ""));
+  return hit ? { id: hit.id, name: hit.name } : null;
+}
+
+/** A new group DM opened as the person (conversations.open with their own token; needs mpim:write) */
+async function openGroupDm(ctx: CommsCtx, users: string[]): Promise<{ ok: true; channel: string } | { ok: false; answer: Record<string, unknown> }> {
+  const { slackUserToken, slackRead } = await import("@/lib/slack-user");
+  const t = await slackUserToken(ctx.me.id);
+  if (!t) return { ok: false, answer: await connectSlack(ctx, "missing") };
+  const r = await slackRead<{ ok: boolean; error?: string; channel?: { id: string } }>(t.token, "conversations.open", { users: users.join(",") });
+  if (r.ok && r.channel?.id) return { ok: true, channel: r.channel.id };
+  if (r.error === "missing_scope") {
+    const { needsConnection } = await import("@/lib/personal-connections-core");
+    const n = needsConnection("slack", "missing_scope", { missing: ["mpim:write"], what: "start a group DM as you" });
+    const link = `/api/slack/connect?read=1&dm=1&next=${encodeURIComponent("/connected?service=slack")}`;
+    ctx.emit?.({ t: "card", card: { id: "connect-slack", title: "Reconnect your Slack", detail: "So I can start group DMs as you", href: link, external: true, cta: "Reconnect", connect: { service: "slack" } } });
+    return { ok: false, answer: { ...n, needs_connection: { ...n.needs_connection, link }, note: "Starting a group DM needs one more Slack permission: say so in a sentence, the Reconnect card is on screen. If Slack refuses it, an admin adds im:write and mpim:write to the Slack app first (they've been told). The draft stays on screen to copy meanwhile." } };
+  }
+  return { ok: false, answer: { error: `Slack couldn't open the group DM (${r.error ?? "no reason given"}).` } };
+}
+
+/** @Name for teammates in Slack as real mentions */
+async function withMentions(ctx: CommsCtx, text: string): Promise<string> {
+  if (!text.includes("@")) return text;
+  const { data } = await ctx.admin.from("profiles").select("full_name, slack_user_id").eq("is_active", true).not("slack_user_id", "is", null);
+  return tagMentions(text, ((data ?? []) as { full_name: string | null; slack_user_id: string }[]).map((p) => ({ name: p.full_name ?? "", slackId: p.slack_user_id })));
 }
 
 /** An email thread's last message, for a reply that stays in it (read with the read-only token) */
@@ -360,8 +431,8 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           from: { type: "string", description: "Who wrote the message being replied to, as said" },
           about: { type: "string", description: "What the thread is about, a few words" },
           text: { type: "string", description: "The message, as it will be sent" },
-          dm: { type: "string", description: "Slack only: a teammate's name (or role) for a new direct message to them, not a reply in a thread" },
-          new_for: { type: "string", description: "Slack only: a new message that isn't a reply or a DM, where it's meant to go as said (\"the OO channel\"), or \"me\" when it's just for them to copy" },
+          dm: { type: "string", description: "Slack only: who a new direct message is to: a teammate's name or role, or a client contact's name (with client); several names (\"Jesus and Dana\") start a group DM. Not a reply in a thread" },
+          new_for: { type: "string", description: "Slack only: a new top-level message in a channel, as said (\"the OO channel\", \"#email-team\", \"La Jetée's internal channel\" with client), sent there as them on their yes; or \"me\" when it's just for them to copy. Tag teammates in the text with @Name" },
           to: { type: "string", description: "A new email's address (not a reply)" },
           subject: { type: "string", description: "A new email's subject" },
           attach: { type: "array", items: { type: "string" }, description: "An email only: document_id(s) from create_document whose PDF goes with it" },
@@ -380,19 +451,28 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         const id = crypto.randomUUID().slice(0, 12);
         let d: Draft;
         const fresh = channel === "email" && clip(input.to, 200) && !input.thread;
-        const dm = channel === "slack" && !input.thread ? clip(input.dm, 80) : "";
+        const dm = channel === "slack" && !input.thread ? clip(input.dm, 160) : "";
         if (dm) {
-          // A new DM to a teammate: found by name or role, then their Slack user; sent as the person on their yes
-          const r = await recipientFor(ctx.admin, { to: dm, client: null, agentRole: null, exclude: ctx.me.id });
-          if (!r.ok) return { drafted: false, note: r.note, ...(r.options ? { options: r.options } : {}) };
-          const place = slackDmPlace((await teammateSlackId(ctx, r.to.id)) ?? "", firstNameOf(r.to.name));
-          if (!place) return { drafted: false, note: `${r.to.name} isn't found in Slack (no Slack account matches their work email). Say so in a sentence.` };
-          if (!text) return { drafted: false, note: `Write the message to ${firstNameOf(r.to.name)}, then draft it again.` };
+          // A new DM (or, with several names, a group DM): each a teammate by name or role, else a client contact;
+          // their Slack users found; sent as the person on their yes
+          const names = dm.split(/\s*(?:,|&|\band\b|\+)\s*/i).map((x) => x.trim()).filter(Boolean).slice(0, 8);
+          const people: { id: string; name: string }[] = [];
+          for (const n of names) {
+            const p = await slackPersonNamed(ctx, n, client);
+            if (!p.ok) return { drafted: false, note: p.note, ...(p.options ? { options: p.options } : {}) };
+            people.push(p.person);
+          }
+          const place = people.length > 1 ? slackGroupPlace(people) : slackDmPlace(people[0]?.id ?? "", people[0]?.name ?? "");
+          if (!place) return { drafted: false, note: "They aren't found in Slack. Say so in a sentence." };
+          if (!text) return { drafted: false, note: `Write the message, then draft it again.` };
           d = { kind: "draft", id, done: true, channel, slack: place, text, client: client?.name ?? null, at: new Date().toISOString() };
         } else if (channel === "slack" && !input.thread && clip(input.new_for, 80)) {
-          // A new message for them to post themselves: tied to no thread, so their self-DM copy carries no label
+          // A new top-level message: in the channel named when it's found (sent there as them on their yes), else a
+          // message for them to post themselves (no thread, so their self-DM copy carries no label)
           if (!text) return { drafted: false, note: "Write the message, then draft it again." };
-          d = { kind: "draft", id, done: true, channel, slack: slackNewPlace(clip(input.new_for, 80)), text, client: client?.name ?? null, at: new Date().toISOString() };
+          const said = clip(input.new_for, 80);
+          const ch = isJustMe(said) ? null : await channelNamed(ctx, said, client);
+          d = { kind: "draft", id, done: true, channel, slack: ch ? slackChannelPlace(ch.id, ch.name) : slackNewPlace(said), text, client: client?.name ?? null, at: new Date().toISOString() };
         } else if (fresh) {
           const to = clip(input.to, 200);
           if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addressOf(to))) return { drafted: false, note: "That isn't an email address. Look it up with find_email_address first; ask only if it finds nothing." };
@@ -484,7 +564,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
     },
     {
       name: "send_message",
-      description: `Sends a drafted message (draft_message) as ${from}, after they clearly said yes to it on this turn (or tapped Approve on the card): a Slack reply posted as them in the exact thread, or a new DM to the teammate from them (their Slack must be connected), or an email reply in the Gmail thread from their mailbox. If sending as them isn't possible it says what happened instead (Slack: how to connect; email: saved as a Gmail draft, else the card's copy button). The text on the card is what's sent (they may have edited it).`,
+      description: `Sends a drafted message (draft_message) as ${from}, after they clearly said yes to it on this turn (or tapped Approve on the card): a Slack reply posted as them in the exact thread, a new DM or group DM from them (to teammates or client contacts), a new message in the channel named (with @mentions), all as them (their Slack must be connected), or an email reply in the Gmail thread from their mailbox. If sending as them isn't possible it says what happened instead (Slack: how to connect; email: saved as a Gmail draft, else the card's copy button). The text on the card is what's sent (they may have edited it).`,
       input_schema: { type: "object", properties: { draft_id: { type: "string", description: "The draft's id (leave out for the latest draft on this call)" }, confirmed: CONFIRMED }, additionalProperties: false },
       status: () => "Sending it…",
       run: async (input) => {
@@ -497,7 +577,16 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         if (d.slack && !d.slack.channel) return { sent: false, note: "A new message with no channel to send it to from here: put it in their Slack with save_draft (no yes needed) for them to post." };
         if (d.slack) {
           const { postAsUser } = await import("@/lib/slack-user");
-          const r = await postAsUser(ctx.me.id, { channel: d.slack.channel, text: d.text, thread: d.slack.thread ?? undefined });
+          // A new group DM: opened as them first (needs mpim:write on their Slack connection)
+          let target = d.slack.channel;
+          const group = groupDmIds(target);
+          if (group) {
+            const opened = await openGroupDm(ctx, group);
+            if (!opened.ok) return { sent: false, ...opened.answer };
+            target = opened.channel;
+          }
+          // @Name in the text: real mentions
+          const r = await postAsUser(ctx.me.id, { channel: target, text: await withMentions(ctx, d.text), thread: d.slack.thread ?? undefined });
           if (!r.ok) {
             if (r.needsConnect) {
               const n = await connectSlack(ctx, "reconnect");

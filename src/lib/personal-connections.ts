@@ -122,6 +122,26 @@ export function showConnect(emit: ((e: CallEvent) => void) | undefined, n: Needs
   if (card && emit) emit({ t: "card", card });
 }
 
+/** Slack refused the DM-starting scopes at sign-in: the executives hear once what to add */
+export async function tellExecsSlackScopes(admin: SupabaseClient, which: "dm") {
+  void which;
+  const { data } = await admin.from("profiles").select("id").eq("is_exec", true).eq("is_active", true);
+  const ids = ((data ?? []) as { id: string }[]).map((p) => p.id);
+  if (!ids.length) return;
+  await admin.from("notifications").upsert(
+    ids.map((id) => ({
+      profile_id: id,
+      kind: "setup",
+      title: "Starting Slack group DMs needs one setting in the Slack app",
+      body: "Assistants can't start a new group DM as someone yet: Slack refused the permission. In api.slack.com/apps > Kaizen OS > OAuth & Permissions > User Token Scopes, add im:write and mpim:write. Then the group-DM card's Reconnect works.",
+      href: "/settings?tab=connections&section=yours",
+      key: "slack:dm-scopes-refused",
+      priority: "normal",
+    })),
+    { onConflict: "profile_id,key", ignoreDuplicates: true },
+  );
+}
+
 /** Slack refused the reading scopes at sign-in (the Slack app doesn't list them yet): the executives hear once */
 export async function tellExecsSlackReadScopes(admin: SupabaseClient) {
   const { data } = await admin.from("profiles").select("id").eq("is_exec", true).eq("is_active", true);

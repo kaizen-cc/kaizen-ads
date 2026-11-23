@@ -22,6 +22,9 @@ export const SLACK_USER_SCOPES = "chat:write,files:write,files:read";
  * ?read=1 (/api/slack/connect?read=1). The admin adds these to the app's User Token Scopes first, once:
  * search:read, channels:history, groups:history, im:history, mpim:history.
  */
+/** Starting a new DM or group DM as them (conversations.open): asked for only with ?dm=1 until the Slack app lists them */
+export const SLACK_DM_SCOPES = "im:write,mpim:write";
+
 export const SLACK_READ_SCOPES = "search:read,channels:history,groups:history,im:history,mpim:history,im:read,mpim:read";
 
 /** This person's own Slack token and what it may do (server only: never sent to the browser or the model) */

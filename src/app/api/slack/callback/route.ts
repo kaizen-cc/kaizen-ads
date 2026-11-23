@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   const jar = await cookies();
   const saved = jar.get("slack_oauth")?.value;
   jar.delete({ name: "slack_oauth", path: "/api/slack" }); // one use only
-  let started: { state?: string; next?: string; read?: boolean } = {};
+  let started: { state?: string; next?: string; read?: boolean; dm?: boolean } = {};
   try {
     started = saved ? JSON.parse(saved) : {};
   } catch {
@@ -26,6 +26,13 @@ export async function GET(request: Request) {
   const denied = url.searchParams.get("error");
   // Slack refused the reading scopes (the Slack app doesn't list them as User Token Scopes): connect for posting now,
   // and the executives hear once what to add in the Slack app
+  // The DM-starting scopes refused (the Slack app doesn't list im:write / mpim:write yet): connect with reading as
+  // before, and the executives hear what to add; reading is never lost for them
+  if (denied === "invalid_scope" && started.dm) {
+    const [{ createAdminClient }, { tellExecsSlackScopes }] = await Promise.all([import("@/lib/supabase/admin"), import("@/lib/personal-connections")]);
+    await tellExecsSlackScopes(createAdminClient(), "dm").catch(() => undefined);
+    return Response.redirect(`${url.origin}/api/slack/connect?next=${encodeURIComponent(withParams(url.origin, next, { slack_dm: "unavailable" }).slice(url.origin.length))}`, 302);
+  }
   if (denied === "invalid_scope" && started.read !== false) {
     const [{ createAdminClient }, { tellExecsSlackReadScopes }] = await Promise.all([import("@/lib/supabase/admin"), import("@/lib/personal-connections")]);
     await tellExecsSlackReadScopes(createAdminClient()).catch(() => undefined);

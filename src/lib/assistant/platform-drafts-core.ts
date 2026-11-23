@@ -66,7 +66,57 @@ export function slackDmPlace(slackUserId: string, name: string): { channel: stri
   return { channel: id, thread: null, where: `a DM to ${name.trim() || "them"}` };
 }
 
+/** A new group DM with several people ("mpim:U1,U2"): opened as the person when it's sent (conversations.open) */
+export function slackGroupPlace(people: readonly { id: string; name: string }[]): { channel: string; thread: null; where: string } | null {
+  const ok = people.filter((p) => /^[UW][A-Z0-9]{6,}$/.test(p.id.trim()));
+  const ids = [...new Set(ok.map((p) => p.id.trim()))];
+  if (ids.length < 2) return null;
+  const names = ok.map((p) => p.name.trim() || "them");
+  return { channel: `mpim:${ids.join(",")}`, thread: null, where: `a group DM with ${names.length > 2 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names.join(" and ")}` };
+}
+
+/** The people of a group DM still to open, from its stored place; null for anything else */
+export const groupDmIds = (channel: string) => (channel.startsWith("mpim:") ? channel.slice(5).split(",").filter(Boolean) : null);
+
+/** A new top-level message in a channel they're in (#name) */
+export const slackChannelPlace = (id: string, name: string) => ({ channel: id, thread: null, where: `#${name.replace(/^#/, "")}` });
+
+/** How a channel is said ("the OO channel", "#oo-team") to how it's named in Slack ("oo-team"), for matching */
+export const channelKey = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/^the\s+/, "")
+    .replace(/\s+channel$/, "")
+    .replace(/^#/, "")
+    .trim()
+    .replace(/[\s_]+/g, "-");
+
+/** Names someone tagged ("@Dana", "@Dana Kim") as real Slack mentions (<@U123>), longest names first, once each place */
+export function tagMentions(text: string, people: readonly { name: string; slackId: string }[]): string {
+  const byName: { label: string; id: string }[] = [];
+  for (const p of people) {
+    if (!/^[UW][A-Z0-9]{6,}$/.test(p.slackId)) continue;
+    const full = p.name.trim();
+    if (!full) continue;
+    byName.push({ label: full, id: p.slackId });
+    const first = full.split(/\s+/)[0];
+    if (first && first !== full) byName.push({ label: first, id: p.slackId });
+  }
+  // A first name two people share isn't tagged by itself (ambiguous)
+  const count = new Map<string, number>();
+  for (const b of byName) count.set(b.label.toLowerCase(), (count.get(b.label.toLowerCase()) ?? 0) + (b.label.includes(" ") ? 0 : 1));
+  const usable = byName.filter((b) => b.label.includes(" ") || count.get(b.label.toLowerCase()) === 1).sort((a, b) => b.label.length - a.label.length);
+  let out = text;
+  for (const b of usable) {
+    const esc = b.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`(^|[^<\\w])@${esc}(?![\\w])`, "gi"), (_m, pre: string) => `${pre}<@${b.id}>`);
+  }
+  return out;
+}
+
 const JUST_ME = /^(?:me|myself|just me|my (?:own )?(?:slack|dms?|self[- ]?dms?|messages))$/i;
+/** Whether a "where it's meant to go" is just them (a copy for themselves), not a channel */
+export const isJustMe = (s: string) => JUST_ME.test(s.trim());
 
 /**
  * A new Slack message that's neither a reply nor a DM (an announcement they'll post in a channel themselves, a note to
