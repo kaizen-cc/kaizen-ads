@@ -765,10 +765,12 @@ async function ownedDay(db: SupabaseClient, me: Staff, drafts: Draft[]): Promise
     transferredTo(admin, me.id, have).catch(() => []),
     leadItems(admin, me.id).catch(() => []),
     asanaCards(db, me.email).catch(() => []),
-    lead && line ? accounts(admin, [line], drafts, { execRule: false }).catch(() => []) : Promise.resolve([]),
+    lead && line ? accounts(admin, [line], drafts, { execRule: false, creativeSide: line === "creative" }).catch(() => []) : Promise.resolve([]),
     lead ? leadPulse(admin, me.id).catch(() => []) : Promise.resolve([]),
   ]);
-  return [...mine, ...moved, ...team, ...[...asana, ...lineAccounts, ...pulse].map(cardToDraft)].map(inBlock);
+  // A lead's "step in" never repeats an account item they already own (the Head of Creative owns allotments behind)
+  const ownAccounts = lineAccounts.filter((c) => !have.has(stableKeyOf(c.key.replace(/^step:/, ""))));
+  return [...mine, ...moved, ...team, ...[...asana, ...ownAccounts, ...pulse].map(cardToDraft)].map(inBlock);
 }
 
 /**

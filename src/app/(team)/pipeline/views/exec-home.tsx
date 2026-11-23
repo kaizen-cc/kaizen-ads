@@ -129,7 +129,9 @@ export function Blocks({ blocks }: { blocks: BlockDef[] }) {
             </button>
             {isOpen && (
               <div className="border-t border-ink/[0.07] p-3 md:p-5" style={{ animation: "block-in .3s cubic-bezier(.2,.8,.2,1) both" }}>
-                {bl.panel ?? <BlockItems id={bl.id} cards={bl.cards ?? []} empty={bl.empty?.line ?? "Nothing here right now."} note={bl.note} />}
+                {/* The block's items, then what the role already had for it, folded in (their clients, the board) */}
+                {(bl.cards?.length || !bl.panel) && <BlockItems id={bl.id} cards={bl.cards ?? []} empty={bl.empty?.line ?? "Nothing here right now."} note={bl.note} />}
+                {bl.panel && <div className={bl.cards?.length ? "mt-5 border-t border-ink/[0.07] pt-5" : ""}>{bl.panel}</div>}
               </div>
             )}
           </section>

@@ -175,7 +175,8 @@ async function rung3Rows(admin: SupabaseClient, focus: readonly string[]): Promi
 // ─── Accounts ────────────────────────────────────────────────────────────────
 
 /** Which of the recap's account items belong to which focus line */
-function accountLine(d: TodayDraft): string | null {
+function accountLine(d: TodayDraft, creativeSide = false): string | null {
+  if (creativeSide) return d.key.startsWith("allot-behind:") || d.key.startsWith("fatigue:") ? "creative" : null;
   if (d.key.startsWith("kpi:")) return / Google/.test(d.title) ? "google" : / TikTok/.test(d.title) ? "tiktok" : "meta";
   if (d.key.startsWith("email-score:") || d.key.startsWith("email-pace:")) return "email";
   if (/^social-(drop|score|target|quiet):/.test(d.key)) return "social";
@@ -183,9 +184,9 @@ function accountLine(d: TodayDraft): string | null {
   return null;
 }
 
-export async function accounts(admin: SupabaseClient, focus: readonly string[], drafts: readonly TodayDraft[], opts: { execRule?: boolean } = { execRule: true }): Promise<ExecCard[]> {
+export async function accounts(admin: SupabaseClient, focus: readonly string[], drafts: readonly TodayDraft[], opts: { execRule?: boolean; creativeSide?: boolean } = { execRule: true }): Promise<ExecCard[]> {
   const mine = drafts
-    .map((d) => ({ d, line: accountLine(d) }))
+    .map((d) => ({ d, line: accountLine(d, opts.creativeSide) }))
     // Off target only (not "close to"), on a line in their focus
     .filter((x): x is { d: TodayDraft; line: string } => Boolean(x.line && (!focus.length || focus.includes(x.line)) && !(x.d.key.startsWith("kpi:") && / close to target/.test(x.d.title))));
   if (!mine.length) return [];

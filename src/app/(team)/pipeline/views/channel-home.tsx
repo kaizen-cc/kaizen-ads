@@ -29,7 +29,20 @@ const LOOK_AT = 30;
  *   Setup            the clients still to connect
  * It reads nothing from the ad tables.
  */
-export async function ChannelHome({ me, line, today, greeting, firstName, recap = null, work = null, workCount = 0, panelsOnly = false }: { panelsOnly?: boolean; me: Me; line: Line; today: string; greeting: string; firstName: string; /** Their day (the recap's way in), above their clients */ recap?: React.ReactNode; /** My work, under the day (no separate tab) */ work?: React.ReactNode; workCount?: number }) {
+export async function ChannelHome(props: ChannelProps) {
+  const { header, tabs, panels } = await channelTabs(props);
+  return (
+    <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
+      {header}
+      <OverviewTabs tabs={tabs} panels={panels} />
+    </div>
+  );
+}
+
+type ChannelProps = { me: Me; line: Line; today: string; greeting: string; firstName: string; /** Their day (the recap's way in), above their clients */ recap?: React.ReactNode; /** My work, under the day (no separate tab) */ work?: React.ReactNode; workCount?: number };
+
+/** The line's tabs and their panels, as data: everyone's block Overview folds them into its blocks (Nov 23 2026) */
+export async function channelTabs({ me, line, today, greeting, firstName, recap = null, work = null, workCount = 0 }: ChannelProps): Promise<{ header: React.ReactNode; tabs: { id: string; label: string; count?: number }[]; panels: Record<string, React.ReactNode> }> {
   const db = await createClient();
   const [board, owed] = await Promise.all([loadChannelBoard(db, line, me), owedByClient(db, me)]);
   const ids = board.rows.map((r) => r.clientId);
@@ -129,11 +142,14 @@ export async function ChannelHome({ me, line, today, greeting, firstName, recap 
   const header = <PageHeader today={today} title={`${greeting}, ${firstName}`} subtitle={`${roleLabel(me.role)} · ${total} ${total === 1 ? "client" : "clients"} · ${needs ? `${needs} ${needs === 1 ? "needs" : "need"} a look` : total ? "all steady today" : "no clients yet"}`} />;
 
   if (total === 0)
-    return (
-      <div className="mx-auto grid max-w-6xl gap-8">
-        {header}
-        {recap}
-        <section className="grid justify-items-start gap-3 rounded-[18px] border border-dashed border-line p-6 md:p-8">
+    return {
+      header,
+      tabs: [{ id: "clients", label: "Clients" }],
+      panels: {
+        clients: (
+          <>
+            {recap}
+            <section className="grid justify-items-start gap-3 rounded-[18px] border border-dashed border-line p-6 md:p-8">
           <p className="font-heading text-xl">No clients yet</p>
           <p className="max-w-prose text-sm text-muted">
             {channel} clients show here once they buy {line === "email" ? "Email Marketing" : "Social Media"} and you hold a seat on them. Heads see every client with the service.
@@ -142,8 +158,10 @@ export async function ChannelHome({ me, line, today, greeting, firstName, recap 
             Open the clients
           </Link>
         </section>
-      </div>
-    );
+          </>
+        ),
+      },
+    };
 
   const names = (rows: DeskRow[]) => rows.slice(0, 3).map((r) => `${r.name}${r.risk.reasons[0] ? `: ${r.risk.reasons[0].toLowerCase()}` : ""}`);
   // Today (with My work under it), Clients and Ideas: audits and sprints sit on each card, setup at the end of Clients
@@ -197,12 +215,5 @@ export async function ChannelHome({ me, line, today, greeting, firstName, recap 
     ideas: <IdeaDeck ideas={ideas} />,
   };
 
-  // Everyone's block Overview (Nov 23 2026): the line's tabs as blocks, under the person's own item blocks
-  if (panelsOnly) return <OverviewTabs asBlocks skip={["today", "work"]} tabs={tabs} panels={panels} />;
-  return (
-    <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
-      {header}
-      <OverviewTabs tabs={tabs} panels={panels} />
-    </div>
-  );
+  return { header, tabs, panels };
 }

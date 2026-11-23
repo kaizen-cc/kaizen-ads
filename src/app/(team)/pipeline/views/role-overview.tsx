@@ -59,13 +59,21 @@ function cardOf(i: TodayItem): ExecCard {
   };
 }
 
-export async function RoleOverview({ db, me, kind, base, subtitle, extras, panels, hidden }: { db: SupabaseClient; me: Staff; kind: RoleKind; base: { greeting: string; firstName: string; today: string }; subtitle: string; extras?: React.ReactNode; panels?: React.ReactNode; hidden: { key: string; how: string; label: string | null; href: string | null; hidden_at: string }[] }) {
+/** At most this many blocks for anyone (owner, Nov 23 2026): everything else folds into them */
+const MAX_BLOCKS = 6;
+
+export async function RoleOverview({ db, me, kind, base, subtitle, extras, folded = {}, own = [], hidden }: { db: SupabaseClient; me: Staff; kind: RoleKind; base: { greeting: string; firstName: string; today: string }; subtitle: string; extras?: React.ReactNode; /** What the role already had, inside the block it belongs to (their clients in My accounts, ideas in Ideas) */ folded?: Partial<Record<TopicKey, React.ReactNode>>; /** A block of the role's own (the support board, Tracking) */ own?: { id: string; label: string; blurb: string; node: React.ReactNode; count?: number }[]; hidden: { key: string; how: string; label: string | null; href: string | null; hidden_at: string }[] }) {
   const snap = await todaySnapshot(db, me);
   const byTopic = new Map<TopicKey, TodayItem[]>();
   for (const i of snap.today.items) byTopic.set(i.topic, [...(byTopic.get(i.topic) ?? []), i]);
-  const shown = [...new Set([...SETS[kind], ...[...byTopic.keys()].filter((t) => t !== "elsewhere" && t !== "system" && t !== "escalated")])].sort((a, b) => BLOCK_ORDER.indexOf(a) - BLOCK_ORDER.indexOf(b));
+  // The role's blocks, then any other block that has items (or something folded in), never more than six in all:
+  // anything past that joins Needs me
+  const extra = [...new Set([...byTopic.keys(), ...(Object.keys(folded) as TopicKey[])])].filter((t) => !SETS[kind].includes(t) && t !== "elsewhere" && t !== "system" && t !== "escalated");
+  const room = Math.max(0, MAX_BLOCKS - SETS[kind].length - own.length);
+  const shown = [...SETS[kind], ...extra.slice(0, room)].sort((a, b) => BLOCK_ORDER.indexOf(a) - BLOCK_ORDER.indexOf(b));
+  const spill = extra.slice(room).flatMap((t) => byTopic.get(t) ?? []);
   const blocks: BlockDef[] = shown.map((t) => {
-    const cards = (byTopic.get(t) ?? []).map(cardOf);
+    const cards = [...(byTopic.get(t) ?? []), ...(t === "needs" ? spill : [])].map(cardOf);
     return {
       id: t,
       label: LABEL[t] ?? TOPICS[t]?.label ?? t,
@@ -77,8 +85,10 @@ export async function RoleOverview({ db, me, kind, base, subtitle, extras, panel
       chips: itemChips(t, cards),
       empty: EMPTY[t],
       note: t === "pulse" ? "Your line at a glance. Nothing here is a to-do." : undefined,
+      panel: folded[t],
     };
   });
+  for (const o of own) blocks.push({ id: `p-${o.id}`, label: o.label, blurb: o.blurb, tone: BLOCK_TONE.panel, panel: o.node, ...(o.count != null ? { count: o.count } : {}) });
   return (
     <div className="mx-auto grid max-w-6xl gap-6 md:gap-8">
       <PageHeader today={base.today} title={`${base.greeting}, ${base.firstName}`} subtitle={subtitle} />
@@ -91,7 +101,6 @@ export async function RoleOverview({ db, me, kind, base, subtitle, extras, panel
       </Suspense>
       {extras}
       <Blocks blocks={blocks} />
-      {panels}
       <HiddenLog items={hidden.map((r) => ({ key: r.key, how: r.how as "done" | "dismissed", label: r.label, href: r.href, at: r.hidden_at }))} />
     </div>
   );

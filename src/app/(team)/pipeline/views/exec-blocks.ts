@@ -41,7 +41,11 @@ export function chips(tab: ExecTab, cards: ExecCard[]): string[] {
     ].filter((x): x is string => Boolean(x));
   if (tab === "accounts") {
     const by = new Map<string, number>();
-    for (const c of cards) by.set(c.line ?? "other", (by.get(c.line ?? "other") ?? 0) + 1);
+    const lineOf = (c: ExecCard) => c.line ?? (/^(step:)?kpi:/.test(c.key) ? "meta" : /^(step:)?email-/.test(c.key) ? "email" : /^(step:)?social-/.test(c.key) ? "social" : /^(step:)?(allot-behind|fatigue):/.test(c.key) ? "creative" : null);
+    for (const c of cards) {
+      const l = lineOf(c);
+      if (l) by.set(l, (by.get(l) ?? 0) + 1);
+    }
     const L: Record<string, string> = { meta: "Meta", google: "Google", tiktok: "TikTok", email: "Email", social: "Social", creative: "Creative" };
     return [...by.entries()].map(([l, k]) => `${k} ${L[l] ?? l}`);
   }

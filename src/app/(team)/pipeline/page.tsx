@@ -4,37 +4,25 @@ import { requireStaff, type Staff } from "@/lib/auth";
 import { greetingFor, todayLabel } from "@/lib/dates";
 import { loadHome } from "@/lib/home";
 import { lineOfTeam, roleLabel } from "@/lib/roles";
-import { ChannelHome } from "./views/channel-home";
+import { channelTabs } from "./views/channel-home";
 import { createClient } from "@/lib/supabase/server";
 import { HandoffCallout } from "@/components/handoff-callout";
 import { ReviewsCallout } from "@/components/reviews-callout";
 import { SupportDashboard } from "@/components/support-dashboard";
 import { StepinsSection } from "@/components/stepins/section";
 import { PageHeader } from "./views/shared";
-import { NextSection } from "./views/next-section";
-import { OverviewTabs } from "./views/overview-tabs";
 import { adsDesk, creativeDesk } from "./views/ads-desk";
-import { loadNextForMe } from "@/lib/next-for-me";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { todaySnapshot } from "@/lib/today-snapshot";
+import type { TopicKey } from "@/lib/today";
 import { MyDesk } from "./views/my-desk";
 import { RoleOverview } from "./views/role-overview";
 import { UnfinishedCallout } from "./views/unfinished-callout";
 import { isCustomerSuccess, isMaker } from "@/lib/maker-day-core";
 import { ReadyCallout } from "./views/ready-callout";
 import { NudgeCallout } from "@/components/nudge-callout";
-import { LeadCreativePanel } from "./views/lead-creative-panel";
 import { isCreativeLead } from "@/lib/lead-creative-core";
-import { hasMyTeam } from "@/lib/my-team";
 
-/** "My team" (the lead video editor, the lead graphic designer, the Head of Creative): every teammate's plate */
-async function myTeamTab(me: Staff) {
-  if (!hasMyTeam(me.role)) return null;
-  const [{ loadMyTeam }, { createAdminClient }, { MyTeam }] = await Promise.all([import("@/lib/my-team"), import("@/lib/supabase/admin"), import("./views/my-team")]);
-  const team = await loadMyTeam(createAdminClient(), me.role, me.id).catch(() => []);
-  const overdue = team.reduce((n, m) => n + m.overdue, 0);
-  return { tab: { id: "team", label: "My team", ...(overdue ? { count: overdue, tone: "bad" as const } : {}) }, panel: <MyTeam team={team} /> };
-}
 
 // The strategist runs in the background after "Look again" (and a brief from Next for me is written), within this
 // page's time
@@ -70,12 +58,6 @@ async function ExecOverview({ db, me, base }: { db: SupabaseClient; me: Staff; b
   );
 }
 
-/** The Google team: ideas taken to their clients from Ideas › Google, waiting on a decision or to be applied */
-async function googleDeploys(db: SupabaseClient, me: Staff, clientIds: string[]) {
-  if (!(me.role === "google_buyer" || me.role === "head_of_google") || !clientIds.length) return [];
-  const { loadDeploys } = await import("@/lib/google-deploy");
-  return (await loadDeploys(db, clientIds, { open: true }).catch(() => [])).filter((d) => d.status === "open" || d.status === "approved");
-}
 
 /** A team member's line desk: a Meta or Google buyer's ad accounts, the creative team's clients; none for the rest */
 async function memberDesk(db: SupabaseClient, me: Staff) {
@@ -128,7 +110,19 @@ export default async function Home({ searchParams }: PageProps<"/pipeline">) {
       <ReviewsCallout db={db} me={me} />
     </>
   );
-  const view = (o: { panels?: React.ReactNode; more?: React.ReactNode }) => (
+  // At most six blocks for anyone, nothing below them but the hidden log: what the role already had folds into the
+  // block it belongs to (their clients, audits and setup in My accounts; ideas in Ideas, or My accounts for a lead)
+  const fold = (tabs: { id: string }[], panels: Record<string, React.ReactNode>) => {
+    const into: Partial<Record<TopicKey, React.ReactNode[]>> = {};
+    for (const t of tabs) {
+      const node = panels[t.id];
+      const block: TopicKey | null = ["clients", "accounts", "audits", "setup"].includes(t.id) ? "accounts" : t.id === "ideas" ? (kind === "lead" ? "accounts" : "briefs") : null;
+      if (node == null || !block) continue;
+      (into[block] ??= []).push(<div key={t.id}>{node}</div>);
+    }
+    return Object.fromEntries(Object.entries(into).map(([k, v]) => [k, <div key={k} className="grid gap-6">{v}</div>])) as Partial<Record<TopicKey, React.ReactNode>>;
+  };
+  const view = (o: { folded?: Partial<Record<TopicKey, React.ReactNode>>; own?: { id: string; label: string; blurb: string; node: React.ReactNode; count?: number }[]; more?: React.ReactNode }) => (
     <RoleOverview
       db={db}
       me={me}
@@ -141,51 +135,47 @@ export default async function Home({ searchParams }: PageProps<"/pipeline">) {
           {o.more}
         </>
       }
-      panels={o.panels}
+      folded={o.folded}
+      own={o.own}
       hidden={(hiddenRows ?? []) as HiddenRow[]}
     />
   );
 
-  // The support positions: their boards as blocks (the Tracking Specialist's Tracking; the others' board)
+  // The support positions: their board as a block of its own (the Tracking Specialist's: Tracking)
   if (kind === "support" || (isCustomerSuccess(me.role) && !lead)) {
     if (me.role === "tracking_specialist") {
       const [{ trackingHealth }, { createAdminClient }, { TrackingHealth }] = await Promise.all([import("@/lib/tracking-health"), import("@/lib/supabase/admin"), import("./views/tracking-health")]);
       const health = await trackingHealth(createAdminClient()).catch(() => []);
       const need = health.filter((r) => r.health.tier === "critical" || r.health.tier === "high").length;
-      return view({ panels: <OverviewTabs asBlocks tabs={[{ id: "tracking", label: "Tracking", ...(need ? { count: need } : {}) }]} panels={{ tracking: <TrackingHealth rows={health} /> }} /> });
+      return view({ own: [{ id: "tracking", label: "Tracking", blurb: "Every paid-ads client's tracking health", node: <TrackingHealth rows={health} />, count: need }] });
     }
-    return view({ panels: <OverviewTabs asBlocks tabs={[{ id: "desk", label: "Your board" }]} panels={{ desk: <SupportDashboard role={me.role} /> }} /> });
+    return view({ own: [{ id: "desk", label: "Your board", blurb: "Reports, channels and onboardings waiting on you", node: <SupportDashboard role={me.role} /> }] });
   }
 
-  // The email and organic social teams: their line's tabs (clients by retention risk, ideas, audits and sprints, setup)
+  // The email and organic social teams: their line's clients, ideas, audits and setup, folded into their blocks
   const channel = lineOfTeam(me.role);
-  if (channel) return view({ panels: <ChannelHome me={me} line={channel} today={base.today} greeting={base.greeting} firstName={base.firstName} panelsOnly /> });
+  if (channel) {
+    const { tabs, panels } = await channelTabs({ me, line: channel, today: base.today, greeting: base.greeting, firstName: base.firstName });
+    return view({ folded: fold(tabs, panels) });
+  }
 
-  // The makers: their blocks, nothing else to tab through
+  // The makers: their blocks, nothing else
   if (kind === "maker") return view({});
 
-  // Buyers, the copywriter, the leads and the heads: their line's desk (Clients, Ideas, Audits, Setup), the creative
-  // leads' team, and everything on them (Next for me) as blocks
+  // Buyers, the copywriter, the leads and the heads: their line's desk folded into their blocks. A creative lead's
+  // Overview has no account watch and no production roster: what's stuck is one item each in My team
+  const creativeLead = isCreativeLead(me.role) || String(me.role) === "head_of_creative";
   const desk = me.isLead && (me.role === "head_of_creative" || me.role === "head_of_meta" || me.role === "head_of_google") ? await leadDesk(db, me) : await memberDesk(db, me);
-  const { data: assigned } = await db.from("client_assignments").select("client_id").eq("profile_id", me.id);
-  const [myTeam, next, deploys] = await Promise.all([myTeamTab(me), loadNextForMe(db, me), googleDeploys(db, me, [...new Set((assigned ?? []).map((m) => m.client_id as string))])]);
-  const tabs = [...(desk?.tabs ?? []), ...(myTeam ? [{ ...myTeam.tab, id: "plates", label: "Who's on what" }] : []), { id: "next", label: "Next for me", count: next.now.length + next.decide.length }];
-  const panels: Record<string, React.ReactNode> = { ...(desk?.panels ?? {}), ...(myTeam ? { plates: myTeam.panel } : {}), next: <NextSection data={next} me={me.id} deploys={deploys} /> };
   return view({
     more: (
       <>
-        {isCreativeLead(me.role) && (
-          <Suspense fallback={null}>
-            <LeadCreativePanel me={me} />
-          </Suspense>
-        )}
         <Suspense fallback={null}>
           <ReadyCallout db={db} me={me} />
         </Suspense>
-        {desk?.today}
+        {!creativeLead && desk?.today}
       </>
     ),
-    panels: <OverviewTabs asBlocks skip={["today", "work"]} tabs={tabs} panels={panels} />,
+    folded: fold(desk?.tabs ?? [], desk?.panels ?? {}),
   });
 }
 
