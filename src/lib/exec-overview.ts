@@ -29,7 +29,7 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
     loadOwedReplies(db, me, false).catch(() => []),
     loadSaidPromises(db, me).catch(() => []),
     myAsanaTasks(me.email, db).catch(() => []),
-    admin.from("call_safety_reviews").select("call_id, severity, distress, summary, reviewed_at").eq("flagged", true).is("resolved_at", null).order("reviewed_at", { ascending: false }).limit(20),
+    admin.from("call_safety_reviews").select("call_id, severity, distress, categories, reviewed_at").eq("flagged", true).is("resolved_at", null).order("reviewed_at", { ascending: false }).limit(20),
     admin.from("agent_learnings").select("id, agent_key, lesson, updated_at").eq("status", "conflict").limit(20),
   ]);
   const cards: ExecCard[] = [];
@@ -79,7 +79,7 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
       action: { label: "Open the task", href: `/pipeline?block=needs&task=${t.gid}` },
     });
   // Approvals only an exec gives: call safety reviews, agent learnings in conflict
-  const flagged = (safety ?? []) as { call_id: string; severity: string | null; distress: boolean | null; summary: string | null; reviewed_at: string | null }[];
+  const flagged = (safety ?? []) as { call_id: string; severity: string | null; distress: boolean | null; categories: string[] | null; reviewed_at: string | null }[];
   if (flagged.length)
     cards.push({
       key: `approve:safety:${today}`,
@@ -88,10 +88,11 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
       client: null,
       clientId: null,
       title: `${flagged.length} call ${s(flagged.length, "safety review", "safety reviews")} to look at`,
-      detail: String(flagged[0].summary ?? "Flagged on an assistant call").slice(0, 140),
+      // Role-based, never the caller's name: what was flagged, newest first (each review opens on its own page)
+      detail: `Flagged on assistant calls${[...new Set(flagged.flatMap((f) => f.categories ?? []))].length ? `: ${[...new Set(flagged.flatMap((f) => f.categories ?? []))].slice(0, 4).join(", ").replace(/_/g, " ")}` : ""} · the newest opens first`,
       severity: flagged.some((f) => f.distress || f.severity === "high") ? "critical" : "high",
       due: flagged[flagged.length - 1].reviewed_at,
-      action: { label: "Review", href: "/safety" },
+      action: { label: "Review", href: `/safety/${flagged[0].call_id}` },
     });
   const conflict = (conflicts ?? []) as { id: string; agent_key: string; lesson: string; updated_at: string }[];
   if (conflict.length)
@@ -105,7 +106,8 @@ async function needsMe(db: SupabaseClient, admin: SupabaseClient, me: Staff, dra
       detail: String(conflict[0].lesson ?? "").slice(0, 140),
       severity: "normal",
       due: null,
-      action: { label: "Decide", href: "/settings?tab=agents" },
+      // The agent whose learnings contradict: its page lists them, the conflict marked, to keep one or merge
+      action: { label: "Decide", href: `/settings?tab=agents&agent=${encodeURIComponent(conflict[0].agent_key)}` },
     });
   // Their own tickets and tasks from the recap (what they transferred away leaves), and what was transferred to them,
   // including stuck work they took over from Escalated (src/lib/item-owners.ts)
@@ -286,7 +288,7 @@ async function system(admin: SupabaseClient): Promise<ExecCard[]> {
   const latest = new Map<string, { key: string; ok: boolean; ran_at: string; result: unknown }>();
   for (const c of (checks ?? []) as { key: string; ok: boolean; ran_at: string; result: unknown }[]) if (!latest.has(c.key)) latest.set(c.key, c);
   for (const c of latest.values())
-    if (!c.ok) cards.push({ key: `system:check:${c.key}`, tab: "system", kind: "system", client: null, clientId: null, title: `System check failing: ${c.key}`, detail: `Last ran ${short(c.ran_at)} · ${JSON.stringify(c.result ?? {}).slice(0, 120)}`, severity: "critical", action: { label: "Open checks", href: "/settings?tab=system" } });
+    if (!c.ok) cards.push({ key: `system:check:${c.key}`, tab: "system", kind: "system", client: null, clientId: null, title: `System check failing: ${c.key}`, detail: `Last ran ${short(c.ran_at)} · ${JSON.stringify(c.result ?? {}).slice(0, 120)}`, severity: "critical", action: { label: "Open errors", href: "/settings?tab=errors" } });
   for (const f of (fixes ?? []) as { id: string; title: string; status: string; fix_state: string; fix_pr_url: string | null; updated_at: string }[])
     cards.push({
       key: `system:fix:${f.id}`,

@@ -185,9 +185,7 @@ function Card({ card }: { card: ExecCard }) {
             </button>
           ) : (
             card.action.href && (
-              <Link href={card.action.href} className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand/90 sm:min-h-8 sm:text-[12px]">
-                {card.action.label}
-              </Link>
+              <Go href={card.action.href} label={card.action.label} />
             )
           )}
           <ItemQuickActions
@@ -271,5 +269,32 @@ function Compose({ card, onSent }: { card: ExecCard; onSent: () => void }) {
         {note && <span className="text-[12.5px] text-muted">{note}</span>}
       </div>
     </div>
+  );
+}
+
+/**
+ * The card's main action. A link that always goes: in the app when it can, and if the address hasn't moved a moment
+ * later (a heavy page, a navigation that didn't start), the browser loads it outright. Shows it's opening meanwhile.
+ */
+function Go({ href, label }: { href: string; label: string }) {
+  const [going, setGoing] = useState(false);
+  const external = /^https?:/.test(href);
+  return (
+    <Link
+      href={href}
+      prefetch={false}
+      {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
+      onClick={(e) => {
+        if (external || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        setGoing(true);
+        const from = window.location.href;
+        window.setTimeout(() => {
+          if (window.location.href === from) window.location.assign(href);
+        }, 2500);
+      }}
+      className="inline-flex min-h-11 items-center rounded-full bg-brand px-4 text-[13px] font-medium text-white hover:bg-brand/90 sm:min-h-8 sm:text-[12px]"
+    >
+      {going ? "Opening..." : label}
+    </Link>
   );
 }
