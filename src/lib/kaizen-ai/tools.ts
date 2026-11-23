@@ -1308,12 +1308,17 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
   // Where the team works: their own Gmail, Drive and Calendar, and hands-on work in a client's Klaviyo (writes after a yes)
   const { workspaceTools } = await import("./workspace-tools");
   for (const t of workspaceTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  // Personal tools (their own Gmail, Drive, Calendar, Figma) are theirs on every team, the email and social teams too
+  // (Nov 23 2026: the Head of Email's Figma links were answered "there's no Figma connection in this chat")
+  for (const t of workspaceTools(ctx)) CHANNEL_EXTRA.add(t.name);
   // Internal calls on Google Calendar: find a time with teammates, book it as them on their yes, move or cancel it
   const { calendarTools } = await import("@/lib/assistant/calendar-tools");
   for (const t of calendarTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  for (const t of calendarTools(ctx)) CHANNEL_EXTRA.add(t.name);
   // Figma, read with their own token (Figma's hosted connector admits only apps Figma approved)
   const { figmaTools } = await import("./figma-tools");
   for (const t of figmaTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
+  for (const t of figmaTools(ctx)) CHANNEL_EXTRA.add(t.name);
   // Asana, read the way the boards read it (Asana's hosted connector needs an app registered with Asana)
   const { asanaTools } = await import("./asana-tools");
   for (const t of asanaTools(ctx)) if (!tools.some((x) => x.name === t.name)) tools.push(t);
@@ -1369,7 +1374,7 @@ export async function chatTools(ctx: ToolCtx): Promise<ChatTool[]> {
 export function toolsFor<T extends { name: string; input_schema?: unknown }>(me: Who & { isLead?: boolean | null }, tools: T[]): T[] {
   // The email and social teams: client lookup, shared context, calls and their own channel. Every other tool reads ad
   // data with the server's rights, so none of them are offered
-  if (isChannelOnly(me.role)) return tools.filter((t) => (CHANNEL_TOOLS.has(t.name) || CHANNEL_EXTRA.has(t.name)) && !(["email_marketing", "top_emails", "email_detail"].includes(t.name) && lineOfTeam(me.role) !== "email") && !(["organic_social", "social_score", "run_social_audit", "start_social_sprint", "top_posts"].includes(t.name) && lineOfTeam(me.role) !== "social"));
+  if (isChannelOnly(me.role)) return tools.filter((t) => (CHANNEL_TOOLS.has(t.name) || CHANNEL_EXTRA.has(t.name)) && !(["email_marketing", "top_emails", "email_detail", "klaviyo_account"].includes(t.name) && lineOfTeam(me.role) !== "email") && !(["organic_social", "social_score", "run_social_audit", "start_social_sprint", "top_posts"].includes(t.name) && lineOfTeam(me.role) !== "social"));
   const p = roleWidePerms(me);
   const changeOn = (["meta", "google"] as const).filter((x) => p.change[x]);
   const drop = new Set<string>();
