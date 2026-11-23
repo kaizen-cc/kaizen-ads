@@ -136,7 +136,7 @@ export async function runLadder(admin: SupabaseClient): Promise<{ nudged: number
   const name = (r: { clients?: unknown }) => ((r.clients as { name?: string } | null)?.name ?? null);
   const items: LadderItem[] = [];
   for (const o of owed.data ?? []) {
-    // A client waiting on a reply: the owner hears first, then after 12 business hours the Client Success Coordinator
+    // A client waiting on a reply: the owner hears first, then after 48 hours the Client Success Coordinator
     if (!o.from_team && o.client_id) items.push({ key: `owed:${o.id}`, kind: "owed", ownerId: o.target_id as string, clientId: o.client_id as string, client: name(o), what: `a reply to ${o.from_name}`, since: o.asked_at as string, href: (o.url as string | null) ?? null, wait: CLIENT_REPLY_WAIT, toRole: CLIENT_REPLY_ROLE });
     // A teammate's ask: the owner's lead, 48 hours after their first notice
     else if (o.nudged_at) items.push({ key: `owed:${o.id}`, kind: "owed", ownerId: o.target_id as string, clientId: (o.client_id as string | null) ?? null, client: name(o), what: `a reply to ${o.from_name}`, since: o.nudged_at as string, href: (o.url as string | null) ?? null });
@@ -266,7 +266,9 @@ export async function runRung3(admin: SupabaseClient, now = new Date()): Promise
     // Only a touch after it reached the lead is movement
     const moved = t && t > Date.parse(r.created_at) && t > Date.parse(r.moved_at ?? "1970-01-01") ? new Date(t).toISOString() : null;
     const movedAt = moved ?? r.moved_at;
-    const exec = !r.taken_by && atRung3({ createdAt: r.created_at, sentAt: r.sent_at, movedAt }, paused.has(r.item_key), now);
+    // An account off target never climbs to the execs on the clock: it reaches them in Accounts (50%+ off for over 7
+    // days with nothing in motion, src/lib/exec-focus/server.ts accountsForExecs)
+    const exec = !r.taken_by && !r.item_key.startsWith("kpi:") && atRung3({ createdAt: r.created_at, sentAt: r.sent_at, movedAt }, paused.has(r.item_key), now);
     const patch: Record<string, string | null> = {};
     if (moved) patch.moved_at = moved;
     if (exec && !r.exec_at) patch.exec_at = iso;

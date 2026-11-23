@@ -3,7 +3,7 @@ import { onService } from "@/lib/service-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIVE } from "@/lib/live";
 import { cleanFocus, clientLines, lineOf, type FocusLine } from "./core";
-import { fireKey, fireOf, fireTitle, kpiWorse, KPI_FIRE_DEVIATION, type FireSignal } from "./fire";
+import { fireKey, fireOf, fireTitle, kpiWorse, KPI_FIRE_DAYS, KPI_FIRE_DEVIATION, type FireSignal } from "./fire";
 
 // Exec focus, the database side: reading an exec's focus, telling every exec when a client is on fire (once per client
 // per day), and the daily sweep for the fire rules that need numbers (the main KPI far off, tracking broken).
@@ -109,41 +109,47 @@ export async function liveFires(admin: SupabaseClient, now = new Date()): Promis
     const fire = fireOf({ kind: "angry_unanswered", text, businessHours: bh });
     if (fire.fire) add({ clientId: o.client_id as string, why: fire.why, href: (o.url as string | null) ?? null, line: null, rule: 3, body: `${o.from_name ?? "The client"}: ${String(o.gist ?? o.body ?? "").slice(0, 300)}`, at: o.asked_at as string });
   }
-  // 4. Severely off target for two weeks with nothing in motion
-  for (const k of await kpiFires(admin, now).catch(() => [])) add(k);
+  // An account off target is no longer a fire: it's on the ladder (the lead first) and in the execs' Accounts block
   return [...out.values()].sort((a, b) => a.rule - b.rule);
 }
 
-/** Rule 4: the main KPI 50%+ worse than target over both the last 7 and 14 days, with no sprint, audit or plan moving */
-async function kpiFires(admin: SupabaseClient, now: Date): Promise<Omit<LiveFire, "client" | "clientSlug">[]> {
-  const { data: targets } = await admin
-    .from("kpi_targets")
-    .select("id, client_id, platform, conversion, target, clients!inner(name, slug, archived_at, status, services, services_extra, services_removed, strategy_only)")
-    .eq("active", true)
-    .not("target", "is", null)
-    .is("clients.archived_at", null)
-    .in("clients.status", LIVE)
-    .then((r) => ({ ...r, data: (r.data ?? []).filter(onService) }));
-  const ids = (targets ?? []).map((t) => t.id as string);
-  if (!ids.length) return [];
-  const { data: snaps } = await admin.from("kpi_snapshots").select("target_id, status, windows").in("target_id", ids).eq("status", "off");
-  const off = new Map((snaps ?? []).map((s) => [s.target_id as string, s]));
-  const offTargets = (targets ?? []).filter((t) => off.has(t.id as string));
-  if (!offTargets.length) return [];
-  const motion = await motionByTarget(admin, offTargets.map((t) => ({ id: t.id as string, clientId: t.client_id as string })), now);
-  const out: Omit<LiveFire, "client" | "clientSlug">[] = [];
-  for (const t of offTargets) {
-    const w = (off.get(t.id as string)?.windows ?? {}) as Record<string, Win>;
+/**
+ * Accounts that reach the execs (owner, Nov 23 2026): the main KPI 50%+ worse than target over the last 7 days, off
+ * target for over 7 days (from the day it first reached anyone's day), and nothing in motion (person-driven: a sprint
+ * started or acted on this week, a person's audit or the plan worked on in 2 weeks). Until then it's the buyer's, then
+ * the line's lead's. By KPI target, with how far off and what's (not) moving.
+ */
+export async function accountsForExecs(admin: SupabaseClient, now = new Date()): Promise<Map<string, { worse: number; days: number }>> {
+  const { data: snaps } = await admin.from("kpi_snapshots").select("target_id, windows").eq("status", "off").limit(1000);
+  const ids = (snaps ?? []).map((s) => s.target_id as string);
+  if (!ids.length) return new Map();
+  const [{ data: targets }, { data: seen }] = await Promise.all([
+    admin
+      .from("kpi_targets")
+      .select("id, client_id, platform, conversion, target, clients!inner(archived_at, status, services, services_extra, services_removed, strategy_only)")
+      .in("id", ids)
+      .eq("active", true)
+      .not("target", "is", null)
+      .is("clients.archived_at", null)
+      .in("clients.status", LIVE)
+      .then((r) => ({ ...r, data: (r.data ?? []).filter(onService) })),
+    admin.from("daily_items").select("key, first_seen_at").in("key", ids.map((i) => `kpi:${i}`)).order("first_seen_at").limit(3000),
+  ]);
+  const firstSeen = new Map<string, number>();
+  for (const d of seen ?? []) if (!firstSeen.has(d.key as string)) firstSeen.set(d.key as string, Date.parse(d.first_seen_at as string));
+  const win = new Map((snaps ?? []).map((s) => [s.target_id as string, (s.windows ?? {}) as Record<string, Win>]));
+  const candidates: { id: string; clientId: string; worse: number; days: number }[] = [];
+  for (const t of targets ?? []) {
+    const w = win.get(t.id as string) ?? {};
     const roas = t.conversion === "roas" || t.conversion === "tiktok_roas";
-    const worse7 = kpiWorse({ value: w.d7?.value, target: Number(t.target), roas, results: w.d7?.results });
-    const worse14 = kpiWorse({ value: w.d14?.value, target: Number(t.target), roas, results: w.d14?.results });
-    if (worse7 == null || worse14 == null || worse7 < KPI_FIRE_DEVIATION || worse14 < KPI_FIRE_DEVIATION) continue;
-    const fire = fireOf({ kind: "kpi", deviation: Math.min(worse7, worse14), days: 14, inMotion: Boolean(motion.get(t.id as string)) });
-    if (!fire.fire) continue;
-    const line = (t.platform === "google" ? "google" : t.platform === "tiktok" ? "tiktok" : "meta") as FocusLine;
-    out.push({ clientId: t.client_id as string, why: fire.why, href: `/kpis?target=${t.id}`, line, rule: 4, body: `${Number(w.d14?.spend ?? 0) ? `$${Math.round(Number(w.d14?.spend)).toLocaleString("en-US")} spent in 14 days. ` : ""}Nobody has a sprint, audit or plan moving on it.`, at: null });
+    const worse = kpiWorse({ value: w.d7?.value, target: Number(t.target), roas, results: w.d7?.results });
+    const since = firstSeen.get(`kpi:${t.id}`);
+    const days = since ? Math.floor((now.getTime() - since) / DAY) : 0;
+    if (worse == null || worse < KPI_FIRE_DEVIATION || days <= KPI_FIRE_DAYS) continue;
+    candidates.push({ id: t.id as string, clientId: t.client_id as string, worse, days });
   }
-  return out;
+  const motion = await motionByTarget(admin, candidates, now);
+  return new Map(candidates.filter((c) => !motion.get(c.id)).map((c) => [c.id, { worse: c.worse, days: c.days }]));
 }
 
 /**

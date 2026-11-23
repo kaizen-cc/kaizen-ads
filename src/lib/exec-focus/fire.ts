@@ -5,17 +5,18 @@ import { soundsLikeChurn } from "@/lib/client-risk";
 //   1. the client says they're leaving or cancelling
 //   2. an ad account disabled, spend stopped, or a payment failed
 //   3. an angry client message unanswered for more than one business day
-//   4. an account severely off target for 2+ weeks with nothing in motion (no sprint, audit or plan moving)
-// Each one says in one line why, and goes out once per client per day. Pure: no database.
+// An account off target is not a fire (owner, Nov 23 2026): it's the buyer's, then the line's lead's, and reaches the
+// execs (their Accounts block) only when it's 50%+ off its KPI for over 7 days with nothing in motion.
+// Each fire says in one line why, and goes out once per client per day. Pure: no database.
 
 /** A big account: this much spend in the last 30 days */
 export const BIG_ACCOUNT_30D = 10_000;
 /** Kept for older readers: tracking is no longer a fire on its own */
 export const TRACKING_SPEND_7D = 1_000;
-/** The main KPI this much worse than target... */
+/** An account reaches the execs (Accounts) when its main KPI is this much worse than target... */
 export const KPI_FIRE_DEVIATION = 0.5;
-/** ...for this long */
-export const KPI_FIRE_DAYS = 14;
+/** ...for over this many days, with nothing in motion */
+export const KPI_FIRE_DAYS = 7;
 /** One business day, in business hours (weekdays 8am to 6pm New York) */
 export const ANGRY_BUSINESS_HOURS = 10;
 /** Spend stopped only counts on an account that was really spending (a day's average before it stopped) */
@@ -87,8 +88,9 @@ export function fireOf(s: FireSignal): Fire {
     }
     case "tracking":
       return NOT;
+    // Off target is never a fire: the lead first, the execs' Accounts after 7+ days at 50%+ off with nothing in motion
     case "kpi":
-      return s.deviation >= KPI_FIRE_DEVIATION && s.days >= KPI_FIRE_DAYS && !s.inMotion ? { fire: true, why: `main KPI ${Math.round(s.deviation * 100)}% off target for ${s.days}+ days with nothing in motion` } : NOT;
+      return NOT;
   }
 }
 

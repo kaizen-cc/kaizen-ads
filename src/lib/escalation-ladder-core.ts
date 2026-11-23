@@ -7,12 +7,12 @@
 export const LADDER_HOURS = 48;
 
 /**
- * Each signal carries its own wait. An unanswered client message (Slack or email) reaches the Client Success
- * Coordinator after 12 business hours (weekdays 8am to 6pm New York); everything else climbs to the line's lead after
- * 48 hours.
+ * Each signal carries its own wait and rung. An unanswered client message (Slack or email) reaches the Client Success
+ * Coordinator after 48 hours without a response (owner, Nov 23 2026; it was 12 business hours); everything else climbs
+ * to the line's lead after 48 hours. Either way the execs hear only after another 48 hours with nothing moving (rung 3).
  */
 export type Wait = { hours: number; business?: boolean };
-export const CLIENT_REPLY_WAIT: Wait = { hours: 12, business: true };
+export const CLIENT_REPLY_WAIT: Wait = { hours: 48 };
 export const DEFAULT_WAIT: Wait = { hours: LADDER_HOURS };
 /** The Client Success Coordinator: who an unanswered client message climbs to */
 export const CLIENT_REPLY_ROLE = "customer_success";

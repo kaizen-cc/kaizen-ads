@@ -175,7 +175,9 @@ async function accounts(admin: SupabaseClient, focus: readonly string[], drafts:
   const day7 = now.getTime() - 7 * DAY;
   const clientIds = [...new Set(mine.map((x) => x.d.clientId).filter((x): x is string => Boolean(x)))];
   const targets = mine.filter((x) => x.d.key.startsWith("kpi:")).map((x) => ({ id: x.d.key.slice(4), clientId: x.d.clientId ?? "" }));
-  const { motionByTarget } = await import("@/lib/exec-focus/server");
+  const { motionByTarget, accountsForExecs } = await import("@/lib/exec-focus/server");
+  // Ad accounts reach an exec only at 50%+ off for over 7 days with nothing in motion; before that they're the lead's
+  const reach = targets.length ? await accountsForExecs(admin, now).catch(() => new Map<string, { worse: number; days: number }>()) : new Map<string, { worse: number; days: number }>();
   const week = new Date(day7).toISOString();
   const [ads, { data: es }, { data: ss }, { data: ea }, { data: sa }, { data: eActs }, { data: sActs }] = await Promise.all([
     motionByTarget(admin, targets, now).catch(() => new Map<string, string | null>()),
@@ -198,6 +200,7 @@ async function accounts(admin: SupabaseClient, focus: readonly string[], drafts:
     const motion = d.key.startsWith("kpi:") ? (ads.get(d.key.slice(4)) ?? null) : line === "email" ? (d.clientId && email.has(d.clientId) ? "A sprint or audit is moving" : null) : line === "social" ? (d.clientId && social.has(d.clientId) ? "A sprint or audit is moving" : null) : null;
     // The team is handling it: off the exec's screen
     if (motion) continue;
+    if (d.key.startsWith("kpi:") && !reach.has(d.key.slice(4))) continue;
     const k = `${d.clientId ?? d.client}:${line}`;
     if (seen.has(k)) continue;
     seen.add(k);

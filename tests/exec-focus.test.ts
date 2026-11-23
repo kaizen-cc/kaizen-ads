@@ -176,11 +176,8 @@ describe("fire rules", () => {
   it("tracking on its own is no longer a fire", () => {
     expect(fireOf({ kind: "tracking", spend7: 1_500, results7: 0, tracksConversions: true }).fire).toBe(false);
   });
-  it("an account severely off target for 2+ weeks with nothing in motion", () => {
-    expect(fireOf({ kind: "kpi", deviation: 0.6, days: 14 }).fire).toBe(true);
-    expect(fireOf({ kind: "kpi", deviation: 0.6, days: 14, inMotion: true }).fire).toBe(false);
-    expect(fireOf({ kind: "kpi", deviation: 0.6, days: 7 }).fire).toBe(false);
-    expect(fireOf({ kind: "kpi", deviation: 0.4, days: 14 }).fire).toBe(false);
+  it("an account off target is never a fire: the lead first, the execs' Accounts later", () => {
+    expect(fireOf({ kind: "kpi", deviation: 0.9, days: 30 }).fire).toBe(false);
   });
   it("how far worse a KPI is", () => {
     expect(kpiWorse({ value: 60, target: 40, roas: false })).toBeCloseTo(0.5);
