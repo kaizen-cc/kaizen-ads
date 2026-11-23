@@ -40,8 +40,13 @@ export function gmailLink(mailbox: string, threadId: string) {
   return `https://mail.google.com/mail/?authuser=${encodeURIComponent(mailbox)}#all/${threadId}`;
 }
 
-/** An email link saved in the old /mail/u/<address>/ form, rewritten to the one that opens; anything else as it is */
+/**
+ * An email link saved in the old /mail/u/<address>/ form (the @ plain or as %40), rewritten to the one that opens:
+ * a thread, or a draft (#drafts, with or without ?compose=). Anything else as it is.
+ */
 export function fixGmailLink<T extends string | null>(href: T): T {
-  const m = href?.match(/^https:\/\/mail\.google\.com\/mail\/u\/([^/#?]+@[^/#?]+)\/?#(?:all|inbox)\/([A-Za-z0-9_-]+)$/);
-  return (m ? gmailLink(decodeURIComponent(m[1]), m[2]) : href) as T;
+  const m = href?.match(/^https:\/\/mail\.google\.com\/mail\/u\/([^/#?]+(?:@|%40)[^/#?]+)\/?#(?:all|inbox)\/([A-Za-z0-9_-]+)$/i);
+  if (m) return gmailLink(decodeURIComponent(m[1]), m[2]) as T;
+  const d = href?.match(/^https:\/\/mail\.google\.com\/mail\/u\/([^/#?]+(?:@|%40)[^/#?]+)\/?#drafts(\?compose=[A-Za-z0-9_-]+)?$/i);
+  return (d ? `https://mail.google.com/mail/?authuser=${encodeURIComponent(decodeURIComponent(d[1]))}#drafts${d[2] ?? ""}` : href) as T;
 }

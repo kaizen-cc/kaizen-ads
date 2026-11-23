@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mimeMessage, rawEmail } from "@/lib/assistant/messages";
+import { fixGmailLink } from "@/lib/email-filters";
 import { composeScopeMessage, draftError, gmailDraftLink, serviceAccountClientId, slackDmPlace, slackMessageLink, slackNewPlace, slackSelfNote, slackSelfText } from "@/lib/assistant/platform-drafts-core";
 
 const decode = (raw: string) => Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
@@ -41,8 +42,8 @@ describe("the Gmail draft's raw email", () => {
 
 describe("Gmail draft links", () => {
   it("opens the draft in the person's own account", () => {
-    expect(gmailDraftLink("Owner@Kaizen.test", "18c2f")).toBe("https://mail.google.com/mail/u/owner%40kaizen.test/#drafts?compose=18c2f");
-    expect(gmailDraftLink("owner@kaizen.test")).toBe("https://mail.google.com/mail/u/owner%40kaizen.test/#drafts");
+    expect(gmailDraftLink("Owner@Kaizen.test", "18c2f")).toBe("https://mail.google.com/mail/?authuser=owner%40kaizen.test#drafts?compose=18c2f");
+    expect(gmailDraftLink("owner@kaizen.test")).toBe("https://mail.google.com/mail/?authuser=owner%40kaizen.test#drafts");
   });
 });
 
@@ -128,5 +129,13 @@ describe("a new Slack message that's neither a reply nor a DM", () => {
   it("a reply still says where it goes and links the thread; a DM says who", () => {
     expect(slackSelfText({ channel: "C0123ABCD", thread: "1700000000.000100", where: "#legal" }, "On it.")).toBe("Draft for #legal (<https://slack.com/archives/C0123ABCD/p1700000000000100|open the thread>). Copy it, edit it and send it there:\n\nOn it.");
     expect(slackSelfText(slackDmPlace("U0123ABCD", "Jesus")!, "Hey")).toBe("Draft for a DM to Jesus. Copy it, edit it and send it there:\n\nHey");
+  });
+});
+
+describe("old Gmail draft links", () => {
+  it("rewrites a saved /u/name%40domain draft link to one that opens", () => {
+    expect(fixGmailLink("https://mail.google.com/mail/u/owner%40kaizen.test/#drafts?compose=1a208b035413405c")).toBe("https://mail.google.com/mail/?authuser=owner%40kaizen.test#drafts?compose=1a208b035413405c");
+    expect(fixGmailLink("https://mail.google.com/mail/u/owner@kaizen.test/#drafts")).toBe("https://mail.google.com/mail/?authuser=owner%40kaizen.test#drafts");
+    expect(fixGmailLink("https://example.com/x")).toBe("https://example.com/x");
   });
 });

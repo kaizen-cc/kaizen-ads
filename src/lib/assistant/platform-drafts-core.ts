@@ -2,9 +2,12 @@
 // themselves (Slack's Web API has no endpoint for a person's Drafts, so their self-DM is the closest place they can
 // copy, edit and send from). Pure: the links, the labels and what a Google refusal means. No keys, no network.
 
-/** The draft open in Gmail, in the right account (the mailbox picks it; /u/0 would be whoever is signed in first) */
+/**
+ * The draft open in Gmail, in the right account: authuser picks the mailbox (/u/0 would be whoever is signed in first).
+ * Never the address in the path: Gmail reads /u/name%40domain as an unknown account ("temporarily unavailable", 404).
+ */
 export function gmailDraftLink(mailbox: string, messageId?: string | null): string {
-  const base = `https://mail.google.com/mail/u/${encodeURIComponent(mailbox.trim().toLowerCase())}/#drafts`;
+  const base = `https://mail.google.com/mail/?authuser=${encodeURIComponent(mailbox.trim().toLowerCase())}#drafts`;
   return messageId ? `${base}?compose=${encodeURIComponent(messageId)}` : base;
 }
 

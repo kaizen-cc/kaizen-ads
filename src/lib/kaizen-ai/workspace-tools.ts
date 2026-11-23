@@ -63,7 +63,7 @@ export function workspaceTools(ctx: ToolCtx): ChatTool[] {
             const h = (n: string) => m.payload.headers?.find((x) => x.name.toLowerCase() === n)?.value ?? "";
             return `From ${h("from")} to ${h("to")}${h("cc") ? `, cc ${h("cc")}` : ""} (${m.internalDate ? new Date(Number(m.internalDate)).toISOString().slice(0, 16).replace("T", " ") : h("date")})\nSubject: ${h("subject")}\n${withoutQuotes(plainText(m.payload) ?? "").trim()}`;
           });
-          return { messages: msgs.length, link: `https://mail.google.com/mail/u/${ctx.me.email}/#all/${id}`, ...textAnswer(msgs.join("\n\n---\n\n") || "(empty)", input) };
+          return { messages: msgs.length, link: `https://mail.google.com/mail/?authuser=${encodeURIComponent(ctx.me.email)}#all/${id}`, ...textAnswer(msgs.join("\n\n---\n\n") || "(empty)", input) };
         }, "https://www.googleapis.com/auth/gmail.readonly");
       },
     },

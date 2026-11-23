@@ -4,6 +4,7 @@ import { useState } from "react";
 import { saveCallDraft } from "@/app/(team)/settings/call-actions";
 import { saveCallDraftToPlatform } from "@/app/(team)/assistant/document-actions";
 import type { CallDraft } from "@/lib/agent-call/core";
+import { fixGmailLink } from "@/lib/email-filters";
 
 // The draft card's way out to where people send things themselves: Save to Gmail drafts (a real draft in their own
 // mailbox, in the thread, PDFs attached) or Put in my Slack (a message to themselves, labeled with where it goes, since
@@ -12,7 +13,7 @@ import type { CallDraft } from "@/lib/agent-call/core";
 export function DraftSave({ callId, d, text }: { callId: string | null; d: CallDraft; text: string }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<{ text: string; fallback: boolean } | null>(null);
-  const [saved, setSaved] = useState<{ to: "gmail" | "slack"; href: string | null } | null>(d.status === "gmail_draft" ? { to: "gmail", href: d.link ?? null } : d.status === "slack_draft" ? { to: "slack", href: d.link ?? null } : null);
+  const [saved, setSaved] = useState<{ to: "gmail" | "slack"; href: string | null } | null>(d.status === "gmail_draft" ? { to: "gmail", href: fixGmailLink(d.link ?? null) } : d.status === "slack_draft" ? { to: "slack", href: d.link ?? null } : null);
   const slack = d.channel === "slack";
   const save = async () => {
     if (!callId) return;
