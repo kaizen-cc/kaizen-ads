@@ -48,6 +48,7 @@ export function emailText(m: EmailMetrics): string {
   ];
   out.push(...channelMtdText(m));
   if (m.target) out.push(`- Target (${m.target.label}): ${targetSub(m.target, c) ?? "set, no progress yet"}${m.target.actual != null ? `; actual ${m.target.unit === "money" ? money(m.target.actual, c) : m.target.unit === "percent" ? pct(m.target.actual) : int(m.target.actual)}` : ""}`);
+  else if (m.paceTarget) out.push(`- Internal pace only (${m.paceTarget.basis}, ${money(m.paceTarget.target, c)} for the month): no target was agreed with the client, so never call this their target or a goal in the message or the report; you may say how the month compares with last month.`);
   if (m.sources) out.push(sourcesText(m.sources, (n) => money(n, c), priorWordOf(m.kind)));
   else if (m.byMetric?.length) {
     out.push(`Each metric that counts as the sale, side by side (primary first; the revenue above is the primary's):`);

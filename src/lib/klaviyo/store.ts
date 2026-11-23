@@ -424,14 +424,14 @@ async function readMetric(key: string, id: string, w: { full: boolean; from: str
 }
 
 /** A metric's rows for the per-metric tables; days only when its daily flow series came in (else only the store's) */
-function metricTableRows(clientId: string, m: MetricRead, ctx: { campaigns: { id: string; sendTime: string | null; channel: string | null }[]; tz: string | null; from: string; to: string; now: string }) {
+function metricTableRows(clientId: string, m: MetricRead, ctx: { campaigns: { id: string; sendTime: string | null; channel: string | null }[]; tz: string | null; from: string; to: string; now: string; /** The first day this read has the store's own numbers for (a recent read: yesterday); earlier days keep theirs */ storeFrom?: string }) {
   const r2 = (x: number) => Math.round(x * 100) / 100;
   const campaigns = ctx.campaigns.flatMap((c) => {
     const st = m.values.get(c.id);
     return st ? [{ client_id: clientId, campaign_id: c.id, metric_id: m.id, conversions: r2(st.conversions), revenue: r2(st.revenue), updated_at: ctx.now }] : [];
   });
   const flows = [...m.flows.entries()].map(([flowId, st]) => ({ client_id: clientId, flow_id: flowId, metric_id: m.id, conversions_30: r2(st.d30.conversions), revenue_30: r2(st.d30.revenue), ...(st.d90 ? { conversions_90: r2(st.d90.conversions), revenue_90: r2(st.d90.revenue) } : {}), updated_at: ctx.now }));
-  const storeOf = (date: string) => (m.store ? { store_revenue: r2(m.store.get(date)?.value ?? 0), store_orders: m.store.get(date)?.count ?? 0 } : {});
+  const storeOf = (date: string) => (m.store && (!ctx.storeFrom || date >= ctx.storeFrom) ? { store_revenue: r2(m.store.get(date)?.value ?? 0), store_orders: m.store.get(date)?.count ?? 0 } : {});
   const days: Record<string, unknown>[] = [];
   if (m.series) {
     for (const d of rollupDays({ campaigns: ctx.campaigns.map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: m.values.get(c.id) ?? emptyStats() })), flows: m.series, campaignSeries: m.campaignSeries ?? null, tz: ctx.tz, from: ctx.from, to: ctx.to }))
@@ -463,12 +463,26 @@ async function saveMetrics(admin: SupabaseClient, clientId: string, reads: Metri
     }
     for (const [table, all, conflict] of parts) {
       const list = await onlyChanged(admin, table, all, conflict);
-      for (let i = 0; i < list.length; i += 500) {
-        const { error } = await admin.from(table).upsert(list.slice(i, i + 500), { onConflict: conflict });
-        if (error) return;
+      // Rows that carry different columns (a day without the store's numbers) go in their own batches, so a missing
+      // column is left as it is, never written empty
+      for (const group of byColumns(list)) {
+        for (let i = 0; i < group.length; i += 500) {
+          const { error } = await admin.from(table).upsert(group.slice(i, i + 500), { onConflict: conflict });
+          if (error) return;
+        }
       }
     }
   }
+}
+
+/** Rows grouped by the columns they carry (an upsert batch writes every column it names, empty where a row has none) */
+export function byColumns<T extends Record<string, unknown>>(rows: T[]): T[][] {
+  const groups = new Map<string, T[]>();
+  for (const r of rows) {
+    const k = Object.keys(r).sort().join(",");
+    groups.set(k, [...(groups.get(k) ?? []), r]);
+  }
+  return [...groups.values()];
 }
 
 /** A ranked metric's read that failed in part, named, for Sync health */
@@ -715,16 +729,22 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
         return { client_id: clientId, flow_id: f.id, name: f.name, status: f.status, trigger_type: f.triggerType, revenue_30: Math.round(s.revenue * 100) / 100, recipients_30: s.recipients, open_rate_30: r4(r.openRate), click_rate_30: r4(r.clickRate), conversions_30: s.conversions, updated_at: now };
       })
     : flows.map((f) => ({ client_id: clientId, flow_id: f.id, name: f.name, status: f.status, trigger_type: f.triggerType, updated_at: now }));
-  const days = metricId && seriesOk ? rollupDays({ campaigns: recent.map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: byCampaign.get(c.id) ?? emptyStats() })), flows: series, campaignSeries: campSeries, tz, from: yesterday, to: today }) : [];
+  // The last seven days, rewritten whole: a campaign keeps earning for days after it goes out and the flows' days fill in
+  // late, so a week's totals match Klaviyo between the daily full reads (not only yesterday and today, as before)
+  const days = metricId && seriesOk ? rollupDays({ campaigns: recent.map((c) => ({ sendTime: c.sendTime, channel: c.channel, stats: byCampaign.get(c.id) ?? emptyStats() })), flows: series, campaignSeries: campSeries, tz, from: from7, to: today }) : [];
 
   await save(admin, "klaviyo_campaigns", campaignRows, "client_id,campaign_id");
   await save(admin, "klaviyo_flows", flowRows, "client_id,flow_id");
   // The first day of the 31 can be cut short by the account's time zone: the flows' days are kept from 30 days back
   if (seriesOk) await saveFlowDays(admin, clientId, series, from30, now);
-  if (days.length) await save(admin, "klaviyo_daily", days.map((d) => withStore(dayRow(clientId, d, now), store, null, null)), "client_id,date");
+  // The store's own numbers were read for yesterday and today only: the earlier days keep theirs
+  if (days.length) {
+    await save(admin, "klaviyo_daily", days.filter((d) => d.date >= yesterday).map((d) => withStore(dayRow(clientId, d, now), store, null, null)), "client_id,date");
+    await save(admin, "klaviyo_daily", days.filter((d) => d.date < yesterday).map((d) => dayRow(clientId, d, now)), "client_id,date");
+  }
   else if (store) await save(admin, "klaviyo_daily", [yesterday, today].map((date) => withStore({ client_id: clientId, date, updated_at: now }, store, null, null)), "client_id,date");
   if (extraReads.length && metricId)
-    await saveMetrics(admin, clientId, [{ id: metricId, values: byCampaign, series: seriesOk ? series : null, campaignSeries: campSeries, flows: new Map([...flow30.entries()].map(([k, v]) => [k, { d30: v }])), store, error: null }, ...extraReads], { campaigns: recent, tz, from: yesterday, to: today, now });
+    await saveMetrics(admin, clientId, [{ id: metricId, values: byCampaign, series: seriesOk ? series : null, campaignSeries: campSeries, flows: new Map([...flow30.entries()].map(([k, v]) => [k, { d30: v }])), store, error: null }, ...extraReads], { campaigns: recent, tz, from: from7, to: today, now, storeFrom: yesterday });
   return { metricId, campaigns: campaignRows.length, flows: flowRows.length, audiences: 0, days: days.length, seriesError: seriesError ?? metricNote ?? extraNote(extras, extraReads), storeError };
 }
 

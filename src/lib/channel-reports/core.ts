@@ -186,6 +186,8 @@ export type EmailMetrics = {
   refreshNote?: RefreshNote;
   /** A weekly's month to date (older stored reports and monthlies have none) */
   mtd?: EmailMtd | null;
+  /** Our automatic pace for the month (last month + 10%) when no target was agreed: internal, never shown as the client's target */
+  paceTarget?: { target: number; basis: string } | null;
   /** Orders, the daily split, each campaign and flow for the period, deliverability and subscribers (older stored reports have none) */
   detail?: EmailDetail | null;
   /** Dated campaigns after the period: scheduled in Klaviyo or planned by the team */

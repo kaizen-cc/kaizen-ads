@@ -277,9 +277,13 @@ export async function loadEmailMetrics(admin: SupabaseClient, clientId: string, 
   });
   // The target the board paces against: last month + 10% by itself, a higher one typed on the board wins
   const row = m.revenueMeasured === false ? null : await emailTarget(admin, clientId, main, sourcesRead?.ids ?? null);
-  m.target = row ? targetLine("email", row, { kind, main, revenue: m.now.revenue }) : null;
+  // Only a target a person set (on the board, from the SOW) is the client's target in the report. The automatic one
+  // (last month + 10%) is our own pace: the writer may use it to judge the month, never shows it as their target
+  const agreed = row && row.source !== "floor" ? row : null;
+  m.target = agreed ? targetLine("email", agreed, { kind, main, revenue: m.now.revenue }) : null;
   // The month to date counts against the whole month's target, not a weekly share of it
-  if (m.mtd) m.mtd.target = row ? targetLine("email", row, { kind: "monthly", main: m.mtd.window, revenue: m.mtd.now.revenue }) : null;
+  if (m.mtd) m.mtd.target = agreed ? targetLine("email", agreed, { kind: "monthly", main: m.mtd.window, revenue: m.mtd.now.revenue }) : null;
+  m.paceTarget = row && !agreed ? { target: row.target, basis: "last month + 10%" } : null;
   // Several metrics counting as the sale: each one's numbers side by side, primary first
   const ranked = await rankedMetrics(admin, clientId);
   if (ranked.length > 1) m.byMetric = await metricSides(admin, clientId, ranked, main, compare).catch(() => null);
