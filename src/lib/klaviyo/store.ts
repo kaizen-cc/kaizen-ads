@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { encryptionKey, seal, unseal } from "@/lib/meta-token-core";
 import { LIVE } from "@/lib/live";
 import { servicesOf } from "@/lib/services";
-import { attributedPages, audienceSize, campaignContent, campaignSeries, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, metricDaily, placedOrderMetric, pulseMetrics, listMetrics } from "./api";
+import { attributedPages, audienceSize, campaignContent, campaignValues, flowSeries, flowValues, getAccount, KlaviyoError, listAudiences, listCampaigns, listFlows, metricDaily, placedOrderMetric, pulseMetrics, listMetrics } from "./api";
 import { BACKFILL_DAYS, cleanKey, dayIn, emailContextLine, emptyStats, keyLast4, keyProblem, klaviyoClientState, klaviyoCostMs, partialSyncWarning, pickKlaviyoWindow, rates, redactKey, rollupDays, sumSince, type CampaignInfo, type KlaviyoClientState, type KlaviyoPlainError, type KlaviyoWindow, type SeriesRow, type Stats } from "./core";
 import { audienceGrowth, emailHealth, keyFlowCoverage, pulseWindow, sanitizeEmailHtml, seriesChunks, sortCampaigns, type CampaignLite, type DailyRow, type DayValue, type FlowLite, type HealthFinding, type KeyFlow, type PulseWindow } from "./insights";
 import { audienceSets, type AudienceLookup } from "./audiences";
@@ -382,11 +382,6 @@ async function readMetric(key: string, id: string, w: { full: boolean; from: str
   } catch (e) {
     note(e);
   }
-  // The campaigns' money on the day it came in, under this metric (on the send day if Klaviyo won't give the series)
-  out.campaignSeries = await (w.full ? campaignSeries(key, id, seriesChunks(w.from, w.today, { maxDays: 45, endIso: w.nowIso })) : campaignSeries(key, id, { start: utc(shift(w.today, -8)), end: w.nowIso })).catch((e) => {
-    note(e);
-    return null;
-  });
   out.store = await metricDaily(key, id, w.full ? w.from : shift(w.today, -1), w.today, w.tz)
     .then(byDate)
     .catch((e) => {
@@ -503,19 +498,13 @@ async function readFull(admin: SupabaseClient, conn: ConnRow, key: string): Prom
   let series: SeriesRow[] = [];
   let seriesOk = false;
   let seriesError: string | null = null;
-  let campSeries: SeriesRow[] | null = null;
+  const campSeries: SeriesRow[] | null = null; // Klaviyo has no campaign series report (404): campaigns count on their send day
   let flowStats: Map<string, { d30: Stats; d90: Stats }> = new Map();
   if (metricId && reportable) {
     try {
       series = await flowSeries(key, metricId, seriesChunks(from, today, { maxDays: 45, endIso: nowIso }));
       seriesOk = true;
       flowStats = new Map(series.map((s) => [s.id, { d30: sumSince(s, from30), d90: sumSince(s, from) }]));
-      // The campaigns' money on the day it came in, as Klaviyo totals a date range (on the send day if it's refused)
-      await step(62, "Reading the campaigns' results, day by day");
-      campSeries = await campaignSeries(key, metricId, seriesChunks(from, today, { maxDays: 45, endIso: nowIso })).catch((e) => {
-        if (isAuth(e)) throw e;
-        return null;
-      });
     } catch (e) {
       if (isAuth(e)) throw e;
       seriesError = redactKey(errText(e), key).slice(0, 240);
@@ -628,7 +617,7 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
   let seriesOk = false;
   let seriesError: string | null = null;
   let flow30 = new Map<string, Stats>();
-  let campSeries: SeriesRow[] | null = null;
+  const campSeries: SeriesRow[] | null = null; // Klaviyo has no campaign series report (404): campaigns count on their send day
   let metricNote: string | null = null;
   if (metricId) {
     try {
@@ -638,11 +627,6 @@ async function readRecent(admin: SupabaseClient, conn: ConnRow, key: string): Pr
         series = await orNamed(() => flowSeries(key, metricId, { start: utc(shift(today, -31)), end: nowIso }), () => flowSeries(key, metricId, { key: "last_30_days" }));
         seriesOk = true;
         flow30 = new Map(series.map((s) => [s.id, sumSince(s, from30)]));
-        // The campaigns' money on the day it came in (older campaigns still earning too), as Klaviyo totals a day
-        campSeries = await campaignSeries(key, metricId, { start: utc(shift(today, -8)), end: nowIso }).catch((e) => {
-          if (isAuth(e)) throw e;
-          return null;
-        });
       } catch (e) {
         if (isAuth(e)) throw e;
         seriesError = redactKey(errText(e), key).slice(0, 240);

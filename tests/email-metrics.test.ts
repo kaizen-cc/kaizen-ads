@@ -68,7 +68,7 @@ describe("ranked conversion metrics", () => {
   });
 
   it("budgets the sync longer per extra metric", () => {
-    expect(klaviyoCostMs("full")).toBe(275_000);
+    expect(klaviyoCostMs("full")).toBe(210_000);
     expect(klaviyoCostMs("full", 2)).toBeGreaterThan(klaviyoCostMs("full", 1));
     expect(klaviyoCostMs("recent", 1)).toBeGreaterThan(klaviyoCostMs("recent"));
   });

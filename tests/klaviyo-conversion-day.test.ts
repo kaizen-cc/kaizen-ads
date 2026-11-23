@@ -46,7 +46,7 @@ describe("campaign revenue on the day it came in", () => {
   });
 
   it("budgets the read for the extra series", () => {
-    expect(klaviyoCostMs("full")).toBe(275_000);
+    expect(klaviyoCostMs("full")).toBe(210_000);
     expect(klaviyoCostMs("recent", 1)).toBeGreaterThan(klaviyoCostMs("recent"));
   });
 });

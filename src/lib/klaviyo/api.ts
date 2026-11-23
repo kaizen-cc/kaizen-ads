@@ -130,15 +130,8 @@ export async function flowSeries(key: string, metricId: string, timeframe: { key
   return seriesOf(key, "flow", metricId, timeframe);
 }
 
-/**
- * campaign-series-report, daily: each campaign's conversions and revenue on the day the order came in (as Klaviyo's own
- * totals for a date range count them), not all of it on the day the campaign went out.
- */
-export async function campaignSeries(key: string, metricId: string, timeframe: { key: string } | { start: string; end: string } | { start: string; end: string }[]): Promise<SeriesRow[]> {
-  return seriesOf(key, "campaign", metricId, timeframe);
-}
-
-async function seriesOf(key: string, what: "flow" | "campaign", metricId: string, timeframe: { key: string } | { start: string; end: string } | { start: string; end: string }[]): Promise<SeriesRow[]> {
+// (Klaviyo has no campaign-series report: /api/campaign-series-reports/ answers 404, so campaigns are read as values)
+async function seriesOf(key: string, what: "flow", metricId: string, timeframe: { key: string } | { start: string; end: string } | { start: string; end: string }[]): Promise<SeriesRow[]> {
   const frames = Array.isArray(timeframe) ? timeframe : [timeframe];
   const out = new Map<string, SeriesRow>();
   for (const tf of frames) {
