@@ -81,6 +81,33 @@ export function rawEmail(m: MailParts): string {
   return base64url(mimeMessage(m));
 }
 
+/** Every address in a header list ("Dana <d@x.com>, e@y.com"), lowercased */
+export const addressesIn = (header: string | null | undefined) => [...new Set((String(header ?? "").match(/[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) ?? []).map((a) => a.toLowerCase()))];
+
+/**
+ * Reply all: everyone else on the last message (its To and Cc) on Cc, never the person themselves nor whoever the reply
+ * already goes to. Null when nobody's left.
+ */
+export function replyAllCc(last: { to: string; cc?: string | null }, mailbox: string, replyingTo: string): string | null {
+  const skip = new Set([mailbox.toLowerCase(), ...addressesIn(replyingTo)]);
+  const rest = [...addressesIn(last.to), ...addressesIn(last.cc)].filter((a) => !skip.has(a));
+  return rest.length ? [...new Set(rest)].join(", ") : null;
+}
+
+/**
+ * A Gmail thread the person pointed at: a thread id from a search (hex), or a Gmail link whose last part is one
+ * ("…/#inbox/18c2f0a1b2c3d4e5"). Gmail's newer link tokens ("FMfcg…") can't be read by the API: null.
+ */
+export function gmailThreadId(v: unknown): string | null {
+  const s = String(v ?? "").trim();
+  if (/^[0-9a-f]{12,24}$/i.test(s)) return s.toLowerCase();
+  const m = s.match(/mail\.google\.com\/[^#]*#[^/]+(?:\/[^/?#]+)*\/([0-9a-f]{12,24})(?:[/?#]|$)/i);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/** "Re: Fwd: BFCM offer" → "BFCM offer": the subject a reply's thread is found by */
+export const subjectCore = (s: string) => s.replace(/^\s*((re|fwd?|fw|aw)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
+
 /** Who a reply goes to: the last message's sender, or (when that was the person themselves) who they wrote to */
 export function replyTo(last: { from: string; to: string; replyTo?: string | null }, mailbox: string): string {
   const from = addressOf(last.from).toLowerCase();

@@ -12,7 +12,7 @@ import { riskNote, RISK_PREFIX } from "@/lib/client-risk";
 import { saidYes } from "./core";
 import { clientTeam, recipientFor } from "./routing-server";
 import { allDrafts, carriedYes, getDraft, latestDraft, putDraft, tellTeammate, type Draft } from "./handoff-server";
-import { addressOf, reSubject, rawEmail, replyTo, slackPlace } from "./messages";
+import { addressOf, gmailThreadId, reSubject, rawEmail, replyAllCc, replyTo, slackPlace, subjectCore } from "./messages";
 import { attachNote, draftFiles, fileViews, mailFiles } from "@/lib/documents/attach";
 import { composeLinks } from "@/lib/email-drafts/core";
 import { teammateTitle, type TeammateKind } from "./teammates";
@@ -244,7 +244,7 @@ async function withMentions(ctx: CommsCtx, text: string): Promise<string> {
 }
 
 /** An email thread's last message, for a reply that stays in it (read with the read-only token) */
-async function lastInThread(mailbox: string, threadId: string): Promise<{ to: string; cc: string | null; subject: string; inReplyTo: string | null; references: string | null } | null> {
+async function lastInThread(mailbox: string, threadId: string, all = false): Promise<{ to: string; cc: string | null; subject: string; inReplyTo: string | null; references: string | null } | null> {
   const { gmailToken, google, googleConfigured } = await import("@/lib/context/google");
   if (!googleConfigured()) return null;
   type Msg = { payload: { headers: { name: string; value: string }[] } };
@@ -252,7 +252,23 @@ async function lastInThread(mailbox: string, threadId: string): Promise<{ to: st
   const last = t.messages.at(-1);
   if (!last) return null;
   const h = (n: string) => last.payload.headers.find((x) => x.name.toLowerCase() === n)?.value ?? "";
-  return { to: replyTo({ from: h("from"), to: h("to"), replyTo: h("reply-to") || null }, mailbox), cc: null, subject: reSubject(h("subject")), inReplyTo: h("message-id") || null, references: h("references") || null };
+  const to = replyTo({ from: h("from"), to: h("to"), replyTo: h("reply-to") || null }, mailbox);
+  return { to, cc: all ? replyAllCc({ to: h("to"), cc: h("cc") || null }, mailbox, to) : null, subject: reSubject(h("subject")), inReplyTo: h("message-id") || null, references: h("references") || null };
+}
+
+/**
+ * The thread a "new" email with a reply's subject belongs to: the newest thread in their mailbox with that subject
+ * and that person (to or from), so "Re: …" never starts a second thread beside the real one
+ */
+async function threadForReply(mailbox: string, to: string, subject: string): Promise<string | null> {
+  const core = subjectCore(subject);
+  const who = addressOf(to);
+  if (!core || !who) return null;
+  const { gmailToken, google, googleConfigured } = await import("@/lib/context/google");
+  if (!googleConfigured()) return null;
+  const q = `subject:"${core.replace(/"/g, "")}" (from:${who} OR to:${who}) newer_than:180d`;
+  const r = await google<{ threads?: { id: string }[] }>(await gmailToken(mailbox), "https://gmail.googleapis.com/gmail/v1/users/me/threads", { q, maxResults: "1" }).catch(() => null);
+  return r?.threads?.[0]?.id ?? null;
 }
 
 /** The draft as a card on the call: edit it, send it (on their yes), or copy it */
@@ -421,7 +437,7 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
     },
     {
       name: "draft_message",
-      description: `Drafts a Slack reply, a new Slack DM to a teammate, or an email as ${from}, in their voice (a message to a person; campaign, flow or SMS copy for the email team is never this: that's create_copy_doc): a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), a new direct message to someone on the team ("DM Jesus", "message Dana on Slack": channel slack, dm: their name as heard, text), a new Slack message that is neither (an announcement they'll post in a channel, or one just for them to copy: channel slack, new_for: where it's meant to go as said, or "me"; never a thread reply), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). A document goes with an email: make it first (create_document), then pass its document_id in attach (the card can save it to their Gmail drafts with the PDF attached, and offers the PDF to download). An email to a client goes to that client's contacts (find_email_address for each person named; never ask for an address it hasn't looked for); never address it to someone on the Kaizen team unless ${from} named them as a recipient. After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes. When they'd rather send it themselves ("put it in my drafts", "I'll send it from Gmail"), run save_draft.`,
+      description: `Drafts a Slack reply, a new Slack DM to a teammate, or an email as ${from}, in their voice (a message to a person; campaign, flow or SMS copy for the email team is never this: that's create_copy_doc): a reply in the exact thread they mean (the ones waiting on them first, then the client's recent threads), a new direct message to someone on the team ("DM Jesus", "message Dana on Slack": channel slack, dm: their name as heard, text), a new Slack message that is neither (an announcement they'll post in a channel, or one just for them to copy: channel slack, new_for: where it's meant to go as said, or "me"; never a thread reply), or a reply in an email thread they point at (a thread_id from search_my_email or a Gmail link: email_thread, never a new email with the same subject; reply_all for reply all), or a new email (to and subject). On a call it shows as a card they can edit and approve, with a copy button. Write the text yourself, short, the way they write (leave text out on a reply that's waiting on them and it's written in their voice for you). Several threads fit: list them in a few words and ask which (thread: its ref). A document goes with an email: make it first (create_document), then pass its document_id in attach (the card can save it to their Gmail drafts with the PDF attached, and offers the PDF to download). An email to a client goes to that client's contacts (find_email_address for each person named; never ask for an address it hasn't looked for); never address it to someone on the Kaizen team unless ${from} named them as a recipient. After drafting, read it back in a sentence or say it's on screen, then ask "send it?"; send only with send_message on their yes. When they'd rather send it themselves ("put it in my drafts", "I'll send it from Gmail"), run save_draft.`,
       input_schema: {
         type: "object",
         properties: {
@@ -433,6 +449,8 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           text: { type: "string", description: "The message, as it will be sent" },
           dm: { type: "string", description: "Slack only: who a new direct message is to: a teammate's name or role, or a client contact's name (with client); several names (\"Jesus and Dana\") start a group DM. Not a reply in a thread" },
           new_for: { type: "string", description: "Slack only: a new top-level message in a channel, as said (\"the OO channel\", \"#email-team\", \"La Jetée's internal channel\" with client), sent there as them on their yes; or \"me\" when it's just for them to copy. Tag teammates in the text with @Name" },
+          email_thread: { type: "string", description: "Email only: the exact thread to reply in, when they point at one: a thread_id from search_my_email / search_my_gmail, or a Gmail link. The reply is drafted inside that thread (same subject, In-Reply-To and References, to whoever wrote last)" },
+          reply_all: { type: "boolean", description: "Email reply only: true for reply all (everyone else on the last message goes on Cc)" },
           to: { type: "string", description: "A new email's address (not a reply)" },
           subject: { type: "string", description: "A new email's subject" },
           attach: { type: "array", items: { type: "string" }, description: "An email only: document_id(s) from create_document whose PDF goes with it" },
@@ -450,7 +468,9 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
         let text = body(input.text, 4000);
         const id = crypto.randomUUID().slice(0, 12);
         let d: Draft;
-        const fresh = channel === "email" && clip(input.to, 200) && !input.thread;
+        const pointed = channel === "email" && !input.thread && clip(input.email_thread, 300) ? gmailThreadId(input.email_thread) : null;
+        if (channel === "email" && !input.thread && clip(input.email_thread, 300) && !pointed) return { drafted: false, note: "That Gmail link can't be read by id. Find the thread with search_my_email (who and subject) and pass its thread_id as email_thread." };
+        const fresh = channel === "email" && clip(input.to, 200) && !input.thread && !pointed;
         const dm = channel === "slack" && !input.thread ? clip(input.dm, 160) : "";
         if (dm) {
           // A new DM (or, with several names, a group DM): each a teammate by name or role, else a client contact;
@@ -473,6 +493,21 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           const said = clip(input.new_for, 80);
           const ch = isJustMe(said) ? null : await channelNamed(ctx, said, client);
           d = { kind: "draft", id, done: true, channel, slack: ch ? slackChannelPlace(ch.id, ch.name) : slackNewPlace(said), text, client: client?.name ?? null, at: new Date().toISOString() };
+        } else if (pointed) {
+          // The exact thread they pointed at: the reply is drafted inside it, to whoever wrote last (reply all on Cc)
+          const last = await lastInThread(ctx.me.email, pointed, input.reply_all === true).catch(() => null);
+          if (!last) return { drafted: false, note: "That thread isn't in their own mailbox (or Gmail didn't answer). Find it with search_my_email and pass its thread_id." };
+          if (!text) return { drafted: false, note: "Write the reply's text, then draft it again with this email_thread." };
+          d = { kind: "draft", id, done: true, channel, email: { mailbox: ctx.me.email, threadId: pointed, to: last.to, cc: last.cc, subject: last.subject, inReplyTo: last.inReplyTo, references: last.references }, text, client: client?.name ?? null, at: new Date().toISOString() };
+        } else if (fresh && (/^\s*re\s*:/i.test(clip(input.subject, 200)) || /\b(?:reply|respond|answer)\b/i.test(ctx.said())) && (await threadForReply(ctx.me.email, clip(input.to, 200), clip(input.subject, 200) || clip(input.about, 120)))) {
+          // A "new" email that's really a reply (a "Re:" subject, or they said reply) to someone they already have that
+          // thread with: drafted inside it, never as a second thread with the same subject
+          const tid = (await threadForReply(ctx.me.email, clip(input.to, 200), clip(input.subject, 200) || clip(input.about, 120)))!;
+          const last = await lastInThread(ctx.me.email, tid, input.reply_all === true).catch(() => null);
+          if (!text) return { drafted: false, note: "Write the reply's text, then draft it again." };
+          d = last
+            ? { kind: "draft", id, done: true, channel, email: { mailbox: ctx.me.email, threadId: tid, to: last.to, cc: last.cc, subject: last.subject, inReplyTo: last.inReplyTo, references: last.references }, text, client: client?.name ?? null, at: new Date().toISOString() }
+            : { kind: "draft", id, done: true, channel, email: { mailbox: ctx.me.email, threadId: null, to: clip(input.to, 200), subject: clip(input.subject, 200) || "(no subject)" }, text, client: client?.name ?? null, at: new Date().toISOString() };
         } else if (fresh) {
           const to = clip(input.to, 200);
           if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addressOf(to))) return { drafted: false, note: "That isn't an email address. Look it up with find_email_address first; ask only if it finds nothing." };
@@ -504,8 +539,8 @@ export function commsTools(ctx: CommsCtx): ChatTool[] {
           if (!text) return { drafted: false, note: "Write the reply's text, then draft it again with this thread.", thread: pick.ref };
           if (pick.slack) d = { kind: "draft", id, done: true, channel, slack: { ...pick.slack, where: `${pick.slack.where}, reply to ${pick.who}` }, text, client: pick.client, owedId: pick.owedId, at: new Date().toISOString() };
           else {
-            const last = await lastInThread(pick.email!.mailbox, pick.email!.threadId).catch(() => null);
-            d = { kind: "draft", id, done: true, channel, email: { mailbox: pick.email!.mailbox, threadId: pick.email!.threadId, to: last?.to ?? pick.who, subject: last?.subject ?? reSubject(pick.email!.subject), inReplyTo: last?.inReplyTo ?? null, references: last?.references ?? null }, text, client: pick.client, owedId: pick.owedId, at: new Date().toISOString() };
+            const last = await lastInThread(pick.email!.mailbox, pick.email!.threadId, input.reply_all === true).catch(() => null);
+            d = { kind: "draft", id, done: true, channel, email: { mailbox: pick.email!.mailbox, threadId: pick.email!.threadId, to: last?.to ?? pick.who, cc: last?.cc ?? null, subject: last?.subject ?? reSubject(pick.email!.subject), inReplyTo: last?.inReplyTo ?? null, references: last?.references ?? null }, text, client: pick.client, owedId: pick.owedId, at: new Date().toISOString() };
           }
         }
         // Files go with an email only: the documents they may see, by id

@@ -110,7 +110,7 @@ export function lookupTools(ctx: AssistantCtx): LoopTool[] {
     {
       name: "search_my_email",
       description:
-        "Searches the person's own Gmail (their mailbox only, read only) with Gmail search syntax (from:, to:, subject:, after:2026/10/01, \"exact phrase\", has:attachment). Returns each email with who, when, the subject, a snippet and a thread id; read one whole with read_my_email_thread. Private to them: only for what they asked.",
+        "Searches the person's own Gmail (their mailbox only, read only) with Gmail search syntax (from:, to:, subject:, after:2026/10/01, \"exact phrase\", has:attachment). Returns each email with who, when, the subject, a snippet and a thread id; read one whole with read_my_email_thread. To reply in one, pass its thread_id to draft_message as email_thread (the reply stays in that thread). Private to them: only for what they asked.",
       input_schema: { type: "object", properties: { query: { type: "string" }, limit: { type: "integer" } }, required: ["query"], additionalProperties: false },
       run: async (input) => {
         const q = clip(input.query, 300);
