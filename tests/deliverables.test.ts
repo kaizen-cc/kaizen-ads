@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { applyPatch, approved, canBringWriter, canRequest, followerOf, newRun, nextStep, readAsk, tasksFor, type RunState } from "@/lib/deliverables/engine";
 import { EMAIL_LINE } from "@/lib/deliverables/lines/email";
 import { lineForAsk } from "@/lib/deliverables/lines";
-import { asanaTaskName, changedLines, copyDocHtml, emailFolderStep, emailWritingKind, folderStep, looseName, mapAsanaFields, normalizeCopy, pickOption, pickSection, urgencyFor, type AsanaFieldSetting } from "@/lib/copy-docs/core";
+import { asanaTaskName, changedLines, copyDocHtml, copyDocName, emailFolderStep, emailWritingKind, folderStep, looseName, mapAsanaFields, normalizeCopy, pickOption, pickSection, urgencyFor, type AsanaFieldSetting } from "@/lib/copy-docs/core";
 import { findOrCreateFolder } from "@/lib/creative-drive-paths";
 import { directSpecialist } from "@/lib/assistant/team";
 import { sheetDetailsOf } from "@/lib/account-sheet-channels-core";
@@ -237,9 +237,21 @@ describe("the copy document", () => {
 
   it("is never addressed to anyone in the Doc", () => {
     const html = copyDocHtml(normalizeCopy(loose), { client: "Candy Cloud" });
-    expect(html).toContain("Subject:");
+    expect(html).toContain("Subject Line:");
     expect(html).toContain("Scratch now");
     expect(html).not.toMatch(/\b(?:Hi|Dear)\b/);
+  });
+
+  it("follows the Template Library: the naming convention per email and only what design needs", () => {
+    const html = copyDocHtml(normalizeCopy(loose), { client: "Candy Cloud" });
+    expect(html).toContain("KZN x Candy Cloud | November Campaigns | Email #1");
+    for (const label of ["Subject Line:", "Preview Text:", "Headline:", "Sub-headline:", "Hero CTA:"]) expect(html).toContain(label);
+    expect(html).toContain("Scratch to reveal");
+    expect(html).not.toContain("Launch the game");
+    expect(html).not.toContain("Rules");
+    const flow = copyDocHtml(normalizeCopy({ ...loose, kind: "flow", short_name: "Winback" }), { client: "Crust Pizza Co." });
+    expect(flow).toContain("KZN x Crust Pizza Co. | Winback Flow | Email #1");
+    expect(copyDocName({ client: "Crust Pizza Co.", kind: "campaign", shortName: "Holiday", sendDate: "2026-12-04" })).toBe("KZN x Crust Pizza Co. | December Campaigns");
   });
 });
 

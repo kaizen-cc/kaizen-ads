@@ -8,7 +8,7 @@ import { readClientSheet, sendClientSheet } from "./actions";
 // if needed, and it goes straight to the client's email designer as one Asana task in Ready for Design, counting against
 // the allotment and running through the board like any request.
 
-type Emails = { name: string; send: string; subject: string; cta: string }[];
+type Emails = import("@/lib/email-supplied").SuppliedEmail[];
 const PRIORITY = [
   { key: "low", label: "Low" },
   { key: "normal", label: "Normal" },
@@ -36,7 +36,7 @@ export function SuppliedRequest({ clientId, clientName, lastSheet, onPlanNormall
     setBusy(null);
     if (!r.ok) return setError(`${r.error} You can still send it: say how many emails are in it.`);
     setRead({ title: r.sheet.title, emails: r.sheet.emails, summary: r.sheet.summary, channel: r.sheet.channel });
-    if (r.sheet.emails.length) setCount(Math.min(5, r.sheet.emails.length));
+    setCount(Math.max(1, Math.min(5, r.sheet.emails.length || 1)));
     if (r.sheet.title) setName(r.sheet.title.replace(/\s*[-|·]\s*(copy|sheet|emails?)\s*$/i, "").slice(0, 60) || "Weekly campaigns");
   };
   const send = async () => {
@@ -98,15 +98,25 @@ export function SuppliedRequest({ clientId, clientName, lastSheet, onPlanNormall
           <p className="text-[13.5px] font-medium text-fg [overflow-wrap:anywhere]">{read.title}</p>
           {read.summary && <p className="text-[13px] text-muted">{read.summary}</p>}
           {read.emails.length ? (
-            <ol className="grid gap-1 text-[13px] text-fg">
+            <div className="grid gap-3">
               {read.emails.map((e, i) => (
-                <li key={i} className="[overflow-wrap:anywhere]">
-                  <span className="tabular text-faint">{i + 1}.</span> {e.name}
-                  {e.send && <span className="text-faint"> · {e.send}</span>}
-                  {e.subject && <span className="text-muted"> · &ldquo;{e.subject}&rdquo;</span>}
-                </li>
+                <div key={i} className="grid gap-1">
+                  <p className="text-[13px] font-medium text-fg [overflow-wrap:anywhere]">
+                    Email #{i + 1}: {e.name}
+                    {e.send && <span className="font-normal text-faint"> · {e.send}</span>}
+                  </p>
+                  {e.notes && <p className="text-[12px] text-muted">{e.notes}</p>}
+                  <ol className="grid gap-0.5 text-[12.5px]">
+                    {e.blocks.map((b, j) => (
+                      <li key={j} className="[overflow-wrap:anywhere]">
+                        <span className="text-faint">{b.section || `Block ${j}`}</span> <span className="text-fg">{b.promo}</span>
+                        {b.button && !/^[-\s]*$/.test(b.button) && <span className="text-muted"> · {b.button}</span>}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
               ))}
-            </ol>
+            </div>
           ) : (
             <p className="text-[12.5px] text-faint">No emails found in it yet. Say how many below.</p>
           )}

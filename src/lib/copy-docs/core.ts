@@ -374,6 +374,8 @@ export const emailFolderStep = folderStep(EMAIL_FOLDER);
 
 /** The Google Doc's name: "Candy Cloud - Email Campaign - Scratch to Win - Nov 23" */
 export function copyDocName(p: { client: string; kind: CopyKind; shortName: string; sendDate: string | null }) {
+  // Email copy follows the Template Library: "KZN x {Client} | {Flow Name or Monthly Campaigns}"
+  if (p.kind === "campaign" || p.kind === "flow" || p.kind === "sms") return `KZN x ${str(p.client, 80)} | ${copyGroupName({ kind: p.kind, shortName: p.shortName, brief: { sendDate: p.sendDate } })}`.replace(/[\\/:*?"<>]/g, " ").slice(0, 200);
   const when = p.sendDate && DAY.test(p.sendDate) ? ` - ${at(p.sendDate).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}` : "";
   return `${str(p.client, 80)} - ${REQUEST_TYPE[p.kind]} - ${str(p.shortName, 90)}${when}`.replace(/[\\/:*?"<>|]/g, " ").slice(0, 200);
 }
@@ -385,8 +387,57 @@ const para = (s: string) =>
     .map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`)
     .join("");
 
-/** The copy as HTML that Drive turns into a Google Doc: the brief, then each email (subject, preview, sections, button, design notes) */
+/**
+ * The email's group in Kaizen's naming convention (the Template Library): a flow by its name ("Winback Flow"), campaigns
+ * by their month ("December Campaigns"), texts the same way ("December SMS")
+ */
+export function copyGroupName(c: { kind: CopyKind; shortName: string; brief: { sendDate: string | null } }, now = new Date()) {
+  if (c.kind === "flow") {
+    const n = str(c.shortName, 80).replace(/\s*\(\d+\)\s*$/, "") || "Email";
+    return /\bflow$/i.test(n) ? n : `${n} Flow`;
+  }
+  const d = c.brief.sendDate && DAY.test(c.brief.sendDate) ? at(c.brief.sendDate) : now;
+  const month = d.toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+  return `${month} ${c.kind === "sms" ? "SMS" : "Campaigns"}`;
+}
+
+/** One email's heading in the convention: "KZN x Crust Pizza Co. | December Campaigns | Email #1" */
+export const copyEmailHeading = (client: string, group: string, kind: CopyKind, i: number) => `KZN x ${str(client, 80)} | ${group} | ${kind === "sms" ? "Text" : "Email"} #${i + 1}`;
+
+/**
+ * Email copy as the designer gets it, exactly the Template Library's layout: per email its heading in the naming
+ * convention, then Subject Line, Preview Text, Headline, Sub-headline and Hero CTA (with its link); any further blocks of
+ * the email as Block n Headline / Copy / CTA; then the design notes. Nothing the designer doesn't need: no brief, goal,
+ * audience, rules or sign-off (those live in the request).
+ */
+function emailDocHtml(c: CopyContent, client: string) {
+  const group = copyGroupName(c);
+  const line = (label: string, v: string | null | undefined) => `<p><b>${esc(label)}:</b> ${v ? esc(v).replace(/\n/g, "<br>") : ""}</p>`;
+  const link = (cta: { label: string; url: string } | null) => (cta ? `${cta.label}${cta.url ? ` (${cta.url})` : ""}` : "");
+  const emails = c.emails
+    .map((e, i) => {
+      const [hero, ...rest] = e.sections;
+      const parts = [`<p><b>${esc(copyEmailHeading(client, group, c.kind, i))}</b></p>`];
+      if (c.kind === "sms") {
+        parts.push(line("Message", e.sections.map((s) => [s.heading, s.body].filter(Boolean).join("\n")).join("\n\n")));
+        if (e.cta) parts.push(line("Link", e.cta.url || e.cta.label));
+      } else {
+        parts.push(line("Subject Line", e.subject), line("Preview Text", e.preview), line("Headline", hero?.heading), line("Sub-headline", hero?.body), line("Hero CTA", link(e.cta)));
+        rest.forEach((s, j) => {
+          if (s.heading) parts.push(line(`Block ${j + 1} Headline`, s.heading));
+          if (s.body) parts.push(line(`Block ${j + 1} Copy`, s.body));
+        });
+      }
+      if (e.designNotes.length) parts.push(`<p><b>Design Notes:</b></p><ul>${e.designNotes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>`);
+      return parts.join("");
+    })
+    .join("<p>&nbsp;</p>");
+  return `<html><head><meta charset="utf-8"><title>${esc(`KZN x ${client} | ${group}`)}</title></head><body style="font-family:Arial,sans-serif">${emails}</body></html>`;
+}
+
+/** The copy as HTML that Drive turns into a Google Doc. Email copy: the Template Library layout (emailDocHtml); a creative or social brief: the brief, then each concept */
 export function copyDocHtml(c: CopyContent, p: { client: string }) {
+  if (c.kind === "campaign" || c.kind === "flow" || c.kind === "sms") return emailDocHtml(c, p.client);
   const b = c.brief;
   const briefRows = [
     ["Goal", b.goal],

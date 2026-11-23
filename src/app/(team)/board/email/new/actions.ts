@@ -64,6 +64,9 @@ export async function writeCopy(input: { clientId: string; kind: EmailKind; plan
   try {
     const { me, db, admin } = await who();
     await client(db, input.clientId);
+    // Their own sheet pasted into the plan: it goes to the designer as it is (no generated copy doc)
+    const { suppliesContent } = await import("@/lib/email-supplied");
+    if ((await suppliesContent(admin, input.clientId)).on && /docs\.google\.com\/spreadsheets/.test(JSON.stringify(input.plan))) return { ok: false, error: "This client supplies their own content: send their sheet to the designer from the start page (Client supplies the content), so the task links the sheet itself." };
     if (!input.plan.items.length) return { ok: false, error: "The plan needs at least one email." };
     const { writeRequestCopy } = await import("@/lib/email-request");
     const doc = await writeRequestCopy(admin, db, me, { clientId: input.clientId, kind: input.kind, plan: input.plan, priority: PRIORITIES.includes(input.priority) ? input.priority : "normal", month: input.month, docId: input.docId });
@@ -133,10 +136,10 @@ export async function readClientSheet(clientId: string, url: string): Promise<{ 
 }
 
 /** Send the client's sheet straight to their email designer: one Asana task in Ready for Design, every field filled */
-export async function sendClientSheet(input: { clientId: string; url: string; count: number; channel: "email" | "sms"; name: string; note: string; priority: string; emails: { name: string; send: string; subject: string; cta: string }[]; summary: string | null }): Promise<{ ok: true; task: { name: string; url: string }; designer: string | null; note: string | null } | Fail> {
+export async function sendClientSheet(input: { clientId: string; url: string; count: number; channel: "email" | "sms"; name: string; note: string; priority: string; emails: import("@/lib/email-supplied").SuppliedEmail[]; summary: string | null }): Promise<{ ok: true; task: { name: string; url: string }; designer: string | null; note: string | null } | Fail> {
   try {
     const { me, db, admin } = await who();
-    await client(db, input.clientId);
+    const c = await client(db, input.clientId);
     if (!/^https:\/\/(docs|drive)\.google\.com\//.test(input.url.trim())) return { ok: false, error: "Paste the Google Sheet's link." };
     const { createSuppliedRequest } = await import("@/lib/deliverables/server");
     const { sheetLines } = await import("@/lib/email-supplied");
@@ -149,7 +152,7 @@ export async function sendClientSheet(input: { clientId: string; url: string; co
       shortName: input.name.trim().slice(0, 80) || "Weekly campaigns",
       note: input.note.trim().slice(0, 1000) || null,
       urgency,
-      emailsText: input.emails.length ? sheetLines(input.emails) : null,
+      emailsText: input.emails.length ? sheetLines(c.name, input.emails) : null,
       summary: input.summary,
     });
     if (!r.ok) return r;

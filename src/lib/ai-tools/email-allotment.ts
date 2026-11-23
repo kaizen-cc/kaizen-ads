@@ -156,7 +156,7 @@ const sendClientSheet: AiTool = {
       shortName: (read?.ok && read.title ? read.title : "Weekly campaigns").slice(0, 80),
       note: str(input.note) ?? null,
       urgency: (["low", "normal", "high", "urgent"] as const).find((p) => p === input.priority) ?? "normal",
-      emailsText: emails.length ? sheetLines(emails) : null,
+      emailsText: emails.length ? sheetLines(c.name, emails) : null,
       summary: read?.ok ? read.summary : null,
     });
     return r.ok ? { ok: true, task: r.task.name, url: r.task.url, designer: r.designer, note: r.designerMissing } : r;

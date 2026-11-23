@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { CopyComment } from "@/lib/copy-docs/core";
+import { copyEmailHeading, copyGroupName, type CopyComment } from "@/lib/copy-docs/core";
 import type { CopyDoc } from "@/lib/copy-docs/server";
 import { approveCopy, askForChange, commentOnLine, copyVersion, editLine, requestCopy, resolveComment } from "../actions";
 
@@ -154,7 +154,15 @@ export function CopyDocView({
       {c.emails.map((e, i) => (
         <article key={i} aria-label={e.name} className="grid gap-1 overflow-hidden rounded-[22px] border border-line bg-surface shadow-sm">
           <div className="flex items-baseline justify-between gap-3 border-b border-line px-5 py-3">
-            <h2 className="text-[15px] font-semibold text-fg">{e.name}</h2>
+            {/* Email copy: each email by Kaizen's naming convention (the Template Library), its own name beneath */}
+            {c.kind === "campaign" || c.kind === "flow" || c.kind === "sms" ? (
+              <span className="grid min-w-0">
+                <h2 className="text-[15px] font-semibold text-fg [overflow-wrap:anywhere]">{copyEmailHeading(doc.client ?? "Client", copyGroupName(c), c.kind, i)}</h2>
+                <span className="text-[12px] text-faint">{e.name}</span>
+              </span>
+            ) : (
+              <h2 className="text-[15px] font-semibold text-fg">{e.name}</h2>
+            )}
             {e.timing && <span className="text-[12px] text-faint">{e.timing}</span>}
           </div>
           <div className="grid gap-0.5 px-2 py-2 md:px-3">
