@@ -71,10 +71,8 @@ export type SlackDraftResult = { ok: true; href: string | null; where: string } 
  */
 export async function saveSlackSelfDraft(profileId: string, d: Draft): Promise<SlackDraftResult> {
   if (!d.slack) return { ok: false, error: "That draft isn't a Slack message." };
-  const { postAsUser, slackUserToken } = await import("@/lib/slack-user");
-  const mine = await slackUserToken(profileId);
-  if (!mine?.slackUserId) return { ok: false, error: "Connect your Slack first, so the draft lands in your own messages.", needsConnect: true };
-  const r = await postAsUser(profileId, { channel: mine.slackUserId, text: slackSelfText(d.slack, d.text) });
+  const { postToSelf } = await import("@/lib/slack-user");
+  const r = await postToSelf(profileId, slackSelfText(d.slack, d.text));
   if (!r.ok) return { ok: false, error: r.error, needsConnect: r.needsConnect };
   return { ok: true, href: r.permalink ?? slackMessageLink(r.channel, r.ts), where: d.slack.where };
 }
